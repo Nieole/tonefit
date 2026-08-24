@@ -1,1 +1,4 @@
 /target
+
+# 本机路径，由各自的 .cargo/config.toml 或环境变量提供
+/.cargo/config.toml
