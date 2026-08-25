@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::cache::CacheBudget;
 use crate::profile::Profile;
 use crate::quantize::BitDepth;
 use crate::resample::Filter;
@@ -20,7 +21,8 @@ pub enum Mode {
 
 /// 一次处理调用的全部输入。
 ///
-/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：抖动模式见 09 号票。
+/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：抖动模式见 09 号票，
+/// 介质见 13 号票。
 #[derive(Debug, Clone)]
 pub struct Request {
     /// 点名要处理的卷。空集是错误，不做全库扫描（ADR 0009）。
@@ -35,6 +37,9 @@ pub struct Request {
     ///
     /// 顶掉的只是判定。面板灰阶数那道硬上界仍在，越界的覆盖当场被拒（ADR 0003）。
     pub bit_depth: Option<BitDepth>,
+    /// 缓存预算（`--cache-budget`）：两遍之间的缓存最多在内存里留这么多字节，
+    /// 超出的页溢写临时文件（ADR 0005）。限的是峰值内存，不是卷的大小上限。
+    pub cache_budget: CacheBudget,
     /// 做到哪一步。
     pub mode: Mode,
 }

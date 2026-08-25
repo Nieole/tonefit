@@ -26,11 +26,33 @@ pub fn is_page(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 解码一页。格式按内容判定，扩展名只用来挑出候选成员。
-pub fn decode(bytes: &[u8]) -> Result<DynamicImage> {
-    image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .context("判定格式")?
-        .decode()
-        .context("解码")
+/// 解码器：解一页记一次。
+///
+/// 解码是本管线上最贵的一步，而 ADR 0005 的两遍管线拿「每页只解码一次」换下了缓存那一整套
+/// 代价。这个计数是那条不变量唯一的守卫，因此它记在**解码这个动作本身**上，
+/// 而不是记在调用方的循环里——解码只此一条路，第二遍要是回头解一页，这个数瞒不住。
+#[derive(Debug, Default)]
+pub struct Decoder {
+    decodes: usize,
+}
+
+impl Decoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 至此解了多少页。
+    pub fn decodes(&self) -> usize {
+        self.decodes
+    }
+
+    /// 解码一页。格式按内容判定，扩展名只用来挑出候选成员。
+    pub fn decode(&mut self, bytes: &[u8]) -> Result<DynamicImage> {
+        self.decodes += 1;
+        image::ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .context("判定格式")?
+            .decode()
+            .context("解码")
+    }
 }

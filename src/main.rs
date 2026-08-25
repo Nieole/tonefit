@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use tonefit::{BitDepth, CandidateScore, Filter, Mode, PageReport, Profile, Report, Request};
+use tonefit::{
+    BitDepth, CacheBudget, CandidateScore, Filter, Mode, PageReport, Profile, Report, Request,
+};
 
 #[derive(Parser)]
 #[command(about = "把漫画页适配到电子墨水阅读设备", version)]
@@ -34,6 +36,11 @@ struct Cli {
     #[arg(long, value_name = "位深")]
     bit_depth: Option<u32>,
 
+    /// 两遍之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
+    /// 超出的页溢写临时文件，运行结束即收走。
+    #[arg(long, value_name = "字节数")]
+    cache_budget: Option<String>,
+
     /// 只算不写：报告照出，逐页给出判定与各候选位深的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
@@ -62,6 +69,14 @@ impl Cli {
         self.bit_depth.map(BitDepth::from_bits).transpose()
     }
 
+    /// 本次的缓存预算。不点名就是默认的那一档。
+    fn cache_budget(&self) -> Result<CacheBudget> {
+        match &self.cache_budget {
+            Some(text) => CacheBudget::parse(text),
+            None => Ok(CacheBudget::default()),
+        }
+    }
+
     /// 把 `--profile` 与 `--gray-levels` 合成本次要用的 profile。
     fn target_profile(&self) -> Result<Profile> {
         let profile = Profile::resolve(&self.profile)?;
@@ -77,6 +92,7 @@ fn main() -> Result<()> {
     let profile = cli.target_profile()?;
     let filter = cli.residual_filter()?;
     let bit_depth = cli.bit_depth_override()?;
+    let cache_budget = cli.cache_budget()?;
     let mode = cli.mode();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
@@ -84,6 +100,7 @@ fn main() -> Result<()> {
         profile,
         filter,
         bit_depth,
+        cache_budget,
         mode,
     })?;
     print!("{}", render(&report, mode));
@@ -102,6 +119,8 @@ fn render(report: &Report, mode: Mode) -> String {
             volume.output.display(),
             volume.pages.len()
         ));
+        // 卷成为不可分割的处理单元，峰值内存随卷大小走（ADR 0005）：这一行是那条代价的现场。
+        text.push_str(&format!("  缓存 {}\n", volume.cache));
         for page in &volume.pages {
             text.push_str(&format!(
                 "  {}  {}  {}\n",
@@ -141,7 +160,19 @@ fn score_line(scores: &[CandidateScore]) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use tonefit::{GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport};
+    use tonefit::{CacheUsage, GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport};
+
+    /// 一份缓存用量。渲染这一侧只关心它有没有被说出来，数值取整好读的。
+    fn cache_usage() -> CacheUsage {
+        CacheUsage {
+            budget: CacheBudget::default(),
+            pages: 1,
+            raw: 4 * 1024 * 1024,
+            stored: 1024 * 1024,
+            resident: 1024 * 1024,
+            spilled: 0,
+        }
+    }
 
     /// B 类中位页缩到基准面板：总缩放比 1.219，不触发预缩（见 measurements 的《B 类素材普查》）。
     fn typical_scaling() -> Scaling {
@@ -212,6 +243,8 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                cache: cache_usage(),
+                decodes: 1,
                 pages: vec![PageReport {
                     source: PathBuf::from("library/volume-a/001.jpg"),
                     output: PathBuf::from("out/volume-a/001.png"),
@@ -253,6 +286,8 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                cache: cache_usage(),
+                decodes: 1,
                 pages: vec![PageReport {
                     source: PathBuf::from("library/volume-a/001.jpg"),
                     output: PathBuf::from("out/volume-a/001.png"),
@@ -273,8 +308,8 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷一行，页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 4);
+        // profile 一行、卷两行（一行去处，一行缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 5);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -296,6 +331,9 @@ mod tests {
         );
         // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它还没标定。
         assert!(text.contains("阈值 8.500（未标定占位值）"), "{text}");
+        // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
+        assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
+        assert!(text.contains("未溢写"), "{text}");
     }
 
     #[test]

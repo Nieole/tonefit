@@ -238,6 +238,7 @@ pub fn request<'a>(
         profile: baseline_profile(),
         filter: tonefit::Filter::default(),
         bit_depth: None,
+        cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
     }
 }

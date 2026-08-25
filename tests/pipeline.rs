@@ -5,7 +5,7 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{BitDepth, Filter, Mode, Reason, Request, Size};
+use tonefit::{BitDepth, CacheBudget, Filter, Mode, Reason, Request, Size};
 
 #[test]
 fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
@@ -799,4 +799,130 @@ fn the_threshold_says_it_has_not_been_calibrated() {
     let profile = fixtures::baseline_profile();
     let said = profile.to_string();
     assert!(said.contains("未标定"), "{said}");
+}
+
+#[test]
+fn every_page_is_decoded_exactly_once() {
+    // 两遍管线的不变量（ADR 0005：解码一次，缓存缩放后的图）：第一遍解码，
+    // 第二遍只从缓存读。计数是这条不变量在 `run` 这个 seam 上看得见的形式——
+    // 第二遍一旦回头碰源页，这个数立刻大于页数。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page(
+        "002.png",
+        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
+    );
+    volume.page("003.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+    // 透传文件不解码，也就不计数。
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    assert_eq!(volume_report.pages.len(), 3);
+    assert_eq!(volume_report.decodes, 3, "源页被解码了不止一遍");
+}
+
+#[test]
+fn the_report_says_how_much_the_cache_held() {
+    // 卷成为不可分割的处理单元，峰值内存随卷大小线性增长（ADR 0005 认下的代价）。
+    // 用量因此要在报告里说得出来，否则这条代价对用户是不可见的。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
+
+    let report = run_volume(&space, &volume);
+
+    let cache = report.volumes[0].cache;
+    // 透传文件不进缓存：缓存里只有页。
+    assert_eq!(cache.pages, 2);
+    // 缓存的是缩放到**目标尺寸**的参照，8 位灰度每像素一字节——未压缩的用量因此手算得出。
+    // 存成源尺寸或存成别的精度，这一条立刻不成立。
+    let expected: u64 = report.volumes[0]
+        .pages
+        .iter()
+        .map(|page| u64::from(page.size.width) * u64::from(page.size.height))
+        .sum();
+    assert_eq!(cache.raw, expected);
+    // LZ4 之后实际占的字节：正数，且不会比未压缩的还大。
+    assert!(cache.stored > 0, "缓存里什么都没有");
+    assert!(cache.stored <= cache.raw, "压过之后反而更大了");
+}
+
+#[test]
+fn a_cache_past_its_budget_spills_to_a_temp_file_and_writes_the_very_same_pages() {
+    // 缓存内存优先，超出 `--cache-budget` 溢写临时文件（ADR 0005）。
+    // 溢写换的是内存，不是结果：同一卷在两种预算下写出的字节必须逐字节相同。
+    let (roomy, roomy_bytes) = one_volume_with_budget(CacheBudget::default());
+    let (cramped, cramped_bytes) = one_volume_with_budget(CacheBudget::new(0));
+
+    // 预算够用：全留在内存里，一个字节都不溢写。
+    assert_eq!(roomy.cache.spilled, 0, "预算够用时不该溢写");
+    assert_eq!(roomy.cache.resident, roomy.cache.stored);
+    // 预算为零：一页都留不住，全部溢写。
+    assert!(cramped.cache.spilled > 0, "预算为零时没有发生溢写");
+    assert_eq!(cramped.cache.resident, 0, "预算为零时不该有常驻");
+    assert_eq!(cramped.cache.spilled, cramped.cache.stored);
+    // 两种预算存下的总量相同：溢写换的是它待在哪里，不是它有多大。
+    assert_eq!(roomy.cache.stored, cramped.cache.stored);
+    // 报告里的预算就是本次实际用的那个。
+    assert_eq!(cramped.cache.budget, CacheBudget::new(0));
+
+    // 判定与写出的字节都不受缓存去处影响。
+    let verdicts = |volume: &tonefit::VolumeReport| -> Vec<_> {
+        volume.pages.iter().map(|page| page.verdict).collect()
+    };
+    assert_eq!(verdicts(&roomy), verdicts(&cramped), "溢写之后判定变了");
+    assert_eq!(roomy_bytes, cramped_bytes, "溢写之后写出的页变了");
+}
+
+/// 用点名的缓存预算处理同一个卷，把卷报告与写出的字节一起带回来。
+fn one_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Vec<u8>>) {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+
+    let report = tonefit::run(&Request {
+        cache_budget: budget,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let volume_report = report.volumes.into_iter().next().expect("一个卷");
+    let written = volume_report
+        .pages
+        .iter()
+        .map(|page| std::fs::read(&page.output).expect("读回写出的页"))
+        .collect();
+    (volume_report, written)
+}
+
+#[test]
+fn a_dry_run_predicts_what_the_cache_will_hold() {
+    // 第一遍在两种模式下是同一遍：判据照求，缓存也照建。`--cache-budget` 是本次的参数之一，
+    // 而 dry-run 存在的意义就是「照做之前先看一眼这组参数」（spec 的 story 6）——
+    // 预告里少了缓存用量，撑不住的预算就要等到照做时才发现。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+
+    let predicted = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("dry-run 应当成功");
+    let done = run_volume(&space, &volume);
+
+    assert!(predicted.volumes[0].cache.stored > 0, "dry-run 没有建缓存");
+    assert_eq!(
+        predicted.volumes[0].cache, done.volumes[0].cache,
+        "dry-run 预告的缓存用量与照做时不一样"
+    );
+    // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
+    assert_eq!(predicted.volumes[0].decodes, 2);
 }

@@ -19,6 +19,9 @@ rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 ssimulacra2 = { version = "0.5.1", optional = true }
+# 缓存的溢写文件要匿名（Unix 上 unlink，Windows 上 delete-on-close），
+# 中断时才不留下孤儿。集成测试也拿它建工作区。
+tempfile = "3.24.0"
 thiserror = "2.0.20"
 toml = "1.1.4"
 walkdir = "2.5.0"
@@ -37,5 +40,4 @@ encoding_rs = "0.8.35"
 # 夹具生成器要写出 AVIF；`avif` 是编码侧特性（ravif），与运行时解码用的 avif-native 不同。
 # resolver v2 不把 dev-dependencies 的特性并进非 dev 构建，`cargo build` 不会带上 ravif。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
-tempfile = "3.24.0"
 zip = "8"

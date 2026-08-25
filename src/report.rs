@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::cache::CacheUsage;
 use crate::decide::{CandidateScore, Verdict};
 use crate::geometry::Size;
 use crate::profile::Profile;
@@ -27,6 +28,14 @@ pub struct VolumeReport {
     pub output: PathBuf,
     /// 按阅读顺序排列的页。
     pub pages: Vec<PageReport>,
+    /// 本卷缓存的用量（ADR 0005）。
+    pub cache: CacheUsage,
+    /// 本卷解码源页的次数。
+    ///
+    /// 两遍管线的不变量是「每页只解码一次」（ADR 0005：解码一次，缓存缩放后的图），
+    /// 这个数因此恒等于页数。它在报告里，是为了让那条不变量在 `run` 这个 seam 上量得出来——
+    /// 第二遍一旦回头碰源页，它立刻大于页数，而别的外部可见事实都察觉不到这件事。
+    pub decodes: usize,
 }
 
 /// 一页的结果。
