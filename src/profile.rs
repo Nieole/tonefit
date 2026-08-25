@@ -3,7 +3,7 @@
 //! 面板是物理显示面板：分辨率 + PPI + 灰阶数，三项俱全才是 profile 的主键（`CONTEXT.md`）。
 //! 设备只是面板的别名，多对一——表里面板是少数几个常量，型号一行一个。
 //!
-//! 阈值档位属于 profile、不属于面板，它随位深判定落地（06 号票）；此刻 profile 只有面板。
+//! 阈值档位属于 profile、不属于面板：面板是物理事实，档位是标定出来的（ADR 0003）。
 //! 同一面板可以有多个 profile，所以 profile 不是面板的同义词。
 
 use std::fmt::Write as _;
@@ -11,6 +11,7 @@ use std::fmt::Write as _;
 use anyhow::{Result, anyhow, bail};
 
 use crate::geometry::Size;
+use crate::metric::Score;
 
 /// 物理显示面板。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,11 +34,55 @@ impl std::fmt::Display for Panel {
     }
 }
 
+/// 判据的可接受上限（`CONTEXT.md`：**判据是量，阈值是界**）。
+///
+/// 与判据同一把尺，单位是 8 位灰度级。跟着判据一起不可跨面板比较（ADR 0002）。
+///
+/// P0 交付的阈值**全部是未标定的保守占位值**，`Display` 因此把这句话写在数值旁边——
+/// 报告与文档都得说出来（spec 的 Further Notes）。标定出来的档位随 14 号票落地，
+/// 那时这里会多出「已标定」的那一种，`Display` 随之分岔。
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Threshold(f32);
+
+impl Threshold {
+    /// 这个判据值在界以内吗。
+    pub fn admits(self, score: Score) -> bool {
+        score.value() <= self.0
+    }
+
+    /// 界的数值，8 位灰度级。
+    pub fn value(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Threshold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "阈值 {:.3}（未标定占位值）", self.0)
+    }
+}
+
+/// 未标定的保守占位值：4bit 量化步长的一半。
+///
+/// 4bit 是与 e-ink 灰阶数对齐的那一档（ADR 0003）。量化到 4bit 的格点，逐像素误差不超过
+/// 半个步长 255/15 ÷ 2 = 8.5（整数格点上实测 8）；低通取的是这些误差的局部均值、
+/// 分块取它们的 RMSE、掩蔽加权只往下压，因此判据值也不超过它。
+/// 界放在这里，意思是「不比 4bit 更差就算过关」：e-ink 的候选上界恒过关，
+/// 判定默认落在对齐的那一档，要往下走必须由判据说了算。**保守指的就是这个偏向。**
+///
+/// 《B 类位深实测》给的是另一把尺——4bit 的局部均值 RMSE 中位 1.36、2bit 6.48——
+/// 那一组是全页 RMSE，与本项目 p99 分块加权的判据不同尺，不能直接拿来当界。
+///
+/// 这个数没有经过标定：真实样本 + 人工 A/B 盲测是 14 号票的事（`CONTEXT.md` 的《尚未确立》）。
+const PLACEHOLDER_THRESHOLD: Threshold = Threshold(8.5);
+
 /// 一次处理调用的目标设备。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Profile {
     device: &'static str,
     panel: Panel,
+    /// 判据的可接受上限。属于 profile、不属于面板。
+    threshold: Threshold,
 }
 
 impl Profile {
@@ -48,6 +93,7 @@ impl Profile {
             Some((name, panel)) => Ok(Self {
                 device: name,
                 panel: *panel,
+                threshold: PLACEHOLDER_THRESHOLD,
             }),
             None => Err(unknown_device_error(device)),
         }
@@ -76,11 +122,16 @@ impl Profile {
     pub fn panel(&self) -> Panel {
         self.panel
     }
+
+    /// 本次位深判定用的阈值。
+    pub fn threshold(&self) -> Threshold {
+        self.threshold
+    }
 }
 
 impl std::fmt::Display for Profile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}：{}", self.device, self.panel)
+        write!(f, "{}：{} · {}", self.device, self.panel, self.threshold)
     }
 }
 

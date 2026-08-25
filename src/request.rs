@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::profile::Profile;
+use crate::quantize::BitDepth;
 use crate::resample::Filter;
 
 /// 一次调用做到哪一步。
@@ -19,7 +20,7 @@ pub enum Mode {
 
 /// 一次处理调用的全部输入。
 ///
-/// spec 固定的形状里还有覆盖项，它们随各自的票落地：位深覆盖见 06 号票。
+/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：抖动模式见 09 号票。
 #[derive(Debug, Clone)]
 pub struct Request {
     /// 点名要处理的卷。空集是错误，不做全库扫描（ADR 0009）。
@@ -30,6 +31,10 @@ pub struct Request {
     pub profile: Profile,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
+    /// 位深覆盖（`--bit-depth`）。给了就顶掉自动判定，特殊卷靠它手工兜底（spec 的 story 23）。
+    ///
+    /// 顶掉的只是判定。面板灰阶数那道硬上界仍在，越界的覆盖当场被拒（ADR 0003）。
+    pub bit_depth: Option<BitDepth>,
     /// 做到哪一步。
     pub mode: Mode,
 }

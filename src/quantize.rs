@@ -4,7 +4,9 @@
 //! 位深只体现为取值落在哪些格点上。
 //!
 //! 这里只有不抖动的那一种量化。抖动模式是候选的另一维，随 09 号票落地；
-//! 按面板灰阶数裁剪候选、以及从候选里选一个，是 06 号票。
+//! 从裁剪后的候选里选出一档在 `decide`。
+
+use anyhow::{Result, bail};
 
 use crate::gray::GrayImage;
 
@@ -38,6 +40,14 @@ impl BitDepth {
             .into_iter()
             .filter(|depth| depth.levels() <= gray_levels)
             .collect()
+    }
+
+    /// 按每像素比特数解析（`--bit-depth`）。取值集合不进 CLI 的类型，库这一侧对 CLI 无知。
+    pub fn from_bits(bits: u32) -> Result<BitDepth> {
+        match BitDepth::ALL.into_iter().find(|depth| depth.bits() == bits) {
+            Some(depth) => Ok(depth),
+            None => bail!("位深 {bits} 不在全集 {{1, 2, 4, 8}} 里"),
+        }
     }
 
     /// 每像素比特数。
@@ -131,6 +141,20 @@ mod tests {
         // 最低的面板也留得住 1bit；无硬上界的面板（LCD）拿到全集。
         assert_eq!(BitDepth::candidates(2), [BitDepth::One]);
         assert_eq!(BitDepth::candidates(256), BitDepth::ALL);
+    }
+
+    /// 全集之外的比特数当场被挡下：`--bit-depth 3` 是用户敲错了，不是一个待四舍五入的数。
+    #[test]
+    fn only_the_four_listed_bit_depths_resolve() {
+        for depth in BitDepth::ALL {
+            assert_eq!(
+                BitDepth::from_bits(depth.bits()).expect("全集里的位深"),
+                depth
+            );
+        }
+        for bits in [0, 3, 5, 16] {
+            assert!(BitDepth::from_bits(bits).is_err(), "{bits} 不该解析出位深");
+        }
     }
 
     /// 量化不改尺寸——候选与参照要逐像素比。

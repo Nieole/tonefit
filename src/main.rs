@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use tonefit::{CandidateScore, Filter, Mode, Profile, Report, Request};
+use tonefit::{BitDepth, CandidateScore, Filter, Mode, PageReport, Profile, Report, Request};
 
 #[derive(Parser)]
 #[command(about = "把漫画页适配到电子墨水阅读设备", version)]
@@ -30,7 +30,11 @@ struct Cli {
     #[arg(long, value_name = "滤波器")]
     filter: Option<String>,
 
-    /// 只算不写：报告照出，逐页给出各候选位深的判据值，一个文件都不落盘。
+    /// 覆盖自动判定的位深：1、2、4、8。面板灰阶数那道上界仍在，越界的覆盖会被拒绝。
+    #[arg(long, value_name = "位深")]
+    bit_depth: Option<u32>,
+
+    /// 只算不写：报告照出，逐页给出判定与各候选位深的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
 }
@@ -53,6 +57,11 @@ impl Cli {
         }
     }
 
+    /// 本次要不要顶掉自动判定。不点名就由判据说了算。
+    fn bit_depth_override(&self) -> Result<Option<BitDepth>> {
+        self.bit_depth.map(BitDepth::from_bits).transpose()
+    }
+
     /// 把 `--profile` 与 `--gray-levels` 合成本次要用的 profile。
     fn target_profile(&self) -> Result<Profile> {
         let profile = Profile::resolve(&self.profile)?;
@@ -67,12 +76,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let profile = cli.target_profile()?;
     let filter = cli.residual_filter()?;
+    let bit_depth = cli.bit_depth_override()?;
     let mode = cli.mode();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
         output_root: cli.out,
         profile,
         filter,
+        bit_depth,
         mode,
     })?;
     print!("{}", render(&report, mode));
@@ -98,15 +109,26 @@ fn render(report: &Report, mode: Mode) -> String {
                 page.scaling,
                 page.output.display()
             ));
-            if !page.scores.is_empty() {
-                text.push_str(&format!("    判据 {}\n", score_line(&page.scores)));
-            }
+            text.push_str(&format!("    {}\n", verdict_line(page)));
         }
     }
     text
 }
 
-/// 一页各候选的判据值排成一行。判据是量、阈值是界——这里只有量，还没有据它下的判定。
+/// 一页的判定：定下的那一档、定它的理由，后面跟上各候选的判据值。
+///
+/// 判据是量、阈值是界：判定从两者的比较来，因此两者都得摆在同一行上，判定才是可解释的
+/// （spec 的 story 7）。阈值在头一行的 profile 里，它对整份报告只有一个。
+fn verdict_line(page: &PageReport) -> String {
+    let verdict = page.verdict;
+    let mut line = format!("位深 {}（{}）", verdict.bit_depth, verdict.reason);
+    if !page.scores.is_empty() {
+        line.push_str(&format!("  判据 {}", score_line(&page.scores)));
+    }
+    line
+}
+
+/// 一页各候选的判据值排成一行，位深由小到大。
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
         .iter()
@@ -119,7 +141,7 @@ fn score_line(scores: &[CandidateScore]) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use tonefit::{BitDepth, GrayImage, PageReport, Reference, Scaling, Size, VolumeReport};
+    use tonefit::{GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport};
 
     /// B 类中位页缩到基准面板：总缩放比 1.219，不触发预缩（见 measurements 的《B 类素材普查》）。
     fn typical_scaling() -> Scaling {
@@ -199,6 +221,10 @@ mod tests {
                         bit_depth: BitDepth::One,
                         score: one_bit,
                     }],
+                    verdict: Verdict {
+                        bit_depth: BitDepth::One,
+                        reason: Reason::LowestWithinThreshold,
+                    },
                 }],
             }],
         };
@@ -210,6 +236,8 @@ mod tests {
         // 比值 < 2 的一页：报告要说出它没预缩，残差段就是全部。
         assert!(text.contains("缩放比 1.219 · 未预缩"), "{text}");
         assert!(text.contains(&format!("判据 1bit {one_bit}")), "{text}");
+        // dry-run 也给判定：预告的就是照做时会写出的那一档。
+        assert!(text.contains("位深 1bit"), "{text}");
     }
 
     #[test]
@@ -226,13 +254,18 @@ mod tests {
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     scores: Vec::new(),
+                    verdict: Verdict {
+                        bit_depth: BitDepth::Four,
+                        reason: Reason::LowestWithinThreshold,
+                    },
                 }],
             }],
         };
 
         let text = render(&report, Mode::Process);
 
-        assert_eq!(text.lines().count(), 3);
+        // profile 一行、卷一行，页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 4);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -245,5 +278,30 @@ mod tests {
         assert!(text.contains("预缩 2×"), "{text}");
         assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
+        // 判定与它的理由：位深判定要可解释（spec 的 story 7）。
+        assert!(text.contains("位深 4bit（阈值内最低的一档）"), "{text}");
+        // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它还没标定。
+        assert!(text.contains("阈值 8.500（未标定占位值）"), "{text}");
+    }
+
+    #[test]
+    fn the_bit_depth_from_the_command_line_overrides_the_verdict() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        assert_eq!(
+            parse(&["--bit-depth", "2"])
+                .bit_depth_override()
+                .expect("2 应当认得"),
+            Some(BitDepth::Two)
+        );
+        // 不点名就由判据说了算。
+        assert_eq!(parse(&[]).bit_depth_override().expect("默认值"), None);
+        // 全集之外的比特数在拼 Request 之前就被挡下。
+        assert!(parse(&["--bit-depth", "3"]).bit_depth_override().is_err());
     }
 }

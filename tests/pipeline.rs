@@ -5,10 +5,10 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{BitDepth, Filter, Mode, Request, Size};
+use tonefit::{BitDepth, Filter, Mode, Reason, Request, Size};
 
 #[test]
-fn each_page_becomes_a_gray8_png_at_the_target_size() {
+fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
@@ -23,8 +23,71 @@ fn each_page_becomes_a_gray8_png_at_the_target_size() {
 
     let written = fixtures::read_png(&pages[0].output);
     assert_eq!(written.size, Size::new(1264, 1680));
+    // 连续渐变页把 4bit 的格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
+    assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
     assert_eq!(written.color_type, png::ColorType::Grayscale);
-    assert_eq!(written.bit_depth, png::BitDepth::Eight);
+    assert_eq!(
+        written.bit_depth,
+        fixtures::png_bit_depth(pages[0].verdict.bit_depth)
+    );
+}
+
+#[test]
+fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
+    // 写出去的取值只能落在判定那一档的格点上——判据比的就是这些格点与参照的差，
+    // 文件里出现格点之外的取值，等于判据算的不是最终输出。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("01.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page(
+        "02.png",
+        &fixtures::color_page(fixtures::SMALLER_THAN_TARGET),
+    );
+    volume.page("03.png", &fixtures::solid(fixtures::DOUBLE_PANEL, 200));
+
+    let report = run_volume(&space, &volume);
+
+    for page in &report.volumes[0].pages {
+        let depth = page.verdict.bit_depth;
+        let grid = tonefit::quantize(
+            &tonefit::GrayImage::new(Size::new(256, 1), (0..=255u8).collect()),
+            depth,
+        );
+        let written = fixtures::read_png(&page.output);
+        for &level in &written.pixels {
+            assert!(
+                grid.pixels().contains(&level),
+                "{} 判定 {depth}，却写出了格点外的 {level}",
+                page.source.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
+    // 二值线稿页点名 4bit：格点有 16 个，页上只用得着 2 个。
+    // 调色板于是把它装进 1 位，像素一个不动——判定说的是量化格点，
+    // 文件里那个位宽是编码器接口以内的事（ADR 0004）。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let page = fixtures::line_art(fixtures::SMALLER_THAN_TARGET);
+    volume.page("001.png", &page);
+
+    let report = tonefit::run(&Request {
+        bit_depth: Some(BitDepth::Four),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let written = fixtures::read_png(&report.volumes[0].pages[0].output);
+    assert_eq!(report.volumes[0].pages[0].verdict.bit_depth, BitDepth::Four);
+    assert_eq!(written.color_type, png::ColorType::Indexed);
+    assert_eq!(written.bit_depth, png::BitDepth::One);
+    assert_eq!(
+        written.pixels.as_slice(),
+        page.to_luma8().as_raw().as_slice()
+    );
 }
 
 #[test]
@@ -63,7 +126,8 @@ fn every_supported_format_decodes() {
         volume.page(name, &page);
     }
 
-    let report = run_volume(&space, &volume);
+    // 量的是解码：把输出钉在 8bit，读回来的就是解码器给出的那张图。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     let pages = &report.volumes[0].pages;
     assert_eq!(pages.len(), names.len());
@@ -92,7 +156,8 @@ fn color_pages_go_through_the_oklab_lightness_channel() {
     let size = fixtures::SMALLER_THAN_TARGET;
     volume.page("001.png", &fixtures::color_page(size));
 
-    let report = run_volume(&space, &volume);
+    // 量的是转灰：把输出钉在 8bit，色带落点才不被量化挪动。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     let band = |index| written.pixel(size.width / 2, fixtures::band_center_row(size, index));
@@ -134,7 +199,8 @@ fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels() {
     let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
     volume.page("001.png", &page);
 
-    let report = run_volume(&space, &volume);
+    // 量的是几何与转灰：把输出钉在 8bit，「逐字节相同」才谈得成。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     assert_eq!(
         report.volumes[0].pages[0].size,
@@ -249,7 +315,8 @@ fn a_solid_page_stays_solid_after_scaling() {
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::solid(fixtures::DOUBLE_PANEL, 200));
 
-    let report = run_volume(&space, &volume);
+    // 量的是重采样：把输出钉在 8bit，200 才应当原样出来（4bit 的格点上它会落到 204）。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     assert!(
@@ -271,7 +338,8 @@ fn a_screentone_page_resolves_into_tones() {
         "网点页必须是二值的"
     );
 
-    let report = run_volume(&space, &volume);
+    // 量的是重采样这一步解析出多少灰调：把输出钉在 8bit，量化不再压级数。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     // 网点是因，灰调是果：缩放把点阵解析成连续灰调。
     assert!(!report.volumes[0].pages[0].scaling.prescaled());
@@ -289,7 +357,8 @@ fn a_prescaled_screentone_page_takes_its_tones_from_the_box_step() {
     // 那是 ADR 0001 要的分工，不是这一条要管的事。
     volume.page("001.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
 
-    let report = run_volume(&space, &volume);
+    // 同上：量的是 box 那一级产出几个取值，把输出钉在 8bit 才数得准。
+    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     let page = &report.volumes[0].pages[0];
     assert_eq!(page.scaling.prescale(), 2);
@@ -580,9 +649,154 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     .expect("dry-run 应当成功");
     let written = run_volume(&space, &volume);
 
-    // 报告先给出的路径与尺寸，就是照做之后真正落盘的那一份（spec 的 story 6）。
+    // 报告先给出的路径、尺寸与判定，就是照做之后真正落盘的那一份（spec 的 story 6）。
     let page = (&predicted.volumes[0].pages[0], &written.volumes[0].pages[0]);
     assert_eq!(page.0.output, page.1.output);
     assert_eq!(page.0.size, page.1.size);
+    assert_eq!(
+        page.0.verdict, page.1.verdict,
+        "dry-run 预告的位深与照做时不一样"
+    );
     assert!(page.1.output.is_file());
+    // 预告的那一档就是文件里写着的那一档：这一页的取值铺满 4bit 格点，灰度胜出，
+    // 位宽因此与判定一致。取值稀疏的页会走调色板、位宽更窄，那条路见
+    // a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict。
+    assert_eq!(
+        fixtures::read_png(&page.1.output).bit_depth,
+        fixtures::png_bit_depth(page.0.verdict.bit_depth)
+    );
+}
+
+#[test]
+fn every_page_gets_a_bit_depth_and_a_reason_for_it() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 连续渐变页：低位深上必然崩，判定该落在候选上界那一档。
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 二值线稿页：1bit 就装得下，判据因此是零，最低那一档直接过关。
+    volume.page(
+        "002.png",
+        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let pages = &report.volumes[0].pages;
+    assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
+    assert_eq!(pages[0].verdict.reason, Reason::LowestWithinThreshold);
+    assert_eq!(pages[1].verdict.bit_depth, BitDepth::One);
+    assert_eq!(pages[1].verdict.reason, Reason::LowestWithinThreshold);
+    // 判定是从判据来的：报告里同时给出被判定的那一档的判据值。
+    for page in pages {
+        assert!(
+            page.scores
+                .iter()
+                .any(|scored| scored.bit_depth == page.verdict.bit_depth),
+            "{} 的判定位深不在候选里",
+            page.source.display()
+        );
+    }
+}
+
+#[test]
+fn the_lowest_bit_depth_within_the_threshold_wins() {
+    // 判据是量、阈值是界：选的是「界以内的最低一档」，不是「误差最小的一档」——
+    // 后者恒是候选上界，位深判定就白做了。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    let threshold = report.profile.threshold();
+    let chosen = page
+        .scores
+        .iter()
+        .position(|scored| scored.bit_depth == page.verdict.bit_depth)
+        .expect("判定位深必须在候选里");
+    assert!(
+        threshold.admits(page.scores[chosen].score),
+        "判定的那一档越过了阈值"
+    );
+    assert!(
+        page.scores[..chosen]
+            .iter()
+            .all(|scored| !threshold.admits(scored.score)),
+        "还有更低的一档也在阈值内"
+    );
+}
+
+#[test]
+fn an_override_replaces_what_the_metric_would_have_chosen() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 这一页自动判定会给 4bit（见 every_page_gets_a_bit_depth_and_a_reason_for_it）。
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = tonefit::run(&Request {
+        bit_depth: Some(BitDepth::Two),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("覆盖后应当照常处理");
+
+    let page = &report.volumes[0].pages[0];
+    assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+    assert_eq!(page.verdict.reason, Reason::Override);
+    // 覆盖了判定，不等于不给判据：报告仍要说得清「本来会选哪一档」。
+    assert!(!page.scores.is_empty(), "覆盖之后判据值没了");
+}
+
+#[test]
+fn a_bit_depth_the_panel_cannot_show_is_refused() {
+    // 灰阶数是硬上界（ADR 0003）：覆盖的是自动判定，不是上界。
+    // 上界只有 `--gray-levels` 动得了，错误信息因此必须指向它。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let error = tonefit::run(&Request {
+        bit_depth: Some(BitDepth::Eight),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect_err("8bit 在 e-ink 面板上应当被拒绝");
+
+    assert!(error.to_string().contains("--gray-levels"), "{error}");
+    assert!(!space.out().exists(), "拒绝之后仍然建了输出目录");
+}
+
+#[test]
+fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
+    // 灰阶数压到 4 级，候选只剩 {1,2}；渐变页在这两档上都远远越界。
+    // 没有可用档时取候选上界兜底——判定要有，理由要说出是兜底。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    let profile = fixtures::baseline_profile()
+        .with_gray_levels(4)
+        .expect("4 级可用");
+
+    let report = tonefit::run(&Request {
+        profile,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let page = &report.volumes[0].pages[0];
+    assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+    assert_eq!(page.verdict.reason, Reason::NoneWithinThreshold);
+}
+
+#[test]
+fn the_threshold_says_it_has_not_been_calibrated() {
+    // spec 的 Further Notes：P0 交付的阈值是占位值，报告必须自己说出这一点。
+    let profile = fixtures::baseline_profile();
+    let said = profile.to_string();
+    assert!(said.contains("未标定"), "{said}");
 }

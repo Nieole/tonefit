@@ -3,7 +3,7 @@
 //! 任何逐像素度量都不得作为候选之间的选择依据：抖动用高频误差换低频保真，
 //! 逐像素度量在「该不该抖」这一维上符号是反的（见 measurements 的《抖动》）。
 //!
-//! 判据是量，阈值是界。这里只出量——阈值与选档是 06 号票。
+//! 判据是量，阈值是界。这里只出量：界在 `profile`，拿量去和界比在 `decide`。
 
 use crate::geometry::Size;
 use crate::gray::GrayImage;
@@ -20,6 +20,12 @@ impl Score {
     /// 8 位灰度级下的误差值。
     pub fn value(self) -> f32 {
         self.0
+    }
+
+    /// 直接造一个判据值。只给测试用——生产路径上判据只能由 [`score`] 算出来。
+    #[cfg(test)]
+    pub(crate) fn from_value(value: f32) -> Self {
+        Score(value)
     }
 }
 

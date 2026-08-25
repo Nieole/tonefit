@@ -2,10 +2,9 @@
 
 use std::path::PathBuf;
 
+use crate::decide::{CandidateScore, Verdict};
 use crate::geometry::Size;
-use crate::metric::Score;
 use crate::profile::Profile;
-use crate::quantize::BitDepth;
 use crate::resample::Scaling;
 
 /// 一次处理调用的结果。
@@ -18,7 +17,8 @@ pub struct Report {
     pub volumes: Vec<VolumeReport>,
 }
 
-/// 一个卷的结果。判定位深、抖动模式与判定理由随位深判定一起落地（06、08 号票）。
+/// 一个卷的结果。卷级的判定位深、抖动模式与判定理由随上包络落地（08 号票）；
+/// 此刻判定是逐页的，见 [`PageReport::verdict`]。
 #[derive(Debug, Clone)]
 pub struct VolumeReport {
     /// 卷标识：源目录路径，或源归档的文件路径。
@@ -47,17 +47,11 @@ pub struct PageReport {
     pub scaling: Scaling,
     /// 各候选的判据值，位深由小到大。候选已按面板灰阶数裁过（ADR 0003）。
     ///
-    /// 只有 dry-run 求值：判据此刻还不改变输出，处理路径上算了也没人看（04 号票）。
-    /// 据判据选出一档、并给出判定理由，是 06 号票。
+    /// 两种模式都求值：判据现在决定输出的位深，dry-run 因此预告的就是照做时的那一档。
     pub scores: Vec<CandidateScore>,
-}
-
-/// 一个候选的判据值。候选此刻只有位深这一维，抖动模式那一维随 09 号票加进来。
-///
-/// 判据是量、阈值是界：这里只有量。判据数值不可跨面板比较（ADR 0002），
-/// 要看是哪块面板上的数，见 [`Report::profile`]。
-#[derive(Debug, Clone, Copy)]
-pub struct CandidateScore {
-    pub bit_depth: BitDepth,
-    pub score: Score,
+    /// 这一页定下的位深，以及定它的理由（spec 的 story 7）。
+    ///
+    /// 判定说的是**量化格点**。文件里写着的那个位深可能更低——一页只用得上几个取值时，
+    /// 调色板装得下同样的像素而位宽更窄，那是编码器接口以内的事（ADR 0004，见 `encode`）。
+    pub verdict: Verdict,
 }

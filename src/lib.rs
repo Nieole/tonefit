@@ -9,6 +9,7 @@
 //! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`BitDepth`]、[`quantize`]——
 //! 一并公开，判据的调用方要拿它们拼出参照与候选。
 
+mod decide;
 mod decode;
 mod encode;
 mod geometry;
@@ -27,12 +28,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+pub use decide::{CandidateScore, Reason, Verdict};
 pub use geometry::Size;
 pub use gray::GrayImage;
 pub use metric::{Reference, Score, score};
-pub use profile::{Panel, Profile};
+pub use profile::{Panel, Profile, Threshold};
 pub use quantize::{BitDepth, quantize};
-pub use report::{CandidateScore, PageReport, Report, VolumeReport};
+pub use report::{PageReport, Report, VolumeReport};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
@@ -44,6 +46,7 @@ pub fn run(request: &Request) -> Result<Report> {
     if request.inputs.is_empty() {
         bail!("处理范围为空：至少点名一个卷（ADR 0009：处理点名的子集）");
     }
+    ensure_the_override_fits_the_panel(request)?;
     for input in &request.inputs {
         ensure_output_is_elsewhere(input, &request.output_root)?;
     }
@@ -83,22 +86,24 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
-        // 两种模式在这一步分道：处理模式编码写出，dry-run 改为把判据求出来给报告。
-        let scores = match &mut sink {
-            Some(sink) => {
-                let encoded = encode::gray8_png(&scaled)
-                    .with_context(|| format!("编 {} 这一页", source.display()))?;
-                sink.write_page(relative, &encoded)?;
-                Vec::new()
-            }
-            None => candidate_scores(&Reference::new(panel, scaled), panel),
-        };
+        // 判据现在决定输出：两种模式都求值，dry-run 预告的就是照做时的那一档（spec 的 story 6）。
+        let reference = Reference::new(panel, scaled);
+        let scores = candidate_scores(&reference, panel);
+        let verdict = decide::decide(&scores, request.profile.threshold(), request.bit_depth);
+        // 两种模式在这一步分道：处理模式按判定的那一档量化、编码、写出，dry-run 到此为止。
+        if let Some(sink) = &mut sink {
+            let quantized = quantize::quantize(reference.image(), verdict.bit_depth);
+            let encoded = encode::png(&quantized, verdict.bit_depth)
+                .with_context(|| format!("编 {} 这一页", source.display()))?;
+            sink.write_page(relative, &encoded)?;
+        }
         pages.push(PageReport {
             source,
             output: output.join(relative),
             size,
             scaling,
             scores,
+            verdict,
         });
     }
     if let Some(mut sink) = sink {
@@ -119,7 +124,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
 /// 把这一页的参照与每个候选各比一遍。
 ///
 /// 候选先按面板灰阶数裁一轮再求值，顺序是 ADR 0003 定的：被裁掉的位深不进入候选，
-/// 也就不进入判据。据判据选出一档是 06 号票——这里只出量，不选。
+/// 也就不进入判据。这里只出量，拿量去和阈值比在 `decide`。
 /// 候选此刻只有位深这一维，抖动模式那一维随 09 号票加进来。
 fn candidate_scores(reference: &Reference, panel: Panel) -> Vec<CandidateScore> {
     BitDepth::candidates(panel.gray_levels)
@@ -158,6 +163,31 @@ fn ensure_one_member_per_output(volume: &Volume, targets: &[PathBuf]) -> Result<
                 relative.display()
             );
         }
+    }
+    Ok(())
+}
+
+/// `--bit-depth` 覆盖的是自动判定，不是面板灰阶数那道硬上界（ADR 0003）。
+///
+/// 面板显示不出来的位深，写出去也到不了眼睛，因此宁可当场拒绝也不静默照写。
+/// 上界本身只有 `--gray-levels` 动得了，错误信息于是指向它。
+fn ensure_the_override_fits_the_panel(request: &Request) -> Result<()> {
+    let Some(bit_depth) = request.bit_depth else {
+        return Ok(());
+    };
+    let panel = request.profile.panel();
+    let candidates = BitDepth::candidates(panel.gray_levels);
+    if !candidates.contains(&bit_depth) {
+        let listed = candidates
+            .iter()
+            .map(BitDepth::to_string)
+            .collect::<Vec<_>>()
+            .join("、");
+        bail!(
+            "{bit_depth} 越过了面板的 {} 级灰阶：这块面板上写得出的是 {listed}。\
+             真要写 {bit_depth}，先按实测用 --gray-levels 抬高上界",
+            panel.gray_levels
+        );
     }
     Ok(())
 }

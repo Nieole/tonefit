@@ -194,6 +194,22 @@ pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> 
     .expect("处理应当成功")
 }
 
+/// 把输出钉在 8bit 再跑一遍：量化成了恒等，写出的就是它之前那一步的结果。
+///
+/// 量重采样、解码或转灰的用例用这个。判定位深会把取值压到那一档的格点上，
+/// 混进来就分不清一处差异出自哪一步——而那几条性质说的都不是量化。
+///
+/// 两个开关都是用户手上真有的：抬上界走 ADR 0003 给的 `--gray-levels`，
+/// 点名那一档走 `--bit-depth`。
+pub fn run_volume_at_eight_bits(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        profile: baseline_profile().with_gray_levels(256).expect("全集可用"),
+        bit_depth: Some(BitDepth::Eight),
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
 /// 点名若干卷跑一遍，用基准设备的 profile。目录与归档都走这里。
 pub fn run_paths<'a>(
     space: &Workspace,
@@ -221,6 +237,7 @@ pub fn request<'a>(
         output_root: space.out(),
         profile: baseline_profile(),
         filter: tonefit::Filter::default(),
+        bit_depth: None,
         mode: tonefit::Mode::Process,
     }
 }
@@ -293,6 +310,9 @@ pub fn encode_image(image: &DynamicImage, extension: &str) -> Vec<u8> {
 }
 
 /// 解出的 PNG，供测试直接看编码结果而不经被测代码。
+///
+/// `color_type` 与 `bit_depth` 是文件里**写着**的那一对；`pixels` 一律摊回 8 位灰度，
+/// 好让断言只谈灰度取值，不必跟着颜色类型分叉。
 pub struct DecodedPng {
     pub size: Size,
     pub color_type: png::ColorType,
@@ -309,16 +329,39 @@ impl DecodedPng {
 /// 用 `png` crate 直接读回文件，绕开被测的编码路径。
 pub fn read_png(path: &Path) -> DecodedPng {
     let file = fs::File::open(path).expect("打开输出 PNG");
-    let decoder = png::Decoder::new(std::io::BufReader::new(file));
-    let mut reader = decoder.read_info().expect("读 PNG 头");
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let header = decoder.read_header_info().expect("读 PNG 头").clone();
+    // EXPAND 把低位深灰度按满量程摊回 8 位，把调色板摊成 RGB8。
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().expect("读 PNG 信息");
     let mut pixels = vec![0; reader.output_buffer_size().expect("PNG 缓冲尺寸")];
     let info = reader.next_frame(&mut pixels).expect("读 PNG 像素");
     pixels.truncate(info.buffer_size());
+    if header.color_type == png::ColorType::Indexed {
+        // 色板项恒是三个相等的分量（见被测的 `encode`），取一个就是灰度取值。
+        pixels = pixels
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|pixel| pixel[0])
+            .collect();
+    }
     DecodedPng {
         size: Size::new(info.width, info.height),
-        color_type: info.color_type,
-        bit_depth: info.bit_depth,
+        color_type: header.color_type,
+        bit_depth: header.bit_depth,
         pixels,
+    }
+}
+
+/// 一页的判定位深对应的 PNG 位深。写出去的那个位深可能更低——调色板装得下同样的像素
+/// 而位宽更窄时就会（ADR 0004 把调色板留在编码器接口以内）。
+pub fn png_bit_depth(depth: BitDepth) -> png::BitDepth {
+    match depth.bits() {
+        1 => png::BitDepth::One,
+        2 => png::BitDepth::Two,
+        4 => png::BitDepth::Four,
+        _ => png::BitDepth::Eight,
     }
 }
 
