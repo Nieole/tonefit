@@ -87,6 +87,9 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         let size = geometry::fit_inside(gray.size(), panel.resolution);
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
         // 判据现在决定输出：两种模式都求值，dry-run 预告的就是照做时的那一档（spec 的 story 6）。
+        // 覆盖了判定也照求：`--dry-run --bit-depth 2` 要说得清「你点的这一档判据是多少」，
+        // 而卷级上包络与离群页（08 号票）本来就要每页都有判据值。代价是判据贵（ADR 0002），
+        // 省它得靠缓存与两遍管线，那是 07 号票。
         let reference = Reference::new(panel, scaled);
         let scores = candidate_scores(&reference, panel);
         let verdict = decide::decide(&scores, request.profile.threshold(), request.bit_depth);

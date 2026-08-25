@@ -4,8 +4,8 @@
 //!
 //! 位深与抖动模式在编码器接口以外，**调色板模式在接口以内**（ADR 0004）：判定位深说的是
 //! 量化格点，颜色类型、以及最终写进文件的那个位深由这里挑，挑的依据只有体积。
-//! 一页只用得上三个灰度取值时，调色板能把它装进 2 位而不改动任何一个像素——
-//! 灰度模式必须按格点数留满位宽，这是它买不到的（见 measurements 的《Go 标准库 PNG 编码器》）。
+//! 两者的差别在位宽由谁定：灰度按**格点数**留位宽，调色板按**页面实际用到的取值数**留。
+//! 判定 4bit 而一页只有两个取值时，后者装进 1 位而像素一个不动，前者留满 4 位。
 //!
 //! ADR 0004 的编码器接口本身还没抽出来——P0 只有 PNG 一个实现，AVIF 输出不在范围内。
 
@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 
 use crate::geometry::Size;
 use crate::gray::GrayImage;
-use crate::quantize::BitDepth;
+use crate::quantize::{BitDepth, grid_index};
 
 /// 把一张按 `depth` 量化过的灰度图编成 PNG，灰度与调色板两种颜色类型取体积小者。
 ///
@@ -70,12 +70,6 @@ fn palette_png(image: &GrayImage) -> Result<Vec<u8>> {
         .flat_map(|&level| [level, level, level])
         .collect();
     write_png(image.size(), &indices, depth, Some(&palette))
-}
-
-/// 一个 8 位取值在 `depth` 格点上的序号。`quantize` 已经把取值放到了格点上，这里只是反查。
-fn grid_index(level: u8, depth: BitDepth) -> u8 {
-    let top = depth.levels() - 1;
-    ((u32::from(level) * top + 127) / 255) as u8
 }
 
 /// 把每像素一个字节的索引写成 PNG。`palette` 给了就是调色板颜色类型，否则是灰度。
@@ -227,23 +221,5 @@ mod tests {
         assert_eq!(color_type, png::ColorType::Indexed);
         assert_eq!(bit_depth, png::BitDepth::One);
         assert!(read_back.iter().all(|&level| level == 204));
-    }
-
-    /// 格点序号是量化的反函数：两边都由 `BitDepth` 推出，错开一格就会整页偏色。
-    #[test]
-    fn the_grid_index_undoes_the_quantization() {
-        for depth in BitDepth::ALL {
-            for level in 0..=255u8 {
-                let quantized = quantize(&GrayImage::new(Size::new(1, 1), vec![level]), depth);
-                let on_grid = quantized.pixels()[0];
-                let index = grid_index(on_grid, depth);
-                assert!(
-                    u32::from(index) < depth.levels(),
-                    "{depth} 的序号 {index} 越界"
-                );
-                let back = (u32::from(index) * 255 / (depth.levels() - 1)) as u8;
-                assert_eq!(back, on_grid, "{depth} 的格点 {on_grid} 反查成了 {back}");
-            }
-        }
     }
 }

@@ -27,8 +27,8 @@ fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
     assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
     assert_eq!(written.color_type, png::ColorType::Grayscale);
     assert_eq!(
-        written.bit_depth,
-        fixtures::png_bit_depth(pages[0].verdict.bit_depth)
+        fixtures::written_bits(written.bit_depth),
+        pages[0].verdict.bit_depth.bits()
     );
 }
 
@@ -662,8 +662,8 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     // 位宽因此与判定一致。取值稀疏的页会走调色板、位宽更窄，那条路见
     // a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict。
     assert_eq!(
-        fixtures::read_png(&page.1.output).bit_depth,
-        fixtures::png_bit_depth(page.0.verdict.bit_depth)
+        fixtures::written_bits(fixtures::read_png(&page.1.output).bit_depth),
+        page.0.verdict.bit_depth.bits()
     );
 }
 

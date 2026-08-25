@@ -354,15 +354,9 @@ pub fn read_png(path: &Path) -> DecodedPng {
     }
 }
 
-/// 一页的判定位深对应的 PNG 位深。写出去的那个位深可能更低——调色板装得下同样的像素
-/// 而位宽更窄时就会（ADR 0004 把调色板留在编码器接口以内）。
-pub fn png_bit_depth(depth: BitDepth) -> png::BitDepth {
-    match depth.bits() {
-        1 => png::BitDepth::One,
-        2 => png::BitDepth::Two,
-        4 => png::BitDepth::Four,
-        _ => png::BitDepth::Eight,
-    }
+/// PNG 头里写着的每像素比特数。`png::BitDepth` 的判别值就是比特数本身。
+pub fn written_bits(depth: png::BitDepth) -> u32 {
+    u32::from(depth as u8)
 }
 
 /// 目录内容的指纹：相对路径 + 每个文件的字节哈希。用来断言源目录未被改动。

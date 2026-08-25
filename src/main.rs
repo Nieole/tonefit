@@ -120,12 +120,12 @@ fn render(report: &Report, mode: Mode) -> String {
 /// 判据是量、阈值是界：判定从两者的比较来，因此两者都得摆在同一行上，判定才是可解释的
 /// （spec 的 story 7）。阈值在头一行的 profile 里，它对整份报告只有一个。
 fn verdict_line(page: &PageReport) -> String {
-    let verdict = page.verdict;
-    let mut line = format!("位深 {}（{}）", verdict.bit_depth, verdict.reason);
-    if !page.scores.is_empty() {
-        line.push_str(&format!("  判据 {}", score_line(&page.scores)));
-    }
-    line
+    format!(
+        "位深 {}（{}）  判据 {}",
+        page.verdict.bit_depth,
+        page.verdict.reason,
+        score_line(&page.scores)
+    )
 }
 
 /// 一页各候选的判据值排成一行，位深由小到大。
@@ -242,8 +242,14 @@ mod tests {
 
     #[test]
     fn the_report_renders_the_profile_then_one_line_per_volume_and_per_page() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        // 判据值从公开 seam 上真算一个：整页偏 8 级，判据读出的就是 8.000。
+        let four_bit = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
         let report = Report {
-            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            profile,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -253,7 +259,10 @@ mod tests {
                     size: Size::new(1264, 1680),
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
-                    scores: Vec::new(),
+                    scores: vec![CandidateScore {
+                        bit_depth: BitDepth::Four,
+                        score: four_bit,
+                    }],
                     verdict: Verdict {
                         bit_depth: BitDepth::Four,
                         reason: Reason::LowestWithinThreshold,
@@ -278,8 +287,13 @@ mod tests {
         assert!(text.contains("预缩 2×"), "{text}");
         assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
-        // 判定与它的理由：位深判定要可解释（spec 的 story 7）。
-        assert!(text.contains("位深 4bit（阈值内最低的一档）"), "{text}");
+        // 判定、它的理由，以及判定所依据的那个量：位深判定要可解释（spec 的 story 7）。
+        assert!(
+            text.contains(&format!(
+                "位深 4bit（阈值内最低的一档）  判据 4bit {four_bit}"
+            )),
+            "{text}"
+        );
         // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它还没标定。
         assert!(text.contains("阈值 8.500（未标定占位值）"), "{text}");
     }

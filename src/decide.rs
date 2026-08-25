@@ -33,6 +33,9 @@ pub struct Verdict {
 ///
 /// spec 固定的那四种（`VolumeEnvelope`、`Outlier`、`Override`、`Skipped`）是**卷级**的形状，
 /// 随 08、11 号票落地。逐页判定这一层只出得起这三种。
+///
+/// 那两张票要把卷级的几种并进本枚举，不是另起一个：两套并存的话，一份报告里
+/// 「这一档为什么是它」就有两种读法，而判定可解释正是 story 7 要的东西。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     /// 判据落在阈值以内的最低一档，比它更低的都越界了。
@@ -45,12 +48,11 @@ pub enum Reason {
 
 impl std::fmt::Display for Reason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let said = match self {
+        f.write_str(match self {
             Reason::LowestWithinThreshold => "阈值内最低的一档",
             Reason::NoneWithinThreshold => "没有一档在阈值内，取候选上界",
             Reason::Override => "--bit-depth 覆盖",
-        };
-        f.write_str(said)
+        })
     }
 }
 

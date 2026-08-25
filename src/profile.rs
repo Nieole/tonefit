@@ -41,7 +41,7 @@ impl std::fmt::Display for Panel {
 /// P0 交付的阈值**全部是未标定的保守占位值**，`Display` 因此把这句话写在数值旁边——
 /// 报告与文档都得说出来（spec 的 Further Notes）。标定出来的档位随 14 号票落地，
 /// 那时这里会多出「已标定」的那一种，`Display` 随之分岔。
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Threshold(f32);
 
 impl Threshold {
@@ -51,6 +51,9 @@ impl Threshold {
     }
 
     /// 界的数值，8 位灰度级。
+    ///
+    /// 判定只经 [`admits`](Self::admits)。读出数值是给渲染与测试用的——用它相对地造判据值，
+    /// 那些用例就不必抄下当前这个占位数字，标定把数字换掉时也不用跟着改。
     pub fn value(self) -> f32 {
         self.0
     }
@@ -65,7 +68,7 @@ impl std::fmt::Display for Threshold {
 /// 未标定的保守占位值：4bit 量化步长的一半。
 ///
 /// 4bit 是与 e-ink 灰阶数对齐的那一档（ADR 0003）。量化到 4bit 的格点，逐像素误差不超过
-/// 半个步长 255/15 ÷ 2 = 8.5（整数格点上实测 8）；低通取的是这些误差的局部均值、
+/// 半个步长 255/15 ÷ 2 = 8.5——格点间距 17 是奇数，整数取值上取到的最大偏差是 8；低通取的是这些误差的局部均值、
 /// 分块取它们的 RMSE、掩蔽加权只往下压，因此判据值也不超过它。
 /// 界放在这里，意思是「不比 4bit 更差就算过关」：e-ink 的候选上界恒过关，
 /// 判定默认落在对齐的那一档，要往下走必须由判据说了算。**保守指的就是这个偏向。**
@@ -81,7 +84,6 @@ const PLACEHOLDER_THRESHOLD: Threshold = Threshold(8.5);
 pub struct Profile {
     device: &'static str,
     panel: Panel,
-    /// 判据的可接受上限。属于 profile、不属于面板。
     threshold: Threshold,
 }
 

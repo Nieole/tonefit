@@ -86,6 +86,14 @@ pub fn quantize(image: &GrayImage, depth: BitDepth) -> GrayImage {
     GrayImage::new(image.size(), pixels)
 }
 
+/// 一个格点上的 8 位取值在 `depth` 上的序号。[`quantize`] 的反函数，编码要拿它写进文件。
+///
+/// 只对落在格点上的取值有意义：格点之间的取值会被就近归到一个序号上，那是量化的事。
+pub(crate) fn grid_index(level: u8, depth: BitDepth) -> u8 {
+    let top = depth.levels() - 1;
+    ((u32::from(level) * top + 127) / 255) as u8
+}
+
 /// 8 位取值 → 量化后落到的 8 位取值。一页有几百万像素，逐像素算浮点不值得。
 fn levels_table(depth: BitDepth) -> [u8; 256] {
     let top = (depth.levels() - 1) as f32;
@@ -154,6 +162,25 @@ mod tests {
         }
         for bits in [0, 3, 5, 16] {
             assert!(BitDepth::from_bits(bits).is_err(), "{bits} 不该解析出位深");
+        }
+    }
+
+    /// 序号与格点一一对应，两个方向都由 `BitDepth` 推出。错开一格就会整页偏色，
+    /// 而两边分头写就是错开的由来——所以正反函数摆在一起。
+    #[test]
+    fn the_grid_index_undoes_the_quantization() {
+        for depth in BitDepth::ALL {
+            let table = levels_table(depth);
+            for level in 0..=255u8 {
+                let on_grid = table[level as usize];
+                let index = grid_index(on_grid, depth);
+                assert!(
+                    u32::from(index) < depth.levels(),
+                    "{depth} 的序号 {index} 越界"
+                );
+                let back = (u32::from(index) * 255 / (depth.levels() - 1)) as u8;
+                assert_eq!(back, on_grid, "{depth} 的格点 {on_grid} 反查成了 {back}");
+            }
         }
     }
 
