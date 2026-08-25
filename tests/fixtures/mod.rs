@@ -20,8 +20,11 @@ pub use cbz::{Cbz, read_cbz};
 /// B 类素材的中位尺寸（见 measurements 的《B 类素材普查》）。缩放比含小数。
 pub const TYPICAL: Size = Size::new(1441, 2048);
 
-/// 正好两倍面板，缩放后的尺寸没有取整歧义。
+/// 正好两倍面板，缩放后的尺寸没有取整歧义。总缩放比 2.000：预缩一步到位，残差比 1.000。
 pub const DOUBLE_PANEL: Size = Size::new(2528, 3360);
+
+/// 面板的 2.5 倍。总缩放比 2.500：预缩 2 之后残差段还剩 1.250，两级各真跑一次。
+pub const TWO_AND_A_HALF_PANEL: Size = Size::new(3160, 4200);
 
 /// 宽幅跨页：宽高比远超面板，fit-inside 由宽边定夺。
 pub const SPREAD: Size = Size::new(5056, 1680);
@@ -217,6 +220,7 @@ pub fn request<'a>(
         inputs: inputs.into_iter().map(Path::to_path_buf).collect(),
         output_root: space.out(),
         profile: baseline_profile(),
+        filter: tonefit::Filter::default(),
         mode: tonefit::Mode::Process,
     }
 }

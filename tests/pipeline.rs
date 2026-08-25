@@ -5,7 +5,7 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{BitDepth, Mode, Request, Size};
+use tonefit::{BitDepth, Filter, Mode, Request, Size};
 
 #[test]
 fn each_page_becomes_a_gray8_png_at_the_target_size() {
@@ -196,6 +196,54 @@ fn the_target_size_comes_from_the_profiles_panel() {
 }
 
 #[test]
+fn the_report_gives_the_total_ratio_the_prescale_and_the_residual_of_every_page() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 期望值手算，面板 1264×1680。总缩放比 = 源高 ÷ 目标高：
+    //   5056×1680 → 1264×420 ：比 4.000，整数比，预缩一步到位
+    //   3160×4200 → 1264×1680：比 2.500，预缩 2 之后残差段还剩 1.250
+    //   2528×3360 → 1264×1680：比 2.000，预缩 2，残差 1.000
+    //   1441×2048 → 1182×1680：比 1.219，不触发预缩，残差就是总比
+    //   800×1000  → 原样      ：比 1.000，两级都没活干
+    volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
+    volume.page(
+        "02.png",
+        &fixtures::gradient(fixtures::TWO_AND_A_HALF_PANEL),
+    );
+    volume.page("03.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page("04.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("05.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+
+    let report = run_volume(&space, &volume);
+
+    let expected = [
+        (4.0, 4, 1.0),
+        (2.5, 2, 1.25),
+        (2.0, 2, 1.0),
+        (1.219, 1, 1.219),
+        (1.0, 1, 1.0),
+    ];
+    for (page, (ratio, prescale, residual)) in report.volumes[0].pages.iter().zip(expected) {
+        let scaling = page.scaling;
+        let name = page.source.display();
+        assert!(
+            (scaling.total_ratio() - ratio).abs() < 5e-4,
+            "{name} 的总缩放比是 {}",
+            scaling.total_ratio()
+        );
+        assert_eq!(scaling.prescale(), prescale, "{name} 的预缩倍数");
+        assert_eq!(scaling.prescaled(), prescale > 1, "{name} 是否触发预缩");
+        assert!(
+            (scaling.residual_ratio() - residual).abs() < 5e-4,
+            "{name} 的残差比是 {}",
+            scaling.residual_ratio()
+        );
+        // 残差比恒 < 2 是 `CONTEXT.md` 的不变量，不只是这几页的巧合。
+        assert!(scaling.residual_ratio() < 2.0, "{name} 的残差比越过了 2");
+    }
+}
+
+#[test]
 fn a_solid_page_stays_solid_after_scaling() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -214,7 +262,8 @@ fn a_solid_page_stays_solid_after_scaling() {
 fn a_screentone_page_resolves_into_tones() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let page = fixtures::screentone(fixtures::DOUBLE_PANEL);
+    // B 类中位尺寸：总缩放比 1.219，不触发预缩，全程一次 Lanczos3。
+    let page = fixtures::screentone(fixtures::TYPICAL);
     volume.page("001.png", &page);
     assert_eq!(
         distinct_levels(page.to_luma8().as_raw()),
@@ -225,9 +274,74 @@ fn a_screentone_page_resolves_into_tones() {
     let report = run_volume(&space, &volume);
 
     // 网点是因，灰调是果：缩放把点阵解析成连续灰调。
+    assert!(!report.volumes[0].pages[0].scaling.prescaled());
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     let levels = distinct_levels(&written.pixels);
     assert!(levels > 16, "缩放后只剩 {levels} 级灰调");
+}
+
+#[test]
+fn a_prescaled_screentone_page_takes_its_tones_from_the_box_step() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 总缩放比正好 2.000：预缩 2 一步到位，残差段无事可做，输出全部来自 box 那一级。
+    // 量的因此是预缩这一级本身。比值非整数时残差段的 Lanczos3 会把级数重新推上去，
+    // 那是 ADR 0001 要的分工，不是这一条要管的事。
+    volume.page("001.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+
+    let report = run_volume(&space, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    assert_eq!(page.scaling.prescale(), 2);
+    let levels = distinct_levels(&fixtures::read_png(&page.output).pixels);
+    // 等权的完整窗口平均对二值输入只落在块内白点计数上，n×n 产出 n²+1 个取值
+    // （见 measurements 的《滤波器与灰调级数》）。2×2 于是至多 5 级——
+    // 灰调级数受控正是这一级要买的东西，非均匀加权在同一处会给出准连续谱。
+    assert!(levels <= 5, "预缩之后出了 {levels} 级灰调，多于 2²+1");
+    // 受控不是塌掉：网点仍然被解析成了灰调，不再是二值。
+    assert!(levels > 2, "预缩之后只剩 {levels} 级，网点没被解析成灰调");
+}
+
+#[test]
+fn the_filter_changes_the_residual_step_and_never_the_prescale() {
+    // 总缩放比正好 2.000：预缩一步到位，残差段无事可做。换滤波器于是逐字节不变——
+    // 预缩那一级恒为 box，`--filter` 够不着它。够得着的话，Lanczos3 会在这里
+    // 把二值网点解析成准连续谱，与 area 的输出天差地别。
+    assert_eq!(
+        one_page_with(fixtures::DOUBLE_PANEL, Filter::Lanczos3),
+        one_page_with(fixtures::DOUBLE_PANEL, Filter::Area),
+        "预缩那一级被 --filter 改掉了"
+    );
+
+    // 比值 1.219 的页只有残差段：换滤波器就换结果。
+    assert_ne!(
+        one_page_with(fixtures::TYPICAL, Filter::Lanczos3),
+        one_page_with(fixtures::TYPICAL, Filter::Area),
+        "--filter 没有作用到残差段"
+    );
+
+    // 比值 2.500：预缩与残差段都真跑一遍。预缩那一级照旧不受 --filter 摆布，
+    // 而残差段仍然听它的——上面两条各废掉一级，只有这一条两级同时在场。
+    assert_ne!(
+        one_page_with(fixtures::TWO_AND_A_HALF_PANEL, Filter::Lanczos3),
+        one_page_with(fixtures::TWO_AND_A_HALF_PANEL, Filter::Area),
+        "两级都在场时 --filter 没有作用到残差段"
+    );
+}
+
+/// 用点名的滤波器处理一张网点页，把写出的 PNG 字节读回来。
+fn one_page_with(size: Size, filter: Filter) -> Vec<u8> {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::screentone(size));
+
+    let report = tonefit::run(&Request {
+        filter,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    std::fs::read(&report.volumes[0].pages[0].output).expect("读回写出的页")
 }
 
 #[test]

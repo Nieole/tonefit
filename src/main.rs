@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use tonefit::{CandidateScore, Mode, Profile, Report, Request};
+use tonefit::{CandidateScore, Filter, Mode, Profile, Report, Request};
 
 #[derive(Parser)]
 #[command(about = "把漫画页适配到电子墨水阅读设备", version)]
@@ -25,6 +25,11 @@ struct Cli {
     #[arg(long, value_name = "级数")]
     gray_levels: Option<u32>,
 
+    /// 残差段的重采样滤波器：area（= box）、bilinear、hamming、bicubic、lanczos3，默认 lanczos3。
+    /// 只作用于残差段——总缩放比 ≥ 2 时的整数倍预缩那一级恒为 box。
+    #[arg(long, value_name = "滤波器")]
+    filter: Option<String>,
+
     /// 只算不写：报告照出，逐页给出各候选位深的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
@@ -37,6 +42,14 @@ impl Cli {
             Mode::DryRun
         } else {
             Mode::Process
+        }
+    }
+
+    /// 本次残差段用哪个滤波器。不点名就是默认的 lanczos3（ADR 0001）。
+    fn residual_filter(&self) -> Result<Filter> {
+        match &self.filter {
+            Some(name) => Filter::resolve(name),
+            None => Ok(Filter::default()),
         }
     }
 
@@ -53,11 +66,13 @@ impl Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let profile = cli.target_profile()?;
+    let filter = cli.residual_filter()?;
     let mode = cli.mode();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
         output_root: cli.out,
         profile,
+        filter,
         mode,
     })?;
     print!("{}", render(&report, mode));
@@ -77,7 +92,12 @@ fn render(report: &Report, mode: Mode) -> String {
             volume.pages.len()
         ));
         for page in &volume.pages {
-            text.push_str(&format!("  {}  {}\n", page.size, page.output.display()));
+            text.push_str(&format!(
+                "  {}  {}  {}\n",
+                page.size,
+                page.scaling,
+                page.output.display()
+            ));
             if !page.scores.is_empty() {
                 text.push_str(&format!("    判据 {}\n", score_line(&page.scores)));
             }
@@ -99,7 +119,12 @@ fn score_line(scores: &[CandidateScore]) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use tonefit::{BitDepth, GrayImage, PageReport, Reference, Size, VolumeReport};
+    use tonefit::{BitDepth, GrayImage, PageReport, Reference, Scaling, Size, VolumeReport};
+
+    /// B 类中位页缩到基准面板：总缩放比 1.219，不触发预缩（见 measurements 的《B 类素材普查》）。
+    fn typical_scaling() -> Scaling {
+        Scaling::plan(Size::new(1441, 2048), Size::new(1182, 1680))
+    }
 
     #[test]
     fn the_command_line_is_wired_up() {
@@ -127,6 +152,31 @@ mod tests {
     }
 
     #[test]
+    fn the_filter_from_the_command_line_names_the_residual_filter() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        // `box` 与 `area` 是同一个滤波器，大小写不论。
+        assert_eq!(
+            parse(&["--filter", "BOX"])
+                .residual_filter()
+                .expect("box 应当认得"),
+            Filter::Area
+        );
+        // 不点名就是 ADR 0001 定的默认。
+        assert_eq!(
+            parse(&[]).residual_filter().expect("默认值"),
+            Filter::Lanczos3
+        );
+        // 认不出的名字在拼 Request 之前就被挡下。
+        assert!(parse(&["--filter", "mitchell"]).residual_filter().is_err());
+    }
+
+    #[test]
     fn a_dry_run_says_nothing_was_written_and_gives_the_metric_for_every_candidate() {
         // 判据值从公开 seam 上真算一个：报告要显示的就是它。
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -144,6 +194,7 @@ mod tests {
                     source: PathBuf::from("library/volume-a/001.jpg"),
                     output: PathBuf::from("out/volume-a/001.png"),
                     size: Size::new(1264, 1680),
+                    scaling: typical_scaling(),
                     scores: vec![CandidateScore {
                         bit_depth: BitDepth::One,
                         score: one_bit,
@@ -156,6 +207,8 @@ mod tests {
 
         assert!(text.contains("dry-run"), "{text}");
         assert!(text.contains("还没落盘"), "{text}");
+        // 比值 < 2 的一页：报告要说出它没预缩，残差段就是全部。
+        assert!(text.contains("缩放比 1.219 · 未预缩"), "{text}");
         assert!(text.contains(&format!("判据 1bit {one_bit}")), "{text}");
     }
 
@@ -170,6 +223,8 @@ mod tests {
                     source: PathBuf::from("library/volume-a/001.jpg"),
                     output: PathBuf::from("out/volume-a/001.png"),
                     size: Size::new(1264, 1680),
+                    // 正好两倍面板的一页：报告要说出它预缩过。
+                    scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     scores: Vec::new(),
                 }],
             }],
@@ -185,6 +240,10 @@ mod tests {
         assert!(text.contains("library/volume-a"), "{text}");
         assert!(text.contains("1 页"), "{text}");
         assert!(text.contains("1264×1680"), "{text}");
+        // 每页的缩放三件套：总缩放比、有没有预缩、残差比。
+        assert!(text.contains("缩放比 2.000"), "{text}");
+        assert!(text.contains("预缩 2×"), "{text}");
+        assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
     }
 }

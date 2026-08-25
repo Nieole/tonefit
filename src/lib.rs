@@ -34,6 +34,7 @@ pub use profile::{Panel, Profile};
 pub use quantize::{BitDepth, quantize};
 pub use report::{CandidateScore, PageReport, Report, VolumeReport};
 pub use request::{Mode, Request};
+pub use resample::{Filter, Scaling};
 
 use sink::Sink;
 use source::{Member, Volume};
@@ -81,7 +82,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
             decode::decode(&bytes).with_context(|| format!("解 {} 这一页", source.display()))?;
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
-        let scaled = resample::resize(&gray, size)?;
+        let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
         // 两种模式在这一步分道：处理模式编码写出，dry-run 改为把判据求出来给报告。
         let scores = match &mut sink {
             Some(sink) => {
@@ -96,6 +97,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
             source,
             output: output.join(relative),
             size,
+            scaling,
             scores,
         });
     }

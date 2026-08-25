@@ -6,6 +6,7 @@ use crate::geometry::Size;
 use crate::metric::Score;
 use crate::profile::Profile;
 use crate::quantize::BitDepth;
+use crate::resample::Scaling;
 
 /// 一次处理调用的结果。
 ///
@@ -39,6 +40,11 @@ pub struct PageReport {
     pub output: PathBuf,
     /// 目标尺寸：实际写出的像素尺寸。
     pub size: Size,
+    /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
+    ///
+    /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
+    /// 报告里说清楚它有没有触发，是这条路径在真实素材上唯一的现场证据。
+    pub scaling: Scaling,
     /// 各候选的判据值，位深由小到大。候选已按面板灰阶数裁过（ADR 0003）。
     ///
     /// 只有 dry-run 求值：判据此刻还不改变输出，处理路径上算了也没人看（04 号票）。
