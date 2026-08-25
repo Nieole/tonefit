@@ -8,6 +8,7 @@ rust-version = "1.98"
 anyhow = "1.0.104"
 blake3 = "1.8.7"
 clap = { version = "4.6.6", features = ["derive"] }
+encoding_rs = "0.8.35"
 fast_image_resize = "6"
 image = { version = "0.25.9", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp", "rayon", "avif-native"] }
 indicatif = "0.18.6"
@@ -27,7 +28,14 @@ zip = "8"
 ssimulacra2 = ["dep:ssimulacra2"]
 
 [dev-dependencies]
+# 夹具要按字节手搓 ZIP——`zip` 的写入端只收 Rust 字符串，编不出 GBK 成员名，
+# 也置不出「没有 UTF-8 标志」这个恰恰要测的状态。
+crc32fast = "1.5.1"
+# 夹具要按 GBK 编成员名，测试要绕开被测代码读回归档。集成测试是独立的 crate，
+# 拿不到本包的普通依赖，因此这两个在两处各列一次。
+encoding_rs = "0.8.35"
 # 夹具生成器要写出 AVIF；`avif` 是编码侧特性（ravif），与运行时解码用的 avif-native 不同。
 # resolver v2 不把 dev-dependencies 的特性并进非 dev 构建，`cargo build` 不会带上 ravif。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
 tempfile = "3.24.0"
+zip = "8"

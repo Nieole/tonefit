@@ -3,13 +3,19 @@
 //! 仓库里不放真实漫画素材：测试用的页全部由本模块按代码生成。
 //! 每一类页对应一条待验证的性质，见调用它的用例。
 
-#![allow(dead_code)]
+// 每个测试二进制都单独编一份夹具，各自只用得上其中一部分。
+#![allow(dead_code, unused_imports)]
+
+mod cbz;
 
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
 use tonefit::{Profile, Size};
+
+pub use cbz::{Cbz, read_cbz};
 
 /// B 类素材的中位尺寸（见 measurements 的《B 类素材普查》）。缩放比含小数。
 pub const TYPICAL: Size = Size::new(1441, 2048);
@@ -129,9 +135,21 @@ impl Workspace {
         }
     }
 
-    /// 建一个空卷。
+    /// 建一个空的目录卷。
     pub fn volume(&self, name: &str) -> Volume {
         Volume::new(self.tmp.path().join(name))
+    }
+
+    /// 建一个空的 CBZ 卷。加完成员要调 `Cbz::write` 才落盘。
+    pub fn cbz(&self, name: &str) -> Cbz {
+        Cbz::new(self.tmp.path().join(format!("{name}.cbz")))
+    }
+
+    /// 在工作区根下写一个不属于任何卷的文件。用来造「扩展名像卷、内容不是」的输入。
+    pub fn stray_file(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.tmp.path().join(name);
+        fs::write(&path, bytes).expect("写工作区文件");
+        path
     }
 
     /// 输出根目录。此刻还不存在，由被测代码建出来。
@@ -159,8 +177,7 @@ pub fn baseline_profile() -> Profile {
     profile(BASELINE_DEVICE)
 }
 
-/// 对一个卷调用被测的 `run`，用基准设备的 profile。
-/// 多卷、换 profile 或要看错误的用例自己拼 `Request`。
+/// 对一个目录卷调用被测的 `run`，用基准设备的 profile。
 pub fn run_volume(space: &Workspace, volume: &Volume) -> tonefit::Report {
     run_volume_with(space, volume, baseline_profile())
 }
@@ -168,11 +185,39 @@ pub fn run_volume(space: &Workspace, volume: &Volume) -> tonefit::Report {
 /// 同上，但点名 profile。
 pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
-        inputs: vec![volume.path().to_path_buf()],
-        output_root: space.out(),
         profile,
+        ..request(space, [volume.path()])
     })
     .expect("处理应当成功")
+}
+
+/// 点名若干卷跑一遍，用基准设备的 profile。目录与归档都走这里。
+pub fn run_paths<'a>(
+    space: &Workspace,
+    inputs: impl IntoIterator<Item = &'a Path>,
+) -> tonefit::Report {
+    tonefit::run(&request(space, inputs)).expect("处理应当成功")
+}
+
+/// 同上，但预期失败，返回那个错误。
+pub fn run_paths_expecting_failure<'a>(
+    space: &Workspace,
+    inputs: impl IntoIterator<Item = &'a Path>,
+) -> anyhow::Error {
+    tonefit::run(&request(space, inputs)).expect_err("处理应当失败")
+}
+
+/// 拼一个用基准 profile、输出到工作区 `out/` 的 `Request`。
+/// 换 profile 或要复用同一个 `Request` 的用例自己拼。
+pub fn request<'a>(
+    space: &Workspace,
+    inputs: impl IntoIterator<Item = &'a Path>,
+) -> tonefit::Request {
+    tonefit::Request {
+        inputs: inputs.into_iter().map(Path::to_path_buf).collect(),
+        output_root: space.out(),
+        profile: baseline_profile(),
+    }
 }
 
 /// 一个卷：磁盘上装着页的目录。
@@ -216,21 +261,30 @@ fn write_image(path: &Path, image: &DynamicImage) {
         .and_then(|e| e.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if extension == "gif" {
-        // GIF 编码器只收 RGB/RGBA。灰度页转成 RGB 再写，解回来 r==g==b，灰度取值不变。
-        image.to_rgb8().save(path).expect("写 GIF 夹具页");
-    } else if extension == "avif" {
+    fs::write(path, encode_image(image, &extension)).expect("写夹具页");
+}
+
+/// 把一张图编成 `extension` 指定的格式。归档夹具的成员也走这里，因此编出的是字节。
+pub fn encode_image(image: &DynamicImage, extension: &str) -> Vec<u8> {
+    let mut bytes = Cursor::new(Vec::new());
+    if extension == "avif" {
         // 默认的 speed 4 编一页要几秒；夹具只需要一个能解的 AVIF。
-        let file = fs::File::create(path).expect("建 AVIF 文件");
-        let encoder = image::codecs::avif::AvifEncoder::new_with_speed_quality(
-            std::io::BufWriter::new(file),
-            10,
-            90,
-        );
+        let encoder = image::codecs::avif::AvifEncoder::new_with_speed_quality(&mut bytes, 10, 90);
         image.write_with_encoder(encoder).expect("编 AVIF");
-    } else {
-        image.save(path).expect("写夹具页");
+        return bytes.into_inner();
     }
+    let format = image::ImageFormat::from_extension(extension)
+        .unwrap_or_else(|| panic!("不认识的夹具格式 {extension}"));
+    if format == image::ImageFormat::Gif {
+        // GIF 编码器只收 RGB/RGBA。灰度页转成 RGB 再写，解回来 r==g==b，灰度取值不变。
+        image
+            .to_rgb8()
+            .write_to(&mut bytes, format)
+            .expect("编 GIF 夹具页");
+    } else {
+        image.write_to(&mut bytes, format).expect("编夹具页");
+    }
+    bytes.into_inner()
 }
 
 /// 解出的 PNG，供测试直接看编码结果而不经被测代码。

@@ -9,11 +9,11 @@ use tonefit::{Profile, Report, Request};
 #[derive(Parser)]
 #[command(about = "把漫画页适配到电子墨水阅读设备", version)]
 struct Cli {
-    /// 要处理的卷（目录）。源目录只读。
+    /// 要处理的卷：一个目录，或一个 CBZ。源只读。
     #[arg(required = true, value_name = "卷")]
     inputs: Vec<PathBuf>,
 
-    /// 输出根目录。每个卷在它下面得到一个同名子目录。
+    /// 输出根目录。每个卷在它下面得到一份同名副本，容器形态与输入一致。
     #[arg(short, long, value_name = "目录")]
     out: PathBuf,
 
