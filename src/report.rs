@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use crate::geometry::Size;
+use crate::metric::Score;
 use crate::profile::Profile;
+use crate::quantize::BitDepth;
 
 /// 一次处理调用的结果。
 ///
@@ -37,4 +39,19 @@ pub struct PageReport {
     pub output: PathBuf,
     /// 目标尺寸：实际写出的像素尺寸。
     pub size: Size,
+    /// 各候选的判据值，位深由小到大。候选已按面板灰阶数裁过（ADR 0003）。
+    ///
+    /// 只有 dry-run 求值：判据此刻还不改变输出，处理路径上算了也没人看（04 号票）。
+    /// 据判据选出一档、并给出判定理由，是 06 号票。
+    pub scores: Vec<CandidateScore>,
+}
+
+/// 一个候选的判据值。候选此刻只有位深这一维，抖动模式那一维随 09 号票加进来。
+///
+/// 判据是量、阈值是界：这里只有量。判据数值不可跨面板比较（ADR 0002），
+/// 要看是哪块面板上的数，见 [`Report::profile`]。
+#[derive(Debug, Clone, Copy)]
+pub struct CandidateScore {
+    pub bit_depth: BitDepth,
+    pub score: Score,
 }

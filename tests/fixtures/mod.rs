@@ -13,7 +13,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
-use tonefit::{Profile, Size};
+use tonefit::{BitDepth, GrayImage, Profile, Size};
 
 pub use cbz::{Cbz, read_cbz};
 
@@ -217,6 +217,7 @@ pub fn request<'a>(
         inputs: inputs.into_iter().map(Path::to_path_buf).collect(),
         output_root: space.out(),
         profile: baseline_profile(),
+        mode: tonefit::Mode::Process,
     }
 }
 
@@ -336,4 +337,59 @@ pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
         .collect();
     entries.sort();
     entries
+}
+
+/// 高频纹理页：`base` 上下各 `amplitude` 的逐像素交替。
+///
+/// 局部均值恒为 `base`，高频能量却拉满——判据的掩蔽加权该按后者放宽。
+/// 取值不触顶不触底，加一个偏移上去不会被截断，加权方向因此可以单独测。
+pub fn fine_texture(size: Size, base: u8, amplitude: u8) -> DynamicImage {
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        Luma([if (x + y) % 2 == 0 {
+            base.saturating_add(amplitude)
+        } else {
+            base.saturating_sub(amplitude)
+        }])
+    }))
+}
+
+/// 把夹具页转成判据吃的 8 位灰度缓冲。夹具造的都是灰度页，取 luma 即可。
+pub fn gray_image(image: &DynamicImage) -> GrayImage {
+    let luma = image.to_luma8();
+    GrayImage::new(Size::new(luma.width(), luma.height()), luma.into_raw())
+}
+
+/// FS 误差扩散抖动到 `depth`，给判据造一个「抖过」的候选。
+///
+/// 生产实现连同抖动模式的选择属于 09 号票；这里只是性质测试要的素材——
+/// 判据那条性质说的是「抖过的候选该赢」，不挑抖动算法（ADR 0002 明确判据不管图案好看与否）。
+pub fn floyd_steinberg(image: &GrayImage, depth: BitDepth) -> GrayImage {
+    let size = image.size();
+    let (width, height) = (size.width as usize, size.height as usize);
+    let top = (depth.levels() - 1) as f32;
+    let mut carried: Vec<f32> = image
+        .pixels()
+        .iter()
+        .map(|&level| f32::from(level))
+        .collect();
+    let mut out = vec![0u8; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let wanted = carried[y * width + x];
+            let quantized = (wanted * top / 255.0).round().clamp(0.0, top) * 255.0 / top;
+            out[y * width + x] = quantized.round() as u8;
+            let residual = wanted - quantized;
+            let mut spread = |dx: isize, dy: usize, factor: f32| {
+                let nx = x as isize + dx;
+                if nx >= 0 && (nx as usize) < width && y + dy < height {
+                    carried[(y + dy) * width + nx as usize] += residual * factor;
+                }
+            };
+            spread(1, 0, 7.0 / 16.0);
+            spread(-1, 1, 3.0 / 16.0);
+            spread(0, 1, 5.0 / 16.0);
+            spread(1, 1, 1.0 / 16.0);
+        }
+    }
+    GrayImage::new(size, out)
 }

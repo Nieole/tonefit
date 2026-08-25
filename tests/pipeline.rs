@@ -5,7 +5,7 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{Request, Size};
+use tonefit::{BitDepth, Mode, Request, Size};
 
 #[test]
 fn each_page_becomes_a_gray8_png_at_the_target_size() {
@@ -298,12 +298,7 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
     let second = space.volume("volume-b");
     second.page("001.jpg", &page);
 
-    let report = tonefit::run(&Request {
-        inputs: vec![first.path().to_path_buf(), second.path().to_path_buf()],
-        output_root: space.out(),
-        profile: fixtures::baseline_profile(),
-    })
-    .expect("处理应当成功");
+    let report = fixtures::run_paths(&space, [first.path(), second.path()]);
 
     assert_eq!(report.volumes.len(), 2);
     assert_eq!(report.volumes[0].output, space.out().join("volume-a"));
@@ -330,12 +325,7 @@ fn two_pages_that_would_share_one_output_are_refused() {
     volume.page("001.jpg", &page);
     volume.page("001.png", &page);
 
-    let error = tonefit::run(&Request {
-        inputs: vec![volume.path().to_path_buf()],
-        output_root: space.out(),
-        profile: fixtures::baseline_profile(),
-    })
-    .expect_err("输出撞名应当报错");
+    let error = fixtures::run_paths_expecting_failure(&space, [volume.path()]);
 
     assert!(error.to_string().contains("都要写到"), "{error}");
 }
@@ -343,12 +333,7 @@ fn two_pages_that_would_share_one_output_are_refused() {
 #[test]
 fn an_empty_scope_is_refused() {
     let space = Workspace::new();
-    let error = tonefit::run(&Request {
-        inputs: Vec::new(),
-        output_root: space.out(),
-        profile: fixtures::baseline_profile(),
-    })
-    .expect_err("空范围应当报错");
+    let error = fixtures::run_paths_expecting_failure(&space, []);
     assert!(error.to_string().contains("处理范围为空"), "{error}");
 }
 
@@ -363,9 +348,8 @@ fn writing_into_the_source_volume_is_refused() {
     let before = fixtures::fingerprint(volume.path());
 
     let error = tonefit::run(&Request {
-        inputs: vec![volume.path().to_path_buf()],
         output_root: volume.path().join("out"),
-        profile: fixtures::baseline_profile(),
+        ..fixtures::request(&space, [volume.path()])
     })
     .expect_err("往源卷里写应当被拒绝");
 
@@ -392,4 +376,99 @@ fn slash_path(path: &std::path::Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[test]
+fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page(
+        "002.png",
+        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
+    );
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
+    let before = fixtures::fingerprint(volume.path());
+
+    let report = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("dry-run 应当成功");
+
+    let pages = &report.volumes[0].pages;
+    assert_eq!(pages.len(), 2);
+    for page in pages {
+        assert!(!page.scores.is_empty(), "{} 缺判据", page.source.display());
+        assert!(
+            !page.output.exists(),
+            "{} 被写出来了",
+            page.output.display()
+        );
+    }
+    // 渐变页在低位深上必然崩：报告里的数是真算出来的，不是一排零。
+    let gradient = &pages[0].scores;
+    assert!(
+        gradient[0].score > gradient[2].score,
+        "1bit 的 {} 没有差过 4bit 的 {}",
+        gradient[0].score,
+        gradient[2].score
+    );
+
+    assert!(!space.out().exists(), "dry-run 建出了输出目录");
+    assert_eq!(before, fixtures::fingerprint(volume.path()), "源卷被动过了");
+}
+
+#[test]
+fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
+    // 灰阶数是位深的硬上界，裁剪在判据求值之前（ADR 0003）：e-ink 恒 16 级，8bit 不进候选。
+    let cases = [
+        (None, vec![BitDepth::One, BitDepth::Two, BitDepth::Four]),
+        (Some(4), vec![BitDepth::One, BitDepth::Two]),
+        (Some(256), BitDepth::ALL.to_vec()),
+    ];
+
+    for (gray_levels, expected) in cases {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+        let mut profile = fixtures::baseline_profile();
+        if let Some(gray_levels) = gray_levels {
+            profile = profile.with_gray_levels(gray_levels).expect("级数可用");
+        }
+
+        let report = tonefit::run(&Request {
+            mode: Mode::DryRun,
+            profile,
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("dry-run 应当成功");
+
+        let depths: Vec<_> = report.volumes[0].pages[0]
+            .scores
+            .iter()
+            .map(|scored| scored.bit_depth)
+            .collect();
+        assert_eq!(depths, expected, "{gray_levels:?} 级灰阶下的候选不对");
+    }
+}
+
+#[test]
+fn processing_writes_the_pages_a_dry_run_only_predicted() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let predicted = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("dry-run 应当成功");
+    let written = run_volume(&space, &volume);
+
+    // 报告先给出的路径与尺寸，就是照做之后真正落盘的那一份（spec 的 story 6）。
+    let page = (&predicted.volumes[0].pages[0], &written.volumes[0].pages[0]);
+    assert_eq!(page.0.output, page.1.output);
+    assert_eq!(page.0.size, page.1.size);
+    assert!(page.1.output.is_file());
 }

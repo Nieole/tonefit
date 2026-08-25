@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use tonefit::{Profile, Report, Request};
+use tonefit::{CandidateScore, Mode, Profile, Report, Request};
 
 #[derive(Parser)]
 #[command(about = "把漫画页适配到电子墨水阅读设备", version)]
@@ -24,9 +24,22 @@ struct Cli {
     /// 覆盖面板灰阶数。内置表没收录的设备、或在真机上数出的实际可分辨级数走这里。
     #[arg(long, value_name = "级数")]
     gray_levels: Option<u32>,
+
+    /// 只算不写：报告照出，逐页给出各候选位深的判据值，一个文件都不落盘。
+    #[arg(long)]
+    dry_run: bool,
 }
 
 impl Cli {
+    /// 本次做到哪一步。
+    fn mode(&self) -> Mode {
+        if self.dry_run {
+            Mode::DryRun
+        } else {
+            Mode::Process
+        }
+    }
+
     /// 把 `--profile` 与 `--gray-levels` 合成本次要用的 profile。
     fn target_profile(&self) -> Result<Profile> {
         let profile = Profile::resolve(&self.profile)?;
@@ -40,17 +53,22 @@ impl Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let profile = cli.target_profile()?;
+    let mode = cli.mode();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
         output_root: cli.out,
         profile,
+        mode,
     })?;
-    print!("{}", render(&report));
+    print!("{}", render(&report, mode));
     Ok(())
 }
 
-fn render(report: &Report) -> String {
+fn render(report: &Report, mode: Mode) -> String {
     let mut text = format!("profile {}\n", report.profile);
+    if mode == Mode::DryRun {
+        text.push_str("dry-run：只算不写，下面的路径都还没落盘\n");
+    }
     for volume in &report.volumes {
         text.push_str(&format!(
             "{} → {}（{} 页）\n",
@@ -60,16 +78,28 @@ fn render(report: &Report) -> String {
         ));
         for page in &volume.pages {
             text.push_str(&format!("  {}  {}\n", page.size, page.output.display()));
+            if !page.scores.is_empty() {
+                text.push_str(&format!("    判据 {}\n", score_line(&page.scores)));
+            }
         }
     }
     text
+}
+
+/// 一页各候选的判据值排成一行。判据是量、阈值是界——这里只有量，还没有据它下的判定。
+fn score_line(scores: &[CandidateScore]) -> String {
+    scores
+        .iter()
+        .map(|scored| format!("{} {}", scored.bit_depth, scored.score))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use tonefit::{PageReport, Size, VolumeReport};
+    use tonefit::{BitDepth, GrayImage, PageReport, Reference, Size, VolumeReport};
 
     #[test]
     fn the_command_line_is_wired_up() {
@@ -97,6 +127,39 @@ mod tests {
     }
 
     #[test]
+    fn a_dry_run_says_nothing_was_written_and_gives_the_metric_for_every_candidate() {
+        // 判据值从公开 seam 上真算一个：报告要显示的就是它。
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
+        let one_bit = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), BitDepth::One),
+        );
+        let report = Report {
+            profile: profile.clone(),
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                pages: vec![PageReport {
+                    source: PathBuf::from("library/volume-a/001.jpg"),
+                    output: PathBuf::from("out/volume-a/001.png"),
+                    size: Size::new(1264, 1680),
+                    scores: vec![CandidateScore {
+                        bit_depth: BitDepth::One,
+                        score: one_bit,
+                    }],
+                }],
+            }],
+        };
+
+        let text = render(&report, Mode::DryRun);
+
+        assert!(text.contains("dry-run"), "{text}");
+        assert!(text.contains("还没落盘"), "{text}");
+        assert!(text.contains(&format!("判据 1bit {one_bit}")), "{text}");
+    }
+
+    #[test]
     fn the_report_renders_the_profile_then_one_line_per_volume_and_per_page() {
         let report = Report {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
@@ -107,11 +170,12 @@ mod tests {
                     source: PathBuf::from("library/volume-a/001.jpg"),
                     output: PathBuf::from("out/volume-a/001.png"),
                     size: Size::new(1264, 1680),
+                    scores: Vec::new(),
                 }],
             }],
         };
 
-        let text = render(&report);
+        let text = render(&report, Mode::Process);
 
         assert_eq!(text.lines().count(), 3);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
