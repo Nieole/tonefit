@@ -6,7 +6,8 @@
 //! 候选进来之前已经按面板灰阶数裁过（ADR 0003：裁剪在判据求值之前）。
 //! 被裁掉的位深不在这里出现，`--bit-depth` 也够不着它，那条上界只有 `--gray-levels` 动得了。
 //!
-//! 这里只有逐页判定。卷级的上包络与迟滞是 08 号票，它建在逐页判定之上。
+//! 这里只有逐页判定。卷级的上包络、迟滞与离群页在 `envelope`，那一层建在这一层之上，
+//! 并会把这里给出的档重定一遍（ADR 0006）。
 
 use crate::metric::Score;
 use crate::profile::Threshold;
@@ -31,11 +32,17 @@ pub struct Verdict {
 
 /// 判定理由——这一档是怎么来的（spec 的 story 7：判定结果要可解释）。
 ///
-/// spec 固定的那四种（`VolumeEnvelope`、`Outlier`、`Override`、`Skipped`）是**卷级**的形状，
-/// 随 08、11 号票落地。逐页判定这一层只出得起这三种。
-///
-/// 那两张票要把卷级的几种并进本枚举，不是另起一个：两套并存的话，一份报告里
+/// 逐页与卷级两层共用本枚举，不是各起一个：两套并存的话，一份报告里
 /// 「这一档为什么是它」就有两种读法，而判定可解释正是 story 7 要的东西。
+/// 前三种由逐页判定给出，后三种由卷级汇总给出（`envelope`）；
+/// spec 固定的 `Skipped` 随 11 号票落地。
+///
+/// 逐页的那三种能在最终报告里露面，只有在卷级那一层不在场的时候：
+/// `--per-page` 关掉它，`--bit-depth` 顶掉它。
+///
+/// `Hysteresis` 在 spec 点名的那几种之外，理由在 ADR 0006 的后果里：
+/// 上包络**不承诺**卷内绝对一致。升上去的那一段与主体之间就是一次翻页跳变，
+/// 并进 `VolumeEnvelope` 就等于把这句话藏起来。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     /// 判据落在阈值以内的最低一档，比它更低的都越界了。
@@ -44,6 +51,12 @@ pub enum Reason {
     NoneWithinThreshold,
     /// `--bit-depth` 覆盖了自动判定（spec 的 story 23）。
     Override,
+    /// 卷级上包络定的基准档：这一页跟着卷内主体走（ADR 0006 决定第 3 条）。
+    VolumeEnvelope,
+    /// 连续够了迟滞页数的一段，整段升到满足整段的最低一档（ADR 0006 决定第 4 条）。
+    Hysteresis,
+    /// 离群页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
+    Outlier,
 }
 
 impl std::fmt::Display for Reason {
@@ -52,6 +65,9 @@ impl std::fmt::Display for Reason {
             Reason::LowestWithinThreshold => "阈值内最低的一档",
             Reason::NoneWithinThreshold => "没有一档在阈值内，取候选上界",
             Reason::Override => "--bit-depth 覆盖",
+            Reason::VolumeEnvelope => "卷级上包络",
+            Reason::Hysteresis => "迟滞升档",
+            Reason::Outlier => "离群页单独定档",
         })
     }
 }

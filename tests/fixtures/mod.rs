@@ -32,6 +32,10 @@ pub const SPREAD: Size = Size::new(5056, 1680);
 /// 两边都小于面板：不该被放大。
 pub const SMALLER_THAN_TARGET: Size = Size::new(800, 1000);
 
+/// 页数多的用例用的小页。卷级的性质只看逐页判定排开之后的分布，与页上有什么内容无关，
+/// 页因此小到只够铺开几块判据分块就行。
+pub const TINY: Size = Size::new(160, 224);
+
 /// 彩页的色带，自上而下。测试按序号取样。
 ///
 /// 蓝与灰这一对是有意的：Rec.601/709 加权会把纯蓝压到 18~29，与第二条灰带混同；
@@ -238,6 +242,7 @@ pub fn request<'a>(
         profile: baseline_profile(),
         filter: tonefit::Filter::default(),
         bit_depth: None,
+        per_page: false,
         cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
     }

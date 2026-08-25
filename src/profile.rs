@@ -50,6 +50,15 @@ impl Threshold {
         score.value() <= self.0
     }
 
+    /// 这个判据值是不是**远在**界外——超出界的 `factor` 倍。
+    ///
+    /// 离群页判据要的就是它（ADR 0006 决定第 5 条：离群页不参与上包络，单独定档）：
+    /// 不是刚过线，是远在界外。倍数由调用方给——那是个未标定的占位值，
+    /// 属于上包络那一层（见 `crate::envelope`），不属于界。
+    pub(crate) fn far_outside(self, score: Score, factor: f32) -> bool {
+        score.value() > self.0 * factor
+    }
+
     /// 界的数值，8 位灰度级。
     ///
     /// 判定只经 [`admits`](Self::admits)。读出数值是给渲染与测试用的——用它相对地造判据值，

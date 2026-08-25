@@ -13,6 +13,7 @@ mod cache;
 mod decide;
 mod decode;
 mod encode;
+mod envelope;
 mod geometry;
 mod gray;
 mod metric;
@@ -31,12 +32,13 @@ use anyhow::{Context, Result, bail};
 
 pub use cache::{CacheBudget, CacheUsage};
 pub use decide::{CandidateScore, Reason, Verdict};
+pub use envelope::Envelope;
 pub use geometry::Size;
 pub use gray::GrayImage;
 pub use metric::{Reference, Score, score};
 pub use profile::{Panel, Profile, Threshold};
 pub use quantize::{BitDepth, quantize};
-pub use report::{PageReport, Report, VolumeReport};
+pub use report::{PageReport, Report, VolumeReport, VolumeVerdict};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
@@ -87,7 +89,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     };
     let mut cache = cache::PageCache::new(request.cache_budget, retention);
     let mut decoder = decode::Decoder::new();
-    let cached = first_pass(
+    let mut cached = first_pass(
         &mut volume,
         request,
         &output,
@@ -96,8 +98,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         &mut decoder,
     )?;
 
-    // 汇总阶段落在这里：卷级 p95 上包络、迟滞与离群页识别是 08 号票，它们要看完整卷才做得了，
-    // 而第二遍此刻已经不必回头碰源页——这正是本票为那一张铺的路。
+    let verdict = summarize_volume(&mut cached, request);
 
     if let Some(mut sink) = sink {
         second_pass(&cached, &targets, &mut cache, &mut sink)?;
@@ -112,9 +113,44 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         volume: volume.root,
         output,
         pages: cached.into_iter().map(|page| page.report).collect(),
+        verdict,
         cache: cache.usage(),
         decodes: decoder.decodes(),
     })
+}
+
+/// 汇总：把逐页判定收成卷级的一个基准档（ADR 0006：位深按卷取上包络并加迟滞）。
+///
+/// 夹在两遍之间——要看完整卷才做得了，而第二遍此刻已经不必回头碰源页（ADR 0005）。
+/// 重定过的判定写回每一页，第二遍读的就是它。
+///
+/// 两条出口走不到上包络，各有各的道理：`--per-page` 是用户点名要逐页最优（决定第 6 条），
+/// `--bit-depth` 是判定整个被顶掉、逐页已全是 `Override`——后者不是「被关掉」，
+/// 而是逐页结果里根本没有分布可聚合。两者在报告里各说各的，见 [`VolumeVerdict`]。
+fn summarize_volume(pages: &mut [CachedPage], request: &Request) -> Option<VolumeVerdict> {
+    if pages.is_empty() {
+        return None;
+    }
+    if let Some(bit_depth) = request.bit_depth {
+        return Some(VolumeVerdict::Override(bit_depth));
+    }
+    if request.per_page {
+        return Some(VolumeVerdict::PerPage);
+    }
+    let summary = {
+        let inputs: Vec<envelope::Page> = pages
+            .iter()
+            .map(|page| envelope::Page {
+                scores: &page.report.scores,
+                decided: page.report.verdict.bit_depth,
+            })
+            .collect();
+        envelope::summarize(&inputs, request.profile.threshold())?
+    };
+    for (page, verdict) in pages.iter_mut().zip(summary.verdicts) {
+        page.report.verdict = verdict;
+    }
+    Some(VolumeVerdict::Envelope(summary.envelope))
 }
 
 /// 第一遍产出的一页：给报告的那一份，加上它在缓存里的序号。
@@ -130,8 +166,10 @@ struct CachedPage {
 /// 第一遍：读 → 解码 → 转灰 → 几何与缩放 → 判据曲线 → 判定，同时把参照存进缓存。
 ///
 /// 判据两种模式都求值，dry-run 预告的就是照做时的那一档（spec 的 story 6）。
-/// 覆盖了判定也照求：`--dry-run --bit-depth 2` 要说得清「你点的这一档判据是多少」，
-/// 而卷级上包络与离群页（08 号票）本来就要每页都有判据值。
+/// 覆盖了判定也照求：`--dry-run --bit-depth 2` 要说得清「你点的这一档判据是多少」。
+///
+/// 这里给出的判定是**逐页**的那一档，汇总（[`summarize`]）会把它重定一遍——
+/// 上包络与离群页判据要的正是每页都有的这条判据曲线。
 fn first_pass(
     volume: &mut Volume,
     request: &Request,

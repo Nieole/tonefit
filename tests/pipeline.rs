@@ -5,7 +5,7 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{BitDepth, CacheBudget, Filter, Mode, Reason, Request, Size};
+use tonefit::{BitDepth, CacheBudget, Filter, Mode, Reason, Request, Size, VolumeVerdict};
 
 #[test]
 fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
@@ -668,7 +668,9 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
 }
 
 #[test]
-fn every_page_gets_a_bit_depth_and_a_reason_for_it() {
+fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_reason() {
+    // `--per-page` 关闭上包络与迟滞，给「只要最小体积」留的出口（ADR 0006 决定第 6 条）。
+    // 换回来的正是翻页跳变：这两页的判据差得远，档位于是也差着。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 连续渐变页：低位深上必然崩，判定该落在候选上界那一档。
@@ -679,8 +681,17 @@ fn every_page_gets_a_bit_depth_and_a_reason_for_it() {
         &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
     );
 
-    let report = run_volume(&space, &volume);
+    let report = tonefit::run(&Request {
+        per_page: true,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
 
+    assert_eq!(
+        report.volumes[0].verdict,
+        Some(VolumeVerdict::PerPage),
+        "上包络没被关掉"
+    );
     let pages = &report.volumes[0].pages;
     assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
     assert_eq!(pages[0].verdict.reason, Reason::LowestWithinThreshold);
@@ -775,6 +786,9 @@ fn a_bit_depth_the_panel_cannot_show_is_refused() {
 fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     // 灰阶数压到 4 级，候选只剩 {1,2}；渐变页在这两档上都远远越界。
     // 没有可用档时取候选上界兜底——判定要有，理由要说出是兜底。
+    //
+    // 兜底是**逐页**那一层的规则，`--per-page` 是它在报告里露面的地方：卷级那一层开着时，
+    // 理由说的是基准档从哪来，而「一档都不达标」这件事仍摆在同一页的判据值里。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -783,7 +797,8 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
         .expect("4 级可用");
 
     let report = tonefit::run(&Request {
-        profile,
+        profile: profile.clone(),
+        per_page: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -791,6 +806,18 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     let page = &report.volumes[0].pages[0];
     assert_eq!(page.verdict.bit_depth, BitDepth::Two);
     assert_eq!(page.verdict.reason, Reason::NoneWithinThreshold);
+
+    // 上包络开着时档位不变：一页的卷，基准档只能是这一页要的那一档。
+    // 兜底的那一档是候选上界，卷级那一层不会、也不该把它再抬高。
+    let with_envelope = tonefit::run(&Request {
+        profile,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        with_envelope.volumes[0].pages[0].verdict.bit_depth,
+        BitDepth::Two
+    );
 }
 
 #[test]
@@ -925,4 +952,183 @@ fn a_dry_run_predicts_what_the_cache_will_hold() {
     );
     // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
     assert_eq!(predicted.volumes[0].decodes, 2);
+}
+
+/// 卷级用例的合成卷：`levels` 里每一项造一页，页名按阅读顺序编号。
+///
+/// 造页一律用纯色页：判据在纯色页上算得出准数——量化误差就是取值到格点的距离，
+/// 低通与掩蔽加权都不改它。逐页判定因此由取值直接定死，卷级那一层要的正是一条排得开的分布。
+fn volume_of_solids(space: &Workspace, levels: &[u8]) -> fixtures::Volume {
+    let volume = space.volume("volume-a");
+    for (index, &level) in levels.iter().enumerate() {
+        volume.page(
+            &format!("{:03}.png", index + 1),
+            &fixtures::solid(fixtures::TINY, level),
+        );
+    }
+    volume
+}
+
+/// 逐页判定要 2bit 的纯色页：85 正落在 2bit 的格点上，1bit 上差 85。
+const NEEDS_TWO_BITS: u8 = 85;
+
+/// 逐页判定要 4bit 的纯色页：96 在 2bit 上差 11——过了阈值，但远够不上「显著偏离」。
+const NEEDS_FOUR_BITS: u8 = 96;
+
+/// 逐页判定同样要 4bit，但在 2bit 上差 42：远在界外，离群页判据要的就是这一量级。
+const FAR_OUTSIDE: u8 = 128;
+
+#[test]
+fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_set_it() {
+    // 位深不再逐页各判各的（ADR 0006）：主体页共用一个基准档，翻页时不逐页变动。
+    // 九页只要 1bit、十页要 2bit：p95 站在 2bit 上，那九页跟着多付一档——
+    // 体积不再最优是明知故犯的交换。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    for index in 0..9 {
+        volume.page(
+            &format!("{:03}.png", index + 1),
+            &fixtures::line_art(fixtures::TINY),
+        );
+    }
+    for index in 9..19 {
+        volume.page(
+            &format!("{:03}.png", index + 1),
+            &fixtures::solid(fixtures::TINY, NEEDS_TWO_BITS),
+        );
+    }
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    let envelope = envelope_of(volume_report);
+    assert_eq!(envelope.base, BitDepth::Two);
+    assert_eq!(envelope.body_pages, 19);
+    assert_eq!(envelope.outlier_pages, 0);
+    assert_eq!(envelope.raised_pages, 0);
+    for page in &volume_report.pages {
+        assert_eq!(
+            page.verdict.bit_depth,
+            BitDepth::Two,
+            "{} 没跟着基准档走",
+            page.source.display()
+        );
+        assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+    }
+    // 驱动页指得出来，而且它的需求就是基准档：站在 p95 秩上的正是它。
+    let driver = &volume_report.pages[envelope.driver];
+    assert_eq!(lowest_within_threshold(driver, &report), BitDepth::Two);
+}
+
+#[test]
+fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own() {
+    // 离群页不参与上包络，单独定档（ADR 0006 决定第 5 条）。
+    // 卷内只有一页远在界外：它自己拿 4bit，主体照旧留在 2bit 上。
+    let space = Workspace::new();
+    let mut levels = vec![NEEDS_TWO_BITS; 19];
+    levels.push(FAR_OUTSIDE);
+    let volume = volume_of_solids(&space, &levels);
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    let envelope = envelope_of(volume_report);
+    assert_eq!(envelope.base, BitDepth::Two);
+    assert_eq!(envelope.outlier_pages, 1);
+    assert_eq!(envelope.body_pages, 19);
+    assert_ne!(envelope.driver, 19, "离群页不该定出基准档");
+
+    let outlier = &volume_report.pages[19];
+    assert_eq!(outlier.verdict.bit_depth, BitDepth::Four);
+    assert_eq!(outlier.verdict.reason, Reason::Outlier);
+    // 交界处那一次跳变是认下的代价，位置指得出来就行：主体一页不动。
+    for page in &volume_report.pages[..19] {
+        assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+        assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+    }
+}
+
+#[test]
+fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
+    // 迟滞限制档位切换频率：一页说了不算，连续够了才升档（ADR 0006 决定第 4 条）。
+    // 两个卷除了要求更高的那一段长了一页，其余完全相同。
+    let raised = run_with_a_run_of(3);
+    let unchanged = run_with_a_run_of(2);
+
+    assert_eq!(envelope_of(&raised).raised_pages, 3);
+    for page in &raised.pages[30..33] {
+        assert_eq!(page.verdict.bit_depth, BitDepth::Four);
+        assert_eq!(page.verdict.reason, Reason::Hysteresis);
+    }
+    // 段外的页不受影响：升的是那一段，不是全卷。
+    assert_eq!(raised.pages[29].verdict.bit_depth, BitDepth::Two);
+    assert_eq!(raised.pages[33].verdict.bit_depth, BitDepth::Two);
+
+    assert_eq!(envelope_of(&unchanged).raised_pages, 0);
+    for page in &unchanged.pages {
+        assert_eq!(
+            page.verdict.bit_depth,
+            BitDepth::Two,
+            "{} 靠不足一段的要求升了档",
+            page.source.display()
+        );
+    }
+}
+
+/// 六十页的卷，第 31 页起有 `length` 页要求高于基准档。
+///
+/// 六十页是 p95 撑得住一段三页的最小规模：秩落在 57，基准档之上还剩得下三页。
+fn run_with_a_run_of(length: usize) -> tonefit::VolumeReport {
+    let space = Workspace::new();
+    let mut levels = vec![NEEDS_TWO_BITS; 60];
+    levels[30..30 + length].fill(NEEDS_FOUR_BITS);
+    let volume = volume_of_solids(&space, &levels);
+
+    let report = run_volume(&space, &volume);
+
+    report.volumes.into_iter().next().expect("一个卷")
+}
+
+#[test]
+fn an_override_leaves_no_volume_envelope_to_speak_of() {
+    // `--bit-depth` 顶掉的是判定本身，卷级基准档因此无从谈起——理由仍分得清是覆盖。
+    let space = Workspace::new();
+    let volume = volume_of_solids(&space, &[NEEDS_TWO_BITS; 4]);
+
+    let report = tonefit::run(&Request {
+        bit_depth: Some(BitDepth::Four),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    // 覆盖之后逐页判定全是 `Override`，逐页结果里没有分布可聚合：
+    // 卷级不是「被关掉」，而是无从谈起，报告要说的正是这一句。
+    assert_eq!(
+        report.volumes[0].verdict,
+        Some(VolumeVerdict::Override(BitDepth::Four))
+    );
+    for page in &report.volumes[0].pages {
+        assert_eq!(page.verdict.reason, Reason::Override);
+    }
+}
+
+/// 取这一卷的上包络。不是上包络定的档就是用例造错了输入。
+fn envelope_of(volume: &tonefit::VolumeReport) -> tonefit::Envelope {
+    match volume.verdict {
+        Some(VolumeVerdict::Envelope(envelope)) => envelope,
+        other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+    }
+}
+
+/// 这一页逐页判定会选的那一档：判据落在阈值以内的最低一档。
+///
+/// 卷级那一层把 `verdict` 重定过了，逐页要的那一档因此得从判据曲线与阈值现算——
+/// 报告留着 `scores`，算得出来正是它留着的理由。
+fn lowest_within_threshold(page: &tonefit::PageReport, report: &tonefit::Report) -> BitDepth {
+    let threshold = report.profile.threshold();
+    page.scores
+        .iter()
+        .find(|scored| threshold.admits(scored.score))
+        .map(|scored| scored.bit_depth)
+        .unwrap_or_else(|| page.scores.last().expect("候选非空").bit_depth)
 }

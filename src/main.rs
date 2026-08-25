@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use tonefit::{
     BitDepth, CacheBudget, CandidateScore, Filter, Mode, PageReport, Profile, Report, Request,
+    VolumeReport, VolumeVerdict,
 };
 
 #[derive(Parser)]
@@ -35,6 +36,11 @@ struct Cli {
     /// 覆盖自动判定的位深：1、2、4、8。面板灰阶数那道上界仍在，越界的覆盖会被拒绝。
     #[arg(long, value_name = "位深")]
     bit_depth: Option<u32>,
+
+    /// 关闭卷级上包络与迟滞，位深回到逐页最优。体积最小，代价是**重新引入翻页跳变**：
+    /// 相邻两页会落到不同档上，翻过去的一瞬间灰调的颗粒感换一种粗细。
+    #[arg(long)]
+    per_page: bool,
 
     /// 两遍之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
     /// 超出的页溢写临时文件，运行结束即收走。
@@ -100,6 +106,7 @@ fn main() -> Result<()> {
         profile,
         filter,
         bit_depth,
+        per_page: cli.per_page,
         cache_budget,
         mode,
     })?;
@@ -119,6 +126,7 @@ fn render(report: &Report, mode: Mode) -> String {
             volume.output.display(),
             volume.pages.len()
         ));
+        text.push_str(&volume_lines(volume));
         // 卷成为不可分割的处理单元，峰值内存随卷大小走（ADR 0005）：这一行是那条代价的现场。
         text.push_str(&format!("  缓存 {}\n", volume.cache));
         for page in &volume.pages {
@@ -132,6 +140,27 @@ fn render(report: &Report, mode: Mode) -> String {
         }
     }
     text
+}
+
+/// 卷级那一段：这一卷的位深从哪来。
+///
+/// 「这卷为什么是这个位深」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
+/// 上包络不在场时说清是为什么不在场——那正是翻页跳变回来的时候，报告不能看起来还是一样。
+fn volume_lines(volume: &VolumeReport) -> String {
+    match &volume.verdict {
+        Some(VolumeVerdict::Envelope(envelope)) => format!(
+            "  卷级 {envelope}\n    驱动页 {}\n",
+            volume.pages[envelope.driver].source.display()
+        ),
+        Some(VolumeVerdict::Override(bit_depth)) => {
+            format!("  卷级 位深 {bit_depth}（--bit-depth 覆盖）：判定被顶掉，卷级基准档无从谈起\n")
+        }
+        Some(VolumeVerdict::PerPage) => {
+            "  卷级 无（--per-page）：上包络与迟滞关着，位深逐页最优，翻页处会换档\n".to_owned()
+        }
+        // 一页都没有的卷只装着透传文件，没有位深可判。
+        None => String::new(),
+    }
 }
 
 /// 一页的判定：定下的那一档、定它的理由，后面跟上各候选的判据值。
@@ -160,7 +189,20 @@ fn score_line(scores: &[CandidateScore]) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use tonefit::{CacheUsage, GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport};
+    use tonefit::{
+        CacheUsage, Envelope, GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport,
+    };
+
+    /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
+    fn envelope() -> Envelope {
+        Envelope {
+            base: BitDepth::Four,
+            driver: 0,
+            body_pages: 1,
+            outlier_pages: 0,
+            raised_pages: 0,
+        }
+    }
 
     /// 一份缓存用量。渲染这一侧只关心它有没有被说出来，数值取整好读的。
     fn cache_usage() -> CacheUsage {
@@ -243,6 +285,7 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                verdict: Some(VolumeVerdict::Envelope(envelope())),
                 cache: cache_usage(),
                 decodes: 1,
                 pages: vec![PageReport {
@@ -286,6 +329,7 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                verdict: Some(VolumeVerdict::Envelope(envelope())),
                 cache: cache_usage(),
                 decodes: 1,
                 pages: vec![PageReport {
@@ -308,8 +352,8 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷两行（一行去处，一行缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 5);
+        // profile 一行、卷四行（去处、卷级、驱动页、缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 7);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -334,6 +378,14 @@ mod tests {
         // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
         assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
         assert!(text.contains("未溢写"), "{text}");
+        // 「这卷为什么是这个位深」要有一个指得出驱动页的答案（ADR 0006）。
+        assert!(text.contains("卷级 基准档 4bit"), "{text}");
+        assert!(text.contains("驱动页 library/volume-a/001.jpg"), "{text}");
+        // 上包络不承诺卷内绝对一致：离群与迟滞升档各出了多少页，报告要说出来。
+        assert!(text.contains("离群 0 页"), "{text}");
+        assert!(text.contains("迟滞升档 0 页"), "{text}");
+        // 上包络的分位、迟滞页数、离群页判据三者均未标定，报告显式标注（ADR 0006）。
+        assert!(text.contains("三者均未标定"), "{text}");
     }
 
     #[test]

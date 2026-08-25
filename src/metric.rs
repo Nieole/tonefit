@@ -251,8 +251,17 @@ fn upper_quantile(values: &mut [f32]) -> f32 {
         return 0.0;
     }
     values.sort_by(|a, b| a.partial_cmp(b).expect("局部均值误差不会是 NaN"));
-    let rank = (UPPER_QUANTILE * values.len() as f64).ceil().max(1.0) as usize;
-    values[rank - 1]
+    values[nearest_rank(UPPER_QUANTILE, values.len()) - 1]
+}
+
+/// 最近秩：`count` 个数排开后，上分位 `quantile` 落在第几名（从 1 数起）。不插值。
+///
+/// 判据的分块聚合与卷级上包络（`crate::envelope`）共用它。两处都要「站在上分位上的那一个」，
+/// 取法写成一处，「同一套取法」才是构造出来的事实，而不是两边注释里的一句声称。
+///
+/// `count` 少到取不出分位时秩就是 `count`，退化成最差的那一个。
+pub(crate) fn nearest_rank(quantile: f64, count: usize) -> usize {
+    (quantile * count as f64).ceil().max(1.0) as usize
 }
 
 #[cfg(test)]
