@@ -7,6 +7,7 @@ mod decode;
 mod encode;
 mod geometry;
 mod gray;
+mod profile;
 mod report;
 mod request;
 mod resample;
@@ -18,13 +19,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 pub use geometry::Size;
+pub use profile::{Panel, Profile};
 pub use report::{PageReport, Report, VolumeReport};
 pub use request::Request;
-
-/// 面板分辨率，暂时写死为 Kobo Libra 2——阈值标定的基准设备。
-///
-/// 目标尺寸由它 fit-inside 算出，逐页不同。02 号票接入 profile 后这个常量退场。
-pub const PANEL_RESOLUTION: Size = Size::new(1264, 1680);
 
 /// 处理点名的若干卷，产出设备优化副本。源卷只读。
 pub fn run(request: &Request) -> Result<Report> {
@@ -34,19 +31,23 @@ pub fn run(request: &Request) -> Result<Report> {
     for input in &request.inputs {
         ensure_output_is_elsewhere(input, &request.output_root)?;
     }
+    let panel = request.profile.panel();
     let volumes = request
         .inputs
         .iter()
-        .map(|input| process_volume(input, &request.output_root))
+        .map(|input| process_volume(input, &request.output_root, panel))
         .collect::<Result<Vec<_>>>()?;
-    Ok(Report { volumes })
+    Ok(Report {
+        profile: request.profile.clone(),
+        volumes,
+    })
 }
 
 /// 逐页读、算、写一遍。
 ///
 /// ADR 0005 要的是「解码一次 + 缓存缩放后的图」的两遍管线；那要等判据出现才有意义，
 /// 见 07 号票。在此之前这里是单遍，卷级决策与缓存都还不存在。
-fn process_volume(input: &Path, output_root: &Path) -> Result<VolumeReport> {
+fn process_volume(input: &Path, output_root: &Path, panel: Panel) -> Result<VolumeReport> {
     let volume = source::open(input)?;
     let output = output_root.join(&volume.name);
     let targets: Vec<PathBuf> = volume
@@ -60,7 +61,7 @@ fn process_volume(input: &Path, output_root: &Path) -> Result<VolumeReport> {
     for (page, target_path) in volume.pages.iter().zip(targets) {
         let decoded = decode::decode(&page.path)?;
         let gray = gray::to_gray(&decoded);
-        let size = geometry::fit_inside(gray.size(), PANEL_RESOLUTION);
+        let size = geometry::fit_inside(gray.size(), panel.resolution);
         let scaled = resample::resize(&gray, size)?;
         encode::write_gray8_png(&target_path, &scaled)?;
         pages.push(PageReport {

@@ -3,12 +3,15 @@
 use std::path::PathBuf;
 
 use crate::geometry::Size;
+use crate::profile::Profile;
 
 /// 一次处理调用的结果。
 ///
 /// spec 固定的形状里还有失败页集与计时，它们随各自的票落地（错误隔离见 12 号票）。
 #[derive(Debug, Clone)]
 pub struct Report {
+    /// 本次实际使用的 profile 与它的面板。这批输出该拿去哪台设备看，答案在这里。
+    pub profile: Profile,
     pub volumes: Vec<VolumeReport>,
 }
 

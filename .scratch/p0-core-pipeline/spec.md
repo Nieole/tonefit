@@ -75,10 +75,13 @@ Request  { 输入路径集, Profile, Mode, 覆盖项 }
 Mode     = Process | DryRun | Calibrate
 覆盖项    { 位深, 滤波器, 抖动模式, 缓存预算, 介质, 编码器 }
 
-Report   { 卷报告集, 失败页集, 计时 }
+Report   { Profile, 卷报告集, 失败页集, 计时 }
 卷报告    { 卷标识, 判定位深, 抖动模式, 判定理由, 驱动页, 页数, 输出路径 }
 判定理由  = VolumeEnvelope | Outlier | Override | Skipped
 ```
+
+`Report` 里的 Profile 是**本次实际用的**那一份：`--gray-levels` 覆盖之后，
+「输出该拿去哪块面板看」只有报告能回答。
 
 `Skipped` 是幂等命中的结果，与「处理过」在报告里可区分。
 

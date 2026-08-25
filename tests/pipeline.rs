@@ -173,6 +173,29 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
 }
 
 #[test]
+fn the_target_size_comes_from_the_profiles_panel() {
+    // 同一页送进三个 profile：目标尺寸随各自的面板走，没有写死的面板。
+    // 期望值手算：B 类中位页 1441×2048 三块面板上都由高边定夺，宽 = round(1441 × 面板高 ÷ 2048)。
+    let cases = [
+        ("kobo-libra-2", Size::new(1182, 1680)),
+        ("kobo-clara-2e", Size::new(1019, 1448)),
+        ("boox-note-air3", Size::new(1317, 1872)),
+    ];
+
+    for (device, expected) in cases {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+
+        let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(device));
+
+        let page = &report.volumes[0].pages[0];
+        assert_eq!(page.size, expected, "{device}");
+        assert_eq!(fixtures::read_png(&page.output).size, expected, "{device}");
+    }
+}
+
+#[test]
 fn a_solid_page_stays_solid_after_scaling() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -205,6 +228,28 @@ fn a_screentone_page_resolves_into_tones() {
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     let levels = distinct_levels(&written.pixels);
     assert!(levels > 16, "缩放后只剩 {levels} 级灰调");
+}
+
+#[test]
+fn the_report_names_the_profile_and_the_panel_it_used() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    // 覆盖过灰阶数的 profile：报告要给出本次实际用的那块面板，而不是内置表里的原样。
+    let profile = fixtures::profile("boox-tab-x")
+        .with_gray_levels(8)
+        .expect("8 级可用");
+
+    let report = fixtures::run_volume_with(&space, &volume, profile);
+
+    assert_eq!(report.profile.device(), "boox-tab-x");
+    let panel = report.profile.panel();
+    assert_eq!(panel.resolution, Size::new(1650, 2200));
+    assert_eq!(panel.ppi, 207);
+    assert_eq!(panel.gray_levels, 8);
 }
 
 #[test]
@@ -256,6 +301,7 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
     let report = tonefit::run(&Request {
         inputs: vec![first.path().to_path_buf(), second.path().to_path_buf()],
         output_root: space.out(),
+        profile: fixtures::baseline_profile(),
     })
     .expect("处理应当成功");
 
@@ -287,6 +333,7 @@ fn two_pages_that_would_share_one_output_are_refused() {
     let error = tonefit::run(&Request {
         inputs: vec![volume.path().to_path_buf()],
         output_root: space.out(),
+        profile: fixtures::baseline_profile(),
     })
     .expect_err("输出撞名应当报错");
 
@@ -299,6 +346,7 @@ fn an_empty_scope_is_refused() {
     let error = tonefit::run(&Request {
         inputs: Vec::new(),
         output_root: space.out(),
+        profile: fixtures::baseline_profile(),
     })
     .expect_err("空范围应当报错");
     assert!(error.to_string().contains("处理范围为空"), "{error}");
@@ -317,6 +365,7 @@ fn writing_into_the_source_volume_is_refused() {
     let error = tonefit::run(&Request {
         inputs: vec![volume.path().to_path_buf()],
         output_root: volume.path().join("out"),
+        profile: fixtures::baseline_profile(),
     })
     .expect_err("往源卷里写应当被拒绝");
 

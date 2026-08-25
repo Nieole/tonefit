@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
-use tonefit::Size;
+use tonefit::{Profile, Size};
 
 /// B 类素材的中位尺寸（见 measurements 的《B 类素材普查》）。缩放比含小数。
 pub const TYPICAL: Size = Size::new(1441, 2048);
@@ -146,11 +146,31 @@ impl Default for Workspace {
     }
 }
 
-/// 对一个卷调用被测的 `run`。多卷或要看错误的用例自己拼 `Request`。
+/// 基准设备：`CONTEXT.md` 里阈值标定的那台。不点名 profile 的用例都用它。
+pub const BASELINE_DEVICE: &str = "kobo-libra-2";
+
+/// 按型号名取 profile。型号必须在内置表里，不在就是夹具写错了。
+pub fn profile(device: &str) -> Profile {
+    Profile::resolve(device).unwrap_or_else(|error| panic!("解析 profile {device}：{error}"))
+}
+
+/// 基准设备的 profile。自己拼 `Request` 的用例用它填 profile 那一项。
+pub fn baseline_profile() -> Profile {
+    profile(BASELINE_DEVICE)
+}
+
+/// 对一个卷调用被测的 `run`，用基准设备的 profile。
+/// 多卷、换 profile 或要看错误的用例自己拼 `Request`。
 pub fn run_volume(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    run_volume_with(space, volume, baseline_profile())
+}
+
+/// 同上，但点名 profile。
+pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
         inputs: vec![volume.path().to_path_buf()],
         output_root: space.out(),
+        profile,
     })
     .expect("处理应当成功")
 }
