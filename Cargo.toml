@@ -25,3 +25,9 @@ zip = "8"
 
 [features]
 ssimulacra2 = ["dep:ssimulacra2"]
+
+[dev-dependencies]
+# 夹具生成器要写出 AVIF；`avif` 是编码侧特性（ravif），与运行时解码用的 avif-native 不同。
+# resolver v2 不把 dev-dependencies 的特性并进非 dev 构建，`cargo build` 不会带上 ravif。
+image = { version = "0.25.9", default-features = false, features = ["avif"] }
+tempfile = "3.24.0"
