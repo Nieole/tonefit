@@ -127,7 +127,7 @@ fn png_depth(depth: BitDepth) -> png::BitDepth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quantize::quantize;
+    use crate::quantize::{Candidate, Dither, quantize};
 
     /// 一页竖直渐变，每行一个取值。
     fn gradient(size: Size) -> GrayImage {
@@ -165,7 +165,7 @@ mod tests {
         // 宽度取 7：1/2/4 位每行都除不尽，末字节留着空位，正好压住打包的边界。
         let size = Size::new(7, 5);
         for depth in BitDepth::ALL {
-            let quantized = quantize(&gradient(size), depth);
+            let quantized = quantize(&gradient(size), Candidate::new(depth, Dither::Off));
             let (_, _, read_back) = read(&png(&quantized, depth).expect("编 PNG"));
             assert_eq!(read_back, quantized.pixels(), "{depth} 没有原样解回来");
         }
@@ -174,7 +174,10 @@ mod tests {
     /// 取值铺满格点时灰度胜出：调色板要为同样的位宽再背一个 PLTE。
     #[test]
     fn a_page_that_fills_the_grid_comes_out_as_grayscale() {
-        let quantized = quantize(&gradient(Size::new(64, 64)), BitDepth::Four);
+        let quantized = quantize(
+            &gradient(Size::new(64, 64)),
+            Candidate::new(BitDepth::Four, Dither::Off),
+        );
         let (color_type, bit_depth, _) = read(&png(&quantized, BitDepth::Four).expect("编 PNG"));
         assert_eq!(color_type, png::ColorType::Grayscale);
         assert_eq!(bit_depth, png::BitDepth::Four);

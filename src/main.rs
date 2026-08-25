@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use tonefit::{
-    BitDepth, CacheBudget, CandidateScore, Filter, Mode, PageReport, Profile, Report, Request,
-    VolumeReport, VolumeVerdict,
+    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, Mode, PageReport, Profile,
+    Report, Request, VolumeReport, VolumeVerdict,
 };
 
 #[derive(Parser)]
@@ -37,6 +37,12 @@ struct Cli {
     #[arg(long, value_name = "位深")]
     bit_depth: Option<u32>,
 
+    /// 覆盖自动选择的抖动模式：off（= none）、fs（= floyd-steinberg）。
+    /// 抖动只在输出不被下游缩放时才谈得上：卷内有页源比目标尺寸小时几何门不成立，
+    /// 那时点名 fs 会被**拒绝**，不会静默照抖。
+    #[arg(long, value_name = "模式")]
+    dither: Option<String>,
+
     /// 关闭卷级上包络与迟滞，位深回到逐页最优。体积最小，代价是**重新引入翻页跳变**：
     /// 相邻两页会落到不同档上，翻过去的一瞬间灰调的颗粒感换一种粗细。
     #[arg(long)]
@@ -47,7 +53,7 @@ struct Cli {
     #[arg(long, value_name = "字节数")]
     cache_budget: Option<String>,
 
-    /// 只算不写：报告照出，逐页给出判定与各候选位深的判据值，一个文件都不落盘。
+    /// 只算不写：报告照出，逐页给出判定与各候选的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
 }
@@ -70,9 +76,14 @@ impl Cli {
         }
     }
 
-    /// 本次要不要顶掉自动判定。不点名就由判据说了算。
+    /// 本次要不要点名位深。不点名就由判据说了算。
     fn bit_depth_override(&self) -> Result<Option<BitDepth>> {
         self.bit_depth.map(BitDepth::from_bits).transpose()
+    }
+
+    /// 本次要不要点名抖动模式。不点名就由判据在几何门放行的那几种里选。
+    fn dither_override(&self) -> Result<Option<Dither>> {
+        self.dither.as_deref().map(Dither::resolve).transpose()
     }
 
     /// 本次的缓存预算。不点名就是默认的那一档。
@@ -98,6 +109,7 @@ fn main() -> Result<()> {
     let profile = cli.target_profile()?;
     let filter = cli.residual_filter()?;
     let bit_depth = cli.bit_depth_override()?;
+    let dither = cli.dither_override()?;
     let cache_budget = cli.cache_budget()?;
     let mode = cli.mode();
     let report = tonefit::run(&Request {
@@ -106,6 +118,7 @@ fn main() -> Result<()> {
         profile,
         filter,
         bit_depth,
+        dither,
         per_page: cli.per_page,
         cache_budget,
         mode,
@@ -142,45 +155,80 @@ fn render(report: &Report, mode: Mode) -> String {
     text
 }
 
-/// 卷级那一段：这一卷的位深从哪来。
+/// 卷级那一段：几何门的判定结果，加上这一卷的候选从哪来。
 ///
-/// 「这卷为什么是这个位深」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
+/// 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
 /// 上包络不在场时说清是为什么不在场——那正是翻页跳变回来的时候，报告不能看起来还是一样。
 fn volume_lines(volume: &VolumeReport) -> String {
-    match &volume.verdict {
-        Some(VolumeVerdict::Envelope(envelope)) => format!(
+    // 一页都没有的卷只装着透传文件，没有候选可判，几何门也就无从谈起。
+    let Some(verdict) = &volume.verdict else {
+        return String::new();
+    };
+    let mut text = gate_line(volume, verdict);
+    text.push_str(&match verdict {
+        VolumeVerdict::Envelope(envelope) => format!(
             "  卷级 {envelope}\n    驱动页 {}\n",
             volume.pages[envelope.driver].source.display()
         ),
-        Some(VolumeVerdict::Override(bit_depth)) => {
-            format!("  卷级 位深 {bit_depth}（--bit-depth 覆盖）：判定被顶掉，卷级基准档无从谈起\n")
+        VolumeVerdict::Override(candidate) => format!(
+            "  卷级 判定 {candidate}（覆盖项裁到只剩一个候选）：判定被顶掉，卷级基准档无从谈起\n"
+        ),
+        VolumeVerdict::PerPage => {
+            "  卷级 无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档\n".to_owned()
         }
-        Some(VolumeVerdict::PerPage) => {
-            "  卷级 无（--per-page）：上包络与迟滞关着，位深逐页最优，翻页处会换档\n".to_owned()
-        }
-        // 一页都没有的卷只装着透传文件，没有位深可判。
-        None => String::new(),
-    }
+    });
+    text
 }
 
-/// 一页的判定：定下的那一档、定它的理由，后面跟上各候选的判据值。
+/// 几何门那一行：门的判定结果，加上本卷最终抖不抖。
+///
+/// 两件事写在一行上，因为只有并排才解释得了对方：门关着时抖动整体关闭，那个「不抖动」
+/// 不是判据选的；门开着时它才是判据选出来的（ADR 0007：不成立时整体关闭，
+/// 通过时抖不抖跟着位深一起按卷决定）。
+/// 门被哪一页关上也要说出来——门关掉的是**整卷**的抖动，不指名，用户就无从下手。
+fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
+    let gate = match volume.gate {
+        GeometryGate::Holds => "成立".to_owned(),
+        GeometryGate::Broken { page } => format!(
+            "不成立（{} 源比目标小，原样输出，阅读器还要再缩一次）",
+            volume.pages[page].source.display()
+        ),
+    };
+    // `--per-page` 一开就没有卷级的抖动模式：它跟着位深一起逐页可变。
+    let dither = verdict
+        .dither()
+        .map_or_else(|| "逐页".to_owned(), |dither| dither.to_string());
+    let mut text = format!("  几何门 {gate} · 本卷 {dither}\n");
+    if !volume.gate.holds() {
+        // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
+        // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
+        // 报告因此得把这句话说出来，而不是让它烂在一句注释里。
+        text.push_str(
+            "    面板灰阶上界的依据随门一起失效，\
+             P0 仍按它裁候选位深（ADR 0003：该用哪个集合尚未测量）\n",
+        );
+    }
+    text
+}
+
+/// 一页的判定：定下的那个候选、定它的理由，后面跟上各候选的判据值。
 ///
 /// 判据是量、阈值是界：判定从两者的比较来，因此两者都得摆在同一行上，判定才是可解释的
 /// （spec 的 story 7）。阈值在头一行的 profile 里，它对整份报告只有一个。
 fn verdict_line(page: &PageReport) -> String {
     format!(
-        "位深 {}（{}）  判据 {}",
-        page.verdict.bit_depth,
+        "判定 {}（{}）  判据 {}",
+        page.verdict.candidate,
         page.verdict.reason,
         score_line(&page.scores)
     )
 }
 
-/// 一页各候选的判据值排成一行，位深由小到大。
+/// 一页各候选的判据值排成一行，候选由小到大。
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
         .iter()
-        .map(|scored| format!("{} {}", scored.bit_depth, scored.score))
+        .map(|scored| format!("{} {}", scored.candidate, scored.score))
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -190,13 +238,14 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use tonefit::{
-        CacheUsage, Envelope, GrayImage, Reason, Reference, Scaling, Size, Verdict, VolumeReport,
+        CacheUsage, Candidate, Envelope, GrayImage, Reason, Reference, Scaling, Size, Verdict,
+        VolumeReport,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
-    fn envelope() -> Envelope {
+    fn envelope(base: Candidate) -> Envelope {
         Envelope {
-            base: BitDepth::Four,
+            base,
             driver: 0,
             body_pages: 1,
             outlier_pages: 0,
@@ -219,6 +268,27 @@ mod tests {
     /// B 类中位页缩到基准面板：总缩放比 1.219，不触发预缩（见 measurements 的《B 类素材普查》）。
     fn typical_scaling() -> Scaling {
         Scaling::plan(Size::new(1441, 2048), Size::new(1182, 1680))
+    }
+
+    /// 一份一页的报告。各用例只改自己那一处，别处照抄默认。
+    fn one_page_report(
+        profile: Profile,
+        gate: GeometryGate,
+        verdict: VolumeVerdict,
+        page: PageReport,
+    ) -> Report {
+        Report {
+            profile,
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                verdict: Some(verdict),
+                gate,
+                cache: cache_usage(),
+                decodes: 1,
+                pages: vec![page],
+            }],
+        }
     }
 
     #[test]
@@ -276,34 +346,30 @@ mod tests {
         // 判据值从公开 seam 上真算一个：报告要显示的就是它。
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
-        let one_bit = tonefit::score(
+        let one_bit_dithered = Candidate::new(BitDepth::One, Dither::FloydSteinberg);
+        let score = tonefit::score(
             &reference,
-            &tonefit::quantize(reference.image(), BitDepth::One),
+            &tonefit::quantize(reference.image(), one_bit_dithered),
         );
-        let report = Report {
-            profile: profile.clone(),
-            volumes: vec![VolumeReport {
-                volume: PathBuf::from("library/volume-a"),
-                output: PathBuf::from("out/volume-a"),
-                verdict: Some(VolumeVerdict::Envelope(envelope())),
-                cache: cache_usage(),
-                decodes: 1,
-                pages: vec![PageReport {
-                    source: PathBuf::from("library/volume-a/001.jpg"),
-                    output: PathBuf::from("out/volume-a/001.png"),
-                    size: Size::new(1264, 1680),
-                    scaling: typical_scaling(),
-                    scores: vec![CandidateScore {
-                        bit_depth: BitDepth::One,
-                        score: one_bit,
-                    }],
-                    verdict: Verdict {
-                        bit_depth: BitDepth::One,
-                        reason: Reason::LowestWithinThreshold,
-                    },
+        let report = one_page_report(
+            profile,
+            GeometryGate::Holds,
+            VolumeVerdict::Envelope(envelope(one_bit_dithered)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                scaling: typical_scaling(),
+                scores: vec![CandidateScore {
+                    candidate: one_bit_dithered,
+                    score,
                 }],
-            }],
-        };
+                verdict: Verdict {
+                    candidate: one_bit_dithered,
+                    reason: Reason::LowestWithinThreshold,
+                },
+            },
+        );
 
         let text = render(&report, Mode::DryRun);
 
@@ -311,9 +377,9 @@ mod tests {
         assert!(text.contains("还没落盘"), "{text}");
         // 比值 < 2 的一页：报告要说出它没预缩，残差段就是全部。
         assert!(text.contains("缩放比 1.219 · 未预缩"), "{text}");
-        assert!(text.contains(&format!("判据 1bit {one_bit}")), "{text}");
-        // dry-run 也给判定：预告的就是照做时会写出的那一档。
-        assert!(text.contains("位深 1bit"), "{text}");
+        assert!(text.contains(&format!("判据 1bit+FS {score}")), "{text}");
+        // dry-run 也给判定：预告的就是照做时会写出的那一个候选。
+        assert!(text.contains("判定 1bit+FS"), "{text}");
     }
 
     #[test]
@@ -324,36 +390,32 @@ mod tests {
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
         );
-        let report = Report {
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let report = one_page_report(
             profile,
-            volumes: vec![VolumeReport {
-                volume: PathBuf::from("library/volume-a"),
-                output: PathBuf::from("out/volume-a"),
-                verdict: Some(VolumeVerdict::Envelope(envelope())),
-                cache: cache_usage(),
-                decodes: 1,
-                pages: vec![PageReport {
-                    source: PathBuf::from("library/volume-a/001.jpg"),
-                    output: PathBuf::from("out/volume-a/001.png"),
-                    size: Size::new(1264, 1680),
-                    // 正好两倍面板的一页：报告要说出它预缩过。
-                    scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
-                    scores: vec![CandidateScore {
-                        bit_depth: BitDepth::Four,
-                        score: four_bit,
-                    }],
-                    verdict: Verdict {
-                        bit_depth: BitDepth::Four,
-                        reason: Reason::LowestWithinThreshold,
-                    },
+            GeometryGate::Holds,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                // 正好两倍面板的一页：报告要说出它预缩过。
+                scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
+                scores: vec![CandidateScore {
+                    candidate,
+                    score: four_bit,
                 }],
-            }],
-        };
+                verdict: Verdict {
+                    candidate,
+                    reason: Reason::LowestWithinThreshold,
+                },
+            },
+        );
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷四行（去处、卷级、驱动页、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 7);
+        // profile 一行、卷五行（去处、几何门、卷级、驱动页、缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 8);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -366,10 +428,10 @@ mod tests {
         assert!(text.contains("预缩 2×"), "{text}");
         assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
-        // 判定、它的理由，以及判定所依据的那个量：位深判定要可解释（spec 的 story 7）。
+        // 判定、它的理由，以及判定所依据的那个量：判定要可解释（spec 的 story 7）。
         assert!(
             text.contains(&format!(
-                "位深 4bit（阈值内最低的一档）  判据 4bit {four_bit}"
+                "判定 4bit（阈值内最低的一档）  判据 4bit {four_bit}"
             )),
             "{text}"
         );
@@ -378,7 +440,7 @@ mod tests {
         // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
         assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
         assert!(text.contains("未溢写"), "{text}");
-        // 「这卷为什么是这个位深」要有一个指得出驱动页的答案（ADR 0006）。
+        // 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006）。
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         assert!(text.contains("驱动页 library/volume-a/001.jpg"), "{text}");
         // 上包络不承诺卷内绝对一致：离群与迟滞升档各出了多少页，报告要说出来。
@@ -386,6 +448,47 @@ mod tests {
         assert!(text.contains("迟滞升档 0 页"), "{text}");
         // 上包络的分位、迟滞页数、离群页判据三者均未标定，报告显式标注（ADR 0006）。
         assert!(text.contains("三者均未标定"), "{text}");
+        // 几何门与本卷的抖动模式都要报出来（ADR 0007）：门开着而判据选了不抖。
+        assert!(text.contains("几何门 成立 · 本卷 不抖动"), "{text}");
+    }
+
+    /// 几何门不成立时报告要说出**是哪一页**关的门：门关掉的是整卷的抖动，
+    /// 不指名，用户就无从判断这一卷该怎么办（ADR 0007）。
+    #[test]
+    fn a_broken_geometry_gate_names_the_page_that_broke_it() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Two, Dither::Off);
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
+        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let report = one_page_report(
+            profile,
+            GeometryGate::Broken { page: 0 },
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(800, 1000),
+                // 源比目标小：按不放大原样输出，一条边都贴不住面板。
+                scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
+                scores: vec![CandidateScore { candidate, score }],
+                verdict: Verdict {
+                    candidate,
+                    reason: Reason::VolumeEnvelope,
+                },
+            },
+        );
+
+        let text = render(&report, Mode::Process);
+
+        assert!(text.contains("几何门 不成立"), "{text}");
+        assert!(
+            text.contains("library/volume-a/001.jpg 源比目标小"),
+            "{text}"
+        );
+        assert!(text.contains("本卷 不抖动"), "{text}");
+        // 同一道门也撑着面板灰阶那道硬上界（ADR 0003），它跟着失效这件事不能只留在注释里。
+        assert!(text.contains("面板灰阶上界的依据随门一起失效"), "{text}");
+        assert!(text.contains("ADR 0003"), "{text}");
     }
 
     #[test]
@@ -407,5 +510,32 @@ mod tests {
         assert_eq!(parse(&[]).bit_depth_override().expect("默认值"), None);
         // 全集之外的比特数在拼 Request 之前就被挡下。
         assert!(parse(&["--bit-depth", "3"]).bit_depth_override().is_err());
+    }
+
+    #[test]
+    fn the_dither_mode_from_the_command_line_overrides_the_automatic_choice() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        assert_eq!(
+            parse(&["--dither", "FS"])
+                .dither_override()
+                .expect("fs 应当认得"),
+            Some(Dither::FloydSteinberg)
+        );
+        assert_eq!(
+            parse(&["--dither", "none"])
+                .dither_override()
+                .expect("none 应当认得"),
+            Some(Dither::Off)
+        );
+        // 不点名就由判据在几何门放行的那几种里选。
+        assert_eq!(parse(&[]).dither_override().expect("默认值"), None);
+        // 认不出的名字在拼 Request 之前就被挡下。
+        assert!(parse(&["--dither", "bayer"]).dither_override().is_err());
     }
 }

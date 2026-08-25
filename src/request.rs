@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::cache::CacheBudget;
 use crate::profile::Profile;
-use crate::quantize::BitDepth;
+use crate::quantize::{BitDepth, Dither};
 use crate::resample::Filter;
 
 /// 一次调用做到哪一步。
@@ -21,8 +21,7 @@ pub enum Mode {
 
 /// 一次处理调用的全部输入。
 ///
-/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：抖动模式见 09 号票，
-/// 介质见 13 号票。
+/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：介质见 13 号票。
 #[derive(Debug, Clone)]
 pub struct Request {
     /// 点名要处理的卷。空集是错误，不做全库扫描（ADR 0009）。
@@ -33,10 +32,19 @@ pub struct Request {
     pub profile: Profile,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
-    /// 位深覆盖（`--bit-depth`）。给了就顶掉自动判定，特殊卷靠它手工兜底（spec 的 story 23）。
+    /// 位深覆盖（`--bit-depth`）。特殊卷靠它手工兜底（spec 的 story 23）。
     ///
-    /// 顶掉的只是判定。面板灰阶数那道硬上界仍在，越界的覆盖当场被拒（ADR 0003）。
+    /// 覆盖项裁的是**候选集**：点名一档位深，候选就只剩那一档的。裁到只剩一个候选时判定
+    /// 整个被顶掉；只点位深而几何门开着时，抖动那一维还有得判，判据照旧说了算。
+    ///
+    /// 裁得掉的只有候选。面板灰阶数那道硬上界仍在，越界的覆盖当场被拒（ADR 0003）。
     pub bit_depth: Option<BitDepth>,
+    /// 抖动模式覆盖（`--dither`）。与 [`bit_depth`](Self::bit_depth) 同一个作用方式：
+    /// 裁候选集的另一维。
+    ///
+    /// 裁得掉的同样只有候选。几何门是几何事实、不是自动选择，点名抖动顶不掉它——
+    /// 门不成立时 `--dither fs` 当场被拒，不静默照抖（ADR 0007：整体关闭，不降级）。
+    pub dither: Option<Dither>,
     /// 关掉卷级上包络与迟滞（`--per-page`），位深回到逐页最优。
     ///
     /// 给「只要最小体积」留的出口（ADR 0006 决定第 6 条）。一开，本决定的保护即失效：

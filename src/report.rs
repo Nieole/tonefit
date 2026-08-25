@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use crate::cache::CacheUsage;
 use crate::decide::{CandidateScore, Verdict};
 use crate::envelope::Envelope;
-use crate::geometry::Size;
+use crate::geometry::{GeometryGate, Size};
 use crate::profile::Profile;
-use crate::quantize::BitDepth;
+use crate::quantize::{Candidate, Dither};
 use crate::resample::Scaling;
 
 /// 一次处理调用的结果。
@@ -20,7 +20,7 @@ pub struct Report {
     pub volumes: Vec<VolumeReport>,
 }
 
-/// 一个卷的结果。卷级的抖动模式随 09 号票落地。
+/// 一个卷的结果。
 #[derive(Debug, Clone)]
 pub struct VolumeReport {
     /// 卷标识：源目录路径，或源归档的文件路径。
@@ -29,10 +29,16 @@ pub struct VolumeReport {
     pub output: PathBuf,
     /// 按阅读顺序排列的页。
     pub pages: Vec<PageReport>,
-    /// 本卷的卷级判定：这一卷的位深从哪来。
+    /// 本卷的卷级判定：这一卷的候选从哪来。抖动模式在这个候选里。
     ///
-    /// 一页都没有的卷（只装着透传文件）是 `None`：那样的卷没有位深可判。
+    /// 一页都没有的卷（只装着透传文件）是 `None`：那样的卷没有候选可判。
     pub verdict: Option<VolumeVerdict>,
+    /// 本卷的几何门判定（ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。
+    ///
+    /// 它不在 [`verdict`](Self::verdict) 里：门是几何的、判定是内容的，门先判，
+    /// 判定在门放行的那套候选上做。门关着时抖动整体关闭，`verdict` 里那个候选
+    /// 于是必然不抖——不说门，报告就解释不了「为什么这一卷没抖」。
+    pub gate: GeometryGate,
     /// 本卷缓存的用量（ADR 0005）。
     pub cache: CacheUsage,
     /// 本卷解码源页的次数。
@@ -43,24 +49,40 @@ pub struct VolumeReport {
     pub decodes: usize,
 }
 
-/// 卷级判定：这一卷的位深从哪来（spec 的卷报告形状：判定位深、判定理由、驱动页）。
+/// 卷级判定：这一卷的候选从哪来（spec 的卷报告形状：判定位深、抖动模式、判定理由、驱动页）。
 ///
-/// 三者绑成一个枚举而不是三个字段，因为它们不是每一种情形下都同时成立：
-/// `--per-page` 一开，卷级根本没有位深，也就没有驱动页可指。
+/// 几项绑成一个枚举而不是各占一个字段，因为它们不是每一种情形下都同时成立：
+/// `--per-page` 一开，卷级根本没有候选，也就没有驱动页可指。
 ///
 /// spec 固定的 `Skipped` 随 11 号票落地。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VolumeVerdict {
     /// 卷级上包络定的基准档（ADR 0006：位深按卷取上包络并加迟滞）。
+    /// 抖动那一维跟着位深一起定在这里（ADR 0007：上包络取的是这个组合）。
     Envelope(Envelope),
-    /// `--bit-depth` 顶掉了判定：全卷同一档，卷级基准档无从谈起（spec 的 story 23）。
+    /// 覆盖项把候选裁到只剩一个：判定被顶掉，卷级基准档无从谈起（spec 的 story 23）。
     ///
-    /// 顶掉之后每一页的判定都是覆盖，逐页结果里没有分布可聚合——上包络于是不是「被关掉」，
-    /// 而是无从谈起。
-    Override(BitDepth),
-    /// `--per-page` 关掉了上包络与迟滞：位深逐页最优，卷内没有基准档
-    /// （ADR 0006 决定第 6 条）。翻页跳变随之回来。
+    /// 裁到只剩一个之后每一页的判定都是覆盖，逐页结果里没有分布可聚合——上包络于是不是
+    /// 「被关掉」，而是无从谈起。裁不到只剩一个的覆盖不走这里：`--bit-depth` 点了一档位深、
+    /// 而几何门开着时，抖动那一维还有得判，卷级仍是一次上包络。
+    Override(Candidate),
+    /// `--per-page` 关掉了上包络与迟滞：候选逐页最优，卷内没有基准档
+    /// （ADR 0006 决定第 6 条）。翻页跳变随之回来，抖动模式也跟着逐页可变。
     PerPage,
+}
+
+impl VolumeVerdict {
+    /// 这一卷定下的抖动模式（09 号票：`Report` 要标明本卷的抖动模式）。
+    ///
+    /// `--per-page` 下没有卷级的那一个：抖动跟着位深一起逐页可变
+    /// （ADR 0006 决定第 6 条）。
+    pub fn dither(&self) -> Option<Dither> {
+        match self {
+            VolumeVerdict::Envelope(envelope) => Some(envelope.base.dither),
+            VolumeVerdict::Override(candidate) => Some(candidate.dither),
+            VolumeVerdict::PerPage => None,
+        }
+    }
 }
 
 /// 一页的结果。
@@ -79,11 +101,11 @@ pub struct PageReport {
     /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
     /// 报告里说清楚它有没有触发，是这条路径在真实素材上唯一的现场证据。
     pub scaling: Scaling,
-    /// 各候选的判据值，位深由小到大。候选已按面板灰阶数裁过（ADR 0003）。
+    /// 各候选的判据值，由小到大。候选已按面板灰阶数与几何门裁过（ADR 0003、ADR 0007）。
     ///
-    /// 两种模式都求值：判据现在决定输出的位深，dry-run 因此预告的就是照做时的那一档。
+    /// 两种模式都求值：判据现在决定输出的候选，dry-run 因此预告的就是照做时的那一个。
     pub scores: Vec<CandidateScore>,
-    /// 这一页最终定下的位深，以及定它的理由（spec 的 story 7）。
+    /// 这一页最终定下的候选，以及定它的理由（spec 的 story 7）。
     ///
     /// 卷级那一层开着时，这里是上包络重定过的结果，不是逐页判定的原始输出——
     /// 写出去的就是它。逐页判定要的那一档仍可从 [`scores`](Self::scores) 与阈值读出来。

@@ -1,32 +1,33 @@
-//! 选档：在裁剪过的候选里定下这一页的位深。
+//! 选档：在裁剪过的候选里定下这一页的那一个。
 //!
 //! 判据是量、阈值是界（`CONTEXT.md`）。这里做的是把量拿去和界比，选出**界以内最低的一档**——
-//! 不是误差最小的那一档：误差最小的恒是候选上界，那样位深判定就白做了。
+//! 不是误差最小的那一档：误差最小的恒是候选上界，那样判定就白做了。
 //!
-//! 候选进来之前已经按面板灰阶数裁过（ADR 0003：裁剪在判据求值之前）。
-//! 被裁掉的位深不在这里出现，`--bit-depth` 也够不着它，那条上界只有 `--gray-levels` 动得了。
+//! 候选进来之前已经裁过两道（都在判据求值之前）：位深按面板灰阶数裁（ADR 0003），
+//! 抖动模式按几何门裁（ADR 0007）。被裁掉的候选不在这里出现，`--bit-depth` 与 `--dither`
+//! 也够不着它们——那两道界只有 `--gray-levels` 与几何本身动得了。
 //!
 //! 这里只有逐页判定。卷级的上包络、迟滞与离群页在 `envelope`，那一层建在这一层之上，
 //! 并会把这里给出的档重定一遍（ADR 0006）。
 
 use crate::metric::Score;
 use crate::profile::Threshold;
-use crate::quantize::BitDepth;
+use crate::quantize::Candidate;
 
-/// 一个候选的判据值。候选此刻只有位深这一维，抖动模式那一维随 09 号票加进来。
+/// 一个候选的判据值。
 ///
 /// 判据是量、阈值是界：这里只有量。判据数值不可跨面板比较（ADR 0002），
 /// 要看是哪块面板上的数，见 [`crate::Report::profile`]。
 #[derive(Debug, Clone, Copy)]
 pub struct CandidateScore {
-    pub bit_depth: BitDepth,
+    pub candidate: Candidate,
     pub score: Score,
 }
 
-/// 一页的位深判定：定下的那一档，加上定它的理由。
+/// 一页的判定：定下的那个候选，加上定它的理由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Verdict {
-    pub bit_depth: BitDepth,
+    pub candidate: Candidate,
     pub reason: Reason,
 }
 
@@ -38,7 +39,7 @@ pub struct Verdict {
 /// spec 固定的 `Skipped` 随 11 号票落地。
 ///
 /// 逐页的那三种能在最终报告里露面，只有在卷级那一层不在场的时候：
-/// `--per-page` 关掉它，`--bit-depth` 顶掉它。
+/// `--per-page` 关掉它，覆盖项顶掉它。
 ///
 /// `Hysteresis` 在 spec 点名的那几种之外，理由在 ADR 0006 的后果里：
 /// 上包络**不承诺**卷内绝对一致。升上去的那一段与主体之间就是一次翻页跳变，
@@ -49,7 +50,7 @@ pub enum Reason {
     LowestWithinThreshold,
     /// 没有一档的判据落在阈值以内：取候选里最高的那一档兜底。
     NoneWithinThreshold,
-    /// `--bit-depth` 覆盖了自动判定（spec 的 story 23）。
+    /// 覆盖项裁到只剩一个候选，判定被顶掉（spec 的 story 23）。
     Override,
     /// 卷级上包络定的基准档：这一页跟着卷内主体走（ADR 0006 决定第 3 条）。
     VolumeEnvelope,
@@ -64,7 +65,7 @@ impl std::fmt::Display for Reason {
         f.write_str(match self {
             Reason::LowestWithinThreshold => "阈值内最低的一档",
             Reason::NoneWithinThreshold => "没有一档在阈值内，取候选上界",
-            Reason::Override => "--bit-depth 覆盖",
+            Reason::Override => "覆盖项顶掉判定",
             Reason::VolumeEnvelope => "卷级上包络",
             Reason::Hysteresis => "迟滞升档",
             Reason::Outlier => "离群页单独定档",
@@ -72,36 +73,40 @@ impl std::fmt::Display for Reason {
     }
 }
 
-/// 为一页定一档位深。
+/// 为一页定一个候选。
 ///
-/// `scores` 是这一页各候选的判据值，位深由小到大——[`BitDepth::candidates`] 就是这个次序，
+/// `scores` 是这一页各候选的判据值，由小到大——[`Candidate::all`] 就是这个次序，
 /// 「最低的一档」靠的正是它。
+///
+/// `pinned` 是覆盖项裁到只剩一个候选时的那一个（见 `crate::pinned`）：判定被顶掉，
+/// 判据说什么都不改变结果。裁到只剩一个而**没有**覆盖项的面板（`--gray-levels 2`
+/// 撞上几何门不成立）不走这条路——那不是「被顶掉」，那一档仍是判出来的。
 pub fn decide(
     scores: &[CandidateScore],
     threshold: Threshold,
-    override_depth: Option<BitDepth>,
+    pinned: Option<Candidate>,
 ) -> Verdict {
     debug_assert!(
         scores
             .windows(2)
-            .all(|pair| pair[0].bit_depth < pair[1].bit_depth),
+            .all(|pair| pair[0].candidate < pair[1].candidate),
         "候选必须由小到大：选的是最低的一档"
     );
-    if let Some(bit_depth) = override_depth {
+    if let Some(candidate) = pinned {
         return Verdict {
-            bit_depth,
+            candidate,
             reason: Reason::Override,
         };
     }
     // 候选非空：面板灰阶数至少 2 级（`Profile::with_gray_levels` 挡着），1bit 恒在里面。
-    let top = scores.last().expect("候选集不会是空的").bit_depth;
+    let top = scores.last().expect("候选集不会是空的").candidate;
     match scores.iter().find(|scored| threshold.admits(scored.score)) {
         Some(scored) => Verdict {
-            bit_depth: scored.bit_depth,
+            candidate: scored.candidate,
             reason: Reason::LowestWithinThreshold,
         },
         None => Verdict {
-            bit_depth: top,
+            candidate: top,
             reason: Reason::NoneWithinThreshold,
         },
     }
@@ -111,6 +116,7 @@ pub fn decide(
 mod tests {
     use super::*;
     use crate::profile::Profile;
+    use crate::quantize::{BitDepth, Dither};
 
     /// 基准设备的阈值。选档的用例只关心「界在哪」，不关心它是几。
     fn threshold() -> Threshold {
@@ -119,12 +125,12 @@ mod tests {
             .threshold()
     }
 
-    /// 造一组判据值，位深由小到大——`BitDepth::candidates` 给的就是这个次序。
-    fn scores(values: &[(BitDepth, f32)]) -> Vec<CandidateScore> {
+    /// 造一组判据值，候选由小到大——`Candidate::all` 给的就是这个次序。
+    fn scores(values: &[(Candidate, f32)]) -> Vec<CandidateScore> {
         values
             .iter()
-            .map(|&(bit_depth, value)| CandidateScore {
-                bit_depth,
+            .map(|&(candidate, value)| CandidateScore {
+                candidate,
                 score: Score::from_value(value),
             })
             .collect()
@@ -135,15 +141,39 @@ mod tests {
     fn the_lowest_candidate_within_the_threshold_wins() {
         let threshold = threshold();
         let scores = scores(&[
-            (BitDepth::One, threshold.value() * 2.0),
-            (BitDepth::Two, threshold.value()),
-            (BitDepth::Four, 0.0),
+            (Candidate::plain(BitDepth::One), threshold.value() * 2.0),
+            (Candidate::plain(BitDepth::Two), threshold.value()),
+            (Candidate::plain(BitDepth::Four), 0.0),
         ]);
 
         let verdict = decide(&scores, threshold, None);
 
         // 界上那一档算在界内：`admits` 取的是闭区间。
-        assert_eq!(verdict.bit_depth, BitDepth::Two);
+        assert_eq!(verdict.candidate, Candidate::plain(BitDepth::Two));
+        assert_eq!(verdict.reason, Reason::LowestWithinThreshold);
+    }
+
+    /// 抖动是候选的另一维，选的规则一条不变：同一档位深上抖动排在不抖动之后，
+    /// 因此不抖动过不了界、抖动过得了时，选出的是抖动那一个，而不是升一档位深
+    /// （ADR 0007：上包络取的是这个组合，不设页级抖动开关）。
+    #[test]
+    fn a_dithered_candidate_wins_before_the_next_bit_depth_does() {
+        let threshold = threshold();
+        let scores = scores(&[
+            (Candidate::plain(BitDepth::One), threshold.value() * 2.0),
+            (
+                Candidate::new(BitDepth::One, Dither::FloydSteinberg),
+                threshold.value(),
+            ),
+            (Candidate::plain(BitDepth::Two), 0.0),
+        ]);
+
+        let verdict = decide(&scores, threshold, None);
+
+        assert_eq!(
+            verdict.candidate,
+            Candidate::new(BitDepth::One, Dither::FloydSteinberg)
+        );
         assert_eq!(verdict.reason, Reason::LowestWithinThreshold);
     }
 
@@ -152,13 +182,13 @@ mod tests {
     fn nothing_within_the_threshold_falls_back_to_the_top_candidate() {
         let threshold = threshold();
         let scores = scores(&[
-            (BitDepth::One, threshold.value() * 4.0),
-            (BitDepth::Two, threshold.value() * 2.0),
+            (Candidate::plain(BitDepth::One), threshold.value() * 4.0),
+            (Candidate::plain(BitDepth::Two), threshold.value() * 2.0),
         ]);
 
         let verdict = decide(&scores, threshold, None);
 
-        assert_eq!(verdict.bit_depth, BitDepth::Two);
+        assert_eq!(verdict.candidate, Candidate::plain(BitDepth::Two));
         assert_eq!(verdict.reason, Reason::NoneWithinThreshold);
     }
 
@@ -166,28 +196,36 @@ mod tests {
     #[test]
     fn an_override_wins_regardless_of_the_metric() {
         let threshold = threshold();
-        let scores = scores(&[(BitDepth::One, 0.0), (BitDepth::Two, 0.0)]);
+        let scores = scores(&[
+            (Candidate::plain(BitDepth::One), 0.0),
+            (Candidate::plain(BitDepth::Two), 0.0),
+        ]);
 
-        let verdict = decide(&scores, threshold, Some(BitDepth::Two));
+        let verdict = decide(&scores, threshold, Some(Candidate::plain(BitDepth::Two)));
 
-        assert_eq!(verdict.bit_depth, BitDepth::Two);
+        assert_eq!(verdict.candidate, Candidate::plain(BitDepth::Two));
         assert_eq!(verdict.reason, Reason::Override);
     }
 
-    /// 只剩一档的面板（`--gray-levels 2`）：那一档无论达不达标都是答案，理由仍要分得清。
+    /// 只剩一档而没有覆盖项（`--gray-levels 2` 撞上几何门不成立）：那一档无论达不达标
+    /// 都是答案，但理由仍是判出来的那两种之一——不是「被顶掉」。
     #[test]
     fn a_single_candidate_is_still_reported_with_a_reason() {
         let threshold = threshold();
-        let within = decide(&scores(&[(BitDepth::One, 0.0)]), threshold, None);
+        let within = decide(
+            &scores(&[(Candidate::plain(BitDepth::One), 0.0)]),
+            threshold,
+            None,
+        );
         let beyond = decide(
-            &scores(&[(BitDepth::One, threshold.value() * 2.0)]),
+            &scores(&[(Candidate::plain(BitDepth::One), threshold.value() * 2.0)]),
             threshold,
             None,
         );
 
-        assert_eq!(within.bit_depth, BitDepth::One);
+        assert_eq!(within.candidate, Candidate::plain(BitDepth::One));
         assert_eq!(within.reason, Reason::LowestWithinThreshold);
-        assert_eq!(beyond.bit_depth, BitDepth::One);
+        assert_eq!(beyond.candidate, Candidate::plain(BitDepth::One));
         assert_eq!(beyond.reason, Reason::NoneWithinThreshold);
     }
 }

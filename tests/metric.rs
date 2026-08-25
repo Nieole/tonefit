@@ -5,7 +5,12 @@
 
 mod fixtures;
 
-use tonefit::{BitDepth, GrayImage, Reference, Size, quantize, score};
+use tonefit::{BitDepth, Candidate, Dither, GrayImage, Reference, Size, quantize, score};
+
+/// 同一档位深上抖过的那个候选。不抖动的那个在 `fixtures::plain`。
+const fn dithered(bit_depth: BitDepth) -> Candidate {
+    Candidate::new(bit_depth, Dither::FloydSteinberg)
+}
 
 /// 性质测试用的页尺寸。判据只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
 /// 取得比目标尺寸小是为了让这一组用例跑得快，分块数（20×26）仍足够 p99 有意义。
@@ -14,8 +19,8 @@ const PAGE: Size = Size::new(640, 832);
 #[test]
 fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
     let reference = baseline_reference(fixtures::gradient(PAGE));
-    let plain = quantize(reference.image(), BitDepth::One);
-    let dithered = fixtures::floyd_steinberg(reference.image(), BitDepth::One);
+    let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
+    let dithered = quantize(reference.image(), dithered(BitDepth::One));
 
     let plain_score = score(&reference, &plain);
     let dithered_score = score(&reference, &dithered);
@@ -40,8 +45,14 @@ fn a_known_offset_reads_back_as_that_many_gray_levels() {
     // 200 在 1bit 的格点上落到 255（偏 55），在 2bit 的 {0,85,170,255} 上落到 170（偏 30）。
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
 
-    let one_bit = score(&reference, &quantize(reference.image(), BitDepth::One));
-    let two_bit = score(&reference, &quantize(reference.image(), BitDepth::Two));
+    let one_bit = score(
+        &reference,
+        &quantize(reference.image(), fixtures::plain(BitDepth::One)),
+    );
+    let two_bit = score(
+        &reference,
+        &quantize(reference.image(), fixtures::plain(BitDepth::Two)),
+    );
 
     assert!(
         (one_bit.value() - 55.0).abs() < 0.001,
@@ -90,7 +101,10 @@ fn the_error_never_grows_when_the_bit_depth_does() {
             .map(|&depth| {
                 (
                     depth,
-                    score(&reference, &quantize(reference.image(), depth)),
+                    score(
+                        &reference,
+                        &quantize(reference.image(), fixtures::plain(depth)),
+                    ),
                 )
             })
             .collect();
@@ -115,17 +129,28 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     let cramped = Reference::new(panel, page_with_tone_patch(patch, patch));
     let roomy = Reference::new(panel, page_with_tone_patch(Size::new(512, 512), patch));
 
-    let cramped_score = score(&cramped, &quantize(cramped.image(), BitDepth::One));
-    let roomy_score = score(&roomy, &quantize(roomy.image(), BitDepth::One));
+    let cramped_score = score(
+        &cramped,
+        &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
+    );
+    let roomy_score = score(
+        &roomy,
+        &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
+    );
     assert!(
         (roomy_score.value() - cramped_score.value()).abs() <= cramped_score.value() * 0.05,
         "留白把判据从 {cramped_score} 稀释到了 {roomy_score}"
     );
 
     // 换成全页聚合就会被稀释：同一块补丁，逐像素度量在大页上掉到约四分之一。
-    let cramped_pixelwise =
-        pixelwise_rmse(cramped.image(), &quantize(cramped.image(), BitDepth::One));
-    let roomy_pixelwise = pixelwise_rmse(roomy.image(), &quantize(roomy.image(), BitDepth::One));
+    let cramped_pixelwise = pixelwise_rmse(
+        cramped.image(),
+        &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
+    );
+    let roomy_pixelwise = pixelwise_rmse(
+        roomy.image(),
+        &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
+    );
     assert!(
         cramped_pixelwise > roomy_pixelwise * 3.5,
         "夹具不对：全页聚合本该被留白稀释，{cramped_pixelwise:.2} 对 {roomy_pixelwise:.2}"
@@ -184,7 +209,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
     assert!(denser.ppi > coarser.ppi);
 
     let page = fixtures::gray_image(&fixtures::gradient(PAGE));
-    let dithered = fixtures::floyd_steinberg(&page, BitDepth::One);
+    let dithered = quantize(&page, dithered(BitDepth::One));
     let on = |panel| {
         let reference = Reference::new(panel, page.clone());
         score(&reference, &dithered)

@@ -13,7 +13,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
-use tonefit::{BitDepth, GrayImage, Profile, Size};
+use tonefit::{BitDepth, Dither, GrayImage, Profile, Size};
 
 pub use cbz::{Cbz, read_cbz};
 
@@ -171,6 +171,11 @@ impl Default for Workspace {
     }
 }
 
+/// 同一档位深上不抖动的那个候选。几何门不成立的卷只有这一种候选可选。
+pub const fn plain(bit_depth: BitDepth) -> tonefit::Candidate {
+    tonefit::Candidate::new(bit_depth, Dither::Off)
+}
+
 /// 基准设备：`CONTEXT.md` 里阈值标定的那台。不点名 profile 的用例都用它。
 pub const BASELINE_DEVICE: &str = "kobo-libra-2";
 
@@ -203,12 +208,14 @@ pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> 
 /// 量重采样、解码或转灰的用例用这个。判定位深会把取值压到那一档的格点上，
 /// 混进来就分不清一处差异出自哪一步——而那几条性质说的都不是量化。
 ///
-/// 两个开关都是用户手上真有的：抬上界走 ADR 0003 给的 `--gray-levels`，
-/// 点名那一档走 `--bit-depth`。
+/// 三个开关都是用户手上真有的：抬上界走 ADR 0003 给的 `--gray-levels`，点名位深走
+/// `--bit-depth`，点名不抖动走 `--dither`。抖动在 8bit 上本来就是恒等（格点即工作精度），
+/// 点名它是为了把候选裁到只剩一个——判定于是整个被顶掉，报告里那一项也就没有歧义。
 pub fn run_volume_at_eight_bits(space: &Workspace, volume: &Volume) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
         profile: baseline_profile().with_gray_levels(256).expect("全集可用"),
         bit_depth: Some(BitDepth::Eight),
+        dither: Some(Dither::Off),
         ..request(space, [volume.path()])
     })
     .expect("处理应当成功")
@@ -242,6 +249,7 @@ pub fn request<'a>(
         profile: baseline_profile(),
         filter: tonefit::Filter::default(),
         bit_depth: None,
+        dither: None,
         per_page: false,
         cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
@@ -404,39 +412,4 @@ pub fn fine_texture(size: Size, base: u8, amplitude: u8) -> DynamicImage {
 pub fn gray_image(image: &DynamicImage) -> GrayImage {
     let luma = image.to_luma8();
     GrayImage::new(Size::new(luma.width(), luma.height()), luma.into_raw())
-}
-
-/// FS 误差扩散抖动到 `depth`，给判据造一个「抖过」的候选。
-///
-/// 生产实现连同抖动模式的选择属于 09 号票；这里只是性质测试要的素材——
-/// 判据那条性质说的是「抖过的候选该赢」，不挑抖动算法（ADR 0002 明确判据不管图案好看与否）。
-pub fn floyd_steinberg(image: &GrayImage, depth: BitDepth) -> GrayImage {
-    let size = image.size();
-    let (width, height) = (size.width as usize, size.height as usize);
-    let top = (depth.levels() - 1) as f32;
-    let mut carried: Vec<f32> = image
-        .pixels()
-        .iter()
-        .map(|&level| f32::from(level))
-        .collect();
-    let mut out = vec![0u8; width * height];
-    for y in 0..height {
-        for x in 0..width {
-            let wanted = carried[y * width + x];
-            let quantized = (wanted * top / 255.0).round().clamp(0.0, top) * 255.0 / top;
-            out[y * width + x] = quantized.round() as u8;
-            let residual = wanted - quantized;
-            let mut spread = |dx: isize, dy: usize, factor: f32| {
-                let nx = x as isize + dx;
-                if nx >= 0 && (nx as usize) < width && y + dy < height {
-                    carried[(y + dy) * width + nx as usize] += residual * factor;
-                }
-            };
-            spread(1, 0, 7.0 / 16.0);
-            spread(-1, 1, 3.0 / 16.0);
-            spread(0, 1, 5.0 / 16.0);
-            spread(1, 1, 1.0 / 16.0);
-        }
-    }
-    GrayImage::new(size, out)
 }

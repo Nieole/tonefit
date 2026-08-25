@@ -12,7 +12,7 @@
 use crate::decide::{CandidateScore, Reason, Verdict};
 use crate::metric::{Score, nearest_rank};
 use crate::profile::Threshold;
-use crate::quantize::BitDepth;
+use crate::quantize::Candidate;
 
 /// 上包络取的分位。**未标定占位值**。
 ///
@@ -29,17 +29,18 @@ const OUTLIER_FACTOR: f32 = 3.0;
 
 /// 汇总要看的那一页：逐页判定的结果，加上它是从哪条判据曲线来的。
 pub(crate) struct Page<'a> {
-    /// 这一页各候选的判据值，位深由小到大。候选集由面板灰阶数裁出，全卷同一套（ADR 0003）。
+    /// 这一页各候选的判据值，由小到大。候选集由面板灰阶数与几何门裁出，
+    /// 全卷同一套（ADR 0003、ADR 0007）。
     pub scores: &'a [CandidateScore],
-    /// 逐页判定定下的那一档（[`crate::decide::decide`]）。
-    pub decided: BitDepth,
+    /// 逐页判定定下的那一个（[`crate::decide::decide`]）。
+    pub decided: Candidate,
 }
 
 /// 一个卷的上包络：基准档、定出它的那一页，以及卷内档位差各出在哪。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Envelope {
-    /// 卷内主体的基准档。
-    pub base: BitDepth,
+    /// 卷内主体的基准档。抖动那一维在这里跟着位深一起定下（ADR 0007：上包络取的是这个组合）。
+    pub base: Candidate,
     /// 定出基准档的那一页：主体页按逐页判定排开后，站在上分位秩上的那一页。
     /// 序号指进 [`crate::VolumeReport::pages`]。
     pub driver: usize,
@@ -59,13 +60,13 @@ pub(crate) struct Summary {
 }
 
 impl Page<'_> {
-    /// 这一页在 `depth` 那一档上的判据值。
+    /// 这一页在 `candidate` 上的判据值。
     ///
-    /// 候选集由面板灰阶数裁出、全卷同一套（ADR 0003），因此每一页都有这一档。
-    fn score_at(&self, depth: BitDepth) -> Score {
+    /// 候选集全卷同一套（ADR 0003、ADR 0007），因此每一页都有这一档。
+    fn score_at(&self, candidate: Candidate) -> Score {
         self.scores
             .iter()
-            .find(|scored| scored.bit_depth == depth)
+            .find(|scored| scored.candidate == candidate)
             .expect("候选集全卷同一套")
             .score
     }
@@ -103,18 +104,18 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
 
     let mut verdicts = vec![
         Verdict {
-            bit_depth: base,
+            candidate: base,
             reason: Reason::VolumeEnvelope,
         };
         pages.len()
     ];
     for index in all.iter().copied().filter(|&index| is_outlier[index]) {
         verdicts[index] = Verdict {
-            bit_depth: pages[index].decided,
+            candidate: pages[index].decided,
             reason: Reason::Outlier,
         };
     }
-    let raised_pages = hysteresis(&body, pages, base, &mut verdicts);
+    let raised_pages = hysteresis(&body, pages, base, threshold, &mut verdicts);
 
     Some(Summary {
         envelope: Envelope {
@@ -128,7 +129,7 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
     })
 }
 
-/// 上包络：把这些页的逐页判定排一遍，站在上分位秩上的那一页定出档位。返回 (档位, 那一页)。
+/// 上包络：把这些页的逐页判定排一遍，站在上分位秩上的那一页定出档位。返回 (候选, 那一页)。
 ///
 /// 分位与判据的分块聚合共用最近秩取法（[`nearest_rank`]），不插值。
 /// 名次相同的按页序排，同一卷跑两遍因此指出同一个驱动页。
@@ -139,7 +140,7 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
 /// 在短卷上只剩离群页那一层挡着；短卷本来也没有「分布」可言。
 ///
 /// `indices` 不得为空。
-fn envelope(indices: &[usize], pages: &[Page]) -> (BitDepth, usize) {
+fn envelope(indices: &[usize], pages: &[Page]) -> (Candidate, usize) {
     let mut order = indices.to_vec();
     order.sort_by_key(|&index| (pages[index].decided, index));
     let driver = order[nearest_rank(ENVELOPE_QUANTILE, order.len()) - 1];
@@ -157,47 +158,103 @@ fn envelope(indices: &[usize], pages: &[Page]) -> (BitDepth, usize) {
 /// 判据是**幅度**，判据形态里没有「连着几页」这一维：卷首连着几页的彩页转灰后仍是离群页，
 /// 那正是 ADR 0006 决定第 5 条举的例子。成段与否只在迟滞那一层说话
 /// （见 [`hysteresis`]），那一层管的是升不升档，不是摘不摘页。
-fn outlying(pages: &[Page], provisional: BitDepth, threshold: Threshold) -> Vec<bool> {
+fn outlying(pages: &[Page], provisional: Candidate, threshold: Threshold) -> Vec<bool> {
     pages
         .iter()
         .map(|page| threshold.far_outside(page.score_at(provisional), OUTLIER_FACTOR))
         .collect()
 }
 
-/// 迟滞：主体页里连续够了 [`HYSTERESIS_PAGES`] 页要求高于基准档的，整段一起升档。
+/// 迟滞：主体页里连续够了 [`HYSTERESIS_PAGES`] 页**基准档不够用**的，整段一起升档。
 /// 返回升上去的页数。
 ///
 /// 一页说了不算——升档要有持续的证据，否则翻页跳变的密度就退回逐页可变
 /// （ADR 0006 决定第 4 条）。段不够长的那些页留在基准档上，也就得不到它们各自要的那一档：
 /// 那是上分位明知故犯的另一半。
 ///
-/// 整段升到**满足整段的最低一档**：与逐页判定同一条规则（界以内最低的一档）抬到段上。
-/// 各位深的格点是套嵌的（见 `quantize`），因此它就是段内各页判定的最大值。
+/// 「基准档不够用」判的是**基准档过不过得了这一页的界**，不是「判定排在基准档之后」。
+/// 后者在位深那一维上与前者等价：判定是这一页最低的合格候选，格点套嵌保证更高的档也合格。
+/// 抖动那一维上不等价——`1bit+FS` 排在 `2bit` 之前，判据却可能好过它，
+/// 于是有页判定排在基准档**之前**、基准档却过不了它的界。照排序判会把这样的页
+/// 静默写成越界档，而 ADR 0006 决定第 4 条说的本来就是「要求高于基准档」。
+///
+/// 整段升到**满足整段的最低一档**：与逐页判定同一条规则（界以内最低的一档）抬到段上，
+/// 只是「整段」把界的检验摊到段内每一页上（见 [`lowest_for`]）。
 /// 段内不会有离群页——那些已经摘走了，所以这一档抬不到极端内容上去。
 ///
 /// 「连续」数的是**主体页**的序列，离群页整个不在其中。否则一页离群就能把一段持续的要求
 /// 切成两截，而离群页恰恰爱出现在段的边上（彩页常在章节交界）。
-fn hysteresis(body: &[usize], pages: &[Page], base: BitDepth, verdicts: &mut [Verdict]) -> usize {
+fn hysteresis(
+    body: &[usize],
+    pages: &[Page],
+    base: Candidate,
+    threshold: Threshold,
+    verdicts: &mut [Verdict],
+) -> usize {
     let mut raised = 0;
-    for run in runs(body.len(), |position| pages[body[position]].decided > base) {
+    for run in runs(body.len(), |position| {
+        !threshold.admits(pages[body[position]].score_at(base))
+    }) {
         if run.len() < HYSTERESIS_PAGES {
             continue;
         }
         let stretch = &body[run];
-        let depth = stretch
-            .iter()
-            .map(|&index| pages[index].decided)
-            .max()
-            .expect("段非空");
+        let candidate = lowest_for(stretch, pages, base, threshold);
+        // 兜底那一路可能给回基准档本身：整卷在每一档上都过不去时就是这个局面
+        // （见 [`summarize`] 里「一页不剩地落到离群侧」那一段）。那时一页都没升上去，
+        // 段留在基准档上，理由仍是上包络，`raised_pages` 也不该把它算进来。
+        if candidate == base {
+            continue;
+        }
         for &index in stretch {
             verdicts[index] = Verdict {
-                bit_depth: depth,
+                candidate,
                 reason: Reason::Hysteresis,
             };
         }
         raised += stretch.len();
     }
     raised
+}
+
+/// 满足整段的最低一档：基准档之上、段内每一页的判据都在界以内的那个最低候选。
+///
+/// 不能拿段内各页判定的最大值代替。位深那一维上两者相等——格点套嵌（见 `quantize`），
+/// 位深升高只会让误差更小；抖动那一维上不成立：`2bit` 排在 `1bit+FS` 之后，
+/// 却不因此就在每一页上都比它更贴近参照。规则本来就是「满足整段」，那就照着检验。
+///
+/// **只在基准档之上找。**迟滞是升档规则（ADR 0006 决定第 4 条），不是给一段页
+/// 另配一档的口子：段内某一页要的那一档排在基准档之前时，照样得抬到基准档之上，
+/// 否则卷内就多出一次向下的跳变，而 `raised_pages` 也不再是实话。
+///
+/// 一档都满足不了整段时退回基准档与段内判定的较高者——那是逐页那一层的兜底
+/// （`Reason::NoneWithinThreshold`：没有一档在界内，取候选上界）抬到段上，
+/// 同样不许往基准档以下走。
+fn lowest_for(
+    stretch: &[usize],
+    pages: &[Page],
+    base: Candidate,
+    threshold: Threshold,
+) -> Candidate {
+    // 候选集全卷同一套，取段内任一页的那一份即可。
+    pages[stretch[0]]
+        .scores
+        .iter()
+        .map(|scored| scored.candidate)
+        .filter(|&candidate| candidate > base)
+        .find(|&candidate| {
+            stretch
+                .iter()
+                .all(|&index| threshold.admits(pages[index].score_at(candidate)))
+        })
+        .unwrap_or_else(|| {
+            stretch
+                .iter()
+                .map(|&index| pages[index].decided)
+                .chain(std::iter::once(base))
+                .max()
+                .expect("段非空")
+        })
 }
 
 /// `0..len` 里满足 `belongs` 的下标切成的极大连续段。
@@ -240,7 +297,9 @@ impl std::fmt::Display for Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::GeometryGate;
     use crate::profile::Profile;
+    use crate::quantize::{BitDepth, Dither};
 
     /// 基准设备的阈值。卷级的用例只关心「界在哪」，不关心它是几。
     fn threshold() -> Threshold {
@@ -249,13 +308,16 @@ mod tests {
             .threshold()
     }
 
-    /// e-ink 面板上的候选集：{1,2,4}，全卷同一套（ADR 0003）。
-    const CANDIDATES: [BitDepth; 3] = [BitDepth::One, BitDepth::Two, BitDepth::Four];
+    /// e-ink 面板 + 几何门不成立时的候选集：{1,2,4} 三档，全不抖动。
+    /// 卷级的多数用例只在位深这一维上分胜负，抖动那一维单开两条用例。
+    fn candidates() -> Vec<Candidate> {
+        Candidate::all(16, GeometryGate::Broken { page: 0 })
+    }
 
     /// 一卷合成的逐页判定。判据曲线要按页存下来，`Page` 借的就是它。
     struct Volume {
         scores: Vec<Vec<CandidateScore>>,
-        decided: Vec<BitDepth>,
+        decided: Vec<Candidate>,
     }
 
     impl Volume {
@@ -264,18 +326,15 @@ mod tests {
         /// 越界量是判定那一档**以下**各档的判据值：那些档全部越界，判定那一档起全部在界内——
         /// 逐页判定给出的正好是这一档。同一个数也是这一页在低档上的偏离量，
         /// 离群页判据看的就是它。
-        fn new(pages: &[(BitDepth, f32)]) -> Self {
+        fn new(pages: &[(Candidate, f32)]) -> Self {
+            Self::over(candidates(), pages)
+        }
+
+        /// 同上，但点名候选集——抖动那一维要的是几何门成立时那一套六个候选。
+        fn over(candidates: Vec<Candidate>, pages: &[(Candidate, f32)]) -> Self {
             let scores = pages
                 .iter()
-                .map(|&(decided, over)| {
-                    CANDIDATES
-                        .into_iter()
-                        .map(|bit_depth| CandidateScore {
-                            bit_depth,
-                            score: Score::from_value(if bit_depth < decided { over } else { 0.0 }),
-                        })
-                        .collect()
-                })
+                .map(|&(decided, over)| over_curve(&candidates, decided, over))
                 .collect();
             Self {
                 scores,
@@ -286,12 +345,14 @@ mod tests {
         /// 一卷在候选上界上也过不去的页：逐页判定只能取候选上界兜底
         /// （`Reason::NoneWithinThreshold`），判据在每一档上都远在界外。
         fn bottomed_out(count: usize) -> Self {
+            let candidates = candidates();
+            let top = *candidates.last().expect("候选非空");
             let scores = (0..count)
                 .map(|_| {
-                    CANDIDATES
-                        .into_iter()
-                        .map(|bit_depth| CandidateScore {
-                            bit_depth,
+                    candidates
+                        .iter()
+                        .map(|&candidate| CandidateScore {
+                            candidate,
                             score: Score::from_value(far_out()),
                         })
                         .collect()
@@ -299,7 +360,7 @@ mod tests {
                 .collect();
             Self {
                 scores,
-                decided: vec![BitDepth::Four; count],
+                decided: vec![top; count],
             }
         }
 
@@ -316,6 +377,17 @@ mod tests {
         }
     }
 
+    /// 一页的判据曲线：`decided` 以下各档都是 `over`，`decided` 起全部零误差。
+    fn over_curve(candidates: &[Candidate], decided: Candidate, over: f32) -> Vec<CandidateScore> {
+        candidates
+            .iter()
+            .map(|&candidate| CandidateScore {
+                candidate,
+                score: Score::from_value(if candidate < decided { over } else { 0.0 }),
+            })
+            .collect()
+    }
+
     /// 刚过线的越界量：够让逐页判定往上走一档，够不上「显著偏离」。
     fn just_over() -> f32 {
         threshold().value() * 1.5
@@ -327,8 +399,8 @@ mod tests {
     }
 
     /// 一卷 `count` 页，全部只要 1bit；`extra` 按 (下标, 逐页判定, 越界量) 插到指定位置上。
-    fn volume_of(count: usize, extra: &[(usize, BitDepth, f32)]) -> Volume {
-        let mut pages = vec![(BitDepth::One, 0.0); count];
+    fn volume_of(count: usize, extra: &[(usize, Candidate, f32)]) -> Volume {
+        let mut pages = vec![(Candidate::plain(BitDepth::One), 0.0); count];
         for &(index, decided, over) in extra {
             pages[index] = (decided, over);
         }
@@ -340,22 +412,48 @@ mod tests {
     #[test]
     fn the_body_pages_all_land_on_one_base_depth() {
         // 十页只要 1bit、十页要 2bit：上分位站在 2bit 上，全卷主体跟着走 2bit。
-        let mut pages = vec![(BitDepth::One, 0.0); 10];
-        pages.extend(vec![(BitDepth::Two, just_over()); 10]);
+        let mut pages = vec![(Candidate::plain(BitDepth::One), 0.0); 10];
+        pages.extend(vec![(Candidate::plain(BitDepth::Two), just_over()); 10]);
         let volume = Volume::new(&pages);
 
         let summary = volume.summarize();
 
-        assert_eq!(summary.envelope.base, BitDepth::Two);
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::Two));
         assert_eq!(summary.envelope.body_pages, 20);
         assert_eq!(summary.envelope.outlier_pages, 0);
         assert_eq!(summary.envelope.raised_pages, 0);
         assert!(
             summary.verdicts.iter().all(|verdict| verdict
                 == &Verdict {
-                    bit_depth: BitDepth::Two,
+                    candidate: Candidate::plain(BitDepth::Two),
                     reason: Reason::VolumeEnvelope,
                 }),
+            "{:?}",
+            summary.verdicts
+        );
+    }
+
+    /// 上包络取的是 (位深, 抖动模式) 这个组合，不是位深单独一维（ADR 0007：
+    /// 「上包络取的是这个组合，不设页级抖动开关」）：
+    /// 抖动跟着位深一起按卷定下，全卷共用同一个抖动模式，页级没有开关。
+    #[test]
+    fn the_envelope_is_taken_over_the_whole_candidate_including_the_dither_mode() {
+        let dithered = Candidate::new(BitDepth::One, Dither::FloydSteinberg);
+        // 十页不抖动就够，十页要抖：上分位站在抖的那一档上，全卷主体跟着抖。
+        let mut pages = vec![(Candidate::plain(BitDepth::One), 0.0); 10];
+        pages.extend(vec![(dithered, just_over()); 10]);
+        let volume = Volume::over(Candidate::all(16, GeometryGate::Holds), &pages);
+
+        let summary = volume.summarize();
+
+        assert_eq!(summary.envelope.base, dithered);
+        // 升的是抖动那一维，位深一档没动——组合排序里 1bit+FS 就排在 2bit 之前。
+        assert_eq!(summary.envelope.base.bit_depth, BitDepth::One);
+        assert!(
+            summary
+                .verdicts
+                .iter()
+                .all(|verdict| verdict.candidate.dither == Dither::FloydSteinberg),
             "{:?}",
             summary.verdicts
         );
@@ -364,7 +462,7 @@ mod tests {
     /// 驱动页是站在上分位秩上的那一页：它的判定就是基准档，而且它必是主体页。
     #[test]
     fn the_envelope_names_the_page_whose_demand_is_the_base() {
-        let volume = volume_of(20, &[(7, BitDepth::Two, just_over())]);
+        let volume = volume_of(20, &[(7, Candidate::plain(BitDepth::Two), just_over())]);
 
         let summary = volume.summarize();
         let driver = summary.envelope.driver;
@@ -376,13 +474,16 @@ mod tests {
     /// 一页说了不算：孤零零一页要求高于基准档，不足以让全卷升档。
     #[test]
     fn one_page_asking_for_more_does_not_move_the_volume() {
-        let volume = volume_of(20, &[(9, BitDepth::Four, just_over())]);
+        let volume = volume_of(20, &[(9, Candidate::plain(BitDepth::Four), just_over())]);
 
         let summary = volume.summarize();
 
-        assert_eq!(summary.envelope.base, BitDepth::One);
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::One));
         assert_eq!(summary.envelope.raised_pages, 0);
-        assert_eq!(summary.verdicts[9].bit_depth, BitDepth::One);
+        assert_eq!(
+            summary.verdicts[9].candidate,
+            Candidate::plain(BitDepth::One)
+        );
         assert_eq!(summary.verdicts[9].reason, Reason::VolumeEnvelope);
     }
 
@@ -391,28 +492,118 @@ mod tests {
     fn a_run_long_enough_to_be_sustained_raises_that_stretch() {
         // 六十页里让三页连续要求更高：上分位的秩落在 57，这三页因此仍在基准档之上。
         let raised: Vec<_> = (30..33)
-            .map(|index| (index, BitDepth::Four, just_over()))
+            .map(|index| (index, Candidate::plain(BitDepth::Four), just_over()))
             .collect();
         let volume = volume_of(60, &raised);
 
         let summary = volume.summarize();
 
-        assert_eq!(summary.envelope.base, BitDepth::One);
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::One));
         assert_eq!(summary.envelope.raised_pages, 3);
         for index in 30..33 {
-            assert_eq!(summary.verdicts[index].bit_depth, BitDepth::Four);
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::plain(BitDepth::Four)
+            );
             assert_eq!(summary.verdicts[index].reason, Reason::Hysteresis);
         }
         // 段外的页一页不动：迟滞限的是切档频率，不是把全卷抬上去。
-        assert_eq!(summary.verdicts[29].bit_depth, BitDepth::One);
-        assert_eq!(summary.verdicts[33].bit_depth, BitDepth::One);
+        assert_eq!(
+            summary.verdicts[29].candidate,
+            Candidate::plain(BitDepth::One)
+        );
+        assert_eq!(
+            summary.verdicts[33].candidate,
+            Candidate::plain(BitDepth::One)
+        );
+    }
+
+    /// 整段升到的那一档要**满足整段**，不是段内判定的最大值。
+    ///
+    /// 段里一页要 `1bit+FS`、两页要 `2bit`，最大值是 `2bit`；但 `2bit` 在头一页上过不了界
+    /// ——抖动那一维上没有位深那种格点套嵌的单调性。满足整段的最低一档因此是 `2bit+FS`。
+    #[test]
+    fn a_raised_stretch_lands_on_a_candidate_that_satisfies_every_page_in_it() {
+        let all = Candidate::all(16, GeometryGate::Holds);
+        let dithered = Candidate::new(BitDepth::One, Dither::FloydSteinberg);
+        let mut volume = Volume::over(
+            all.clone(),
+            &vec![(Candidate::plain(BitDepth::One), 0.0); 60],
+        );
+        for (index, decided) in [
+            (30, dithered),
+            (31, Candidate::plain(BitDepth::Two)),
+            (32, Candidate::plain(BitDepth::Two)),
+        ] {
+            volume.decided[index] = decided;
+            volume.scores[index] = over_curve(&all, decided, just_over());
+        }
+        // 要 `1bit+FS` 的那一页在 `2bit` 上也越界：这才是「取最大值」不够用的由来。
+        let two_bit = all
+            .iter()
+            .position(|&candidate| candidate == Candidate::plain(BitDepth::Two))
+            .expect("2bit 在候选集里");
+        volume.scores[30][two_bit].score = Score::from_value(just_over());
+
+        let summary = volume.summarize();
+
+        assert_eq!(summary.envelope.raised_pages, 3);
+        for index in 30..33 {
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+                "第 {index} 页升到了满足不了整段的那一档"
+            );
+        }
+    }
+
+    /// 主体页跟着基准档走，前提是基准档**过得了这一页的界**。判定排在基准档之前的页
+    /// 不等于基准档够用它——抖动那一维上没有位深那种单调性，`1bit+FS` 排在 `2bit` 之前，
+    /// 判据却可能好过它。这样的页要照样进迟滞那一段，否则会被静默写成越界档。
+    #[test]
+    fn a_page_the_base_cannot_admit_is_raised_even_when_it_sorts_below_the_base() {
+        let all = Candidate::all(16, GeometryGate::Holds);
+        let dithered = Candidate::new(BitDepth::One, Dither::FloydSteinberg);
+        // 五十七页只要 2bit，基准档落在它上面。
+        let mut volume = Volume::over(
+            all.clone(),
+            &vec![(Candidate::plain(BitDepth::Two), just_over()); 60],
+        );
+        // 另三页连着：不抖动的两档都越界，`1bit+FS` 起在界内——判定因此排在基准档**之前**。
+        for index in 30..33 {
+            volume.decided[index] = dithered;
+            volume.scores[index] = all
+                .iter()
+                .map(|&candidate| CandidateScore {
+                    candidate,
+                    score: Score::from_value(if candidate.dither == Dither::Off {
+                        just_over()
+                    } else {
+                        0.0
+                    }),
+                })
+                .collect();
+        }
+
+        let summary = volume.summarize();
+
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::Two));
+        assert_eq!(summary.envelope.raised_pages, 3);
+        for index in 30..33 {
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+                "第 {index} 页被写成了基准档，而基准档过不了它的界"
+            );
+            assert_eq!(summary.verdicts[index].reason, Reason::Hysteresis);
+        }
     }
 
     /// 差一页就不算持续：同样的内容少一页，全卷留在基准档上。
     #[test]
     fn a_run_one_page_short_of_the_hysteresis_stays_at_the_base() {
         let short: Vec<_> = (30..30 + HYSTERESIS_PAGES - 1)
-            .map(|index| (index, BitDepth::Four, just_over()))
+            .map(|index| (index, Candidate::plain(BitDepth::Four), just_over()))
             .collect();
         let volume = volume_of(60, &short);
 
@@ -423,7 +614,7 @@ mod tests {
             summary
                 .verdicts
                 .iter()
-                .all(|verdict| verdict.bit_depth == BitDepth::One),
+                .all(|verdict| verdict.candidate == Candidate::plain(BitDepth::One)),
             "{:?}",
             summary.verdicts
         );
@@ -432,16 +623,19 @@ mod tests {
     /// 离群页：远在界外的那些页。不参与上包络，单独定到它自己要的那一档。
     #[test]
     fn a_page_far_outside_the_threshold_is_taken_out_and_decided_on_its_own() {
-        let volume = volume_of(20, &[(4, BitDepth::Four, far_out())]);
+        let volume = volume_of(20, &[(4, Candidate::plain(BitDepth::Four), far_out())]);
 
         let summary = volume.summarize();
 
         assert_eq!(summary.envelope.outlier_pages, 1);
         assert_eq!(summary.envelope.body_pages, 19);
         assert_ne!(summary.envelope.driver, 4, "离群页不该定出基准档");
-        assert_eq!(summary.verdicts[4].bit_depth, BitDepth::Four);
+        assert_eq!(
+            summary.verdicts[4].candidate,
+            Candidate::plain(BitDepth::Four)
+        );
         assert_eq!(summary.verdicts[4].reason, Reason::Outlier);
-        assert_eq!(summary.envelope.base, BitDepth::One);
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::One));
     }
 
     /// 离群看的是幅度，不是「连着几页」：卷首连着几页的彩页仍然一页一页地摘出去。
@@ -452,7 +646,7 @@ mod tests {
         // 再多一页就越过 5%，临时基准档随之抬进这一组——那时它们不再是离群页，
         // 而是这一卷该服务的一部分，正是上分位的定义在说话。
         let opening: Vec<_> = (0..3)
-            .map(|index| (index, BitDepth::Four, far_out()))
+            .map(|index| (index, Candidate::plain(BitDepth::Four), far_out()))
             .collect();
         let volume = volume_of(60, &opening);
 
@@ -462,7 +656,10 @@ mod tests {
         assert_eq!(summary.envelope.body_pages, 57);
         assert_eq!(summary.envelope.raised_pages, 0);
         for index in 0..3 {
-            assert_eq!(summary.verdicts[index].bit_depth, BitDepth::Four);
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::plain(BitDepth::Four)
+            );
             assert_eq!(summary.verdicts[index].reason, Reason::Outlier);
         }
     }
@@ -474,11 +671,11 @@ mod tests {
         let volume = volume_of(
             80,
             &[
-                (10, BitDepth::Two, just_over()),
-                (11, BitDepth::Two, just_over()),
+                (10, Candidate::plain(BitDepth::Two), just_over()),
+                (11, Candidate::plain(BitDepth::Two), just_over()),
                 // 夹在中间的这一页远在界外，单独定档。
-                (12, BitDepth::Four, far_out()),
-                (13, BitDepth::Two, just_over()),
+                (12, Candidate::plain(BitDepth::Four), far_out()),
+                (13, Candidate::plain(BitDepth::Two), just_over()),
             ],
         );
 
@@ -486,11 +683,17 @@ mod tests {
 
         assert_eq!(summary.envelope.outlier_pages, 1);
         assert_eq!(summary.verdicts[12].reason, Reason::Outlier);
-        assert_eq!(summary.verdicts[12].bit_depth, BitDepth::Four);
+        assert_eq!(
+            summary.verdicts[12].candidate,
+            Candidate::plain(BitDepth::Four)
+        );
         // 10、11、13 在主体序列上是连着的三页，够一次升档。
         assert_eq!(summary.envelope.raised_pages, 3);
         for index in [10, 11, 13] {
-            assert_eq!(summary.verdicts[index].bit_depth, BitDepth::Two);
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::plain(BitDepth::Two)
+            );
             assert_eq!(summary.verdicts[index].reason, Reason::Hysteresis);
         }
     }
@@ -504,7 +707,7 @@ mod tests {
 
         assert_eq!(summary.envelope.outlier_pages, 0);
         assert_eq!(summary.envelope.body_pages, 20);
-        assert_eq!(summary.envelope.base, BitDepth::Four);
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::Four));
         assert!(
             summary
                 .verdicts
@@ -524,7 +727,7 @@ mod tests {
     /// 三个数都没标定，报告要自己说出这一点（ADR 0006：三个数均尚未标定）。
     #[test]
     fn the_envelope_says_none_of_its_three_numbers_have_been_calibrated() {
-        let volume = volume_of(20, &[(4, BitDepth::Four, far_out())]);
+        let volume = volume_of(20, &[(4, Candidate::plain(BitDepth::Four), far_out())]);
 
         let said = volume.summarize().envelope.to_string();
 

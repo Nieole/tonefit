@@ -5,7 +5,10 @@
 mod fixtures;
 
 use fixtures::{Workspace, run_volume};
-use tonefit::{BitDepth, CacheBudget, Filter, Mode, Reason, Request, Size, VolumeVerdict};
+use tonefit::{
+    BitDepth, CacheBudget, Candidate, Dither, Filter, GeometryGate, Mode, Reason, Request, Size,
+    VolumeVerdict,
+};
 
 #[test]
 fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
@@ -23,14 +26,80 @@ fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
 
     let written = fixtures::read_png(&pages[0].output);
     assert_eq!(written.size, Size::new(1264, 1680));
-    // 连续渐变页把 4bit 的格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
-    assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
+    // 这一页贴住面板，几何门放行抖动：判据于是在 2bit+FS 上就够了，
+    // 而同一档不抖动差得远——差多远看报告里这一页的判据曲线。
+    assert_eq!(
+        pages[0].verdict.candidate,
+        Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
+    );
+    // 抖过的渐变页把 2bit 的四个格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
     assert_eq!(written.color_type, png::ColorType::Grayscale);
     assert_eq!(
         fixtures::written_bits(written.bit_depth),
-        pages[0].verdict.bit_depth.bits()
+        pages[0].verdict.candidate.bit_depth.bits()
     );
 }
+
+/// 色带：平缓渐变被就近取整压成几条等值的宽带，带与带之间一步跨掉一个格距。
+/// 抖动把那一步摊成高频误差，逐行均值于是平滑地爬上去（ADR 0007、measurements 的《抖动》）。
+#[test]
+fn a_gradient_written_at_a_low_bit_depth_comes_out_without_measurable_banding() {
+    let dithered = Workspace::new();
+    let volume = dithered.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+
+    let report = run_volume(&dithered, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    let depth = page.verdict.candidate.bit_depth;
+    assert_eq!(page.verdict.candidate.dither, Dither::FloydSteinberg);
+    assert!(depth <= BitDepth::Two, "判定落在 {depth}，色带那一档没测到");
+
+    // 同一档位深、同一页，点名不抖动再跑一遍：差别只剩抖动这一项。
+    let plain_space = Workspace::new();
+    let plain_volume = plain_space.volume("volume-a");
+    plain_volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    let plain = tonefit::run(&Request {
+        bit_depth: Some(depth),
+        dither: Some(Dither::Off),
+        ..fixtures::request(&plain_space, [plain_volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let with_dither = worst_banding_step(&fixtures::read_png(&page.output));
+    let without = worst_banding_step(&fixtures::read_png(&plain.volumes[0].pages[0].output));
+
+    // 不抖动时相邻两块的均值一步跨掉几十级——那一步就是看得见的色带（2bit 的格距是 85）。
+    assert!(
+        without > 40.0,
+        "夹具不对：不抖动的 {depth} 本该出色带，最大跳变只有 {without:.2}"
+    );
+    assert!(
+        with_dither < 10.0,
+        "抖过之后局部均值仍有 {with_dither:.2} 级的跳变，色带没消掉"
+    );
+}
+
+/// 相邻两块的均值之间的最大跳变，8 位灰度级。色带就是这个量。
+///
+/// 一块取 [`BANDING_BLOCK`] 行。**不能逐行量**：FS 把误差往下一行推，相邻两行的均值
+/// 因此本来就在几十级上下摆——那正是抖动买下的高频，量它等于量这笔交换本身，
+/// 而不是量色带。块高取低通核（4 px，见 ADR 0002）的两倍，摆动落在块内、色带落在块间。
+fn worst_banding_step(written: &fixtures::DecodedPng) -> f64 {
+    let stride = written.size.width as usize * BANDING_BLOCK;
+    let means: Vec<f64> = written
+        .pixels
+        .chunks(stride)
+        .map(|block| block.iter().map(|&level| f64::from(level)).sum::<f64>() / block.len() as f64)
+        .collect();
+    means
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0, f64::max)
+}
+
+/// 量色带的块高，行。
+const BANDING_BLOCK: usize = 8;
 
 #[test]
 fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
@@ -48,10 +117,10 @@ fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
     let report = run_volume(&space, &volume);
 
     for page in &report.volumes[0].pages {
-        let depth = page.verdict.bit_depth;
+        let depth = page.verdict.candidate.bit_depth;
         let grid = tonefit::quantize(
             &tonefit::GrayImage::new(Size::new(256, 1), (0..=255u8).collect()),
-            depth,
+            Candidate::new(depth, Dither::Off),
         );
         let written = fixtures::read_png(&page.output);
         for &level in &written.pixels {
@@ -81,7 +150,10 @@ fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
     .expect("处理应当成功");
 
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
-    assert_eq!(report.volumes[0].pages[0].verdict.bit_depth, BitDepth::Four);
+    assert_eq!(
+        report.volumes[0].pages[0].verdict.candidate.bit_depth,
+        BitDepth::Four
+    );
     assert_eq!(written.color_type, png::ColorType::Indexed);
     assert_eq!(written.bit_depth, png::BitDepth::One);
     assert_eq!(
@@ -604,14 +676,11 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
 
 #[test]
 fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
-    // 灰阶数是位深的硬上界，裁剪在判据求值之前（ADR 0003）：e-ink 恒 16 级，8bit 不进候选。
-    let cases = [
-        (None, vec![BitDepth::One, BitDepth::Two, BitDepth::Four]),
-        (Some(4), vec![BitDepth::One, BitDepth::Two]),
-        (Some(256), BitDepth::ALL.to_vec()),
-    ];
+    // 候选是两道裁剪的乘积，都在判据求值之前：位深按面板灰阶数裁（ADR 0003），
+    // 抖动模式按几何门裁（ADR 0007）。这一页贴住面板，门放行，于是每档位深各两个候选。
+    let cases = [(None, 16), (Some(4), 4), (Some(256), 256)];
 
-    for (gray_levels, expected) in cases {
+    for (gray_levels, effective) in cases {
         let space = Workspace::new();
         let volume = space.volume("volume-a");
         volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -627,12 +696,78 @@ fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
         })
         .expect("dry-run 应当成功");
 
-        let depths: Vec<_> = report.volumes[0].pages[0]
+        let candidates: Vec<_> = report.volumes[0].pages[0]
             .scores
             .iter()
-            .map(|scored| scored.bit_depth)
+            .map(|scored| scored.candidate)
             .collect();
-        assert_eq!(depths, expected, "{gray_levels:?} 级灰阶下的候选不对");
+        assert_eq!(
+            candidates,
+            Candidate::all(effective, GeometryGate::Holds),
+            "{gray_levels:?} 级灰阶下的候选不对"
+        );
+    }
+}
+
+/// 几何门是**几何**的，对整卷只有一个结果（ADR 0007：整体关闭，不降级）：一页贴不住面板，
+/// 整卷的抖动就整体关闭——不是只关那一页，也不是降级成更温和的模式。
+#[test]
+fn one_page_smaller_than_the_target_shuts_the_dither_off_for_the_whole_volume() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 头一页贴住面板，本可以抖；第二页源比目标小，按不放大原样输出，把门关上。
+    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page(
+        "002.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    // 门关在哪一页要指得出来：它关掉的是整卷的抖动。
+    assert_eq!(volume_report.gate, GeometryGate::Broken { page: 1 });
+    for page in &volume_report.pages {
+        assert_eq!(
+            page.verdict.candidate.dither,
+            Dither::Off,
+            "{} 在门关着时抖了",
+            page.source.display()
+        );
+        // 被裁掉的候选不进入判据：门先判，判据在门放行的那套候选上求值。
+        assert!(
+            page.scores
+                .iter()
+                .all(|scored| scored.candidate.dither == Dither::Off),
+            "{} 的判据里还留着抖动候选",
+            page.source.display()
+        );
+    }
+}
+
+/// 每一页都缩下来贴住面板时门就成立，抖动这才跟着位深一起按卷定下
+/// （ADR 0007：上包络取的是这个组合，不设页级抖动开关）。
+#[test]
+fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 跨页宽幅页贴住的是宽边，两侧留边换成上下留边，门同样成立。
+    volume.page("003.png", &fixtures::gradient(fixtures::SPREAD));
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    assert_eq!(volume_report.gate, GeometryGate::Holds);
+    let base = match volume_report.verdict {
+        Some(VolumeVerdict::Envelope(envelope)) => envelope.base,
+        other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+    };
+    assert_eq!(base.dither, Dither::FloydSteinberg);
+    // 抖动模式全卷共用一个：页级没有开关。
+    for page in &volume_report.pages {
+        assert_eq!(page.verdict.candidate.dither, base.dither);
     }
 }
 
@@ -663,7 +798,7 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     // a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict。
     assert_eq!(
         fixtures::written_bits(fixtures::read_png(&page.1.output).bit_depth),
-        page.0.verdict.bit_depth.bits()
+        page.0.verdict.candidate.bit_depth.bits()
     );
 }
 
@@ -693,16 +828,16 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
         "上包络没被关掉"
     );
     let pages = &report.volumes[0].pages;
-    assert_eq!(pages[0].verdict.bit_depth, BitDepth::Four);
+    assert_eq!(pages[0].verdict.candidate.bit_depth, BitDepth::Four);
     assert_eq!(pages[0].verdict.reason, Reason::LowestWithinThreshold);
-    assert_eq!(pages[1].verdict.bit_depth, BitDepth::One);
+    assert_eq!(pages[1].verdict.candidate.bit_depth, BitDepth::One);
     assert_eq!(pages[1].verdict.reason, Reason::LowestWithinThreshold);
     // 判定是从判据来的：报告里同时给出被判定的那一档的判据值。
     for page in pages {
         assert!(
             page.scores
                 .iter()
-                .any(|scored| scored.bit_depth == page.verdict.bit_depth),
+                .any(|scored| scored.candidate.bit_depth == page.verdict.candidate.bit_depth),
             "{} 的判定位深不在候选里",
             page.source.display()
         );
@@ -727,7 +862,7 @@ fn the_lowest_bit_depth_within_the_threshold_wins() {
     let chosen = page
         .scores
         .iter()
-        .position(|scored| scored.bit_depth == page.verdict.bit_depth)
+        .position(|scored| scored.candidate.bit_depth == page.verdict.candidate.bit_depth)
         .expect("判定位深必须在候选里");
     assert!(
         threshold.admits(page.scores[chosen].score),
@@ -743,22 +878,85 @@ fn the_lowest_bit_depth_within_the_threshold_wins() {
 
 #[test]
 fn an_override_replaces_what_the_metric_would_have_chosen() {
+    // 两维都点名，候选只剩一个：判定整个被顶掉，判据说什么都不改变结果。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 这一页自动判定会给 4bit（见 every_page_gets_a_bit_depth_and_a_reason_for_it）。
+    // 这一页自动判定会给 2bit+FS（见 each_page_becomes_a_png_at_the_target_size...）。
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
 
     let report = tonefit::run(&Request {
         bit_depth: Some(BitDepth::Two),
+        dither: Some(Dither::Off),
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("覆盖后应当照常处理");
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+    assert_eq!(page.verdict.candidate, fixtures::plain(BitDepth::Two));
     assert_eq!(page.verdict.reason, Reason::Override);
-    // 覆盖了判定，不等于不给判据：报告仍要说得清「本来会选哪一档」。
+    assert_eq!(
+        report.volumes[0].verdict,
+        Some(VolumeVerdict::Override(fixtures::plain(BitDepth::Two)))
+    );
+    // 覆盖了判定，不等于不给判据：报告仍要说得清「你点的这一档判据是多少」。
     assert!(!page.scores.is_empty(), "覆盖之后判据值没了");
+}
+
+/// 覆盖项裁的是候选集，一次裁一维：只点了位深，抖动那一维还有得判，判据照旧说了算。
+/// 报告因此不说「被顶掉」——那一卷仍有分布可聚合。
+#[test]
+fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = tonefit::run(&Request {
+        bit_depth: Some(BitDepth::Four),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("覆盖后应当照常处理");
+
+    let page = &report.volumes[0].pages[0];
+    assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Four);
+    assert_ne!(
+        page.verdict.reason,
+        Reason::Override,
+        "还有一维在判，不该说被顶掉"
+    );
+    // 候选只剩点名那一档位深的两个，抖动那一维原样留着。
+    assert_eq!(
+        page.scores
+            .iter()
+            .map(|scored| scored.candidate)
+            .collect::<Vec<_>>(),
+        [
+            fixtures::plain(BitDepth::Four),
+            Candidate::new(BitDepth::Four, Dither::FloydSteinberg)
+        ]
+    );
+}
+
+/// 几何门是几何事实，不是自动选择：`--dither` 覆盖不了它（ADR 0007：整体关闭，不降级）。
+/// 门不成立时点名抖动当场被拒，不静默照抖。
+#[test]
+fn a_dither_the_geometry_gate_forbids_is_refused() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let error = tonefit::run(&Request {
+        dither: Some(Dither::FloydSteinberg),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect_err("几何门不成立时点名抖动应当被拒绝");
+
+    let said = error.to_string();
+    assert!(said.contains("几何门"), "{said}");
+    // 是哪一页关的门要说出来——那是唯一能让用户看懂这条拒绝的信息。
+    assert!(format!("{error:#}").contains("001.png"), "{error:#}");
 }
 
 #[test]
@@ -784,8 +982,11 @@ fn a_bit_depth_the_panel_cannot_show_is_refused() {
 
 #[test]
 fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
-    // 灰阶数压到 4 级，候选只剩 {1,2}；渐变页在这两档上都远远越界。
+    // 灰阶数压到 4 级、抖动点名关掉，候选只剩 {1,2}；渐变页在这两档上都远远越界。
     // 没有可用档时取候选上界兜底——判定要有，理由要说出是兜底。
+    //
+    // 抖动要点名关掉，否则测不到这一条：同一页同一块面板上 2bit+FS 落在界内
+    // （见 dithering_can_bring_a_page_back_within_the_threshold），兜底就不触发了。
     //
     // 兜底是**逐页**那一层的规则，`--per-page` 是它在报告里露面的地方：卷级那一层开着时，
     // 理由说的是基准档从哪来，而「一档都不达标」这件事仍摆在同一页的判据值里。
@@ -798,26 +999,65 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
 
     let report = tonefit::run(&Request {
         profile: profile.clone(),
+        dither: Some(Dither::Off),
         per_page: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+    assert_eq!(page.verdict.candidate, fixtures::plain(BitDepth::Two));
     assert_eq!(page.verdict.reason, Reason::NoneWithinThreshold);
 
     // 上包络开着时档位不变：一页的卷，基准档只能是这一页要的那一档。
     // 兜底的那一档是候选上界，卷级那一层不会、也不该把它再抬高。
     let with_envelope = tonefit::run(&Request {
         profile,
+        dither: Some(Dither::Off),
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
     assert_eq!(
-        with_envelope.volumes[0].pages[0].verdict.bit_depth,
-        BitDepth::Two
+        with_envelope.volumes[0].pages[0].verdict.candidate,
+        fixtures::plain(BitDepth::Two)
     );
+}
+
+/// 抖动买到的是**低位深上的保真**：同一页同一块面板，不抖动时一档都不达标，
+/// 抖过之后 2bit 就落回界内（ADR 0007 的收益，见 measurements 的《抖动》）。
+#[test]
+fn dithering_can_bring_a_page_back_within_the_threshold() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 灰阶数压到 4 级：候选位深只剩 {1,2}，4bit 那条退路不在。
+    let profile = fixtures::baseline_profile()
+        .with_gray_levels(4)
+        .expect("4 级可用");
+
+    let report = tonefit::run(&Request {
+        profile,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let page = &report.volumes[0].pages[0];
+    assert_eq!(
+        page.verdict.candidate,
+        Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
+    );
+    assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+    // 不抖动的那两档全部越界，抖过的这一档在界内：判据自己说出了这笔交换。
+    let threshold = report.profile.threshold();
+    for scored in &page.scores {
+        assert_eq!(
+            threshold.admits(scored.score),
+            scored.candidate >= page.verdict.candidate,
+            "{} 的 {} 落在了界的另一边",
+            scored.candidate,
+            scored.score
+        );
+    }
 }
 
 #[test]
@@ -1002,13 +1242,13 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
-    assert_eq!(envelope.base, BitDepth::Two);
+    assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
     assert_eq!(envelope.body_pages, 19);
     assert_eq!(envelope.outlier_pages, 0);
     assert_eq!(envelope.raised_pages, 0);
     for page in &volume_report.pages {
         assert_eq!(
-            page.verdict.bit_depth,
+            page.verdict.candidate.bit_depth,
             BitDepth::Two,
             "{} 没跟着基准档走",
             page.source.display()
@@ -1033,17 +1273,17 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
-    assert_eq!(envelope.base, BitDepth::Two);
+    assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
     assert_eq!(envelope.outlier_pages, 1);
     assert_eq!(envelope.body_pages, 19);
     assert_ne!(envelope.driver, 19, "离群页不该定出基准档");
 
     let outlier = &volume_report.pages[19];
-    assert_eq!(outlier.verdict.bit_depth, BitDepth::Four);
+    assert_eq!(outlier.verdict.candidate.bit_depth, BitDepth::Four);
     assert_eq!(outlier.verdict.reason, Reason::Outlier);
     // 交界处那一次跳变是认下的代价，位置指得出来就行：主体一页不动。
     for page in &volume_report.pages[..19] {
-        assert_eq!(page.verdict.bit_depth, BitDepth::Two);
+        assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Two);
         assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
     }
 }
@@ -1057,17 +1297,17 @@ fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
 
     assert_eq!(envelope_of(&raised).raised_pages, 3);
     for page in &raised.pages[30..33] {
-        assert_eq!(page.verdict.bit_depth, BitDepth::Four);
+        assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Four);
         assert_eq!(page.verdict.reason, Reason::Hysteresis);
     }
     // 段外的页不受影响：升的是那一段，不是全卷。
-    assert_eq!(raised.pages[29].verdict.bit_depth, BitDepth::Two);
-    assert_eq!(raised.pages[33].verdict.bit_depth, BitDepth::Two);
+    assert_eq!(raised.pages[29].verdict.candidate.bit_depth, BitDepth::Two);
+    assert_eq!(raised.pages[33].verdict.candidate.bit_depth, BitDepth::Two);
 
     assert_eq!(envelope_of(&unchanged).raised_pages, 0);
     for page in &unchanged.pages {
         assert_eq!(
-            page.verdict.bit_depth,
+            page.verdict.candidate.bit_depth,
             BitDepth::Two,
             "{} 靠不足一段的要求升了档",
             page.source.display()
@@ -1105,7 +1345,7 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
     // 卷级不是「被关掉」，而是无从谈起，报告要说的正是这一句。
     assert_eq!(
         report.volumes[0].verdict,
-        Some(VolumeVerdict::Override(BitDepth::Four))
+        Some(VolumeVerdict::Override(fixtures::plain(BitDepth::Four)))
     );
     for page in &report.volumes[0].pages {
         assert_eq!(page.verdict.reason, Reason::Override);
@@ -1129,6 +1369,6 @@ fn lowest_within_threshold(page: &tonefit::PageReport, report: &tonefit::Report)
     page.scores
         .iter()
         .find(|scored| threshold.admits(scored.score))
-        .map(|scored| scored.bit_depth)
-        .unwrap_or_else(|| page.scores.last().expect("候选非空").bit_depth)
+        .map(|scored| scored.candidate.bit_depth)
+        .unwrap_or_else(|| page.scores.last().expect("候选非空").candidate.bit_depth)
 }
