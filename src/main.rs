@@ -56,6 +56,11 @@ struct Cli {
     /// 只算不写：报告照出，逐页给出判定与各候选的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
+
+    /// 不把自描述元数据写进输出 PNG。**幂等能力随之关闭**：判定与理由不再随文件走，
+    /// 重跑时也无从判断这一卷变没变，每一趟都整卷重做。
+    #[arg(long)]
+    no_metadata: bool,
 }
 
 impl Cli {
@@ -122,6 +127,7 @@ fn main() -> Result<()> {
         per_page: cli.per_page,
         cache_budget,
         mode,
+        metadata: !cli.no_metadata,
     })?;
     print!("{}", render(&report, mode));
     Ok(())
@@ -137,10 +143,14 @@ fn render(report: &Report, mode: Mode) -> String {
             "{} → {}（{} 页{}）\n",
             volume.volume.display(),
             volume.output.display(),
-            volume.pages.len(),
+            volume.page_count(),
             color_page_note(volume)
         ));
         text.push_str(&volume_lines(volume));
+        // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`volume_lines` 那一行已经说完了。
+        if volume.skipped() {
+            continue;
+        }
         // 卷成为不可分割的处理单元，峰值内存随卷大小走（ADR 0005）：这一行是那条代价的现场。
         text.push_str(&format!("  缓存 {}\n", volume.cache));
         for page in &volume.pages {
@@ -155,6 +165,13 @@ fn render(report: &Report, mode: Mode) -> String {
     }
     text
 }
+
+/// 幂等命中而跳过的卷那一行。
+///
+/// 「跳过」本身不够——用户要能分清「这一卷没变」与「工具没做事」。四项依据点名摆出来，
+/// 改了其中哪一项会让它重做，一眼看得见（spec 的 story 8、story 9）。
+const SKIPPED_LINE: &str =
+    "  跳过 幂等命中：工具版本、profile、参数、源均未变，上一趟的输出还在，这一卷一页都没有重做\n";
 
 /// 卷那一行里说彩页有几张的那一小截。
 ///
@@ -182,6 +199,11 @@ fn volume_lines(volume: &VolumeReport) -> String {
     let Some(verdict) = &volume.verdict else {
         return String::new();
     };
+    // 跳过的卷同样没有几何门可说——它一页都没算。这一支要排在 `gate_line` 之前：
+    // 那里读的 `volume.gate` 只有算过的卷才有。
+    if volume.skipped() {
+        return SKIPPED_LINE.to_owned();
+    }
     let mut text = gate_line(volume, verdict);
     text.push_str(&match verdict {
         VolumeVerdict::Envelope(envelope) => format!(
@@ -194,6 +216,8 @@ fn volume_lines(volume: &VolumeReport) -> String {
         VolumeVerdict::PerPage => {
             "  卷级 无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档\n".to_owned()
         }
+        // 上面那一支已经把跳过的卷送走了。
+        VolumeVerdict::Skipped { .. } => String::new(),
     });
     text
 }
@@ -205,7 +229,8 @@ fn volume_lines(volume: &VolumeReport) -> String {
 /// 通过时抖不抖跟着位深一起按卷决定）。
 /// 门被哪一页关上也要说出来——门关掉的是**整卷**的抖动，不指名，用户就无从下手。
 fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
-    let gate = match volume.gate {
+    // 走到这里的卷都真算过一遍：跳过的那一种在 `volume_lines` 里已经走掉了。
+    let gate = match volume.gate.expect("算过的卷必有几何门判定") {
         GeometryGate::Holds => "成立".to_owned(),
         GeometryGate::Broken { page } => format!(
             "不成立（{} 源比目标小，原样输出，阅读器还要再缩一次）",
@@ -217,7 +242,7 @@ fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
         .dither()
         .map_or_else(|| "逐页".to_owned(), |dither| dither.to_string());
     let mut text = format!("  几何门 {gate} · 本卷 {dither}\n");
-    if !volume.gate.holds() {
+    if !volume.gate.is_some_and(GeometryGate::holds) {
         // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
         // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
         // 报告因此得把这句话说出来，而不是让它烂在一句注释里。
@@ -316,7 +341,7 @@ mod tests {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
                 verdict: Some(verdict),
-                gate,
+                gate: Some(gate),
                 cache: cache_usage(),
                 decodes: 1,
                 pages: vec![page],
@@ -574,7 +599,7 @@ mod tests {
                     outlier_pages: 0,
                     raised_pages: 0,
                 })),
-                gate: GeometryGate::Holds,
+                gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
                 decodes: 3,
                 pages: vec![
@@ -599,6 +624,40 @@ mod tests {
         assert!(text.contains("驱动页 library/volume-a/003.png"), "{text}");
     }
 
+    /// 跳过的卷只占两行：去处那一行，加上说清它为什么什么都没有的那一行。
+    ///
+    /// 几何门、卷级判定、缓存用量、逐页结果一个都不出现——那一趟根本没算过它们，
+    /// 报告摆出任何一项都是编的。页数照旧要说出来：它是源那一侧的事实。
+    #[test]
+    fn a_skipped_volume_says_so_and_says_nothing_it_did_not_compute() {
+        let report = Report {
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                pages: Vec::new(),
+                verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
+                gate: None,
+                cache: cache_usage(),
+                decodes: 0,
+            }],
+        };
+
+        let text = render(&report, Mode::Process);
+
+        // profile 一行、卷两行。
+        assert_eq!(text.lines().count(), 3);
+        assert!(
+            text.contains("library/volume-a → out/volume-a（12 页）"),
+            "{text}"
+        );
+        assert!(text.contains("跳过 幂等命中"), "{text}");
+        // 改哪一项会让它重做，用户得看得见（spec 的 story 9）。
+        assert!(text.contains("工具版本、profile、参数、源均未变"), "{text}");
+        assert!(!text.contains("几何门"), "{text}");
+        assert!(!text.contains("缓存"), "{text}");
+    }
+
     #[test]
     fn the_bit_depth_from_the_command_line_overrides_the_verdict() {
         let parse = |arguments: &[&str]| {
@@ -618,6 +677,34 @@ mod tests {
         assert_eq!(parse(&[]).bit_depth_override().expect("默认值"), None);
         // 全集之外的比特数在拼 Request 之前就被挡下。
         assert!(parse(&["--bit-depth", "3"]).bit_depth_override().is_err());
+    }
+
+    /// `--no-metadata` 关掉记录，幂等能力随之关闭——两件事是同一个开关，
+    /// 帮助文本里必须并排说出来，否则用户会以为自己只是少写了几行 tEXt。
+    #[test]
+    fn no_metadata_says_in_the_help_text_that_it_also_turns_idempotency_off() {
+        let line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+        let mut with_flag = line.clone();
+        with_flag.extend(["--no-metadata", "volume-a"]);
+        let mut without = line;
+        without.push("volume-a");
+
+        assert!(
+            Cli::try_parse_from(with_flag)
+                .expect("参数应当可解析")
+                .no_metadata
+        );
+        // 不点名就照写：记录随文件走是默认行为。
+        assert!(
+            !Cli::try_parse_from(without)
+                .expect("参数应当可解析")
+                .no_metadata
+        );
+
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--no-metadata"), "{help}");
+        assert!(help.contains("幂等能力随之关闭"), "{help}");
+        assert!(help.contains("每一趟都整卷重做"), "{help}");
     }
 
     #[test]

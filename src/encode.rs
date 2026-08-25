@@ -7,6 +7,11 @@
 //! 两者的差别在位宽由谁定：灰度按**格点数**留位宽，调色板按**页面实际用到的取值数**留。
 //! 判定 4bit 而一页只有两个取值时，后者装进 1 位而像素一个不动，前者留满 4 位。
 //!
+//! 自描述元数据也在这里落进文件：判定与理由随页走，同一批字段兼作幂等依据
+//! （ADR 0006，字段见 `crate::metadata`）。三种编法共用同一个出口，
+//! 因此「哪一种颜色类型胜出」不改变写进去的记录——两边各背同样几个 tEXt 块，
+//! 取小者比的仍是像素那一侧。
+//!
 //! ADR 0004 的编码器接口本身还没抽出来——P0 只有 PNG 一个实现，AVIF 输出不在范围内。
 
 use std::collections::{HashMap, HashSet};
@@ -16,14 +21,15 @@ use anyhow::{Context, Result};
 use crate::color::ColorImage;
 use crate::geometry::Size;
 use crate::gray::GrayImage;
+use crate::metadata::Record;
 use crate::quantize::{BitDepth, grid_index};
 
 /// 把一张按 `depth` 量化过的灰度图编成 PNG，灰度与调色板两种颜色类型取体积小者。
 ///
 /// 两种编法写出的像素完全相同，差别只在颜色类型与位宽，因此「取小者」不牵动画质。
-pub fn png(image: &GrayImage, depth: BitDepth) -> Result<Vec<u8>> {
-    let grayscale = grayscale_png(image, depth)?;
-    let palette = palette_png(image)?;
+pub fn png(image: &GrayImage, depth: BitDepth, record: Option<&Record>) -> Result<Vec<u8>> {
+    let grayscale = grayscale_png(image, depth, record)?;
+    let palette = palette_png(image, record)?;
     // 一样大时留灰度：它不带 PLTE，读的那一端也少一层间接。
     Ok(if palette.len() < grayscale.len() {
         palette
@@ -36,23 +42,24 @@ pub fn png(image: &GrayImage, depth: BitDepth) -> Result<Vec<u8>> {
 ///
 /// 彩色分支不量化（ADR 0005 决定第 4 条）：这里写出的是缩放后的像素本身，每分量 8 位。
 /// 「取体积较小者」与灰度那一侧同一条规则，挑的依据同样只有体积——两种编法写出的像素完全相同。
-pub fn color_png(image: &ColorImage) -> Result<Vec<u8>> {
+pub fn color_png(image: &ColorImage, record: Option<&Record>) -> Result<Vec<u8>> {
     // 两种编法读的是同一份交织缓冲：一页 RGB 好几 MB，交织两遍是白付一次分配。
     let interleaved = image.interleaved();
-    let truecolor = truecolor_png(image.size(), &interleaved)?;
-    match palette_color_png(image.size(), &interleaved)? {
+    let truecolor = truecolor_png(image.size(), &interleaved, record)?;
+    match palette_color_png(image.size(), &interleaved, record)? {
         Some(palette) if palette.len() < truecolor.len() => Ok(palette),
         _ => Ok(truecolor),
     }
 }
 
 /// 真彩色 PNG：每像素三字节，原样写出。
-fn truecolor_png(size: Size, interleaved: &[u8]) -> Result<Vec<u8>> {
+fn truecolor_png(size: Size, interleaved: &[u8], record: Option<&Record>) -> Result<Vec<u8>> {
     write(
         size,
         png::BitDepth::Eight,
         png::ColorType::Rgb,
         None,
+        record,
         interleaved,
     )
 }
@@ -62,7 +69,11 @@ fn truecolor_png(size: Size, interleaved: &[u8]) -> Result<Vec<u8>> {
 /// 色板按 RGB 三元组的字典序排。灰度那一侧排序买的是「索引跟着取值单调，行滤波器的差分才小」，
 /// 彩色这一侧买不到同样的东西——三个分量上没有一个共同的序。排序在这里只为**定死次序**：
 /// 同一页跑两遍要编出同一个文件（11 号票的幂等靠的是这一条）。
-fn palette_color_png(size: Size, interleaved: &[u8]) -> Result<Option<Vec<u8>>> {
+fn palette_color_png(
+    size: Size,
+    interleaved: &[u8],
+    record: Option<&Record>,
+) -> Result<Option<Vec<u8>>> {
     let Some(colors) = distinct_colors(interleaved) else {
         return Ok(None);
     };
@@ -83,6 +94,7 @@ fn palette_color_png(size: Size, interleaved: &[u8]) -> Result<Option<Vec<u8>>> 
         &indices,
         narrowest_depth(colors.len()),
         Some(&palette),
+        record,
     )
     .map(Some)
 }
@@ -103,20 +115,20 @@ fn distinct_colors(interleaved: &[u8]) -> Option<Vec<[u8; 3]>> {
 }
 
 /// 灰度 PNG：取值直接落在 `depth` 的格点序号上，位宽就是 `depth`。
-fn grayscale_png(image: &GrayImage, depth: BitDepth) -> Result<Vec<u8>> {
+fn grayscale_png(image: &GrayImage, depth: BitDepth, record: Option<&Record>) -> Result<Vec<u8>> {
     let indices: Vec<u8> = image
         .pixels()
         .iter()
         .map(|&level| grid_index(level, depth))
         .collect();
-    write_png(image.size(), &indices, depth, None)
+    write_png(image.size(), &indices, depth, None, record)
 }
 
 /// 调色板 PNG：色板只收这一页真正用到的取值，位宽因此可能低于判定位深。
 ///
 /// 色板按灰度取值升序排，索引跟着单调——PNG 的行滤波器在索引上做差分，
 /// 乱序的色板会把平缓过渡打成噪声。
-fn palette_png(image: &GrayImage) -> Result<Vec<u8>> {
+fn palette_png(image: &GrayImage, record: Option<&Record>) -> Result<Vec<u8>> {
     let mut used = [false; 256];
     for &level in image.pixels() {
         used[level as usize] = true;
@@ -141,6 +153,7 @@ fn palette_png(image: &GrayImage) -> Result<Vec<u8>> {
         &indices,
         narrowest_depth(levels.len()),
         Some(&palette),
+        record,
     )
 }
 
@@ -161,6 +174,7 @@ fn write_png(
     indices: &[u8],
     depth: BitDepth,
     palette: Option<&[u8]>,
+    record: Option<&Record>,
 ) -> Result<Vec<u8>> {
     let color = match palette {
         Some(_) => png::ColorType::Indexed,
@@ -171,6 +185,7 @@ fn write_png(
         png_depth(depth),
         color,
         palette,
+        record,
         &pack(indices, size, depth.bits()),
     )
 }
@@ -178,12 +193,14 @@ fn write_png(
 /// 把一整幅扫描行写成 PNG 字节。
 ///
 /// 三种编法——灰度、调色板、真彩色——只在位宽、颜色类型与带不带色板这三项上分岔，
-/// 编码器这一段的样板与出错说法因此只此一份。
+/// 编码器这一段的样板与出错说法因此只此一份。自描述元数据也在这里落进文件，
+/// 三种编法一视同仁：`--no-metadata` 关掉它时 `record` 是 `None`，一个 tEXt 块都不写。
 fn write(
     size: Size,
     depth: png::BitDepth,
     color: png::ColorType,
     palette: Option<&[u8]>,
+    record: Option<&Record>,
     scanlines: &[u8],
 ) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -192,6 +209,11 @@ fn write(
     encoder.set_color(color);
     if let Some(palette) = palette {
         encoder.set_palette(palette.to_vec());
+    }
+    for (keyword, value) in record.iter().flat_map(|record| record.fields()) {
+        encoder
+            .add_text_chunk(keyword.to_owned(), value.to_owned())
+            .with_context(|| format!("写 PNG 的 {keyword} 记录"))?;
     }
     let mut writer = encoder.write_header().context("写 PNG 头")?;
     writer.write_image_data(scanlines).context("写 PNG 像素")?;
@@ -268,7 +290,7 @@ mod tests {
         let size = Size::new(7, 5);
         for depth in BitDepth::ALL {
             let quantized = quantize(&gradient(size), Candidate::new(depth, Dither::Off));
-            let (_, _, read_back) = read(&png(&quantized, depth).expect("编 PNG"));
+            let (_, _, read_back) = read(&png(&quantized, depth, None).expect("编 PNG"));
             assert_eq!(read_back, quantized.pixels(), "{depth} 没有原样解回来");
         }
     }
@@ -280,7 +302,8 @@ mod tests {
             &gradient(Size::new(64, 64)),
             Candidate::new(BitDepth::Four, Dither::Off),
         );
-        let (color_type, bit_depth, _) = read(&png(&quantized, BitDepth::Four).expect("编 PNG"));
+        let (color_type, bit_depth, _) =
+            read(&png(&quantized, BitDepth::Four, None).expect("编 PNG"));
         assert_eq!(color_type, png::ColorType::Grayscale);
         assert_eq!(bit_depth, png::BitDepth::Four);
     }
@@ -297,7 +320,7 @@ mod tests {
             .collect();
         let image = GrayImage::new(size, pixels);
 
-        let bytes = png(&image, BitDepth::Four).expect("编 PNG");
+        let bytes = png(&image, BitDepth::Four, None).expect("编 PNG");
 
         let (color_type, bit_depth, read_back) = read(&bytes);
         assert_eq!(color_type, png::ColorType::Indexed);
@@ -305,7 +328,7 @@ mod tests {
         assert_eq!(read_back, image.pixels());
         assert!(
             bytes.len()
-                < grayscale_png(&image, BitDepth::Four)
+                < grayscale_png(&image, BitDepth::Four, None)
                     .expect("编灰度 PNG")
                     .len(),
             "调色板没有比灰度小"
@@ -349,7 +372,7 @@ mod tests {
         });
 
         for image in [&flat, &varied] {
-            let (_, _, read_back) = read_color(&color_png(image).expect("编彩色 PNG"));
+            let (_, _, read_back) = read_color(&color_png(image, None).expect("编彩色 PNG"));
             assert_eq!(read_back, image.interleaved(), "彩色像素没有原样解回来");
         }
     }
@@ -371,12 +394,12 @@ mod tests {
                 [0, 0, 0],
             ][(y % 6) as usize]
         });
-        let (color_type, bit_depth, _) = read_color(&color_png(&banded).expect("编彩色 PNG"));
+        let (color_type, bit_depth, _) = read_color(&color_png(&banded, None).expect("编彩色 PNG"));
         assert_eq!(color_type, png::ColorType::Indexed);
         assert_eq!(bit_depth, png::BitDepth::Four);
         assert!(
-            color_png(&banded).expect("编彩色 PNG").len()
-                < truecolor_png(banded.size(), &banded.interleaved())
+            color_png(&banded, None).expect("编彩色 PNG").len()
+                < truecolor_png(banded.size(), &banded.interleaved(), None)
                     .expect("编真彩色 PNG")
                     .len(),
             "调色板没有比真彩色小"
@@ -385,11 +408,12 @@ mod tests {
         // 每个像素一种颜色：4096 种，色板装不下。
         let photograph = color_image(size, |x, y| [x as u8, y as u8, (x * y) as u8]);
         assert!(
-            palette_color_png(photograph.size(), &photograph.interleaved())
+            palette_color_png(photograph.size(), &photograph.interleaved(), None)
                 .expect("编调色板 PNG")
                 .is_none()
         );
-        let (color_type, bit_depth, _) = read_color(&color_png(&photograph).expect("编彩色 PNG"));
+        let (color_type, bit_depth, _) =
+            read_color(&color_png(&photograph, None).expect("编彩色 PNG"));
         assert_eq!(color_type, png::ColorType::Rgb);
         assert_eq!(bit_depth, png::BitDepth::Eight);
     }
@@ -403,7 +427,8 @@ mod tests {
         let size = Size::new(16, 16);
         let image = GrayImage::new(size, vec![204; 256]);
 
-        let (color_type, bit_depth, read_back) = read(&palette_png(&image).expect("编调色板 PNG"));
+        let (color_type, bit_depth, read_back) =
+            read(&palette_png(&image, None).expect("编调色板 PNG"));
 
         assert_eq!(color_type, png::ColorType::Indexed);
         assert_eq!(bit_depth, png::BitDepth::One);

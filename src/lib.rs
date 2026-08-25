@@ -17,6 +17,7 @@ mod encode;
 mod envelope;
 mod geometry;
 mod gray;
+mod metadata;
 mod metric;
 mod profile;
 mod quantize;
@@ -44,6 +45,7 @@ pub use report::{PageBranch, PageReport, Report, VolumeReport, VolumeVerdict};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
+use metadata::{Fingerprint, Record, Recorder};
 use sink::Sink;
 use source::{Member, Volume};
 
@@ -76,11 +78,36 @@ pub fn run(request: &Request) -> Result<Report> {
 /// （ADR 0005 决定第 4 条，见 [`first_pass`]）。第二遍只把它按阅读顺序写出去。
 ///
 /// dry-run 走同一条路，只是不建输出容器，第二遍也就没有可写的地方。
+///
+/// 两遍之前还有一道**幂等**：上一趟的输出还在、四项依据一项没变，这一卷就整个不做
+/// （见 [`volume_fingerprint`]）。dry-run 也走这一道——它预告的是照做时会发生的事，
+/// 而照做时会发生的正是「跳过」（spec 的 story 6、story 8）。
 fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     let mut volume = source::open(input)?;
     let output = volume.output_path(&request.output_root);
     let targets = page_targets(&volume);
     ensure_one_member_per_output(&volume, &targets)?;
+
+    // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
+    let fingerprint = request
+        .metadata
+        .then(|| volume_fingerprint(&mut volume, request))
+        .transpose()?;
+    if let Some(fingerprint) = &fingerprint
+        && can_skip(&output, &volume, &targets, fingerprint)
+    {
+        return Ok(VolumeReport {
+            volume: volume.root,
+            output,
+            pages: Vec::new(),
+            verdict: Some(VolumeVerdict::Skipped {
+                page_count: targets.len(),
+            }),
+            gate: None,
+            cache: CacheUsage::new(request.cache_budget),
+            decodes: 0,
+        });
+    }
 
     // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
     let sink = match request.mode {
@@ -101,12 +128,23 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         &targets,
         &mut cache,
         &mut decoder,
+        fingerprint.as_ref(),
     )?;
 
     let (verdicts, verdict) = summarize_volume(&scored.pages, request);
 
     if let Some(mut sink) = sink {
-        second_pass(&scored.pages, &verdicts, &targets, &mut cache, &mut sink)?;
+        let recorder = fingerprint
+            .as_ref()
+            .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
+        second_pass(
+            &scored.pages,
+            &verdicts,
+            &targets,
+            &mut cache,
+            &mut sink,
+            recorder.as_ref(),
+        )?;
         for extra in &volume.extras {
             let bytes = volume.reader.read(extra)?;
             sink.write_extra(&extra.relative, &bytes)?;
@@ -124,7 +162,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
             .map(|(page, verdict)| page.into_report(verdict))
             .collect(),
         verdict,
-        gate: scored.gate,
+        gate: Some(scored.gate),
         cache: cache.usage(),
         decodes: decoder.decodes(),
     })
@@ -313,6 +351,7 @@ fn first_pass(
     targets: &[PathBuf],
     cache: &mut cache::PageCache,
     decoder: &mut decode::Decoder,
+    fingerprint: Option<&Fingerprint>,
 ) -> Result<Scored> {
     let panel = request.profile.panel();
     let mut gate = GeometryGate::Holds;
@@ -334,7 +373,7 @@ fn first_pass(
             // dry-run 一个文件都不落盘，编出来的字节没人要。
             let encoded = match request.mode {
                 Mode::Process => Some(
-                    encode::color_png(&scaled)
+                    encode::color_png(&scaled, fingerprint.map(Record::color).as_ref())
                         .with_context(|| format!("编 {} 这一页", source.display()))?,
                 ),
                 Mode::DryRun => None,
@@ -396,6 +435,7 @@ fn second_pass(
     targets: &[PathBuf],
     cache: &mut cache::PageCache,
     sink: &mut Sink,
+    recorder: Option<&Recorder>,
 ) -> Result<()> {
     for ((page, verdict), relative) in pages.iter().zip(verdicts).zip(targets) {
         let source = page.source.display();
@@ -410,13 +450,79 @@ fn second_pass(
                     .load(*slot)
                     .with_context(|| format!("从缓存取 {source} 这一页"))?;
                 let quantized = quantize::quantize(&reference, verdict.candidate);
-                let encoded = encode::png(&quantized, verdict.candidate.bit_depth)
+                let record = recorder.map(|recorder| recorder.gray(verdict));
+                let encoded = encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
                     .with_context(|| format!("编 {source} 这一页"))?;
                 sink.write_page(relative, &encoded)?;
             }
         }
     }
     Ok(())
+}
+
+/// 本次调用在这一卷上的幂等依据（ADR 0006：同一批 tEXt 字段兼作幂等依据）。
+///
+/// 源哈希在这里算，作用域是卷（为什么，见 ADR 0006 的《决定》末段）。
+///
+/// 这一遍**把源字节多读一遍**——它在第一遍解码之前，而第一遍还要再读一次。这笔成本换不掉：
+/// 彩页在第一遍就编好并写进 tEXt（ADR 0010），那一刻卷级哈希必须已经齐了。
+/// 换来的是命中时一趟都不用做——多读一遍字节，省掉的是整卷的解码、缩放、判据与编码。
+/// `--no-metadata` 连这一遍都不读：那时既没有记录可写，也没有依据可比。
+fn volume_fingerprint(volume: &mut Volume, request: &Request) -> Result<Fingerprint> {
+    let Volume {
+        pages,
+        extras,
+        reader,
+        ..
+    } = volume;
+    let mut hasher = metadata::SourceHasher::new();
+    for member in pages.iter().chain(extras.iter()) {
+        let bytes = reader.read(member)?;
+        hasher.member(&member.relative, &bytes);
+    }
+    Ok(Fingerprint::new(request, hasher.finish()))
+}
+
+/// 这一卷可以跳过吗：上一趟的输出还齐着，且每一页都记着这份指纹（spec 的 story 8）。
+///
+/// **两件事都要问。**指纹只随页走，透传文件不带记录——只问指纹的话，
+/// 有人从输出里删掉 ComicInfo.xml 之后这一卷会永远跳过，那个文件再也补不回来。
+///
+/// 一页读不出记录就整卷重做，不逐页续做：判定是卷级的（ADR 0006 决定第 3 条），
+/// 补写的那几页会拿到一个由**当前**全卷算出的基准档，与旁边幸存的旧页对不上。
+///
+/// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。那样的卷每一趟
+/// 都把透传文件重写一遍——它们本来就是逐字节照搬，重写一遍与跳过没有可观察的差别。
+fn can_skip(
+    output: &Path,
+    volume: &Volume,
+    targets: &[PathBuf],
+    fingerprint: &Fingerprint,
+) -> bool {
+    if targets.is_empty() {
+        return false;
+    }
+    let Some(mut written) = sink::Written::open(output, volume.container) else {
+        return false;
+    };
+    targets
+        .iter()
+        .all(|relative| written.fingerprint_of(relative).as_ref() == Some(fingerprint))
+        && volume
+            .extras
+            .iter()
+            .all(|extra| written.holds(&extra.relative))
+}
+
+/// 卷级上包络的驱动页序号，写进 tEXt 那句 `volume-p95, driven by page 087` 用它。
+///
+/// 另外三种卷级判定没有驱动页可指：覆盖项顶掉了判定，`--per-page` 关掉了卷级那一层，
+/// 而跳过的卷根本走不到写出这一步。
+fn driver(verdict: Option<VolumeVerdict>) -> Option<usize> {
+    match verdict {
+        Some(VolumeVerdict::Envelope(envelope)) => Some(envelope.driver),
+        _ => None,
+    }
 }
 
 /// 把这一页的参照与每个候选各比一遍。

@@ -393,12 +393,12 @@ fn a_color_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
 
     assert_eq!(
         color.volumes[0].gate,
-        GeometryGate::Holds,
+        Some(GeometryGate::Holds),
         "彩色分支上的那一页把整卷的抖动关掉了"
     );
     assert_eq!(
         mono.volumes[0].gate,
-        GeometryGate::Broken { page: 0 },
+        Some(GeometryGate::Broken { page: 0 }),
         "同一页转灰之后走灰度路径，它的几何这时说了算"
     );
 }
@@ -629,6 +629,10 @@ fn the_filter_changes_the_residual_step_and_never_the_prescale() {
 }
 
 /// 用点名的滤波器处理一张网点页，把写出的 PNG 字节读回来。
+///
+/// 关掉自描述元数据：记录里带着参数哈希，而滤波器正是它收的一项——留着它，
+/// 两次输出必然逐字节不同，`assert_ne!` 那几条会因为几行 tEXt 而通过，
+/// 与像素有没有变毫无关系。关掉之后文件里只剩像素那一侧，比字节才是在比重采样。
 fn one_page_with(size: Size, filter: Filter) -> Vec<u8> {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -636,6 +640,7 @@ fn one_page_with(size: Size, filter: Filter) -> Vec<u8> {
 
     let report = tonefit::run(&Request {
         filter,
+        metadata: false,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -888,7 +893,7 @@ fn one_page_smaller_than_the_target_shuts_the_dither_off_for_the_whole_volume() 
 
     let volume_report = &report.volumes[0];
     // 门关在哪一页要指得出来：它关掉的是整卷的抖动。
-    assert_eq!(volume_report.gate, GeometryGate::Broken { page: 1 });
+    assert_eq!(volume_report.gate, Some(GeometryGate::Broken { page: 1 }));
     for page in &volume_report.pages {
         assert_eq!(
             fixtures::verdict(page).candidate.dither,
@@ -921,7 +926,7 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     let report = run_volume(&space, &volume);
 
     let volume_report = &report.volumes[0];
-    assert_eq!(volume_report.gate, GeometryGate::Holds);
+    assert_eq!(volume_report.gate, Some(GeometryGate::Holds));
     let base = match volume_report.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope.base,
         other => panic!("这一卷该由上包络定档，实际是 {other:?}"),

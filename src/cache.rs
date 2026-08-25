@@ -98,7 +98,8 @@ pub struct CacheUsage {
 }
 
 impl CacheUsage {
-    fn new(budget: CacheBudget) -> Self {
+    /// 一份什么都没存的用量。幂等命中而跳过的卷报的就是它——那一趟一页都没进缓存。
+    pub(crate) fn new(budget: CacheBudget) -> Self {
         Self {
             budget,
             pages: 0,

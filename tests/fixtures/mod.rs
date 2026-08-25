@@ -253,6 +253,7 @@ pub fn request<'a>(
         per_page: false,
         cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
+        metadata: true,
     }
 }
 
@@ -463,4 +464,32 @@ pub fn fine_texture(size: Size, base: u8, amplitude: u8) -> DynamicImage {
 pub fn gray_image(image: &DynamicImage) -> GrayImage {
     let luma = image.to_luma8();
     GrayImage::new(Size::new(luma.width(), luma.height()), luma.into_raw())
+}
+
+/// 一页输出 PNG 里的 tEXt 记录：关键字到取值，按文件里的顺序。
+///
+/// 用 `png` 直接读，绕开被测的写入路径。归档卷的页没有文件系统路径，成员字节走
+/// [`png_text`]——两者读的是同一批字节。
+pub fn read_png_text(path: &Path) -> Vec<(String, String)> {
+    png_text(&fs::read(path).expect("读输出 PNG"))
+}
+
+/// 同上，直接从一页 PNG 的字节里读。
+pub fn png_text(bytes: &[u8]) -> Vec<(String, String)> {
+    let reader = png::Decoder::new(Cursor::new(bytes))
+        .read_info()
+        .expect("读 PNG 信息");
+    reader
+        .info()
+        .uncompressed_latin1_text
+        .iter()
+        .map(|chunk| (chunk.keyword.clone(), chunk.text.clone()))
+        .collect()
+}
+
+/// 一页 tEXt 记录里某个关键字的取值。没有这个关键字就是 `None`。
+pub fn png_field(text: &[(String, String)], keyword: &str) -> Option<String> {
+    text.iter()
+        .find(|(listed, _)| listed == keyword)
+        .map(|(_, value)| value.clone())
 }

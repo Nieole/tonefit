@@ -46,6 +46,18 @@ impl Filter {
             .ok_or_else(|| unknown_filter_error(name))
     }
 
+    /// 这个滤波器的规范名，取表里第一个指向它的那个。
+    ///
+    /// 参数哈希拿它当稳定写法（见 `crate::metadata`）：那串字节要落进输出文件、
+    /// 几个月后还要比对，因此不能搭在 `Debug` 那种没有稳定承诺的写法上。
+    pub(crate) fn name(self) -> &'static str {
+        FILTERS
+            .iter()
+            .find(|(_, filter)| *filter == self)
+            .map(|(name, _)| *name)
+            .expect("表覆盖全部滤波器")
+    }
+
     /// 交给重采样器的那一个。
     fn filter_type(self) -> FilterType {
         match self {
@@ -420,6 +432,11 @@ mod tests {
         }
         assert_eq!(Filter::resolve("box").unwrap(), Filter::Area);
         assert_eq!(Filter::default(), Filter::Lanczos3);
+        // 规范名要能自己解析回来：参数哈希拿它当稳定写法（见 `crate::metadata`），
+        // 解析不回去，落进输出文件的就是一串没人认得的字。
+        for (_, filter) in FILTERS {
+            assert_eq!(Filter::resolve(filter.name()).expect("规范名"), *filter);
+        }
     }
 
     /// 认不出的名字要把认得的全端出来——用户是从这段文字里挑的。

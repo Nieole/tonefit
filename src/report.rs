@@ -39,10 +39,14 @@ pub struct VolumeReport {
     /// 它不在 [`verdict`](Self::verdict) 里：门是几何的、判定是内容的，门先判，
     /// 判定在门放行的那套候选上做。门关着时抖动整体关闭，`verdict` 里那个候选
     /// 于是必然不抖——不说门，报告就解释不了「为什么这一卷没抖」。
-    pub gate: GeometryGate,
+    ///
+    /// 幂等命中而跳过的卷是 `None`：门是算出来的，而那一趟一页都没算
+    /// （见 [`VolumeVerdict::Skipped`]）。一页都没有的卷不是 `None` 而是 `Holds`——
+    /// 没有页去关它，那是真话，不是「不知道」。
+    pub gate: Option<GeometryGate>,
     /// 本卷缓存的用量（ADR 0005）。
     pub cache: CacheUsage,
-    /// 本卷解码源页的次数。
+    /// 本卷解码源页的次数。跳过的卷是 0——「不重复工作」量得出来的形式就是它。
     ///
     /// 两遍管线的不变量是「每页只解码一次」（ADR 0005：解码一次，缓存缩放后的图），
     /// 这个数因此恒等于页数。它在报告里，是为了让那条不变量在 `run` 这个 seam 上量得出来——
@@ -54,8 +58,6 @@ pub struct VolumeReport {
 ///
 /// 几项绑成一个枚举而不是各占一个字段，因为它们不是每一种情形下都同时成立：
 /// `--per-page` 一开，卷级根本没有候选，也就没有驱动页可指。
-///
-/// spec 固定的 `Skipped` 随 11 号票落地。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VolumeVerdict {
     /// 卷级上包络定的基准档（ADR 0006：位深按卷取上包络并加迟滞）。
@@ -70,6 +72,16 @@ pub enum VolumeVerdict {
     /// `--per-page` 关掉了上包络与迟滞：候选逐页最优，卷内没有基准档
     /// （ADR 0006 决定第 6 条）。翻页跳变随之回来，抖动模式也跟着逐页可变。
     PerPage,
+    /// 幂等命中：输出已经在，且工具版本、profile、参数、源四项都没变，本卷一页都没有重做
+    /// （ADR 0006：同一批 tEXt 字段兼作幂等依据）。
+    ///
+    /// `page_count` 是这一卷的页数，数的是**源**那一侧——不做工作也数得出来。
+    /// 它不叫 `pages`：[`VolumeReport::pages`] 是逐页结果，而跳过的那一趟一份都没有。
+    /// 读页数一律走 [`VolumeReport::page_count`]。
+    ///
+    /// 与另外三种并列而不是另起一个字段，因为它和它们是同一个问题的答案：
+    /// 「这一卷的候选从哪来」——这一卷的候选哪儿也没来，上一趟写的还在。
+    Skipped { page_count: usize },
 }
 
 impl VolumeVerdict {
@@ -81,7 +93,29 @@ impl VolumeVerdict {
         match self {
             VolumeVerdict::Envelope(envelope) => Some(envelope.base.dither),
             VolumeVerdict::Override(candidate) => Some(candidate.dither),
-            VolumeVerdict::PerPage => None,
+            VolumeVerdict::PerPage | VolumeVerdict::Skipped { .. } => None,
+        }
+    }
+}
+
+impl VolumeReport {
+    /// 这一卷被幂等命中跳过了吗。
+    ///
+    /// 跳过这件事在本结构里由三处一起体现——卷级判定是 [`VolumeVerdict::Skipped`]、
+    /// `gate` 为空、`pages` 为空。**它们只有一个来源**，就是这里：读的那一端各自去认
+    /// 其中一处，迟早会有人认错一处。
+    pub fn skipped(&self) -> bool {
+        matches!(self.verdict, Some(VolumeVerdict::Skipped { .. }))
+    }
+
+    /// 本卷的页数。
+    ///
+    /// 跳过的卷没有逐页结果，页数从卷级判定里取——它是**源**那一侧的事实，
+    /// 不做工作也数得出来，报告不该因为跳过就说这一卷是 0 页。
+    pub fn page_count(&self) -> usize {
+        match self.verdict {
+            Some(VolumeVerdict::Skipped { page_count }) => page_count,
+            _ => self.pages.len(),
         }
     }
 }

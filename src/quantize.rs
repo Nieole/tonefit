@@ -102,6 +102,18 @@ impl Dither {
         }
     }
 
+    /// 这个抖动模式的规范名，取表里第一个指向它的那个。
+    ///
+    /// 与 [`Filter::name`](crate::resample::Filter::name) 同一个用途：参数哈希要一个钉死的写法。
+    /// `Display` 顶不了它——那一份是中文，而 tEXt 只装得下 Latin-1。
+    pub(crate) fn name(self) -> &'static str {
+        DITHERS
+            .iter()
+            .find(|(_, dither)| *dither == self)
+            .map(|(name, _)| *name)
+            .expect("表覆盖全部抖动模式")
+    }
+
     /// 按名字解析（`--dither`）。大小写不论。
     pub fn resolve(name: &str) -> Result<Self> {
         let key = name.trim().to_ascii_lowercase();
@@ -453,6 +465,10 @@ mod tests {
 
         for (name, _) in DITHERS {
             assert!(error.contains(name), "清单里少了 {name}：{error}");
+        }
+        // 与滤波器那一侧同一条：规范名要能自己解析回来，参数哈希拿它当稳定写法。
+        for (_, dither) in DITHERS {
+            assert_eq!(Dither::resolve(dither.name()).expect("规范名"), *dither);
         }
     }
 }

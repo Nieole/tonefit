@@ -1,14 +1,18 @@
 //! 输出容器：收页与透传文件，写成目录或 CBZ。
 //!
 //! 与源对称：输入是目录就写目录，输入是 CBZ 就写 CBZ（[`crate::source::Container`] 定这件事）。
+//!
+//! 幂等要读回上一趟的输出，读的也是这个容器，因此 [`Written`] 落在这里：
+//! 「一页在容器里怎么找」两个方向上是同一件事，分开写就是两份会走散的容器知识。
 
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use zip::write::SimpleFileOptions;
 
+use crate::metadata::{Fingerprint, RECORD_PREFIX};
 use crate::source::Container;
 
 /// 一个卷的输出容器。写完必须调用 [`Sink::finish`]。
@@ -69,6 +73,63 @@ impl Sink {
         match self {
             Sink::Directory { .. } => Ok(()),
             Sink::Archive(archive) => archive.finish(),
+        }
+    }
+}
+
+/// 上一趟写出的输出容器，只读。幂等要问它两件事：一页里记着什么指纹，一个成员还在不在。
+///
+/// 与 [`Sink`] 对称，也共用同一套容器知识——归档成员名怎么拼只此一份（见 [`archive_name`]）。
+/// 两个方向分成两个类型，因为它们的生命期不同：写那一侧要建容器、要收尾，
+/// 读这一侧连打开都可能失败，而失败就是「重做」这个平常答案。
+pub enum Written {
+    Directory(PathBuf),
+    Archive(Box<zip::ZipArchive<BufReader<File>>>),
+}
+
+impl Written {
+    /// 打开上一趟的输出。容器根本不在就是 `None`——那是头一趟，没什么可比的。
+    pub fn open(path: &Path, container: Container) -> Option<Self> {
+        match container {
+            Container::Directory => path
+                .is_dir()
+                .then(|| Written::Directory(path.to_path_buf())),
+            Container::Archive => {
+                let file = BufReader::new(File::open(path).ok()?);
+                Some(Written::Archive(Box::new(zip::ZipArchive::new(file).ok()?)))
+            }
+        }
+    }
+
+    /// 读回一页里记着的指纹。成员不在、或它没有记录，就是 `None`
+    /// （ADR 0006：读回 tEXt 比对）。
+    ///
+    /// 只读到第一个 IDAT 为止，一个像素都不解——成本停在这里，跳过一卷才比重做一卷便宜。
+    pub fn fingerprint_of(&mut self, relative: &Path) -> Option<Fingerprint> {
+        match self {
+            Written::Directory(root) => {
+                Fingerprint::read(BufReader::new(File::open(root.join(relative)).ok()?))
+            }
+            Written::Archive(archive) => {
+                // 归档成员不能回退寻址，解码器却要得起 `Seek`：先取开头一截到内存里。
+                // 只取一截而不是整页，理由见 `RECORD_PREFIX`。
+                let mut prefix = Vec::new();
+                archive
+                    .by_name(&archive_name(relative))
+                    .ok()?
+                    .take(RECORD_PREFIX)
+                    .read_to_end(&mut prefix)
+                    .ok()?;
+                Fingerprint::read(Cursor::new(prefix))
+            }
+        }
+    }
+
+    /// 这个成员还在吗。透传文件不带记录，能问的只有在不在。
+    pub fn holds(&mut self, relative: &Path) -> bool {
+        match self {
+            Written::Directory(root) => root.join(relative).is_file(),
+            Written::Archive(archive) => archive.by_name(&archive_name(relative)).is_ok(),
         }
     }
 }
