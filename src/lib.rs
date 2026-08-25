@@ -10,6 +10,7 @@
 //! 一并公开，判据的调用方要拿它们拼出参照与候选。
 
 mod cache;
+mod color;
 mod decide;
 mod decode;
 mod encode;
@@ -31,6 +32,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub use cache::{CacheBudget, CacheUsage};
+pub use color::PageColor;
 pub use decide::{CandidateScore, Reason, Verdict};
 pub use envelope::Envelope;
 pub use geometry::{GeometryGate, Size};
@@ -38,7 +40,7 @@ pub use gray::GrayImage;
 pub use metric::{Reference, Score, score};
 pub use profile::{Panel, Profile, Threshold};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
-pub use report::{PageReport, Report, VolumeReport, VolumeVerdict};
+pub use report::{PageBranch, PageReport, Report, VolumeReport, VolumeVerdict};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
@@ -69,6 +71,9 @@ pub fn run(request: &Request) -> Result<Report> {
 ///
 /// 两遍之间隔着缓存（ADR 0005：解码一次，缓存缩放后的图）。第二遍的输入是第一遍存下的参照，
 /// 源页因此只被解码一次——`VolumeReport::decodes` 是这条不变量看得见的形式。
+///
+/// 彩页在彩色 profile 下不走这条路：它在第一遍就缩放并编好，绕开缓存、判据与汇总
+/// （ADR 0005 决定第 4 条，见 [`first_pass`]）。第二遍只把它按阅读顺序写出去。
 ///
 /// dry-run 走同一条路，只是不建输出容器，第二遍也就没有可写的地方。
 fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
@@ -130,6 +135,10 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
 /// 夹在两遍之间——要看完整卷才做得了，而第二遍此刻已经不必回头碰源页（ADR 0005）。
 /// 返回的逐页判定与 `pages` 等长同序，第二遍读的就是它。
 ///
+/// **只有灰度路径上的页进来。**彩色分支上的页没有判据曲线，也不该有：ADR 0006 决定第 5 条
+/// 说彩页在彩色 profile 下「根本不进灰度上包络」。它们在返回的判定里占位为 `None`，
+/// 位置留着——第二遍与报告都按页序取。
+///
 /// 逐页定档也落在这里，而不在第一遍：几何门要看完整卷才判得死（一页比目标小就整卷关掉抖动，
 /// 见 [`first_pass`]），而候选集是判定的前提——在门还可能关上的时候定档，定的是一套
 /// 随后可能被裁掉的候选。
@@ -140,36 +149,58 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
 fn summarize_volume(
     pages: &[ScoredPage],
     request: &Request,
-) -> (Vec<Verdict>, Option<VolumeVerdict>) {
-    let Some(first) = pages.first() else {
-        return (Vec::new(), None);
-    };
-    let threshold = request.profile.threshold();
-    let pinned = pinned(request, &first.scores);
-    let decided: Vec<Verdict> = pages
+) -> (Vec<Option<Verdict>>, Option<VolumeVerdict>) {
+    let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
+    // 灰度路径上那些页在 `pages` 里的序号。卷级的一切都只在它们身上做。
+    let gray: Vec<usize> = pages
         .iter()
-        .map(|page| decide::decide(&page.scores, threshold, pinned))
+        .enumerate()
+        .filter(|(_, page)| page.scores().is_some())
+        .map(|(index, _)| index)
+        .collect();
+    // 一张灰度页都没有的卷（只装着彩页，或一页都没有）没有候选可判。
+    let Some(&first) = gray.first() else {
+        return (verdicts, None);
+    };
+    let scores = |index: usize| pages[index].scores().expect("灰度路径上必有判据曲线");
+
+    let threshold = request.profile.threshold();
+    let pinned = pinned(request, scores(first));
+    let decided: Vec<Verdict> = gray
+        .iter()
+        .map(|&index| decide::decide(scores(index), threshold, pinned))
         .collect();
 
+    let write_back = |verdicts: &mut Vec<Option<Verdict>>, decided: &[Verdict]| {
+        for (&index, &verdict) in gray.iter().zip(decided) {
+            verdicts[index] = Some(verdict);
+        }
+    };
     if let Some(candidate) = pinned {
-        return (decided, Some(VolumeVerdict::Override(candidate)));
+        write_back(&mut verdicts, &decided);
+        return (verdicts, Some(VolumeVerdict::Override(candidate)));
     }
     if request.per_page {
-        return (decided, Some(VolumeVerdict::PerPage));
+        write_back(&mut verdicts, &decided);
+        return (verdicts, Some(VolumeVerdict::PerPage));
     }
-    let inputs: Vec<envelope::Page> = pages
+    let inputs: Vec<envelope::Page> = gray
         .iter()
         .zip(&decided)
-        .map(|(page, verdict)| envelope::Page {
-            scores: &page.scores,
+        .map(|(&index, verdict)| envelope::Page {
+            scores: scores(index),
             decided: verdict.candidate,
         })
         .collect();
-    let summary = envelope::summarize(&inputs, threshold).expect("卷非空");
-    (
-        summary.verdicts,
-        Some(VolumeVerdict::Envelope(summary.envelope)),
-    )
+    let summary = envelope::summarize(&inputs, threshold).expect("灰度页非空");
+    write_back(&mut verdicts, &summary.verdicts);
+    // 驱动页的序号在上包络那一侧指进**灰度页**的序列，报告里那个序号指进整卷的页。
+    // 卷内混着彩页时两者不重合，这一步把它换回去——不换，报告会指着另一页说「就是它定的档」。
+    let envelope = Envelope {
+        driver: gray[summary.envelope.driver],
+        ..summary.envelope
+    };
+    (verdicts, Some(VolumeVerdict::Envelope(envelope)))
 }
 
 /// 覆盖项裁到只剩一个候选时的那一个：判定被顶掉，判据说什么都不改变结果（spec 的 story 23）。
@@ -187,30 +218,62 @@ fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     }
 }
 
-/// 第一遍产出的一页：报告要的几何与判据曲线，加上它在缓存里的序号。
+/// 第一遍产出的一页：报告要的几何，加上它走的那条分支留下的东西。
 ///
-/// 序号跟着页走，不由第二遍数数补出来。眼下两者恰好重合，但 ADR 0005 决定第 4 条说
-/// 彩页在彩色 profile 下第一遍即写出、**不进灰度缓存**——那一票（10 号）落地当天页序与缓存序
-/// 就此分家，而重新数出来的序号会静默地把另一页的像素写到这一页的位置上。
+/// 两条分支留下的不是同一套：灰度路径留判据曲线与缓存序号，彩色分支留编好的字节
+/// （ADR 0005 决定第 4 条）。
 struct ScoredPage {
     source: PathBuf,
     output: PathBuf,
     size: Size,
     scaling: resample::Scaling,
-    scores: Vec<CandidateScore>,
-    slot: usize,
+    color: PageColor,
+    branch: Branch,
+}
+
+/// 一页在第一遍里走的那条分支，连同它留给第二遍的东西。
+enum Branch {
+    /// 灰度路径。
+    Gray {
+        scores: Vec<CandidateScore>,
+        /// 这一页在缓存里的序号。
+        ///
+        /// 序号跟着页走，不由第二遍数数补出来：彩页在彩色 profile 下不进灰度缓存
+        /// （ADR 0005 决定第 4 条），页序与缓存序因此不重合，
+        /// 而重新数出来的序号会静默地把另一页的像素写到这一页的位置上。
+        slot: usize,
+    },
+    /// 彩色分支：第一遍缩放并编好的 PNG 字节，等写出那一遍按阅读顺序落位。
+    ///
+    /// dry-run 没有写出那一遍，也就不编——一个字节都不留（spec 的 story 6）。
+    Color { encoded: Option<Vec<u8>> },
 }
 
 impl ScoredPage {
-    /// 补上汇总定下的那个判定，就是报告要的一页。缓存序号不进报告——它是管线内部的事。
-    fn into_report(self, verdict: Verdict) -> PageReport {
+    /// 这一页的判据曲线。彩色分支上没有——那条路径不量化。
+    fn scores(&self) -> Option<&[CandidateScore]> {
+        match &self.branch {
+            Branch::Gray { scores, .. } => Some(scores),
+            Branch::Color { .. } => None,
+        }
+    }
+
+    /// 补上汇总定下的那个判定，就是报告要的一页。缓存序号与编好的字节都不进报告——
+    /// 它们是管线内部的事。
+    fn into_report(self, verdict: Option<Verdict>) -> PageReport {
         PageReport {
             source: self.source,
             output: self.output,
             size: self.size,
             scaling: self.scaling,
-            scores: self.scores,
-            verdict,
+            color: self.color,
+            branch: match self.branch {
+                Branch::Gray { scores, .. } => PageBranch::Gray {
+                    scores,
+                    verdict: verdict.expect("灰度路径上必有判定"),
+                },
+                Branch::Color { .. } => PageBranch::Color,
+            },
         }
     }
 }
@@ -221,15 +284,28 @@ struct Scored {
     gate: GeometryGate,
 }
 
-/// 第一遍：读 → 解码 → 转灰 → 几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
+/// 第一遍：读 → 解码 → **彩页识别** → 分流。
+///
+/// 灰度路径：转灰 → 几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
+/// 彩色分支：几何 → 缩放 → 编码，不进缓存、不求判据（ADR 0005 决定第 4 条）。
+///
+/// **识别排在转灰之前**，因为转过之后就没有颜色可看了；也排在汇总之前，
+/// 因为分流决定了哪些页进得了上包络（ADR 0006 决定第 5 条）。
+/// 走哪条分支由**面板与页**共同决定：只有彩色面板上的彩页走彩色分支，
+/// 黑白面板上的彩页转灰、和其它页走同一条路。
 ///
 /// 判据两种模式都求值，dry-run 预告的就是照做时的那一档（spec 的 story 6）。
 /// 覆盖了判定也照求：`--dry-run --bit-depth 2` 要说得清「你点的这一档判据是多少」。
+/// 彩色分支上没有这回事——那条路径不量化，dry-run 因此连编码都省了。
 ///
 /// **几何门在这一遍上收口。**门是几何的、逐页看得出来，但它对整卷只有一个结果
 /// （ADR 0007：条件不成立时抖动整体关闭），因此一页关上门，抖动那一维就当场
 /// 从候选集里去掉，已经求过的抖动候选一并丢掉——「候选集全卷同一套」在任何时刻都成立，
 /// 上包络与迟滞靠的正是这一条。门关得越早，白求的判据越少。
+///
+/// **彩色分支上的页不参与几何门。**门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），
+/// 两者都只作用在灰度路径上；彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
+/// 让它关掉整卷的抖动，就是让一条不受影响的路径去削掉另一条路径的收益。
 fn first_pass(
     volume: &mut Volume,
     request: &Request,
@@ -248,6 +324,32 @@ fn first_pass(
         let decoded = decoder
             .decode(&bytes)
             .with_context(|| format!("解 {} 这一页", source.display()))?;
+        let color = color::identify(&decoded);
+        let output = output.join(relative);
+
+        if panel.color && color.is_color() {
+            let image = color::to_color(&decoded);
+            let size = geometry::fit_inside(image.size(), panel.resolution);
+            let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
+            // dry-run 一个文件都不落盘，编出来的字节没人要。
+            let encoded = match request.mode {
+                Mode::Process => Some(
+                    encode::color_png(&scaled)
+                        .with_context(|| format!("编 {} 这一页", source.display()))?,
+                ),
+                Mode::DryRun => None,
+            };
+            pages.push(ScoredPage {
+                source,
+                output,
+                size,
+                scaling,
+                color,
+                branch: Branch::Color { encoded },
+            });
+            continue;
+        }
+
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
         if gate.holds() && !geometry::one_to_one(size, panel.resolution) {
@@ -255,9 +357,9 @@ fn first_pass(
             allowed = candidates(request, gate)
                 .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
             for earlier in &mut pages {
-                earlier
-                    .scores
-                    .retain(|scored| allowed.contains(&scored.candidate));
+                if let Branch::Gray { scores, .. } = &mut earlier.branch {
+                    scores.retain(|scored| allowed.contains(&scored.candidate));
+                }
             }
         }
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
@@ -268,33 +370,51 @@ fn first_pass(
             .with_context(|| format!("缓存 {} 这一页", source.display()))?;
         pages.push(ScoredPage {
             source,
-            output: output.join(relative),
+            output,
             size,
             scaling,
-            scores,
-            slot,
+            color,
+            branch: Branch::Gray { scores, slot },
         });
     }
     Ok(Scored { pages, gate })
 }
 
-/// 第二遍：从缓存读 → 量化 → 编码 → 写出。不再碰源页（ADR 0005）。
+/// 第二遍：灰度页从缓存读 → 量化 → 编码，彩页取第一遍编好的字节，两者一同写出。
+/// 不再碰源页（ADR 0005）。
+///
+/// **写出按阅读顺序**，彩页也在这一遍落位。ADR 0005 决定第 4 条原话是「第一遍即写出」，
+/// 那一句管的是彩页**离开灰度管线的时刻**——不进缓存、不求判据、不进上包络，这三条这里都成立。
+/// 写出的时刻另有一条约束压着它：归档卷的成员按写入顺序排，而页名的字典序与阅读顺序
+/// 本来就对不上（`1.png` `2.png` `10.png`）。彩页在第一遍就写进归档，混排卷的成员顺序
+/// 就变成「先全部彩页、再全部灰度页」，按归档顺序翻页的阅读器会跳着读。
+/// 代价认下：编好的字节要在内存里等到这一遍，且不受 `--cache-budget` 约束
+/// （详见 ADR 0010）——那是编码后的 PNG，比参照小。
 fn second_pass(
     pages: &[ScoredPage],
-    verdicts: &[Verdict],
+    verdicts: &[Option<Verdict>],
     targets: &[PathBuf],
     cache: &mut cache::PageCache,
     sink: &mut Sink,
 ) -> Result<()> {
     for ((page, verdict), relative) in pages.iter().zip(verdicts).zip(targets) {
         let source = page.source.display();
-        let reference = cache
-            .load(page.slot)
-            .with_context(|| format!("从缓存取 {source} 这一页"))?;
-        let quantized = quantize::quantize(&reference, verdict.candidate);
-        let encoded = encode::png(&quantized, verdict.candidate.bit_depth)
-            .with_context(|| format!("编 {source} 这一页"))?;
-        sink.write_page(relative, &encoded)?;
+        match &page.branch {
+            Branch::Color { encoded } => {
+                let bytes = encoded.as_deref().expect("照做的那一遍第一遍就编过彩页");
+                sink.write_page(relative, bytes)?;
+            }
+            Branch::Gray { slot, .. } => {
+                let verdict = verdict.expect("灰度路径上必有判定");
+                let reference = cache
+                    .load(*slot)
+                    .with_context(|| format!("从缓存取 {source} 这一页"))?;
+                let quantized = quantize::quantize(&reference, verdict.candidate);
+                let encoded = encode::png(&quantized, verdict.candidate.bit_depth)
+                    .with_context(|| format!("编 {source} 这一页"))?;
+                sink.write_page(relative, &encoded)?;
+            }
+        }
     }
     Ok(())
 }

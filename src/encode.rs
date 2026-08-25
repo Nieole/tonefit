@@ -9,8 +9,11 @@
 //!
 //! ADR 0004 的编码器接口本身还没抽出来——P0 只有 PNG 一个实现，AVIF 输出不在范围内。
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result};
 
+use crate::color::ColorImage;
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 use crate::quantize::{BitDepth, grid_index};
@@ -27,6 +30,76 @@ pub fn png(image: &GrayImage, depth: BitDepth) -> Result<Vec<u8>> {
     } else {
         grayscale
     })
+}
+
+/// 把一张彩色图编成 PNG，真彩色与调色板两种颜色类型取体积小者。
+///
+/// 彩色分支不量化（ADR 0005 决定第 4 条）：这里写出的是缩放后的像素本身，每分量 8 位。
+/// 「取体积较小者」与灰度那一侧同一条规则，挑的依据同样只有体积——两种编法写出的像素完全相同。
+pub fn color_png(image: &ColorImage) -> Result<Vec<u8>> {
+    // 两种编法读的是同一份交织缓冲：一页 RGB 好几 MB，交织两遍是白付一次分配。
+    let interleaved = image.interleaved();
+    let truecolor = truecolor_png(image.size(), &interleaved)?;
+    match palette_color_png(image.size(), &interleaved)? {
+        Some(palette) if palette.len() < truecolor.len() => Ok(palette),
+        _ => Ok(truecolor),
+    }
+}
+
+/// 真彩色 PNG：每像素三字节，原样写出。
+fn truecolor_png(size: Size, interleaved: &[u8]) -> Result<Vec<u8>> {
+    write(
+        size,
+        png::BitDepth::Eight,
+        png::ColorType::Rgb,
+        None,
+        interleaved,
+    )
+}
+
+/// 调色板 PNG：这一页用到的颜色不超过 256 种时才编得出来，超过就是 `None`。
+///
+/// 色板按 RGB 三元组的字典序排。灰度那一侧排序买的是「索引跟着取值单调，行滤波器的差分才小」，
+/// 彩色这一侧买不到同样的东西——三个分量上没有一个共同的序。排序在这里只为**定死次序**：
+/// 同一页跑两遍要编出同一个文件（11 号票的幂等靠的是这一条）。
+fn palette_color_png(size: Size, interleaved: &[u8]) -> Result<Option<Vec<u8>>> {
+    let Some(colors) = distinct_colors(interleaved) else {
+        return Ok(None);
+    };
+    let index_of: HashMap<[u8; 3], u8> = colors
+        .iter()
+        .enumerate()
+        .map(|(index, &color)| (color, index as u8))
+        .collect();
+    let indices: Vec<u8> = interleaved
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|pixel| index_of[pixel])
+        .collect();
+    let palette: Vec<u8> = colors.concat();
+    write_png(
+        size,
+        &indices,
+        narrowest_depth(colors.len()),
+        Some(&palette),
+    )
+    .map(Some)
+}
+
+/// 这一页用到的颜色，升序。超过 256 种就是 `None`——那时调色板编不出来。
+///
+/// 数到第 257 种就停：照片一类的页在头几行就越过它，把整页扫完是白扫。
+fn distinct_colors(interleaved: &[u8]) -> Option<Vec<[u8; 3]>> {
+    let mut seen: HashSet<[u8; 3]> = HashSet::new();
+    for &pixel in interleaved.as_chunks::<3>().0 {
+        if seen.insert(pixel) && seen.len() > 256 {
+            return None;
+        }
+    }
+    let mut colors: Vec<[u8; 3]> = seen.into_iter().collect();
+    colors.sort_unstable();
+    Some(colors)
 }
 
 /// 灰度 PNG：取值直接落在 `depth` 的格点序号上，位宽就是 `depth`。
@@ -59,17 +132,27 @@ fn palette_png(image: &GrayImage) -> Result<Vec<u8>> {
         .iter()
         .map(|&level| index_of[level as usize])
         .collect();
-
-    // 装得下这块色板的最小位宽。全图同一个取值时色板只有一项，PNG 没有 0 位，落到 1 位。
-    let depth = BitDepth::ALL
-        .into_iter()
-        .find(|depth| depth.levels() as usize >= levels.len())
-        .expect("256 个取值装得进 8bit");
     let palette: Vec<u8> = levels
         .iter()
         .flat_map(|&level| [level, level, level])
         .collect();
-    write_png(image.size(), &indices, depth, Some(&palette))
+    write_png(
+        image.size(),
+        &indices,
+        narrowest_depth(levels.len()),
+        Some(&palette),
+    )
+}
+
+/// 装得下这么多项色板的最小位宽。
+///
+/// 灰度与彩色两条调色板路径共用它：位宽由**色板项数**定，与判定位深无关。
+/// PNG 没有 0 位，只有一项的色板（全图一色）落到 1 位。
+fn narrowest_depth(entries: usize) -> BitDepth {
+    BitDepth::ALL
+        .into_iter()
+        .find(|depth| depth.levels() as usize >= entries)
+        .expect("256 项装得进 8bit")
 }
 
 /// 把每像素一个字节的索引写成 PNG。`palette` 给了就是调色板颜色类型，否则是灰度。
@@ -79,20 +162,39 @@ fn write_png(
     depth: BitDepth,
     palette: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
+    let color = match palette {
+        Some(_) => png::ColorType::Indexed,
+        None => png::ColorType::Grayscale,
+    };
+    write(
+        size,
+        png_depth(depth),
+        color,
+        palette,
+        &pack(indices, size, depth.bits()),
+    )
+}
+
+/// 把一整幅扫描行写成 PNG 字节。
+///
+/// 三种编法——灰度、调色板、真彩色——只在位宽、颜色类型与带不带色板这三项上分岔，
+/// 编码器这一段的样板与出错说法因此只此一份。
+fn write(
+    size: Size,
+    depth: png::BitDepth,
+    color: png::ColorType,
+    palette: Option<&[u8]>,
+    scanlines: &[u8],
+) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, size.width, size.height);
-    encoder.set_depth(png_depth(depth));
-    match palette {
-        Some(palette) => {
-            encoder.set_color(png::ColorType::Indexed);
-            encoder.set_palette(palette.to_vec());
-        }
-        None => encoder.set_color(png::ColorType::Grayscale),
+    encoder.set_depth(depth);
+    encoder.set_color(color);
+    if let Some(palette) = palette {
+        encoder.set_palette(palette.to_vec());
     }
     let mut writer = encoder.write_header().context("写 PNG 头")?;
-    writer
-        .write_image_data(&pack(indices, size, depth.bits()))
-        .context("写 PNG 像素")?;
+    writer.write_image_data(scanlines).context("写 PNG 像素")?;
     writer.finish().context("收尾 PNG")?;
     Ok(bytes)
 }
@@ -208,6 +310,88 @@ mod tests {
                     .len(),
             "调色板没有比灰度小"
         );
+    }
+
+    /// 解回一张彩色 PNG：颜色类型、位宽，以及摊成 RGB8 的像素。
+    fn read_color(bytes: &[u8]) -> (png::ColorType, png::BitDepth, Vec<u8>) {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let header = decoder.read_header_info().expect("读 PNG 头").clone();
+        // EXPAND 把调色板摊成 RGB8，两种颜色类型于是解成同一种形态。
+        decoder.set_transformations(png::Transformations::EXPAND);
+        let mut reader = decoder.read_info().expect("读 PNG 信息");
+        let mut pixels = vec![0; reader.output_buffer_size().expect("PNG 缓冲尺寸")];
+        let info = reader.next_frame(&mut pixels).expect("读 PNG 像素");
+        pixels.truncate(info.buffer_size());
+        (header.color_type, header.bit_depth, pixels)
+    }
+
+    /// 一张彩色图，`pixel` 给出每个像素的三个分量。
+    fn color_image(size: Size, pixel: impl Fn(u32, u32) -> [u8; 3]) -> ColorImage {
+        let mut planes = [Vec::new(), Vec::new(), Vec::new()];
+        for y in 0..size.height {
+            for x in 0..size.width {
+                for (plane, channel) in planes.iter_mut().zip(pixel(x, y)) {
+                    plane.push(channel);
+                }
+            }
+        }
+        ColorImage::new(size, planes.map(|pixels| GrayImage::new(size, pixels)))
+    }
+
+    /// 彩色分支不量化：写出去的像素与缩放结果逐字节相同，两种颜色类型都是。
+    #[test]
+    fn a_color_page_round_trips_whichever_color_type_wins() {
+        // 宽度取 7：调色板那一路每行都除不尽，末字节留着空位，压住打包的边界。
+        let size = Size::new(7, 5);
+        let flat = color_image(size, |x, y| [(x * 17) as u8, (y * 51) as u8, 0]);
+        let varied = color_image(size, |x, y| {
+            [(x * 37 + y) as u8, (y * 13) as u8, (x + y) as u8]
+        });
+
+        for image in [&flat, &varied] {
+            let (_, _, read_back) = read_color(&color_png(image).expect("编彩色 PNG"));
+            assert_eq!(read_back, image.interleaved(), "彩色像素没有原样解回来");
+        }
+    }
+
+    /// 颜色少于 256 种时调色板胜出，位宽压到装得下色板的那一档；多于 256 种只能走真彩色。
+    ///
+    /// 与灰度那一侧同一条规则：两种编法写出的像素完全相同，挑的依据只有体积。
+    #[test]
+    fn a_page_with_few_colors_comes_out_as_a_palette_and_a_photograph_does_not() {
+        let size = Size::new(64, 64);
+        // 六种颜色：色板装得下，4 位就够（PNG 没有 3 位）。
+        let banded = color_image(size, |_, y| {
+            [
+                [0, 0, 255],
+                [18, 18, 18],
+                [255, 0, 0],
+                [0, 255, 0],
+                [255, 255, 255],
+                [0, 0, 0],
+            ][(y % 6) as usize]
+        });
+        let (color_type, bit_depth, _) = read_color(&color_png(&banded).expect("编彩色 PNG"));
+        assert_eq!(color_type, png::ColorType::Indexed);
+        assert_eq!(bit_depth, png::BitDepth::Four);
+        assert!(
+            color_png(&banded).expect("编彩色 PNG").len()
+                < truecolor_png(banded.size(), &banded.interleaved())
+                    .expect("编真彩色 PNG")
+                    .len(),
+            "调色板没有比真彩色小"
+        );
+
+        // 每个像素一种颜色：4096 种，色板装不下。
+        let photograph = color_image(size, |x, y| [x as u8, y as u8, (x * y) as u8]);
+        assert!(
+            palette_color_png(photograph.size(), &photograph.interleaved())
+                .expect("编调色板 PNG")
+                .is_none()
+        );
+        let (color_type, bit_depth, _) = read_color(&color_png(&photograph).expect("编彩色 PNG"));
+        assert_eq!(color_type, png::ColorType::Rgb);
+        assert_eq!(bit_depth, png::BitDepth::Eight);
     }
 
     /// 全图一个取值：色板只有一项，而 PNG 没有 0 位，位宽落到 1 位。

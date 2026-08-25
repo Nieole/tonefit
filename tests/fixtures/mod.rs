@@ -323,6 +323,15 @@ pub fn encode_image(image: &DynamicImage, extension: &str) -> Vec<u8> {
     bytes.into_inner()
 }
 
+/// 一页的判定。
+///
+/// 彩色分支上没有判定——那条路径不量化（ADR 0005 决定第 4 条）。取它就是用例写错了：
+/// 要么点错了页，要么该断言的是 `verdict()` 为空。
+pub fn verdict(page: &tonefit::PageReport) -> tonefit::Verdict {
+    page.verdict()
+        .unwrap_or_else(|| panic!("{} 走的是彩色分支，没有判定", page.source.display()))
+}
+
 /// 解出的 PNG，供测试直接看编码结果而不经被测代码。
 ///
 /// `color_type` 与 `bit_depth` 是文件里**写着**的那一对；`pixels` 一律摊回 8 位灰度，
@@ -361,6 +370,48 @@ pub fn read_png(path: &Path) -> DecodedPng {
             .collect();
     }
     DecodedPng {
+        size: Size::new(info.width, info.height),
+        color_type: header.color_type,
+        bit_depth: header.bit_depth,
+        pixels,
+    }
+}
+
+/// 解出的彩色 PNG，供测试直接看彩色分支的编码结果。
+///
+/// 与 [`DecodedPng`] 分开：那一个把像素摊回灰度，专为「断言只谈灰度取值」；
+/// 彩色这一侧要断言的恰恰是三个分量各是多少。
+pub struct DecodedColorPng {
+    pub size: Size,
+    pub color_type: png::ColorType,
+    pub bit_depth: png::BitDepth,
+    /// 每像素三字节，RGB。调色板已摊开。
+    pub pixels: Vec<u8>,
+}
+
+impl DecodedColorPng {
+    pub fn pixel(&self, x: u32, y: u32) -> [u8; 3] {
+        let start = ((y * self.size.width + x) * 3) as usize;
+        [
+            self.pixels[start],
+            self.pixels[start + 1],
+            self.pixels[start + 2],
+        ]
+    }
+}
+
+/// 用 `png` crate 直接读回一个彩色 PNG，绕开被测的编码路径。
+pub fn read_color_png(path: &Path) -> DecodedColorPng {
+    let file = fs::File::open(path).expect("打开输出 PNG");
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let header = decoder.read_header_info().expect("读 PNG 头").clone();
+    // EXPAND 把调色板摊成 RGB8。
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().expect("读 PNG 信息");
+    let mut pixels = vec![0; reader.output_buffer_size().expect("PNG 缓冲尺寸")];
+    let info = reader.next_frame(&mut pixels).expect("读 PNG 像素");
+    pixels.truncate(info.buffer_size());
+    DecodedColorPng {
         size: Size::new(info.width, info.height),
         color_type: header.color_type,
         bit_depth: header.bit_depth,

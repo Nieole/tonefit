@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use tonefit::{
-    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, Mode, PageReport, Profile,
-    Report, Request, VolumeReport, VolumeVerdict,
+    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, Mode, PageBranch,
+    PageColor, PageReport, Profile, Report, Request, VolumeReport, VolumeVerdict,
 };
 
 #[derive(Parser)]
@@ -134,10 +134,11 @@ fn render(report: &Report, mode: Mode) -> String {
     }
     for volume in &report.volumes {
         text.push_str(&format!(
-            "{} → {}（{} 页）\n",
+            "{} → {}（{} 页{}）\n",
             volume.volume.display(),
             volume.output.display(),
-            volume.pages.len()
+            volume.pages.len(),
+            color_page_note(volume)
         ));
         text.push_str(&volume_lines(volume));
         // 卷成为不可分割的处理单元，峰值内存随卷大小走（ADR 0005）：这一行是那条代价的现场。
@@ -153,6 +154,23 @@ fn render(report: &Report, mode: Mode) -> String {
         }
     }
     text
+}
+
+/// 卷那一行里说彩页有几张的那一小截。
+///
+/// 一张都没有就不说——绝大多数卷是这个样子（见 measurements 的《B 类素材普查》：97% 近灰度），
+/// 每卷都挂一句「彩页 0 页」只是噪声。数的是**彩页**，与它走了哪条分支无关。
+fn color_page_note(volume: &VolumeReport) -> String {
+    let count = volume
+        .pages
+        .iter()
+        .filter(|page| page.color == PageColor::Color)
+        .count();
+    if count == 0 {
+        String::new()
+    } else {
+        format!("，其中彩页 {count} 页")
+    }
 }
 
 /// 卷级那一段：几何门的判定结果，加上这一卷的候选从哪来。
@@ -211,17 +229,32 @@ fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
     text
 }
 
-/// 一页的判定：定下的那个候选、定它的理由，后面跟上各候选的判据值。
+/// 一页那一行：它走的分支，以及那条分支得出的结果。
 ///
-/// 判据是量、阈值是界：判定从两者的比较来，因此两者都得摆在同一行上，判定才是可解释的
-/// （spec 的 story 7）。阈值在头一行的 profile 里，它对整份报告只有一个。
+/// 灰度路径给的是判定与判据。判据是量、阈值是界：判定从两者的比较来，因此两者都得摆在
+/// 同一行上，判定才是可解释的（spec 的 story 7）。阈值在头一行的 profile 里，
+/// 它对整份报告只有一个。
+///
+/// 彩色分支上没有判定可说，那一行说的是它为什么没有：那条路径只缩放（ADR 0005 决定第 4 条）。
+/// 彩页转灰走的是灰度路径，行首标出来——不标，用户就看不出这一档位深是替一张彩页定的，
+/// 也看不出这台设备为什么没留住颜色。
 fn verdict_line(page: &PageReport) -> String {
-    format!(
-        "判定 {}（{}）  判据 {}",
-        page.verdict.candidate,
-        page.verdict.reason,
-        score_line(&page.scores)
-    )
+    match &page.branch {
+        PageBranch::Gray { scores, verdict } => format!(
+            "{}判定 {}（{}）  判据 {}",
+            if page.color == PageColor::Color {
+                "彩页转灰 · "
+            } else {
+                ""
+            },
+            verdict.candidate,
+            verdict.reason,
+            score_line(scores)
+        ),
+        PageBranch::Color => {
+            "彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络".to_owned()
+        }
+    }
 }
 
 /// 一页各候选的判据值排成一行，候选由小到大。
@@ -360,13 +393,16 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
                 scaling: typical_scaling(),
-                scores: vec![CandidateScore {
-                    candidate: one_bit_dithered,
-                    score,
-                }],
-                verdict: Verdict {
-                    candidate: one_bit_dithered,
-                    reason: Reason::LowestWithinThreshold,
+                color: PageColor::Gray,
+                branch: PageBranch::Gray {
+                    scores: vec![CandidateScore {
+                        candidate: one_bit_dithered,
+                        score,
+                    }],
+                    verdict: Verdict {
+                        candidate: one_bit_dithered,
+                        reason: Reason::LowestWithinThreshold,
+                    },
                 },
             },
         );
@@ -401,13 +437,16 @@ mod tests {
                 size: Size::new(1264, 1680),
                 // 正好两倍面板的一页：报告要说出它预缩过。
                 scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
-                scores: vec![CandidateScore {
-                    candidate,
-                    score: four_bit,
-                }],
-                verdict: Verdict {
-                    candidate,
-                    reason: Reason::LowestWithinThreshold,
+                color: PageColor::Gray,
+                branch: PageBranch::Gray {
+                    scores: vec![CandidateScore {
+                        candidate,
+                        score: four_bit,
+                    }],
+                    verdict: Verdict {
+                        candidate,
+                        reason: Reason::LowestWithinThreshold,
+                    },
                 },
             },
         );
@@ -470,10 +509,13 @@ mod tests {
                 size: Size::new(800, 1000),
                 // 源比目标小：按不放大原样输出，一条边都贴不住面板。
                 scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
-                scores: vec![CandidateScore { candidate, score }],
-                verdict: Verdict {
-                    candidate,
-                    reason: Reason::VolumeEnvelope,
+                color: PageColor::Gray,
+                branch: PageBranch::Gray {
+                    scores: vec![CandidateScore { candidate, score }],
+                    verdict: Verdict {
+                        candidate,
+                        reason: Reason::VolumeEnvelope,
+                    },
                 },
             },
         );
@@ -489,6 +531,72 @@ mod tests {
         // 同一道门也撑着面板灰阶那道硬上界（ADR 0003），它跟着失效这件事不能只留在注释里。
         assert!(text.contains("面板灰阶上界的依据随门一起失效"), "{text}");
         assert!(text.contains("ADR 0003"), "{text}");
+    }
+
+    /// 报告要区分彩页与灰度页，也要区分它们走了哪条分支（10 号票）。
+    ///
+    /// 三页各占一种情形：彩页走彩色分支、彩页转灰走灰度路径、灰度页走灰度路径。
+    /// 中间那一种是最容易被藏起来的——它有判定，看上去与灰度页毫无二致，
+    /// 而用户想知道的恰恰是「这台设备为什么没留住颜色」。
+    #[test]
+    fn the_report_tells_a_color_page_apart_from_a_gray_one() {
+        let profile = Profile::resolve("kobo-libra-colour").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        let page = |name: &str, color, branch| PageReport {
+            source: PathBuf::from(format!("library/volume-a/{name}.png")),
+            output: PathBuf::from(format!("out/volume-a/{name}.png")),
+            size: Size::new(1264, 1680),
+            scaling: typical_scaling(),
+            color,
+            branch,
+        };
+        let gray_branch = || PageBranch::Gray {
+            scores: vec![CandidateScore { candidate, score }],
+            verdict: Verdict {
+                candidate,
+                reason: Reason::LowestWithinThreshold,
+            },
+        };
+        let report = Report {
+            profile,
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                // 驱动页必须是一张灰度页：彩页不进上包络，指不出档来。
+                verdict: Some(VolumeVerdict::Envelope(Envelope {
+                    base: candidate,
+                    driver: 2,
+                    body_pages: 2,
+                    outlier_pages: 0,
+                    raised_pages: 0,
+                })),
+                gate: GeometryGate::Holds,
+                cache: cache_usage(),
+                decodes: 3,
+                pages: vec![
+                    page("001", PageColor::Color, PageBranch::Color),
+                    page("002", PageColor::Color, gray_branch()),
+                    page("003", PageColor::Gray, gray_branch()),
+                ],
+            }],
+        };
+
+        let text = render(&report, Mode::Process);
+
+        // 卷那一行数得出彩页有几张：走哪条分支不影响它是不是彩页。
+        assert!(text.contains("3 页，其中彩页 2 页"), "{text}");
+        // 彩色分支那一页说得出它为什么没有判定。
+        assert!(text.contains("彩页 · 彩色分支：只缩放"), "{text}");
+        assert!(text.contains("不进灰度缓存也不进卷级上包络"), "{text}");
+        // 转灰的那一页有判定，行首标着它的来路。
+        assert!(text.contains("彩页转灰 · 判定 4bit"), "{text}");
+        // 灰度页那一行不多带任何标记：四个空格之后直接是判定。
+        assert!(text.contains("    判定 4bit"), "{text}");
+        assert!(text.contains("驱动页 library/volume-a/003.png"), "{text}");
     }
 
     #[test]

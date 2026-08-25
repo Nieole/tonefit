@@ -331,6 +331,47 @@ fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
     );
 }
 
+/// 混排卷在归档里仍按阅读顺序排。
+///
+/// 彩页走的是彩色分支，第一遍就缩放并编好（ADR 0005 决定第 4 条），但它与灰度页
+/// 一同在写出那一遍按页序落位。归档成员按**写入顺序**排，而页名的字典序与阅读顺序
+/// 本来就对不上（`1` `2` `10`）——彩页要是在第一遍就写进归档，成员顺序会变成
+/// 「先全部彩页、再全部灰度页」，按归档顺序翻页的阅读器于是跳着读。
+#[test]
+fn color_and_gray_pages_come_out_of_the_archive_in_reading_order() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let gray = fixtures::gradient(fixtures::TINY);
+    let color = fixtures::color_page(fixtures::TINY);
+    cbz.page("10.png", &gray)
+        .page("2.png", &color)
+        .page("11.png", &color)
+        .page("1.png", &gray);
+    let path = cbz.write();
+
+    let report = tonefit::run(&tonefit::Request {
+        profile: fixtures::profile("kobo-libra-colour"),
+        ..fixtures::request(&space, [path.as_path()])
+    })
+    .expect("处理应当成功");
+
+    // 两条分支各有两页，混着排。
+    let volume = &report.volumes[0];
+    assert_eq!(
+        volume
+            .pages
+            .iter()
+            .filter(|page| page.verdict().is_none())
+            .count(),
+        2,
+        "夹具不对：彩页没走彩色分支，这条用例就什么都没钉住"
+    );
+    assert_eq!(
+        member_names(&volume.output),
+        ["1.png", "2.png", "10.png", "11.png"]
+    );
+}
+
 /// 一个归档里成员名的清单，按归档里的顺序。
 fn member_names(archive: &std::path::Path) -> Vec<String> {
     fixtures::read_cbz(archive)

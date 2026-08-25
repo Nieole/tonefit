@@ -1,6 +1,6 @@
 //! Profile 与面板表。
 //!
-//! 面板是物理显示面板：分辨率 + PPI + 灰阶数，三项俱全才是 profile 的主键（`CONTEXT.md`）。
+//! 面板是物理显示面板：分辨率 + PPI + 灰阶数 + 彩色，四项俱全才是 profile 的主键（`CONTEXT.md`）。
 //! 设备只是面板的别名，多对一——表里面板是少数几个常量，型号一行一个。
 //!
 //! 阈值档位属于 profile、不属于面板：面板是物理事实，档位是标定出来的（ADR 0003）。
@@ -21,15 +21,27 @@ pub struct Panel {
     /// 每英寸像素数。判据的低通核由它推出（ADR 0002）。
     pub ppi: u32,
     /// 面板物理能显示的灰度级数。位深的硬上界（ADR 0003）。
+    ///
+    /// 彩色面板上它说的仍是黑白那一层：Kaleido 是黑白面板加一层彩色滤光片，
+    /// 灰度页在它上面与在纯黑白面板上走同一条路。
     pub gray_levels: u32,
+    /// 这块面板显不显示彩色。
+    ///
+    /// 彩页在彩色面板上走彩色分支、保留颜色，在黑白面板上转灰
+    /// （ADR 0010：彩页按 profile 分流；ADR 0005 决定第 4 条）。
+    /// 它在主键里：同分辨率同 PPI 的 Kaleido 与纯黑白 e-ink 输出不同，不是同一块面板。
+    pub color: bool,
 }
 
 impl std::fmt::Display for Panel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} · {} PPI · {} 级灰阶",
-            self.resolution, self.ppi, self.gray_levels
+            "{} · {} PPI · {} 级灰阶 · {}",
+            self.resolution,
+            self.ppi,
+            self.gray_levels,
+            if self.color { "彩色" } else { "黑白" }
         )
     }
 }
@@ -159,7 +171,7 @@ fn unknown_device_error(device: &str) -> anyhow::Error {
     anyhow!(text)
 }
 
-/// 内置清单按面板归并。面板按分辨率从小到大排，同分辨率再按 PPI——替身是照分辨率挑的。
+/// 内置清单按面板归并。面板按分辨率从小到大排，同分辨率再按 PPI、再按彩色——替身是照分辨率挑的。
 fn devices_by_panel() -> Vec<(Panel, Vec<&'static str>)> {
     let mut groups: Vec<(Panel, Vec<&'static str>)> = Vec::new();
     for (device, panel) in DEVICES {
@@ -168,7 +180,14 @@ fn devices_by_panel() -> Vec<(Panel, Vec<&'static str>)> {
             None => groups.push((*panel, vec![device])),
         }
     }
-    groups.sort_by_key(|(panel, _)| (panel.resolution.height, panel.resolution.width, panel.ppi));
+    groups.sort_by_key(|(panel, _)| {
+        (
+            panel.resolution.height,
+            panel.resolution.width,
+            panel.ppi,
+            panel.color,
+        )
+    });
     groups
 }
 
@@ -188,12 +207,28 @@ fn canonical(device: &str) -> String {
 /// e-ink 面板的灰阶数恒为 16（`CONTEXT.md`）。
 const EINK_GRAY_LEVELS: u32 = 16;
 
-/// 一块 e-ink 面板。
+/// 一块纯黑白 e-ink 面板。
 const fn eink(width: u32, height: u32, ppi: u32) -> Panel {
     Panel {
         resolution: Size::new(width, height),
         ppi,
         gray_levels: EINK_GRAY_LEVELS,
+        color: false,
+    }
+}
+
+/// 一块 Kaleido 彩色 e-ink 面板：同一块黑白面板加一层彩色滤光片。
+///
+/// 分辨率与 PPI 填的是**黑白那一层**的规格——面板的主键、目标尺寸与低通核都由它推出。
+/// 彩色滤光片让彩色内容的实际分辨率降到黑白层之下（各家口径是一半），
+/// 但 P0 的彩色分支只做缩放、不做判据，这个折减到不了任何判定上；
+/// 真要利用它得先测（`CONTEXT.md` 的《尚未确立》）。
+const fn kaleido(width: u32, height: u32, ppi: u32) -> Panel {
+    Panel {
+        resolution: Size::new(width, height),
+        ppi,
+        gray_levels: EINK_GRAY_LEVELS,
+        color: true,
     }
 }
 
@@ -208,14 +243,22 @@ const EINK_1404X1872_300: Panel = eink(1404, 1872, 300);
 const EINK_1440X1920_300: Panel = eink(1440, 1920, 300);
 const EINK_1650X2200_207: Panel = eink(1650, 2200, 207);
 const EINK_1860X2480_300: Panel = eink(1860, 2480, 300);
+const KALEIDO_1072X1448_300: Panel = kaleido(1072, 1448, 300);
+const KALEIDO_1264X1680_300: Panel = kaleido(1264, 1680, 300);
+const KALEIDO_1404X1872_227: Panel = kaleido(1404, 1872, 227);
 
 /// 型号 → 面板，多对一。新增型号只需在这里加一行。
 ///
-/// 只收黑白 e-ink 型号：Kaleido 彩色面板要走自己的分支，P0 不在范围内。
+/// 黑白与 Kaleido 彩色两类 e-ink 型号都收。彩色那几个的面板与同代黑白型号同分辨率同 PPI，
+/// 区分它们的是彩色那一项——它在主键里，两者不是同一块面板（ADR 0010：彩页按 profile 分流）。
 /// 名字一律小写连字符，解析前会把用户敲的形式归一到这里。
 ///
 /// 同一条产品线换代换过面板的（Paperwhite、Oasis），型号名必须带代次：
 /// 少写一位就会静默给出错的目标尺寸，而那正是这张表要挡掉的事。
+///
+/// **拼写跟各家自己的产品名走**，不统一：Kobo 写作 Libra/Clara **Colour**，
+/// BOOX 写作 Go **Color** 7，Amazon 写作 **Color**soft。[`canonical`] 归一的是大小写与分隔符，
+/// 不管拼写——把 `colour` 改成 `color`，用户敲真实产品名就解析不出来。
 ///
 /// 分辨率与 PPI 取各家公布的规格，不是实测——实测数字见 measurements 的《B 类素材普查》，
 /// 那一节的三块面板都在本表内。
@@ -231,6 +274,8 @@ const DEVICES: &[(&str, Panel)] = &[
     ("kobo-aura-one", EINK_1404X1872_300),
     ("kobo-elipsa", EINK_1404X1872_227),
     ("kobo-elipsa-2e", EINK_1404X1872_227),
+    ("kobo-clara-colour", KALEIDO_1072X1448_300),
+    ("kobo-libra-colour", KALEIDO_1264X1680_300),
     // BOOX
     ("boox-palma", EINK_824X1648_300),
     ("boox-palma-2", EINK_824X1648_300),
@@ -242,6 +287,9 @@ const DEVICES: &[(&str, Panel)] = &[
     ("boox-go-10-3", EINK_1404X1872_227),
     ("boox-max-lumi2", EINK_1650X2200_207),
     ("boox-tab-x", EINK_1650X2200_207),
+    ("boox-go-color-7", KALEIDO_1264X1680_300),
+    ("boox-note-air3-c", KALEIDO_1404X1872_227),
+    ("boox-tab-ultra-c", KALEIDO_1404X1872_227),
     // Kindle
     ("kindle-voyage", EINK_1072X1448_300),
     ("kindle-11", EINK_1072X1448_300),
@@ -250,6 +298,7 @@ const DEVICES: &[(&str, Panel)] = &[
     ("kindle-paperwhite-11", EINK_1236X1648_300),
     ("kindle-paperwhite-12", EINK_1264X1680_300),
     ("kindle-scribe", EINK_1860X2480_300),
+    ("kindle-colorsoft", KALEIDO_1264X1680_300),
 ];
 
 #[cfg(test)]
@@ -267,8 +316,9 @@ mod tests {
                 Profile::resolve(device).unwrap_or_else(|error| panic!("{device}：{error}"));
             assert_eq!(profile.device(), *device, "表里的名字必须已经是规范名");
             assert_eq!(profile.panel(), *panel);
-            // 内置表当前只收黑白 e-ink。哪天进了 LCD 面板，它得连同「未经标定」的标注
-            // 一起落地（ADR 0003），这条断言随之改写。
+            // 内置表收的全是 e-ink，黑白与 Kaleido 都是——Kaleido 的黑白那一层同样 16 级。
+            // 哪天进了 LCD 面板，它得连同「未经标定」的标注一起落地（ADR 0003），
+            // 这条断言随之改写。
             assert_eq!(
                 panel.gray_levels, EINK_GRAY_LEVELS,
                 "{device} 不是 e-ink 面板"
@@ -286,6 +336,21 @@ mod tests {
             DEVICES.len(),
             panels.len()
         );
+    }
+
+    /// 彩色面板与黑白面板是**两块**面板：彩色那一项进主键，因此同分辨率同 PPI 的
+    /// Kaleido 与纯黑白 e-ink 各占一行（ADR 0010：彩页按 profile 分流）。
+    #[test]
+    fn a_kaleido_model_resolves_to_a_color_panel() {
+        let color = Profile::resolve("kobo-libra-colour").expect("内置型号");
+        let monochrome = Profile::resolve("kobo-libra-2").expect("内置型号");
+
+        assert!(color.panel().color, "Kaleido 面板显示彩色");
+        assert!(!monochrome.panel().color, "纯黑白 e-ink 面板不显示彩色");
+        // 两者的分辨率与 PPI 相同，区分它们的只有彩色那一项——它必须在主键里。
+        assert_eq!(color.panel().resolution, monochrome.panel().resolution);
+        assert_eq!(color.panel().ppi, monochrome.panel().ppi);
+        assert_ne!(color.panel(), monochrome.panel());
     }
 
     /// 清单要全：用户挑替身是从这段文字里挑的，漏掉的型号等于不存在。

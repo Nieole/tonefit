@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 
+use crate::color::ColorImage;
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 
@@ -157,6 +158,28 @@ pub fn resize(source: &GrayImage, target: Size, filter: Filter) -> Result<(GrayI
         factor => Cow::Owned(box_prescale(source, factor)),
     };
     Ok((resample(&prescaled, target, filter)?, scaling))
+}
+
+/// 把彩色图缩到 `target`：三个通道各走一遍 [`resize`]。
+///
+/// **分通道跑与交织跑逐字节相同。**两级缩放都逐通道独立——预缩是等权块平均，
+/// 残差段是卷积重采样，卷积核只在同一通道内取样。分通道于是不是近似，
+/// 而是把灰度那条路径原样用过来：彩色分支不必另写一份缩放，两条路径也不会各自漂移。
+///
+/// 彩色分支只做缩放（ADR 0005 决定第 4 条），因此这里之后就直接编码写出，没有判据也没有量化。
+pub fn resize_color(
+    source: &ColorImage,
+    target: Size,
+    filter: Filter,
+) -> Result<(ColorImage, Scaling)> {
+    let scaling = Scaling::plan(source.size(), target);
+    let [red, green, blue] = source.planes();
+    let planes = [
+        resize(red, target, filter)?.0,
+        resize(green, target, filter)?.0,
+        resize(blue, target, filter)?.0,
+    ];
+    Ok((ColorImage::new(target, planes), scaling))
 }
 
 /// 整数倍 box 预缩：每个输出像素是源上一个 `factor`×`factor` 块的等权平均。

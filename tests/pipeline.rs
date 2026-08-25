@@ -6,8 +6,8 @@ mod fixtures;
 
 use fixtures::{Workspace, run_volume};
 use tonefit::{
-    BitDepth, CacheBudget, Candidate, Dither, Filter, GeometryGate, Mode, Reason, Request, Size,
-    VolumeVerdict,
+    BitDepth, CacheBudget, Candidate, Dither, Filter, GeometryGate, Mode, PageColor, Reason,
+    Request, Size, VolumeVerdict,
 };
 
 #[test]
@@ -29,14 +29,14 @@ fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
     // 这一页贴住面板，几何门放行抖动：判据于是在 2bit+FS 上就够了，
     // 而同一档不抖动差得远——差多远看报告里这一页的判据曲线。
     assert_eq!(
-        pages[0].verdict.candidate,
+        fixtures::verdict(&pages[0]).candidate,
         Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
     );
     // 抖过的渐变页把 2bit 的四个格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
     assert_eq!(written.color_type, png::ColorType::Grayscale);
     assert_eq!(
         fixtures::written_bits(written.bit_depth),
-        pages[0].verdict.candidate.bit_depth.bits()
+        fixtures::verdict(&pages[0]).candidate.bit_depth.bits()
     );
 }
 
@@ -51,8 +51,11 @@ fn a_gradient_written_at_a_low_bit_depth_comes_out_without_measurable_banding() 
     let report = run_volume(&dithered, &volume);
 
     let page = &report.volumes[0].pages[0];
-    let depth = page.verdict.candidate.bit_depth;
-    assert_eq!(page.verdict.candidate.dither, Dither::FloydSteinberg);
+    let depth = fixtures::verdict(page).candidate.bit_depth;
+    assert_eq!(
+        fixtures::verdict(page).candidate.dither,
+        Dither::FloydSteinberg
+    );
     assert!(depth <= BitDepth::Two, "判定落在 {depth}，色带那一档没测到");
 
     // 同一档位深、同一页，点名不抖动再跑一遍：差别只剩抖动这一项。
@@ -117,7 +120,7 @@ fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
     let report = run_volume(&space, &volume);
 
     for page in &report.volumes[0].pages {
-        let depth = page.verdict.candidate.bit_depth;
+        let depth = fixtures::verdict(page).candidate.bit_depth;
         let grid = tonefit::quantize(
             &tonefit::GrayImage::new(Size::new(256, 1), (0..=255u8).collect()),
             Candidate::new(depth, Dither::Off),
@@ -151,7 +154,9 @@ fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
 
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     assert_eq!(
-        report.volumes[0].pages[0].verdict.candidate.bit_depth,
+        fixtures::verdict(&report.volumes[0].pages[0])
+            .candidate
+            .bit_depth,
         BitDepth::Four
     );
     assert_eq!(written.color_type, png::ColorType::Indexed);
@@ -243,6 +248,159 @@ fn color_pages_go_through_the_oklab_lightness_channel() {
     assert_eq!(band(5), 0, "黑");
     // 蓝带与灰带取自同一条 Rec.709 亮度（见夹具的 COLOR_BANDS），这里必须仍然可分。
     assert!(band(0) > band(1) + 50, "彩色与灰的对比不该塌掉");
+}
+
+/// 黑白 profile 下彩页转灰、走与其它页相同的灰度路径，但它仍然是一张彩页——
+/// 报告分得清（ADR 0005 决定第 4 条；10 号票：`Report` 区分彩页与灰度页）。
+#[test]
+fn a_color_page_on_a_monochrome_profile_is_grayed_and_still_reported_as_color() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::color_page(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    let pages = &volume_report.pages;
+    assert_eq!(pages[0].color, PageColor::Color, "彩页没被识别出来");
+    assert_eq!(pages[1].color, PageColor::Gray);
+    // 两页都走了灰度路径：都有判定，都进了灰度缓存，写出的都不是彩色 PNG。
+    assert_eq!(
+        volume_report.cache.pages, 2,
+        "黑白 profile 下彩页也进灰度缓存"
+    );
+    for page in pages {
+        assert!(
+            page.verdict().is_some(),
+            "{} 没有判定",
+            page.source.display()
+        );
+        let written = fixtures::read_png(&page.output);
+        assert_ne!(
+            written.color_type,
+            png::ColorType::Rgb,
+            "黑白 profile 不留颜色"
+        );
+    }
+}
+
+/// 彩色 profile 下彩页走彩色分支：只做缩放，不量化、不进灰度缓存、没有判定，
+/// 颜色原样留在输出里（ADR 0005 决定第 4 条）。同一卷里的灰度页照旧走灰度路径。
+#[test]
+fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cache() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 不必缩放的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
+    let size = fixtures::SMALLER_THAN_TARGET;
+    volume.page("001.png", &fixtures::color_page(size));
+    volume.page("002.png", &fixtures::gradient(size));
+
+    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile("kobo-libra-colour"));
+
+    let volume_report = &report.volumes[0];
+    let pages = &volume_report.pages;
+    assert_eq!(pages[0].color, PageColor::Color);
+    // 彩色分支不量化：既没有判定，也没有判据曲线。
+    assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
+    assert!(pages[0].scores().is_empty(), "彩色分支上不该有判据曲线");
+    // 不进灰度缓存：缓存里只剩那一张灰度页。
+    assert_eq!(volume_report.cache.pages, 1, "彩页不该进灰度缓存");
+    // 每页仍然只解码一次（ADR 0005）。
+    assert_eq!(volume_report.decodes, 2);
+
+    // 颜色留住了：色带一条不少地写在输出里。
+    let written = fixtures::read_color_png(&pages[0].output);
+    assert_eq!(written.size, size);
+    for (index, band) in fixtures::COLOR_BANDS.iter().enumerate() {
+        let row = fixtures::band_center_row(size, index);
+        assert_eq!(
+            written.pixel(size.width / 2, row),
+            *band,
+            "第 {index} 条色带"
+        );
+    }
+
+    // 同一卷里的灰度页在彩色面板上照旧走灰度路径。
+    assert_eq!(pages[1].color, PageColor::Gray);
+    assert!(pages[1].verdict().is_some(), "灰度页该有判定");
+    assert_eq!(
+        fixtures::read_png(&pages[1].output).color_type,
+        png::ColorType::Grayscale
+    );
+}
+
+/// dry-run 下彩色分支也一个文件都不落盘，报告照出（spec 的 story 6）。
+///
+/// 彩色分支上没有判据可预告——那条路径不量化——所以这一遍连编码都省了。
+/// 要预告的只有几何：目标尺寸与缩放照旧算得出来。
+#[test]
+fn a_dry_run_reports_the_color_branch_without_writing_anything() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::color_page(fixtures::TINY));
+    volume.page("002.png", &fixtures::gradient(fixtures::TINY));
+
+    let report = tonefit::run(&Request {
+        profile: fixtures::profile(COLOR_DEVICE),
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let pages = &report.volumes[0].pages;
+    assert_eq!(pages[0].color, PageColor::Color);
+    assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
+    assert_eq!(pages[0].size, fixtures::TINY, "彩页的目标尺寸照旧算出来");
+    assert!(pages[1].verdict().is_some(), "灰度页照旧有判定");
+    assert!(!space.out().exists(), "dry-run 落了盘");
+}
+
+/// 彩色分支上的页不参与几何门（ADR 0010）。
+///
+/// 门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），两者只作用在灰度路径上：
+/// 彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。让它关掉整卷的抖动，
+/// 就是让一条不受影响的路径去削掉另一条路径的收益。
+///
+/// 同一卷换到黑白 profile 上，那一页转灰、走灰度路径，它的几何这时就说了算——
+/// 门是**分支的函数**，不是页的常量。
+#[test]
+fn a_color_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
+    let build = |space: &Workspace| {
+        let volume = space.volume("volume-a");
+        // 源比目标小的彩页：一条边都贴不住面板。
+        volume.page(
+            "001.png",
+            &fixtures::color_page(fixtures::SMALLER_THAN_TARGET),
+        );
+        // 正好两倍面板的灰度页：贴住，门在它这里是开的。
+        volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+        volume
+    };
+
+    let color_space = Workspace::new();
+    let color = fixtures::run_volume_with(
+        &color_space,
+        &build(&color_space),
+        fixtures::profile(COLOR_DEVICE),
+    );
+    let mono_space = Workspace::new();
+    let mono = fixtures::run_volume_with(
+        &mono_space,
+        &build(&mono_space),
+        fixtures::baseline_profile(),
+    );
+
+    assert_eq!(
+        color.volumes[0].gate,
+        GeometryGate::Holds,
+        "彩色分支上的那一页把整卷的抖动关掉了"
+    );
+    assert_eq!(
+        mono.volumes[0].gate,
+        GeometryGate::Broken { page: 0 },
+        "同一页转灰之后走灰度路径，它的几何这时说了算"
+    );
 }
 
 #[test]
@@ -654,7 +812,11 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
     let pages = &report.volumes[0].pages;
     assert_eq!(pages.len(), 2);
     for page in pages {
-        assert!(!page.scores.is_empty(), "{} 缺判据", page.source.display());
+        assert!(
+            !page.scores().is_empty(),
+            "{} 缺判据",
+            page.source.display()
+        );
         assert!(
             !page.output.exists(),
             "{} 被写出来了",
@@ -662,7 +824,7 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
         );
     }
     // 渐变页在低位深上必然崩：报告里的数是真算出来的，不是一排零。
-    let gradient = &pages[0].scores;
+    let gradient = &pages[0].scores();
     assert!(
         gradient[0].score > gradient[2].score,
         "1bit 的 {} 没有差过 4bit 的 {}",
@@ -697,7 +859,7 @@ fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
         .expect("dry-run 应当成功");
 
         let candidates: Vec<_> = report.volumes[0].pages[0]
-            .scores
+            .scores()
             .iter()
             .map(|scored| scored.candidate)
             .collect();
@@ -729,14 +891,14 @@ fn one_page_smaller_than_the_target_shuts_the_dither_off_for_the_whole_volume() 
     assert_eq!(volume_report.gate, GeometryGate::Broken { page: 1 });
     for page in &volume_report.pages {
         assert_eq!(
-            page.verdict.candidate.dither,
+            fixtures::verdict(page).candidate.dither,
             Dither::Off,
             "{} 在门关着时抖了",
             page.source.display()
         );
         // 被裁掉的候选不进入判据：门先判，判据在门放行的那套候选上求值。
         assert!(
-            page.scores
+            page.scores()
                 .iter()
                 .all(|scored| scored.candidate.dither == Dither::Off),
             "{} 的判据里还留着抖动候选",
@@ -767,7 +929,7 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     assert_eq!(base.dither, Dither::FloydSteinberg);
     // 抖动模式全卷共用一个：页级没有开关。
     for page in &volume_report.pages {
-        assert_eq!(page.verdict.candidate.dither, base.dither);
+        assert_eq!(fixtures::verdict(page).candidate.dither, base.dither);
     }
 }
 
@@ -789,7 +951,8 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     assert_eq!(page.0.output, page.1.output);
     assert_eq!(page.0.size, page.1.size);
     assert_eq!(
-        page.0.verdict, page.1.verdict,
+        page.0.verdict(),
+        page.1.verdict(),
         "dry-run 预告的位深与照做时不一样"
     );
     assert!(page.1.output.is_file());
@@ -798,7 +961,7 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     // a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict。
     assert_eq!(
         fixtures::written_bits(fixtures::read_png(&page.1.output).bit_depth),
-        page.0.verdict.candidate.bit_depth.bits()
+        fixtures::verdict(page.0).candidate.bit_depth.bits()
     );
 }
 
@@ -828,16 +991,29 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
         "上包络没被关掉"
     );
     let pages = &report.volumes[0].pages;
-    assert_eq!(pages[0].verdict.candidate.bit_depth, BitDepth::Four);
-    assert_eq!(pages[0].verdict.reason, Reason::LowestWithinThreshold);
-    assert_eq!(pages[1].verdict.candidate.bit_depth, BitDepth::One);
-    assert_eq!(pages[1].verdict.reason, Reason::LowestWithinThreshold);
+    assert_eq!(
+        fixtures::verdict(&pages[0]).candidate.bit_depth,
+        BitDepth::Four
+    );
+    assert_eq!(
+        fixtures::verdict(&pages[0]).reason,
+        Reason::LowestWithinThreshold
+    );
+    assert_eq!(
+        fixtures::verdict(&pages[1]).candidate.bit_depth,
+        BitDepth::One
+    );
+    assert_eq!(
+        fixtures::verdict(&pages[1]).reason,
+        Reason::LowestWithinThreshold
+    );
     // 判定是从判据来的：报告里同时给出被判定的那一档的判据值。
     for page in pages {
         assert!(
-            page.scores
+            page.scores()
                 .iter()
-                .any(|scored| scored.candidate.bit_depth == page.verdict.candidate.bit_depth),
+                .any(|scored| scored.candidate.bit_depth
+                    == fixtures::verdict(page).candidate.bit_depth),
             "{} 的判定位深不在候选里",
             page.source.display()
         );
@@ -860,16 +1036,18 @@ fn the_lowest_bit_depth_within_the_threshold_wins() {
     let page = &report.volumes[0].pages[0];
     let threshold = report.profile.threshold();
     let chosen = page
-        .scores
+        .scores()
         .iter()
-        .position(|scored| scored.candidate.bit_depth == page.verdict.candidate.bit_depth)
+        .position(|scored| {
+            scored.candidate.bit_depth == fixtures::verdict(page).candidate.bit_depth
+        })
         .expect("判定位深必须在候选里");
     assert!(
-        threshold.admits(page.scores[chosen].score),
+        threshold.admits(page.scores()[chosen].score),
         "判定的那一档越过了阈值"
     );
     assert!(
-        page.scores[..chosen]
+        page.scores()[..chosen]
             .iter()
             .all(|scored| !threshold.admits(scored.score)),
         "还有更低的一档也在阈值内"
@@ -892,14 +1070,17 @@ fn an_override_replaces_what_the_metric_would_have_chosen() {
     .expect("覆盖后应当照常处理");
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.verdict.candidate, fixtures::plain(BitDepth::Two));
-    assert_eq!(page.verdict.reason, Reason::Override);
+    assert_eq!(
+        fixtures::verdict(page).candidate,
+        fixtures::plain(BitDepth::Two)
+    );
+    assert_eq!(fixtures::verdict(page).reason, Reason::Override);
     assert_eq!(
         report.volumes[0].verdict,
         Some(VolumeVerdict::Override(fixtures::plain(BitDepth::Two)))
     );
     // 覆盖了判定，不等于不给判据：报告仍要说得清「你点的这一档判据是多少」。
-    assert!(!page.scores.is_empty(), "覆盖之后判据值没了");
+    assert!(!page.scores().is_empty(), "覆盖之后判据值没了");
 }
 
 /// 覆盖项裁的是候选集，一次裁一维：只点了位深，抖动那一维还有得判，判据照旧说了算。
@@ -917,15 +1098,15 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
     .expect("覆盖后应当照常处理");
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Four);
+    assert_eq!(fixtures::verdict(page).candidate.bit_depth, BitDepth::Four);
     assert_ne!(
-        page.verdict.reason,
+        fixtures::verdict(page).reason,
         Reason::Override,
         "还有一维在判，不该说被顶掉"
     );
     // 候选只剩点名那一档位深的两个，抖动那一维原样留着。
     assert_eq!(
-        page.scores
+        page.scores()
             .iter()
             .map(|scored| scored.candidate)
             .collect::<Vec<_>>(),
@@ -1006,8 +1187,11 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     .expect("处理应当成功");
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.verdict.candidate, fixtures::plain(BitDepth::Two));
-    assert_eq!(page.verdict.reason, Reason::NoneWithinThreshold);
+    assert_eq!(
+        fixtures::verdict(page).candidate,
+        fixtures::plain(BitDepth::Two)
+    );
+    assert_eq!(fixtures::verdict(page).reason, Reason::NoneWithinThreshold);
 
     // 上包络开着时档位不变：一页的卷，基准档只能是这一页要的那一档。
     // 兜底的那一档是候选上界，卷级那一层不会、也不该把它再抬高。
@@ -1018,7 +1202,7 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     })
     .expect("处理应当成功");
     assert_eq!(
-        with_envelope.volumes[0].pages[0].verdict.candidate,
+        fixtures::verdict(&with_envelope.volumes[0].pages[0]).candidate,
         fixtures::plain(BitDepth::Two)
     );
 }
@@ -1043,16 +1227,16 @@ fn dithering_can_bring_a_page_back_within_the_threshold() {
 
     let page = &report.volumes[0].pages[0];
     assert_eq!(
-        page.verdict.candidate,
+        fixtures::verdict(page).candidate,
         Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
     );
-    assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+    assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     // 不抖动的那两档全部越界，抖过的这一档在界内：判据自己说出了这笔交换。
     let threshold = report.profile.threshold();
-    for scored in &page.scores {
+    for scored in page.scores() {
         assert_eq!(
             threshold.admits(scored.score),
-            scored.candidate >= page.verdict.candidate,
+            scored.candidate >= fixtures::verdict(page).candidate,
             "{} 的 {} 落在了界的另一边",
             scored.candidate,
             scored.score
@@ -1140,7 +1324,7 @@ fn a_cache_past_its_budget_spills_to_a_temp_file_and_writes_the_very_same_pages(
 
     // 判定与写出的字节都不受缓存去处影响。
     let verdicts = |volume: &tonefit::VolumeReport| -> Vec<_> {
-        volume.pages.iter().map(|page| page.verdict).collect()
+        volume.pages.iter().map(|page| page.verdict()).collect()
     };
     assert_eq!(verdicts(&roomy), verdicts(&cramped), "溢写之后判定变了");
     assert_eq!(roomy_bytes, cramped_bytes, "溢写之后写出的页变了");
@@ -1248,12 +1432,12 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
     assert_eq!(envelope.raised_pages, 0);
     for page in &volume_report.pages {
         assert_eq!(
-            page.verdict.candidate.bit_depth,
+            fixtures::verdict(page).candidate.bit_depth,
             BitDepth::Two,
             "{} 没跟着基准档走",
             page.source.display()
         );
-        assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+        assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     }
     // 驱动页指得出来，而且它的需求就是基准档：站在 p95 秩上的正是它。
     let driver = &volume_report.pages[envelope.driver];
@@ -1279,14 +1463,111 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     assert_ne!(envelope.driver, 19, "离群页不该定出基准档");
 
     let outlier = &volume_report.pages[19];
-    assert_eq!(outlier.verdict.candidate.bit_depth, BitDepth::Four);
-    assert_eq!(outlier.verdict.reason, Reason::Outlier);
+    assert_eq!(
+        fixtures::verdict(outlier).candidate.bit_depth,
+        BitDepth::Four
+    );
+    assert_eq!(fixtures::verdict(outlier).reason, Reason::Outlier);
     // 交界处那一次跳变是认下的代价，位置指得出来就行：主体一页不动。
     for page in &volume_report.pages[..19] {
-        assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Two);
-        assert_eq!(page.verdict.reason, Reason::VolumeEnvelope);
+        assert_eq!(fixtures::verdict(page).candidate.bit_depth, BitDepth::Two);
+        assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     }
 }
+
+/// 彩页不污染灰度页的卷级上包络（ADR 0006 决定第 5 条：彩色 profile 下彩页
+/// 根本不进灰度上包络）。同一批灰度页，把彩页混进去前后，基准档、驱动页与逐页判定一个不变。
+///
+/// 混排还钉住驱动页那个序号：上包络在**灰度页**的序列上取分位，报告里的序号却指进整卷的页。
+/// 卷内混着彩页时两者不重合，换算漏掉一次，报告就会指着另一页说「就是它定的档」。
+#[test]
+fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
+    let alone = run_with_a_color_page_every(0);
+    let mixed = run_with_a_color_page_every(4);
+
+    // 彩页真的混进去了，而且都走了彩色分支：没有判定的就是它们。
+    assert_eq!(alone.pages.len(), 20);
+    assert_eq!(mixed.pages.len(), 25);
+    assert_eq!(
+        mixed
+            .pages
+            .iter()
+            .filter(|page| page.verdict().is_none())
+            .count(),
+        5,
+        "彩页该走彩色分支"
+    );
+
+    // 灰度页的判定一个不变。
+    let verdicts = |volume: &tonefit::VolumeReport| -> Vec<_> {
+        volume
+            .pages
+            .iter()
+            .filter_map(|page| page.verdict())
+            .collect()
+    };
+    assert_eq!(
+        verdicts(&alone),
+        verdicts(&mixed),
+        "混进彩页之后灰度页的判定变了"
+    );
+
+    // 上包络只数灰度页：主体 19 页 + 离群 1 页，彩页一页不算。
+    let envelope = envelope_of(&mixed);
+    assert_eq!(envelope.base, envelope_of(&alone).base);
+    assert_eq!(envelope.body_pages, 19);
+    assert_eq!(envelope.outlier_pages, 1);
+
+    // 驱动页指的仍是同一张灰度页——序号已经从灰度序换回页序。
+    let driver_rank = |volume: &tonefit::VolumeReport| {
+        let driver = envelope_of(volume).driver;
+        assert!(
+            volume.pages[driver].verdict().is_some(),
+            "驱动页必须是一张灰度页"
+        );
+        volume.pages[..driver]
+            .iter()
+            .filter(|page| page.verdict().is_some())
+            .count()
+    };
+    assert_eq!(
+        driver_rank(&alone),
+        driver_rank(&mixed),
+        "驱动页指到了另一页上"
+    );
+    assert_ne!(
+        envelope_of(&alone).driver,
+        envelope_of(&mixed).driver,
+        "夹具不对：混排没有把驱动页的序号推开，这条用例就什么都没钉住"
+    );
+}
+
+/// 二十页灰度纯色页（十九页主体 + 一页远在界外），每 `every` 页之前插一张彩页。
+/// `every` 为 0 就一张彩页都不插。跑的是彩色 profile——彩页只在那上面才走彩色分支。
+fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let mut levels = vec![NEEDS_TWO_BITS; 19];
+    levels.push(FAR_OUTSIDE);
+
+    let mut written = 0;
+    let mut write = |image: &image::DynamicImage| {
+        written += 1;
+        volume.page(&format!("{written:03}.png"), image);
+    };
+    for (position, &level) in levels.iter().enumerate() {
+        if every > 0 && position % every == 0 {
+            write(&fixtures::color_page(fixtures::TINY));
+        }
+        write(&fixtures::solid(fixtures::TINY, level));
+    }
+
+    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
+    report.volumes.into_iter().next().expect("一个卷")
+}
+
+/// 一台彩色面板设备：彩页只有在彩色 profile 下才走彩色分支（ADR 0010）。
+const COLOR_DEVICE: &str = "kobo-libra-colour";
 
 #[test]
 fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
@@ -1297,17 +1578,23 @@ fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
 
     assert_eq!(envelope_of(&raised).raised_pages, 3);
     for page in &raised.pages[30..33] {
-        assert_eq!(page.verdict.candidate.bit_depth, BitDepth::Four);
-        assert_eq!(page.verdict.reason, Reason::Hysteresis);
+        assert_eq!(fixtures::verdict(page).candidate.bit_depth, BitDepth::Four);
+        assert_eq!(fixtures::verdict(page).reason, Reason::Hysteresis);
     }
     // 段外的页不受影响：升的是那一段，不是全卷。
-    assert_eq!(raised.pages[29].verdict.candidate.bit_depth, BitDepth::Two);
-    assert_eq!(raised.pages[33].verdict.candidate.bit_depth, BitDepth::Two);
+    assert_eq!(
+        fixtures::verdict(&raised.pages[29]).candidate.bit_depth,
+        BitDepth::Two
+    );
+    assert_eq!(
+        fixtures::verdict(&raised.pages[33]).candidate.bit_depth,
+        BitDepth::Two
+    );
 
     assert_eq!(envelope_of(&unchanged).raised_pages, 0);
     for page in &unchanged.pages {
         assert_eq!(
-            page.verdict.candidate.bit_depth,
+            fixtures::verdict(page).candidate.bit_depth,
             BitDepth::Two,
             "{} 靠不足一段的要求升了档",
             page.source.display()
@@ -1348,7 +1635,7 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
         Some(VolumeVerdict::Override(fixtures::plain(BitDepth::Four)))
     );
     for page in &report.volumes[0].pages {
-        assert_eq!(page.verdict.reason, Reason::Override);
+        assert_eq!(fixtures::verdict(page).reason, Reason::Override);
     }
 }
 
@@ -1366,9 +1653,9 @@ fn envelope_of(volume: &tonefit::VolumeReport) -> tonefit::Envelope {
 /// 报告留着 `scores`，算得出来正是它留着的理由。
 fn lowest_within_threshold(page: &tonefit::PageReport, report: &tonefit::Report) -> BitDepth {
     let threshold = report.profile.threshold();
-    page.scores
+    page.scores()
         .iter()
         .find(|scored| threshold.admits(scored.score))
         .map(|scored| scored.candidate.bit_depth)
-        .unwrap_or_else(|| page.scores.last().expect("候选非空").candidate.bit_depth)
+        .unwrap_or_else(|| page.scores().last().expect("候选非空").candidate.bit_depth)
 }

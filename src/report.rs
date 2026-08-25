@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::cache::CacheUsage;
+use crate::color::PageColor;
 use crate::decide::{CandidateScore, Verdict};
 use crate::envelope::Envelope;
 use crate::geometry::{GeometryGate, Size};
@@ -101,16 +102,58 @@ pub struct PageReport {
     /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
     /// 报告里说清楚它有没有触发，是这条路径在真实素材上唯一的现场证据。
     pub scaling: Scaling,
-    /// 各候选的判据值，由小到大。候选已按面板灰阶数与几何门裁过（ADR 0003、ADR 0007）。
+    /// 第一遍识别出这一页是彩页还是灰度页（ADR 0005 决定第 1 条：彩页识别在第一遍）。
     ///
-    /// 两种模式都求值：判据现在决定输出的候选，dry-run 因此预告的就是照做时的那一个。
-    pub scores: Vec<CandidateScore>,
-    /// 这一页最终定下的候选，以及定它的理由（spec 的 story 7）。
-    ///
-    /// 卷级那一层开着时，这里是上包络重定过的结果，不是逐页判定的原始输出——
-    /// 写出去的就是它。逐页判定要的那一档仍可从 [`scores`](Self::scores) 与阈值读出来。
-    ///
-    /// 判定说的是**量化格点**。文件里写着的那个位深可能更低——一页只用得上几个取值时，
-    /// 调色板装得下同样的像素而位宽更窄，那是编码器接口以内的事（ADR 0004，见 `encode`）。
-    pub verdict: Verdict,
+    /// 这是**页的事实**，与它走了哪条分支不是一回事：黑白 profile 下彩页转灰、
+    /// 走的是 [`PageBranch::Gray`]，但它仍然是一张彩页。两者都在报告里，
+    /// 「这一页为什么没保留颜色」才答得出来。
+    pub color: PageColor,
+    /// 这一页走的那条分支，连同那条分支的产物。
+    pub branch: PageBranch,
+}
+
+/// 一页走过的那条分支（ADR 0010：彩页按 profile 分流）。
+///
+/// 两条分支的产物不是同一套，所以它们是一个枚举而不是几个各自可空的字段：
+/// 彩色分支上没有判据曲线、也没有判定——那条路径根本不量化，说「判定为空」
+/// 会读成「判定丢了」。
+#[derive(Debug, Clone)]
+pub enum PageBranch {
+    /// 灰度路径：算判据、进缓存、第二遍照判定量化写出。
+    /// 黑白 profile 下的彩页转灰后也走这里（ADR 0005 决定第 4 条）。
+    Gray {
+        /// 各候选的判据值，由小到大。候选已按面板灰阶数与几何门裁过（ADR 0003、ADR 0007）。
+        ///
+        /// 两种模式都求值：判据现在决定输出的候选，dry-run 因此预告的就是照做时的那一个。
+        scores: Vec<CandidateScore>,
+        /// 这一页最终定下的候选，以及定它的理由（spec 的 story 7）。
+        ///
+        /// 卷级那一层开着时，这里是上包络重定过的结果，不是逐页判定的原始输出——
+        /// 写出去的就是它。逐页判定要的那一档仍可从 `scores` 与阈值读出来。
+        ///
+        /// 判定说的是**量化格点**。文件里写着的那个位深可能更低——一页只用得上几个取值时，
+        /// 调色板装得下同样的像素而位宽更窄，那是编码器接口以内的事（ADR 0004，见 `encode`）。
+        verdict: Verdict,
+    },
+    /// 彩色分支：只做缩放，不量化、不进灰度缓存、不进卷级上包络
+    /// （ADR 0005 决定第 4 条）。彩色 profile 下的彩页走这里。
+    Color,
+}
+
+impl PageReport {
+    /// 这一页定下的候选与理由。彩色分支上没有——那条路径不量化。
+    pub fn verdict(&self) -> Option<Verdict> {
+        match &self.branch {
+            PageBranch::Gray { verdict, .. } => Some(*verdict),
+            PageBranch::Color => None,
+        }
+    }
+
+    /// 这一页各候选的判据值，由小到大。彩色分支上是空的。
+    pub fn scores(&self) -> &[CandidateScore] {
+        match &self.branch {
+            PageBranch::Gray { scores, .. } => scores,
+            PageBranch::Color => &[],
+        }
+    }
 }

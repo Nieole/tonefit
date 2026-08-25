@@ -69,10 +69,20 @@ fn gray_value_over_paper(r: u8, g: u8, b: u8, alpha: u8) -> u8 {
     if alpha == u8::MAX {
         return gray_value(r, g, b);
     }
-    let lut = &*SRGB_TO_LINEAR;
     let alpha = f32::from(alpha) / 255.0;
-    let over_paper = |channel: u8| lut[channel as usize] * alpha + (1.0 - alpha);
-    oklab_gray(over_paper(r), over_paper(g), over_paper(b))
+    oklab_gray(
+        over_paper(r, alpha),
+        over_paper(g, alpha),
+        over_paper(b, alpha),
+    )
+}
+
+/// 一个 sRGB 分量在线性光下合到纸白上的取值。纸白是线性 1.0。
+///
+/// 彩色分支合成透明区用的是同一条（见 `crate::color`）：两条路径对「透明区就是纸」
+/// 这件事必须给出同一个答案。
+pub(crate) fn over_paper(channel: u8, alpha: f32) -> f32 {
+    SRGB_TO_LINEAR[channel as usize] * alpha + (1.0 - alpha)
 }
 
 /// 完整公式：线性 RGB → OKLab 的 L → 立方回线性 → sRGB。
@@ -95,7 +105,7 @@ static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
     })
 });
 
-fn linear_to_srgb(value: f32) -> u8 {
+pub(crate) fn linear_to_srgb(value: f32) -> u8 {
     let value = value.clamp(0.0, 1.0);
     let encoded = if value <= 0.003_130_8 {
         value * 12.92
