@@ -112,6 +112,42 @@ pub fn color_page(size: Size) -> DynamicImage {
     }))
 }
 
+/// 截断的页：一张纯黑页的完整 PNG，只留前 `KEPT_FRACTION` 那一段。
+///
+/// 文件头与 IHDR 都在，IDAT 只剩一截：完整尺寸解得出来，像素解不全。
+/// 12 号票的界线正画在这里——解得出尺寸的页照用，解不出尺寸的才算失败。
+///
+/// 纯黑是为了让两段一眼分得开：解回来的那一段是 0，救不回来的那一段是纸白 255。
+pub fn truncated_page(size: Size) -> Vec<u8> {
+    let bytes = encode_image(&solid(size, 0), "png");
+    bytes[..bytes.len() * KEPT_FRACTION / 100].to_vec()
+}
+
+/// 截断的页留下的那一段占原文件的百分之多少。
+///
+/// 取一半是为了让「解出来的那部分」与「缺的那一段」两侧都真的存在：
+/// 留太多，整页都解得回来，留白那一段测不到；留太少，连一行都解不出来。
+const KEPT_FRACTION: usize = 50;
+
+/// 尺寸大到解码器分配不出缓冲的页：只有文件头与 IHDR，横竖各 65535。
+///
+/// 像素缓冲要 4 GiB，越过解码器的分配上界。尺寸解得出来，这一页仍然算失败——
+/// 分配不出来的页救不回任何像素（见 `decode::salvage`）。
+pub fn oversized_page() -> Vec<u8> {
+    let mut header = Vec::new();
+    header.extend_from_slice(b"IHDR");
+    header.extend_from_slice(&u32::from(u16::MAX).to_be_bytes());
+    header.extend_from_slice(&u32::from(u16::MAX).to_be_bytes());
+    // 位深 8、灰度、默认压缩与滤波、非隔行。
+    header.extend_from_slice(&[8, 0, 0, 0, 0]);
+
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.extend_from_slice(&(header.len() as u32 - 4).to_be_bytes());
+    bytes.extend_from_slice(&header);
+    bytes.extend_from_slice(&crc32fast::hash(&header).to_be_bytes());
+    bytes
+}
+
 /// 带透明区的页：左半不透明黑，右半全透明——而 RGB 仍是黑。
 /// 丢 alpha 会让右半出成黑，按纸白合成才出成白。
 pub fn page_with_transparency(size: Size) -> DynamicImage {
@@ -326,11 +362,16 @@ pub fn encode_image(image: &DynamicImage, extension: &str) -> Vec<u8> {
 
 /// 一页的判定。
 ///
-/// 彩色分支上没有判定——那条路径不量化（ADR 0005 决定第 4 条）。取它就是用例写错了：
+/// 两种页没有判定：彩色分支上的（那条路径不量化，ADR 0005 决定第 4 条），
+/// 以及失败页（它根本没解出来，12 号票）。取它就是用例写错了：
 /// 要么点错了页，要么该断言的是 `verdict()` 为空。
 pub fn verdict(page: &tonefit::PageReport) -> tonefit::Verdict {
-    page.verdict()
-        .unwrap_or_else(|| panic!("{} 走的是彩色分支，没有判定", page.source.display()))
+    page.verdict().unwrap_or_else(|| {
+        panic!(
+            "{} 没有判定：它要么走的彩色分支，要么是失败页",
+            page.source.display()
+        )
+    })
 }
 
 /// 解出的 PNG，供测试直接看编码结果而不经被测代码。

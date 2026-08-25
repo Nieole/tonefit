@@ -1,6 +1,7 @@
 //! CLI：把命令行参数拼成 `Request`，把 `Report` 渲染成文字。此外不做别的事。
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
@@ -109,7 +110,43 @@ impl Cli {
     }
 }
 
-fn main() -> Result<()> {
+/// 有卷被隔离时的退出码。
+///
+/// 与「拒绝执行」分成两个数（12 号票：退出码要分得开「全部成功」与「有卷被隔离」）：
+/// 隔离过的那一趟**做完了**——输出齐着、报告齐着，只是其中几卷带着坏页。
+/// 脚本据此可以选择忽略，也可以停下来看一眼，而 `1` 只说得出「这一趟没做成」。
+const ISOLATED_EXIT: u8 = 2;
+
+/// 全部成功的退出码。
+const SUCCESS_EXIT: u8 = 0;
+
+fn main() -> ExitCode {
+    match execute() {
+        Ok(code) => ExitCode::from(code),
+        // `Result<()>` 那个 main 印的就是这一行，退出码 1。自己拿 `ExitCode` 之后照印。
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// 这一趟的退出码：全部成功是 [`SUCCESS_EXIT`]，有卷被隔离是 [`ISOLATED_EXIT`]。
+///
+/// 拒绝执行那一种走不到这里——它在 `run` 里就返回了 `Err`，退出码是 `ExitCode::FAILURE`（1）。
+/// 三个数因此各说一件事：做完了、做完了但有卷带着坏页、没做成。
+///
+/// 出的是 `u8` 而不是 `ExitCode`：后者不可比较，这条规则也就测不了，
+/// 而「退出码分得开这两种」正是本票要钉住的那一条。
+fn exit_code(report: &Report) -> u8 {
+    if report.any_isolated() {
+        ISOLATED_EXIT
+    } else {
+        SUCCESS_EXIT
+    }
+}
+
+fn execute() -> Result<u8> {
     let cli = Cli::parse();
     let profile = cli.target_profile()?;
     let filter = cli.residual_filter()?;
@@ -130,7 +167,7 @@ fn main() -> Result<()> {
         metadata: !cli.no_metadata,
     })?;
     print!("{}", render(&report, mode));
-    Ok(())
+    Ok(exit_code(&report))
 }
 
 fn render(report: &Report, mode: Mode) -> String {
@@ -146,6 +183,7 @@ fn render(report: &Report, mode: Mode) -> String {
             volume.page_count(),
             color_page_note(volume)
         ));
+        text.push_str(&superseded_line(volume));
         text.push_str(&volume_lines(volume));
         // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`volume_lines` 那一行已经说完了。
         if volume.skipped() {
@@ -157,13 +195,64 @@ fn render(report: &Report, mode: Mode) -> String {
             text.push_str(&format!(
                 "  {}  {}  {}\n",
                 page.size,
-                page.scaling,
+                scaling_note(page),
                 page.output.display()
             ));
-            text.push_str(&format!("    {}\n", verdict_line(page)));
+            text.push_str(&format!("    {}\n", page_line(page)));
         }
     }
+    text.push_str(&isolation_tail(report));
     text
+}
+
+/// 隔离那一小结，摆在整份报告的末尾。
+///
+/// 逐页那几行已经把每一个失败页与原因说过一遍了；这一行是给长任务备的：几十卷跑下来，
+/// 失败页早滚出屏幕了，而「这一趟到底有没有出事」得有一个不用往回翻的答案。
+/// 退出码说的是同一件事（见 [`exit_code`]），只是那一个给脚本读、这一行给人读。
+/// 一卷都没被隔离就一个字都不说。
+fn isolation_tail(report: &Report) -> String {
+    let volumes = report
+        .volumes
+        .iter()
+        .filter(|volume| volume.isolated())
+        .count();
+    if volumes == 0 {
+        return String::new();
+    }
+    format!(
+        "隔离 {volumes} 卷 · 失败 {} 页：失败页以卷内统一尺寸留白占位，原因逐条列在上面\n",
+        report.failures().count()
+    )
+}
+
+/// 过期副本那一行（12 号票）。
+///
+/// 卷的去处随「有没有失败页」在干净目录与隔离目录之间跳，而这一趟写不到的那一份不会被覆盖、
+/// 也不会被删。它可能是**一整卷白页**的占位输出——摆在文件管理器里与一本正经的书没有分别。
+/// 报告因此要指名道姓地说出它在哪儿，删不删由用户定。
+///
+/// 这一行排在卷级各行之前：它说的不是这一趟做了什么，而是上一趟留下了什么。
+fn superseded_line(volume: &VolumeReport) -> String {
+    match &volume.superseded {
+        Some(path) => format!(
+            "  过期副本 {}：上一趟写在那儿，这一趟没有覆盖它。\
+             那一份当初若是被隔离过的，它整卷都是白页——删不删由你\n",
+            path.display()
+        ),
+        None => String::new(),
+    }
+}
+
+/// 一页那一行里说缩放的那一小截。
+///
+/// 失败页没有缩放可说——它没被缩放过（ADR 0001 那三个数一个都不成立）。
+/// 那一格于是改说它的尺寸是从哪来的：卷内统一，不是它自己的。
+fn scaling_note(page: &PageReport) -> String {
+    match page.scaling() {
+        Some(scaling) => scaling.to_string(),
+        None => "失败页 · 卷内统一尺寸留白".to_owned(),
+    }
 }
 
 /// 幂等命中而跳过的卷那一行。
@@ -181,7 +270,7 @@ fn color_page_note(volume: &VolumeReport) -> String {
     let count = volume
         .pages
         .iter()
-        .filter(|page| page.color == PageColor::Color)
+        .filter(|page| page.color() == Some(PageColor::Color))
         .count();
     if count == 0 {
         String::new()
@@ -204,7 +293,8 @@ fn volume_lines(volume: &VolumeReport) -> String {
     if volume.skipped() {
         return SKIPPED_LINE.to_owned();
     }
-    let mut text = gate_line(volume, verdict);
+    let mut text = isolated_line(volume);
+    text.push_str(&gate_line(volume, verdict));
     text.push_str(&match verdict {
         VolumeVerdict::Envelope(envelope) => format!(
             "  卷级 {envelope}\n    驱动页 {}\n",
@@ -220,6 +310,23 @@ fn volume_lines(volume: &VolumeReport) -> String {
         VolumeVerdict::Skipped { .. } => String::new(),
     });
     text
+}
+
+/// 被隔离的卷那一行，排在卷级各行之首（12 号票：含失败页的卷被标记）。
+///
+/// 卷那一行里的去处已经指着隔离目录了，但那要用户认得出那个目录名才读得懂。
+/// 这一行把话说完：几页失败、这一卷因此去了哪儿、坏页在输出里是什么样子。
+/// 后面几行照常——隔离的卷是**处理过**的卷，几何门、卷级判定、逐页结果一样不少。
+fn isolated_line(volume: &VolumeReport) -> String {
+    let failed = volume.failures().count();
+    if failed == 0 {
+        return String::new();
+    }
+    format!(
+        "  隔离 {failed} 页失败：本卷整卷写到隔离目录 {}，\
+         失败页以卷内统一尺寸留白占位，页序不断\n",
+        volume.output.display()
+    )
 }
 
 /// 几何门那一行：门的判定结果，加上本卷最终抖不抖。
@@ -263,11 +370,17 @@ fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
 /// 彩色分支上没有判定可说，那一行说的是它为什么没有：那条路径只缩放（ADR 0005 决定第 4 条）。
 /// 彩页转灰走的是灰度路径，行首标出来——不标，用户就看不出这一档位深是替一张彩页定的，
 /// 也看不出这台设备为什么没留住颜色。
-fn verdict_line(page: &PageReport) -> String {
-    match &page.branch {
+///
+/// 失败页那一行说的是**原因**（spec 的 story 26）：报告要让用户知道该去修哪几张。
+/// 原因是由内到外的整条错误链，最外一环指得出是哪一页、卡在哪一步。
+fn page_line(page: &PageReport) -> String {
+    let Some(branch) = page.branch() else {
+        return format!("失败 {}", page.failure().expect("没有分支的页必是失败页"));
+    };
+    match branch {
         PageBranch::Gray { scores, verdict } => format!(
             "{}判定 {}（{}）  判据 {}",
-            if page.color == PageColor::Color {
+            if page.color() == Some(PageColor::Color) {
                 "彩页转灰 · "
             } else {
                 ""
@@ -296,8 +409,8 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use tonefit::{
-        CacheUsage, Candidate, Envelope, GrayImage, Reason, Reference, Scaling, Size, Verdict,
-        VolumeReport,
+        CacheUsage, Candidate, Envelope, GrayImage, PageOutcome, Reason, Reference, Scaling, Size,
+        Verdict, VolumeReport,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -340,6 +453,7 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                superseded: None,
                 verdict: Some(verdict),
                 gate: Some(gate),
                 cache: cache_usage(),
@@ -417,16 +531,18 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
-                scaling: typical_scaling(),
-                color: PageColor::Gray,
-                branch: PageBranch::Gray {
-                    scores: vec![CandidateScore {
-                        candidate: one_bit_dithered,
-                        score,
-                    }],
-                    verdict: Verdict {
-                        candidate: one_bit_dithered,
-                        reason: Reason::LowestWithinThreshold,
+                outcome: PageOutcome::Processed {
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        scores: vec![CandidateScore {
+                            candidate: one_bit_dithered,
+                            score,
+                        }],
+                        verdict: Verdict {
+                            candidate: one_bit_dithered,
+                            reason: Reason::LowestWithinThreshold,
+                        },
                     },
                 },
             },
@@ -460,17 +576,19 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
-                // 正好两倍面板的一页：报告要说出它预缩过。
-                scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
-                color: PageColor::Gray,
-                branch: PageBranch::Gray {
-                    scores: vec![CandidateScore {
-                        candidate,
-                        score: four_bit,
-                    }],
-                    verdict: Verdict {
-                        candidate,
-                        reason: Reason::LowestWithinThreshold,
+                outcome: PageOutcome::Processed {
+                    // 正好两倍面板的一页：报告要说出它预缩过。
+                    scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        scores: vec![CandidateScore {
+                            candidate,
+                            score: four_bit,
+                        }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::LowestWithinThreshold,
+                        },
                     },
                 },
             },
@@ -532,14 +650,16 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(800, 1000),
-                // 源比目标小：按不放大原样输出，一条边都贴不住面板。
-                scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
-                color: PageColor::Gray,
-                branch: PageBranch::Gray {
-                    scores: vec![CandidateScore { candidate, score }],
-                    verdict: Verdict {
-                        candidate,
-                        reason: Reason::VolumeEnvelope,
+                outcome: PageOutcome::Processed {
+                    // 源比目标小：按不放大原样输出，一条边都贴不住面板。
+                    scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
                     },
                 },
             },
@@ -575,9 +695,11 @@ mod tests {
             source: PathBuf::from(format!("library/volume-a/{name}.png")),
             output: PathBuf::from(format!("out/volume-a/{name}.png")),
             size: Size::new(1264, 1680),
-            scaling: typical_scaling(),
-            color,
-            branch,
+            outcome: PageOutcome::Processed {
+                scaling: typical_scaling(),
+                color,
+                branch,
+            },
         };
         let gray_branch = || PageBranch::Gray {
             scores: vec![CandidateScore { candidate, score }],
@@ -591,6 +713,7 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                superseded: None,
                 // 驱动页必须是一张灰度页：彩页不进上包络，指不出档来。
                 verdict: Some(VolumeVerdict::Envelope(Envelope {
                     base: candidate,
@@ -635,6 +758,7 @@ mod tests {
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
+                superseded: None,
                 pages: Vec::new(),
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 gate: None,
@@ -656,6 +780,122 @@ mod tests {
         assert!(text.contains("工具版本、profile、参数、源均未变"), "{text}");
         assert!(!text.contains("几何门"), "{text}");
         assert!(!text.contains("缓存"), "{text}");
+    }
+
+    /// 被隔离的卷要说清三件事：几页失败、整卷去了哪儿、每一页各是为什么
+    /// （spec 的 story 25、story 26）。退出码跟着分开——脚本读的是那个数。
+    #[test]
+    fn an_isolated_volume_names_its_failed_pages_and_gets_its_own_exit_code() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        let good = PageReport {
+            source: PathBuf::from("library/volume-a/001.jpg"),
+            output: PathBuf::from("out/_isolated/volume-a/001.png"),
+            size: Size::new(1264, 1680),
+            outcome: PageOutcome::Processed {
+                scaling: typical_scaling(),
+                color: PageColor::Gray,
+                branch: PageBranch::Gray {
+                    scores: vec![CandidateScore { candidate, score }],
+                    verdict: Verdict {
+                        candidate,
+                        reason: Reason::VolumeEnvelope,
+                    },
+                },
+            },
+        };
+        let failed = PageReport {
+            source: PathBuf::from("library/volume-a/002.jpg"),
+            output: PathBuf::from("out/_isolated/volume-a/002.png"),
+            // 失败页照卷内统一尺寸出：与上面那张好页一模一样。
+            size: Size::new(1264, 1680),
+            outcome: PageOutcome::Failed {
+                reason: "解 library/volume-a/002.jpg 这一页: 判定格式".to_owned(),
+            },
+        };
+        let report = Report {
+            profile,
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/_isolated/volume-a"),
+                // 上一趟这一卷是干净的，那一份还在 out/volume-a 留着。
+                superseded: Some(PathBuf::from("out/volume-a")),
+                // 驱动页必须是一张好页：失败页没有判据曲线，指不出档来。
+                verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
+                gate: Some(GeometryGate::Holds),
+                cache: cache_usage(),
+                decodes: 2,
+                pages: vec![good, failed],
+            }],
+        };
+
+        let text = render(&report, Mode::Process);
+
+        // 卷级那一行说得出几页失败、整卷去了哪儿。
+        assert!(text.contains("隔离 1 页失败"), "{text}");
+        assert!(text.contains("out/_isolated/volume-a"), "{text}");
+        // 隔离的卷仍是**处理过**的卷：几何门、卷级判定、缓存一样不少。
+        assert!(text.contains("几何门 成立"), "{text}");
+        assert!(text.contains("卷级 基准档 4bit"), "{text}");
+        // 失败页那两行：尺寸从哪来，以及它为什么失败。
+        assert!(
+            text.contains("1264×1680  失败页 · 卷内统一尺寸留白"),
+            "{text}"
+        );
+        assert!(
+            text.contains("失败 解 library/volume-a/002.jpg 这一页: 判定格式"),
+            "{text}"
+        );
+        // 末尾那一行：几十卷跑下来不用往回翻也知道这一趟出过事。
+        assert!(text.contains("隔离 1 卷 · 失败 1 页"), "{text}");
+        // 上一趟写在干净去处的那一份还在，这一趟没覆盖它——报告要指名道姓说出来。
+        assert!(text.contains("过期副本 out/volume-a"), "{text}");
+        assert!(text.contains("删不删由你"), "{text}");
+        // 退出码分得开「全部成功」与「有卷被隔离」。
+        assert_eq!(exit_code(&report), ISOLATED_EXIT);
+    }
+
+    /// 一卷都没被隔离时，隔离那几行一个字都不出现，退出码是 0。
+    ///
+    /// 「没出事」与「出了事」在报告与退出码上都得分得开，而分得开要两侧各测一遍。
+    #[test]
+    fn a_run_without_a_failed_page_says_nothing_about_isolation() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
+        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let report = one_page_report(
+            profile,
+            GeometryGate::Holds,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Processed {
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
+                    },
+                },
+            },
+        );
+
+        let text = render(&report, Mode::Process);
+
+        assert!(!text.contains("隔离"), "{text}");
+        assert!(!text.contains("失败"), "{text}");
+        assert!(!text.contains("过期副本"), "{text}");
+        assert_eq!(exit_code(&report), SUCCESS_EXIT);
     }
 
     #[test]

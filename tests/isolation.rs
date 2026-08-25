@@ -1,0 +1,365 @@
+//! 错误处理与隔离目录，在 `run(Request) -> Report` 这个 seam 上测。
+//!
+//! 只断言外部可见的事实：`run` 返没返回错误、`Report` 里列着哪几页失败、
+//! 卷写到了哪个目录、隔离目录里那一卷是不是完整的。
+//!
+//! 一条贯穿全篇的界线：**出得来一张对的页就照用**（12 号票）。解得出完整尺寸的页照用，
+//! 哪怕像素只解回来一半；尺寸解不出来、或尺寸解得出来而缓冲分配不下，才算失败。
+
+mod fixtures;
+
+use fixtures::{Workspace, run_paths, run_volume};
+use tonefit::{Mode, Size};
+
+/// 隔离目录在输出根下的名字。测试把它写死，因为它是用户看得见的那个事实。
+const ISOLATED: &str = "_isolated";
+
+/// 一份透传文件的内容。故意带上非 ASCII 与换行——透传要逐字节一致。
+const COMIC_INFO: &[u8] = "<?xml version=\"1.0\"?>
+<ComicInfo><Title>卷一</Title></ComicInfo>
+"
+.as_bytes();
+
+/// 基准面板的分辨率。一页好页都没有的卷退到它。
+const PANEL: Size = Size::new(1264, 1680);
+
+/// 一张坏图不再毁掉整卷：其余页照常判定、照常写出（spec 的 story 24）。
+#[test]
+fn one_page_that_cannot_be_decoded_does_not_take_the_volume_down() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+    volume.page("003.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    // 失败页按阅读顺序占住自己那一格：页数不因为一页坏了就少一页。
+    assert_eq!(reported.page_count(), 3);
+    assert!(reported.pages[0].failure().is_none());
+    assert!(reported.pages[1].failure().is_some(), "坏页没被认出来");
+    assert!(reported.pages[2].failure().is_none());
+    // 两张好页照常有判定，也照常落了盘。
+    for index in [0, 2] {
+        let page = &reported.pages[index];
+        assert!(page.verdict().is_some(), "好页丢了判定");
+        assert!(page.output.is_file(), "{} 没写出来", page.output.display());
+    }
+}
+
+/// 失败页仍以卷内统一的尺寸产出：一页坏了，卷内尺寸不因此参差。
+#[test]
+fn a_failed_page_still_comes_out_at_the_size_the_rest_of_the_volume_uses() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+    volume.page("003.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    let pages = &report.volumes[0].pages;
+    let uniform = pages[0].size;
+    assert_eq!(pages[2].size, uniform, "夹具不对：两张好页该是同一个尺寸");
+    assert_eq!(pages[1].size, uniform, "失败页没被强制到卷内统一尺寸");
+
+    let written = fixtures::read_png(&pages[1].output);
+    assert_eq!(written.size, uniform, "写出的占位页尺寸对不上报告");
+    // 占位页是纸白：它顶住位置，但不冒充内容。
+    assert!(
+        written.pixels.iter().all(|&pixel| pixel == 255),
+        "占位页不是纸白"
+    );
+}
+
+/// 含失败页的卷输出到隔离目录，并在报告里被标记（spec 的 story 25）。
+#[test]
+fn a_volume_with_a_failed_page_goes_to_the_isolation_directory() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert!(reported.isolated(), "含失败页的卷没被标记");
+    assert_eq!(reported.output, space.out().join(ISOLATED).join("volume-a"));
+    assert!(reported.output.is_dir());
+    // 干净的那个去处不该同时有一份：一卷只有一个去处。
+    assert!(
+        !space.out().join("volume-a").exists(),
+        "隔离的卷同时留在了干净的去处"
+    );
+    // 隔离目录里的卷是完整的：坏页占着位，好页照常在。
+    for page in &reported.pages {
+        assert!(page.output.is_file(), "{} 没写出来", page.output.display());
+    }
+}
+
+/// 干净的卷不进隔离目录：隔离是标记，不是默认去处。
+#[test]
+fn a_volume_without_a_failed_page_stays_out_of_the_isolation_directory() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    assert!(!report.volumes[0].isolated());
+    assert_eq!(report.volumes[0].output, space.out().join("volume-a"));
+    assert!(!space.out().join(ISOLATED).exists());
+}
+
+/// `Report` 列出每一个失败页与原因（spec 的 story 26）。
+#[test]
+fn the_report_lists_every_failed_page_with_a_reason_that_names_it() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file("001.png", b"");
+    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("003.png", b"not a png at all");
+
+    let report = run_volume(&space, &volume);
+
+    let failures: Vec<_> = report.failures().collect();
+    assert_eq!(failures.len(), 2, "失败页集数不对");
+    for page in failures {
+        let name = page
+            .source
+            .file_name()
+            .expect("失败页也有名字")
+            .to_string_lossy()
+            .into_owned();
+        let reason = page.failure().expect("失败页必有原因");
+        assert!(reason.contains(&name), "原因里没指名是哪一页：{reason}");
+    }
+    // 卷那一侧数出来的是同一批页。
+    assert_eq!(report.volumes[0].failures().count(), 2);
+}
+
+/// 零字节文件、非图片文件、超大尺寸页都只是失败页，不中止进程。
+#[test]
+fn a_zero_byte_a_non_image_and_an_oversized_page_are_isolated_rather_than_fatal() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file("001.png", b"");
+    volume.file("002.png", b"not a png at all");
+    volume.file("003.png", &fixtures::oversized_page());
+    volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    // `run_volume` 里那句 expect 就是这条用例要的断言：进程没中止，调用也没返回错误。
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert_eq!(reported.failures().count(), 3);
+    assert!(reported.pages[3].verdict().is_some(), "唯一的好页也没了");
+    // 四页一页不少地写了出去，坏页三张用的是那张好页的尺寸。
+    assert_eq!(reported.page_count(), 4);
+    for page in &reported.pages {
+        assert_eq!(page.size, reported.pages[3].size);
+        assert!(page.output.is_file());
+    }
+}
+
+/// 截断的页只要还解得出完整尺寸就照用：它按自己的尺寸出，也不把卷送进隔离目录。
+#[test]
+fn a_truncated_page_whose_size_still_decodes_is_used_rather_than_failed() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file("001.png", &fixtures::truncated_page(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert!(!reported.isolated(), "截断页不该把卷送进隔离目录");
+    let page = &reported.pages[0];
+    assert!(page.failure().is_none(), "截断页不该算失败");
+    // 尺寸按它自己的源尺寸算：完整尺寸解得出来，几何因此照常成立。
+    assert_eq!(page.size, Size::new(1182, 1680));
+
+    let written = fixtures::read_png(&page.output);
+    assert_eq!(written.size, page.size);
+    // 解出来的那一段是真像素（源是纯黑），缺的那一段留白。
+    assert_eq!(written.pixel(0, 0), 0, "解出来的那一段丢了");
+    assert_eq!(
+        written.pixel(0, written.size.height - 1),
+        255,
+        "缺的那一段没留白"
+    );
+}
+
+/// 归档卷同样进隔离目录，形态仍是归档，成员按阅读顺序一个不少。
+#[test]
+fn an_archive_volume_with_a_failed_page_is_isolated_as_an_archive() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let page = fixtures::gradient(fixtures::TYPICAL);
+    cbz.page("001.png", &page)
+        // 归档结构完好，坏的是这一个成员的字节：读得到它，读不出它。
+        .rotten_page("002.png", &page)
+        .page("003.png", &page)
+        .file("ComicInfo.xml", COMIC_INFO);
+    let path = cbz.write();
+
+    let report = run_paths(&space, [path.as_path()]);
+
+    let reported = &report.volumes[0];
+    assert!(reported.isolated());
+    assert_eq!(
+        reported.output,
+        space.out().join(ISOLATED).join("volume-a.cbz")
+    );
+    assert!(reported.output.is_file());
+    // 进隔离目录的是**整卷**：三张页一张不少，透传文件也跟着走，而且逐字节一致。
+    let members = fixtures::read_cbz(&reported.output);
+    let names: Vec<&str> = members.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["001.png", "002.png", "003.png", "ComicInfo.xml"]);
+    let carried = &members
+        .iter()
+        .find(|(name, _)| name == "ComicInfo.xml")
+        .expect("透传文件应当在隔离目录里的那一卷内")
+        .1;
+    assert_eq!(carried.as_slice(), COMIC_INFO, "透传的内容必须逐字节一致");
+}
+
+/// 卷的去处会跳，而上一趟写在另一处的那一份不会被覆盖也不会被删——报告要指出来
+/// （12 号票的「过期副本」）。
+///
+/// 这条盯的是隔离这套机制自己造出来的坑：整卷白页的占位输出留在隔离目录里，
+/// 摆在文件管理器里与一本正经的书没有分别，藏起来就等于白做。
+#[test]
+fn the_copy_left_in_the_other_place_is_named_in_the_report() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let good = fixtures::gradient(fixtures::TYPICAL);
+    volume.page("001.png", &good);
+    let broken = volume.file("002.png", b"not a png at all");
+
+    // 头一趟有坏页：整卷进隔离目录，干净那一处还空着。
+    let first = run_volume(&space, &volume);
+    assert!(first.volumes[0].isolated());
+    assert_eq!(first.volumes[0].superseded, None, "头一趟没有上一份可指");
+
+    // 修好坏页再跑：这一趟干净，写回 out/volume-a，而隔离目录里那一份原地留着。
+    std::fs::write(&broken, fixtures::encode_image(&good, "png")).expect("修好坏页");
+    let second = run_volume(&space, &volume);
+
+    let redone = &second.volumes[0];
+    assert!(!redone.isolated());
+    assert_eq!(redone.output, space.out().join("volume-a"));
+    assert_eq!(
+        redone.superseded,
+        Some(space.out().join(ISOLATED).join("volume-a")),
+        "隔离目录里那一整卷白页没被指出来"
+    );
+    // 没被删：tonefit 不替用户扔东西，只负责让他知道有这么一份。
+    assert!(space.out().join(ISOLATED).join("volume-a").is_dir());
+}
+
+/// 一页好页都没有的卷仍然出得来：卷内统一尺寸退到面板分辨率。
+#[test]
+fn a_volume_whose_every_page_fails_still_comes_out_whole() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file("001.png", b"not a png at all");
+    volume.file("002.png", b"");
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert!(reported.isolated());
+    assert_eq!(reported.failures().count(), 2);
+    for page in &reported.pages {
+        // 没有一页好页可参照，统一尺寸只能是这块面板本身。
+        assert_eq!(page.size, PANEL);
+        assert_eq!(fixtures::read_png(&page.output).size, PANEL);
+    }
+}
+
+/// 隔离的卷每一趟都重做，不被幂等跳过：它不是一份做完了的输出，
+/// 而失败清单要能重新给得出来（11 号票的跳过只认干净的那个去处）。
+#[test]
+fn an_isolated_volume_is_redone_on_every_run() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+
+    let first = run_volume(&space, &volume);
+    let second = run_volume(&space, &volume);
+
+    assert!(first.volumes[0].isolated());
+    let redone = &second.volumes[0];
+    assert!(!redone.skipped(), "隔离的卷被跳过了，失败清单跟着没了");
+    assert!(redone.isolated());
+    assert_eq!(redone.failures().count(), 1);
+    assert_eq!(redone.decodes, 2, "重做那一趟没有真的重做");
+}
+
+/// dry-run 预告的是照做时会发生的事：隔离的去处照说，一个文件都不落盘。
+#[test]
+fn a_dry_run_names_the_isolation_directory_without_writing_anything() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+
+    let report = tonefit::run(&tonefit::Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let reported = &report.volumes[0];
+    assert!(reported.isolated());
+    assert_eq!(reported.output, space.out().join(ISOLATED).join("volume-a"));
+    assert_eq!(reported.failures().count(), 1);
+    assert!(!space.out().exists(), "dry-run 落了盘");
+}
+
+/// 三条路径混在一卷里也不串位：彩色分支、灰度路径、失败页。
+///
+/// 彩页在彩色 profile 下不进灰度缓存（ADR 0005 决定第 4 条），失败页也不进——页序与缓存序
+/// 因此在**两个**地方脱钩。缓存序号跟着页走而不是第二遍数出来，钉的正是这件事：
+/// 数错一格，就会静默地把另一页的像素写到这一页的位置上。
+#[test]
+fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::color_page(fixtures::TINY));
+    volume.file("002.png", b"not a png at all");
+    volume.page("003.png", &fixtures::gradient(fixtures::TINY));
+    volume.page("004.png", &fixtures::color_page(fixtures::TINY));
+    volume.page("005.png", &fixtures::gradient(fixtures::TINY));
+
+    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile("kobo-libra-colour"));
+
+    let reported = &report.volumes[0];
+    assert!(reported.isolated());
+    assert_eq!(reported.page_count(), 5);
+    // 只有两张灰度页进得了缓存：彩页与失败页都不进。
+    assert_eq!(reported.cache.pages, 2, "缓存里的页数不对");
+    for page in &reported.pages {
+        assert!(page.output.is_file(), "{} 没写出来", page.output.display());
+    }
+    // 003 与 005 是同一张渐变图，写出来必须逐字节相同——不同就是缓存序号串了位。
+    let third = std::fs::read(&reported.pages[2].output).expect("读 003");
+    let fifth = std::fs::read(&reported.pages[4].output).expect("读 005");
+    assert_eq!(third, fifth, "缓存序号串位了");
+}
+
+/// 源库只读：坏页与好页一样，源那一侧一个字节都不动（spec 的 story 10）。
+#[test]
+fn isolating_a_volume_leaves_the_source_untouched() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.file("002.png", b"not a png at all");
+    let before = fixtures::fingerprint(volume.path());
+
+    run_volume(&space, &volume);
+
+    assert_eq!(fixtures::fingerprint(volume.path()), before);
+}

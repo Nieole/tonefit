@@ -75,6 +75,18 @@ impl Cbz {
     /// 加一页，但把 CRC 写错——归档结构完好，这一个成员的字节却是坏的。
     pub fn rotten_page(&mut self, name: &str, image: &DynamicImage) -> &mut Self {
         self.page(name, image);
+        self.rot()
+    }
+
+    /// 同上，非图片成员。透传文件读不出来是**卷级**的失败，不是失败页——
+    /// 12 号票隔离的是页，而透传文件逐字节照搬，搬不动就没有别的办法。
+    pub fn rotten_file(&mut self, name: &str, bytes: &[u8]) -> &mut Self {
+        self.file(name, bytes);
+        self.rot()
+    }
+
+    /// 把刚加进去的那个成员的 CRC 写错。
+    fn rot(&mut self) -> &mut Self {
         let member = self.members.last_mut().expect("刚加进去的那个成员");
         member.crc = !member.crc;
         self

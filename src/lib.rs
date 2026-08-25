@@ -41,7 +41,7 @@ pub use gray::GrayImage;
 pub use metric::{Reference, Score, score};
 pub use profile::{Panel, Profile, Threshold};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
-pub use report::{PageBranch, PageReport, Report, VolumeReport, VolumeVerdict};
+pub use report::{PageBranch, PageOutcome, PageReport, Report, VolumeReport, VolumeVerdict};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
@@ -69,6 +69,12 @@ pub fn run(request: &Request) -> Result<Report> {
     })
 }
 
+/// 隔离目录在输出根下的名字（12 号票：含失败页的卷输出到隔离目录）。
+///
+/// 名字用 ASCII：输出常常要经 MTP 或 FAT 搬到阅读器上，目录名少一分编码上的赌注是一分。
+/// 下划线前缀买两件事——它不至于撞上一个真叫这个名字的卷，列目录时也排在最前面。
+const ISOLATED_DIRECTORY: &str = "_isolated";
+
 /// 处理一个卷：第一遍解码到判据，第二遍量化到写出，非图片成员原样搬过去。
 ///
 /// 两遍之间隔着缓存（ADR 0005：解码一次，缓存缩放后的图）。第二遍的输入是第一遍存下的参照，
@@ -82,9 +88,19 @@ pub fn run(request: &Request) -> Result<Report> {
 /// 两遍之前还有一道**幂等**：上一趟的输出还在、四项依据一项没变，这一卷就整个不做
 /// （见 [`volume_fingerprint`]）。dry-run 也走这一道——它预告的是照做时会发生的事，
 /// 而照做时会发生的正是「跳过」（spec 的 story 6、story 8）。
+///
+/// **卷的去处到第一遍走完才定得下来**（12 号票）：有失败页的卷整个进隔离目录，
+/// 而哪一页失败要解过才知道。输出容器因此在第一遍之后才建——写出全在第二遍，
+/// 早建一步只会让隔离的卷在干净的去处留下一个空壳。
+///
+/// **隔离的卷不被幂等跳过**：跳过只认干净的那个去处（见 [`can_skip`]）。这是有意的——
+/// 那不是一份做完了的输出，而失败清单每一趟都要重新给得出来（spec 的 story 26）。
+/// 代价是有坏页的卷每趟都重做一遍，直到坏页被修好。
 fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     let mut volume = source::open(input)?;
-    let output = volume.output_path(&request.output_root);
+    // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
+    let clean = volume.output_path(&request.output_root);
+    let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
     let targets = page_targets(&volume);
     ensure_one_member_per_output(&volume, &targets)?;
 
@@ -94,11 +110,13 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         .then(|| volume_fingerprint(&mut volume, request))
         .transpose()?;
     if let Some(fingerprint) = &fingerprint
-        && can_skip(&output, &volume, &targets, fingerprint)
+        && can_skip(&clean, &volume, &targets, fingerprint)
     {
         return Ok(VolumeReport {
             volume: volume.root,
-            output,
+            output: clean,
+            // 跳过的卷是干净的，隔离目录里若还留着一份，那是上一趟坏页时写的。
+            superseded: superseded(&isolated),
             pages: Vec::new(),
             verdict: Some(VolumeVerdict::Skipped {
                 page_count: targets.len(),
@@ -109,11 +127,6 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         });
     }
 
-    // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
-    let sink = match request.mode {
-        Mode::Process => Some(Sink::create(&output, volume.container)?),
-        Mode::DryRun => None,
-    };
     // dry-run 没有第二遍，缓存于是只记账不留页：用量照旧预告得出，临时文件一个不建。
     let retention = match request.mode {
         Mode::Process => cache::Retention::Keep,
@@ -124,16 +137,24 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     let scored = first_pass(
         &mut volume,
         request,
-        &output,
-        &targets,
         &mut cache,
         &mut decoder,
         fingerprint.as_ref(),
     )?;
 
     let (verdicts, verdict) = summarize_volume(&scored.pages, request);
+    let uniform = uniform_size(&scored.pages, request.profile.panel().resolution);
+    // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
+    let (output, elsewhere) = if scored.pages.iter().any(ScoredPage::failed) {
+        (isolated, clean)
+    } else {
+        (clean, isolated)
+    };
+    let superseded = superseded(&elsewhere);
 
-    if let Some(mut sink) = sink {
+    // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
+    if request.mode == Mode::Process {
+        let mut sink = Sink::create(&output, volume.container)?;
         let recorder = fingerprint
             .as_ref()
             .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
@@ -141,6 +162,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
             &scored.pages,
             &verdicts,
             &targets,
+            uniform,
             &mut cache,
             &mut sink,
             recorder.as_ref(),
@@ -152,15 +174,20 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         sink.finish()?;
     }
 
+    let pages = scored
+        .pages
+        .into_iter()
+        .zip(verdicts)
+        .zip(&targets)
+        .map(|((page, verdict), relative)| {
+            page.into_report(output.join(relative), verdict, uniform)
+        })
+        .collect();
     Ok(VolumeReport {
         volume: volume.root,
         output,
-        pages: scored
-            .pages
-            .into_iter()
-            .zip(verdicts)
-            .map(|(page, verdict)| page.into_report(verdict))
-            .collect(),
+        superseded,
+        pages,
         verdict,
         gate: Some(scored.gate),
         cache: cache.usage(),
@@ -168,14 +195,54 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     })
 }
 
+/// 这一卷在另一个去处留着的上一趟输出，没有就是 `None`（12 号票的「过期副本」）。
+///
+/// 只问在不在，不去读它，也**不删它**：那是用户手上一份真实存在的输出，
+/// 而 tonefit 在别处一律不做破坏性动作。删不删由用户定，报告负责让他知道有这么一份。
+fn superseded(elsewhere: &Path) -> Option<PathBuf> {
+    elsewhere.exists().then(|| elsewhere.to_path_buf())
+}
+
+/// 卷内统一的那个尺寸：失败页按它留白占位（12 号票：卷内尺寸保持一致）。
+///
+/// 取处理成了的那些页里**出现次数最多**的那个尺寸，并列时取先出现的。漫画卷内绝大多数页
+/// 同一个尺寸，众数因此就是「这一卷看上去的样子」；取最大值会让一张跨页把整卷的占位页撑宽，
+/// 取第一页则会被卷首的封面或彩页带偏。
+///
+/// 一页好页都没有的卷退到面板分辨率：卷内没有可参照的尺寸了，那就照这块面板的满幅出。
+fn uniform_size(pages: &[ScoredPage], panel: Size) -> Size {
+    let mut counted: Vec<(Size, usize)> = Vec::new();
+    for size in pages.iter().filter_map(ScoredPage::size) {
+        match counted.iter_mut().find(|(seen, _)| *seen == size) {
+            Some((_, count)) => *count += 1,
+            None => counted.push((size, 1)),
+        }
+    }
+    counted
+        .into_iter()
+        // 并列时留先出现的那个：`max_by_key` 留的是最后一个。
+        .reduce(|best, next| if next.1 > best.1 { next } else { best })
+        .map_or(panel, |(size, _)| size)
+}
+
+/// 一张纸白的页：失败页留在输出里的那个**占位页**。
+///
+/// 白而不是别的什么——占位页顶住页序与尺寸，但不冒充内容，也不该往页上添一笔本来没有的墨。
+/// 它认得出来的地方在别处：这一卷在隔离目录里，这一页的记录写着 `failed`（见 `metadata`），
+/// 报告里逐条列着原因。
+fn placeholder(size: Size) -> GrayImage {
+    let pixels = vec![u8::MAX; size.width as usize * size.height as usize];
+    GrayImage::new(size, pixels)
+}
+
 /// 汇总：先逐页定档，再把它们收成卷级的一个基准档（ADR 0006：位深按卷取上包络并加迟滞）。
 ///
 /// 夹在两遍之间——要看完整卷才做得了，而第二遍此刻已经不必回头碰源页（ADR 0005）。
 /// 返回的逐页判定与 `pages` 等长同序，第二遍读的就是它。
 ///
-/// **只有灰度路径上的页进来。**彩色分支上的页没有判据曲线，也不该有：ADR 0006 决定第 5 条
-/// 说彩页在彩色 profile 下「根本不进灰度上包络」。它们在返回的判定里占位为 `None`，
-/// 位置留着——第二遍与报告都按页序取。
+/// **只有灰度路径上的页进来。**另外两种页没有判据曲线：彩色分支上的页不该有——ADR 0006
+/// 决定第 5 条说彩页在彩色 profile 下「根本不进灰度上包络」；失败页则是没有可求判据的像素
+/// （12 号票）。两者在返回的判定里都占位为 `None`，位置留着——第二遍与报告都按页序取。
 ///
 /// 逐页定档也落在这里，而不在第一遍：几何门要看完整卷才判得死（一页比目标小就整卷关掉抖动，
 /// 见 [`first_pass`]），而候选集是判定的前提——在门还可能关上的时候定档，定的是一套
@@ -196,7 +263,7 @@ fn summarize_volume(
         .filter(|(_, page)| page.scores().is_some())
         .map(|(index, _)| index)
         .collect();
-    // 一张灰度页都没有的卷（只装着彩页，或一页都没有）没有候选可判。
+    // 一张灰度页都没有的卷没有候选可判：只装着彩页的、一页都没有的、整卷全失败的，都是这一支。
     let Some(&first) = gray.first() else {
         return (verdicts, None);
     };
@@ -256,20 +323,36 @@ fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     }
 }
 
-/// 第一遍产出的一页：报告要的几何，加上它走的那条分支留下的东西。
-///
-/// 两条分支留下的不是同一套：灰度路径留判据曲线与缓存序号，彩色分支留编好的字节
-/// （ADR 0005 决定第 4 条）。
+/// 第一遍产出的一页：这一页有没有处理成，以及处理成了的话留下了什么。
 struct ScoredPage {
     source: PathBuf,
-    output: PathBuf,
-    size: Size,
-    scaling: resample::Scaling,
-    color: PageColor,
-    branch: Branch,
+    outcome: Outcome,
+}
+
+/// 一页在第一遍的结局。
+///
+/// 与报告那一侧的 [`PageOutcome`] 同形而不同物：这里装的是**第二遍要用的东西**
+/// （缓存序号、编好的字节），那里装的是报告要读的东西。两者各留各的，
+/// 内部产物才不会跟着报告一路公开出去。
+enum Outcome {
+    /// 处理成了的一页。
+    Processed {
+        size: Size,
+        scaling: resample::Scaling,
+        color: PageColor,
+        branch: Branch,
+    },
+    /// 失败页：字节读不出来，或者连完整尺寸都解不出来（12 号票）。
+    ///
+    /// 它在这里仍然占着自己那一格——页序不因为一页坏了就错位，
+    /// 第二遍照样给它写一张卷内统一尺寸的白页。
+    Failed { reason: String },
 }
 
 /// 一页在第一遍里走的那条分支，连同它留给第二遍的东西。
+///
+/// 两条分支留下的不是同一套：灰度路径留判据曲线与缓存序号，彩色分支留编好的字节
+/// （ADR 0005 决定第 4 条）。
 enum Branch {
     /// 灰度路径。
     Gray {
@@ -277,7 +360,7 @@ enum Branch {
         /// 这一页在缓存里的序号。
         ///
         /// 序号跟着页走，不由第二遍数数补出来：彩页在彩色 profile 下不进灰度缓存
-        /// （ADR 0005 决定第 4 条），页序与缓存序因此不重合，
+        /// （ADR 0005 决定第 4 条）、失败页也不进，页序与缓存序因此不重合，
         /// 而重新数出来的序号会静默地把另一页的像素写到这一页的位置上。
         slot: usize,
     },
@@ -288,30 +371,63 @@ enum Branch {
 }
 
 impl ScoredPage {
-    /// 这一页的判据曲线。彩色分支上没有——那条路径不量化。
+    /// 这一页的判据曲线。彩色分支与失败页上都没有——一条不量化，一条没解出来。
     fn scores(&self) -> Option<&[CandidateScore]> {
-        match &self.branch {
-            Branch::Gray { scores, .. } => Some(scores),
-            Branch::Color { .. } => None,
+        match &self.outcome {
+            Outcome::Processed {
+                branch: Branch::Gray { scores, .. },
+                ..
+            } => Some(scores),
+            _ => None,
         }
+    }
+
+    /// 这一页写出的尺寸。失败页没有自己的尺寸——它按卷内统一尺寸出，而那个数
+    /// 恰恰是从这个函数的结果里算出来的（见 [`uniform_size`]）。
+    fn size(&self) -> Option<Size> {
+        match &self.outcome {
+            Outcome::Processed { size, .. } => Some(*size),
+            Outcome::Failed { .. } => None,
+        }
+    }
+
+    /// 这一页失败了吗。一卷里只要有一页答是，整卷就进隔离目录。
+    fn failed(&self) -> bool {
+        matches!(self.outcome, Outcome::Failed { .. })
     }
 
     /// 补上汇总定下的那个判定，就是报告要的一页。缓存序号与编好的字节都不进报告——
     /// 它们是管线内部的事。
-    fn into_report(self, verdict: Option<Verdict>) -> PageReport {
+    ///
+    /// `uniform` 只对失败页说话：它写出去用的就是这个尺寸。
+    fn into_report(self, output: PathBuf, verdict: Option<Verdict>, uniform: Size) -> PageReport {
+        let (size, outcome) = match self.outcome {
+            Outcome::Processed {
+                size,
+                scaling,
+                color,
+                branch,
+            } => (
+                size,
+                PageOutcome::Processed {
+                    scaling,
+                    color,
+                    branch: match branch {
+                        Branch::Gray { scores, .. } => PageBranch::Gray {
+                            scores,
+                            verdict: verdict.expect("灰度路径上必有判定"),
+                        },
+                        Branch::Color { .. } => PageBranch::Color,
+                    },
+                },
+            ),
+            Outcome::Failed { reason } => (uniform, PageOutcome::Failed { reason }),
+        };
         PageReport {
             source: self.source,
-            output: self.output,
-            size: self.size,
-            scaling: self.scaling,
-            color: self.color,
-            branch: match self.branch {
-                Branch::Gray { scores, .. } => PageBranch::Gray {
-                    scores,
-                    verdict: verdict.expect("灰度路径上必有判定"),
-                },
-                Branch::Color { .. } => PageBranch::Color,
-            },
+            output,
+            size,
+            outcome,
         }
     }
 }
@@ -344,11 +460,13 @@ struct Scored {
 /// **彩色分支上的页不参与几何门。**门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），
 /// 两者都只作用在灰度路径上；彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
 /// 让它关掉整卷的抖动，就是让一条不受影响的路径去削掉另一条路径的收益。
+///
+/// **读不出、解不出的页在这里变成失败页**（12 号票），而不是让整卷的调用返回 `Err`。
+/// 它同样不参与几何门，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
+/// 没有像素可求判据，也没有像素可缓存。它留下的只有一条原因，等第二遍给它留一张白页。
 fn first_pass(
     volume: &mut Volume,
     request: &Request,
-    output: &Path,
-    targets: &[PathBuf],
     cache: &mut cache::PageCache,
     decoder: &mut decode::Decoder,
     fingerprint: Option<&Fingerprint>,
@@ -357,14 +475,28 @@ fn first_pass(
     let mut gate = GeometryGate::Holds;
     let mut allowed = candidates(request, gate)?;
     let mut pages: Vec<ScoredPage> = Vec::with_capacity(volume.pages.len());
-    for (index, (page, relative)) in volume.pages.iter().zip(targets).enumerate() {
+    for (index, page) in volume.pages.iter().enumerate() {
         let source = volume.identity(page);
-        let bytes = volume.reader.read(page)?;
-        let decoded = decoder
-            .decode(&bytes)
-            .with_context(|| format!("解 {} 这一页", source.display()))?;
+        let read = volume.reader.read(page).and_then(|bytes| {
+            decoder
+                .decode(&bytes)
+                .with_context(|| format!("解 {} 这一页", source.display()))
+        });
+        let decoded = match read {
+            Ok(decoded) => decoded,
+            // 一张坏图不毁掉整卷（spec 的 story 24）：记下原因就走，
+            // 第二遍拿卷内统一尺寸给它留一张白页，整卷进隔离目录。
+            Err(error) => {
+                pages.push(ScoredPage {
+                    source,
+                    outcome: Outcome::Failed {
+                        reason: format!("{error:#}"),
+                    },
+                });
+                continue;
+            }
+        };
         let color = color::identify(&decoded);
-        let output = output.join(relative);
 
         if panel.color && color.is_color() {
             let image = color::to_color(&decoded);
@@ -380,11 +512,12 @@ fn first_pass(
             };
             pages.push(ScoredPage {
                 source,
-                output,
-                size,
-                scaling,
-                color,
-                branch: Branch::Color { encoded },
+                outcome: Outcome::Processed {
+                    size,
+                    scaling,
+                    color,
+                    branch: Branch::Color { encoded },
+                },
             });
             continue;
         }
@@ -396,7 +529,11 @@ fn first_pass(
             allowed = candidates(request, gate)
                 .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
             for earlier in &mut pages {
-                if let Branch::Gray { scores, .. } = &mut earlier.branch {
+                if let Outcome::Processed {
+                    branch: Branch::Gray { scores, .. },
+                    ..
+                } = &mut earlier.outcome
+                {
                     scores.retain(|scored| allowed.contains(&scored.candidate));
                 }
             }
@@ -409,18 +546,19 @@ fn first_pass(
             .with_context(|| format!("缓存 {} 这一页", source.display()))?;
         pages.push(ScoredPage {
             source,
-            output,
-            size,
-            scaling,
-            color,
-            branch: Branch::Gray { scores, slot },
+            outcome: Outcome::Processed {
+                size,
+                scaling,
+                color,
+                branch: Branch::Gray { scores, slot },
+            },
         });
     }
     Ok(Scored { pages, gate })
 }
 
-/// 第二遍：灰度页从缓存读 → 量化 → 编码，彩页取第一遍编好的字节，两者一同写出。
-/// 不再碰源页（ADR 0005）。
+/// 第二遍：灰度页从缓存读 → 量化 → 编码，彩页取第一遍编好的字节，失败页留一张白页，
+/// 三者一同写出。不再碰源页（ADR 0005）。
 ///
 /// **写出按阅读顺序**，彩页也在这一遍落位。ADR 0005 决定第 4 条原话是「第一遍即写出」，
 /// 那一句管的是彩页**离开灰度管线的时刻**——不进缓存、不求判据、不进上包络，这三条这里都成立。
@@ -429,22 +567,45 @@ fn first_pass(
 /// 就变成「先全部彩页、再全部灰度页」，按归档顺序翻页的阅读器会跳着读。
 /// 代价认下：编好的字节要在内存里等到这一遍，且不受 `--cache-budget` 约束
 /// （详见 ADR 0010）——那是编码后的 PNG，比参照小。
+///
+/// **失败页也在这一遍占住自己那一格**（12 号票）：一张 `uniform` 尺寸的纸白页。
+/// 少写一页会让页序错位、页数对不上，而那正是「一张坏图毁掉整卷」的另一种形态。
+///
+/// 这一遍出的错仍然是卷级的错，不再变成失败页：它们不是坏图，是磁盘、内存与输出容器出了事，
+/// 换一页重试也躲不过去。
 fn second_pass(
     pages: &[ScoredPage],
     verdicts: &[Option<Verdict>],
     targets: &[PathBuf],
+    uniform: Size,
     cache: &mut cache::PageCache,
     sink: &mut Sink,
     recorder: Option<&Recorder>,
 ) -> Result<()> {
     for ((page, verdict), relative) in pages.iter().zip(verdicts).zip(targets) {
         let source = page.source.display();
-        match &page.branch {
-            Branch::Color { encoded } => {
+        match &page.outcome {
+            Outcome::Failed { .. } => {
+                // 占位页按 1bit 编，不跟卷级基准档走。它不是一个**判定**——它没进过候选集、
+                // 没求过判据，卷级那一档说的是「这一卷的内容要几档灰」，而这一页没有内容。
+                // 位深是编码属性（`CONTEXT.md`），而整页只有一个取值时 1bit 恰好装得下它；
+                // 换个更宽的档也写不出别的字节，编码器那一层照旧会挑最窄的（ADR 0004）。
+                let record = recorder.map(Recorder::failed);
+                let encoded = encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
+                    .with_context(|| format!("编 {source} 这一页的占位页"))?;
+                sink.write_page(relative, &encoded)?;
+            }
+            Outcome::Processed {
+                branch: Branch::Color { encoded },
+                ..
+            } => {
                 let bytes = encoded.as_deref().expect("照做的那一遍第一遍就编过彩页");
                 sink.write_page(relative, bytes)?;
             }
-            Branch::Gray { slot, .. } => {
+            Outcome::Processed {
+                branch: Branch::Gray { slot, .. },
+                ..
+            } => {
                 let verdict = verdict.expect("灰度路径上必有判定");
                 let reference = cache
                     .load(*slot)
@@ -477,8 +638,13 @@ fn volume_fingerprint(volume: &mut Volume, request: &Request) -> Result<Fingerpr
     } = volume;
     let mut hasher = metadata::SourceHasher::new();
     for member in pages.iter().chain(extras.iter()) {
-        let bytes = reader.read(member)?;
-        hasher.member(&member.relative, &bytes);
+        // 读不出字节的成员在这一遍不算失败：它在第一遍里才变成失败页（12 号票），
+        // 而这一遍排在第一遍之前。这里把它记成「读不出来」照样喂进哈希——
+        // 拦在这里，一个坏成员就会毁掉整卷，正是本票要拆掉的那件事。
+        match reader.read(member) {
+            Ok(bytes) => hasher.member(&member.relative, &bytes),
+            Err(_) => hasher.unreadable(&member.relative),
+        }
     }
     Ok(Fingerprint::new(request, hasher.finish()))
 }

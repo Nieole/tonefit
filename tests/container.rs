@@ -225,21 +225,27 @@ fn an_archive_whose_structure_cannot_be_read_is_refused_without_leaving_output()
     assert!(!space.out().exists(), "被拒绝之后仍然写了输出");
 }
 
+/// 透传文件的字节读不出来仍然是**卷级**的失败，而且要指名是哪个成员。
+///
+/// 页不再走这条路——坏页变成失败页，整卷进隔离目录（12 号票，见 `isolation.rs`）。
+/// 透传文件没有那条出路：它逐字节照搬，搬不动就交不出这一卷，
+/// 编一份空的 ComicInfo.xml 顶上去只会让阅读器读到假的书籍元信息。
 #[test]
-fn a_member_whose_bytes_are_corrupt_is_named_in_the_error() {
+fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_error() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
     // 归档结构完好，坏的是这一个成员的字节——只有读到它才看得出来。
-    cbz.rotten_page(
+    cbz.page(
         "001.png",
         &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    )
+    .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
 
     let message = format!("{error:#}");
-    assert!(message.contains("001.png"), "{message}");
+    assert!(message.contains("ComicInfo.xml"), "{message}");
 }
 
 #[test]
@@ -273,6 +279,10 @@ fn a_member_name_that_would_escape_the_volume_is_refused() {
     assert!(!space.out().exists(), "被拒绝之后仍然写了输出");
 }
 
+/// 归档要么完整、要么不存在（03 号票：不产出半成品）。
+///
+/// 触发失败用的是一个**读不出字节的透传文件**：它排在页之后写，页因此已经进了临时归档，
+/// 那一刻失败才真的是「写到一半」。坏页触发不了了——它现在被隔离，不再中止整卷（12 号票）。
 #[test]
 fn an_archive_that_fails_partway_leaves_no_half_written_output() {
     let space = Workspace::new();
@@ -281,16 +291,13 @@ fn an_archive_that_fails_partway_leaves_no_half_written_output() {
         "001.png",
         &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
     )
-    // 触发失败用的是一张坏图，只因为现在没有别的办法在写到一半时失败。
-    // 12 号票会把坏图改成隔离而不是中止，届时这里要换一个触发方式——
-    // 要钉住的性质是「归档要么完整、要么不存在」，不是「坏图让整卷失败」。
-    .file("002.png", b"not a png at all");
+    .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
 
     let message = format!("{error:#}");
-    assert!(message.contains("002.png"), "{message}");
+    assert!(message.contains("ComicInfo.xml"), "{message}");
     let left_behind: Vec<_> = std::fs::read_dir(space.out())
         .expect("输出根目录")
         .map(|entry| {
@@ -316,11 +323,12 @@ fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
     let report = tonefit::run(&request).expect("第一次处理应当成功");
     let output = report.volumes[0].output.clone();
 
-    // 同一个位置换成一份会中途失败的卷，再跑一次。触发方式的注意事项同上一个用例。
+    // 同一个位置换成一份会中途失败的卷，再跑一次。触发方式的理由同上一个用例。
     let mut broken = space.cbz("volume-a");
     broken
         .page("001.png", &page)
-        .file("002.png", b"not a png at all");
+        .page("002.png", &page)
+        .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     broken.write();
     tonefit::run(&request).expect_err("第二次处理应当失败");
 

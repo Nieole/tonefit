@@ -334,7 +334,7 @@ fn a_color_page_carries_the_same_record_without_a_bit_depth() {
     let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.color, PageColor::Color);
+    assert_eq!(page.color(), Some(PageColor::Color));
     assert_eq!(page.verdict(), None, "这一页该走彩色分支");
     let text = fixtures::read_png_text(&page.output);
     assert_eq!(

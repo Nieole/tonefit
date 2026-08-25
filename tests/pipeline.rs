@@ -263,8 +263,8 @@ fn a_color_page_on_a_monochrome_profile_is_grayed_and_still_reported_as_color() 
 
     let volume_report = &report.volumes[0];
     let pages = &volume_report.pages;
-    assert_eq!(pages[0].color, PageColor::Color, "彩页没被识别出来");
-    assert_eq!(pages[1].color, PageColor::Gray);
+    assert_eq!(pages[0].color(), Some(PageColor::Color), "彩页没被识别出来");
+    assert_eq!(pages[1].color(), Some(PageColor::Gray));
     // 两页都走了灰度路径：都有判定，都进了灰度缓存，写出的都不是彩色 PNG。
     assert_eq!(
         volume_report.cache.pages, 2,
@@ -300,7 +300,7 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
 
     let volume_report = &report.volumes[0];
     let pages = &volume_report.pages;
-    assert_eq!(pages[0].color, PageColor::Color);
+    assert_eq!(pages[0].color(), Some(PageColor::Color));
     // 彩色分支不量化：既没有判定，也没有判据曲线。
     assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
     assert!(pages[0].scores().is_empty(), "彩色分支上不该有判据曲线");
@@ -322,7 +322,7 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
     }
 
     // 同一卷里的灰度页在彩色面板上照旧走灰度路径。
-    assert_eq!(pages[1].color, PageColor::Gray);
+    assert_eq!(pages[1].color(), Some(PageColor::Gray));
     assert!(pages[1].verdict().is_some(), "灰度页该有判定");
     assert_eq!(
         fixtures::read_png(&pages[1].output).color_type,
@@ -349,7 +349,7 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     .expect("处理应当成功");
 
     let pages = &report.volumes[0].pages;
-    assert_eq!(pages[0].color, PageColor::Color);
+    assert_eq!(pages[0].color(), Some(PageColor::Color));
     assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
     assert_eq!(pages[0].size, fixtures::TINY, "彩页的目标尺寸照旧算出来");
     assert!(pages[1].verdict().is_some(), "灰度页照旧有判定");
@@ -520,7 +520,7 @@ fn the_report_gives_the_total_ratio_the_prescale_and_the_residual_of_every_page(
         (1.0, 1, 1.0),
     ];
     for (page, (ratio, prescale, residual)) in report.volumes[0].pages.iter().zip(expected) {
-        let scaling = page.scaling;
+        let scaling = page.scaling().expect("处理成了的页有缩放");
         let name = page.source.display();
         assert!(
             (scaling.total_ratio() - ratio).abs() < 5e-4,
@@ -572,7 +572,12 @@ fn a_screentone_page_resolves_into_tones() {
     let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     // 网点是因，灰调是果：缩放把点阵解析成连续灰调。
-    assert!(!report.volumes[0].pages[0].scaling.prescaled());
+    assert!(
+        !report.volumes[0].pages[0]
+            .scaling()
+            .expect("处理成了的页有缩放")
+            .prescaled()
+    );
     let written = fixtures::read_png(&report.volumes[0].pages[0].output);
     let levels = distinct_levels(&written.pixels);
     assert!(levels > 16, "缩放后只剩 {levels} 级灰调");
@@ -591,7 +596,7 @@ fn a_prescaled_screentone_page_takes_its_tones_from_the_box_step() {
     let report = fixtures::run_volume_at_eight_bits(&space, &volume);
 
     let page = &report.volumes[0].pages[0];
-    assert_eq!(page.scaling.prescale(), 2);
+    assert_eq!(page.scaling().expect("处理成了的页有缩放").prescale(), 2);
     let levels = distinct_levels(&fixtures::read_png(&page.output).pixels);
     // 等权的完整窗口平均对二值输入只落在块内白点计数上，n×n 产出 n²+1 个取值
     // （见 measurements 的《滤波器与灰调级数》）。2×2 于是至多 5 级——

@@ -107,6 +107,9 @@ pub const RECORD_PREFIX: u64 = 64 * 1024;
 /// 作用域为什么是卷而不是页，见 ADR 0006 的《决定》末段。
 pub struct SourceHasher(blake3::Hasher);
 
+/// 读不出字节的成员在源哈希里占的那个长度前缀。真实成员到不了这个长度。
+const UNREADABLE: u64 = u64::MAX;
+
 impl SourceHasher {
     pub fn new() -> Self {
         Self(blake3::Hasher::new())
@@ -117,6 +120,22 @@ impl SourceHasher {
     /// 只算字节的话，两页对调名字看不出来，而输出会整个错位。
     /// 名字与字节各自带上长度前缀，两个成员的拼接才不会与另一种切法撞上。
     pub fn member(&mut self, relative: &Path, bytes: &[u8]) {
+        self.feed(relative, bytes.len() as u64, bytes);
+    }
+
+    /// 喂进一个**字节读不出来**的成员：名字照算，字节那一半换成一个固定的记号。
+    ///
+    /// 这样的成员在第一遍里会变成失败页（12 号票），但它在这一遍**不能被跳过**：
+    /// 跳过它，把一个坏成员从卷里删掉之后哈希纹丝不动，那一卷会被静默地跳过，
+    /// 而它明明少了一页。
+    ///
+    /// 记号是长度前缀写成 [`UNREADABLE`]，与任何真实字节串都撞不上——
+    /// 那个长度是任何一段真实字节都到不了的。
+    pub fn unreadable(&mut self, relative: &Path) {
+        self.feed(relative, UNREADABLE, &[]);
+    }
+
+    fn feed(&mut self, relative: &Path, length: u64, bytes: &[u8]) {
         // 分隔符按 `/` 归一：同一个卷在 Windows 与别处要算出同一个哈希。
         let name = relative
             .components()
@@ -125,7 +144,7 @@ impl SourceHasher {
             .join("/");
         self.0.update(&(name.len() as u64).to_le_bytes());
         self.0.update(name.as_bytes());
-        self.0.update(&(bytes.len() as u64).to_le_bytes());
+        self.0.update(&length.to_le_bytes());
         self.0.update(bytes);
     }
 
@@ -138,6 +157,14 @@ impl SourceHasher {
 /// 彩色分支那两项的取值。那条路径不量化，没有判定位深可写（ADR 0005 决定第 4 条）。
 const COLOR_VERDICT: &str = "color";
 const COLOR_REASON: &str = "color branch, scaled only";
+
+/// 失败页那两项的取值。那一页没解出来，也就没有判定位深可写（12 号票）。
+///
+/// 报告那一侧的原因具体到「哪个成员、卡在哪一步」，这一句钉死不变：tEXt 只装得下 Latin-1，
+/// 而原因里有成员名与中文。占位页因此自己说得出「我是个占位页」——
+/// 隔离目录之外，这是它随身带着的第二处标记。
+const FAILED_VERDICT: &str = "failed";
+const FAILED_REASON: &str = "page could not be decoded, blank placeholder";
 
 /// 一页要写进 tEXt 的全部字段：幂等那四项由整卷共用，判定与理由逐页各一份。
 pub struct Record<'a> {
@@ -199,6 +226,22 @@ impl<'a> Recorder<'a> {
             fingerprint: self.fingerprint,
             verdict: verdict.candidate.to_string(),
             reason: reason_text(verdict.reason, self.driver),
+        }
+    }
+
+    /// 失败页留下的那张占位页：没有判定，只说明自己是什么（12 号票）。
+    ///
+    /// 这一句是占位页**随身带着**的那处标记，而它得随身带着：白页一旦离开报告的上下文
+    /// ——被拷进阅读器、从隔离目录里单拎出来——就再没有别的地方说得出它是个占位页，
+    /// 而 12 号票要的正是「问题不会藏起来」。
+    ///
+    /// 幂等那四项照填，但幂等在这里买不到什么：隔离的卷每一趟都重做
+    /// （见 `crate::process_volume`）。填它只是因为记录本身是六项一套的。
+    pub fn failed(&self) -> Record<'a> {
+        Record {
+            fingerprint: self.fingerprint,
+            verdict: FAILED_VERDICT.to_owned(),
+            reason: FAILED_REASON.to_owned(),
         }
     }
 }
