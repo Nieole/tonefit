@@ -7,6 +7,7 @@ use crate::color::PageColor;
 use crate::decide::{CandidateScore, Verdict};
 use crate::envelope::Envelope;
 use crate::geometry::{GeometryGate, Size};
+use crate::medium::IoPlan;
 use crate::profile::Profile;
 use crate::quantize::{Candidate, Dither};
 use crate::resample::Scaling;
@@ -75,6 +76,13 @@ pub struct VolumeReport {
     pub gate: Option<GeometryGate>,
     /// 本卷缓存的用量（ADR 0005）。
     pub cache: CacheUsage,
+    /// 本卷这一趟怎么读：介质是什么，据此派了几条读取（13 号票）。
+    ///
+    /// 探测退到保守策略时**要说得出为什么**，那句话就在 [`IoPlan::medium`] 里
+    /// （见 [`Medium::Unknown`](crate::Medium::Unknown)）。不说，用户看到的只是「跑得慢」。
+    ///
+    /// 跳过的卷也有一份：幂等那一道照样要把整卷的字节读一遍，读法与做事的那一趟同一个。
+    pub io: IoPlan,
     /// 本卷解码源页的次数。跳过的卷是 0——「不重复工作」量得出来的形式就是它。
     ///
     /// 两遍管线的不变量是「每页只解码一次」（ADR 0005：解码一次，缓存缩放后的图），

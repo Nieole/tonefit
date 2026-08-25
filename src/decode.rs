@@ -10,6 +10,7 @@
 
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use image::{ColorType, DynamicImage, ImageBuffer, ImageDecoder, ImageReader, Limits};
@@ -52,9 +53,12 @@ pub fn is_page(path: &Path) -> bool {
 ///
 /// 救回那一趟不另记一次：它在同一个 [`decode`](Self::decode) 调用里，
 /// 数的是「这一页被解了几回」，不是「解码器被叫了几回」。
+///
+/// 计数是原子的，解码本身因此**不需要独占**：第一遍在 rayon 上满核跑（13 号票），
+/// 而一个要 `&mut` 的计数器会把整条计算层串回一条线。
 #[derive(Debug, Default)]
 pub struct Decoder {
-    decodes: usize,
+    decodes: AtomicUsize,
 }
 
 impl Decoder {
@@ -64,15 +68,15 @@ impl Decoder {
 
     /// 至此解了多少页。
     pub fn decodes(&self) -> usize {
-        self.decodes
+        self.decodes.load(Ordering::Relaxed)
     }
 
     /// 解码一页。格式按内容判定，扩展名只用来挑出候选成员。
     ///
     /// 整解不成再试一次救回：尺寸还解得出来就按尺寸出一页（12 号票）。两趟都不成才是失败，
     /// 而失败在这里只是一个 `Err`——把它变成一个失败页、把卷送进隔离目录，是 `crate::run` 那一层的事。
-    pub fn decode(&mut self, bytes: &[u8]) -> Result<DynamicImage> {
-        self.decodes += 1;
+    pub fn decode(&self, bytes: &[u8]) -> Result<DynamicImage> {
+        self.decodes.fetch_add(1, Ordering::Relaxed);
         let error = match reader(bytes)?.decode() {
             Ok(image) => return Ok(image),
             Err(error) => error,

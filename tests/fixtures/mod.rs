@@ -199,6 +199,13 @@ impl Workspace {
     pub fn out(&self) -> PathBuf {
         self.tmp.path().join("out")
     }
+
+    /// 另起一个输出根，与 [`out`](Self::out) 并列。同一个卷跑两趟、比两份输出的用例用它——
+    /// 换个工作区跑第二趟就得把卷也生成两份，那时比的就不只是这两趟的差别了。
+    pub fn out_named(&self, name: &str) -> PathBuf {
+        assert_ne!(name, "out", "另起的输出根不该与默认那个撞名");
+        self.tmp.path().join(name)
+    }
 }
 
 impl Default for Workspace {
@@ -289,6 +296,8 @@ pub fn request<'a>(
         per_page: false,
         cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
+        io_mode: tonefit::IoMode::default(),
+        progress: None,
         metadata: true,
     }
 }

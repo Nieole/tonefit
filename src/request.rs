@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use crate::cache::CacheBudget;
+use crate::medium::IoMode;
 use crate::profile::Profile;
+use crate::progress::ProgressSink;
 use crate::quantize::{BitDepth, Dither};
 use crate::resample::Filter;
 
@@ -21,7 +23,7 @@ pub enum Mode {
 
 /// 一次处理调用的全部输入。
 ///
-/// spec 固定的形状里还有别的覆盖项，它们随各自的票落地：介质见 13 号票。
+/// spec 固定的形状里还有一个覆盖项没有落地：编码器（ADR 0004 说了 P0 只实现 PNG）。
 #[derive(Debug, Clone)]
 pub struct Request {
     /// 点名要处理的卷。空集是错误，不做全库扫描（ADR 0009）。
@@ -55,6 +57,17 @@ pub struct Request {
     pub cache_budget: CacheBudget,
     /// 做到哪一步。
     pub mode: Mode,
+    /// 读取策略（`--io-mode`），覆盖按路径的介质探测。
+    ///
+    /// 默认 [`IoMode::Auto`]：路径解析到所在的卷再探寻道惩罚，有惩罚的串行读、
+    /// 没有的并发读（ADR 0009 决定第 2 条）。探不出来的一律按未知退到串行——
+    /// NAS 与网络路径都落在那里，而它们的最优策略尚未测量（`CONTEXT.md` 的《尚未确立》），
+    /// 实测出并发更快的用户从这里点名。
+    pub io_mode: IoMode,
+    /// 进度观察者（spec 的 story 30）。`None` 即没人看着，管线一步都不报。
+    ///
+    /// 库这一侧只报到，印在哪、印不印由调用方定——CLI 接 indicatif，用例接一个计数器。
+    pub progress: Option<ProgressSink>,
     /// 写不写自描述元数据（`--no-metadata` 关掉它）。
     ///
     /// 判定与理由随输出文件走，同一批字段兼作幂等依据（ADR 0006）。关掉之后两件事一起消失：

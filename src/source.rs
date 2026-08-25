@@ -58,6 +58,13 @@ impl Volume {
 pub struct Member {
     /// 相对卷根的路径。输出按它镜像出结构。
     pub relative: PathBuf,
+    /// 这个成员摊开来有多少字节。
+    ///
+    /// 在这里而不是读的时候现问：读取层要在**读之前**按它占住在途字节的预算
+    /// （13 号票，见 `crate::read`），而那一刻问文件系统就等于每页多一次 stat——
+    /// 机械盘上那是一次真实的寻道。两边都是现成的：目录卷遍历时顺手拿到，
+    /// 归档卷在中央目录里写着。
+    pub bytes: u64,
     /// 归档内的成员序号。目录卷不用它。
     entry: usize,
 }
@@ -69,13 +76,19 @@ pub enum Reader {
 }
 
 impl Reader {
+    /// 目录卷的卷根。归档卷没有——它的成员待在一个游标背后，因此并发读无从谈起
+    /// （见 `crate::read`）。
+    pub fn directory_root(&self) -> Option<&Path> {
+        match self {
+            Reader::Directory { root } => Some(root),
+            Reader::Archive(_) => None,
+        }
+    }
+
     /// 读出一个成员的原始字节。
     pub fn read(&mut self, member: &Member) -> Result<Vec<u8>> {
         match self {
-            Reader::Directory { root } => {
-                let path = root.join(&member.relative);
-                std::fs::read(&path).with_context(|| format!("读 {}", path.display()))
-            }
+            Reader::Directory { root } => read_file(&root.join(&member.relative)),
             Reader::Archive(archive) => {
                 let mut entry = archive
                     .by_index(member.entry)
@@ -88,6 +101,14 @@ impl Reader {
             }
         }
     }
+}
+
+/// 读一个文件的全部字节。
+///
+/// 目录卷的读取只此一条路：串行那条与并发那条都走它（见 `crate::read`），
+/// 「读不出来」那句话才不会有两个版本。
+pub fn read_file(path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path).with_context(|| format!("读 {}", path.display()))
 }
 
 /// 打开一个卷。源只读，这里不写任何东西。
@@ -131,7 +152,14 @@ fn open_directory(root: &Path) -> Result<Volume> {
             .strip_prefix(root)
             .expect("遍历结果恒在卷根之下")
             .to_path_buf();
-        members.push(Member { relative, entry: 0 });
+        // 遍历时已经 stat 过一次，这里拿的是那一次的结果，不再多问一次文件系统。
+        // 问不出大小的成员按 0 算：它只是在读取层的预算上不占位，读法一点不变。
+        let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        members.push(Member {
+            relative,
+            bytes,
+            entry: 0,
+        });
     }
 
     let (pages, extras) = split_and_sort(members);
@@ -172,7 +200,12 @@ fn open_archive(path: &Path) -> Result<Volume> {
         let name = decode_name(file.name_raw(), file.name());
         let relative = relative_path(&name)
             .with_context(|| format!("{} 的成员名 {name} 不能当作输出路径", path.display()))?;
-        members.push(Member { relative, entry });
+        let bytes = file.size();
+        members.push(Member {
+            relative,
+            bytes,
+            entry,
+        });
     }
     strip_wrapper_directory(&mut members);
 

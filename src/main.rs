@@ -1,13 +1,16 @@
 //! CLI：把命令行参数拼成 `Request`，把 `Report` 渲染成文字。此外不做别的事。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::Result;
 use clap::Parser;
+use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
-    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, Mode, PageBranch,
-    PageColor, PageReport, Profile, Report, Request, VolumeReport, VolumeVerdict,
+    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, IoMode, Mode, PageBranch,
+    PageColor, PageReport, Profile, Progress, ProgressSink, Report, Request, VolumeReport,
+    VolumeVerdict,
 };
 
 #[derive(Parser)]
@@ -54,6 +57,11 @@ struct Cli {
     #[arg(long, value_name = "字节数")]
     cache_budget: Option<String>,
 
+    /// 读取策略：auto（按路径探测介质，默认）、serial（读取串行）、concurrent（读取并发）。
+    /// auto 下有寻道惩罚的盘串行读、没有的并发读；网络路径与探不出来的一律按未知退到串行。
+    #[arg(long, value_name = "模式")]
+    io_mode: Option<String>,
+
     /// 只算不写：报告照出，逐页给出判定与各候选的判据值，一个文件都不落盘。
     #[arg(long)]
     dry_run: bool,
@@ -97,6 +105,14 @@ impl Cli {
         match &self.cache_budget {
             Some(text) => CacheBudget::parse(text),
             None => Ok(CacheBudget::default()),
+        }
+    }
+
+    /// 本次的读取策略。不点名就按路径探测介质（ADR 0009）。
+    fn io_mode(&self) -> Result<IoMode> {
+        match &self.io_mode {
+            Some(text) => IoMode::resolve(text),
+            None => Ok(IoMode::default()),
         }
     }
 
@@ -153,7 +169,9 @@ fn execute() -> Result<u8> {
     let bit_depth = cli.bit_depth_override()?;
     let dither = cli.dither_override()?;
     let cache_budget = cli.cache_budget()?;
+    let io_mode = cli.io_mode()?;
     let mode = cli.mode();
+    let bar = Bar::new();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
         output_root: cli.out,
@@ -164,6 +182,8 @@ fn execute() -> Result<u8> {
         per_page: cli.per_page,
         cache_budget,
         mode,
+        io_mode,
+        progress: Some(ProgressSink::new(bar)),
         metadata: !cli.no_metadata,
     })?;
     print!("{}", render(&report, mode));
@@ -185,6 +205,9 @@ fn render(report: &Report, mode: Mode) -> String {
         ));
         text.push_str(&superseded_line(volume));
         text.push_str(&volume_lines(volume));
+        // 这一卷是怎么读的（13 号票）。它排在跳过那一支**之前**：幂等命中的卷同样把整卷的字节
+        // 读了一遍，读法与做事的那一趟是同一个，而「跳过一卷为什么也要等这么久」正问在这里。
+        text.push_str(&format!("  {}\n", volume.io));
         // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`volume_lines` 那一行已经说完了。
         if volume.skipped() {
             continue;
@@ -404,13 +427,74 @@ fn score_line(scores: &[CandidateScore]) -> String {
         .join(" · ")
 }
 
+/// 进度条：把管线报到的那些步画出来（spec 的 story 30）。
+///
+/// 画在 **stderr** 上——报告走 stdout，`tonefit … > 报告.txt` 那种用法下进度条不该混进文件里。
+/// indicatif 自己认得出对面不是终端，那时它一个字节都不写，管道与用例因此干净
+/// （见 `ProgressDrawTarget::term`）。
+///
+/// 一卷一条，走完即抹掉：几十卷跑下来，屏幕上留下的只有报告。留着一排走完的进度条
+/// 是另一种噪声，而「这一趟做了什么」报告说得更清楚。
+struct Bar {
+    /// 当下这一卷的那一条。卷与卷之间是空的。
+    ///
+    /// 每卷新起一条而不是复用同一条：走完的那一条已经收了尾，再往它身上设长度、加位置，
+    /// indicatif 那一侧不保证还画得出来。
+    volume: Mutex<Option<ProgressBar>>,
+}
+
+impl Bar {
+    fn new() -> Self {
+        Self {
+            volume: Mutex::new(None),
+        }
+    }
+
+    fn current(&self) -> MutexGuard<'_, Option<ProgressBar>> {
+        self.volume
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl Progress for Bar {
+    fn volume_started(&self, volume: &Path, steps: u64) {
+        let name = volume.file_name().map_or_else(
+            || volume.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let bar = ProgressBar::new(steps);
+        bar.set_style(
+            ProgressStyle::with_template(
+                "{msg} [{bar:30}] {pos}/{len} 步 · 已用 {elapsed} · 剩 {eta}",
+            )
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
+            .progress_chars("=> "),
+        );
+        bar.set_message(name);
+        *self.current() = Some(bar);
+    }
+
+    fn stepped(&self) {
+        if let Some(bar) = self.current().as_ref() {
+            bar.inc(1);
+        }
+    }
+
+    fn volume_finished(&self) {
+        if let Some(bar) = self.current().take() {
+            bar.finish_and_clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
     use tonefit::{
-        CacheUsage, Candidate, Envelope, GrayImage, PageOutcome, Reason, Reference, Scaling, Size,
-        Verdict, VolumeReport,
+        CacheUsage, Candidate, ChosenBy, Envelope, GrayImage, IoPlan, Medium, PageOutcome, Reason,
+        Reference, Scaling, Size, Verdict, VolumeReport,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -421,6 +505,15 @@ mod tests {
             body_pages: 1,
             outlier_pages: 0,
             raised_pages: 0,
+        }
+    }
+
+    /// 一份读取计划。渲染这一侧只关心它有没有被说出来，取「探到固态盘、并发读」那一种。
+    fn io_plan() -> IoPlan {
+        IoPlan {
+            medium: Medium::Solid,
+            readers: 8,
+            chosen_by: ChosenBy::Probe,
         }
     }
 
@@ -457,6 +550,7 @@ mod tests {
                 verdict: Some(verdict),
                 gate: Some(gate),
                 cache: cache_usage(),
+                io: io_plan(),
                 decodes: 1,
                 pages: vec![page],
             }],
@@ -596,8 +690,9 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷五行（去处、几何门、卷级、驱动页、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 8);
+        // profile 一行、卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：
+        // 一行几何，一行判定。
+        assert_eq!(text.lines().count(), 9);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -724,6 +819,7 @@ mod tests {
                 })),
                 gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
+                io: io_plan(),
                 decodes: 3,
                 pages: vec![
                     page("001", PageColor::Color, PageBranch::Color),
@@ -763,14 +859,15 @@ mod tests {
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 gate: None,
                 cache: cache_usage(),
+                io: io_plan(),
                 decodes: 0,
             }],
         };
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷两行。
-        assert_eq!(text.lines().count(), 3);
+        // profile 一行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 4);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -780,6 +877,40 @@ mod tests {
         assert!(text.contains("工具版本、profile、参数、源均未变"), "{text}");
         assert!(!text.contains("几何门"), "{text}");
         assert!(!text.contains("缓存"), "{text}");
+    }
+
+    /// 介质探不出来的卷：报告说得出它退到了串行，也说得出**为什么**探不出来（13 号票）。
+    ///
+    /// 不说那句话，退到保守策略这件事对用户就只表现为「这一卷跑得慢」——
+    /// 而那正是他没法据以决定要不要 `--io-mode concurrent` 的样子。
+    #[test]
+    fn a_volume_whose_medium_is_unknown_says_why_it_fell_back_to_serial() {
+        let mut report = Report {
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from(r"\\nas\share\volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                superseded: None,
+                pages: Vec::new(),
+                verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
+                gate: None,
+                cache: cache_usage(),
+                io: io_plan(),
+                decodes: 0,
+            }],
+        };
+        report.volumes[0].io = IoPlan {
+            medium: Medium::Unknown {
+                reason: r"\\nas\share\ 是网络路径，介质无从探测".to_owned(),
+            },
+            readers: 1,
+            chosen_by: ChosenBy::Probe,
+        };
+
+        let text = render(&report, Mode::Process);
+
+        assert!(text.contains("读取串行"), "{text}");
+        assert!(text.contains("是网络路径"), "{text}");
     }
 
     /// 被隔离的卷要说清三件事：几页失败、整卷去了哪儿、每一页各是为什么
@@ -828,6 +959,7 @@ mod tests {
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
                 gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
+                io: io_plan(),
                 decodes: 2,
                 pages: vec![good, failed],
             }],

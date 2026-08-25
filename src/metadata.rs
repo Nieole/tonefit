@@ -326,6 +326,7 @@ fn hex(digest: blake3::Hash) -> String {
 mod tests {
     use super::*;
     use crate::cache::CacheBudget;
+    use crate::medium::IoMode;
     use crate::profile::Profile;
     use crate::quantize::{BitDepth, Candidate};
     use crate::request::Mode;
@@ -347,6 +348,8 @@ mod tests {
             per_page: false,
             cache_budget: CacheBudget::default(),
             mode: Mode::Process,
+            io_mode: IoMode::default(),
+            progress: None,
             metadata: true,
         }
     }
@@ -387,11 +390,14 @@ mod tests {
     #[test]
     fn what_does_not_change_the_output_does_not_change_the_hash() {
         let baseline = params_hash(&request());
-        let changes: [Change; 4] = [
+        let changes: [Change; 5] = [
             ("缓存预算", |request| {
                 request.cache_budget = CacheBudget::new(4096)
             }),
             ("模式", |request| request.mode = Mode::DryRun),
+            // 读取策略只改这一趟怎么把字节取进来，一个像素都不动（13 号票）。
+            // 收了它，同一批卷换台机器跑就要整库重做——而输出逐字节相同。
+            ("读取策略", |request| request.io_mode = IoMode::Serial),
             ("输入路径", |request| {
                 request.inputs = vec![PathBuf::from("elsewhere/volume-a")]
             }),

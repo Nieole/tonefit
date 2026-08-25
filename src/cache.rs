@@ -157,6 +157,28 @@ pub struct PageCache {
     usage: CacheUsage,
 }
 
+/// 一页压好的块，等着进缓存。
+///
+/// 压缩与存放分成两步，为的是计算层那一侧：压缩是**纯计算**、每页各做各的，
+/// 存放要动共用的账本、非串起来不可。合成一步，那把锁就得连压缩一起罩住——
+/// 满核跑起来时它会成为唯一的瓶颈，而压缩恰恰是这两件事里贵的那一件。
+pub struct Block {
+    size: Size,
+    /// LZ4 压过的像素。
+    block: Vec<u8>,
+    /// 摊开来有多少字节。用量那一行里的「压缩前」就是它。
+    raw: u64,
+}
+
+/// 把一页压成一个待存的块。不碰缓存，因此并发做没有争用。
+pub fn compress(image: &GrayImage) -> Block {
+    Block {
+        size: image.size(),
+        block: lz4_flex::compress(image.pixels()),
+        raw: image.pixels().len() as u64,
+    }
+}
+
 /// 一页在缓存里的样子：尺寸，加上 LZ4 压过的像素在哪儿。
 ///
 /// 尺寸单独留着而不是从压缩块里读——解压要先知道摊开有多大。
@@ -206,13 +228,19 @@ impl PageCache {
         self.usage
     }
 
-    /// 存下一页，返回它的序号。
+    /// 把一个压好的块存进来，返回它的序号。
     ///
     /// 内存优先：预算还装得下就留在内存里，装不下的那一页溢写（ADR 0005）。
     /// 判的是这一页放进去之后会不会越过预算，因此单页大过整个预算时它自己溢写，
     /// 已经在内存里的那些页不受牵连。
-    pub fn store(&mut self, image: &GrayImage) -> Result<usize> {
-        let block = lz4_flex::compress(image.pixels());
+    ///
+    /// **谁常驻、谁溢写随存入顺序而变**，而第一遍是乱序满核跑的（13 号票）：同一个卷、
+    /// 同一份预算，两趟跑出来的 `resident` 与 `spilled` 分法可能不同。总量不受影响——
+    /// `pages`、`raw`、`stored` 与顺序无关，写出的字节也一个不差，分法只改这一页
+    /// 待在内存里还是临时文件里。认下它是因为另一头更贵：要让分法确定，存入就得按页序串起来，
+    /// 而那正是计算层满核要拆掉的东西。
+    pub fn insert(&mut self, page: Block) -> Result<usize> {
+        let Block { size, block, raw } = page;
         let length = block.len() as u64;
         let resident = self.usage.resident + length <= self.usage.budget.bytes();
         // 先落定，后记账：溢写写盘失败时，用量不该记下一页其实并不存在的缓存。
@@ -222,17 +250,14 @@ impl PageCache {
             (Retention::Keep, false) => Stored::Spilled(self.spill()?.append(&block)?),
         };
         self.usage.pages += 1;
-        self.usage.raw += image.pixels().len() as u64;
+        self.usage.raw += raw;
         self.usage.stored += length;
         if resident {
             self.usage.resident += length;
         } else {
             self.usage.spilled += length;
         }
-        self.entries.push(Entry {
-            size: image.size(),
-            stored,
-        });
+        self.entries.push(Entry { size, stored });
         Ok(self.entries.len() - 1)
     }
 
@@ -366,7 +391,7 @@ mod tests {
             let image = page(Size::new(64, 48));
             let mut cache = PageCache::spilling_into(budget, Retention::Keep, spill_dir.path());
 
-            let index = cache.store(&image).expect("存一页");
+            let index = cache.insert(compress(&image)).expect("存一页");
             let restored = cache.load(index).expect("取回那一页");
 
             assert_eq!(restored.size(), image.size(), "预算 {budget}");
@@ -388,12 +413,14 @@ mod tests {
 
         let mut measured =
             PageCache::spilling_into(CacheBudget::default(), Retention::Keep, spill_dir.path());
-        measured.store(&pages[0]).expect("量第一页压完有多大");
+        measured
+            .insert(compress(&pages[0]))
+            .expect("量第一页压完有多大");
         let budget = CacheBudget::new(measured.usage().stored);
 
         let mut cache = PageCache::spilling_into(budget, Retention::Keep, spill_dir.path());
         for image in &pages {
-            cache.store(image).expect("存一页");
+            cache.insert(compress(image)).expect("存一页");
         }
 
         let usage = cache.usage();
@@ -418,7 +445,9 @@ mod tests {
         let spill_dir = tempfile::tempdir().expect("建溢写目录");
         let mut cache =
             PageCache::spilling_into(CacheBudget::new(0), Retention::Keep, spill_dir.path());
-        cache.store(&page(Size::new(64, 48))).expect("存一页");
+        cache
+            .insert(compress(&page(Size::new(64, 48))))
+            .expect("存一页");
         assert!(cache.usage().spilled > 0, "这一页没有溢写，下面就白测了");
         // Unix 上文件已经 unlink，此刻目录就已经是空的；Windows 上要等句柄关闭。
         #[cfg(unix)]
@@ -446,7 +475,7 @@ mod tests {
         let mut cache =
             PageCache::spilling_into(CacheBudget::new(0), Retention::Account, spill_dir.path());
 
-        let index = cache.store(&image).expect("量一页");
+        let index = cache.insert(compress(&image)).expect("量一页");
 
         let usage = cache.usage();
         assert_eq!(usage.pages, 1);
@@ -476,7 +505,7 @@ mod tests {
         let usage = |retention| {
             let mut cache = PageCache::spilling_into(budget, retention, spill_dir.path());
             for image in &pages {
-                cache.store(image).expect("存一页");
+                cache.insert(compress(image)).expect("存一页");
             }
             cache.usage()
         };

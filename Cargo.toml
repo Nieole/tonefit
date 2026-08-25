@@ -27,6 +27,18 @@ toml = "1.1.4"
 walkdir = "2.5.0"
 zip = "8"
 
+# 介质探测在 Windows 上要问存储栈本身有没有寻道惩罚（ADR 0009：介质按路径探测），
+# 而那条路只有 DeviceIoControl 走得通。Linux 那一侧靠 sysfs，纯 std 就够，不必再引一个包。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Ioctl",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming",
+] }
+
 [features]
 ssimulacra2 = ["dep:ssimulacra2"]
 

@@ -17,20 +17,27 @@ mod encode;
 mod envelope;
 mod geometry;
 mod gray;
+mod medium;
 mod metadata;
 mod metric;
 mod profile;
+mod progress;
 mod quantize;
+mod read;
 mod report;
 mod request;
 mod resample;
 mod sink;
 mod source;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail};
+use rayon::prelude::*;
 
 pub use cache::{CacheBudget, CacheUsage};
 pub use color::PageColor;
@@ -38,8 +45,10 @@ pub use decide::{CandidateScore, Reason, Verdict};
 pub use envelope::Envelope;
 pub use geometry::{GeometryGate, Size};
 pub use gray::GrayImage;
+pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Reference, Score, score};
 pub use profile::{Panel, Profile, Threshold};
+pub use progress::{Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{PageBranch, PageOutcome, PageReport, Report, VolumeReport, VolumeVerdict};
 pub use request::{Mode, Request};
@@ -58,15 +67,60 @@ pub fn run(request: &Request) -> Result<Report> {
     for input in &request.inputs {
         ensure_output_is_elsewhere(input, &request.output_root)?;
     }
+    // 介质**按路径**探测，一次运行共用一份缓存（ADR 0009 决定第 2 条，见 `medium`）：
+    // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
+    let mut probes = medium::Probes::new();
     let volumes = request
         .inputs
         .iter()
-        .map(|input| process_volume(input, request))
+        .map(|input| {
+            let medium = probes.medium(input);
+            process_volume(input, request, medium)
+        })
         .collect::<Result<Vec<_>>>()?;
     Ok(Report {
         profile: request.profile.clone(),
         volumes,
     })
+}
+
+/// 这一卷要走多少步（spec 的 story 30）。
+///
+/// 三段：幂等这一道读全部成员，第一遍走每一页，第二遍写全部成员。各自可能不在——
+/// `--no-metadata` 关掉第一段（那时既没有记录可写也没有依据可比），dry-run 没有第三段
+/// （一个文件都不落盘）。因此按**这一趟真要做的事**算，而不是按一个固定的倍数：
+/// 不然进度条会停在某个百分比上再也不动。
+///
+/// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
+/// 剩下的由 `Progress::volume_finished` 一次性了结。
+fn volume_steps(volume: &Volume, request: &Request) -> u64 {
+    let members = (volume.pages.len() + volume.extras.len()) as u64;
+    let fingerprint = if request.metadata { members } else { 0 };
+    let write = if request.mode == Mode::Process {
+        members
+    } else {
+        0
+    };
+    fingerprint + volume.pages.len() as u64 + write
+}
+
+/// 锁上这一卷的缓存。
+///
+/// 中毒了照样用：里面是这一卷的账本，而一条计算线程恐慌不该让其余每一条跟着恐慌——
+/// 那会把一处失败放大成整趟失败，真正的恐慌还被「锁中毒了」这句话盖住。
+/// 与读取层那道闸同一条规矩（见 `read` 的 `Throttle::lock`）。
+fn lock(cache: &Mutex<cache::PageCache>) -> MutexGuard<'_, cache::PageCache> {
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 计算层这一趟摊得开多少条。
+///
+/// 取核数：rayon 的默认线程池就是照这个数建的，读取层无谓比它派得更多——读得再快，
+/// 也没有更多的核去消化（见 `read`）。
+fn cores() -> usize {
+    num_cpus::get().max(1)
 }
 
 /// 隔离目录在输出根下的名字（12 号票：含失败页的卷输出到隔离目录）。
@@ -96,7 +150,10 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// **隔离的卷不被幂等跳过**：跳过只认干净的那个去处（见 [`can_skip`]）。这是有意的——
 /// 那不是一份做完了的输出，而失败清单每一趟都要重新给得出来（spec 的 story 26）。
 /// 代价是有坏页的卷每趟都重做一遍，直到坏页被修好。
-fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
+///
+/// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
+/// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
+fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<VolumeReport> {
     let mut volume = source::open(input)?;
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
@@ -104,14 +161,20 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     let targets = page_targets(&volume);
     ensure_one_member_per_output(&volume, &targets)?;
 
+    let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
+    let writes = request.mode == Mode::Process;
+    let steps = progress::Steps::new(request.progress.as_ref());
+    steps.started(&volume.root, volume_steps(&volume, request));
+
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     let fingerprint = request
         .metadata
-        .then(|| volume_fingerprint(&mut volume, request))
+        .then(|| volume_fingerprint(&mut volume, request, &io, steps))
         .transpose()?;
     if let Some(fingerprint) = &fingerprint
         && can_skip(&clean, &volume, &targets, fingerprint)
     {
+        steps.finished();
         return Ok(VolumeReport {
             volume: volume.root,
             output: clean,
@@ -124,6 +187,7 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
             gate: None,
             cache: CacheUsage::new(request.cache_budget),
             decodes: 0,
+            io,
         });
     }
 
@@ -132,14 +196,18 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         Mode::Process => cache::Retention::Keep,
         Mode::DryRun => cache::Retention::Account,
     };
-    let mut cache = cache::PageCache::new(request.cache_budget, retention);
-    let mut decoder = decode::Decoder::new();
+    // 缓存与解码计数是计算层唯一共用的两样东西：一个要串起来（账本只有一本），
+    // 一个是原子加。贵的那几步——解码、缩放、判据、压缩——全在锁外。
+    let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
+    let decoder = decode::Decoder::new();
     let scored = first_pass(
         &mut volume,
         request,
-        &mut cache,
-        &mut decoder,
+        &cache,
+        &decoder,
         fingerprint.as_ref(),
+        &io,
+        steps,
     )?;
 
     let (verdicts, verdict) = summarize_volume(&scored.pages, request);
@@ -153,26 +221,32 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
     let superseded = superseded(&elsewhere);
 
     // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
-    if request.mode == Mode::Process {
+    if writes {
         let mut sink = Sink::create(&output, volume.container)?;
         let recorder = fingerprint
             .as_ref()
             .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
+        let encode = Encode {
+            uniform,
+            cache: &cache,
+            recorder: recorder.as_ref(),
+        };
         second_pass(
             &scored.pages,
             &verdicts,
             &targets,
-            uniform,
-            &mut cache,
+            &encode,
             &mut sink,
-            recorder.as_ref(),
+            steps,
         )?;
         for extra in &volume.extras {
             let bytes = volume.reader.read(extra)?;
             sink.write_extra(&extra.relative, &bytes)?;
+            steps.step();
         }
         sink.finish()?;
     }
+    steps.finished();
 
     let pages = scored
         .pages
@@ -190,8 +264,9 @@ fn process_volume(input: &Path, request: &Request) -> Result<VolumeReport> {
         pages,
         verdict,
         gate: Some(scored.gate),
-        cache: cache.usage(),
+        cache: lock(&cache).usage(),
         decodes: decoder.decodes(),
+        io,
     })
 }
 
@@ -464,21 +539,125 @@ struct Scored {
 /// **读不出、解不出的页在这里变成失败页**（12 号票），而不是让整卷的调用返回 `Err`。
 /// 它同样不参与几何门，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
 /// 没有像素可求判据，也没有像素可缓存。它留下的只有一条原因，等第二遍给它留一张白页。
+///
+/// **读取与计算在这里分成两层**（13 号票，见 `read` 与 `medium`）：读取按介质定并发度，
+/// 计算走 rayon 满核，两层之间是一道按在途字节背压的有界通道。页因此**乱序算完**，
+/// 页序在收尾处按序号归位——除此之外，这一遍的产物与一页一页顺着做完全相同。
 fn first_pass(
     volume: &mut Volume,
     request: &Request,
-    cache: &mut cache::PageCache,
-    decoder: &mut decode::Decoder,
+    cache: &Mutex<cache::PageCache>,
+    decoder: &decode::Decoder,
     fingerprint: Option<&Fingerprint>,
+    io: &IoPlan,
+    steps: progress::Steps,
 ) -> Result<Scored> {
-    let panel = request.profile.panel();
-    let mut gate = GeometryGate::Holds;
-    let mut allowed = candidates(request, gate)?;
-    let mut pages: Vec<ScoredPage> = Vec::with_capacity(volume.pages.len());
-    for (index, page) in volume.pages.iter().enumerate() {
-        let source = volume.identity(page);
-        let read = volume.reader.read(page).and_then(|bytes| {
-            decoder
+    // 两套候选集在碰卷之前就备好：门一关，算到那一页的线程当场换用另一套。
+    // 候选集只看门成不成立、不看是哪一页关的，序号在这里因此随便填一个。
+    let holds = candidates(request, GeometryGate::Holds)?;
+    let broken = candidates(request, GeometryGate::Broken { page: 0 });
+
+    // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
+    let sources: Vec<PathBuf> = volume
+        .pages
+        .iter()
+        .map(|page| volume.identity(page))
+        .collect();
+    let Volume { pages, reader, .. } = volume;
+    let members: Vec<&Member> = pages.iter().collect();
+
+    let breaker = AtomicUsize::new(GATE_HOLDS);
+    let compute = Compute {
+        request,
+        decoder,
+        cache,
+        fingerprint,
+        holds: &holds,
+        broken: &broken,
+        breaker: &breaker,
+        steps,
+    };
+    let mut scored: Vec<(usize, Result<ScoredPage>)> =
+        read::reads(reader, &members, io.readers, read::BUDGET)
+            .par_bridge()
+            .map(|read| {
+                let index = read.index;
+                (index, compute.page(index, &sources[index], read.bytes))
+            })
+            .collect();
+    // 计算层乱序完成，页序在这里归位。往后每一处「第 n 页」都指得回同一页。
+    scored.sort_by_key(|(index, _)| *index);
+    // 归位**之后**才短路取错，因此报出来的是序号最小的那一页出的错，不是最先撞上的那一页——
+    // 与几何门指名道姓那一条同一个道理（见下）：换一次调度就换一句错误的报告等于没有报告。
+    // 代价是一页出错时整卷仍会算完，而这一支上整卷本来就要作废，省下的那点算力买不到什么。
+    let mut pages: Vec<ScoredPage> = scored
+        .into_iter()
+        .map(|(_, page)| page)
+        .collect::<Result<Vec<_>>>()?;
+
+    // 关上门的是**序号最小**的那一页，不是最先算完的那一页：并发下这两个不是同一页，
+    // 而报告里指名道姓的那一页必须与顺着做时是同一个答案。
+    let gate = match breaker.load(Ordering::Relaxed) {
+        GATE_HOLDS => GeometryGate::Holds,
+        page => GeometryGate::Broken { page },
+    };
+    let allowed = match gate {
+        GeometryGate::Holds => holds,
+        GeometryGate::Broken { page } => {
+            broken.with_context(|| format!("{} 这一页关上了几何门", sources[page].display()))?
+        }
+    };
+    // 门关得晚时，早算完的那几页多求了几个抖动候选：按最终那一套统一裁一遍。
+    // **「候选集全卷同一套」到汇总看见它的时候必须成立**——上包络与迟滞靠的正是这一条，
+    // 而裁在这里而不是各线程自己裁，结果就不随线程的先后而变。
+    for page in &mut pages {
+        if let Outcome::Processed {
+            branch: Branch::Gray { scores, .. },
+            ..
+        } = &mut page.outcome
+        {
+            scores.retain(|scored| allowed.contains(&scored.candidate));
+        }
+    }
+    Ok(Scored { pages, gate })
+}
+
+/// 几何门还开着时 [`Compute::breaker`] 里放的那个数。真实页序永远到不了它。
+const GATE_HOLDS: usize = usize::MAX;
+
+/// 第一遍上每条计算线程共用的那一摊。
+///
+/// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成八个参数，
+/// 闭包的捕获清单就得逐个写一遍，而漏掉一个的报错在 rayon 那一层读起来毫无线索。
+struct Compute<'a> {
+    request: &'a Request,
+    decoder: &'a decode::Decoder,
+    /// 缓存的账本只有一本，因此非串起来不可。压缩在锁外做（见 `cache::compress`）。
+    cache: &'a Mutex<cache::PageCache>,
+    fingerprint: Option<&'a Fingerprint>,
+    /// 几何门开着时的候选集。
+    holds: &'a [Candidate],
+    /// 几何门关上之后的候选集。覆盖项把它裁空时是 `Err`——那一趟注定要报错，
+    /// 但报在哪一页上要等全卷走完才定得下来（见 [`first_pass`] 收尾）。
+    broken: &'a Result<Vec<Candidate>>,
+    /// 关上门的那一页的序号，取最小的那个；[`GATE_HOLDS`] 即门还开着。
+    breaker: &'a AtomicUsize,
+    steps: progress::Steps<'a>,
+}
+
+impl Compute<'_> {
+    /// 算一页：解码 → 彩页识别 → 分流。语义与顺着做时逐字相同，见 [`first_pass`]。
+    fn page(&self, index: usize, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
+        let page = self.branch(index, source, bytes)?;
+        self.steps.step();
+        Ok(page)
+    }
+
+    fn branch(&self, index: usize, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
+        let request = self.request;
+        let panel = request.profile.panel();
+        let read = bytes.and_then(|bytes| {
+            self.decoder
                 .decode(&bytes)
                 .with_context(|| format!("解 {} 这一页", source.display()))
         });
@@ -487,13 +666,12 @@ fn first_pass(
             // 一张坏图不毁掉整卷（spec 的 story 24）：记下原因就走，
             // 第二遍拿卷内统一尺寸给它留一张白页，整卷进隔离目录。
             Err(error) => {
-                pages.push(ScoredPage {
-                    source,
+                return Ok(ScoredPage {
+                    source: source.to_path_buf(),
                     outcome: Outcome::Failed {
                         reason: format!("{error:#}"),
                     },
                 });
-                continue;
             }
         };
         let color = color::identify(&decoded);
@@ -505,13 +683,13 @@ fn first_pass(
             // dry-run 一个文件都不落盘，编出来的字节没人要。
             let encoded = match request.mode {
                 Mode::Process => Some(
-                    encode::color_png(&scaled, fingerprint.map(Record::color).as_ref())
+                    encode::color_png(&scaled, self.fingerprint.map(Record::color).as_ref())
                         .with_context(|| format!("编 {} 这一页", source.display()))?,
                 ),
                 Mode::DryRun => None,
             };
-            pages.push(ScoredPage {
-                source,
+            return Ok(ScoredPage {
+                source: source.to_path_buf(),
                 outcome: Outcome::Processed {
                     size,
                     scaling,
@@ -519,42 +697,45 @@ fn first_pass(
                     branch: Branch::Color { encoded },
                 },
             });
-            continue;
         }
 
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
-        if gate.holds() && !geometry::one_to_one(size, panel.resolution) {
-            gate = GeometryGate::Broken { page: index };
-            allowed = candidates(request, gate)
-                .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
-            for earlier in &mut pages {
-                if let Outcome::Processed {
-                    branch: Branch::Gray { scores, .. },
-                    ..
-                } = &mut earlier.outcome
-                {
-                    scores.retain(|scored| allowed.contains(&scored.candidate));
-                }
-            }
+        if !geometry::one_to_one(size, panel.resolution) {
+            // 门关得越早，白求的判据越少：先记下，再去问该用哪一套候选。
+            self.breaker.fetch_min(index, Ordering::Relaxed);
         }
+        let allowed = self.allowed();
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
         let reference = Reference::new(panel, scaled);
-        let scores = candidate_scores(&reference, &allowed);
-        let slot = cache
-            .store(reference.image())
+        let scores = candidate_scores(&reference, allowed);
+        let block = cache::compress(reference.image());
+        let slot = lock(self.cache)
+            .insert(block)
             .with_context(|| format!("缓存 {} 这一页", source.display()))?;
-        pages.push(ScoredPage {
-            source,
+        Ok(ScoredPage {
+            source: source.to_path_buf(),
             outcome: Outcome::Processed {
                 size,
                 scaling,
                 color,
                 branch: Branch::Gray { scores, slot },
             },
-        });
+        })
     }
-    Ok(Scored { pages, gate })
+
+    /// 此刻该拿哪一套候选去求判据。
+    ///
+    /// 只是个**省力**的近似：门关上的那一刻，已经在算的页可能还在用旧的那一套。
+    /// 收尾处按最终的门统一裁一遍，结果因此与这里读到的先后无关（见 [`first_pass`]）。
+    fn allowed(&self) -> &[Candidate] {
+        if self.breaker.load(Ordering::Relaxed) == GATE_HOLDS {
+            return self.holds;
+        }
+        // 门关了，而覆盖项把剩下的候选裁空：这一趟注定要报错，判据求了也没人看。
+        // 一个候选都不给，白算的那一份就省下了。
+        self.broken.as_deref().unwrap_or(&[])
+    }
 }
 
 /// 第二遍：灰度页从缓存读 → 量化 → 编码，彩页取第一遍编好的字节，失败页留一张白页，
@@ -573,16 +754,59 @@ fn first_pass(
 ///
 /// 这一遍出的错仍然是卷级的错，不再变成失败页：它们不是坏图，是磁盘、内存与输出容器出了事，
 /// 换一页重试也躲不过去。
+/// **量化与编码满核跑，写出仍按阅读顺序**（13 号票）。两件事之所以分得开：编一页是纯计算、
+/// 每页各编各的，而写出有次序——归档卷的成员按写入顺序排，乱一位就得让阅读器跳着读
+/// （理由与彩页为什么不在第一遍写出是同一条）。
+///
+/// 一批编完再写一批，批量取核数：编好的字节要等到轮到它才写得出去，这一批就是它们在内存里
+/// 排队的长度，因此**有界**——一页 PNG 中位不到 1 MB（measurements 的《B 类位深实测》），
+/// 满核也就十几 MB。不分批而是一口气全编，那一摊就随卷长，正是有界通道要拦的东西。
 fn second_pass(
     pages: &[ScoredPage],
     verdicts: &[Option<Verdict>],
     targets: &[PathBuf],
-    uniform: Size,
-    cache: &mut cache::PageCache,
+    encode: &Encode,
     sink: &mut Sink,
-    recorder: Option<&Recorder>,
+    steps: progress::Steps,
 ) -> Result<()> {
-    for ((page, verdict), relative) in pages.iter().zip(verdicts).zip(targets) {
+    let work: Vec<(&ScoredPage, Option<Verdict>, &PathBuf)> = pages
+        .iter()
+        .zip(verdicts)
+        .zip(targets)
+        .map(|((page, verdict), relative)| (page, *verdict, relative))
+        .collect();
+    for batch in work.chunks(cores()) {
+        let encoded: Vec<Cow<'_, [u8]>> = batch
+            .par_iter()
+            .map(|(page, verdict, _)| encode.page(page, *verdict))
+            .collect::<Result<Vec<_>>>()?;
+        for ((_, _, relative), bytes) in batch.iter().zip(&encoded) {
+            sink.write_page(relative, bytes)?;
+            steps.step();
+        }
+    }
+    Ok(())
+}
+
+/// 第二遍上每条计算线程共用的那一摊，与第一遍的 [`Compute`] 同一个用意。
+struct Encode<'a> {
+    /// 失败页按它出（12 号票的卷内统一尺寸）。
+    uniform: Size,
+    cache: &'a Mutex<cache::PageCache>,
+    recorder: Option<&'a Recorder<'a>>,
+}
+
+impl Encode<'_> {
+    /// 一页写出去的那串字节。三种页各有各的来路，但出来的都是一页 PNG。
+    ///
+    /// 出的是 [`Cow`]：彩页的字节第一遍就编好了，这里**借**它而不是复制一份。
+    /// 那一摊本来就不受 `--cache-budget` 约束（ADR 0010），再翻一倍不合适。
+    fn page<'p>(&self, page: &'p ScoredPage, verdict: Option<Verdict>) -> Result<Cow<'p, [u8]>> {
+        let Self {
+            uniform,
+            cache,
+            recorder,
+        } = *self;
         let source = page.source.display();
         match &page.outcome {
             Outcome::Failed { .. } => {
@@ -591,34 +815,33 @@ fn second_pass(
                 // 位深是编码属性（`CONTEXT.md`），而整页只有一个取值时 1bit 恰好装得下它；
                 // 换个更宽的档也写不出别的字节，编码器那一层照旧会挑最窄的（ADR 0004）。
                 let record = recorder.map(Recorder::failed);
-                let encoded = encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
-                    .with_context(|| format!("编 {source} 这一页的占位页"))?;
-                sink.write_page(relative, &encoded)?;
+                encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
+                    .map(Cow::Owned)
+                    .with_context(|| format!("编 {source} 这一页的占位页"))
             }
             Outcome::Processed {
                 branch: Branch::Color { encoded },
                 ..
-            } => {
-                let bytes = encoded.as_deref().expect("照做的那一遍第一遍就编过彩页");
-                sink.write_page(relative, bytes)?;
-            }
+            } => Ok(Cow::Borrowed(
+                encoded.as_deref().expect("照做的那一遍第一遍就编过彩页"),
+            )),
             Outcome::Processed {
                 branch: Branch::Gray { slot, .. },
                 ..
             } => {
                 let verdict = verdict.expect("灰度路径上必有判定");
-                let reference = cache
+                // 取页要动缓存那本账，因此在锁里；量化与编码在锁外——贵的是后两件。
+                let reference = lock(cache)
                     .load(*slot)
                     .with_context(|| format!("从缓存取 {source} 这一页"))?;
                 let quantized = quantize::quantize(&reference, verdict.candidate);
                 let record = recorder.map(|recorder| recorder.gray(verdict));
-                let encoded = encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
-                    .with_context(|| format!("编 {source} 这一页"))?;
-                sink.write_page(relative, &encoded)?;
+                encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
+                    .map(Cow::Owned)
+                    .with_context(|| format!("编 {source} 这一页"))
             }
         }
     }
-    Ok(())
 }
 
 /// 本次调用在这一卷上的幂等依据（ADR 0006：同一批 tEXt 字段兼作幂等依据）。
@@ -629,22 +852,34 @@ fn second_pass(
 /// 彩页在第一遍就编好并写进 tEXt（ADR 0010），那一刻卷级哈希必须已经齐了。
 /// 换来的是命中时一趟都不用做——多读一遍字节，省掉的是整卷的解码、缩放、判据与编码。
 /// `--no-metadata` 连这一遍都不读：那时既没有记录可写，也没有依据可比。
-fn volume_fingerprint(volume: &mut Volume, request: &Request) -> Result<Fingerprint> {
+///
+/// 它走的是与第一遍同一个[读取层](read)，因此在没有寻道惩罚的盘上这一遍也是并发读的。
+/// 喂哈希那一端仍**严格按成员次序**——源哈希是有序的，乱一位整卷的指纹就变了，
+/// 而读取层交付本来就有序（见 `read` 的模块头）。
+fn volume_fingerprint(
+    volume: &mut Volume,
+    request: &Request,
+    io: &IoPlan,
+    steps: progress::Steps,
+) -> Result<Fingerprint> {
     let Volume {
         pages,
         extras,
         reader,
         ..
     } = volume;
+    let members: Vec<&Member> = pages.iter().chain(extras.iter()).collect();
     let mut hasher = metadata::SourceHasher::new();
-    for member in pages.iter().chain(extras.iter()) {
+    for read in read::reads(reader, &members, io.readers, read::BUDGET) {
+        let relative = &members[read.index].relative;
         // 读不出字节的成员在这一遍不算失败：它在第一遍里才变成失败页（12 号票），
         // 而这一遍排在第一遍之前。这里把它记成「读不出来」照样喂进哈希——
         // 拦在这里，一个坏成员就会毁掉整卷，正是本票要拆掉的那件事。
-        match reader.read(member) {
-            Ok(bytes) => hasher.member(&member.relative, &bytes),
-            Err(_) => hasher.unreadable(&member.relative),
+        match &read.bytes {
+            Ok(bytes) => hasher.member(relative, bytes),
+            Err(_) => hasher.unreadable(relative),
         }
+        steps.step();
     }
     Ok(Fingerprint::new(request, hasher.finish()))
 }

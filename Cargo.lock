@@ -1787,6 +1787,7 @@ dependencies = [
  "thiserror",
  "toml",
  "walkdir",
+ "windows-sys",
  "zip",
 ]
 
