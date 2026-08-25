@@ -250,7 +250,8 @@ impl PageCache {
             Stored::Memory(block) => return unpack(block, size, pixels, index),
             Stored::Spilled(slot) => *slot,
             Stored::Measured => bail!(
-                "这一遍的缓存只记账、不留页：第 {index} 页取不回来。                 dry-run 没有第二遍，取页说明调用方走错了路"
+                "这一遍的缓存只记账、不留页：第 {index} 页取不回来。\
+                 dry-run 没有第二遍，取页说明调用方走错了路"
             ),
         };
         let spill = self.spill.as_mut().expect("有溢写记录就有溢写文件");
