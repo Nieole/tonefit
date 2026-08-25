@@ -2,3 +2,6 @@
 
 # 本机路径，由各自的 .cargo/config.toml 或环境变量提供
 /.cargo/config.toml
+
+# 真实漫画样本，仅本地暂存
+/_samples/
