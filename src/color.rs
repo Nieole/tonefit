@@ -197,28 +197,61 @@ mod tests {
 
     use image::{ImageBuffer, Luma, Rgb, Rgba};
 
-    const SIZE: (u32, u32) = (64, 64);
+    /// 夹具页的尺寸：100×200，两万像素。取这个数是为了让覆盖率有个整数落点，
+    /// 下面那些写死的像素计数因此读得出它占全页的百分之几。
+    const SIZE: Size = Size::new(100, 200);
 
-    /// 这一页的像素数。
-    const PIXELS: u32 = SIZE.0 * SIZE.1;
+    /// 把这一页判成彩页要的带色像素**个数**：**写死**的 100，占两万像素的 0.5%。
+    ///
+    /// 从 [`COLORED_FRACTION`] 反算出来的夹具对任何门限都恒真——门限取 0.005 还是 0.1，
+    /// 用例一样绿。写死之后两个数各站一边：门限一动，下面那一对等号就对不上，
+    /// 改门限的人必须在这里重新挑一个数，而挑的时候得说出为什么。
+    /// [`NOISE_CHROMA`] 到 [`PAINT_CHROMA`] 那几级色度同理。
+    const COLORED_PIXELS_NEEDED: u32 = 100;
 
-    /// 恰好够把这一页判成彩页的带色像素数。用判据本身算出来，不抄那个占位数字。
-    fn just_enough_colored() -> u32 {
-        (f64::from(PIXELS) * COLORED_FRACTION).ceil() as u32
-    }
+    /// 有损转码给消色像素添上的色度幅度，写死的一级。地板之下。
+    const NOISE_CHROMA: u8 = 12;
+
+    /// 恰好落在地板上的那一级色度，写死。名字不与 [`CHROMA_FLOOR`] 同形是有意的：
+    /// 一个是被测的门限，一个是夹具挑的幅度，两者在同一屏里读不该要多看一眼。
+    const CHROMA_AT_FLOOR: u8 = 16;
+
+    /// 半页彩绘用的色度幅度，写死。只比地板高四级——彩绘不必饱和，
+    /// 地板抬高一点就会把这一页整张丢了颜色。
+    const PAINT_CHROMA: u8 = 20;
 
     /// 一张 RGB 编码的图，像素由 `pixel` 给出。
     fn rgb(pixel: impl Fn(u32, u32) -> [u8; 3]) -> DynamicImage {
-        DynamicImage::ImageRgb8(ImageBuffer::from_fn(SIZE.0, SIZE.1, |x, y| {
+        DynamicImage::ImageRgb8(ImageBuffer::from_fn(SIZE.width, SIZE.height, |x, y| {
             Rgb(pixel(x, y))
         }))
     }
 
     /// 灰度编码的一页。
     fn luma(level: impl Fn(u32, u32) -> u8) -> DynamicImage {
-        DynamicImage::ImageLuma8(ImageBuffer::from_fn(SIZE.0, SIZE.1, |x, y| {
+        DynamicImage::ImageLuma8(ImageBuffer::from_fn(SIZE.width, SIZE.height, |x, y| {
             Luma([level(x, y)])
         }))
+    }
+
+    /// 亮度在 `level` 上下、色度恰好是 `chroma` 的一个像素。
+    ///
+    /// 色度是三分量的极差（见 [`chroma`]），把 `chroma` 在绿蓝两路上分摊开就得到它。
+    /// `level` 要留得下这点摆幅，夹具都取在 28..=228 之间。
+    fn with_chroma(level: u8, chroma: u8) -> [u8; 3] {
+        debug_assert!((28..=228).contains(&level), "亮度留不下这点摆幅");
+        [level, level - chroma / 2, level + chroma.div_ceil(2)]
+    }
+
+    /// 一页灰底，按行优先的前 `count` 个像素换成饱和的红。覆盖率就是 `count` 除以两万。
+    fn colored_pixels(count: u32) -> DynamicImage {
+        rgb(|x, y| {
+            if y * SIZE.width + x < count {
+                [255, 0, 0]
+            } else {
+                [128, 128, 128]
+            }
+        })
     }
 
     /// 识别看的是**像素里有没有颜色**，不是文件用了几个通道。
@@ -227,63 +260,112 @@ mod tests {
     /// 《B 类素材普查》）：只看颜色类型，那 97% 会整批被判成彩页。
     #[test]
     fn a_page_is_color_only_when_its_pixels_carry_color() {
-        assert_eq!(identify(&luma(|_, y| (y * 4) as u8)), PageColor::Gray);
+        let level = |y: u32| (y * 255 / (SIZE.height - 1)) as u8;
+        assert_eq!(identify(&luma(|_, y| level(y))), PageColor::Gray);
         assert_eq!(
-            identify(&rgb(|x, _| if x < 32 { [255, 0, 0] } else { [0, 0, 255] })),
+            identify(&rgb(|x, _| if x < SIZE.width / 2 {
+                [255, 0, 0]
+            } else {
+                [0, 0, 255]
+            })),
             PageColor::Color
         );
         // 三个分量相等的 RGB 图是灰度页，哪怕文件里写着三个通道。
-        let level = |y: u32| (y * 4) as u8;
-        assert_eq!(
-            identify(&rgb(|_, y| [level(y), level(y), level(y)])),
-            PageColor::Gray
-        );
+        assert_eq!(identify(&rgb(|_, y| [level(y); 3])), PageColor::Gray);
     }
 
-    /// 有损转码给灰度源添上的色度不该把它变成彩页。
+    /// 一整页近灰、每个像素都带着一点转码噪声，仍然是灰度页。
     ///
     /// B 类素材整批是 8bit YUV420 的有损 AVIF（见 measurements 的《B 类素材普查》）：
-    /// 色度子采样与量化让消色像素解回来带上几级色度。识别因此有一道**地板**，
-    /// 不是「色度非零」。`CONTEXT.md` 的《尚未确立》记着「有损转码源的行为」这个洞，
-    /// 这道地板的高度就在洞里——它是未标定占位值。
+    /// 色度子采样与量化让消色像素解回来带上几级色度。这一页噪声铺满全幅，
+    /// **覆盖率那一维一点忙都帮不上**，拦住它的只有地板——地板降到 [`NOISE_CHROMA`]
+    /// 以下，这 97% 的素材就整批被判成彩页。
+    ///
+    /// `CONTEXT.md` 的《尚未确立》记着「有损转码源的行为」这个洞，地板的高度就在洞里。
     #[test]
-    fn the_chroma_a_lossy_transcode_adds_does_not_make_a_page_color() {
-        let noise = CHROMA_FLOOR - 1;
+    fn a_near_gray_page_with_transcode_noise_stays_gray() {
         let noisy = rgb(|x, y| {
             let level = ((x + y) % 200 + 28) as u8;
-            [level, level - noise / 2, level + noise / 2]
+            // 噪声幅度逐像素在 0..=NOISE_CHROMA 之间跳，最高那一级仍在地板之下。
+            let chroma = ((x * 7 + y * 3) % (u32::from(NOISE_CHROMA) + 1)) as u8;
+            with_chroma(level, chroma)
         });
         assert_eq!(identify(&noisy), PageColor::Gray);
-
-        // 地板上那一级算在内：闭区间，与阈值那一侧同一个取舍。
-        let floor = CHROMA_FLOOR;
-        let at_the_floor = rgb(|_, _| [128, 128 - floor / 2, 128 + floor.div_ceil(2)]);
-        assert_eq!(identify(&at_the_floor), PageColor::Color);
     }
 
-    /// 零星几个带色像素不足以让整页成为彩页：判据除了幅度还有一道覆盖率。
+    /// 一枚小面积彩色印章不足以让整页成为彩页：判据除了幅度还有一道覆盖率。
     ///
-    /// 一页灰度扫描上有几十个带色像素，来路是压缩伪影或一枚彩色印章，
-    /// 不是「这一页要保留颜色」。覆盖率同样是未标定占位值。
+    /// 印章的色度是饱和的，**幅度那一维一点忙都帮不上**，拦住它的只有覆盖率。
+    /// 一页灰度扫描上的这么一小块，来路是出版社的印记或压缩伪影，
+    /// 不是「这一页要保留颜色」。
+    ///
+    /// 当哨兵它比 [`the_colored_fraction_sits_at_a_literal_pixel_count`] 宽松——
+    /// 覆盖率降到 0.32% 以下它才红，而那一对任何改动都红。两条各有各的用处：
+    /// 那一对钉的是**这个数是多少**，这一条钉的是**这类页该判成什么**，
+    /// 覆盖率重新标定之后前者要跟着改，后者不必。
     #[test]
-    fn a_handful_of_colored_pixels_leaves_the_page_gray() {
-        let colored_pixels = |count: u32| {
-            rgb(|x, y| {
-                if y * SIZE.0 + x < count {
-                    [255, 0, 0]
-                } else {
-                    [128, 128, 128]
-                }
-            })
-        };
+    fn a_small_color_stamp_leaves_the_page_gray() {
+        // 8×8 一枚，64 个饱和红像素，占这一页的 0.32%。
+        let stamped = rgb(|x, y| {
+            if x < 8 && y < 8 {
+                [255, 0, 0]
+            } else {
+                [128, 128, 128]
+            }
+        });
+        assert_eq!(identify(&stamped), PageColor::Gray);
+    }
 
+    /// 半页彩绘是彩页：色度只比地板高四级、覆盖率只有半页，两维都过得去。
+    ///
+    /// 与上面两条反着来——那两条各钉一维拦得住什么，这一条钉两维都不该拦住什么。
+    /// 地板抬到 [`PAINT_CHROMA`] 之上，这一页就整张丢了颜色。
+    #[test]
+    fn a_half_page_painting_is_a_color_page() {
+        let painted = rgb(|_, y| {
+            if y >= SIZE.height / 2 {
+                with_chroma(150, PAINT_CHROMA)
+            } else {
+                [200, 200, 200]
+            }
+        });
+        assert_eq!(identify(&painted), PageColor::Color);
+    }
+
+    /// 色度地板落在写死的那一级上：低一级判灰，正好那一级判彩。
+    ///
+    /// 整页都带色，覆盖率那一维满格，这一对问的只有幅度。
+    /// [`CHROMA_FLOOR`] 往哪个方向动，这一对里都有一句对不上。
+    #[test]
+    fn the_chroma_floor_sits_at_a_literal_level() {
         assert_eq!(
-            identify(&colored_pixels(just_enough_colored() - 1)),
-            PageColor::Gray
+            identify(&rgb(|_, _| with_chroma(128, CHROMA_AT_FLOOR - 1))),
+            PageColor::Gray,
+            "地板下一级不该算带色"
+        );
+        // 地板上那一级算在内：闭区间，与阈值那一侧同一个取舍。
+        assert_eq!(
+            identify(&rgb(|_, _| with_chroma(128, CHROMA_AT_FLOOR))),
+            PageColor::Color,
+            "地板那一级该算带色"
+        );
+    }
+
+    /// 覆盖率落在写死的那个像素数上：少一个判灰，正好那个数判彩。
+    ///
+    /// 带色的那些像素是饱和的，幅度那一维满格，这一对问的只有覆盖率。
+    /// [`COLORED_FRACTION`] 往哪个方向动，这一对里都有一句对不上。
+    #[test]
+    fn the_colored_fraction_sits_at_a_literal_pixel_count() {
+        assert_eq!(
+            identify(&colored_pixels(COLORED_PIXELS_NEEDED - 1)),
+            PageColor::Gray,
+            "差一个像素就该还是灰度页"
         );
         assert_eq!(
-            identify(&colored_pixels(just_enough_colored())),
-            PageColor::Color
+            identify(&colored_pixels(COLORED_PIXELS_NEEDED)),
+            PageColor::Color,
+            "够了这个数就该是彩页"
         );
     }
 
@@ -293,15 +375,17 @@ mod tests {
     /// 否则一页会被判成彩页，转灰之后却与灰度页毫无二致。
     #[test]
     fn color_hidden_under_full_transparency_does_not_count() {
-        let hidden = DynamicImage::ImageRgba8(ImageBuffer::from_fn(SIZE.0, SIZE.1, |_, _| {
-            Rgba([255, 0, 0, 0])
-        }));
+        let hidden =
+            DynamicImage::ImageRgba8(ImageBuffer::from_fn(SIZE.width, SIZE.height, |_, _| {
+                Rgba([255, 0, 0, 0])
+            }));
         assert_eq!(identify(&hidden), PageColor::Gray);
 
         // 不透明的同一片红仍然是彩页。
-        let shown = DynamicImage::ImageRgba8(ImageBuffer::from_fn(SIZE.0, SIZE.1, |_, _| {
-            Rgba([255, 0, 0, 255])
-        }));
+        let shown =
+            DynamicImage::ImageRgba8(ImageBuffer::from_fn(SIZE.width, SIZE.height, |_, _| {
+                Rgba([255, 0, 0, 255])
+            }));
         assert_eq!(identify(&shown), PageColor::Color);
     }
 }

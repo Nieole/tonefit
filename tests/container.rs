@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fixtures::{Workspace, run_paths, run_paths_expecting_failure, run_volume};
+use tonefit::Size;
 
 /// 透传要逐字节一致，因此这份夹具故意带上非 ASCII 与换行。
 const COMIC_INFO: &str = "<?xml version=\"1.0\"?>\n<ComicInfo><Title>卷一</Title></ComicInfo>\n";
@@ -536,6 +537,87 @@ fn color_and_gray_pages_come_out_of_the_archive_in_reading_order() {
     assert_eq!(
         member_names(&volume.output),
         ["1.png", "2.png", "10.png", "11.png"]
+    );
+}
+
+/// 归档里每个成员装的是**它自己那一页**：尺寸与像素逐个对得上。
+///
+/// 目录卷那一侧不缺这道哨兵：`pipeline.rs` 与 `isolation.rs` 里一大批用例按
+/// `page.output` 逐页读回文件，比尺寸、比像素、比记录。归档成员没有文件系统路径，
+/// 读它只有 `fixtures::read_cbz` 一条路，而在这条用例之前没有一处用它解过页——
+/// 成员名、成员顺序、成员非空、透传字节都测过，成员**里装着什么**没人问过。
+/// 写出时让每个成员都写第一页的字节：目录那一侧红 8 条，归档这一侧只红黄金快照
+/// 那一列字节数（变异实验见 08 号票的《落地记录》）。
+///
+/// 夹具让四页两两分得开：尺寸各不相同，图案也各不相同。三张灰度页只有纯黑与纯白
+/// 两个取值（见 `fixtures::black_top_band`），因此断得起逐字节的等号；
+/// 彩页走的是彩色分支，颜色原样出去，按色带取样。
+#[test]
+fn every_archive_member_carries_its_own_pixels_at_its_own_size() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    // 三张灰度页：尺寸与黑带高度都不同，任意两张既不同形也不同图。
+    let grays = [
+        ("1.png", Size::new(160, 224), 8),
+        ("2.png", Size::new(120, 200), 96),
+        ("10.png", Size::new(200, 160), 151),
+    ];
+    // 彩页夹在中间，且尺寸也与别人不同：两条分支之间串位一样要红。
+    let color_size = Size::new(180, 240);
+    let color = fixtures::color_page(color_size);
+    for (name, size, black_rows) in grays {
+        cbz.page(name, &fixtures::black_top_band(size, black_rows));
+    }
+    cbz.page("3.png", &color)
+        .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let path = cbz.write();
+
+    let report = tonefit::run(&tonefit::Request {
+        profile: fixtures::profile("kobo-libra-colour"),
+        ..fixtures::request(&space, [path.as_path()])
+    })
+    .expect("处理应当成功");
+
+    // 归档只读回一遍：顺序与内容问的是同一批成员。
+    let in_order = fixtures::read_cbz(&report.volumes[0].output);
+    let names: Vec<&str> = in_order.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["1.png", "2.png", "3.png", "10.png", "ComicInfo.xml"]
+    );
+    let members: std::collections::HashMap<&str, &[u8]> = in_order
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+
+    for (name, size, black_rows) in grays {
+        let written = fixtures::read_png_bytes(members[name]);
+        assert_eq!(written.size, size, "{name} 的尺寸不是它自己的");
+        assert_eq!(
+            written.pixels,
+            fixtures::luma_pixels(&fixtures::black_top_band(size, black_rows)),
+            "{name} 装的不是它自己的像素"
+        );
+    }
+
+    // 彩页那一格：色带一条不少，尺寸也是它自己的。
+    let written = fixtures::read_color_png_bytes(members["3.png"]);
+    assert_eq!(written.size, color_size, "彩页的尺寸不是它自己的");
+    for (index, band) in fixtures::COLOR_BANDS.iter().enumerate() {
+        assert_eq!(
+            written.pixel(
+                color_size.width / 2,
+                fixtures::band_center_row(color_size, index)
+            ),
+            *band,
+            "彩页第 {index} 条色带"
+        );
+    }
+
+    assert_eq!(
+        members["ComicInfo.xml"],
+        COMIC_INFO.as_bytes(),
+        "透传成员装的不是它自己的字节"
     );
 }
 

@@ -119,6 +119,22 @@ pub fn solid(size: Size, level: u8) -> DynamicImage {
     }))
 }
 
+/// 白底、顶上 `black_rows` 行涂黑的一页：整页只有纯黑与纯白两个取值。
+///
+/// 这两个取值在 {1,2,4,8} 每一档上都是格点，量化与抖动对它们都是恒等；页小于面板时
+/// 又一步都不缩放。写出的像素于是与源**逐字节相同**——断言写得起等号，不必留容差。
+/// 同一卷里给每页配一个不同的 `black_rows`，页与页就两两分得开。
+pub fn black_top_band(size: Size, black_rows: u32) -> DynamicImage {
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |_, y| {
+        Luma([if y < black_rows { 0 } else { 255 }])
+    }))
+}
+
+/// 一张灰度页摊平成 8 位灰度像素，按行优先。断言「写出的与源逐字节相同」时拿它当期望值。
+pub fn luma_pixels(image: &DynamicImage) -> Vec<u8> {
+    image.to_luma8().into_raw()
+}
+
 /// 彩页：`COLOR_BANDS` 自上而下的等高色带。
 pub fn color_page(size: Size) -> DynamicImage {
     let bands = COLOR_BANDS.len() as u32;
@@ -523,8 +539,13 @@ impl DecodedColorPng {
 
 /// 用 `png` crate 直接读回一个彩色 PNG，绕开被测的编码路径。
 pub fn read_color_png(path: &Path) -> DecodedColorPng {
-    let file = fs::File::open(path).expect("打开输出 PNG");
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    read_color_png_bytes(&fs::read(path).expect("读输出 PNG"))
+}
+
+/// 同上，直接从一页 PNG 的字节里读。归档卷的页没有文件系统路径，成员字节走这里——
+/// 与 [`read_png_bytes`] 是同一种分工。
+pub fn read_color_png_bytes(bytes: &[u8]) -> DecodedColorPng {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
     let header = decoder.read_header_info().expect("读 PNG 头").clone();
     // EXPAND 把调色板摊成 RGB8。
     decoder.set_transformations(png::Transformations::EXPAND);
