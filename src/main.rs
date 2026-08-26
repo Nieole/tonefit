@@ -44,6 +44,13 @@ struct Cli {
     #[arg(long, value_name = "级数")]
     gray_levels: Option<u32>,
 
+    /// 覆盖判定用的阈值。内置值由两块面板上的盲测定出，**没有逐面板复核**——
+    /// 判据跟着面板走、不可跨面板比较（ADR 0002）。在自己那台设备上盲测出来的界填这里：
+    /// 拿 `--dry-run` 逐页读出各档判据值，把同一页的各档拷进设备目视，
+    /// 记下最低的那个**不可接受**档的判据值，界取在它之下。
+    #[arg(long, value_name = "界")]
+    threshold: Option<f32>,
+
     /// 残差段的重采样滤波器：area（= box）、bilinear、hamming、bicubic、lanczos3，默认 lanczos3。
     /// 只作用于残差段——总缩放比 ≥ 2 时的整数倍预缩那一级恒为 box。
     #[arg(long, value_name = "滤波器")]
@@ -128,11 +135,12 @@ impl Cli {
         }
     }
 
-    /// 把 `--profile` 与 `--gray-levels` 合成本次要用的 profile。
+    /// 把 `--profile`、`--gray-levels` 与 `--threshold` 合成本次要用的 profile。
     fn target_profile(&self) -> Result<Profile> {
         target_profile(
             self.profile.as_deref().expect(REQUIRED_BY_CLAP),
             self.gray_levels,
+            self.threshold,
         )
     }
 }
@@ -180,16 +188,25 @@ enum Command {
     },
 }
 
-/// 把型号名与灰阶数覆盖合成一个 profile。
+/// 把型号名与各覆盖项合成一个 profile。
 ///
-/// 处理卷与 `calibrate` 共用它：两边解析出的必须是同一个 profile，
-/// 不然标定图量的是一块面板、判定用的是另一块。
-fn target_profile(device: &str, gray_levels: Option<u32>) -> Result<Profile> {
-    let profile = Profile::resolve(device)?;
-    match gray_levels {
-        Some(gray_levels) => profile.with_gray_levels(gray_levels),
-        None => Ok(profile),
+/// 处理卷与 `calibrate` 共用它：两边解析出的必须是同一块面板，
+/// 不然标定图量的是一块、判定用的是另一块。
+///
+/// 阈值是这里唯一一项 `calibrate` 用不上的：标定图是量具，不经判定（它恒传 `None`）。
+fn target_profile(
+    device: &str,
+    gray_levels: Option<u32>,
+    threshold: Option<f32>,
+) -> Result<Profile> {
+    let mut profile = Profile::resolve(device)?;
+    if let Some(gray_levels) = gray_levels {
+        profile = profile.with_gray_levels(gray_levels)?;
     }
+    if let Some(threshold) = threshold {
+        profile = profile.with_threshold(threshold)?;
+    }
+    Ok(profile)
 }
 
 /// 有卷被隔离时的退出码。
@@ -269,7 +286,7 @@ fn execute() -> Result<u8> {
 /// 这一趟不读源、不写输出根、不判定任何东西：标定图是量具，管线一整套都不在场。
 /// 因此也没有「有卷被隔离」那种结局——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
 fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
-    let profile = target_profile(device, gray_levels)?;
+    let profile = target_profile(device, gray_levels, None)?;
     let chart = tonefit::calibration_chart(&profile)?;
     if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
@@ -749,7 +766,7 @@ mod tests {
             panic!("没解析成 calibrate 子命令");
         };
         assert_eq!(
-            target_profile(profile, *gray_levels)
+            target_profile(profile, *gray_levels, None)
                 .expect("内置型号")
                 .device(),
             "kobo-libra-2"
@@ -812,7 +829,7 @@ mod tests {
         };
 
         assert_eq!(
-            target_profile(profile, *gray_levels)
+            target_profile(profile, *gray_levels, None)
                 .expect("内置型号")
                 .panel()
                 .gray_levels,
@@ -1025,8 +1042,8 @@ mod tests {
             )),
             "{text}"
         );
-        // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它还没标定。
-        assert!(text.contains("阈值 8.500（未标定占位值）"), "{text}");
+        // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它是怎么定出来的。
+        assert!(text.contains("阈值 5.500（盲测标定于 boox-poke6，其余面板未复核）"), "{text}");
         // 判据那一栏的每个数都是分块聚合收出来的，而聚合里的 K 同样没标定——
         // 不说出来，读的人无从判断这一栏该信到什么程度（02 号票，ADR 0002 决定第 3 条）。
         // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——

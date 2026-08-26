@@ -52,7 +52,7 @@ pub use geometry::{GeometryGate, Size};
 pub use gray::GrayImage;
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Aggregation, Reference, Score, aggregation, score};
-pub use profile::{Panel, Profile, Threshold};
+pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{

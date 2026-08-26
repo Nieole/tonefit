@@ -1099,9 +1099,13 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
         fixtures::verdict(&pages[0]).candidate.bit_depth,
         BitDepth::Four
     );
+    // 卷内有页小于目标尺寸，几何门整卷不成立，抖动跟着关掉（ADR 0007）——候选上界因此
+    // 降为 4bit **不抖**，而连续渐变页在那一档上过不了标定后的界。判定仍落在 4bit，
+    // 因为它是上界；理由是兜底，不是「阈值内最低的一档」。报告说出这一点，
+    // 正是它该做的：这一页没有一档达标，而不是达标了。
     assert_eq!(
         fixtures::verdict(&pages[0]).reason,
-        Reason::LowestWithinThreshold
+        Reason::NoneWithinThreshold
     );
     assert_eq!(
         fixtures::verdict(&pages[1]).candidate.bit_depth,
@@ -1349,11 +1353,20 @@ fn dithering_can_bring_a_page_back_within_the_threshold() {
 }
 
 #[test]
-fn the_threshold_says_it_has_not_been_calibrated() {
-    // spec 的 Further Notes：P0 交付的阈值是占位值，报告必须自己说出这一点。
-    let profile = fixtures::baseline_profile();
-    let said = profile.to_string();
-    assert!(said.contains("未标定"), "{said}");
+fn the_threshold_says_where_it_came_from() {
+    // spec 的 Further Notes：报告要自己说出一个数是怎么来的。阈值标定之后这条不是消失了，
+    // 是换了内容——它现在要说出标定在哪块面板上做的，以及本机这块有没有复核。
+    let said = fixtures::baseline_profile().to_string();
+    assert!(said.contains("标定"), "{said}");
+    assert!(said.contains("boox-poke6"), "没说出标定在哪块面板上做的：{said}");
+    assert!(said.contains("未复核"), "没说出其余面板沿用同一个数：{said}");
+
+    // 点名覆盖的那一种要与内置值分得开：读的人得知道这个数是谁定的。
+    let pinned = fixtures::baseline_profile()
+        .with_threshold(2.0)
+        .expect("2.0 在界的取值范围内")
+        .to_string();
+    assert!(pinned.contains("阈值 2.000（命令行指定）"), "{pinned}");
 }
 
 #[test]

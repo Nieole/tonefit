@@ -50,16 +50,26 @@ impl std::fmt::Display for Panel {
 ///
 /// 与判据同一把尺，单位是 8 位灰度级。跟着判据一起不可跨面板比较（ADR 0002）。
 ///
-/// P0 交付的阈值**全部是未标定的保守占位值**，`Display` 因此把这句话写在数值旁边——
-/// 报告与文档都得说出来（spec 的 Further Notes）。标定出来的档位随 14 号票落地，
-/// 那时这里会多出「已标定」的那一种，`Display` 随之分岔。
+/// 数值从哪来，`Display` 一并写在数值旁边——报告与文档都得说出来（spec 的 Further Notes）。
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Threshold(f32);
+pub struct Threshold {
+    value: f32,
+    source: ThresholdSource,
+}
+
+/// 一个阈值是怎么定出来的。判定只看数值，这一项只进 `Display`。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ThresholdSource {
+    /// 内置值，由真实素材上的人工盲测定出（见 measurements 的《位深盲测》）。
+    Calibrated,
+    /// `--threshold` 点名。用户在自己那台设备上数出来的界走这一条。
+    Pinned,
+}
 
 impl Threshold {
     /// 这个判据值在界以内吗。
     pub fn admits(self, score: Score) -> bool {
-        score.value() <= self.0
+        score.value() <= self.value
     }
 
     /// 这个判据值是不是**远在**界外——超出界的 `factor` 倍。
@@ -68,37 +78,56 @@ impl Threshold {
     /// 不是刚过线，是远在界外。倍数由调用方给——那是个未标定的占位值，
     /// 属于上包络那一层（见 `crate::envelope`），不属于界。
     pub(crate) fn far_outside(self, score: Score, factor: f32) -> bool {
-        score.value() > self.0 * factor
+        score.value() > self.value * factor
     }
 
     /// 界的数值，8 位灰度级。
     ///
     /// 判定只经 [`admits`](Self::admits)。读出数值是给渲染与测试用的——用它相对地造判据值，
-    /// 那些用例就不必抄下当前这个占位数字，标定把数字换掉时也不用跟着改。
+    /// 那些用例就不必抄下当前这个数字，标定把数字换掉时也不用跟着改。
     pub fn value(self) -> f32 {
-        self.0
+        self.value
+    }
+
+    /// 这个界是怎么定出来的。
+    pub fn source(self) -> ThresholdSource {
+        self.source
     }
 }
 
 impl std::fmt::Display for Threshold {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "阈值 {:.3}（未标定占位值）", self.0)
+        let source = match self.source {
+            ThresholdSource::Calibrated => "盲测标定于 boox-poke6，其余面板未复核",
+            ThresholdSource::Pinned => "命令行指定",
+        };
+        write!(f, "阈值 {:.3}（{source}）", self.value)
     }
 }
 
-/// 未标定的保守占位值：4bit 量化步长的一半。
+/// 内置的界，由真实素材上的人工盲测定出。
 ///
-/// 4bit 是与 e-ink 灰阶数对齐的那一档（ADR 0003）。量化到 4bit 的格点，逐像素误差不超过
-/// 半个步长 255/15 ÷ 2 = 8.5——格点间距 17 是奇数，整数取值上取到的最大偏差是 8；低通取的是这些误差的局部均值、
-/// 分块取它们的 RMSE、掩蔽加权只往下压，因此判据值也不超过它。
-/// 界放在这里，意思是「不比 4bit 更差就算过关」：e-ink 的候选上界恒过关，
-/// 判定默认落在对齐的那一档，要往下走必须由判据说了算。**保守指的就是这个偏向。**
+/// **标定只在 boox-poke6 上做过**：真机、逐组全排序，夹出窗口 [4.885, 6.157)——
+/// 下界是被判可接受的最高判据值，上界是被判不可接受的最低判据值。
+/// kobo-libra-2 那一轮是屏幕判读，另给出 [4.14, 5.64)，只作旁证：
+/// 屏幕判读已被证明会造出面板上不存在的差异（《位深盲测》里滤波器那一条）。
+/// 5.5 落在两者交集里，且在真实语料上不把任何一卷虚抬一档。
 ///
-/// 《B 类位深实测》给的是另一把尺——4bit 的局部均值 RMSE 中位 1.36、2bit 6.48——
-/// 那一组是全页 RMSE，与本项目取分块尾巴、带掩蔽加权的判据不同尺，不能直接拿来当界。
+/// 判据跟着面板走、不可跨面板比较（ADR 0002），而这里是一个常数——**其余面板沿用这个数，
+/// 没有复核**。`Display` 把这句话写在数值旁边，`--threshold` 是出口。
 ///
-/// 这个数没有经过标定：真实样本 + 人工 A/B 盲测是 14 号票的事（`CONTEXT.md` 的《尚未确立》）。
-const PLACEHOLDER_THRESHOLD: Threshold = Threshold(8.5);
+/// **它只挡得住 1bit。** 判据在同一页内会把 1bit+FS 排在 2bit 不抖之前，而人的判断相反；
+/// 任何标量界都无法同时挡住前者、放行后者（`.scratch/metric-ordering/issues/01`）。
+/// 5.5 因此顺带挡掉了目视排第二、体积更省的 2bit 不抖——那是判据的账，不在界这一层。
+///
+/// **「候选上界恒过关」这条不再无条件成立。** 8.5 是 4bit 量化步长的一半，保证 4bit 恒在界内；
+/// 5.5 不保证。几何门成立时上界是 4bit+FS，实测最大 1.563，远在界内；
+/// 门不成立时上界降为 4bit 不抖，实测 66 页里有 4 页超过 5.5（最大 7.000），
+/// 那几页走 [`crate::decide`] 的兜底。判定因此整体偏向更高的位深，文件更大。
+const DEFAULT_THRESHOLD: Threshold = Threshold {
+    value: 5.5,
+    source: ThresholdSource::Calibrated,
+};
 
 /// 一次处理调用的目标设备。
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +145,7 @@ impl Profile {
             Some((name, panel)) => Ok(Self {
                 device: name,
                 panel: *panel,
-                threshold: PLACEHOLDER_THRESHOLD,
+                threshold: DEFAULT_THRESHOLD,
             }),
             None => Err(unknown_device_error(device)),
         }
@@ -133,6 +162,24 @@ impl Profile {
             bail!("灰阶数 {gray_levels} 数不出来：取值在 2 与 256 之间（e-ink 恒 16）");
         }
         self.panel.gray_levels = gray_levels;
+        Ok(self)
+    }
+
+    /// 覆盖判定用的界（`--threshold`）。
+    ///
+    /// 判据跟着面板走、不可跨面板比较（ADR 0002），而内置值是一个常数（见 [`DEFAULT_THRESHOLD`]）。
+    /// 在自己那台设备上盲测出来的界走这一条：把同一页的各档输出拷进设备，
+    /// 记下最低的那个**不可接受**档的判据值，界取在它之下。判据值由 `--dry-run` 逐页给出。
+    ///
+    /// 单位与判据同为 8 位灰度级，因此界落在 0 与 255 之间；取大了各档全部过关，界就不成其为界。
+    pub fn with_threshold(mut self, threshold: f32) -> Result<Self> {
+        if !(threshold.is_finite() && threshold > 0.0 && threshold <= 255.0) {
+            bail!("阈值 {threshold} 不是一个界：取值在 0 与 255 之间，与判据同为 8 位灰度级");
+        }
+        self.threshold = Threshold {
+            value: threshold,
+            source: ThresholdSource::Pinned,
+        };
         Ok(self)
     }
 
