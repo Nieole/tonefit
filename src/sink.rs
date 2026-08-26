@@ -94,6 +94,11 @@ impl DirectorySink {
         let partial = partial_path(path);
         // 上一趟被硬停在半路、连析构都没跑到的临时目录，这一趟当垃圾清掉：
         // 留着它，里面的陈旧成员会混进本趟的输出。
+        //
+        // 临时名字是**推得出来**的，因此有一个远角上的代价：同一趟里另有一个卷就叫
+        // `<名字>.partial` 时，删掉的是它已经写好的输出。挡这一下要在开工之前把点名的卷
+        // 全枚举一遍、比一遍去处，那是预扫要做的事（ADR 0011），不在这一层。
+        // 换成随机名字能躲开，但硬停留下的垃圾就再也认不出来、也没有下一趟去清它了。
         if partial.exists() {
             std::fs::remove_dir_all(&partial)
                 .with_context(|| format!("清掉残留的临时目录 {}", partial.display()))?;

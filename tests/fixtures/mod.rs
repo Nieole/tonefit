@@ -513,13 +513,26 @@ pub fn written_bits(depth: png::BitDepth) -> u32 {
 pub fn directory_members(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = walkdir::WalkDir::new(root)
         .into_iter()
-        // 目录根本不在就是「里面什么都没有」——问「此刻输出里有什么」的用例正要这个答案。
-        .filter_map(Result::ok)
+        .filter(|entry| !missing_root(entry))
+        .map(|entry| entry.expect("遍历目录"))
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| relative_name(root, entry.path()))
         .collect();
     names.sort();
     names
+}
+
+/// 遍历的头一条就是「这个根不在」吗。
+///
+/// 目录还没建出来就是「里面什么都没有」，问「此刻输出里有什么」的用例正要这个答案。
+/// **只放过这一种**：遍历途中的错误照旧当场炸（与 [`fingerprint`] 同一个口径），
+/// 一律吞掉的话，一次 IO 抖动就能让「输出里只剩本趟的产物」假性通过。
+fn missing_root(entry: &walkdir::Result<walkdir::DirEntry>) -> bool {
+    let Err(error) = entry else { return false };
+    error.depth() == 0
+        && error
+            .io_error()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// 目录内容的指纹：相对路径 + 每个文件的字节哈希。用来断言源目录未被改动。
