@@ -11,10 +11,45 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 骨架票那条改写或标注退场，与位深判定票的口径一致
-- [ ] 幂等票那条二选一：改写成「记录随文件走」并另记已知限制，或真做到按记录反查
-- [ ] 标定票那条二选一：改成「含英文说明」并留后续项，或图内补中文说明
-- [ ] dry-run 的承诺在 spec 与票面统一为「不写输出」，与 ADR 0012 同口径
-- [ ] 每处的用例与被勾选的标准对得上
+- [x] 骨架票那条改写或标注退场，与位深判定票的口径一致
+- [x] 幂等票那条二选一：改写成「记录随文件走」并另记已知限制，或真做到按记录反查
+- [x] 标定票那条二选一：改成「含英文说明」并留后续项，或图内补中文说明
+- [x] dry-run 的承诺在 spec 与票面统一为「不写输出」，与 ADR 0012 同口径
+- [x] 每处的用例与被勾选的标准对得上
+
+## 落地记录
+
+四处各自收口，一行代码没动——本票的职责是让措辞对上实现，不是把功能补上。
+
+**骨架票（`p0-core-pipeline/01`）**：「输出 8bit 灰度 PNG」的 8bit 与灰度两项一并退场，
+标注写进它已有的《写死的与推迟的》那一段（`PANEL_RESOLUTION` 就在那里退场，同一个位置、
+同一种写法）。票面只剩「输出 PNG 到新位置」——那是至今仍成立的部分，与 06 号票
+「PNG 支持 1/2/4/8 位的灰度与调色板两种颜色类型，按体积取小者」同口径。
+
+**幂等票（`p0-core-pipeline/11`）**：选了「记录随文件走」这一支。标准改写成两条断言各自钉住的事——
+页被移动改名重新打包后记录不丢、输出根整个搬走交给 `--out` 后仍跳过。
+「按记录反查」没做，理由记在该票的《已知限制》里：改了输出容器的名字，那一份找不回来，
+下一趟在原名上整卷重做、旧的那份成了重名副本；要修得扫遍输出根或另立索引，
+后者正是 ADR 0009 决定第 1 条关掉的东西。限制的出处仍是 `CONTEXT.md` 的《输出》，票里引它。
+
+**标定票（`p0-core-pipeline/14`）**：选了「含英文说明」这一支，中文说明留作后续项，
+指向 `calibration-chart/01`——那张票本来就要重画这张图，中文字模跟着那一次重画一起算才划得来。
+该票 Comments 里「唯一一处没能照票面做到底」的说法随之取消：那不再是欠账，是缩过范围的标准。
+
+**dry-run**：承诺统一为「不写输出」，改在 `p0-core-pipeline/spec.md` 的《Testing Decisions》
+与 04 号票的标准上。顺带对齐了四处引用同一句话的地方（07、11、12 号票，`src/cache.rs`
+与 `src/metadata.rs` 的注释）。**`Mode::DryRun` 自身的注释一处没动**：它走 `Retention::Account`，
+连临时文件都不建，那句更强的话在命令行这一路仍然字面成立（ADR 0012 决定第 5 条明说命令行不变）；
+被 ADR 0012 重述掉的是**试算**这个概念，而单卷试算不是 `Mode::DryRun`。
+`CONTEXT.md` 的「试算」词条与 `p1-session/spec.md` 的 story 17 因此各改了一处，两处原先都写着
+「不写文件」，而那条路上溢写临时文件仍可能建。
+
+**用例核对**：骨架那条落在 `each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth`
+与 `the_source_volume_is_left_untouched`；幂等那条落在
+`the_record_survives_moving_renaming_and_repacking_the_page` 与
+`moving_the_output_elsewhere_keeps_the_judgment`；标定那条落在
+`the_printed_instructions_say_how_to_read_the_chart`（逐项查英文说明的九个要点）与
+`the_instructions_are_painted_on_the_chart`；dry-run 那几条断言的都是 `!space.out().exists()`，
+本就是「不写输出」而不是「不写任何文件」。四处的断言与改后的标准逐条对得上，一条用例没改。
