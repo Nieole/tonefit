@@ -1,6 +1,6 @@
 //! tonefit：把漫画页适配到电子墨水阅读设备。
 //!
-//! 对外是两个 seam，其余全部是内部实现。
+//! 对外是三个 seam，其余全部是内部实现。
 //!
 //! [`run`] 是主 seam：所有模式走同一个入口，CLI 是它之上的薄层，只负责把命令行参数拼成
 //! [`Request`]、把 [`Report`] 渲染成文字。
@@ -9,8 +9,9 @@
 //! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`Candidate`]、[`quantize`]——
 //! 一并公开，判据的调用方要拿它们拼出参照与候选。
 //!
-//! [`calibration_chart`] 是第三个：灰阶阶梯标定图。它不在管线上——不读源、不写文件，
-//! 只按一个 [`Profile`] 画出一张图的字节，`--gray-levels` 填的那个数由它量出来（ADR 0003）。
+//! [`write_calibration_chart`] 是第三个：灰阶阶梯标定图。它不并进主入口——不读源、不走管线、
+//! 不判定，只按一个 [`Profile`] 画出一张图并**无损写到点名的那个文件上**，
+//! `--gray-levels` 填的那个数由它量出来（ADR 0003）。量具与被处理的页走的不是同一条路。
 
 mod cache;
 mod calibrate;
@@ -66,15 +67,21 @@ use metadata::{Fingerprint, Record, Recorder};
 use sink::Sink;
 use source::{Member, Volume};
 
-/// 画一张灰阶阶梯标定图，编成 PNG 字节。
+/// 画一张灰阶阶梯标定图并写到 `out`，父目录不在就建出来。
 ///
 /// 尺寸恒等于面板分辨率：图要在真机上 1:1 显示才数得准（见 `calibrate`）。
 ///
 /// **图本身不经过位深判定**：它是量具，不是被处理的页——判据、上包络、抖动一概不碰它，
 /// 像素以 8 位工作精度原样交给编码器，写出的是无损 PNG。自描述元数据也不写：
 /// 记录说的是一页的判定与幂等依据（见 `metadata`），标定图两样都没有。
-pub fn calibration_chart(profile: &Profile) -> Result<Vec<u8>> {
-    encode::png(&calibrate::chart(profile), BitDepth::Eight, None)
+///
+/// 落盘在库内完成，命令行与会话共用这一个调用（加固批 12 号票）：出图这件事从头到尾只有一份，
+/// 界面层两边都不必自己建目录、自己写文件。写不出去时回的是 `Err`——盘满、
+/// 父目录建不了都在里面，调用方接住它照自己的方式说，不必崩掉一整个会话。
+///
+/// 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`）。
+pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
+    calibrate::write_chart(profile, out)
 }
 
 /// 处理点名的若干卷，产出设备优化副本。源卷只读。

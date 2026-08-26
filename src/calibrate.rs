@@ -1,3 +1,8 @@
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
+use crate::encode;
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 use crate::profile::Profile;
@@ -9,8 +14,33 @@ const PAPER: u8 = 255;
 /// 墨黑。判读说明与边框的颜色，也是阶梯最暗的那一档。
 const INK: u8 = 0;
 
+/// 画一张标定图并写到 `out`，父目录不在就建出来。
+///
+/// 库的第三个 seam 落在这一条上，契约见 [`crate::write_calibration_chart`]。
+///
+/// 写法是最朴素的那一种：建目录、写文件，不走临时文件加改名那一套。
+/// 输出容器要那套是因为**一卷做到一半的目录冒充得了做完的**，下一趟幂等会当它齐了；
+/// 标定图没有那个角色——没有哪一趟程序会回来读它并当它齐了，
+/// 而人读它是在设备上打开，写坏了一眼就看得见，重敲一次命令即可。
+pub fn write_chart(profile: &Profile, out: &Path) -> Result<()> {
+    let bytes = chart_png(profile)?;
+    // 点名的是个裸文件名时 `parent()` 给的是空串，那时没有目录要建。
+    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("建标定图的去处 {}", parent.display()))?;
+    }
+    std::fs::write(out, &bytes).with_context(|| format!("写标定图 {}", out.display()))
+}
+
+/// 画一张标定图，编成 PNG 字节。
+///
+/// 8 位工作精度、不带记录，两样都是定死的，理由见 [`crate::write_calibration_chart`]。
+fn chart_png(profile: &Profile) -> Result<Vec<u8>> {
+    encode::png(&chart(profile), BitDepth::Eight, None)
+}
+
 /// 按目标 profile 画一张灰阶阶梯标定图，尺寸恒等于面板分辨率。
-pub fn chart(profile: &Profile) -> GrayImage {
+fn chart(profile: &Profile) -> GrayImage {
     let layout = Layout::plan(profile);
     let mut canvas = Canvas::new(profile.panel().resolution, PAPER);
 
@@ -497,7 +527,7 @@ mod tests {
 
     /// 画一张标定图并从 PNG 字节解回来——测的是**写出去的那张图**，不是中间缓冲。
     fn decode(profile: &Profile) -> GrayImage {
-        let bytes = crate::calibration_chart(profile).expect("画标定图");
+        let bytes = chart_png(profile).expect("画标定图");
         let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
         let header = decoder.read_header_info().expect("读 PNG 头").clone();
         decoder.set_transformations(png::Transformations::EXPAND);
@@ -727,5 +757,43 @@ mod tests {
                 assert_ne!(rows, other_rows, "「{character}」与「{other}」长得一样");
             }
         }
+    }
+
+    /// 落盘在库里完成：父目录不在就建出来，写下的字节就是画出来的那张图（加固批 12 号票）。
+    ///
+    /// 命令行与会话共用的正是这个调用，钉在库这一侧因此两边都算钉住了，也不必起子进程。
+    #[test]
+    fn writing_the_chart_makes_its_parent_and_lays_down_the_bytes_it_drew() {
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let out = workspace.path().join("还不存在的目录").join("标定图.png");
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+
+        write_chart(&profile, &out).expect("写标定图");
+
+        assert_eq!(
+            std::fs::read(&out).expect("读回标定图"),
+            chart_png(&profile).expect("画标定图"),
+            "落盘的字节与画出来的不是同一份"
+        );
+    }
+
+    /// 写不出去的时候回的是 `Err`，不是恐慌（加固批 12 号票：这条路在库这一侧可测）——
+    /// 调用方接得住，才谈得上「写出失败不崩掉一整个会话」（会话批的 13 号票）。
+    ///
+    /// 拿一个文件当父目录——建不出来，两台系统上都不行。
+    #[test]
+    fn writing_the_chart_where_the_parent_cannot_be_made_comes_back_as_an_error() {
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let blocker = workspace.path().join("这是一个文件");
+        std::fs::write(&blocker, b"").expect("建挡路的文件");
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+
+        let failure =
+            write_chart(&profile, &blocker.join("标定图.png")).expect_err("父目录建不出来");
+
+        // 说得清 = 说得出是哪件事、卡在哪个路径上。少了后者，会话只能印一句「写失败了」。
+        let said = format!("{failure:#}");
+        assert!(said.contains("标定图"), "没说出是哪件事：{said}");
+        assert!(said.contains("这是一个文件"), "没说出卡在哪儿：{said}");
     }
 }

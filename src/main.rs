@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Mutex, MutexGuard};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
@@ -286,18 +286,16 @@ fn execute() -> Result<u8> {
     Ok(exit_code(&report))
 }
 
-/// 画一张灰阶阶梯标定图并写到 `out`（14 号票）。
+/// 把命令行点名的那台设备与去处交给库里的出图入口（14 号票、加固批 12 号票）。
 ///
 /// 这一趟不读源、不写输出根、不判定任何东西：标定图是量具，管线一整套都不在场。
 /// 因此也没有「有卷被隔离」那种结局——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
+///
+/// 出图整件事在 [`tonefit::write_calibration_chart`] 里。这一层剩下两件命令行自己的事：
+/// 把型号名与 `--gray-levels` 合成 profile，以及印出[那几行文案](render::calibration_note)。
 fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
     let profile = target_profile(device, gray_levels, None)?;
-    let chart = tonefit::calibration_chart(&profile)?;
-    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("建标定图的去处 {}", parent.display()))?;
-    }
-    std::fs::write(out, &chart).with_context(|| format!("写标定图 {}", out.display()))?;
+    tonefit::write_calibration_chart(&profile, out)?;
     print!("{}", render::calibration_note(&profile, out));
     Ok(SUCCESS_EXIT)
 }
@@ -504,23 +502,44 @@ mod tests {
         );
     }
 
-    /// `calibrate` 把图写到点名的那个文件上，父目录不在就建出来（14 号票）。
+    /// `calibrate` 这一层只剩两件事：把型号名与 `--gray-levels` 合成 profile 交给库出图，
+    /// 以及写成了给出 [`SUCCESS_EXIT`]（14 号票、加固批 12 号票）。
     ///
-    /// 落不落盘、落到哪儿是 CLI 这一层的事：库那侧出的是字节，够不着这一条。
-    /// 断言比的是**文件里的字节**与库出的那一份——中间这一段不许对图动手。
+    /// 断言照这两件事写。**不比「文件里的字节 == 库出的字节」**——落盘整个在库里，
+    /// 两边跑的是同一段代码，那个等号恒成立，钉不住任何东西。
+    /// 「父目录不在就建出来」同理归库，钉在 `calibrate` 模块的用例里；
+    /// 这里仍点名一个不存在的父目录，只为让命令行这条路真的走过它。
+    ///
+    /// 钉得住的是**交出去的是哪个 profile**：图恒等于面板分辨率，写出的 PNG 头里因此看得见
+    /// 型号名解成了哪块面板；覆盖了灰阶数的那一趟排的阶梯条数不同，字节跟着不同。
     #[test]
-    fn calibrate_writes_the_chart_to_the_named_file_and_makes_its_parent() {
+    fn calibrate_folds_the_device_and_the_override_into_the_profile_it_hands_the_library() {
         let workspace = tempfile::tempdir().expect("建临时目录");
         let out = workspace.path().join("还不存在的目录").join("标定图.png");
+        let two_levels = workspace.path().join("两级灰阶.png");
 
         let code = calibrate("Kobo Libra 2", None, &out).expect("写标定图");
+        calibrate("Kobo Libra 2", Some(2), &two_levels).expect("写标定图");
 
         assert_eq!(code, SUCCESS_EXIT, "写成了就该是全部成功那个数");
-        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let panel = Profile::resolve("kobo-libra-2")
+            .expect("内置型号")
+            .panel()
+            .resolution;
+        let written = std::fs::read(&out).expect("读回标定图");
+        let header = png::Decoder::new(std::io::Cursor::new(&written))
+            .read_header_info()
+            .expect("读 PNG 头")
+            .clone();
         assert_eq!(
-            std::fs::read(&out).expect("读回标定图"),
-            tonefit::calibration_chart(&profile).expect("画标定图"),
-            "落盘的字节与库出的不是同一份"
+            (header.width, header.height),
+            (panel.width, panel.height),
+            "交给库的不是这台设备那块面板"
+        );
+        assert_ne!(
+            written,
+            std::fs::read(&two_levels).expect("读回标定图"),
+            "--gray-levels 没跟着走到库那一侧"
         );
     }
 
