@@ -415,6 +415,7 @@ pub fn calibration_note(profile: &Profile, out: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use super::*;
     // 退出码不是渲染的事，用例却要问它：「报告说得出隔离」与「退出码分得开隔离」是同一条
@@ -424,7 +425,7 @@ mod tests {
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, GeometryGate,
         GrayImage, IoPlan, Medium, PageOutcome, Processed, Reason, Reference, Salvage, Scaling,
-        Size, Verdict,
+        Size, Verdict, VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -479,8 +480,10 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 1,
+                timing: VolumeTiming::default(),
                 pages: vec![page],
             }],
+            elapsed: Duration::ZERO,
         }
     }
 
@@ -723,12 +726,14 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 3,
+                timing: VolumeTiming::default(),
                 pages: vec![
                     page("001", PageColor::Color, PageBranch::Color),
                     page("002", PageColor::Color, gray_branch()),
                     page("003", PageColor::Gray, gray_branch()),
                 ],
             }],
+            elapsed: Duration::ZERO,
         };
 
         let text = super::report(&report, Mode::Process);
@@ -762,7 +767,9 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 0,
+                timing: VolumeTiming::default(),
             }],
+            elapsed: Duration::ZERO,
         };
 
         let text = super::report(&report, Mode::Process);
@@ -797,7 +804,9 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 0,
+                timing: VolumeTiming::default(),
             }],
+            elapsed: Duration::ZERO,
         };
         report.volumes[0].io = IoPlan {
             medium: Medium::Unknown {
@@ -861,8 +870,10 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 2,
+                timing: VolumeTiming::default(),
                 pages: vec![good, failed],
             }],
+            elapsed: Duration::ZERO,
         };
 
         let text = super::report(&report, Mode::Process);
@@ -944,8 +955,10 @@ mod tests {
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 2,
+                timing: VolumeTiming::default(),
                 pages: vec![whole, salvaged],
             }],
+            elapsed: Duration::ZERO,
         };
 
         let text = super::report(&report, Mode::Process);
@@ -1060,6 +1073,7 @@ mod tests {
             cache: cache_usage(),
             io: io_plan(),
             decodes: 0,
+            timing: VolumeTiming::default(),
         });
 
         let mut drawn = header(&report, Mode::Process);
@@ -1070,5 +1084,68 @@ mod tests {
         drawn.push_str(&tail(&report));
 
         assert_eq!(drawn, super::report(&report, Mode::Process));
+    }
+
+    /// 计时**不进渲染出的文字**：印不印、印在哪由调用方定（加固批 11 号票）。
+    ///
+    /// 断言写成「同一份报告只改计时，画出来逐字节相同」，而不是「文字里找不到某个数」：
+    /// 后者只挡得住恰好那一个写法，而这一条挡得住任何一处把耗时印出去的改动——
+    /// 真有人加了一行「耗时 3.2 秒」，两份当场分家。
+    ///
+    /// 黄金快照不因机器快慢而 flaky，靠的就是这一条：渲染一个计时字段都不读。
+    #[test]
+    fn the_rendered_text_says_nothing_about_how_long_it_took() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        let quick = one_page_report(
+            profile,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::LowestWithinThreshold,
+                        },
+                    },
+                }),
+            },
+        );
+
+        // 同一份报告，慢了一小时：每一个计时字段都改掉，别的一个字节都不动。
+        let mut slow = quick.clone();
+        slow.elapsed = Duration::from_secs(3600);
+        for each in &mut slow.volumes {
+            each.timing = VolumeTiming {
+                fingerprint: Duration::from_secs(11),
+                first_pass: Duration::from_secs(222),
+                second_pass: Duration::from_secs(3333),
+                elapsed: Duration::from_secs(3600),
+            };
+        }
+
+        // 四段逐段比，而不只比拼起来的那一份：会话画的是这四段，
+        // 只比总的，某一段说了而另一段抵消掉的情形就漏过去了。
+        assert_eq!(header(&slow, Mode::Process), header(&quick, Mode::Process));
+        for (slower, quicker) in slow.volumes.iter().zip(&quick.volumes) {
+            assert_eq!(volume(slower), volume(quicker));
+            assert_eq!(pages(slower), pages(quicker));
+        }
+        assert_eq!(tail(&slow), tail(&quick));
+        assert_eq!(
+            super::report(&slow, Mode::Process),
+            super::report(&quick, Mode::Process)
+        );
     }
 }

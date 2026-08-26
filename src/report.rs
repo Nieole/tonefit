@@ -1,6 +1,7 @@
 //! `run` 的输出。
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::cache::CacheUsage;
 use crate::color::PageColor;
@@ -15,7 +16,7 @@ use crate::resample::Scaling;
 
 /// 一次处理调用的结果。
 ///
-/// spec 固定的形状里还有计时，它随自己那张票落地。**失败页集**是 [`Report::failures`]：
+/// **失败页集**是 [`Report::failures`]：
 /// 它不另占一个字段，因为失败页本来就在它那一卷的 [`VolumeReport::pages`] 里按阅读顺序占着位——
 /// 再存一份就有两个出处，而两处早晚会走散（12 号票）。
 #[derive(Debug, Clone)]
@@ -23,6 +24,16 @@ pub struct Report {
     /// 本次实际使用的 profile 与它的面板。这批输出该拿去哪台设备看，答案在这里。
     pub profile: Profile,
     pub volumes: Vec<VolumeReport>,
+    /// 整趟的墙钟耗时：`run` 从进到出（加固批 11 号票）。
+    ///
+    /// 它**装得下**各卷 [`VolumeTiming::elapsed`]，而不等于它们的和：开工前那几道检查
+    /// （处理范围非空、输出不在源里、两个卷不撞同一个去处）与逐卷的介质探测都在卷外，
+    /// 而这两样都要摸文件系统——慢盘与网络盘上探测尤其不便宜（ADR 0009）。
+    ///
+    /// 计时**只进结构，不进渲染出的文字**：印不印、印在哪、印成什么样由调用方定。
+    /// 这与进度那一条是同一条规矩（见 `progress`：库只报到，样子由调用方定），
+    /// 直接的好处是黄金快照不随机器快慢而变。
+    pub elapsed: Duration,
 }
 
 impl Report {
@@ -89,6 +100,63 @@ pub struct VolumeReport {
     /// 这个数因此恒等于页数。它在报告里，是为了让那条不变量在 `run` 这个 seam 上量得出来——
     /// 第二遍一旦回头碰源页，它立刻大于页数，而别的外部可见事实都察觉不到这件事。
     pub decodes: usize,
+    /// 本卷这一趟的墙钟耗时，按管线的段分开（加固批 11 号票）。跳过的卷也有一份。
+    pub timing: VolumeTiming,
+}
+
+/// 一个卷这一趟的墙钟耗时，按**管线的段**分开（加固批 11 号票）。
+///
+/// 段是 [`fingerprint`](Self::fingerprint)、[`first_pass`](Self::first_pass)、
+/// [`second_pass`](Self::second_pass) 三个，与进度报到的那三段同一条分界线
+/// （`CONTEXT.md` 的《进度》：幂等这一道读全部成员、第一遍走每一页、第二遍写全部成员）。
+/// 三段在 `crate::process_volume` 里依次首尾相接、互不重叠，一个卷总共只掐三次表——
+/// **插桩点一个都不在热路径上**。
+///
+/// 页内那一层（解码、缩放、判据、量化、编码）不在这里，而且不该在：那几步在满核并行里交错跑，
+/// 「解码耗时」是墙钟还是 CPU 时间说不清，聚合出来的数会骗人，而插桩点全落在热路径上。
+/// 要那一层的数走事件流（ADR 0011）或 feature-gated 插桩（加固批 13 号票）。
+///
+/// 三段之和**不等于** [`elapsed`](Self::elapsed)：打开卷、枚举成员、汇总、定去处都在段外。
+/// 那一截有名字，见 [`outside_the_segments`](Self::outside_the_segments)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VolumeTiming {
+    /// 幂等这一道：算出本卷指纹，再与上一趟写在输出里的比。两半都在这一段里——
+    /// 算的那一半把整卷源字节读一遍，比的那一半开输出容器、逐成员读回记录。
+    ///
+    /// 它**不是免费的**（`CONTEXT.md` 的《管线》），而幂等命中的卷付的正好只有这一笔——
+    /// 「跳过一卷为什么也要等这么久」只有这个数答得出来，报告里因此不许报零。
+    /// `--no-metadata` 下整道不在，那时才是 [`Duration::ZERO`]。
+    pub fingerprint: Duration,
+    /// 第一遍：解码、彩页识别、几何、缩放、算判据、进缓存。
+    ///
+    /// 幂等命中的卷提前收摊，一遍都不走，是 [`Duration::ZERO`]。
+    pub first_pass: Duration,
+    /// 第二遍：建输出容器、量化、编码、写页、搬透传文件、收尾改名。
+    ///
+    /// 段界照**步**那一侧划（第二遍写全部成员），透传成员因此算在这里；建容器与收尾改名
+    /// 同样算在这里——它们是写出这件事的两头，摊在段外只会让这个数假装比实际便宜。
+    /// dry-run 一个文件都不落盘，幂等命中的卷也不走，两种情形都是 [`Duration::ZERO`]。
+    pub second_pass: Duration,
+    /// 这一卷的墙钟耗时：从打开卷到这份卷报告成型。
+    pub elapsed: Duration,
+}
+
+impl VolumeTiming {
+    /// 三段之外的那一截：打开卷、枚举成员、查重、汇总、定去处、拼报告。
+    ///
+    /// 它是 [`elapsed`](Self::elapsed) 减去三段，饱和到零。有名字是为了让「三段不求和」
+    /// 这件事说得出口：读的那一端自己去加那三个数，得出的是一个偏小的总耗时，
+    /// 而少掉的那一截恰恰是枚举——慢盘上它不小。
+    ///
+    /// 名字不叫 `elsewhere`：那个词在 crate 里已经指着**卷的另一个去处**
+    /// （见 `crate::superseded`），一个词两个意思，读的人迟早认错一处。
+    ///
+    /// 饱和是**断言的形式**，不是遮丑：三段是 `elapsed` 里的一部分，差额不可能为负，
+    /// 真为负说明段与段重叠了，那时这个数为零，而三段之和会大于 `elapsed`。
+    pub fn outside_the_segments(&self) -> Duration {
+        self.elapsed
+            .saturating_sub(self.fingerprint + self.first_pass + self.second_pass)
+    }
 }
 
 /// 卷级判定：这一卷的候选从哪来（spec 的卷报告形状：判定位深、抖动模式、判定理由、驱动页）。
@@ -391,5 +459,34 @@ impl PageReport {
             PageOutcome::Failed { reason } => Some(reason),
             PageOutcome::Whole(_) | PageOutcome::Salvaged { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 段外那一截是**减出来的**，而且减不出负数（加固批 11 号票）。
+    ///
+    /// 前半句在集成用例里量得到（`tests/timing.rs`），后半句量不到：那要一份段与段重叠的计时，
+    /// 而管线不产出这种东西。它却是 [`VolumeTiming::outside_the_segments`] 的实义所在——
+    /// `Duration` 的减法在下溢时恐慌，报告里一处掐表出岔子不该让整趟当场炸掉。
+    #[test]
+    fn what_falls_outside_the_three_segments_is_the_remainder_and_never_negative() {
+        let timing = VolumeTiming {
+            fingerprint: Duration::from_secs(1),
+            first_pass: Duration::from_secs(2),
+            second_pass: Duration::from_secs(3),
+            elapsed: Duration::from_secs(10),
+        };
+        assert_eq!(timing.outside_the_segments(), Duration::from_secs(4));
+
+        // 三段之和大于总耗时：段与段重叠了。答一个零，不恐慌——
+        // 而三段之和大于 `elapsed` 这件事，调用方自己加一遍就看得出来。
+        let overlapping = VolumeTiming {
+            elapsed: Duration::from_secs(1),
+            ..timing
+        };
+        assert_eq!(overlapping.outside_the_segments(), Duration::ZERO);
     }
 }

@@ -38,6 +38,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
@@ -55,7 +56,8 @@ pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
-    PageBranch, PageOutcome, PageReport, Processed, Report, VolumeReport, VolumeVerdict,
+    PageBranch, PageOutcome, PageReport, Processed, Report, VolumeReport, VolumeTiming,
+    VolumeVerdict,
 };
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
@@ -77,6 +79,9 @@ pub fn calibration_chart(profile: &Profile) -> Result<Vec<u8>> {
 
 /// 处理点名的若干卷，产出设备优化副本。源卷只读。
 pub fn run(request: &Request) -> Result<Report> {
+    // 整趟的表从这里开始掐：开工前那几道检查也要摸文件系统，摊在计时之外
+    // 只会让报出来的总耗时比调用方自己在外面掐的那个小一截（加固批 11 号票）。
+    let started = Instant::now();
     if request.inputs.is_empty() {
         bail!("处理范围为空：至少点名一个卷（ADR 0009：处理点名的子集）");
     }
@@ -99,7 +104,19 @@ pub fn run(request: &Request) -> Result<Report> {
     Ok(Report {
         profile: request.profile.clone(),
         volumes,
+        elapsed: started.elapsed(),
     })
+}
+
+/// 掐一段的表：跑一遍 `work`，把这一段的墙钟耗时写进 `segment`。
+///
+/// 写成一个函数而不是在调用处各写三行，为的是让「哪几段掐了表」在 [`process_volume`] 里
+/// 一眼数得清：段与段不许重叠，而重叠一旦发生，[`VolumeTiming`] 里三段之和就会大于总耗时。
+fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    let value = work();
+    *segment = started.elapsed();
+    value
 }
 
 /// 这一卷要走多少步（spec 的 story 30）。
@@ -172,6 +189,9 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
 /// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
 fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<VolumeReport> {
+    // 这一卷的表：总的从打开卷之前起算，三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。
+    let started = Instant::now();
+    let mut timing = VolumeTiming::default();
     let mut volume = source::open(input)?;
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
@@ -185,13 +205,22 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     steps.started(&volume.root, volume_steps(&volume, request));
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
-    let fingerprint = request
-        .metadata
-        .then(|| volume_fingerprint(&mut volume, request, &io, steps))
-        .transpose()?;
-    if let Some(fingerprint) = &fingerprint
-        && can_skip(&clean, &volume, &targets, fingerprint)
-    {
+    //
+    // 算指纹与拿它比是**同一段**（`CONTEXT.md` 的《管线》：算出本卷的指纹，与上一趟写在
+    // 输出里的比）：比的那一半要开输出容器、逐成员读回记录，同样是真 I/O。摊到段外，
+    // 「跳过一卷花在幂等上多久」就会少算一截，而那正是这个数存在的理由（加固批 11 号票）。
+    let mut skip = false;
+    let fingerprint = if request.metadata {
+        timed(&mut timing.fingerprint, || -> Result<_> {
+            let fingerprint = volume_fingerprint(&mut volume, request, &io, steps)?;
+            skip = can_skip(&clean, &volume, &targets, &fingerprint);
+            Ok(Some(fingerprint))
+        })?
+    } else {
+        // 掐表在这个 `if` 之内：整道不在时那一段是零，而不是一个「什么都没做」的很小的数。
+        None
+    };
+    if skip {
         steps.finished();
         return Ok(VolumeReport {
             volume: volume.root,
@@ -205,6 +234,11 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             cache: CacheUsage::new(request.cache_budget),
             decodes: 0,
             io,
+            // 两遍一遍都不走，三段里只有幂等那一段有数。
+            timing: VolumeTiming {
+                elapsed: started.elapsed(),
+                ..timing
+            },
         });
     }
 
@@ -217,15 +251,17 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 一个是原子加。贵的那几步——解码、缩放、判据、压缩——全在锁外。
     let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
     let decoder = decode::Decoder::new();
-    let scored = first_pass(
-        &mut volume,
-        request,
-        &cache,
-        &decoder,
-        fingerprint.as_ref(),
-        &io,
-        steps,
-    )?;
+    let scored = timed(&mut timing.first_pass, || {
+        first_pass(
+            &mut volume,
+            request,
+            &cache,
+            &decoder,
+            fingerprint.as_ref(),
+            &io,
+            steps,
+        )
+    })?;
 
     let (verdicts, verdict) = summarize_volume(&scored, request);
     let uniform = uniform_size(&scored, request.profile.panel().resolution);
@@ -238,23 +274,26 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     let superseded = superseded(&elsewhere);
 
     // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
+    // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
     if writes {
-        let mut sink = Sink::create(&output, volume.container)?;
-        let recorder = fingerprint
-            .as_ref()
-            .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
-        let encode = Encode {
-            uniform,
-            cache: &cache,
-            recorder: recorder.as_ref(),
-        };
-        second_pass(&scored, &verdicts, &targets, &encode, &mut sink, steps)?;
-        for extra in &volume.extras {
-            let bytes = volume.reader.read(extra)?;
-            sink.write_extra(&extra.relative, &bytes)?;
-            steps.step();
-        }
-        sink.finish()?;
+        timed(&mut timing.second_pass, || -> Result<()> {
+            let mut sink = Sink::create(&output, volume.container)?;
+            let recorder = fingerprint
+                .as_ref()
+                .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
+            let encode = Encode {
+                uniform,
+                cache: &cache,
+                recorder: recorder.as_ref(),
+            };
+            second_pass(&scored, &verdicts, &targets, &encode, &mut sink, steps)?;
+            for extra in &volume.extras {
+                let bytes = volume.reader.read(extra)?;
+                sink.write_extra(&extra.relative, &bytes)?;
+                steps.step();
+            }
+            sink.finish()
+        })?;
     }
     steps.finished();
 
@@ -275,6 +314,10 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
         cache: lock(&cache).usage(),
         decodes: decoder.decodes(),
         io,
+        timing: VolumeTiming {
+            elapsed: started.elapsed(),
+            ..timing
+        },
     })
 }
 
