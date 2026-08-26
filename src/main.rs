@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Mutex, MutexGuard};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
@@ -14,19 +14,31 @@ use tonefit::{
 };
 
 #[derive(Parser)]
-#[command(about = "把漫画页适配到电子墨水阅读设备", version)]
+// 不点子命令就是「处理点名的若干卷」这一件事，那是绝大多数时候要做的：
+// `args_conflicts_with_subcommands` 把两种用法分开，`subcommand_negates_reqs`
+// 让子命令不必再交出处理卷才要的那几个必填项。
+#[command(
+    about = "把漫画页适配到电子墨水阅读设备",
+    version,
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
+)]
 struct Cli {
+    /// 另做一件事，而不是处理卷。
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// 要处理的卷：一个目录，或一个 CBZ。源只读。
     #[arg(required = true, value_name = "卷")]
     inputs: Vec<PathBuf>,
 
     /// 输出根目录。每个卷在它下面得到一份同名副本，容器形态与输入一致。
-    #[arg(short, long, value_name = "目录")]
-    out: PathBuf,
+    #[arg(short, long, required = true, value_name = "目录")]
+    out: Option<PathBuf>,
 
     /// 目标设备型号。内置表覆盖 Kobo、BOOX、Kindle 的主力型号，型号名不区分大小写与分隔符。
-    #[arg(short, long, value_name = "型号")]
-    profile: String,
+    #[arg(short, long, required = true, value_name = "型号")]
+    profile: Option<String>,
 
     /// 覆盖面板灰阶数。内置表没收录的设备、或在真机上数出的实际可分辨级数走这里。
     #[arg(long, value_name = "级数")]
@@ -118,11 +130,65 @@ impl Cli {
 
     /// 把 `--profile` 与 `--gray-levels` 合成本次要用的 profile。
     fn target_profile(&self) -> Result<Profile> {
-        let profile = Profile::resolve(&self.profile)?;
-        match self.gray_levels {
-            Some(gray_levels) => profile.with_gray_levels(gray_levels),
-            None => Ok(profile),
-        }
+        target_profile(
+            self.profile.as_deref().expect(REQUIRED_BY_CLAP),
+            self.gray_levels,
+        )
+    }
+}
+
+/// 处理卷那一路的必填项走到这里就一定有值：`required = true` 挡在 clap 那一层。
+///
+/// 字段类型仍是 `Option`——`subcommand_negates_reqs` 让子命令那一路不必交出它们
+/// （`calibrate` 根本不收输出根与卷），字段就得容得下「没有」。
+/// 必填这道关因此留在 clap：错在哪、该怎么敲，它说得比这里好。
+const REQUIRED_BY_CLAP: &str = "clap 的 required = true 已经挡在前面";
+
+/// 处理卷之外的那些事，各占一个子命令。
+#[derive(clap::Subcommand)]
+enum Command {
+    /// 生成灰阶阶梯标定图，在设备上目视数出感知可分辨级数——它不等于面板的物理灰阶数。
+    ///
+    /// 那句话在头一行，为的是 `-h` 也说得到：短帮助只印这一行，而它正是最容易被误读的一条。
+    ///
+    /// 图按目标面板的分辨率排布，并排给出各候选位深的阶梯，每一级标着自己的号，
+    /// 判读说明印在图内——图拷进设备就能用，不必对着文档看。
+    ///
+    /// 用法：把图拷进设备，以**原尺寸**打开（关掉缩放与适配屏幕），
+    /// 数出**最右**那条阶梯里你还分得开几级——它最细，其余几条只作对照；
+    /// 再把那个数回填给 `--gray-levels`（ADR 0003：面板灰阶数是位深的硬上界，
+    /// 它在判据之前裁掉候选位深）。
+    ///
+    /// **数出来的是感知可分辨级数，不等于面板的物理灰阶数。** 两者不必相等——
+    /// 显示固件的处理、环境光、观看距离都会改变你数得出几级，而 `--gray-levels`
+    /// 填的正是前者：判定要贴合你**实际看到**的效果，不是贴合规格表。
+    ///
+    /// 标定图本身不经过位深判定：它是量具，不是被处理的页。像素以 8 位工作精度画出，
+    /// 无损写出，不带自描述元数据。
+    Calibrate {
+        /// 目标设备型号。与处理卷时同一张内置表，型号名不区分大小写与分隔符。
+        #[arg(short, long, value_name = "型号")]
+        profile: String,
+
+        /// 覆盖面板灰阶数。上一趟数出来的级数填这里，图跟着只排这台设备真会用到的那几档。
+        #[arg(long, value_name = "级数")]
+        gray_levels: Option<u32>,
+
+        /// 标定图写到哪个文件。父目录不在就建出来。
+        #[arg(short, long, value_name = "文件")]
+        out: PathBuf,
+    },
+}
+
+/// 把型号名与灰阶数覆盖合成一个 profile。
+///
+/// 处理卷与 `calibrate` 共用它：两边解析出的必须是同一个 profile，
+/// 不然标定图量的是一块面板、判定用的是另一块。
+fn target_profile(device: &str, gray_levels: Option<u32>) -> Result<Profile> {
+    let profile = Profile::resolve(device)?;
+    match gray_levels {
+        Some(gray_levels) => profile.with_gray_levels(gray_levels),
+        None => Ok(profile),
     }
 }
 
@@ -164,6 +230,14 @@ fn exit_code(report: &Report) -> u8 {
 
 fn execute() -> Result<u8> {
     let cli = Cli::parse();
+    if let Some(Command::Calibrate {
+        profile,
+        gray_levels,
+        out,
+    }) = &cli.command
+    {
+        return calibrate(profile, *gray_levels, out);
+    }
     let profile = cli.target_profile()?;
     let filter = cli.residual_filter()?;
     let bit_depth = cli.bit_depth_override()?;
@@ -174,7 +248,7 @@ fn execute() -> Result<u8> {
     let bar = Bar::new();
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
-        output_root: cli.out,
+        output_root: cli.out.expect(REQUIRED_BY_CLAP),
         profile,
         filter,
         bit_depth,
@@ -188,6 +262,42 @@ fn execute() -> Result<u8> {
     })?;
     print!("{}", render(&report, mode));
     Ok(exit_code(&report))
+}
+
+/// 画一张灰阶阶梯标定图并写到 `out`（14 号票）。
+///
+/// 这一趟不读源、不写输出根、不判定任何东西：标定图是量具，管线一整套都不在场。
+/// 因此也没有「有卷被隔离」那种结局——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
+fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
+    let profile = target_profile(device, gray_levels)?;
+    let chart = tonefit::calibration_chart(&profile)?;
+    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("建标定图的去处 {}", parent.display()))?;
+    }
+    std::fs::write(out, &chart).with_context(|| format!("写标定图 {}", out.display()))?;
+    print!("{}", calibration_note(&profile, out));
+    Ok(SUCCESS_EXIT)
+}
+
+/// 标定图写出去之后印的那几行：图在哪儿，以及**此刻**要做对的那一件事。
+///
+/// 只说这一件。怎么数、数出来的数是什么意思，图内印着，`--help` 里也写着——
+/// 同一套说法在终端上再抄一遍，改的时候就得记着改三处。
+/// 留下的那一条之所以在这里，是因为它在别处已经来不及：图一旦被缩着显示过，
+/// 数出来的就不是这块面板了，而用户正是在这一刻决定怎么打开它。
+///
+/// 面板规格不重复——头一行的 `profile` 里已经有了。
+fn calibration_note(profile: &Profile, out: &Path) -> String {
+    format!(
+        "profile {profile}\n\
+         标定图 {}\n  \
+         拷进设备，以原尺寸打开：关掉缩放，也关掉适配屏幕——\
+         图被缩过一次，数出来的就不是这块面板了\n  \
+         怎么数印在图内（大写英文，中文字模装不进一张位图）；\
+         完整说法见 tonefit calibrate --help\n",
+        out.display(),
+    )
 }
 
 fn render(report: &Report, mode: Mode) -> String {
@@ -560,6 +670,157 @@ mod tests {
     #[test]
     fn the_command_line_is_wired_up() {
         Cli::command().debug_assert();
+    }
+
+    /// `calibrate` 点名一台设备与一个去处，此外什么都不要（14 号票）。
+    ///
+    /// 处理卷要的那一整排参数它一个都不收——标定图不读源、不落进输出根，
+    /// 缩放、位深、抖动、缓存、并发在它身上一件都不发生。
+    #[test]
+    fn the_calibrate_subcommand_names_a_device_and_where_to_write_the_chart() {
+        let cli = Cli::try_parse_from([
+            "tonefit",
+            "calibrate",
+            "--profile",
+            "Kobo Libra 2",
+            "--out",
+            "标定图.png",
+        ])
+        .expect("参数应当可解析");
+
+        let Some(Command::Calibrate {
+            profile,
+            gray_levels,
+            out,
+        }) = &cli.command
+        else {
+            panic!("没解析成 calibrate 子命令");
+        };
+        assert_eq!(
+            target_profile(profile, *gray_levels)
+                .expect("内置型号")
+                .device(),
+            "kobo-libra-2"
+        );
+        assert_eq!(out, &PathBuf::from("标定图.png"));
+
+        // 不点子命令仍是「处理点名的若干卷」那一件事：子命令没有把默认用法顶掉。
+        let plain =
+            Cli::try_parse_from(["tonefit", "--out", "out", "--profile", "kobo-libra-2", "卷"])
+                .expect("参数应当可解析");
+        assert!(plain.command.is_none());
+    }
+
+    /// 处理卷那一路的必填项一项都没松：`--out`、`--profile`、卷，缺一样都不许往下走。
+    ///
+    /// 这三项的字段类型是 `Option`，为的是让 `calibrate` 那一路不必交出它们
+    /// （见 [`REQUIRED_BY_CLAP`]）。类型放松了，**必填这道关不许跟着放松**——
+    /// 松掉的话，敲错的命令会一路走到 `expect` 上恐慌，而不是被 clap 拦下并告诉用户缺了什么。
+    #[test]
+    fn the_volume_side_still_demands_an_output_root_a_profile_and_a_volume() {
+        for line in [
+            vec!["tonefit", "--profile", "kobo-libra-2", "卷"],
+            vec!["tonefit", "--out", "out", "卷"],
+            vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"],
+        ] {
+            let kind = Cli::try_parse_from(&line)
+                .map(|_| ())
+                .map_err(|error| error.kind());
+            assert_eq!(
+                kind,
+                Err(clap::error::ErrorKind::MissingRequiredArgument),
+                "{line:?} 不该解析得出来"
+            );
+        }
+    }
+
+    /// 数出来的级数回填给 `--gray-levels`，标定图跟着只排这台设备真会用到的那几档
+    /// （ADR 0003：面板灰阶数是位深的硬上界）。
+    #[test]
+    fn gray_levels_on_calibrate_fold_into_the_profile_the_chart_is_drawn_for() {
+        let cli = Cli::try_parse_from([
+            "tonefit",
+            "calibrate",
+            "-p",
+            "kobo-libra-2",
+            "--gray-levels",
+            "4",
+            "-o",
+            "chart.png",
+        ])
+        .expect("参数应当可解析");
+
+        let Some(Command::Calibrate {
+            profile,
+            gray_levels,
+            ..
+        }) = &cli.command
+        else {
+            panic!("没解析成 calibrate 子命令");
+        };
+
+        assert_eq!(
+            target_profile(profile, *gray_levels)
+                .expect("内置型号")
+                .panel()
+                .gray_levels,
+            4
+        );
+    }
+
+    /// 帮助文本必须说清：目视数出的是**感知可分辨级数**，不等于面板的物理灰阶数
+    /// （14 号票的最后一条；ADR 0003 的《后果》）。
+    ///
+    /// 两者不必相等，而 `--gray-levels` 填的是前者。这句话不说出来，用户会拿数出的 12
+    /// 去质疑「厂商标的明明是 16」，然后什么都不填。
+    #[test]
+    fn the_calibrate_help_says_what_is_counted_is_perceived_not_physical() {
+        let mut command = Cli::command();
+        let calibrate = command
+            .find_subcommand_mut("calibrate")
+            .expect("calibrate 子命令");
+
+        // `-h` 与 `--help` 两份都要说到：短的那份只印头一行，而用户多半只敲 `-h`。
+        for help in [
+            calibrate.render_help().to_string(),
+            calibrate.render_long_help().to_string(),
+        ] {
+            assert!(help.contains("感知可分辨级数"), "{help}");
+            assert!(help.contains("不等于面板的物理灰阶数"), "{help}");
+        }
+
+        let long = calibrate.render_long_help().to_string();
+        assert!(long.contains("--gray-levels"), "{long}");
+        // 数哪一条要点名：几条阶梯就有几个数。
+        assert!(long.contains("最右"), "{long}");
+        // 子命令在总帮助里露得出来，不然没人找得到它。
+        assert!(
+            Cli::command()
+                .render_long_help()
+                .to_string()
+                .contains("calibrate"),
+            "总帮助里没有 calibrate"
+        );
+    }
+
+    /// `calibrate` 把图写到点名的那个文件上，父目录不在就建出来（14 号票）。
+    ///
+    /// 落不落盘、落到哪儿是 CLI 这一层的事：库那侧出的是字节，够不着这一条。
+    /// 断言比的是**文件里的字节**与库出的那一份——中间这一段不许对图动手。
+    #[test]
+    fn calibrate_writes_the_chart_to_the_named_file_and_makes_its_parent() {
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let out = workspace.path().join("还不存在的目录").join("标定图.png");
+
+        let code = calibrate("Kobo Libra 2", None, &out).expect("写标定图");
+
+        assert_eq!(code, SUCCESS_EXIT, "写成了就该是全部成功那个数");
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        assert_eq!(
+            std::fs::read(&out).expect("读回标定图"),
+            tonefit::calibration_chart(&profile).expect("画标定图"),
+            "落盘的字节与库出的不是同一份"
+        );
     }
 
     #[test]

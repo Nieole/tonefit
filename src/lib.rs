@@ -8,8 +8,12 @@
 //! [`score`] 是第二个 seam：判据的纯函数形态，数值与性质测试、标定工具直接调它。
 //! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`Candidate`]、[`quantize`]——
 //! 一并公开，判据的调用方要拿它们拼出参照与候选。
+//!
+//! [`calibration_chart`] 是第三个：灰阶阶梯标定图。它不在管线上——不读源、不写文件，
+//! 只按一个 [`Profile`] 画出一张图的字节，`--gray-levels` 填的那个数由它量出来（ADR 0003）。
 
 mod cache;
+mod calibrate;
 mod color;
 mod decide;
 mod decode;
@@ -57,6 +61,17 @@ pub use resample::{Filter, Scaling};
 use metadata::{Fingerprint, Record, Recorder};
 use sink::Sink;
 use source::{Member, Volume};
+
+/// 画一张灰阶阶梯标定图，编成 PNG 字节。
+///
+/// 尺寸恒等于面板分辨率：图要在真机上 1:1 显示才数得准（见 `calibrate`）。
+///
+/// **图本身不经过位深判定**：它是量具，不是被处理的页——判据、上包络、抖动一概不碰它，
+/// 像素以 8 位工作精度原样交给编码器，写出的是无损 PNG。自描述元数据也不写：
+/// 记录说的是一页的判定与幂等依据（见 `metadata`），标定图两样都没有。
+pub fn calibration_chart(profile: &Profile) -> Result<Vec<u8>> {
+    encode::png(&calibrate::chart(profile), BitDepth::Eight, None)
+}
 
 /// 处理点名的若干卷，产出设备优化副本。源卷只读。
 pub fn run(request: &Request) -> Result<Report> {

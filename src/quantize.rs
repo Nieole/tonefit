@@ -265,6 +265,15 @@ pub(crate) fn grid_index(level: u8, depth: BitDepth) -> u8 {
     ((u32::from(level) * top + 127) / 255) as u8
 }
 
+/// `depth` 的第 `index` 个格点落在哪个 8 位取值上。[`grid_index`] 的逆。
+///
+/// 标定图的阶梯照它排（见 `crate::calibrate`）：阶梯上的每一级落的就是这一档位深
+/// **真会写出**的那个取值，不是随手取的等距灰。阶梯要预告得了输出，格点就必须与编码器同源。
+pub(crate) fn grid_level(index: u32, depth: BitDepth) -> u8 {
+    let top = depth.levels() - 1;
+    ((index * 255 + top / 2) / top) as u8
+}
+
 /// 8 位取值 → 量化后落到的 8 位取值。一页有几百万像素，逐像素算浮点不值得。
 fn levels_table(depth: BitDepth) -> [u8; 256] {
     let top = (depth.levels() - 1) as f32;
@@ -278,6 +287,33 @@ fn levels_table(depth: BitDepth) -> [u8; 256] {
 mod tests {
     use super::*;
     use crate::geometry::Size;
+
+    /// 格点的两侧对得上：第 `index` 个格点的取值量化回去还是 `index`，
+    /// 而落在格点上的取值经量化表照样不动。标定图的阶梯与编码器写出的取值因此是同一批数。
+    #[test]
+    fn the_grid_reads_the_same_from_either_side() {
+        for depth in BitDepth::ALL {
+            let table = levels_table(depth);
+            for index in 0..depth.levels() {
+                let level = grid_level(index, depth);
+                assert_eq!(
+                    grid_index(level, depth),
+                    index as u8,
+                    "{depth} 第 {index} 个格点"
+                );
+                assert_eq!(
+                    table[level as usize], level,
+                    "{depth} 第 {index} 个格点不在格点表上"
+                );
+            }
+            assert_eq!(grid_level(0, depth), 0, "{depth} 最暗的那个格点不是纯黑");
+            assert_eq!(
+                grid_level(depth.levels() - 1, depth),
+                255,
+                "{depth} 最亮的那个格点不是纯白"
+            );
+        }
+    }
 
     /// 8bit 的格点就是 8 位工作精度本身：参照在这一档上零误差，判据因此必须先裁候选
     /// 再选（ADR 0003），而不是交给判据自己挑。
