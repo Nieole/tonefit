@@ -78,13 +78,98 @@ impl<'a> Steps<'a> {
 mod tests {
     use super::*;
 
-    /// 没有观察者时每一步都是空操作——库不会因为没人看着就走别的路。
-    #[test]
-    fn a_run_without_an_observer_reports_into_nowhere() {
-        let steps = Steps::new(None);
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-        steps.started(Path::new("卷一"), 10);
-        steps.step();
-        steps.finished();
+    /// 记账用的观察者：报到什么就记什么。用例那一头留一份克隆，散场之后查得出来。
+    ///
+    /// 形状照 `tests/concurrency.rs` 的同名夹具办（句柄 + 一格共享记账）。那一个数的是
+    /// 管线报到的步，这一个数的是 [`Steps`] 转手的次数，共用不了代码，至少共用一个样子。
+    ///
+    /// 开卷记的是**参数**而不只是次数：`volume_started` 带着卷路径与预告的步数两样东西，
+    /// 只数次数的话，把卷报错、把总步数报错都不会红——而预告的步数报错正是进度条
+    /// 「停在某个百分比上再也不动」的样子。
+    #[derive(Clone, Default)]
+    struct Tally(Arc<Counts>);
+
+    #[derive(Default)]
+    struct Counts {
+        started: Mutex<Vec<(PathBuf, u64)>>,
+        stepped: AtomicUsize,
+        finished: AtomicUsize,
+    }
+
+    impl Progress for Tally {
+        fn volume_started(&self, volume: &Path, steps: u64) {
+            self.0
+                .started
+                .lock()
+                .expect("记账没有中毒")
+                .push((volume.to_owned(), steps));
+        }
+
+        fn stepped(&self) {
+            self.0.stepped.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn volume_finished(&self) {
+            self.0.finished.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    impl Tally {
+        fn started(&self) -> Vec<(PathBuf, u64)> {
+            self.0.started.lock().expect("记账没有中毒").clone()
+        }
+
+        fn stepped(&self) -> usize {
+            self.0.stepped.load(Ordering::Relaxed)
+        }
+
+        fn finished(&self) -> usize {
+            self.0.finished.load(Ordering::Relaxed)
+        }
+    }
+
+    /// 每一下报到都原样到得了装进去的那个观察者，此外哪儿都不到。
+    ///
+    /// 后半句只有拿前半句当参照才断言得出来：场上得先有一个收得到报到的观察者，
+    /// 没装它的那一端走完之后它一动不动，那才叫没人收到。只调三下不断言，
+    /// 测到的是「不恐慌」——而空操作与「悄悄少报了一步」都不恐慌，那个形式两者分不开。
+    #[test]
+    fn every_step_reaches_the_installed_observer_and_nowhere_else() {
+        let tally = Tally::default();
+        let sink = ProgressSink::new(tally.clone());
+
+        let watched = Steps::new(Some(&sink));
+        watched.started(Path::new("卷一"), 10);
+        watched.step();
+        watched.step();
+        watched.finished();
+
+        // 每一下都恰好到一次，带着的东西也没变样：多报一步进度条会冲过头，
+        // 少报一步它会停在半路，而预告的步数报错则从头到尾都对不上。
+        assert_eq!(
+            tally.started(),
+            vec![(PathBuf::from("卷一"), 10)],
+            "开卷没有原样到达"
+        );
+        assert_eq!(tally.stepped(), 2, "走过的步没有原样到达");
+        assert_eq!(tally.finished(), 1, "收摊没有原样到达");
+
+        // 同一个记账本还在场上，而这一端没装它：三下报到一下都不该落到它那里。
+        let unwatched = Steps::new(None);
+        unwatched.started(Path::new("卷二"), 10);
+        unwatched.step();
+        unwatched.finished();
+
+        assert_eq!(
+            tally.started(),
+            vec![(PathBuf::from("卷一"), 10)],
+            "没装观察者，开卷却到了某处"
+        );
+        assert_eq!(tally.stepped(), 2, "没装观察者，步却到了某处");
+        assert_eq!(tally.finished(), 1, "没装观察者，收摊却到了某处");
     }
 }

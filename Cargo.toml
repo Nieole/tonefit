@@ -42,12 +42,19 @@ windows-sys = { version = "0.61.2", features = [
 [features]
 ssimulacra2 = ["dep:ssimulacra2"]
 
+# 真实素材冒烟自带 harness，只为把「本次没跑」说得出口。理由见 `tests/smoke.rs` 的模块文档。
+[[test]]
+name = "smoke"
+harness = false
+
 [dev-dependencies]
 # 夹具要按字节手搓 ZIP——`zip` 的写入端只收 Rust 字符串，编不出 GBK 成员名，
 # 也置不出「没有 UTF-8 标志」这个恰恰要测的状态。
 crc32fast = "1.5.1"
-# 夹具要按 GBK 编成员名，测试要绕开被测代码读回归档。集成测试是独立的 crate，
-# 拿不到本包的普通依赖，因此这两个在两处各列一次。
+# 夹具要按 GBK 编成员名，测试要绕开被测代码读回归档。
+# 这两个在 `[dependencies]` 里也各有一份，重列是冗余的——`[dependencies]` 的非可选项
+# 对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着 `num_cpus`）。
+# 该不该把这两行删掉见《非阻塞问题》，不在 09 号票的范围里。
 encoding_rs = "0.8.35"
 # 夹具生成器要写出 AVIF；`avif` 是编码侧特性（ravif），与运行时解码用的 avif-native 不同。
 # resolver v2 不把 dev-dependencies 的特性并进非 dev 构建，`cargo build` 不会带上 ravif。

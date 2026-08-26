@@ -1,14 +1,20 @@
-//! 真实素材冒烟：opt-in，默认跳过。
+//! 真实素材冒烟：opt-in，没有素材时**明确跳过**。
 //!
 //! 仓库里不放真实漫画（15 号票最后一条，也是 spec 的 story 35）。素材放在本机的
 //! `_samples/`（`.gitignore` 挡着，见 `.scratch/p0-core-pipeline/samples-wanted.md`），
 //! 由环境变量指过来：
 //!
 //! ```text
-//! TONEFIT_SAMPLES=_samples cargo test --test smoke -- --nocapture
+//! TONEFIT_SAMPLES=_samples cargo test --test smoke
 //! ```
 //!
-//! **环境变量没设时这一条什么都不做、照样通过**：它不该是任何一次普通 `cargo test` 的负担。
+//! **这一条自带 harness**（`Cargo.toml` 里 `[[test]] harness = false`），只为一件事：
+//! 跳过要说得出口。内建 harness 认得的跳过只有 `#[ignore]` 那个**静态**标记，而这里的条件
+//! 是运行时的——环境变量指没指过来，编译期答不出。挂在内建 harness 上，没素材的那一趟印出来
+//! 是 `test ... ok`，与真跑过一模一样，读 CI 日志的人会把它当证据。自带 harness 之后跳过
+//! 印的是跳过，这个二进制一个「通过」都不计入总数，本次跑没跑一眼看得出。
+//!
+//! 素材指过来了却指错地方**不是跳过**：那是点名要跑，当场红。
 //!
 //! 断言只有两件事：**不崩溃**，以及**产出合法**——写出来的每一页都解得回来，尺寸与
 //! 报告说的对得上，至少有一页真的处理成了。具体体积、具体判定一概不断言：真实素材各不
@@ -36,18 +42,54 @@ const SAMPLES: &str = "TONEFIT_SAMPLES";
 /// 归档卷的扩展名。素材目录里的 `.cbz` 各算一个卷。
 const ARCHIVE: &str = "cbz";
 
-#[test]
-fn real_material_runs_through_the_pipeline() {
+/// 这一条用例的名字。自带 harness 之后，命令行的过滤词要自己拿它比对，落款也用它。
+const NAME: &str = "real_material_runs_through_the_pipeline";
+
+/// 三种结局各印一行，头两个字就分得开：跑过了、跳过了，红了那一路走 panic。
+fn main() {
+    if !selected() {
+        println!("跳过 {NAME}：命令行的过滤词点的是别的用例。");
+        return;
+    }
     let Some(root) = samples() else {
-        eprintln!(
-            "跳过真实素材冒烟：{SAMPLES} 没有指向任何目录。\
+        println!(
+            "跳过 {NAME}：{SAMPLES} 没有指向任何目录，本次一个卷都没跑。\n\
              要跑就把素材放到本机某处，再 `{SAMPLES}=<那个目录> cargo test --test smoke`。"
         );
         return;
     };
 
-    let inputs = volumes(&root);
-    eprintln!("真实素材冒烟：{} 下 {} 个卷", root.display(), inputs.len());
+    let processed = real_material_runs_through_the_pipeline(&root);
+
+    println!("跑过 {NAME}：{} 下 {processed} 页处理成。", root.display());
+}
+
+/// 命令行点的是这一条吗。
+///
+/// 自带 harness 就得自己认这件事：`cargo test <过滤词>` 把过滤词发给**每一个**测试二进制，
+/// 内建 harness 拿它对测试名做子串匹配。这里照同一条规矩办，不然 `cargo test golden`
+/// 会顺带把真实素材跑一遍。`--nocapture` 一类的 flag 不是过滤词，不看。
+///
+/// 一个过滤词都没有就跑；有几个则**任一命中即跑**——内建 harness 的多过滤词是或，不是与。
+///
+/// **拿不准就跑**：命令行上但凡出现一个 flag，就不按过滤词跳过。libtest 有好几个分离取值的
+/// 选项（`--test-threads 4`、`--skip foo`），它们的值不以 `-` 开头，照过滤词认会把 `4`
+/// 当成一个谁都不命中的过滤词，于是本该跑的这一趟静悄悄跳过——「本该跑却没跑、还印着一行跳过」
+/// 正是这张票要收掉的那种谎。多跑一趟只是慢，跳错一趟是假的证据，两者的代价不对称。
+///
+/// `--exact`、`--skip` 那几个不认。要单点这一条，用 `cargo test --test smoke`。
+fn selected() -> bool {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.iter().any(|argument| argument.starts_with('-')) {
+        return true;
+    }
+    arguments.is_empty() || arguments.iter().any(|filter| NAME.contains(filter))
+}
+
+/// 真实素材跑得下来，产出也合法。返回这一趟真正处理成了的页数。
+fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
+    let inputs = volumes(root);
+    println!("真实素材冒烟：{} 下 {} 个卷", root.display(), inputs.len());
 
     let space = Workspace::new();
     let report = tonefit::run(&Request {
@@ -84,6 +126,7 @@ fn real_material_runs_through_the_pipeline() {
         "{} 下一页都没有处理成：素材要么全坏了，要么根本不是图片",
         root.display()
     );
+    processed
 }
 
 /// 素材目录。环境变量没设、或设成空串就是 `None`。
@@ -202,14 +245,16 @@ impl Written {
     }
 }
 
-/// 这一趟都发生了什么，印给跑它的人看（`-- --nocapture`）。
+/// 这一趟都发生了什么，印给跑它的人看。
+///
+/// 自带 harness 不捕获输出，因此不必再 `-- --nocapture`：印了就看得见。
 ///
 /// 冒烟不断言判定，可判定恰恰是跑它的人要看的东西——真实素材上的档位分布，
 /// 是 `CONTEXT.md` 的《尚未确立》里那几条目前唯一的现场数据来源。
 fn summarize(report: &Report) {
-    eprintln!("profile：{}", report.profile);
+    println!("profile：{}", report.profile);
     for volume in &report.volumes {
-        eprintln!(
+        println!(
             "  {} · {} 页{}\n    {}",
             volume
                 .volume
@@ -227,19 +272,19 @@ fn summarize(report: &Report) {
             .filter(|page| matches!(page.branch(), Some(PageBranch::Color)))
             .count();
         if color > 0 {
-            eprintln!("    彩色分支 {color} 页");
+            println!("    彩色分支 {color} 页");
         }
         // 部分救回页在真实素材上是「这份片源下歪了」的现场证据（04 号票），
         // 而它不进隔离目录、也没有退出码替它喊：不印出来，跑冒烟的人无从知道。
         for page in volume.salvaged() {
-            eprintln!(
+            println!(
                 "    部分救回 {}：{}",
                 page.source.display(),
                 page.salvage().expect("这是一张部分救回页"),
             );
         }
         for page in volume.failures() {
-            eprintln!(
+            println!(
                 "    失败页 {}：{}",
                 page.source.display(),
                 page.failure().expect("这是一张失败页"),

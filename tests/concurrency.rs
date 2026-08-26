@@ -155,9 +155,15 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
     assert_eq!(serial.chosen_by, ChosenBy::Named);
     assert_eq!(serial.readers, 1, "点名串行还派了不止一条读取");
     assert_eq!(concurrent.chosen_by, ChosenBy::Named);
-    assert!(
-        concurrent.readers >= serial.readers,
-        "点名并发派得比串行还少：{concurrent}"
+    // 断言的是一个**等号**，不是「不少于串行那一档」：串行恒为 1，那个不等号展开就是
+    // 「不小于 1」，把并发悄悄退化成串行照样绿——一条永真的断言在 CI 日志里与真断言长得一样。
+    // 点名并发派几条由核数定（`crate::cores`），本进程问到的是同一个数。
+    // 单核机器上并发与串行本就分不开，这个等号在那里退成 `1 == 1`；
+    // 「Concurrent 映射到核数」与主机无关的那一半钉在 `src/medium.rs` 的单元用例里。
+    assert_eq!(
+        concurrent.readers,
+        num_cpus::get().max(1),
+        "点名并发没有派满核数：{concurrent}"
     );
     // 探到的介质与点名无关：三趟说的是同一块盘。
     assert_eq!(automatic.medium, serial.medium);

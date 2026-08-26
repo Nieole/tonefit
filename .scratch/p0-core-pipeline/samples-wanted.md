@@ -3,10 +3,10 @@
 Status: ready-for-agent
 
 样本放在仓库内的 `_samples/`，该目录不入版本库。真实素材冒烟按 `TONEFIT_SAMPLES` 指过来，
-默认不跑：
+没指就跳过，跳过在测试输出里印成一行「跳过」、不计入通过：
 
 ```
-TONEFIT_SAMPLES=_samples cargo test --test smoke -- --nocapture
+TONEFIT_SAMPLES=_samples cargo test --test smoke
 ```
 
 目录的直接子项各算一个卷（子目录或 `.cbz`）。它断言什么、不断言什么见 `tests/smoke.rs`。
