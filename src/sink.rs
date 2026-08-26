@@ -4,6 +4,8 @@
 //!
 //! 幂等要读回上一趟的输出，读的也是这个容器，因此 [`Written`] 落在这里：
 //! 「一页在容器里怎么找」两个方向上是同一件事，分开写就是两份会走散的容器知识。
+//!
+//! 两种形态**都先写到临时容器、收尾时才改名到最终位置**（见 [`Sink`]）。
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Read, Write};
@@ -16,25 +18,23 @@ use crate::metadata::{Fingerprint, RECORD_PREFIX};
 use crate::source::Container;
 
 /// 一个卷的输出容器。写完必须调用 [`Sink::finish`]。
+///
+/// 两种形态同形：**先写到一个临时容器，收尾时才改名到最终位置**。因此最终位置上
+/// 要么是上一趟那一份、要么是这一趟完整的一份，中间那一份不出现——而收尾时最终位置
+/// 整个被换掉，输出里于是只剩本趟写出的成员（见 [`DirectorySink`]、[`ArchiveSink`]）。
 pub enum Sink {
-    Directory {
-        root: PathBuf,
-    },
+    Directory(DirectorySink),
     /// 装箱是因为 `ZipWriter` 自带几 KB 的压缩状态，直接内嵌会让目录卷也背上这份体积。
     Archive(Box<ArchiveSink>),
 }
 
 impl Sink {
     /// 在 `path` 建出输出容器：目录卷是一个目录，归档卷是一个归档文件。
+    ///
+    /// 这一步建出来的是临时容器，`path` 此刻还没被碰——它要等 [`finish`](Sink::finish)。
     pub fn create(path: &Path, container: Container) -> Result<Self> {
         match container {
-            Container::Directory => {
-                std::fs::create_dir_all(path)
-                    .with_context(|| format!("建输出目录 {}", path.display()))?;
-                Ok(Sink::Directory {
-                    root: path.to_path_buf(),
-                })
-            }
+            Container::Directory => Ok(Sink::Directory(DirectorySink::create(path)?)),
             Container::Archive => Ok(Sink::Archive(Box::new(ArchiveSink::create(path)?))),
         }
     }
@@ -56,23 +56,90 @@ impl Sink {
         compression: zip::CompressionMethod,
     ) -> Result<()> {
         match self {
-            Sink::Directory { root } => {
-                let path = root.join(relative);
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("建输出目录 {}", parent.display()))?;
-                }
-                std::fs::write(&path, bytes).with_context(|| format!("写 {}", path.display()))
-            }
+            Sink::Directory(directory) => directory.write(relative, bytes),
             Sink::Archive(archive) => archive.write(relative, bytes, compression),
         }
     }
 
-    /// 收尾。归档在这一步才落到最终位置。
+    /// 收尾。两种容器都在这一步才落到最终位置。
     pub fn finish(self) -> Result<()> {
         match self {
-            Sink::Directory { .. } => Ok(()),
+            Sink::Directory(directory) => directory.finish(),
             Sink::Archive(archive) => archive.finish(),
+        }
+    }
+}
+
+/// 目录输出。
+///
+/// 先写到一个临时目录，收尾时把最终位置**整个**换掉。两件事各要它一半：
+///
+/// 一是**不产出半成品**：写到一半的目录里每一页都带着完全正确的记录，
+/// 摆在文件管理器里与一本处理好的书没有分别。
+///
+/// 二是**清掉陈旧产物**：只覆盖本趟写出的文件的话，源里删掉的那一页会在输出里原地留着、
+/// 还带着上一趟的记录，下一趟又被幂等跳过，从此永久留在输出里。
+///
+/// 归档卷本来就整个重写，两件事在它身上都不成立——同一条标准这才在两种容器形态上
+/// 给出同一个答案。
+pub struct DirectorySink {
+    /// 最终位置。
+    path: PathBuf,
+    /// 正在写的临时目录。改名到位或析构之后为 `None`。
+    partial: Option<PathBuf>,
+}
+
+impl DirectorySink {
+    fn create(path: &Path) -> Result<Self> {
+        let partial = partial_path(path);
+        // 上一趟被硬停在半路、连析构都没跑到的临时目录，这一趟当垃圾清掉：
+        // 留着它，里面的陈旧成员会混进本趟的输出。
+        if partial.exists() {
+            std::fs::remove_dir_all(&partial)
+                .with_context(|| format!("清掉残留的临时目录 {}", partial.display()))?;
+        }
+        std::fs::create_dir_all(&partial)
+            .with_context(|| format!("建输出目录 {}", partial.display()))?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            partial: Some(partial),
+        })
+    }
+
+    fn write(&mut self, relative: &Path, bytes: &[u8]) -> Result<()> {
+        let root = self.partial.as_ref().expect("收尾之前临时目录恒在");
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("建输出目录 {}", parent.display()))?;
+        }
+        std::fs::write(&path, bytes).with_context(|| format!("写 {}", path.display()))
+    }
+
+    /// 收尾：最终位置整个换成这一趟写出的那一份。
+    ///
+    /// 先腾位置再改名，而不是「把旧的改名到一边、放好新的、再删旧的」：多出来的那个
+    /// 中间名字要么留在输出里让用户猜，要么还得为「删它又失败了」再写一手。
+    /// 腾位置这一步失败就整趟失败，最终位置原样不动，临时目录由析构收走。
+    fn finish(mut self) -> Result<()> {
+        let partial = self.partial.clone().expect("收尾之前临时目录恒在");
+        if self.path.exists() {
+            std::fs::remove_dir_all(&self.path)
+                .with_context(|| format!("腾出输出位置 {}", self.path.display()))?;
+        }
+        std::fs::rename(&partial, &self.path)
+            .with_context(|| format!("把 {} 改名到 {}", partial.display(), self.path.display()))?;
+        // 改名成功，临时目录已经不在了。
+        self.partial = None;
+        Ok(())
+    }
+}
+
+impl Drop for DirectorySink {
+    fn drop(&mut self) {
+        // 改名到位就没有临时目录了；还在就是中途出了错，别把半个卷留在输出里。
+        if let Some(partial) = self.partial.take() {
+            let _ = std::fs::remove_dir_all(partial);
         }
     }
 }
@@ -137,12 +204,15 @@ impl Written {
 /// 归档输出。
 ///
 /// 先写到一个临时文件，收尾时才改名到位：中途失败的归档没有中央目录，是打不开的垃圾，
-/// 不能让它顶着最终文件名留在输出里（03 号票：不产出半成品）。
+/// 不能让它顶着最终文件名留在输出里。目录卷同形，理由见 [`DirectorySink`]。
 pub struct ArchiveSink {
     /// 最终位置。
     path: PathBuf,
-    /// 正在写的临时文件与它的写入器。收尾或析构之后为 `None`——两者同生同死，因此共用一个 `Option`。
-    partial: Option<(PathBuf, zip::ZipWriter<BufWriter<File>>)>,
+    /// 正在写的临时文件。改名到位或析构之后为 `None`——与 [`DirectorySink`] 同一格。
+    partial: Option<PathBuf>,
+    /// 往临时文件里写的那个写入器。收尾时取走：中央目录一写完它就没用了，
+    /// 而临时文件还要等改名，两者因此各占一格。
+    writer: Option<zip::ZipWriter<BufWriter<File>>>,
 }
 
 impl ArchiveSink {
@@ -156,7 +226,8 @@ impl ArchiveSink {
             File::create(&partial).with_context(|| format!("建输出归档 {}", partial.display()))?;
         Ok(Self {
             path: path.to_path_buf(),
-            partial: Some((partial, zip::ZipWriter::new(BufWriter::new(file)))),
+            partial: Some(partial),
+            writer: Some(zip::ZipWriter::new(BufWriter::new(file))),
         })
     }
 
@@ -167,7 +238,7 @@ impl ArchiveSink {
         compression: zip::CompressionMethod,
     ) -> Result<()> {
         let name = archive_name(relative);
-        let (_, writer) = self.partial.as_mut().expect("收尾之前临时文件恒在");
+        let writer = self.writer.as_mut().expect("收尾之前写入器恒在");
         writer
             .start_file(
                 &name,
@@ -180,8 +251,10 @@ impl ArchiveSink {
     }
 
     fn finish(mut self) -> Result<()> {
-        let (partial, writer) = self.partial.take().expect("收尾只做一次");
-        writer
+        let partial = self.partial.clone().expect("收尾之前临时文件恒在");
+        self.writer
+            .take()
+            .expect("收尾之前写入器恒在")
             .finish()
             .with_context(|| format!("收尾 {}", self.path.display()))?
             .into_inner()
@@ -189,15 +262,19 @@ impl ArchiveSink {
             .sync_all()
             .with_context(|| format!("落盘 {}", self.path.display()))?;
         std::fs::rename(&partial, &self.path)
-            .with_context(|| format!("把 {} 改名到 {}", partial.display(), self.path.display()))
+            .with_context(|| format!("把 {} 改名到 {}", partial.display(), self.path.display()))?;
+        // 改名成功，临时文件已经不在了。
+        self.partial = None;
+        Ok(())
     }
 }
 
 impl Drop for ArchiveSink {
     fn drop(&mut self) {
-        // 收尾过就没有临时文件了；还在就是中途出了错，别把半个归档留在输出里。
-        if let Some((partial, writer)) = self.partial.take() {
-            drop(writer);
+        // 改名到位就没有临时文件了；还在就是中途出了错，别把半个归档留在输出里。
+        // 先放掉写入器：Windows 上还开着句柄的文件删不掉。
+        drop(self.writer.take());
+        if let Some(partial) = self.partial.take() {
             let _ = std::fs::remove_file(partial);
         }
     }
@@ -212,7 +289,8 @@ fn archive_name(relative: &Path) -> String {
         .join("/")
 }
 
-/// 临时文件名：在最终文件名后面接一段固定后缀，与最终文件同目录，改名因此不跨卷。
+/// 临时容器的位置：在最终名字后面接一段固定后缀，与最终位置**同一层**，
+/// 改名因此不跨卷，也就不会退化成一次逐字节复制。
 fn partial_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".partial");

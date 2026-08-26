@@ -506,6 +506,22 @@ pub fn written_bits(depth: png::BitDepth) -> u32 {
     u32::from(depth as u8)
 }
 
+/// 一个目录容器里的成员名清单，按名字排序，分隔符归一成 `/`。
+///
+/// 归档那一侧的清单按**写入顺序**（见 `container.rs` 的 `member_names`），目录没有顺序，
+/// 只有排序才比得出「输出里有什么」。断言「输出里只剩本趟的产物」用它。
+pub fn directory_members(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = walkdir::WalkDir::new(root)
+        .into_iter()
+        // 目录根本不在就是「里面什么都没有」——问「此刻输出里有什么」的用例正要这个答案。
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| relative_name(root, entry.path()))
+        .collect();
+    names.sort();
+    names
+}
+
 /// 目录内容的指纹：相对路径 + 每个文件的字节哈希。用来断言源目录未被改动。
 pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
     let mut entries: Vec<_> = walkdir::WalkDir::new(root)

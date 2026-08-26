@@ -4,6 +4,9 @@
 
 mod fixtures;
 
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
 use fixtures::{Workspace, run_paths, run_paths_expecting_failure, run_volume};
 
 /// 透传要逐字节一致，因此这份夹具故意带上非 ASCII 与换行。
@@ -279,7 +282,7 @@ fn a_member_name_that_would_escape_the_volume_is_refused() {
     assert!(!space.out().exists(), "被拒绝之后仍然写了输出");
 }
 
-/// 归档要么完整、要么不存在（03 号票：不产出半成品）。
+/// 归档要么完整、要么不存在：不产出半成品。目录卷同形，见下面那一对用例。
 ///
 /// 触发失败用的是一个**读不出字节的透传文件**：它排在页之后写，页因此已经进了临时归档，
 /// 那一刻失败才真的是「写到一半」。坏页触发不了了——它现在被隔离，不再中止整卷（12 号票）。
@@ -378,6 +381,284 @@ fn color_and_gray_pages_come_out_of_the_archive_in_reading_order() {
         member_names(&volume.output),
         ["1.png", "2.png", "10.png", "11.png"]
     );
+}
+
+/// 目录卷是**整目录重写**：源里删掉一页，输出里那一页跟着消失。
+///
+/// 只覆盖本趟写出的文件的话，那一页会原地留着、还带着上一趟的记录，下一趟又被幂等跳过，
+/// 从此永久留在输出里——在阅读器里与真页毫无分别。
+#[test]
+fn a_page_deleted_from_the_source_disappears_from_the_directory_output() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let page = fixtures::gradient(fixtures::TINY);
+    volume.page("001.png", &page);
+    volume.page("002.png", &page);
+    volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+
+    let first = run_volume(&space, &volume);
+    assert_eq!(
+        fixtures::directory_members(&first.volumes[0].output),
+        ["001.png", "002.png", "ComicInfo.xml"],
+        "夹具不对：头一趟就没写全"
+    );
+
+    std::fs::remove_file(volume.path().join("002.png")).expect("从源里删掉一页");
+    let second = run_volume(&space, &volume);
+
+    assert_eq!(
+        fixtures::directory_members(&second.volumes[0].output),
+        ["001.png", "ComicInfo.xml"]
+    );
+}
+
+/// 写完之后输出里只剩本趟的产物与透传文件：上一趟留下的东西一概不留。
+///
+/// 用一个陈旧产物钉这条，而不是再钉一次「删掉的页」：整目录重写管的是**所有**
+/// 不该再存在的旧成员，删页只是其中最要命的那一种。
+#[test]
+fn a_directory_volume_keeps_nothing_that_this_run_did_not_write() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+
+    let output = run_volume(&space, &volume).volumes[0].output.clone();
+    std::fs::write(output.join("陈旧产物.png"), "上一趟的".as_bytes()).expect("放一个陈旧产物");
+    // 源多了一页，这一卷因此要重做——陈旧产物本身不是重做的理由。
+    volume.page("002.png", &fixtures::solid(fixtures::TINY, 40));
+    let second = run_volume(&space, &volume);
+
+    assert_eq!(
+        fixtures::directory_members(&second.volumes[0].output),
+        ["001.png", "002.png", "ComicInfo.xml"]
+    );
+}
+
+/// 半卷永远不出现在最终位置：整卷写完之前，那个目录里一个成员都没有。
+///
+/// 逐页直写的话，最后一页写完的那一刻最终位置上已经躺着大半卷散页——观察者恰好在
+/// 那一刻被叫到，这条用例因此站得住。
+#[test]
+fn a_directory_volume_does_not_appear_at_its_final_path_until_it_is_complete() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let page = fixtures::gradient(fixtures::TINY);
+    for name in ["001.png", "002.png", "003.png", "004.png"] {
+        volume.page(name, &page);
+    }
+    volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let watch = WatchDuringRun::new(&space.out().join("volume-a"));
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(watch.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    assert!(watch.steps() > 4, "夹具不对：观察者没被叫到几次");
+    assert_eq!(
+        watch.most_it_ever_held(),
+        0,
+        "跑到一半时最终位置上已经有成员了"
+    );
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        ["001.png", "002.png", "003.png", "004.png", "ComicInfo.xml"]
+    );
+}
+
+/// 目录卷要么完整、要么不存在：中途失败不留半成品目录，临时容器也不留。
+///
+/// 触发失败的是一个**读不出字节的透传文件**——透传文件排在页之后写，页因此已经进了
+/// 临时目录，那一刻失败才真的是「写到一半」。理由与归档那条用例同一条。
+#[test]
+fn a_directory_volume_that_fails_partway_leaves_no_half_written_output() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let page = fixtures::gradient(fixtures::TINY);
+    volume.page("001.png", &page);
+    volume.page("002.png", &page);
+    volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+
+    let error = run_losing_the_extra(&space, &volume);
+
+    let message = format!("{error:#}");
+    assert!(message.contains("ComicInfo.xml"), "{message}");
+    let left = left_in(&space.out());
+    assert!(left.is_empty(), "输出里留下了 {left:?}");
+}
+
+/// 一趟失败不毁掉上一趟的成品：整目录重写只在收尾那一刻才碰最终位置。
+#[test]
+fn a_run_that_fails_leaves_the_previous_output_directory_intact() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let page = fixtures::gradient(fixtures::TINY);
+    volume.page("001.png", &page);
+    volume.page("002.png", &page);
+    volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+
+    let output = run_volume(&space, &volume).volumes[0].output.clone();
+    let before = fixtures::fingerprint(&output);
+
+    // 同一个卷，这一趟中途失败。触发方式的理由同上一个用例。
+    run_losing_the_extra(&space, &volume);
+
+    assert_eq!(
+        fixtures::fingerprint(&output),
+        before,
+        "上一次的成品被这次失败毁掉了"
+    );
+    assert_eq!(left_in(&space.out()), ["volume-a"], "输出根里多了东西");
+}
+
+/// 同一批输入在两种容器形态上给出**一致的输出成员**——源里删掉一页之后也一致。
+///
+/// 归档卷整个重写，删掉的页本来就不会留下；目录卷此前只覆盖本趟写出的文件，
+/// 同一条标准于是在两种形态上给出不同答案。
+#[test]
+fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let loose = space.volume("volume-a");
+    let pack = |names: &[&str]| {
+        let mut cbz = space.cbz("volume-b");
+        for name in names {
+            cbz.page(name, &page);
+        }
+        cbz.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+        cbz.write()
+    };
+
+    loose.page("001.png", &page);
+    loose.page("002.png", &page);
+    loose.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let packed = pack(&["001.png", "002.png"]);
+    run_paths(&space, [loose.path(), packed.as_path()]);
+
+    std::fs::remove_file(loose.path().join("002.png")).expect("从目录卷里删掉一页");
+    let packed = pack(&["001.png"]);
+    let report = run_paths(&space, [loose.path(), packed.as_path()]);
+
+    let mut packed_members = member_names(&report.volumes[1].output);
+    packed_members.sort();
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        packed_members
+    );
+    assert_eq!(packed_members, ["001.png", "ComicInfo.xml"]);
+}
+
+/// 跑一趟，开工那一刻把源里的透传文件抽走，返回那个错误。
+///
+/// 造「写到一半才失败」用它：成员在 `volume_started` 之前就枚举完了，读到它是第二遍的事，
+/// 那时页已经写进临时容器。目录卷没有归档那种坏 CRC 可造——文件系统上一个文件
+/// 要么读得出来，要么根本不在。
+fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> anyhow::Error {
+    let removal = RemoveAtStart::new(&volume.path().join("ComicInfo.xml"));
+    tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(removal)),
+        ..fixtures::request(space, [volume.path()])
+    })
+    .expect_err("处理应当失败")
+}
+
+/// 输出根下留着的那些名字，按名字排序。半成品也在这个清单里——正是要断言它不在的东西。
+fn left_in(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .map(|entry| {
+            entry
+                .expect("列输出")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// 跑到一半时最终位置上有多少个成员——每报到一步问一次，留下见过的最大值。
+///
+/// 观察者是库唯一向外开的、跑到一半还插得上话的口子（见 `tonefit::Progress`）：
+/// 「半卷不出现在最终位置」是一条**过程中**的性质，跑完再看是看不出来的。
+#[derive(Clone)]
+struct WatchDuringRun {
+    path: PathBuf,
+    /// 观察者要交给库、用例又要读回它记下的数，因此这一格共享——
+    /// `ProgressSink` 收的是所有权，留不下第二个把手。
+    seen: Arc<Mutex<Seen>>,
+}
+
+/// 一趟跑下来记住的两个数。
+#[derive(Default)]
+struct Seen {
+    steps: usize,
+    most: usize,
+}
+
+impl WatchDuringRun {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            seen: Arc::new(Mutex::new(Seen::default())),
+        }
+    }
+
+    fn look(&self) {
+        let held = fixtures::directory_members(&self.path).len();
+        let mut seen = self.seen.lock().expect("看一眼最终位置");
+        seen.most = seen.most.max(held);
+    }
+
+    fn most_it_ever_held(&self) -> usize {
+        self.seen.lock().expect("读回见过的最大值").most
+    }
+
+    fn steps(&self) -> usize {
+        self.seen.lock().expect("读回报到次数").steps
+    }
+}
+
+impl tonefit::Progress for WatchDuringRun {
+    fn volume_started(&self, _volume: &Path, _steps: u64) {
+        self.look();
+    }
+
+    fn stepped(&self) {
+        self.seen.lock().expect("记一步").steps += 1;
+        self.look();
+    }
+
+    /// 收尾排在这条报到之前，此刻最终位置上**应该**已经是一整卷了——不看。
+    fn volume_finished(&self) {}
+}
+
+/// 开工那一刻把源里的一个文件抽走：成员已经枚举过，读到它时就读不出来了。
+struct RemoveAtStart {
+    path: PathBuf,
+}
+
+impl RemoveAtStart {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+        }
+    }
+}
+
+impl tonefit::Progress for RemoveAtStart {
+    fn volume_started(&self, _volume: &Path, _steps: u64) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+
+    fn stepped(&self) {}
+
+    fn volume_finished(&self) {}
 }
 
 /// 一个归档里成员名的清单，按归档里的顺序。

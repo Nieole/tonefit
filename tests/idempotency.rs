@@ -13,8 +13,8 @@ use tonefit::{BitDepth, CacheBudget, Filter, Mode, PageColor, Reason, Request, V
 /// 一处参数改动，连同它在断言里的说法。
 type Change = (&'static str, fn(&mut Request));
 
-/// 一处源改动，连同它在断言里的说法。
-type Touch = (&'static str, fn(&Volume));
+/// 一处源改动：它在断言里的说法、动手的那一下、以及重做之后输出里该剩下哪些成员。
+type Touch = (&'static str, fn(&Volume), &'static [&'static str]);
 
 /// 一台彩色面板设备：彩页只有在彩色 profile 下才走彩色分支（ADR 0010）。
 const COLOR_DEVICE: &str = "kobo-libra-colour";
@@ -87,7 +87,7 @@ fn a_changed_parameter_redoes_the_volume() {
     ];
 
     for (what, change) in changes {
-        assert_redone(rerun(|_| {}, change), what);
+        assert_redone(rerun(|_| {}, change).verdict, what);
     }
 }
 
@@ -97,53 +97,79 @@ fn a_changed_parameter_redoes_the_volume() {
 /// （与 `Report::profile` 同一个理由）。
 #[test]
 fn switching_to_another_alias_of_the_same_panel_redoes_the_volume() {
-    let verdict = rerun(
+    let redone = rerun(
         |_| {},
         |request| request.profile = fixtures::profile("kobo-libra-h2o"),
     );
 
-    assert_redone(verdict, "换了同一块面板的另一个别名");
+    assert_redone(redone.verdict, "换了同一块面板的另一个别名");
 }
 
 /// 缓存预算限的是峰值内存，一个像素都不改（ADR 0005）：改它不该让整库重做。
 #[test]
 fn the_cache_budget_alone_does_not_redo_the_volume() {
-    let verdict = rerun(
+    let redone = rerun(
         |_| {},
         |request| request.cache_budget = CacheBudget::new(4 * 1024),
     );
 
-    assert_eq!(verdict, Some(VolumeVerdict::Skipped { page_count: 2 }));
+    assert_eq!(
+        redone.verdict,
+        Some(VolumeVerdict::Skipped { page_count: 2 })
+    );
 }
 
 /// 源哈希是**卷级**的（为什么，见 ADR 0006 的《决定》末段）：卷里任何一个成员变了、
 /// 多了、少了，整卷都得重做。「少了一页」是逐页哈希看不见、而这一条钉得住的那一种。
+///
+/// 重做之后**输出里剩下什么**一并钉住：重做只是把源里还在的那些成员写一遍，
+/// 而「源里少了一页」要的是输出里那一页跟着消失——只断言「没被跳过」的话，
+/// 那一页会原地留着、还带着上一趟的记录，下一趟又被跳过（整目录重写，见 `container.rs`）。
 #[test]
 fn a_changed_source_redoes_the_volume() {
+    const INTACT: &[&str] = &["001.png", "002.png", "ComicInfo.xml"];
     let changes: [Touch; 4] = [
-        ("改了一页", |volume| {
-            volume.page("001.png", &fixtures::gradient(fixtures::TINY));
-        }),
-        ("多了一页", |volume| {
-            volume.page("003.png", &fixtures::solid(fixtures::TINY, 40));
-        }),
-        ("少了一页", |volume| {
-            fs::remove_file(volume.path().join("002.png")).expect("删掉一页");
-        }),
-        ("改了透传文件", |volume| {
-            volume.file("ComicInfo.xml", b"<ComicInfo><Title>2</Title></ComicInfo>");
-        }),
+        (
+            "改了一页",
+            |volume| {
+                volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+            },
+            INTACT,
+        ),
+        (
+            "多了一页",
+            |volume| {
+                volume.page("003.png", &fixtures::solid(fixtures::TINY, 40));
+            },
+            &["001.png", "002.png", "003.png", "ComicInfo.xml"],
+        ),
+        (
+            "少了一页",
+            |volume| {
+                fs::remove_file(volume.path().join("002.png")).expect("删掉一页");
+            },
+            &["001.png", "ComicInfo.xml"],
+        ),
+        (
+            "改了透传文件",
+            |volume| {
+                volume.file("ComicInfo.xml", b"<ComicInfo><Title>2</Title></ComicInfo>");
+            },
+            INTACT,
+        ),
     ];
 
-    for (what, touch) in changes {
-        assert_redone(rerun(touch, |_| {}), what);
+    for (what, touch, members) in changes {
+        let redone = rerun(touch, |_| {});
+        assert_redone(redone.verdict, what);
+        assert_eq!(redone.members, members, "{what}之后输出里的成员不对");
     }
 }
 
 /// 页名换了也是源变了：只哈希字节的话，两页对调名字看不出来，而输出会整个错位。
 #[test]
 fn renaming_a_source_page_redoes_the_volume() {
-    let verdict = rerun(
+    let redone = rerun(
         |volume| {
             fs::rename(volume.path().join("002.png"), volume.path().join("003.png"))
                 .expect("给一页改名");
@@ -151,7 +177,9 @@ fn renaming_a_source_page_redoes_the_volume() {
         |_| {},
     );
 
-    assert_redone(verdict, "给一页改名");
+    assert_redone(redone.verdict, "给一页改名");
+    // 旧名字下的那一页也得跟着走：留着它，输出里会同时躺着改名前后的两份。
+    assert_eq!(redone.members, ["001.png", "003.png", "ComicInfo.xml"]);
 }
 
 /// 记录**就在文件里**：把页搬走、改名、重新打包，读回来还是同一份。
@@ -409,8 +437,18 @@ fn two_pages_and_an_extra(space: &Workspace) -> Volume {
     volume
 }
 
-/// 跑两趟：中间按 `touch` 动一动源，按 `change` 改一改参数。返回第二趟的卷级判定。
-fn rerun(touch: impl FnOnce(&Volume), change: impl FnOnce(&mut Request)) -> Option<VolumeVerdict> {
+/// 第二趟跑完留下的两样东西：这一卷的卷级判定，以及输出里剩下哪些成员。
+///
+/// 「这一卷重做了没有」与「重做之后输出里有什么」是同一件事的两半，判定只答得出前一半。
+struct Redone {
+    verdict: Option<VolumeVerdict>,
+    /// 成员清单在 [`rerun`] 里就取好：工作区是个临时目录，那个函数一返回它就被删了，
+    /// 输出路径带回来也问不出东西。
+    members: Vec<String>,
+}
+
+/// 跑两趟：中间按 `touch` 动一动源，按 `change` 改一改参数。返回第二趟留下的东西。
+fn rerun(touch: impl FnOnce(&Volume), change: impl FnOnce(&mut Request)) -> Redone {
     let space = Workspace::new();
     let volume = two_pages_and_an_extra(&space);
     fixtures::run_volume(&space, &volume);
@@ -420,7 +458,11 @@ fn rerun(touch: impl FnOnce(&Volume), change: impl FnOnce(&mut Request)) -> Opti
     change(&mut request);
     let report = tonefit::run(&request).expect("第二趟应当成功");
 
-    report.volumes.into_iter().next().expect("一个卷").verdict
+    let redone = report.volumes.into_iter().next().expect("一个卷");
+    Redone {
+        verdict: redone.verdict,
+        members: fixtures::directory_members(&redone.output),
+    }
 }
 
 /// 这一卷该重做，不该跳过。
