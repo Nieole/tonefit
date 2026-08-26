@@ -1871,3 +1871,47 @@ fn lowest_within_threshold(page: &tonefit::PageReport, report: &tonefit::Report)
         .map(|scored| scored.candidate.bit_depth)
         .unwrap_or_else(|| page.scores().last().expect("候选非空").candidate.bit_depth)
 }
+
+/// 同名的两个卷会写到同一个地方，后到的把先到的整卷盖掉。开工前就要拒。
+///
+/// 卷名重复在真实素材上是常态：一部漫画一个目录，每部里都有「第 1 话」。
+/// 一次点名多部就撞在一起，而覆盖掉的那一卷在阅读器里与真卷毫无分别——
+/// 静默是这条缺陷最要命的地方。
+#[test]
+fn two_volumes_that_would_write_to_the_same_place_are_refused() {
+    let space = Workspace::new();
+    let first = space.volume("甲部/第1话");
+    first.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let second = space.volume("乙部/第1话");
+    second.page("001.png", &fixtures::line_art(fixtures::TINY));
+
+    let error =
+        fixtures::run_paths_expecting_failure(&space, [first.path(), second.path()]).to_string();
+
+    // 撞在一起的两个卷都要点名：只说「撞车了」，用户无从知道是哪两卷。
+    assert!(error.contains("甲部"), "{error}");
+    assert!(error.contains("乙部"), "{error}");
+    // 拒绝要发生在写出第一个字节之前，输出根因此根本不该被建出来。
+    assert!(
+        !space.out().exists(),
+        "拒之前已经动过输出根：撞车没能在开工前查出来"
+    );
+}
+
+/// 一个目录卷和一个归档卷即使卷名相同也不撞：去处一个是 `名字`、一个是 `名字.cbz`。
+///
+/// 这条是上一条的反面。查撞车比的是**去处**，不是卷名——比卷名会把这一对误判成撞车。
+#[test]
+fn a_directory_and_an_archive_of_the_same_name_do_not_collide() {
+    let space = Workspace::new();
+    let directory = space.volume("第1话");
+    directory.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let mut archive = space.cbz("第1话");
+    archive.page("001.png", &fixtures::line_art(fixtures::TINY));
+    let archive = archive.write();
+
+    let report = fixtures::run_paths(&space, [directory.path(), archive.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2);
+    assert_ne!(report.volumes[0].output, report.volumes[1].output);
+}

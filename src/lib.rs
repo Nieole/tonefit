@@ -85,6 +85,7 @@ pub fn run(request: &Request) -> Result<Report> {
     for input in &request.inputs {
         ensure_output_is_elsewhere(input, &request.output_root)?;
     }
+    ensure_no_two_volumes_share_an_output(request)?;
     // 介质**按路径**探测，一次运行共用一份缓存（ADR 0009 决定第 2 条，见 `medium`）：
     // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
     let mut probes = medium::Probes::new();
@@ -1160,6 +1161,62 @@ fn ensure_one_member_per_output(volume: &Volume, targets: &[PathBuf]) -> Result<
 }
 
 /// 源库只读（ADR 0009）：输出与源卷互相嵌套时直接拒绝，不去猜用户的意思。
+/// 两个卷不能写到同一个地方。
+///
+/// 输出名取自卷名，而卷名重复得很自然：一部漫画一个目录，每部里都有「第 1 话」。
+/// 一次点名多部，后到的会把先到的**整卷盖掉**——一句告警都没有，在阅读器里也与真卷
+/// 毫无分别。因此开工前就查：撞车要在写出第一个字节之前说。
+///
+/// 不替用户改名。「输出名就是卷名」这条约定要能反着用——看着输出得认得出是哪一卷——
+/// 自动加后缀会让它失效，而失效的方式还是静默的。
+fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
+    let mut by_target: HashMap<String, Vec<&Path>> = HashMap::new();
+    for input in &request.inputs {
+        let target = source::planned_output(input, &request.output_root)?;
+        by_target
+            .entry(collision_key(&target))
+            .or_default()
+            .push(input.as_path());
+    }
+    let mut collisions: Vec<_> = by_target.into_values().filter(|by| by.len() > 1).collect();
+    if collisions.is_empty() {
+        return Ok(());
+    }
+    // 顺序取自第一个卷的路径：报错要可复现，而 `HashMap` 的遍历序不是。
+    collisions.sort_by(|a, b| a[0].cmp(b[0]));
+
+    let total: usize = collisions.iter().map(|by| by.len()).sum();
+    let mut said = format!(
+        "{total} 个卷要写到同一批去处，后到的会把先到的整卷盖掉。撞在一起的是：\n"
+    );
+    const SHOWN: usize = 5;
+    for group in collisions.iter().take(SHOWN) {
+        let target = source::planned_output(group[0], &request.output_root)?;
+        said.push_str(&format!("  {}\n", target.display()));
+        for input in group {
+            said.push_str(&format!("    ← {}\n", input.display()));
+        }
+    }
+    if collisions.len() > SHOWN {
+        said.push_str(&format!("  ……另有 {} 处\n", collisions.len() - SHOWN));
+    }
+    said.push_str("输出名取自卷名，同名的卷因此撞在一起。分批处理，每批给一个自己的输出根。");
+    bail!(said)
+}
+
+/// 撞车比的是文件系统认不认成同一个去处。
+///
+/// Windows 上大小写不区分，`Abc.cbz` 与 `abc.cbz` 是同一个文件；别的平台上是两个。
+/// 按平台折叠，查出来的撞车才与真会发生的撞车一致。
+fn collision_key(target: &Path) -> String {
+    let text = target.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
 fn ensure_output_is_elsewhere(input: &Path, output_root: &Path) -> Result<()> {
     let input_path = resolve(input)?;
     let output_path = resolve(output_root)?;

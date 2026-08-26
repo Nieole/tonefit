@@ -40,10 +40,7 @@ pub struct Volume {
 impl Volume {
     /// 本卷的输出位置：目录卷是同名目录，归档卷是同名归档文件。
     pub fn output_path(&self, output_root: &Path) -> PathBuf {
-        match self.container {
-            Container::Directory => output_root.join(&self.name),
-            Container::Archive => output_root.join(format!("{}.{ARCHIVE_EXTENSION}", self.name)),
-        }
+        output_path_of(&self.name, self.container, output_root)
     }
 
     /// 一个成员的身份：卷根接上它的相对路径。报告与错误信息用它指人。
@@ -113,8 +110,34 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>> {
 
 /// 打开一个卷。源只读，这里不写任何东西。
 pub fn open(path: &Path) -> Result<Volume> {
+    let (name, container) = identity_of(path)?;
+    match container {
+        Container::Directory => open_directory(path, name),
+        Container::Archive => open_archive(path, name),
+    }
+}
+
+/// 这个输入将要写到哪里——**不打开卷**。
+///
+/// 卷名与容器形态只取决于路径本身，因此去处在读任何字节之前就算得出来。
+/// 开工前查同名撞车要的就是它（见 `crate::run`）：撞车要在写出第一个字节之前说，
+/// 不是写到一半才说。
+pub fn planned_output(input: &Path, output_root: &Path) -> Result<PathBuf> {
+    let (name, container) = identity_of(input)?;
+    Ok(output_path_of(&name, container, output_root))
+}
+
+/// 卷名与容器形态。两者都只看路径，不看内容。
+///
+/// `open` 与 [`planned_output`] 共用它：算去处的那一趟与真去写的那一趟必须得出同一个名字，
+/// 不然查出来的撞车与实际发生的撞车是两回事。
+fn identity_of(path: &Path) -> Result<(String, Container)> {
     if path.is_dir() {
-        return open_directory(path);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .with_context(|| format!("{} 没有目录名，无法决定输出位置", path.display()))?;
+        return Ok((name, Container::Directory));
     }
     if !path.exists() {
         bail!("{} 不存在", path.display());
@@ -125,7 +148,19 @@ pub fn open(path: &Path) -> Result<Volume> {
             path.display()
         );
     }
-    open_archive(path)
+    let name = path
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+        .with_context(|| format!("{} 没有文件名，无法决定输出位置", path.display()))?;
+    Ok((name, Container::Archive))
+}
+
+/// 卷名 + 容器形态 → 输出位置。目录卷是同名目录，归档卷是同名归档文件。
+fn output_path_of(name: &str, container: Container, output_root: &Path) -> PathBuf {
+    match container {
+        Container::Directory => output_root.join(name),
+        Container::Archive => output_root.join(format!("{name}.{ARCHIVE_EXTENSION}")),
+    }
 }
 
 /// 扩展名是否表明这是一个归档卷。大小写不敏感。
@@ -135,12 +170,7 @@ fn is_archive(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(ARCHIVE_EXTENSION))
 }
 
-fn open_directory(root: &Path) -> Result<Volume> {
-    let name = root
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .with_context(|| format!("{} 没有目录名，无法决定输出位置", root.display()))?;
-
+fn open_directory(root: &Path, name: String) -> Result<Volume> {
     let mut members = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.with_context(|| format!("遍历 {}", root.display()))?;
@@ -178,12 +208,7 @@ fn open_directory(root: &Path) -> Result<Volume> {
     })
 }
 
-fn open_archive(path: &Path) -> Result<Volume> {
-    let name = path
-        .file_stem()
-        .map(|name| name.to_string_lossy().into_owned())
-        .with_context(|| format!("{} 没有文件名，无法决定输出位置", path.display()))?;
-
+fn open_archive(path: &Path, name: String) -> Result<Volume> {
     let file = File::open(path).with_context(|| format!("打开 {}", path.display()))?;
     let mut archive = zip::ZipArchive::new(BufReader::new(file)).with_context(|| {
         format!(
