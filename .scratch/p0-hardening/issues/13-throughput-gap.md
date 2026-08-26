@@ -6,6 +6,9 @@
 
 具体瓶颈在哪尚未测量——本票要先 profiling 再动手，不要凭猜优化。
 
+取数走两条路，都不要把分阶段计时塞进 `Report`：事件流（ADR 0011：进度是事件流，
+开工前先预扫）给得到卷级与页级的粒度；再细的走 feature-gated 插桩或外部 profiler。
+
 那批页绝大多数不需要缩放，编码器在写全尺寸产物，是最贵的情形，而这正是网络发布版素材的常态。
 
 **Blocked by:** None — can start immediately.
