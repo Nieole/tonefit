@@ -2,7 +2,14 @@
 
 Status: needs-info
 
-样本放在仓库内的 `_samples/`，该目录不入版本库。真实素材冒烟测试通过环境变量指向它。
+样本放在仓库内的 `_samples/`，该目录不入版本库。真实素材冒烟按 `TONEFIT_SAMPLES` 指过来，
+默认不跑：
+
+```
+TONEFIT_SAMPLES=_samples cargo test --test smoke -- --nocapture
+```
+
+目录的直接子项各算一个卷（子目录或 `.cbz`）。它断言什么、不断言什么见 `tests/smoke.rs`。
 
 现有全部实测来自网络发布版（B 类，见 measurements 的《B 类素材普查》）。
 A 类只有一个合成代理基底，因此凡涉及 A 类的数值主张目前一律标注「尚未测量」。

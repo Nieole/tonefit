@@ -1,0 +1,78 @@
+# 黄金回归快照。由 `cargo test --test golden` 算出，夹具全部由代码生成。
+#
+# **任何一行变了都要显式接受**：
+#
+#     TONEFIT_ACCEPT_GOLDEN=1 cargo test --test golden
+#
+# 接受之前先答一句「为什么变」。这份快照存在的全部理由，就是不让判定在无人察觉时改动。
+#
+# 卷行：`[型号] 卷名 · 几何门 · 卷级判定`。
+# 页行：页名 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
+# 透传行：非图片文件原样搬过去的那些，名字与字节数。
+#
+# 字节数**不含自描述元数据**（这一趟按 `--no-metadata` 跑）：tEXt 里写着工具版本，
+# 收进来的话改一次版本号整份快照就跟着动，真正的判定变动会淹在里面。
+# tEXt 那一批字段各是什么，由 `tests/idempotency.rs` 逐字段钉着。
+
+[kobo-libra-2] b-class-gradient
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  2bit+FS   192766  卷级上包络
+
+[kobo-libra-2] a-class-gradient
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1264x1680  2bit+FS   205346  卷级上包络
+
+[kobo-libra-2] screentone
+  几何门 成立
+  卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1264x1680  1bit+FS   103257  卷级上包络
+
+[kobo-libra-2] line-art
+  几何门 成立
+  卷级   基准档 1bit · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  1bit       10436  卷级上包络
+
+[kobo-libra-2] solid
+  几何门 成立
+  卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  1bit+FS    13221  卷级上包络
+
+[kobo-libra-2] color-on-mono
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  2bit+FS   104475  卷级上包络 · 彩页转灰
+
+[kobo-libra-2] spread
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1264x420   2bit+FS    44307  卷级上包络
+
+[kobo-libra-2] undersized
+  几何门 不成立 · 001.png 贴不住面板
+  卷级   基准档 4bit · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        800x1000   4bit        2364  卷级上包络
+
+[kobo-libra-2] mixed
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 005.png · 主体 5 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  2bit+FS    16730  卷级上包络
+  002.png        1182x1680  2bit+FS    16730  卷级上包络
+  003.png        1182x1680  2bit+FS   192766  卷级上包络
+  004.png        1182x1680  2bit+FS    16730  卷级上包络
+  005.png        1182x1680  2bit+FS   215607  卷级上包络
+
+[kobo-libra-2] damaged · 隔离
+  几何门 成立
+  卷级   基准档 1bit · 驱动页 002.png · 主体 2 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  1bit       10436  卷级上包络
+  002.png        1182x1680  1bit        2236  卷级上包络
+  003.png        1182x1680  failed      2235  失败页 · 占位页
+  透传 ComicInfo.xml · 12 字节
+
+[kobo-libra-colour] color-on-color
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 002.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1182x1680  color       5690  彩色分支 · 只缩放不量化
+  002.png        1182x1680  2bit+FS   192766  卷级上包络

@@ -402,8 +402,13 @@ impl DecodedPng {
 
 /// 用 `png` crate 直接读回文件，绕开被测的编码路径。
 pub fn read_png(path: &Path) -> DecodedPng {
-    let file = fs::File::open(path).expect("打开输出 PNG");
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    read_png_bytes(&fs::read(path).expect("读输出 PNG"))
+}
+
+/// 同上，直接从一页 PNG 的字节里读。归档卷的页没有文件系统路径，成员字节走这里——
+/// 与 [`read_png_text`] 和 [`png_text`] 是同一种分工，读的是同一批字节。
+pub fn read_png_bytes(bytes: &[u8]) -> DecodedPng {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
     let header = decoder.read_header_info().expect("读 PNG 头").clone();
     // EXPAND 把低位深灰度按满量程摊回 8 位，把调色板摊成 RGB8。
     decoder.set_transformations(png::Transformations::EXPAND);
@@ -542,4 +547,52 @@ pub fn png_field(text: &[(String, String)], keyword: &str) -> Option<String> {
     text.iter()
         .find(|(listed, _)| listed == keyword)
         .map(|(_, value)| value.clone())
+}
+
+/// 一个成员相对某个容器根的名字，分隔符归一成 `/`。
+///
+/// 归一是因为**这个名字要被断言**：路径分隔符随平台而变，而黄金回归的快照要在哪台机器上
+/// 都是同一份（15 号票）。`sink` 往归档里写成员名时用的也是这个算法，归档那一侧因此按它取得回来。
+pub fn relative_name(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// 一个卷的卷级判定，写成一行给人读的话。
+///
+/// 用词取自 `CONTEXT.md`：上包络定出的那一档叫**基准档**，站在分位秩上的那一页叫**驱动页**，
+/// 因迟滞升上去的那些页叫**迟滞升档**。`Envelope` 自己的 `Display` 另有一份，那一份还带着
+/// 「三者均未标定」那句注脚——快照要的是钉死的一行，注脚每趟都一样，摆进去只是噪声。
+///
+/// 黄金回归与真实素材冒烟共用这一份（15 号票）：两处说的是同一件事，各写一份迟早会走散。
+pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
+    match volume.verdict {
+        Some(tonefit::VolumeVerdict::Envelope(envelope)) => format!(
+            "基准档 {} · 驱动页 {} · 主体 {} 页 · 离群 {} 页 · 迟滞升档 {} 页",
+            envelope.base,
+            page_at(volume, envelope.driver),
+            envelope.body_pages,
+            envelope.outlier_pages,
+            envelope.raised_pages,
+        ),
+        Some(tonefit::VolumeVerdict::Override(candidate)) => format!("覆盖 {candidate}"),
+        Some(tonefit::VolumeVerdict::PerPage) => "逐页".to_owned(),
+        Some(tonefit::VolumeVerdict::Skipped { page_count }) => {
+            format!("跳过 · 源 {page_count} 页")
+        }
+        None => "无 · 这一卷一页都没有".to_owned(),
+    }
+}
+
+/// 卷内第 `index` 页在卷里的名字。驱动页与关掉几何门的那一页都靠它指人。
+pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
+    volume
+        .pages
+        .get(index)
+        .map(|page| relative_name(&volume.volume, &page.source))
+        .unwrap_or_else(|| format!("第 {index} 页"))
 }
