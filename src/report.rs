@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::cache::CacheUsage;
 use crate::color::PageColor;
 use crate::decide::{CandidateScore, Verdict};
+use crate::decode::Salvage;
 use crate::envelope::Envelope;
 use crate::geometry::{GeometryGate, Size};
 use crate::medium::IoPlan;
@@ -30,6 +31,15 @@ impl Report {
     /// 页自己说得出它是哪一卷的哪一页——`source` 是卷根接上成员的相对路径。
     pub fn failures(&self) -> impl Iterator<Item = &PageReport> {
         self.volumes.iter().flat_map(VolumeReport::failures)
+    }
+
+    /// 本次每一个部分救回页，按卷序、卷内按阅读顺序（04 号票）。
+    ///
+    /// 与 [`failures`](Self::failures) 并列而不是并进去：部分救回页**处理成了**——
+    /// 它有自己的尺寸、判定与像素，卷也不因为它进隔离目录。两者混成一份清单，
+    /// 「这一趟有几页根本没出来」就再也问不出来。
+    pub fn salvaged(&self) -> impl Iterator<Item = &PageReport> {
+        self.volumes.iter().flat_map(VolumeReport::salvaged)
     }
 
     /// 本次有没有卷被隔离。退出码要分得开「全部成功」与「有卷被隔离」，问的就是它。
@@ -163,6 +173,14 @@ impl VolumeReport {
             .filter(|page| matches!(page.outcome, PageOutcome::Failed { .. }))
     }
 
+    /// 本卷的部分救回页，按阅读顺序（04 号票）。
+    ///
+    /// 它们**不**把这一卷送进隔离目录：救回来的页有自己的尺寸与像素，是处理成了的页。
+    /// 报告仍要数得出来——源文件不全这件事只此一处说得出口，而它没有退出码替它喊。
+    pub fn salvaged(&self) -> impl Iterator<Item = &PageReport> {
+        self.pages.iter().filter(|page| page.salvage().is_some())
+    }
+
     /// 本卷被隔离了吗（spec 的 story 25）。
     ///
     /// **判据只有一条：有没有失败页。**隔离目录那个去处是它的**结果**，
@@ -185,40 +203,37 @@ pub struct PageReport {
     /// 目标尺寸：实际写出的像素尺寸。
     ///
     /// 失败页也有一个，而且是真的——它按**卷内统一尺寸**留白占位写了出去（12 号票）。
+    /// 部分救回页用的是它自己的尺寸：文件头里那个尺寸一点没缺（04 号票）。
     pub size: Size,
     /// 这一页有没有处理成，处理成了的话它走了哪条分支。
     pub outcome: PageOutcome,
 }
 
-/// 一页的处理结果：成了，还是失败了（12 号票）。
+/// 一页的处理结果：完好、部分救回，还是失败（04 号票）。
 ///
-/// 这一层与 [`PageBranch`] 问的不是同一件事：这里问「这一页解出来了吗」，那里问
+/// **三种，不是两种。** 12 号票只问「解出来了吗」，而救回 99% 与救回 0 行在那一层是同一个
+/// 答案。中间那一种单列出来，是因为它在管线上真的与另外两种都不同：完好页什么都参加，
+/// 部分救回页**不参与几何门与卷级上包络**（见 `crate::first_pass` 与
+/// `crate::summarize_volume`），失败页连像素都没有。
+///
+/// 这一层与 [`PageBranch`] 问的不是同一件事：这里问「这一页解出来了多少」，那里问
 /// 「解出来之后它走了哪条路」。合成一个枚举就得回答「失败页走的是哪条分支」，
 /// 而那个问题没有答案——分支是解码之后才分的。
-///
-/// 缩放与彩页识别落在 [`Processed`](Self::Processed) 里而不在 [`PageReport`] 上，
-/// 因为失败页两样都没有：它没被缩放过，也没人看得出它是不是彩页。
-/// 摆一个 `PageColor::Gray` 上去是编的，报告不该有编出来的字段。
 #[derive(Debug, Clone)]
 pub enum PageOutcome {
-    /// 处理成了的一页。
-    Processed {
-        /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
-        ///
-        /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
-        /// 报告里说清楚它有没有触发，是这条路径在真实素材上唯一的现场证据。
-        scaling: Scaling,
-        /// 第一遍识别出这一页是彩页还是灰度页（ADR 0005 决定第 1 条：彩页识别在第一遍）。
-        ///
-        /// 这是**页的事实**，与它走了哪条分支不是一回事：黑白 profile 下彩页转灰、
-        /// 走的是 [`PageBranch::Gray`]，但它仍然是一张彩页。两者都在报告里，
-        /// 「这一页为什么没保留颜色」才答得出来。
-        color: PageColor,
-        /// 这一页走的那条分支，连同那条分支的产物。
-        branch: PageBranch,
+    /// 完好页：整解出来的一页。
+    Whole(Processed),
+    /// 部分救回页：整解失败，按文件头里的尺寸救回了其中一段（04 号票）。
+    ///
+    /// 它照常缩放、判定、写出——几何一点没缺，缺的那一段留成纸白。但它**不替整卷说话**：
+    /// 几何门与卷级上包络都没有它，一页没解全的页不该定另外一百多页的档。
+    Salvaged {
+        page: Processed,
+        /// 这一页救回了多少。
+        salvage: Salvage,
     },
-    /// 失败页：字节读不出来，或完整尺寸解不出来，或尺寸解得出来而像素缓冲大到分配不下
-    /// （12 号票，三种判据见 `decode`）。
+    /// 失败页：字节读不出来，或完整尺寸解不出来，或尺寸解得出来而像素缓冲大到分配不下，
+    /// 或救回了却一个像素都没解出来（12 号票的三种，加上 04 号票补的第四种，判据见 `decode`）。
     ///
     /// 它仍然写了出去——以卷内统一尺寸留白占位，页序因此不断、卷内尺寸因此一致。
     /// 含失败页的卷整卷进隔离目录（见 [`VolumeReport::isolated`]）。
@@ -229,6 +244,42 @@ pub enum PageOutcome {
         /// 而这一句要说得出具体是哪个成员、卡在哪一步。
         reason: String,
     },
+}
+
+/// 处理成了的一页留下的东西。完好页与部分救回页共用它——两者在这几项上一模一样，
+/// 差别只有「救回了多少」，而那一项挂在 [`PageOutcome::Salvaged`] 上。
+///
+/// 缩放与彩页识别落在这里而不在 [`PageReport`] 上，因为失败页两样都没有：
+/// 它没被缩放过，也没人看得出它是不是彩页。摆一个 `PageColor::Gray` 上去是编的，
+/// 报告不该有编出来的字段。
+#[derive(Debug, Clone)]
+pub struct Processed {
+    /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
+    ///
+    /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
+    /// 报告里说清楚它有没有触发，是这条路径在真实素材上唯一的现场证据。
+    pub scaling: Scaling,
+    /// 第一遍识别出这一页是彩页还是灰度页（ADR 0005 决定第 1 条：彩页识别在第一遍）。
+    ///
+    /// 这是**页的事实**，与它走了哪条分支不是一回事：黑白 profile 下彩页转灰、
+    /// 走的是 [`PageBranch::Gray`]，但它仍然是一张彩页。两者都在报告里，
+    /// 「这一页为什么没保留颜色」才答得出来。
+    pub color: PageColor,
+    /// 这一页走的那条分支，连同那条分支的产物。
+    pub branch: PageBranch,
+}
+
+impl PageOutcome {
+    /// 处理成了的那一页留下的东西。失败页没有。
+    ///
+    /// 完好页与部分救回页在这里合流：读的那一端只有在**问的正是那点差别**时才该分辨两者，
+    /// 而分辨的口子只有一个，见 [`PageReport::salvage`]。
+    fn processed(&self) -> Option<&Processed> {
+        match self {
+            PageOutcome::Whole(page) | PageOutcome::Salvaged { page, .. } => Some(page),
+            PageOutcome::Failed { .. } => None,
+        }
+    }
 }
 
 /// 一页走过的那条分支（ADR 0010：彩页按 profile 分流）。
@@ -260,6 +311,18 @@ pub enum PageBranch {
 }
 
 impl PageReport {
+    /// 这一页救回了多少。完好页与失败页都没有——一个整解出来了，一个一个像素都没有。
+    ///
+    /// **三种页状态的唯一分辨口**（04 号票）：[`failure`](Self::failure) 有值的是失败页，
+    /// 这里有值的是部分救回页，两处都没有的才是完好页。各处自己去认 [`PageOutcome`]
+    /// 的变体，迟早有人少认一种。
+    pub fn salvage(&self) -> Option<Salvage> {
+        match &self.outcome {
+            PageOutcome::Salvaged { salvage, .. } => Some(*salvage),
+            PageOutcome::Whole(_) | PageOutcome::Failed { .. } => None,
+        }
+    }
+
     /// 这一页定下的候选与理由。彩色分支与失败页都没有——一个不量化，一个没解出来。
     pub fn verdict(&self) -> Option<Verdict> {
         match self.branch() {
@@ -278,33 +341,24 @@ impl PageReport {
 
     /// 这一页走的那条分支。失败页没有——分支是解码之后才分的。
     pub fn branch(&self) -> Option<&PageBranch> {
-        match &self.outcome {
-            PageOutcome::Processed { branch, .. } => Some(branch),
-            PageOutcome::Failed { .. } => None,
-        }
+        self.outcome.processed().map(|page| &page.branch)
     }
 
     /// 第一遍认出这一页是彩页还是灰度页。失败页没解出来，看不出。
     pub fn color(&self) -> Option<PageColor> {
-        match &self.outcome {
-            PageOutcome::Processed { color, .. } => Some(*color),
-            PageOutcome::Failed { .. } => None,
-        }
+        self.outcome.processed().map(|page| page.color)
     }
 
     /// 这一页实际走过的缩放。失败页没被缩放过。
     pub fn scaling(&self) -> Option<Scaling> {
-        match &self.outcome {
-            PageOutcome::Processed { scaling, .. } => Some(*scaling),
-            PageOutcome::Failed { .. } => None,
-        }
+        self.outcome.processed().map(|page| page.scaling)
     }
 
     /// 这一页失败的原因。处理成了的页是 `None`。
     pub fn failure(&self) -> Option<&str> {
         match &self.outcome {
             PageOutcome::Failed { reason } => Some(reason),
-            PageOutcome::Processed { .. } => None,
+            PageOutcome::Whole(_) | PageOutcome::Salvaged { .. } => None,
         }
     }
 }

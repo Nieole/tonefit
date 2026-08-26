@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use fixtures::{Volume, Workspace};
 use tonefit::{
-    CacheBudget, Filter, GeometryGate, IoMode, Mode, PageBranch, PageColor, PageOutcome,
-    PageReport, Request, Size, VolumeReport,
+    CacheBudget, Filter, GeometryGate, IoMode, Mode, PageBranch, PageColor, PageReport, Request,
+    Size, VolumeReport,
 };
 
 /// 快照文件，相对仓库根。
@@ -372,12 +372,18 @@ fn mono_cases() -> Vec<Case> {
                 .page("002.png", &fixtures::gradient(fixtures::TYPICAL))
                 .file("ComicInfo.xml", b"<ComicInfo/>");
         }),
-        // 坏页与透传文件：救回的那一页、失败的那一页、原样搬过去的那一个文件。
-        // 这一卷整个进隔离目录（12 号票），占位页按卷内统一尺寸出。
+        // 三种页状态与透传文件各占一格（04 号票）：完好的那一页、部分救回的那一页、
+        // 失败的那两页——一张连尺寸都分配不下，一张尺寸有而一个像素都没救回来。
+        // 这一卷整个进隔离目录（12 号票），占位页按卷内统一尺寸出；
+        // 部分救回的那一页按自己的尺寸出，也不进卷级上包络。
         Case::new("damaged", |volume| {
             volume.page("001.png", &fixtures::line_art(fixtures::TYPICAL));
             volume.file("002.png", &fixtures::truncated_page(fixtures::TYPICAL));
             volume.file("003.png", &fixtures::oversized_page());
+            volume.file(
+                "004.png",
+                &fixtures::salvages_nothing_page(fixtures::TYPICAL),
+            );
             volume.file("ComicInfo.xml", b"<ComicInfo/>");
         }),
     ]
@@ -499,23 +505,24 @@ fn gate(volume: &VolumeReport) -> String {
 ///
 /// 前四列一律 ASCII 且定宽，理由排在最后——中文的显示宽度对不齐，夹在中间会把整列拧歪。
 fn page_line(volume: &VolumeReport, page: &PageReport, sizes: &BTreeMap<String, u64>) -> String {
-    let (candidate, mut reason) = match &page.outcome {
-        PageOutcome::Processed {
-            branch: PageBranch::Gray { verdict, .. },
-            ..
-        } => (verdict.candidate.to_string(), verdict.reason.to_string()),
-        PageOutcome::Processed {
-            branch: PageBranch::Color,
-            ..
-        } => ("color".to_owned(), "彩色分支 · 只缩放不量化".to_owned()),
+    let (candidate, mut reason) = match page.branch() {
+        Some(PageBranch::Gray { verdict, .. }) => {
+            (verdict.candidate.to_string(), verdict.reason.to_string())
+        }
+        Some(PageBranch::Color) => ("color".to_owned(), "彩色分支 · 只缩放不量化".to_owned()),
         // 失败的那一句里有成员名与平台相关的分隔符，进不了快照（原因见 tests/isolation.rs）。
-        PageOutcome::Failed { .. } => ("failed".to_owned(), "失败页 · 占位页".to_owned()),
+        None => ("failed".to_owned(), "失败页 · 占位页".to_owned()),
     };
     // 彩页在黑白面板上转灰、走灰度路径，报告里两件事都在（见 `PageOutcome`）。
     if page.color() == Some(PageColor::Color)
         && matches!(page.branch(), Some(PageBranch::Gray { .. }))
     {
         reason.push_str(" · 彩页转灰");
+    }
+    // 救回了多少进快照（04 号票）：它决定这一页算不算数——救回到 0 就是一张失败页，
+    // 而这个比例还决定了它进不进上包络。夹具固定，它因此也是个定值。
+    if let Some(salvage) = page.salvage() {
+        reason.push_str(&format!(" · {salvage}"));
     }
     let name = fixtures::relative_name(&volume.output, &page.output);
     let bytes = sizes

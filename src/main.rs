@@ -339,6 +339,7 @@ fn render(report: &Report, mode: Mode) -> String {
             text.push_str(&format!("    {}\n", page_line(page)));
         }
     }
+    text.push_str(&salvage_tail(report));
     text.push_str(&isolation_tail(report));
     text
 }
@@ -364,6 +365,29 @@ fn isolation_tail(report: &Report) -> String {
     )
 }
 
+/// 部分救回那一小结，与隔离那一小结并排摆在报告末尾（04 号票）。
+///
+/// 它比隔离那一行更需要这个位置：含失败页的卷有退出码替它喊，也有一个隔离目录摆在那儿；
+/// 部分救回页两样都没有——卷照常落在干净的去处，退出码是 0，而源文件确实不全。
+/// 几十卷跑下来，逐页那几行早滚出屏幕了，不在末尾说一句就等于没说。
+///
+/// 一页都没有就一个字都不说，与隔离那一行同一条规矩。
+fn salvage_tail(report: &Report) -> String {
+    let pages = report.salvaged().count();
+    if pages == 0 {
+        return String::new();
+    }
+    let volumes = report
+        .volumes
+        .iter()
+        .filter(|volume| volume.salvaged().next().is_some())
+        .count();
+    format!(
+        "部分救回 {volumes} 卷 · {pages} 页：源文件不全，缺的那一段留成纸白。\
+         这些页不参与几何门与卷级上包络，各自单独定档\n"
+    )
+}
+
 /// 过期副本那一行（12 号票）。
 ///
 /// 卷的去处随「有没有失败页」在干净目录与隔离目录之间跳，而这一趟写不到的那一份不会被覆盖、
@@ -380,6 +404,22 @@ fn superseded_line(volume: &VolumeReport) -> String {
         ),
         None => String::new(),
     }
+}
+
+/// 卷级那一段里说部分救回的那一行，排在隔离那一行之后（04 号票）。
+///
+/// 隔离那一行说的是「这一卷有页根本没出来」，这一行说的是「有页出来了，但不全」。
+/// 两句分开，因为后果不同：前者整卷换了去处，后者没有——这一卷仍在干净的去处，
+/// 而卷级的档是在**没有**这几页的情况下定出来的，那正是这一行要交代的事。
+fn salvaged_line(volume: &VolumeReport) -> String {
+    let pages = volume.salvaged().count();
+    if pages == 0 {
+        return String::new();
+    }
+    format!(
+        "  部分救回 {pages} 页：整解失败，按文件头的尺寸救回了一段，缺的那一段留成纸白。\
+         它们不参与几何门与卷级上包络，各自单独定档\n"
+    )
 }
 
 /// 一页那一行里说缩放的那一小截。
@@ -432,6 +472,7 @@ fn volume_lines(volume: &VolumeReport) -> String {
         return SKIPPED_LINE.to_owned();
     }
     let mut text = isolated_line(volume);
+    text.push_str(&salvaged_line(volume));
     text.push_str(&gate_line(volume, verdict));
     text.push_str(&match verdict {
         VolumeVerdict::Envelope(envelope) => format!(
@@ -515,9 +556,15 @@ fn page_line(page: &PageReport) -> String {
     let Some(branch) = page.branch() else {
         return format!("失败 {}", page.failure().expect("没有分支的页必是失败页"));
     };
+    // 部分救回页标在行首（04 号票）：它有判定、有判据、有自己的尺寸，逐页那一行因此
+    // 与一张完好页长得一模一样，而它的判据是在一页大半留白的图上求出来的。
+    let salvaged = match page.salvage() {
+        Some(salvage) => format!("{salvage} · "),
+        None => String::new(),
+    };
     match branch {
         PageBranch::Gray { scores, verdict } => format!(
-            "{}判定 {}（{}）  判据 {}",
+            "{salvaged}{}判定 {}（{}）  判据 {}",
             if page.color() == Some(PageColor::Color) {
                 "彩页转灰 · "
             } else {
@@ -528,7 +575,7 @@ fn page_line(page: &PageReport) -> String {
             score_line(scores)
         ),
         PageBranch::Color => {
-            "彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络".to_owned()
+            format!("{salvaged}彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络")
         }
     }
 }
@@ -608,8 +655,8 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use tonefit::{
-        CacheUsage, Candidate, ChosenBy, Envelope, GrayImage, IoPlan, Medium, PageOutcome, Reason,
-        Reference, Scaling, Size, Verdict, VolumeReport,
+        CacheUsage, Candidate, ChosenBy, Envelope, GrayImage, IoPlan, Medium, PageOutcome,
+        Processed, Reason, Reference, Salvage, Scaling, Size, Verdict, VolumeReport,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -891,7 +938,7 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
-                outcome: PageOutcome::Processed {
+                outcome: PageOutcome::Whole(Processed {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -904,7 +951,7 @@ mod tests {
                             reason: Reason::LowestWithinThreshold,
                         },
                     },
-                },
+                }),
             },
         );
 
@@ -936,7 +983,7 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
-                outcome: PageOutcome::Processed {
+                outcome: PageOutcome::Whole(Processed {
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
@@ -950,7 +997,7 @@ mod tests {
                             reason: Reason::LowestWithinThreshold,
                         },
                     },
-                },
+                }),
             },
         );
 
@@ -1024,7 +1071,7 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(800, 1000),
-                outcome: PageOutcome::Processed {
+                outcome: PageOutcome::Whole(Processed {
                     // 源比目标小：按不放大原样输出，一条边都贴不住面板。
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
@@ -1035,7 +1082,7 @@ mod tests {
                             reason: Reason::VolumeEnvelope,
                         },
                     },
-                },
+                }),
             },
         );
 
@@ -1069,11 +1116,11 @@ mod tests {
             source: PathBuf::from(format!("library/volume-a/{name}.png")),
             output: PathBuf::from(format!("out/volume-a/{name}.png")),
             size: Size::new(1264, 1680),
-            outcome: PageOutcome::Processed {
+            outcome: PageOutcome::Whole(Processed {
                 scaling: typical_scaling(),
                 color,
                 branch,
-            },
+            }),
         };
         let gray_branch = || PageBranch::Gray {
             scores: vec![CandidateScore { candidate, score }],
@@ -1206,7 +1253,7 @@ mod tests {
             source: PathBuf::from("library/volume-a/001.jpg"),
             output: PathBuf::from("out/_isolated/volume-a/001.png"),
             size: Size::new(1264, 1680),
-            outcome: PageOutcome::Processed {
+            outcome: PageOutcome::Whole(Processed {
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -1216,7 +1263,7 @@ mod tests {
                         reason: Reason::VolumeEnvelope,
                     },
                 },
-            },
+            }),
         };
         let failed = PageReport {
             source: PathBuf::from("library/volume-a/002.jpg"),
@@ -1270,6 +1317,81 @@ mod tests {
         assert_eq!(exit_code(&report), ISOLATED_EXIT);
     }
 
+    /// 部分救回页在报告里认得出来，而且**只有报告认得出来**（04 号票）。
+    ///
+    /// 它没有退出码替它喊，卷也照旧落在干净的去处：这一趟从进程那一侧看与全部成功
+    /// 一模一样。三处各说一遍——逐页那一行说这一页救回了多少，卷级那一行说它没参与
+    /// 卷级的判定，末尾那一行让几十卷跑下来的人不用往回翻。
+    #[test]
+    fn the_report_marks_a_salvaged_page_and_says_it_stayed_out_of_the_volume_decision() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        let processed = |reason| Processed {
+            scaling: typical_scaling(),
+            color: PageColor::Gray,
+            branch: PageBranch::Gray {
+                scores: vec![CandidateScore { candidate, score }],
+                verdict: Verdict { candidate, reason },
+            },
+        };
+        let whole = PageReport {
+            source: PathBuf::from("library/volume-a/001.jpg"),
+            output: PathBuf::from("out/volume-a/001.png"),
+            size: Size::new(1264, 1680),
+            outcome: PageOutcome::Whole(processed(Reason::VolumeEnvelope)),
+        };
+        let salvaged = PageReport {
+            source: PathBuf::from("library/volume-a/002.jpg"),
+            output: PathBuf::from("out/volume-a/002.png"),
+            // 它按**自己**的尺寸出：文件头里那个尺寸一点没缺。
+            size: Size::new(1264, 1680),
+            outcome: PageOutcome::Salvaged {
+                // 它没进上包络，判定因此是它自己那条判据曲线定的。
+                page: processed(Reason::LowestWithinThreshold),
+                salvage: Salvage::from_share(0.625),
+            },
+        };
+        let report = Report {
+            profile,
+            volumes: vec![VolumeReport {
+                volume: PathBuf::from("library/volume-a"),
+                output: PathBuf::from("out/volume-a"),
+                superseded: None,
+                verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
+                gate: Some(GeometryGate::Holds),
+                cache: cache_usage(),
+                io: io_plan(),
+                decodes: 2,
+                pages: vec![whole, salvaged],
+            }],
+        };
+
+        let text = render(&report, Mode::Process);
+
+        // 逐页那一行：救回了多少，摆在判定前面。
+        assert!(text.contains("救回 62.5% · 判定 4bit"), "{text}");
+        // 卷级那一行：这一卷有几页不全，以及它们没参与卷级的哪两件事。
+        assert!(text.contains("部分救回 1 页"), "{text}");
+        assert!(text.contains("不参与几何门与卷级上包络"), "{text}");
+        // 末尾那一行：几十卷跑下来不用往回翻。
+        assert!(text.contains("部分救回 1 卷 · 1 页"), "{text}");
+        // 完好的那一页一个字都不多说：它那一行以判定开头，前面没有救回那一截。
+        assert!(
+            text.contains(
+                "
+    判定 4bit（卷级上包络）"
+            ),
+            "{text}"
+        );
+        // 卷没被隔离，退出码因此仍是 0——报告是唯一说得出这件事的地方。
+        assert!(!text.contains("隔离"), "{text}");
+        assert_eq!(exit_code(&report), SUCCESS_EXIT);
+    }
+
     /// 一卷都没被隔离时，隔离那几行一个字都不出现，退出码是 0。
     ///
     /// 「没出事」与「出了事」在报告与退出码上都得分得开，而分得开要两侧各测一遍。
@@ -1287,7 +1409,7 @@ mod tests {
                 source: PathBuf::from("library/volume-a/001.jpg"),
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
-                outcome: PageOutcome::Processed {
+                outcome: PageOutcome::Whole(Processed {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1297,7 +1419,7 @@ mod tests {
                             reason: Reason::VolumeEnvelope,
                         },
                     },
-                },
+                }),
             },
         );
 
@@ -1306,6 +1428,8 @@ mod tests {
         assert!(!text.contains("隔离"), "{text}");
         assert!(!text.contains("失败"), "{text}");
         assert!(!text.contains("过期副本"), "{text}");
+        // 一页都没救回过的一趟同样一个字都不说（04 号票）。
+        assert!(!text.contains("救回"), "{text}");
         assert_eq!(exit_code(&report), SUCCESS_EXIT);
     }
 

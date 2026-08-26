@@ -130,12 +130,18 @@ pub fn color_page(size: Size) -> DynamicImage {
 
 /// 截断的页：一张纯黑页的完整 PNG，只留前 `KEPT_FRACTION` 那一段。
 ///
-/// 文件头与 IHDR 都在，IDAT 只剩一截：完整尺寸解得出来，像素解不全。
-/// 12 号票的界线正画在这里——解得出尺寸的页照用，解不出尺寸的才算失败。
+/// 文件头与 IHDR 都在，IDAT 只剩一截：完整尺寸解得出来，像素解不全，但救得回一段。
+/// 这是**部分救回页**——三种页状态里的第三种（04 号票）：它照常缩放、判定、写出，
+/// 但不参与几何门与卷级上包络。
 ///
 /// 纯黑是为了让两段一眼分得开：解回来的那一段是 0，救不回来的那一段是纸白 255。
 pub fn truncated_page(size: Size) -> Vec<u8> {
-    let bytes = encode_image(&solid(size, 0), "png");
+    truncated(&solid(size, 0))
+}
+
+/// 同上，但页上画什么由调用方定：判定要跟着救回来的那一段走的用例需要它。
+pub fn truncated(image: &DynamicImage) -> Vec<u8> {
+    let bytes = encode_image(image, "png");
     bytes[..bytes.len() * KEPT_FRACTION / 100].to_vec()
 }
 
@@ -144,6 +150,36 @@ pub fn truncated_page(size: Size) -> Vec<u8> {
 /// 取一半是为了让「解出来的那部分」与「缺的那一段」两侧都真的存在：
 /// 留太多，整页都解得回来，留白那一段测不到；留太少，连一行都解不出来。
 const KEPT_FRACTION: usize = 50;
+
+/// 一行像素都救不回来的页：完整的文件头与 IHDR，第一个 IDAT 只剩块头。
+///
+/// 尺寸解得出来，救回那一趟一个像素都没写下——这正是 04 号票要拦的那一张：
+/// 按 12 号票的界线（「解得出完整尺寸就照用」）它是一张正常页，写出去是一整张纸白，
+/// 带着正常的判定元数据，卷还留在干净的去处。
+///
+/// 砍在第一个 IDAT 的块头上，而不是按比例砍：能不能救回取决于砍在哪里，不取决于比例
+/// （见 measurements 的《截断页的解码容忍度》）。按比例砍出来的「零救回」会随
+/// 编码器的输出长度漂，砍在块头上则是个定值。
+pub fn salvages_nothing_page(size: Size) -> Vec<u8> {
+    let bytes = encode_image(&solid(size, 0), "png");
+    let mut at = PNG_SIGNATURE;
+    loop {
+        let length = u32::from_be_bytes(
+            bytes[at..at + 4]
+                .try_into()
+                .expect("PNG 块头有四个字节的长度"),
+        ) as usize;
+        if &bytes[at + 4..at + 8] == b"IDAT" {
+            // 留下块头、丢掉块身：解码器读得到「这里有一块数据」，读不到数据本身。
+            return bytes[..at + 8].to_vec();
+        }
+        // 长度、类型、块身、CRC。
+        at += 12 + length;
+    }
+}
+
+/// PNG 文件签名的长度。块从它之后开始。
+const PNG_SIGNATURE: usize = 8;
 
 /// 尺寸大到解码器分配不出缓冲的页：只有文件头与 IHDR，横竖各 65535。
 ///

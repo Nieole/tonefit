@@ -20,12 +20,22 @@ fn the_exit_code_tells_a_clean_run_an_isolated_one_and_a_refusal_apart() {
     let isolated = space.volume("volume-b");
     isolated.page("001.png", &fixtures::gradient(fixtures::TINY));
     isolated.file("002.png", b"not a png at all");
+    // 一个像素都救不回来的页同样是失败页（04 号票）：它单独一卷，退出码要跟着变。
+    // 它此前是一张「正常页」——整趟做完、退出码 0，脚本什么都察觉不到。
+    let salvages_nothing = space.volume("volume-c");
+    salvages_nothing.page("001.png", &fixtures::gradient(fixtures::TINY));
+    salvages_nothing.file("002.png", &fixtures::salvages_nothing_page(fixtures::TINY));
 
     assert_eq!(tonefit(&space, clean.path()), Some(0), "干净的一趟不是 0");
     assert_eq!(
         tonefit(&space, isolated.path()),
         Some(2),
         "有卷被隔离的一趟没和干净的那一趟分开"
+    );
+    assert_eq!(
+        tonefit(&space, salvages_nothing.path()),
+        Some(2),
+        "一个像素都没救回来的页没让退出码反映失败"
     );
     // 拒绝执行是第三个数，不能和上面两个混在一起：那一趟根本没做成。
     // 点一个不存在的卷——它落在源那一侧，不会先撞上「输出与源卷相互嵌套」那道拒绝。

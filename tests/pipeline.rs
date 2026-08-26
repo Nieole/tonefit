@@ -403,6 +403,97 @@ fn a_color_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
     );
 }
 
+/// 部分救回页不参与几何门（04 号票）：一张没解全的页不替另外那些页回答
+/// 「输出会不会被下游再缩一次」。
+///
+/// 同一张页不截断时它的几何说了算——门是**页状态的函数**，不是页尺寸的常量。
+/// 两趟并排跑，钉的正是这个差别：只断言截断那一趟门开着，夹具选错尺寸也照样通过。
+#[test]
+fn a_salvaged_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
+    let small = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let build = |space: &Workspace, bytes: Vec<u8>| {
+        let volume = space.volume("volume-a");
+        // 源比目标小的那一页：一条边都贴不住面板。
+        volume.file("001.png", &bytes);
+        // 正好两倍面板的页：贴住，门在它这里是开的。
+        volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+        volume
+    };
+
+    let salvaged_space = Workspace::new();
+    let salvaged = run_volume(
+        &salvaged_space,
+        &build(&salvaged_space, fixtures::truncated(&small)),
+    );
+    let whole_space = Workspace::new();
+    let whole = run_volume(
+        &whole_space,
+        &build(&whole_space, fixtures::encode_image(&small, "png")),
+    );
+
+    // 夹具自证：两趟里那一页都是同一个贴不住面板的尺寸，差别只在它救回来没有。
+    assert_eq!(
+        salvaged.volumes[0].pages[0].size,
+        fixtures::SMALLER_THAN_TARGET
+    );
+    assert!(
+        salvaged.volumes[0].pages[0].salvage().is_some(),
+        "夹具不对：那一页没被救回，这条用例就什么都没钉住"
+    );
+    assert_eq!(
+        whole.volumes[0].pages[0].size,
+        fixtures::SMALLER_THAN_TARGET
+    );
+
+    assert_eq!(
+        salvaged.volumes[0].gate,
+        Some(GeometryGate::Holds),
+        "部分救回页把整卷的抖动关掉了"
+    );
+    assert_eq!(
+        whole.volumes[0].gate,
+        Some(GeometryGate::Broken { page: 0 }),
+        "同一页不截断时它的几何该说了算"
+    );
+}
+
+/// 一卷里的灰度页全是部分救回页时，几何门无人可关，判定为成立——
+/// 与只装着彩页的卷同一个答案（04 号票认下的代价）。
+///
+/// 卷级那一层则相反：主体不能空着，这几页于是**照旧定得出一个基准档**。
+/// 两处不对称是有意的：门有一个「没人说话时」的答案，上包络没有。
+#[test]
+fn a_volume_of_nothing_but_salvaged_pages_still_gets_a_base_tier() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file(
+        "001.png",
+        &fixtures::truncated(&fixtures::line_art(fixtures::TINY)),
+    );
+    volume.file(
+        "002.png",
+        &fixtures::truncated(&fixtures::line_art(fixtures::TINY)),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert_eq!(
+        reported.salvaged().count(),
+        2,
+        "夹具不对：两页都该是救回来的"
+    );
+    // 页比面板小得多，一条边都贴不住——门却成立，因为没有一张完好页去关它。
+    assert_eq!(reported.pages[0].size, fixtures::TINY);
+    assert_eq!(reported.gate, Some(GeometryGate::Holds));
+    // 一页不剩地落在救回那一侧，就一页都不摘：两页都进主体，基准档照旧定得出来。
+    let envelope = envelope_of(reported);
+    assert_eq!(envelope.body_pages, 2);
+    for page in &reported.pages {
+        assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
+    }
+}
+
 #[test]
 fn transparent_areas_come_out_as_paper_white() {
     let space = Workspace::new();
@@ -1588,6 +1679,63 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
         envelope_of(&mixed).driver,
         "夹具不对：混排没有把驱动页的序号推开，这条用例就什么都没钉住"
     );
+}
+
+/// 部分救回页不进卷级上包络，按自己那条判据曲线单独定档（04 号票）。
+///
+/// 它的判据是在一页大半留白的图上求出来的：留白在任何位深上都是格点、误差恒为零，
+/// 那条曲线代表不了这一卷。让它进上包络，一张残页就替整卷定了档。
+///
+/// 夹具让那一页**比主体更吃位深**：三页主体加它一共四页，p95 的秩落在最后一名上，
+/// 它一旦进得去，基准档就是它那一档。断言因此钉得住「摘出去改变了结果」，
+/// 而不只是「字段填对了」。
+#[test]
+fn salvaged_pages_stay_out_of_the_volume_envelope() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 主体三页纯白：任何位深上都是格点，判据恒为零，定的是最低那一档。
+    for name in ["001.png", "002.png", "003.png"] {
+        volume.page(name, &fixtures::solid(fixtures::TINY, 255));
+    }
+    // 救回来的那一页：解回来的那一段是连续渐变，低位深上必然崩。
+    volume.file(
+        "004.png",
+        &fixtures::truncated(&fixtures::gradient(fixtures::TINY)),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    let salvaged = &reported.pages[3];
+    assert!(
+        salvaged.salvage().is_some(),
+        "夹具不对：那一页没被救回，这条用例就什么都没钉住"
+    );
+
+    // 主体只有三页：救回来的那一页不在里面。
+    let envelope = envelope_of(reported);
+    assert_eq!(envelope.body_pages, 3);
+    assert_eq!(envelope.outlier_pages, 0);
+    // 驱动页指的是一张完好页——序号已经从主体序换回页序。
+    assert!(
+        reported.pages[envelope.driver].salvage().is_none(),
+        "驱动页是一张部分救回页"
+    );
+
+    // 它自己那一档由它自己的判据定，理由因此不是「卷级上包络」。
+    let decided = fixtures::verdict(salvaged);
+    assert_ne!(decided.reason, Reason::VolumeEnvelope);
+    // 而它确实比主体更吃位深：进得去的话，基准档就是它那一档。
+    assert!(
+        decided.candidate > envelope.base,
+        "夹具不对：这一页不比主体更吃位深（{} 对 {}），摘不摘它都是同一个基准档",
+        decided.candidate,
+        envelope.base
+    );
+    // 主体三页仍然跟着基准档走。
+    for page in &reported.pages[..3] {
+        assert_eq!(fixtures::verdict(page).candidate, envelope.base);
+    }
 }
 
 /// 二十页灰度纯色页（十九页主体 + 一页远在界外），每 `every` 页之前插一张彩页。

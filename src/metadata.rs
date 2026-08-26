@@ -20,6 +20,7 @@ use std::io::{BufRead, Seek};
 use std::path::Path;
 
 use crate::decide::{Reason, Verdict};
+use crate::decode::Salvage;
 use crate::quantize::Dither;
 use crate::request::Request;
 
@@ -179,11 +180,13 @@ impl<'a> Record<'a> {
     ///
     /// 这一支不经 [`Recorder`]：彩页在第一遍就编好写出（ADR 0010），那时驱动页还没定下来，
     /// 而它本来也用不上——`volume-p95, driven by page …` 是灰度那一侧的理由。
-    pub fn color(fingerprint: &'a Fingerprint) -> Self {
+    ///
+    /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
+    pub fn color(fingerprint: &'a Fingerprint, salvage: Option<Salvage>) -> Self {
         Self {
             fingerprint,
             verdict: COLOR_VERDICT.to_owned(),
-            reason: COLOR_REASON.to_owned(),
+            reason: salvaged_text(salvage, COLOR_REASON.to_owned()),
         }
     }
 
@@ -221,11 +224,13 @@ impl<'a> Recorder<'a> {
     }
 
     /// 灰度路径上的一页：判定与理由都有。
-    pub fn gray(&self, verdict: Verdict) -> Record<'a> {
+    ///
+    /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
+    pub fn gray(&self, verdict: Verdict, salvage: Option<Salvage>) -> Record<'a> {
         Record {
             fingerprint: self.fingerprint,
             verdict: verdict.candidate.to_string(),
-            reason: reason_text(verdict.reason, self.driver),
+            reason: salvaged_text(salvage, reason_text(verdict.reason, self.driver)),
         }
     }
 
@@ -243,6 +248,27 @@ impl<'a> Recorder<'a> {
             verdict: FAILED_VERDICT.to_owned(),
             reason: FAILED_REASON.to_owned(),
         }
+    }
+}
+
+/// 部分救回页的理由前面添一句：这一页只救回了这么多（04 号票）。
+///
+/// 与占位页那句自证同一个道理（见 [`Recorder::failed`]）：一张只救回了一半的页
+/// 一旦离开报告的上下文——被拷进阅读器、被单拎出来——就再没有别的地方说得出它不全，
+/// 而它看上去与一张下半截是留白的正常页毫无分别。
+///
+/// 添在理由上而不另占一个 tEXt 关键字：救回了多少与「这一档是怎么来的」是同一句话的两半，
+/// 而拆成两个字段会让只读其中一个的工具看漏。它也**不进** [`Fingerprint`]——
+/// 那四项管的是「要不要重做」，而重做与否只看源字节，源字节没变，救回的比例也不会变。
+///
+/// 取值仍是 ASCII：百分数只用得上数字与小数点。
+fn salvaged_text(salvage: Option<Salvage>, reason: String) -> String {
+    match salvage {
+        Some(salvage) => format!(
+            "salvaged {:.1}% recovered, {reason}",
+            salvage.share() * 100.0
+        ),
+        None => reason,
     }
 }
 
@@ -475,8 +501,10 @@ mod tests {
             reason: Reason::VolumeEnvelope,
         };
         let records = [
-            Recorder::new(&fingerprint, Some(86)).gray(verdict),
-            Record::color(&fingerprint),
+            Recorder::new(&fingerprint, Some(86)).gray(verdict, None),
+            Record::color(&fingerprint, None),
+            Recorder::new(&fingerprint, Some(86)).gray(verdict, Some(half())),
+            Record::color(&fingerprint, Some(half())),
         ];
 
         for record in &records {
@@ -489,6 +517,41 @@ mod tests {
         assert_eq!(
             records[0].reason, "volume-p95, driven by page 087",
             "驱动页那一句与 ADR 0006 对不上"
+        );
+    }
+
+    /// 救回了多少这一半的页数，`Salvage` 造不出来——它只在 `decode` 里量得出。
+    fn half() -> Salvage {
+        Salvage::from_share(0.5)
+    }
+
+    /// 部分救回页的记录**自己说得出它不全**（04 号票）。
+    ///
+    /// 两条分支各钉一次：灰度路径与彩色分支写记录的是两段代码，只测一条，
+    /// 另一条上的页离开报告之后就再没有地方说得出它救回了多少。
+    #[test]
+    fn a_salvaged_page_says_so_in_its_own_record() {
+        let fingerprint = Fingerprint::new(&request(), SourceHasher::new().finish());
+        let verdict = Verdict {
+            candidate: Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+            reason: Reason::VolumeEnvelope,
+        };
+
+        assert_eq!(
+            Recorder::new(&fingerprint, Some(86))
+                .gray(verdict, Some(half()))
+                .reason,
+            "salvaged 50.0% recovered, volume-p95, driven by page 087"
+        );
+        assert_eq!(
+            Record::color(&fingerprint, Some(half())).reason,
+            "salvaged 50.0% recovered, color branch, scaled only"
+        );
+        // 完好页那一句一个字都不动：添的这一句只属于救回来的页。
+        assert_eq!(
+            Record::color(&fingerprint, None).reason,
+            COLOR_REASON,
+            "完好页的理由被救回那一句污染了"
         );
     }
 

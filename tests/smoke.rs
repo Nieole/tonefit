@@ -27,8 +27,7 @@ use std::path::{Path, PathBuf};
 
 use fixtures::Workspace;
 use tonefit::{
-    CacheBudget, Filter, IoMode, Mode, PageBranch, PageOutcome, PageReport, Report, Request,
-    VolumeReport,
+    CacheBudget, Filter, IoMode, Mode, PageBranch, PageReport, Report, Request, VolumeReport,
 };
 
 /// 指向本机素材目录的环境变量。没设就跳过。
@@ -230,15 +229,21 @@ fn summarize(report: &Report) {
         if color > 0 {
             eprintln!("    彩色分支 {color} 页");
         }
-        for page in volume.failures() {
-            eprintln!("    失败页 {}：{}", page.source.display(), reason(page));
+        // 部分救回页在真实素材上是「这份片源下歪了」的现场证据（04 号票），
+        // 而它不进隔离目录、也没有退出码替它喊：不印出来，跑冒烟的人无从知道。
+        for page in volume.salvaged() {
+            eprintln!(
+                "    部分救回 {}：{}",
+                page.source.display(),
+                page.salvage().expect("这是一张部分救回页"),
+            );
         }
-    }
-}
-
-fn reason(page: &PageReport) -> &str {
-    match &page.outcome {
-        PageOutcome::Failed { reason } => reason,
-        PageOutcome::Processed { .. } => "",
+        for page in volume.failures() {
+            eprintln!(
+                "    失败页 {}：{}",
+                page.source.display(),
+                page.failure().expect("这是一张失败页"),
+            );
+        }
     }
 }

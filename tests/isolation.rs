@@ -3,8 +3,9 @@
 //! 只断言外部可见的事实：`run` 返没返回错误、`Report` 里列着哪几页失败、
 //! 卷写到了哪个目录、隔离目录里那一卷是不是完整的。
 //!
-//! 一条贯穿全篇的界线：**出得来一张对的页就照用**（12 号票）。解得出完整尺寸的页照用，
-//! 哪怕像素只解回来一半；尺寸解不出来、或尺寸解得出来而缓冲分配不下，才算失败。
+//! 一条贯穿全篇的界线：**救得回像素就照用**（04 号票收紧了 12 号票的说法）。
+//! 救回到像素的页照用，哪怕只回来一半——那是一张**部分救回页**；
+//! 一个像素都救不回来、尺寸解不出来、或尺寸解得出来而缓冲分配不下，才算失败。
 
 mod fixtures;
 
@@ -163,9 +164,10 @@ fn a_zero_byte_a_non_image_and_an_oversized_page_are_isolated_rather_than_fatal(
     }
 }
 
-/// 截断的页只要还解得出完整尺寸就照用：它按自己的尺寸出，也不把卷送进隔离目录。
+/// 救回到像素的截断页是**部分救回页**：它按自己的尺寸出，不把卷送进隔离目录，
+/// 而报告说得出它救回了多少（04 号票）。
 #[test]
-fn a_truncated_page_whose_size_still_decodes_is_used_rather_than_failed() {
+fn a_truncated_page_that_still_gives_back_pixels_is_salvaged_rather_than_failed() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.file("001.png", &fixtures::truncated_page(fixtures::TYPICAL));
@@ -173,11 +175,23 @@ fn a_truncated_page_whose_size_still_decodes_is_used_rather_than_failed() {
     let report = run_volume(&space, &volume);
 
     let reported = &report.volumes[0];
-    assert!(!reported.isolated(), "截断页不该把卷送进隔离目录");
+    assert!(!reported.isolated(), "部分救回页不该把卷送进隔离目录");
     let page = &reported.pages[0];
-    assert!(page.failure().is_none(), "截断页不该算失败");
+    assert!(page.failure().is_none(), "部分救回页不该算失败");
+    assert!(page.verdict().is_some(), "部分救回页照常有判定");
     // 尺寸按它自己的源尺寸算：完整尺寸解得出来，几何因此照常成立。
     assert_eq!(page.size, Size::new(1182, 1680));
+
+    // 救回了多少说得出来——这正是「救回 99% 与救回 0 行是同一种结果」被拆开的地方。
+    let salvage = page.salvage().expect("截断页该是一张部分救回页");
+    assert!(
+        (0.0..1.0).contains(&salvage.share()) && salvage.share() > 0.0,
+        "救回的比例落在两端上：{}",
+        salvage.share()
+    );
+    // 卷那一侧数出来的是同一张页。
+    assert_eq!(reported.salvaged().count(), 1);
+    assert_eq!(report.salvaged().count(), 1);
 
     let written = fixtures::read_png(&page.output);
     assert_eq!(written.size, page.size);
@@ -187,6 +201,66 @@ fn a_truncated_page_whose_size_still_decodes_is_used_rather_than_failed() {
         written.pixel(0, written.size.height - 1),
         255,
         "缺的那一段没留白"
+    );
+    // 写出去那一段的比例与报告说的对得上：报告不是另算一份数。
+    let ink = (0..written.size.height)
+        .filter(|&y| written.pixel(0, y) != 255)
+        .count() as f64
+        / f64::from(written.size.height);
+    assert!(
+        (ink - salvage.share()).abs() < 0.05,
+        "报告说救回 {}，写出来的却是 {ink}",
+        salvage.share()
+    );
+}
+
+/// 一个像素都救不回来的页是**失败页**（04 号票）：它进隔离目录、进失败清单，
+/// 退出码跟着变。
+///
+/// 这是本票的缺陷本身：尺寸解得出来买不到任何像素，而按 12 号票的界线它是一张正常页——
+/// 输出是一整张纸白，带着正常的判定元数据，卷还留在干净的去处，退出码 0。
+#[test]
+fn a_page_that_gives_back_no_pixels_at_all_is_a_failed_page() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 尺寸与那张好页不同：占位页要是按自己的几何出，这一条当场看得出来。
+    volume.file(
+        "002.png",
+        &fixtures::salvages_nothing_page(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    let page = &reported.pages[1];
+    assert!(
+        page.salvage().is_none(),
+        "一个像素都没救回来的页被当成了部分救回页"
+    );
+    let reason = page.failure().expect("它该是一张失败页");
+    assert!(reason.contains("002.png"), "原因里没指名是哪一页：{reason}");
+    assert!(
+        reason.contains("一个像素都没解出来"),
+        "原因没说清是救回那一步空手而归：{reason}"
+    );
+
+    // 三条后果一条不少：进隔离目录、进失败清单、退出码那一侧看得见。
+    assert!(reported.isolated(), "含失败页的卷没进隔离目录");
+    assert_eq!(reported.output, space.out().join(ISOLATED).join("volume-a"));
+    assert_eq!(reported.failures().count(), 1);
+    assert!(
+        report.any_isolated(),
+        "退出码读的就是它：`exit_code` 靠它把「有卷被隔离」与「全部成功」分开"
+    );
+
+    // 它按卷内统一尺寸留白占位，不按自己那个几何——失败页没有自己的几何可用。
+    assert_eq!(page.size, reported.pages[0].size);
+    let written = fixtures::read_png(&page.output);
+    assert_eq!(written.size, reported.pages[0].size);
+    assert!(
+        written.pixels.iter().all(|&pixel| pixel == 255),
+        "占位页不是纸白"
     );
 }
 

@@ -4,9 +4,14 @@
 //!
 //! AVIF 走 dav1d（见 measurements 的《AVIF 解码的可用路径》），由 `image` 的 `avif-native` 特性提供。
 //!
-//! **界线在「出不出得来一张对的页」上**（12 号票），而尺寸是其中的大头：解得出完整尺寸的页照用，
-//! 截断的页因此不是坏页——它的几何一点没缺，缺的只是末尾几行像素，见 [`salvage`]。
-//! 尺寸解不出来、或尺寸解得出来而缓冲分配不下，两种都算失败——后者救不回任何像素。
+//! **界线在「救不救得回像素」上**（04 号票）。12 号票把它画在「解不解得出完整尺寸」上，
+//! 而尺寸买不到像素：一张截在第一个数据块头部的页尺寸齐全、一行像素也没有，
+//! 按那条界线它是一张正常页。救回因此要报出**救回了多少**（见 [`Salvage`]），
+//! 三种结局各自分开：
+//!
+//! - 整解成功：完好页。
+//! - 整解失败、救回到像素：部分救回页，缺的那一段留成纸白。它的几何一点没缺。
+//! - 整解失败、一个像素都没救回，或尺寸解不出来，或尺寸解得出来而缓冲分配不下：失败页。
 
 use std::io::Cursor;
 use std::path::Path;
@@ -34,6 +39,52 @@ const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 /// 与转灰对透明区的处理同一条（`crate::gray` 的 `over_paper`）：漫画页上没有内容的地方就是纸。
 const PAPER: u8 = u8::MAX;
 
+/// 量救回了多少时，另一趟拿来填缓冲的那个值。只要与 [`PAPER`] 不同即可，见 [`measure`]。
+const PROBE: u8 = 0;
+
+/// 救回了多少：解码器真写进像素缓冲的那一份占整页的比例，0 到 1（04 号票）。
+///
+/// 量的是**缓冲的字节**，而每个像素在缓冲里占的字节数处处相同，比例因此就是像素的比例。
+/// 不量「第几行」：隔行 PNG 写进缓冲的位置本来就不连续，行数说不出它救回了多少。
+///
+/// 它只在救回来的页上有意义：整解成功的页一整页都在，没有比例可谈（见 [`Decoded`]）。
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Salvage(f64);
+
+impl Salvage {
+    /// 救回的那一份占整页的比例，0 到 1。
+    ///
+    /// 一个像素都没有的页不会走到调用方手上——那是一张失败页（见 [`Decoder::decode`]），
+    /// 因此从报告里读到的这个数恒大于 0。
+    pub fn share(self) -> f64 {
+        self.0
+    }
+
+    /// 直接造一个比例。**只给测试用**——生产路径上救回了多少只能由 [`measure`] 量出来。
+    ///
+    /// 与 [`Score::from_value`](crate::Score) 同一条规矩，但它够不着 `#[cfg(test)]`：
+    /// 渲染那一层在另一个 crate 里（`src/main.rs`），它要造得出一份带部分救回页的报告。
+    pub fn from_share(share: f64) -> Self {
+        Self(share)
+    }
+}
+
+impl std::fmt::Display for Salvage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "救回 {:.1}%", self.0 * 100.0)
+    }
+}
+
+/// 一页解出来的东西：像素，加上它是整解出来的还是救回来的（04 号票）。
+///
+/// 救回了多少跟着像素一起交出去，而不是让调用方回头再问一次：那个数只有解码这一刻算得出来，
+/// 出了这个模块就再没有第二个地方看得见「哪些字节是解码器真写下的」。
+pub struct Decoded {
+    pub image: DynamicImage,
+    /// 整解出来的完好页是 `None`；救回来的页带着它救回了多少。
+    pub salvage: Option<Salvage>,
+}
+
 /// 扩展名是否表明这是一页。不是页的成员原样透传，见 `source`。
 pub fn is_page(path: &Path) -> bool {
     path.extension()
@@ -52,7 +103,8 @@ pub fn is_page(path: &Path) -> bool {
 /// 而不是记在调用方的循环里——解码只此一条路，第二遍要是回头解一页，这个数瞒不住。
 ///
 /// 救回那一趟不另记一次：它在同一个 [`decode`](Self::decode) 调用里，
-/// 数的是「这一页被解了几回」，不是「解码器被叫了几回」。
+/// 数的是「这一页被解了几回」，不是「解码器被叫了几回」——救回自己就要解两趟
+/// （见 [`measure`]），按后者数，一张坏页会记成三次解码，而它只是一页。
 ///
 /// 计数是原子的，解码本身因此**不需要独占**：第一遍在 rayon 上满核跑（13 号票），
 /// 而一个要 `&mut` 的计数器会把整条计算层串回一条线。
@@ -73,18 +125,32 @@ impl Decoder {
 
     /// 解码一页。格式按内容判定，扩展名只用来挑出候选成员。
     ///
-    /// 整解不成再试一次救回：尺寸还解得出来就按尺寸出一页（12 号票）。两趟都不成才是失败，
-    /// 而失败在这里只是一个 `Err`——把它变成一个失败页、把卷送进隔离目录，是 `crate::run` 那一层的事。
-    pub fn decode(&self, bytes: &[u8]) -> Result<DynamicImage> {
+    /// 整解不成再试一次救回：按文件头的尺寸建好缓冲，解到哪个像素算哪个像素（12 号票）。
+    /// **救回到一个像素都算数，一个都没救回来不算**（04 号票）：尺寸给不出像素，
+    /// 而一张零像素的页与一张纸白页在输出里没有分别，当成正常页写出去就是把问题藏起来。
+    ///
+    /// 失败在这里只是一个 `Err`——把它变成一个失败页、把卷送进隔离目录，是 `crate::run` 那一层的事。
+    pub fn decode(&self, bytes: &[u8]) -> Result<Decoded> {
         self.decodes.fetch_add(1, Ordering::Relaxed);
         let error = match reader(bytes)?.decode() {
-            Ok(image) => return Ok(image),
+            Ok(image) => {
+                return Ok(Decoded {
+                    image,
+                    salvage: None,
+                });
+            }
             Err(error) => error,
         };
-        match salvage(bytes) {
-            Some(image) => Ok(image),
-            None => Err(anyhow::Error::new(error).context("解码")),
+        let Some((image, salvage)) = salvage(bytes) else {
+            return Err(anyhow::Error::new(error).context("解码"));
+        };
+        if salvage.share() == 0.0 {
+            return Err(anyhow::Error::new(error).context("按文件头的尺寸救回，一个像素都没解出来"));
         }
+        Ok(Decoded {
+            image,
+            salvage: Some(salvage),
+        })
     }
 }
 
@@ -100,16 +166,22 @@ fn reader(bytes: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
     Ok(reader)
 }
 
-/// 整解失败之后的第二趟：按文件头里的尺寸建好缓冲，解到哪一行算哪一行。
+/// 整解失败之后的第二趟：按文件头里的尺寸建好缓冲，解到哪个像素算哪个像素，
+/// 并量出救回了多少。
 ///
-/// 这是「截断的图片只要能解出完整尺寸就使用」那一条的实现（12 号票）。**完整尺寸**是关键：
-/// 页的几何一点没缺，它因此有自己的目标尺寸、照常参与几何门与判据，与好页毫无二致；
-/// 缺的只是末尾几行像素，那一段留成纸白。把它算作失败页反而更糟——那会用卷内统一尺寸
-/// 顶掉一个本来就正确的尺寸，还平白把整卷送进隔离目录。
+/// 这是「截断的图片只要能解出完整尺寸就使用」那一条的实现（12 号票），
+/// 04 号票给它补上了量：**完整尺寸**只买到几何，买不到像素。救回到像素的页几何一点没缺，
+/// 它因此有自己的目标尺寸、照常缩放与判定，缺的那一段留成纸白；把它算作失败页反而更糟——
+/// 那会用卷内统一尺寸顶掉一个本来就正确的尺寸。一个像素都没救回来的页则相反，
+/// 「解得出尺寸」在它身上什么都没买到，与那张分配不下缓冲的页同一个结局。
 ///
 /// 尺寸解不出来、或尺寸大到缓冲分配不下，就没有第二趟可言：`None` 回到调用方，那是一个失败页。
-fn salvage(bytes: &[u8]) -> Option<DynamicImage> {
+///
+/// 两个解码器一起建：量那一趟要的是**同一份字节的第二次解码**，建不出来就等于量不出来，
+/// 而量不出来的救回没有资格叫救回。
+fn salvage(bytes: &[u8]) -> Option<(DynamicImage, Salvage)> {
     let decoder = reader(bytes).ok()?.into_decoder().ok()?;
+    let probe = reader(bytes).ok()?.into_decoder().ok()?;
     let total = decoder.total_bytes();
     if total > MAX_DECODED_BYTES {
         return None;
@@ -117,9 +189,37 @@ fn salvage(bytes: &[u8]) -> Option<DynamicImage> {
     let (width, height) = decoder.dimensions();
     let color = decoder.color_type();
     let mut buffer = vec![PAPER; usize::try_from(total).ok()?];
-    // 错误照吞：缓冲里已经落下的行就是救回来的那一段，剩下的仍是纸白。
+    // 错误照吞：缓冲里已经落下的那些像素就是救回来的那一段，剩下的仍是纸白。
     let _ = decoder.read_image(&mut buffer);
-    assemble(width, height, color, buffer)
+    let salvage = measure(probe, &buffer);
+    assemble(width, height, color, buffer).map(|image| (image, salvage))
+}
+
+/// 量出解码器究竟写下了多少：同一份字节再解一趟，这一趟把缓冲填成 [`PROBE`]。
+///
+/// 两趟里**对得上的那些字节就是解码器真写下的**：写过的地方两趟都是解出来的那个值，
+/// 没写过的地方一边是 [`PAPER`]、一边是 [`PROBE`]，恒不相等。这一手不认哪个格式、
+/// 也不假定救回来的是一段前缀（隔行 PNG 写进缓冲的位置本来就不连续）。
+///
+/// 换不成「数一数缓冲里还剩多少个 [`PAPER`]」：漫画页的天地留白本来就是纸白，
+/// 那样数出来，一张只救回了页眉留白的页会被判成一个像素都没救回。**它恰恰是本票的判据**，
+/// 判错的方向还是把一张救回来的页打成失败页。
+///
+/// 代价是救回这条路上解两趟、峰值多占一份缓冲。它整个落在**整解已经失败**的那条路上，
+/// 正常页一趟都不多解。
+fn measure(probe: impl ImageDecoder, salvaged: &[u8]) -> Salvage {
+    let mut buffer = vec![PROBE; salvaged.len()];
+    let _ = probe.read_image(&mut buffer);
+    let recovered = salvaged
+        .iter()
+        .zip(&buffer)
+        .filter(|(written, probed)| written == probed)
+        .count();
+    // 一页恒有像素，`salvaged` 因此非空；真出了个零长度的缓冲，那也是一个像素都没救回。
+    Salvage(match salvaged.len() {
+        0 => 0.0,
+        total => recovered as f64 / total as f64,
+    })
 }
 
 /// 把 [`ImageDecoder::read_image`] 写出的原始缓冲装回一张图。

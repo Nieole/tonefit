@@ -89,10 +89,11 @@
 
 [kobo-libra-2] damaged · 隔离
   几何门 成立
-  卷级   基准档 1bit · 驱动页 002.png · 主体 2 页 · 离群 0 页 · 迟滞升档 0 页
+  卷级   基准档 1bit · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
   001.png        1182x1680  1bit       10436  卷级上包络
-  002.png        1182x1680  1bit        2236  卷级上包络
+  002.png        1182x1680  1bit        2236  阈值内最低的一档 · 救回 49.8%
   003.png        1182x1680  failed      2235  失败页 · 占位页
+  004.png        1182x1680  failed      2235  失败页 · 占位页
   透传 ComicInfo.xml · 12 字节
 
 [kobo-libra-colour] color-on-color

@@ -46,6 +46,7 @@ use rayon::prelude::*;
 pub use cache::{CacheBudget, CacheUsage};
 pub use color::PageColor;
 pub use decide::{CandidateScore, Reason, Verdict};
+pub use decode::Salvage;
 pub use envelope::Envelope;
 pub use geometry::{GeometryGate, Size};
 pub use gray::GrayImage;
@@ -54,7 +55,9 @@ pub use metric::{Aggregation, Reference, Score, aggregation, score};
 pub use profile::{Panel, Profile, Threshold};
 pub use progress::{Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
-pub use report::{PageBranch, PageOutcome, PageReport, Report, VolumeReport, VolumeVerdict};
+pub use report::{
+    PageBranch, PageOutcome, PageReport, Processed, Report, VolumeReport, VolumeVerdict,
+};
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 
@@ -334,6 +337,13 @@ fn placeholder(size: Size) -> GrayImage {
 /// 决定第 5 条说彩页在彩色 profile 下「根本不进灰度上包络」；失败页则是没有可求判据的像素
 /// （12 号票）。两者在返回的判定里都占位为 `None`，位置留着——第二遍与报告都按页序取。
 ///
+/// **部分救回页进得来，但不进上包络**（04 号票）：它有判据曲线，那条曲线却是在一页
+/// 大半留白的图上求出来的，代表不了这一卷。它因此按自己那条曲线单独定档——
+/// 与离群页同一个待遇（ADR 0006 决定第 5 条），只是摘它的理由是页残缺，不是判据偏离。
+///
+/// 一页不剩地落在救回那一侧时**一页都不摘**：那说明残缺的是这一卷本身，不是其中几页，
+/// 而主体不能空着。这与 `envelope::summarize` 里「一页不剩地落到离群侧」是同一条规矩。
+///
 /// 逐页定档也落在这里，而不在第一遍：几何门要看完整卷才判得死（一页比目标小就整卷关掉抖动，
 /// 见 [`first_pass`]），而候选集是判定的前提——在门还可能关上的时候定档，定的是一套
 /// 随后可能被裁掉的候选。
@@ -345,6 +355,12 @@ fn summarize_volume(
     pages: &[ScoredPage],
     request: &Request,
 ) -> (Vec<Option<Verdict>>, Option<VolumeVerdict>) {
+    /// 汇总里逐页那一对：这一页在**卷内**的序号，加上它定下的判定。
+    ///
+    /// 序号非带不可：卷级每一步都只在其中一部分页上做——彩页与失败页根本不在场，
+    /// 部分救回页摘出去单独定档——手上那个序列与卷内页序早就不重合了。
+    type Decided = (usize, Verdict);
+
     let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
     // 灰度路径上那些页在 `pages` 里的序号。卷级的一切都只在它们身上做。
     let gray: Vec<usize> = pages
@@ -366,11 +382,12 @@ fn summarize_volume(
         .map(|&index| decide::decide(scores(index), threshold, pinned))
         .collect();
 
-    let write_back = |verdicts: &mut Vec<Option<Verdict>>, decided: &[Verdict]| {
-        for (&index, &verdict) in gray.iter().zip(decided) {
+    let write_back = |verdicts: &mut Vec<Option<Verdict>>, decided: &[Decided]| {
+        for &(index, verdict) in decided {
             verdicts[index] = Some(verdict);
         }
     };
+    let decided: Vec<Decided> = gray.iter().copied().zip(decided).collect();
     if let Some(candidate) = pinned {
         write_back(&mut verdicts, &decided);
         return (verdicts, Some(VolumeVerdict::Override(candidate)));
@@ -379,20 +396,34 @@ fn summarize_volume(
         write_back(&mut verdicts, &decided);
         return (verdicts, Some(VolumeVerdict::PerPage));
     }
-    let inputs: Vec<envelope::Page> = gray
+    // 上包络只在完好页上取（04 号票）。两条出口上不分：覆盖项顶掉了判定、`--per-page`
+    // 关掉了卷级那一层，两种情形下都没有一个「卷级的档」可供部分救回页去污染。
+    let (mut body, mut salvaged): (Vec<Decided>, Vec<Decided>) = decided
+        .into_iter()
+        .partition(|&(index, _)| !pages[index].salvaged());
+    if body.is_empty() {
+        (body, salvaged) = (salvaged, Vec::new());
+    }
+    write_back(&mut verdicts, &salvaged);
+    let inputs: Vec<envelope::Page> = body
         .iter()
-        .zip(&decided)
-        .map(|(&index, verdict)| envelope::Page {
+        .map(|&(index, verdict)| envelope::Page {
             scores: scores(index),
             decided: verdict.candidate,
         })
         .collect();
-    let summary = envelope::summarize(&inputs, threshold).expect("灰度页非空");
-    write_back(&mut verdicts, &summary.verdicts);
-    // 驱动页的序号在上包络那一侧指进**灰度页**的序列，报告里那个序号指进整卷的页。
-    // 卷内混着彩页时两者不重合，这一步把它换回去——不换，报告会指着另一页说「就是它定的档」。
+    let summary = envelope::summarize(&inputs, threshold).expect("主体非空");
+    let decided: Vec<Decided> = body
+        .iter()
+        .map(|&(index, _)| index)
+        .zip(summary.verdicts)
+        .collect();
+    write_back(&mut verdicts, &decided);
+    // 驱动页的序号在上包络那一侧指进**主体页**的序列，报告里那个序号指进整卷的页。
+    // 卷内混着彩页或部分救回页时两者不重合，这一步把它换回去——不换，报告会指着另一页
+    // 说「就是它定的档」。
     let envelope = Envelope {
-        driver: gray[summary.envelope.driver],
+        driver: body[summary.envelope.driver].0,
         ..summary.envelope
     };
     (verdicts, Some(VolumeVerdict::Envelope(envelope)))
@@ -425,12 +456,14 @@ struct ScoredPage {
 /// （缓存序号、编好的字节），那里装的是报告要读的东西。两者各留各的，
 /// 内部产物才不会跟着报告一路公开出去。
 enum Outcome {
-    /// 处理成了的一页。
+    /// 处理成了的一页：完好的，或者救回来一段的。
     Processed {
         size: Size,
         scaling: resample::Scaling,
         color: PageColor,
         branch: Branch,
+        /// 这一页救回了多少。整解出来的完好页是 `None`（04 号票，见 `decode`）。
+        salvage: Option<Salvage>,
     },
     /// 失败页：字节读不出来，或者连完整尺寸都解不出来（12 号票）。
     ///
@@ -486,6 +519,17 @@ impl ScoredPage {
         matches!(self.outcome, Outcome::Failed { .. })
     }
 
+    /// 这一页是救回来的吗（04 号票）。答是的页不参与几何门与卷级上包络。
+    fn salvaged(&self) -> bool {
+        matches!(
+            self.outcome,
+            Outcome::Processed {
+                salvage: Some(_),
+                ..
+            }
+        )
+    }
+
     /// 补上汇总定下的那个判定，就是报告要的一页。缓存序号与编好的字节都不进报告——
     /// 它们是管线内部的事。
     ///
@@ -497,9 +541,9 @@ impl ScoredPage {
                 scaling,
                 color,
                 branch,
-            } => (
-                size,
-                PageOutcome::Processed {
+                salvage,
+            } => {
+                let processed = Processed {
                     scaling,
                     color,
                     branch: match branch {
@@ -509,8 +553,16 @@ impl ScoredPage {
                         },
                         Branch::Color { .. } => PageBranch::Color,
                     },
-                },
-            ),
+                };
+                let outcome = match salvage {
+                    Some(salvage) => PageOutcome::Salvaged {
+                        page: processed,
+                        salvage,
+                    },
+                    None => PageOutcome::Whole(processed),
+                };
+                (size, outcome)
+            }
             Outcome::Failed { reason } => (uniform, PageOutcome::Failed { reason }),
         };
         PageReport {
@@ -550,6 +602,13 @@ struct Scored {
 /// **彩色分支上的页不参与几何门。**门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），
 /// 两者都只作用在灰度路径上；彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
 /// 让它关掉整卷的抖动，就是让一条不受影响的路径去削掉另一条路径的收益。
+///
+/// **部分救回页同样不参与**（04 号票）。它的尺寸倒是真的——文件头一点没缺——但门对整卷
+/// 只有一个结果，而一张连像素都没解全的页不该是替另外一百多页回答这个问题的那一张。
+/// 一卷里连一张完好的灰度页都没有时，门于是无人可关，判定为成立：与只装着彩页的卷同一个
+/// 答案，理由也同一条——没有页去关它，那是真话，不是「不知道」（见 [`GeometryGate`]）。
+/// 代价认下：那样一卷里真的贴不住面板的页会跟着抖动一起写出去。
+/// 少数页否决整卷这件事本身归 06 号票收口。
 ///
 /// **读不出、解不出的页在这里变成失败页**（12 号票），而不是让整卷的调用返回 `Err`。
 /// 它同样不参与几何门，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
@@ -676,8 +735,8 @@ impl Compute<'_> {
                 .decode(&bytes)
                 .with_context(|| format!("解 {} 这一页", source.display()))
         });
-        let decoded = match read {
-            Ok(decoded) => decoded,
+        let (decoded, salvage) = match read {
+            Ok(decoded) => (decoded.image, decoded.salvage),
             // 一张坏图不毁掉整卷（spec 的 story 24）：记下原因就走，
             // 第二遍拿卷内统一尺寸给它留一张白页，整卷进隔离目录。
             Err(error) => {
@@ -696,9 +755,12 @@ impl Compute<'_> {
             let size = geometry::fit_inside(image.size(), panel.resolution);
             let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
             // dry-run 一个文件都不落盘，编出来的字节没人要。
+            let record = self
+                .fingerprint
+                .map(|fingerprint| Record::color(fingerprint, salvage));
             let encoded = match request.mode {
                 Mode::Process => Some(
-                    encode::color_png(&scaled, self.fingerprint.map(Record::color).as_ref())
+                    encode::color_png(&scaled, record.as_ref())
                         .with_context(|| format!("编 {} 这一页", source.display()))?,
                 ),
                 Mode::DryRun => None,
@@ -710,13 +772,14 @@ impl Compute<'_> {
                     scaling,
                     color,
                     branch: Branch::Color { encoded },
+                    salvage,
                 },
             });
         }
 
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
-        if !geometry::one_to_one(size, panel.resolution) {
+        if salvage.is_none() && !geometry::one_to_one(size, panel.resolution) {
             // 门关得越早，白求的判据越少：先记下，再去问该用哪一套候选。
             self.breaker.fetch_min(index, Ordering::Relaxed);
         }
@@ -735,6 +798,7 @@ impl Compute<'_> {
                 scaling,
                 color,
                 branch: Branch::Gray { scores, slot },
+                salvage,
             },
         })
     }
@@ -842,6 +906,7 @@ impl Encode<'_> {
             )),
             Outcome::Processed {
                 branch: Branch::Gray { slot, .. },
+                salvage,
                 ..
             } => {
                 let verdict = verdict.expect("灰度路径上必有判定");
@@ -850,7 +915,7 @@ impl Encode<'_> {
                     .load(*slot)
                     .with_context(|| format!("从缓存取 {source} 这一页"))?;
                 let quantized = quantize::quantize(&reference, verdict.candidate);
-                let record = recorder.map(|recorder| recorder.gray(verdict));
+                let record = recorder.map(|recorder| recorder.gray(verdict, *salvage));
                 encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
                     .map(Cow::Owned)
                     .with_context(|| format!("编 {source} 这一页"))
