@@ -2,7 +2,10 @@
 //!
 //! 这里一条性质都不主张——它只钉住「今天这批夹具算出来的就是这些数」。存在的理由是
 //! 15 号票那一句：防止调优在无人察觉时改变判定结果。判据的低通核、掩蔽加权、上包络的
-//! 分位、迟滞页数、编码器在灰度与调色板之间的取舍，任何一处动一下都会在这里露出来。
+//! 分位、迟滞页数、离群倍数、编码器在灰度与调色板之间的取舍，任何一处动一下都会在这里露出来。
+//!
+//! 卷级那三条路径（非退化的上分位、离群、迟滞升档）要页数够多才走得到，因此有三个长卷
+//! 专门喂它们；归档卷单列一个，让写进容器的页字节数也进快照。
 //!
 //! 与 `tests/metric.rs` 分工相反：那边测的是判据**该有的性质**，数值动了不算错；
 //! 这边测的是**数值本身**，动了就要有人当场答一句「为什么」。
@@ -12,7 +15,7 @@
 
 mod fixtures;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -184,14 +187,61 @@ fn snapshot() -> String {
 }
 
 /// 一个夹具卷：卷名，加上往里放页的那一手。
+///
+/// `summary_only` 是给长卷的：卷级那三条路径（非退化的上分位、离群、迟滞升档）要页数够多
+/// 才走得到，而几十行页行会把快照撑爆，真正的判定变动反而淹在里面。长卷因此只记卷级摘要——
+/// 那一行里有基准档、驱动页、主体/离群/升档三个计数，本来就是这几条路径的全部观测点。
 struct Case {
     name: &'static str,
-    build: fn(&Volume),
+    build: Build,
+    summary_only: bool,
+}
+
+/// 夹具卷的两种形态。归档那一支存在的理由：写进归档的页，除了成员名之外
+/// 一条断言都没有——变异实验里让每个成员都写第一页的字节，全套测试一项没红。
+/// 页字节数进了快照，那种串位就再也藏不住。
+enum Build {
+    Directory(fn(&Volume)),
+    Archive(fn(&mut fixtures::Cbz)),
 }
 
 impl Case {
     const fn new(name: &'static str, build: fn(&Volume)) -> Self {
-        Self { name, build }
+        Self {
+            name,
+            build: Build::Directory(build),
+            summary_only: false,
+        }
+    }
+
+    /// 长卷：只记卷级摘要，不逐页展开。
+    const fn summary(name: &'static str, build: fn(&Volume)) -> Self {
+        Self {
+            name,
+            build: Build::Directory(build),
+            summary_only: true,
+        }
+    }
+
+    /// 归档卷：输入是一个 CBZ，输出也是。
+    const fn archive(name: &'static str, build: fn(&mut fixtures::Cbz)) -> Self {
+        Self {
+            name,
+            build: Build::Archive(build),
+            summary_only: false,
+        }
+    }
+}
+
+/// 铺一个长卷：`count` 页，第 `index` 页画什么由 `page` 说了算（下标从 1 起）。
+///
+/// 长卷用的都是小页。卷级那三条路径只看逐页判定的分布，不看页画的是什么，而小页把
+/// 一卷几十页的代价压到可接受——代价是源比面板小、几何门不成立、抖动整卷关闭
+/// （ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。那是这几卷有意接受的形态：
+/// 它们考的是上包络、离群与迟滞，不是几何。
+fn long_volume(volume: &Volume, count: usize, page: impl Fn(usize) -> image::DynamicImage) {
+    for index in 1..=count {
+        volume.page(&format!("{index:03}.png"), &page(index));
     }
 }
 
@@ -243,6 +293,63 @@ fn mono_cases() -> Vec<Case> {
             volume.page("004.png", &fixtures::line_art(fixtures::TYPICAL));
             volume.page("005.png", &fixtures::solid(fixtures::TYPICAL, 200));
         }),
+        // 以下三卷各二十页。二十是**下限**，不是随手取的：上分位的秩是 ceil(0.95n)，
+        // n≤19 时它等于 n，秩落在排序末位——临时基准档成了最极端那一页自己，
+        // 于是既没有非退化的上分位，也摘不出任何离群页。n=20 时秩是 19，
+        // 最高那一页第一次不再给自己当尺子。
+        //
+        // 填充页一律用 `solid`：卷级那三条路径只看判据的分布，不看页画的是什么，
+        // 而纯色页的生成、编码、解码、判据全是这批夹具里最便宜的。
+        //
+        // 三卷都只记卷级摘要——那一行里的基准档、驱动页、主体/离群/升档三个计数，
+        // 就是这几条路径的全部观测点，二十行页行只会把真正的变动淹掉。
+
+        // 非退化的上分位 + 一页离群。一页占 20 页的 5%，秩 19 恰好把它排除在外，
+        // 临时基准档因此落在填充页那一档上，离群检验才有一个不含被检页的立脚点。
+        Case::summary("envelope-outlier", |volume| {
+            long_volume(volume, 20, |index| {
+                if index == 20 {
+                    fixtures::solid(fixtures::TINY, 128)
+                } else {
+                    fixtures::line_art(fixtures::TINY)
+                }
+            });
+        }),
+        // 离群占比 10%，越过上分位那 5% 的线。**这一卷现在摘不出离群页**：
+        // 秩 19 落进那两页自己里，临时基准档被它们抬上去，检验又在那一档上做，
+        // 于是谁都不显著偏离（加固批 01 号票）。它录在这里，是为了让那张票修完之后
+        // 差异在快照里看得见——录基线时把当下的错误行为一并录进去，不是把它封成正确，
+        // 是先钉住「现在是什么样」，好让后面的改动可指认。
+        Case::summary("envelope-outlier-heavy", |volume| {
+            long_volume(volume, 20, |index| {
+                if index >= 19 {
+                    fixtures::solid(fixtures::TINY, 128)
+                } else {
+                    fixtures::line_art(fixtures::TINY)
+                }
+            });
+        }),
+        // 迟滞升档：连续三页够不上基准档、又够不上离群，整段一起升。
+        // 三页是 `HYSTERESIS_PAGES` 的取值。卷长 60 而不是 20，是因为 3 页要占到
+        // 5% 以内，秩才落得回填充页上——否则那三页又把基准档抬上去，重演上一卷的退化。
+        Case::summary("envelope-hysteresis", |volume| {
+            long_volume(volume, 60, |index| {
+                if (8..=10).contains(&index) {
+                    // 判据在基准档上过线、又够不上离群那三倍线的那一档。
+                    fixtures::solid(fixtures::TINY, 15)
+                } else {
+                    fixtures::line_art(fixtures::TINY)
+                }
+            });
+        }),
+        // 归档卷：输入是 CBZ，输出也是。两页画得不一样，字节数因此各不相同——
+        // 归档写出把成员串位的话，这两个数会当场对不上。透传文件一并进来，
+        // 「原样搬过去」在归档那一侧同样是一条会被改坏的性质。
+        Case::archive("archive", |cbz| {
+            cbz.page("001.png", &fixtures::line_art(fixtures::TYPICAL))
+                .page("002.png", &fixtures::gradient(fixtures::TYPICAL))
+                .file("ComicInfo.xml", b"<ComicInfo/>");
+        }),
         // 坏页与透传文件：救回的那一页、失败的那一页、原样搬过去的那一个文件。
         // 这一卷整个进隔离目录（12 号票），占位页按卷内统一尺寸出。
         Case::new("damaged", |volume| {
@@ -267,20 +374,27 @@ fn color_cases() -> Vec<Case> {
 /// 一趟 `run` 收全部卷，不是一卷一趟：多卷同趟本来就是常态，而卷级判定各卷各判，
 /// 合在一起不改变任何一卷的结果。
 fn render(text: &mut String, space: &Workspace, device: &str, cases: &[Case]) {
-    let volumes: Vec<Volume> = cases
-        .iter()
-        .map(|case| {
-            let volume = space.volume(case.name);
-            (case.build)(&volume);
-            volume
-        })
-        .collect();
+    // 目录卷要活到 `run` 之后（`Volume` 一落地就把临时目录收走），归档卷写完即成文件。
+    let mut directories: Vec<Volume> = Vec::new();
+    let mut inputs: Vec<PathBuf> = Vec::new();
+    for case in cases {
+        match case.build {
+            Build::Directory(build) => {
+                let volume = space.volume(case.name);
+                build(&volume);
+                inputs.push(volume.path().to_owned());
+                directories.push(volume);
+            }
+            Build::Archive(build) => {
+                let mut archive = space.cbz(case.name);
+                build(&mut archive);
+                inputs.push(archive.write());
+            }
+        }
+    }
 
     let report = tonefit::run(&Request {
-        inputs: volumes
-            .iter()
-            .map(|volume| volume.path().to_owned())
-            .collect(),
+        inputs,
         // 各设备一个输出根：同一个工作区里两趟并列，互不覆盖。
         output_root: space.out_named(&format!("out-{device}")),
         profile: fixtures::profile(device),
@@ -297,24 +411,38 @@ fn render(text: &mut String, space: &Workspace, device: &str, cases: &[Case]) {
     })
     .expect("黄金回归的夹具都该处理得下来");
 
+    let summary_only: HashSet<&str> = cases
+        .iter()
+        .filter(|case| case.summary_only)
+        .map(|case| case.name)
+        .collect();
+
     for volume in &report.volumes {
+        let name = volume_name(volume);
         let mut block = vec![
             format!(
-                "[{device}] {}{}",
-                volume_name(volume),
+                "[{device}] {name}{}",
                 if volume.isolated() { " · 隔离" } else { "" }
             ),
             format!("  几何门 {}", gate(volume)),
             format!("  卷级   {}", fixtures::volume_verdict(volume)),
         ];
+        if summary_only.contains(name.as_str()) {
+            // 长卷到此为止：卷级那一行已经载着这几条路径的全部观测点。
+            text.push('\n');
+            text.push_str(&block.join("\n"));
+            text.push('\n');
+            continue;
+        }
+        let sizes = output_sizes(volume);
         block.extend(
             volume
                 .pages
                 .iter()
-                .map(|page| format!("  {}", page_line(volume, page))),
+                .map(|page| format!("  {}", page_line(volume, page, &sizes))),
         );
         block.extend(
-            passthrough(volume)
+            passthrough(volume, &sizes)
                 .into_iter()
                 .map(|(name, bytes)| format!("  透传 {name} · {bytes} 字节")),
         );
@@ -348,7 +476,7 @@ fn gate(volume: &VolumeReport) -> String {
 /// 一页的那一行：名字、目标尺寸、判定候选、输出字节、理由。
 ///
 /// 前四列一律 ASCII 且定宽，理由排在最后——中文的显示宽度对不齐，夹在中间会把整列拧歪。
-fn page_line(volume: &VolumeReport, page: &PageReport) -> String {
+fn page_line(volume: &VolumeReport, page: &PageReport, sizes: &BTreeMap<String, u64>) -> String {
     let (candidate, mut reason) = match &page.outcome {
         PageOutcome::Processed {
             branch: PageBranch::Gray { verdict, .. },
@@ -367,9 +495,11 @@ fn page_line(volume: &VolumeReport, page: &PageReport) -> String {
     {
         reason.push_str(" · 彩页转灰");
     }
-    let bytes = fs::metadata(&page.output)
-        .unwrap_or_else(|error| panic!("读 {} 的大小：{error}", page.output.display()))
-        .len();
+    let name = fixtures::relative_name(&volume.output, &page.output);
+    let bytes = sizes
+        .get(&name)
+        .copied()
+        .unwrap_or_else(|| panic!("输出里没有成员 {name}"));
     format!(
         "{:<14} {:<10} {:<8} {:>7}  {reason}",
         fixtures::relative_name(&volume.volume, &page.source),
@@ -379,28 +509,45 @@ fn page_line(volume: &VolumeReport, page: &PageReport) -> String {
     )
 }
 
+/// 这一卷输出里每个成员的字节数，按成员名索引。
+///
+/// 目录卷从文件系统读，归档卷从容器里读——归档成员不是磁盘上的文件，`fs::metadata`
+/// 够不着它们。两种形态因此走同一个索引，下游不必再分辨自己面对的是哪一种。
+fn output_sizes(volume: &VolumeReport) -> BTreeMap<String, u64> {
+    if volume.output.is_dir() {
+        walkdir::WalkDir::new(&volume.output)
+            .into_iter()
+            .map(|entry| entry.expect("遍历输出容器"))
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| {
+                (
+                    fixtures::relative_name(&volume.output, entry.path()),
+                    entry.metadata().expect("读输出成员的大小").len(),
+                )
+            })
+            .collect()
+    } else {
+        fixtures::read_cbz(&volume.output)
+            .into_iter()
+            .map(|(name, bytes)| (name, bytes.len() as u64))
+            .collect()
+    }
+}
+
 /// 这一卷原样透传的非图片文件：名字与字节数，按名字排好。
 ///
-/// `VolumeReport` 不单列它们（页才有逐个的报告），因此从输出容器里数：里面除页之外
+/// `VolumeReport` 不单列它们（页才有逐个的报告），因此从输出成员里数：除页之外
 /// 剩下的就是透传过来的那些。它们进快照，是因为「原样透传」也是一条会被改坏的性质——
 /// 少一个文件、多压一遍，页那几行都不会动。
-fn passthrough(volume: &VolumeReport) -> Vec<(String, u64)> {
-    let pages: HashSet<&Path> = volume
+fn passthrough(volume: &VolumeReport, sizes: &BTreeMap<String, u64>) -> Vec<(String, u64)> {
+    let pages: HashSet<String> = volume
         .pages
         .iter()
-        .map(|page| page.output.as_path())
+        .map(|page| fixtures::relative_name(&volume.output, &page.output))
         .collect();
-    let mut extras: Vec<(String, u64)> = walkdir::WalkDir::new(&volume.output)
-        .into_iter()
-        .map(|entry| entry.expect("遍历输出容器"))
-        .filter(|entry| entry.file_type().is_file() && !pages.contains(entry.path()))
-        .map(|entry| {
-            (
-                fixtures::relative_name(&volume.output, entry.path()),
-                entry.metadata().expect("读透传文件的大小").len(),
-            )
-        })
-        .collect();
-    extras.sort();
-    extras
+    sizes
+        .iter()
+        .filter(|(name, _)| !pages.contains(name.as_str()))
+        .map(|(name, bytes)| (name.clone(), *bytes))
+        .collect()
 }
