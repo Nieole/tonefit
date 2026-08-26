@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use fixtures::{SMALLER_THAN_TARGET, Workspace};
 use tonefit::{
-    ChosenBy, Dither, GeometryGate, IoMode, Mode, Progress, ProgressSink, Request, Size,
+    ChosenBy, Dither, GeometryGate, IoMode, Mode, Progress, ProgressSink, Request, Size, Verdict,
 };
 
 /// 一条贴住面板宽边的窄页：几何门成立，而像素少到几十页连跑也不慢。
@@ -38,7 +38,9 @@ fn long_volume(space: &Workspace, name: &str) -> fixtures::Volume {
     volume
 }
 
-/// 一个第 3 页与第 9 页都关得上几何门的卷：报告该指前一页。
+/// 一个第 3 页与第 9 页贴不住面板的卷，其余十页都贴住：**混排卷**（06 号票）。
+///
+/// 门逐页判，这一卷因此两套候选集都用得上：那两页只剩不抖的三个，另外十页六个都在。
 fn volume_with_two_gate_breakers(space: &Workspace, name: &str) -> fixtures::Volume {
     let volume = space.volume(name);
     for index in 0..12 {
@@ -99,30 +101,31 @@ fn reading_serially_or_concurrently_writes_the_very_same_bytes() {
             .collect::<Vec<_>>(),
         "两种读法写出的字节不一样"
     );
-    // 报告里那些算出来的事实也得一样：卷级判定、几何门、缓存用量、解码次数。
+    // 报告里那些算出来的事实也得一样：卷级判定、缓存用量、解码次数。
+    // 几何门不在这一排里——它跟着页走（06 号票），逐页那一处比得更细。
     let (one, other) = (&serial.volumes[0], &concurrent.volumes[0]);
     assert_eq!(format!("{:?}", one.verdict), format!("{:?}", other.verdict));
-    assert_eq!(one.gate, other.gate);
     assert_eq!(one.decodes, other.decodes);
     // 缓存的**总量**与顺序无关，因此两趟必须一样；常驻与溢写的分法则随存入顺序而变，
     // 而第一遍是乱序满核跑的（见 `cache::PageCache::insert`）——那两个数不在这里断言。
     assert_eq!(one.cache.pages, other.cache.pages);
     assert_eq!(one.cache.raw, other.cache.raw);
     assert_eq!(one.cache.stored, other.cache.stored);
-    // 逐页判定同样逐页相等——卷级相等掩盖得了逐页的错位。
-    let verdicts = |report: &tonefit::Report| {
+    // 逐页的门与判定同样逐页相等——卷级相等掩盖得了逐页的错位。
+    let decided = |report: &tonefit::Report| {
         report.volumes[0]
             .pages
             .iter()
             .map(|page| {
                 (
                     page.source.file_name().map(ToOwned::to_owned),
+                    page.gate(),
                     page.verdict(),
                 )
             })
             .collect::<Vec<_>>()
     };
-    assert_eq!(verdicts(&serial), verdicts(&concurrent));
+    assert_eq!(decided(&serial), decided(&concurrent));
 }
 
 /// `--io-mode` 覆盖自动探测，而报告说得出这个数是点名来的（13 号票）。
@@ -209,16 +212,20 @@ fn every_page_is_still_decoded_exactly_once_when_reading_concurrently() {
     assert_eq!(volume.decodes, volume.pages.len());
 }
 
-/// 几何门指的仍是**序号最小**的那一页，不是最先算完的那一页。
+/// 混排卷里几何门不成立的仍然只有那两页，逐页判定也一趟一个样地不变。
 ///
-/// 并发下这两个不是同一页，而报告要指名道姓地说是谁关掉了整卷的抖动——
-/// 换一次调度就换一个答案的报告等于没有答案。
+/// 并发下页乱序算完，而几何门与候选集都在那条路上。门逐页判（ADR 0007 决定第 1 条）之后
+/// 每一页自己判自己，答案本就与调度无关——这一条钉的是它真的无关：从前那一套要在收尾处
+/// 按最小页序定出一个卷级的门，而那时**换一次调度就可能换一个答案**。
+///
+/// 顺带钉住 06 号票的票面：那十页贴住面板的页照旧抖得动，没有被那两页连坐。
 #[test]
-fn the_geometry_gate_still_names_the_first_page_that_broke_it() {
+fn a_mixed_volume_gates_the_same_pages_every_time_under_concurrency() {
     let space = Workspace::new();
     let volume = volume_with_two_gate_breakers(&space, "volume-a");
 
     // dry-run：一个文件都不落盘，因此同一个输出根跑几趟都互不干扰。
+    let mut before: Option<Vec<(Option<GeometryGate>, Option<Verdict>)>> = None;
     for attempt in 0..4 {
         let report = tonefit::run(&Request {
             io_mode: IoMode::Concurrent,
@@ -227,11 +234,33 @@ fn the_geometry_gate_still_names_the_first_page_that_broke_it() {
         })
         .expect("处理应当成功");
 
-        assert_eq!(
-            report.volumes[0].gate,
-            Some(GeometryGate::Broken { page: 3 }),
-            "第 {attempt} 趟指错了关门的那一页"
-        );
+        let pages = &report.volumes[0].pages;
+        let broken: Vec<usize> = pages
+            .iter()
+            .enumerate()
+            .filter(|(_, page)| page.gate() == Some(GeometryGate::Broken))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(broken, vec![3, 9], "第 {attempt} 趟摘错了页");
+        // 另外十页照旧抖得动：一张贴不住面板的页不否决整卷（06 号票）。
+        for (index, page) in pages.iter().enumerate() {
+            let dither = fixtures::verdict(page).candidate.dither;
+            let expected = if broken.contains(&index) {
+                Dither::Off
+            } else {
+                Dither::FloydSteinberg
+            };
+            assert_eq!(dither, expected, "第 {attempt} 趟第 {index} 页抖得不对");
+        }
+
+        let decided: Vec<_> = pages
+            .iter()
+            .map(|page| (page.gate(), page.verdict()))
+            .collect();
+        match &before {
+            Some(first) => assert_eq!(*first, decided, "第 {attempt} 趟与头一趟不一样"),
+            None => before = Some(decided),
+        }
     }
 }
 

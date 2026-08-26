@@ -266,7 +266,7 @@ impl Default for Workspace {
     }
 }
 
-/// 同一档位深上不抖动的那个候选。几何门不成立的卷只有这一种候选可选。
+/// 同一档位深上不抖动的那个候选。几何门不成立的页只有这一种候选可选。
 pub const fn plain(bit_depth: BitDepth) -> tonefit::Candidate {
     tonefit::Candidate::new(bit_depth, Dither::Off)
 }
@@ -682,7 +682,7 @@ pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
     }
 }
 
-/// 卷内第 `index` 页在卷里的名字。驱动页与关掉几何门的那一页都靠它指人。
+/// 卷内第 `index` 页在卷里的名字。驱动页靠它指人。
 pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
     volume
         .pages

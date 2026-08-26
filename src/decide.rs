@@ -35,7 +35,7 @@ pub struct Verdict {
 ///
 /// 逐页与卷级两层共用本枚举，不是各起一个：两套并存的话，一份报告里
 /// 「这一档为什么是它」就有两种读法，而判定可解释正是 story 7 要的东西。
-/// 前三种由逐页判定给出，后三种由卷级汇总给出（`envelope`）。
+/// 前三种由逐页判定给出，后四种由卷级汇总给出（`envelope` 与 `crate::summarize_volume`）。
 ///
 /// spec 把 `Skipped` 也列在判定理由里，它落在 [`crate::VolumeVerdict`] 而不是这里：
 /// 幂等命中是**整卷**的结果，那一趟一页都没有重做，也就没有逐页的理由可给
@@ -61,6 +61,15 @@ pub enum Reason {
     Hysteresis,
     /// 离群页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
     Outlier,
+    /// 这一页的几何门不成立：它会被下游再缩一次，抖动因此关掉（ADR 0007 决定第 2、3 条）。
+    ///
+    /// 位深仍跟着卷级基准档走、不低于它——门只拿走抖动，不拿走档次。抖动被拿走之后
+    /// 这一页在剩下的那套候选里自己判一次，判出来更高的就用更高的那一档。
+    ///
+    /// 它与 [`Outlier`](Self::Outlier) 摘的理由不同：那一页偏离卷内分布，这一页只是尺寸不同。
+    /// 整卷的灰度页一页不剩地落在门这一侧时不走这里——那时它们就是主体，
+    /// 拿到的是 [`VolumeEnvelope`](Self::VolumeEnvelope)。
+    OutsideTheGate,
 }
 
 impl std::fmt::Display for Reason {
@@ -72,6 +81,7 @@ impl std::fmt::Display for Reason {
             Reason::VolumeEnvelope => "卷级上包络",
             Reason::Hysteresis => "迟滞升档",
             Reason::Outlier => "离群页单独定档",
+            Reason::OutsideTheGate => "几何门不成立，本页不抖动",
         })
     }
 }

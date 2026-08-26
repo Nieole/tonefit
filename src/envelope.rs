@@ -67,9 +67,14 @@ pub struct Envelope {
     /// 定出基准档的那一页：主体页按逐页判定排开后，站在上分位秩上的那一页。
     /// 序号指进 [`crate::VolumeReport::pages`]。
     pub driver: usize,
-    /// 参与上包络的主体页数。离群页不在内；部分救回页在进这一层之前就被摘走了，
-    /// 除非一卷里的灰度页一页不剩地落在救回那一侧——那时它们就是主体
-    /// （04 号票，见 `crate::summarize_volume`）。
+    /// 参与上包络的主体页数。离群页不在内。
+    ///
+    /// 进这一层之前还摘过两刀（都在 `crate::summarize_volume`）：几何门不成立的页
+    /// （ADR 0007 决定第 2 条）与部分救回页（04 号票）。两者各有一条兜底——
+    /// 一页不剩地落在那一侧时那一侧就是主体。
+    ///
+    /// **这个数因此小于卷内的灰度页数**，差额是被那两刀摘走的页。门那一刀摘走了几页，
+    /// 报告的几何门那一行说得出来（[`crate::VolumeReport::outside_the_gate`]）。
     pub body_pages: usize,
     /// 摘出去单独定档的离群页数。
     pub outlier_pages: usize,
@@ -78,9 +83,11 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    /// 离群页占卷内进得了上包络的那些灰度页的比例，0 到 1。彩页与失败页不在分母里——
-    /// 它们本来就不进上包络；部分救回页同样不在，除非整卷只剩它们
-    /// （见 [`body_pages`](Self::body_pages)）。
+    /// 离群页占卷内进得了上包络的那些灰度页的比例，0 到 1。
+    ///
+    /// 分母是主体那一组加离群页，**不是卷内全部灰度页**：彩页与失败页本来就不进上包络，
+    /// 几何门不成立的页与部分救回页则是进这一层之前被摘走的（见
+    /// [`body_pages`](Self::body_pages)）。
     ///
     /// 离群页机制是卷级分位聚合的安全网，而这个数是**这张网有没有张开**的唯一外部观测点。
     /// 只看 [`outlier_pages`](Self::outlier_pages)，「离群 0 页」读起来像「这一卷本来就没有
@@ -90,7 +97,8 @@ impl Envelope {
     /// 这一卷本身长什么样，不再是「几页偏离」。那条界线**随卷长变**，短卷上宽得多，
     /// 算式在 `envelope` 的 `ANCHOR_QUANTILE`——所以这个数要连着页数一起读。
     pub fn outlier_share(&self) -> f64 {
-        // 主体加离群就是灰度页的全部；`summarize` 挡掉了空卷，分母因此不会是零。
+        // 主体加离群就是**进得了这一层**的全部（摘走的两类见 `body_pages`）；
+        // `summarize` 挡掉了空卷，分母因此不会是零。
         self.outlier_pages as f64 / (self.body_pages + self.outlier_pages) as f64
     }
 }
@@ -394,7 +402,7 @@ mod tests {
     /// e-ink 面板 + 几何门不成立时的候选集：{1,2,4} 三档，全不抖动。
     /// 卷级的多数用例只在位深这一维上分胜负，抖动那一维单开两条用例。
     fn candidates() -> Vec<Candidate> {
-        Candidate::all(16, GeometryGate::Broken { page: 0 })
+        Candidate::all(16, GeometryGate::Broken)
     }
 
     /// 一卷合成的逐页判定。判据曲线要按页存下来，`Page` 借的就是它。

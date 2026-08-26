@@ -356,16 +356,15 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     assert!(!space.out().exists(), "dry-run 落了盘");
 }
 
-/// 彩色分支上的页不参与几何门（ADR 0010）。
+/// 彩色分支上的页不在几何门的**判定范围**内（ADR 0010 决定第 4 条）。
 ///
 /// 门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），两者只作用在灰度路径上：
-/// 彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。让它关掉整卷的抖动，
-/// 就是让一条不受影响的路径去削掉另一条路径的收益。
+/// 彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
 ///
-/// 同一卷换到黑白 profile 上，那一页转灰、走灰度路径，它的几何这时就说了算——
-/// 门是**分支的函数**，不是页的常量。
+/// 同一卷换到黑白 profile 上，那一页转灰、走灰度路径，这时它就落进范围里了——
+/// 判定范围是**分支的函数**，不是页的常量。
 #[test]
-fn a_color_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
+fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
     let build = |space: &Workspace| {
         let volume = space.volume("volume-a");
         // 源比目标小的彩页：一条边都贴不住面板。
@@ -391,78 +390,133 @@ fn a_color_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
         fixtures::baseline_profile(),
     );
 
-    assert_eq!(
-        color.volumes[0].gate,
-        Some(GeometryGate::Holds),
-        "彩色分支上的那一页把整卷的抖动关掉了"
-    );
-    assert_eq!(
-        mono.volumes[0].gate,
-        Some(GeometryGate::Broken { page: 0 }),
-        "同一页转灰之后走灰度路径，它的几何这时说了算"
-    );
+    // 彩色面板上那一页走彩色分支：没有门可判，判定范围因此只有另一页。
+    let on_color = &color.volumes[0];
+    assert_eq!(on_color.pages[0].gate(), None);
+    assert_eq!(on_color.judged_by_the_gate().count(), 1);
+    assert_eq!(on_color.outside_the_gate().count(), 0);
+
+    // 同一页转灰之后走灰度路径，它的几何这时说得上话——但只对它自己那一页说。
+    let on_mono = &mono.volumes[0];
+    assert_eq!(on_mono.pages[0].gate(), Some(GeometryGate::Broken));
+    assert_eq!(on_mono.pages[1].gate(), Some(GeometryGate::Holds));
+    assert_eq!(on_mono.judged_by_the_gate().count(), 2);
 }
 
-/// 部分救回页不参与几何门（04 号票）：一张没解全的页不替另外那些页回答
-/// 「输出会不会被下游再缩一次」。
+/// 部分救回页**在**几何门的判定范围内（ADR 0007 决定第 1 条）：那是文件头里的真尺寸，
+/// 它答得出「这一页会不会被下游再缩一次」。
 ///
-/// 同一张页不截断时它的几何说了算——门是**页状态的函数**，不是页尺寸的常量。
-/// 两趟并排跑，钉的正是这个差别：只断言截断那一趟门开着，夹具选错尺寸也照样通过。
+/// 04 号票把它摘出去，是因为那时门对整卷只有一个结果——一张没解全的页不该替另外
+/// 一百多页回答这个问题。门改成逐页判之后那条理由不在了：它答的只是自己那一页，
+/// 而另一页照旧抖得动。
+///
+/// 上包络那一侧的豁免没有跟着变：它那条判据曲线仍是在一页大半留白的图上求出来的，
+/// 代表不了这一卷。两处于是分了家，这一条把分家钉住。
 #[test]
-fn a_salvaged_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
+fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
     let small = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
-    let build = |space: &Workspace, bytes: Vec<u8>| {
-        let volume = space.volume("volume-a");
-        // 源比目标小的那一页：一条边都贴不住面板。
-        volume.file("001.png", &bytes);
-        // 正好两倍面板的页：贴住，门在它这里是开的。
-        volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-        volume
-    };
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 源比目标小、又只救回了一段的那一页：一条边都贴不住面板。
+    volume.file("001.png", &fixtures::truncated(&small));
+    // 正好两倍面板的完好页：贴住，门在它这里是开的。
+    volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
 
-    let salvaged_space = Workspace::new();
-    let salvaged = run_volume(
-        &salvaged_space,
-        &build(&salvaged_space, fixtures::truncated(&small)),
-    );
-    let whole_space = Workspace::new();
-    let whole = run_volume(
-        &whole_space,
-        &build(&whole_space, fixtures::encode_image(&small, "png")),
-    );
+    let report = run_volume(&space, &volume);
+    let reported = &report.volumes[0];
 
-    // 夹具自证：两趟里那一页都是同一个贴不住面板的尺寸，差别只在它救回来没有。
-    assert_eq!(
-        salvaged.volumes[0].pages[0].size,
-        fixtures::SMALLER_THAN_TARGET
-    );
+    // 夹具自证：那一页确实是救回来的，尺寸也确实贴不住面板。
     assert!(
-        salvaged.volumes[0].pages[0].salvage().is_some(),
-        "夹具不对：那一页没被救回，这条用例就什么都没钉住"
+        reported.pages[0].salvage().is_some(),
+        "夹具不对：那一页没被截断，这条用例就什么都没钉住"
+    );
+    assert_eq!(reported.pages[0].size, fixtures::SMALLER_THAN_TARGET);
+
+    // 门问了它，答案是不成立——而它只关掉自己那一页的抖动。
+    assert_eq!(reported.judged_by_the_gate().count(), 2);
+    assert_eq!(reported.pages[0].gate(), Some(GeometryGate::Broken));
+    assert_eq!(reported.pages[1].gate(), Some(GeometryGate::Holds));
+    assert_eq!(
+        fixtures::verdict(&reported.pages[0]).candidate.dither,
+        Dither::Off
     );
     assert_eq!(
-        whole.volumes[0].pages[0].size,
-        fixtures::SMALLER_THAN_TARGET
+        fixtures::verdict(&reported.pages[1]).candidate.dither,
+        Dither::FloydSteinberg,
+        "一张救回来的小页把另一页的抖动也带走了"
+    );
+    // 上包络那一侧照旧摘它：主体只剩那一张完好页。
+    assert_eq!(envelope_of(reported).body_pages, 1);
+}
+
+/// 两刀落在同一页上时，几何门那一刀在外层（ADR 0007 决定第 3 条）。
+///
+/// 一张既没解全、又贴不住面板的页：04 号票让部分救回页「按自己那条曲线单独定档」，
+/// 门这一条让门外的页不低于卷级基准档。两条撞在一起门赢——摘部分救回页的理由是
+/// 它那条判据曲线不具代表性（一页大半留白，而留白在任何位深上都是格点、误差恒为零，
+/// 判出来必偏低），而不具代表性的曲线更没有资格把这一页压到基准档以下。
+///
+/// 这一条钉的正是那个组合：两条规矩各自的用例都碰不到它。
+#[test]
+fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 既贴不住面板、又只救回一段的线稿页：它自己那条曲线判得很低。
+    volume.file(
+        "001.png",
+        &fixtures::truncated(&fixtures::line_art(fixtures::SMALLER_THAN_TARGET)),
+    );
+    // 三页完好的渐变正片，都贴得住面板：基准档由它们定出，比那一页高。
+    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("003.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+    let reported = &report.volumes[0];
+
+    // 夹具自证：那一页两刀都挨着——既是部分救回，几何门在它身上又不成立。
+    assert!(
+        reported.pages[0].salvage().is_some(),
+        "夹具不对：那一页没被截断"
+    );
+    assert_eq!(reported.pages[0].gate(), Some(GeometryGate::Broken));
+    // 主体只剩三页完好正片：两刀摘的是同一页，各摘各的理由。
+    let base = envelope_of(reported).base;
+    assert_eq!(envelope_of(reported).body_pages, 3);
+
+    // 它自己那条曲线要的那一档比基准档低——不然这条用例分不出谁在外层。
+    let scores = reported.pages[0].scores();
+    let threshold = fixtures::baseline_profile().threshold();
+    let own = scores
+        .iter()
+        .find(|scored| threshold.admits(scored.score))
+        .unwrap_or_else(|| scores.last().expect("候选集不会是空的"))
+        .candidate;
+    assert!(
+        own.bit_depth < base.bit_depth,
+        "夹具不对：那一页自己那一档不比基准档低（{:?} vs {:?}）",
+        own.bit_depth,
+        base.bit_depth
     );
 
+    // 门在外层：拿的是基准档的位深、抖动关掉，不是它自己那条曲线判出的那一档。
+    let verdict = fixtures::verdict(&reported.pages[0]);
     assert_eq!(
-        salvaged.volumes[0].gate,
-        Some(GeometryGate::Holds),
-        "部分救回页把整卷的抖动关掉了"
+        verdict.candidate,
+        Candidate::new(base.bit_depth, Dither::Off),
+        "门外的部分救回页掉到了基准档以下"
     );
-    assert_eq!(
-        whole.volumes[0].gate,
-        Some(GeometryGate::Broken { page: 0 }),
-        "同一页不截断时它的几何该说了算"
-    );
+    assert_eq!(verdict.reason, Reason::OutsideTheGate);
 }
 
 /// 一卷里的灰度页一页不剩地落在救回那一侧时，**两处都不摘**：摘一页是为了护着别人，
 /// 而那时没有别人可护（04 号票）。
 ///
-/// 几何门于是听它们的——两页都贴不住面板，门因此关上、整卷不抖动。这一条要是不成立，
+/// 几何门那一侧同理（ADR 0007 决定第 5 条）：两页都贴不住面板，一页成立的都没有——
+/// 它们于是自己就是主体，卷级基准档由它们定出、必然不抖。这一条要是不成立，
 /// 一整卷会被下游再缩一次的页会带着抖动写出去，正是 ADR 0007 拦的那件事。
-/// 卷级那一层同理：主体不能空着，这两页于是照旧定得出一个基准档。
+/// 主体不能空着，这两页因此照旧定得出一个基准档，理由也仍是「卷级上包络」——
+/// 不是「几何门不成立」：那一种说的是「摘出去了」，而这一卷没有别人可摘给。
 #[test]
 fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
     let space = Workspace::new();
@@ -484,10 +538,11 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
         2,
         "夹具不对：两页都该是救回来的"
     );
-    // 页比面板小得多，一条边都贴不住：没有完好页可护，它们自己的几何这时说了算。
+    // 页比面板小得多，一条边都贴不住：判定范围里一页成立的都没有。
     assert_eq!(reported.pages[0].size, fixtures::TINY);
-    assert_eq!(reported.gate, Some(GeometryGate::Broken { page: 0 }));
-    // 门关着，抖动因此整体关闭（ADR 0007）。
+    assert_eq!(reported.judged_by_the_gate().count(), 2);
+    assert_eq!(reported.outside_the_gate().count(), 2);
+    // 一页成立的都没有，抖动因此整卷关闭（ADR 0007 决定第 5 条）。
     let envelope = envelope_of(reported);
     assert_eq!(envelope.base.dither, Dither::Off);
     // 一页不剩地落在救回那一侧，上包络那一侧同样一页都不摘：两页都进主体。
@@ -943,7 +998,8 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
 #[test]
 fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
     // 候选是两道裁剪的乘积，都在判据求值之前：位深按面板灰阶数裁（ADR 0003），
-    // 抖动模式按几何门裁（ADR 0007）。这一页贴住面板，门放行，于是每档位深各两个候选。
+    // 抖动模式按这一页的几何门裁（ADR 0007）。这一页贴住面板，门放行，
+    // 于是每档位深各两个候选。
     let cases = [(None, 16), (Some(4), 4), (Some(256), 256)];
 
     for (gray_levels, effective) in cases {
@@ -975,40 +1031,93 @@ fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
     }
 }
 
-/// 几何门是**几何**的，对整卷只有一个结果（ADR 0007：整体关闭，不降级）：一页贴不住面板，
-/// 整卷的抖动就整体关闭——不是只关那一页，也不是降级成更温和的模式。
+/// **一张不具代表性的封面不否决整卷的抖动**（06 号票，ADR 0007 决定第 1～3 条）。
+///
+/// 混合尺寸卷：四页正片贴住面板，一张封面比目标还小。门逐页判，那一张封面只关掉自己
+/// 那一页的抖动；另外四页照旧跟着卷级基准档抖。同一卷在从前那套口径下会**整卷**不抖动。
+///
+/// 三件事一条用例里钉齐，因为它们互为对方的前提：少数页不连坐（第二条验收标准）、
+/// 真会被下游缩放的页确实不抖（第三条）、而位深仍按卷统一（ADR 0006 要消灭的翻页跳变
+/// 没有跟着回来）。
 #[test]
-fn one_page_smaller_than_the_target_shuts_the_dither_off_for_the_whole_volume() {
+fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volume() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 头一页贴住面板，本可以抖；第二页源比目标小，按不放大原样输出，把门关上。
-    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    // 封面：源比目标小，按不放大原样输出，门在它这里不成立。
     volume.page(
-        "002.png",
+        "001.png",
         &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
     );
+    // 四页正片，都贴得住面板。
+    volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page("003.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("005.png", &fixtures::gradient(fixtures::SPREAD));
 
     let report = run_volume(&space, &volume);
+    let reported = &report.volumes[0];
 
-    let volume_report = &report.volumes[0];
-    // 门关在哪一页要指得出来：它关掉的是整卷的抖动。
-    assert_eq!(volume_report.gate, Some(GeometryGate::Broken { page: 1 }));
-    for page in &volume_report.pages {
+    // 判定范围是五页，被排除的只有封面那一张——报告说得出这两个数（06 号票）。
+    assert_eq!(reported.judged_by_the_gate().count(), 5);
+    let outside: Vec<_> = reported
+        .outside_the_gate()
+        .map(|page| page.source.file_name().expect("页有名字").to_owned())
+        .collect();
+    assert_eq!(outside, vec!["001.png"]);
+
+    let base = envelope_of(reported).base;
+    assert_eq!(
+        base.dither,
+        Dither::FloydSteinberg,
+        "一张封面把整卷的抖动带走了"
+    );
+    // 正片各页跟着基准档走，抖动那一维一个不落。
+    for page in &reported.pages[1..] {
         assert_eq!(
-            fixtures::verdict(page).candidate.dither,
-            Dither::Off,
-            "{} 在门关着时抖了",
-            page.source.display()
-        );
-        // 被裁掉的候选不进入判据：门先判，判据在门放行的那套候选上求值。
-        assert!(
-            page.scores()
-                .iter()
-                .all(|scored| scored.candidate.dither == Dither::Off),
-            "{} 的判据里还留着抖动候选",
+            fixtures::verdict(page).candidate,
+            base,
+            "{} 没跟上卷级基准档",
             page.source.display()
         );
     }
+    // 封面这一页真的会被阅读器再缩一次：它不抖，理由也说得出为什么。
+    let cover = fixtures::verdict(&reported.pages[0]);
+    assert_eq!(cover.candidate.dither, Dither::Off);
+    assert_eq!(cover.reason, Reason::OutsideTheGate);
+    // 门只拿走抖动，不拿走档次（ADR 0007 决定第 3 条）：抖动被拿走之后封面在剩下那套候选里
+    // 自己判一次，判出来比基准档高就用它自己那一档——不抖的同一档保真更差，只给基准档会亏着它。
+    let threshold = fixtures::baseline_profile().threshold();
+    let cover_scores = reported.pages[0].scores();
+    let own = cover_scores
+        .iter()
+        .find(|scored| threshold.admits(scored.score))
+        // 一档都不达标就取候选上界兜底——与逐页选档那一条同一个规则。
+        .unwrap_or_else(|| cover_scores.last().expect("候选集不会是空的"))
+        .candidate;
+    assert!(
+        own.bit_depth > base.bit_depth,
+        "夹具不对：封面自己那一档不比基准档高，这条用例就分不出「取更严的」与「只拿基准档」"
+    );
+    assert_eq!(
+        cover.candidate.bit_depth,
+        own.bit_depth.max(base.bit_depth),
+        "封面没取更严的那一档"
+    );
+    // 被裁掉的候选不进入判据：门先判，判据在门放行的那套候选上求值。
+    assert!(
+        reported.pages[0]
+            .scores()
+            .iter()
+            .all(|scored| scored.candidate.dither == Dither::Off),
+        "封面的判据里还留着抖动候选"
+    );
+    assert!(
+        reported.pages[1]
+            .scores()
+            .iter()
+            .any(|scored| scored.candidate.dither == Dither::FloydSteinberg),
+        "正片的判据里被连坐掉了抖动候选"
+    );
 }
 
 /// 每一页都缩下来贴住面板时门就成立，抖动这才跟着位深一起按卷定下
@@ -1025,7 +1134,8 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     let report = run_volume(&space, &volume);
 
     let volume_report = &report.volumes[0];
-    assert_eq!(volume_report.gate, Some(GeometryGate::Holds));
+    assert_eq!(volume_report.judged_by_the_gate().count(), 3);
+    assert_eq!(volume_report.outside_the_gate().count(), 0);
     let base = match volume_report.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope.base,
         other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
@@ -1095,26 +1205,31 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
         "上包络没被关掉"
     );
     let pages = &report.volumes[0].pages;
+    // 头一页贴住面板，门在它这里放行（ADR 0007 决定第 1 条：门逐页判）：抖动那一维在场，
+    // 2bit+FS 就够得着界。第二页源比目标小，门在它那里不成立——但那一页的事与这一页无关，
+    // 从前那套口径下它会把这一页的抖动一并带走，判定跟着退到 4bit 兜底。
+    assert_eq!(pages[0].gate(), Some(GeometryGate::Holds));
+    assert_eq!(pages[1].gate(), Some(GeometryGate::Broken));
     assert_eq!(
-        fixtures::verdict(&pages[0]).candidate.bit_depth,
-        BitDepth::Four
+        fixtures::verdict(&pages[0]).candidate,
+        Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+        "另一页的几何把这一页的抖动带走了"
     );
-    // 卷内有页小于目标尺寸，几何门整卷不成立，抖动跟着关掉（ADR 0007）——候选上界因此
-    // 降为 4bit **不抖**，而连续渐变页在那一档上过不了标定后的界。判定仍落在 4bit，
-    // 因为它是上界；理由是兜底，不是「阈值内最低的一档」。报告说出这一点，
-    // 正是它该做的：这一页没有一档达标，而不是达标了。
+    // 第二页会被下游再缩一次，抖动因此不在它的候选里——`--per-page` 也放不开这一维。
     assert_eq!(
-        fixtures::verdict(&pages[0]).reason,
-        Reason::NoneWithinThreshold
+        fixtures::verdict(&pages[1]).candidate,
+        Candidate::new(BitDepth::One, Dither::Off)
     );
-    assert_eq!(
-        fixtures::verdict(&pages[1]).candidate.bit_depth,
-        BitDepth::One
-    );
-    assert_eq!(
-        fixtures::verdict(&pages[1]).reason,
-        Reason::LowestWithinThreshold
-    );
+    // 卷级那一层关着，两页的理由因此都是逐页判出来的那一种，而档位差着——
+    // 翻页跳变正是 `--per-page` 换回来的东西。
+    for page in pages {
+        assert_eq!(
+            fixtures::verdict(page).reason,
+            Reason::LowestWithinThreshold,
+            "{} 的理由不是逐页判出来的",
+            page.source.display()
+        );
+    }
     // 判定是从判据来的：报告里同时给出被判定的那一档的判据值。
     for page in pages {
         assert!(
@@ -1225,8 +1340,11 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
     );
 }
 
-/// 几何门是几何事实，不是自动选择：`--dither` 覆盖不了它（ADR 0007：整体关闭，不降级）。
-/// 门不成立时点名抖动当场被拒，不静默照抖。
+/// 几何门是**页的**几何事实，不是自动选择：`--dither` 覆盖不了它
+/// （ADR 0007：不成立时整体关闭，不降级）。
+///
+/// 门逐页判之后拒绝仍是**整趟**的：覆盖项是用户的显式指令，不是可以按页悄悄放弃的东西
+/// （ADR 0007 的《后果》）。撞上的是哪一页因此要说出来——那是唯一能让用户看懂这条拒绝的信息。
 #[test]
 fn a_dither_the_geometry_gate_forbids_is_refused() {
     let space = Workspace::new();
@@ -1358,8 +1476,14 @@ fn the_threshold_says_where_it_came_from() {
     // 是换了内容——它现在要说出标定在哪块面板上做的，以及本机这块有没有复核。
     let said = fixtures::baseline_profile().to_string();
     assert!(said.contains("标定"), "{said}");
-    assert!(said.contains("boox-poke6"), "没说出标定在哪块面板上做的：{said}");
-    assert!(said.contains("未复核"), "没说出其余面板沿用同一个数：{said}");
+    assert!(
+        said.contains("boox-poke6"),
+        "没说出标定在哪块面板上做的：{said}"
+    );
+    assert!(
+        said.contains("未复核"),
+        "没说出其余面板沿用同一个数：{said}"
+    );
 
     // 点名覆盖的那一种要与内置值分得开：读的人得知道这个数是谁定的。
     let pinned = fixtures::baseline_profile()

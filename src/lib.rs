@@ -37,7 +37,6 @@ mod source;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -203,7 +202,6 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             verdict: Some(VolumeVerdict::Skipped {
                 page_count: targets.len(),
             }),
-            gate: None,
             cache: CacheUsage::new(request.cache_budget),
             decodes: 0,
             io,
@@ -229,10 +227,10 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
         steps,
     )?;
 
-    let (verdicts, verdict) = summarize_volume(&scored.pages, request);
-    let uniform = uniform_size(&scored.pages, request.profile.panel().resolution);
+    let (verdicts, verdict) = summarize_volume(&scored, request);
+    let uniform = uniform_size(&scored, request.profile.panel().resolution);
     // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
-    let (output, elsewhere) = if scored.pages.iter().any(ScoredPage::failed) {
+    let (output, elsewhere) = if scored.iter().any(ScoredPage::failed) {
         (isolated, clean)
     } else {
         (clean, isolated)
@@ -250,14 +248,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             cache: &cache,
             recorder: recorder.as_ref(),
         };
-        second_pass(
-            &scored.pages,
-            &verdicts,
-            &targets,
-            &encode,
-            &mut sink,
-            steps,
-        )?;
+        second_pass(&scored, &verdicts, &targets, &encode, &mut sink, steps)?;
         for extra in &volume.extras {
             let bytes = volume.reader.read(extra)?;
             sink.write_extra(&extra.relative, &bytes)?;
@@ -268,7 +259,6 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     steps.finished();
 
     let pages = scored
-        .pages
         .into_iter()
         .zip(verdicts)
         .zip(&targets)
@@ -282,7 +272,6 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
         superseded,
         pages,
         verdict,
-        gate: Some(scored.gate),
         cache: lock(&cache).usage(),
         decodes: decoder.decodes(),
         io,
@@ -338,17 +327,30 @@ fn placeholder(size: Size) -> GrayImage {
 /// 决定第 5 条说彩页在彩色 profile 下「根本不进灰度上包络」；失败页则是没有可求判据的像素
 /// （12 号票）。两者在返回的判定里都占位为 `None`，位置留着——第二遍与报告都按页序取。
 ///
-/// **部分救回页进得来，但不进上包络**（04 号票）：它有判据曲线，那条曲线却是在一页
-/// 大半留白的图上求出来的，代表不了这一卷。它因此按自己那条曲线单独定档——
-/// 与离群页同一个待遇（ADR 0006 决定第 5 条），只是摘它的理由是页残缺，不是判据偏离。
+/// **第一刀按几何门切**（ADR 0007 决定第 2 条）。门成立的页与门不成立的页候选集不是同一套：
+/// 后者少了抖动那一维，而上包络取的是 (位深, 抖动模式) 这个组合——候选集不同的页
+/// 排不进同一条序列。卷级那一层因此只在其中**一组**上做，主体取门成立的那一组；
+/// 那一组一页都没有时才轮到另一组，摘一页是为了护着别人，而那时没有别人可护
+/// （ADR 0007 决定第 5 条）。
 ///
-/// 一页不剩地落在救回那一侧时**一页都不摘**：那说明残缺的是这一卷本身，不是其中几页，
-/// 而主体不能空着。这与 `envelope::summarize` 里「一页不剩地落到离群侧」是同一条规矩，
-/// 几何门那一侧也照它走（见 [`first_pass`]）。
+/// 摘出去的那一组**不单独定档**：它们跟着卷级基准档的位深走、不低于它，抖动关掉
+/// （ADR 0007 决定第 3 条）。门只拿走抖动，不拿走档次——让它们各按自己那条曲线定，
+/// 位深那一维也会跟着逐页变，而它们并没有偏离卷内分布，摘它们的理由是几何。
+/// 反过来只给基准档也不行：抖动被拿走之后同一档位深保真更差，那一页可能真的还要高一档。
 ///
-/// 逐页定档也落在这里，而不在第一遍：几何门要看完整卷才判得死（一页比目标小就整卷关掉抖动，
-/// 见 [`first_pass`]），而候选集是判定的前提——在门还可能关上的时候定档，定的是一套
-/// 随后可能被裁掉的候选。
+/// **第二刀按页残缺切**（04 号票）。部分救回页有判据曲线，那条曲线却是在一页大半留白的图上
+/// 求出来的，代表不了这一卷。它因此不进上包络，按自己那条曲线单独定档——与离群页同一个待遇
+/// （ADR 0006 决定第 5 条），只是摘它的理由是页残缺，不是判据偏离。
+/// 一页不剩地落在救回那一侧时一页都不摘：主体不能空着，与门那一刀同一条规矩
+/// （也与 `envelope::summarize` 里「一页不剩地落到离群侧」同一条）。
+///
+/// **两刀落在同一页上时，门那一刀在外层**（ADR 0007 决定第 3 条）：既没解全、又贴不住面板的页
+/// 拿的是「基准档的位深，不低于它，抖动关掉」，不是 04 号票那条「按自己那条曲线单独定档」。
+/// 摘部分救回页的理由是它那条曲线不具代表性——一页大半留白，误差恒为零，判出来必偏低——
+/// 而不具代表性的曲线更没有资格把这一页压到基准档以下。
+///
+/// 逐页定档也落在这里，而不在第一遍：摘出去的那两组都要拿卷级基准档当参照，
+/// 而那一档要看完整卷才定得下来。
 ///
 /// 两条出口走不到上包络，各有各的道理：`--per-page` 是用户点名要逐页最优（决定第 6 条），
 /// 覆盖项裁到只剩一个候选是判定整个被顶掉、逐页已全是 `Override`——后者不是「被关掉」，
@@ -357,76 +359,92 @@ fn summarize_volume(
     pages: &[ScoredPage],
     request: &Request,
 ) -> (Vec<Option<Verdict>>, Option<VolumeVerdict>) {
-    /// 汇总里逐页那一对：这一页在**卷内**的序号，加上它定下的判定。
-    ///
-    /// 序号非带不可：卷级每一步都只在其中一部分页上做——彩页与失败页根本不在场，
-    /// 部分救回页摘出去单独定档——手上那个序列与卷内页序早就不重合了。
-    type Decided = (usize, Verdict);
-
-    let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
     // 灰度路径上那些页在 `pages` 里的序号。卷级的一切都只在它们身上做。
+    //
+    // 序号非带不可：卷级每一步都只在其中一部分页上做——彩页与失败页根本不在场，
+    // 门不成立的页与部分救回页各自摘出去——手上那个序列与卷内页序早就不重合了。
     let gray: Vec<usize> = pages
         .iter()
         .enumerate()
         .filter(|(_, page)| page.scores().is_some())
         .map(|(index, _)| index)
         .collect();
+    // 门先分组。两组的候选集不是同一套，混不得（见 [`Candidates`]）。
+    let (holding, broken): (Vec<usize>, Vec<usize>) = gray
+        .iter()
+        .copied()
+        .partition(|&index| pages[index].gate() == Some(GeometryGate::Holds));
+    // 一页门成立的灰度页都没有时，不成立的那些页就是这一卷的主体，基准档由它们定出
+    // ——那一档必然不抖（ADR 0007 决定第 5 条）。
+    let (inside, outside) = if holding.is_empty() {
+        (broken, Vec::new())
+    } else {
+        (holding, broken)
+    };
+
+    let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
     // 一张灰度页都没有的卷没有候选可判：只装着彩页的、一页都没有的、整卷全失败的，都是这一支。
-    let Some(&first) = gray.first() else {
+    let Some(&first) = inside.first() else {
         return (verdicts, None);
     };
     let scores = |index: usize| pages[index].scores().expect("灰度路径上必有判据曲线");
 
     let threshold = request.profile.threshold();
+    // 「覆盖项裁到只剩一个候选」问的是**主体那一组**的候选集：门那两组不一样长，
+    // 拿门不成立的页去问，答案会随卷里第一张灰度页碰巧是哪一种而变。
     let pinned = pinned(request, scores(first));
-    let decided: Vec<Verdict> = gray
-        .iter()
-        .map(|&index| decide::decide(scores(index), threshold, pinned))
-        .collect();
+    // 逐页先各判各的。摘出去的两组都还用得上自己这一档：部分救回页直接用它，
+    // 门不成立的页拿它跟基准档比出更严的那个（ADR 0007 决定第 3 条）。
+    for &index in &gray {
+        verdicts[index] = Some(decide::decide(scores(index), threshold, pinned));
+    }
 
-    let write_back = |verdicts: &mut Vec<Option<Verdict>>, decided: &[Decided]| {
-        for &(index, verdict) in decided {
-            verdicts[index] = Some(verdict);
-        }
-    };
-    let decided: Vec<Decided> = gray.iter().copied().zip(decided).collect();
     if let Some(candidate) = pinned {
-        write_back(&mut verdicts, &decided);
         return (verdicts, Some(VolumeVerdict::Override(candidate)));
     }
     if request.per_page {
-        write_back(&mut verdicts, &decided);
         return (verdicts, Some(VolumeVerdict::PerPage));
     }
-    // 上包络只在完好页上取（04 号票）。两条出口上不分：覆盖项顶掉了判定、`--per-page`
-    // 关掉了卷级那一层，两种情形下都没有一个「卷级的档」可供部分救回页去污染。
-    let (mut body, mut salvaged): (Vec<Decided>, Vec<Decided>) = decided
-        .into_iter()
-        .partition(|&(index, _)| !pages[index].salvaged());
-    if body.is_empty() {
-        (body, salvaged) = (salvaged, Vec::new());
-    }
-    write_back(&mut verdicts, &salvaged);
+
+    // 上包络只在主体那一组的完好页上取（04 号票）。两条出口上不分这一刀：覆盖项顶掉了判定、
+    // `--per-page` 关掉了卷级那一层，两种情形下都没有一个「卷级的档」可供谁去污染。
+    // 摘出去的部分救回页留着逐页判定：`verdicts` 里已经是它了，不必再写一遍。
+    let (body, salvaged): (Vec<usize>, Vec<usize>) = inside
+        .iter()
+        .copied()
+        .partition(|&index| !pages[index].salvaged());
+    // 一页不剩地落在救回那一侧时一页都不摘：主体不能空着。
+    let body = if body.is_empty() { salvaged } else { body };
+
     let inputs: Vec<envelope::Page> = body
         .iter()
-        .map(|&(index, verdict)| envelope::Page {
+        .map(|&index| envelope::Page {
             scores: scores(index),
-            decided: verdict.candidate,
+            decided: verdicts[index].expect("灰度页都判过了").candidate,
         })
         .collect();
-    let summary = envelope::summarize(&inputs, threshold).expect("主体非空");
-    let decided: Vec<Decided> = body
-        .iter()
-        .map(|&(index, _)| index)
-        .zip(summary.verdicts)
-        .collect();
-    write_back(&mut verdicts, &decided);
+    let envelope::Summary {
+        envelope,
+        verdicts: refined,
+    } = envelope::summarize(&inputs, threshold).expect("主体非空");
+    for (&index, verdict) in body.iter().zip(refined) {
+        verdicts[index] = Some(verdict);
+    }
+    // 门不成立的页：跟着基准档的位深走、不低于它，抖动关掉（ADR 0007 决定第 3 条）。
+    // 它们与 `body` 不相交，逐页那一档因此还在原处等着被读。
+    for &index in &outside {
+        let own = verdicts[index].expect("灰度页都判过了").candidate.bit_depth;
+        verdicts[index] = Some(Verdict {
+            candidate: Candidate::new(envelope.base.bit_depth.max(own), Dither::Off),
+            reason: Reason::OutsideTheGate,
+        });
+    }
     // 驱动页的序号在上包络那一侧指进**主体页**的序列，报告里那个序号指进整卷的页。
-    // 卷内混着彩页或部分救回页时两者不重合，这一步把它换回去——不换，报告会指着另一页
-    // 说「就是它定的档」。
+    // 卷内混着彩页、门不成立的页或部分救回页时两者不重合，这一步把它换回去——不换，
+    // 报告会指着另一页说「就是它定的档」。
     let envelope = Envelope {
-        driver: body[summary.envelope.driver].0,
-        ..summary.envelope
+        driver: body[envelope.driver],
+        ..envelope
     };
     (verdicts, Some(VolumeVerdict::Envelope(envelope)))
 }
@@ -436,8 +454,12 @@ fn summarize_volume(
 /// 「裁到只剩一个」与「有覆盖项」两条都要：`--gray-levels 2` 撞上几何门不成立同样只剩一个候选，
 /// 但那一档是判出来的，不是被顶掉的——理由分得清，报告才解释得了它是怎么来的。
 ///
-/// 反过来，只点了一维的覆盖项裁不到只剩一个：`--bit-depth 4` 而几何门开着时，
+/// 反过来，只点了一维的覆盖项裁不到只剩一个：`--bit-depth 4` 而主体那一组的门开着时，
 /// 抖动那一维还有得判，判据照旧说了算。
+///
+/// `scores` 取的是**主体那一组**里的一页（见 [`summarize_volume`]）。裁到只剩一个的
+/// 覆盖项落在门不成立那一组上时，那一组的候选集必然也只剩同一个——门只拿走抖动，
+/// 而剩下的那一个既然过得了门，它本来就不抖。
 fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     let overridden = request.bit_depth.is_some() || request.dither.is_some();
     match scores {
@@ -482,6 +504,12 @@ enum Branch {
     /// 灰度路径。
     Gray {
         scores: Vec<CandidateScore>,
+        /// 这一页的几何门判定（ADR 0007 决定第 1 条：门逐页判）。
+        ///
+        /// 它跟着页走，不由汇总那一步按尺寸重算：判定几何门的地方只有一处
+        /// （[`GeometryGate::of`]，ADR 0003 要求灰阶硬上界与抖动判定同源），
+        /// 而重算一遍就是第二处。
+        gate: GeometryGate,
         /// 这一页在缓存里的序号。
         ///
         /// 序号跟着页走，不由第二遍数数补出来：彩页在彩色 profile 下不进灰度缓存
@@ -521,22 +549,19 @@ impl ScoredPage {
         matches!(self.outcome, Outcome::Failed { .. })
     }
 
-    /// 这一页有资格替整卷回答几何门那个问题吗（04 号票）：走灰度路径，而且是整解出来的。
-    ///
-    /// 彩色分支上的页不算——门撑的两件事与它无关；部分救回页也不算——它没解全。
-    /// 失败页连几何都没有。一卷里一张都没有时，门改听部分救回页的（见 [`first_pass`]）。
-    fn speaks_for_the_gate(&self) -> bool {
-        matches!(
-            self.outcome,
+    /// 这一页的几何门判定。判定范围之外的页没有——彩色分支上的页不在范围内
+    /// （ADR 0010 决定第 4 条），失败页连几何都没有。部分救回页在范围内（ADR 0007 决定第 1 条）。
+    fn gate(&self) -> Option<GeometryGate> {
+        match &self.outcome {
             Outcome::Processed {
-                branch: Branch::Gray { .. },
-                salvage: None,
+                branch: Branch::Gray { gate, .. },
                 ..
-            }
-        )
+            } => Some(*gate),
+            _ => None,
+        }
     }
 
-    /// 这一页是救回来的吗（04 号票）。答是的页不参与几何门与卷级上包络。
+    /// 这一页是救回来的吗（04 号票）。答是的页不参与卷级上包络。
     fn salvaged(&self) -> bool {
         matches!(
             self.outcome,
@@ -564,9 +589,10 @@ impl ScoredPage {
                     scaling,
                     color,
                     branch: match branch {
-                        Branch::Gray { scores, .. } => PageBranch::Gray {
+                        Branch::Gray { scores, gate, .. } => PageBranch::Gray {
                             scores,
                             verdict: verdict.expect("灰度路径上必有判定"),
+                            gate,
                         },
                         Branch::Color { .. } => PageBranch::Color,
                     },
@@ -591,10 +617,41 @@ impl ScoredPage {
     }
 }
 
-/// 第一遍产出的一卷：逐页的判据曲线，加上这一卷的几何门判定。
-struct Scored {
-    pages: Vec<ScoredPage>,
-    gate: GeometryGate,
+/// 本次的两套候选：几何门成立的那一套，与门不成立的那一套。
+///
+/// 两套在碰卷之前就备好，页判出门之后现取一套（[`Candidates::for_gate`]）。
+/// 门逐页判，一卷里两套都用得上——混排卷正是 06 号票要收的那个形态（ADR 0007 决定第 1 条）。
+///
+/// 门不成立那一套是成立那一套的**子集**：同样的位深，少了抖动那一维。
+/// 「候选集全卷同一套」因此只在**一组之内**成立，而卷级那一层只在其中一组上做
+/// （见 [`summarize_volume`]）。
+struct Candidates {
+    /// 门成立时的候选集。它非空——覆盖项把它裁空的话，整趟在碰卷之前就被拒了
+    /// （见 [`ensure_the_overrides_leave_a_candidate`]）。
+    holds: Vec<Candidate>,
+    /// 门不成立时的候选集。覆盖项把它裁空时是 `Err`：`--dither fs` 撞上一页贴不住面板
+    /// 就是这个局面。错误留到真撞上那一页时才报——门是**页**的事实，一卷里可能一页都不撞。
+    broken: Result<Vec<Candidate>>,
+}
+
+impl Candidates {
+    fn new(request: &Request) -> Result<Self> {
+        Ok(Self {
+            holds: candidates(request, GeometryGate::Holds)?,
+            broken: candidates(request, GeometryGate::Broken),
+        })
+    }
+
+    /// 门是这个结果的页该拿哪一套。
+    ///
+    /// 裁空那一支上**重说一遍**错误，而不是把它搬走：撞上门的页可能有好几张，
+    /// 每一张都要指得出自己，而 `anyhow::Error` 复制不了。
+    fn for_gate(&self, gate: GeometryGate) -> Result<&[Candidate]> {
+        match gate {
+            GeometryGate::Holds => Ok(&self.holds),
+            GeometryGate::Broken => self.broken.as_deref().map_err(|error| anyhow!("{error:#}")),
+        }
+    }
 }
 
 /// 第一遍：读 → 解码 → **彩页识别** → 分流。
@@ -611,30 +668,20 @@ struct Scored {
 /// 覆盖了判定也照求：`--dry-run --bit-depth 2` 要说得清「你点的这一档判据是多少」。
 /// 彩色分支上没有这回事——那条路径不量化，dry-run 因此连编码都省了。
 ///
-/// **几何门在这一遍上收口。**门是几何的、逐页看得出来，但它对整卷只有一个结果
-/// （ADR 0007：条件不成立时抖动整体关闭），因此一页关上门，抖动那一维就当场
-/// 从候选集里去掉，已经求过的抖动候选一并丢掉——「候选集全卷同一套」在任何时刻都成立，
-/// 上包络与迟滞靠的正是这一条。门关得越早，白求的判据越少。
+/// **几何门在这一遍上逐页收口。**门是几何的、一页看得出来，而它只决定这一页
+/// （ADR 0007 决定第 1 条）：算到哪一页就判哪一页的门，候选集随之定下，判据只在那一套上求。
+/// 一页贴不住面板不再改变别的页求几个候选，收尾处因此不必回头统一裁一遍——
+/// 而从前那一裁，正是「一页否决整卷」在实现上的落点。
 ///
-/// **彩色分支上的页不参与几何门。**门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），
+/// **彩色分支上的页不在判定范围内。**门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），
 /// 两者都只作用在灰度路径上；彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
-/// 让它关掉整卷的抖动，就是让一条不受影响的路径去削掉另一条路径的收益。
 ///
-/// **部分救回页同样不参与**（04 号票）。它的尺寸倒是真的——文件头一点没缺——但门对整卷
-/// 只有一个结果，而一张连像素都没解全的页不该是替另外一百多页回答这个问题的那一张。
-///
-/// **一页完好的灰度页都没有时，它们自己的几何说了算**：摘它们是为了护着别人，
-/// 而那时没有别人可护。这与汇总那一侧「一页不剩地落在救回那一侧就一页都不摘」是同一条规矩
-/// （见 [`summarize_volume`]）。连部分救回页也没有的卷才真是无人可关，判定为成立——
-/// 与只装着彩页的卷同一个答案（见 [`GeometryGate`]）。
-///
-/// **这一条与 ADR 0007 冲突，冲突留着**：混排卷里那张贴不住面板的部分救回页会跟着整卷
-/// 一起抖动，而 ADR 0007 的决定是「抖动仅在目标尺寸未被下游缩放时启用」。冲突是本票
-/// 那条验收标准的直接后件（部分救回页不参与几何门），口径与 ADR 0007 的修订归 06 号票
-/// ——它要收的正是「少数页否决整卷」这同一件事。
+/// **部分救回页在范围内**：它的尺寸是文件头里的真尺寸，答得出「这一页会不会被下游再缩一次」，
+/// 而它答的只是自己那一页。04 号票把它摘出去，是因为那时门对整卷只有一个结果；
+/// 门改成逐页判之后那条理由不在了，口径把它收了回来（ADR 0007 决定第 1 条）。
 ///
 /// **读不出、解不出的页在这里变成失败页**（12 号票），而不是让整卷的调用返回 `Err`。
-/// 它同样不参与几何门，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
+/// 它同样不在判定范围内，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
 /// 没有像素可求判据，也没有像素可缓存。它留下的只有一条原因，等第二遍给它留一张白页。
 ///
 /// **读取与计算在这里分成两层**（13 号票，见 `read` 与 `medium`）：读取按介质定并发度，
@@ -648,12 +695,9 @@ fn first_pass(
     fingerprint: Option<&Fingerprint>,
     io: &IoPlan,
     steps: progress::Steps,
-) -> Result<Scored> {
-    // 两套候选集在碰卷之前就备好：门一关，算到那一页的线程当场换用另一套。
-    // 候选集只看门成不成立、不看是哪一页关的，序号在这里因此随便填一个。
-    let holds = candidates(request, GeometryGate::Holds)?;
-    let broken = candidates(request, GeometryGate::Broken { page: 0 });
-
+) -> Result<Vec<ScoredPage>> {
+    // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）。
+    let candidates = Candidates::new(request)?;
     // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
     let sources: Vec<PathBuf> = volume
         .pages
@@ -663,17 +707,12 @@ fn first_pass(
     let Volume { pages, reader, .. } = volume;
     let members: Vec<&Member> = pages.iter().collect();
 
-    let breaker = AtomicUsize::new(GATE_HOLDS);
-    let salvaged_breaker = AtomicUsize::new(GATE_HOLDS);
     let compute = Compute {
         request,
         decoder,
         cache,
         fingerprint,
-        holds: &holds,
-        broken: &broken,
-        breaker: &breaker,
-        salvaged_breaker: &salvaged_breaker,
+        candidates: &candidates,
         steps,
     };
     let mut scored: Vec<(usize, Result<ScoredPage>)> =
@@ -681,62 +720,24 @@ fn first_pass(
             .par_bridge()
             .map(|read| {
                 let index = read.index;
-                (index, compute.page(index, &sources[index], read.bytes))
+                (index, compute.page(&sources[index], read.bytes))
             })
             .collect();
     // 计算层乱序完成，页序在这里归位。往后每一处「第 n 页」都指得回同一页。
     scored.sort_by_key(|(index, _)| *index);
-    // 归位**之后**才短路取错，因此报出来的是序号最小的那一页出的错，不是最先撞上的那一页——
-    // 与几何门指名道姓那一条同一个道理（见下）：换一次调度就换一句错误的报告等于没有报告。
+    // 归位**之后**才短路取错，因此报出来的是序号最小的那一页出的错，不是最先撞上的那一页：
+    // 换一次调度就换一句错误的报告等于没有报告。`--dither fs` 撞上几何门那一支尤其吃这一条,
+    // 那一支上没有报告可看，错误里指的那一页是唯一的线索。
     // 代价是一页出错时整卷仍会算完，而这一支上整卷本来就要作废，省下的那点算力买不到什么。
-    let mut pages: Vec<ScoredPage> = scored
+    scored
         .into_iter()
         .map(|(_, page)| page)
-        .collect::<Result<Vec<_>>>()?;
-
-    // 关上门的是**序号最小**的那一页，不是最先算完的那一页：并发下这两个不是同一页，
-    // 而报告里指名道姓的那一页必须与顺着做时是同一个答案。
-    //
-    // 完好的灰度页一张都没有时，改听部分救回页那一个：摘它们是为了护着别人，而那时
-    // 没有别人可护（见本函数的文档）。反过来 `breaker` 一旦有值，关门的那一页自己就是
-    // 一张完好灰度页，这一支因此不必再问。
-    let broke = match breaker.load(Ordering::Relaxed) {
-        GATE_HOLDS if !pages.iter().any(ScoredPage::speaks_for_the_gate) => {
-            salvaged_breaker.load(Ordering::Relaxed)
-        }
-        page => page,
-    };
-    let gate = match broke {
-        GATE_HOLDS => GeometryGate::Holds,
-        page => GeometryGate::Broken { page },
-    };
-    let allowed = match gate {
-        GeometryGate::Holds => holds,
-        GeometryGate::Broken { page } => {
-            broken.with_context(|| format!("{} 这一页关上了几何门", sources[page].display()))?
-        }
-    };
-    // 门关得晚时，早算完的那几页多求了几个抖动候选：按最终那一套统一裁一遍。
-    // **「候选集全卷同一套」到汇总看见它的时候必须成立**——上包络与迟滞靠的正是这一条，
-    // 而裁在这里而不是各线程自己裁，结果就不随线程的先后而变。
-    for page in &mut pages {
-        if let Outcome::Processed {
-            branch: Branch::Gray { scores, .. },
-            ..
-        } = &mut page.outcome
-        {
-            scores.retain(|scored| allowed.contains(&scored.candidate));
-        }
-    }
-    Ok(Scored { pages, gate })
+        .collect::<Result<Vec<_>>>()
 }
-
-/// 几何门还开着时 [`Compute::breaker`] 里放的那个数。真实页序永远到不了它。
-const GATE_HOLDS: usize = usize::MAX;
 
 /// 第一遍上每条计算线程共用的那一摊。
 ///
-/// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成八个参数，
+/// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成六个参数，
 /// 闭包的捕获清单就得逐个写一遍，而漏掉一个的报错在 rayon 那一层读起来毫无线索。
 struct Compute<'a> {
     request: &'a Request,
@@ -744,29 +745,20 @@ struct Compute<'a> {
     /// 缓存的账本只有一本，因此非串起来不可。压缩在锁外做（见 `cache::compress`）。
     cache: &'a Mutex<cache::PageCache>,
     fingerprint: Option<&'a Fingerprint>,
-    /// 几何门开着时的候选集。
-    holds: &'a [Candidate],
-    /// 几何门关上之后的候选集。覆盖项把它裁空时是 `Err`——那一趟注定要报错，
-    /// 但报在哪一页上要等全卷走完才定得下来（见 [`first_pass`] 收尾）。
-    broken: &'a Result<Vec<Candidate>>,
-    /// 关上门的那一页的序号，取最小的那个；[`GATE_HOLDS`] 即门还开着。**只收完好灰度页**。
-    breaker: &'a AtomicUsize,
-    /// 同上，收的是部分救回页。它只在一卷里连一张完好灰度页都没有时作数
-    /// （见 [`first_pass`]），因此**不进** [`allowed`](Compute::allowed) 那条快路——
-    /// 那时门最终关不关得上，要等全卷走完才知道。
-    salvaged_breaker: &'a AtomicUsize,
+    /// 两套候选集。这一页判出门之后现取一套（见 [`Candidates::for_gate`]）。
+    candidates: &'a Candidates,
     steps: progress::Steps<'a>,
 }
 
 impl Compute<'_> {
     /// 算一页：解码 → 彩页识别 → 分流。语义与顺着做时逐字相同，见 [`first_pass`]。
-    fn page(&self, index: usize, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
-        let page = self.branch(index, source, bytes)?;
+    fn page(&self, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
+        let page = self.branch(source, bytes)?;
         self.steps.step();
         Ok(page)
     }
 
-    fn branch(&self, index: usize, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
+    fn branch(&self, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
         let request = self.request;
         let panel = request.profile.panel();
         let read = bytes.and_then(|bytes| {
@@ -818,15 +810,13 @@ impl Compute<'_> {
 
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
-        if !geometry::one_to_one(size, panel.resolution) {
-            // 门关得越早，白求的判据越少：先记下，再去问该用哪一套候选。
-            // 部分救回页记在另一格上——它那一票只在没有完好灰度页时才作数（见 `first_pass`）。
-            match salvage {
-                None => self.breaker.fetch_min(index, Ordering::Relaxed),
-                Some(_) => self.salvaged_breaker.fetch_min(index, Ordering::Relaxed),
-            };
-        }
-        let allowed = self.allowed();
+        // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
+        // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
+        let gate = GeometryGate::of(size, panel.resolution);
+        let allowed = self
+            .candidates
+            .for_gate(gate)
+            .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
         let reference = Reference::new(panel, scaled);
         let scores = candidate_scores(&reference, allowed);
@@ -840,23 +830,10 @@ impl Compute<'_> {
                 size,
                 scaling,
                 color,
-                branch: Branch::Gray { scores, slot },
+                branch: Branch::Gray { scores, gate, slot },
                 salvage,
             },
         })
-    }
-
-    /// 此刻该拿哪一套候选去求判据。
-    ///
-    /// 只是个**省力**的近似：门关上的那一刻，已经在算的页可能还在用旧的那一套。
-    /// 收尾处按最终的门统一裁一遍，结果因此与这里读到的先后无关（见 [`first_pass`]）。
-    fn allowed(&self) -> &[Candidate] {
-        if self.breaker.load(Ordering::Relaxed) == GATE_HOLDS {
-            return self.holds;
-        }
-        // 门关了，而覆盖项把剩下的候选裁空：这一趟注定要报错，判据求了也没人看。
-        // 一个候选都不给，白算的那一份就省下了。
-        self.broken.as_deref().unwrap_or(&[])
     }
 }
 
@@ -1063,14 +1040,15 @@ fn candidate_scores(reference: &Reference, allowed: &[Candidate]) -> Vec<Candida
         .collect()
 }
 
-/// 本次可用的候选集，由小到大。
+/// 门是 `gate` 的页可用的候选集，由小到大。
 ///
 /// 四道裁剪，全部发生在判据求值之前：位深按面板灰阶数裁（ADR 0003），抖动模式按几何门裁
 /// （ADR 0007），`--bit-depth` 与 `--dither` 各再裁自己那一维。前两道是界，后两道是覆盖项，
 /// 但作用方式是同一个——都只从候选集里拿走东西，谁都放不回被拿走的。
 ///
 /// 裁空了就报错：面板显示不出来、或几何上到不了眼睛的那些候选，写出去也是白写，
-/// 宁可当场拒绝也不静默照写。
+/// 宁可当场拒绝也不静默照写。门那一维裁空的时候，拒绝的报出的是**哪一页**撞上的门
+/// （见 [`Candidates::for_gate`]）。
 fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
     let panel = request.profile.panel();
     let picked: Vec<Candidate> = Candidate::all(panel.gray_levels, gate)
@@ -1094,8 +1072,8 @@ fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
 
 /// 覆盖项与面板对不对得上，在碰卷之前先问一次。
 ///
-/// 几何门此刻还没有卷可判，先当它成立：门那一侧裁空的候选集只有等到第一遍里
-/// 那一页出现才拦得住（见 [`first_pass`]）。
+/// 几何门此刻还没有页可判，先当它成立：门那一侧裁空的候选集只有等到第一遍里
+/// 真撞上那一页才拦得住（见 [`Candidates::for_gate`]）。
 fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
     candidates(request, GeometryGate::Holds).map(|_| ())
 }
@@ -1122,9 +1100,10 @@ fn nothing_left_error(request: &Request) -> anyhow::Error {
         }
         // 位深那一维过得去，裁空的只能是抖动那一维：几何门不成立，而 `--dither` 点了抖动。
         _ => anyhow!(
-            "点名的抖动模式越过了几何门：这一卷有页源比目标尺寸还小，按不放大原样输出，\
+            "点名的抖动模式越过了几何门：这一页源比目标尺寸还小，按不放大原样输出，\
              阅读器显示时还要再缩一次，抖动推到高频的误差会被折回低频。\
-             几何门不成立时抖动整体关闭，--dither 覆盖不了它（ADR 0007）"
+             门在这一页上不成立，抖动因此关闭，--dither 覆盖不了它——它是页的几何事实，\
+             不是一个可以放宽的档位（ADR 0007）"
         ),
     }
 }
@@ -1186,9 +1165,8 @@ fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
     collisions.sort_by(|a, b| a[0].cmp(b[0]));
 
     let total: usize = collisions.iter().map(|by| by.len()).sum();
-    let mut said = format!(
-        "{total} 个卷要写到同一批去处，后到的会把先到的整卷盖掉。撞在一起的是：\n"
-    );
+    let mut said =
+        format!("{total} 个卷要写到同一批去处，后到的会把先到的整卷盖掉。撞在一起的是：\n");
     const SHOWN: usize = 5;
     for group in collisions.iter().take(SHOWN) {
         let target = source::planned_output(group[0], &request.output_root)?;

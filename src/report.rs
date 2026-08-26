@@ -74,16 +74,6 @@ pub struct VolumeReport {
     ///
     /// 一页都没有的卷（只装着透传文件）是 `None`：那样的卷没有候选可判。
     pub verdict: Option<VolumeVerdict>,
-    /// 本卷的几何门判定（ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。
-    ///
-    /// 它不在 [`verdict`](Self::verdict) 里：门是几何的、判定是内容的，门先判，
-    /// 判定在门放行的那套候选上做。门关着时抖动整体关闭，`verdict` 里那个候选
-    /// 于是必然不抖——不说门，报告就解释不了「为什么这一卷没抖」。
-    ///
-    /// 幂等命中而跳过的卷是 `None`：门是算出来的，而那一趟一页都没算
-    /// （见 [`VolumeVerdict::Skipped`]）。一页都没有的卷不是 `None` 而是 `Holds`——
-    /// 没有页去关它，那是真话，不是「不知道」。
-    pub gate: Option<GeometryGate>,
     /// 本卷缓存的用量（ADR 0005）。
     pub cache: CacheUsage,
     /// 本卷这一趟怎么读：介质是什么，据此派了几条读取（13 号票）。
@@ -148,8 +138,8 @@ impl VolumeVerdict {
 impl VolumeReport {
     /// 这一卷被幂等命中跳过了吗。
     ///
-    /// 跳过这件事在本结构里由三处一起体现——卷级判定是 [`VolumeVerdict::Skipped`]、
-    /// `gate` 为空、`pages` 为空。**它们只有一个来源**，就是这里：读的那一端各自去认
+    /// 跳过这件事在本结构里由两处一起体现——卷级判定是 [`VolumeVerdict::Skipped`]、
+    /// `pages` 为空。**它们只有一个来源**，就是这里：读的那一端各自去认
     /// 其中一处，迟早会有人认错一处。
     pub fn skipped(&self) -> bool {
         matches!(self.verdict, Some(VolumeVerdict::Skipped { .. }))
@@ -171,6 +161,28 @@ impl VolumeReport {
         self.pages
             .iter()
             .filter(|page| matches!(page.outcome, PageOutcome::Failed { .. }))
+    }
+
+    /// 本卷落在几何门**判定范围**里的页，按阅读顺序（06 号票）。
+    ///
+    /// 范围是灰度路径上的每一页（ADR 0007 决定第 1 条）：彩色分支上的页不在里面——
+    /// 那条路径既不量化也不抖动（ADR 0010 决定第 4 条）；失败页连几何都没有。
+    ///
+    /// 报告要说得出这个范围，否则「几何门成立」这句话读不出它替多少页说了话：
+    /// 一卷全是彩页时门同样成立，而那是「无人可关」，不是「每一页都贴住了面板」。
+    pub fn judged_by_the_gate(&self) -> impl Iterator<Item = &PageReport> {
+        self.pages.iter().filter(|page| page.gate().is_some())
+    }
+
+    /// 本卷几何门不成立的页，按阅读顺序（06 号票）。
+    ///
+    /// 它们**只被排除在抖动之外**：位深仍跟着卷级基准档走、不低于它（ADR 0007 决定第 3 条）。
+    /// 一页门成立的灰度页都没有时它们就是主体，那时这个清单等于整个判定范围，
+    /// 而卷级基准档本身就不抖。
+    pub fn outside_the_gate(&self) -> impl Iterator<Item = &PageReport> {
+        self.pages
+            .iter()
+            .filter(|page| page.gate() == Some(GeometryGate::Broken))
     }
 
     /// 本卷的部分救回页，按阅读顺序（04 号票）。
@@ -292,6 +304,16 @@ pub enum PageBranch {
     /// 灰度路径：算判据、进缓存、第二遍照判定量化写出。
     /// 黑白 profile 下的彩页转灰后也走这里（ADR 0005 决定第 4 条）。
     Gray {
+        /// 这一页的几何门判定（ADR 0007 决定第 1 条：门逐页判）。
+        ///
+        /// 它落在灰度路径这一支上而不在 [`PageReport`] 上，因为判定范围就是这条路径：
+        /// 彩色分支上没有门可判（ADR 0010 决定第 4 条），失败页连几何都没有。
+        /// 摆一个 `Holds` 上去是编的，报告不该有编出来的字段。
+        ///
+        /// 卷级那一层的「判定范围」与「被排除的页」都从这里数出来
+        /// （[`VolumeReport::judged_by_the_gate`]、[`VolumeReport::outside_the_gate`]）：
+        /// 门的结果只有一个出处，就是页。
+        gate: GeometryGate,
         /// 各候选的判据值，由小到大。候选已按面板灰阶数与几何门裁过（ADR 0003、ADR 0007）。
         ///
         /// 两种模式都求值：判据现在决定输出的候选，dry-run 因此预告的就是照做时的那一个。
@@ -327,6 +349,15 @@ impl PageReport {
     pub fn verdict(&self) -> Option<Verdict> {
         match self.branch() {
             Some(PageBranch::Gray { verdict, .. }) => Some(*verdict),
+            _ => None,
+        }
+    }
+
+    /// 这一页的几何门判定。彩色分支与失败页上都没有——那是判定范围之外
+    /// （见 [`VolumeReport::judged_by_the_gate`]）。
+    pub fn gate(&self) -> Option<GeometryGate> {
+        match self.branch() {
+            Some(PageBranch::Gray { gate, .. }) => Some(*gate),
             _ => None,
         }
     }

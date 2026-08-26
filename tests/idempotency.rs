@@ -39,8 +39,8 @@ fn a_rerun_with_the_same_parameters_and_source_skips_the_volume() {
     assert!(skipped.pages.is_empty(), "跳过的卷不该有逐页结果");
     // 页数是源那一侧的事实，不做工作也数得出来。
     assert_eq!(skipped.page_count(), 2);
-    // 几何门是算出来的，这一趟一页都没算。
-    assert_eq!(skipped.gate, None);
+    // 几何门跟着页走，而这一趟一页都没算：判定范围因此是空的。
+    assert_eq!(skipped.judged_by_the_gate().count(), 0);
     assert_eq!(
         fixtures::fingerprint(&skipped.output),
         written,
@@ -427,7 +427,7 @@ fn a_volume_without_pages_is_never_skipped() {
     assert_eq!(report.volumes[0].verdict, None);
 }
 
-/// 两页加一个透传文件的卷。两页都小于面板，几何门因此关着——本文件测的每一条都与门无关。
+/// 两页加一个透传文件的卷。两页都小于面板，几何门在两页上都不成立——本文件测的每一条都与门无关。
 fn two_pages_and_an_extra(space: &Workspace) -> Volume {
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::solid(fixtures::TINY, 128));

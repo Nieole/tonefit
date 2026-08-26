@@ -8,9 +8,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
-    BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, IoMode, Mode, PageBranch,
-    PageColor, PageReport, Profile, Progress, ProgressSink, Report, Request, VolumeReport,
-    VolumeVerdict, aggregation,
+    BitDepth, CacheBudget, CandidateScore, Dither, Filter, IoMode, Mode, PageBranch, PageColor,
+    PageReport, Profile, Progress, ProgressSink, Report, Request, VolumeReport, VolumeVerdict,
+    aggregation,
 };
 
 #[derive(Parser)]
@@ -61,8 +61,9 @@ struct Cli {
     bit_depth: Option<u32>,
 
     /// 覆盖自动选择的抖动模式：off（= none）、fs（= floyd-steinberg）。
-    /// 抖动只在输出不被下游缩放时才谈得上：卷内有页源比目标尺寸小时几何门不成立，
-    /// 那时点名 fs 会被**拒绝**，不会静默照抖。
+    /// 抖动只在输出不被下游缩放时才谈得上，而这是**每一页**各自的事实：
+    /// 卷里只要有一页源比目标尺寸小，点名 fs 就会被**拒绝**——错误指得出是哪一页，
+    /// 不会静默照抖。
     #[arg(long, value_name = "模式")]
     dither: Option<String>,
 
@@ -435,7 +436,8 @@ fn salvaged_line(volume: &VolumeReport) -> String {
     }
     format!(
         "  部分救回 {pages} 页：整解失败，按文件头的尺寸救回了一段，缺的那一段留成纸白。\
-         它们不参与几何门与卷级上包络，各自单独定档\n"
+         它们不参与卷级上包络，各自单独定档。几何门照旧问它们——那是文件头里的真尺寸；\
+         门在哪一页上也不成立，那一页就改按门那一条来（见上）\n"
     )
 }
 
@@ -525,36 +527,68 @@ fn isolated_line(volume: &VolumeReport) -> String {
     )
 }
 
-/// 几何门那一行：门的判定结果，加上本卷最终抖不抖。
+/// 几何门那一段：门的**判定范围**、范围里有几页不成立，加上本卷最终抖不抖。
 ///
-/// 两件事写在一行上，因为只有并排才解释得了对方：门关着时抖动整体关闭，那个「不抖动」
-/// 不是判据选的；门开着时它才是判据选出来的（ADR 0007：不成立时整体关闭，
-/// 通过时抖不抖跟着位深一起按卷决定）。
-/// 门被哪一页关上也要说出来——门关掉的是**整卷**的抖动，不指名，用户就无从下手。
+/// 三件事写在一起，因为只有并排才解释得了对方。门逐页判（ADR 0007 决定第 1 条），
+/// 「成立」这句话因此得连着范围一起读——一卷全是彩页时门同样成立，而那是「无人可关」，
+/// 不是「每一页都贴住了面板」。本卷那个抖动模式同理：门在主体那一组上开着时它才是判据选的，
+/// 主体一页都不成立时它只是被关掉的结果。
+///
+/// **被排除的页要指得出来**，与上包络指出驱动页同一个做法：不指名，用户就无从判断
+/// 这一卷该不该换个 profile。逐页那几行各自标着理由（`几何门不成立，本页不抖动`），
+/// 这里只给个抓手——页数多起来时全列一遍只会把卷级那几行淹掉。
 fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
-    // 走到这里的卷都真算过一遍：跳过的那一种在 `volume_lines` 里已经走掉了。
-    let gate = match volume.gate.expect("算过的卷必有几何门判定") {
-        GeometryGate::Holds => "成立".to_owned(),
-        GeometryGate::Broken { page } => format!(
-            "不成立（{} 源比目标小，原样输出，阅读器还要再缩一次）",
-            volume.pages[page].source.display()
-        ),
-    };
+    let judged = volume.judged_by_the_gate().count();
+    let broken: Vec<&PageReport> = volume.outside_the_gate().collect();
     // `--per-page` 一开就没有卷级的抖动模式：它跟着位深一起逐页可变。
     let dither = verdict
         .dither()
         .map_or_else(|| "逐页".to_owned(), |dither| dither.to_string());
-    let mut text = format!("  几何门 {gate} · 本卷 {dither}\n");
-    if !volume.gate.is_some_and(GeometryGate::holds) {
-        // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
-        // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
-        // 报告因此得把这句话说出来，而不是让它烂在一句注释里。
+    let mut text = format!(
+        "  几何门 判定范围 灰度页 {judged} 页 · 不成立 {} 页 · 本卷 {dither}\n",
+        broken.len()
+    );
+    if broken.is_empty() {
+        return text;
+    }
+    if broken.len() == judged {
+        // 一页成立的都没有：没有别人可护，这些页自己就是主体，卷级那一档由它们定出
+        // ——那一档必然不抖（ADR 0007 决定第 5 条）。
         text.push_str(
-            "    面板灰阶上界的依据随门一起失效，\
-             P0 仍按它裁候选位深（ADR 0003：该用哪个集合尚未测量）\n",
+            "    范围内一页都不成立：每一页源都比目标小，按不放大原样输出，\
+             阅读器还要再缩一次。没有别人可护，卷级基准档由它们自己定出，抖动因此整卷关闭\n",
+        );
+    } else {
+        text.push_str(&format!("    不成立：{}\n", first_few_names(&broken)));
+        text.push_str(
+            "    这几页源比目标小，原样输出，阅读器还要再缩一次：它们不进卷级上包络，\
+             抖动单独关掉，位深仍跟着卷级基准档、不低于它\n",
         );
     }
+    // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
+    // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
+    // 报告因此得把这句话说出来，而不是让它烂在一句注释里。
+    text.push_str(
+        "    面板灰阶上界的依据在这几页上随门一起失效，\
+         P0 仍按它裁候选位深（ADR 0003：该用哪个集合尚未测量）\n",
+    );
     text
+}
+
+/// 头几页的名字排成一句，剩下的报个数收口。
+///
+/// 上界取三：这一句是给人抓手用的，不是清单——真要逐页看，逐页那几行一页不落地列着。
+fn first_few_names(pages: &[&PageReport]) -> String {
+    const SHOWN: usize = 3;
+    let listed: Vec<String> = pages
+        .iter()
+        .take(SHOWN)
+        .map(|page| page.source.display().to_string())
+        .collect();
+    match pages.len().checked_sub(SHOWN) {
+        Some(rest) if rest > 0 => format!("{}，另有 {rest} 页", listed.join("、")),
+        _ => listed.join("、"),
+    }
 }
 
 /// 一页那一行：它走的分支，以及那条分支得出的结果。
@@ -580,7 +614,9 @@ fn page_line(page: &PageReport) -> String {
         None => String::new(),
     };
     match branch {
-        PageBranch::Gray { scores, verdict } => format!(
+        PageBranch::Gray {
+            scores, verdict, ..
+        } => format!(
             "{salvaged}{}判定 {}（{}）  判据 {}",
             if page.color() == Some(PageColor::Color) {
                 "彩页转灰 · "
@@ -672,8 +708,8 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use tonefit::{
-        CacheUsage, Candidate, ChosenBy, Envelope, GrayImage, IoPlan, Medium, PageOutcome,
-        Processed, Reason, Reference, Salvage, Scaling, Size, Verdict, VolumeReport,
+        CacheUsage, Candidate, ChosenBy, Envelope, GeometryGate, GrayImage, IoPlan, Medium,
+        PageOutcome, Processed, Reason, Reference, Salvage, Scaling, Size, Verdict, VolumeReport,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -714,12 +750,10 @@ mod tests {
     }
 
     /// 一份一页的报告。各用例只改自己那一处，别处照抄默认。
-    fn one_page_report(
-        profile: Profile,
-        gate: GeometryGate,
-        verdict: VolumeVerdict,
-        page: PageReport,
-    ) -> Report {
+    ///
+    /// 几何门不在参数里：它跟着那一页走（`PageBranch::Gray` 的 `gate`），
+    /// 卷级那一段是从页数出来的（06 号票）。
+    fn one_page_report(profile: Profile, verdict: VolumeVerdict, page: PageReport) -> Report {
         Report {
             profile,
             volumes: vec![VolumeReport {
@@ -727,7 +761,6 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 verdict: Some(verdict),
-                gate: Some(gate),
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 1,
@@ -949,7 +982,6 @@ mod tests {
         );
         let report = one_page_report(
             profile,
-            GeometryGate::Holds,
             VolumeVerdict::Envelope(envelope(one_bit_dithered)),
             PageReport {
                 source: PathBuf::from("library/volume-a/001.jpg"),
@@ -959,6 +991,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
                         scores: vec![CandidateScore {
                             candidate: one_bit_dithered,
                             score,
@@ -994,7 +1027,6 @@ mod tests {
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
         let report = one_page_report(
             profile,
-            GeometryGate::Holds,
             VolumeVerdict::Envelope(envelope(candidate)),
             PageReport {
                 source: PathBuf::from("library/volume-a/001.jpg"),
@@ -1005,6 +1037,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
                         scores: vec![CandidateScore {
                             candidate,
                             score: four_bit,
@@ -1043,7 +1076,10 @@ mod tests {
             "{text}"
         );
         // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它是怎么定出来的。
-        assert!(text.contains("阈值 5.500（盲测标定于 boox-poke6，其余面板未复核）"), "{text}");
+        assert!(
+            text.contains("阈值 5.500（盲测标定于 boox-poke6，其余面板未复核）"),
+            "{text}"
+        );
         // 判据那一栏的每个数都是分块聚合收出来的，而聚合里的 K 同样没标定——
         // 不说出来，读的人无从判断这一栏该信到什么程度（02 号票，ADR 0002 决定第 3 条）。
         // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——
@@ -1068,21 +1104,24 @@ mod tests {
         // 上包络的分位、迟滞页数、离群页判据的立脚点分位与倍数，四者均未标定，
         // 报告显式标注（ADR 0006）。
         assert!(text.contains("四者均未标定"), "{text}");
-        // 几何门与本卷的抖动模式都要报出来（ADR 0007）：门开着而判据选了不抖。
-        assert!(text.contains("几何门 成立 · 本卷 不抖动"), "{text}");
+        // 几何门的判定范围与本卷的抖动模式都要报出来（ADR 0007、06 号票）：
+        // 这一页在范围内、门开着，那个「不抖动」因此是判据选的。
+        assert!(
+            text.contains("几何门 判定范围 灰度页 1 页 · 不成立 0 页 · 本卷 不抖动"),
+            "{text}"
+        );
     }
 
-    /// 几何门不成立时报告要说出**是哪一页**关的门：门关掉的是整卷的抖动，
-    /// 不指名，用户就无从判断这一卷该怎么办（ADR 0007）。
+    /// 几何门那一段要说出**判定范围**与**被排除的页**（06 号票）：门逐页判，
+    /// 「不成立」这句话得连着「范围里有几页、是哪几页」一起读，用户才判断得了这一卷该怎么办。
     #[test]
-    fn a_broken_geometry_gate_names_the_page_that_broke_it() {
+    fn a_broken_geometry_gate_names_its_scope_and_the_pages_it_left_out() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Two, Dither::Off);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
         let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
         let report = one_page_report(
             profile,
-            GeometryGate::Broken { page: 0 },
             VolumeVerdict::Envelope(envelope(candidate)),
             PageReport {
                 source: PathBuf::from("library/volume-a/001.jpg"),
@@ -1093,6 +1132,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        gate: GeometryGate::Broken,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
                             candidate,
@@ -1105,14 +1145,19 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        assert!(text.contains("几何门 不成立"), "{text}");
+        // 判定范围与不成立的页数并排：一卷全是彩页时门同样成立，那是「无人可关」，
+        // 不是「每一页都贴住了面板」。
         assert!(
-            text.contains("library/volume-a/001.jpg 源比目标小"),
+            text.contains("几何门 判定范围 灰度页 1 页 · 不成立 1 页 · 本卷 不抖动"),
             "{text}"
         );
-        assert!(text.contains("本卷 不抖动"), "{text}");
+        // 这一卷范围内一页都不成立：没有别人可护，卷级那一档由它们自己定出。
+        assert!(text.contains("范围内一页都不成立"), "{text}");
         // 同一道门也撑着面板灰阶那道硬上界（ADR 0003），它跟着失效这件事不能只留在注释里。
-        assert!(text.contains("面板灰阶上界的依据随门一起失效"), "{text}");
+        assert!(
+            text.contains("面板灰阶上界的依据在这几页上随门一起失效"),
+            "{text}"
+        );
         assert!(text.contains("ADR 0003"), "{text}");
     }
 
@@ -1140,6 +1185,7 @@ mod tests {
             }),
         };
         let gray_branch = || PageBranch::Gray {
+            gate: GeometryGate::Holds,
             scores: vec![CandidateScore { candidate, score }],
             verdict: Verdict {
                 candidate,
@@ -1160,7 +1206,6 @@ mod tests {
                     outlier_pages: 0,
                     raised_pages: 0,
                 })),
-                gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 3,
@@ -1200,7 +1245,6 @@ mod tests {
                 superseded: None,
                 pages: Vec::new(),
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
-                gate: None,
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 0,
@@ -1236,7 +1280,6 @@ mod tests {
                 superseded: None,
                 pages: Vec::new(),
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
-                gate: None,
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 0,
@@ -1274,6 +1317,7 @@ mod tests {
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
+                    gate: GeometryGate::Holds,
                     scores: vec![CandidateScore { candidate, score }],
                     verdict: Verdict {
                         candidate,
@@ -1300,7 +1344,6 @@ mod tests {
                 superseded: Some(PathBuf::from("out/volume-a")),
                 // 驱动页必须是一张好页：失败页没有判据曲线，指不出档来。
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
-                gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 2,
@@ -1314,7 +1357,11 @@ mod tests {
         assert!(text.contains("隔离 1 页失败"), "{text}");
         assert!(text.contains("out/_isolated/volume-a"), "{text}");
         // 隔离的卷仍是**处理过**的卷：几何门、卷级判定、缓存一样不少。
-        assert!(text.contains("几何门 成立"), "{text}");
+        // 失败页不在几何门的判定范围内（它连尺寸都没有），范围因此只有那一张好页。
+        assert!(
+            text.contains("几何门 判定范围 灰度页 1 页 · 不成立 0 页"),
+            "{text}"
+        );
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         // 失败页那两行：尺寸从哪来，以及它为什么失败。
         assert!(
@@ -1351,6 +1398,7 @@ mod tests {
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
+                gate: GeometryGate::Holds,
                 scores: vec![CandidateScore { candidate, score }],
                 verdict: Verdict { candidate, reason },
             },
@@ -1379,7 +1427,6 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
-                gate: Some(GeometryGate::Holds),
                 cache: cache_usage(),
                 io: io_plan(),
                 decodes: 2,
@@ -1391,9 +1438,11 @@ mod tests {
 
         // 逐页那一行：救回了多少，摆在判定前面。
         assert!(text.contains("救回 62.5% · 判定 4bit"), "{text}");
-        // 卷级那一行：这一卷有几页不全，以及它们没参与卷级的哪两件事。
+        // 卷级那一行：这一卷有几页不全，以及它没参与卷级的哪一件事。
+        // 几何门不在那句话里了——门逐页判之后照旧问它（ADR 0007 决定第 1 条，06 号票）。
         assert!(text.contains("部分救回 1 页"), "{text}");
-        assert!(text.contains("不参与几何门与卷级上包络"), "{text}");
+        assert!(text.contains("不参与卷级上包络"), "{text}");
+        assert!(text.contains("几何门照旧问它们"), "{text}");
         // 末尾那一行：几十卷跑下来不用往回翻。
         assert!(text.contains("部分救回 1 卷 · 1 页"), "{text}");
         // 完好的那一页一个字都不多说：它那一行以判定开头，前面没有救回那一截。
@@ -1420,7 +1469,6 @@ mod tests {
         let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
         let report = one_page_report(
             profile,
-            GeometryGate::Holds,
             VolumeVerdict::Envelope(envelope(candidate)),
             PageReport {
                 source: PathBuf::from("library/volume-a/001.jpg"),
@@ -1430,6 +1478,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
                             candidate,

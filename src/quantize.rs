@@ -93,7 +93,9 @@ pub enum Dither {
 impl Dither {
     /// 几何门放行的抖动模式（ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。
     ///
-    /// 门不成立时只剩「不抖动」这一种——**整体关闭**，不降级、也不留页级开关。
+    /// 门不成立时只剩「不抖动」这一种——**整体关闭**，不降级成更温和的模式。
+    /// 门逐页判，这一裁因此也是逐页的：同一卷里贴住面板的页仍拿得到两种
+    /// （ADR 0007 决定第 1、2 条）。
     pub fn candidates(gate: GeometryGate) -> &'static [Dither] {
         if gate.holds() {
             &[Dither::Off, Dither::FloydSteinberg]
@@ -174,10 +176,11 @@ impl Candidate {
         Candidate::new(bit_depth, Dither::Off)
     }
 
-    /// 本次的候选集，由小到大：位深按面板灰阶数裁（ADR 0003），抖动模式按几何门裁
+    /// 这一页的候选集，由小到大：位深按面板灰阶数裁（ADR 0003），抖动模式按几何门裁
     /// （ADR 0007）。两道裁剪都在判据求值之前。
     ///
-    /// e-ink 面板 + 几何门成立 = 六个候选；门一关就回到三个。
+    /// e-ink 面板 + 几何门成立 = 六个候选；门在这一页上不成立就回到三个。
+    /// 门不成立的那一套是成立那一套的**子集**——同样的位深，少了抖动那一维。
     pub fn all(gray_levels: u32, gate: GeometryGate) -> Vec<Candidate> {
         BitDepth::candidates(gray_levels)
             .into_iter()
@@ -476,7 +479,7 @@ mod tests {
         );
         // 门一关，抖动那一维整个消失——不是降级成更温和的模式（ADR 0007）。
         assert_eq!(
-            Candidate::all(16, GeometryGate::Broken { page: 3 }),
+            Candidate::all(16, GeometryGate::Broken),
             [
                 Candidate::new(BitDepth::One, Dither::Off),
                 Candidate::new(BitDepth::Two, Dither::Off),

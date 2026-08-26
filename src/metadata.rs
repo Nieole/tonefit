@@ -288,6 +288,7 @@ fn reason_text(reason: Reason, driver: Option<usize>) -> String {
         },
         Reason::Hysteresis => "hysteresis raise".to_owned(),
         Reason::Outlier => "outlier, decided on its own".to_owned(),
+        Reason::OutsideTheGate => "outside the geometry gate, dither off".to_owned(),
     }
 }
 

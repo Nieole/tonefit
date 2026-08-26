@@ -42,37 +42,44 @@ fn scaled(length: u32, scale: f64, limit: u32) -> u32 {
     rounded.clamp(1, limit)
 }
 
-/// 几何门：这一页的目标尺寸贴住面板了吗——贴住才谈得上「输出不再被下游缩放」。
+/// 一页的几何门判定：这一页的目标尺寸贴住面板了吗——贴住才谈得上「输出不再被下游缩放」。
 ///
-/// fit-inside 把等比缩小的页顶到面板的一条边上，另一条边留边。漫画页更瘦，留边出在两侧，
-/// 阅读器填背景、不重采样，1:1 仍然成立（ADR 0007）。一条边都没贴住只有一种来路：
-/// 源比目标小、按不放大原样输出——那一页到了阅读器手里还要被放大一次。
+/// **门逐页判，一页的门只决定这一页**（ADR 0007 决定第 1 条）。它取决于几何、
+/// 不取决于页上有什么内容，因此不参与卷级统计：卷级那一层（ADR 0006 的上包络）
+/// 建在门放行的那套候选之上，门先判。
 ///
-/// **这是本仓库唯一一处判定几何门的地方。**ADR 0003 的灰阶硬上界与 ADR 0007 的抖动
-/// 依赖的是同一条不变量，ADR 0003 因此要求两者判定同源、不许各写一份。
-pub fn one_to_one(target: Size, panel: Size) -> bool {
-    target.width == panel.width || target.height == panel.height
-}
-
-/// 一个卷的几何门判定结果。
+/// 不成立时抖动**整体关闭**，「不降级成更温和的抖动模式」；成立时也「不设页级抖动开关」，
+/// 抖不抖跟着位深一起按卷决定。页级变化的只有「几何能不能承载抖动」这一件事，
+/// 判据够不着它。
 ///
-/// 门是**几何**的，不取决于页上有什么内容，因此**不参与卷级统计**——ADR 0007 的《决定》
-/// 说的是「几何门先判」。它对整卷只有一个结果：不成立时抖动**整体关闭**、
-/// 「不降级成更温和的抖动模式」，成立时也「不设页级抖动开关」。
-/// 于是卷内只要有一页不成立，整卷就不成立。
-///
-/// 不成立的那一页要指得出来——与上包络指出驱动页同一个做法：门关掉了一整卷的抖动，
-/// 报告不说是哪一页关的，用户就无从判断这一卷该不该换个 profile。
+/// 判定范围是**灰度路径上的每一页**：彩色分支上的页不在范围内（ADR 0010 决定第 4 条——
+/// 那条路径既不量化也不抖动），失败页连几何都没有。部分救回页在范围内，
+/// 它的尺寸是文件头里的真尺寸。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeometryGate {
-    /// 成立：卷内每一页的目标尺寸都贴住面板。
+    /// 成立：这一页的目标尺寸贴住面板。
     Holds,
-    /// 不成立：这一页源比目标小，按不放大原样输出（spec 的 story 17），阅读器还要再缩一次。
-    /// 序号指进 [`crate::VolumeReport::pages`]。
-    Broken { page: usize },
+    /// 不成立：源比目标小，按不放大原样输出（spec 的 story 17），阅读器还要再缩一次。
+    Broken,
 }
 
 impl GeometryGate {
+    /// 判这一页的门。
+    ///
+    /// fit-inside 把等比缩小的页顶到面板的一条边上，另一条边留边。漫画页更瘦，留边出在两侧，
+    /// 阅读器填背景、不重采样，1:1 仍然成立（ADR 0007）。一条边都没贴住只有一种来路：
+    /// 源比目标小、按不放大原样输出——那一页到了阅读器手里还要被放大一次。
+    ///
+    /// **这是本仓库唯一一处判定几何门的地方。**ADR 0003 的灰阶硬上界与 ADR 0007 的抖动
+    /// 依赖的是同一条不变量，ADR 0003 因此要求两者判定同源、不许各写一份。
+    pub fn of(target: Size, panel: Size) -> Self {
+        if target.width == panel.width || target.height == panel.height {
+            GeometryGate::Holds
+        } else {
+            GeometryGate::Broken
+        }
+    }
+
     /// 门成立吗。
     pub fn holds(self) -> bool {
         self == GeometryGate::Holds
@@ -92,21 +99,22 @@ mod tests {
         // B 类中位页（见 measurements 的《B 类素材普查》）：缩到 1182×1680，宽边留边。
         let target = fit_inside(Size::new(1441, 2048), PANEL);
         assert_eq!(target, Size::new(1182, 1680));
-        assert!(one_to_one(target, PANEL));
+        assert!(GeometryGate::of(target, PANEL).holds());
 
         // 跨页宽幅页反过来贴住宽的那条边，上下留边。
         let spread = fit_inside(Size::new(5056, 1680), PANEL);
         assert_eq!(spread, Size::new(1264, 420));
-        assert!(one_to_one(spread, PANEL));
+        assert!(GeometryGate::of(spread, PANEL).holds());
     }
 
     /// 两边都小于面板的页按不放大原样输出，一条边都贴不住：阅读器会把它放大，门不成立。
-    /// B 类里这样的页占比不低（1264×1680 面板上 19%），ADR 0007 认下的正是这笔代价。
+    /// B 类里这样的页占比不低（1264×1680 面板上 19%），ADR 0007 认下的正是这笔代价——
+    /// 但只这一页认，同卷里贴住面板的页照旧抖得动（ADR 0007 决定第 1 条）。
     #[test]
     fn a_page_smaller_than_the_panel_breaks_the_gate() {
         let target = fit_inside(Size::new(800, 1000), PANEL);
         assert_eq!(target, Size::new(800, 1000), "小于目标的页不该被放大");
-        assert!(!one_to_one(target, PANEL));
+        assert_eq!(GeometryGate::of(target, PANEL), GeometryGate::Broken);
     }
 
     /// 只有一条边够长的页也原样输出，但那条边恰好贴住面板：阅读器按 fit-inside 显示
@@ -115,9 +123,9 @@ mod tests {
     fn a_page_that_already_touches_one_edge_keeps_the_gate_open() {
         let target = fit_inside(Size::new(PANEL.width, 1000), PANEL);
         assert_eq!(target, Size::new(PANEL.width, 1000));
-        assert!(one_to_one(target, PANEL));
+        assert!(GeometryGate::of(target, PANEL).holds());
         // 差一个像素就贴不住了，阅读器会放大 0.08%——那就不是 1:1。
         let shy = fit_inside(Size::new(PANEL.width - 1, 1000), PANEL);
-        assert!(!one_to_one(shy, PANEL));
+        assert!(!GeometryGate::of(shy, PANEL).holds());
     }
 }

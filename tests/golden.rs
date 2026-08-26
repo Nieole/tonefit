@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use fixtures::{Volume, Workspace};
 use tonefit::{
-    CacheBudget, Filter, GeometryGate, IoMode, Mode, PageBranch, PageColor, PageReport, Request,
-    Size, VolumeReport,
+    CacheBudget, Filter, IoMode, Mode, PageBranch, PageColor, PageReport, Request, Size,
+    VolumeReport,
 };
 
 /// 快照文件，相对仓库根。
@@ -240,9 +240,10 @@ impl Case {
 /// 铺一个长卷：`count` 页，第 `index` 页画什么由 `page` 说了算（下标从 1 起）。
 ///
 /// 长卷用的都是小页。卷级那三条路径只看逐页判定的分布，不看页画的是什么，而小页把
-/// 一卷几十页的代价压到可接受——代价是源比面板小、几何门不成立、抖动整卷关闭
-/// （ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。那是这几卷有意接受的形态：
-/// 它们考的是上包络、离群与迟滞，不是几何。
+/// 一卷几十页的代价压到可接受——代价是源比面板小，几何门在**每一页**上都不成立
+/// （ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。一页成立的都没有，那些页于是
+/// 自己就是主体，卷级基准档由它们定出、必然不抖（ADR 0007 决定第 5 条）。
+/// 那是这几卷有意接受的形态：它们考的是上包络、离群与迟滞，不是几何。
 ///
 /// **由此这几卷的基线踩在一件尚未想清楚的事情上**：几何门不成立时该用哪个位深集合，
 /// 是 `CONTEXT.md` 的《尚未确立》里明确挂着的一条——对齐消失，灰阶硬上界的依据随之失效，
@@ -295,12 +296,27 @@ fn mono_cases() -> Vec<Case> {
         Case::new("spread", |volume| {
             volume.page("001.png", &fixtures::gradient(fixtures::SPREAD));
         }),
-        // 源比目标小：不放大，一条边都贴不住，几何门不成立 → 抖动整卷关闭（ADR 0007）。
+        // 源比目标小：不放大，一条边都贴不住，几何门在这一页上不成立。
+        // 全卷只此一页，一页成立的都没有——它自己就是主体，抖动因此关着（ADR 0007 决定第 5 条）。
         Case::new("undersized", |volume| {
             volume.page(
                 "001.png",
                 &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
             );
+        }),
+        // **混合尺寸卷：06 号票的现场。**四页正片贴住面板，一张封面比目标还小。
+        // 门逐页判（ADR 0007 决定第 1 条）：那一张封面不再否决另外四页的抖动，
+        // 它自己拿卷级基准档的位深、抖动关掉。这一卷因此是快照里唯一两套候选集
+        // 都用得上的那个——一张封面否决整卷那件事回来的话，四页正片的候选会整片变短。
+        Case::new("mixed-size", |volume| {
+            volume.page(
+                "001.png",
+                &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+            );
+            volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+            volume.page("003.png", &fixtures::line_art(fixtures::TYPICAL));
+            volume.page("004.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+            volume.page("005.png", &fixtures::screentone(fixtures::TYPICAL));
         }),
         // 多页混排：卷内档位一致与驱动页落在哪一页，只有多页才看得出来（ADR 0006）。
         // 三页线稿，另两页（渐变与纯色）在线稿过得去的那一档上远在界外，
@@ -490,15 +506,16 @@ fn volume_name(volume: &VolumeReport) -> String {
         .into_owned()
 }
 
-/// 这一卷的几何门（ADR 0007）。
+/// 这一卷的几何门（ADR 0007）：判定范围有几页，其中几页不成立。
+///
+/// 门逐页判（06 号票），卷级这一行因此记的是两个计数，不是一页的名字。
+/// 是**哪几页**不成立，逐页那几行自己说得出来：它们的理由写着「几何门不成立」。
 fn gate(volume: &VolumeReport) -> String {
-    match volume.gate {
-        Some(GeometryGate::Holds) => "成立".to_owned(),
-        Some(GeometryGate::Broken { page }) => {
-            format!("不成立 · {} 贴不住面板", fixtures::page_at(volume, page))
-        }
-        None => "—".to_owned(),
-    }
+    format!(
+        "判定范围 {} 页 · 不成立 {} 页",
+        volume.judged_by_the_gate().count(),
+        volume.outside_the_gate().count()
+    )
 }
 
 /// 一页的那一行：名字、目标尺寸、判定候选、输出字节、理由。
