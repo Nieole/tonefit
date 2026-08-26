@@ -96,6 +96,22 @@ pub fn line_art(size: Size) -> DynamicImage {
     }))
 }
 
+/// 一页留白，左上角一块 `patch` 大的灰调补丁——低位深下唯一会崩的就是这块。
+///
+/// 补丁竖直方向 0→255，与 [`gradient`] 同一条斜坡，只是圈在一小块里。
+/// 页上其余部分是白的：白在任何位深上都是格点，误差恒为零，
+/// 这一页的判据于是完全由那一小块说了算。
+pub fn tone_patch(size: Size, patch: Size) -> DynamicImage {
+    let last = (patch.height - 1).max(1);
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        Luma([if x < patch.width && y < patch.height {
+            (y * 255 / last) as u8
+        } else {
+            255
+        }])
+    }))
+}
+
 /// 纯色页：全图同一个灰度取值。
 pub fn solid(size: Size, level: u8) -> DynamicImage {
     DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |_, _| {
@@ -230,6 +246,16 @@ pub fn profile(device: &str) -> Profile {
 /// 基准设备的 profile。自己拼 `Request` 的用例用它填 profile 那一项。
 pub fn baseline_profile() -> Profile {
     profile(BASELINE_DEVICE)
+}
+
+/// 与基准面板等大的页尺寸：源即目标，不缩放，几何门两条边都贴住，
+/// 也就是这台 profile 输出得到的**最大尺寸**。
+///
+/// 判据的分块聚合按**目标尺寸**铺开块数，「多小的损伤读得出来」因此只在真实输出尺寸上
+/// 问得准（ADR 0002 的《第 3 条为什么改过》）。从 profile 推出而不写死：
+/// 面板表改了，用它的夹具跟着走。
+pub fn panel_sized() -> Size {
+    baseline_profile().panel().resolution
 }
 
 /// 对一个目录卷调用被测的 `run`，用基准设备的 profile。

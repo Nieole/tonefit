@@ -10,7 +10,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, CandidateScore, Dither, Filter, GeometryGate, IoMode, Mode, PageBranch,
     PageColor, PageReport, Profile, Progress, ProgressSink, Report, Request, VolumeReport,
-    VolumeVerdict,
+    VolumeVerdict, aggregation,
 };
 
 #[derive(Parser)]
@@ -302,6 +302,11 @@ fn calibration_note(profile: &Profile, out: &Path) -> String {
 
 fn render(report: &Report, mode: Mode) -> String {
     let mut text = format!("profile {}\n", report.profile);
+    // 逐页那些「判据 …」的数都是这套取法收出来的，而取法里的 K 还没标定。
+    // 它与阈值同一个待遇：数摆出来，没标定这件事跟着摆出来（ADR 0002 决定第 3 条）。
+    // 它自成一行、不接在 profile 后面——判据聚合眼下对所有 profile 都一样，不是这台设备的事。
+    // 行首是「判据聚合」而不是「判据」：逐页那一行的「判据」说的是**量**，两者不许同名。
+    text.push_str(&format!("判据聚合 {}\n", aggregation()));
     if mode == Mode::DryRun {
         text.push_str("dry-run：只算不写，下面的路径都还没落盘\n");
     }
@@ -951,9 +956,9 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：
-        // 一行几何，一行判定。
-        assert_eq!(text.lines().count(), 9);
+        // profile 一行、判据形状一行、卷六行（去处、几何门、卷级、驱动页、读取、缓存），
+        // 页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 10);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -975,6 +980,16 @@ mod tests {
         );
         // 阈值对整份报告只有一个，写在头一行的 profile 里，并标明它还没标定。
         assert!(text.contains("阈值 8.500（未标定占位值）"), "{text}");
+        // 判据那一栏的每个数都是分块聚合收出来的，而聚合里的 K 同样没标定——
+        // 不说出来，读的人无从判断这一栏该信到什么程度（02 号票，ADR 0002 决定第 3 条）。
+        // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——
+        // 标定把它换掉时这一条不该跟着改。
+        assert!(text.contains("判据聚合 分块 32×32"), "{text}");
+        assert!(
+            text.contains(&format!("不宽于 {} 块", aggregation().tail_tiles)),
+            "{text}"
+        );
+        assert!(text.contains("K 未标定占位值"), "{text}");
         // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
         assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
         assert!(text.contains("未溢写"), "{text}");
@@ -1130,8 +1145,8 @@ mod tests {
 
         let text = render(&report, Mode::Process);
 
-        // profile 一行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 4);
+        // profile 一行、判据形状一行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 5);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"

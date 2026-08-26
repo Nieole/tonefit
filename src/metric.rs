@@ -1,4 +1,5 @@
-//! 判据：参照与候选各做低通之后的局部均值误差，分块聚合取上分位（ADR 0002）。
+//! 判据：参照与候选各做低通之后的局部均值误差，
+//! 分块聚合取上分位与「第 K 差的那一块」之间更严的那个（ADR 0002）。
 //!
 //! 任何逐像素度量都不得作为候选之间的选择依据：抖动用高频误差换低频保真，
 //! 逐像素度量在「该不该抖」这一维上符号是反的（见 measurements 的《抖动》）。
@@ -103,7 +104,7 @@ pub fn score(reference: &Reference, candidate: &GrayImage) -> Score {
                 * weighted.weight
         })
         .collect();
-    Score(upper_quantile(&mut errors))
+    Score(aggregate(&mut errors))
 }
 
 /// 观看距离，毫米。ADR 0002 的论证前提：300 PPI、30 cm。
@@ -160,10 +161,60 @@ fn low_pass(pixels: &[u8], size: Size, kernel: u32) -> Vec<f32> {
 }
 
 /// 分块边长。ADR 0002 定死 32×32：banding 是局部现象，全页均值会被留白稀释。
+///
+/// **绝对尺寸，不随页尺寸缩放**——它对齐的是 banding 的空间尺度，不是页的尺度。
+/// 放大它，块内均值会自己把损伤与干净区平均掉，分块要防的稀释降一级重新出现
+/// （ADR 0002 的《不要做的「简化」》）。
 const TILE: u32 = 32;
 
-/// 聚合取的上分位。ADR 0002 定死 p99。
+/// 尾巴按比例走的那一半：上分位。ADR 0002 定死 p99。
 const UPPER_QUANTILE: f64 = 0.99;
+
+/// 尾巴按绝对块数走的那一半，即 ADR 0002 决定第 3 条的 K：尾巴永远不宽于这么多块。
+///
+/// **未标定占位值**，按量级推得、不是实测：一块值得报警的 banding 在 300 PPI 上
+/// 是百来像素见方，铺在 32×32 的块上就是几块到十几块，8 取的是这个量级的下沿。
+/// 为什么占位值往严的一侧取、为什么它第一批该被替掉，见 `CONTEXT.md` 的《尚未确立》。
+const TAIL_TILES: usize = 8;
+
+/// 判据聚合（ADR 0002 决定第 3 条）：块边长绝对，尾巴按比例走但永不宽于 K 块。
+///
+/// 三个数摆在一处，因为读它们的两端要的是同一件事：报告要把 K 标成未标定占位值，
+/// 用例要按块边长与 K 造夹具。两端都不必抄下当前这几个数字，标定把 K 换掉时
+/// 一行都不用改（与 [`Threshold::value`](crate::Threshold::value) 同一个理由）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Aggregation {
+    /// 分块边长。绝对尺寸，不随页尺寸缩放。
+    pub tile: u32,
+    /// 尾巴按比例走的那一半：上分位。
+    pub quantile: f64,
+    /// 尾巴按绝对块数走的那一半：永远不宽于这么多块。**未标定占位值**。
+    pub tail_tiles: usize,
+}
+
+/// 本次判据用的聚合。三个数眼下对所有 profile 都一样。
+pub const fn aggregation() -> Aggregation {
+    Aggregation {
+        tile: TILE,
+        quantile: UPPER_QUANTILE,
+        tail_tiles: TAIL_TILES,
+    }
+}
+
+impl std::fmt::Display for Aggregation {
+    /// 形状连同「K 还没标定」一并说出——判据那一栏的每一个数都是这个形状算出来的，
+    /// 不说，读的人无从判断该信到什么程度（与 [`Threshold`](crate::Threshold) 同一个做法）。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "分块 {}×{} · 尾巴取 p{}，但不宽于 {} 块（K 未标定占位值）",
+            self.tile,
+            self.tile,
+            (self.quantile * 100.0).round(),
+            self.tail_tiles,
+        )
+    }
+}
 
 /// 掩蔽加权的地板：纹理再密也不至于完全不看。
 const MASKING_FLOOR: f32 = 0.25;
@@ -244,14 +295,23 @@ fn tiles(size: Size) -> Vec<Tile> {
     tiles
 }
 
-/// 上分位，最近秩取法。块数少到取不出分位时退化成最差的那一块——
+/// 分块误差收成一个数：**上分位与「第 K 差的那一块」之间更严的那个**（ADR 0002 决定第 3 条）。
+///
+/// 尾巴按比例走，但永远不宽于 K 块。两端都不退化：小页上分位本就只圈住两三块、比 K 严，
+/// 分位说了算；大页上 K 说了算，绝对尺度的损伤因此穿得过去。
+///
+/// 只按比例走会让「多小的损伤会被丢掉」随页面积漂——p99 在 2120 块上圈住最差的 22 块，
+/// 盖不满那么多块的损伤读数就是 0。块数少到取不出分位时退化成最差的那一块，
 /// 宁可严格，也不要把仅有的几块平均掉。
-fn upper_quantile(values: &mut [f32]) -> f32 {
+fn aggregate(values: &mut [f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
     values.sort_by(|a, b| a.partial_cmp(b).expect("局部均值误差不会是 NaN"));
-    values[nearest_rank(UPPER_QUANTILE, values.len()) - 1]
+    // 升序排开，秩越靠后取到的块越差、判据越严：两个秩取靠后的那个，就是取更严的那个。
+    let by_share = nearest_rank(UPPER_QUANTILE, values.len());
+    let by_count = values.len() + 1 - TAIL_TILES.min(values.len());
+    values[by_share.max(by_count) - 1]
 }
 
 /// 最近秩：`count` 个数排开后，上分位 `quantile` 落在第几名（从 1 数起）。不插值。
@@ -279,6 +339,36 @@ mod tests {
         // 面板表之外的极端 PPI 也不许跑出量级。
         assert!(KERNEL_RANGE.contains(&low_pass_kernel(96)));
         assert!(KERNEL_RANGE.contains(&low_pass_kernel(1200)));
+    }
+
+    /// 块边长**不随页尺寸变化**：绝对尺寸，对齐的是 banding 的空间尺度，不是页的尺度。
+    ///
+    /// 「让块边长随页放大，块数稳住了，分位自然就对了」读起来像同一件事的更简单做法，
+    /// 实则把稀释问题从页级降到块级重新引入一遍——1264×1680 上要保持 256 块，
+    /// 块得放大到约 91×91，那个尺寸的一块已横跨多个内容区，**块内均值自己就开始
+    /// 把损伤与干净区平均掉**（ADR 0002 的《备选方案》与《不要做的「简化」》两处都钉死了它）。
+    /// 这条把它钉在代码里：块边长一旦跟着页走，这里当场红。
+    #[test]
+    fn the_tile_edge_does_not_follow_the_page_size() {
+        // 左上角那一块在这几张页上都是满块，边长直接读得出来。
+        let edge = |size| {
+            let corner = tiles(size).into_iter().next().expect("页上总有块");
+            (corner.width, corner.height)
+        };
+        let cramped = edge(Size::new(256, 256));
+        for size in [
+            Size::new(512, 512),
+            // 基准面板的实际输出尺寸，以及贴住宽边的跨页。
+            Size::new(1264, 1680),
+            Size::new(1264, 420),
+        ] {
+            assert_eq!(edge(size), cramped, "{size} 上的块边长跟着页变了");
+        }
+        assert_eq!(cramped, (TILE, TILE));
+
+        // 块数因此随页面积走，而不是被稳在某个常数上：基准面板的输出尺寸上铺出
+        // 40×53 = 2120 块——ADR 0002 的《第 3 条为什么改过》算的就是这个数。
+        assert_eq!(tiles(Size::new(1264, 1680)).len(), 2120);
     }
 
     /// 分块铺满整页，不重不漏。

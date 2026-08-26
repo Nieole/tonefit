@@ -121,13 +121,20 @@ fn the_error_never_grows_when_the_bit_depth_does() {
     }
 }
 
+/// 大页那一侧取 [`fixtures::panel_sized`]，不拿小页挑软柿子。
+///
+/// 这条性质当初是在 512×512 上量的（16/256 块 = 6.25%，恰好在 p99 的 1% 门限之上），
+/// 换成实际输出尺寸当场失败——2120 块上 p99 只圈得住最差的 22 块。
+/// **测试在性质成立的那一侧挑了尺寸**，这才是那次缺陷真正的教训
+/// （ADR 0002 的《第 3 条为什么改过》）。
 #[test]
 fn a_page_of_white_around_the_damage_does_not_dilute_it() {
-    let patch = Size::new(128, 128);
+    // 2K 块：够 K 圈住，又不到 p99 在输出尺寸上圈住的 22 块。
+    let patch = patch_of(tonefit::aggregation().tail_tiles, 2);
     let panel = fixtures::baseline_profile().panel();
-    // 同一块灰调补丁，一次占满整页，一次泡在十六倍的留白里。
-    let cramped = Reference::new(panel, page_with_tone_patch(patch, patch));
-    let roomy = Reference::new(panel, page_with_tone_patch(Size::new(512, 512), patch));
+    // 同一块灰调补丁，一次占满整页，一次泡在一百多倍的留白里。
+    let cramped = Reference::new(panel, tone_patch_page(patch, patch));
+    let roomy = Reference::new(panel, tone_patch_page(fixtures::panel_sized(), patch));
 
     let cramped_score = score(
         &cramped,
@@ -137,12 +144,21 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
         &roomy,
         &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
     );
+    // 读数几乎不变，且大页那一侧不高过小页——留白只会往下拉，不会凭空添出误差来。
+    //
+    // 不主张两边**相等**：两张页取的不是同一个秩。局促页上分位只圈住最差的一块，
+    // 大页上 K 说了算、取的是第 K 差的那一块，而那一块贴着补丁的边——
+    // 低通在那里掺进了留白，掩蔽加权也因边界的活动度而收了手。两样都是判据照定义在做事。
+    // 留下的余量按量的：K 从 4 到 20 落差都是 1.6%，一成的带子稳稳罩得住，
+    // 而稀释一露头就是量级塌陷（同一份夹具上，聚合退回只取上分位读的是 0.000）。
     assert!(
-        (roomy_score.value() - cramped_score.value()).abs() <= cramped_score.value() * 0.05,
+        roomy_score <= cramped_score && roomy_score.value() >= cramped_score.value() * 0.9,
         "留白把判据从 {cramped_score} 稀释到了 {roomy_score}"
     );
 
-    // 换成全页聚合就会被稀释：同一块补丁，逐像素度量在大页上掉到约四分之一。
+    // 换成全页聚合就会被稀释：同一块补丁在实际输出尺寸上只占千分之几，
+    // 逐像素度量按面积比开方掉下去，掉的是一个量级。倍数写得比实际宽松，
+    // 因为补丁尺寸跟着 K 走——这一条要证的是「夹具确实摊薄了」，不是那个倍数本身。
     let cramped_pixelwise = pixelwise_rmse(
         cramped.image(),
         &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
@@ -152,21 +168,25 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
         &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
     );
     assert!(
-        cramped_pixelwise > roomy_pixelwise * 3.5,
+        cramped_pixelwise > roomy_pixelwise * 5.0,
         "夹具不对：全页聚合本该被留白稀释，{cramped_pixelwise:.2} 对 {roomy_pixelwise:.2}"
     );
 }
 
-/// 一页留白，左上角放一块 `patch` 大的灰调补丁——低位深下唯一会崩的就是这块。
-fn page_with_tone_patch(size: Size, patch: Size) -> GrayImage {
-    let mut pixels = vec![255u8; (size.width * size.height) as usize];
-    let last = (patch.height - 1).max(1);
-    for y in 0..patch.height.min(size.height) {
-        for x in 0..patch.width.min(size.width) {
-            pixels[(y * size.width + x) as usize] = (y * 255 / last) as u8;
-        }
-    }
-    GrayImage::new(size, pixels)
+/// 一块 `wide × tall` 块大的补丁。判据的分块聚合数的是块，夹具因此也按块说话。
+///
+/// 块数按 K 推出而不抄下当前那个数字，两头都不能碰：要**够 K**，否则大页那一侧读回 0，
+/// 量的就成了别的事；又不能大到 p99 自己都圈得住，否则退回只取上分位也照样绿
+/// （2120 块上那是最差的 22 块）。K 换个值，用它的几条用例一行都不用改。
+fn patch_of(wide: usize, tall: usize) -> Size {
+    let shape = tonefit::aggregation();
+    Size::new(shape.tile * wide as u32, shape.tile * tall as u32)
+}
+
+/// 留白里一块灰调补丁的那种页，转成判据吃的灰度缓冲。页本身由 [`fixtures::tone_patch`] 造，
+/// 黄金回归的 `local-damage` 用的是同一份——两处量的必须是同一种页。
+fn tone_patch_page(size: Size, patch: Size) -> GrayImage {
+    fixtures::gray_image(&fixtures::tone_patch(size, patch))
 }
 
 #[test]
@@ -222,4 +242,35 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
         on(denser),
         on(coarser)
     );
+}
+
+/// 一块绝对尺寸的损伤，在该 profile 的**实际输出尺寸**上照样读得出来。
+///
+/// 分块上分位是**比例**，而值得报警的损伤是**绝对面积**：p99 在 1264×1680 上只圈得住
+/// 最差的 22 块，覆盖不到那么多块的损伤被整块丢掉，三个候选位深读数全是 0，
+/// 那一页于是判成最低档——而那一小块正是唯一会崩的地方（ADR 0002 的《第 3 条为什么改过》）。
+#[test]
+fn damage_covering_the_tail_width_reads_back_at_every_page_size() {
+    let shape = tonefit::aggregation();
+    // 正好盖住 K 块的一条：宽 K 块、高一块，块边界对齐——保证的下边界就在这里。
+    let patch = patch_of(shape.tail_tiles, 1);
+
+    // 三个尺寸各压一端：补丁自己那么大时块数少到分位退化成最差的一块；
+    // 512×512 铺出 256 块，p99 圈住最差的 3 块，分位比 K 严、分位说了算；
+    // 实际输出尺寸铺出 2120 块，p99 圈住 22 块，K 说了算——只有这一端从前读回 0。
+    for page in [patch, Size::new(512, 512), fixtures::panel_sized()] {
+        let reference = Reference::new(
+            fixtures::baseline_profile().panel(),
+            tone_patch_page(page, patch),
+        );
+        let score = score(
+            &reference,
+            &quantize(reference.image(), fixtures::plain(BitDepth::One)),
+        );
+        assert!(
+            score.value() > 0.0,
+            "{page} 的页上，盖住 {} 块的损伤读成了 {score}",
+            shape.tail_tiles
+        );
+    }
 }

@@ -39,6 +39,11 @@
   卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
   001.png        1182x1680  1bit+FS    13221  卷级上包络
 
+[kobo-libra-2] local-damage
+  几何门 成立
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1264x1680  2bit+FS     6229  卷级上包络
+
 [kobo-libra-2] color-on-mono
   几何门 成立
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页

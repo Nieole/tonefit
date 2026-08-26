@@ -1,12 +1,13 @@
 //! 黄金回归：一组固定夹具的判定与输出体积记进快照，任何变动都要显式接受。
 //!
 //! 这里一条性质都不主张——它只钉住「今天这批夹具算出来的就是这些数」。存在的理由是
-//! 15 号票那一句：防止调优在无人察觉时改变判定结果。判据的低通核、掩蔽加权、上包络的
-//! 分位、迟滞页数、离群判据的立脚点分位与倍数、编码器在灰度与调色板之间的取舍，
-//! 任何一处动一下都会在这里露出来。
+//! 15 号票那一句：防止调优在无人察觉时改变判定结果。判据的低通核、掩蔽加权、分块的
+//! 边长与尾巴宽度、上包络的分位、迟滞页数、离群判据的立脚点分位与倍数、编码器在灰度与
+//! 调色板之间的取舍，任何一处动一下都会在这里露出来。
 //!
 //! 非退化的上分位与迟滞升档要页数够多才走得到，因此有三个长卷专门喂它们；
 //! 离群那一条不挑卷长，短卷夹具里就走得到（立脚点逐页各取一个，见 `envelope` 的 `outlying`）。
+//! 判据自己那一层的分块聚合则要**局部**损伤才走得到，`local-damage` 专喂它。
 //! 归档卷单列一个，让写进容器的页字节数也进快照。
 //!
 //! 与 `tests/metric.rs` 分工相反：那边测的是判据**该有的性质**，数值动了不算错；
@@ -24,7 +25,7 @@ use std::path::{Path, PathBuf};
 use fixtures::{Volume, Workspace};
 use tonefit::{
     CacheBudget, Filter, GeometryGate, IoMode, Mode, PageBranch, PageColor, PageOutcome,
-    PageReport, Request, VolumeReport,
+    PageReport, Request, Size, VolumeReport,
 };
 
 /// 快照文件，相对仓库根。
@@ -275,6 +276,16 @@ fn mono_cases() -> Vec<Case> {
         // 纯色页：一个取值，编码器那一侧的下限。
         Case::new("solid", |volume| {
             volume.page("001.png", &fixtures::solid(fixtures::TYPICAL, 128));
+        }),
+        // 一页留白里一小块灰调崩坏，页与面板等大——**判据这一侧的分块聚合只在这里走得到**。
+        // 别的夹具页画的都是铺满整页的东西，块与块之间读数相近，尾巴取第几块都一样；
+        // 只有这一页的损伤是局部的，尾巴宽一格窄一格当场换一档位深（02 号票，ADR 0002 决定第 3 条）。
+        // 补丁 128×128 = 16 块：够 K 那条绝对下限圈住，又不到 p99 在 2120 块上圈住的 22 块。
+        Case::new("local-damage", |volume| {
+            volume.page(
+                "001.png",
+                &fixtures::tone_patch(fixtures::panel_sized(), Size::new(128, 128)),
+            );
         }),
         // 彩页落在黑白面板上：转灰后走灰度路径，是离群页的主要来源（`CONTEXT.md`）。
         Case::new("color-on-mono", |volume| {

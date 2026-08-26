@@ -95,7 +95,7 @@ impl std::fmt::Display for Threshold {
 /// 判定默认落在对齐的那一档，要往下走必须由判据说了算。**保守指的就是这个偏向。**
 ///
 /// 《B 类位深实测》给的是另一把尺——4bit 的局部均值 RMSE 中位 1.36、2bit 6.48——
-/// 那一组是全页 RMSE，与本项目 p99 分块加权的判据不同尺，不能直接拿来当界。
+/// 那一组是全页 RMSE，与本项目取分块尾巴、带掩蔽加权的判据不同尺，不能直接拿来当界。
 ///
 /// 这个数没有经过标定：真实样本 + 人工 A/B 盲测是 14 号票的事（`CONTEXT.md` 的《尚未确立》）。
 const PLACEHOLDER_THRESHOLD: Threshold = Threshold(8.5);
