@@ -342,7 +342,8 @@ fn placeholder(size: Size) -> GrayImage {
 /// 与离群页同一个待遇（ADR 0006 决定第 5 条），只是摘它的理由是页残缺，不是判据偏离。
 ///
 /// 一页不剩地落在救回那一侧时**一页都不摘**：那说明残缺的是这一卷本身，不是其中几页，
-/// 而主体不能空着。这与 `envelope::summarize` 里「一页不剩地落到离群侧」是同一条规矩。
+/// 而主体不能空着。这与 `envelope::summarize` 里「一页不剩地落到离群侧」是同一条规矩，
+/// 几何门那一侧也照它走（见 [`first_pass`]）。
 ///
 /// 逐页定档也落在这里，而不在第一遍：几何门要看完整卷才判得死（一页比目标小就整卷关掉抖动，
 /// 见 [`first_pass`]），而候选集是判定的前提——在门还可能关上的时候定档，定的是一套
@@ -519,6 +520,21 @@ impl ScoredPage {
         matches!(self.outcome, Outcome::Failed { .. })
     }
 
+    /// 这一页有资格替整卷回答几何门那个问题吗（04 号票）：走灰度路径，而且是整解出来的。
+    ///
+    /// 彩色分支上的页不算——门撑的两件事与它无关；部分救回页也不算——它没解全。
+    /// 失败页连几何都没有。一卷里一张都没有时，门改听部分救回页的（见 [`first_pass`]）。
+    fn speaks_for_the_gate(&self) -> bool {
+        matches!(
+            self.outcome,
+            Outcome::Processed {
+                branch: Branch::Gray { .. },
+                salvage: None,
+                ..
+            }
+        )
+    }
+
     /// 这一页是救回来的吗（04 号票）。答是的页不参与几何门与卷级上包络。
     fn salvaged(&self) -> bool {
         matches!(
@@ -605,10 +621,16 @@ struct Scored {
 ///
 /// **部分救回页同样不参与**（04 号票）。它的尺寸倒是真的——文件头一点没缺——但门对整卷
 /// 只有一个结果，而一张连像素都没解全的页不该是替另外一百多页回答这个问题的那一张。
-/// 一卷里连一张完好的灰度页都没有时，门于是无人可关，判定为成立：与只装着彩页的卷同一个
-/// 答案，理由也同一条——没有页去关它，那是真话，不是「不知道」（见 [`GeometryGate`]）。
-/// 代价认下：那样一卷里真的贴不住面板的页会跟着抖动一起写出去。
-/// 少数页否决整卷这件事本身归 06 号票收口。
+///
+/// **一页完好的灰度页都没有时，它们自己的几何说了算**：摘它们是为了护着别人，
+/// 而那时没有别人可护。这与汇总那一侧「一页不剩地落在救回那一侧就一页都不摘」是同一条规矩
+/// （见 [`summarize_volume`]）。连部分救回页也没有的卷才真是无人可关，判定为成立——
+/// 与只装着彩页的卷同一个答案（见 [`GeometryGate`]）。
+///
+/// **这一条与 ADR 0007 冲突，冲突留着**：混排卷里那张贴不住面板的部分救回页会跟着整卷
+/// 一起抖动，而 ADR 0007 的决定是「抖动仅在目标尺寸未被下游缩放时启用」。冲突是本票
+/// 那条验收标准的直接后件（部分救回页不参与几何门），口径与 ADR 0007 的修订归 06 号票
+/// ——它要收的正是「少数页否决整卷」这同一件事。
 ///
 /// **读不出、解不出的页在这里变成失败页**（12 号票），而不是让整卷的调用返回 `Err`。
 /// 它同样不参与几何门，理由比彩页还直白：它连尺寸都没有。判据与缓存也一样绕开——
@@ -641,6 +663,7 @@ fn first_pass(
     let members: Vec<&Member> = pages.iter().collect();
 
     let breaker = AtomicUsize::new(GATE_HOLDS);
+    let salvaged_breaker = AtomicUsize::new(GATE_HOLDS);
     let compute = Compute {
         request,
         decoder,
@@ -649,6 +672,7 @@ fn first_pass(
         holds: &holds,
         broken: &broken,
         breaker: &breaker,
+        salvaged_breaker: &salvaged_breaker,
         steps,
     };
     let mut scored: Vec<(usize, Result<ScoredPage>)> =
@@ -671,7 +695,17 @@ fn first_pass(
 
     // 关上门的是**序号最小**的那一页，不是最先算完的那一页：并发下这两个不是同一页，
     // 而报告里指名道姓的那一页必须与顺着做时是同一个答案。
-    let gate = match breaker.load(Ordering::Relaxed) {
+    //
+    // 完好的灰度页一张都没有时，改听部分救回页那一个：摘它们是为了护着别人，而那时
+    // 没有别人可护（见本函数的文档）。反过来 `breaker` 一旦有值，关门的那一页自己就是
+    // 一张完好灰度页，这一支因此不必再问。
+    let broke = match breaker.load(Ordering::Relaxed) {
+        GATE_HOLDS if !pages.iter().any(ScoredPage::speaks_for_the_gate) => {
+            salvaged_breaker.load(Ordering::Relaxed)
+        }
+        page => page,
+    };
+    let gate = match broke {
         GATE_HOLDS => GeometryGate::Holds,
         page => GeometryGate::Broken { page },
     };
@@ -714,8 +748,12 @@ struct Compute<'a> {
     /// 几何门关上之后的候选集。覆盖项把它裁空时是 `Err`——那一趟注定要报错，
     /// 但报在哪一页上要等全卷走完才定得下来（见 [`first_pass`] 收尾）。
     broken: &'a Result<Vec<Candidate>>,
-    /// 关上门的那一页的序号，取最小的那个；[`GATE_HOLDS`] 即门还开着。
+    /// 关上门的那一页的序号，取最小的那个；[`GATE_HOLDS`] 即门还开着。**只收完好灰度页**。
     breaker: &'a AtomicUsize,
+    /// 同上，收的是部分救回页。它只在一卷里连一张完好灰度页都没有时作数
+    /// （见 [`first_pass`]），因此**不进** [`allowed`](Compute::allowed) 那条快路——
+    /// 那时门最终关不关得上，要等全卷走完才知道。
+    salvaged_breaker: &'a AtomicUsize,
     steps: progress::Steps<'a>,
 }
 
@@ -779,9 +817,13 @@ impl Compute<'_> {
 
         let gray = gray::to_gray(&decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
-        if salvage.is_none() && !geometry::one_to_one(size, panel.resolution) {
+        if !geometry::one_to_one(size, panel.resolution) {
             // 门关得越早，白求的判据越少：先记下，再去问该用哪一套候选。
-            self.breaker.fetch_min(index, Ordering::Relaxed);
+            // 部分救回页记在另一格上——它那一票只在没有完好灰度页时才作数（见 `first_pass`）。
+            match salvage {
+                None => self.breaker.fetch_min(index, Ordering::Relaxed),
+                Some(_) => self.salvaged_breaker.fetch_min(index, Ordering::Relaxed),
+            };
         }
         let allowed = self.allowed();
         let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;

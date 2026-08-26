@@ -457,13 +457,14 @@ fn a_salvaged_page_smaller_than_the_panel_does_not_close_the_geometry_gate() {
     );
 }
 
-/// 一卷里的灰度页全是部分救回页时，几何门无人可关，判定为成立——
-/// 与只装着彩页的卷同一个答案（04 号票认下的代价）。
+/// 一卷里的灰度页一页不剩地落在救回那一侧时，**两处都不摘**：摘一页是为了护着别人，
+/// 而那时没有别人可护（04 号票）。
 ///
-/// 卷级那一层则相反：主体不能空着，这几页于是**照旧定得出一个基准档**。
-/// 两处不对称是有意的：门有一个「没人说话时」的答案，上包络没有。
+/// 几何门于是听它们的——两页都贴不住面板，门因此关上、整卷不抖动。这一条要是不成立，
+/// 一整卷会被下游再缩一次的页会带着抖动写出去，正是 ADR 0007 拦的那件事。
+/// 卷级那一层同理：主体不能空着，这两页于是照旧定得出一个基准档。
 #[test]
-fn a_volume_of_nothing_but_salvaged_pages_still_gets_a_base_tier() {
+fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.file(
@@ -483,11 +484,13 @@ fn a_volume_of_nothing_but_salvaged_pages_still_gets_a_base_tier() {
         2,
         "夹具不对：两页都该是救回来的"
     );
-    // 页比面板小得多，一条边都贴不住——门却成立，因为没有一张完好页去关它。
+    // 页比面板小得多，一条边都贴不住：没有完好页可护，它们自己的几何这时说了算。
     assert_eq!(reported.pages[0].size, fixtures::TINY);
-    assert_eq!(reported.gate, Some(GeometryGate::Holds));
-    // 一页不剩地落在救回那一侧，就一页都不摘：两页都进主体，基准档照旧定得出来。
+    assert_eq!(reported.gate, Some(GeometryGate::Broken { page: 0 }));
+    // 门关着，抖动因此整体关闭（ADR 0007）。
     let envelope = envelope_of(reported);
+    assert_eq!(envelope.base.dither, Dither::Off);
+    // 一页不剩地落在救回那一侧，上包络那一侧同样一页都不摘：两页都进主体。
     assert_eq!(envelope.body_pages, 2);
     for page in &reported.pages {
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);

@@ -371,6 +371,9 @@ fn isolation_tail(report: &Report) -> String {
 /// 部分救回页两样都没有——卷照常落在干净的去处，退出码是 0，而源文件确实不全。
 /// 几十卷跑下来，逐页那几行早滚出屏幕了，不在末尾说一句就等于没说。
 ///
+/// 这一行只报数，不重复「它们没参与卷级的哪两件事」——那句话在卷级那一行上，
+/// 而这一行与它出现在同一份报告里（见 [`salvaged_line`]）。
+///
 /// 一页都没有就一个字都不说，与隔离那一行同一条规矩。
 fn salvage_tail(report: &Report) -> String {
     let pages = report.salvaged().count();
@@ -382,10 +385,7 @@ fn salvage_tail(report: &Report) -> String {
         .iter()
         .filter(|volume| volume.salvaged().next().is_some())
         .count();
-    format!(
-        "部分救回 {volumes} 卷 · {pages} 页：源文件不全，缺的那一段留成纸白。\
-         这些页不参与几何门与卷级上包络，各自单独定档\n"
-    )
+    format!("部分救回 {volumes} 卷 · {pages} 页：源文件不全，缺的那一段留成纸白\n")
 }
 
 /// 过期副本那一行（12 号票）。
