@@ -12,6 +12,10 @@ use fixtures::{Workspace, run_paths, run_paths_expecting_failure, run_volume};
 /// 透传要逐字节一致，因此这份夹具故意带上非 ASCII 与换行。
 const COMIC_INFO: &str = "<?xml version=\"1.0\"?>\n<ComicInfo><Title>卷一</Title></ComicInfo>\n";
 
+/// AppleDouble 边车文件的开头：魔数 0x00051607 加版本号。
+/// macOS 打包时给每个成员配一份，扩展名照抄本体——当页解必然解不出图。
+const APPLE_DOUBLE: &[u8] = &[0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00];
+
 #[test]
 fn a_directory_volume_carries_its_non_page_files_across_byte_for_byte() {
     let space = Workspace::new();
@@ -159,6 +163,158 @@ fn parallel_top_level_directories_are_not_a_wrapper_and_stay() {
         member_names(&report.volumes[0].output),
         ["ch1/001.png", "ch2/001.png"]
     );
+}
+
+/// macOS 的「压缩」菜单打出来的包：整卷一个目录，外加一个 `__MACOSX` 兄弟目录，
+/// 里面每个成员配一份 AppleDouble 边车，扩展名与页一模一样。
+///
+/// 边车当页解必然解不出图，整卷因此进隔离目录还被插上白页；`__MACOSX` 与 `.DS_Store`
+/// 又都是包装那一层的兄弟，包装层于是一层都剥不掉。这一条把三件事一起钉住。
+#[test]
+fn a_mac_packed_archive_ignores_its_sidecars_and_stays_out_of_isolation() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    cbz.directory("volume-a")
+        .page("volume-a/001.png", &page)
+        .page("volume-a/002.png", &page)
+        .file("volume-a/ComicInfo.xml", COMIC_INFO.as_bytes())
+        .directory("__MACOSX")
+        .directory("__MACOSX/volume-a")
+        .file("__MACOSX/volume-a/._001.png", APPLE_DOUBLE)
+        .file("__MACOSX/volume-a/._002.png", APPLE_DOUBLE)
+        .file("__MACOSX/volume-a/._ComicInfo.xml", APPLE_DOUBLE)
+        .file(".DS_Store", b"\x00\x00\x00\x01Bud1")
+        .file("volume-a/.DS_Store", b"\x00\x00\x00\x01Bud1");
+    let path = cbz.write();
+
+    let report = run_paths(&space, [path.as_path()]);
+
+    let volume = &report.volumes[0];
+    assert!(!volume.isolated(), "边车被当成页，整卷进了隔离目录");
+    assert_eq!(volume.output, space.out().join("volume-a.cbz"));
+    assert_eq!(volume.page_count(), 2, "边车混进了页里");
+    // 忽略掉这些之后包装那一层才没了兄弟，剥得掉。
+    assert_eq!(
+        member_names(&volume.output),
+        ["001.png", "002.png", "ComicInfo.xml"]
+    );
+}
+
+/// 边车不当页，也不当透传文件：它是打包环境的产物，不是卷的内容。
+#[test]
+fn a_sidecar_that_sits_next_to_the_pages_is_not_carried_across_either() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    // 这一份没有 `__MACOSX` 那一层：拷到 exFAT 上再打包就是这个样子。
+    cbz.page("001.png", &page)
+        .file("._001.png", APPLE_DOUBLE)
+        .file("Thumbs.db", b"thumbnail cache")
+        .file("desktop.ini", b"[.ShellClassInfo]\n")
+        .file("@eaDir/001.png@SynoResource", b"nas index")
+        .file(".DS_Store", b"\x00\x00\x00\x01Bud1");
+    let path = cbz.write();
+
+    let report = run_paths(&space, [path.as_path()]);
+
+    assert!(!report.volumes[0].isolated());
+    assert_eq!(member_names(&report.volumes[0].output), ["001.png"]);
+}
+
+/// 目录卷同形：同一批垃圾从目录里读进来也一样不算成员。
+#[test]
+fn a_directory_volume_ignores_the_same_system_junk() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    volume.file("._001.png", APPLE_DOUBLE);
+    volume.file(".DS_Store", b"\x00\x00\x00\x01Bud1");
+    volume.file("__MACOSX/._001.png", APPLE_DOUBLE);
+
+    let report = run_volume(&space, &volume);
+
+    assert!(
+        !report.volumes[0].isolated(),
+        "边车被当成页，整卷进了隔离目录"
+    );
+    assert_eq!(report.volumes[0].page_count(), 1);
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        ["001.png"]
+    );
+}
+
+/// 老式 Windows 打包工具把分隔符写成反斜杠。归一之后它与斜杠分隔的同一份包无从分别。
+///
+/// 归一之前它触发的是为路径穿越准备的那条拒绝，整卷被拒；而同一份归档在非 Windows 平台上
+/// 连拒都不拒，反斜杠被当成文件名里的一个普通字符。
+#[test]
+fn backslash_separated_member_names_are_normalised_not_refused() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    cbz.page(r"volume-a\ch1\001.png", &page)
+        .page(r"volume-a\ch2\001.png", &page)
+        .file(r"volume-a\ComicInfo.xml", COMIC_INFO.as_bytes());
+    let path = cbz.write();
+
+    let report = run_paths(&space, [path.as_path()]);
+
+    let volume = &report.volumes[0];
+    assert!(!volume.isolated());
+    // 包装层照剥，两章留着，输出成员名一律用斜杠。
+    assert_eq!(
+        member_names(&volume.output),
+        ["ch1/001.png", "ch2/001.png", "ComicInfo.xml"]
+    );
+    // 报告里的身份也是归一之后的那个名字。
+    assert!(
+        volume.pages[0].source.ends_with("ch1/001.png"),
+        "{:?}",
+        volume.pages[0].source
+    );
+}
+
+/// 盘符仍被拒，且两个平台上是同一句话——归一只管分隔符，管不到「这个名字写的是别处」。
+#[test]
+fn a_member_name_with_a_drive_letter_is_refused() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    cbz.page(
+        r"C:\001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    let path = cbz.write();
+
+    let error = run_paths_expecting_failure(&space, [path.as_path()]);
+
+    let message = format!("{error:#}");
+    assert!(message.contains("不能当作输出路径"), "{message}");
+    assert!(message.contains("盘符"), "{message}");
+    assert!(!space.out().exists(), "被拒绝之后仍然写了输出");
+}
+
+/// 反斜杠写的路径穿越同样被拒，说的是穿越，不是分隔符。
+#[test]
+fn a_backslash_written_traversal_is_still_refused_as_a_traversal() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    cbz.page(
+        r"..\..\001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    let path = cbz.write();
+
+    let error = run_paths_expecting_failure(&space, [path.as_path()]);
+
+    let message = format!("{error:#}");
+    assert!(message.contains("不能当作输出路径"), "{message}");
+    assert!(message.contains("走出卷外"), "{message}");
+    assert!(!space.out().exists(), "被拒绝之后仍然写了输出");
 }
 
 #[test]

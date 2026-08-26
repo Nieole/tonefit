@@ -152,6 +152,9 @@ fn open_directory(root: &Path) -> Result<Volume> {
             .strip_prefix(root)
             .expect("遍历结果恒在卷根之下")
             .to_path_buf();
+        if is_junk(&relative) {
+            continue;
+        }
         // 遍历时已经 stat 过一次，这里拿的是那一次的结果，不再多问一次文件系统。
         // 问不出大小的成员按 0 算：它只是在读取层的预算上不占位，读法一点不变。
         let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
@@ -200,6 +203,9 @@ fn open_archive(path: &Path) -> Result<Volume> {
         let name = decode_name(file.name_raw(), file.name());
         let relative = relative_path(&name)
             .with_context(|| format!("{} 的成员名 {name} 不能当作输出路径", path.display()))?;
+        if is_junk(&relative) {
+            continue;
+        }
         let bytes = file.size();
         members.push(Member {
             relative,
@@ -254,17 +260,39 @@ fn decode_name(raw: &[u8], cp437: &str) -> String {
 
 /// 成员名转成相对路径。
 ///
-/// 归档来自外部，名字里的 `..`、绝对路径与盘符会把输出写到卷外，一律拒绝而不是就地修正——
-/// 修正会静默改变成员的去处，而这种归档本就不该被当成一个卷。
+/// 分隔符两种都认：ZIP 规范只写 `/`，而老式 Windows 打包工具写的是 `\`。
+/// 反斜杠在这里就归一掉，两种包于是往下走同一条路。不归一的话它在 Windows 上撞进
+/// 下面那条为路径穿越准备的拒绝、整卷被拒，在别的平台上却被当成文件名里的一个普通字符——
+/// 同一份归档两个平台两种结果。
+///
+/// 代价是文件名里真带一个反斜杠的成员会被劈成两级。那种名字在 Windows 上根本建不出来，
+/// 而反斜杠分隔的包是眼下就在流通的东西。
+///
+/// 名字里的 `..` 与盘符会把输出写到卷外，一律拒绝而不是就地修正——修正会静默改变成员的
+/// 去处，而这种归档本就不该被当成一个卷。**拒绝说的是「这个名字指着卷外」**，
+/// 与分隔符写法无关：反斜杠写的穿越报的仍是穿越。
+///
+/// 盘符自己认而不交给 `Path`：`C:` 在 Windows 上是路径前缀、在别的平台上是一个普通名字，
+/// 交给 `Path` 就等于让平台决定这份归档收不收。
 fn relative_path(name: &str) -> Result<PathBuf> {
     let mut relative = PathBuf::new();
-    for part in name.split('/') {
+    for part in name.split(['/', '\\']) {
         if part.is_empty() || part == "." {
             continue;
+        }
+        if part == ".." {
+            bail!("片段 {part} 指着上一级，会走出卷外");
+        }
+        if is_drive_letter(part) {
+            bail!("片段 {part} 是一个盘符，会走出卷外");
         }
         let mut components = Path::new(part).components();
         match (components.next(), components.next()) {
             (Some(Component::Normal(part)), None) => relative.push(part),
+            // 分隔符已经归一，`.`、`..`、盘符也都在上面拦掉了——`Path` 的其余几种分量
+            // （根、UNC、设备名）无一不带分隔符，因此这条兜底够不着。留着是因为
+            // 「片段最终必须是一个普通分量」这条不变量要写在它成立的地方，
+            // 而不是靠上面那三条各自的正确性去推。
             _ => bail!("片段 {part} 不是一个普通的路径分量"),
         }
     }
@@ -272,6 +300,57 @@ fn relative_path(name: &str) -> Result<PathBuf> {
         bail!("整个名字里没有一个普通的路径分量");
     }
     Ok(relative)
+}
+
+/// 这个片段是不是盘符：一个 ASCII 字母接一个冒号。`C:` 与 `C:001.png` 都算。
+fn is_drive_letter(part: &str) -> bool {
+    let bytes = part.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+/// 打包环境留下的目录：整个子树都不是卷的内容。
+///
+/// `__MACOSX` 是 macOS 的「压缩」菜单写出来的兄弟目录，里面按原结构镜像着每个成员的
+/// AppleDouble 边车；其余几个是各家文件管理器与 NAS 自己的索引目录。
+const JUNK_DIRECTORIES: [&str; 6] = [
+    "__MACOSX",
+    ".Spotlight-V100",
+    ".Trashes",
+    ".TemporaryItems",
+    ".fseventsd",
+    "@eaDir",
+];
+
+/// 打包环境留下的单个文件。
+const JUNK_FILES: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+
+/// AppleDouble 边车文件的名字前缀：本体叫什么它就叫 `._` 加什么，**扩展名照抄**。
+const APPLE_DOUBLE_PREFIX: &str = "._";
+
+/// 这个成员是不是打包环境留下的垃圾。
+///
+/// 它们既不当页也不当透传文件：边车的扩展名照抄本体，当页解必然解不出图，
+/// 整卷因此进隔离目录还被插上白页；当透传文件搬过去，则是把打包环境的产物带进成品。
+///
+/// 目录卷与归档卷共用这一条：两者在源之下同形，同一份卷解开到磁盘上再处理不该换一个答案。
+fn is_junk(relative: &Path) -> bool {
+    let mut parts = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str());
+    if parts.any(|part| is_one_of(&JUNK_DIRECTORIES, part)) {
+        return true;
+    }
+    let Some(name) = relative.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.starts_with(APPLE_DOUBLE_PREFIX) || is_one_of(&JUNK_FILES, name)
+}
+
+/// 名字命中这一组里的哪一个吗。
+///
+/// 大小写不敏感地比：这些名字来处的文件系统本就不分大小写，`Thumbs.db` 各家写法不一。
+fn is_one_of(names: &[&str], name: &str) -> bool {
+    names.iter().any(|junk| junk.eq_ignore_ascii_case(name))
 }
 
 /// 剥掉包内统一的目录前缀。
@@ -284,6 +363,9 @@ fn relative_path(name: &str) -> Result<PathBuf> {
 /// 一旦某一层出现两个以上的名字（并列的章节目录），剥就停下：那一层开始承担顺序了。
 ///
 /// 目录卷没有这一步：用户点名的那个目录就是卷根，里面的第一层是他自己的组织方式。
+///
+/// 垃圾成员在这一步之前就摘掉了（见 [`is_junk`]）：`__MACOSX` 与 `.DS_Store` 都是包装层的
+/// **兄弟**，留着它们，这一层就一层都剥不掉。
 fn strip_wrapper_directory(members: &mut [Member]) {
     loop {
         let mut wrapper: Option<Component> = None;

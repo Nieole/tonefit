@@ -387,9 +387,12 @@ impl Volume {
         path
     }
 
-    /// 写一个非图片文件。
+    /// 写一个非图片文件。名字带目录就把目录一起建出来，与 [`page`](Self::page) 同形。
     pub fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.root.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("建文件所在目录");
+        }
         fs::write(&path, bytes).expect("写非图片文件");
         path
     }
