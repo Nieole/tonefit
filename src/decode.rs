@@ -68,7 +68,8 @@ impl Salvage {
     ///
     /// 它公开，是因为 [`Salvage`] 是**报告那一侧**的类型：报告上的东西一律拼得出来
     /// （[`Envelope`](crate::Envelope)、[`PageReport`](crate::PageReport) 全是公开字段），
-    /// 渲染那一层与它的用例在另一个 crate 里（`src/main.rs`），要拼得出一份带部分救回页的报告。
+    /// 渲染那一层与它的用例在另一个 crate 里（二进制那一侧的 `render`），
+    /// 要拼得出一份带部分救回页的报告。
     /// 这与判据那一侧的 [`Score`](crate::Score) 恰好相反——那是个算出来的量，
     /// 它的 `from_value` 因此锁在 `#[cfg(test)]` 里。
     ///
