@@ -56,12 +56,12 @@
 
 [kobo-libra-2] mixed
   几何门 成立
-  卷级   基准档 2bit+FS · 驱动页 005.png · 主体 5 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  2bit+FS    16730  卷级上包络
-  002.png        1182x1680  2bit+FS    16730  卷级上包络
-  003.png        1182x1680  2bit+FS   192766  卷级上包络
-  004.png        1182x1680  2bit+FS    16730  卷级上包络
-  005.png        1182x1680  2bit+FS   215607  卷级上包络
+  卷级   基准档 1bit · 驱动页 004.png · 主体 3 页 · 离群 2 页 · 迟滞升档 0 页
+  001.png        1182x1680  1bit       10436  卷级上包络
+  002.png        1182x1680  1bit       10436  卷级上包络
+  003.png        1182x1680  2bit+FS   192766  离群页单独定档
+  004.png        1182x1680  1bit       10436  卷级上包络
+  005.png        1182x1680  2bit+FS   215607  离群页单独定档
 
 [kobo-libra-2] envelope-outlier
   几何门 不成立 · 001.png 贴不住面板
@@ -69,7 +69,7 @@
 
 [kobo-libra-2] envelope-outlier-heavy
   几何门 不成立 · 001.png 贴不住面板
-  卷级   基准档 4bit · 驱动页 019.png · 主体 20 页 · 离群 0 页 · 迟滞升档 0 页
+  卷级   基准档 1bit · 驱动页 018.png · 主体 18 页 · 离群 2 页 · 迟滞升档 0 页
 
 [kobo-libra-2] envelope-hysteresis
   几何门 不成立 · 001.png 贴不住面板
@@ -77,9 +77,9 @@
 
 [kobo-libra-2] archive.cbz
   几何门 成立
-  卷级   基准档 2bit+FS · 驱动页 002.png · 主体 2 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  2bit+FS    16730  卷级上包络
-  002.png        1182x1680  2bit+FS   192766  卷级上包络
+  卷级   基准档 1bit · 驱动页 001.png · 主体 1 页 · 离群 1 页 · 迟滞升档 0 页
+  001.png        1182x1680  1bit       10436  卷级上包络
+  002.png        1182x1680  2bit+FS   192766  离群页单独定档
   透传 ComicInfo.xml · 12 字节
 
 [kobo-libra-2] damaged · 隔离

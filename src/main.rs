@@ -982,10 +982,13 @@ mod tests {
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         assert!(text.contains("驱动页 library/volume-a/001.jpg"), "{text}");
         // 上包络不承诺卷内绝对一致：离群与迟滞升档各出了多少页，报告要说出来。
-        assert!(text.contains("离群 0 页"), "{text}");
+        // 离群那一处还带着占比——「一页都没摘出来」要在报告里看得见，而光看计数分不清
+        // 「本来就没有离群页」与「离群判定整个失灵」（加固批 01 号票）。
+        assert!(text.contains("离群 0 页（0.0%）"), "{text}");
         assert!(text.contains("迟滞升档 0 页"), "{text}");
-        // 上包络的分位、迟滞页数、离群页判据三者均未标定，报告显式标注（ADR 0006）。
-        assert!(text.contains("三者均未标定"), "{text}");
+        // 上包络的分位、迟滞页数、离群页判据的立脚点分位与倍数，四者均未标定，
+        // 报告显式标注（ADR 0006）。
+        assert!(text.contains("四者均未标定"), "{text}");
         // 几何门与本卷的抖动模式都要报出来（ADR 0007）：门开着而判据选了不抖。
         assert!(text.contains("几何门 成立 · 本卷 不抖动"), "{text}");
     }

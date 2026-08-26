@@ -6,8 +6,9 @@
 //! （ADR 0006 认下的代价），[`Envelope`] 因此把这两处各出了多少页原样摆出来——
 //! 报告不许把上包络说成绝对一致。
 //!
-//! 三个数——上包络的分位、迟滞页数、离群页判据——全部**未标定**
-//! （ADR 0006：三个数均尚未标定），[`Envelope`] 的 `Display` 把这句话写在数值旁边。
+//! 四个数——上包络的分位、迟滞页数、离群页判据的立脚点分位与倍数——全部**未标定**
+//! （ADR 0006：三个数均尚未标定，其中「离群页判据」在这里是两个数），
+//! [`Envelope`] 的 `Display` 把这句话写在数值旁边。
 
 use crate::decide::{CandidateScore, Reason, Verdict};
 use crate::metric::{Score, nearest_rank};
@@ -24,8 +25,31 @@ const ENVELOPE_QUANTILE: f64 = 0.95;
 /// 一页说了不算（ADR 0006 决定第 4 条）。
 const HYSTERESIS_PAGES: usize = 3;
 
-/// 离群页判据：判据要超过阈值的这么多倍，才算「显著偏离卷内分布」。**未标定占位值**。
+/// 离群页判据的倍数：判据要超过阈值的这么多倍，才算「显著偏离卷内分布」。**未标定占位值**。
 const OUTLIER_FACTOR: f32 = 3.0;
+
+/// 离群页判据的立脚点所在的分位：偏离量在这一档上量。**未标定占位值**。
+///
+/// 它不等于 [`ENVELOPE_QUANTILE`]，两者问的不是同一件事。上包络问「主体要哪一档」，
+/// 答案该贴着分布的上沿走；立脚点问「主体过得去的是哪一档」，答案要**经得住离群页自己的拉抬**。
+/// p95 当不了立脚点：越过它的页至多 5%，离群页一旦多于此就把立脚点抬进自己那一档，
+/// 检验又在那一档上做，于是人人达标、一个都摘不出。而 ADR 0006 决定第 5 条举的例子——
+/// 黑白 profile 下的彩页转灰——在一卷里占到一成是常态。
+///
+/// 再往下取也不行。取中位数的话，一卷里过半页要更高一档时（同一位画师换了种网点，
+/// 后半卷整片抬一档），那些页会被当成离群页整片摘走，而它们才是这一卷的主体——
+/// 摘完剩下的主体反倒成了少数派，卷级基准档跟着塌下去。
+///
+/// p75 把两侧的余量摆在一处。摘得出来的占比有个上界，越过它立脚点就站进了离群那一组——
+/// 那时报出来的档说的是这一卷本身长什么样，不再是「几页偏离」
+/// （与 [`summarize`] 里「一页不剩地落到离群侧」同一个道理）。
+///
+/// **这个上界随卷长变，长卷上才趋近四分之一**：留一之后剩 `n-1` 页，
+/// 立脚点站在第 `⌈0.75(n-1)⌉` 名上，离群页要占到 `n+1-⌈0.75(n-1)⌉` 页才够把它抬进自己那一组。
+/// 60 页要 16 页（26.7%），20 页要 6 页（30%），5 页要 3 页（60%），2 页要 2 页。
+/// 短卷更宽不是漏洞，是同一件事的另一面：几页的卷本来就没有「分布」，
+/// 而那时离群页那一层是唯一还挡着的防线（见 [`envelope`] 里上分位在短卷上的退化）。
+const ANCHOR_QUANTILE: f64 = 0.75;
 
 /// 汇总要看的那一页：逐页判定的结果，加上它是从哪条判据曲线来的。
 pub(crate) struct Page<'a> {
@@ -52,6 +76,22 @@ pub struct Envelope {
     pub raised_pages: usize,
 }
 
+impl Envelope {
+    /// 离群页占卷内灰度页的比例，0 到 1。彩页与失败页不在分母里——它们本来就不进上包络。
+    ///
+    /// 离群页机制是卷级分位聚合的安全网，而这个数是**这张网有没有张开**的唯一外部观测点。
+    /// 只看 [`outlier_pages`](Self::outlier_pages)，「离群 0 页」读起来像「这一卷本来就没有
+    /// 离群页」，而它同样可能是这张网整个失灵。占比把它摆到主体页数旁边，「零」由此有了刻度。
+    ///
+    /// 反过来，占比高本身也是话：高到立脚点已经站进那一档时，报出来的档说的是
+    /// 这一卷本身长什么样，不再是「几页偏离」。那条界线**随卷长变**，短卷上宽得多，
+    /// 算式在 `envelope` 的 `ANCHOR_QUANTILE`——所以这个数要连着页数一起读。
+    pub fn outlier_share(&self) -> f64 {
+        // 主体加离群就是灰度页的全部；`summarize` 挡掉了空卷，分母因此不会是零。
+        self.outlier_pages as f64 / (self.body_pages + self.outlier_pages) as f64
+    }
+}
+
 /// 汇总的产出：卷级的那一份，加上重定过的逐页判定。
 pub(crate) struct Summary {
     pub envelope: Envelope,
@@ -74,21 +114,19 @@ impl Page<'_> {
 
 /// 把逐页判定收成一个卷级的基准档。空卷没有上包络。
 ///
-/// 三步，次序不能反：
-/// 1. 先按全卷取一次上包络，得到**临时基准档**——离群页判据要有个立脚点；
-/// 2. 摘出离群页（[`outlying`]），剩下的是主体；
-/// 3. 在主体上重取上包络定出基准档，再叠加迟滞（[`hysteresis`]）。
+/// 两步，次序不能反：
+/// 1. 摘出离群页（[`outlying`]），剩下的是主体；
+/// 2. 在主体上取上包络定出基准档，再叠加迟滞（[`hysteresis`]）。
 ///
-/// 第 1 步的临时基准档确实被离群页污染过，这正是 ADR 0006 决定第 5 条要摘它们的理由；
-/// 但上分位至多让 5% 的页越过它，污染因此有界，够拿来当立脚点。第 3 步重取的那一次才算数。
+/// **这里不先取一次全卷的上包络。**离群检验要的立脚点整个在 [`outlying`] 以内逐页取，
+/// 卷级聚合当不了它——那一档由全卷算出，被判的页自己也在里面
+/// （`CONTEXT.md` 的《判据》：立脚点不含被判的这一页）。
 pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary> {
     if pages.is_empty() {
         return None;
     }
     let all: Vec<usize> = (0..pages.len()).collect();
-    let (provisional, _) = envelope(&all, pages);
-
-    let mut is_outlier = outlying(pages, provisional, threshold);
+    let mut is_outlier = outlying(pages, threshold);
     // 一页不剩地落到离群侧，说明偏离的是这一卷本身，不是其中某几页：一页都不摘。
     // 候选上界都过不去的卷（`Reason::NoneWithinThreshold`，如 `--gray-levels 4` 撞上整卷灰调）
     // 就是这个局面——那时「远在界外」不再说明谁偏离了谁，而主体不能空着。
@@ -131,8 +169,8 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
 
 /// 上包络：把这些页的逐页判定排一遍，站在上分位秩上的那一页定出档位。返回 (候选, 那一页)。
 ///
-/// 分位与判据的分块聚合共用最近秩取法（[`nearest_rank`]），不插值。
-/// 名次相同的按页序排，同一卷跑两遍因此指出同一个驱动页。
+/// 分位与判据的分块聚合共用最近秩取法（[`nearest_rank`]），不插值；
+/// 排开的次序见 [`by_demand`]，同一卷跑两遍因此指出同一个驱动页。
 ///
 /// **页数少到取不出分位时退化成判定最高的那一页**：p95 的秩在 20 页以内就是页数本身。
 /// 这与判据的分块聚合是同一个取舍（见 `metric` 的 `upper_quantile`）——宁可严格，
@@ -141,28 +179,63 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
 ///
 /// `indices` 不得为空。
 fn envelope(indices: &[usize], pages: &[Page]) -> (Candidate, usize) {
-    let mut order = indices.to_vec();
-    order.sort_by_key(|&index| (pages[index].decided, index));
+    let order = by_demand(indices, pages);
     let driver = order[nearest_rank(ENVELOPE_QUANTILE, order.len()) - 1];
     (pages[driver].decided, driver)
+}
+
+/// 这些页按逐页判定由低到高排开的次序。名次相同的按页序排，同一卷跑两遍因此排出同一条序列。
+///
+/// 上包络与离群检验的立脚点都站在这条序列的某个秩上（[`envelope`]、[`outlying`]），
+/// 两者取的分位不同、秩不同，**序列必须是同一条**：一个说「主体要哪一档」、
+/// 另一个说「其余页过得去的是哪一档」，两句话谈的得是同一个分布。
+/// 排法写成一处，「同一条序列」才是构造出来的事实，而不是两边注释里的一句声称
+/// （与 [`nearest_rank`] 同一个理由）。
+fn by_demand(indices: &[usize], pages: &[Page]) -> Vec<usize> {
+    let mut order = indices.to_vec();
+    order.sort_by_key(|&index| (pages[index].decided, index));
+    order
 }
 
 /// 离群页：判据显著偏离卷内分布的页（`CONTEXT.md`）。不参与上包络，单独定档
 /// （ADR 0006 决定第 5 条）。
 ///
-/// 偏离量取**临时基准档上的判据值**——卷内主体过得去的那一档，离群页远远过不去。
-/// 逐页判定不高于临时基准档的页，判据必在阈值以内，因此永远落不到离群侧；
-/// 而高过临时基准档的页至多占全卷 5%（上分位的定义），离群页的数量由此自带上界，
-/// ADR 0006 认下的「位置少且可指认」不靠额外的限额撑着。
+/// 偏离量在**立脚点**那一档上量（`CONTEXT.md` 的《判据》）：把被判的这一页从
+/// [`by_demand`] 排出的序列里抽掉，站在 [`ANCHOR_QUANTILE`] 秩上的那一页就是它。
+/// 卷内其余页过得去的那一档，离群页远远过不去。
+///
+/// 抽掉自己与分位取多少，两者各挡一种退化，缺一不可：**留一**挡短卷——上分位的秩在 20 页
+/// 以内就是页数本身（见 [`envelope`]），不抽的话立脚点就是最极端那页自己；**分位**挡高占比，
+/// 见 [`ANCHOR_QUANTILE`]。
+///
+/// **一页的卷没有离群页**：一页构不成分布，也就没有谁偏离谁——抽掉它就什么都不剩了。
 ///
 /// 判据是**幅度**，判据形态里没有「连着几页」这一维：卷首连着几页的彩页转灰后仍是离群页，
 /// 那正是 ADR 0006 决定第 5 条举的例子。成段与否只在迟滞那一层说话
 /// （见 [`hysteresis`]），那一层管的是升不升档，不是摘不摘页。
-fn outlying(pages: &[Page], provisional: Candidate, threshold: Threshold) -> Vec<bool> {
-    pages
-        .iter()
-        .map(|page| threshold.far_outside(page.score_at(provisional), OUTLIER_FACTOR))
-        .collect()
+fn outlying(pages: &[Page], threshold: Threshold) -> Vec<bool> {
+    let mut taken = vec![false; pages.len()];
+    // 抽掉被判的那一页之后一页不剩：一页的卷没有别人可比。
+    if pages.len() < 2 {
+        return taken;
+    }
+    // 立脚点从这条序列上取，与上包络同一条（[`by_demand`]）。
+    let all: Vec<usize> = (0..pages.len()).collect();
+    let order = by_demand(&all, pages);
+    let mut place = vec![0usize; pages.len()];
+    for (position, &index) in order.iter().enumerate() {
+        place[index] = position;
+    }
+    // 抽掉一页之后剩 `len - 1` 页，立脚点站在其中这个秩上（0 起）。
+    let rank = nearest_rank(ANCHOR_QUANTILE, pages.len() - 1) - 1;
+    for (index, page) in pages.iter().enumerate() {
+        // 抽掉的那一页排在秩之前，后面的整段前移一格；排在秩之后则不影响这个秩。
+        // 一次排序换来逐页 O(1)，不必真的为每一页抽一遍。
+        let position = if rank < place[index] { rank } else { rank + 1 };
+        let anchor = pages[order[position]].decided;
+        taken[index] = threshold.far_outside(page.score_at(anchor), OUTLIER_FACTOR);
+    }
+    taken
 }
 
 /// 迟滞：主体页里连续够了 [`HYSTERESIS_PAGES`] 页**基准档不够用**的，整段一起升档。
@@ -277,18 +350,23 @@ fn runs(len: usize, belongs: impl Fn(usize) -> bool) -> Vec<std::ops::Range<usiz
 }
 
 impl std::fmt::Display for Envelope {
-    /// 三个数一并说出，并标明都还没标定——报告不许把上包络说成绝对一致（ADR 0006）。
+    /// 四个数一并说出，并标明都还没标定——报告不许把上包络说成绝对一致（ADR 0006）。
+    ///
+    /// 离群页数后面跟着占比（[`Envelope::outlier_share`]）：
+    /// 「离群 0 页」要读得出它是相对多少页的零。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "基准档 {} · 主体 {} 页 · 离群 {} 页 · 迟滞升档 {} 页\
-             （上包络 p{} · 迟滞 {} 页 · 离群判据 {:.1}× 阈值，三者均未标定）",
+            "基准档 {} · 主体 {} 页 · 离群 {} 页（{:.1}%）· 迟滞升档 {} 页\
+             （上包络 p{} · 迟滞 {} 页 · 离群判据 p{} 立脚点、{:.1}× 阈值，四者均未标定）",
             self.base,
             self.body_pages,
             self.outlier_pages,
+            self.outlier_share() * 100.0,
             self.raised_pages,
             (ENVELOPE_QUANTILE * 100.0).round(),
             HYSTERESIS_PAGES,
+            (ANCHOR_QUANTILE * 100.0).round(),
             OUTLIER_FACTOR,
         )
     }
@@ -642,9 +720,10 @@ mod tests {
     /// ADR 0006 决定第 5 条举的正是这个例子，它不能因为彩页成段就落回主体。
     #[test]
     fn a_stretch_of_pages_far_outside_the_threshold_is_a_stretch_of_outliers() {
-        // 六十页里的三页：上分位的秩落在 57，这三页因此在临时基准档之上，看得见偏离量。
-        // 再多一页就越过 5%，临时基准档随之抬进这一组——那时它们不再是离群页，
-        // 而是这一卷该服务的一部分，正是上分位的定义在说话。
+        // 六十页里的三页。占比多少不改变这一条：三页占 5% 摘得出来，占一成同样摘得出来
+        // （`a_tenth_of_the_volume_falling_far_outside_is_a_tenth_of_the_volume_taken_out`）。
+        // 60 页的卷要占到 16 页，立脚点才站进这一组，那时它们不再是离群页，
+        // 而是这一卷本身长这样——[`ANCHOR_QUANTILE`] 那一头的余量。
         let opening: Vec<_> = (0..3)
             .map(|index| (index, Candidate::plain(BitDepth::Four), far_out()))
             .collect();
@@ -698,6 +777,130 @@ mod tests {
         }
     }
 
+    /// 六十页里六页远在界外，占一成：六页一页不少地摘出去，主体档不被它们抬高。
+    ///
+    /// ADR 0006 决定第 5 条举的例子——黑白 profile 下的彩页转灰——在一卷里占到一成是常态，
+    /// 而立脚点必须扛得住这一成（见 [`ANCHOR_QUANTILE`]）。
+    #[test]
+    fn a_tenth_of_the_volume_falling_far_outside_is_a_tenth_of_the_volume_taken_out() {
+        let summary = far_out_pages(60, 6).summarize();
+
+        assert_eq!(summary.envelope.outlier_pages, 6);
+        assert_eq!(summary.envelope.body_pages, 54);
+        // 主体档不被这六页抬高：五十四页主体页要的仍然是 1bit。
+        assert_eq!(summary.envelope.base, Candidate::plain(BitDepth::One));
+        for index in 0..6 {
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::plain(BitDepth::Four)
+            );
+            assert_eq!(summary.verdicts[index].reason, Reason::Outlier);
+        }
+        for index in 6..60 {
+            assert_eq!(
+                summary.verdicts[index].candidate,
+                Candidate::plain(BitDepth::One),
+                "第 {index} 页被那六页拖着走了"
+            );
+        }
+    }
+
+    /// 一卷 `count` 页，只有末页远在界外。短卷那一串用例喂的都是它。
+    fn one_outlier_in(count: usize) -> Volume {
+        volume_of(
+            count,
+            &[(count - 1, Candidate::plain(BitDepth::Four), far_out())],
+        )
+    }
+
+    /// 卷页数从 1 到 20 逐个走一遍：除了一页的卷，末页那张离群页每一档卷长都摘得出来。
+    ///
+    /// CBZ 章节包普遍落在这个区间，而这正是卷级分位站不住的那一段：上分位的秩在 20 页以内
+    /// 就是页数本身。逐个钉，是因为这类退化只在某几个卷长上出现，挑一两个数试不出来。
+    #[test]
+    fn a_lone_outlier_is_taken_out_at_every_volume_length_up_to_twenty() {
+        // 一页的卷没有别人可比：一页构不成分布，摘不出也不该摘。
+        let alone = one_outlier_in(1).summarize();
+        assert_eq!(alone.envelope.outlier_pages, 0);
+        assert_eq!(alone.envelope.body_pages, 1);
+
+        for count in 2..=20 {
+            let summary = one_outlier_in(count).summarize();
+
+            assert_eq!(
+                summary.envelope.outlier_pages, 1,
+                "{count} 页的卷没把末页那张离群页摘出来"
+            );
+            assert_eq!(summary.envelope.body_pages, count - 1);
+            assert_eq!(
+                summary.verdicts[count - 1].reason,
+                Reason::Outlier,
+                "{count} 页的卷里末页没被单独定档"
+            );
+            assert_eq!(
+                summary.envelope.base,
+                Candidate::plain(BitDepth::One),
+                "{count} 页的卷被末页拖高了基准档"
+            );
+        }
+    }
+
+    /// 19 页与 20 页的相邻对照：同样的内容，多一页少一页，结论必须一样。
+    ///
+    /// 这一对是上一条用例里最要紧的那两格，单列出来指名道姓：`ceil(0.95n)` 在 n=19 时等于 n、
+    /// 在 n=20 时是 19，卷级分位恰在这里从「秩落在排序末位」跨到「真的是个分位」。
+    /// 离群判定不许跟着这条坎翻面——它站的是自己那个立脚点，不是上包络那一档。
+    #[test]
+    fn nineteen_pages_and_twenty_pages_reach_the_same_conclusion() {
+        let nineteen = one_outlier_in(19).summarize();
+        let twenty = one_outlier_in(20).summarize();
+
+        assert_eq!(
+            nineteen.envelope.outlier_pages,
+            twenty.envelope.outlier_pages
+        );
+        assert_eq!(nineteen.envelope.base, twenty.envelope.base);
+        assert_eq!(
+            nineteen.verdicts[18].reason, twenty.verdicts[19].reason,
+            "两卷的末页一个被摘出、一个没有"
+        );
+    }
+
+    /// 摘得出来的占比有个上界，而这个上界**随卷长变**：
+    /// 离群页占到 `n+1-⌈0.75(n-1)⌉` 页时，立脚点就站进了它们那一组，一页也摘不出来。
+    ///
+    /// [`ANCHOR_QUANTILE`] 的文档写着这条算式与它在几个卷长上的取值。那句话不许只是注释里的
+    /// 声称——本票修的原缺陷，正是一句「上分位至多让 5% 的页越过它」被当成了成立的性质。
+    /// 60 页与 5 页各喂一对相邻的 k，界线两侧因此各有一处钉子。
+    #[test]
+    fn one_page_past_the_bound_is_where_the_anchor_moves_in_and_nothing_is_taken_out() {
+        // 界线随卷长变，短卷宽得多：60 页要 16 页才越界，5 页要 3 页。
+        for (count, bound) in [(60, 16), (5, 3)] {
+            let under = far_out_pages(count, bound - 1).summarize();
+            assert_eq!(
+                under.envelope.outlier_pages,
+                bound - 1,
+                "{count} 页的卷里 {} 页远在界外，界线以内，该一页不少地摘出来",
+                bound - 1
+            );
+
+            let over = far_out_pages(count, bound).summarize();
+            assert_eq!(
+                over.envelope.outlier_pages, 0,
+                "{count} 页的卷里 {bound} 页远在界外，立脚点已站进这一组，不该再摘出谁"
+            );
+            assert_eq!(over.envelope.body_pages, count);
+        }
+    }
+
+    /// 一卷 `count` 页，头 `far` 页远在界外，其余只要 1bit。
+    fn far_out_pages(count: usize, far: usize) -> Volume {
+        let extreme: Vec<_> = (0..far)
+            .map(|index| (index, Candidate::plain(BitDepth::Four), far_out()))
+            .collect();
+        volume_of(count, &extreme)
+    }
+
     /// 一页不剩地落到离群侧时一页都不摘：偏离的是这一卷本身，主体不能空着。
     #[test]
     fn a_volume_that_is_entirely_far_outside_the_threshold_has_no_outliers_at_all() {
@@ -718,23 +921,45 @@ mod tests {
         );
     }
 
+    /// 离群页占比进报告：「一页都没摘出来」得在报告里看得见。
+    ///
+    /// 这个数是这张安全网**有没有张开**的唯一外部观测点。只报计数的话，
+    /// 「离群 0 页」读起来像「这一卷本来就没有离群页」，而它同样可能是判定整个失灵——
+    /// 本票修的就是后一种。占比把它摆在主体页数旁边，两个读数一起说话。
+    #[test]
+    fn the_envelope_says_what_share_of_the_volume_was_taken_out() {
+        let taken = far_out_pages(60, 6).summarize().envelope;
+        assert_eq!(taken.outlier_share(), 0.1);
+        assert!(taken.to_string().contains("10.0%"), "{taken}");
+
+        // 一页都没摘出来的卷照样把这个数说出来，而不是省掉不提。
+        let none = volume_of(60, &[]).summarize().envelope;
+        assert_eq!(none.outlier_share(), 0.0);
+        assert!(none.to_string().contains("0.0%"), "{none}");
+    }
+
     /// 一页都没有的卷没有上包络：卷级基准档无从谈起。
     #[test]
     fn an_empty_volume_has_no_envelope() {
         assert!(summarize(&[], threshold()).is_none());
     }
 
-    /// 三个数都没标定，报告要自己说出这一点（ADR 0006：三个数均尚未标定）。
+    /// 四个数都没标定，报告要自己说出这一点（ADR 0006：三个数均尚未标定，
+    /// 其中「离群页判据」在实现里是立脚点分位与倍数两个数）。
     #[test]
-    fn the_envelope_says_none_of_its_three_numbers_have_been_calibrated() {
+    fn the_envelope_says_none_of_its_four_numbers_have_been_calibrated() {
         let volume = volume_of(20, &[(4, Candidate::plain(BitDepth::Four), far_out())]);
 
         let said = volume.summarize().envelope.to_string();
 
         assert!(said.contains("未标定"), "{said}");
-        // 三个数各自都要露面，读的人才知道「未标定」说的是哪几个。
+        // 四个数各自都要露面，读的人才知道「未标定」说的是哪几个。
         assert!(said.contains("p95"), "{said}");
         assert!(said.contains(&format!("{HYSTERESIS_PAGES} 页")), "{said}");
         assert!(said.contains(&format!("{OUTLIER_FACTOR:.1}")), "{said}");
+        assert!(
+            said.contains(&format!("p{}", (ANCHOR_QUANTILE * 100.0).round())),
+            "{said}"
+        );
     }
 }

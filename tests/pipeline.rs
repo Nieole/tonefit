@@ -1485,6 +1485,44 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     }
 }
 
+/// 二十页里两页远在界外，占一成：主体那十八页留在自己要的那一档上，不被这两页拖高。
+///
+/// 与上一条用例的差别只有离群页的**页数**：一页与两页在 `run` 这个 seam 上必须同一个结论。
+/// 离群页多到什么程度才不再算离群，由立脚点那一层说了算（见 `envelope` 的 `ANCHOR_QUANTILE`），
+/// 而不该由「恰好有几页」说了算。
+#[test]
+fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
+    let space = Workspace::new();
+    let mut levels = vec![NEEDS_TWO_BITS; 18];
+    levels.extend([FAR_OUTSIDE; 2]);
+    let volume = volume_of_solids(&space, &levels);
+
+    let report = run_volume(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    let envelope = envelope_of(volume_report);
+    assert_eq!(envelope.outlier_pages, 2);
+    assert_eq!(envelope.body_pages, 18);
+    // 主体档不被那两页抬高：十八页主体页要的仍然是 2bit。
+    assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
+    // 占比进报告：「一页都没摘出来」与「本来就没有离群页」要分得开（01 号票）。
+    assert_eq!(envelope.outlier_share(), 0.1);
+
+    for page in &volume_report.pages[18..] {
+        assert_eq!(fixtures::verdict(page).candidate.bit_depth, BitDepth::Four);
+        assert_eq!(fixtures::verdict(page).reason, Reason::Outlier);
+    }
+    for page in &volume_report.pages[..18] {
+        assert_eq!(
+            fixtures::verdict(page).candidate.bit_depth,
+            BitDepth::Two,
+            "{} 被那两页拖着走了",
+            page.source.display()
+        );
+        assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
+    }
+}
+
 /// 彩页不污染灰度页的卷级上包络（ADR 0006 决定第 5 条：彩色 profile 下彩页
 /// 根本不进灰度上包络）。同一批灰度页，把彩页混进去前后，基准档、驱动页与逐页判定一个不变。
 ///
