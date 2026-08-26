@@ -63,16 +63,16 @@ Status: ready-for-agent
 
 ### Seam
 
-两个对外 seam，其余全部是内部实现，可自由重构。
+三个对外 seam，其余全部是内部实现，可自由重构。
 
 **`run(Request) -> Report`** 是主 seam。CLI 是它之上的薄层，只负责把命令行参数拼成 `Request`、
-把 `Report` 渲染成文字。所有模式走同一个入口。
+把 `Report` 渲染成文字。**处理卷的每一种模式**走同一个入口。
 
 `Request` 与 `Report` 的形状（编码了几个决定，故在此固定）：
 
 ```
 Request  { 输入路径集, Profile, Mode, 覆盖项 }
-Mode     = Process | DryRun | Calibrate
+Mode     = Process | DryRun
 覆盖项    { 位深, 滤波器, 抖动模式, 缓存预算, 介质, 编码器 }
 
 Report   { Profile, 卷报告集, 失败页集, 计时 }
@@ -86,6 +86,12 @@ Report   { Profile, 卷报告集, 失败页集, 计时 }
 `Skipped` 是幂等命中的结果，与「处理过」在报告里可区分。
 
 **`score(参照, 候选) -> Score`** 是第二个 seam：判据的纯函数形态。标定工具建在它上面。
+
+**标定图的写出**是第三个 seam，不并进主入口。`CONTEXT.md` 把标定图定义为**量具**——
+不读源、不走管线、不判定、无损写出。并进去会让 `Request` 的绝大多数字段对它全无意义，
+而 `Report` 也装不下一个没有卷、没有页、没有判定的产物。要的不是「走同一个入口」，
+是「库里调得到、落盘在库里」——第三个 seam 满足这一条。建父目录与写文件都在库内完成，
+界面文案留在界面层。
 
 ### 管线
 
