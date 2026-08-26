@@ -27,3 +27,7 @@ Status: needs-triage
 ```
 
 One role per issue at a time — replace the value rather than accumulating them.
+
+`resolved` is not one of the five roles: triage answers "should this be worked on", and the
+five roles run out once the answer is yes. Delivered implementation tickets in this repo write
+`Status: resolved` on that same line, alongside a `## 落地记录` section (see `issue-tracker.md`).

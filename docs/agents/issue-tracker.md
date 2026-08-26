@@ -9,6 +9,7 @@ Issues and specs (you may know a spec as a PRD) for this repo live as markdown f
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` — never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- What actually shipped goes under a `## 落地记录` heading at the bottom — the delivery record of a `resolved` ticket. It states what was built and what it cost; **it is a historical record and is not rewritten when later work supersedes it** (the superseding ticket's own record is where that belongs). Correcting a claim that was already false when written is not a rewrite — that is a defect in the record.
 
 ## When a skill says "publish to the issue tracker"
 

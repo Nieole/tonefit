@@ -491,4 +491,42 @@ mod tests {
             "驱动页那一句与 ADR 0006 对不上"
         );
     }
+
+    /// 六条理由的英文说法各钉一次。
+    ///
+    /// 这一份要落进文件、几个月后由别的工具读出来，写法因此得钉死（见 [`reason_text`]）。
+    /// 「钉死」从前只是一句声称：全仓只有上包络那一条被断言过，另外五条改成任何字面量，
+    /// 全套测试一条都不会红——黄金回归按 `--no-metadata` 跑，根本不看 tEXt。
+    ///
+    /// 离群页那一条尤其要钉：它现在真的随普通卷落盘（黄金夹具里 `mixed` 与 `archive.cbz`
+    /// 各出离群页），而 ADR 0006 认下「可指认」时，报告那一侧有快照钉着，
+    /// 随文件走的这一侧此前没有。
+    #[test]
+    fn every_reason_has_a_frozen_english_wording() {
+        for (reason, driver, text) in [
+            (
+                Reason::LowestWithinThreshold,
+                None,
+                "lowest candidate within threshold",
+            ),
+            (
+                Reason::NoneWithinThreshold,
+                None,
+                "none within threshold, top candidate",
+            ),
+            (Reason::Override, None, "override"),
+            (Reason::VolumeEnvelope, None, "volume-p95"),
+            (
+                Reason::VolumeEnvelope,
+                Some(86),
+                "volume-p95, driven by page 087",
+            ),
+            (Reason::Hysteresis, None, "hysteresis raise"),
+            (Reason::Outlier, None, "outlier, decided on its own"),
+        ] {
+            assert_eq!(reason_text(reason, driver), text, "{reason:?} 的说法变了");
+            // tEXt 只装得下 Latin-1，这一份还得是 ASCII。
+            assert!(text.is_ascii(), "{text}");
+        }
+    }
 }

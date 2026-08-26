@@ -7,8 +7,7 @@
 //! 报告不许把上包络说成绝对一致。
 //!
 //! 四个数——上包络的分位、迟滞页数、离群页判据的立脚点分位与倍数——全部**未标定**
-//! （ADR 0006：三个数均尚未标定，其中「离群页判据」在这里是两个数），
-//! [`Envelope`] 的 `Display` 把这句话写在数值旁边。
+//! （ADR 0006），[`Envelope`] 的 `Display` 把这句话写在数值旁边。
 
 use crate::decide::{CandidateScore, Reason, Verdict};
 use crate::metric::{Score, nearest_rank};
@@ -204,9 +203,11 @@ fn by_demand(indices: &[usize], pages: &[Page]) -> Vec<usize> {
 /// [`by_demand`] 排出的序列里抽掉，站在 [`ANCHOR_QUANTILE`] 秩上的那一页就是它。
 /// 卷内其余页过得去的那一档，离群页远远过不去。
 ///
-/// 抽掉自己与分位取多少，两者各挡一种退化，缺一不可：**留一**挡短卷——上分位的秩在 20 页
-/// 以内就是页数本身（见 [`envelope`]），不抽的话立脚点就是最极端那页自己；**分位**挡高占比，
-/// 见 [`ANCHOR_QUANTILE`]。
+/// 抽掉自己与分位取多少，两者各挡一种退化，缺一不可。**留一**挡「拿自己当尺子」：
+/// 不抽的话立脚点站在全卷的第 `⌈0.75n⌉` 名上，而恰好站在那个秩上的那一页量的是**自己**
+/// 那一档——按定义必在界内，它自己永远摘不出来。`n ≤ 3` 时那一页就是最极端的那一页，
+/// 短卷整个失守；卷再长些，它也把摘得出来的占比上界整整放宽一页。
+/// **分位**挡高占比，见 [`ANCHOR_QUANTILE`]。
 ///
 /// **一页的卷没有离群页**：一页构不成分布，也就没有谁偏离谁——抽掉它就什么都不剩了。
 ///
@@ -944,8 +945,7 @@ mod tests {
         assert!(summarize(&[], threshold()).is_none());
     }
 
-    /// 四个数都没标定，报告要自己说出这一点（ADR 0006：三个数均尚未标定，
-    /// 其中「离群页判据」在实现里是立脚点分位与倍数两个数）。
+    /// 四个数都没标定，报告要自己说出这一点（ADR 0006）。
     #[test]
     fn the_envelope_says_none_of_its_four_numbers_have_been_calibrated() {
         let volume = volume_of(20, &[(4, Candidate::plain(BitDepth::Four), far_out())]);
