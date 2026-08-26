@@ -12,6 +12,9 @@
 
 **Blocked by:** None — can start immediately.
 
+**同文件争用**：`p1-session/01`（报告渲染搬出 CLI 主文件）也动 `Report`。两者逻辑上无关，
+物理上要串——先 `p1-session/01`，本票接在它后面改动最小。
+
 **Status:** ready-for-agent
 
 - [ ] `VolumeReport` 带该卷的墙钟耗时，`Report` 带整体墙钟耗时

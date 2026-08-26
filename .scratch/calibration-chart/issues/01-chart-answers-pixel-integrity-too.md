@@ -2,7 +2,10 @@
 
 **Status:** ready-for-agent
 
-**Blocked by:** None — can start immediately
+**Blocked by:** `p0-hardening/12 — 标定图的落盘移进库`
+
+落盘还在 CLI 里的时候，这张图改完只有命令行用得上；会话层要一键写出它（`p1-session/13`）
+得先有个库侧的写入口。先移，再改内容。
 
 ## 要做到的
 

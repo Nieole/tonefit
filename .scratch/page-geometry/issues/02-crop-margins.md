@@ -13,6 +13,9 @@
 
 **Blocked by:** None — can start immediately
 
+**排期建议**：排在 `metric-ordering/01` **之后**。那张票引用的判据基线是在未裁边的几何下
+量的，本票一落，那批数就不作数了。
+
 **Status:** ready-for-agent
 
 - [ ] 命令行能开关裁边，**默认打开**

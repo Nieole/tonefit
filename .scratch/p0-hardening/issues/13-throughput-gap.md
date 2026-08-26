@@ -11,7 +11,10 @@
 
 那批页绝大多数不需要缩放，编码器在写全尺寸产物，是最贵的情形，而这正是网络发布版素材的常态。
 
-**Blocked by:** None — can start immediately.
+**Blocked by:** `p0-hardening/11 — Report 补上计时`（没有计时就没有可调的依据）。
+
+**排期建议**：宜在 `page-geometry` 全部落地之后。页几何把跨页卷的输出规模改到约三倍，
+在那之前调出来的吞吐结论会被它作废。
 
 **Status:** ready-for-agent
 
