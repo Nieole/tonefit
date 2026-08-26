@@ -280,6 +280,7 @@ const DEVICES: &[(&str, Panel)] = &[
     ("boox-palma", EINK_824X1648_300),
     ("boox-palma-2", EINK_824X1648_300),
     ("boox-poke5", EINK_1072X1448_300),
+    ("boox-poke6", EINK_1072X1448_300),
     ("boox-leaf2", EINK_1264X1680_300),
     ("boox-page", EINK_1264X1680_300),
     ("boox-note-air3", EINK_1404X1872_227),
