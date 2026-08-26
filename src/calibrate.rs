@@ -1,3 +1,16 @@
+//! 标定图：一次上机同时回答两件事。
+//!
+//! 1. **像素有没有原样贴上**——抖动块与同均值实心块分不分得开，1 像素周期光栅有没有纹理，
+//!    四角标记在不在。这一件不成立时抖动做了等于没做（measurements 的《真机像素完整性》），
+//!    而 tonefit 探不到它：阅读器的显示管线在视野之外（ADR 0007 的备选方案）。
+//! 2. **还分得开几级灰**——最右那条阶梯数出来的数回填给 `--gray-levels`（ADR 0003）。
+//!
+//! **两件事有先后**，先后印在图内：缩放没关掉时阶梯本身就被重采样过，数出来的不是面板
+//! 能显示的级数。因此第一件不通过就别数第二件。两件事合在一张图上，是因为它们只有
+//! **一次上机**才有价值——分成两张，第二张就没人拷进设备了。
+
+mod glyphs;
+
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -7,11 +20,12 @@ use crate::geometry::Size;
 use crate::gray::GrayImage;
 use crate::profile::Profile;
 use crate::quantize::{BitDepth, grid_level};
+use glyphs::{FULL_WIDTH, GLYPH_HEIGHT, HALF_WIDTH};
 
 /// 纸白。图的底色，也是阶梯最亮的那一档。
 const PAPER: u8 = 255;
 
-/// 墨黑。判读说明与边框的颜色，也是阶梯最暗的那一档。
+/// 墨黑。判读说明、边框与四角标记的颜色，也是阶梯最暗的那一档。
 const INK: u8 = 0;
 
 /// 画一张标定图并写到 `out`，父目录不在就建出来。
@@ -39,37 +53,45 @@ fn chart_png(profile: &Profile) -> Result<Vec<u8>> {
     encode::png(&chart(profile), BitDepth::Eight, None)
 }
 
-/// 按目标 profile 画一张灰阶阶梯标定图，尺寸恒等于面板分辨率。
+/// 按目标 profile 画一张标定图，尺寸恒等于面板分辨率。
 fn chart(profile: &Profile) -> GrayImage {
     let layout = Layout::plan(profile);
     let mut canvas = Canvas::new(profile.panel().resolution, PAPER);
 
-    let mut y = layout.margin;
-    for line in &layout.legend {
-        canvas.text(layout.margin, y, layout.legend_scale, INK, line);
-        y += line_height(layout.legend_scale);
+    for line in &layout.text {
+        canvas.text(line.left, line.top, line.scale, INK, &line.text);
+    }
+    for pair in &layout.pairs {
+        pair.draw(&mut canvas, layout.hairline);
+    }
+    for grating in &layout.gratings {
+        grating.draw(&mut canvas, layout.hairline);
     }
     for ladder in &layout.ladders {
         ladder.draw(&mut canvas, &layout);
     }
+    // 四角标记最后画：它压在第 0 行列与末行列上，谁都不该盖住它。
+    layout.corners(&mut canvas);
     canvas.into_image()
 }
 
-/// 一张标定图的版式：说明用多大字号排在上面，各条阶梯落在下面的哪一块。
+/// 一张标定图的版式：哪一行字排在哪儿，两排方块与各条阶梯各占哪一块。
 ///
 /// 尺寸一概按面板算、不写死像素：面板从 824 宽到 1860 宽，同一个常数在两头一个嫌挤一个嫌空。
 /// 整份版式一次算完，画的时候只管照着填——版式与作画分开，两边才不会各算一遍而算得不一样。
 struct Layout {
-    /// 图四周的留白，也是阶梯之间的间隔。
-    margin: u32,
     /// 边框与细线的粗细。300 PPI 上一像素的线细到看不见。
     hairline: u32,
-    /// 印在图上的判读说明，一行一项。
-    legend: Vec<String>,
-    /// 说明的字号：一个字模格子放大成几像素。
-    legend_scale: u32,
+    /// 四角标记的臂长。
+    arm: u32,
     /// 阶梯抬头的字号。它按**栏宽**定，不跟着说明走——抬头得在自己那一栏里放得下。
     header_scale: u32,
+    /// 印在图上的每一行字，连同它的落点与字号。
+    text: Vec<TextLine>,
+    /// 抖动块与同均值实心块的并置，一档灰度一对。
+    pairs: Vec<Pair>,
+    /// 1 像素周期光栅，四种。
+    gratings: Vec<Grating>,
     /// 各条阶梯，从左到右。
     ladders: Vec<Ladder>,
 }
@@ -79,50 +101,280 @@ impl Layout {
         let panel = profile.panel();
         let resolution = panel.resolution;
         let margin = (resolution.width / 24).max(8);
+        let hairline = (resolution.width / 400).max(1);
         let content = resolution.width - margin * 2;
-
-        let legend = legend(profile);
-        let longest = legend.iter().map(|line| line.chars().count() as u32).max();
-        let legend_scale = fitting_scale(longest.unwrap_or(1), content);
+        let available = resolution.height - margin * 2;
 
         // 位深按面板灰阶数裁（ADR 0003）：图排的是**这台设备真会用到的**那几档，不是位深全集。
         let depths = BitDepth::candidates(panel.gray_levels);
         let columns = depths.len() as u32;
-        let width = (content - margin * (columns - 1)) / columns;
+        let column = (content - margin * (columns - 1)) / columns;
+        let legend = legend(profile);
+        // 两排方块各占面板高的十四分之一：再矮就看不出抖动块那点颗粒，再高就该轮到阶梯抱怨了。
+        let patch = resolution.height / 14;
+        let scale = legend.scale(content, available, patch);
         // 抬头共用一个字号：各栏字号不一，眼睛会把它读成「这一条更要紧」。
+        // 它也不许大过说明——抬头压过判读说明，读的人会先去数阶梯。
         let header_scale = depths
             .iter()
-            .map(|&depth| fitting_scale(header(depth).chars().count() as u32, width))
+            .map(|&depth| fitting_scale(&header(depth), column))
             .min()
-            .expect("候选位深至少有 1bit 那一档");
+            .expect("候选位深至少有 1bit 那一档")
+            .min(scale);
 
-        // 自上而下：说明、空一行、抬头，剩下的全归阶梯。
-        let top = margin
-            + line_height(legend_scale) * (legend.len() as u32 + 1)
-            + line_height(header_scale);
-        let height = resolution.height - margin - top;
+        // 自上而下：方块上面那几组说明、两排方块、方块下面那一组说明，抬头之下剩的全归阶梯。
+        // **每一节的说明排在它那几块的上面**——说明在下面的话，人会先看见方块、后知道该看什么。
+        let gap = line_height(scale) / 2;
+        let mut text = Vec::new();
+        let mut y = margin;
+        for group in legend.above() {
+            y = place(&mut text, group, margin, y, scale) + gap;
+        }
+        let pairs = Pair::row(Rect::new(margin, y, content, patch), margin);
+        y += patch + gap;
+        let gratings = Grating::row(Rect::new(margin, y, content, patch), margin);
+        y += patch + gap;
+        y = place(&mut text, legend.below(), margin, y, scale) + gap;
+
+        let top = y + line_height(header_scale);
+        let height = resolution.height.saturating_sub(margin + top);
         let ladders = depths
             .iter()
             .enumerate()
-            .map(|(column, &depth)| Ladder {
+            .map(|(index, &depth)| Ladder {
                 depth,
                 rect: Rect::new(
-                    margin + column as u32 * (width + margin),
+                    margin + index as u32 * (column + margin),
                     top,
-                    width,
+                    column,
                     height,
                 ),
             })
             .collect();
 
         Self {
-            margin,
-            hairline: (resolution.width / 400).max(1),
-            legend,
-            legend_scale,
+            hairline,
+            arm: (resolution.width / 12).max(16),
             header_scale,
+            text,
+            pairs,
+            gratings,
             ladders,
         }
+    }
+
+    /// 四角各压一个直角标记，两条臂分别落在第 0 行列与末行列上。
+    ///
+    /// 它答的是**边距与裁切**：阅读器自己加了边距、或者裁掉了白边，第一行第一列就不在屏上了，
+    /// 少一个角就看得出来。臂要够长——只点一个像素的话，那一个像素落在屏边上没人分得清它在不在。
+    fn corners(&self, canvas: &mut Canvas) {
+        let Size { width, height } = canvas.size;
+        // 比细线粗一倍：标记是拿来一眼扫过去数的，细到与阶梯的边框同粗就要凑近了看。
+        let thickness = (self.hairline * 2).max(3);
+        let (arm, right, bottom) = (self.arm, width - self.arm, height - thickness);
+        for (left, top) in [(0, 0), (right, 0), (0, bottom), (right, bottom)] {
+            canvas.fill(Rect::new(left, top, arm, thickness), INK);
+        }
+        let (right, bottom) = (width - thickness, height - arm);
+        for (left, top) in [(0, 0), (right, 0), (0, bottom), (right, bottom)] {
+            canvas.fill(Rect::new(left, top, thickness, arm), INK);
+        }
+    }
+}
+
+/// 把一组说明逐行摆下去，回下一组该从哪儿起。
+fn place(text: &mut Vec<TextLine>, group: &[String], left: u32, top: u32, scale: u32) -> u32 {
+    let mut y = top;
+    for line in group {
+        text.push(TextLine {
+            left,
+            top: y,
+            scale,
+            text: line.clone(),
+        });
+        y += line_height(scale);
+    }
+    y
+}
+
+/// 印在图上的一行字：落点、字号与内容。
+struct TextLine {
+    left: u32,
+    top: u32,
+    scale: u32,
+    text: String,
+}
+
+/// `count` 块等宽的东西横排在 `band` 里、块与块之间空 `gap` 时，一块最宽能有多宽。
+fn spread_width(band: Rect, count: u32, gap: u32) -> u32 {
+    (band.size.width - gap * (count - 1)) / count
+}
+
+/// 把 `count` 块宽 `width` 的东西横排在 `band` 里，整排横向居中。
+///
+/// 宽度由调用方给而不是这里算：抖动块那一排要它是 15 的整数倍（均值严格相等的前提），
+/// 光栅那一排不要，两者只在这一个数上不同。居中是因为取整会剩下几个像素，
+/// 全堆在右边看得出来。
+fn spread(band: Rect, count: u32, gap: u32, width: u32) -> Vec<Rect> {
+    let inset = (band.size.width - (width * count + gap * (count - 1))) / 2;
+    (0..count)
+        .map(|index| {
+            Rect::new(
+                band.left + inset + index * (width + gap),
+                band.top,
+                width,
+                band.size.height,
+            )
+        })
+        .collect()
+}
+
+/// 一对方块：左边抖动、右边实心，**两块的均值严格相等**。
+///
+/// 这是整张图的命门。均值不相等的话，阅读器重采样过之后两块仍然分得开，
+/// 判读会给出一个假的「通过」——那比没有这张图更糟。
+///
+/// 相等靠构造保证，不靠事后凑：抖动块每 15 格里恰好 `level` 格纸白，
+/// 而 255 = 15 × 17，一行的均值因此恰好是 `17 × level`——整数，且正好落在 16 级面板的格点上。
+/// 块宽取 15 的整数倍，每一行都恰好走完整数个周期，整块的均值于是与逐行的均值同一个数。
+/// 实心块填的就是那个数（见 [`Pair::solid_level`]）。
+struct Pair {
+    /// 抖动的那一半。
+    dither: Rect,
+    /// 实心的那一半，紧挨着抖动那一半，尺寸相同。
+    solid: Rect,
+    /// 每 15 格里几格纸白。均值是它的 17 倍。
+    level: u32,
+}
+
+impl Pair {
+    /// 一排四对，横排在 `band` 这一条带里。
+    fn row(band: Rect, gap: u32) -> Vec<Self> {
+        let count = PAIR_LEVELS.len() as u32;
+        // 半块宽取 15 的整数倍——均值严格相等靠的就是每一行走完整数个周期。
+        let half = spread_width(band, count, gap) / 2 / DITHER_PERIOD * DITHER_PERIOD;
+        spread(band, count, gap, half * 2)
+            .into_iter()
+            .zip(PAIR_LEVELS)
+            .map(|(cell, level)| Self {
+                dither: Rect::new(cell.left, cell.top, half, cell.size.height),
+                solid: Rect::new(cell.left + half, cell.top, half, cell.size.height),
+                level,
+            })
+            .collect()
+    }
+
+    /// 实心那一半的灰：抖动那一半的均值，取整数、且落在 16 级面板的格点上。
+    fn solid_level(&self) -> u8 {
+        (u32::from(PAPER) * self.level / DITHER_PERIOD) as u8
+    }
+
+    /// 画这一对，再沿两块**外沿**围一圈边。
+    ///
+    /// 边围在外面而不是压在块上：压上去就改掉了块里的像素，均值跟着不再相等，
+    /// 而那正是这一对方块唯一要保住的性质。
+    fn draw(&self, canvas: &mut Canvas, hairline: u32) {
+        let level = self.level;
+        canvas.paint(
+            self.dither,
+            |x, y| {
+                if dithered(x, y, level) { PAPER } else { INK }
+            },
+        );
+        canvas.fill(self.solid, self.solid_level());
+        canvas.outline(
+            Rect::new(
+                self.dither.left,
+                self.dither.top,
+                self.dither.size.width + self.solid.size.width,
+                self.dither.size.height,
+            ),
+            hairline,
+        );
+    }
+}
+
+/// 四对方块取的那几档灰：每 15 格里几格纸白。均值依次是 51、102、153、204，
+/// 也就是 16 级面板的第 3、6、9、12 级——四档摊开在整个灰度区间上，不挤在中间。
+const PAIR_LEVELS: [u32; 4] = [3, 6, 9, 12];
+
+/// 抖动块的行内周期。255 = 15 × 17，取 15 才使「每 15 格 n 格纸白」的均值恰好是整数 17n。
+const DITHER_PERIOD: u32 = 15;
+
+/// 行内的散布步长。与 15 互素，因此每 15 格里恰好取到 `level` 格，而取到的那几格互相散得开。
+const DITHER_STRIDE: u32 = 4;
+
+/// 行与行之间的错位，0..15 的一个排列。
+///
+/// 每一行的图案都是头一行平移出来的，而平移量互不相同：不这么错开的话，
+/// 各行同相位，抖动块会变成一片竖条纹——那就成了光栅那一节的东西，而不是抖动。
+const ROW_SHIFT: [u32; DITHER_PERIOD as usize] = [0, 6, 11, 3, 13, 8, 1, 10, 4, 14, 7, 2, 12, 5, 9];
+
+/// 抖动块上 `(x, y)` 那一格是不是纸白。
+fn dithered(x: u32, y: u32, level: u32) -> bool {
+    let shift = ROW_SHIFT[(y % DITHER_PERIOD) as usize];
+    (DITHER_STRIDE * x + shift) % DITHER_PERIOD < level
+}
+
+/// 一块 1 像素周期光栅。
+///
+/// 它比抖动块**更早**暴露非 1.0 的缩放：抖动块糊掉要重采样核铺开好几个像素，
+/// 而 1 像素周期的结构上任何一次非整数重采样都会掉幅度——原样贴上时是细密纹理，
+/// 缩过一次就是一片平灰。
+struct Grating {
+    rect: Rect,
+    kind: Ruling,
+}
+
+/// 光栅的四种走向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ruling {
+    /// 棋盘：横竖两个方向同时 1 像素周期。
+    Checker,
+    /// 竖线：只在横向上有周期，暴露横向的缩放。
+    Vertical,
+    /// 横线：只在纵向上有周期，暴露纵向的缩放。
+    Horizontal,
+    /// 斜线：1 像素宽，周期取 3。
+    ///
+    /// 周期取 2 的斜线就是棋盘，与头一块重复；取 3 才既是 1 像素宽的线、又不与棋盘同形。
+    Diagonal,
+}
+
+impl Grating {
+    /// 一排四块，横排在 `band` 这一条带里，四种走向各占一块。
+    fn row(band: Rect, gap: u32) -> Vec<Self> {
+        let kinds = [
+            Ruling::Checker,
+            Ruling::Vertical,
+            Ruling::Horizontal,
+            Ruling::Diagonal,
+        ];
+        let count = kinds.len() as u32;
+        spread(band, count, gap, spread_width(band, count, gap))
+            .into_iter()
+            .zip(kinds)
+            .map(|(rect, kind)| Self { rect, kind })
+            .collect()
+    }
+
+    fn draw(&self, canvas: &mut Canvas, hairline: u32) {
+        let kind = self.kind;
+        canvas.paint(
+            self.rect,
+            |x, y| if ruled(kind, x, y) { INK } else { PAPER },
+        );
+        canvas.outline(self.rect, hairline);
+    }
+}
+
+/// 光栅上 `(x, y)` 那一格是不是墨黑。
+fn ruled(kind: Ruling, x: u32, y: u32) -> bool {
+    match kind {
+        Ruling::Checker => (x + y).is_multiple_of(2),
+        Ruling::Vertical => x.is_multiple_of(2),
+        Ruling::Horizontal => y.is_multiple_of(2),
+        Ruling::Diagonal => (x + y).is_multiple_of(3),
     }
 }
 
@@ -162,18 +414,18 @@ impl Ladder {
     /// 放不下时整条阶梯都不印号——半数带号半数不带，数起来比全不带还难；
     /// 那时这一条仍数得出来，靠的是各级的灰本身两两不同。
     fn number_scale(&self, hairline: u32) -> Option<u32> {
-        let digits = self.depth.levels().to_string().chars().count() as u32;
+        let widest = text_width(&self.depth.levels().to_string(), 1);
         let by_height = self.rect.size.height / self.depth.levels() / LINE_ADVANCE;
-        let by_width = (self.rect.size.width / 2).saturating_sub(number_inset(hairline))
-            / (digits * GLYPH_ADVANCE);
+        let by_width = (self.rect.size.width / 2).saturating_sub(number_inset(hairline)) / widest;
         let scale = by_height.min(by_width).min(MAX_SCALE);
         (scale >= 1).then_some(scale)
     }
 
-    /// 画这一条：抬头、逐级填灰并印上级号，最后围一圈黑边。
+    /// 画这一条：抬头、逐级填灰并印上级号，最后沿**外沿**围一圈黑边。
     ///
     /// 黑边不是装饰：最亮的那一级就是纸白，不围起来它与图的底色连成一片，最后一级就数不出来了。
-    /// 它排在最后画，因此盖住的是各级自己的边沿，而不是反过来把级号盖住。
+    /// 围在外沿而不是压在栏上，理由与那两排方块同一条（见 [`Canvas::outline`]）：
+    /// 压上去就吃掉了最上与最下那一级——256 级那一条上一级只有两三行高，压一圈边就等于少两级。
     fn draw(&self, canvas: &mut Canvas, layout: &Layout) {
         self.draw_header(canvas, layout.header_scale);
 
@@ -193,7 +445,7 @@ impl Ladder {
                 );
             }
         }
-        canvas.frame(self.rect, layout.hairline, INK);
+        canvas.outline(self.rect, layout.hairline);
     }
 
     /// 抬头居中排在这一栏正上方：这是哪一档位深、它有几级。
@@ -206,7 +458,7 @@ impl Ladder {
                 .rect
                 .size
                 .width
-                .saturating_sub(printed_width(&header, scale))
+                .saturating_sub(text_width(&header, scale))
                 / 2;
         canvas.text(
             left,
@@ -228,43 +480,113 @@ fn header(depth: BitDepth) -> String {
     format!("{depth} {}", depth.levels())
 }
 
-/// 印在图上的判读说明（14 号票：图内含英文判读说明，脱离文档也能用）。
+/// 印在图上的判读说明，按它挨着的那一段分组。
 ///
-/// 用大写 ASCII 说。图是一张灰度位图，印字就得有字模，而中文字模按 16×16 算，
-/// 一句话就是几十个字形——手写不出来，也验不了（见 [`GLYPHS`]）。
-/// 中文那一份在 `calibrate` 的帮助文本里。终端上跑完只印当下要做对的那一件事，
-/// 不把这套说法再抄一遍——同一段话摆三处，改的时候就得记着改三处。
+/// 中英两份都印（14 号票要英文，标定图批 01 号票加中文）。这是一个全中文界面的工具，
+/// 「脱离文档也能用」对只有英文的说明并不成立；而英文那一份留着，
+/// 是因为图会被拷到不认这套字的地方去看。
+struct Legend {
+    /// 这是哪台设备、哪块面板的图。
+    heading: Vec<String>,
+    /// 怎么打开，以及两件事的先后。
+    order: Vec<String>,
+    /// 英文那一份。
+    english: Vec<String>,
+    /// 第一节：像素完整性。紧挨着下面那两排方块。
+    pixels: Vec<String>,
+    /// 第二节：感知可分辨级数。紧挨着下面那几条阶梯。
+    levels: Vec<String>,
+}
+
+impl Legend {
+    /// 排在那两排方块**上面**的几组。
+    fn above(&self) -> [&[String]; 4] {
+        [&self.heading, &self.order, &self.english, &self.pixels]
+    }
+
+    /// 排在方块**下面**的那一组：第二节的说明，紧挨着几条阶梯。
+    fn below(&self) -> &[String] {
+        &self.levels
+    }
+
+    /// 每一行字，不论它排在哪一组。
+    fn lines(&self) -> impl Iterator<Item = &String> {
+        self.above().into_iter().flatten().chain(self.below())
+    }
+
+    /// 说明该用多大字号：宽度放得下，且给两排方块与阶梯留得出地方。
+    ///
+    /// 两头都要卡。只按宽度定的话，窄面板上说明会把阶梯挤没；只按高度定的话，
+    /// 最长的那一行会出血。**阶梯那一块给的是下限而不是实得**——说明短的时候阶梯就更高，
+    /// 那是好事，反过来则不行：阶梯矮到数不出级，这张图的第二件事就白做了。
+    ///
+    fn scale(&self, content: u32, available: u32, patch: u32) -> u32 {
+        let widest = self
+            .lines()
+            .map(|line| text_width(line, 1))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let by_width = content / widest;
+        // 组与组、组与方块之间各空半行：上面四组之后各一个，两排方块之后各一个，
+        // 下面那一组之后一个——七个半行。抬头另占一整行。
+        let gaps = self.above().len() as u32 + 3;
+        let rows = self.lines().count() as u32 + gaps.div_ceil(2) + 1;
+        let spare = available
+            // 阶梯至少要占五分之一：4bit 那一条 16 级，再少就一级不到 20 像素、数不出来。
+            .saturating_sub(patch * 2 + available / 5)
+            .max(rows * LINE_ADVANCE);
+        let by_height = spare / (rows * LINE_ADVANCE);
+        by_width.min(by_height).clamp(1, MAX_SCALE)
+    }
+}
+
+/// 排出这块面板的判读说明。
 ///
 /// 说明要点名**数哪一条**：几条阶梯就有几个数，不说清楚，回填给 `--gray-levels`
 /// 的会是随便哪一个。数的是最细的那一条——阶梯按候选位深由小到大排开，它恒在最右边。
-fn legend(profile: &Profile) -> Vec<String> {
+fn legend(profile: &Profile) -> Legend {
     let panel = profile.panel();
-    let mut lines = vec![
-        "TONEFIT CALIBRATION CHART".to_owned(),
-        format!("DEVICE {}", profile.device().to_uppercase()),
-        format!(
-            "PANEL {}X{} {}PPI {} LEVELS",
-            panel.resolution.width, panel.resolution.height, panel.ppi, panel.gray_levels
-        ),
-        String::new(),
-        "1 SHOW AT 1:1. NO ZOOM OR FIT.".to_owned(),
-        "2 COUNT THE STEPS YOU CAN TELL".to_owned(),
-        "  APART IN THE RIGHTMOST LADDER.".to_owned(),
+    let mut levels = vec![
+        "二 感知可分辨级数".to_owned(),
+        "数最右那条阶梯还分得开几级".to_owned(),
     ];
     // 只剩一条阶梯时不提「其余几条」：`--gray-levels 2` 就是这个样子。
     if BitDepth::candidates(panel.gray_levels).len() > 1 {
-        lines.push("  THE OTHERS ARE COARSER. THEY".to_owned());
-        lines.push("  ARE THERE FOR COMPARISON.".to_owned());
+        levels.push("其余几条更粗，只作对照".to_owned());
     }
-    lines.extend([
-        "3 RUN TONEFIT AGAIN WITH THAT".to_owned(),
-        "  COUNT AS --GRAY-LEVELS N.".to_owned(),
-        String::new(),
-        "WHAT YOU COUNT IS PERCEIVED LEVELS.".to_owned(),
-        "IT IS NOT THE PHYSICAL GRAY LEVEL".to_owned(),
-        "COUNT OF THE PANEL.".to_owned(),
-    ]);
-    lines
+    levels.push("把那个数回填给 --gray-levels".to_owned());
+    levels.push("数的是看得见的级数，不是物理灰阶数".to_owned());
+
+    Legend {
+        heading: vec![
+            format!("TONEFIT 标定图  {}", profile.device()),
+            format!(
+                "{}X{}  {}PPI  {} 级",
+                panel.resolution.width, panel.resolution.height, panel.ppi, panel.gray_levels
+            ),
+        ],
+        order: vec![
+            "以原尺寸打开，关掉缩放与裁边".to_owned(),
+            "先做一，一不过就别做二".to_owned(),
+            "阶梯被重采样过，数出的不是面板能显示的级数".to_owned(),
+        ],
+        // 英文那一份要把**三样检查各点一次**：只提抖动块的话，光栅与四角标记在英文里就不存在了，
+        // 而 14 号票要的是「脱离文档也能用」——对着英文读的人拿不到另一份说明。
+        english: vec![
+            "SHOW AT 1:1. NO ZOOM, NO FIT, NO CROP.".to_owned(),
+            "1 DITHER VS SOLID MUST DIFFER, GRATINGS MUST".to_owned(),
+            "SHOW TEXTURE, ALL 4 CORNERS MUST BE THERE.".to_owned(),
+            "2 IF SO, COUNT THE RIGHTMOST LADDER, PASS IT".to_owned(),
+            "BACK AS --GRAY-LEVELS N. PERCEIVED, NOT SPEC.".to_owned(),
+        ],
+        pixels: vec![
+            "一 像素完整性".to_owned(),
+            "抖动块与实心块分得开吗，光栅有细纹吗".to_owned(),
+            "四角标记都在吗，糊成一片就是被重采样过".to_owned(),
+        ],
+        levels,
+    }
 }
 
 /// 图上的一块矩形：左上角，加上它的尺寸。
@@ -313,6 +635,21 @@ impl Canvas {
         }
     }
 
+    /// 逐格填一块矩形，取值由 `value` 按**块内**坐标给出。
+    ///
+    /// 块内坐标而不是画布坐标：抖动块与光栅的图案必须跟着块走，
+    /// 跟着画布走的话，同一档灰在图上换个位置就换了个花样。
+    fn paint(&mut self, rect: Rect, value: impl Fn(u32, u32) -> u8) {
+        let right = (rect.left + rect.size.width).min(self.size.width);
+        let bottom = (rect.top + rect.size.height).min(self.size.height);
+        for row in rect.top..bottom {
+            for column in rect.left..right {
+                let index = row as usize * self.size.width as usize + column as usize;
+                self.pixels[index] = value(column - rect.left, row - rect.top);
+            }
+        }
+    }
+
     /// 沿矩形内沿围一圈粗 `thickness` 的边。
     fn frame(&mut self, rect: Rect, thickness: u32, value: u8) {
         let Rect { left, top, size } = rect;
@@ -328,33 +665,51 @@ impl Canvas {
         );
     }
 
+    /// 沿矩形**外沿**围一圈边，一个格子都不动块里的像素。
+    ///
+    /// 方块要围起来才与纸白的底色分得开——最亮的那几块不围就没有边界。
+    /// 而围在里面就改掉了块里的像素：抖动块与实心块的均值随之不再相等，
+    /// 这张图最要紧的那条性质就没了。
+    fn outline(&mut self, rect: Rect, thickness: u32) {
+        let left = rect.left.saturating_sub(thickness);
+        let top = rect.top.saturating_sub(thickness);
+        self.frame(
+            Rect::new(
+                left,
+                top,
+                rect.size.width + (rect.left - left) + thickness,
+                rect.size.height + (rect.top - top) + thickness,
+            ),
+            thickness,
+            INK,
+        );
+    }
+
     /// 从 `(x, y)` 起印一行字，`scale` 是一个字模格子放大成几像素。
+    ///
+    /// 半宽与全宽混排：字距按各个字形自己的宽度推进（见 `glyphs`）。
     fn text(&mut self, x: u32, y: u32, scale: u32, value: u8, text: &str) {
-        for (index, character) in text.chars().enumerate() {
-            let pen = x + index as u32 * GLYPH_ADVANCE * scale;
+        let mut pen = x;
+        for character in text.chars() {
             self.draw_glyph(pen, y, scale, value, character);
+            pen += advance(character) * scale;
         }
     }
 
     fn draw_glyph(&mut self, x: u32, y: u32, scale: u32, value: u8, character: char) {
-        let cell = |column: usize, row: usize| {
-            Rect::new(
-                x + column as u32 * scale,
-                y + row as u32 * scale,
-                scale,
-                scale,
-            )
-        };
-        let Some(rows) = glyph(character) else {
+        let Some(glyph) = glyphs::glyph(character) else {
             // 字模里没有的字符画成一个空框：印不出来这件事要看得见，而不是静静少一个字。
-            let box_ = Rect::new(x, y, GLYPH_WIDTH * scale, GLYPH_HEIGHT * scale);
+            let box_ = Rect::new(x, y, advance(character) * scale, GLYPH_HEIGHT * scale);
             self.frame(box_, scale, value);
             return;
         };
-        for (row, cells) in rows.iter().enumerate() {
-            for (column, lit) in cells.chars().enumerate() {
-                if lit == '#' {
-                    self.fill(cell(column, row), value);
+        for row in 0..GLYPH_HEIGHT {
+            for column in 0..glyph.width() {
+                if glyph.lit(column, row) {
+                    self.fill(
+                        Rect::new(x + column * scale, y + row * scale, scale, scale),
+                        value,
+                    );
                 }
             }
         }
@@ -365,27 +720,27 @@ impl Canvas {
     }
 }
 
-/// 字模的格子数：5 宽、7 高。
-const GLYPH_WIDTH: u32 = 5;
-const GLYPH_HEIGHT: u32 = 7;
-
-/// 字距：字形之间空一格。
-const GLYPH_ADVANCE: u32 = GLYPH_WIDTH + 1;
-
 /// 行距：行与行之间空两格。
 const LINE_ADVANCE: u32 = GLYPH_HEIGHT + 2;
 
-/// 一个字模格子最多放大成几像素。再大就挤不下几个字，说明反而说不完。
-const MAX_SCALE: u32 = 5;
+/// 一个字模格子最多放大成几像素。再大就挤不下几行，说明反而说不完。
+const MAX_SCALE: u32 = 3;
 
-/// 一行字排下来推进多少，含末尾那一格字距。定的是**下一行字从哪儿起**。
-fn text_width(text: &str, scale: u32) -> u32 {
-    text.chars().count() as u32 * GLYPH_ADVANCE * scale
+/// 这个字符占几格。字模里没有的字符按它那一类的宽度算——ASCII 半宽，其余全宽。
+fn advance(character: char) -> u32 {
+    glyphs::glyph(character).map_or(
+        if character.is_ascii() {
+            HALF_WIDTH
+        } else {
+            FULL_WIDTH
+        },
+        |glyph| glyph.width(),
+    )
 }
 
-/// 一行字**印出来**多宽，不含末尾那一格字距。居中与比对量的是它。
-fn printed_width(text: &str, scale: u32) -> u32 {
-    text_width(text, scale).saturating_sub(scale)
+/// 一行字印出来多宽。字模自带左右留白，因此没有额外的字距要加。
+fn text_width(text: &str, scale: u32) -> u32 {
+    text.chars().map(advance).sum::<u32>() * scale
 }
 
 /// 一行字占的高度，含行距。
@@ -393,83 +748,37 @@ fn line_height(scale: u32) -> u32 {
     LINE_ADVANCE * scale
 }
 
-/// 这么多个字排在 `available` 像素里，一个格子最大放得成几像素。
-fn fitting_scale(characters: u32, available: u32) -> u32 {
-    (available / (characters.max(1) * GLYPH_ADVANCE)).clamp(1, MAX_SCALE)
+/// 这一行字排在 `available` 像素里，一个格子最大放得成几像素。
+fn fitting_scale(text: &str, available: u32) -> u32 {
+    (available / text_width(text, 1).max(1)).clamp(1, MAX_SCALE)
 }
-
-/// `character` 的字模。大小写不论——表里只收大写。
-fn glyph(character: char) -> Option<&'static [&'static str; GLYPH_HEIGHT as usize]> {
-    let key = character.to_ascii_uppercase();
-    GLYPHS
-        .iter()
-        .find(|(listed, _)| *listed == key)
-        .map(|(_, rows)| rows)
-}
-
-/// 5×7 点阵字模，一行一个字形，`#` 是点亮的那一格。
-///
-/// 只收大写 ASCII，标点只收图上真用得到的那几个。判读说明要印在图上（14 号票），
-/// 而图是一张灰度位图——印字就得有字模，字模就得随程序走，不能指望目标机器上有哪个字体。
-///
-/// 字母全集加数字全集都在表里，不只收当下说明里用到的那些：型号名归一后是 `[a-z0-9-]`
-/// （见 `profile` 的 `canonical`），新加一行设备就可能带进任何一个字母。
-/// 标点则**只加要用的**：有一条用例把图上印得出的每一个字符都拿来查一遍表，
-/// 少一个会当场报出来，因此不必先囤着。
-// 一行一个字形，眯起眼就看得出它长什么样——字模是画出来的，不是写出来的。
-// rustfmt 会把每一行拆成七行，那七行摞起来什么也不像，改一个字形就得在脑子里重新拼一遍。
-#[rustfmt::skip]
-const GLYPHS: &[(char, [&str; GLYPH_HEIGHT as usize])] = &[
-    (' ', ["     ", "     ", "     ", "     ", "     ", "     ", "     "]),
-    ('-', ["     ", "     ", "     ", "#####", "     ", "     ", "     "]),
-    ('.', ["     ", "     ", "     ", "     ", "     ", " ##  ", " ##  "]),
-    (':', ["     ", " ##  ", " ##  ", "     ", " ##  ", " ##  ", "     "]),
-    ('0', [" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "]),
-    ('1', ["  #  ", " ##  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "]),
-    ('2', [" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####"]),
-    ('3', ["#####", "   # ", "  #  ", "   # ", "    #", "#   #", " ### "]),
-    ('4', ["   # ", "  ## ", " # # ", "#  # ", "#####", "   # ", "   # "]),
-    ('5', ["#####", "#    ", "#### ", "    #", "    #", "#   #", " ### "]),
-    ('6', ["  ## ", " #   ", "#    ", "#### ", "#   #", "#   #", " ### "]),
-    ('7', ["#####", "#   #", "    #", "   # ", "  #  ", "  #  ", "  #  "]),
-    ('8', [" ### ", "#   #", "#   #", " ### ", "#   #", "#   #", " ### "]),
-    ('9', [" ### ", "#   #", "#   #", " ####", "    #", "   # ", " ##  "]),
-    ('A', [" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"]),
-    ('B', ["#### ", "#   #", "#   #", "#### ", "#   #", "#   #", "#### "]),
-    ('C', [" ### ", "#   #", "#    ", "#    ", "#    ", "#   #", " ### "]),
-    ('D', ["###  ", "#  # ", "#   #", "#   #", "#   #", "#  # ", "###  "]),
-    ('E', ["#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####"]),
-    ('F', ["#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#    "]),
-    ('G', [" ### ", "#   #", "#    ", "#  ##", "#   #", "#   #", " ### "]),
-    ('H', ["#   #", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"]),
-    ('I', [" ### ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "]),
-    ('J', ["  ###", "   # ", "   # ", "   # ", "   # ", "#  # ", " ##  "]),
-    ('K', ["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"]),
-    ('L', ["#    ", "#    ", "#    ", "#    ", "#    ", "#    ", "#####"]),
-    ('M', ["#   #", "## ##", "# # #", "#   #", "#   #", "#   #", "#   #"]),
-    ('N', ["#   #", "##  #", "# # #", "#  ##", "#   #", "#   #", "#   #"]),
-    ('O', [" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "]),
-    ('P', ["#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "]),
-    ('Q', [" ### ", "#   #", "#   #", "#   #", "# # #", "#  # ", " ## #"]),
-    ('R', ["#### ", "#   #", "#   #", "#### ", "# #  ", "#  # ", "#   #"]),
-    ('S', [" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "]),
-    ('T', ["#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  "]),
-    ('U', ["#   #", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "]),
-    ('V', ["#   #", "#   #", "#   #", "#   #", "#   #", " # # ", "  #  "]),
-    ('W', ["#   #", "#   #", "#   #", "# # #", "# # #", "## ##", "#   #"]),
-    ('X', ["#   #", "#   #", " # # ", "  #  ", " # # ", "#   #", "#   #"]),
-    ('Y', ["#   #", "#   #", " # # ", "  #  ", "  #  ", "  #  ", "  #  "]),
-    ('Z', ["#####", "    #", "   # ", "  #  ", " #   ", "#    ", "#####"]),
-];
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::quantize::{BitDepth, grid_level};
+
+    /// 内置表里挑出来的几台设备，最窄的与最宽的面板都在里面。
+    const DEVICES: [&str; 4] = ["boox-palma", "boox-poke6", "kobo-libra-2", "kindle-scribe"];
 
     /// `image` 上 `(x, y)` 那一点的取值。
     fn at(image: &GrayImage, x: u32, y: u32) -> u8 {
         image.pixels()[(y * image.size().width + x) as usize]
+    }
+
+    /// 一块矩形里全部像素的和，以及它有几个像素。
+    fn sum_of(image: &GrayImage, rect: Rect) -> (u64, u64) {
+        let mut sum = 0;
+        let mut count = 0;
+        for y in rect.top..rect.top + rect.size.height {
+            for x in rect.left..rect.left + rect.size.width {
+                sum += u64::from(at(image, x, y));
+                count += 1;
+            }
+        }
+        (sum, count)
     }
 
     /// 图上有没有哪一列，自上而下**接连**走过 `steps` 这一串取值。
@@ -519,7 +828,7 @@ mod tests {
 
     /// 一行字印在 `paper` 底色上的那块图案，四周不留白——拿它去图上比对。
     fn stamp(text: &str, scale: u32, ink: u8, paper: u8) -> GrayImage {
-        let size = Size::new(printed_width(text, scale), GLYPH_HEIGHT * scale);
+        let size = Size::new(text_width(text, scale), GLYPH_HEIGHT * scale);
         let mut canvas = Canvas::new(size, paper);
         canvas.text(0, 0, scale, ink, text);
         canvas.into_image()
@@ -550,7 +859,7 @@ mod tests {
     /// 标定图要**能 1:1 显示**：尺寸必须逐像素等于目标面板的分辨率。
     #[test]
     fn the_chart_is_exactly_the_panel_resolution() {
-        for device in ["kobo-libra-2", "boox-palma", "kindle-scribe"] {
+        for device in DEVICES {
             let profile = Profile::resolve(device).expect("内置型号");
 
             let chart = decode(&profile);
@@ -560,6 +869,145 @@ mod tests {
                 profile.panel().resolution,
                 "{device} 的标定图贴不住面板"
             );
+        }
+    }
+
+    /// **抖动块与同均值实心块的均值严格相等**（标定图批 01 号票的命门）。
+    ///
+    /// 不相等的话，阅读器重采样过之后两块仍然分得开，判读会给出一个假的「通过」——
+    /// 那比没有这张图更糟。断言比的是两块的**和**：两块像素数相同，和相等即均值相等，
+    /// 而和是整数，比得起「严格」这两个字，不必绕道浮点。
+    ///
+    /// 顺带钉住两块**不是同一块**：抖动那一半必须真有两种取值，
+    /// 不然「均值相等」这条用两块实心也能满足，而那是一张什么都量不出来的图。
+    #[test]
+    fn a_dithered_patch_and_its_solid_twin_have_exactly_the_same_mean() {
+        for device in DEVICES {
+            let profile = Profile::resolve(device).expect("内置型号");
+            let chart = decode(&profile);
+
+            for pair in &Layout::plan(&profile).pairs {
+                let (dithered, cells) = sum_of(&chart, pair.dither);
+                let (solid, twin) = sum_of(&chart, pair.solid);
+
+                assert_eq!(cells, twin, "{device}：两半的像素数不一样");
+                assert_eq!(
+                    dithered, solid,
+                    "{device}：第 {} 档两半的均值不相等",
+                    pair.level
+                );
+                let values: BTreeSet<u8> = (pair.dither.top
+                    ..pair.dither.top + pair.dither.size.height)
+                    .flat_map(|y| {
+                        (pair.dither.left..pair.dither.left + pair.dither.size.width)
+                            .map(move |x| (x, y))
+                    })
+                    .map(|(x, y)| at(&chart, x, y))
+                    .collect();
+                assert_eq!(
+                    values,
+                    [INK, PAPER].into_iter().collect(),
+                    "{device}：抖动那一半不是墨黑与纸白两种取值"
+                );
+            }
+        }
+    }
+
+    /// 四角的直角标记压在**第 0 行列与末行列**上，用来发现边距与裁切。
+    ///
+    /// 四个角上的那一点必须是墨黑：阅读器加了边距、或者裁掉了白边，第一行第一列就不在屏上，
+    /// 少一个角当场看得出来。两条臂各自也要在，只有一个角点的话，屏边上那一个像素没人分得清。
+    ///
+    /// 同时钉住它**不是一圈边框**：每条边的中点是纸白。围成一圈的话，
+    /// 裁掉一点边仍然看得见一条线，标记就答不出问题了。
+    #[test]
+    fn the_corner_marks_sit_on_the_first_and_last_row_and_column() {
+        for device in DEVICES {
+            let profile = Profile::resolve(device).expect("内置型号");
+            let chart = decode(&profile);
+            let (width, height) = (chart.size().width, chart.size().height);
+            let arm = Layout::plan(&profile).arm;
+
+            for (x, y) in [
+                (0, 0),
+                (width - 1, 0),
+                (0, height - 1),
+                (width - 1, height - 1),
+            ] {
+                assert_eq!(
+                    at(&chart, x, y),
+                    INK,
+                    "{device}：({x}, {y}) 这个角上没有标记"
+                );
+            }
+            // 两条臂：沿着第 0 行/末行走 `arm`，沿着第 0 列/末列也走 `arm`。
+            for offset in 0..arm {
+                for (x, y) in [
+                    (offset, 0),
+                    (width - 1 - offset, 0),
+                    (offset, height - 1),
+                    (width - 1 - offset, height - 1),
+                    (0, offset),
+                    (0, height - 1 - offset),
+                    (width - 1, offset),
+                    (width - 1, height - 1 - offset),
+                ] {
+                    assert_eq!(at(&chart, x, y), INK, "{device}：({x}, {y}) 处的臂断了");
+                }
+            }
+            for (x, y) in [
+                (width / 2, 0),
+                (width / 2, height - 1),
+                (0, height / 2),
+                (width - 1, height / 2),
+            ] {
+                assert_eq!(
+                    at(&chart, x, y),
+                    PAPER,
+                    "{device}：({x}, {y}) 上有东西——四角标记连成了一圈边框"
+                );
+            }
+        }
+    }
+
+    /// 1 像素周期光栅四种都在图上：每一种在自己该有周期的那个方向上一格一换，
+    /// 而且四种**互不相同**。
+    ///
+    /// 光栅比抖动块更早暴露非 1.0 的缩放，因此两样都要有，不是二选一。
+    /// 四种互不相同这一条要单钉：只问「横向纵向变不变」的话，斜线与棋盘答得一模一样，
+    /// 而那时图上就只剩三种走向了。
+    #[test]
+    fn the_four_gratings_alternate_every_pixel_and_are_all_different() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let chart = decode(&profile);
+        let gratings = Layout::plan(&profile).gratings;
+
+        assert_eq!(gratings.len(), 4, "四种光栅少了几种");
+        let mut painted: Vec<(Ruling, Vec<u8>)> = Vec::new();
+        for grating in &gratings {
+            let rect = grating.rect;
+            let (x, y) = (rect.left, rect.top);
+            let (across, down) = (
+                at(&chart, x + 1, y) != at(&chart, x, y),
+                at(&chart, x, y + 1) != at(&chart, x, y),
+            );
+            let alternates = match grating.kind {
+                Ruling::Checker | Ruling::Diagonal => across && down,
+                Ruling::Vertical => across && !down,
+                Ruling::Horizontal => !across && down,
+            };
+            assert!(alternates, "{:?} 这块光栅的周期不对", grating.kind);
+            // 取一小块图案作指纹：走向不同的两块，六格见方之内必然已经分道扬镳。
+            let window = (0..6)
+                .flat_map(|row| (0..6).map(move |column| (column, row)))
+                .map(|(column, row)| at(&chart, x + column, y + row))
+                .collect();
+            painted.push((grating.kind, window));
+        }
+        for (index, (kind, window)) in painted.iter().enumerate() {
+            for (other, other_window) in &painted[index + 1..] {
+                assert_ne!(window, other_window, "{kind:?} 与 {other:?} 是同一种图案");
+            }
         }
     }
 
@@ -605,7 +1053,7 @@ mod tests {
     /// 解回来必须还是同一批字节。图上量出的级数要是被编码器动过手，量的就不是面板了。
     #[test]
     fn the_chart_comes_back_out_of_the_png_pixel_for_pixel() {
-        for device in ["kobo-libra-2", "boox-palma"] {
+        for device in DEVICES {
             let profile = Profile::resolve(device).expect("内置型号");
 
             let painted = chart(&profile);
@@ -620,26 +1068,47 @@ mod tests {
         }
     }
 
-    /// 判读说明要把整套做法说完，脱离文档也能用（14 号票）。
+    /// 判读说明要把整套做法说完，脱离文档也能用（14 号票、标定图批 01 号票）。
     ///
-    /// 缺一不可的几件事：这是哪台设备、哪块面板的图，怎么显示，数什么，数出来的数往哪填，
-    /// 以及那个数**是感知可分辨级数、不是面板的物理灰阶数**（ADR 0003 的《后果》）。
+    /// 缺一不可的几件事：这是哪台设备、哪块面板的图，怎么显示，**两件事的先后**，
+    /// 第一件看什么，第二件数什么、往哪填，以及那个数**是感知可分辨级数、
+    /// 不是面板的物理灰阶数**（ADR 0003 的《后果》）。
     #[test]
     fn the_printed_instructions_say_how_to_read_the_chart() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
 
-        let text = legend(&profile).join("\n");
+        let legend = legend(&profile);
+        let text: Vec<&str> = legend.lines().map(String::as_str).collect();
+        let text = text.join("\n");
 
-        assert!(text.contains("KOBO-LIBRA-2"), "{text}");
+        assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("1264X1680"), "{text}");
-        assert!(text.contains("16 LEVELS"), "{text}");
+        assert!(text.contains("16 级"), "{text}");
+        // 怎么显示：不 1:1 的话两件事都不成立。
+        assert!(text.contains("以原尺寸打开"), "{text}");
         assert!(text.contains("1:1"), "{text}");
-        assert!(text.contains("COUNT"), "{text}");
+        // 先后，连同为什么有先后。
+        assert!(text.contains("先做一"), "{text}");
+        assert!(text.contains("重采样"), "{text}");
+        // 第一件事看什么。
+        assert!(text.contains("像素完整性"), "{text}");
+        assert!(text.contains("抖动块与实心块"), "{text}");
+        assert!(text.contains("光栅"), "{text}");
+        assert!(text.contains("四角标记"), "{text}");
+        // 第二件事数什么、往哪填、数出来的是什么。
+        assert!(text.contains("感知可分辨级数"), "{text}");
+        assert!(text.contains("--gray-levels"), "{text}");
+        assert!(text.contains("不是物理灰阶数"), "{text}");
+        // 数哪一条要点名：几条阶梯就有几个数，不说清楚，回填的会是随便哪一个。
+        assert!(text.contains("最右"), "{text}");
+        // 英文那一份要**自成一套**：三样检查各点一次，脱离中文也走得下来（14 号票）。
+        assert!(text.contains("1:1"), "{text}");
+        assert!(text.contains("DITHER VS SOLID MUST DIFFER"), "{text}");
+        assert!(text.contains("GRATINGS"), "{text}");
+        assert!(text.contains("CORNERS"), "{text}");
+        assert!(text.contains("RIGHTMOST LADDER"), "{text}");
         assert!(text.contains("--GRAY-LEVELS"), "{text}");
         assert!(text.contains("PERCEIVED"), "{text}");
-        assert!(text.contains("NOT THE PHYSICAL GRAY LEVEL"), "{text}");
-        // 数哪一条要点名：几条阶梯就有几个数，不说清楚，回填的会是随便哪一个。
-        assert!(text.contains("RIGHTMOST LADDER"), "{text}");
     }
 
     /// 只剩一条阶梯时，说明不提「其余几条」——那时它们不存在。
@@ -650,29 +1119,78 @@ mod tests {
             .with_gray_levels(2)
             .expect("2 与 256 之间");
 
-        let text = legend(&profile).join("\n");
+        let legend = legend(&profile);
+        let text: Vec<&str> = legend.lines().map(String::as_str).collect();
+        let text = text.join("\n");
 
         assert_eq!(BitDepth::candidates(2).len(), 1, "灰阶数 2 只留得下 1bit");
-        assert!(!text.contains("THE OTHERS"), "{text}");
-        assert!(text.contains("RIGHTMOST LADDER"), "{text}");
+        assert!(!text.contains("其余几条"), "{text}");
+        assert!(text.contains("最右"), "{text}");
     }
 
-    /// 说明真的印在图上了：图上找得到照同一字号印出来的头一行。
+    /// **中文判读说明真的画进了图里**，不是只存在于源码常量里（标定图批 01 号票）。
     ///
-    /// 这一条钉的是「印上去了」——没被裁掉、没被阶梯盖住、字号是按这块面板算出来的那一个。
+    /// 逐台设备把每一行含汉字的说明按版式给的落点、字号重新印一遍，再与图上那一块逐像素比。
+    /// 对得上，就说明这一行没被裁掉、没被别的东西盖住，字号也是按这块面板算出来的那一个。
+    ///
+    /// 它与 [`every_character_the_chart_can_print_has_a_glyph`] 是**一对**，各堵一半：
+    /// 对照图与图走的是同一个 [`Canvas::text`]，字模缺了的话两边都画空框、这一条照样绿，
+    /// 而那一条会当场报出少了哪个字。
     #[test]
-    fn the_instructions_are_painted_on_the_chart() {
-        for device in ["kobo-libra-2", "boox-palma", "kindle-scribe"] {
+    fn the_chinese_instructions_are_painted_on_the_chart() {
+        for device in DEVICES {
             let profile = Profile::resolve(device).expect("内置型号");
             let layout = Layout::plan(&profile);
             let chart = decode(&profile);
 
-            let title = stamp(&layout.legend[0], layout.legend_scale, INK, PAPER);
-            let band = Rect::new(0, 0, chart.size().width, chart.size().height / 3);
+            let chinese: Vec<&TextLine> = layout
+                .text
+                .iter()
+                .filter(|line| !line.text.is_ascii())
+                .collect();
+            assert!(chinese.len() >= 8, "{device}：图上没有几行中文");
 
+            for line in chinese {
+                let printed = stamp(&line.text, line.scale, INK, PAPER);
+                assert!(
+                    line.left + printed.size().width <= chart.size().width
+                        && line.top + printed.size().height <= chart.size().height,
+                    "{device}：「{}」排到图外去了",
+                    line.text
+                );
+                assert!(
+                    matches_at(&chart, &printed, line.left, line.top),
+                    "{device}：「{}」没印在图上",
+                    line.text
+                );
+            }
+        }
+    }
+
+    /// 英文那一份也在图上（14 号票）：图会被拷到不认这套字的地方去看。
+    #[test]
+    fn the_english_instructions_are_painted_on_the_chart() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let layout = Layout::plan(&profile);
+        let chart = decode(&profile);
+
+        let english = legend(&profile).english;
+        // 先数一遍：英文那一组空掉的话，下面那个循环一遍都不走，用例就成了句空话。
+        assert!(english.len() >= 4, "英文说明只剩 {} 行", english.len());
+        for wanted in &english {
+            let line = layout
+                .text
+                .iter()
+                .find(|line| &line.text == wanted)
+                .expect("英文那几行都在版式里");
             assert!(
-                contains_stamp(&chart, &title, band),
-                "{device}：判读说明没印在图上"
+                matches_at(
+                    &chart,
+                    &stamp(&line.text, line.scale, INK, PAPER),
+                    line.left,
+                    line.top
+                ),
+                "「{wanted}」没印在图上"
             );
         }
     }
@@ -712,7 +1230,7 @@ mod tests {
     #[test]
     fn every_character_the_chart_can_print_has_a_glyph() {
         let mut printed: String = "abcdefghijklmnopqrstuvwxyz0123456789-".to_owned();
-        for device in ["kobo-libra-2", "boox-palma", "kindle-scribe"] {
+        for device in DEVICES {
             let profile = Profile::resolve(device).expect("内置型号");
             let full = profile
                 .clone()
@@ -720,7 +1238,9 @@ mod tests {
                 .expect("2 与 256 之间");
             for profile in [profile, full] {
                 let layout = Layout::plan(&profile);
-                printed.push_str(&layout.legend.join(""));
+                for line in &layout.text {
+                    printed.push_str(&line.text);
+                }
                 for ladder in &layout.ladders {
                     printed.push_str(&header(ladder.depth));
                     for index in 0..ladder.depth.levels() {
@@ -731,30 +1251,46 @@ mod tests {
         }
 
         for character in printed.chars() {
-            assert!(glyph(character).is_some(), "字模里没有「{character}」");
+            assert!(
+                glyphs::glyph(character).is_some(),
+                "字模里没有「{character}」"
+            );
         }
     }
 
-    /// 字模表本身要立得住：每个字形恰好 5×7、只有点亮与不亮两种格子，
-    /// 而且没有两个字形长得一模一样——印出来分不开的字等于没印。
+    /// 抖动块的构造本身立得住：每 15 格恰好 `level` 格纸白，而 255 除得尽 15。
+    ///
+    /// 均值严格相等这条性质是从这里推出来的：一行走完整数个周期，均值就恰好是 `17 × level`。
+    /// 这一条钉的是推理的前提，上面那条用例钉的是图上真的成立。
+    ///
+    /// **每一档都要过，不只是图上取的那四档。** 这一条钉住的其实是散布步长与周期互素：
+    /// 步长取 3 时，图上那四档（都是 3 的倍数）照样恰好，而第 1 档会一格不亮或亮三格——
+    /// 那时抖动块变成一片周期 5 的规则条纹，重采样也抹不平它，量具就不量了。
     #[test]
-    fn the_glyphs_are_five_by_seven_and_all_different() {
-        for (character, rows) in GLYPHS {
-            for row in rows {
-                assert_eq!(
-                    row.chars().count() as u32,
-                    GLYPH_WIDTH,
-                    "「{character}」有一行不是 {GLYPH_WIDTH} 格宽"
-                );
-                assert!(
-                    row.chars().all(|cell| cell == '#' || cell == ' '),
-                    "「{character}」有一格既不是 # 也不是空"
-                );
-            }
-        }
-        for (index, (character, rows)) in GLYPHS.iter().enumerate() {
-            for (other, other_rows) in &GLYPHS[index + 1..] {
-                assert_ne!(rows, other_rows, "「{character}」与「{other}」长得一样");
+    fn each_period_of_the_dither_holds_exactly_its_level_of_paper() {
+        assert_eq!(
+            u32::from(PAPER) % DITHER_PERIOD,
+            0,
+            "255 除不尽周期，均值就不是整数"
+        );
+        let mut shifts = ROW_SHIFT;
+        shifts.sort_unstable();
+        assert_eq!(
+            shifts,
+            std::array::from_fn::<u32, { DITHER_PERIOD as usize }, _>(|index| index as u32),
+            "行间错位不是 0..15 的一个排列"
+        );
+        for level in 0..=DITHER_PERIOD {
+            for y in 0..DITHER_PERIOD * 2 {
+                for start in 0..DITHER_PERIOD {
+                    let lit = (start..start + DITHER_PERIOD)
+                        .filter(|&x| dithered(x, y, level))
+                        .count() as u32;
+                    assert_eq!(
+                        lit, level,
+                        "第 {level} 档在 y={y}、x={start} 处那一周期不对"
+                    );
+                }
             }
         }
     }
