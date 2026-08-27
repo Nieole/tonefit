@@ -16,7 +16,7 @@ use std::path::Path;
 
 use tonefit::{
     CandidateScore, Mode, PageBranch, PageColor, PageReport, Profile, Report, VolumeReport,
-    VolumeVerdict, aggregation,
+    VolumeVerdict, aggregation, composition,
 };
 
 /// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
@@ -38,6 +38,10 @@ pub fn report(report: &Report, mode: Mode) -> String {
 /// （ADR 0011），攒到一半的那一份同样答得出这三件事。
 pub fn header(report: &Report, mode: Mode) -> String {
     let mut text = format!("profile {}\n", report.profile);
+    // 逐页那一行的每个数由两项合成，其中颗粒项那道地板与阈值同一批盲测标定
+    // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
+    // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
+    text.push_str(&format!("判据构成 {}\n", composition()));
     // 逐页那些「判据 …」的数都是这套取法收出来的，而取法里的 K 还没标定。
     // 它与阈值同一个待遇：数摆出来，没标定这件事跟着摆出来（ADR 0002 决定第 3 条）。
     // 它自成一行、不接在 profile 后面——判据聚合眼下对所有 profile 都一样，不是这台设备的事。
@@ -579,9 +583,9 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、判据形状一行、卷六行（去处、几何门、卷级、驱动页、读取、缓存），
-        // 页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 10);
+        // profile 一行、判据形状两行（构成与聚合）、卷六行（去处、几何门、卷级、驱动页、
+        // 读取、缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 11);
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -611,6 +615,14 @@ mod tests {
         // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——
         // 标定把它换掉时这一条不该跟着改。
         assert!(text.contains("判据聚合 分块 32×32"), "{text}");
+        // 判据由两项合成，其中颗粒项那道地板与阈值同一批盲测标定：数与来源一并摆出来，
+        // 否则逐页那一行的数是从哪来的没人答得出（ADR 0002 决定第 5 条）。
+        assert!(text.contains("判据构成 低通后的局部均值误差"), "{text}");
+        assert!(
+            text.contains(&format!("颗粒超出 {:.1} 灰度级", composition().grain_floor)),
+            "{text}"
+        );
+        assert!(text.contains("地板盲测标定于 boox-poke6"), "{text}");
         assert!(
             text.contains(&format!("不宽于 {} 块", aggregation().tail_tiles)),
             "{text}"
@@ -785,8 +797,8 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、判据形状一行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 5);
+        // profile 一行、判据形状两行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 6);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"

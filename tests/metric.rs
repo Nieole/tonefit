@@ -2,6 +2,10 @@
 //!
 //! 断言的是判据的性质，不是具体数值——核尺寸、掩蔽加权的形状都还没标定，数值会动，
 //! 而这几条性质正是判据存在的理由，动了就是判据错了。
+//!
+//! 判据是两项：低通项与颗粒项。两项**各有一条会把对方推翻的性质**，两条都在这里：
+//! 「1bit 上抖动优于不抖动」（低通项在守）与「抖动骗不过局部均值」（颗粒项在守）。
+//! 只留一条，判据就会退回它修好之前的那一半。
 
 mod fixtures;
 
@@ -36,6 +40,144 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
     assert!(
         dithered_pixelwise > plain_pixelwise,
         "逐像素度量本该反过来：抖动 {dithered_pixelwise:.2} 对不抖动 {plain_pixelwise:.2}"
+    );
+}
+
+/// 网点页缩到目标尺寸之后，1bit 上抖动仍优于不抖动——**《抖动》那一组量的就是这种页**。
+///
+/// 那一组的基底是「网点页 area 缩放后（22 灰调级）」，1bit 上 FS 6.05 优于无抖动 10.33，
+/// 而逐像素 RMSE 反过来（42.86 对 34.81）。仓库里没有那张源图，这一条按同一形状造一张：
+/// 聚集点阵二值页，box 降采样解析出连续灰调——**网点是因，灰调是果**。
+///
+/// 它与 [`on_a_gradient_the_dithered_candidate_beats_the_undithered_one`] 分工不同：
+/// 那一条守的是渐变页，这一条守的是网点页，而立判据时的证据出在网点页上。
+/// 补颗粒项时最容易把它撞翻——颗粒项在 1bit 上给两个候选都记一笔。
+#[test]
+fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() {
+    let reference = baseline_reference(resolved_screentone(PAGE));
+    let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
+    let dithered = quantize(reference.image(), dithered(BitDepth::One));
+
+    let plain_score = score(&reference, &plain);
+    let dithered_score = score(&reference, &dithered);
+    assert!(
+        dithered_score < plain_score,
+        "网点页上抖动 {dithered_score} 没有赢过不抖动 {plain_score}"
+    );
+    // 同一对候选上逐像素度量给出相反的排序——《抖动》记的正是这个符号。
+    assert!(
+        pixelwise_rmse(reference.image(), &dithered) > pixelwise_rmse(reference.image(), &plain),
+        "夹具不对：逐像素度量本该反过来"
+    );
+}
+
+/// 网点页 box 降采样两倍：二值的「因」进去，连续灰调的「果」出来。
+///
+/// 判据吃的是目标尺寸下的参照，而网点在原始分辨率上还是二值的——不缩这一次，
+/// 各档位深读数全是零，这一条就什么都没量到。
+fn resolved_screentone(size: Size) -> image::DynamicImage {
+    let doubled = Size::new(size.width * 2, size.height * 2);
+    let source = fixtures::gray_image(&fixtures::screentone(doubled));
+    let stride = doubled.width as usize;
+    let pixels = (0..size.height)
+        .flat_map(|y| {
+            let source = &source;
+            (0..size.width).map(move |x| {
+                let corner = (y as usize * 2) * stride + x as usize * 2;
+                let sum: u32 = [corner, corner + 1, corner + stride, corner + stride + 1]
+                    .iter()
+                    .map(|&index| u32::from(source.pixels()[index]))
+                    .sum();
+                ((sum + 2) / 4) as u8
+            })
+        })
+        .collect();
+    image::DynamicImage::ImageLuma8(
+        image::ImageBuffer::from_raw(size.width, size.height, pixels).expect("尺寸对得上"),
+    )
+}
+
+/// 抖动保住了局部均值，判据仍要看得见它撒下的颗粒——**真机盲测排反的那一条就在这里**。
+///
+/// 棋魂 0060 上 1bit+FS 真机排第 5、不可接受，同页 2bit 不抖排第 2，而只有低通项的判据
+/// 给出 6.157 对 8.211，把序排反了（见 measurements 的《位深盲测》）。机理是低通项量的
+/// 恰好是误差扩散被设计来优化的那个量。这一条把那个形状搬到合成页上：一张平坦灰调页，
+/// 1bit+FS 的局部均值几乎不差、2bit 不抖整块偏 30 级，判据仍须判前者更差。
+///
+/// 反过来那一侧由 [`on_a_gradient_the_dithered_candidate_beats_the_undithered_one`] 守着。
+/// 两条各守一项，缺一条判据就退回它修好之前的那一半。
+#[test]
+fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
+    let reference = baseline_reference(fixtures::solid(PAGE, 200));
+    let of = |candidate| score(&reference, &quantize(reference.image(), candidate));
+
+    let one_bit_dithered = of(dithered(BitDepth::One));
+    let two_bit_plain = of(fixtures::plain(BitDepth::Two));
+
+    assert!(
+        one_bit_dithered > two_bit_plain,
+        "1bit+FS 的 {one_bit_dithered} 没有差过 2bit 不抖的 {two_bit_plain}：判据看不见颗粒"
+    );
+}
+
+/// 颗粒项有一道**可见度地板**：低于它的高频起伏不收费。
+///
+/// 没有这道地板，颗粒项就是逐像素度量的一半，而抖动在每一档上都会被罚——
+/// 那正是 ADR 0002 关掉的那个洞。有了它，抖动把误差摊到眼睛分不开的尺度上这件事
+/// 才拿得到它该得的便宜：同一张页上 4bit+FS 的颗粒远在地板之下，读数因此贴着零，
+/// 而 1bit+FS 的颗粒穿得过去。
+#[test]
+fn grain_below_the_visibility_floor_is_not_charged_for() {
+    let reference = baseline_reference(fixtures::solid(PAGE, 200));
+    let of = |candidate| score(&reference, &quantize(reference.image(), candidate));
+
+    // 4bit 的格点间距 17，抖动撒下的起伏最多半格——远在地板之下。
+    let four_bit = of(dithered(BitDepth::Four));
+    let one_bit = of(dithered(BitDepth::One));
+
+    assert!(
+        four_bit.value() < 1.0,
+        "4bit+FS 读成了 {four_bit}：地板没在，细颗粒被当成看得见的"
+    );
+    assert!(
+        one_bit.value() > tonefit::composition().grain_floor / 2.0,
+        "1bit+FS 读成了 {one_bit}：地板高到把粗颗粒也放过去了"
+    );
+}
+
+/// 平缓斜坡**不给自己买掩蔽**：同样的偏移，在斜坡上与在纯色上读数一样。
+///
+/// 掩蔽的活动度量在块这个尺度上（不是低通核那一层），量法是「原值离块尺度局部均值有多远」。
+/// 若改成「离块内均值有多远」，一段横跨整块的斜坡就成了活动度——而斜坡恰恰是 banding
+/// 最显眼的地方，它一旦买到掩蔽，判据就分不出画集 056 与 040 那两页
+/// （见 measurements 的《位深盲测》）。box 局部均值不改变线性斜坡，这一条把它钉住。
+#[test]
+fn a_slow_ramp_does_not_buy_itself_any_masking() {
+    let panel = fixtures::baseline_profile().panel();
+    let flat = fixtures::gray_image(&fixtures::solid(PAGE, 128));
+    // 40→200 铺满整页高：一块（32 行）里抬 6 级出头，块内均值会把它读成 1.5 级的「活动度」。
+    let ramp = GrayImage::new(
+        PAGE,
+        (0..PAGE.height)
+            .flat_map(|y| {
+                let level = (40 + y * 160 / (PAGE.height - 1)) as u8;
+                std::iter::repeat_n(level, PAGE.width as usize)
+            })
+            .collect(),
+    );
+    let lifted = |image: &GrayImage| {
+        GrayImage::new(
+            image.size(),
+            image.pixels().iter().map(|&v| v + 8).collect(),
+        )
+    };
+
+    let flat_score = score(&Reference::new(panel, flat.clone()), &lifted(&flat));
+    let ramp_score = score(&Reference::new(panel, ramp.clone()), &lifted(&ramp));
+
+    assert!(
+        ramp_score.value() > flat_score.value() * 0.97,
+        "斜坡上的 8 级偏移读成了 {ramp_score}，纯色上是 {flat_score}：斜坡买到了掩蔽"
     );
 }
 
