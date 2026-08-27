@@ -697,7 +697,9 @@ pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
         Some(tonefit::VolumeVerdict::Override(candidate)) => format!("覆盖 {candidate}"),
         Some(tonefit::VolumeVerdict::PerPage) => "逐页".to_owned(),
         Some(tonefit::VolumeVerdict::Skipped { page_count }) => {
-            format!("跳过 · 源 {page_count} 页")
+            // 数的是**输出**页：跳过说的是「上一趟写在那儿的那些页一张都没重做」。
+            // 源页数是另一个数（`VolumeReport::source_pages`），一个源页产出一到多张。
+            format!("跳过 · 输出 {page_count} 页")
         }
         None => "无 · 这一卷一页都没有".to_owned(),
     }

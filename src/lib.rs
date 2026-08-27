@@ -129,22 +129,48 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 
 /// 这一卷要走多少步（spec 的 story 30）。
 ///
-/// 三段：幂等这一道读全部成员，第一遍走每一页，第二遍写全部成员。各自可能不在——
-/// `--no-metadata` 关掉第一段（那时既没有记录可写也没有依据可比），dry-run 没有第三段
-/// （一个文件都不落盘）。因此按**这一趟真要做的事**算，而不是按一个固定的倍数：
-/// 不然进度条会停在某个百分比上再也不动。
+/// 三段：幂等这一道读全部**源**成员，第一遍走每一张**源页**，第二遍写全部**输出**成员。
+/// 源那一侧与输出那一侧不是同一个数——一个源页产出一到多张输出页（页几何批 03 号票），
+/// 两者眼下相等（[`OUTPUTS_PER_SOURCE_PAGE`]）。三段里只有第二段按输出那一侧算：
+/// 读源与解源页都发生在切开之前。
+///
+/// 各段自己可能不在——`--no-metadata` 关掉第一段（那时既没有记录可写也没有依据可比），
+/// dry-run 没有第三段（一个文件都不落盘）。因此按**这一趟真要做的事**算，
+/// 而不是按一个固定的倍数：不然进度条会停在某个百分比上再也不动。
 ///
 /// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
 /// 剩下的由 `Progress::volume_finished` 一次性了结。
-fn volume_steps(volume: &Volume, request: &Request) -> u64 {
-    let members = (volume.pages.len() + volume.extras.len()) as u64;
-    let fingerprint = if request.metadata { members } else { 0 };
-    let write = if request.mode == Mode::Process {
-        members
+fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
+    let MemberCounts {
+        source_pages,
+        output_pages,
+        extras,
+    } = members;
+    let fingerprint = if request.metadata {
+        source_pages + extras
     } else {
         0
     };
-    fingerprint + volume.pages.len() as u64 + write
+    let write = if request.mode == Mode::Process {
+        output_pages + extras
+    } else {
+        0
+    };
+    (fingerprint + source_pages + write) as u64
+}
+
+/// 一个卷这一趟要碰的成员数，源那一侧与输出那一侧分开数（页几何批 03 号票）。
+///
+/// 三个数绑成一个类型而不是三个相邻的 `usize` 参数：它们总是一同算出、一同传下去，
+/// 而三个同型的裸数换了位置编译器一句话都不会说，[`volume_steps`] 却会当场少报或多报一整段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MemberCounts {
+    /// 源页数。幂等这一道读它们，第一遍走它们。
+    source_pages: usize,
+    /// 输出页数。第二遍写它们——一个源页产出一到多张，切开发生在第一遍之内。
+    output_pages: usize,
+    /// 透传文件数。它不经切开，两侧数的是同一批。
+    extras: usize,
 }
 
 /// 锁上这一卷的缓存。
@@ -204,13 +230,22 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
     let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
+    // 这一卷的输出成员名，一个源页一组（页几何批 03 号票：一个源页产出一到多张输出页）。
+    // 源页数与输出页数从此是两个数，此刻相等。
     let targets = page_targets(&volume);
     ensure_one_member_per_output(&volume, &targets)?;
+    let source_pages = targets.len();
+    let output_pages: usize = targets.iter().map(Vec::len).sum();
+    let members = MemberCounts {
+        source_pages,
+        output_pages,
+        extras: volume.extras.len(),
+    };
 
     let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
     let writes = request.mode == Mode::Process;
     let steps = progress::Steps::new(request.progress.as_ref());
-    steps.started(&volume.root, volume_steps(&volume, request));
+    steps.started(&volume.root, volume_steps(members, request));
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     //
@@ -236,8 +271,9 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             // 跳过的卷是干净的，隔离目录里若还留着一份，那是上一趟坏页时写的。
             superseded: superseded(&isolated),
             pages: Vec::new(),
+            source_pages,
             verdict: Some(VolumeVerdict::Skipped {
-                page_count: targets.len(),
+                page_count: output_pages,
             }),
             cache: CacheUsage::new(request.cache_budget),
             decodes: 0,
@@ -259,6 +295,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 一个是原子加。贵的那几步——解码、缩放、判据、压缩——全在锁外。
     let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
     let decoder = decode::Decoder::new();
+    // 第一遍产出的是**输出页**：一个源页产出的那几张挨着排，卷内页序就是写出顺序。
     let scored = timed(&mut timing.first_pass, || {
         first_pass(
             &mut volume,
@@ -270,11 +307,17 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             steps,
         )
     })?;
+    // 预告的张数与真产出的张数在这里第一次同时在手上。对不上，第二遍写出的成员名就与
+    // 幂等比过的那一批错开——而那是一种静默的错：报告照出，输出里却少了或多了成员。
+    // 此刻两边都是 `OUTPUTS_PER_SOURCE_PAGE`，撞不响；页几何批 04 号票让 N 随内容而变时，
+    // 这一句是它第一处该撞响的地方——失败页尤其，它没有像素可切、恒出一张，
+    // 而预告那一侧看不出哪一页会失败。
+    debug_assert_eq!(scored.len(), output_pages, "第一遍产出的张数与预告的对不上");
 
     let (verdicts, verdict) = summarize_volume(&scored, request);
     let uniform = uniform_size(&scored, request.profile.panel().resolution);
     // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
-    let (output, elsewhere) = if scored.iter().any(ScoredPage::failed) {
+    let (output, elsewhere) = if scored.iter().any(OutputPage::failed) {
         (isolated, clean)
     } else {
         (clean, isolated)
@@ -294,7 +337,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
                 cache: &cache,
                 recorder: recorder.as_ref(),
             };
-            second_pass(&scored, &verdicts, &targets, &encode, &mut sink, steps)?;
+            second_pass(&scored, &verdicts, &encode, &mut sink, steps)?;
             for extra in &volume.extras {
                 let bytes = volume.reader.read(extra)?;
                 sink.write_extra(&extra.relative, &bytes)?;
@@ -308,16 +351,14 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     let pages = scored
         .into_iter()
         .zip(verdicts)
-        .zip(&targets)
-        .map(|((page, verdict), relative)| {
-            page.into_report(output.join(relative), verdict, uniform)
-        })
+        .map(|(page, verdict)| page.into_report(&output, verdict, uniform))
         .collect();
     Ok(VolumeReport {
         volume: volume.root,
         output,
         superseded,
         pages,
+        source_pages,
         verdict,
         cache: lock(&cache).usage(),
         decodes: decoder.decodes(),
@@ -344,9 +385,11 @@ fn superseded(elsewhere: &Path) -> Option<PathBuf> {
 /// 取第一页则会被卷首的封面或彩页带偏。
 ///
 /// 一页好页都没有的卷退到面板分辨率：卷内没有可参照的尺寸了，那就照这块面板的满幅出。
-fn uniform_size(pages: &[ScoredPage], panel: Size) -> Size {
+///
+/// 数的是**输出页**：一个源页产出的那几张各有各的尺寸（页几何批 03 号票），众数因此在切开之后取。
+fn uniform_size(pages: &[OutputPage], panel: Size) -> Size {
     let mut counted: Vec<(Size, usize)> = Vec::new();
-    for size in pages.iter().filter_map(ScoredPage::size) {
+    for size in pages.iter().filter_map(OutputPage::size) {
         match counted.iter_mut().find(|(seen, _)| *seen == size) {
             Some((_, count)) => *count += 1,
             None => counted.push((size, 1)),
@@ -406,8 +449,12 @@ fn placeholder(size: Size) -> GrayImage {
 /// 两条出口走不到上包络，各有各的道理：`--per-page` 是用户点名要逐页最优（决定第 6 条），
 /// 覆盖项裁到只剩一个候选是判定整个被顶掉、逐页已全是 `Override`——后者不是「被关掉」，
 /// 而是逐页结果里根本没有分布可聚合。两者在报告里各说各的，见 [`VolumeVerdict`]。
+///
+/// 进来的是**输出页**，不是源页（页几何批 03 号票）：一个源页产出的那几张各有各的几何、各有各的
+/// 判据曲线，卷级那一层因此在切开之后取——序号也都指进输出页那个序列，
+/// 上包络的驱动页序号跟着（见 [`Envelope::driver`]）。
 fn summarize_volume(
-    pages: &[ScoredPage],
+    pages: &[OutputPage],
     request: &Request,
 ) -> (Vec<Option<Verdict>>, Option<VolumeVerdict>) {
     // 灰度路径上那些页在 `pages` 里的序号。卷级的一切都只在它们身上做。
@@ -519,9 +566,18 @@ fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     }
 }
 
-/// 第一遍产出的一页：这一页有没有处理成，以及处理成了的话留下了什么。
-struct ScoredPage {
+/// 第一遍产出的一张**输出页**：它从哪一个源页来、写到哪儿去，有没有处理成，
+/// 以及处理成了的话留下了什么。
+///
+/// 一个源页产出**一到多张**（见 [`split`]）。因此 `source` 会重复
+/// ——同一源页切出来的几张都指着它——而 `target` 一定不重复
+/// （见 [`ensure_one_member_per_output`]）。第一遍之后管线上处处按输出页数事：
+/// 汇总、上包络的序号、第二遍的写出、报告里的逐页结果，一律以它为单位。
+struct OutputPage {
+    /// 这一张来自哪一个源页：卷根接上成员相对路径，报告与错误信息用它指人。
     source: PathBuf,
+    /// 它在输出容器里的相对位置（见 [`output_name`]）。
+    target: PathBuf,
     outcome: Outcome,
 }
 
@@ -574,7 +630,7 @@ enum Branch {
     Color { encoded: Option<Vec<u8>> },
 }
 
-impl ScoredPage {
+impl OutputPage {
     /// 这一页的判据曲线。彩色分支与失败页上都没有——一条不量化，一条没解出来。
     fn scores(&self) -> Option<&[CandidateScore]> {
         match &self.outcome {
@@ -626,8 +682,10 @@ impl ScoredPage {
     /// 补上汇总定下的那个判定，就是报告要的一页。缓存序号与编好的字节都不进报告——
     /// 它们是管线内部的事。
     ///
+    /// `output` 是这一卷的去处，接上这一张的成员名就是它写出去的位置。
     /// `uniform` 只对失败页说话：它写出去用的就是这个尺寸。
-    fn into_report(self, output: PathBuf, verdict: Option<Verdict>, uniform: Size) -> PageReport {
+    fn into_report(self, output: &Path, verdict: Option<Verdict>, uniform: Size) -> PageReport {
+        let output = output.join(&self.target);
         let (size, outcome) = match self.outcome {
             Outcome::Processed {
                 size,
@@ -705,10 +763,14 @@ impl Candidates {
     }
 }
 
-/// 第一遍：读 → 解码 → **彩页识别** → 分流。
+/// 第一遍：读 → 解码 → **切开** → 逐张彩页识别 → 分流。
 ///
 /// 灰度路径：转灰 → 几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
 /// 彩色分支：几何 → 缩放 → 编码，不进缓存、不求判据（ADR 0005 决定第 4 条）。
+///
+/// **产出的是输出页，不是源页**（页几何批 03 号票）：一张源页读一次、解一次，切成一到多张
+/// （见 [`split`]），此后每一张各走各的分支、各占一个缓存序号、
+/// 各占报告里的一格。同一源页切出来的那几张挨着排，卷内的输出页序因此仍是阅读顺序。
 ///
 /// **识别排在转灰之前**，因为转过之后就没有颜色可看了；也排在汇总之前，
 /// 因为分流决定了哪些页进得了上包络（ADR 0006 决定第 5 条）。
@@ -746,7 +808,7 @@ fn first_pass(
     fingerprint: Option<&Fingerprint>,
     io: &IoPlan,
     steps: progress::Steps,
-) -> Result<Vec<ScoredPage>> {
+) -> Result<Vec<OutputPage>> {
     // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）。
     let candidates = Candidates::new(request)?;
     // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
@@ -766,12 +828,15 @@ fn first_pass(
         candidates: &candidates,
         steps,
     };
-    let mut scored: Vec<(usize, Result<ScoredPage>)> =
+    let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
         read::reads(reader, &members, io.readers, read::BUDGET)
             .par_bridge()
             .map(|read| {
                 let index = read.index;
-                (index, compute.page(&sources[index], read.bytes))
+                // 成员表在这一层照旧读得到：读取层借的也是共享引用。
+                // 输出成员名由相对路径推出（见 [`output_name`]）。
+                let relative = &members[index].relative;
+                (index, compute.page(&sources[index], relative, read.bytes))
             })
             .collect();
     // 计算层乱序完成，页序在这里归位。往后每一处「第 n 页」都指得回同一页。
@@ -780,10 +845,23 @@ fn first_pass(
     // 换一次调度就换一句错误的报告等于没有报告。`--dither fs` 撞上几何门那一支尤其吃这一条,
     // 那一支上没有报告可看，错误里指的那一页是唯一的线索。
     // 代价是一页出错时整卷仍会算完，而这一支上整卷本来就要作废，省下的那点算力买不到什么。
+    //
+    // 摊平放在最后：一个源页产出的那几张挨着排（页几何批 03 号票），卷内的输出页序因此仍然是阅读顺序。
     scored
         .into_iter()
         .map(|(_, page)| page)
         .collect::<Result<Vec<_>>>()
+        .map(|pages| pages.into_iter().flatten().collect())
+}
+
+/// 把一张解出来的源页切成这一趟要输出的那几张图。
+///
+/// **此刻不切**：一张进、一张出。页几何批 04 号票的跨页拆分落在这里——那时同一个源页
+/// 会出来两张，而下游从成员命名到缓存、从进度步数到报告，都已经按一对多的形状写好了。
+///
+/// 出来几张必须与 [`OUTPUTS_PER_SOURCE_PAGE`] 预告的一致，理由见那里。
+fn split(page: image::DynamicImage) -> Vec<image::DynamicImage> {
+    vec![page]
 }
 
 /// 第一遍上每条计算线程共用的那一摊。
@@ -802,16 +880,29 @@ struct Compute<'a> {
 }
 
 impl Compute<'_> {
-    /// 算一页：解码 → 彩页识别 → 分流。语义与顺着做时逐字相同，见 [`first_pass`]。
-    fn page(&self, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
-        let page = self.branch(source, bytes)?;
+    /// 算一张**源页**：解码 → 切开 → 每一张各自彩页识别、分流。
+    /// 语义与顺着做时逐字相同，见 [`first_pass`]。
+    ///
+    /// 报到一步，不是几步：步按**源页**数（`CONTEXT.md` 的《进度》：第一遍走每一页），
+    /// 而一张源页读一次、解一次，切成几张不改变这一遍的工作量。
+    fn page(
+        &self,
+        source: &Path,
+        relative: &Path,
+        bytes: Result<Vec<u8>>,
+    ) -> Result<Vec<OutputPage>> {
+        let pages = self.split_and_branch(source, relative, bytes)?;
         self.steps.step();
-        Ok(page)
+        Ok(pages)
     }
 
-    fn branch(&self, source: &Path, bytes: Result<Vec<u8>>) -> Result<ScoredPage> {
-        let request = self.request;
-        let panel = request.profile.panel();
+    /// 解一张源页，切开，每一张各走各的分支。
+    fn split_and_branch(
+        &self,
+        source: &Path,
+        relative: &Path,
+        bytes: Result<Vec<u8>>,
+    ) -> Result<Vec<OutputPage>> {
         let read = bytes.and_then(|bytes| {
             self.decoder
                 .decode(&bytes)
@@ -821,19 +912,58 @@ impl Compute<'_> {
             Ok(decoded) => (decoded.image, decoded.salvage),
             // 一张坏图不毁掉整卷（spec 的 story 24）：记下原因就走，
             // 第二遍拿卷内统一尺寸给它留一张白页，整卷进隔离目录。
+            //
+            // 失败页**恒产出一张**占位页：没有像素可切，切不出第二张来。
             Err(error) => {
-                return Ok(ScoredPage {
+                return Ok(vec![OutputPage {
                     source: source.to_path_buf(),
+                    target: output_name(relative, 0, OUTPUTS_PER_FAILED_PAGE),
                     outcome: Outcome::Failed {
                         reason: format!("{error:#}"),
                     },
-                });
+                }]);
             }
         };
+        // 彩页识别排在切开**之前**，也只在这里问一次（ADR 0005 决定第 1 条：
+        // 读 → 解码 → 彩页识别 → 拆分/裁边）。切出来的那几张因此共用这一个结果：
+        // 彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
         let color = color::identify(&decoded);
+        // 这一张源页切成的那几张图（页几何批 03 号票）。
+        let images = split(decoded);
+        let count = images.len();
+        images
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, image)| {
+                self.branch(
+                    source,
+                    output_name(relative, ordinal, count),
+                    &image,
+                    color,
+                    salvage,
+                )
+            })
+            .collect()
+    }
+
+    /// 一张切出来的图走它那条分支：彩色分支或灰度路径。
+    ///
+    /// `color` 是这一张所属源页的识别结果，在切开之前就问完了
+    /// （见 [`Compute::split_and_branch`]）：走哪条分支由**面板与页**共同决定，
+    /// 只有彩色面板上的彩页走彩色分支。
+    fn branch(
+        &self,
+        source: &Path,
+        target: PathBuf,
+        decoded: &image::DynamicImage,
+        color: PageColor,
+        salvage: Option<Salvage>,
+    ) -> Result<OutputPage> {
+        let request = self.request;
+        let panel = request.profile.panel();
 
         if panel.color && color.is_color() {
-            let image = color::to_color(&decoded);
+            let image = color::to_color(decoded);
             let size = geometry::fit_inside(image.size(), panel.resolution);
             let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
             // dry-run 一个文件都不落盘，编出来的字节没人要。
@@ -847,8 +977,9 @@ impl Compute<'_> {
                 ),
                 Mode::DryRun => None,
             };
-            return Ok(ScoredPage {
+            return Ok(OutputPage {
                 source: source.to_path_buf(),
+                target,
                 outcome: Outcome::Processed {
                     size,
                     scaling,
@@ -859,7 +990,7 @@ impl Compute<'_> {
             });
         }
 
-        let gray = gray::to_gray(&decoded);
+        let gray = gray::to_gray(decoded);
         let size = geometry::fit_inside(gray.size(), panel.resolution);
         // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
         // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
@@ -875,8 +1006,9 @@ impl Compute<'_> {
         let slot = lock(self.cache)
             .insert(block)
             .with_context(|| format!("缓存 {} 这一页", source.display()))?;
-        Ok(ScoredPage {
+        Ok(OutputPage {
             source: source.to_path_buf(),
+            target,
             outcome: Outcome::Processed {
                 size,
                 scaling,
@@ -911,27 +1043,29 @@ impl Compute<'_> {
 /// 一批编完再写一批，批量取核数：编好的字节要等到轮到它才写得出去，这一批就是它们在内存里
 /// 排队的长度，因此**有界**——一页 PNG 中位不到 1 MB（measurements 的《B 类位深实测》），
 /// 满核也就十几 MB。不分批而是一口气全编，那一摊就随卷长，正是有界通道要拦的东西。
+///
+/// 走的是**输出页**那个序列（页几何批 03 号票）：一步一张输出页，成员名跟着页走
+/// （[`OutputPage::target`]），不由这一遍按源页序数出来——一个源页产出几张时，
+/// 数出来的那个序号会静默地把另一张的字节写到这一张的位置上。
 fn second_pass(
-    pages: &[ScoredPage],
+    pages: &[OutputPage],
     verdicts: &[Option<Verdict>],
-    targets: &[PathBuf],
     encode: &Encode,
     sink: &mut Sink,
     steps: progress::Steps,
 ) -> Result<()> {
-    let work: Vec<(&ScoredPage, Option<Verdict>, &PathBuf)> = pages
+    let work: Vec<(&OutputPage, Option<Verdict>)> = pages
         .iter()
         .zip(verdicts)
-        .zip(targets)
-        .map(|((page, verdict), relative)| (page, *verdict, relative))
+        .map(|(page, verdict)| (page, *verdict))
         .collect();
     for batch in work.chunks(cores()) {
         let encoded: Vec<Cow<'_, [u8]>> = batch
             .par_iter()
-            .map(|(page, verdict, _)| encode.page(page, *verdict))
+            .map(|(page, verdict)| encode.page(page, *verdict))
             .collect::<Result<Vec<_>>>()?;
-        for ((_, _, relative), bytes) in batch.iter().zip(&encoded) {
-            sink.write_page(relative, bytes)?;
+        for ((page, _), bytes) in batch.iter().zip(&encoded) {
+            sink.write_page(&page.target, bytes)?;
             steps.step();
         }
     }
@@ -951,7 +1085,7 @@ impl Encode<'_> {
     ///
     /// 出的是 [`Cow`]：彩页的字节第一遍就编好了，这里**借**它而不是复制一份。
     /// 那一摊本来就不受 `--cache-budget` 约束（ADR 0010），再翻一倍不合适。
-    fn page<'p>(&self, page: &'p ScoredPage, verdict: Option<Verdict>) -> Result<Cow<'p, [u8]>> {
+    fn page<'p>(&self, page: &'p OutputPage, verdict: Option<Verdict>) -> Result<Cow<'p, [u8]>> {
         let Self {
             uniform,
             cache,
@@ -1045,10 +1179,13 @@ fn volume_fingerprint(
 ///
 /// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。那样的卷每一趟
 /// 都把透传文件重写一遍——它们本来就是逐字节照搬，重写一遍与跳过没有可观察的差别。
+///
+/// `targets` 是一对多的（页几何批 03 号票）：一个源页产出的那几张输出页**每一张**都要带着这份指纹，
+/// 少一张就重做。名单由 [`page_targets`] 在碰像素之前给出，比对因此仍然停在解码之前。
 fn can_skip(
     output: &Path,
     volume: &Volume,
-    targets: &[PathBuf],
+    targets: &[Vec<PathBuf>],
     fingerprint: &Fingerprint,
 ) -> bool {
     if targets.is_empty() {
@@ -1059,6 +1196,7 @@ fn can_skip(
     };
     targets
         .iter()
+        .flatten()
         .all(|relative| written.fingerprint_of(relative).as_ref() == Some(fingerprint))
         && volume
             .extras
@@ -1159,30 +1297,103 @@ fn nothing_left_error(request: &Request) -> anyhow::Error {
     }
 }
 
-/// 每页在输出容器里的相对位置：扩展名一律换成 png。透传文件原名不动，不必单列一份。
-fn page_targets(volume: &Volume) -> Vec<PathBuf> {
-    volume
-        .pages
-        .iter()
-        .map(|page| page.relative.with_extension("png"))
+/// 一个源页产出几张输出页。**恒 1**——页几何批 03 号票只放宽形状，
+/// 决定 N 是多少的那套逻辑（跨页拆分）在页几何批 04 号票。
+///
+/// 它是**预告**那一侧的出处：输出成员名要在碰像素之前给得出来（见 [`page_targets`]），
+/// 而真产出几张要等 [`split`] 解完像素才知道。两边此刻都是这个常量，因此必然一致；
+/// 页几何批 04 号票让 N 随内容而变的那一天，这个等号就得另找依据——两个数一旦对不上，
+/// 第二遍写出的成员名会与幂等比过的那一批错开。[`process_volume`] 在两个数都在手上的那一处
+/// 对了一次，好让那一天在测试里当场撞出来。
+const OUTPUTS_PER_SOURCE_PAGE: usize = 1;
+
+/// 一张失败页产出几张占位页。**恒 1，而且与 [`OUTPUTS_PER_SOURCE_PAGE`] 无关**：
+/// 它没有像素可切，切不出第二张来（12 号票：失败页以卷内统一尺寸留白占位，页序不断）。
+///
+/// 单列一个数而不是借用上面那个，是因为两者会分家：页几何批 04 号票让 N 随内容而变之后，
+/// 解不出像素的那一页仍然只出一张。
+const OUTPUTS_PER_FAILED_PAGE: usize = 1;
+
+/// 一个源页产出的第 `ordinal` 张输出页（从 0 起）在输出容器里的相对位置，
+/// `count` 是这一源页总共产出几张。
+///
+/// 扩展名一律换成 png。**只产出一张时名字就是源页名换扩展名**——一对一那条老路
+/// 一个字符都不多，升级的人手上的输出因此不会有成员被改名。产出多张时在名字后面接一个
+/// 从 1 起的序号（`001.jpg` → `001-1.png`、`001-2.png`），序号顺序就是阅读顺序。
+///
+/// 加了序号的名字可能撞上卷里本来就有的另一个成员（源里同时有 `001.jpg` 与 `001-1.png`），
+/// 那一撞由 [`ensure_one_member_per_output`] 当场拦下，不静默覆盖。
+fn output_name(relative: &Path, ordinal: usize, count: usize) -> PathBuf {
+    if count <= 1 {
+        return relative.with_extension("png");
+    }
+    let mut name = relative.file_stem().unwrap_or_default().to_os_string();
+    name.push(format!("-{}.png", ordinal + 1));
+    relative.with_file_name(name)
+}
+
+/// 一个源页产出的那几张输出页的成员名，按阅读顺序。规则见 [`output_name`]。
+fn output_names(relative: &Path, count: usize) -> Vec<PathBuf> {
+    (0..count)
+        .map(|ordinal| output_name(relative, ordinal, count))
         .collect()
 }
 
-/// 扩展名一律换成 png，`001.jpg` 与 `001.png` 于是撞在同一个输出上；归档里还可能有同名成员。
-/// 撞了就报错——静默覆盖会让 `Report` 里两页指向同一个文件。
-fn ensure_one_member_per_output(volume: &Volume, targets: &[PathBuf]) -> Result<()> {
-    let members = volume.pages.iter().chain(&volume.extras);
-    let relatives = targets
+/// 这一卷每个源页产出的输出成员名：外层按源页序，内层按阅读顺序（页几何批 03 号票）。
+///
+/// 一个源页对**一到多张**输出页，几张由 [`OUTPUTS_PER_SOURCE_PAGE`] 说了算。
+/// 透传文件原名不动，不必单列一份。
+///
+/// 这份名单在碰像素之前就要给得出来：幂等那一道拿它逐个去比上一趟的记录
+/// （见 [`can_skip`]），而幂等的全部意义就是在解码之前答完。
+fn page_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
+    volume
+        .pages
         .iter()
-        .chain(volume.extras.iter().map(|extra| &extra.relative));
+        .map(|page| output_names(&page.relative, OUTPUTS_PER_SOURCE_PAGE))
+        .collect()
+}
 
-    let mut taken: HashMap<&Path, &Member> = HashMap::new();
-    for (member, relative) in members.zip(relatives) {
+/// 每个输出成员只对一个源成员。
+///
+/// 扩展名一律换成 png，`001.jpg` 与 `001.png` 于是撞在同一个输出上；一个源页产出多张时
+/// 加的那个序号也可能撞上卷里本来就有的成员；归档里还可能有同名成员。
+/// 撞了就报错——静默覆盖会让 `Report` 里两页指向同一个文件。
+fn ensure_one_member_per_output(volume: &Volume, targets: &[Vec<PathBuf>]) -> Result<()> {
+    let pages = volume
+        .pages
+        .iter()
+        .zip(targets)
+        .flat_map(|(page, names)| names.iter().map(move |name| (page, name.as_path())));
+    let extras = volume
+        .extras
+        .iter()
+        .map(|extra| (extra, extra.relative.as_path()));
+    ensure_distinct_outputs(pages.chain(extras), |member| {
+        volume.identity(member).display().to_string()
+    })
+}
+
+/// 一批 (源成员, 它要写到的输出成员) 里有没有两个源成员认领同一个输出成员。
+///
+/// 同一个源成员出现几次是合法的——它产出几张输出页就出现几次（页几何批 03 号票）；
+/// 同一个输出成员被两个源成员认领则不行。
+///
+/// `identity` 只在真撞上时才被叫到：报错要指得出是哪两个源成员，而拼那两个名字
+/// 不该让每一个卷都白付一遍。源成员做成类型参数而不是钉死 `&Member`，买的是这道校验
+/// **单独测得了**——`Member` 的归档序号是 `source` 模块的私有字段，卷外造不出一个来，
+/// 而一对多的撞名恰恰要在卷外喂进去才试得到（见本文件的用例）。
+fn ensure_distinct_outputs<'a, M: Copy>(
+    pairs: impl IntoIterator<Item = (M, &'a Path)>,
+    identity: impl Fn(M) -> String,
+) -> Result<()> {
+    let mut taken: HashMap<&Path, M> = HashMap::new();
+    for (member, relative) in pairs {
         if let Some(previous) = taken.insert(relative, member) {
             bail!(
                 "{} 与 {} 都要写到 {}：请让同一卷内的成员名互不冲突",
-                volume.identity(previous).display(),
-                volume.identity(member).display(),
+                identity(previous),
+                identity(member),
                 relative.display()
             );
         }
@@ -1279,5 +1490,423 @@ fn resolve(path: &Path) -> Result<PathBuf> {
             // 一个已存在的祖先都没有，退回词法绝对路径。
             _ => return Ok(absolute),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! 一个源页产出**两张**输出页时，下游还跟不跟得上（页几何批 03 号票）。
+    //!
+    //! 命令行造不出这个形态：此刻每一源页恒产出一张（[`OUTPUTS_PER_SOURCE_PAGE`]），
+    //! 决定 N 是多少的那套逻辑要等页几何批 04 号票。因此这几条直接喂一份 N=2 的第一遍产物，
+    //! 问的是从成员命名到进度步数、从汇总到写出，这条管线认不认这个形状。
+    //!
+    //! 与集成用例分工不同：`tests/` 那一批只经 `run` 这个 seam，而 N=2 眼下走不到那个 seam。
+
+    use std::fs;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    use crate::cache::Retention;
+    use crate::source::Container;
+
+    /// 基准 profile 上门成立的那一页拿得到的候选，由小到大。
+    const CANDIDATES: [(BitDepth, Dither); 3] = [
+        (BitDepth::One, Dither::Off),
+        (BitDepth::Two, Dither::Off),
+        (BitDepth::Four, Dither::Off),
+    ];
+
+    /// 一份最小的请求。各用例只改自己那一处。
+    fn request() -> Request {
+        Request {
+            inputs: vec![PathBuf::from("library/volume-a")],
+            output_root: PathBuf::from("out"),
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            filter: Filter::default(),
+            bit_depth: None,
+            dither: None,
+            per_page: false,
+            cache_budget: CacheBudget::default(),
+            mode: Mode::Process,
+            io_mode: IoMode::default(),
+            progress: None,
+            metadata: true,
+        }
+    }
+
+    /// 一张走灰度路径的输出页。`values` 是三个候选各自的判据值。
+    fn gray(source: &str, target: &str, size: Size, values: [f32; 3], slot: usize) -> OutputPage {
+        let scores = CANDIDATES
+            .into_iter()
+            .zip(values)
+            .map(|((bit_depth, dither), value)| CandidateScore {
+                candidate: Candidate::new(bit_depth, dither),
+                score: Score::from_value(value),
+            })
+            .collect();
+        OutputPage {
+            source: PathBuf::from(source),
+            target: PathBuf::from(target),
+            outcome: Outcome::Processed {
+                size,
+                scaling: Scaling::plan(size, size),
+                color: PageColor::Gray,
+                branch: Branch::Gray {
+                    scores,
+                    gate: GeometryGate::Holds,
+                    slot,
+                },
+                salvage: None,
+            },
+        }
+    }
+
+    /// 一张走彩色分支的输出页：没有判据曲线，也没有几何门。
+    fn color(source: &str, target: &str, size: Size) -> OutputPage {
+        OutputPage {
+            source: PathBuf::from(source),
+            target: PathBuf::from(target),
+            outcome: Outcome::Processed {
+                size,
+                scaling: Scaling::plan(size, size),
+                color: PageColor::Color,
+                branch: Branch::Color { encoded: None },
+                salvage: None,
+            },
+        }
+    }
+
+    /// 一对一那条老路一个字符都不改，一对多才加序号（页几何批 03 号票的成员命名）。
+    ///
+    /// 前半句是这张票「什么都没变」那条验收在命名这一侧的形式：产出一张时名字
+    /// 就是源页名换扩展名，升级的人手上的输出不会有成员被改名。
+    #[test]
+    fn one_output_keeps_the_source_name_and_several_get_ordered_suffixes() {
+        assert_eq!(
+            output_names(Path::new("001.jpg"), 1),
+            [PathBuf::from("001.png")]
+        );
+        assert_eq!(
+            output_names(Path::new("ch1/001.jpg"), 2),
+            [
+                PathBuf::from("ch1/001-1.png"),
+                PathBuf::from("ch1/001-2.png")
+            ]
+        );
+        // 序号从 1 起，序号顺序就是阅读顺序。
+        assert_eq!(
+            output_names(Path::new("001.png"), 3),
+            [
+                PathBuf::from("001-1.png"),
+                PathBuf::from("001-2.png"),
+                PathBuf::from("001-3.png")
+            ]
+        );
+    }
+
+    /// 第二段按**输出**成员数，前两段按源那一侧（页几何批 03 号票的进度步数）。
+    ///
+    /// 分得开才要紧：读源与解源页都发生在切开之前，只有写出那一段跟着切完的张数走。
+    /// 混成一个数的话，切开的卷进度条会在第二遍里走过头或者停下不动。
+    #[test]
+    fn the_write_segment_counts_output_pages_and_the_read_segments_count_source_pages() {
+        // 三张源页切成五张输出页，外加一个透传文件：幂等读 3+1、第一遍走 3、第二遍写 5+1。
+        let split = MemberCounts {
+            source_pages: 3,
+            output_pages: 5,
+            extras: 1,
+        };
+        assert_eq!(volume_steps(split, &request()), 4 + 3 + 6);
+        // 一对一时与从前逐字相同。
+        let intact = MemberCounts {
+            output_pages: 3,
+            ..split
+        };
+        assert_eq!(volume_steps(intact, &request()), 4 + 3 + 4);
+        // dry-run 没有第二段，切成几张都不改变步数。
+        let dry = Request {
+            mode: Mode::DryRun,
+            ..request()
+        };
+        assert_eq!(volume_steps(split, &dry), 4 + 3);
+        // `--no-metadata` 关掉幂等那一段，第二段照旧按输出算。
+        let bare = Request {
+            metadata: false,
+            ..request()
+        };
+        assert_eq!(volume_steps(split, &bare), 3 + 6);
+    }
+
+    /// 一个输出成员只对一个源成员：同一源成员出现几次是合法的，两个源成员撞在一起不行。
+    ///
+    /// 加了序号的名字可能撞上卷里本来就叫那个名字的成员——`001.jpg` 切出来的 `001-1.png`
+    /// 与一张真叫 `001-1.jpg` 的页就是这个局面。撞了要当场指名道姓，不静默覆盖。
+    #[test]
+    fn two_source_members_may_not_claim_the_same_output_member() {
+        // 同一个源成员产出两张，各占一个名字：合法。
+        assert!(
+            distinct(&[("001.jpg", "001-1.png"), ("001.jpg", "001-2.png")]).is_ok(),
+            "一个源页产出多张不该被当成撞名"
+        );
+
+        let error = distinct(&[
+            ("001.jpg", "001-1.png"),
+            ("001.jpg", "001-2.png"),
+            ("001-1.jpg", "001-1.png"),
+        ])
+        .expect_err("撞名该被拦下");
+        let said = format!("{error:#}");
+        for named in ["001.jpg", "001-1.jpg", "001-1.png"] {
+            assert!(said.contains(named), "错误里没指出 {named}：{said}");
+        }
+    }
+
+    /// 把 (源成员, 输出成员) 对喂给那道校验。源成员在这里就是一个名字。
+    fn distinct(pairs: &[(&'static str, &'static str)]) -> Result<()> {
+        ensure_distinct_outputs(
+            pairs
+                .iter()
+                .map(|(source, target)| (*source, Path::new(*target))),
+            |source: &str| source.to_owned(),
+        )
+    }
+
+    /// 幂等要对上一个源页产出的**每一张**输出页，少一张就重做（页几何批 03 号票）。
+    ///
+    /// 这是票面点名的「幂等依据认一对多的形状」那一条。只比对头一张的话，
+    /// 切开的卷缺了后一半也会被静默跳过——而那一半再也补不回来。
+    #[test]
+    fn a_skip_needs_the_fingerprint_on_every_output_page_of_a_source_page() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        // 一个真卷：一张源页，好让 `can_skip` 拿得到容器形态与透传清单。
+        let root = space.path().join("volume-a");
+        fs::create_dir_all(&root).expect("建源卷");
+        let page = GrayImage::new(Size::new(4, 4), vec![128; 16]);
+        fs::write(
+            root.join("001.png"),
+            encode::png(&page, BitDepth::One, None).expect("编一张源页"),
+        )
+        .expect("写源页");
+        let volume = source::open(&root).expect("打开源卷");
+
+        // 这一张源页切成两半——名单是预告出来的，此刻走不到，用例直接给。
+        let targets = vec![output_names(Path::new("001.png"), 2)];
+        let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
+        let record = Record::color(&fingerprint, None);
+        let written = encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页");
+
+        // 两半都在、都带着这份指纹：跳得过。
+        let output = space.path().join("out-both");
+        fs::create_dir_all(&output).expect("建输出容器");
+        for name in targets[0].iter() {
+            fs::write(output.join(name), &written).expect("写一张输出页");
+        }
+        assert!(
+            can_skip(&output, &volume, &targets, &fingerprint),
+            "两半都齐着还是重做了"
+        );
+
+        // 后一半被删掉：整卷重做。只比对头一张的实现在这里会答「跳过」。
+        fs::remove_file(output.join(&targets[0][1])).expect("删掉后一半");
+        assert!(
+            !can_skip(&output, &volume, &targets, &fingerprint),
+            "输出里少了一张，这一卷仍然被跳过了"
+        );
+    }
+
+    /// 卷内统一尺寸的众数在**切开之后**取：同一源页的两半各算一张（页几何批 03 号票）。
+    ///
+    /// 按源页数，两个尺寸各一票、并列；按输出页数，切开的那个尺寸两票。
+    /// 失败页照它留白占位，数错了整卷的占位页就换一个尺寸。
+    #[test]
+    fn the_uniform_size_counts_output_pages() {
+        let narrow = Size::new(500, 800);
+        let wide = Size::new(600, 800);
+        let pages = vec![
+            gray("001.jpg", "001-1.png", narrow, [9.0, 4.0, 1.0], 0),
+            gray("001.jpg", "001-2.png", narrow, [9.0, 4.0, 1.0], 1),
+            gray("002.jpg", "002.png", wide, [9.0, 4.0, 1.0], 2),
+        ];
+
+        assert_eq!(uniform_size(&pages, Size::new(1264, 1680)), narrow);
+    }
+
+    /// 汇总那一层的序号指进**输出页**那个序列，不是源页那个（页几何批 03 号票）。
+    ///
+    /// 头一张源页的两半走彩色分支、不进上包络，灰度页因此排在第 2、3 位上——
+    /// 按源页数的话驱动页会指到 0 或 1，而那是另一张页。
+    #[test]
+    fn the_volume_level_summary_indexes_output_pages_not_source_pages() {
+        let size = Size::new(600, 800);
+        let pages = vec![
+            color("001.jpg", "001-1.png", size),
+            color("001.jpg", "001-2.png", size),
+            gray("002.jpg", "002-1.png", size, [9.0, 4.0, 1.0], 0),
+            gray("002.jpg", "002-2.png", size, [8.0, 3.0, 0.5], 1),
+        ];
+
+        let (verdicts, verdict) = summarize_volume(&pages, &request());
+
+        // 判定与输出页一一对应，一张一格。
+        assert_eq!(verdicts.len(), 4);
+        assert!(
+            verdicts[0].is_none() && verdicts[1].is_none(),
+            "彩色分支上没有判定"
+        );
+        assert!(verdicts[2].is_some() && verdicts[3].is_some());
+        let Some(VolumeVerdict::Envelope(envelope)) = verdict else {
+            panic!("这一卷该由上包络定档，实际是 {verdict:?}");
+        };
+        assert!(
+            matches!(envelope.driver, 2 | 3),
+            "驱动页指到了第 {} 张，那不是一张灰度页",
+            envelope.driver
+        );
+    }
+
+    /// 同一源页切出来的两张各写各的成员，源那一格指着同一张源页（页几何批 03 号票）。
+    #[test]
+    fn both_halves_of_one_source_page_report_their_own_output_and_the_same_source() {
+        let size = Size::new(600, 800);
+        let verdict = Some(Verdict {
+            candidate: Candidate::new(BitDepth::Two, Dither::Off),
+            reason: Reason::VolumeEnvelope,
+        });
+        let out = Path::new("out/volume-a");
+
+        let reports: Vec<PageReport> = vec![
+            gray(
+                "library/volume-a/001.jpg",
+                "001-1.png",
+                size,
+                [9.0, 4.0, 1.0],
+                0,
+            ),
+            gray(
+                "library/volume-a/001.jpg",
+                "001-2.png",
+                size,
+                [9.0, 4.0, 1.0],
+                1,
+            ),
+        ]
+        .into_iter()
+        .map(|page| page.into_report(out, verdict, size))
+        .collect();
+
+        assert_eq!(reports[0].output, PathBuf::from("out/volume-a/001-1.png"));
+        assert_eq!(reports[1].output, PathBuf::from("out/volume-a/001-2.png"));
+        assert_eq!(
+            reports[0].source, reports[1].source,
+            "两半来自同一张源页，报告里那一格该指着同一个成员"
+        );
+    }
+
+    /// 第二遍按输出页写出：一个源页的两半各落一个成员，各带各的字节，各报到一步（页几何批 03 号票）。
+    ///
+    /// 成员名跟着页走。由第二遍按源页序数出来的话，两半会写到同一个名字上——
+    /// 一张覆盖另一张，而报告里两页仍各说各的。
+    #[test]
+    fn the_second_pass_writes_every_output_page_of_a_split_source_page() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let out = space.path().join("volume-a");
+        let size = Size::new(4, 4);
+
+        // 两半在缓存里各占一个序号，像素刻意不同：串位当场看得出来。
+        let cache = Mutex::new(cache::PageCache::new(
+            CacheBudget::default(),
+            Retention::Keep,
+        ));
+        let slots: Vec<usize> = [0u8, u8::MAX]
+            .into_iter()
+            .map(|level| {
+                let image = GrayImage::new(size, vec![level; 16]);
+                lock(&cache)
+                    .insert(cache::compress(&image))
+                    .expect("存进缓存")
+            })
+            .collect();
+
+        let pages = vec![
+            gray(
+                "volume-a/001.jpg",
+                "001-1.png",
+                size,
+                [9.0, 4.0, 1.0],
+                slots[0],
+            ),
+            gray(
+                "volume-a/001.jpg",
+                "001-2.png",
+                size,
+                [9.0, 4.0, 1.0],
+                slots[1],
+            ),
+        ];
+        let verdict = Some(Verdict {
+            candidate: Candidate::new(BitDepth::Two, Dither::Off),
+            reason: Reason::VolumeEnvelope,
+        });
+        let encode = Encode {
+            uniform: size,
+            cache: &cache,
+            recorder: None,
+        };
+        let tally = Tally::default();
+        let watching = ProgressSink::new(tally.clone());
+
+        let mut sink = Sink::create(&out, Container::Directory).expect("建输出容器");
+        second_pass(
+            &pages,
+            &[verdict, verdict],
+            &encode,
+            &mut sink,
+            progress::Steps::new(Some(&watching)),
+        )
+        .expect("写出这两张");
+        sink.finish().expect("收尾");
+
+        let mut members: Vec<String> = fs::read_dir(&out)
+            .expect("列输出容器")
+            .map(|entry| {
+                entry
+                    .expect("读目录项")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        members.sort();
+        assert_eq!(members, ["001-1.png", "001-2.png"]);
+        assert_ne!(
+            fs::read(out.join("001-1.png")).expect("读回头一半"),
+            fs::read(out.join("001-2.png")).expect("读回后一半"),
+            "两半写出了同样的字节：缓存序号串位了"
+        );
+        // 一张输出页一步，不是一张源页一步。
+        assert_eq!(tally.steps(), 2);
+    }
+
+    /// 数第二遍报到了几步。观察者那一端只关心次数，卷路径与预告的步数在别处测。
+    #[derive(Clone, Default)]
+    struct Tally(Arc<AtomicUsize>);
+
+    impl Tally {
+        fn steps(&self) -> usize {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    impl Progress for Tally {
+        fn volume_started(&self, _volume: &Path, _steps: u64) {}
+
+        fn stepped(&self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn volume_finished(&self) {}
     }
 }

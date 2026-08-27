@@ -85,7 +85,8 @@ impl std::fmt::Display for CacheBudget {
 pub struct CacheUsage {
     /// 本次的预算。
     pub budget: CacheBudget,
-    /// 缓存里的页数。透传文件不进缓存。
+    /// 缓存里的页数。数的是**输出页**——一个源页切成几张就占几个序号（页几何批 03 号票）。
+    /// 透传文件不进缓存，彩色分支上的页也不进（ADR 0005 决定第 4 条）。
     pub pages: usize,
     /// 这些页摊开来有多少字节：目标尺寸 × 每像素一字节。
     pub raw: u64,

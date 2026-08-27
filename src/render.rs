@@ -54,6 +54,10 @@ pub fn header(report: &Report, mode: Mode) -> String {
 /// 逐页那些行不在里面，它们在 [`pages`]。分成两个函数是给会话用的：报告区默认只给卷级，
 /// 展开某一卷才逐页（p1 spec 的《会话：布局与交互》）。命令行两段都要，接连拼上去
 /// 就是从前那一整段。
+///
+/// 那个页数是**输出**页数——用户打开的那本书里躺着几页。源页数是另一个数
+/// （`VolumeReport::source_pages`，页几何批 03 号票），一个源页可以产出多张输出页；
+/// 两者眼下相等，这一行因此还没有分开说的必要。
 pub fn volume(volume: &VolumeReport) -> String {
     let mut text = format!(
         "{} → {}（{} 页{}）\n",
@@ -486,6 +490,7 @@ mod tests {
                 decodes: 1,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
+                source_pages: 1,
             }],
             elapsed: Duration::ZERO,
         }
@@ -731,6 +736,7 @@ mod tests {
                 io: io_plan(),
                 decodes: 3,
                 timing: VolumeTiming::default(),
+                source_pages: 3,
                 pages: vec![
                     page("001", PageColor::Color, PageBranch::Color),
                     page("002", PageColor::Color, gray_branch()),
@@ -767,6 +773,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 pages: Vec::new(),
+                source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
                 io: io_plan(),
@@ -804,6 +811,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 pages: Vec::new(),
+                source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
                 io: io_plan(),
@@ -875,6 +883,7 @@ mod tests {
                 io: io_plan(),
                 decodes: 2,
                 timing: VolumeTiming::default(),
+                source_pages: 2,
                 pages: vec![good, failed],
             }],
             elapsed: Duration::ZERO,
@@ -960,6 +969,7 @@ mod tests {
                 io: io_plan(),
                 decodes: 2,
                 timing: VolumeTiming::default(),
+                source_pages: 2,
                 pages: vec![whole, salvaged],
             }],
             elapsed: Duration::ZERO,
@@ -1073,6 +1083,7 @@ mod tests {
             output: PathBuf::from("out/volume-b"),
             superseded: None,
             pages: Vec::new(),
+            source_pages: 12,
             verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
             cache: cache_usage(),
             io: io_plan(),

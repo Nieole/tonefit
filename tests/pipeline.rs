@@ -1516,6 +1516,36 @@ fn every_page_is_decoded_exactly_once() {
     assert_eq!(volume_report.decodes, 3, "源页被解码了不止一遍");
 }
 
+/// 报告把**源页数与输出页数分开**说，两者眼下相等（页几何批 03 号票）。
+///
+/// 一个源页可以产出多张输出页，两个数从此不是同一个。跳过的卷同样答得出源页数——
+/// 那是源枚举就数得出的事实，不做工作也在。
+#[test]
+fn the_report_counts_source_pages_and_output_pages_separately() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::line_art(fixtures::TYPICAL));
+    // 透传文件既不是源页也不是输出页。
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
+
+    let done = run_volume(&space, &volume);
+
+    let processed = &done.volumes[0];
+    assert_eq!(processed.source_pages, 2);
+    assert_eq!(processed.page_count(), 2, "输出页数");
+    // 逐页结果是**输出**那一侧的，与 `page_count()` 只有一个出处。
+    assert_eq!(processed.pages.len(), processed.page_count());
+
+    // 第二趟幂等命中：一页都没重做，两个数照样答得出来。
+    let skipped = run_volume(&space, &volume);
+    let skipped = &skipped.volumes[0];
+    assert!(skipped.skipped(), "第二趟该被跳过");
+    assert!(skipped.pages.is_empty(), "跳过的卷没有逐页结果");
+    assert_eq!(skipped.source_pages, 2);
+    assert_eq!(skipped.page_count(), 2, "输出页数");
+}
+
 #[test]
 fn the_report_says_how_much_the_cache_held() {
     // 卷成为不可分割的处理单元，峰值内存随卷大小线性增长（ADR 0005 认下的代价）。
