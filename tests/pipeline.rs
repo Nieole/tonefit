@@ -6,8 +6,8 @@ mod fixtures;
 
 use fixtures::{Workspace, run_volume};
 use tonefit::{
-    BitDepth, CacheBudget, Candidate, Dither, Filter, GeometryGate, Mode, PageColor, Reason,
-    Request, Size, VolumeVerdict,
+    BitDepth, CacheBudget, Candidate, Dither, Filter, FitMode, GeometryGate, Mode, PageColor,
+    Reason, Request, Size, VolumeVerdict,
 };
 
 #[test]
@@ -143,7 +143,8 @@ fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
     // 文件里那个位宽是编码器接口以内的事（ADR 0004）。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let page = fixtures::line_art(fixtures::SMALLER_THAN_TARGET);
+    // 恒等通过的尺寸：不经缩放，「像素一个不动」才谈得成（页几何批 01 号票）。
+    let page = fixtures::line_art(fixtures::PASSES_THROUGH);
     volume.page("001.png", &page);
 
     let report = tonefit::run(&Request {
@@ -194,7 +195,8 @@ fn pages_come_out_in_reading_order() {
 fn every_supported_format_decodes() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let size = fixtures::SMALLER_THAN_TARGET;
+    // 恒等通过的尺寸：读回来的就是解码器给出的那张图，中间不隔一层缩放。
+    let size = fixtures::PASSES_THROUGH;
     let page = fixtures::gradient(size);
     let names = [
         "01.avif", "02.bmp", "03.gif", "04.jpg", "05.png", "06.tiff", "07.webp",
@@ -229,8 +231,8 @@ fn every_supported_format_decodes() {
 fn color_pages_go_through_the_oklab_lightness_channel() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 用不需要缩放的尺寸，像素与色带一一对应。
-    let size = fixtures::SMALLER_THAN_TARGET;
+    // 用两种适配方式都恒等通过的尺寸，像素与色带一一对应。
+    let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::color_page(size));
 
     // 量的是转灰：把输出钉在 8bit，色带落点才不被量化挪动。
@@ -291,8 +293,8 @@ fn a_color_page_on_a_monochrome_profile_is_grayed_and_still_reported_as_color() 
 fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cache() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 不必缩放的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
-    let size = fixtures::SMALLER_THAN_TARGET;
+    // 两种适配方式都恒等通过的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
+    let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::color_page(size));
     volume.page("002.png", &fixtures::gradient(size));
 
@@ -338,8 +340,8 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
 fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("001.png", &fixtures::color_page(fixtures::TINY));
-    volume.page("002.png", &fixtures::gradient(fixtures::TINY));
+    volume.page("001.png", &fixtures::color_page(fixtures::PASSES_THROUGH));
+    volume.page("002.png", &fixtures::gradient(fixtures::PASSES_THROUGH));
 
     let report = tonefit::run(&Request {
         profile: fixtures::profile(COLOR_DEVICE),
@@ -351,7 +353,11 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     let pages = &report.volumes[0].pages;
     assert_eq!(pages[0].color(), Some(PageColor::Color));
     assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
-    assert_eq!(pages[0].size, fixtures::TINY, "彩页的目标尺寸照旧算出来");
+    assert_eq!(
+        pages[0].size,
+        fixtures::PASSES_THROUGH,
+        "彩页的目标尺寸照旧算出来"
+    );
     assert!(pages[1].verdict().is_some(), "灰度页照旧有判定");
     assert!(!space.out().exists(), "dry-run 落了盘");
 }
@@ -377,14 +383,24 @@ fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
         volume
     };
 
+    // 两趟都点名 fit-inside：头一页要贴不住面板，而门不成立那一支只在这条路上走得到
+    // （页几何批 01 号票）。
+    let run = |space: &Workspace, volume: &fixtures::Volume, profile| {
+        tonefit::run(&Request {
+            profile,
+            fit: FitMode::Inside,
+            ..fixtures::request(space, [volume.path()])
+        })
+        .expect("处理应当成功")
+    };
     let color_space = Workspace::new();
-    let color = fixtures::run_volume_with(
+    let color = run(
         &color_space,
         &build(&color_space),
         fixtures::profile(COLOR_DEVICE),
     );
     let mono_space = Workspace::new();
-    let mono = fixtures::run_volume_with(
+    let mono = run(
         &mono_space,
         &build(&mono_space),
         fixtures::baseline_profile(),
@@ -422,7 +438,8 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
     // 正好两倍面板的完好页：贴住，门在它这里是开的。
     volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
 
-    let report = run_volume(&space, &volume);
+    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 夹具自证：那一页确实是救回来的，尺寸也确实贴不住面板。
@@ -471,7 +488,8 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
     volume.page("003.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
     volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
 
-    let report = run_volume(&space, &volume);
+    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 夹具自证：那一页两刀都挨着——既是部分救回，几何门在它身上又不成立。
@@ -530,7 +548,9 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
         &fixtures::truncated(&fixtures::line_art(fixtures::TINY)),
     );
 
-    let report = run_volume(&space, &volume);
+    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）：以高为准让每一页的高
+    // 都等于面板高，一条边永远贴着，这一卷就没有「一页成立的都没有」可谈。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
     assert_eq!(
@@ -556,7 +576,8 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
 fn transparent_areas_come_out_as_paper_white() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let size = fixtures::SMALLER_THAN_TARGET;
+    // 恒等通过的尺寸：透明区与不透明区的边界不被重采样糊开。
+    let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::page_with_transparency(size));
 
     let report = run_volume(&space, &volume);
@@ -571,15 +592,16 @@ fn transparent_areas_come_out_as_paper_white() {
     );
 }
 
+/// `--fit inside` 那条路上，比面板小的页**不放大**（spec 的 story 17）。
 #[test]
-fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels() {
+fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels_when_fitted_inside() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
     volume.page("001.png", &page);
 
     // 量的是几何与转灰：把输出钉在 8bit，「逐字节相同」才谈得成。
-    let report = fixtures::run_volume_at_eight_bits(&space, &volume);
+    let report = fixtures::run_volume_at_eight_bits_fitted_inside(&space, &volume);
 
     assert_eq!(
         report.volumes[0].pages[0].size,
@@ -594,6 +616,38 @@ fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels() {
     );
 }
 
+/// **默认这条路反过来：比面板矮的页被放大到面板高**，几何门跟着成立，抖动不再被关掉
+/// （页几何批 01 号票）。
+///
+/// 这是本票认下的第二笔代价，与跨页那一笔并列：比面板小的卷会被放大。
+/// 上一条用例是它的对照——同一页同一块面板，只换适配方式。
+#[test]
+fn a_page_shorter_than_the_panel_is_enlarged_until_it_touches_the_panel_height() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    // 期望值手算：800×1000 放大 1680/1000 = 1.68 倍，宽跟到 1344——比面板宽还宽，
+    // 一张比面板小的页也可能要横向平移。
+    assert_eq!(page.size, Size::new(1344, 1680));
+    assert_eq!(fixtures::read_png(&page.output).size, page.size);
+    // 门在它身上成立了，抖动那一维因此回到候选集里。
+    assert_eq!(page.gate(), Some(GeometryGate::Holds));
+    assert_eq!(
+        fixtures::verdict(page).candidate.dither,
+        Dither::FloydSteinberg,
+        "门成立了，抖动却仍被关着"
+    );
+    // 报告点得出它超过了面板宽（01 号票：哪些页要横向翻动）。
+    assert_eq!(report.wider_than_the_panel().count(), 1);
+}
+
 #[test]
 fn the_target_size_is_the_page_fitted_inside_the_panel() {
     let space = Workspace::new();
@@ -602,7 +656,7 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
     volume.page("02.png", &fixtures::gradient(fixtures::TYPICAL));
     volume.page("03.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
 
-    let report = run_volume(&space, &volume);
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     // 期望值手算：跨页 5056×1680 由宽边定夺，×0.25；B 类中位 1441×2048 由高边定夺，
     // ×1680/2048 得 1182.07 → 1182；800×1000 两边都小于面板，原样。
@@ -615,6 +669,101 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
         assert_eq!(page.size, expected, "{}", page.source.display());
         assert_eq!(fixtures::read_png(&page.output).size, expected);
     }
+}
+
+/// 默认这条路上目标高**恒等于面板高**，宽按源宽高比算出、不设上限（页几何批 01 号票）。
+///
+/// 与上一条用例同一批页、同一块面板，只换适配方式：分岔只出在头一页与末一页身上，
+/// 中间那张 B 类中位页两条路上一模一样——下一条用例把那件事单独钉住。
+#[test]
+fn the_target_size_leads_with_the_panel_height_by_default() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
+    volume.page("02.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("03.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+
+    let report = run_volume(&space, &volume);
+
+    // 期望值手算：跨页 5056×1680 高已经等于面板高，原样出去——宽是面板宽的 4 倍；
+    // B 类中位 1441×2048 仍由高边定夺，与 fit-inside 同一个尺寸；
+    // 800×1000 放大到面板高，宽 800×1.68 = 1344。
+    let expected = [
+        Size::new(5056, 1680),
+        Size::new(1182, 1680),
+        Size::new(1344, 1680),
+    ];
+    for (page, expected) in report.volumes[0].pages.iter().zip(expected) {
+        assert_eq!(page.size, expected, "{}", page.source.display());
+        assert_eq!(fixtures::read_png(&page.output).size, expected);
+        // 每一页的高都等于面板高，门因此**每一页**都成立。
+        assert_eq!(page.gate(), Some(GeometryGate::Holds));
+    }
+    // 溢出面板宽的是头一页与末一页，中间那张没有。
+    let wide: Vec<_> = report
+        .wider_than_the_panel()
+        .map(|page| page.source.file_name().expect("页有名字").to_owned())
+        .collect();
+    assert_eq!(wide, ["01.png", "03.png"]);
+}
+
+/// **普通漫画页两种适配方式产出同一个尺寸。**
+///
+/// 那不是巧合，是「页比面板更瘦长、本来就受高度约束」的直接后果：两条路上宽都由同一个
+/// `面板高 ÷ 源高` 算出。实测棋魂完全版 230 页、N和S 第43话 24 页 **100% 一致**
+/// （measurements 的《适配方式：fit-inside 与以高为准》）。
+///
+/// 写在 `run` 这个 seam 上，而不只写在几何那一层：用户看得见的是输出文件，
+/// 而「开关不该起作用的地方它不起作用」是 spec 的 story 16。
+/// 断言连**输出字节**都比——尺寸相同还不够，判定与写出也得一字不差。
+#[test]
+fn an_ordinary_comic_page_comes_out_the_same_size_either_way() {
+    // 宽高比 1.42：B 类素材的中位页（measurements 的《B 类素材普查》），
+    // 比面板的 1.35 更瘦长，且比面板高——两条前提都在。
+    let build = |space: &Workspace| {
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+        volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+        volume.page(
+            "003.png",
+            &fixtures::line_art(fixtures::TWO_AND_A_HALF_PANEL),
+        );
+        volume
+    };
+
+    let height_space = Workspace::new();
+    let by_height = run_volume(&height_space, &build(&height_space));
+    let inside_space = Workspace::new();
+    let inside = fixtures::run_volume_fitted_inside(&inside_space, &build(&inside_space));
+
+    for (left, right) in by_height.volumes[0]
+        .pages
+        .iter()
+        .zip(&inside.volumes[0].pages)
+    {
+        assert_eq!(left.size, right.size, "{}", left.source.display());
+        assert_eq!(
+            fixtures::verdict(left).candidate,
+            fixtures::verdict(right).candidate,
+            "{}",
+            left.source.display()
+        );
+        // 比的是**像素**，不是文件字节：适配方式进了参数哈希（见 `crate::metadata`），
+        // 两趟的 tEXt 本来就不同，而那正是幂等要的（换了它这一卷要重做）。
+        let (left_png, right_png) = (
+            fixtures::read_png(&left.output),
+            fixtures::read_png(&right.output),
+        );
+        assert_eq!(
+            left_png.pixels,
+            right_png.pixels,
+            "{} 两条路上写出的像素不同",
+            left.source.display()
+        );
+        assert_eq!(left_png.bit_depth, right_png.bit_depth);
+    }
+    // 一页都没有溢出面板：普通漫画卷在以高为准下不必横向翻动。
+    assert_eq!(by_height.wider_than_the_panel().count(), 0);
 }
 
 #[test]
@@ -643,23 +792,14 @@ fn the_target_size_comes_from_the_profiles_panel() {
 #[test]
 fn the_report_gives_the_total_ratio_the_prescale_and_the_residual_of_every_page() {
     let space = Workspace::new();
-    let volume = space.volume("volume-a");
-    // 期望值手算，面板 1264×1680。总缩放比 = 源高 ÷ 目标高：
+    let volume = scaling_volume(&space);
+    // 期望值手算，面板 1264×1680，`--fit inside`。总缩放比 = 源高 ÷ 目标高：
     //   5056×1680 → 1264×420 ：比 4.000，整数比，预缩一步到位
     //   3160×4200 → 1264×1680：比 2.500，预缩 2 之后残差段还剩 1.250
     //   2528×3360 → 1264×1680：比 2.000，预缩 2，残差 1.000
     //   1441×2048 → 1182×1680：比 1.219，不触发预缩，残差就是总比
     //   800×1000  → 原样      ：比 1.000，两级都没活干
-    volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    volume.page(
-        "02.png",
-        &fixtures::gradient(fixtures::TWO_AND_A_HALF_PANEL),
-    );
-    volume.page("03.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    volume.page("04.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("05.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
-
-    let report = run_volume(&space, &volume);
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let expected = [
         (4.0, 4, 1.0),
@@ -668,6 +808,52 @@ fn the_report_gives_the_total_ratio_the_prescale_and_the_residual_of_every_page(
         (1.219, 1, 1.219),
         (1.0, 1, 1.0),
     ];
+    assert_scaling(&report, expected);
+}
+
+/// **预缩与总缩放比跟着适配方式走**（页几何批 01 号票）。
+///
+/// 同一批页、同一块面板，只换适配方式：目标高改成恒等于面板高，总缩放比 = 源高 ÷ 面板高
+/// 跟着变，预缩那一级于是也可能换一个倍数。分岔只出在两头——中间三页两条路上目标尺寸相同，
+/// 三个数因此一个不动。
+#[test]
+fn the_total_ratio_follows_the_fit_mode() {
+    let space = Workspace::new();
+    let volume = scaling_volume(&space);
+    // 期望值手算，面板 1264×1680，默认的以高为准。目标高恒为 1680：
+    //   5056×1680 → 5056×1680：比 1.000，高已经是面板高，两级都没活干
+    //   3160×4200 → 1264×1680：比 2.500，与 fit-inside 同一个目标，三个数不动
+    //   2528×3360 → 1264×1680：比 2.000，同上
+    //   1441×2048 → 1182×1680：比 1.219，同上
+    //   800×1000  → 1344×1680：比 0.595，**放大**——比小于 1，预缩自然退化为恒等
+    let report = run_volume(&space, &volume);
+
+    let expected = [
+        (1.0, 1, 1.0),
+        (2.5, 2, 1.25),
+        (2.0, 2, 1.0),
+        (1.219, 1, 1.219),
+        (1000.0 / 1680.0, 1, 1000.0 / 1680.0),
+    ];
+    assert_scaling(&report, expected);
+}
+
+/// 缩放那两条用例共用的卷：五页各落在预缩的一个档上。
+fn scaling_volume(space: &Workspace) -> fixtures::Volume {
+    let volume = space.volume("volume-a");
+    volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
+    volume.page(
+        "02.png",
+        &fixtures::gradient(fixtures::TWO_AND_A_HALF_PANEL),
+    );
+    volume.page("03.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page("04.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("05.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+    volume
+}
+
+/// 逐页比对总缩放比、预缩倍数与残差比。
+fn assert_scaling(report: &tonefit::Report, expected: [(f64, u32, f64); 5]) {
     for (page, (ratio, prescale, residual)) in report.volumes[0].pages.iter().zip(expected) {
         let scaling = page.scaling().expect("处理成了的页有缩放");
         let name = page.source.display();
@@ -1054,7 +1240,9 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
     volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
     volume.page("005.png", &fixtures::gradient(fixtures::SPREAD));
 
-    let report = run_volume(&space, &volume);
+    // 混排卷只在 fit-inside 上是混排卷（页几何批 01 号票）：以高为准会把那张封面放大到
+    // 面板高，门跟着成立，一卷五页都拿满候选，「一张封面否决整卷」这件事就无从谈起。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 判定范围是五页，被排除的只有封面那一张——报告说得出这两个数（06 号票）。
@@ -1195,6 +1383,9 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
 
     let report = tonefit::run(&Request {
         per_page: true,
+        // 第二页要贴不住面板才钉得住「另一页的几何不牵连这一页」，而门不成立那一支
+        // 只在 fit-inside 上走得到（页几何批 01 号票）。
+        fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -1356,6 +1547,9 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
 
     let error = tonefit::run(&Request {
         dither: Some(Dither::FloydSteinberg),
+        // 拒绝那条路只在 fit-inside 上打得着（页几何批 01 号票）：以高为准让每一页的高
+        // 都等于面板高，没有页贴不住面板，`--dither fs` 也就撞不上门。
+        fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect_err("几何门不成立时点名抖动应当被拒绝");
@@ -1364,6 +1558,9 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     assert!(said.contains("几何门"), "{said}");
     // 是哪一页关的门要说出来——那是唯一能让用户看懂这条拒绝的信息。
     assert!(format!("{error:#}").contains("001.png"), "{error:#}");
+    // 门放宽不了，几何却动得了：换个适配方式这一页就贴住面板了（页几何批 01 号票）。
+    // 不说这一句，用户手上只剩「换一批源页」。
+    assert!(format!("{error:#}").contains("--fit height"), "{error:#}");
 }
 
 #[test]
@@ -1693,7 +1890,9 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
         );
     }
 
-    let report = run_volume(&space, &volume);
+    // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
+    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -1724,7 +1923,9 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     levels.push(FAR_OUTSIDE);
     let volume = volume_of_solids(&space, &levels);
 
-    let report = run_volume(&space, &volume);
+    // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
+    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -1758,7 +1959,9 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     levels.extend([FAR_OUTSIDE; 2]);
     let volume = volume_of_solids(&space, &levels);
 
-    let report = run_volume(&space, &volume);
+    // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
+    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -1873,7 +2076,9 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
         &fixtures::truncated(&fixtures::gradient(fixtures::TINY)),
     );
 
-    let report = run_volume(&space, &volume);
+    // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
+    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
     let salvaged = &reported.pages[3];
@@ -1928,7 +2133,13 @@ fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
         write(&fixtures::solid(fixtures::TINY, level));
     }
 
-    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
+    // 同上：小页只在 fit-inside 上还是小页。
+    let report = tonefit::run(&Request {
+        profile: fixtures::profile(COLOR_DEVICE),
+        fit: FitMode::Inside,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
     report.volumes.into_iter().next().expect("一个卷")
 }
 
@@ -1977,7 +2188,9 @@ fn run_with_a_run_of(length: usize) -> tonefit::VolumeReport {
     levels[30..30 + length].fill(NEEDS_FOUR_BITS);
     let volume = volume_of_solids(&space, &levels);
 
-    let report = run_volume(&space, &volume);
+    // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
+    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")
 }
@@ -1990,6 +2203,9 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
 
     let report = tonefit::run(&Request {
         bit_depth: Some(BitDepth::Four),
+        // 门不成立时候选集里没有抖动那一维，`--bit-depth` 一点名就只剩一个候选，
+        // 判定整个被顶掉——这一条要的正是那个局面（页几何批 01 号票）。
+        fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");

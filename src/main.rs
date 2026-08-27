@@ -13,8 +13,8 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, IoMode, Mode, Profile, Progress, ProgressSink, Report,
-    Request,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Mode, Profile, Progress, ProgressSink,
+    Report, Request,
 };
 
 #[derive(Parser)]
@@ -54,6 +54,20 @@ struct Cli {
     /// 记下最低的那个**不可接受**档的判据值，界取在它之下。
     #[arg(long, value_name = "界")]
     threshold: Option<f32>,
+
+    /// 这一趟怎么把页适配到面板：height（默认，以高为准）、inside（fit-inside）。
+    ///
+    /// **默认 height**：目标高恒等于面板高，宽按源宽高比算出、**允许超过面板宽**，
+    /// 超出的部分靠阅读器横向平移。跨页因此从压扁状态变得可读，代价要认下来——
+    /// **跨页卷的体积涨到约三四倍**，而比面板矮的页会被**放大**到面板高。
+    ///
+    /// 普通漫画页两种方式产出同一个尺寸：页比面板更瘦长、本来就受高度约束
+    /// （实测棋魂 230 页、N和S 24 页 100% 一致）。
+    ///
+    /// inside 是从前那条路：整页放进面板，源比面板小时不放大，页两侧留边。
+    /// 它对阅读器的要求更松——留边只要阅读器填背景不重采样，溢出要它平移不缩放。
+    #[arg(long, value_name = "方式")]
+    fit: Option<String>,
 
     /// 残差段的重采样滤波器：area（= box）、bilinear、hamming、bicubic、lanczos3，默认 lanczos3。
     /// 只作用于残差段——总缩放比 ≥ 2 时的整数倍预缩那一级恒为 box。
@@ -103,6 +117,14 @@ impl Cli {
             Mode::DryRun
         } else {
             Mode::Process
+        }
+    }
+
+    /// 本次的适配方式。不点名就是默认的以高为准（01 号票）。
+    fn fit_mode(&self) -> Result<FitMode> {
+        match &self.fit {
+            Some(name) => FitMode::resolve(name),
+            None => Ok(FitMode::default()),
         }
     }
 
@@ -272,6 +294,7 @@ fn execute() -> Result<u8> {
         return calibrate(profile, *gray_levels, out);
     }
     let profile = cli.target_profile()?;
+    let fit = cli.fit_mode()?;
     let filter = cli.residual_filter()?;
     let bit_depth = cli.bit_depth_override()?;
     let dither = cli.dither_override()?;
@@ -283,6 +306,7 @@ fn execute() -> Result<u8> {
         inputs: cli.inputs,
         output_root: cli.out.expect(REQUIRED_BY_CLAP),
         profile,
+        fit,
         filter,
         bit_depth,
         dither,
@@ -579,6 +603,51 @@ mod tests {
 
         assert_eq!(profile.device(), "kobo-libra-2");
         assert_eq!(profile.panel().gray_levels, 8);
+    }
+
+    /// `--fit` 两种都点得到，**不点名就是以高为准**（01 号票：默认换了）。
+    ///
+    /// 默认这一条要在命令行这一层单独钉住：库那一侧的 `FitMode::default()` 换了向，
+    /// 而命令行完全可以自己写死另一个，那时用户敲出来的与文档说的对不上。
+    #[test]
+    fn the_fit_mode_from_the_command_line_names_how_pages_meet_the_panel() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        assert_eq!(
+            parse(&["--fit", "INSIDE"])
+                .fit_mode()
+                .expect("inside 应当认得"),
+            FitMode::Inside
+        );
+        assert_eq!(
+            parse(&["--fit", "height"])
+                .fit_mode()
+                .expect("height 应当认得"),
+            FitMode::Height
+        );
+        // 不点名就是以高为准。
+        assert_eq!(parse(&[]).fit_mode().expect("默认值"), FitMode::Height);
+        // 认不出的名字在拼 Request 之前就被挡下。
+        assert!(parse(&["--fit", "stretch"]).fit_mode().is_err());
+    }
+
+    /// 帮助里要把这一趟的**行为变化与代价**说出来：默认是以高为准、跨页卷体积涨、
+    /// 比面板矮的页被放大（01 号票的票面）。少了这几句，升级的人只会看到输出突然变样。
+    #[test]
+    fn the_fit_help_says_the_default_changed_and_what_it_costs() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--fit"), "{help}");
+        assert!(help.contains("默认 height"), "{help}");
+        assert!(help.contains("允许超过面板宽"), "{help}");
+        assert!(help.contains("体积涨到约三四倍"), "{help}");
+        assert!(help.contains("放大"), "{help}");
+        // 「两种方式在普通漫画页上同尺寸」也要说：不然用户以为开关处处生效。
+        assert!(help.contains("同一个尺寸"), "{help}");
     }
 
     #[test]

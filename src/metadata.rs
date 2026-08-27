@@ -294,7 +294,7 @@ fn reason_text(reason: Reason, driver: Option<usize>) -> String {
 
 /// 参数哈希：这一次调用里**会改变输出**的每一项。
 ///
-/// 收进来的是面板四项、阈值、残差段滤波器与三个覆盖项。
+/// 收进来的是面板四项、阈值、适配方式、残差段滤波器与三个覆盖项。
 ///
 /// 型号名不收：设备只是面板的别名，多对一（`CONTEXT.md`），同一块面板的两个别名输出
 /// 逐字节相同。它另有去处——[`Fingerprint`] 单独记着它，也单独比它，理由见那里。
@@ -326,6 +326,9 @@ fn params_hash(request: &Request) -> String {
         "threshold",
         &format!("{:.3}", request.profile.threshold().value()),
     );
+    // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
+    // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
+    line("fit", &request.fit.name());
     line("filter", &request.filter.name());
     line(
         "bit-depth",
@@ -353,6 +356,7 @@ fn hex(digest: blake3::Hash) -> String {
 mod tests {
     use super::*;
     use crate::cache::CacheBudget;
+    use crate::geometry::FitMode;
     use crate::medium::IoMode;
     use crate::profile::Profile;
     use crate::quantize::{BitDepth, Candidate};
@@ -369,6 +373,7 @@ mod tests {
             inputs: vec![PathBuf::from("library/volume-a")],
             output_root: PathBuf::from("out"),
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
             filter: Filter::default(),
             bit_depth: None,
             dither: None,
@@ -386,7 +391,7 @@ mod tests {
     #[test]
     fn every_parameter_that_changes_the_output_changes_the_hash() {
         let baseline = params_hash(&request());
-        let changes: [Change; 6] = [
+        let changes: [Change; 7] = [
             ("面板", |request| {
                 request.profile = Profile::resolve("kobo-clara-hd").expect("内置型号")
             }),
@@ -397,6 +402,8 @@ mod tests {
                     .with_gray_levels(4)
                     .expect("4 级灰阶")
             }),
+            // 适配方式换掉，目标尺寸整卷重算（页几何批 01 号票）。
+            ("适配方式", |request| request.fit = FitMode::Inside),
             ("滤波器", |request| request.filter = Filter::Bicubic),
             ("位深覆盖", |request| {
                 request.bit_depth = Some(BitDepth::Four)

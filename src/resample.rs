@@ -263,7 +263,7 @@ fn resample(source: &GrayImage, target: Size, filter: Filter) -> Result<GrayImag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::fit_inside;
+    use crate::geometry::FitMode;
 
     /// 基准面板。缩放的算术与面板无关，取一块具体的只为把手算的期望值写死。
     const PANEL: Size = Size::new(1264, 1680);
@@ -313,35 +313,47 @@ mod tests {
         }
     }
 
-    /// 不变量（`CONTEXT.md`）：残差比恒 < 2，且预缩绝不缩过头——残差段只降不升。
+    /// 不变量（`CONTEXT.md`）：残差比恒 < 2，且预缩绝不缩过头——预缩之后仍不小于目标。
     ///
-    /// 扫的是真实几何算出来的目标尺寸，不是编出来的比值：取整发生在 `fit_inside` 里，
-    /// 这条不变量必须在取整之后仍然成立。
+    /// 扫的是真实几何算出来的目标尺寸，不是编出来的比值：取整发生在适配方式那一层，
+    /// 这条不变量必须在取整之后仍然成立。**两种适配方式各扫一遍**（页几何批 01 号票）——
+    /// 目标尺寸的来源换了，总缩放比跟着换，而这两条不变量是缩放这一层的，不该跟着换。
+    ///
+    /// 以高为准带来了一支从前不存在的情形：**总缩放比小于 1**，也就是放大。
+    /// 那时预缩退化为恒等（它只在比 ≥ 2 时存在），残差段反过来升采样，
+    /// 「预缩之后不小于目标」因此只在真预缩过的页上问得出口——下面那道守卫说的就是这件事。
     #[test]
     fn the_residual_ratio_stays_under_two_at_every_size() {
-        for height in 1..=6000u32 {
-            for width in [height * 3 / 4, height * 2, height / 3] {
-                let source = Size::new(width.max(1), height);
-                let target = fit_inside(source, PANEL);
-                let scaling = Scaling::plan(source, target);
-                let prescaled = prescaled_size(source, scaling.prescale());
+        for fit in [FitMode::Height, FitMode::Inside] {
+            for height in 1..=6000u32 {
+                for width in [height * 3 / 4, height * 2, height / 3] {
+                    let source = Size::new(width.max(1), height);
+                    let target = fit.target(source, PANEL);
+                    let scaling = Scaling::plan(source, target);
 
-                assert!(
-                    scaling.residual_ratio() < 2.0,
-                    "{source} → {target} 的残差比 {} 越过了 2",
-                    scaling.residual_ratio()
-                );
-                assert_eq!(
-                    scaling.prescaled(),
-                    scaling.total_ratio() >= 2.0,
-                    "{source} → {target} 的总缩放比是 {}",
-                    scaling.total_ratio()
-                );
-                assert!(
-                    prescaled.width >= target.width && prescaled.height >= target.height,
-                    "{source} 预缩 {} 倍得 {prescaled}，已经小于目标 {target}",
-                    scaling.prescale()
-                );
+                    assert!(
+                        scaling.residual_ratio() < 2.0,
+                        "{fit:?}：{source} → {target} 的残差比 {} 越过了 2",
+                        scaling.residual_ratio()
+                    );
+                    assert_eq!(
+                        scaling.prescaled(),
+                        scaling.total_ratio() >= 2.0,
+                        "{fit:?}：{source} → {target} 的总缩放比是 {}",
+                        scaling.total_ratio()
+                    );
+                    // 没预缩过的页没有「缩过头」可谈：以高为准下它可能本来就比目标小，
+                    // 那一段是残差段升采样，不是预缩失手。
+                    if !scaling.prescaled() {
+                        continue;
+                    }
+                    let prescaled = prescaled_size(source, scaling.prescale());
+                    assert!(
+                        prescaled.width >= target.width && prescaled.height >= target.height,
+                        "{fit:?}：{source} 预缩 {} 倍得 {prescaled}，已经小于目标 {target}",
+                        scaling.prescale()
+                    );
+                }
             }
         }
     }

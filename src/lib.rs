@@ -49,7 +49,7 @@ pub use color::PageColor;
 pub use decide::{CandidateScore, Reason, Verdict};
 pub use decode::Salvage;
 pub use envelope::Envelope;
-pub use geometry::{GeometryGate, Size};
+pub use geometry::{FitMode, GeometryGate, Size};
 pub use gray::GrayImage;
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
@@ -111,6 +111,7 @@ pub fn run(request: &Request) -> Result<Report> {
         .collect::<Result<Vec<_>>>()?;
     Ok(Report {
         profile: request.profile.clone(),
+        fit: request.fit,
         volumes,
         elapsed: started.elapsed(),
     })
@@ -964,7 +965,7 @@ impl Compute<'_> {
 
         if panel.color && color.is_color() {
             let image = color::to_color(decoded);
-            let size = geometry::fit_inside(image.size(), panel.resolution);
+            let size = request.fit.target(image.size(), panel.resolution);
             let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
             // dry-run 一个文件都不落盘，编出来的字节没人要。
             let record = self
@@ -991,7 +992,7 @@ impl Compute<'_> {
         }
 
         let gray = gray::to_gray(decoded);
-        let size = geometry::fit_inside(gray.size(), panel.resolution);
+        let size = request.fit.target(gray.size(), panel.resolution);
         // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
         // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
         let gate = GeometryGate::of(size, panel.resolution);
@@ -1288,11 +1289,16 @@ fn nothing_left_error(request: &Request) -> anyhow::Error {
             )
         }
         // 位深那一维过得去，裁空的只能是抖动那一维：几何门不成立，而 `--dither` 点了抖动。
+        //
+        // 门本身仍然放宽不了——它是页的几何事实。但**几何**动得了：以高为准把这一页放大到
+        // 面板高，门跟着成立（页几何批 01 号票）。那是唯一一条出路，说出来，
+        // 不然用户手上只剩「换一批源页」。
         _ => anyhow!(
             "点名的抖动模式越过了几何门：这一页源比目标尺寸还小，按不放大原样输出，\
              阅读器显示时还要再缩一次，抖动推到高频的误差会被折回低频。\
              门在这一页上不成立，抖动因此关闭，--dither 覆盖不了它——它是页的几何事实，\
-             不是一个可以放宽的档位（ADR 0007）"
+             不是一个可以放宽的档位（ADR 0007）。\
+             改得动的是几何：--fit height 把这一页放大到面板高，门跟着成立"
         ),
     }
 }
@@ -1525,6 +1531,7 @@ mod tests {
             inputs: vec![PathBuf::from("library/volume-a")],
             output_root: PathBuf::from("out"),
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
             filter: Filter::default(),
             bit_depth: None,
             dither: None,

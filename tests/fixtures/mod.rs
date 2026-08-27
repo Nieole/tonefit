@@ -29,12 +29,25 @@ pub const TWO_AND_A_HALF_PANEL: Size = Size::new(3160, 4200);
 /// 宽幅跨页：宽高比远超面板，fit-inside 由宽边定夺。
 pub const SPREAD: Size = Size::new(5056, 1680);
 
-/// 两边都小于面板：不该被放大。
+/// 两边都小于面板：**fit-inside 下**不该被放大。
+///
+/// 以高为准会把它放大到面板高（页几何批 01 号票），几何门跟着成立——问「不放大」
+/// 或问「门不成立」的用例因此要点名 [`run_volume_fitted_inside`]。
 pub const SMALLER_THAN_TARGET: Size = Size::new(800, 1000);
 
 /// 页数多的用例用的小页。卷级的性质只看逐页判定排开之后的分布，与页上有什么内容无关，
 /// 页因此小到只够铺开几块判据分块就行。
+///
+/// 它**只在 fit-inside 上还是小页**：以高为准把每一页放大到面板高（页几何批 01 号票），
+/// 一卷几十页的代价跟着涨两个数量级。拿它铺长卷的用例点名 [`run_volume_fitted_inside`]。
 pub const TINY: Size = Size::new(160, 224);
+
+/// **两种适配方式下都恒等通过**的尺寸：高已经等于基准面板的高，宽不到面板宽。
+///
+/// 以高为准原样输出（缩放比 1.000），fit-inside 也不放大——「输出与源逐字节相同」
+/// 这类断言因此写得下来，而写下来的性质与这一趟走哪条适配方式无关。
+/// 量解码、转灰、透明区、调色板的用例用它：那几条说的都不是几何。
+pub const PASSES_THROUGH: Size = Size::new(800, 1680);
 
 /// 彩页的色带，自上而下。测试按序号取样。
 ///
@@ -333,10 +346,35 @@ pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> 
 /// `--bit-depth`，点名不抖动走 `--dither`。抖动在 8bit 上本来就是恒等（格点即工作精度），
 /// 点名它是为了把候选裁到只剩一个——判定于是整个被顶掉，报告里那一项也就没有歧义。
 pub fn run_volume_at_eight_bits(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    at_eight_bits(space, volume, tonefit::FitMode::default())
+}
+
+/// 同上，但点名 fit-inside：问「比面板小的页不放大」的用例用它（页几何批 01 号票）。
+pub fn run_volume_at_eight_bits_fitted_inside(
+    space: &Workspace,
+    volume: &Volume,
+) -> tonefit::Report {
+    at_eight_bits(space, volume, tonefit::FitMode::Inside)
+}
+
+fn at_eight_bits(space: &Workspace, volume: &Volume, fit: tonefit::FitMode) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
         profile: baseline_profile().with_gray_levels(256).expect("全集可用"),
+        fit,
         bit_depth: Some(BitDepth::Eight),
         dither: Some(Dither::Off),
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
+/// 把这一卷按 **fit-inside** 跑一遍（页几何批 01 号票）。
+///
+/// 两种用例点名它：问几何门**不成立**那一支的（默认那条路上它是空集——以高为准让每一页的
+/// 高都等于面板高），以及拿 [`TINY`] 或 [`SMALLER_THAN_TARGET`] 铺出小页来图快的。
+pub fn run_volume_fitted_inside(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        fit: tonefit::FitMode::Inside,
         ..request(space, [volume.path()])
     })
     .expect("处理应当成功")
@@ -368,6 +406,7 @@ pub fn request<'a>(
         inputs: inputs.into_iter().map(Path::to_path_buf).collect(),
         output_root: space.out(),
         profile: baseline_profile(),
+        fit: tonefit::FitMode::default(),
         filter: tonefit::Filter::default(),
         bit_depth: None,
         dither: None,

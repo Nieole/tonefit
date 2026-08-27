@@ -32,12 +32,17 @@ pub fn report(report: &Report, mode: Mode) -> String {
     text
 }
 
-/// 抬头：这批输出给哪台设备、判据是怎么聚合出来的，以及这一趟写不写盘。
+/// 抬头：这批输出给哪台设备、页尺寸照哪种适配方式算出、判据是怎么聚合出来的，
+/// 以及这一趟写不写盘。
 ///
 /// 一趟只出一次。它吃的是整份报告而不是单独一个 profile——报告是**逐卷攒出来的**
-/// （ADR 0011），攒到一半的那一份同样答得出这三件事。
+/// （ADR 0011），攒到一半的那一份同样答得出这几件事。
 pub fn header(report: &Report, mode: Mode) -> String {
     let mut text = format!("profile {}\n", report.profile);
+    // 这一趟的页尺寸是照哪条规矩算出来的（页几何批 01 号票）。它自成一行、不接在 profile
+    // 后面：适配方式是**读法偏好**，不是这块面板的物理事实（`CONTEXT.md` 的《几何》）。
+    // 非说不可，是因为两种方式在普通漫画页上产出同一个尺寸——光看页尺寸分不出走的是哪一条。
+    text.push_str(&format!("适配方式 {}\n", report.fit));
     // 逐页那一行的每个数由两项合成，其中颗粒项那道地板与阈值同一批盲测标定
     // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
@@ -107,14 +112,44 @@ pub fn pages(volume: &VolumeReport) -> String {
     text
 }
 
-/// 末尾那两小结：部分救回与隔离。各自一页都没有就一个字都不说。
+/// 末尾那三小结：输出宽超过面板、部分救回、隔离。各自一页都没有就一个字都不说。
 ///
-/// 它们要看完整趟才给得出来，因此不进 [`volume`]：那两行数的是**这一趟**有几卷几页，
+/// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
 pub fn tail(report: &Report) -> String {
-    let mut text = salvage_tail(report);
+    let mut text = overflow_tail(report);
+    text.push_str(&salvage_tail(report));
     text.push_str(&isolation_tail(report));
     text
+}
+
+/// 输出宽超过面板的那些页，摆在报告末尾（页几何批 01 号票）。
+///
+/// 它们要求阅读器**平移、不缩放**才看得全，而用户翻它们时要横向翻动——那是以高为准
+/// 认下的代价，用户得知道是哪几页。留边那一侧要不到这句话：填背景不重采样是绝大多数
+/// 阅读器的默认行为，而平移不缩放不是。
+///
+/// 一页都没有就一个字都不说，与另外两小结同一条规矩——普通漫画卷正是这个样子
+/// （实测棋魂 0%，见 measurements 的《适配方式：fit-inside 与以高为准》）。页多时只点名头几页：
+/// 跨页卷几乎整卷落在这里（哆啦A梦 91%），全列出来只会把报告刷满。
+fn overflow_tail(report: &Report) -> String {
+    let pages: Vec<&PageReport> = report.wider_than_the_panel().collect();
+    let Some(widest) = pages
+        .iter()
+        .map(|page| page.size)
+        .max_by_key(|size| size.width)
+    else {
+        return String::new();
+    };
+    let panel = report.profile.panel().resolution.width;
+    format!(
+        "输出宽超过面板 {} 页：最宽 {widest}，是面板宽 {panel} 的 {:.2} 倍。\
+         这些页要阅读器平移着看才读得全——留边那一侧只要它别重采样，这一侧的要求更强。\
+         换 --fit inside 能把它们压回面板以内，代价是跨页重新被压扁\n  {}\n",
+        pages.len(),
+        f64::from(widest.width) / f64::from(panel),
+        first_few_names(&pages)
+    )
 }
 
 /// 隔离那一小结，摆在整份报告的末尾。
@@ -435,9 +470,9 @@ mod tests {
     // 够得着命令行那一侧的只有这个 `#[cfg(test)]` 块：上面那些渲染函数一个符号都不碰它。
     use crate::{ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
     use tonefit::{
-        BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, GeometryGate,
-        GrayImage, IoPlan, Medium, PageOutcome, Processed, Reason, Reference, Salvage, Scaling,
-        Size, Verdict, VolumeTiming,
+        BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
+        GeometryGate, GrayImage, IoPlan, Medium, PageOutcome, Processed, Reason, Reference,
+        Salvage, Scaling, Size, Verdict, VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -484,6 +519,7 @@ mod tests {
     fn one_page_report(profile: Profile, verdict: VolumeVerdict, page: PageReport) -> Report {
         Report {
             profile,
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -583,9 +619,13 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、判据形状两行（构成与聚合）、卷六行（去处、几何门、卷级、驱动页、
-        // 读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 11);
+        // profile 一行、适配方式一行、判据形状两行（构成与聚合）、卷六行（去处、几何门、
+        // 卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 12);
+        // 这一趟的页尺寸照哪条规矩算出来的，抬头说得出（页几何批 01 号票）。
+        assert!(text.contains("适配方式 以高为准"), "{text}");
+        // 一页都没有超出面板宽，末尾那一小结因此一个字都不说。
+        assert!(!text.contains("输出宽超过面板"), "{text}");
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
         assert!(text.contains("kobo-libra-2"), "{text}");
         assert!(text.contains("300 PPI"), "{text}");
@@ -699,6 +739,56 @@ mod tests {
         assert!(text.contains("ADR 0003"), "{text}");
     }
 
+    /// 输出宽超过面板的页要在末尾**点名**（页几何批 01 号票）。
+    ///
+    /// 用户翻它们时要横向翻动，而那对阅读器的要求比留边更强——留边只要它别重采样，
+    /// 溢出要它平移不缩放。几何门在这些页上照旧成立（高那条边贴着面板），
+    /// 光看门那一行看不出这件事，所以它得自己有一行。
+    #[test]
+    fn the_pages_wider_than_the_panel_are_named_at_the_end() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
+        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        // 跨页：以高为准之后高贴住面板、宽是面板宽的 4 倍（5056 ÷ 1264）。
+        let report = one_page_report(
+            profile,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(5056, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    scaling: Scaling::plan(Size::new(5056, 1680), Size::new(5056, 1680)),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        // 门照旧成立：溢出的页贴得好好的。
+                        gate: GeometryGate::Holds,
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
+                    },
+                }),
+            },
+        );
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(text.contains("输出宽超过面板 1 页"), "{text}");
+        assert!(text.contains("最宽 5056×1680"), "{text}");
+        // 倍数要说出来：那是「要横向翻多少」的唯一线索。
+        assert!(text.contains("面板宽 1264 的 4.00 倍"), "{text}");
+        // 是哪一页要点名——报告里翻不回去就等于没说。点名用的是**源**那一侧的名字，
+        // 与几何门那一行同一个出处（见 `first_few_names`）。
+        assert!(text.contains("library/volume-a/001.jpg"), "{text}");
+        // 出路也要给：换回 fit-inside 就压得回面板以内，代价一并说清。
+        assert!(text.contains("--fit inside"), "{text}");
+        // 门在这一页上照旧成立，两件事不许混为一谈。
+        assert!(text.contains("不成立 0 页"), "{text}");
+    }
+
     /// 报告要区分彩页与灰度页，也要区分它们走了哪条分支（10 号票）。
     ///
     /// 三页各占一种情形：彩页走彩色分支、彩页转灰走灰度路径、灰度页走灰度路径。
@@ -732,6 +822,7 @@ mod tests {
         };
         let report = Report {
             profile,
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -780,6 +871,7 @@ mod tests {
     fn a_skipped_volume_says_so_and_says_nothing_it_did_not_compute() {
         let report = Report {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -797,8 +889,9 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、判据形状两行、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 6);
+        // profile 一行、适配方式一行、判据形状两行、卷两行，加上读取那一行——
+        // 跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 7);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -818,6 +911,7 @@ mod tests {
     fn a_volume_whose_medium_is_unknown_says_why_it_fell_back_to_serial() {
         let mut report = Report {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -884,6 +978,7 @@ mod tests {
         };
         let report = Report {
             profile,
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/_isolated/volume-a"),
@@ -972,6 +1067,7 @@ mod tests {
         };
         let report = Report {
             profile,
+            fit: FitMode::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),

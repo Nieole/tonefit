@@ -8,7 +8,9 @@ mod fixtures;
 use std::fs;
 
 use fixtures::{Volume, Workspace};
-use tonefit::{BitDepth, CacheBudget, Filter, Mode, PageColor, Reason, Request, VolumeVerdict};
+use tonefit::{
+    BitDepth, CacheBudget, Filter, FitMode, Mode, PageColor, Reason, Request, VolumeVerdict,
+};
 
 /// 一处参数改动，连同它在断言里的说法。
 type Change = (&'static str, fn(&mut Request));
@@ -70,7 +72,7 @@ fn a_dry_run_predicts_the_skip() {
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {
-    let changes: [Change; 5] = [
+    let changes: [Change; 6] = [
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
         }),
@@ -83,6 +85,9 @@ fn a_changed_parameter_redoes_the_volume() {
             request.bit_depth = Some(BitDepth::Four)
         }),
         ("换滤波器", |request| request.filter = Filter::Bicubic),
+        // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
+        // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
+        ("换适配方式", |request| request.fit = FitMode::Inside),
         ("关掉上包络", |request| request.per_page = true),
     ];
 

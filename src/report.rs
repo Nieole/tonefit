@@ -8,7 +8,7 @@ use crate::color::PageColor;
 use crate::decide::{CandidateScore, Verdict};
 use crate::decode::Salvage;
 use crate::envelope::Envelope;
-use crate::geometry::{GeometryGate, Size};
+use crate::geometry::{FitMode, GeometryGate, Size};
 use crate::medium::IoPlan;
 use crate::profile::Profile;
 use crate::quantize::{Candidate, Dither};
@@ -23,6 +23,12 @@ use crate::resample::Scaling;
 pub struct Report {
     /// 本次实际使用的 profile 与它的面板。这批输出该拿去哪台设备看，答案在这里。
     pub profile: Profile,
+    /// 本次用的适配方式（页几何批 01 号票）。
+    ///
+    /// 它与 [`profile`](Self::profile) 并排，理由也一样：读的人要知道这批页的尺寸
+    /// 是**照哪条规矩**算出来的。两种方式在普通漫画页上产出同一个尺寸
+    /// （见 `crate::FitMode`），光看页尺寸分不出这一趟走的是哪一条。
+    pub fit: FitMode,
     pub volumes: Vec<VolumeReport>,
     /// 整趟的墙钟耗时：`run` 从进到出（加固批 11 号票）。
     ///
@@ -51,6 +57,24 @@ impl Report {
     /// 「这一趟有几页根本没出来」就再也问不出来。
     pub fn salvaged(&self) -> impl Iterator<Item = &PageReport> {
         self.volumes.iter().flat_map(VolumeReport::salvaged)
+    }
+
+    /// 本次**输出宽超过面板宽**的页，按卷序、卷内按阅读顺序（页几何批 01 号票）。
+    ///
+    /// 这些页要求阅读器**平移、不缩放**才看得全——那比留边那一侧的要求更强
+    /// （见 `crate::GeometryGate::of`），而用户翻它们时要横向翻动。
+    /// 报告因此得点得出是哪几页：以高为准下跨页卷几乎整卷落在这里，
+    /// 普通漫画卷一页都没有（实测棋魂 0%、哆啦A梦 91%，见 measurements 的《适配方式：fit-inside 与以高为准》）。
+    ///
+    /// 问的是 [`PageReport::size`]，因此**失败页也算**：它那张占位页按卷内统一尺寸写出，
+    /// 那个尺寸真有那么宽，翻起来真要平移。几何门与它无关——门问的是「贴没贴住」，
+    /// 溢出的页贴得好好的（见 `crate::GeometryGate`）。
+    pub fn wider_than_the_panel(&self) -> impl Iterator<Item = &PageReport> {
+        let panel = self.profile.panel().resolution.width;
+        self.volumes
+            .iter()
+            .flat_map(|volume| volume.pages.iter())
+            .filter(move |page| page.size.width > panel)
     }
 
     /// 本次有没有卷被隔离。退出码要分得开「全部成功」与「有卷被隔离」，问的就是它。

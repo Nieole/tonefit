@@ -18,15 +18,18 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use fixtures::{SMALLER_THAN_TARGET, Workspace};
 use tonefit::{
-    ChosenBy, Dither, GeometryGate, IoMode, Mode, Progress, ProgressSink, Request, Size, Verdict,
+    ChosenBy, Dither, FitMode, GeometryGate, IoMode, Mode, Progress, ProgressSink, Request, Size,
+    Verdict,
 };
 
-/// 一条贴住面板宽边的窄页：几何门成立，而像素少到几十页连跑也不慢。
+/// 一条贴住面板高边的窄页：几何门成立，而像素少到几十页连跑也不慢。
 ///
-/// 宽取基准面板的 1264（`fixtures::BASELINE_DEVICE`），高远不到面板高——fit-inside 于是
-/// 原样输出，而宽那条边正贴着面板，门照样成立。本文件要的正是这个：门开着，
-/// 候选集里带着抖动那一维，判据每页多求几个，乱序跑与顺着跑的差别才有地方露出来。
-const TOUCHING: Size = Size::new(1264, 200);
+/// 高取基准面板的 1680（`fixtures::BASELINE_DEVICE`），宽远不到面板宽。这个尺寸是
+/// **两种适配方式的公共不动点**：高已经等于面板高，以高为准原样输出，fit-inside
+/// 也不放大——本文件因此两条路上都跑得快，而门在两条路上都开着。
+/// 本文件要的正是门开着：候选集里带着抖动那一维，判据每页多求几个，
+/// 乱序跑与顺着跑的差别才有地方露出来。
+const TOUCHING: Size = Size::new(200, 1680);
 
 /// 一个够长的卷：页数多到几条读取线程真的会互相错开。
 fn long_volume(space: &Workspace, name: &str) -> fixtures::Volume {
@@ -41,6 +44,9 @@ fn long_volume(space: &Workspace, name: &str) -> fixtures::Volume {
 /// 一个第 3 页与第 9 页贴不住面板的卷，其余十页都贴住：**混排卷**（06 号票）。
 ///
 /// 门逐页判，这一卷因此两套候选集都用得上：那两页只剩不抖的三个，另外十页六个都在。
+///
+/// **它只在 `--fit inside` 下是混排卷**（页几何批 01 号票）：以高为准会把那两页放大到
+/// 面板高，门跟着成立，一卷十二页都拿满候选。用它的两条用例因此各自点名了适配方式。
 fn volume_with_two_gate_breakers(space: &Workspace, name: &str) -> fixtures::Volume {
     let volume = space.volume(name);
     for index in 0..12 {
@@ -236,6 +242,9 @@ fn a_mixed_volume_gates_the_same_pages_every_time_under_concurrency() {
         let report = tonefit::run(&Request {
             io_mode: IoMode::Concurrent,
             mode: Mode::DryRun,
+            // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）：
+            // 以高为准让每一页的高都等于面板高，一条边永远贴着。
+            fit: FitMode::Inside,
             ..fixtures::request(&space, [volume.path()])
         })
         .expect("处理应当成功");
@@ -284,6 +293,8 @@ fn a_dither_the_gate_forbids_is_refused_naming_the_same_page_every_time() {
             io_mode: IoMode::Concurrent,
             mode: Mode::DryRun,
             dither: Some(Dither::FloydSteinberg),
+            // 同上：拒绝那条路只在 fit-inside 上打得着。
+            fit: FitMode::Inside,
             ..fixtures::request(&space, [volume.path()])
         })
         .expect_err("门不成立时点名抖动该被拒");

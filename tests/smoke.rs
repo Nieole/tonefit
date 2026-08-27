@@ -33,7 +33,8 @@ use std::path::{Path, PathBuf};
 
 use fixtures::Workspace;
 use tonefit::{
-    CacheBudget, Filter, IoMode, Mode, PageBranch, PageReport, Report, Request, VolumeReport,
+    CacheBudget, Filter, FitMode, IoMode, Mode, PageBranch, PageReport, Report, Request,
+    VolumeReport,
 };
 
 /// 指向本机素材目录的环境变量。没设就跳过。
@@ -96,6 +97,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
         inputs: inputs.clone(),
         output_root: space.out(),
         profile: fixtures::baseline_profile(),
+        fit: FitMode::default(),
         filter: Filter::default(),
         bit_depth: None,
         dither: None,

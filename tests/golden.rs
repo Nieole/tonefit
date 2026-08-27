@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use fixtures::{Volume, Workspace};
 use tonefit::{
-    CacheBudget, Filter, IoMode, Mode, PageBranch, PageColor, PageReport, Request, Size,
+    CacheBudget, Filter, FitMode, IoMode, Mode, PageBranch, PageColor, PageReport, Request, Size,
     VolumeReport,
 };
 
@@ -51,7 +51,7 @@ const HEADER: &str = "\
 #
 # 接受之前先答一句「为什么变」。这份快照存在的全部理由，就是不让判定在无人察觉时改动。
 #
-# 卷行：`[型号] 卷名 · 几何门 · 卷级判定`。
+# 卷行：`[型号 适配方式] 卷名 · 几何门 · 卷级判定`。
 # 页行：页名 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
 # 透传行：非图片文件原样搬过去的那些，名字与字节数。
 #
@@ -183,10 +183,84 @@ fn compare(committed: Option<&str>, produced: &str) -> Result<(), String> {
 /// 这一趟算出来的整份快照。
 fn snapshot() -> String {
     let space = Workspace::new();
+    // fit-inside 那一组另起一个工作区：两组有同名的卷，源目录撞在一起会看不出是谁的。
+    let inside = Workspace::new();
     let mut text = String::from(HEADER);
-    render(&mut text, &space, fixtures::BASELINE_DEVICE, &mono_cases());
-    render(&mut text, &space, COLOR_DEVICE, &color_cases());
+    render(
+        &mut text,
+        &space,
+        fixtures::BASELINE_DEVICE,
+        FitMode::Height,
+        &height_cases(),
+    );
+    render(
+        &mut text,
+        &space,
+        COLOR_DEVICE,
+        FitMode::Height,
+        &color_cases(),
+    );
+    render(
+        &mut text,
+        &inside,
+        fixtures::BASELINE_DEVICE,
+        FitMode::Inside,
+        &fit_inside_cases(),
+    );
     text
+}
+
+/// 适配方式在快照里的短名。
+///
+/// 不借 `FitMode` 的 `Display`——那一句是给人读的界面文案，改一次措辞整份快照就跟着动，
+/// 而这里要的是一个稳定的键。库里那个稳定写法（`FitMode::name`，参数哈希用的就是它）
+/// 是 `pub(crate)` 的，而集成测试是另一个 crate，看不见它——这第二份因此不是重复，
+/// 是 seam 那一侧本来就够不着。两处真要分家，红的是这个文件里的快照。
+fn fit_key(fit: FitMode) -> &'static str {
+    match fit {
+        FitMode::Height => "height",
+        FitMode::Inside => "inside",
+    }
+}
+
+/// **几何上真会分岔**的三个卷：两条适配方式各跑一遍（页几何批 01 号票）。
+///
+/// 跨页由宽边定夺、比面板小的页不放大、混排卷一卷里两套候选集都用得上——三件事都只在
+/// fit-inside 上成立。其余夹具页比面板更瘦长、本来就受高度约束，两条路上产出同一个尺寸
+/// （见 `tonefit::FitMode`），跑第二遍只是把同样的数抄一份。
+const BOTH_WAYS: [&str; 3] = ["spread", "undersized", "mixed-size"];
+
+/// **只在 fit-inside 上跑**的三个长卷。
+///
+/// 它们考的是上包络、离群与迟滞，与几何无关，用的是小页（`fixtures::TINY`）——而小页
+/// **只在 fit-inside 上还是小页**：以高为准会把每一页放大到面板高，一卷六十页的代价
+/// 跟着涨两个数量级。默认那条路上的卷级行为由本组之外那些正常尺寸的卷载着
+/// （`mixed`、`archive.cbz`、`damaged`）。
+const SMALL_PAGES: [&str; 3] = [
+    "envelope-outlier",
+    "envelope-outlier-heavy",
+    "envelope-hysteresis",
+];
+
+/// 默认那条路（以高为准）上跑的夹具卷：除长卷之外的全部。
+fn height_cases() -> Vec<Case> {
+    mono_cases()
+        .into_iter()
+        .filter(|case| !SMALL_PAGES.contains(&case.name))
+        .collect()
+}
+
+/// fit-inside 那条路上跑的夹具卷（页几何批 01 号票）。
+///
+/// 默认换成以高为准之后，**几何门不成立那一支在默认路径上成了空集**——每一页的高都等于
+/// 面板高。ADR 0007 认下的那笔代价并没有消失，它只是搬到了 `--fit inside` 上，
+/// 而快照要是只跑默认，那条路连同它下面的一整套行为（抖动关闭、跟着基准档的位深走、
+/// 一页成立的都没有时门不成立的页就是主体）会一行都不剩。
+fn fit_inside_cases() -> Vec<Case> {
+    mono_cases()
+        .into_iter()
+        .filter(|case| BOTH_WAYS.contains(&case.name) || SMALL_PAGES.contains(&case.name))
+        .collect()
 }
 
 /// 一个夹具卷：卷名，加上往里放页的那一手。
@@ -417,7 +491,7 @@ fn color_cases() -> Vec<Case> {
 ///
 /// 一趟 `run` 收全部卷，不是一卷一趟：多卷同趟本来就是常态，而卷级判定各卷各判，
 /// 合在一起不改变任何一卷的结果。
-fn render(text: &mut String, space: &Workspace, device: &str, cases: &[Case]) {
+fn render(text: &mut String, space: &Workspace, device: &str, fit: FitMode, cases: &[Case]) {
     // 目录卷要活到 `run` 之后（`Volume` 一落地就把临时目录收走），归档卷写完即成文件。
     let mut directories: Vec<Volume> = Vec::new();
     let mut inputs: Vec<PathBuf> = Vec::new();
@@ -439,9 +513,10 @@ fn render(text: &mut String, space: &Workspace, device: &str, cases: &[Case]) {
 
     let report = tonefit::run(&Request {
         inputs,
-        // 各设备一个输出根：同一个工作区里两趟并列，互不覆盖。
-        output_root: space.out_named(&format!("out-{device}")),
+        // 各设备、各适配方式一个输出根：同一个工作区里几趟并列，互不覆盖。
+        output_root: space.out_named(&format!("out-{device}-{}", fit_key(fit))),
         profile: fixtures::profile(device),
+        fit,
         filter: Filter::default(),
         bit_depth: None,
         dither: None,
@@ -465,7 +540,8 @@ fn render(text: &mut String, space: &Workspace, device: &str, cases: &[Case]) {
         let name = volume_name(volume);
         let mut block = vec![
             format!(
-                "[{device}] {name}{}",
+                "[{device} {}] {name}{}",
+                fit_key(fit),
                 if volume.isolated() { " · 隔离" } else { "" }
             ),
             format!("  几何门 {}", gate(volume)),

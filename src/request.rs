@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::cache::CacheBudget;
+use crate::geometry::FitMode;
 use crate::medium::IoMode;
 use crate::profile::Profile;
 use crate::progress::ProgressSink;
@@ -32,6 +33,15 @@ pub struct Request {
     pub output_root: PathBuf,
     /// 目标设备。目标尺寸由它的面板算出，`--gray-levels` 的覆盖已经折进来了。
     pub profile: Profile,
+    /// 这一趟怎么把页适配到面板（`--fit`，页几何批 01 号票）。
+    ///
+    /// 默认 [`FitMode::Height`]：目标高恒等于面板高，宽按源宽高比算出、允许超过面板宽。
+    /// 它是**读法偏好**，不是面板的物理事实，因此不进 profile——profile 的主键是面板
+    /// （`CONTEXT.md`）。
+    ///
+    /// 它改的是**目标尺寸**，而目标尺寸是几何门、总缩放比与判据参照三样东西的来源：
+    /// 换一个适配方式，这一卷的判定要重算，幂等因此收着它（见 `crate::metadata`）。
+    pub fit: FitMode,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
     /// 位深覆盖（`--bit-depth`）。特殊卷靠它手工兜底（spec 的 story 23）。

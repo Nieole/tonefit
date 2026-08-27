@@ -347,7 +347,10 @@ fn an_archive_carries_its_non_page_members_across_byte_for_byte() {
 #[test]
 fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
     let space = Workspace::new();
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    // 高已经等于面板高：这样的页是两种适配方式的**公共不动点**（页几何批 01 号票），
+    // 尺寸断言因此写得出一个字面值。本条问的是容器形态，不是几何。
+    const PAGE: Size = Size::new(200, 1680);
+    let page = fixtures::gradient(PAGE);
     let loose = space.volume("volume-a");
     loose.page("001.png", &page);
     let mut packed = space.cbz("volume-b");
@@ -363,7 +366,7 @@ fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
     assert!(report.volumes[1].output.is_file());
     for volume in &report.volumes {
         assert_eq!(volume.pages.len(), 1);
-        assert_eq!(volume.pages[0].size, fixtures::SMALLER_THAN_TARGET);
+        assert_eq!(volume.pages[0].size, PAGE);
     }
 }
 
@@ -557,13 +560,17 @@ fn every_archive_member_carries_its_own_pixels_at_its_own_size() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
     // 三张灰度页：尺寸与黑带高度都不同，任意两张既不同形也不同图。
+    //
+    // 高一律取面板高（1264×1680 那块，见 `fixtures::BASELINE_DEVICE`）：这样的页是
+    // **两种适配方式的公共不动点**（页几何批 01 号票），写出的像素因此与源逐个相等，
+    // 断言问得出「这一格装的是不是它自己的像素」。宽各不相同，串位照样红。
     let grays = [
-        ("1.png", Size::new(160, 224), 8),
-        ("2.png", Size::new(120, 200), 96),
-        ("10.png", Size::new(200, 160), 151),
+        ("1.png", Size::new(160, 1680), 8),
+        ("2.png", Size::new(120, 1680), 96),
+        ("10.png", Size::new(200, 1680), 151),
     ];
     // 彩页夹在中间，且尺寸也与别人不同：两条分支之间串位一样要红。
-    let color_size = Size::new(180, 240);
+    let color_size = Size::new(180, 1680);
     let color = fixtures::color_page(color_size);
     for (name, size, black_rows) in grays {
         cbz.page(name, &fixtures::black_top_band(size, black_rows));
