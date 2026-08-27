@@ -55,7 +55,11 @@ fn volume_with_two_gate_breakers(space: &Workspace, name: &str) -> fixtures::Vol
         } else {
             TOUCHING
         };
-        volume.page(&format!("{index:03}.png"), &fixtures::gradient(size));
+        // 四边顶着墨：这一条钉的是几何门，而裁边会改掉每一页的几何（页几何批 02 号票）。
+        volume.page(
+            &format!("{index:03}.png"),
+            &fixtures::full_bleed_gradient(size),
+        );
     }
     volume
 }

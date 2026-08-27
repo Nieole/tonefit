@@ -329,6 +329,9 @@ fn params_hash(request: &Request) -> String {
     // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
     // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
     line("fit", &request.fit.name());
+    // 裁边改的是**适配之前**的页尺寸（页几何批 02 号票）：换了它，目标尺寸、几何门、
+    // 判据参照与判定整卷重算，上一趟的输出一张都不能留。
+    line("crop", &request.crop);
     line("filter", &request.filter.name());
     line(
         "bit-depth",
@@ -374,6 +377,7 @@ mod tests {
             output_root: PathBuf::from("out"),
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
+            crop: true,
             filter: Filter::default(),
             bit_depth: None,
             dither: None,
@@ -391,7 +395,7 @@ mod tests {
     #[test]
     fn every_parameter_that_changes_the_output_changes_the_hash() {
         let baseline = params_hash(&request());
-        let changes: [Change; 7] = [
+        let changes: [Change; 8] = [
             ("面板", |request| {
                 request.profile = Profile::resolve("kobo-clara-hd").expect("内置型号")
             }),
@@ -404,6 +408,8 @@ mod tests {
             }),
             // 适配方式换掉，目标尺寸整卷重算（页几何批 01 号票）。
             ("适配方式", |request| request.fit = FitMode::Inside),
+            // 裁边换掉，适配之前的页尺寸就变了（页几何批 02 号票）。
+            ("裁边", |request| request.crop = false),
             ("滤波器", |request| request.filter = Filter::Bicubic),
             ("位深覆盖", |request| {
                 request.bit_depth = Some(BitDepth::Four)

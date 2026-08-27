@@ -70,6 +70,37 @@ pub fn gradient(size: Size) -> DynamicImage {
     }))
 }
 
+/// 连续渐变页，但**四边都顶着墨**：[`gradient`] 外面加一圈 [`INK_BORDER`] 像素宽的黑边。
+///
+/// 裁边在它身上是**空操作**（页几何批 02 号票），几何、解码、缩放那几条性质因此不与裁边
+/// 缠在一起：`gradient` 下方亮于墨阈的那一段按行列墨量占比就是白边，会被裁掉，
+/// 而那些用例说的都不是裁边。
+///
+/// 与 [`PASSES_THROUGH`] 同一个用意——那个尺寸让适配方式不起作用，这一圈墨边让裁边不起作用。
+/// 页里仍是连续灰调：那一圈只占最外面几个像素。
+pub fn full_bleed_gradient(size: Size) -> DynamicImage {
+    inked_border(gradient(size))
+}
+
+/// 那一圈墨边多宽。取 4 而不是 1：有损格式会把一像素的黑边糊成灰，
+/// 而 [`every_supported_format_decodes`](../pipeline.rs) 那一条要它在 AVIF 与 JPEG 上也还是墨。
+pub const INK_BORDER: u32 = 4;
+
+/// 给一张页加一圈纯黑边框，宽 [`INK_BORDER`]。
+///
+/// 裁法取的是**头一条与末一条**内容行列（见 `tonefit` 的 `crop`），
+/// 四边各有一条满是墨的行/列，窗口于是恒等于整页。
+fn inked_border(image: DynamicImage) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let mut gray = image.to_luma8();
+    for (x, y, pixel) in gray.enumerate_pixels_mut() {
+        if x < INK_BORDER || y < INK_BORDER || x + INK_BORDER >= width || y + INK_BORDER >= height {
+            *pixel = Luma([0]);
+        }
+    }
+    DynamicImage::ImageLuma8(gray)
+}
+
 /// 二值网点页：只有 0 与 255 两个取值，点的大小随横向位置由小到大。
 ///
 /// 用经典 8×8 聚集点阈值矩阵对横向斜坡二值化——网点是因，灰调是果，
@@ -125,6 +156,66 @@ pub fn tone_patch(size: Size, patch: Size) -> DynamicImage {
     }))
 }
 
+/// 四周纸白、中间一块内容的页：**裁边那几条用例的被测对象**（页几何批 02 号票）。
+///
+/// 内容是竖直方向 0→190 的斜坡——整块都低于墨阈（200），因此内容里每一行、每一列
+/// 都是满的墨，而白边一个墨点都没有。裁出来的窗口于是恰好是 `content` 那一块，
+/// 期望值写得出字面值。
+pub fn page_with_margins(size: Size, origin: (u32, u32), content: Size) -> DynamicImage {
+    let (left, top) = origin;
+    let last = (content.height - 1).max(1);
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        let inside = x >= left && x < left + content.width && y >= top && y < top + content.height;
+        Luma([if inside {
+            ((y - top) * 190 / last) as u8
+        } else {
+            255
+        }])
+    }))
+}
+
+/// 同上，但白边里另落了几粒**孤立噪点**：扫描件白边上的墨点。
+///
+/// 三粒顶在两个对角与下方白边正中，**内容外接框因此退回整页**（实测那样量出来的
+/// 中位增益是 0）；按行列墨量占比的裁法不受它们影响——一粒墨在一行 1441 像素上
+/// 占 0.07%，够不到 0.5% 那道线。用它与 [`page_with_margins`] 并排比，
+/// 两者裁出来的窗口必须一模一样。
+pub fn page_with_specks_in_the_margin(
+    size: Size,
+    origin: (u32, u32),
+    content: Size,
+) -> DynamicImage {
+    let mut page = page_with_margins(size, origin, content).to_luma8();
+    for (x, y) in [
+        (0, 0),
+        (size.width - 1, size.height - 1),
+        (size.width / 2, size.height - 3),
+    ] {
+        page.put_pixel(x, y, Luma([0]));
+    }
+    DynamicImage::ImageLuma8(page)
+}
+
+/// 一页上全部墨点的**外接框**有多大。只给裁边那条用例当对照，不是被测代码。
+///
+/// 「本裁法不是外接框」这句话要有一个东西替它作证：同一页上外接框退回整页，
+/// 而裁边裁出了内容那一块。墨阈与 `tonefit` 的 `crop` 同一个（200）。
+pub fn ink_bounding_box(image: &DynamicImage) -> Size {
+    let gray = image.to_luma8();
+    let (mut left, mut top) = (gray.width(), gray.height());
+    let (mut right, mut bottom) = (0, 0);
+    for (x, y, pixel) in gray.enumerate_pixels() {
+        if pixel[0] >= 200 {
+            continue;
+        }
+        left = left.min(x);
+        right = right.max(x);
+        top = top.min(y);
+        bottom = bottom.max(y);
+    }
+    Size::new(right + 1 - left, bottom + 1 - top)
+}
+
 /// 纯色页：全图同一个灰度取值。
 pub fn solid(size: Size, level: u8) -> DynamicImage {
     DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |_, _| {
@@ -132,15 +223,21 @@ pub fn solid(size: Size, level: u8) -> DynamicImage {
     }))
 }
 
-/// 白底、顶上 `black_rows` 行涂黑的一页：整页只有纯黑与纯白两个取值。
+/// 白底、顶上 `black_rows` 行涂黑、**四边一圈墨**的一页：整页只有纯黑与纯白两个取值。
 ///
 /// 这两个取值在 {1,2,4,8} 每一档上都是格点，量化与抖动对它们都是恒等；页小于面板时
 /// 又一步都不缩放。写出的像素于是与源**逐字节相同**——断言写得起等号，不必留容差。
 /// 同一卷里给每页配一个不同的 `black_rows`，页与页就两两分得开。
+///
+/// 那一圈墨边让裁边成为空操作（页几何批 02 号票）：没有它，白底那一大片就是白边，
+/// 页会被裁成 `宽 × black_rows`，而这一条用例说的是「这一格装的是不是它自己的像素」，
+/// 不是裁边。理由与 [`full_bleed_gradient`] 同一条。
 pub fn black_top_band(size: Size, black_rows: u32) -> DynamicImage {
-    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |_, y| {
-        Luma([if y < black_rows { 0 } else { 255 }])
-    }))
+    inked_border(DynamicImage::ImageLuma8(ImageBuffer::from_fn(
+        size.width,
+        size.height,
+        |_, y| Luma([if y < black_rows { 0 } else { 255 }]),
+    )))
 }
 
 /// 一张灰度页摊平成 8 位灰度像素，按行优先。断言「写出的与源逐字节相同」时拿它当期望值。
@@ -231,9 +328,17 @@ pub fn oversized_page() -> Vec<u8> {
 
 /// 带透明区的页：左半不透明黑，右半全透明——而 RGB 仍是黑。
 /// 丢 alpha 会让右半出成黑，按纸白合成才出成白。
+///
+/// 四边另有一圈 [`INK_BORDER`] 宽的不透明黑，理由与 [`full_bleed_gradient`] 同一条：
+/// 透明区合成之后就是纸白，而纸白按墨量就是白边，裁边会把右半整个裁掉
+/// （页几何批 02 号票）——而这一条用例说的是透明区合成成了什么，不是裁边。
 pub fn page_with_transparency(size: Size) -> DynamicImage {
-    DynamicImage::ImageRgba8(ImageBuffer::from_fn(size.width, size.height, |x, _| {
-        if x < size.width / 2 {
+    DynamicImage::ImageRgba8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        let border = x < INK_BORDER
+            || y < INK_BORDER
+            || x + INK_BORDER >= size.width
+            || y + INK_BORDER >= size.height;
+        if border || x < size.width / 2 {
             Rgba([0, 0, 0, 255])
         } else {
             Rgba([0, 0, 0, 0])
@@ -368,6 +473,19 @@ fn at_eight_bits(space: &Workspace, volume: &Volume, fit: tonefit::FitMode) -> t
     .expect("处理应当成功")
 }
 
+/// 把这一卷按 `--no-crop` 跑一遍：白边留着（页几何批 02 号票）。
+///
+/// 点名它的只有一种用例：**页上那一片白本身就是被测对象**，裁掉它就没什么可断言了。
+/// 别的用例一律走默认那条路（裁边开着），需要的话把夹具换成四边顶着墨的那几个
+/// （[`full_bleed_gradient`]、[`line_art`]）——那样钉住的性质与裁边无关，读起来也不必绕。
+pub fn run_volume_keeping_margins(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        crop: false,
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
 /// 把这一卷按 **fit-inside** 跑一遍（页几何批 01 号票）。
 ///
 /// 两种用例点名它：问几何门**不成立**那一支的（默认那条路上它是空集——以高为准让每一页的
@@ -407,6 +525,7 @@ pub fn request<'a>(
         output_root: space.out(),
         profile: baseline_profile(),
         fit: tonefit::FitMode::default(),
+        crop: true,
         filter: tonefit::Filter::default(),
         bit_depth: None,
         dither: None,

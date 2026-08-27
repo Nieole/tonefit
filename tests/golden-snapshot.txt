@@ -6,126 +6,137 @@
 #
 # 接受之前先答一句「为什么变」。这份快照存在的全部理由，就是不让判定在无人察觉时改动。
 #
-# 卷行：`[型号 适配方式] 卷名 · 几何门 · 卷级判定`。
-# 页行：页名 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
+# 卷行：`[型号 适配方式 裁边] 卷名 · 几何门 · 卷级判定`。
+# 页行：页名 · 裁后尺寸 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
+# 裁后尺寸那一列是 `-` 表示这一页一个像素都没裁掉（源尺寸由夹具定死，见 tests/golden.rs）。
 # 透传行：非图片文件原样搬过去的那些，名字与字节数。
 #
 # 字节数**不含自描述元数据**（这一趟按 `--no-metadata` 跑）：tEXt 里写着工具版本，
 # 收进来的话改一次版本号整份快照就跟着动，真正的判定变动会淹在里面。
 # tEXt 那一批字段各是什么，由 `tests/idempotency.rs` 逐字段钉着。
 
-[kobo-libra-2 height] b-class-gradient
+[kobo-libra-2 height crop] b-class-gradient
+  几何门 判定范围 1 页 · 不成立 0 页
+  卷级   基准档 4bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        1441x1606  1507x1680  4bit+FS   229253  卷级上包络
+
+[kobo-libra-2 height crop] a-class-gradient
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  2bit+FS   192766  卷级上包络
+  001.png        2528x2635  1612x1680  2bit+FS   245356  卷级上包络
 
-[kobo-libra-2 height] a-class-gradient
+[kobo-libra-2 height crop] screentone
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1264x1680  2bit+FS   205346  卷级上包络
+  001.png        2527x3360  1264x1680  2bit+FS   116351  卷级上包络
 
-[kobo-libra-2 height] screentone
-  几何门 判定范围 1 页 · 不成立 0 页
-  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1264x1680  2bit+FS   116301  卷级上包络
-
-[kobo-libra-2 height] line-art
+[kobo-libra-2 height crop] line-art
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  1bit+FS    10748  卷级上包络
+  001.png        -          1182x1680  1bit+FS    10748  卷级上包络
 
-[kobo-libra-2 height] solid
+[kobo-libra-2 height crop] solid
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  2bit+FS    42687  卷级上包络
+  001.png        -          1182x1680  2bit+FS    42687  卷级上包络
 
-[kobo-libra-2 height] local-damage
+[kobo-libra-2 height crop] local-damage
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1264x1680  2bit+FS     6229  卷级上包络
+  001.png        -          1264x1680  2bit+FS     6229  卷级上包络
 
-[kobo-libra-2 height] color-on-mono
+[kobo-libra-2 height crop] color-on-mono
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  2bit+FS   104475  卷级上包络 · 彩页转灰
+  001.png        -          1182x1680  2bit+FS   104475  卷级上包络 · 彩页转灰
 
-[kobo-libra-2 height] spread
+[kobo-libra-2 height crop] spread
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        5056x1680  2bit+FS   606399  卷级上包络
+  001.png        5056x1317  6450x1680  2bit+FS   703868  卷级上包络
 
-[kobo-libra-2 height] undersized
+[kobo-libra-2 height crop] undersized
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1344x1680  2bit+FS   213578  卷级上包络
+  001.png        800x784    1714x1680  2bit+FS   260371  卷级上包络
 
-[kobo-libra-2 height] mixed-size
+[kobo-libra-2 height crop] mixed-size
   几何门 判定范围 5 页 · 不成立 0 页
-  卷级   基准档 2bit+FS · 驱动页 004.png · 主体 5 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1344x1680  2bit+FS   213578  卷级上包络
-  002.png        1182x1680  2bit+FS   192766  卷级上包络
-  003.png        1182x1680  2bit+FS    16730  卷级上包络
-  004.png        1264x1680  2bit+FS   205346  卷级上包络
-  005.png        1182x1680  2bit+FS   228113  卷级上包络
+  卷级   基准档 4bit+FS · 驱动页 002.png · 主体 5 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        800x784    1714x1680  4bit+FS   258323  卷级上包络
+  002.png        1441x1606  1507x1680  4bit+FS   229253  卷级上包络
+  003.png        -          1182x1680  4bit+FS    26713  卷级上包络
+  004.png        2528x2635  1612x1680  4bit+FS   241431  卷级上包络
+  005.png        1439x2048  1180x1680  4bit+FS   706727  卷级上包络
 
-[kobo-libra-2 height] mixed
+[kobo-libra-2 height crop] mixed
   几何门 判定范围 5 页 · 不成立 0 页
   卷级   基准档 1bit+FS · 驱动页 004.png · 主体 3 页 · 离群 2 页 · 迟滞升档 0 页
-  001.png        1182x1680  1bit+FS    10748  卷级上包络
-  002.png        1182x1680  1bit+FS    10748  卷级上包络
-  003.png        1182x1680  2bit+FS   192766  离群页单独定档
-  004.png        1182x1680  1bit+FS    10748  卷级上包络
-  005.png        1182x1680  2bit+FS   215607  离群页单独定档
+  001.png        -          1182x1680  1bit+FS    10748  卷级上包络
+  002.png        -          1182x1680  1bit+FS    10748  卷级上包络
+  003.png        1441x1606  1507x1680  4bit+FS   229253  离群页单独定档
+  004.png        -          1182x1680  1bit+FS    10748  卷级上包络
+  005.png        -          1182x1680  2bit+FS   215607  离群页单独定档
 
-[kobo-libra-2 height] archive.cbz
+[kobo-libra-2 height crop] archive.cbz
   几何门 判定范围 2 页 · 不成立 0 页
   卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 1 页 · 迟滞升档 0 页
-  001.png        1182x1680  1bit+FS    10748  卷级上包络
-  002.png        1182x1680  2bit+FS   192766  离群页单独定档
+  001.png        -          1182x1680  1bit+FS    10748  卷级上包络
+  002.png        1441x1606  1507x1680  4bit+FS   229253  离群页单独定档
   透传 ComicInfo.xml · 12 字节
 
-[kobo-libra-2 height] damaged · 隔离
+[kobo-libra-2 height crop] damaged · 隔离
   几何门 判定范围 2 页 · 不成立 0 页
   卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  1bit+FS    10748  卷级上包络
-  002.png        1182x1680  1bit        2236  阈值内最低的一档 · 救回 49.8%
-  003.png        1182x1680  failed      2235  失败页 · 占位页
-  004.png        1182x1680  failed      2235  失败页 · 占位页
+  001.png        -          1182x1680  1bit+FS    10748  卷级上包络
+  002.png        -          1182x1680  1bit        2236  阈值内最低的一档 · 救回 49.8%
+  003.png        -          1182x1680  failed      2235  失败页 · 占位页
+  004.png        -          1182x1680  failed      2235  失败页 · 占位页
   透传 ComicInfo.xml · 12 字节
 
-[kobo-libra-colour height] color-on-color
+[kobo-libra-colour height crop] color-on-color
   几何门 判定范围 1 页 · 不成立 0 页
-  卷级   基准档 2bit+FS · 驱动页 002.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1182x1680  color       5690  彩色分支 · 只缩放不量化
-  002.png        1182x1680  2bit+FS   192766  卷级上包络
+  卷级   基准档 4bit+FS · 驱动页 002.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        -          1182x1680  color       5690  彩色分支 · 只缩放不量化
+  002.png        1441x1606  1507x1680  4bit+FS   229253  卷级上包络
 
-[kobo-libra-2 inside] spread
+[kobo-libra-2 inside crop] spread
   几何门 判定范围 1 页 · 不成立 0 页
   卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        1264x420   2bit+FS    44307  卷级上包络
+  001.png        5056x1317  1264x329   2bit+FS    31874  卷级上包络
 
-[kobo-libra-2 inside] undersized
+[kobo-libra-2 inside crop] undersized
   几何门 判定范围 1 页 · 不成立 1 页
   卷级   基准档 4bit · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        800x1000   4bit        2364  卷级上包络
+  001.png        800x784    800x784    4bit        1871  卷级上包络
 
-[kobo-libra-2 inside] mixed-size
+[kobo-libra-2 inside crop] mixed-size
   几何门 判定范围 5 页 · 不成立 1 页
-  卷级   基准档 2bit+FS · 驱动页 004.png · 主体 4 页 · 离群 0 页 · 迟滞升档 0 页
-  001.png        800x1000   4bit        2364  几何门不成立，本页不抖动
-  002.png        1182x1680  2bit+FS   192766  卷级上包络
-  003.png        1182x1680  2bit+FS    16730  卷级上包络
-  004.png        1264x1680  2bit+FS   205346  卷级上包络
-  005.png        1182x1680  2bit+FS   228113  卷级上包络
+  卷级   基准档 4bit+FS · 驱动页 002.png · 主体 4 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        800x784    800x784    4bit        1871  几何门不成立，本页不抖动
+  002.png        1441x1606  1264x1409  4bit+FS   163007  卷级上包络
+  003.png        -          1182x1680  4bit+FS    26713  卷级上包络
+  004.png        2528x2635  1264x1318  4bit+FS   147858  卷级上包络
+  005.png        1439x2048  1180x1680  4bit+FS   706727  卷级上包络
 
-[kobo-libra-2 inside] envelope-outlier
+[kobo-libra-2 inside crop] envelope-outlier
   几何门 判定范围 20 页 · 不成立 20 页
   卷级   基准档 1bit · 驱动页 019.png · 主体 19 页 · 离群 1 页 · 迟滞升档 0 页
 
-[kobo-libra-2 inside] envelope-outlier-heavy
+[kobo-libra-2 inside crop] envelope-outlier-heavy
   几何门 判定范围 20 页 · 不成立 20 页
   卷级   基准档 1bit · 驱动页 018.png · 主体 18 页 · 离群 2 页 · 迟滞升档 0 页
 
-[kobo-libra-2 inside] envelope-hysteresis
+[kobo-libra-2 inside crop] envelope-hysteresis
   几何门 判定范围 60 页 · 不成立 60 页
   卷级   基准档 1bit · 驱动页 060.png · 主体 60 页 · 离群 0 页 · 迟滞升档 3 页
+
+[kobo-libra-2 height keep] a-class-gradient
+  几何门 判定范围 1 页 · 不成立 0 页
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        -          1264x1680  2bit+FS   205346  卷级上包络
+
+[kobo-libra-2 height keep] local-damage
+  几何门 判定范围 1 页 · 不成立 0 页
+  卷级   基准档 2bit+FS · 驱动页 001.png · 主体 1 页 · 离群 0 页 · 迟滞升档 0 页
+  001.png        -          1264x1680  2bit+FS     6229  卷级上包络

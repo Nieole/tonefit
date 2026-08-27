@@ -14,7 +14,11 @@ use tonefit::{
 fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    // 四边顶着墨的渐变页：这一条说的是几何与位深，不是裁边（页几何批 02 号票）。
+    volume.page(
+        "001.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
 
     let report = run_volume(&space, &volume);
 
@@ -197,7 +201,8 @@ fn every_supported_format_decodes() {
     let volume = space.volume("volume-a");
     // 恒等通过的尺寸：读回来的就是解码器给出的那张图，中间不隔一层缩放。
     let size = fixtures::PASSES_THROUGH;
-    let page = fixtures::gradient(size);
+    // 四边顶着墨：裁边在它身上是空操作，读回来的尺寸因此仍是源尺寸（页几何批 02 号票）。
+    let page = fixtures::full_bleed_gradient(size);
     let names = [
         "01.avif", "02.bmp", "03.gif", "04.jpg", "05.png", "06.tiff", "07.webp",
     ];
@@ -218,8 +223,9 @@ fn every_supported_format_decodes() {
         assert_eq!(written.bit_depth, png::BitDepth::Eight, "{name}");
         // 尺寸对而像素空白的解码器也能过尺寸断言，所以还要看内容：
         // 渐变页顶端近黑、底端近白，灰调级数不该塌。容差留给有损格式。
-        let top = written.pixel(10, 2);
-        let bottom = written.pixel(10, size.height - 3);
+        // 取样避开那一圈墨边（`fixtures::INK_BORDER`），量的是渐变本身。
+        let top = written.pixel(10, fixtures::INK_BORDER + 2);
+        let bottom = written.pixel(10, size.height - fixtures::INK_BORDER - 3);
         let levels = distinct_levels(&written.pixels);
         assert!(top < 16, "{name} 顶端出成了 {top}");
         assert!(bottom > 239, "{name} 底端出成了 {bottom}");
@@ -597,7 +603,8 @@ fn transparent_areas_come_out_as_paper_white() {
 fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels_when_fitted_inside() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    // 四边顶着墨：这一条说的是「不放大」，裁边不该插一脚（页几何批 02 号票）。
+    let page = fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET);
     volume.page("001.png", &page);
 
     // 量的是几何与转灰：把输出钉在 8bit，「逐字节相同」才谈得成。
@@ -627,7 +634,7 @@ fn a_page_shorter_than_the_panel_is_enlarged_until_it_touches_the_panel_height()
     let volume = space.volume("volume-a");
     volume.page(
         "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
     );
 
     let report = run_volume(&space, &volume);
@@ -653,8 +660,12 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    volume.page("02.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("03.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+    // 两页渐变都四边顶着墨：这两条说的是适配方式，裁边不该插一脚（页几何批 02 号票）。
+    volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page(
+        "03.png",
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+    );
 
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
@@ -680,8 +691,12 @@ fn the_target_size_leads_with_the_panel_height_by_default() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    volume.page("02.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("03.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+    // 两页渐变都四边顶着墨：这两条说的是适配方式，裁边不该插一脚（页几何批 02 号票）。
+    volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page(
+        "03.png",
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+    );
 
     let report = run_volume(&space, &volume);
 
@@ -722,7 +737,7 @@ fn an_ordinary_comic_page_comes_out_the_same_size_either_way() {
     // 比面板的 1.35 更瘦长，且比面板高——两条前提都在。
     let build = |space: &Workspace| {
         let volume = space.volume("volume-a");
-        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+        volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
         volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
         volume.page(
             "003.png",
@@ -766,6 +781,223 @@ fn an_ordinary_comic_page_comes_out_the_same_size_either_way() {
     assert_eq!(by_height.wider_than_the_panel().count(), 0);
 }
 
+/// 裁边那几条用例共用的一页：1441×2048 的纸，中间 1200×1600 那一块是内容。
+///
+/// 四边的白边各不相等（左 120 上 100 右 121 下 348）：窗口摆错一边就当场对不上。
+const MARGINED: Size = fixtures::TYPICAL;
+const CONTENT: Size = Size::new(1200, 1600);
+const CONTENT_AT: (u32, u32) = (120, 100);
+
+/// **裁边发生在适配之前**（页几何批 02 号票）：目标尺寸从裁完的那个尺寸算出来，
+/// 而不是从解出来的那个。
+///
+/// 同一页跑两趟，只换裁边这一个开关：裁的那一趟目标尺寸是 1200×1600 顶到面板高，
+/// 不裁的那一趟是 1441×2048 顶到面板高。两个数不同，正是「先裁后适配」的现场——
+/// 反过来（先适配再裁）会得出第三个数，而那个数一页都对不上。
+///
+/// 报告逐页说得出裁掉了多少：裁前裁后两个尺寸加左上角，四边因此都减得出来。
+#[test]
+fn margins_come_off_before_the_page_meets_the_panel() {
+    // 两趟各起一个工作区：同一个输出根会被后一趟覆盖，那时比的就不是两趟的差别了。
+    let build = |space: &Workspace| {
+        let volume = space.volume("volume-a");
+        volume.page(
+            "001.png",
+            &fixtures::page_with_margins(MARGINED, CONTENT_AT, CONTENT),
+        );
+        volume
+    };
+    let space = Workspace::new();
+    let report = run_volume(&space, &build(&space));
+    let kept_space = Workspace::new();
+    let kept = fixtures::run_volume_keeping_margins(&kept_space, &build(&kept_space));
+
+    let page = &report.volumes[0].pages[0];
+    let crop = page.crop().expect("处理成了的页有裁边");
+    // 裁掉了多少：报告自己说得出来。右边与下边减得出来——
+    // 1441 - 1200 - 120 = 121，2048 - 1600 - 100 = 348。
+    assert_eq!(crop.before(), MARGINED);
+    assert_eq!(crop.after(), CONTENT);
+    assert_eq!((crop.left(), crop.top()), CONTENT_AT);
+    assert_eq!(
+        (
+            crop.before().width - crop.after().width - crop.left(),
+            crop.before().height - crop.after().height - crop.top(),
+        ),
+        (121, 348)
+    );
+    // 期望值手算：裁完 1200×1600 顶到面板高 1680，宽 = 1200 × 1680 ÷ 1600 = 1260。
+    assert_eq!(page.size, Size::new(1260, 1680));
+    assert_eq!(fixtures::read_png(&page.output).size, page.size);
+
+    // `--no-crop` 退回从前的行为：一个像素都不裁，目标尺寸从 1441×2048 算出
+    // （1441 × 1680 ÷ 2048 = 1182）。
+    let kept_page = &kept.volumes[0].pages[0];
+    let kept_crop = kept_page.crop().expect("处理成了的页有裁边");
+    assert!(!kept_crop.trimmed(), "关掉了裁边却还是裁了");
+    assert_eq!(kept_crop.after(), MARGINED);
+    assert_eq!(kept_page.size, Size::new(1182, 1680));
+}
+
+/// **白边里的孤立噪点不算内容。**
+///
+/// 这是本裁法与内容外接框的分水岭，也是这张票点名要钉住的那一条：外接框边缘沾一个墨点
+/// 就退回整页，实测那样量出来的中位增益是 0（见 measurements 的《裁边》）。
+///
+/// 同一页两份，一份白边干净、一份白边里落了三粒墨点，两份裁出来的窗口必须一模一样；
+/// 而那三粒顶在两个对角上，外接框在这一页上**一个像素都裁不掉**——那一句由夹具自己作证，
+/// 不然这条用例在退化成外接框的实现下照样是绿的。
+#[test]
+fn a_speck_in_the_margin_is_not_content() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::page_with_margins(MARGINED, CONTENT_AT, CONTENT),
+    );
+    let specked = fixtures::page_with_specks_in_the_margin(MARGINED, CONTENT_AT, CONTENT);
+    volume.page("002.png", &specked);
+
+    let report = run_volume(&space, &volume);
+
+    let pages = &report.volumes[0].pages;
+    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁边").after();
+    assert_eq!(window(&pages[0]), CONTENT);
+    assert_eq!(window(&pages[1]), CONTENT, "三粒噪点把窗口撑回了整页");
+    assert_eq!(pages[0].size, pages[1].size, "噪点改变了目标尺寸");
+    // 夹具自证：外接框在带噪点的那一页上退回整页，本裁法没有。
+    assert_eq!(
+        fixtures::ink_bounding_box(&specked),
+        MARGINED,
+        "夹具没造对：外接框在这一页上本该失败"
+    );
+}
+
+/// **整页空白的页原样通过，不裁成零尺寸**（页几何批 02 号票）。
+///
+/// 一个墨点都没有的页挑不出内容行列，窗口于是等于整页——那一页照常适配、照常写出。
+/// 裁成零尺寸的实现在这里会当场崩掉：0 像素的页写不出去。
+#[test]
+fn a_blank_page_is_not_cropped_away() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::solid(MARGINED, 255));
+
+    let report = run_volume(&space, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    assert!(!page.crop().expect("处理成了的页有裁边").trimmed());
+    // 与不裁边那一趟同一个目标尺寸：1441 × 1680 ÷ 2048 = 1182。
+    assert_eq!(page.size, Size::new(1182, 1680));
+    assert_eq!(fixtures::read_png(&page.output).size, page.size);
+}
+
+/// **页间字号跳动是接受的形态，不是缺陷**（页几何批 02 号票）。
+///
+/// 逐页各裁各的：白边宽的那一页裁完剩得少、被放得更大，白边窄的那一页放得少。
+/// 同样一块 1200 宽的内容因此在两页上出成不同的宽度，翻页时字号跟着跳
+/// （实测卷内极差 B 类 0.041–0.109、A 类双页 0.390，见 measurements 的《裁边》）。
+///
+/// **不要为了抹平它去取卷级裁切框**：那会被留白最多的那一页拖住，而用户明确要的是
+/// 更大的实际利用面积（票面的《不要做的》）。这条用例写在这里，就是为了让后来的人
+/// 在改成卷级框时当场撞响，而不是把它当回归修掉。
+#[test]
+fn pages_with_different_margins_are_magnified_differently_and_that_is_accepted() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 同一张纸、同样宽的内容，只有上下白边不同：一页留白多，一页留白少。
+    volume.page(
+        "001.png",
+        &fixtures::page_with_margins(MARGINED, CONTENT_AT, Size::new(1200, 1200)),
+    );
+    volume.page(
+        "002.png",
+        &fixtures::page_with_margins(MARGINED, CONTENT_AT, Size::new(1200, 1900)),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    let pages = &report.volumes[0].pages;
+    // 期望值手算：内容 1200×1200 顶到面板高，宽 = 1200 × 1680 ÷ 1200 = 1680；
+    // 内容 1200×1900 顶到面板高，宽 = 1200 × 1680 ÷ 1900 = 1061。
+    assert_eq!(pages[0].size, Size::new(1680, 1680));
+    assert_eq!(pages[1].size, Size::new(1061, 1680));
+    // 同一块内容在两页上放大得不一样多——那就是字号跳动。
+    let gain = |page: &tonefit::PageReport| page.crop().expect("有裁边").linear_gain();
+    assert!(
+        gain(&pages[0]) - gain(&pages[1]) > 0.5,
+        "两页的线性放大只差 {:.3}，夹具没把跳动造出来",
+        gain(&pages[0]) - gain(&pages[1])
+    );
+}
+
+/// **裁边与适配方式正交：四种组合都跑得通**（页几何批 02 号票）。
+///
+/// 两个开关各改一件事——裁边改的是适配之前的页尺寸，适配方式改的是页怎么顶上面板——
+/// 组合起来不该有哪一种走不下去。断言只要外部可见的三件事：跑得完、写出来的页解得回来、
+/// 尺寸与报告说的对得上。具体数值由上面那几条各自钉着。
+#[test]
+fn all_four_combinations_of_crop_and_fit_run_through() {
+    for fit in [FitMode::Height, FitMode::Inside] {
+        for crop in [true, false] {
+            let space = Workspace::new();
+            let volume = space.volume("volume-a");
+            volume.page(
+                "001.png",
+                &fixtures::page_with_margins(MARGINED, CONTENT_AT, CONTENT),
+            );
+            volume.page("002.png", &fixtures::solid(MARGINED, 255));
+            volume.page(
+                "003.png",
+                &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+            );
+
+            let report = tonefit::run(&Request {
+                fit,
+                crop,
+                ..fixtures::request(&space, [volume.path()])
+            })
+            .unwrap_or_else(|error| panic!("{fit:?} + 裁边 {crop} 没跑下来：{error:#}"));
+
+            let pages = &report.volumes[0].pages;
+            assert_eq!(pages.len(), 3, "{fit:?} + 裁边 {crop}");
+            for page in pages {
+                let written = fixtures::read_png(&page.output);
+                assert_eq!(written.size, page.size, "{fit:?} + 裁边 {crop}");
+                // 裁过没裁过，报告都答得出来；关着的那一趟一页都不许裁。
+                let cropped = page.crop().expect("处理成了的页有裁边");
+                assert!(crop || !cropped.trimmed(), "关掉了裁边却还是裁了");
+            }
+            assert_eq!(report.crop, crop, "报告没记住这一趟开没开裁边");
+            assert_eq!(report.fit, fit);
+        }
+    }
+}
+
+/// **部分救回页不裁边**（页几何批 02 号票）。
+///
+/// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而纸白按墨量就是白边——
+/// 裁掉它等于把「这一页缺了一半」从产物里抹掉，报告里那个救回比例也就再对不上尺寸。
+/// 缺的那一段不是白边，是缺的那一段。
+#[test]
+fn a_salvaged_page_keeps_the_blank_it_could_not_decode() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 截断的纯黑页：解回来的那一段是 0，救不回来的那一段是纸白。
+    volume.file("001.png", &fixtures::truncated_page(MARGINED));
+
+    let report = run_volume(&space, &volume);
+
+    let page = &report.volumes[0].pages[0];
+    assert!(page.salvage().is_some(), "夹具没造出一张部分救回页");
+    assert!(
+        !page.crop().expect("处理成了的页有裁边").trimmed(),
+        "把救回页缺的那一段当白边裁掉了"
+    );
+    // 尺寸仍是文件头里的那个：1441 × 1680 ÷ 2048 = 1182。
+    assert_eq!(page.size, Size::new(1182, 1680));
+}
+
 #[test]
 fn the_target_size_comes_from_the_profiles_panel() {
     // 同一页送进三个 profile：目标尺寸随各自的面板走，没有写死的面板。
@@ -779,7 +1011,8 @@ fn the_target_size_comes_from_the_profiles_panel() {
     for (device, expected) in cases {
         let space = Workspace::new();
         let volume = space.volume("volume-a");
-        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+        // 四边顶着墨：这一条说的是「面板从 profile 来」，裁边不该插一脚（页几何批 02 号票）。
+        volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
         let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(device));
 
@@ -842,13 +1075,21 @@ fn the_total_ratio_follows_the_fit_mode() {
 fn scaling_volume(space: &Workspace) -> fixtures::Volume {
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
+    // 四页渐变一律四边顶着墨：这两条说的是预缩与总缩放比，而裁边会改掉每一页的源高
+    // （页几何批 02 号票），那时手算的期望值量的就不是缩放了。
     volume.page(
         "02.png",
-        &fixtures::gradient(fixtures::TWO_AND_A_HALF_PANEL),
+        &fixtures::full_bleed_gradient(fixtures::TWO_AND_A_HALF_PANEL),
     );
-    volume.page("03.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    volume.page("04.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("05.png", &fixtures::gradient(fixtures::SMALLER_THAN_TARGET));
+    volume.page(
+        "03.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
+    volume.page("04.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page(
+        "05.png",
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+    );
     volume
 }
 
@@ -1232,13 +1473,17 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
     // 封面：源比目标小，按不放大原样输出，门在它这里不成立。
     volume.page(
         "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
     );
-    // 四页正片，都贴得住面板。
-    volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    volume.page("003.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("005.png", &fixtures::gradient(fixtures::SPREAD));
+    // 四页正片，都贴得住面板。五页一律四边顶着墨：这一条说的是几何门逐页判，
+    // 而裁边会改掉每一页的几何（页几何批 02 号票）。
+    volume.page(
+        "002.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
+    volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page("004.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page("005.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
     // 混排卷只在 fit-inside 上是混排卷（页几何批 01 号票）：以高为准会把那张封面放大到
     // 面板高，门跟着成立，一卷五页都拿满候选，「一张封面否决整卷」这件事就无从谈起。
@@ -1374,7 +1619,8 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 连续渐变页：低位深上必然崩，判定该落在候选上界那一档。
-    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 四边顶着墨，裁边不改它的几何（页几何批 02 号票）。
+    volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     // 二值线稿页：1bit 就装得下，判据因此是零，最低那一档直接过关。
     volume.page(
         "002.png",
@@ -1636,7 +1882,7 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
 fn dithering_can_bring_a_page_back_within_the_threshold() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     // 灰阶数压到 4 级：候选位深只剩 {1,2}，4bit 那条退路不在。
     let profile = fixtures::baseline_profile()
         .with_gray_levels(4)

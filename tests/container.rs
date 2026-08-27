@@ -350,7 +350,8 @@ fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
     // 高已经等于面板高：这样的页是两种适配方式的**公共不动点**（页几何批 01 号票），
     // 尺寸断言因此写得出一个字面值。本条问的是容器形态，不是几何。
     const PAGE: Size = Size::new(200, 1680);
-    let page = fixtures::gradient(PAGE);
+    // 四边顶着墨：裁边在它身上是空操作（页几何批 02 号票），尺寸断言仍写得出字面值。
+    let page = fixtures::full_bleed_gradient(PAGE);
     let loose = space.volume("volume-a");
     loose.page("001.png", &page);
     let mut packed = space.cbz("volume-b");

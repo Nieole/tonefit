@@ -16,6 +16,7 @@
 mod cache;
 mod calibrate;
 mod color;
+mod crop;
 mod decide;
 mod decode;
 mod encode;
@@ -46,6 +47,7 @@ use rayon::prelude::*;
 
 pub use cache::{CacheBudget, CacheUsage};
 pub use color::PageColor;
+pub use crop::{Crop, InkRule, ink_rule};
 pub use decide::{CandidateScore, Reason, Verdict};
 pub use decode::Salvage;
 pub use envelope::Envelope;
@@ -112,6 +114,7 @@ pub fn run(request: &Request) -> Result<Report> {
     Ok(Report {
         profile: request.profile.clone(),
         fit: request.fit,
+        crop: request.crop,
         volumes,
         elapsed: started.elapsed(),
     })
@@ -591,6 +594,8 @@ enum Outcome {
     /// 处理成了的一页：完好的，或者救回来一段的。
     Processed {
         size: Size,
+        /// 这一页裁掉了多少白边（页几何批 02 号票）。裁边在适配之前，`size` 由裁完的尺寸算出。
+        crop: Crop,
         scaling: resample::Scaling,
         color: PageColor,
         branch: Branch,
@@ -690,12 +695,14 @@ impl OutputPage {
         let (size, outcome) = match self.outcome {
             Outcome::Processed {
                 size,
+                crop,
                 scaling,
                 color,
                 branch,
                 salvage,
             } => {
                 let processed = Processed {
+                    crop,
                     scaling,
                     color,
                     branch: match branch {
@@ -965,6 +972,9 @@ impl Compute<'_> {
 
         if panel.color && color.is_color() {
             let image = color::to_color(decoded);
+            // 裁边在适配**之前**：目标尺寸从裁完的那个尺寸算出（页几何批 02 号票）。
+            let crop = Crop::of_color(&image, request.crop, salvage);
+            let image = crop.apply_color(image);
             let size = request.fit.target(image.size(), panel.resolution);
             let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
             // dry-run 一个文件都不落盘，编出来的字节没人要。
@@ -983,6 +993,7 @@ impl Compute<'_> {
                 target,
                 outcome: Outcome::Processed {
                     size,
+                    crop,
                     scaling,
                     color,
                     branch: Branch::Color { encoded },
@@ -992,6 +1003,9 @@ impl Compute<'_> {
         }
 
         let gray = gray::to_gray(decoded);
+        // 同上：裁边在适配之前，门与判据参照都建在裁完的那个尺寸上。
+        let crop = Crop::of_gray(&gray, request.crop, salvage);
+        let gray = crop.apply_gray(gray);
         let size = request.fit.target(gray.size(), panel.resolution);
         // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
         // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
@@ -1012,6 +1026,7 @@ impl Compute<'_> {
             target,
             outcome: Outcome::Processed {
                 size,
+                crop,
                 scaling,
                 color,
                 branch: Branch::Gray { scores, gate, slot },
@@ -1532,6 +1547,7 @@ mod tests {
             output_root: PathBuf::from("out"),
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
+            crop: true,
             filter: Filter::default(),
             bit_depth: None,
             dither: None,
@@ -1559,6 +1575,7 @@ mod tests {
             target: PathBuf::from(target),
             outcome: Outcome::Processed {
                 size,
+                crop: Crop::keeping_all(size),
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Gray,
                 branch: Branch::Gray {
@@ -1578,6 +1595,7 @@ mod tests {
             target: PathBuf::from(target),
             outcome: Outcome::Processed {
                 size,
+                crop: Crop::keeping_all(size),
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Color,
                 branch: Branch::Color { encoded: None },

@@ -72,7 +72,7 @@ fn a_dry_run_predicts_the_skip() {
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {
-    let changes: [Change; 6] = [
+    let changes: [Change; 7] = [
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
         }),
@@ -88,6 +88,8 @@ fn a_changed_parameter_redoes_the_volume() {
         // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
         // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
         ("换适配方式", |request| request.fit = FitMode::Inside),
+        // 裁边改的是**适配之前**的页尺寸（页几何批 02 号票）：同上，整卷重算。
+        ("关掉裁边", |request| request.crop = false),
         ("关掉上包络", |request| request.per_page = true),
     ];
 

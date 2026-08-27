@@ -42,7 +42,7 @@ pub fn to_gray(image: &DynamicImage) -> GrayImage {
         (true, false) => image
             .to_rgb8()
             .pixels()
-            .map(|p| gray_value(p[0], p[1], p[2]))
+            .map(|p| value(p[0], p[1], p[2]))
             .collect(),
         // 带 alpha 的源先按纸白合成：漫画页的透明区就是纸，直接丢 alpha 会把它变成底下的 RGB（常是黑）。
         (_, true) => image
@@ -55,7 +55,9 @@ pub fn to_gray(image: &DynamicImage) -> GrayImage {
 }
 
 /// 一个 sRGB 像素的灰度取值。
-fn gray_value(r: u8, g: u8, b: u8) -> u8 {
+///
+/// 裁边那一侧量墨也用它（见 `crate::crop`）：一页的白边在哪，不该因为面板认不认得颜色而变。
+pub(crate) fn value(r: u8, g: u8, b: u8) -> u8 {
     if r == g && g == b {
         // 消色像素的往返恒等（见本模块的测试），直接短路——顺带躲开三次开立方。
         return r;
@@ -67,7 +69,7 @@ fn gray_value(r: u8, g: u8, b: u8) -> u8 {
 /// 先在线性光下合到纸白上，再取灰度取值。
 fn gray_value_over_paper(r: u8, g: u8, b: u8, alpha: u8) -> u8 {
     if alpha == u8::MAX {
-        return gray_value(r, g, b);
+        return value(r, g, b);
     }
     let alpha = f32::from(alpha) / 255.0;
     oklab_gray(
@@ -130,7 +132,7 @@ mod tests {
                 level,
                 "灰度 {level} 变了"
             );
-            assert_eq!(gray_value(level, level, level), level);
+            assert_eq!(value(level, level, level), level);
         }
     }
 }

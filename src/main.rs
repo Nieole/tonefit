@@ -69,6 +69,19 @@ struct Cli {
     #[arg(long, value_name = "方式")]
     fit: Option<String>,
 
+    /// 不裁掉页面白边。**默认是裁的**：tonefit 自己按行列墨量占比逐页裁边。
+    ///
+    /// 裁边的要点不是省白边，是让你**关得掉阅读器那一侧的裁切**：阅读器裁白边会改变页尺寸，
+    /// 随后的适配于是不再是 1.0 倍，抖动连同 1 像素周期的结构一起被抹平、字节白付。
+    /// tonefit 裁完之后好处已经烤进产物，阅读器那个开关变成空操作，1:1 恢复。
+    /// 关掉本项就得把阅读器那一侧的裁切留着，抖动会被它抹平。
+    ///
+    /// 裁法按**行列墨量占比**，不是内容外接框：白边里的孤立噪点不算内容，
+    /// 边缘一个墨点不会让裁边整个失效。逐页各裁各的，**页与页的字号因此会跳动**——
+    /// 那是要更大实际利用面积的代价，不是缺陷。整页空白的页原样通过。
+    #[arg(long)]
+    no_crop: bool,
+
     /// 残差段的重采样滤波器：area（= box）、bilinear、hamming、bicubic、lanczos3，默认 lanczos3。
     /// 只作用于残差段——总缩放比 ≥ 2 时的整数倍预缩那一级恒为 box。
     #[arg(long, value_name = "滤波器")]
@@ -307,6 +320,7 @@ fn execute() -> Result<u8> {
         output_root: cli.out.expect(REQUIRED_BY_CLAP),
         profile,
         fit,
+        crop: !cli.no_crop,
         filter,
         bit_depth,
         dither,
@@ -648,6 +662,41 @@ mod tests {
         assert!(help.contains("放大"), "{help}");
         // 「两种方式在普通漫画页上同尺寸」也要说：不然用户以为开关处处生效。
         assert!(help.contains("同一个尺寸"), "{help}");
+    }
+
+    /// `--no-crop` 关得掉裁边，**不点名就是裁**（页几何批 02 号票：默认打开）。
+    ///
+    /// 默认这一条要在命令行这一层单独钉住，与 `--fit` 那一条同一个理由：
+    /// 库那一侧默认裁着，而命令行完全可以自己写反一个布尔，那时用户敲出来的与文档说的对不上。
+    #[test]
+    fn crop_is_on_unless_the_command_line_turns_it_off() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        assert!(!parse(&[]).no_crop, "不点名就该裁");
+        assert!(parse(&["--no-crop"]).no_crop);
+    }
+
+    /// 帮助里要说清**默认是裁的**、以及关掉它要付什么——抖动会被阅读器那一侧的裁切抹平。
+    ///
+    /// 这一条只进 `--help` 与文档，不进每趟报告（页几何批 05 号票的处置 ②）：
+    /// 抖动被抹平只在用户的阅读器会裁时才发生，而 tonefit 看不到那一层。
+    /// 少了这几句，用户不会知道这个开关与抖动是一件事。
+    #[test]
+    fn the_crop_help_says_it_is_on_by_default_and_what_turning_it_off_costs() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--no-crop"), "{help}");
+        assert!(help.contains("默认是裁的"), "{help}");
+        // 关掉它的代价：阅读器那一侧的裁切留着，抖动被抹平。
+        assert!(help.contains("抹平"), "{help}");
+        // 裁法与它认下的两件事：孤立噪点不算内容，页间字号会跳动。
+        assert!(help.contains("行列墨量占比"), "{help}");
+        assert!(help.contains("孤立噪点"), "{help}");
+        assert!(help.contains("字号因此会跳动"), "{help}");
     }
 
     #[test]

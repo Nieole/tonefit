@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::cache::CacheUsage;
 use crate::color::PageColor;
+use crate::crop::Crop;
 use crate::decide::{CandidateScore, Verdict};
 use crate::decode::Salvage;
 use crate::envelope::Envelope;
@@ -29,6 +30,12 @@ pub struct Report {
     /// 是**照哪条规矩**算出来的。两种方式在普通漫画页上产出同一个尺寸
     /// （见 `crate::FitMode`），光看页尺寸分不出这一趟走的是哪一条。
     pub fit: FitMode,
+    /// 这一趟裁不裁白边（页几何批 02 号票）。
+    ///
+    /// 与 [`fit`](Self::fit) 并排，理由也一样：页尺寸是照哪条规矩算出来的，读的人要知道。
+    /// 逐页那一行只在**真裁掉了东西**时才说话，而一页都没裁与整趟没开是两件事——
+    /// 分辨它们只有这一项。
+    pub crop: bool,
     pub volumes: Vec<VolumeReport>,
     /// 整趟的墙钟耗时：`run` 从进到出（加固批 11 号票）。
     ///
@@ -378,6 +385,15 @@ pub enum PageOutcome {
 /// 报告不该有编出来的字段。
 #[derive(Debug, Clone)]
 pub struct Processed {
+    /// 这一页裁掉了多少白边（页几何批 02 号票）。
+    ///
+    /// 裁边发生在**适配之前**：目标尺寸由 [`Crop::after`] 算出，而不是由源尺寸算出。
+    /// 因此它排在 [`scaling`](Self::scaling) 前面——报告里两者也是这个顺序，
+    /// 读的人顺着「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」一路读下来。
+    ///
+    /// 裁边关着的那一趟是一个原样通过的窗口，与「这一页没什么可裁」长得一样：
+    /// 分辨它们靠报告抬头那一行。
+    pub crop: Crop,
     /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
     ///
     /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
@@ -495,6 +511,11 @@ impl PageReport {
     /// 这一页实际走过的缩放。失败页没被缩放过。
     pub fn scaling(&self) -> Option<Scaling> {
         self.outcome.processed().map(|page| page.scaling)
+    }
+
+    /// 这一页裁掉了多少白边（页几何批 02 号票）。失败页没有——它没有像素可裁。
+    pub fn crop(&self) -> Option<Crop> {
+        self.outcome.processed().map(|page| page.crop)
     }
 
     /// 这一页失败的原因。处理成了的页是 `None`。

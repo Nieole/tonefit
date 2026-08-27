@@ -98,6 +98,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
         output_root: space.out(),
         profile: fixtures::baseline_profile(),
         fit: FitMode::default(),
+        crop: true,
         filter: Filter::default(),
         bit_depth: None,
         dither: None,

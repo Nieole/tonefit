@@ -51,8 +51,9 @@ const HEADER: &str = "\
 #
 # 接受之前先答一句「为什么变」。这份快照存在的全部理由，就是不让判定在无人察觉时改动。
 #
-# 卷行：`[型号 适配方式] 卷名 · 几何门 · 卷级判定`。
-# 页行：页名 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
+# 卷行：`[型号 适配方式 裁边] 卷名 · 几何门 · 卷级判定`。
+# 页行：页名 · 裁后尺寸 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
+# 裁后尺寸那一列是 `-` 表示这一页一个像素都没裁掉（源尺寸由夹具定死，见 tests/golden.rs）。
 # 透传行：非图片文件原样搬过去的那些，名字与字节数。
 #
 # 字节数**不含自描述元数据**（这一趟按 `--no-metadata` 跑）：tEXt 里写着工具版本，
@@ -183,14 +184,17 @@ fn compare(committed: Option<&str>, produced: &str) -> Result<(), String> {
 /// 这一趟算出来的整份快照。
 fn snapshot() -> String {
     let space = Workspace::new();
-    // fit-inside 那一组另起一个工作区：两组有同名的卷，源目录撞在一起会看不出是谁的。
+    // fit-inside 与裁边关着那两组各起一个工作区：几组有同名的卷，
+    // 源目录撞在一起会看不出是谁的。
     let inside = Workspace::new();
+    let kept = Workspace::new();
     let mut text = String::from(HEADER);
     render(
         &mut text,
         &space,
         fixtures::BASELINE_DEVICE,
         FitMode::Height,
+        Margins::Trim,
         &height_cases(),
     );
     render(
@@ -198,6 +202,7 @@ fn snapshot() -> String {
         &space,
         COLOR_DEVICE,
         FitMode::Height,
+        Margins::Trim,
         &color_cases(),
     );
     render(
@@ -205,9 +210,44 @@ fn snapshot() -> String {
         &inside,
         fixtures::BASELINE_DEVICE,
         FitMode::Inside,
+        Margins::Trim,
         &fit_inside_cases(),
     );
+    render(
+        &mut text,
+        &kept,
+        fixtures::BASELINE_DEVICE,
+        FitMode::Height,
+        Margins::Keep,
+        &kept_margin_cases(),
+    );
     text
+}
+
+/// 裁边这一维在快照里的两种取值。
+///
+/// 它在这个文件里是个枚举而不是 `bool`：卷行要印出它，而 `[型号 height true]` 读不出
+/// 那个 `true` 说的是哪一项。名字不叫 `Crop`——那个词在库里已经指着**一页的裁切窗口**
+/// （`tonefit::Crop`），一个词两个意思，读的人迟早认错一处。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Margins {
+    /// 默认：tonefit 自己裁掉白边。
+    Trim,
+    /// `--no-crop`：白边留着。
+    Keep,
+}
+
+impl Margins {
+    fn key(self) -> &'static str {
+        match self {
+            Margins::Trim => "crop",
+            Margins::Keep => "keep",
+        }
+    }
+
+    fn on(self) -> bool {
+        self == Margins::Trim
+    }
 }
 
 /// 适配方式在快照里的短名。
@@ -260,6 +300,31 @@ fn fit_inside_cases() -> Vec<Case> {
     mono_cases()
         .into_iter()
         .filter(|case| BOTH_WAYS.contains(&case.name) || SMALL_PAGES.contains(&case.name))
+        .collect()
+}
+
+/// **裁边会把它们考的东西拿走**的两个卷，因此在 `--no-crop` 上再跑一遍（页几何批 02 号票）。
+///
+/// 两个卷画的都是「内容 + 一大片浅色」，而浅色按行列墨量占比就是白边：
+///
+/// - `a-class-gradient` 是正好两倍面板的渐变页，考的是**整数倍预缩**（ADR 0001）。
+///   渐变下方 21.6% 亮于墨阈，裁完只剩 0.784 倍高——总缩放比跌到 2 以下，预缩当场退化为恒等，
+///   那条路径在快照里一行都不剩。
+/// - `local-damage` 是一页留白加一小块灰调补丁，考的是**判据的分块聚合**（ADR 0002 决定第 3 条）。
+///   量出来的窗口只剩那块补丁（128×100），「局部」损伤会变成整页损伤，
+///   尾巴取第几块再也不影响判定。它眼下**被那道「留不到一半就原样通过」的守卫挡住了**，
+///   默认那一组里因此一个像素都没裁——但那个数是未标定占位值（见 `tonefit` 的 `crop`），
+///   把分块聚合那条路径挂在它身上不合适，所以这一组仍收着它。
+///
+/// 它们仍留在默认那一组里：裁边对它们做了什么本身就值得钉住。这一组是**补**回被拿走的
+/// 那两条路径，不是替换。
+const KEPT_MARGINS: [&str; 2] = ["a-class-gradient", "local-damage"];
+
+/// 裁边关着那条路上跑的夹具卷（页几何批 02 号票）。
+fn kept_margin_cases() -> Vec<Case> {
+    mono_cases()
+        .into_iter()
+        .filter(|case| KEPT_MARGINS.contains(&case.name))
         .collect()
 }
 
@@ -491,7 +556,14 @@ fn color_cases() -> Vec<Case> {
 ///
 /// 一趟 `run` 收全部卷，不是一卷一趟：多卷同趟本来就是常态，而卷级判定各卷各判，
 /// 合在一起不改变任何一卷的结果。
-fn render(text: &mut String, space: &Workspace, device: &str, fit: FitMode, cases: &[Case]) {
+fn render(
+    text: &mut String,
+    space: &Workspace,
+    device: &str,
+    fit: FitMode,
+    crop: Margins,
+    cases: &[Case],
+) {
     // 目录卷要活到 `run` 之后（`Volume` 一落地就把临时目录收走），归档卷写完即成文件。
     let mut directories: Vec<Volume> = Vec::new();
     let mut inputs: Vec<PathBuf> = Vec::new();
@@ -514,9 +586,10 @@ fn render(text: &mut String, space: &Workspace, device: &str, fit: FitMode, case
     let report = tonefit::run(&Request {
         inputs,
         // 各设备、各适配方式一个输出根：同一个工作区里几趟并列，互不覆盖。
-        output_root: space.out_named(&format!("out-{device}-{}", fit_key(fit))),
+        output_root: space.out_named(&format!("out-{device}-{}-{}", fit_key(fit), crop.key())),
         profile: fixtures::profile(device),
         fit,
+        crop: crop.on(),
         filter: Filter::default(),
         bit_depth: None,
         dither: None,
@@ -540,8 +613,9 @@ fn render(text: &mut String, space: &Workspace, device: &str, fit: FitMode, case
         let name = volume_name(volume);
         let mut block = vec![
             format!(
-                "[{device} {}] {name}{}",
+                "[{device} {} {}] {name}{}",
                 fit_key(fit),
+                crop.key(),
                 if volume.isolated() { " · 隔离" } else { "" }
             ),
             format!("  几何门 {}", gate(volume)),
@@ -623,12 +697,30 @@ fn page_line(volume: &VolumeReport, page: &PageReport, sizes: &BTreeMap<String, 
         .copied()
         .unwrap_or_else(|| panic!("输出里没有成员 {name}"));
     format!(
-        "{:<14} {:<10} {:<8} {:>7}  {reason}",
+        "{:<14} {:<10} {:<10} {:<8} {:>7}  {reason}",
         fixtures::relative_name(&volume.volume, &page.source),
+        cropped(page),
         format!("{}x{}", page.size.width, page.size.height),
         candidate,
         bytes,
     )
+}
+
+/// 一页裁完剩下多大（页几何批 02 号票）。一个像素都没裁的页是 `-`。
+///
+/// 与界面那一侧的 `render::crop_note` 长得像，理由与 [`fit_key`] 那一份相同：
+/// 集成测试是另一个 crate，够不着二进制侧的渲染；而快照要的是一个定宽的键，
+/// 不是给人读的那句文案。两处真要分家，红的是这个文件里的快照。
+///
+/// 它排在目标尺寸**之前**：裁边发生在适配之前，目标尺寸就是从这一列算出来的。
+/// 两列都进快照，是因为它们会各自变动——裁法改了，头一列先变；适配方式改了，后一列才变。
+fn cropped(page: &PageReport) -> String {
+    match page.crop() {
+        Some(crop) if crop.trimmed() => {
+            format!("{}x{}", crop.after().width, crop.after().height)
+        }
+        _ => "-".to_owned(),
+    }
 }
 
 /// 这一卷输出里每个成员的字节数，按成员名索引。

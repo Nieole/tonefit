@@ -43,6 +43,10 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // 后面：适配方式是**读法偏好**，不是这块面板的物理事实（`CONTEXT.md` 的《几何》）。
     // 非说不可，是因为两种方式在普通漫画页上产出同一个尺寸——光看页尺寸分不出走的是哪一条。
     text.push_str(&format!("适配方式 {}\n", report.fit));
+    // 裁边同理（页几何批 02 号票）：它改的是**适配之前**的页尺寸，而一卷里可能一页都没裁得动。
+    // 「这一趟没开」与「这一卷没什么可裁」在逐页那几行上长得一样，只有这一行分得开。
+    // 裁法那两个数跟着印出来，与判据聚合那一行同一条规矩：数摆出来，读的人自己判断。
+    text.push_str(&format!("裁边 {}\n", crop_rule(report.crop)));
     // 逐页那一行的每个数由两项合成，其中颗粒项那道地板与阈值同一批盲测标定
     // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
@@ -102,8 +106,9 @@ pub fn pages(volume: &VolumeReport) -> String {
     let mut text = String::new();
     for page in &volume.pages {
         text.push_str(&format!(
-            "  {}  {}  {}\n",
+            "  {}  {}{}  {}\n",
             page.size,
+            crop_note(page),
             scaling_note(page),
             page.output.display()
         ));
@@ -229,6 +234,30 @@ fn salvaged_line(volume: &VolumeReport) -> String {
          它们不参与卷级上包络，各自单独定档。几何门照旧问它们——那是文件头里的真尺寸；\
          门在哪一页上也不成立，那一页就改按门那一条来（见上）\n"
     )
+}
+
+/// 抬头那一行里说裁边的那一小截：开着就把裁法那两个数一并印出来。
+///
+/// 开着的那一趟不多说一个字的利害——那归 `--help` 与文档（页几何批 05 号票的处置 ②）：
+/// 抖动被阅读器抹平只在用户的阅读器会裁时才发生，而 tonefit 看不到那一层，逐卷提醒等于噪音。
+fn crop_rule(on: bool) -> String {
+    if on {
+        tonefit::ink_rule().to_string()
+    } else {
+        "关（页按解出来的原尺寸适配）".to_owned()
+    }
+}
+
+/// 一页那一行里说裁边的那一小截，排在缩放**之前**——裁边发生在适配之前。
+///
+/// **真裁掉了东西才说话**：一页都没裁的页在这里一个字不说，与彩页那一小截同一条规矩
+/// （见 [`color_page_note`]）。这一趟开没开裁边由抬头那一行说，两件事分得开。
+/// 失败页也不说：它没有像素可裁，那一格由 [`scaling_note`] 顶着。
+fn crop_note(page: &PageReport) -> String {
+    match page.crop() {
+        Some(crop) if crop.trimmed() => format!("{crop} · "),
+        _ => String::new(),
+    }
 }
 
 /// 一页那一行里说缩放的那一小截。
@@ -507,6 +536,14 @@ mod tests {
         }
     }
 
+    use tonefit::Crop;
+
+    /// 一个什么都没裁掉的裁边窗口。逐页那一行只在真裁掉了东西时才说裁边，
+    /// 不问裁边的用例因此一律拿它填这一格（页几何批 02 号票）。
+    fn nothing_trimmed() -> Crop {
+        Crop::keeping_all(Size::new(1441, 2048))
+    }
+
     /// B 类中位页缩到基准面板：总缩放比 1.219，不触发预缩（见 measurements 的《B 类素材普查》）。
     fn typical_scaling() -> Scaling {
         Scaling::plan(Size::new(1441, 2048), Size::new(1182, 1680))
@@ -520,6 +557,7 @@ mod tests {
         Report {
             profile,
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -554,6 +592,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -599,6 +638,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
@@ -619,11 +659,14 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、判据形状两行（构成与聚合）、卷六行（去处、几何门、
-        // 卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 12);
-        // 这一趟的页尺寸照哪条规矩算出来的，抬头说得出（页几何批 01 号票）。
+        // profile 一行、适配方式一行、裁边一行、判据形状两行（构成与聚合）、
+        // 卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
+        assert_eq!(text.lines().count(), 13);
+        // 这一趟的页尺寸照哪两条规矩算出来的，抬头都说得出（页几何批 01、02 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
+        assert!(text.contains("裁边 按行列墨量占比"), "{text}");
+        // 这一页一个像素都没裁，逐页那一行因此一个字都不说裁边。
+        assert!(!text.contains("裁边 1441×2048"), "{text}");
         // 一页都没有超出面板宽，末尾那一小结因此一个字都不说。
         assert!(!text.contains("输出宽超过面板"), "{text}");
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
@@ -706,6 +749,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(800, 1000),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     // 源比目标小：按不放大原样输出，一条边都贴不住面板。
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
@@ -759,6 +803,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(5056, 1680),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     scaling: Scaling::plan(Size::new(5056, 1680), Size::new(5056, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -789,6 +834,71 @@ mod tests {
         assert!(text.contains("不成立 0 页"), "{text}");
     }
 
+    /// **报告逐页说得出这一页裁掉了多少**（页几何批 02 号票），而没裁的页一个字不说。
+    ///
+    /// 裁边那一小截排在缩放**之前**：裁边发生在适配之前，读的人顺着
+    /// 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」一路读下来。
+    ///
+    /// 一页都没裁时那一格空着，与「这一趟根本没开裁边」长得一样——分辨两者的是抬头那一行，
+    /// 这条用例把两处一起钉住。
+    #[test]
+    fn the_report_says_how_much_came_off_each_page_and_nothing_when_none_did() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        let page = |crop: Crop| PageReport {
+            source: PathBuf::from("library/volume-a/001.jpg"),
+            output: PathBuf::from("out/volume-a/001.png"),
+            size: Size::new(1260, 1680),
+            outcome: PageOutcome::Whole(Processed {
+                crop,
+                scaling: typical_scaling(),
+                color: PageColor::Gray,
+                branch: PageBranch::Gray {
+                    gate: GeometryGate::Holds,
+                    scores: vec![CandidateScore { candidate, score }],
+                    verdict: Verdict {
+                        candidate,
+                        reason: Reason::LowestWithinThreshold,
+                    },
+                },
+            }),
+        };
+        let trimmed = Crop::new(Size::new(1441, 2048), (120, 100), Size::new(1200, 1600));
+
+        let text = super::report(
+            &one_page_report(
+                profile.clone(),
+                VolumeVerdict::Envelope(envelope(candidate)),
+                page(trimmed),
+            ),
+            Mode::Process,
+        );
+
+        // 裁前裁后两个尺寸都在，裁掉了多少一眼看得出。**四边各去了多少不进这行文字**——
+        // 读的人要的是「裁没裁、裁了多少」，不是左右上下怎么分；要那个数走 `PageReport::crop()`。
+        assert!(text.contains("裁边 1441×2048 → 1200×1600"), "{text}");
+        // 它排在缩放之前。
+        let crop_at = text.find("裁边 1441×2048").expect("裁边那一小截");
+        let scaling_at = text.find("缩放比").expect("缩放那一小截");
+        assert!(crop_at < scaling_at, "裁边排到了缩放后面：{text}");
+
+        // 一个像素都没裁的那一页：逐页那一行一个字不说，抬头那一行照旧说得出裁边开着。
+        let untouched = super::report(
+            &one_page_report(
+                profile,
+                VolumeVerdict::Envelope(envelope(candidate)),
+                page(nothing_trimmed()),
+            ),
+            Mode::Process,
+        );
+        assert!(!untouched.contains("裁边 1441×2048"), "{untouched}");
+        assert!(untouched.contains("裁边 按行列墨量占比"), "{untouched}");
+    }
+
     /// 报告要区分彩页与灰度页，也要区分它们走了哪条分支（10 号票）。
     ///
     /// 三页各占一种情形：彩页走彩色分支、彩页转灰走灰度路径、灰度页走灰度路径。
@@ -807,6 +917,7 @@ mod tests {
             output: PathBuf::from(format!("out/volume-a/{name}.png")),
             size: Size::new(1264, 1680),
             outcome: PageOutcome::Whole(Processed {
+                crop: nothing_trimmed(),
                 scaling: typical_scaling(),
                 color,
                 branch,
@@ -823,6 +934,7 @@ mod tests {
         let report = Report {
             profile,
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -872,6 +984,7 @@ mod tests {
         let report = Report {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -889,9 +1002,9 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、判据形状两行、卷两行，加上读取那一行——
+        // profile 一行、适配方式一行、裁边一行、判据形状两行、卷两行，加上读取那一行——
         // 跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 7);
+        assert_eq!(text.lines().count(), 8);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -912,6 +1025,7 @@ mod tests {
         let mut report = Report {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -955,6 +1069,7 @@ mod tests {
             output: PathBuf::from("out/_isolated/volume-a/001.png"),
             size: Size::new(1264, 1680),
             outcome: PageOutcome::Whole(Processed {
+                crop: nothing_trimmed(),
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -979,6 +1094,7 @@ mod tests {
         let report = Report {
             profile,
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/_isolated/volume-a"),
@@ -1040,6 +1156,7 @@ mod tests {
             &GrayImage::new(Size::new(1, 1), vec![136]),
         );
         let processed = |reason| Processed {
+            crop: nothing_trimmed(),
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
@@ -1068,6 +1185,7 @@ mod tests {
         let report = Report {
             profile,
             fit: FitMode::default(),
+            crop: true,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1124,6 +1242,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1166,6 +1285,7 @@ mod tests {
             size: Size::new(1264, 1680),
             outcome: PageOutcome::Salvaged {
                 page: Processed {
+                    crop: nothing_trimmed(),
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1232,6 +1352,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a/001.png"),
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
