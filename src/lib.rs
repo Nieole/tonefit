@@ -51,7 +51,7 @@ pub use crop::{Crop, InkRule, ink_rule};
 pub use decide::{CandidateScore, Reason, Verdict};
 pub use decode::Salvage;
 pub use envelope::Envelope;
-pub use geometry::{FitMode, GeometryGate, Size};
+pub use geometry::{FitMode, GeometryGate, Size, max_target_pixels};
 pub use gray::GrayImage;
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
@@ -596,6 +596,11 @@ enum Outcome {
         size: Size,
         /// 这一页裁掉了多少白边（页几何批 02 号票）。裁边在适配之前，`size` 由裁完的尺寸算出。
         crop: Crop,
+        /// `size` 是不是**兜底上界**改出来的（07 号票，见 [`FitMode::target`]）。
+        ///
+        /// 它跟着页走，不由报告那一侧按尺寸倒推：算目标尺寸的地方只有一处，
+        /// 倒推一遍就是第二处——与几何门那一条同一个理由（见 [`Branch::Gray`] 的 `gate`）。
+        backstopped: bool,
         scaling: resample::Scaling,
         color: PageColor,
         branch: Branch,
@@ -696,6 +701,7 @@ impl OutputPage {
             Outcome::Processed {
                 size,
                 crop,
+                backstopped,
                 scaling,
                 color,
                 branch,
@@ -703,6 +709,7 @@ impl OutputPage {
             } => {
                 let processed = Processed {
                     crop,
+                    backstopped,
                     scaling,
                     color,
                     branch: match branch {
@@ -975,7 +982,10 @@ impl Compute<'_> {
             // 裁边在适配**之前**：目标尺寸从裁完的那个尺寸算出（页几何批 02 号票）。
             let crop = Crop::of_color(&image, request.crop, salvage);
             let image = crop.apply_color(image);
-            let size = request.fit.target(image.size(), panel.resolution);
+            // 兜底上界在 `FitMode::target` 里，两条分支因此共用同一道（07 号票）：
+            // 彩色分支上一个目标像素更贵，越界的页在这条路上先撑不住。
+            let fit = request.fit.target(image.size(), panel.resolution);
+            let size = fit.size();
             let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
             // dry-run 一个文件都不落盘，编出来的字节没人要。
             let record = self
@@ -994,6 +1004,7 @@ impl Compute<'_> {
                 outcome: Outcome::Processed {
                     size,
                     crop,
+                    backstopped: fit.backstopped(),
                     scaling,
                     color,
                     branch: Branch::Color { encoded },
@@ -1006,7 +1017,8 @@ impl Compute<'_> {
         // 同上：裁边在适配之前，门与判据参照都建在裁完的那个尺寸上。
         let crop = Crop::of_gray(&gray, request.crop, salvage);
         let gray = crop.apply_gray(gray);
-        let size = request.fit.target(gray.size(), panel.resolution);
+        let fit = request.fit.target(gray.size(), panel.resolution);
+        let size = fit.size();
         // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
         // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
         let gate = GeometryGate::of(size, panel.resolution);
@@ -1027,6 +1039,7 @@ impl Compute<'_> {
             outcome: Outcome::Processed {
                 size,
                 crop,
+                backstopped: fit.backstopped(),
                 scaling,
                 color,
                 branch: Branch::Gray { scores, gate, slot },
@@ -1576,6 +1589,7 @@ mod tests {
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
+                backstopped: false,
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Gray,
                 branch: Branch::Gray {
@@ -1596,6 +1610,7 @@ mod tests {
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
+                backstopped: false,
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Color,
                 branch: Branch::Color { encoded: None },

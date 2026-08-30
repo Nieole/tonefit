@@ -722,6 +722,52 @@ fn the_target_size_leads_with_the_panel_height_by_default() {
     assert_eq!(wide, ["01.png", "03.png"]);
 }
 
+/// **算出来的目标尺寸大到分配不下的那一页退回 fit-inside，整趟照样跑完**（页几何批 07 号票）。
+///
+/// 以高为准让宽随源比例算出、阅读上不设上限，而目标宽 = 源宽 × 面板高 ÷ 源高：
+/// 一根长条在面板上算出的尺寸能到几亿像素，那块缓冲分配不下会**中止整趟**——
+/// 不是变成一个失败页，是整趟死掉。管线本来有隔离机制专防「一页坏内容毁掉一整卷」
+/// （`CONTEXT.md` 的《失败》），这条用例要的正是那条性质回来。
+///
+/// 退回的是 fit-inside，**不是失败页**：那一页的像素是好的，退回来仍然读得了，
+/// 变成一张白页反而丢内容。
+///
+/// 写在 `run` 这个 seam 上而不只写在几何那一层：几何那一层答得出「该退回」，
+/// 答不出「整趟真的跑完了、别的页一点没受影响」。
+#[test]
+fn a_page_whose_target_would_not_fit_in_memory_falls_back_and_the_run_finishes() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 整页纯墨：裁边一个像素都拿不走，这一页走得到的只有兜底那一条。
+    volume.page("01.png", &fixtures::solid(fixtures::DEGENERATE_STRIP, 0));
+    // 一张普通页做对照，四边顶着墨，裁边同样不插一脚。
+    volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+
+    let report = run_volume(&space, &volume);
+
+    let pages = &report.volumes[0].pages;
+    assert_eq!(pages.len(), 2);
+    // 整趟跑完了，而那一页也没被记成失败页——卷因此仍在干净的去处。
+    assert_eq!(report.failures().count(), 0);
+    assert!(!report.any_isolated());
+    // 退回 fit-inside：3000×100 等比缩进面板是 1264×42。以高为准会算出 50400×1680。
+    let backed_off = Size::new(1264, 42);
+    assert_eq!(pages[0].size, backed_off);
+    assert_eq!(fixtures::read_png(&pages[0].output).size, backed_off);
+    assert!(pages[0].backstopped());
+    // 门照旧问它，而且照 fit-inside 那条判：宽那条边贴住了面板。
+    assert_eq!(pages[0].gate(), Some(GeometryGate::Holds));
+    // **逐页可指认**：用户要知道哪几页没按点名的方式适配。
+    let named: Vec<_> = report
+        .backstopped()
+        .map(|page| page.source.file_name().expect("页有名字").to_owned())
+        .collect();
+    assert_eq!(named, ["01.png"]);
+    // **其余页一点不受影响**：照旧按以高为准出，1441×2048 → 1182×1680。
+    assert_eq!(pages[1].size, Size::new(1182, 1680));
+    assert!(!pages[1].backstopped());
+}
+
 /// **普通漫画页两种适配方式产出同一个尺寸。**
 ///
 /// 那不是巧合，是「页比面板更瘦长、本来就受高度约束」的直接后果：两条路上宽都由同一个

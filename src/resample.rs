@@ -328,7 +328,7 @@ mod tests {
             for height in 1..=6000u32 {
                 for width in [height * 3 / 4, height * 2, height / 3] {
                     let source = Size::new(width.max(1), height);
-                    let target = fit.target(source, PANEL);
+                    let target = fit.target(source, PANEL).size();
                     let scaling = Scaling::plan(source, target);
 
                     assert!(

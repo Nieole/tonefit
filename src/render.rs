@@ -106,10 +106,11 @@ pub fn pages(volume: &VolumeReport) -> String {
     let mut text = String::new();
     for page in &volume.pages {
         text.push_str(&format!(
-            "  {}  {}{}  {}\n",
+            "  {}  {}{}{}  {}\n",
             page.size,
             crop_note(page),
             scaling_note(page),
+            backstop_note(page),
             page.output.display()
         ));
         text.push_str(&format!("    {}\n", page_line(page)));
@@ -117,12 +118,14 @@ pub fn pages(volume: &VolumeReport) -> String {
     text
 }
 
-/// 末尾那三小结：输出宽超过面板、部分救回、隔离。各自一页都没有就一个字都不说。
+/// 末尾那四小结：输出宽超过面板、兜底上界退回、部分救回、隔离。
+/// 各自一页都没有就一个字都不说。
 ///
 /// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
 pub fn tail(report: &Report) -> String {
     let mut text = overflow_tail(report);
+    text.push_str(&backstop_tail(report));
     text.push_str(&salvage_tail(report));
     text.push_str(&isolation_tail(report));
     text
@@ -153,6 +156,33 @@ fn overflow_tail(report: &Report) -> String {
          换 --fit inside 能把它们压回面板以内，代价是跨页重新被压扁\n  {}\n",
         pages.len(),
         f64::from(widest.width) / f64::from(panel),
+        first_few_names(&pages)
+    )
+}
+
+/// **兜底上界**退回去的那些页，紧挨着上一小结（07 号票）。
+///
+/// 排在「输出宽超过面板」后面，因为两者说的是同一件事的两头：那一头是宽出去了但仍然出得来，
+/// 这一头是宽到再走下去整趟都要停。两张清单**不重叠**——退回之后的页恒在面板宽以内。
+///
+/// 这不是一个开关，用户没得选，报告因此只在真发生时说话，抬头一个字都不提
+/// （与裁边那条互锁同一个待遇，见 05 号票的处置 ②）。上界那个数跟着印出来，
+/// 与裁法那两个数同一条规矩：数摆出来，读的人自己判断。
+///
+/// 一页都没有就一个字都不说——真实素材整批都是这个样子（实测最宽的一页只有面板宽的
+/// 3.22 倍，离这道线还有 13 倍，见 measurements 的《适配方式：fit-inside 与以高为准》）。
+fn backstop_tail(report: &Report) -> String {
+    let pages: Vec<&PageReport> = report.backstopped().collect();
+    if pages.is_empty() {
+        return String::new();
+    }
+    format!(
+        "兜底上界 {} 页：按 {} 算出的目标尺寸越过 {} 像素，这几页改按 fit-inside 出——\
+         再照原样算下去那块缓冲分配不下，整趟都要停。够得着这道线的是宽高比极端的源页，\
+         不是页上画着什么\n  {}\n",
+        pages.len(),
+        report.fit,
+        tonefit::max_target_pixels(),
         first_few_names(&pages)
     )
 }
@@ -257,6 +287,21 @@ fn crop_note(page: &PageReport) -> String {
     match page.crop() {
         Some(crop) if crop.trimmed() => format!("{crop} · "),
         _ => String::new(),
+    }
+}
+
+/// 一页那一行里说兜底上界的那一小截，排在最后（07 号票）。
+///
+/// **真退回过才说话**，与裁边那一小截同一条规矩。它排在缩放后面：那一行顺着
+/// 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」读下来，而兜底改的是最后那一步的规矩。
+///
+/// 末尾那一小结数的是**这一趟**有几页，而且只点名头几页；「哪一页」要逐页翻得到，
+/// 靠的是这一小截（07 号票：退回这件事逐页可指认）。
+fn backstop_note(page: &PageReport) -> String {
+    if page.backstopped() {
+        " · 兜底退回 fit-inside".to_owned()
+    } else {
+        String::new()
     }
 }
 
@@ -593,6 +638,7 @@ mod tests {
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -639,6 +685,7 @@ mod tests {
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
@@ -750,6 +797,7 @@ mod tests {
                 size: Size::new(800, 1000),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     // 源比目标小：按不放大原样输出，一条边都贴不住面板。
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
@@ -804,6 +852,7 @@ mod tests {
                 size: Size::new(5056, 1680),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     scaling: Scaling::plan(Size::new(5056, 1680), Size::new(5056, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -834,6 +883,99 @@ mod tests {
         assert!(text.contains("不成立 0 页"), "{text}");
     }
 
+    /// **兜底上界退回去的页要在末尾点名**（07 号票）。
+    ///
+    /// 用户点了一种适配方式，这几页却不是照它出的——报告不说，就只剩输出里几张莫名其妙
+    /// 小一号的页。它自成一小结、不并进「输出宽超过面板」那一段：退回之后的页恒在面板宽
+    /// 以内，压根不会落在那张清单里，两处说的是同一件事的两头。
+    #[test]
+    fn the_pages_the_backstop_pulled_back_are_named_at_the_end() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
+        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        // 一根 3000×100 的长条：以高为准算出 50400×1680，退回 fit-inside 之后是 1264×42。
+        let report = one_page_report(
+            profile,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 42),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: Crop::keeping_all(Size::new(3000, 100)),
+                    backstopped: true,
+                    scaling: Scaling::plan(Size::new(3000, 100), Size::new(1264, 42)),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
+                    },
+                }),
+            },
+        );
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(text.contains("兜底上界 1 页"), "{text}");
+        // 是哪一页要点名——报告里翻不回去就等于没说。
+        assert!(text.contains("library/volume-a/001.jpg"), "{text}");
+        // 逐页那一行自己也说得出：末尾那一小结只点名头几页，翻得到的是这一小截。
+        assert!(text.contains("兜底退回 fit-inside"), "{text}");
+        // 上界那个数摆出来，读的人自己判断它对手上这批素材成不成立。
+        assert!(
+            text.contains(&tonefit::max_target_pixels().to_string()),
+            "{text}"
+        );
+        // 退回的目的地也要说：用户点的是以高为准，出来的却是 fit-inside 的尺寸。
+        assert!(text.contains("fit-inside"), "{text}");
+        // 这一页在面板宽以内，不该同时出现在「输出宽超过面板」那一段里。
+        assert!(!text.contains("输出宽超过面板"), "{text}");
+    }
+
+    /// 一页都没退回时**一个字都不说**：真实素材整批都是这个样子（07 号票）。
+    ///
+    /// 与另外三小结同一条规矩。这条用例与上一条一起把「只在真发生时说话」钉死——
+    /// 少了它，一个恒真的小结也能让上一条通过。
+    #[test]
+    fn a_run_where_the_backstop_never_fired_says_nothing_about_it() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
+        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let report = one_page_report(
+            profile,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1182, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: vec![CandidateScore { candidate, score }],
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
+                    },
+                }),
+            },
+        );
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(!text.contains("兜底"), "{text}");
+    }
+
     /// **报告逐页说得出这一页裁掉了多少**（页几何批 02 号票），而没裁的页一个字不说。
     ///
     /// 裁边那一小截排在缩放**之前**：裁边发生在适配之前，读的人顺着
@@ -855,6 +997,7 @@ mod tests {
             size: Size::new(1260, 1680),
             outcome: PageOutcome::Whole(Processed {
                 crop,
+                backstopped: false,
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -918,6 +1061,7 @@ mod tests {
             size: Size::new(1264, 1680),
             outcome: PageOutcome::Whole(Processed {
                 crop: nothing_trimmed(),
+                backstopped: false,
                 scaling: typical_scaling(),
                 color,
                 branch,
@@ -1070,6 +1214,7 @@ mod tests {
             size: Size::new(1264, 1680),
             outcome: PageOutcome::Whole(Processed {
                 crop: nothing_trimmed(),
+                backstopped: false,
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -1157,6 +1302,7 @@ mod tests {
         );
         let processed = |reason| Processed {
             crop: nothing_trimmed(),
+            backstopped: false,
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
@@ -1243,6 +1389,7 @@ mod tests {
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1286,6 +1433,7 @@ mod tests {
             outcome: PageOutcome::Salvaged {
                 page: Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1353,6 +1501,7 @@ mod tests {
                 size: Size::new(1264, 1680),
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
+                    backstopped: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {

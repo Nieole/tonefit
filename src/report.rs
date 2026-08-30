@@ -84,6 +84,21 @@ impl Report {
             .filter(move |page| page.size.width > panel)
     }
 
+    /// 本次目标尺寸被**兜底上界**改过的页，按卷序、卷内按阅读顺序（07 号票）。
+    ///
+    /// 这几页没按 [`fit`](Self::fit) 那条规矩出，而是退回了 fit-inside——点名那条路
+    /// 算出的尺寸大到分配不下，照着走整趟都要停（见 `crate::FitMode::target`）。
+    /// 用户点了一种适配方式，报告因此得点得出哪几页不是照它出的。
+    ///
+    /// 与 [`wider_than_the_panel`](Self::wider_than_the_panel) **不重叠**：退回之后的页
+    /// 恒不超过面板宽，一页都不会同时落在两张清单里。
+    pub fn backstopped(&self) -> impl Iterator<Item = &PageReport> {
+        self.volumes
+            .iter()
+            .flat_map(|volume| volume.pages.iter())
+            .filter(|page| page.backstopped())
+    }
+
     /// 本次有没有卷被隔离。退出码要分得开「全部成功」与「有卷被隔离」，问的就是它。
     pub fn any_isolated(&self) -> bool {
         self.volumes.iter().any(VolumeReport::isolated)
@@ -394,6 +409,12 @@ pub struct Processed {
     /// 裁边关着的那一趟是一个原样通过的窗口，与「这一页没什么可裁」长得一样：
     /// 分辨它们靠报告抬头那一行。
     pub crop: Crop,
+    /// 这一页的目标尺寸是**兜底上界**改出来的吗（07 号票）。
+    ///
+    /// 为真的页没按抬头那条适配方式出，而是退回了 fit-inside：点名那条路算出的尺寸
+    /// 大到分配不下，照着走整趟都要停（见 `crate::FitMode::target`）。
+    /// 读的口子在 [`PageReport::backstopped`]，整趟的清单在 [`Report::backstopped`]。
+    pub backstopped: bool,
     /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
     ///
     /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
@@ -516,6 +537,17 @@ impl PageReport {
     /// 这一页裁掉了多少白边（页几何批 02 号票）。失败页没有——它没有像素可裁。
     pub fn crop(&self) -> Option<Crop> {
         self.outcome.processed().map(|page| page.crop)
+    }
+
+    /// 这一页的目标尺寸是**兜底上界**改出来的吗（07 号票）。
+    ///
+    /// 失败页答否，而那是真话不是缺省：它连目标尺寸都没算过，那张占位页按卷内统一尺寸出
+    /// （见 [`PageReport::size`]）。这里因此不是 `Option`——「这一页退回过吗」
+    /// 对每一页都问得出口，而另外几项（缩放、裁边、判定）在失败页上根本不存在。
+    pub fn backstopped(&self) -> bool {
+        self.outcome
+            .processed()
+            .is_some_and(|page| page.backstopped)
     }
 
     /// 这一页失败的原因。处理成了的页是 `None`。
