@@ -78,6 +78,10 @@
   004.png        -          1182x1680  1bit+FS    10748  卷级上包络
   005.png        -          1182x1680  2bit+FS   215607  离群页单独定档
 
+[kobo-libra-2 height crop] envelope-hysteresis-gate-holds
+  几何门 判定范围 60 页 · 不成立 0 页
+  卷级   基准档 2bit · 驱动页 060.png · 主体 60 页 · 离群 0 页 · 迟滞升档 3 页
+
 [kobo-libra-2 height crop] archive.cbz
   几何门 判定范围 2 页 · 不成立 0 页
   卷级   基准档 1bit+FS · 驱动页 001.png · 主体 1 页 · 离群 1 页 · 迟滞升档 0 页

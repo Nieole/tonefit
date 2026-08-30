@@ -2138,29 +2138,32 @@ fn a_dry_run_predicts_what_the_cache_will_hold() {
     assert_eq!(predicted.volumes[0].decodes, 2);
 }
 
-/// 卷级用例的合成卷：`levels` 里每一项造一页，页名按阅读顺序编号。
+/// 卷级用例的合成卷：`levels` 里每一项造一页，页名按阅读顺序编号。页用 `fixtures::TINY`，
+/// 因此只在 **fit-inside** 上还是小页。
 ///
 /// 造页一律用纯色页：判据在纯色页上算得出准数——量化误差就是取值到格点的距离，
 /// 低通与掩蔽加权都不改它。逐页判定因此由取值直接定死，卷级那一层要的正是一条排得开的分布。
 fn volume_of_solids(space: &Workspace, levels: &[u8]) -> fixtures::Volume {
+    volume_of_solids_sized(space, fixtures::TINY, levels)
+}
+
+/// 同上，但点名页尺寸。**默认那条路上的卷级用例走这一条**（08 号票）：
+/// `fixtures::TINY` 在以高为准下会被放大到面板高，一卷六十页的代价涨两个数量级，
+/// 而 `fixtures::NARROW_PASSES_THROUGH` 两种适配方式下都恒等通过。
+fn volume_of_solids_sized(space: &Workspace, size: Size, levels: &[u8]) -> fixtures::Volume {
     let volume = space.volume("volume-a");
     for (index, &level) in levels.iter().enumerate() {
         volume.page(
             &format!("{:03}.png", index + 1),
-            &fixtures::solid(fixtures::TINY, level),
+            &fixtures::solid(size, level),
         );
     }
     volume
 }
 
-/// 逐页判定要 2bit 的纯色页：85 正落在 2bit 的格点上，1bit 上差 85。
-const NEEDS_TWO_BITS: u8 = 85;
-
-/// 逐页判定要 4bit 的纯色页：96 在 2bit 上差 11——过了阈值，但远够不上「显著偏离」。
-const NEEDS_FOUR_BITS: u8 = 96;
-
-/// 逐页判定同样要 4bit，但在 2bit 上差 42：远在界外，离群页判据要的就是这一量级。
-const FAR_OUTSIDE: u8 = 128;
+// 卷级用例造分布用的三个纯色取值在 `fixtures` 那一侧（`NEEDS_TWO_BITS`、
+// `ONE_STEP_ABOVE_TWO_BITS`、`FAR_OUTSIDE`）：黄金回归那个 crate 用的是同一批数，
+// 出处只留一个（08 号票）。
 
 #[test]
 fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_set_it() {
@@ -2178,7 +2181,7 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
     for index in 9..19 {
         volume.page(
             &format!("{:03}.png", index + 1),
-            &fixtures::solid(fixtures::TINY, NEEDS_TWO_BITS),
+            &fixtures::solid(fixtures::TINY, fixtures::NEEDS_TWO_BITS),
         );
     }
 
@@ -2211,8 +2214,8 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     // 离群页不参与上包络，单独定档（ADR 0006 决定第 5 条）。
     // 卷内只有一页远在界外：它自己拿 4bit，主体照旧留在 2bit 上。
     let space = Workspace::new();
-    let mut levels = vec![NEEDS_TWO_BITS; 19];
-    levels.push(FAR_OUTSIDE);
+    let mut levels = vec![fixtures::NEEDS_TWO_BITS; 19];
+    levels.push(fixtures::FAR_OUTSIDE);
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
@@ -2247,8 +2250,8 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
 #[test]
 fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     let space = Workspace::new();
-    let mut levels = vec![NEEDS_TWO_BITS; 18];
-    levels.extend([FAR_OUTSIDE; 2]);
+    let mut levels = vec![fixtures::NEEDS_TWO_BITS; 18];
+    levels.extend([fixtures::FAR_OUTSIDE; 2]);
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
@@ -2410,8 +2413,8 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
 fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let mut levels = vec![NEEDS_TWO_BITS; 19];
-    levels.push(FAR_OUTSIDE);
+    let mut levels = vec![fixtures::NEEDS_TWO_BITS; 19];
+    levels.push(fixtures::FAR_OUTSIDE);
 
     let mut written = 0;
     let mut write = |image: &image::DynamicImage| {
@@ -2442,8 +2445,10 @@ const COLOR_DEVICE: &str = "kobo-libra-colour";
 fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
     // 迟滞限制档位切换频率：一页说了不算，连续够了才升档（ADR 0006 决定第 4 条）。
     // 两个卷除了要求更高的那一段长了一页，其余完全相同。
-    let raised = run_with_a_run_of(3);
-    let unchanged = run_with_a_run_of(2);
+    // 这一条跑在 **fit-inside** 上，几何门在每一页上都不成立，候选集里没有抖动那一维——
+    // 升的因此是位深。默认那条路由下面那一条守着（08 号票），两条路升的不是同一档。
+    let raised = run_with_a_run_of_fitted_inside(3);
+    let unchanged = run_with_a_run_of_fitted_inside(2);
 
     assert_eq!(envelope_of(&raised).raised_pages, 3);
     for page in &raised.pages[30..33] {
@@ -2471,14 +2476,22 @@ fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
     }
 }
 
-/// 六十页的卷，第 31 页起有 `length` 页要求高于基准档。
+/// 六十页的取值：第 31 页起 `length` 页要求高于基准档，其余都是主体页。
 ///
-/// 六十页是 p95 撑得住一段三页的最小规模：秩落在 57，基准档之上还剩得下三页。
-fn run_with_a_run_of(length: usize) -> tonefit::VolumeReport {
+/// **六十页是 p95 撑得住一段三页的最小规模**：秩 `ceil(0.95n)` 要落在主体页上，
+/// 即 `ceil(0.95n) ≤ n-3`，解得 n ≥ 60；60 页时秩是 57，基准档之上还剩得下三页。
+/// 这条不等式数的是页在判定序列上的**名次**，与候选集是三个还是六个无关——
+/// 两条适配方式因此喂同一串取值，差别全在页尺寸上（08 号票）。
+fn levels_with_a_run_of(length: usize) -> Vec<u8> {
+    let mut levels = vec![fixtures::NEEDS_TWO_BITS; 60];
+    levels[30..30 + length].fill(fixtures::ONE_STEP_ABOVE_TWO_BITS);
+    levels
+}
+
+/// [`levels_with_a_run_of`] 那一卷跑在 **fit-inside** 上。
+fn run_with_a_run_of_fitted_inside(length: usize) -> tonefit::VolumeReport {
     let space = Workspace::new();
-    let mut levels = vec![NEEDS_TWO_BITS; 60];
-    levels[30..30 + length].fill(NEEDS_FOUR_BITS);
-    let volume = volume_of_solids(&space, &levels);
+    let volume = volume_of_solids(&space, &levels_with_a_run_of(length));
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
@@ -2487,11 +2500,76 @@ fn run_with_a_run_of(length: usize) -> tonefit::VolumeReport {
     report.volumes.into_iter().next().expect("一个卷")
 }
 
+/// **迟滞升档在默认适配方式上也真跑一遍**（08 号票，了结停车场 Q6）。
+///
+/// ADR 0006 决定第 4 条是这个产品的核心行为之一，而 `page-geometry/01` 把默认适配方式
+/// 换成以高为准之后，喂它的那几个长卷全留在了 `--fit inside` 上——上面那一条端到端用例
+/// 因此从没在用户默认走的那条路上跑过。`src/envelope.rs` 那一层的单元用例不碰几何，
+/// 丢的不是覆盖，是「默认这一趟真跑一遍」。
+///
+/// **两条路升的不是同一档，所以两条都要留着。** 这一趟的页两种适配方式下都恒等通过，
+/// 几何门于是**每一页都成立**（ADR 0007 决定第 1 条），候选集多出抖动那一维：
+/// 基准档是 `2bit`，而基准档过不了界的那一段升到 `2bit+FS`——**升的是抖动，不是位深**。
+/// fit-inside 那条路上同一批取值升的是 `4bit`，而且走的是另一套机制（兜底取候选上界）：
+/// 两条路各自的判据读数与机制，出处是 `fixtures` 的 `ONE_STEP_ABOVE_TWO_BITS`。
+#[test]
+fn a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_does_not() {
+    let raised = run_with_a_run_of_on_the_default_fit(3);
+    let unchanged = run_with_a_run_of_on_the_default_fit(2);
+
+    // 门在每一页上都成立——这一条与上面那一条的全部差别就在这里。
+    assert!(
+        raised
+            .pages
+            .iter()
+            .all(|page| page.gate() == Some(GeometryGate::Holds)),
+        "夹具不对：这一卷有页落在门外，候选集就不是六个那一套了"
+    );
+
+    let base = Candidate::new(BitDepth::Two, Dither::Off);
+    let stretch = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+    assert_eq!(envelope_of(&raised).base, base);
+    assert_eq!(envelope_of(&raised).raised_pages, 3);
+    for page in &raised.pages[30..33] {
+        assert_eq!(fixtures::verdict(page).candidate, stretch);
+        assert_eq!(fixtures::verdict(page).reason, Reason::Hysteresis);
+    }
+    // 段外的页一页不动：升的是那一段，不是全卷。
+    assert_eq!(fixtures::verdict(&raised.pages[29]).candidate, base);
+    assert_eq!(fixtures::verdict(&raised.pages[33]).candidate, base);
+
+    // 差一页就不算持续，默认路径上同样如此。
+    assert_eq!(envelope_of(&unchanged).raised_pages, 0);
+    for page in &unchanged.pages {
+        assert_eq!(
+            fixtures::verdict(page).candidate,
+            base,
+            "{} 靠不足一段的要求升了档",
+            page.source.display()
+        );
+    }
+}
+
+/// 同一卷跑在**默认适配方式**上：取值一个不改，只把页换成两种适配方式下都恒等通过的
+/// 那一个，几何门因此每一页都成立。
+fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport {
+    let space = Workspace::new();
+    let volume = volume_of_solids_sized(
+        &space,
+        fixtures::NARROW_PASSES_THROUGH,
+        &levels_with_a_run_of(length),
+    );
+
+    let report = run_volume(&space, &volume);
+
+    report.volumes.into_iter().next().expect("一个卷")
+}
+
 #[test]
 fn an_override_leaves_no_volume_envelope_to_speak_of() {
     // `--bit-depth` 顶掉的是判定本身，卷级基准档因此无从谈起——理由仍分得清是覆盖。
     let space = Workspace::new();
-    let volume = volume_of_solids(&space, &[NEEDS_TWO_BITS; 4]);
+    let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 4]);
 
     let report = tonefit::run(&Request {
         bit_depth: Some(BitDepth::Four),
