@@ -4,31 +4,103 @@
 
 **Blocked by:** `page-geometry/04`（跨页拆分会再动一批夹具，现在整理等于整两遍）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `fixtures::gradient` 在默认适配方式下会被裁掉下面 21.6%（那一片 200–255 的浅灰按行列
+- [x] `fixtures::gradient` 在默认适配方式下会被裁掉下面 21.6%（那一片 200–255 的浅灰按行列
       墨量占比就是白边），而它有 **101 处**调用。断言真踩在几何上的已经换成 `full_bleed_gradient`，
       其余原样留着——**风险是后来的人给它们加一条尺寸断言时会撞上一个解释不了的数**
       （1441×2048 的页出成 1507×1680）。逐处判一遍「这一条问不问几何」
-- [ ] `SMALLER_THAN_TARGET`（800×1000）在默认路径上被放大到 1344×1680、像素多 2.8 倍，
+- [x] `SMALLER_THAN_TARGET`（800×1000）在默认路径上被放大到 1344×1680、像素多 2.8 倍，
       而 **53 处**调用仍拿它当「一张便宜的页」。全套测试因此从约 12 秒涨到约 19 秒
       （`tests/container.rs` 0.22 → 2.05 秒是大头）。只要便宜页的那些换成 `fixtures::PASSES_THROUGH`
       （800×1680，两种适配方式下都恒等通过）
-- [ ] `tests/isolation.rs` 的 `a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels`
+- [x] `tests/isolation.rs` 的 `a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels`
       名不副实：名字承诺三条路径各保住自己的像素，实际只断言了五页都写出来、缓存里两页、
       以及 003 与 005 **这两张同一夹具**逐字节相同。五页同尺寸，其余三页的像素一个都没比，
       套上「写出时每页都写第一页的字节」这个变异照样绿——它真正钉住的是缓存序号错格。
       补断言或改名，二选一
-- [ ] `[dev-dependencies]` 里 `encoding_rs` 与 `zip` 两行冗余。原本的解释「集成测试拿不到本包的
+- [x] `[dev-dependencies]` 里 `encoding_rs` 与 `zip` 两行冗余。原本的解释「集成测试拿不到本包的
       普通依赖」不成立（`tests/concurrency.rs` 现在就直接用着只列在 `[dependencies]` 里的 `num_cpus`），
       注释已订正，剩下的是删不删。**`image` 那一处不在此列**——dev 侧要的是 `avif` 编码特性，
       与运行时的 `avif-native` 不是一回事，重列有实义
-- [ ] 闸门（`cargo test`）通过数不减；`cargo fmt --check` 与 `cargo clippy --all-targets` 保持干净
+- [x] 闸门（`cargo test`）通过数不减；`cargo fmt --check` 与 `cargo clippy --all-targets` 保持干净
 
 ## 不要做的
 
 - 不要顺手改产品行为。这张票只让测试说实话。
 - 不要把 `full_bleed_gradient` 换回 `gradient`——四边顶着墨正是它存在的理由。
+
+## 落地记录
+
+**产品行为一行没动**，`src/` 只在变异检验时临时改过一处、当场改回（`git status` 可证）。
+黄金快照一个字节没变。
+
+### `gradient` 那 103 处：逐处判下来是 26 问几何、77 不问
+
+（票面写 101。按 `fixtures::gradient(` 在 `tests/*.rs` 里数出来是 **103** 处，
+不含夹具模块自己那两处定义。差的两处没查是怎么少的，以量出来的为准。）
+
+- **问几何的 26 处**里，**15 处**换成了 `full_bleed_gradient`——它们的断言或注释直接站在
+  页的几何上，而裁边把那个几何改掉了：`tests/concurrency.rs` 的 `TOUCHING`
+  （常量文档写着「以高为准原样输出」，裁完再放大回来，那句话本来是假的）2 处，
+  `tests/pipeline.rs` 里问几何门开合、问「正好两倍面板」、问跨页宽高比的 13 处。
+  其中 `a_spread_without_a_gutter_is_left_whole_and_read_by_panning` 最值得说：
+  裁掉渐变下方那一片会把宽高比从 3.01 推到 3.84，「够得上跨页候选」那一句于是成了裁边送的。
+- 另 **11 处原样留着，理由写在原处**：`tests/golden.rs` 那 10 处是快照本身在记
+  「裁边对这一页做了什么」（`KEPT_MARGINS` 那一节写着），换掉等于把那条路径从快照里删了；
+  `a_salvaged_page_answers_the_geometry_gate_for_itself_only` 那 1 处是部分救回页，
+  裁边根本不作用在它身上（02 号票）。
+- **不问几何的 77 处**：其中 26 处顺手换成了 `fixtures::cheap_page()`（与下面那一笔是同一次改动），
+  2 处随 `isolation.rs` 那条用例重写掉了，其余 49 处原样留着——`tests/metric.rs` 那 3 处
+  根本不进管线，别的都只是「一张页」。
+
+**风险从源头上收掉了**：`fixtures::gradient` 的文档里现在写着默认那条路会裁掉它下面 21.6%、
+1441×2048 出成 1507×1680，以及「问几何、问尺寸、问逐字节相同的一律用 `full_bleed_gradient`」。
+后来的人给它加尺寸断言时，撞上的不再是一个解释不了的数。
+
+### `SMALLER_THAN_TARGET` 那 50 处调用：19 处要几何，31 处换掉
+
+（票面写 53，那是这个名字在文件里出现的次数——含 `tests/concurrency.rs` 的 `use` 那一行
+与夹具模块自己的定义和一处文档引用。真正把它当尺寸传下去的是 **50** 处。）
+
+新加了一个夹具 `fixtures::cheap_page()` = `full_bleed_gradient(PASSES_THROUGH)`。
+**两样凑齐才算数**：那个尺寸让适配方式不起作用，那圈墨边让裁边不起作用——
+只换尺寸的话，页照样被裁成 800×1317 再放大回 1021×1680，`PASSES_THROUGH` 文档里
+「输出与源逐字节相同」那句话仍然不成立。这一条也补进了 `PASSES_THROUGH` 的文档。
+
+换掉的 31 处：`tests/container.rs` 19 处（整个文件问的都是容器形态）、
+`tests/pipeline.rs` 12 处（6 处走 `cheap_page()`，6 处是 `line_art` / `color_page`
+只换尺寸——那几条用例要的是线稿或彩页，不是渐变）。
+留下的 19 处一律是「一条边都贴不住面板」那件事本身的被测对象。
+
+### `isolation.rs` 那条用例：选了补断言，没有改名
+
+名字承诺的三条路径现在各有各的断言：两张灰度页比**逐字节的像素**（`black_top_band`
+黑带高度不同，四边顶着墨、高等于面板高，写出的与源逐个相等），两张彩页比**色带**且宽各不相同，
+失败页比**卷内众数尺寸的一整张纸白**。四张好页两两分得开，任意两格对调都红。
+
+**变异检验**：把 `second_pass` 改成每一页都编第一页（`encode.page(&pages[0], verdicts[0])`），
+这条用例当场红在 `003.png 的尺寸不是它自己的`（120×1680 vs 200×1680）。
+改动已当场撤回，`src/lib.rs` 在提交里没有出现。
+
+### `[dev-dependencies]`
+
+`encoding_rs` 与 `zip` 两行删掉了，`image` 那一行留着并写清了「它不是冗余的重列」。
+夹具照旧用得上那两个包——`[dependencies]` 的非可选项对 `tests/` 那些独立 crate 同样可见。
+
+### 闸门
+
+`cargo test` 381 通过 0 失败（与本票开工前同一个数），`cargo fmt --check` 与
+`cargo clippy --all-targets` 干净。
+
+耗时**这台机器上量不准**：同一份代码连跑三遍 `--test container` 得到 15.9 / 18.0 / 21.3 秒，
+上下浮动三成。能说的是方向与量级——开工前那一趟基线全套 309 秒，改完之后三趟是 280、308、317 秒；
+逐个二进制看，`container` 25.2 → 15.9~21.3、`pipeline` 69.9 → 51.4~67.7、
+`isolation` 12.5 → 9.8~15.2、`concurrency` 11.4 → 9.0。
+
+**这一笔省下来的被两个没动的大头淹掉了**：`golden` 约 100 秒、`idempotency` 约 70 秒，
+两者合起来占全套六成，而本票一处没碰它们。票面说的「12 秒涨到 19 秒」那一档在别的机器上量得出来，
+这台机器整体慢一个数量级，噪声也跟着放大。
 
 ## 停车场结转
 

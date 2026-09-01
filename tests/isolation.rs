@@ -398,15 +398,41 @@ fn a_dry_run_names_the_isolation_directory_without_writing_anything() {
 /// 彩页在彩色 profile 下不进灰度缓存（ADR 0005 决定第 4 条），失败页也不进——页序与缓存序
 /// 因此在**两个**地方脱钩。缓存序号跟着页走而不是第二遍数出来，钉的正是这件事：
 /// 数错一格，就会静默地把另一页的像素写到这一页的位置上。
+///
+/// **四张好页两两分得开**（页几何批 09 号票）：两张彩页各用一个宽，两张灰度页同宽而
+/// 黑带高度不同——任意两格对调都当场红。从前五页同尺寸，断言只有三句：五页都写出来、
+/// 缓存里两页、以及 003 与 005 这两张**同一夹具**逐字节相同；「写出时每页都写第一页的
+/// 字节」那个变异套上去照样绿——名字承诺的三条路径里，真被比过像素的一条都没有。
+///
+/// 高一律取面板高（`PANEL`）：这样的页两种适配方式下都原样输出（页几何批 01 号票）。
+/// 裁边在这两类页上也都是空操作——灰度那一张四边顶着墨（见 `fixtures::black_top_band`），
+/// 彩页最下面那条色带是纯黑，每一列都有墨。写出的像素因此与源逐个相等，等号写得起。
+/// 灰度页只有纯黑与纯白两个取值，在任何一档位深上都是格点，量化与抖动对它们都是恒等；
+/// 彩页不量化（ADR 0005 决定第 4 条），按色带取样。
+///
+/// 失败页那一格按**卷内众数**尺寸留白占位（见 `tonefit` 的 `uniform_size`）：
+/// 两张灰度页共用一个宽，两张彩页各用一个，众数因此是灰度页那个尺寸，写得出字面值。
 #[test]
 fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("001.png", &fixtures::color_page(fixtures::TINY));
+    // 灰度页那一对：同宽（好让它成为卷内众数），黑带高度不同。
+    let gray_size = Size::new(200, PANEL.height);
+    let grays = [(2, "003.png", 8u32), (4, "005.png", 151u32)];
+    // 彩页那一对：宽各不相同，与灰度页也不同——两条分支之间串位一样要红。
+    let colors = [
+        (0, "001.png", Size::new(120, PANEL.height)),
+        (3, "004.png", Size::new(180, PANEL.height)),
+    ];
+
+    // 写下去的与读回来比的是同一批名字与尺寸：两处各写一份就会各自漂。
+    for (_, name, size) in colors {
+        volume.page(name, &fixtures::color_page(size));
+    }
+    for (_, name, black_rows) in grays {
+        volume.page(name, &fixtures::black_top_band(gray_size, black_rows));
+    }
     volume.file("002.png", b"not a png at all");
-    volume.page("003.png", &fixtures::gradient(fixtures::TINY));
-    volume.page("004.png", &fixtures::color_page(fixtures::TINY));
-    volume.page("005.png", &fixtures::gradient(fixtures::TINY));
 
     let report = fixtures::run_volume_with(&space, &volume, fixtures::profile("kobo-libra-colour"));
 
@@ -418,15 +444,39 @@ fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
     for page in &reported.pages {
         assert!(page.output.is_file(), "{} 没写出来", page.output.display());
     }
-    // 003 与 005 是同一张渐变图，**写出来的像素**必须一模一样——不同就是缓存序号串了位。
-    //
-    // 比的是像素而不是整个文件：记录里有「这一张来自哪个源成员」那一项（页几何批 04 号票），
-    // 两张页的来路不同，字节因此本来就不同。那一项正是为了让来路分得开，
-    // 拿它去证「缓存没串位」等于让这条用例改测另一件事。
-    let third = fixtures::read_png(&reported.pages[2].output);
-    let fifth = fixtures::read_png(&reported.pages[4].output);
-    assert_eq!(third.size, fifth.size);
-    assert_eq!(third.pixels, fifth.pixels, "缓存序号串位了");
+
+    // 灰度路径那两格：尺寸是它自己的，像素与源逐个相等。
+    for (index, name, black_rows) in grays {
+        let written = fixtures::read_png(&reported.pages[index].output);
+        assert_eq!(written.size, gray_size, "{name} 的尺寸不是它自己的");
+        assert_eq!(
+            written.pixels,
+            fixtures::luma_pixels(&fixtures::black_top_band(gray_size, black_rows)),
+            "{name} 装的不是它自己的像素"
+        );
+    }
+
+    // 彩色分支那两格：尺寸各是自己的，色带一条不少。
+    for (index, name, size) in colors {
+        let written = fixtures::read_color_png(&reported.pages[index].output);
+        assert_eq!(written.size, size, "{name} 的尺寸不是它自己的");
+        for (band, expected) in fixtures::COLOR_BANDS.iter().enumerate() {
+            assert_eq!(
+                written.pixel(size.width / 2, fixtures::band_center_row(size, band)),
+                *expected,
+                "{name} 的第 {band} 条色带"
+            );
+        }
+    }
+
+    // 失败页那一格：卷内众数尺寸的一整张纸白——它顶住位置，但不冒充内容，
+    // 也没有拿到别人的像素。
+    let placeholder = fixtures::read_png(&reported.pages[1].output);
+    assert_eq!(placeholder.size, gray_size, "占位页不是卷内众数尺寸");
+    assert!(
+        placeholder.pixels.iter().all(|&pixel| pixel == 255),
+        "占位页装的不是纸白"
+    );
 }
 
 /// 源库只读：坏页与好页一样，源那一侧一个字节都不动（spec 的 story 10）。

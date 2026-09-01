@@ -52,12 +52,9 @@ harness = false
 # 夹具要按字节手搓 ZIP——`zip` 的写入端只收 Rust 字符串，编不出 GBK 成员名，
 # 也置不出「没有 UTF-8 标志」这个恰恰要测的状态。
 crc32fast = "1.5.1"
-# 夹具要按 GBK 编成员名，测试要绕开被测代码读回归档。
-# 这两个在 `[dependencies]` 里也各有一份，重列是冗余的——`[dependencies]` 的非可选项
-# 对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着 `num_cpus`）。
-# 该不该把这两行删掉见《非阻塞问题》，不在 09 号票的范围里。
-encoding_rs = "0.8.35"
 # 夹具生成器要写出 AVIF；`avif` 是编码侧特性（ravif），与运行时解码用的 avif-native 不同。
 # resolver v2 不把 dev-dependencies 的特性并进非 dev 构建，`cargo build` 不会带上 ravif。
+# 这一行**不是**冗余的重列：夹具也要 `encoding_rs` 与 `zip`，而那两个只列在 `[dependencies]` 里
+# 就够——非可选项对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着
+# 只列在那边的 `num_cpus`）。`image` 不同：dev 侧要的 `avif` 编码特性运行时那一份没有。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
-zip = "8"

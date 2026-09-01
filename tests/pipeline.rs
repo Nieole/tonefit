@@ -115,10 +115,7 @@ fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page(
-        "02.png",
-        &fixtures::color_page(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("02.png", &fixtures::color_page(fixtures::PASSES_THROUGH));
     volume.page("03.png", &fixtures::solid(fixtures::DOUBLE_PANEL, 200));
 
     let report = run_volume(&space, &volume);
@@ -176,7 +173,7 @@ fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
 fn pages_come_out_in_reading_order() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let page = fixtures::line_art(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::line_art(fixtures::PASSES_THROUGH);
     // 故意让字典序（1、10、2）与阅读顺序（1、2、10）分道扬镳，章节目录同理。
     for name in ["10.png", "2.png", "1.png", "ch10/1.png", "ch2/1.png"] {
         volume.page(name, &page);
@@ -300,9 +297,11 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 两种适配方式都恒等通过的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
+    // 灰度页那一张四边顶着墨：这个尺寸只管缩放，裁边照跑，不挡着它就把「恒等」裁没了
+    // （页几何批 09 号票）。
     let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::color_page(size));
-    volume.page("002.png", &fixtures::gradient(size));
+    volume.page("002.png", &fixtures::full_bleed_gradient(size));
 
     let report = fixtures::run_volume_with(&space, &volume, fixtures::profile("kobo-libra-colour"));
 
@@ -347,7 +346,7 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::color_page(fixtures::PASSES_THROUGH));
-    volume.page("002.png", &fixtures::gradient(fixtures::PASSES_THROUGH));
+    volume.page("002.png", &fixtures::cheap_page());
 
     let report = tonefit::run(&Request {
         profile: fixtures::profile(COLOR_DEVICE),
@@ -385,7 +384,10 @@ fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
             &fixtures::color_page(fixtures::SMALLER_THAN_TARGET),
         );
         // 正好两倍面板的灰度页：贴住，门在它这里是开的。
-        volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+        volume.page(
+            "002.png",
+            &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+        );
         volume
     };
 
@@ -442,7 +444,10 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
     // 源比目标小、又只救回了一段的那一页：一条边都贴不住面板。
     volume.file("001.png", &fixtures::truncated(&small));
     // 正好两倍面板的完好页：贴住，门在它这里是开的。
-    volume.page("002.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+    volume.page(
+        "002.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
 
     // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
@@ -490,9 +495,13 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
         &fixtures::truncated(&fixtures::line_art(fixtures::SMALLER_THAN_TARGET)),
     );
     // 三页完好的渐变正片，都贴得住面板：基准档由它们定出，比那一页高。
-    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("003.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    volume.page("004.png", &fixtures::gradient(fixtures::TYPICAL));
+    // 四边顶着墨，「正好两倍面板」「B 类中位页」这两个形状才真的是它们送进来的形状。
+    volume.page("002.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page(
+        "003.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
+    volume.page("004.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
     // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
@@ -1173,7 +1182,9 @@ fn a_spread_without_a_gutter_is_left_whole_and_read_by_panning() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 竖直渐变的宽幅页：每一列长得一模一样，一条空白列都挑不出来。
-    volume.page("001.png", &fixtures::gradient(fixtures::SPREAD));
+    // 四边顶着墨，裁边因此不动它的宽高比——裁掉渐变下方那一片会把 3.01 推到 3.84，
+    // 「够得上跨页候选」就成了裁边送的，而不是夹具造的（页几何批 09 号票）。
+    volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
     let report = run_volume(&space, &volume);
 
@@ -1270,7 +1281,7 @@ fn a_volume_that_mixes_single_pages_and_spreads_lands_both_right() {
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     volume.page("002.png", &spread_page());
-    volume.page("003.png", &fixtures::gradient(fixtures::SPREAD));
+    volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
     let report = run_volume(&space, &volume);
 
@@ -1660,10 +1671,7 @@ fn one_page_with(size: Size, filter: Filter) -> Vec<u8> {
 fn the_report_names_the_profile_and_the_panel_it_used() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
     // 覆盖过灰阶数的 profile：报告要给出本次实际用的那块面板，而不是内置表里的原样。
     let profile = fixtures::profile("boox-tab-x")
         .with_gray_levels(8)
@@ -1683,10 +1691,7 @@ fn the_source_volume_is_left_untouched() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page(
-        "002.jpg",
-        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("002.jpg", &fixtures::line_art(fixtures::PASSES_THROUGH));
     let before = fixtures::fingerprint(volume.path());
 
     run_volume(&space, &volume);
@@ -1702,10 +1707,7 @@ fn the_source_volume_is_left_untouched() {
 fn files_that_are_not_pages_are_not_pages() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
     volume.file("ComicInfo.xml", b"<ComicInfo/>");
 
     let report = run_volume(&space, &volume);
@@ -1718,7 +1720,7 @@ fn files_that_are_not_pages_are_not_pages() {
 #[test]
 fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
     let space = Workspace::new();
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     let first = space.volume("volume-a");
     first.page("ch1/001.png", &page);
     let second = space.volume("volume-b");
@@ -1746,7 +1748,7 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
 fn two_pages_that_would_share_one_output_are_refused() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 扩展名一换成 png，这两页就撞在同一个输出上。
     volume.page("001.jpg", &page);
     volume.page("001.png", &page);
@@ -1767,10 +1769,7 @@ fn an_empty_scope_is_refused() {
 fn writing_into_the_source_volume_is_refused() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
     let before = fixtures::fingerprint(volume.path());
 
     let error = tonefit::run(&Request {
@@ -1809,10 +1808,7 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page(
-        "002.png",
-        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("002.png", &fixtures::line_art(fixtures::PASSES_THROUGH));
     volume.file("ComicInfo.xml", b"<ComicInfo/>");
     let before = fixtures::fingerprint(volume.path());
 
@@ -1853,13 +1849,13 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
 fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
     // 候选是两道裁剪的乘积，都在判据求值之前：位深按面板灰阶数裁（ADR 0003），
     // 抖动模式按这一页的几何门裁（ADR 0007）。这一页贴住面板，门放行，
-    // 于是每档位深各两个候选。
+    // 于是每档位深各两个候选。页四边顶着墨，裁边不改它贴住的是哪条边。
     let cases = [(None, 16), (Some(4), 4), (Some(256), 256)];
 
     for (gray_levels, effective) in cases {
         let space = Workspace::new();
         let volume = space.volume("volume-a");
-        volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+        volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
         let mut profile = fixtures::baseline_profile();
         if let Some(gray_levels) = gray_levels {
             profile = profile.with_gray_levels(gray_levels).expect("级数可用");
@@ -1986,10 +1982,13 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
 fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    volume.page("002.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page(
+        "001.png",
+        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+    );
+    volume.page("002.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     // 跨页宽幅页贴住的是宽边，两侧留边换成上下留边，门同样成立。
-    volume.page("003.png", &fixtures::gradient(fixtures::SPREAD));
+    volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
     let report = run_volume(&space, &volume);
 
@@ -2113,10 +2112,7 @@ fn the_lowest_bit_depth_within_the_threshold_wins() {
     // 后者恒是候选上界，位深判定就白做了。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::line_art(fixtures::PASSES_THROUGH));
 
     let report = run_volume(&space, &volume);
 
@@ -2217,9 +2213,11 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
 fn a_dither_the_geometry_gate_forbids_is_refused() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
+    // 四边顶着墨：门问的是裁完之后的几何，而这一条要的是「源两边都比面板小」本身
+    // 关的门，不是裁边替它关的（页几何批 09 号票）。
     volume.page(
         "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
     );
 
     let error = tonefit::run(&Request {
@@ -2297,10 +2295,7 @@ fn a_bit_depth_the_panel_cannot_show_is_refused() {
     // 上界只有 `--gray-levels` 动得了，错误信息因此必须指向它。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
 
     let error = tonefit::run(&Request {
         bit_depth: Some(BitDepth::Eight),
@@ -2426,10 +2421,7 @@ fn every_page_is_decoded_exactly_once() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page(
-        "002.png",
-        &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("002.png", &fixtures::line_art(fixtures::PASSES_THROUGH));
     volume.page("003.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
     // 透传文件不解码，也就不计数。
     volume.file("ComicInfo.xml", b"<ComicInfo/>");

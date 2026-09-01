@@ -27,15 +27,23 @@ use tonefit::{
 /// 高取基准面板的 1680（`fixtures::BASELINE_DEVICE`），宽远不到面板宽。这个尺寸是
 /// **两种适配方式的公共不动点**：高已经等于面板高，以高为准原样输出，fit-inside
 /// 也不放大——本文件因此两条路上都跑得快，而门在两条路上都开着。
+///
 /// 本文件要的正是门开着：候选集里带着抖动那一维，判据每页多求几个，
 /// 乱序跑与顺着跑的差别才有地方露出来。
+///
+/// 拿它跑的页一律配 `fixtures::full_bleed_gradient` 那圈墨边（页几何批 09 号票）：
+/// 裁边一裁，「原样输出」当场不成立——渐变下方那 21.6% 亮于墨阈的白边会被裁掉，
+/// 页于是又要被放大回面板高，上面那句话就成了假话。
 const TOUCHING: Size = Size::new(200, 1680);
 
 /// 一个够长的卷：页数多到几条读取线程真的会互相错开。
 fn long_volume(space: &Workspace, name: &str) -> fixtures::Volume {
     let volume = space.volume(name);
     for index in 0..24 {
-        volume.page(&format!("{index:03}.png"), &fixtures::gradient(TOUCHING));
+        volume.page(
+            &format!("{index:03}.png"),
+            &fixtures::full_bleed_gradient(TOUCHING),
+        );
     }
     volume.file("ComicInfo.xml", b"<ComicInfo/>");
     volume
@@ -193,7 +201,10 @@ fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
     let directory = long_volume(&space, "volume-a");
     let mut archive = space.cbz("volume-b");
     for index in 0..8 {
-        archive.page(&format!("{index:03}.png"), &fixtures::gradient(TOUCHING));
+        archive.page(
+            &format!("{index:03}.png"),
+            &fixtures::full_bleed_gradient(TOUCHING),
+        );
     }
     let archive = archive.write();
 

@@ -21,10 +21,7 @@ const APPLE_DOUBLE: &[u8] = &[0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00];
 fn a_directory_volume_carries_its_non_page_files_across_byte_for_byte() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
     volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
 
     let report = run_volume(&space, &volume);
@@ -38,7 +35,7 @@ fn a_directory_volume_carries_its_non_page_files_across_byte_for_byte() {
 fn a_cbz_volume_is_read_without_unpacking_and_comes_back_out_as_a_cbz() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 故意让字典序与阅读顺序分道扬镳：包内成员与目录成员走同一套排序。
     cbz.page("10.jpg", &page)
         .page("2.png", &page)
@@ -64,7 +61,7 @@ fn a_cbz_volume_is_read_without_unpacking_and_comes_back_out_as_a_cbz() {
 fn an_archive_page_is_reported_as_the_volume_path_plus_its_member_name() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 两章并列，`ch1` 因此不是包装层，成员名里留得住一级目录。
     cbz.page("ch1/001.jpg", &page).page("ch2/001.jpg", &page);
     let path = cbz.write();
@@ -87,7 +84,7 @@ fn an_archive_page_is_reported_as_the_volume_path_plus_its_member_name() {
 fn member_names_that_are_not_utf8_are_decoded_instead_of_mangled() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // GBK 名且不置 UTF-8 标志。按规范的 cp437 去解，「第」会变成一串乱码。
     cbz.gbk_page("第02话/001.png", &page)
         .gbk_page("第01话/001.png", &page)
@@ -113,7 +110,7 @@ fn member_names_that_are_not_utf8_are_decoded_instead_of_mangled() {
 fn a_wrapper_directory_inside_the_archive_does_not_survive_into_the_output() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 打包工具惯常把整卷塞进一个同名目录，连目录项一起写出来。
     cbz.directory("volume-a")
         .directory("volume-a/ch1")
@@ -135,7 +132,7 @@ fn a_wrapper_directory_inside_the_archive_does_not_survive_into_the_output() {
 fn every_level_that_holds_the_whole_volume_is_stripped_not_just_the_first() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 嵌了两层，两层都装着整卷。没有兄弟的目录不承担顺序，一路剥到底。
     cbz.page("raw/第01话/001.png", &page)
         .page("raw/第01话/002.png", &page);
@@ -153,7 +150,7 @@ fn every_level_that_holds_the_whole_volume_is_stripped_not_just_the_first() {
 fn parallel_top_level_directories_are_not_a_wrapper_and_stay() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 两个并列的顶层目录开始承担顺序了，剥掉就把两章合并了。
     cbz.page("ch1/001.png", &page).page("ch2/001.png", &page);
     let path = cbz.write();
@@ -175,7 +172,7 @@ fn parallel_top_level_directories_are_not_a_wrapper_and_stay() {
 fn a_mac_packed_archive_ignores_its_sidecars_and_stays_out_of_isolation() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     cbz.directory("volume-a")
         .page("volume-a/001.png", &page)
         .page("volume-a/002.png", &page)
@@ -207,7 +204,7 @@ fn a_mac_packed_archive_ignores_its_sidecars_and_stays_out_of_isolation() {
 fn a_sidecar_that_sits_next_to_the_pages_is_not_carried_across_either() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     // 这一份没有 `__MACOSX` 那一层：拷到 exFAT 上再打包就是这个样子。
     cbz.page("001.png", &page)
         .file("._001.png", APPLE_DOUBLE)
@@ -228,10 +225,7 @@ fn a_sidecar_that_sits_next_to_the_pages_is_not_carried_across_either() {
 fn a_directory_volume_ignores_the_same_system_junk() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    volume.page("001.png", &fixtures::cheap_page());
     volume.file("._001.png", APPLE_DOUBLE);
     volume.file(".DS_Store", b"\x00\x00\x00\x01Bud1");
     volume.file("__MACOSX/._001.png", APPLE_DOUBLE);
@@ -257,7 +251,7 @@ fn a_directory_volume_ignores_the_same_system_junk() {
 fn backslash_separated_member_names_are_normalised_not_refused() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     cbz.page(r"volume-a\ch1\001.png", &page)
         .page(r"volume-a\ch2\001.png", &page)
         .file(r"volume-a\ComicInfo.xml", COMIC_INFO.as_bytes());
@@ -285,10 +279,7 @@ fn backslash_separated_member_names_are_normalised_not_refused() {
 fn a_member_name_with_a_drive_letter_is_refused() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        r"C:\001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    cbz.page(r"C:\001.png", &fixtures::cheap_page());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -304,10 +295,7 @@ fn a_member_name_with_a_drive_letter_is_refused() {
 fn a_backslash_written_traversal_is_still_refused_as_a_traversal() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        r"..\..\001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    cbz.page(r"..\..\001.png", &fixtures::cheap_page());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -322,11 +310,8 @@ fn a_backslash_written_traversal_is_still_refused_as_a_traversal() {
 fn an_archive_carries_its_non_page_members_across_byte_for_byte() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    )
-    .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    cbz.page("001.png", &fixtures::cheap_page())
+        .file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
     let before = std::fs::read(&path).expect("读源归档");
 
@@ -375,10 +360,7 @@ fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
 fn an_archive_whose_structure_cannot_be_read_is_refused_without_leaving_output() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    cbz.page("001.png", &fixtures::cheap_page());
     let path = cbz.write_truncated();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -399,11 +381,8 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_error() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
     // 归档结构完好，坏的是这一个成员的字节——只有读到它才看得出来。
-    cbz.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    )
-    .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    cbz.page("001.png", &fixtures::cheap_page())
+        .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -430,10 +409,7 @@ fn a_file_that_is_neither_a_directory_nor_an_archive_is_refused() {
 fn a_member_name_that_would_escape_the_volume_is_refused() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        "../001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    );
+    cbz.page("../001.png", &fixtures::cheap_page());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -451,11 +427,8 @@ fn a_member_name_that_would_escape_the_volume_is_refused() {
 fn an_archive_that_fails_partway_leaves_no_half_written_output() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
-    cbz.page(
-        "001.png",
-        &fixtures::gradient(fixtures::SMALLER_THAN_TARGET),
-    )
-    .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    cbz.page("001.png", &fixtures::cheap_page())
+        .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
     let error = run_paths_expecting_failure(&space, [path.as_path()]);
@@ -478,7 +451,7 @@ fn an_archive_that_fails_partway_leaves_no_half_written_output() {
 #[test]
 fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
     let space = Workspace::new();
-    let page = fixtures::gradient(fixtures::SMALLER_THAN_TARGET);
+    let page = fixtures::cheap_page();
     let request = fixtures::request(&space, [space.cbz("volume-a").path()]);
 
     let mut good = space.cbz("volume-a");
