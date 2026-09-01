@@ -59,7 +59,7 @@ pub use interlock::{Interlock, Voice};
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
-pub use progress::{Progress, ProgressSink};
+pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
     PageBranch, PageOutcome, PageReport, Processed, Report, VolumeReport, VolumeTiming,
@@ -109,14 +109,26 @@ pub fn run(request: &Request) -> Result<Report> {
     // 介质**按路径**探测，一次运行共用一份缓存（ADR 0009 决定第 2 条，见 `medium`）：
     // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
     let mut probes = medium::Probes::new();
-    let volumes = request
-        .inputs
-        .iter()
-        .map(|input| {
-            let medium = probes.medium(input);
-            process_volume(input, request, medium)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // 这一趟的事件流。闩活在这里——一次运行一份，`Request` 复用不到它
+    // （见 [`progress::Events`] 的 `standing`）。
+    let standing = progress::Standing::default();
+    let events = progress::Events::new(request.progress.as_ref(), &standing);
+    // 开工前那几道检查排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
+    // 全局总步数将来也落在这一条上（03 号票：预扫）。
+    events.run_started(request.inputs.len());
+    let mut volumes = Vec::with_capacity(request.inputs.len());
+    for input in &request.inputs {
+        // **卷边界上的检查点**（ADR 0013 决定第 1 条）：收尾让当前卷跑完就停，
+        // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
+        // 中止在这一道上与收尾同样停下；它自己那个**页边界**检查点与丢弃 `partial`
+        // 由 04 号票落地（见 [`Instruction::Abort`]）。
+        if events.standing() != Instruction::Continue {
+            break;
+        }
+        let medium = probes.medium(input);
+        volumes.push(process_volume(input, request, medium, events)?);
+    }
+    events.run_finished();
     Ok(Report {
         profile: request.profile.clone(),
         fit: request.fit,
@@ -150,7 +162,7 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 /// 而不是按一个固定的倍数：不然进度条会停在某个百分比上再也不动。
 ///
 /// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
-/// 剩下的由 `Progress::volume_finished` 一次性了结。
+/// 剩下的由 [`Event::VolumeFinished`] 一次性了结。
 ///
 /// 第二段那个数**也是上界**，理由与上面那条不同：一个源页产出几张要解了像素才知道，
 /// 而这一步在解码之前。取的是[每个源页最多几张](MAX_OUTPUTS_PER_SOURCE_PAGE)——
@@ -239,7 +251,12 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
 /// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
-fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<VolumeReport> {
+fn process_volume(
+    input: &Path,
+    request: &Request,
+    medium: Medium,
+    events: progress::Events,
+) -> Result<VolumeReport> {
     // 这一卷的表：总的从打开卷之前起算，三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。
     let started = Instant::now();
     let mut timing = VolumeTiming::default();
@@ -262,8 +279,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
 
     let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
     let writes = request.mode == Mode::Process;
-    let steps = progress::Steps::new(request.progress.as_ref());
-    steps.started(&volume.root, volume_steps(members, request));
+    events.volume_started(&volume.root, volume_steps(members, request));
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     //
@@ -274,8 +290,9 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 一个源页产出几张由内容决定，而跳过的这一趟一个像素都不碰（见 [`can_skip`]）。
     let mut written_pages = None;
     let fingerprint = if request.metadata {
+        events.pass_started(Pass::Fingerprint);
         timed(&mut timing.fingerprint, || -> Result<_> {
-            let fingerprint = volume_fingerprint(&mut volume, request, &io, steps)?;
+            let fingerprint = volume_fingerprint(&mut volume, request, &io, events)?;
             written_pages = can_skip(&clean, &volume, &fingerprint);
             Ok(Some(fingerprint))
         })?
@@ -284,8 +301,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
         None
     };
     if let Some(output_pages) = written_pages {
-        steps.finished();
-        return Ok(VolumeReport {
+        let report = VolumeReport {
             volume: volume.root,
             output: clean,
             // 跳过的卷是干净的，隔离目录里若还留着一份，那是上一趟坏页时写的。
@@ -303,7 +319,11 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
                 elapsed: started.elapsed(),
                 ..timing
             },
-        });
+        };
+        // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
+        // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
+        events.volume_finished(&report);
+        return Ok(report);
     }
 
     // dry-run 没有第二遍，缓存于是只记账不留页：用量照旧预告得出，临时文件一个不建。
@@ -316,6 +336,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
     let decoder = decode::Decoder::new();
     // 第一遍产出的是**输出页**：一个源页产出的那几张挨着排，卷内页序就是写出顺序。
+    events.pass_started(Pass::First);
     let scored = timed(&mut timing.first_pass, || {
         first_pass(
             &mut volume,
@@ -324,7 +345,7 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             &decoder,
             fingerprint.as_ref(),
             &io,
-            steps,
+            events,
         )
     })?;
     // 预告的张数与真产出的张数在这里第一次同时在手上。预告是**上界**（页几何批 04 号票：
@@ -355,6 +376,9 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
     // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
     if writes {
+        // **续做的决策点就在这一句上**（ADR 0012 决定第 2 条）：汇总已经做完、
+        // 第二遍还没开始。本票只把它报出去，「答收尾就停在这儿」由 06 号票落地。
+        events.pass_started(Pass::Second);
         timed(&mut timing.second_pass, || -> Result<()> {
             let mut sink = Sink::create(&output, volume.container)?;
             let recorder = fingerprint
@@ -365,37 +389,42 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
                 cache: &cache,
                 recorder: recorder.as_ref(),
             };
-            second_pass(&scored, &verdicts, &encode, &mut sink, steps)?;
+            second_pass(&scored, &verdicts, &encode, &mut sink, events)?;
             for extra in &volume.extras {
                 let bytes = volume.reader.read(extra)?;
                 sink.write_extra(&extra.relative, &bytes)?;
-                steps.step();
+                events.step();
             }
             sink.finish()
         })?;
     }
-    steps.finished();
 
     let pages = scored
         .into_iter()
         .zip(verdicts)
         .map(|(page, verdict)| page.into_report(&output, verdict, uniform))
         .collect();
-    Ok(VolumeReport {
+    // 缓存的用量在拼报告**之前**读回来：读它要抢那一把锁，而下一句就要把报告交给观察者，
+    // 而观察者可能很久不返回（见 `progress` 的模块文档）。写在结构体字面量里的话，
+    // 那个临时的 guard 要活到整条 `let` 语句结束——这一行把它掐在自己这一句里。
+    let cache = lock(&cache).usage();
+    let report = VolumeReport {
         volume: volume.root,
         output,
         superseded,
         pages,
         source_pages,
         verdict,
-        cache: lock(&cache).usage(),
+        cache,
         decodes: decoder.decodes(),
         io,
         timing: VolumeTiming {
             elapsed: started.elapsed(),
             ..timing
         },
-    })
+    };
+    events.volume_finished(&report);
+    Ok(report)
 }
 
 /// 这一卷在另一个去处留着的上一趟输出，没有就是 `None`（12 号票的「过期副本」）。
@@ -698,9 +727,22 @@ impl OutputPage {
         }
     }
 
+    /// 这一页为什么失败，没失败就是 `None`。
+    ///
+    /// 事件流报「一页失败了」那一条用它取原因（见 [`Compute::page`]）。
+    fn failure(&self) -> Option<&str> {
+        match &self.outcome {
+            Outcome::Failed { reason } => Some(reason),
+            Outcome::Processed { .. } => None,
+        }
+    }
+
     /// 这一页失败了吗。一卷里只要有一页答是，整卷就进隔离目录。
+    ///
+    /// 问的是 [`failure`](Self::failure)：「失败了吗」与「为什么失败」只有一个出处，
+    /// 两处各自 `matches!` 一遍，将来多一种失败就会有一处忘了改。
     fn failed(&self) -> bool {
-        matches!(self.outcome, Outcome::Failed { .. })
+        self.failure().is_some()
     }
 
     /// 这一页的几何门判定。判定范围之外的页没有——彩色分支上的页不在范围内
@@ -862,7 +904,7 @@ fn first_pass(
     decoder: &decode::Decoder,
     fingerprint: Option<&Fingerprint>,
     io: &IoPlan,
-    steps: progress::Steps,
+    events: progress::Events,
 ) -> Result<Vec<OutputPage>> {
     // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）。
     let candidates = Candidates::new(request)?;
@@ -881,7 +923,7 @@ fn first_pass(
         cache,
         fingerprint,
         candidates: &candidates,
-        steps,
+        events,
     };
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
         read::reads(reader, &members, io.readers, read::BUDGET)
@@ -921,7 +963,7 @@ struct Compute<'a> {
     fingerprint: Option<&'a Fingerprint>,
     /// 两套候选集。这一页判出门之后现取一套（见 [`Candidates::for_gate`]）。
     candidates: &'a Candidates,
-    steps: progress::Steps<'a>,
+    events: progress::Events<'a>,
 }
 
 impl Compute<'_> {
@@ -930,6 +972,13 @@ impl Compute<'_> {
     ///
     /// 报到一步，不是几步：步按**源页**数（`CONTEXT.md` 的《进度》：第一遍走每一页），
     /// 而一张源页读一次、解一次，切成几张不改变这一遍的工作量。
+    ///
+    /// 失败页在这里就报出去，不等整卷跑完（09 号票：失败页出现的当场就在主区可见）。
+    /// 报在这一层而不在造出它的那一层：坏字节与解不出来的图各从各的地方回来，
+    /// 而两条路最后都汇到这个返回值上——报在汇合处，以后多一种失败也不会漏报。
+    ///
+    /// 两条报到都在解码与切分**之后**：这条线程此刻一把锁都没拿着（缓存那把在
+    /// [`Compute::gray_page`] 里进出），而观察者可能很久不返回（见 `progress` 的模块文档）。
     fn page(
         &self,
         source: &Path,
@@ -937,7 +986,12 @@ impl Compute<'_> {
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
         let pages = self.split_and_branch(source, relative, bytes)?;
-        self.steps.step();
+        for page in &pages {
+            if let Some(reason) = page.failure() {
+                self.events.page_failed(&page.source, reason);
+            }
+        }
+        self.events.step();
         Ok(pages)
     }
 
@@ -1274,7 +1328,7 @@ fn second_pass(
     verdicts: &[Option<Verdict>],
     encode: &Encode,
     sink: &mut Sink,
-    steps: progress::Steps,
+    events: progress::Events,
 ) -> Result<()> {
     let work: Vec<(&OutputPage, Option<Verdict>)> = pages
         .iter()
@@ -1288,7 +1342,7 @@ fn second_pass(
             .collect::<Result<Vec<_>>>()?;
         for ((page, _), bytes) in batch.iter().zip(&encoded) {
             sink.write_page(&page.target, bytes)?;
-            steps.step();
+            events.step();
         }
     }
     Ok(())
@@ -1368,7 +1422,7 @@ fn volume_fingerprint(
     volume: &mut Volume,
     request: &Request,
     io: &IoPlan,
-    steps: progress::Steps,
+    events: progress::Events,
 ) -> Result<Fingerprint> {
     let Volume {
         pages,
@@ -1387,7 +1441,7 @@ fn volume_fingerprint(
             Ok(bytes) => hasher.member(relative, bytes),
             Err(_) => hasher.unreadable(relative),
         }
-        steps.step();
+        events.step();
     }
     Ok(Fingerprint::new(request, hasher.finish()))
 }
@@ -2279,6 +2333,7 @@ mod tests {
         };
         let tally = Tally::default();
         let watching = ProgressSink::new(tally.clone());
+        let standing = progress::Standing::default();
 
         let mut sink = Sink::create(&out, Container::Directory).expect("建输出容器");
         second_pass(
@@ -2286,7 +2341,7 @@ mod tests {
             &[verdict, verdict],
             &encode,
             &mut sink,
-            progress::Steps::new(Some(&watching)),
+            progress::Events::new(Some(&watching), &standing),
         )
         .expect("写出这两张");
         sink.finish().expect("收尾");
@@ -2312,7 +2367,8 @@ mod tests {
         assert_eq!(tally.steps(), 2);
     }
 
-    /// 数第二遍报到了几步。观察者那一端只关心次数，卷路径与预告的步数在别处测。
+    /// 数第二遍报到了几步。观察者那一端只关心「走完一步」这一种事件，
+    /// 别的事件长什么样在 `progress` 与 `tests/events.rs` 里测。
     #[derive(Clone, Default)]
     struct Tally(Arc<AtomicUsize>);
 
@@ -2323,12 +2379,11 @@ mod tests {
     }
 
     impl Progress for Tally {
-        fn volume_started(&self, _volume: &Path, _steps: u64) {}
-
-        fn stepped(&self) {
-            self.0.fetch_add(1, Ordering::Relaxed);
+        fn observe(&self, event: Event<'_>) -> Instruction {
+            if matches!(event, Event::Stepped { .. }) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+            Instruction::Continue
         }
-
-        fn volume_finished(&self) {}
     }
 }

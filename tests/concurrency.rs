@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use fixtures::{SMALLER_THAN_TARGET, Workspace};
 use tonefit::{
-    ChosenBy, Dither, FitMode, GeometryGate, IoMode, Mode, Progress, ProgressSink, Request, Size,
-    Verdict,
+    ChosenBy, Dither, Event, FitMode, GeometryGate, Instruction, IoMode, Mode, Progress,
+    ProgressSink, Request, Size, Verdict,
 };
 
 /// 一条贴住面板高边的窄页：几何门成立，而像素少到几十页连跑也不慢。
@@ -321,6 +321,9 @@ fn a_dither_the_gate_forbids_is_refused_naming_the_same_page_every_time() {
 }
 
 /// 记账用的进度观察者：管线报的每一步都落在这里。
+///
+/// 本文件只问「预告了多少步、真走了多少步、收没收尾」这三件事，别的事件一概不记——
+/// 事件流本身的形状在 `tests/events.rs` 里测。
 #[derive(Clone, Default)]
 struct Tally(Arc<Counts>);
 
@@ -335,16 +338,20 @@ struct Counts {
 }
 
 impl Progress for Tally {
-    fn volume_started(&self, _volume: &Path, steps: u64) {
-        self.0.started.lock().expect("记账没有中毒").push(steps);
-    }
-
-    fn stepped(&self) {
-        self.0.advanced.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn volume_finished(&self) {
-        self.0.finished.fetch_add(1, Ordering::Relaxed);
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        match event {
+            Event::VolumeStarted { steps, .. } => {
+                self.0.started.lock().expect("记账没有中毒").push(steps);
+            }
+            Event::Stepped { .. } => {
+                self.0.advanced.fetch_add(1, Ordering::Relaxed);
+            }
+            Event::VolumeFinished { .. } => {
+                self.0.finished.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        Instruction::Continue
     }
 }
 

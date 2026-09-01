@@ -13,8 +13,8 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, Interlock, IoMode, Mode, Profile, Progress,
-    ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
+    Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
 };
 
 #[derive(Parser)]
@@ -463,8 +463,9 @@ impl Bar {
     }
 }
 
-impl Progress for Bar {
-    fn volume_started(&self, volume: &Path, steps: u64) {
+impl Bar {
+    /// 起一条新的：这一卷叫什么、这一趟最多走多少步。
+    fn start(&self, volume: &Path, steps: u64) {
         let name = volume.file_name().map_or_else(
             || volume.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
@@ -480,17 +481,34 @@ impl Progress for Bar {
         bar.set_message(name);
         *self.current() = Some(bar);
     }
+}
 
-    fn stepped(&self) {
-        if let Some(bar) = self.current().as_ref() {
-            bar.inc(1);
+impl Progress for Bar {
+    /// 事件流里它只认三条：开卷起一条、走一步进一格、跑完抹掉。
+    ///
+    /// 其余的事件命令行这一路当下没有去处——「在走哪一遍」与「哪一页失败了」
+    /// 报告里说得更全，而全局那一条要等预扫（03 号票）。`_` 那一支不是遗漏：
+    /// [`Event`] 非穷尽，多一个变体不该逼着这里跟着改（ADR 0011 的《后果》）。
+    ///
+    /// 回的恒是[继续](Instruction::Continue)：两级停要有人按，而命令行这一路
+    /// 还没有那个键——它是会话那一头的事（ADR 0013 决定第 3 条说命令行同样用得上，
+    /// 接线留给按停那几张票）。
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        match event {
+            Event::VolumeStarted { volume, steps, .. } => self.start(volume, steps),
+            Event::Stepped { .. } => {
+                if let Some(bar) = self.current().as_ref() {
+                    bar.inc(1);
+                }
+            }
+            Event::VolumeFinished { .. } => {
+                if let Some(bar) = self.current().take() {
+                    bar.finish_and_clear();
+                }
+            }
+            _ => {}
         }
-    }
-
-    fn volume_finished(&self) {
-        if let Some(bar) = self.current().take() {
-            bar.finish_and_clear();
-        }
+        Instruction::Continue
     }
 }
 

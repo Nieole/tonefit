@@ -773,7 +773,7 @@ fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
 
 /// 跑一趟，开工那一刻把源里的透传文件抽走，返回那个错误。
 ///
-/// 造「写到一半才失败」用它：成员在 `volume_started` 之前就枚举完了，读到它是第二遍的事，
+/// 造「写到一半才失败」用它：成员在 `Event::VolumeStarted` 之前就枚举完了，读到它是第二遍的事，
 /// 那时页已经写进临时容器。目录卷没有归档那种坏 CRC 可造——文件系统上一个文件
 /// 要么读得出来，要么根本不在。
 fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> anyhow::Error {
@@ -846,17 +846,21 @@ impl WatchDuringRun {
 }
 
 impl tonefit::Progress for WatchDuringRun {
-    fn volume_started(&self, _volume: &Path, _steps: u64) {
-        self.look();
+    /// 开卷与走完一步这两条上各看一眼。
+    ///
+    /// 一卷跑完那一条上**不看**：收尾改名排在它之前，此刻最终位置上应该已经是一整卷了。
+    /// 别的事件同理不看——它们与「最终位置上此刻有几个成员」无关。
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        match event {
+            tonefit::Event::VolumeStarted { .. } => self.look(),
+            tonefit::Event::Stepped { .. } => {
+                self.seen.lock().expect("记一步").steps += 1;
+                self.look();
+            }
+            _ => {}
+        }
+        tonefit::Instruction::Continue
     }
-
-    fn stepped(&self) {
-        self.seen.lock().expect("记一步").steps += 1;
-        self.look();
-    }
-
-    /// 收尾排在这条报到之前，此刻最终位置上**应该**已经是一整卷了——不看。
-    fn volume_finished(&self) {}
 }
 
 /// 开工那一刻把源里的一个文件抽走：成员已经枚举过，读到它时就读不出来了。
@@ -873,13 +877,12 @@ impl RemoveAtStart {
 }
 
 impl tonefit::Progress for RemoveAtStart {
-    fn volume_started(&self, _volume: &Path, _steps: u64) {
-        let _ = std::fs::remove_file(&self.path);
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if matches!(event, tonefit::Event::VolumeStarted { .. }) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+        tonefit::Instruction::Continue
     }
-
-    fn stepped(&self) {}
-
-    fn volume_finished(&self) {}
 }
 
 /// 一个归档里成员名的清单，按归档里的顺序。
