@@ -16,6 +16,7 @@ indicatif = "0.18.6"
 lz4_flex = "0.14.0"
 num_cpus = "1.17.0"
 png = "0.18.1"
+ratatui = { version = "0.30.2", optional = true }
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -41,7 +42,9 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [features]
+default = ["tui"]
 ssimulacra2 = ["dep:ssimulacra2"]
+tui = ["dep:ratatui"]
 
 # 真实素材冒烟自带 harness，只为把「本次没跑」说得出口。理由见 `tests/smoke.rs` 的模块文档。
 [[test]]

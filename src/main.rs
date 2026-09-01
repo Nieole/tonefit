@@ -2,9 +2,15 @@
 //!
 //! 出来的文字长什么样不在这里，在 [`render`]——命令行与会话共用同一套措辞，
 //! 那一套因此不该长在任何一个入口里面。
+//!
+//! **无参数即会话，带参数即直接跑**（`CONTEXT.md` 的《会话》）。分岔在
+//! [`without_arguments`]，排在 clap **之前**：带参数那一路因此一字不变，
+//! 连必填项的判定都没有被松动过。
 
 mod preset;
 mod render;
+#[cfg(feature = "tui")]
+mod session;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -528,7 +534,33 @@ fn exit_code(report: &Report) -> u8 {
     }
 }
 
+/// 不带任何参数敲 `tonefit` 时走的那一条：**会话**。
+///
+/// 它排在 [`Cli::parse`] **之前**，这是本票唯一一处动到入口的地方。
+/// 为什么非得在 clap 之前：`--out`、`--profile`、卷三项必填，无参数交到 clap 手上
+/// 就是一条「缺了什么」的错误，而那正是要拦下的那一趟。反过来，
+/// **带参数的命令行一个字都没改**——参数只要有一个，这里立刻让路
+/// （`-p` 因此不必放宽必填，见 [`REQUIRED_BY_CLAP`]）。
+///
+/// 「有没有参数」问的是 `args_os`：程序名之外一个都没有才算数。
+/// 不问 clap，因为要在它开口之前就分岔。
+///
+/// 关掉 `tui` 特性时它恒不接手，无参数照旧落到 clap 的必填项错误上
+/// （spec 的《依赖》：库使用者 `default-features = false` 即可甩掉终端库）。
+#[cfg(feature = "tui")]
+fn without_arguments() -> Option<Result<u8>> {
+    (std::env::args_os().len() <= 1).then(session::enter)
+}
+
+#[cfg(not(feature = "tui"))]
+fn without_arguments() -> Option<Result<u8>> {
+    None
+}
+
 fn execute() -> Result<u8> {
+    if let Some(session) = without_arguments() {
+        return session;
+    }
     let cli = Cli::parse();
     if let Some(Command::Calibrate {
         profile,

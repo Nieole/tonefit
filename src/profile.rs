@@ -184,6 +184,19 @@ impl Profile {
         Ok(self)
     }
 
+    /// 内置表里的全部型号规范名，按表里的次序。
+    ///
+    /// **给会话挑型号用的**（`p1-session/08`）：命令行上用户自己敲名字，认不出时
+    /// [`resolve`](Self::resolve) 的错误把清单端出来；而会话里没有那条错误——
+    /// 光标停在型号那一行、左右键换一个，那就要一份**枚举得出来**的清单。
+    ///
+    /// 它不是新 seam，是既有类型上的一个访问器：清单本来就从 `resolve` 的错误里出得来，
+    /// 这里只是不必先制造一次失败。两处同一张内置表，次序也同一个：
+    /// 按厂商分组、组内从小屏到大屏。
+    pub fn devices() -> impl Iterator<Item = &'static str> {
+        DEVICES.iter().map(|(device, _)| *device)
+    }
+
     /// 解析到的型号规范名。
     pub fn device(&self) -> &'static str {
         self.device
@@ -400,6 +413,27 @@ mod tests {
         assert_eq!(color.panel().resolution, monochrome.panel().resolution);
         assert_eq!(color.panel().ppi, monochrome.panel().ppi);
         assert_ne!(color.panel(), monochrome.panel());
+    }
+
+    /// 枚举出来的清单与那条错误里的清单是**同一份**，每一项都解析得回它自己。
+    ///
+    /// 会话挑型号靠前者、命令行报错靠后者（见 [`Profile::devices`]）：
+    /// 两处走散的话，屏上挑得到的型号会有敲不出来的，或者反过来。
+    #[test]
+    fn the_enumerated_models_are_the_ones_the_table_lists() {
+        let listed: Vec<&str> = Profile::devices().collect();
+
+        assert_eq!(listed.len(), DEVICES.len());
+        let message = unknown_device_error("没这个型号").to_string();
+        for device in listed {
+            assert_eq!(
+                Profile::resolve(device)
+                    .expect("枚举出来的就是规范名")
+                    .device(),
+                device
+            );
+            assert!(message.contains(device), "错误里少了 {device}");
+        }
     }
 
     /// 清单要全：用户挑替身是从这段文字里挑的，漏掉的型号等于不存在。

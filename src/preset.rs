@@ -376,7 +376,10 @@ impl From<&Preset> for OnDisk {
 ///
 /// `CacheBudget` 的 `Display` 顶不了这件事——那一份是给人看的（`512 MiB`），
 /// 而 `parse` 读不回来。往返用例逐个验 `parse(spell(x)) == x`。
-fn spell_budget(budget: CacheBudget) -> String {
+///
+/// 会话也拿它（`p1-session/08`）：光标停在缓存预算那一行按下回车时，缓冲里摆的
+/// 必须是**改一个字就能再收下**的写法，而那与写进预设的写法是同一件事。
+pub fn spell_budget(budget: CacheBudget) -> String {
     const UNITS: [(u64, &str); 3] = [(1024 * 1024 * 1024, "G"), (1024 * 1024, "M"), (1024, "K")];
     let bytes = budget.bytes();
     for (scale, suffix) in UNITS {
@@ -439,33 +442,39 @@ fn no_such_preset_error<P>(name: &str, presets: &BTreeMap<String, P>) -> anyhow:
     anyhow!("预设文件里没有「{name}」。有的是：{}。", names.join(" "))
 }
 
+/// 一份每一项都写满的预设。往返用例要的是「每一项都验过」，不是「随便挑几项」。
+///
+/// 会话那一侧的用例也拿它（`crate::session::state`）：屏上的两层与盘上的两层格数对不对得上，
+/// 靠的正是这一份「说满了」的预设——它**没有 `..Default::default()`**，
+/// 往任何一层加一个字段，这里当场编译不过；补完之后盘上那一节就多一个键，
+/// 而屏上的行数没跟着变，那一条断言随之变红。
+#[cfg(test)]
+pub fn every_field() -> Preset {
+    Preset {
+        device: DeviceLayer {
+            profile: Some("boox-poke6".to_owned()),
+            gray_levels: Some(12),
+            threshold: Some(4.75),
+        },
+        taste: TasteLayer {
+            fit: Some(FitMode::Inside),
+            crop: Some(false),
+            split: Some(false),
+            split_threshold: Some(SplitThreshold::parse("1.75").expect("是个正数")),
+            reading_order: Some(ReadingOrder::LeftToRight),
+            filter: Some(Filter::Hamming),
+            bit_depth: Some(BitDepth::Two),
+            dither: Some(Dither::FloydSteinberg),
+            per_page: Some(true),
+            cache_budget: Some(CacheBudget::parse("1G").expect("认得的写法")),
+            io_mode: Some(IoMode::Concurrent),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 一份每一项都写满的预设。往返用例要的是「每一项都验过」，不是「随便挑几项」。
-    fn every_field() -> Preset {
-        Preset {
-            device: DeviceLayer {
-                profile: Some("boox-poke6".to_owned()),
-                gray_levels: Some(12),
-                threshold: Some(4.75),
-            },
-            taste: TasteLayer {
-                fit: Some(FitMode::Inside),
-                crop: Some(false),
-                split: Some(false),
-                split_threshold: Some(SplitThreshold::parse("1.75").expect("是个正数")),
-                reading_order: Some(ReadingOrder::LeftToRight),
-                filter: Some(Filter::Hamming),
-                bit_depth: Some(BitDepth::Two),
-                dither: Some(Dither::FloydSteinberg),
-                per_page: Some(true),
-                cache_budget: Some(CacheBudget::parse("1G").expect("认得的写法")),
-                io_mode: Some(IoMode::Concurrent),
-            },
-        }
-    }
 
     /// 一份预设文件的正文，装着 `name` 这一个预设。
     fn one(name: &str, preset: &Preset) -> String {
