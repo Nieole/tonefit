@@ -15,16 +15,26 @@
 //!
 //! # 三层与终端分开
 //!
-//! 状态机在 [`state`]，一个终端都不碰；逐层补全在 [`complete`]；画法在 [`draw`]。
+//! 状态机在 [`state`]，一个终端都不碰；边跑边攒的那一份在 [`live`]，同样不碰；
+//! 逐层补全在 [`complete`]；起线程在 [`run`]；画法在 [`draw`]。
 //! 这一层剩下的只有三件事：进出终端、把键码翻译成 [`state::Key`]、在两者之间转一个循环。
 //! spec 的 story 44（会话的状态机脱离终端可测）因此不必靠自觉——
-//! 那三个模块的用例连终端都开不起来。
+//! 那几个模块的用例连终端都开不起来。
+//!
+//! # 一趟跑起来之后
+//!
+//! [`tonefit::run`] 一进去就跑到底，会话这一头还得接着画、接着认键，因此它在
+//! **另一条线程**上（见 [`run::Running`]）。循环于是不再是「等一个键」，而是
+//! 「等一个键，最多等 [`TICK`] 那么久」——没等到就画下一帧，跑着的那一趟因此看得见在动。
 
 mod complete;
 mod draw;
+mod live;
+mod run;
 mod state;
 
 use std::io::{IsTerminal, Stderr, stderr};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
@@ -36,42 +46,91 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
-use state::{Exit, Key, Session};
+use run::Running;
+use state::{Action, Exit, Key, Session};
+
+/// 没等到按键时隔多久重画一帧。
+///
+/// 跑着的那一趟就是靠它动起来的：事件从计算线程上折进 [`live::Live`]，而把它画出来的
+/// 只有这一条循环。取八十毫秒——比人眼看得出的停顿短，又不至于把一趟长任务的
+/// CPU 花在画横条上。
+const TICK: Duration = Duration::from_millis(80);
 
 /// 进会话，跑到用户退出为止。
 ///
-/// 出的是这一趟的退出码。本票的会话还跑不了任何东西（试算与执行归 `p1-session/09`），
-/// 因此退出码恒是[全部成功](crate::SUCCESS_EXIT)那个数。
+/// 出的是**最后那一趟**的退出码，与命令行那一路同一套（见 [`live::Live::exit_code`]）：
+/// 全部成功 `0`、有卷被隔离 `2`、有卷没做成 `3`、拒绝执行 `1`。一趟都没跑过是 `0`。
+///
+/// 退出前把那份报告照原格式印到 **stdout**：会话整个画在 stderr 上，
+/// `tonefit > 报告.txt` 因此仍然成立。
 pub fn enter() -> Result<u8> {
     if !stderr().is_terminal() {
         return Err(no_terminal_error());
     }
     let mut screen = Screen::open()?;
     let mut session = Session::new();
-    // 终端**一定**要还回去：`?` 提前返回、恐慌展开，走的都是 `Screen` 的 `Drop`。
-    let outcome = drive(&mut screen, &mut session);
+    // 跑着的那一趟**一定**要收手：`?` 提前返回、恐慌展开，走的都是 `Running` 的 `Drop`。
+    // 终端同理，走 `Screen` 的 `Drop`。
+    let mut running = Running::default();
+    let outcome = drive(&mut screen, &mut session, &mut running);
     drop(screen);
     outcome?;
-    Ok(crate::SUCCESS_EXIT)
+    // 报告印在终端还回去**之后**：印进 alternate screen 的话它会随着那一屏一起消失。
+    if let Some(report) = running.report() {
+        print!("{report}");
+    }
+    Ok(running.exit_code())
 }
 
-/// 画一屏、等一个键、做掉它，直到用户退出。
-fn drive(screen: &mut Screen, session: &mut Session) -> Result<()> {
+/// 画一屏、等一个键（最多等 [`TICK`]）、做掉它，直到用户退出。
+fn drive(screen: &mut Screen, session: &mut Session, running: &mut Running) -> Result<()> {
     loop {
-        screen.terminal.draw(|frame| draw::shell(frame, session))?;
-        // 只认按下去那一下：Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍。
-        let Event::Key(pressed) = event::read()? else {
-            continue;
-        };
-        if pressed.kind != KeyEventKind::Press {
-            continue;
-        }
-        if let Some(key) = translate(&pressed)
-            && session.press(key) == Exit::Leave
         {
-            return Ok(());
+            // 借着锁画：画完当场还回去，计算线程最多等一帧的功夫（见 `Running::live`）。
+            let live = running.live();
+            screen
+                .terminal
+                .draw(|frame| draw::shell(frame, session, live.as_deref()))?;
+        }
+        if event::poll(TICK)? {
+            // 只认按下去那一下：Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍。
+            let Event::Key(pressed) = event::read()? else {
+                continue;
+            };
+            if pressed.kind == KeyEventKind::Press
+                && let Some(key) = translate(&pressed)
+                && press(session, running, key) == Exit::Leave
+            {
+                running.leave();
+                return Ok(());
+            }
+        }
+        // 那一趟跑完了：配置又改得动。
+        if running.reap() {
+            session.run_finished();
         }
     }
+}
+
+/// 把一个键交给会话。
+///
+/// **只有[起一趟](Action::Start)这一支不走 [`Session::press`]**：起线程、拼 `Request`、
+/// 把观察者接上去都在这一层，而状态机一个终端都不碰、也不起线程。
+/// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
+fn press(session: &mut Session, running: &mut Running, key: Key) -> Exit {
+    // 问一次就够：`Start` 之外的原样交回状态机，不让它再问一遍。
+    let action = session.action(key);
+    let Action::Start(mode) = action else {
+        return session.act(action);
+    };
+    match session.request(mode) {
+        Ok(request) => {
+            running.start(request);
+            session.run_started();
+        }
+        Err(error) => session.complain(format!("{error:#}")),
+    }
+    Exit::Stay
 }
 
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。

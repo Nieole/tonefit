@@ -23,6 +23,9 @@ use tonefit::{
     CandidateScore, Mode, PageBranch, PageColor, PageReport, Profile, Report, Voice, VolumeReport,
     VolumeVerdict, aggregation, composition,
 };
+// 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
+#[cfg(feature = "tui")]
+use tonefit::{Instruction, RunOutcome};
 
 /// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
 ///
@@ -558,7 +561,7 @@ fn first_few_names(pages: &[&PageReport]) -> String {
 /// 原因是由内到外的整条错误链，最外一环指得出是哪一页、卡在哪一步。
 fn page_line(page: &PageReport) -> String {
     let Some(branch) = page.branch() else {
-        return format!("失败 {}", page.failure().expect("没有分支的页必是失败页"));
+        return failure_line(page.failure().expect("没有分支的页必是失败页"));
     };
     // 部分救回页标在行首（04 号票）：它有判定、有判据、有自己的尺寸，逐页那一行因此
     // 与一张完好页长得一模一样，而它的判据是在一页大半留白的图上求出来的。
@@ -586,6 +589,14 @@ fn page_line(page: &PageReport) -> String {
     }
 }
 
+/// 失败页那一句：**原因原样带上**（spec 的 story 26）。
+///
+/// 逐页那一行（[`pages`]）与会话「出现的当场」那一段（[`failing_pages`]）说的是
+/// 同一句话——一份是结果，一份是增量，而措辞只有这一处。
+fn failure_line(reason: &str) -> String {
+    format!("失败 {reason}")
+}
+
 /// 一页各候选的判据值排成一行，候选由小到大。
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
@@ -593,6 +604,78 @@ fn score_line(scores: &[CandidateScore]) -> String {
         .map(|scored| format!("{} {}", scored.candidate, scored.score))
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+/// 这一趟**至今为止**失败的那些页，出现一条画一条（09 号票的会话主区）。
+///
+/// 一页都没有就一个字都不说，与末尾那几小结同一条规矩。
+///
+/// 它与逐页那一行（[`pages`] 里失败页那一支）说的是同一件事、同一份原因——
+/// 那一份是结果，这一段是**增量**（见 `tonefit::Event::PageFailed`）。
+/// 会话非要它不可，是因为报告区默认只给卷级，而卷级那几行只说得出「几页失败」、
+/// 说不出为什么（见 [`isolated_line`]），何况那一行要等整卷跑完才有。
+///
+/// 命令行不画它：那一路攒完才印，那时逐页那几行已经把话说全了。
+/// 措辞仍然只有这一处——会话画的是它，不是自己另编的一句。
+///
+/// 它因此是本模块**唯一**挂着特性开关的一个：关掉 `tui` 就没有会话，
+/// 也就没有人读它。措辞留在这里而不是搬进会话，是为了让它与 [`pages`] 里那一句
+/// 挨着——两句说的是同一件事，走散了没人发现。
+#[cfg(feature = "tui")]
+pub fn failing_pages<'a>(pages: impl Iterator<Item = (&'a Path, &'a str)>) -> String {
+    let mut text = String::new();
+    for (page, reason) in pages {
+        if text.is_empty() {
+            text.push_str("失败页（出现的当场，逐页那几行在整卷跑完后才有）\n");
+        }
+        // 页名一行、原因一行，缩进与那一句都与逐页那两行一样（见 [`pages`] 与
+        // [`failure_line`]）：同一件事在屏上不该长成两个样子。
+        text.push_str(&format!(
+            "  {}\n    {}\n",
+            page.display(),
+            failure_line(reason)
+        ));
+    }
+    text
+}
+
+/// 这一趟是怎么**收的场**（`CONTEXT.md` 的《进度》：收场）。
+///
+/// 与 [`failing_pages`] 同一条：会话是它眼下唯一的读者（命令行那一路不印收场），
+/// 措辞却仍旧留在这里——它说的是报告上的一格（`Report::outcome`），
+/// 而报告的措辞只有本模块一处。会话直接印 `{:?}` 的话，中文界面上会冒出
+/// `Stopped(Abort)` 这种 Rust 标识符。
+///
+/// 逐个变体都列出来、不留 `_`：[`RunOutcome`] 与 [`Instruction`] 都**不是**非穷尽的
+/// （后者的文档写着为什么：它是库外要造出来的东西），多一种收场该怎么说，
+/// 是个要当场拿的主意。
+#[cfg(feature = "tui")]
+pub fn outcome(outcome: RunOutcome) -> String {
+    match outcome {
+        RunOutcome::Completed => "点名的卷都走过了".to_owned(),
+        RunOutcome::Stopped(Instruction::Finish) => {
+            "按停（收尾）：当前卷跑完就停了，剩下的卷一个都没开工".to_owned()
+        }
+        RunOutcome::Stopped(Instruction::Abort) => {
+            "按停（中止）：当前卷丢掉了，它等于没做，剩下的卷一个都没开工".to_owned()
+        }
+        // `Stopped` 里恒不是「继续」（见 `RunOutcome::of`）。真到了这里说明库那一侧
+        // 改了那条性质，而这一句至少不撒谎。
+        RunOutcome::Stopped(Instruction::Continue) => "按停停在半路".to_owned(),
+        // 报告上出不来（那一趟返回的是错误本身），事件流上到得了。
+        RunOutcome::Refused => "拒绝执行".to_owned(),
+    }
+}
+
+/// 一个卷在屏上叫什么：路径的最后一段，取不出就整条路径。
+///
+/// 命令行的进度条（`crate::Bar::start`）与会话的当前卷条（会话批的 09 号票）
+/// 印的是同一个名字，因此只有这一处。
+pub fn volume_name(volume: &Path) -> String {
+    volume.file_name().map_or_else(
+        || volume.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// 标定图写出去之后印的那几行：图在哪儿，以及**此刻**要做对的那一件事。

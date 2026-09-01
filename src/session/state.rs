@@ -8,7 +8,8 @@
 //! 按键与状态的规矩由 [`Session::action`] 一处答完——它是纯函数，
 //! 「哪些键在哪个状态下有效」那张表就是它，用例直接问它
 //! （本模块的 `which_keys_do_what_in_which_state` 逐条问过它）。
-//! [`Session::press`] 只是「问一次 `action`，再把它做掉」。
+//! [`Session::act`] 只是「把 `action` 说的那件事做掉」，用例那一侧的
+//! [`Session::press`] 把两步并成一步。
 //!
 //! # 三层照预设那一份分
 //!
@@ -30,7 +31,8 @@
 use std::path::PathBuf;
 
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Profile, ReadingOrder, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Mode as RunMode, Profile, ReadingOrder,
+    Request, SplitThreshold,
 };
 
 use super::complete;
@@ -83,6 +85,15 @@ pub enum Action {
     Commit,
     /// 编辑中：丢掉缓冲，回到浏览。
     Cancel,
+    /// 起一趟：[试算](RunMode::DryRun)或[执行](RunMode::Process)。
+    ///
+    /// 两者**是同一件事的两半**，区别只在做到哪一步（`CONTEXT.md` 的《会话》：
+    /// 试算就是会话里按下去的那一次 dry-run），因此是一个带参数的动作、不是两个变体——
+    /// 分成两个，「试算与执行走同一条回路」这句话就得靠自觉。
+    ///
+    /// 真把线程起起来的那件事**不在状态机里**（见 [`Session::apply`]）：
+    /// 本模块一个终端都不碰，也不该起线程。
+    Start(RunMode),
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -284,6 +295,12 @@ pub enum Mode {
     Browsing,
     /// 某一行正在被打字改。
     Editing(Edit),
+    /// 一趟正跑着。**设备层与口味层这时只读**（spec 的《会话：布局与交互》）：
+    /// 卷与卷之间换参数，报告顶上那行 `profile` 就开始撒谎。
+    ///
+    /// 「只读」不是靠画法上灰，是靠 [`Session::action`] 在这个状态下一个改动键都不派
+    /// （见 [`running_action`]）。
+    Running,
 }
 
 /// 正在编辑的那一行。
@@ -300,9 +317,13 @@ pub struct Edit {
 
 /// 一个会话。
 ///
-/// 这一票只做骨架：三层可改、按键退出。试算与执行（`09`）、两级停（`10`）、
-/// 逐页展开（`11`）、预设的存取（`12`）、一键出标定图（`13`）都还没接上，
+/// 三层可改、按 `t` 试算、按 `x` 执行、按键退出。两级停（`10`）、逐页展开（`11`）、
+/// 预设的存取（`12`）、一键出标定图（`13`）、单卷续做（`14`）都还没接上，
 /// 它们各自会往这里加状态。
+///
+/// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
+/// 攒着的那份报告与两条进度在 [`super::live::Live`] 上。分开是因为它们的寿命不同——
+/// 会话一个，跑过的趟一趟一份。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session {
     /// 设备层：预设装的那一层，一格不多一格不少。
@@ -372,6 +393,75 @@ impl Session {
         self.notice.as_deref()
     }
 
+    /// 说一句。跑不起来的那几种（型号没挑、输出根没填）就是靠它说出口的。
+    pub fn complain(&mut self, said: String) {
+        self.notice = Some(said);
+    }
+
+    /// 一趟跑起来了：进 [`Mode::Running`]，配置从这一刻起只读。
+    pub fn run_started(&mut self) {
+        self.notice = None;
+        self.mode = Mode::Running;
+    }
+
+    /// 那一趟收场了：回到浏览，配置又改得动。
+    ///
+    /// **不叫 `Live::run_finished`。** 那一个折的是 `RunFinished` 那条**事件**
+    /// （库说「这一趟完了」），这一个改的是**会话**此刻在做什么——两件事，两个接收者。
+    pub fn run_finished(&mut self) {
+        if self.mode == Mode::Running {
+            self.mode = Mode::Browsing;
+        }
+    }
+
+    /// 把三层拼成这一趟的 [`Request`]。**试算与执行只差 `mode` 一格**
+    /// （`CONTEXT.md` 的《会话》：两者是同一条回路的两半）。
+    ///
+    /// 口味层每一项落到默认值那一步走 [`TasteLayer`] 自己那几个方法——命令行
+    /// 「命令行没点、预设也没说」那一档读的是同一个（见 `crate::Cli`），
+    /// 默认值因此没有第二个出处。型号那一步走 [`crate::target_profile`]，
+    /// 命令行与 `calibrate` 用的也是它：三处解析出来的必须是同一块面板。
+    ///
+    /// **只有两项在这里挡**：型号与输出根。它们在 `Request` 上不是 `Option`，
+    /// 拼不出来就无从下手。范围为空不在这里挡——那句话库那一侧已经有了
+    /// （`run` 的「处理范围为空」），会话再写一句就是第二份措辞。
+    pub fn request(&self, mode: RunMode) -> anyhow::Result<Request> {
+        let Some(device) = self.device.profile.as_deref() else {
+            anyhow::bail!("先挑型号：目标尺寸与判据都从那块面板上来，没有它跑不起来");
+        };
+        let Some(output_root) = self.scope.out.clone() else {
+            anyhow::bail!("先填输出根：每个卷在它下面得到一份同名副本");
+        };
+        let taste = &self.taste;
+        Ok(Request {
+            inputs: self
+                .scope
+                .volumes
+                .iter()
+                .filter(|picked| picked.on)
+                .map(|picked| picked.path.clone())
+                .collect(),
+            output_root,
+            profile: crate::target_profile(device, self.device.gray_levels, self.device.threshold)?,
+            fit: taste.fit(),
+            crop: taste.crop(),
+            split: taste.split_rule(),
+            filter: taste.filter(),
+            bit_depth: taste.bit_depth,
+            dither: taste.dither,
+            per_page: taste.per_page(),
+            cache_budget: taste.cache_budget(),
+            mode,
+            io_mode: taste.io_mode(),
+            // 会话里没有 `--no-metadata` 那一项：它一开就把记录与幂等一起关掉，
+            // 而那是对**这一批输出**的处置，不是一份存得住的立场（见 `preset::TasteLayer`）。
+            metadata: true,
+            // 观察者由起线程的那一层接上去（见 [`super::run::Running::start`]）：
+            // 本模块一个终端都不碰，也不该起线程。
+            progress: None,
+        })
+    }
+
     /// 这个键在当前状态下做什么。**「哪些键在哪个状态下有效」这张表就是它。**
     ///
     /// 纯函数：不改任何东西，用例问得动它，也因此不必去数「按下去之后屏幕变成什么样」。
@@ -379,6 +469,7 @@ impl Session {
         match &self.mode {
             Mode::Browsing => self.browsing_action(key),
             Mode::Editing(edit) => editing_action(edit, key),
+            Mode::Running => running_action(key),
         }
     }
 
@@ -400,14 +491,31 @@ impl Session {
                 Shape::Volume => Action::Remove,
                 _ => Action::Ignored,
             },
+            // 试算与执行。两个键**在键盘上离得远**：按错一个会往盘上写东西，
+            // 而这一路上没有第二道确认（`t` 只算不写，`x` 真写）。
+            Key::Char('t') => Action::Start(RunMode::DryRun),
+            Key::Char('x') => Action::Start(RunMode::Process),
             Key::Char('q') | Key::Esc | Key::Interrupt => Action::Quit,
             Key::Char(_) | Key::Tab | Key::Backspace => Action::Ignored,
         }
     }
 
     /// 按一个键，把它对应的那件事做掉。
+    ///
+    /// **只给用例用。** 真会话里那一层先把[起一趟](Action::Start)接走
+    /// （见 [`super::press`]），剩下的原样交给 [`act`](Self::act)，不必再问一遍
+    /// [`action`](Self::action)；而用例问的是「按下这个键之后会话变成什么样」，
+    /// 那两步在它眼里本来就是一步。
+    #[cfg(test)]
     pub fn press(&mut self, key: Key) -> Exit {
-        let action = self.action(key);
+        self.act(self.action(key))
+    }
+
+    /// 把一个动作做掉。**问过 [`action`](Self::action) 的调用方走这一条**——
+    /// [`super::press`] 先把[起一趟](Action::Start)那一支接走，剩下的原样交回来，
+    /// 不必再问一次。
+    pub(super) fn act(&mut self, action: Action) -> Exit {
+        // 上一个动作说的那句话到这里就作废了：下一次按键就抹掉。
         self.notice = None;
         self.apply(action)
     }
@@ -426,6 +534,10 @@ impl Session {
             Action::Complete => self.complete(),
             Action::Commit => self.commit(),
             Action::Cancel => self.mode = Mode::Browsing,
+            // 起线程、拼 `Request`、把观察者接上去，都在 [`super::press`] 那一层：
+            // 本模块一个终端都不碰，也不该起线程。那一层把 `Start` 接走之后才调
+            // [`act`](Self::act)，因此这里到不了——真到了也只是这一下没起来，不是错。
+            Action::Start(_) => {}
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
         }
@@ -501,6 +613,31 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
         Key::Esc => Action::Cancel,
         Key::Interrupt => Action::Quit,
         Key::Up | Key::Down | Key::Left | Key::Right => Action::Ignored,
+    }
+}
+
+/// 跑起来之后的按键表：**一个改动键都不派**。
+///
+/// 「跑起来之后设备层与口味层只读」（spec 的《会话：布局与交互》）因此是结构上成立的，
+/// 不是画法上把它们涂灰：改一行的那几个动作在这个状态下根本不存在。
+///
+/// **两级停那两个键不在这里**——它们归 `p1-session/10`，本票一个都不占。
+/// 留在这里的只有 [`Key::Interrupt`]：它在**每一个**状态下都是退出，跑到一半也是
+/// （见 `Key::Interrupt` 自己的文档）。退出时那条还在写盘的线程怎么收，
+/// 见 [`super::run::Running::leave`]。
+fn running_action(key: Key) -> Action {
+    match key {
+        Key::Interrupt => Action::Quit,
+        Key::Up
+        | Key::Down
+        | Key::Left
+        | Key::Right
+        | Key::Enter
+        | Key::Space
+        | Key::Tab
+        | Key::Backspace
+        | Key::Esc
+        | Key::Char(_) => Action::Ignored,
     }
 }
 
@@ -933,6 +1070,7 @@ fn spell_flag(value: Option<bool>, fallback: bool, yes: &str, no: &str) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     /// 每一个环转一圈都回得到出发点，而且**转一圈的长度就是那一项的取值个数**。
     fn ring_of<T: Clone + PartialEq + std::fmt::Debug>(start: T, next: impl Fn(T) -> T) -> Vec<T> {
@@ -968,8 +1106,17 @@ mod tests {
         assert_eq!(session.action(Key::Char('q')), Action::Quit);
         assert_eq!(session.action(Key::Esc), Action::Quit);
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 试算与执行在每一行上都按得动：它们与光标停在哪儿无关。
+        assert_eq!(
+            session.action(Key::Char('t')),
+            Action::Start(RunMode::DryRun)
+        );
+        assert_eq!(
+            session.action(Key::Char('x')),
+            Action::Start(RunMode::Process)
+        );
         // 打字与补全在浏览时没有意义；删卷的键在不是卷的行上也没有。
-        assert_eq!(session.action(Key::Char('x')), Action::Ignored);
+        assert_eq!(session.action(Key::Char('z')), Action::Ignored);
         assert_eq!(session.action(Key::Char('d')), Action::Ignored);
         assert_eq!(session.action(Key::Tab), Action::Ignored);
         assert_eq!(session.action(Key::Backspace), Action::Ignored);
@@ -1016,6 +1163,119 @@ mod tests {
         session.focus_on(Field::CacheBudget);
         session.press(Key::Enter);
         assert_eq!(session.action(Key::Tab), Action::Ignored);
+
+        // 六、跑起来之后：配置只读，试算与执行也按不动（一趟里跑不了第二趟）。
+        session.press(Key::Esc);
+        session.run_started();
+        for key in [
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+            Key::Enter,
+            Key::Space,
+            Key::Tab,
+            Key::Backspace,
+            Key::Esc,
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('q'),
+            Key::Char('d'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 跑着时不该生效"
+            );
+        }
+        // Ctrl-C 仍旧退得出去：它在**每一个**状态下都是退出。
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 收场之后配置又改得动。
+        session.run_finished();
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+    }
+
+    /// 试算与执行拼出来的 `Request` **只差 `mode` 一格**，其余逐项相同。
+    ///
+    /// 跑不起来的那两种（型号没挑、输出根没填）当场说得出口，而不是拼出一个
+    /// 编造了默认值的请求交给库。
+    #[test]
+    fn a_trial_and_a_run_differ_only_in_how_far_they_go() {
+        let mut session = Session::new();
+
+        // 两项必填都缺：先说型号，那是判定的依据。
+        let said = session.request(RunMode::DryRun).expect_err("跑不起来");
+        assert!(format!("{said:#}").contains("先挑型号"), "{said:#}");
+
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        let said = session.request(RunMode::DryRun).expect_err("跑不起来");
+        assert!(format!("{said:#}").contains("输出根"), "{said:#}");
+
+        session.scope.out = Some(PathBuf::from("出"));
+        session.scope.volumes = vec![
+            Picked {
+                path: PathBuf::from("库/卷一"),
+                on: true,
+            },
+            // 勾掉的那一条不进这一趟：打错一条勾掉就是了（spec 的 story 16）。
+            Picked {
+                path: PathBuf::from("库/卷二"),
+                on: false,
+            },
+        ];
+
+        let trial = session.request(RunMode::DryRun).expect("拼得出来");
+        let run = session.request(RunMode::Process).expect("拼得出来");
+
+        assert_eq!(trial.mode, tonefit::Mode::DryRun);
+        assert_eq!(run.mode, tonefit::Mode::Process);
+        assert_eq!(trial.inputs, vec![PathBuf::from("库/卷一")]);
+        assert_eq!(trial.inputs, run.inputs);
+        assert_eq!(trial.output_root, run.output_root);
+        assert_eq!(trial.crop, run.crop);
+        assert_eq!(trial.split, run.split);
+        assert_eq!(trial.cache_budget, run.cache_budget);
+    }
+
+    /// 一项都没改的会话拼出来的，与**一个 flag 都不加的命令行**拼出来的逐项相同。
+    ///
+    /// 「命令行没点、预设也没说」那一档与会话读的是同一个（`preset::TasteLayer` 那几个
+    /// 方法），这一条钉的就是那件事：默认值没有第二个出处。
+    #[test]
+    fn an_untouched_session_asks_for_what_a_bare_command_line_asks_for() {
+        let mut session = Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.scope.out = Some(PathBuf::from("出"));
+        session.scope.volumes = vec![Picked {
+            path: PathBuf::from("库/卷一"),
+            on: true,
+        }];
+
+        let asked = session.request(RunMode::Process).expect("拼得出来");
+        let command_line = crate::Cli::try_parse_from([
+            "tonefit",
+            "--profile",
+            "kobo-libra-2",
+            "--out",
+            "出",
+            "库/卷一",
+        ])
+        .expect("命令行读得懂")
+        .request(&crate::preset::Preset::default())
+        .expect("拼得出来");
+
+        assert_eq!(asked.fit, command_line.fit);
+        assert_eq!(asked.crop, command_line.crop);
+        assert_eq!(asked.split, command_line.split);
+        assert_eq!(asked.filter, command_line.filter);
+        assert_eq!(asked.bit_depth, command_line.bit_depth);
+        assert_eq!(asked.dither, command_line.dither);
+        assert_eq!(asked.per_page, command_line.per_page);
+        assert_eq!(asked.cache_budget, command_line.cache_budget);
+        assert_eq!(asked.io_mode, command_line.io_mode);
+        assert_eq!(asked.metadata, command_line.metadata);
+        assert_eq!(asked.inputs, command_line.inputs);
+        assert_eq!(asked.output_root, command_line.output_root);
     }
 
     /// 退出只由那几个键说得出来，别的键按到底都退不出去。

@@ -47,7 +47,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Profile, ReadingOrder, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Profile, ReadingOrder, SplitRule,
+    SplitThreshold,
 };
 
 /// 预设文件在用户配置目录下的位置。
@@ -118,6 +119,57 @@ pub struct TasteLayer {
     pub cache_budget: Option<CacheBudget>,
     /// 读取策略（`--io-mode`）。
     pub io_mode: Option<IoMode>,
+}
+
+impl TasteLayer {
+    /// 这一层每一项**落到默认值之后**的取值。
+    ///
+    /// 它是「没说」这一格的唯一去处：命令行拿它做「命令行没点、预设也没说」那一档
+    /// （见 [`crate::Cli`] 各项那几个方法），会话直接拿它拼 [`Request`](tonefit::Request)
+    /// （见 `session::state::Session::request`）。两处因此不会各写一份默认值——
+    /// 写第二份，同一条命令与同一次会话就会在无人察觉时分家。
+    ///
+    /// 各项的默认值**仍在库那一侧**（那几个 `Default`），本方法一个都不复述；
+    /// 复述的只有 [`crop`](Self::crop) 那一项，理由写在它自己身上。
+    pub fn fit(&self) -> FitMode {
+        self.fit.unwrap_or_default()
+    }
+
+    /// 裁不裁边。**默认裁**，而这个 `true` 在本仓库只有这一处：
+    /// `Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它。
+    pub fn crop(&self) -> bool {
+        self.crop.unwrap_or(true)
+    }
+
+    /// 关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关。**
+    pub fn per_page(&self) -> bool {
+        self.per_page.unwrap_or(false)
+    }
+
+    /// 怎么拆跨页。三项收成库那一侧的一份规矩，各自的默认在 [`SplitRule::default`]。
+    pub fn split_rule(&self) -> SplitRule {
+        let default = SplitRule::default();
+        SplitRule {
+            on: self.split.unwrap_or(default.on),
+            threshold: self.split_threshold.unwrap_or(default.threshold),
+            order: self.reading_order.unwrap_or(default.order),
+        }
+    }
+
+    /// 残差段的重采样滤波器（ADR 0001）。
+    pub fn filter(&self) -> Filter {
+        self.filter.unwrap_or_default()
+    }
+
+    /// 缓存预算（ADR 0005）。
+    pub fn cache_budget(&self) -> CacheBudget {
+        self.cache_budget.unwrap_or_default()
+    }
+
+    /// 读取策略（ADR 0009）。
+    pub fn io_mode(&self) -> IoMode {
+        self.io_mode.unwrap_or_default()
+    }
 }
 
 /// 按名字读一份预设。**这是本仓库唯一一处为了预设去碰文件系统的地方。**

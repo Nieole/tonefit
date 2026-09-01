@@ -236,19 +236,20 @@ impl Cli {
     fn fit_mode(&self, preset: &Preset) -> Result<FitMode> {
         match &self.fit {
             Some(name) => FitMode::resolve(name),
-            None => Ok(preset.taste.fit.unwrap_or_default()),
+            None => Ok(preset.taste.fit()),
         }
     }
 
     /// 本次裁不裁边（02 号票）。**默认裁**，`--no-crop` 关掉它。
     fn crop(&self, preset: &Preset) -> bool {
-        // 默认值写在这里而不是库那一侧：`Request::crop` 是个裸 `bool`，没有第二个出处。
-        !self.no_crop && preset.taste.crop.unwrap_or(true)
+        // 默认值不在这里：它在 `TasteLayer::crop`，会话拼 `Request` 时读的是同一个
+        // （`Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它）。
+        !self.no_crop && preset.taste.crop()
     }
 
     /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它。
     fn per_page(&self, preset: &Preset) -> bool {
-        self.per_page || preset.taste.per_page.unwrap_or(false)
+        self.per_page || preset.taste.per_page()
     }
 
     /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
@@ -256,16 +257,16 @@ impl Cli {
     /// 不点名就是默认那一套：拆、阈值 1.5、右开。三项各自的默认在库那一侧
     /// （`SplitRule::default`），这里只把命令行点到的那几项盖上去——写死一份就是第二个出处。
     fn split_rule(&self, preset: &Preset) -> Result<SplitRule> {
-        let default = SplitRule::default();
+        let stored = preset.taste.split_rule();
         Ok(SplitRule {
-            on: !self.no_split && preset.taste.split.unwrap_or(default.on),
+            on: !self.no_split && stored.on,
             threshold: match &self.split_threshold {
                 Some(text) => SplitThreshold::parse(text)?,
-                None => preset.taste.split_threshold.unwrap_or(default.threshold),
+                None => stored.threshold,
             },
             order: match &self.reading_order {
                 Some(name) => ReadingOrder::resolve(name)?,
-                None => preset.taste.reading_order.unwrap_or(default.order),
+                None => stored.order,
             },
         })
     }
@@ -274,7 +275,7 @@ impl Cli {
     fn residual_filter(&self, preset: &Preset) -> Result<Filter> {
         match &self.filter {
             Some(name) => Filter::resolve(name),
-            None => Ok(preset.taste.filter.unwrap_or_default()),
+            None => Ok(preset.taste.filter()),
         }
     }
 
@@ -298,7 +299,7 @@ impl Cli {
     fn cache_budget(&self, preset: &Preset) -> Result<CacheBudget> {
         match &self.cache_budget {
             Some(text) => CacheBudget::parse(text),
-            None => Ok(preset.taste.cache_budget.unwrap_or_default()),
+            None => Ok(preset.taste.cache_budget()),
         }
     }
 
@@ -306,7 +307,7 @@ impl Cli {
     fn io_mode(&self, preset: &Preset) -> Result<IoMode> {
         match &self.io_mode {
             Some(text) => IoMode::resolve(text),
-            None => Ok(preset.taste.io_mode.unwrap_or_default()),
+            None => Ok(preset.taste.io_mode()),
         }
     }
 
@@ -498,13 +499,21 @@ const SUCCESS_EXIT: u8 = 0;
 /// 一个数只说得出一件事，而「有卷根本没做成」是那两件里更该让人停下来看的。
 const FAILED_VOLUME_EXIT: u8 = 3;
 
+/// **这一趟没做成**时的退出码：拒绝执行，以及别的任何一种当场返回 `Err` 的收场
+/// （`CONTEXT.md` 的《失败》）。
+///
+/// 它就是 `ExitCode::FAILURE` 那个数，写成常量是为了让会话那一路取得到它——
+/// 会话在拒绝执行之后**不退出**（把话画出来当场改，见 spec 的《卷级失败与退出码》），
+/// 那个 `1` 因此要等到用户退出会话时才交出去，而那时早已不在这个 `match` 里了。
+const REFUSED_EXIT: u8 = 1;
+
 fn main() -> ExitCode {
     match execute() {
         Ok(code) => ExitCode::from(code),
         // `Result<()>` 那个 main 印的就是这一行，退出码 1。自己拿 `ExitCode` 之后照印。
         Err(error) => {
             eprintln!("Error: {error:?}");
-            ExitCode::FAILURE
+            ExitCode::from(REFUSED_EXIT)
         }
     }
 }
@@ -634,10 +643,16 @@ struct Bar {
 /// 整趟那条与当前卷那条共用它——两条长得一样，靠 `{msg}` 分辨是哪一条。
 /// 模板编不出来时退回 indicatif 的默认样式：进度条画得难看不该让这一趟跑不成。
 fn bar_style() -> ProgressStyle {
-    ProgressStyle::with_template("{msg} [{bar:30}] {pos}/{len} 步 · 已用 {elapsed} · 剩 {eta}")
-        .unwrap_or_else(|_| ProgressStyle::default_bar())
-        .progress_chars("=> ")
+    ProgressStyle::with_template(&format!(
+        "{{msg}} [{{bar:{BAR_WIDTH}}}] {{pos}}/{{len}} 步 · 已用 {{elapsed}} · 剩 {{eta}}"
+    ))
+    .unwrap_or_else(|_| ProgressStyle::default_bar())
+    .progress_chars("=> ")
 }
+
+/// 一条横条画多宽。**命令行与会话共用这一个数**：两处的横条长得一样，
+/// 读的人不必重新认一遍（会话那一份见 `session::draw`）。
+const BAR_WIDTH: usize = 30;
 
 impl Bar {
     /// 起一份进度显示，预扫那条转轮当场登场。
@@ -681,13 +696,10 @@ impl Bar {
 
     /// 起一条新的：这一卷叫什么、这一趟最多走多少步。
     fn start(&self, volume: &Path, steps: u64) {
-        let name = volume.file_name().map_or_else(
-            || volume.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
         let bar = self.frame.add(ProgressBar::new(steps));
         bar.set_style(bar_style());
-        bar.set_message(name);
+        // 卷名怎么取只有一处（`render::volume_name`）：会话的当前卷条印的是同一个。
+        bar.set_message(render::volume_name(volume));
         *self.current() = Some(bar);
     }
 
