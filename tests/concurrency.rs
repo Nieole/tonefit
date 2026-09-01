@@ -351,11 +351,17 @@ impl Tally {
     }
 }
 
-/// 长任务报得出进度（spec 的 story 30），而且预告的步数与真走的步数对得上。
+/// 长任务报得出进度（spec 的 story 30），而真走的步数不越过预告。
 ///
-/// 三段各占多少：幂等那一道读全部成员、第一遍走每一页、第二遍写全部成员。
-/// 24 页 + 1 个透传文件，因此 25 + 24 + 25 = 74 步。这个数钉在这里，
-/// 是为了让进度条不会「停在某个百分比上再也不动」——那正是预告与实际走散的样子。
+/// 三段各占多少：幂等那一道读全部成员、第一遍走每一页、第二遍写全部**输出**成员。
+/// 24 页 + 1 个透传文件。
+///
+/// **预告是上界，不是承诺**（`CONTEXT.md` 的《进度》）：拆分开着时一张源页最多产出两张
+/// 输出页（页几何批 04 号票），而几张要解了像素才知道——第二段因此按 24×2 + 1 预告。
+/// 这一卷一张跨页都没有，真走的是 25 + 24 + 25 = 74。
+///
+/// 拆分**关着**时预告仍然精确：N 恒 1，第二段数得准。那一半钉的正是「进度条不会
+/// 停在某个百分比上再也不动」——上界那一侧钉的只能是「不越过」。
 #[test]
 fn a_long_run_reports_every_step_it_announced() {
     let space = Workspace::new();
@@ -368,9 +374,33 @@ fn a_long_run_reports_every_step_it_announced() {
     })
     .expect("处理应当成功");
 
+    assert_eq!(
+        tally.started(),
+        vec![25 + 24 + (24 * 2 + 1)],
+        "预告的是上界"
+    );
+    assert_eq!(tally.advanced(), 25 + 24 + 25);
+    assert!(
+        tally.advanced() <= tally.started()[0],
+        "走过的步越过了预告的上界"
+    );
+    assert_eq!(tally.finished(), 1);
+
+    // 拆分关着：预告与真走的对得上，一步不差。
+    let exact = Workspace::new();
+    let volume = long_volume(&exact, "volume-a");
+    let tally = Tally::default();
+    tonefit::run(&Request {
+        split: tonefit::SplitRule {
+            on: false,
+            ..tonefit::SplitRule::default()
+        },
+        progress: Some(ProgressSink::new(tally.clone())),
+        ..fixtures::request(&exact, [volume.path()])
+    })
+    .expect("处理应当成功");
     assert_eq!(tally.started(), vec![25 + 24 + 25]);
     assert_eq!(tally.advanced(), 25 + 24 + 25);
-    assert_eq!(tally.finished(), 1);
 }
 
 /// dry-run 没有第二遍，预告的步数就少那一段——不预告一段永远走不到的路。
@@ -410,7 +440,11 @@ fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
     .expect("第二趟应当成功");
 
     assert!(report.volumes[0].skipped(), "第二趟没有被幂等跳过");
-    assert_eq!(tally.started(), vec![25 + 24 + 25], "预告的是上界");
+    assert_eq!(
+        tally.started(),
+        vec![25 + 24 + (24 * 2 + 1)],
+        "预告的是上界"
+    );
     assert_eq!(tally.advanced(), 25, "跳过的卷只该走幂等那一道");
     assert_eq!(tally.finished(), 1, "跳过的卷没有收尾");
 }

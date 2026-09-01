@@ -35,6 +35,7 @@ mod request;
 mod resample;
 mod sink;
 mod source;
+mod spread;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -64,10 +65,13 @@ pub use report::{
 };
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
+pub use spread::{Cut, Gutter, ReadingOrder, Side, SplitRule, SplitThreshold};
 
-use metadata::{Fingerprint, Record, Recorder};
+use color::ColorImage;
+use metadata::{Fingerprint, Origin, PageRecord, Record, Recorder};
 use sink::Sink;
 use source::{Member, Volume};
+use spread::Split;
 
 /// 画一张标定图并写到 `out`，父目录不在就建出来。
 ///
@@ -115,6 +119,7 @@ pub fn run(request: &Request) -> Result<Report> {
         profile: request.profile.clone(),
         fit: request.fit,
         crop: request.crop,
+        split: request.split,
         volumes,
         elapsed: started.elapsed(),
     })
@@ -135,7 +140,7 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 ///
 /// 三段：幂等这一道读全部**源**成员，第一遍走每一张**源页**，第二遍写全部**输出**成员。
 /// 源那一侧与输出那一侧不是同一个数——一个源页产出一到多张输出页（页几何批 03 号票），
-/// 两者眼下相等（[`OUTPUTS_PER_SOURCE_PAGE`]）。三段里只有第二段按输出那一侧算：
+/// 而几张由内容决定（有没有装订沟，页几何批 04 号票）。三段里只有第二段按输出那一侧算：
 /// 读源与解源页都发生在切开之前。
 ///
 /// 各段自己可能不在——`--no-metadata` 关掉第一段（那时既没有记录可写也没有依据可比），
@@ -144,6 +149,11 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 ///
 /// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
 /// 剩下的由 `Progress::volume_finished` 一次性了结。
+///
+/// 第二段那个数**也是上界**，理由与上面那条不同：一个源页产出几张要解了像素才知道，
+/// 而这一步在解码之前。取的是[每个源页最多几张](MAX_OUTPUTS_PER_SOURCE_PAGE)——
+/// 一卷里真被切开的页越少，走过的步就越少。取下界会让进度条冲过头，
+/// 而「预告是上界」这条规矩本来就在。
 fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
     let MemberCounts {
         source_pages,
@@ -171,7 +181,8 @@ fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
 struct MemberCounts {
     /// 源页数。幂等这一道读它们，第一遍走它们。
     source_pages: usize,
-    /// 输出页数。第二遍写它们——一个源页产出一到多张，切开发生在第一遍之内。
+    /// 输出页数的**上界**。第二遍写它们——一个源页产出一到多张，切开发生在第一遍之内，
+    /// 而几张由内容决定（页几何批 04 号票），因此这一步只给得出上界。
     output_pages: usize,
     /// 透传文件数。它不经切开，两侧数的是同一批。
     extras: usize,
@@ -234,15 +245,16 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
     let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
-    // 这一卷的输出成员名，一个源页一组（页几何批 03 号票：一个源页产出一到多张输出页）。
-    // 源页数与输出页数从此是两个数，此刻相等。
-    let targets = page_targets(&volume);
-    ensure_one_member_per_output(&volume, &targets)?;
-    let source_pages = targets.len();
-    let output_pages: usize = targets.iter().map(Vec::len).sum();
+    // 这一卷的输出成员名此刻只预告得出**一对一那一套**：一个源页产出几张要解了像素才知道
+    // （有没有装订沟，页几何批 04 号票），而这一步在解码之前。撞名因此查两遍——
+    // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
+    // 真正产出的那批名字等第一遍走完再查一遍。早查这一遍买的是**别白做一整卷**。
+    ensure_one_member_per_output(&volume, &one_to_one_targets(&volume))?;
+    let source_pages = volume.pages.len();
     let members = MemberCounts {
         source_pages,
-        output_pages,
+        // 上界，不是承诺：一卷里真被切开的页越少，第二遍走过的步越少（见 [`volume_steps`]）。
+        output_pages: source_pages * max_outputs_per_source_page(request),
         extras: volume.extras.len(),
     };
 
@@ -256,18 +268,20 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
     // 算指纹与拿它比是**同一段**（`CONTEXT.md` 的《管线》：算出本卷的指纹，与上一趟写在
     // 输出里的比）：比的那一半要开输出容器、逐成员读回记录，同样是真 I/O。摊到段外，
     // 「跳过一卷花在幂等上多久」就会少算一截，而那正是这个数存在的理由（加固批 11 号票）。
-    let mut skip = false;
+    // 命中时它是**上一趟写在输出里的那几张**的张数，不是这一步预告出来的数：
+    // 一个源页产出几张由内容决定，而跳过的这一趟一个像素都不碰（见 [`can_skip`]）。
+    let mut written_pages = None;
     let fingerprint = if request.metadata {
         timed(&mut timing.fingerprint, || -> Result<_> {
             let fingerprint = volume_fingerprint(&mut volume, request, &io, steps)?;
-            skip = can_skip(&clean, &volume, &targets, &fingerprint);
+            written_pages = can_skip(&clean, &volume, &fingerprint);
             Ok(Some(fingerprint))
         })?
     } else {
         // 掐表在这个 `if` 之内：整道不在时那一段是零，而不是一个「什么都没做」的很小的数。
         None
     };
-    if skip {
+    if let Some(output_pages) = written_pages {
         steps.finished();
         return Ok(VolumeReport {
             volume: volume.root,
@@ -311,12 +325,20 @@ fn process_volume(input: &Path, request: &Request, medium: Medium) -> Result<Vol
             steps,
         )
     })?;
-    // 预告的张数与真产出的张数在这里第一次同时在手上。对不上，第二遍写出的成员名就与
-    // 幂等比过的那一批错开——而那是一种静默的错：报告照出，输出里却少了或多了成员。
-    // 此刻两边都是 `OUTPUTS_PER_SOURCE_PAGE`，撞不响；页几何批 04 号票让 N 随内容而变时，
-    // 这一句是它第一处该撞响的地方——失败页尤其，它没有像素可切、恒出一张，
-    // 而预告那一侧看不出哪一页会失败。
-    debug_assert_eq!(scored.len(), output_pages, "第一遍产出的张数与预告的对不上");
+    // 预告的张数与真产出的张数在这里第一次同时在手上。预告是**上界**（页几何批 04 号票：
+    // 一个源页产出几张由内容决定），因此比的是区间而不是等号：下界是一张源页至少出一张，
+    // 上界是每张都被切开。越出这个区间说明拆分与预告分了家，而那是一种静默的错——
+    // 报告照出，进度条却要么冲过头、要么停在半路。
+    debug_assert!(
+        (members.source_pages..=members.output_pages).contains(&scored.len()),
+        "第一遍产出 {} 张，而源页 {} 张、上界 {} 张",
+        scored.len(),
+        members.source_pages,
+        members.output_pages
+    );
+    // 真正产出的那批成员名在这里第一次齐了：加了序号的名字可能撞上卷里本来就有的成员
+    // （源里同时有 `001.jpg` 与 `001-1.png`），而那一撞要在写出第一个字节之前拦下。
+    ensure_no_two_outputs_collide(&volume, &scored)?;
 
     let (verdicts, verdict) = summarize_volume(&scored, request);
     let uniform = uniform_size(&scored, request.profile.panel().resolution);
@@ -582,6 +604,13 @@ struct OutputPage {
     source: PathBuf,
     /// 它在输出容器里的相对位置（见 [`output_name`]）。
     target: PathBuf,
+    /// 它的**来路**：来自哪个源成员、在那一族里排第几、那一族共几张（页几何批 04 号票）。
+    ///
+    /// 与 [`source`](Self::source) 不是重复：那一项是**给人读的身份**（卷根接上相对路径，
+    /// 报告与错误信息指人用它），这一项是**写进 tEXt 的索引**（卷内相对路径，转义成 ASCII，
+    /// 带着那一族的位次）。幂等靠它把输出页反查回源页——一个源页产出几张由内容决定，
+    /// 输出成员名因此在碰像素之前预告不出来（见 [`Origin`] 与 [`can_skip`]）。
+    origin: Origin,
     outcome: Outcome,
 }
 
@@ -601,6 +630,11 @@ enum Outcome {
         /// 它跟着页走，不由报告那一侧按尺寸倒推：算目标尺寸的地方只有一处，
         /// 倒推一遍就是第二处——与几何门那一条同一个理由（见 [`Branch::Gray`] 的 `gate`）。
         backstopped: bool,
+        /// 这一张是那一刀的产物：切在哪条装订沟上、是哪一侧。整页出的是 `None`（04 号票）。
+        cut: Option<spread::Cut>,
+        /// 这一张所属的源页够得上**跨页候选**吗（04 号票）。与 `cut` 一起才说得全
+        /// 拆分那两级，见 [`PageReport::spread_candidate`]。
+        spread_candidate: bool,
         scaling: resample::Scaling,
         color: PageColor,
         branch: Branch,
@@ -702,6 +736,8 @@ impl OutputPage {
                 size,
                 crop,
                 backstopped,
+                cut,
+                spread_candidate,
                 scaling,
                 color,
                 branch,
@@ -710,6 +746,8 @@ impl OutputPage {
                 let processed = Processed {
                     crop,
                     backstopped,
+                    cut,
+                    spread_candidate,
                     scaling,
                     color,
                     branch: match branch {
@@ -869,16 +907,6 @@ fn first_pass(
         .map(|pages| pages.into_iter().flatten().collect())
 }
 
-/// 把一张解出来的源页切成这一趟要输出的那几张图。
-///
-/// **此刻不切**：一张进、一张出。页几何批 04 号票的跨页拆分落在这里——那时同一个源页
-/// 会出来两张，而下游从成员命名到缓存、从进度步数到报告，都已经按一对多的形状写好了。
-///
-/// 出来几张必须与 [`OUTPUTS_PER_SOURCE_PAGE`] 预告的一致，理由见那里。
-fn split(page: image::DynamicImage) -> Vec<image::DynamicImage> {
-    vec![page]
-}
-
 /// 第一遍上每条计算线程共用的那一摊。
 ///
 /// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成六个参数，
@@ -911,7 +939,11 @@ impl Compute<'_> {
         Ok(pages)
     }
 
-    /// 解一张源页，切开，每一张各走各的分支。
+    /// 解一张源页，**分流**，再按裁边 → 判跨页 → 拆分 → 每半再裁 → 适配走下去。
+    ///
+    /// 分流排在切开**之前**，也只问一次（ADR 0005 决定第 1 条：读 → 解码 → 彩页识别 →
+    /// 拆分/裁边）：彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
+    /// 走哪条分支由**面板与页**共同决定——只有彩色面板上的彩页走彩色分支。
     fn split_and_branch(
         &self,
         source: &Path,
@@ -930,30 +962,67 @@ impl Compute<'_> {
             //
             // 失败页**恒产出一张**占位页：没有像素可切，切不出第二张来。
             Err(error) => {
-                return Ok(vec![OutputPage {
-                    source: source.to_path_buf(),
-                    target: output_name(relative, 0, OUTPUTS_PER_FAILED_PAGE),
-                    outcome: Outcome::Failed {
+                let placement = Placement::new(relative, 0, OUTPUTS_PER_FAILED_PAGE);
+                return Ok(vec![placement.into_page(
+                    source,
+                    Outcome::Failed {
                         reason: format!("{error:#}"),
                     },
-                }]);
+                )]);
             }
         };
-        // 彩页识别排在切开**之前**，也只在这里问一次（ADR 0005 决定第 1 条：
-        // 读 → 解码 → 彩页识别 → 拆分/裁边）。切出来的那几张因此共用这一个结果：
-        // 彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
         let color = color::identify(&decoded);
-        // 这一张源页切成的那几张图（页几何批 03 号票）。
-        let images = split(decoded);
-        let count = images.len();
-        images
+        let panel = self.request.profile.panel();
+        if panel.color && color.is_color() {
+            self.color_pages(source, relative, color::to_color(&decoded), color, salvage)
+        } else {
+            self.gray_pages(source, relative, gray::to_gray(&decoded), color, salvage)
+        }
+    }
+
+    /// 灰度路径上一张源页产出的那几张输出页。
+    ///
+    /// 次序是**裁边 → 判跨页 → 拆分 → 每半再裁**（`crate::spread` 的模块文档）：
+    /// 先裁再判，因为白边过宽的单页在裁之前宽高比会像跨页；每半再裁，因为装订沟那一侧的
+    /// 白边是切开之后才露出来的。三段窗口叠成源页上的一块，报告只印那一个
+    /// （见 [`Crop::then`]）。
+    ///
+    /// **没切开的那一支一个像素都不多搬**：整页那一张原样往下走，既不复制一遍，
+    /// 也不白裁第二遍——一对一那条老路因此与本票落地之前逐字节相同。
+    fn gray_pages(
+        &self,
+        source: &Path,
+        relative: &Path,
+        image: GrayImage,
+        color: PageColor,
+        salvage: Option<Salvage>,
+    ) -> Result<Vec<OutputPage>> {
+        let request = self.request;
+        let panel = request.profile.panel().resolution;
+        let crop = Crop::of_gray(&image, request.crop, salvage);
+        let image = crop.apply_gray(image);
+        let split = Split::of_gray(&image, panel, request.split, salvage);
+        let pieces: Vec<(GrayImage, Piece)> = match split.halves() {
+            None => vec![(image, Piece::whole(crop, split))],
+            Some(halves) => halves
+                .iter()
+                .map(|half| {
+                    let piece = half.window().take_gray(&image);
+                    let inner = Crop::of_gray(&piece, request.crop, salvage);
+                    (inner.apply_gray(piece), Piece::half(crop, *half, inner))
+                })
+                .collect(),
+        };
+        let count = pieces.len();
+        pieces
             .into_iter()
             .enumerate()
-            .map(|(ordinal, image)| {
-                self.branch(
+            .map(|(ordinal, (image, piece))| {
+                self.gray_page(
                     source,
-                    output_name(relative, ordinal, count),
-                    &image,
+                    Placement::new(relative, ordinal, count),
+                    image,
+                    piece,
                     color,
                     salvage,
                 )
@@ -961,63 +1030,116 @@ impl Compute<'_> {
             .collect()
     }
 
-    /// 一张切出来的图走它那条分支：彩色分支或灰度路径。
+    /// 彩色分支上一张源页产出的那几张输出页。次序与灰度那一侧逐字相同，
+    /// 见 [`gray_pages`](Self::gray_pages)。
     ///
-    /// `color` 是这一张所属源页的识别结果，在切开之前就问完了
-    /// （见 [`Compute::split_and_branch`]）：走哪条分支由**面板与页**共同决定，
-    /// 只有彩色面板上的彩页走彩色分支。
-    fn branch(
+    /// 两条路各写一遍而不是收成一个泛型：收起来要给「一张页的像素」立一个 trait，
+    /// 而两条路真正共用的只有那五行次序——次序本身的出处在 `crate::spread` 的模块文档里，
+    /// 那是文字，不是代码。多一层抽象换回来的是同一句话说三遍。
+    /// 裁边那一侧早已是这个形状（`Crop::of_gray` 与 `Crop::of_color` 两支）。
+    fn color_pages(
         &self,
         source: &Path,
-        target: PathBuf,
-        decoded: &image::DynamicImage,
+        relative: &Path,
+        image: ColorImage,
+        color: PageColor,
+        salvage: Option<Salvage>,
+    ) -> Result<Vec<OutputPage>> {
+        let request = self.request;
+        let panel = request.profile.panel().resolution;
+        let crop = Crop::of_color(&image, request.crop, salvage);
+        let image = crop.apply_color(image);
+        let split = Split::of_color(&image, panel, request.split, salvage);
+        let pieces: Vec<(ColorImage, Piece)> = match split.halves() {
+            None => vec![(image, Piece::whole(crop, split))],
+            Some(halves) => halves
+                .iter()
+                .map(|half| {
+                    let piece = half.window().take_color(&image);
+                    let inner = Crop::of_color(&piece, request.crop, salvage);
+                    (inner.apply_color(piece), Piece::half(crop, *half, inner))
+                })
+                .collect(),
+        };
+        let count = pieces.len();
+        pieces
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (image, piece))| {
+                self.color_page(
+                    source,
+                    Placement::new(relative, ordinal, count),
+                    &image,
+                    piece,
+                    color,
+                    salvage,
+                )
+            })
+            .collect()
+    }
+
+    /// 彩色分支上的一张：几何 → 缩放 → 编码，不进缓存、不求判据（ADR 0005 决定第 4 条）。
+    ///
+    /// 进来的 `image` 已经裁过、可能切过（见 [`color_pages`](Self::color_pages)），
+    /// `crop` 是那几段窗口叠起来的**源页上的一块**，报告印的就是它。
+    fn color_page(
+        &self,
+        source: &Path,
+        placement: Placement,
+        image: &ColorImage,
+        piece: Piece,
+        color: PageColor,
+        salvage: Option<Salvage>,
+    ) -> Result<OutputPage> {
+        let request = self.request;
+        // 兜底上界在 `FitMode::target` 里，两条分支因此共用同一道（07 号票）：
+        // 彩色分支上一个目标像素更贵，越界的页在这条路上先撑不住。
+        let fit = request
+            .fit
+            .target(image.size(), request.profile.panel().resolution);
+        let size = fit.size();
+        let (scaled, scaling) = resample::resize_color(image, size, request.filter)?;
+        // dry-run 一个文件都不落盘，编出来的字节没人要。
+        let record = self
+            .fingerprint
+            .map(|fingerprint| Record::color(fingerprint, &placement.origin, salvage));
+        let encoded = match request.mode {
+            Mode::Process => Some(
+                encode::color_png(&scaled, record.as_ref())
+                    .with_context(|| format!("编 {} 这一页", source.display()))?,
+            ),
+            Mode::DryRun => None,
+        };
+        Ok(placement.into_page(
+            source,
+            Outcome::Processed {
+                size,
+                crop: piece.crop,
+                backstopped: fit.backstopped(),
+                cut: piece.cut,
+                spread_candidate: piece.candidate,
+                scaling,
+                color,
+                branch: Branch::Color { encoded },
+                salvage,
+            },
+        ))
+    }
+
+    /// 灰度路径上的一张：几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
+    /// 进来的东西同 [`color_page`](Self::color_page)。
+    fn gray_page(
+        &self,
+        source: &Path,
+        placement: Placement,
+        image: GrayImage,
+        piece: Piece,
         color: PageColor,
         salvage: Option<Salvage>,
     ) -> Result<OutputPage> {
         let request = self.request;
         let panel = request.profile.panel();
-
-        if panel.color && color.is_color() {
-            let image = color::to_color(decoded);
-            // 裁边在适配**之前**：目标尺寸从裁完的那个尺寸算出（页几何批 02 号票）。
-            let crop = Crop::of_color(&image, request.crop, salvage);
-            let image = crop.apply_color(image);
-            // 兜底上界在 `FitMode::target` 里，两条分支因此共用同一道（07 号票）：
-            // 彩色分支上一个目标像素更贵，越界的页在这条路上先撑不住。
-            let fit = request.fit.target(image.size(), panel.resolution);
-            let size = fit.size();
-            let (scaled, scaling) = resample::resize_color(&image, size, request.filter)?;
-            // dry-run 一个文件都不落盘，编出来的字节没人要。
-            let record = self
-                .fingerprint
-                .map(|fingerprint| Record::color(fingerprint, salvage));
-            let encoded = match request.mode {
-                Mode::Process => Some(
-                    encode::color_png(&scaled, record.as_ref())
-                        .with_context(|| format!("编 {} 这一页", source.display()))?,
-                ),
-                Mode::DryRun => None,
-            };
-            return Ok(OutputPage {
-                source: source.to_path_buf(),
-                target,
-                outcome: Outcome::Processed {
-                    size,
-                    crop,
-                    backstopped: fit.backstopped(),
-                    scaling,
-                    color,
-                    branch: Branch::Color { encoded },
-                    salvage,
-                },
-            });
-        }
-
-        let gray = gray::to_gray(decoded);
-        // 同上：裁边在适配之前，门与判据参照都建在裁完的那个尺寸上。
-        let crop = Crop::of_gray(&gray, request.crop, salvage);
-        let gray = crop.apply_gray(gray);
-        let fit = request.fit.target(gray.size(), panel.resolution);
+        let fit = request.fit.target(image.size(), panel.resolution);
         let size = fit.size();
         // 门在这里判，也只在这里判：这一页的候选集当场定下，判据只在那一套上求。
         // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
@@ -1026,26 +1148,95 @@ impl Compute<'_> {
             .candidates
             .for_gate(gate)
             .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
-        let (scaled, scaling) = resample::resize(&gray, size, request.filter)?;
+        let (scaled, scaling) = resample::resize(&image, size, request.filter)?;
         let reference = Reference::new(panel, scaled);
         let scores = candidate_scores(&reference, allowed);
         let block = cache::compress(reference.image());
         let slot = lock(self.cache)
             .insert(block)
             .with_context(|| format!("缓存 {} 这一页", source.display()))?;
-        Ok(OutputPage {
-            source: source.to_path_buf(),
-            target,
-            outcome: Outcome::Processed {
+        Ok(placement.into_page(
+            source,
+            Outcome::Processed {
                 size,
-                crop,
+                crop: piece.crop,
                 backstopped: fit.backstopped(),
+                cut: piece.cut,
+                spread_candidate: piece.candidate,
                 scaling,
                 color,
                 branch: Branch::Gray { scores, gate, slot },
                 salvage,
             },
-        })
+        ))
+    }
+}
+
+/// 一张输出页在**源页上是哪一块**：留下的那个窗口，加上拆分那两级各自的结果。
+///
+/// 三项绑成一个类型而不是各占一个参数：它们由同一段（裁边 → 判跨页 → 拆分 → 每半再裁）
+/// 一起算出，一起传下去，一起落进报告。摊成三个参数之后，两个可空的同型参数换了位置
+/// 编译器一句话都不会说，而报告里会静默地把一张页说成另一张的形状。
+#[derive(Debug, Clone, Copy)]
+struct Piece {
+    /// 这一张在源页上留下的那一块——裁边、切开、每半再裁三段窗口叠起来的结果
+    /// （见 [`Crop::then`]）。
+    crop: Crop,
+    /// 这一张是那一刀的产物吗；是的话，切在哪条装订沟上、是哪一侧。整页出的是 `None`。
+    cut: Option<spread::Cut>,
+    /// 这一张所属的源页够得上**跨页候选**吗（拆分两级判定的第一级）。
+    candidate: bool,
+}
+
+impl Piece {
+    /// 没切开的那一张：整页就是一块。它仍然可能是候选——**候选而没切开就是连续跨页**。
+    fn whole(crop: Crop, split: Split) -> Self {
+        Self {
+            crop,
+            cut: None,
+            candidate: split.candidate(),
+        }
+    }
+
+    /// 切出来的一半：外层裁边、这一刀、每半再裁，三段窗口叠成源页上的一块。
+    /// 切得开的必然是候选。
+    fn half(outer: Crop, half: spread::Half, inner: Crop) -> Self {
+        Self {
+            crop: outer.then(half.window()).then(inner),
+            cut: Some(half.cut()),
+            candidate: true,
+        }
+    }
+}
+
+/// 一张输出页在输出容器里的位置与它的**来路**。
+///
+/// 两者由同一组 (源成员, 第几张, 共几张) 算出，因此一同算出、一同传下去：
+/// 分开算就是两个出处，而两处一旦对不上，幂等去找的名字与真写出的名字就错开了
+/// ——报告照出，输出里却少了成员（页几何批 04 号票）。
+struct Placement {
+    /// 它在输出容器里的相对位置（见 [`output_name`]）。
+    target: PathBuf,
+    /// 它的来路，写进 tEXt（见 [`Origin`]）。
+    origin: Origin,
+}
+
+impl Placement {
+    fn new(relative: &Path, ordinal: usize, count: usize) -> Self {
+        Self {
+            target: output_name(relative, ordinal, count),
+            origin: Origin::new(relative, ordinal, count),
+        }
+    }
+
+    /// 配上这一张的结局，就是第一遍产出的一张输出页。
+    fn into_page(self, source: &Path, outcome: Outcome) -> OutputPage {
+        OutputPage {
+            source: source.to_path_buf(),
+            target: self.target,
+            origin: self.origin,
+            outcome,
+        }
     }
 }
 
@@ -1127,7 +1318,7 @@ impl Encode<'_> {
                 // 没求过判据，卷级那一档说的是「这一卷的内容要几档灰」，而这一页没有内容。
                 // 位深是编码属性（`CONTEXT.md`），而整页只有一个取值时 1bit 恰好装得下它；
                 // 换个更宽的档也写不出别的字节，编码器那一层照旧会挑最窄的（ADR 0004）。
-                let record = recorder.map(Recorder::failed);
+                let record = recorder.map(|recorder| recorder.failed(&page.origin));
                 encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
                     .map(Cow::Owned)
                     .with_context(|| format!("编 {source} 这一页的占位页"))
@@ -1149,7 +1340,8 @@ impl Encode<'_> {
                     .load(*slot)
                     .with_context(|| format!("从缓存取 {source} 这一页"))?;
                 let quantized = quantize::quantize(&reference, verdict.candidate);
-                let record = recorder.map(|recorder| recorder.gray(verdict, *salvage));
+                let record =
+                    recorder.map(|recorder| recorder.gray(&page.origin, verdict, *salvage));
                 encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
                     .map(Cow::Owned)
                     .with_context(|| format!("编 {source} 这一页"))
@@ -1209,28 +1401,75 @@ fn volume_fingerprint(
 /// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。那样的卷每一趟
 /// 都把透传文件重写一遍——它们本来就是逐字节照搬，重写一遍与跳过没有可观察的差别。
 ///
-/// `targets` 是一对多的（页几何批 03 号票）：一个源页产出的那几张输出页**每一张**都要带着这份指纹，
-/// 少一张就重做。名单由 [`page_targets`] 在碰像素之前给出，比对因此仍然停在解码之前。
-fn can_skip(
-    output: &Path,
-    volume: &Volume,
-    targets: &[Vec<PathBuf>],
-    fingerprint: &Fingerprint,
-) -> bool {
-    if targets.is_empty() {
-        return false;
+/// 一个源页产出的那几张输出页**每一张**都要带着这份指纹，少一张就重做。
+///
+/// # 名单从哪儿来（页几何批 04 号票）
+///
+/// 从前它由 `page_targets` 在碰像素之前预告出来，逐个去比。跨页拆分落地之后那条预告
+/// 不成立了——一个源页产出几张由内容决定（有没有装订沟），而幂等的全部意义是在解码之前答完。
+///
+/// 方向因此反过来：名单从**上一趟写在输出里的记录**读回来。一张输出页自己说得出
+/// 它来自哪个源成员、那一族该有几张（[`Origin`]），于是按源页逐族去探——
+/// 先试一对一那个名字，不在就试切开的那一族，头一张说出总共几张，再把余下的逐个对上。
+///
+/// **「输出里少一张就该察觉」这条能力因此没有丢，而且比从前更严**：
+/// 一族两张里删掉一张，剩下那一张仍写着「1/2」，第二张找不到，整卷重做
+/// （`p0-hardening/03` 靠的正是这条能力）。缺了那个计数就只剩「至少有一张」，
+/// 一张跨页被删掉半边会静默地留在输出里。
+///
+/// 命中时答的是**上一趟写在那儿的输出页数**，不是这一趟预告出来的数：
+/// 那个数眼下只给得出上界（见 [`MemberCounts`]），而报告里印的那个要是真数。
+fn can_skip(output: &Path, volume: &Volume, fingerprint: &Fingerprint) -> Option<usize> {
+    if volume.pages.is_empty() {
+        return None;
     }
-    let Some(mut written) = sink::Written::open(output, volume.container) else {
-        return false;
-    };
-    targets
+    let mut written = sink::Written::open(output, volume.container)?;
+    let mut pages = 0;
+    for page in &volume.pages {
+        pages += written_family(&mut written, &page.relative, fingerprint)?;
+    }
+    volume
+        .extras
         .iter()
-        .flatten()
-        .all(|relative| written.fingerprint_of(relative).as_ref() == Some(fingerprint))
-        && volume
-            .extras
-            .iter()
-            .all(|extra| written.holds(&extra.relative))
+        .all(|extra| written.holds(&extra.relative))
+        .then_some(pages)
+}
+
+/// 一个源页那一族输出页在上一趟的输出里齐不齐；齐就答它有几张，缺一张就是 `None`。
+///
+/// 两支：一对一那个名字在，就只此一张（记录自己也得说是 `1/1`——名字对上而记录说
+/// 「共两张」的话，另一张要么被删了、要么是别的参数跑出来的）；不在，就按切开那一族探，
+/// 头一张（`…-1.png`）的记录说出总共几张，剩下的逐个对上。
+///
+/// 名字怎么拼只有一个出处（[`output_name`]），两支拼的都是它。
+fn written_family(
+    written: &mut sink::Written,
+    relative: &Path,
+    fingerprint: &Fingerprint,
+) -> Option<usize> {
+    let matched = |record: Option<PageRecord>, ordinal: usize, count: usize| {
+        record.is_some_and(|record| record.matches(fingerprint, relative, ordinal, count))
+    };
+    if let Some(record) = written.record_of(&output_name(relative, 0, 1)) {
+        return record.matches(fingerprint, relative, 0, 1).then_some(1);
+    }
+    // 一对一那个名字不在。那这一族要么是切开的，要么根本没写出来——头一张说了算：
+    // 它记着自己那一族共几张，而余下几张的名字由那个数推得出来。
+    let first_of_many = output_name(relative, 0, MORE_THAN_ONE);
+    let first = written.record_of(&first_of_many)?;
+    let count = first.origin.as_ref()?.count();
+    if count < MORE_THAN_ONE || !first.matches(fingerprint, relative, 0, count) {
+        return None;
+    }
+    (1..count)
+        .all(|ordinal| {
+            matched(
+                written.record_of(&output_name(relative, ordinal, count)),
+                ordinal,
+                count,
+            )
+        })
+        .then_some(count)
 }
 
 /// 卷级上包络的驱动页序号，写进 tEXt 那句 `volume-p95, driven by page 087` 用它。
@@ -1331,21 +1570,36 @@ fn nothing_left_error(request: &Request) -> anyhow::Error {
     }
 }
 
-/// 一个源页产出几张输出页。**恒 1**——页几何批 03 号票只放宽形状，
-/// 决定 N 是多少的那套逻辑（跨页拆分）在页几何批 04 号票。
+/// 一个源页**最多**产出几张输出页：跨页从装订沟上切一刀，因此是两张（页几何批 04 号票）。
 ///
-/// 它是**预告**那一侧的出处：输出成员名要在碰像素之前给得出来（见 [`page_targets`]），
-/// 而真产出几张要等 [`split`] 解完像素才知道。两边此刻都是这个常量，因此必然一致；
-/// 页几何批 04 号票让 N 随内容而变的那一天，这个等号就得另找依据——两个数一旦对不上，
-/// 第二遍写出的成员名会与幂等比过的那一批错开。[`process_volume`] 在两个数都在手上的那一处
-/// 对了一次，好让那一天在测试里当场撞出来。
-const OUTPUTS_PER_SOURCE_PAGE: usize = 1;
+/// 真产出几张由内容决定，解完像素才知道（见 `crate::spread`）。这个数是碰像素之前
+/// 给得出来的那个**上界**：进度步数照它预告（[`volume_steps`]），第一遍走完拿它对一次区间
+/// （[`process_volume`]）。
+///
+/// 它不是「切几刀」的配置项：切点只有一个（装订沟），两半就是两张。
+const MAX_OUTPUTS_PER_SOURCE_PAGE: usize = 2;
 
-/// 一张失败页产出几张占位页。**恒 1，而且与 [`OUTPUTS_PER_SOURCE_PAGE`] 无关**：
+/// 拼「切开那一族里的第一张」这个名字时传的张数。
+///
+/// [`output_name`] 只分「一张」与「不止一张」两种写法，具体几张不进名字——
+/// `001-1.png` 无论那一族有两张还是三张都是这个名字。幂等按名字探那一族时因此随便传一个
+/// ≥2 的数就够（见 [`written_family`]）；名字里那个 `-1` 不是「共两张」的意思。
+const MORE_THAN_ONE: usize = 2;
+
+/// 这一趟一个源页最多产出几张。拆分关着时恒 1——那时预告是精确的，不是上界。
+fn max_outputs_per_source_page(request: &Request) -> usize {
+    if request.split.on {
+        MAX_OUTPUTS_PER_SOURCE_PAGE
+    } else {
+        1
+    }
+}
+
+/// 一张失败页产出几张占位页。**恒 1，而且与 [`MAX_OUTPUTS_PER_SOURCE_PAGE`] 无关**：
 /// 它没有像素可切，切不出第二张来（12 号票：失败页以卷内统一尺寸留白占位，页序不断）。
 ///
-/// 单列一个数而不是借用上面那个，是因为两者会分家：页几何批 04 号票让 N 随内容而变之后，
-/// 解不出像素的那一页仍然只出一张。
+/// 两者已经分家：拆分让好页的 N 随内容而变（页几何批 04 号票），而解不出像素的那一页
+/// 仍然只出一张——预告那个上界因此对它偏大一张，那正是[区间断言](process_volume)容得下的。
 const OUTPUTS_PER_FAILED_PAGE: usize = 1;
 
 /// 一个源页产出的第 `ordinal` 张输出页（从 0 起）在输出容器里的相对位置，
@@ -1373,18 +1627,22 @@ fn output_names(relative: &Path, count: usize) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 这一卷每个源页产出的输出成员名：外层按源页序，内层按阅读顺序（页几何批 03 号票）。
+/// 这一卷每个源页**当它一张都不切时**的输出成员名：外层按源页序，内层按阅读顺序。
 ///
-/// 一个源页对**一到多张**输出页，几张由 [`OUTPUTS_PER_SOURCE_PAGE`] 说了算。
+/// 这一份是碰像素之前唯一给得出来的名单：一个源页产出几张由内容决定（页几何批 04 号票），
+/// 而这一步在解码之前。它只喂开工前那道撞名校验——拦下与内容无关的那些
+/// （`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
+/// 买的是**别白做一整卷**。真正产出的那批名字等第一遍走完再查一遍
+/// （见 [`ensure_no_two_outputs_collide`]）。
+///
+/// 幂等不再问它：名单改从上一趟写在输出里的记录读回来（见 [`can_skip`]）。
+///
 /// 透传文件原名不动，不必单列一份。
-///
-/// 这份名单在碰像素之前就要给得出来：幂等那一道拿它逐个去比上一趟的记录
-/// （见 [`can_skip`]），而幂等的全部意义就是在解码之前答完。
-fn page_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
+fn one_to_one_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
     volume
         .pages
         .iter()
-        .map(|page| output_names(&page.relative, OUTPUTS_PER_SOURCE_PAGE))
+        .map(|page| output_names(&page.relative, 1))
         .collect()
 }
 
@@ -1406,6 +1664,30 @@ fn ensure_one_member_per_output(volume: &Volume, targets: &[Vec<PathBuf>]) -> Re
     ensure_distinct_outputs(pages.chain(extras), |member| {
         volume.identity(member).display().to_string()
     })
+}
+
+/// 第一遍**真产出**的那批成员名互不冲突（页几何批 04 号票）。
+///
+/// 开工前那一遍（[`ensure_one_member_per_output`]）只查得了一对一那套名字：切开之后
+/// 加的那个序号可能撞上卷里本来就有的成员——源里同时有 `001.jpg` 与 `001-1.png`，
+/// 前者被切成两张，`001-1.png` 就有两个主人。那一撞要在**写出第一个字节之前**拦下，
+/// 而这里正是两批名字第一次同时在手上的地方（第二遍还没开始，输出容器还没建）。
+///
+/// 报错指得出是哪两个源成员：输出页自己记着它来自哪一张（[`OutputPage::source`]），
+/// 而透传成员按原名占着位。
+fn ensure_no_two_outputs_collide(volume: &Volume, pages: &[OutputPage]) -> Result<()> {
+    let written = pages
+        .iter()
+        .map(|page| (page.source.as_path(), page.target.as_path()));
+    let extras = volume
+        .extras
+        .iter()
+        .map(|extra| (volume.identity(extra), extra.relative.clone()))
+        .collect::<Vec<_>>();
+    let extras = extras
+        .iter()
+        .map(|(identity, relative)| (identity.as_path(), relative.as_path()));
+    ensure_distinct_outputs(written.chain(extras), |source| source.display().to_string())
 }
 
 /// 一批 (源成员, 它要写到的输出成员) 里有没有两个源成员认领同一个输出成员。
@@ -1561,6 +1843,7 @@ mod tests {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             filter: Filter::default(),
             bit_depth: None,
             dither: None,
@@ -1586,10 +1869,13 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
+            origin: Origin::new(Path::new(source), 0, 1),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
                 backstopped: false,
+                cut: None,
+                spread_candidate: false,
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Gray,
                 branch: Branch::Gray {
@@ -1607,10 +1893,13 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
+            origin: Origin::new(Path::new(source), 0, 1),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
                 backstopped: false,
+                cut: None,
+                spread_candidate: false,
                 scaling: Scaling::plan(size, size),
                 color: PageColor::Color,
                 branch: Branch::Color { encoded: None },
@@ -1714,10 +2003,14 @@ mod tests {
         )
     }
 
-    /// 幂等要对上一个源页产出的**每一张**输出页，少一张就重做（页几何批 03 号票）。
+    /// 幂等要对上一个源页产出的**每一张**输出页，少一张就重做（页几何批 04 号票）。
     ///
-    /// 这是票面点名的「幂等依据认一对多的形状」那一条。只比对头一张的话，
-    /// 切开的卷缺了后一半也会被静默跳过——而那一半再也补不回来。
+    /// 名单不再是预告出来的：一个源页产出几张由内容决定，而这一道在解码之前。
+    /// 它改由**上一趟写在输出里的记录**说出来——头一张写着「1/2」，第二张就非在不可
+    /// （见 [`Origin`] 与 [`written_family`]）。
+    ///
+    /// 「输出里少一张就该察觉」这条能力是 `p0-hardening/03` 的地基，这一条钉的正是它：
+    /// 只认「至少有一张」的实现在下半段会答「跳过」，而那一半再也补不回来。
     #[test]
     fn a_skip_needs_the_fingerprint_on_every_output_page_of_a_source_page() {
         let space = tempfile::tempdir().expect("建临时目录");
@@ -1732,29 +2025,77 @@ mod tests {
         .expect("写源页");
         let volume = source::open(&root).expect("打开源卷");
 
-        // 这一张源页切成两半——名单是预告出来的，此刻走不到，用例直接给。
-        let targets = vec![output_names(Path::new("001.png"), 2)];
+        // 这一张源页切成了两半：两张输出页各记着自己是那一族的第几张。
+        let names = output_names(Path::new("001.png"), 2);
         let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
-        let record = Record::color(&fingerprint, None);
-        let written = encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页");
+        let written = |ordinal: usize, count: usize| {
+            let origin = Origin::new(Path::new("001.png"), ordinal, count);
+            let record = Record::color(&fingerprint, &origin, None);
+            encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
+        };
 
-        // 两半都在、都带着这份指纹：跳得过。
+        // 两半都在、都带着这份指纹与自己那一格：跳得过，而且数得出是两张。
         let output = space.path().join("out-both");
         fs::create_dir_all(&output).expect("建输出容器");
-        for name in targets[0].iter() {
-            fs::write(output.join(name), &written).expect("写一张输出页");
+        for (ordinal, name) in names.iter().enumerate() {
+            fs::write(output.join(name), written(ordinal, 2)).expect("写一张输出页");
         }
-        assert!(
-            can_skip(&output, &volume, &targets, &fingerprint),
+        assert_eq!(
+            can_skip(&output, &volume, &fingerprint),
+            Some(2),
             "两半都齐着还是重做了"
         );
 
-        // 后一半被删掉：整卷重做。只比对头一张的实现在这里会答「跳过」。
-        fs::remove_file(output.join(&targets[0][1])).expect("删掉后一半");
-        assert!(
-            !can_skip(&output, &volume, &targets, &fingerprint),
+        // 后一半被删掉：整卷重做。剩下那一张仍写着「1/2」，缺口因此看得见。
+        fs::remove_file(output.join(&names[1])).expect("删掉后一半");
+        assert_eq!(
+            can_skip(&output, &volume, &fingerprint),
+            None,
             "输出里少了一张，这一卷仍然被跳过了"
         );
+
+        // 旧记录（没有来路那一项）不命中：它说不出自己那一族有几张，
+        // 证不了「输出里没少东西」，而幂等从不该给一个证不出来的命中。
+        let old = space.path().join("out-old");
+        fs::create_dir_all(&old).expect("建输出容器");
+        let stale = encode::png(&page, BitDepth::One, None).expect("编一张不带记录的页");
+        fs::write(old.join(&names[0]), &stale).expect("写一张输出页");
+        fs::write(old.join(&names[1]), &stale).expect("写一张输出页");
+        assert_eq!(can_skip(&old, &volume, &fingerprint), None);
+    }
+
+    /// 没切开的那一族只有一张，而且它得**自己说是一张**（页几何批 04 号票）。
+    ///
+    /// 名字对上、指纹也对上，记录却写着「共两张」——那说明另一张要么被删了、
+    /// 要么是别的参数跑出来的。这一族因此不齐，整卷重做。
+    #[test]
+    fn a_one_to_one_output_must_say_it_is_the_only_one() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let root = space.path().join("volume-a");
+        fs::create_dir_all(&root).expect("建源卷");
+        let page = GrayImage::new(Size::new(4, 4), vec![128; 16]);
+        fs::write(
+            root.join("001.png"),
+            encode::png(&page, BitDepth::One, None).expect("编一张源页"),
+        )
+        .expect("写源页");
+        let volume = source::open(&root).expect("打开源卷");
+        let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
+        let written = |count: usize| {
+            let origin = Origin::new(Path::new("001.png"), 0, count);
+            let record = Record::color(&fingerprint, &origin, None);
+            encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
+        };
+
+        let honest = space.path().join("out-one");
+        fs::create_dir_all(&honest).expect("建输出容器");
+        fs::write(honest.join("001.png"), written(1)).expect("写一张输出页");
+        assert_eq!(can_skip(&honest, &volume, &fingerprint), Some(1));
+
+        let lying = space.path().join("out-claims-two");
+        fs::create_dir_all(&lying).expect("建输出容器");
+        fs::write(lying.join("001.png"), written(2)).expect("写一张输出页");
+        assert_eq!(can_skip(&lying, &volume, &fingerprint), None);
     }
 
     /// 卷内统一尺寸的众数在**切开之后**取：同一源页的两半各算一张（页几何批 03 号票）。

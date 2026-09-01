@@ -4,10 +4,13 @@
 //! 不在任何外部状态库：文件被移动、改名、重新打包都不会丢，而 tonefit 也就不必为了幂等
 //! 去维护一份全库索引——那正是 ADR 0009 关掉的东西。
 //!
-//! 六个字段分两摞：
+//! 七个字段分三摞：
 //!
 //! - **幂等依据**四项：工具版本、profile 名、参数哈希、源哈希。重跑时读回来逐项比，
 //!   四项都对得上就不必重做（见 [`Fingerprint`]）。
+//! - **来路**一项：这一张来自哪个源成员，以及它在那一族里排第几、一共几张（见 [`Origin`]）。
+//!   它不是「要不要重做」的依据，是让幂等**问得出这个问题**的索引——一个源页产出几张
+//!   由内容决定（跨页拆分，页几何批 04 号票），输出成员名因此在碰像素之前预告不出来。
 //! - **判定记录**两项：判定与理由。两者由前四项推出来，因此不进比对；它们在这里，
 //!   是为了让「这一页为什么是这一档」随文件走（spec 的 story 7）。
 //!
@@ -41,6 +44,7 @@ const TOOL_KEYWORD: &str = "Software";
 const PROFILE_KEYWORD: &str = "tonefit:profile";
 const PARAMS_KEYWORD: &str = "tonefit:params";
 const SOURCE_KEYWORD: &str = "tonefit:source";
+const ORIGIN_KEYWORD: &str = "tonefit:origin";
 const VERDICT_KEYWORD: &str = "tonefit:verdict";
 const REASON_KEYWORD: &str = "tonefit:reason";
 
@@ -71,8 +75,95 @@ impl Fingerprint {
             source,
         }
     }
+}
 
-    /// 从一页输出 PNG 里读回依据。四项缺一项就是 `None`——没有记录的输出
+/// 一张输出页的**来路**：它来自哪个源成员，在那一族里排第几，那一族一共几张。
+///
+/// # 它为什么存在
+///
+/// 幂等要在**碰像素之前**答完（ADR 0006），而一个源页产出几张输出页由内容决定
+/// ——有装订沟就切成两张，没有就一张（页几何批 04 号票）。输出成员名因此预告不出来，
+/// 从前那条「按预告的名单逐个比指纹」的路走不下去了。这一项把方向反过来：
+/// 名单从**上一趟写在输出里的记录**读回来，一张输出页自己说得出它来自哪个源页、
+/// 那一族该有几张（见 `crate::can_skip`）。
+///
+/// **「输出里少一张就该察觉」这条能力因此没有丢**，而且比从前更严：一族两张里删掉一张，
+/// 剩下那一张仍写着「1/2」，第二张找不到，这一卷重做。缺了这个计数就只剩「至少有一张」，
+/// 一张跨页被删掉半边会静默地留在输出里——`p0-hardening/03` 要拦的正是这一类。
+///
+/// # 取值写法
+///
+/// `<源成员相对路径> <第几>/<共几>`，序号从 1 数起，例如 `001.jpg 1/2`。
+/// 分隔符按 `/` 归一（与 [`SourceHasher`] 同一条规矩：同一个卷在 Windows 与别处
+/// 要给出同一份记录）。tEXt 只装得下 Latin-1，而成员名里中文与日文是常态，
+/// 因此非 ASCII 的字节按 UTF-8 写成 `%XX`（见 [`escape`]）。
+///
+/// 比对只在**转义之后**的写法上做，没有反转义：读回来的是什么，就拿源成员名转义一遍去比。
+/// 少一个方向的代码，也就少一处两个方向对不上的可能。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Origin {
+    /// 源成员的相对路径，已转义成 ASCII。
+    member: String,
+    /// 这一张在那一族里排第几，从 0 数起。
+    ordinal: usize,
+    /// 那一族一共几张。
+    count: usize,
+}
+
+impl Origin {
+    /// 一个源成员切出来的第 `ordinal` 张（从 0 起），那一族共 `count` 张。
+    pub fn new(relative: &Path, ordinal: usize, count: usize) -> Self {
+        Self {
+            member: escape(&normalized(relative)),
+            ordinal,
+            count,
+        }
+    }
+
+    /// 这一族一共几张。幂等靠它知道还该去找几张（见 `crate::can_skip`）。
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// 写进 tEXt 的那串字。
+    fn text(&self) -> String {
+        format!("{} {}/{}", self.member, self.ordinal + 1, self.count)
+    }
+
+    /// 从 tEXt 里读回来。写法对不上、序号越界都是 `None`——那不是本工具写的记录。
+    fn parse(text: &str) -> Option<Self> {
+        let (member, position) = text.rsplit_once(' ')?;
+        let (ordinal, count) = position.split_once('/')?;
+        let ordinal: usize = ordinal.parse().ok()?;
+        let count: usize = count.parse().ok()?;
+        if ordinal == 0 || ordinal > count {
+            return None;
+        }
+        Some(Self {
+            member: member.to_owned(),
+            ordinal: ordinal - 1,
+            count,
+        })
+    }
+}
+
+/// 一页输出 PNG 里读回来的记录，幂等要的那两摞。
+///
+/// 两摞一趟读回来而不是各读一次：读一页记录要开文件、解 PNG 头，那笔成本
+/// 「跳过一卷比重做一卷便宜」全靠它压着（见 [`RECORD_PREFIX`]）。
+pub struct PageRecord {
+    /// 幂等依据那四项。
+    pub fingerprint: Fingerprint,
+    /// 这一张的来路。**旧记录没有这一项**——它是页几何批 04 号票加的。
+    ///
+    /// 缺了它幂等**不命中**：一张说不出自己那一族有几张的页，证不了「输出里没少东西」，
+    /// 而幂等从不该给一个证不出来的命中。代价是升级之后每一卷重做一趟，
+    /// 那一趟之后每一页都带着它。
+    pub origin: Option<Origin>,
+}
+
+impl PageRecord {
+    /// 从一页输出 PNG 里读回记录。幂等那四项缺一项就是 `None`——没有记录的输出
     /// （`--no-metadata` 写出的，或别的工具写的）不构成幂等的依据。
     ///
     /// 只读到第一个 IDAT 为止，一个像素都不解：ADR 0006 认下的「读回 tEXt 比对」就是这一步，
@@ -86,12 +177,61 @@ impl Fingerprint {
                 .map(|chunk| chunk.text.clone())
         };
         Some(Self {
-            tool: field(TOOL_KEYWORD)?,
-            profile: field(PROFILE_KEYWORD)?,
-            params: field(PARAMS_KEYWORD)?,
-            source: field(SOURCE_KEYWORD)?,
+            fingerprint: Fingerprint {
+                tool: field(TOOL_KEYWORD)?,
+                profile: field(PROFILE_KEYWORD)?,
+                params: field(PARAMS_KEYWORD)?,
+                source: field(SOURCE_KEYWORD)?,
+            },
+            origin: field(ORIGIN_KEYWORD).as_deref().and_then(Origin::parse),
         })
     }
+
+    /// 这一页记的正是「这份指纹下、那个源成员切出来的第几张」吗。
+    ///
+    /// 三样都要对上：指纹（这一卷变没变）、来路（这一张属于哪个源页的哪一格）。
+    /// 来路缺项即不命中，理由见 [`PageRecord::origin`]。
+    pub fn matches(
+        &self,
+        fingerprint: &Fingerprint,
+        relative: &Path,
+        ordinal: usize,
+        count: usize,
+    ) -> bool {
+        self.fingerprint == *fingerprint
+            && self.origin.as_ref() == Some(&Origin::new(relative, ordinal, count))
+    }
+}
+
+/// 一个相对路径写成一串字：分隔符按 `/` 归一。
+///
+/// 与 [`SourceHasher::feed`] 那一处同一条规矩，也同一个理由：同一个卷在 Windows 与别处
+/// 要算出同一份记录。
+fn normalized(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// 把一串字转义成 ASCII：非 ASCII 的字节按 UTF-8 写成 `%XX`，`%` 自己与空格也转。
+///
+/// tEXt 只装得下 Latin-1，而本模块产出的字符串一律 ASCII（见模块文档）。成员名里
+/// 中文与日文是常态，直接写进去编码器会当场拒绝。
+///
+/// `%` 要转，否则一个真叫 `%41.jpg` 的成员与转义出来的 `A` 撞在一起；
+/// 空格要转，因为它是 [`Origin::text`] 里名字与序号之间的分隔符。
+fn escape(name: &str) -> String {
+    let mut text = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii() && byte != b'%' && byte != b' ' && !byte.is_ascii_control() {
+            text.push(byte as char);
+        } else {
+            let _ = write!(text, "%{byte:02X}");
+        }
+    }
+    text
 }
 
 /// 记录落在文件开头这么多字节以内。
@@ -137,12 +277,8 @@ impl SourceHasher {
     }
 
     fn feed(&mut self, relative: &Path, length: u64, bytes: &[u8]) {
-        // 分隔符按 `/` 归一：同一个卷在 Windows 与别处要算出同一个哈希。
-        let name = relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+        // 分隔符按 `/` 归一：同一个卷在 Windows 与别处要算出同一个哈希（见 [`normalized`]）。
+        let name = normalized(relative);
         self.0.update(&(name.len() as u64).to_le_bytes());
         self.0.update(name.as_bytes());
         self.0.update(&length.to_le_bytes());
@@ -167,36 +303,39 @@ const COLOR_REASON: &str = "color branch, scaled only";
 const FAILED_VERDICT: &str = "failed";
 const FAILED_REASON: &str = "page could not be decoded, blank placeholder";
 
-/// 一页要写进 tEXt 的全部字段：幂等那四项由整卷共用，判定与理由逐页各一份。
+/// 一页要写进 tEXt 的全部字段：幂等那四项由整卷共用，来路、判定与理由逐页各一份。
 pub struct Record<'a> {
     fingerprint: &'a Fingerprint,
+    origin: String,
     verdict: String,
     reason: String,
 }
 
 impl<'a> Record<'a> {
     /// 彩色分支上的一页：只缩放、不量化，因此没有判定位深可写（ADR 0005 决定第 4 条）。
-    /// 幂等那四项一项不少——它同样要能被跳过。
+    /// 幂等那四项与来路一项不少——它同样要能被跳过，也同样可能是切出来的一半。
     ///
     /// 这一支不经 [`Recorder`]：彩页在第一遍就编好写出（ADR 0010），那时驱动页还没定下来，
     /// 而它本来也用不上——`volume-p95, driven by page …` 是灰度那一侧的理由。
     ///
     /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
-    pub fn color(fingerprint: &'a Fingerprint, salvage: Option<Salvage>) -> Self {
+    pub fn color(fingerprint: &'a Fingerprint, origin: &Origin, salvage: Option<Salvage>) -> Self {
         Self {
             fingerprint,
+            origin: origin.text(),
             verdict: COLOR_VERDICT.to_owned(),
             reason: salvaged_text(salvage, COLOR_REASON.to_owned()),
         }
     }
 
-    /// 六个字段，按写进文件的顺序。
-    pub fn fields(&self) -> [(&'static str, &str); 6] {
+    /// 七个字段，按写进文件的顺序。
+    pub fn fields(&self) -> [(&'static str, &str); 7] {
         [
             (TOOL_KEYWORD, &self.fingerprint.tool),
             (PROFILE_KEYWORD, &self.fingerprint.profile),
             (PARAMS_KEYWORD, &self.fingerprint.params),
             (SOURCE_KEYWORD, &self.fingerprint.source),
+            (ORIGIN_KEYWORD, &self.origin),
             (VERDICT_KEYWORD, &self.verdict),
             (REASON_KEYWORD, &self.reason),
         ]
@@ -226,9 +365,10 @@ impl<'a> Recorder<'a> {
     /// 灰度路径上的一页：判定与理由都有。
     ///
     /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
-    pub fn gray(&self, verdict: Verdict, salvage: Option<Salvage>) -> Record<'a> {
+    pub fn gray(&self, origin: &Origin, verdict: Verdict, salvage: Option<Salvage>) -> Record<'a> {
         Record {
             fingerprint: self.fingerprint,
+            origin: origin.text(),
             verdict: verdict.candidate.to_string(),
             reason: salvaged_text(salvage, reason_text(verdict.reason, self.driver)),
         }
@@ -240,11 +380,14 @@ impl<'a> Recorder<'a> {
     /// ——被拷进阅读器、从隔离目录里单拎出来——就再没有别的地方说得出它是个占位页，
     /// 而 12 号票要的正是「问题不会藏起来」。
     ///
-    /// 幂等那四项照填，但幂等在这里买不到什么：隔离的卷每一趟都重做
-    /// （见 `crate::process_volume`）。填它只是因为记录本身是六项一套的。
-    pub fn failed(&self) -> Record<'a> {
+    /// 幂等那四项与来路照填，但幂等在这里买不到什么：隔离的卷每一趟都重做
+    /// （见 `crate::process_volume`）。填它们只是因为记录本身是七项一套的。
+    ///
+    /// 失败页那一族恒只有一张（`crate::OUTPUTS_PER_FAILED_PAGE`）：它没有像素可切。
+    pub fn failed(&self, origin: &Origin) -> Record<'a> {
         Record {
             fingerprint: self.fingerprint,
+            origin: origin.text(),
             verdict: FAILED_VERDICT.to_owned(),
             reason: FAILED_REASON.to_owned(),
         }
@@ -332,6 +475,15 @@ fn params_hash(request: &Request) -> String {
     // 裁边改的是**适配之前**的页尺寸（页几何批 02 号票）：换了它，目标尺寸、几何门、
     // 判据参照与判定整卷重算，上一趟的输出一张都不能留。
     line("crop", &request.crop);
+    // 拆分那三项改的是**这一卷有几页、每一页是哪一块**（页几何批 04 号票）：
+    // 换了其中任何一项，成员名与页尺寸都要重算。阅读方向只换两半的先后，
+    // 但那正是成员名的次序——`001-1.png` 从右半变成左半，字节整个换了一张。
+    line("split", &request.split.on);
+    line(
+        "split-threshold",
+        &format!("{:.3}", request.split.threshold.value()),
+    );
+    line("reading-order", &request.split.order.name());
     line("filter", &request.filter.name());
     line(
         "bit-depth",
@@ -365,6 +517,7 @@ mod tests {
     use crate::quantize::{BitDepth, Candidate};
     use crate::request::Mode;
     use crate::resample::Filter;
+    use crate::spread::SplitRule;
     use std::path::PathBuf;
 
     /// 一处参数改动，连同它在断言里的说法。
@@ -378,6 +531,7 @@ mod tests {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             filter: Filter::default(),
             bit_depth: None,
             dither: None,
@@ -514,11 +668,14 @@ mod tests {
             candidate: Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
             reason: Reason::VolumeEnvelope,
         };
+        // 成员名取一个**带中文的**：那是这批素材的常态，而 tEXt 只装得下 Latin-1。
+        let origin = Origin::new(Path::new("第 1 话/001.jpg"), 0, 2);
         let records = [
-            Recorder::new(&fingerprint, Some(86)).gray(verdict, None),
-            Record::color(&fingerprint, None),
-            Recorder::new(&fingerprint, Some(86)).gray(verdict, Some(half())),
-            Record::color(&fingerprint, Some(half())),
+            Recorder::new(&fingerprint, Some(86)).gray(&origin, verdict, None),
+            Record::color(&fingerprint, &origin, None),
+            Recorder::new(&fingerprint, Some(86)).gray(&origin, verdict, Some(half())),
+            Record::color(&fingerprint, &origin, Some(half())),
+            Recorder::new(&fingerprint, Some(86)).failed(&origin),
         ];
 
         for record in &records {
@@ -551,19 +708,20 @@ mod tests {
             reason: Reason::VolumeEnvelope,
         };
 
+        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
         assert_eq!(
             Recorder::new(&fingerprint, Some(86))
-                .gray(verdict, Some(half()))
+                .gray(&origin, verdict, Some(half()))
                 .reason,
             "salvaged 50.0% recovered, volume-p95, driven by page 087"
         );
         assert_eq!(
-            Record::color(&fingerprint, Some(half())).reason,
+            Record::color(&fingerprint, &origin, Some(half())).reason,
             "salvaged 50.0% recovered, color branch, scaled only"
         );
         // 完好页那一句一个字都不动：添的这一句只属于救回来的页。
         assert_eq!(
-            Record::color(&fingerprint, None).reason,
+            Record::color(&fingerprint, &origin, None).reason,
             COLOR_REASON,
             "完好页的理由被救回那一句污染了"
         );

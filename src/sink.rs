@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use zip::write::SimpleFileOptions;
 
-use crate::metadata::{Fingerprint, RECORD_PREFIX};
+use crate::metadata::{PageRecord, RECORD_PREFIX};
 use crate::source::Container;
 
 /// 一个卷的输出容器。写完必须调用 [`Sink::finish`]。
@@ -173,14 +173,14 @@ impl Written {
         }
     }
 
-    /// 读回一页里记着的指纹。成员不在、或它没有记录，就是 `None`
-    /// （ADR 0006：读回 tEXt 比对）。
+    /// 读回一页里记着的那份记录：幂等那四项，加上这一张的来路。成员不在、
+    /// 或它没有记录，就是 `None`（ADR 0006：读回 tEXt 比对）。
     ///
     /// 只读到第一个 IDAT 为止，一个像素都不解——成本停在这里，跳过一卷才比重做一卷便宜。
-    pub fn fingerprint_of(&mut self, relative: &Path) -> Option<Fingerprint> {
+    pub fn record_of(&mut self, relative: &Path) -> Option<PageRecord> {
         match self {
             Written::Directory(root) => {
-                Fingerprint::read(BufReader::new(File::open(root.join(relative)).ok()?))
+                PageRecord::read(BufReader::new(File::open(root.join(relative)).ok()?))
             }
             Written::Archive(archive) => {
                 // 归档成员不能回退寻址，解码器却要得起 `Seek`：先取开头一截到内存里。
@@ -192,7 +192,7 @@ impl Written {
                     .take(RECORD_PREFIX)
                     .read_to_end(&mut prefix)
                     .ok()?;
-                Fingerprint::read(Cursor::new(prefix))
+                PageRecord::read(Cursor::new(prefix))
             }
         }
     }

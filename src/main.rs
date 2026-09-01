@@ -14,7 +14,7 @@ use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Mode, Profile, Progress, ProgressSink,
-    Report, Request,
+    ReadingOrder, Report, Request, SplitRule, SplitThreshold,
 };
 
 #[derive(Parser)]
@@ -82,6 +82,35 @@ struct Cli {
     #[arg(long)]
     no_crop: bool,
 
+    /// 不把跨页拆成两页。**默认是拆的**：tonefit 在装订沟上把跨页切成两半，每半用满面板高。
+    ///
+    /// 拆开之后每半基本不必横向翻动（实测三卷双页片源的屏占比中位从 1.88–1.91 落到 0.88–0.92），
+    /// 而**缩放系数完全相同**——拆分不是拿分辨率换的。
+    ///
+    /// 判定分两级，两级都只看几何与墨量，不看画面语义：先按宽高比与面板比挑出跨页候选
+    /// （阈值走 `--split-threshold`），再在跨页候选里找装订沟定切点。**切点跟着装订沟走，
+    /// 不切正中**——实测沟中心在 0.401–0.538 之间，按正中盲切最偏的一页会切进画面近一成页宽
+    /// （8K 跨页上是 599 像素）。
+    ///
+    /// **找不到装订沟的是连续跨页，不切**：那是为视觉效果画满两页的一幅整画，切开就毁了。
+    /// 不切的页照这一趟的适配方式出——默认 height 下宽溢出面板，靠阅读器横向平移看。
+    /// 关掉本项，所有跨页都走那条路。
+    #[arg(long)]
+    no_split: bool,
+
+    /// 跨页候选的阈值：页宽高比要有面板宽高比的这么多倍才算候选，默认 1.5。
+    ///
+    /// 混排卷是常态——一卷里有些页已经拆好、有些还是连页。调低了收得进更多页
+    /// （已经拆好的单页可能被再切一刀），调高了把真跨页也放过去（它退回横向平移）。
+    #[arg(long, value_name = "比")]
+    split_threshold: Option<String>,
+
+    /// 拆开后两半的先后：rtl（默认，右开，右半在先）、ltr（左开，左半在先）。
+    ///
+    /// 日式漫画是右开，国漫与西方漫画是左开。不读 ComicInfo.xml——八卷素材里它出现 0 次。
+    #[arg(long, value_name = "方向")]
+    reading_order: Option<String>,
+
     /// 残差段的重采样滤波器：area（= box）、bilinear、hamming、bicubic、lanczos3，默认 lanczos3。
     /// 只作用于残差段——总缩放比 ≥ 2 时的整数倍预缩那一级恒为 box。
     #[arg(long, value_name = "滤波器")]
@@ -139,6 +168,25 @@ impl Cli {
             Some(name) => FitMode::resolve(name),
             None => Ok(FitMode::default()),
         }
+    }
+
+    /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
+    ///
+    /// 不点名就是默认那一套：拆、阈值 1.5、右开。三项各自的默认在库那一侧
+    /// （`SplitRule::default`），这里只把命令行点到的那几项盖上去——写死一份就是第二个出处。
+    fn split_rule(&self) -> Result<SplitRule> {
+        let default = SplitRule::default();
+        Ok(SplitRule {
+            on: !self.no_split,
+            threshold: match &self.split_threshold {
+                Some(text) => SplitThreshold::parse(text)?,
+                None => default.threshold,
+            },
+            order: match &self.reading_order {
+                Some(name) => ReadingOrder::resolve(name)?,
+                None => default.order,
+            },
+        })
     }
 
     /// 本次残差段用哪个滤波器。不点名就是默认的 lanczos3（ADR 0001）。
@@ -308,6 +356,7 @@ fn execute() -> Result<u8> {
     }
     let profile = cli.target_profile()?;
     let fit = cli.fit_mode()?;
+    let split = cli.split_rule()?;
     let filter = cli.residual_filter()?;
     let bit_depth = cli.bit_depth_override()?;
     let dither = cli.dither_override()?;
@@ -321,6 +370,7 @@ fn execute() -> Result<u8> {
         profile,
         fit,
         crop: !cli.no_crop,
+        split,
         filter,
         bit_depth,
         dither,
@@ -697,6 +747,74 @@ mod tests {
         assert!(help.contains("行列墨量占比"), "{help}");
         assert!(help.contains("孤立噪点"), "{help}");
         assert!(help.contains("字号因此会跳动"), "{help}");
+    }
+
+    /// `--no-split` 关得掉拆分，阈值与阅读方向点得动，**不点名就是拆、1.5、右开**
+    /// （页几何批 04 号票：默认打开，阈值可调）。
+    ///
+    /// 默认这三项要在命令行这一层单独钉住，与 `--fit`、`--no-crop` 那两条同一个理由：
+    /// 库那一侧的默认在 `SplitRule::default()`，而命令行完全可以自己写死另一套，
+    /// 那时用户敲出来的与文档说的对不上。
+    #[test]
+    fn splitting_is_on_unless_the_command_line_turns_it_off() {
+        let parse = |arguments: &[&str]| {
+            let mut line = vec!["tonefit", "--out", "out", "--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            line.push("volume-a");
+            Cli::try_parse_from(line).expect("参数应当可解析")
+        };
+
+        let default = parse(&[]).split_rule().expect("默认值");
+        assert!(default.on, "不点名就该拆");
+        assert_eq!(default.threshold, SplitThreshold::default());
+        assert_eq!(default.order, ReadingOrder::RightToLeft);
+
+        assert!(!parse(&["--no-split"]).split_rule().expect("认得").on);
+        assert_eq!(
+            parse(&["--split-threshold", "2.5"])
+                .split_rule()
+                .expect("2.5 应当认得")
+                .threshold,
+            SplitThreshold::parse("2.5").expect("正数")
+        );
+        assert_eq!(
+            parse(&["--reading-order", "LTR"])
+                .split_rule()
+                .expect("ltr 应当认得")
+                .order,
+            ReadingOrder::LeftToRight
+        );
+        // 认不出的取值在拼 Request 之前就被挡下。
+        assert!(
+            parse(&["--reading-order", "japanese"])
+                .split_rule()
+                .is_err()
+        );
+        assert!(parse(&["--split-threshold", "0"]).split_rule().is_err());
+        assert!(parse(&["--split-threshold", "很宽"]).split_rule().is_err());
+    }
+
+    /// 帮助里要说清**默认是拆的**、切点由什么定、以及不切的那一种是什么
+    /// （页几何批 04 号票的票面）。
+    ///
+    /// 少了「默认是拆的」，升级的人只会看到页数突然翻倍；少了「装订沟定切点」，
+    /// 他会以为工具从正中盲切；少了「连续跨页不切」，他会以为整幅跨页也被切开了——
+    /// 而那正是这张票明确不做的事。
+    #[test]
+    fn the_split_help_says_it_is_on_by_default_and_how_the_cut_point_is_found() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--no-split"), "{help}");
+        assert!(help.contains("--split-threshold"), "{help}");
+        assert!(help.contains("--reading-order"), "{help}");
+        assert!(help.contains("默认是拆的"), "{help}");
+        // 切点由装订沟定，不切正中。
+        assert!(help.contains("装订沟"), "{help}");
+        assert!(help.contains("不切正中"), "{help}");
+        // 找不到沟的那一种不切，退回横向平移。
+        assert!(help.contains("连续跨页"), "{help}");
+        assert!(help.contains("横向平移"), "{help}");
+        // 拆开的收益与它不换什么：不必横向翻动，而缩放系数不变。
+        assert!(help.contains("缩放系数完全相同"), "{help}");
     }
 
     #[test]

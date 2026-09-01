@@ -47,6 +47,10 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // 「这一趟没开」与「这一卷没什么可裁」在逐页那几行上长得一样，只有这一行分得开。
     // 裁法那两个数跟着印出来，与判据聚合那一行同一条规矩：数摆出来，读的人自己判断。
     text.push_str(&format!("裁边 {}\n", crop_rule(report.crop)));
+    // 拆分同理（页几何批 04 号票）：它改的是**这一卷有几页、每一页是哪一块**，
+    // 而一卷里可能一张跨页都没有。「这一趟没开」与「这一卷没有跨页」在逐页那几行上
+    // 长得一样，只有这一行分得开。阈值与阅读方向跟着印出来，与裁法那两个数同一条规矩。
+    text.push_str(&format!("跨页拆分 {}\n", report.split));
     // 逐页那一行的每个数由两项合成，其中颗粒项那道地板与阈值同一批盲测标定
     // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
@@ -106,10 +110,11 @@ pub fn pages(volume: &VolumeReport) -> String {
     let mut text = String::new();
     for page in &volume.pages {
         text.push_str(&format!(
-            "  {}  {}{}{}  {}\n",
+            "  {}  {}{}{}{}  {}\n",
             page.size,
             crop_note(page),
             scaling_note(page),
+            cut_note(page),
             backstop_note(page),
             page.output.display()
         ));
@@ -287,6 +292,21 @@ fn crop_note(page: &PageReport) -> String {
     match page.crop() {
         Some(crop) if crop.trimmed() => format!("{crop} · "),
         _ => String::new(),
+    }
+}
+
+/// 一页那一行里说这一张是跨页哪一半的那一小截（04 号票）。
+///
+/// **真是切出来的一半才说话**，与裁边那一小截同一条规矩：整页出的页在这里一个字不说。
+/// 这一趟开没开拆分由抬头那一行说，两件事分得开——「这一卷没有跨页」与「整趟没开拆分」
+/// 在逐页那几行上长得一样。
+///
+/// 说的是**哪一侧**，不是排第几：排第几看成员名上那个序号就行，而「这张图原来长在页的哪边」
+/// 没有第二处说得出来（见 `tonefit::Side`）。
+fn cut_note(page: &PageReport) -> String {
+    match page.cut() {
+        Some(cut) => format!(" · {cut}"),
+        None => String::new(),
     }
 }
 
@@ -539,6 +559,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use tonefit::SplitRule;
     // 退出码不是渲染的事，用例却要问它：「报告说得出隔离」与「退出码分得开隔离」是同一条
     // 验收的两半（12 号票），拆到两个用例就得把那一大摊报告再拼一遍。
     // 够得着命令行那一侧的只有这个 `#[cfg(test)]` 块：上面那些渲染函数一个符号都不碰它。
@@ -603,6 +624,7 @@ mod tests {
             profile,
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -639,6 +661,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -686,6 +710,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     // 正好两倍面板的一页：报告要说出它预缩过。
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
@@ -706,12 +732,18 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、裁边一行、判据形状两行（构成与聚合）、
+        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行（构成与聚合）、
         // 卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 13);
-        // 这一趟的页尺寸照哪两条规矩算出来的，抬头都说得出（页几何批 01、02 号票）。
+        assert_eq!(text.lines().count(), 14);
+        // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
         assert!(text.contains("裁边 按行列墨量占比"), "{text}");
+        assert!(text.contains("跨页拆分 跨页候选阈值 1.50"), "{text}");
+        // 这一页不是切出来的，逐页那一行因此一个字都不说拆分。
+        assert!(
+            !text.contains("跨页右半") && !text.contains("跨页左半"),
+            "{text}"
+        );
         // 这一页一个像素都没裁，逐页那一行因此一个字都不说裁边。
         assert!(!text.contains("裁边 1441×2048"), "{text}");
         // 一页都没有超出面板宽，末尾那一小结因此一个字都不说。
@@ -798,6 +830,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     // 源比目标小：按不放大原样输出，一条边都贴不住面板。
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
@@ -853,6 +887,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: Scaling::plan(Size::new(5056, 1680), Size::new(5056, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -905,6 +941,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: Crop::keeping_all(Size::new(3000, 100)),
                     backstopped: true,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: Scaling::plan(Size::new(3000, 100), Size::new(1264, 42)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -957,6 +995,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -998,6 +1038,8 @@ mod tests {
             outcome: PageOutcome::Whole(Processed {
                 crop,
                 backstopped: false,
+                cut: None,
+                spread_candidate: false,
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -1062,6 +1104,8 @@ mod tests {
             outcome: PageOutcome::Whole(Processed {
                 crop: nothing_trimmed(),
                 backstopped: false,
+                cut: None,
+                spread_candidate: false,
                 scaling: typical_scaling(),
                 color,
                 branch,
@@ -1079,6 +1123,7 @@ mod tests {
             profile,
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1129,6 +1174,7 @@ mod tests {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1146,9 +1192,9 @@ mod tests {
 
         let text = super::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、裁边一行、判据形状两行、卷两行，加上读取那一行——
-        // 跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 8);
+        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行、卷两行，
+        // 加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 9);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -1170,6 +1216,7 @@ mod tests {
             profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1215,6 +1262,8 @@ mod tests {
             outcome: PageOutcome::Whole(Processed {
                 crop: nothing_trimmed(),
                 backstopped: false,
+                cut: None,
+                spread_candidate: false,
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
@@ -1240,6 +1289,7 @@ mod tests {
             profile,
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/_isolated/volume-a"),
@@ -1303,6 +1353,8 @@ mod tests {
         let processed = |reason| Processed {
             crop: nothing_trimmed(),
             backstopped: false,
+            cut: None,
+            spread_candidate: false,
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
@@ -1332,6 +1384,7 @@ mod tests {
             profile,
             fit: FitMode::default(),
             crop: true,
+            split: SplitRule::default(),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1390,6 +1443,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1434,6 +1489,8 @@ mod tests {
                 page: Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
@@ -1502,6 +1559,8 @@ mod tests {
                 outcome: PageOutcome::Whole(Processed {
                     crop: nothing_trimmed(),
                     backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {

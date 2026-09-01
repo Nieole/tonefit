@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use fixtures::{Volume, Workspace};
 use tonefit::{
     CacheBudget, Filter, FitMode, IoMode, Mode, PageBranch, PageColor, PageReport, Request, Size,
-    VolumeReport,
+    SplitRule, VolumeReport,
 };
 
 /// 快照文件，相对仓库根。
@@ -442,8 +442,29 @@ fn mono_cases() -> Vec<Case> {
             volume.page("001.png", &fixtures::color_page(fixtures::TYPICAL));
         }),
         // 跨页宽幅：fit-inside 由宽边定夺，贴住的是宽那条边，门仍成立。
+        //
+        // 它同时是**连续跨页**那一格（页几何批 04 号票）：竖直渐变每一列长得一模一样，
+        // 一条空白列都挑不出来，装订沟因此找不到——这一页够得上跨页候选却**不被切开**，
+        // 退回以高为准、靠横向平移看。「切不切由装订沟决定」在快照里就是这一行：
+        // 它仍然是一页，而不是两页。
         Case::new("spread", |volume| {
             volume.page("001.png", &fixtures::gradient(fixtures::SPREAD));
+        }),
+        // **拆得开的跨页**（页几何批 04 号票）：正中偏左一条贯穿全高的装订沟。
+        //
+        // 一张源页出两张输出页，成员名 `001-1.png`、`001-2.png`，右半在先（默认右开）。
+        // 沟中心取 0.441（实测区间偏离正中较远的一侧），切点因此**不在正中**：两半宽度不等，
+        // 而两条页行的裁后尺寸就是那件事量得出来的形式——切点挪一列，两个数一起变。
+        // 每半各自再裁一次，沟那一侧的纸白因此不留在产物里。
+        Case::new("spread-gutter", |volume| {
+            volume.page(
+                "001.png",
+                &fixtures::spread_with_gutter(
+                    fixtures::SPREAD_WITH_GUTTER,
+                    fixtures::GUTTER_CENTER,
+                    fixtures::GUTTER_WIDTH,
+                ),
+            );
         }),
         // 源比目标小：不放大，一条边都贴不住，几何门在这一页上不成立。
         // 全卷只此一页，一页成立的都没有——它自己就是主体，抖动因此关着（ADR 0007 决定第 5 条）。
@@ -622,6 +643,7 @@ fn render(
         profile: fixtures::profile(device),
         fit,
         crop: crop.on(),
+        split: SplitRule::default(),
         filter: Filter::default(),
         bit_depth: None,
         dither: None,
@@ -722,6 +744,12 @@ fn page_line(volume: &VolumeReport, page: &PageReport, sizes: &BTreeMap<String, 
     // 而这个比例还决定了它进不进上包络。夹具固定，它因此也是个定值。
     if let Some(salvage) = page.salvage() {
         reason.push_str(&format!(" · {salvage}"));
+    }
+    // 这一张是跨页哪一半（页几何批 04 号票）。源成员名那一列在切开的两张上是同一个，
+    // 分得开它们的只有这一小截与两个尺寸；而**先后**是阅读方向定的——
+    // 反过阅读方向，两行的次序跟着反，这一列的取值不变。
+    if let Some(cut) = page.cut() {
+        reason.push_str(&format!(" · {cut}"));
     }
     let name = fixtures::relative_name(&volume.output, &page.output);
     let bytes = sizes

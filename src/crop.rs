@@ -48,6 +48,23 @@ const INK: u8 = 200;
 /// 要看得拿真实尺寸的页（见本模块的用例）。
 const INK_FRACTION: f64 = 0.005;
 
+/// 这个像素算一个墨点吗。**本仓库唯一一处拿墨阈判像素的地方。**
+///
+/// 跨页拆分那一侧也问它（`crate::spread`）：装订沟检测与裁边是同一类扫描，
+/// 「什么算墨」不该有第二套答案。
+pub(crate) fn is_ink(value: u8) -> bool {
+    value < INK
+}
+
+/// 一行或一列要有这么多个墨点才算内容，`length` 是那一行/列有多长
+/// （行按页宽算，列按页高算——一行有多长，取决于页有多宽）。
+///
+/// 与 [`is_ink`] 同一个用意：占比那条线只有一个出处。跨页拆分拿它判「这一列是不是空白」
+/// ——空白就是够不着这条线（`crate::spread`）。
+pub(crate) fn content_line(length: u32) -> f64 {
+    f64::from(length) * INK_FRACTION
+}
+
 /// 裁完至少要留下原页的这么大一截，宽与高**各自**都算。留不到就整页原样通过。
 ///
 /// 它拦的是**几乎空白的页**：卷末那一张只印着一行版权字的页，按行列墨量占比量出来的窗口
@@ -146,8 +163,12 @@ impl Crop {
 
     /// 直接造一个窗口：`origin` 是留下的那一块的左上角，`after` 是它的尺寸。
     ///
-    /// **生产路径上一个都不用**——窗口只由 [`Crop::of_gray`] 与 [`Crop::of_color`] 量出来。
-    /// 它公开的理由与 [`Salvage::from_share`](crate::Salvage::from_share) 一样：
+    /// **裁边那一侧一个都不用**——白边窗口只由 [`Crop::of_gray`] 与 [`Crop::of_color`]
+    /// 量出来。生产路径上用它的只有跨页拆分（`crate::spread`）：切出来的那一半
+    /// 同样是源页上的一块窗口，形状与裁出来的那一块一模一样，两者因此共用这个类型
+    /// ——多一个只有名字不同的窗口类型，[`then`](Self::then) 那一步就得在两个类型之间翻译。
+    ///
+    /// 它公开还有第二个理由，与 [`Salvage::from_share`](crate::Salvage::from_share) 一样：
     /// [`Crop`] 是**报告那一侧**的类型，而渲染那一层与它的用例在另一个 crate 里
     /// （二进制那一侧的 `render`），要拼得出一份带裁边的报告。
     pub fn new(before: Size, origin: (u32, u32), after: Size) -> Self {
@@ -168,7 +189,7 @@ impl Crop {
     ///   报告里那个救回比例也就再对不上尺寸。缺的那一段不是白边，是缺的那一段。
     pub fn of_gray(image: &GrayImage, enabled: bool, salvage: Option<Salvage>) -> Self {
         Self::of(image.size(), enabled, salvage, || {
-            image.pixels().iter().map(|&value| value < INK)
+            image.pixels().iter().copied().map(is_ink)
         })
     }
 
@@ -190,7 +211,7 @@ impl Crop {
                 .iter()
                 .zip(green.pixels())
                 .zip(blue.pixels())
-                .map(|((&red, &green), &blue)| gray::value(red, green, blue) < INK)
+                .map(|((&red, &green), &blue)| is_ink(gray::value(red, green, blue)))
         })
     }
 
@@ -283,11 +304,42 @@ impl Crop {
         f64::from(self.before.height) / f64::from(self.after.height)
     }
 
+    /// 把这个窗口套在另一个窗口**里面**：`inner` 的坐标以本窗口留下的那一块为原点，
+    /// 出来的仍是一个长在原页上的窗口。
+    ///
+    /// 跨页拆分要它（页几何批 04 号票）：整页裁一次、切成两半、每半再裁一次，
+    /// 三段窗口叠起来仍是**源页上的一块**。报告因此只印一个窗口——读的人顺着
+    /// 「解出来多大 → 留下哪一块」一路读下来，不必自己把三段坐标加起来，
+    /// 而[线性放大](Self::linear_gain)也就仍然量得出「同一块内容裁与不裁差几倍」。
+    pub fn then(self, inner: Crop) -> Crop {
+        debug_assert_eq!(
+            inner.before, self.after,
+            "里层窗口不是长在外层留下的那一块上"
+        );
+        Crop {
+            before: self.before,
+            origin: (
+                self.origin.0 + inner.origin.0,
+                self.origin.1 + inner.origin.1,
+            ),
+            after: inner.after,
+        }
+    }
+
     /// 按这个窗口裁一张灰度图。窗口原样通过时**原样返回**，一个字节都不搬。
     pub fn apply_gray(self, image: GrayImage) -> GrayImage {
         if !self.trimmed() {
             return image;
         }
+        self.take_gray(&image)
+    }
+
+    /// 按这个窗口从一张灰度图里**取出**那一块。与 [`apply_gray`](Self::apply_gray)
+    /// 的区别只在所有权：这一个借图，因此同一张图上取得出两块——跨页拆分要的正是这件事。
+    ///
+    /// 它恒复制一份，连整页那个窗口也复制。调用方因此要自己躲开那一下
+    /// （`crate::Compute` 上一对一那条路根本不走这里）。
+    pub(crate) fn take_gray(self, image: &GrayImage) -> GrayImage {
         GrayImage::new(self.after, self.cut(image.pixels()))
     }
 
@@ -296,6 +348,11 @@ impl Crop {
         if !self.trimmed() {
             return image;
         }
+        self.take_color(&image)
+    }
+
+    /// 彩色那一侧的 [`take_gray`](Self::take_gray)。
+    pub(crate) fn take_color(self, image: &ColorImage) -> ColorImage {
         let planes = image
             .planes()
             .each_ref()
@@ -324,10 +381,10 @@ impl std::fmt::Display for Crop {
 
 /// 一串计数里内容那一段的头尾下标，`length` 是每一格的满量。
 ///
-/// 一格算内容的条件是它的占比够得着 [`INK_FRACTION`]。取的是**头一格与末一格**，
+/// 一格算内容的条件是它的占比够得着 [`content_line`]。取的是**头一格与末一格**，
 /// 中间的空档原样留着：页当中一片浅色（天空、留白的格子）不是白边，裁边只从外面往里收。
 fn span(counts: &[u32], length: u32) -> Option<(u32, u32)> {
-    let needed = f64::from(length) * INK_FRACTION;
+    let needed = content_line(length);
     let content = |count: &u32| f64::from(*count) >= needed;
     let first = counts.iter().position(&content)?;
     let last = counts

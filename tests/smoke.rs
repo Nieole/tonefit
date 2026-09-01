@@ -27,13 +27,14 @@
 
 mod fixtures;
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use fixtures::Workspace;
 use tonefit::{
-    CacheBudget, Filter, FitMode, IoMode, Mode, PageBranch, PageReport, Report, Request,
+    CacheBudget, Filter, FitMode, Gutter, IoMode, Mode, PageBranch, PageReport, Report, Request,
     VolumeReport,
 };
 
@@ -99,6 +100,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
         profile: fixtures::baseline_profile(),
         fit: FitMode::default(),
         crop: true,
+        split: tonefit::SplitRule::default(),
         filter: Filter::default(),
         bit_depth: None,
         dither: None,
@@ -206,6 +208,65 @@ fn check_volume(volume: &VolumeReport) -> usize {
     processed
 }
 
+/// 一卷的**跨页拆分**这一行：跨页候选几页、真切开几页、装订沟长什么样（04 号票的验收）。
+///
+/// 误报率那条基线说的是**跨页候选那一关**该把单页挡在外面：实测哆啦A梦 15/16、
+/// 改革之獸 16/16 命中；棋魂 2/16、画集 1/16 误报，而误报的沟宽 21–24%、真装订沟窄得多
+/// （见 measurements 的《跨页拆分》）。这一行把两个数并排印出来——
+/// **单页卷上跨页候选那一栏不是 0，就是这道防线漏了**，而漏下去的是不是被沟那一关接住了，
+/// 「切开」那一栏答得出来。
+///
+/// 两个数都从**报告里读**，不在这里拿同一套判据重算一遍：spec 的《Testing Decisions》
+/// 定死「Seam 只用 `run(Request) -> Report` 这一个……不新开公开 seam」。
+/// 重算一遍的话，这一行量的是它自己，不是管线。
+///
+/// 沟本身的两个比例也印出来：中心落在页宽的哪儿（实测 0.401–0.538）、占页宽多少
+/// （实测 0.17%–12.47%）。这一行是那两个数唯一的现场数据来源。
+///
+/// 冒烟不断言这些数（见 [`summarize`]）：真实素材各不相同，而「本该是多少」没有一条说得出。
+fn spread_line(volume: &VolumeReport) -> String {
+    let mut candidates = 0;
+    let mut split = 0;
+    let mut gutters: Vec<Gutter> = Vec::new();
+    // 同一源页切出来的那几张挨着排（页几何批 03 号票），因此按源成员名分组就是按源页分组。
+    let mut groups: Vec<(&Path, Vec<&PageReport>)> = Vec::new();
+    for page in &volume.pages {
+        match groups.last_mut() {
+            Some((source, pages)) if *source == page.source.as_path() => pages.push(page),
+            _ => groups.push((page.source.as_path(), vec![page])),
+        }
+    }
+    for (_, pages) in &groups {
+        if pages[0].spread_candidate() {
+            candidates += 1;
+        }
+        if let Some(cut) = pages[0].cut() {
+            split += 1;
+            gutters.push(cut.gutter());
+        }
+    }
+    let mut line = format!(
+        "跨页 源页 {} · 跨页候选 {candidates} · 切开 {split}",
+        groups.len()
+    );
+    if !gutters.is_empty() {
+        let span = |values: Vec<f64>| {
+            let low = values.iter().copied().fold(f64::INFINITY, f64::min);
+            let high = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            (low, high)
+        };
+        let (low, high) = span(gutters.iter().map(|gutter| gutter.center()).collect());
+        let (thin, thick) = span(gutters.iter().map(|gutter| gutter.share()).collect());
+        let _ = write!(
+            line,
+            " · 沟中心 {low:.3}–{high:.3} · 沟宽 {:.2}%–{:.2}%",
+            thin * 100.0,
+            thick * 100.0
+        );
+    }
+    line
+}
+
 /// 一个卷写出来的页从哪儿取：目录卷从文件里，归档卷从归档里。
 ///
 /// 归档卷的 `PageReport::output` 不是一个打得开的路径（它是 `卷.cbz/001.png` 这个身份），
@@ -256,6 +317,7 @@ impl Written {
 /// 是 `CONTEXT.md` 的《尚未确立》里那几条目前唯一的现场数据来源。
 fn summarize(report: &Report) {
     println!("profile：{}", report.profile);
+    println!("跨页拆分：{}", report.split);
     for volume in &report.volumes {
         println!(
             "  {} · {} 页{}\n    {}",
@@ -277,6 +339,7 @@ fn summarize(report: &Report) {
         if color > 0 {
             println!("    彩色分支 {color} 页");
         }
+        println!("    {}", spread_line(volume));
         // 部分救回页在真实素材上是「这份片源下歪了」的现场证据（04 号票），
         // 而它不进隔离目录、也没有退出码替它喊：不印出来，跑冒烟的人无从知道。
         for page in volume.salvaged() {

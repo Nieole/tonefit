@@ -418,10 +418,15 @@ fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
     for page in &reported.pages {
         assert!(page.output.is_file(), "{} 没写出来", page.output.display());
     }
-    // 003 与 005 是同一张渐变图，写出来必须逐字节相同——不同就是缓存序号串了位。
-    let third = std::fs::read(&reported.pages[2].output).expect("读 003");
-    let fifth = std::fs::read(&reported.pages[4].output).expect("读 005");
-    assert_eq!(third, fifth, "缓存序号串位了");
+    // 003 与 005 是同一张渐变图，**写出来的像素**必须一模一样——不同就是缓存序号串了位。
+    //
+    // 比的是像素而不是整个文件：记录里有「这一张来自哪个源成员」那一项（页几何批 04 号票），
+    // 两张页的来路不同，字节因此本来就不同。那一项正是为了让来路分得开，
+    // 拿它去证「缓存没串位」等于让这条用例改测另一件事。
+    let third = fixtures::read_png(&reported.pages[2].output);
+    let fifth = fixtures::read_png(&reported.pages[4].output);
+    assert_eq!(third.size, fifth.size);
+    assert_eq!(third.pixels, fifth.pixels, "缓存序号串位了");
 }
 
 /// 源库只读：坏页与好页一样，源那一侧一个字节都不动（spec 的 story 10）。

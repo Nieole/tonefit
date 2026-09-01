@@ -29,6 +29,35 @@ pub const TWO_AND_A_HALF_PANEL: Size = Size::new(3160, 4200);
 /// 宽幅跨页：宽高比远超面板，fit-inside 由宽边定夺。
 pub const SPREAD: Size = Size::new(5056, 1680);
 
+/// **拆得开的跨页**（页几何批 04 号票）：形状取实测那一卷（哆啦A梦 8K 的 6048×4320，
+/// 见 measurements 的《适配方式：fit-inside 与以高为准》）按半缩一档，宽高比 1.40 一模一样。
+///
+/// 拆开之后每半 1512×2160、宽高比 0.70——正是一张普通漫画页的形状。
+/// 与 [`SPREAD`] 分开而不是共用一个尺寸：那一个宽高比 3.01，切成两半仍然远宽于面板，
+/// 「拆开就不必横向翻动」在它身上不成立，而那正是本票的收益所在。
+pub const SPREAD_WITH_GUTTER: Size = Size::new(3024, 2160);
+
+/// 跨页夹具那条装订沟的中心，占页宽的比例。
+///
+/// 实测区间是 0.401–0.538（measurements 的《跨页拆分》），这里取偏离正中较远的一侧。
+/// 「切点跟着沟走、不落在正中」那几条用例要的正是一个不在正中的沟：按正中盲切，
+/// 这一页会切进画面 (0.5 − 0.441) × 页宽。
+///
+/// **不取实测最偏的 0.401**：那一条离装订沟检测窗口的边只剩 0.001，
+/// 合成夹具落在那儿量出来的是窗口截断，不是切点（见 `tonefit` 的 `spread`）。
+pub const GUTTER_CENTER: f64 = 0.441;
+
+/// 跨页夹具那条装订沟有多宽，单位是列。占 [`SPREAD_WITH_GUTTER`] 页宽的 1.3%，
+/// 落在实测的 0.17%–12.47% 之间（measurements 的《跨页拆分》）。
+pub const GUTTER_WIDTH: u32 = 40;
+
+/// 跨页夹具两半各自那圈墨边有多宽。
+///
+/// 不借 [`INK_BORDER`] 那个 4：一行要有页宽 0.5% 的墨点才算内容，而 3024 宽的页上
+/// 那条线是 15.1 个像素——两半四条竖边合起来只有 4×4 = 16 个，堪堪压线。
+/// 取 16 让它有四倍余量，裁边在这张页上因此稳稳是空操作。
+const SPREAD_INK_BORDER: u32 = 16;
+
 /// 宽高比 30:1 的长条：**目标尺寸的兜底上界拦得住它**（页几何批 07 号票）。
 ///
 /// 在基准面板（1264×1680）上以高为准算出 50400×1680，8470 万像素，越过上界的 6710 万；
@@ -158,6 +187,62 @@ fn inked_border(image: DynamicImage) -> DynamicImage {
         }
     }
     DynamicImage::ImageLuma8(gray)
+}
+
+/// 一张**带装订沟的跨页**：两半各画一段竖直渐变、各自四边顶着墨，中间一条贯穿全高的纸白。
+///
+/// 那条纸白就是装订沟。四边顶着墨买两件事：**裁边在整页上是空操作**（拆分那几条用例
+/// 因此不与裁边缠在一起，与 [`full_bleed_gradient`] 同一个用意），而**每半再裁**那一步
+/// 恰好只收走沟那一侧——两半的窗口于是严丝合缝地贴着沟，切点错一列当场看得出来。
+///
+/// 沟的位置由 `center` 定，宽由 `gutter` 定；沟的头一列由 [`gutter_left`] 算出，
+/// 用例拿它推两半该有多宽——那个算式**只有一个出处**。
+pub fn spread_with_gutter(size: Size, center: f64, gutter: u32) -> DynamicImage {
+    let left = gutter_left(size, center, gutter);
+    let last = (size.height - 1).max(1);
+    let edge = SPREAD_INK_BORDER;
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        if (left..left + gutter).contains(&x) {
+            return Luma([255]);
+        }
+        let (from, to) = if x < left {
+            (0, left)
+        } else {
+            (left + gutter, size.width)
+        };
+        if x < from + edge || x + edge >= to || y < edge || y + edge >= size.height {
+            return Luma([0]);
+        }
+        Luma([(y * 255 / last) as u8])
+    }))
+}
+
+/// 把一张灰度页染成**真彩色**：墨的地方按行给红／绿／蓝，纸白仍是纸白。
+///
+/// 「真彩色」是要点：三个平面放同一份灰度会走进 `gray::value` 的消色短路，
+/// 转灰那一支一次都跑不到，而灰度路径与彩色分支真要分家只会分在那里
+/// （与 `tonefit` 的 `crop`、`spread` 里那两条同名用例同一个用意）。
+///
+/// 纸白不染色：装订沟得留着，不然染完就没有沟可找了。
+pub fn colorize(page: &DynamicImage) -> DynamicImage {
+    let gray = page.to_luma8();
+    let (width, height) = (gray.width(), gray.height());
+    DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, y| {
+        let value = gray.get_pixel(x, y)[0];
+        if value > 240 {
+            return Rgb([255, 255, 255]);
+        }
+        // 逐行换一个色相：整页因此有真实的色度覆盖，不是一片单色。
+        let channel = (y % 3) as usize;
+        let mut pixel = [0u8; 3];
+        pixel[channel] = 255 - value / 2;
+        Rgb(pixel)
+    }))
+}
+
+/// [`spread_with_gutter`] 造出的那条沟的**头一列**。用例拿它推两半的窗口该落在哪儿。
+pub fn gutter_left(size: Size, center: f64, gutter: u32) -> u32 {
+    (f64::from(size.width) * center) as u32 - gutter / 2
 }
 
 /// 二值网点页：只有 0 与 255 两个取值，点的大小随横向位置由小到大。
@@ -545,6 +630,20 @@ pub fn run_volume_keeping_margins(space: &Workspace, volume: &Volume) -> tonefit
     .expect("处理应当成功")
 }
 
+/// 把这一卷**不拆跨页**跑一遍（`--no-split`，页几何批 04 号票）。
+///
+/// 拆与不拆的对照要它：跨页不拆时顶到面板高、宽溢出面板，靠阅读器横向平移看。
+pub fn run_volume_without_splitting(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        split: tonefit::SplitRule {
+            on: false,
+            ..tonefit::SplitRule::default()
+        },
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
 /// 把这一卷按 **fit-inside** 跑一遍（页几何批 01 号票）。
 ///
 /// 两种用例点名它：问几何门**不成立**那一支的（默认那条路上它是空集——以高为准让每一页的
@@ -585,6 +684,7 @@ pub fn request<'a>(
         profile: baseline_profile(),
         fit: tonefit::FitMode::default(),
         crop: true,
+        split: tonefit::SplitRule::default(),
         filter: tonefit::Filter::default(),
         bit_depth: None,
         dither: None,

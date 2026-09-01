@@ -72,7 +72,7 @@ fn a_dry_run_predicts_the_skip() {
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {
-    let changes: [Change; 7] = [
+    let changes: [Change; 10] = [
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
         }),
@@ -90,6 +90,16 @@ fn a_changed_parameter_redoes_the_volume() {
         ("换适配方式", |request| request.fit = FitMode::Inside),
         // 裁边改的是**适配之前**的页尺寸（页几何批 02 号票）：同上，整卷重算。
         ("关掉裁边", |request| request.crop = false),
+        // 拆分那三项改的是**这一卷有几页、每一页是哪一块**（页几何批 04 号票）。
+        // 阅读方向只换两半的先后，但那正是成员名的次序——`001-1.png` 从右半变成左半，
+        // 字节整个换了一张。
+        ("关掉拆分", |request| request.split.on = false),
+        ("换拆分阈值", |request| {
+            request.split.threshold = tonefit::SplitThreshold::parse("2.5").expect("正数")
+        }),
+        ("换阅读方向", |request| {
+            request.split.order = tonefit::ReadingOrder::LeftToRight
+        }),
         ("关掉上包络", |request| request.per_page = true),
     ];
 
@@ -389,6 +399,81 @@ fn a_color_page_carries_the_same_record_without_a_bit_depth() {
         again.volumes[0].verdict,
         Some(VolumeVerdict::Skipped { page_count: 2 })
     );
+}
+
+/// **切开的卷跳得过，而少一半就重做**（页几何批 04 号票）。
+///
+/// 幂等要在碰像素之前答完，而一个源页产出几张由内容决定——名单因此改从**上一趟写在
+/// 输出里的记录**读回来：每一张自己说得出它来自哪个源页、那一族该有几张
+/// （`tonefit:origin`）。
+///
+/// 下半段钉的是**「输出里少一张就该察觉」这条能力没有丢**（`p0-hardening/03` 靠的正是它）：
+/// 删掉后一半之后剩下那一张仍写着「1/2」，缺口因此看得见。只认「至少有一张」的实现
+/// 在这里会答「跳过」，而那一半再也补不回来。
+#[test]
+fn a_split_volume_is_skipped_and_losing_one_half_redoes_it() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+
+    let first = fixtures::run_volume(&space, &volume);
+    assert_eq!(first.volumes[0].page_count(), 2, "夹具没被切开");
+    let output = first.volumes[0].output.clone();
+
+    // 一张源页两张输出页，第二趟一页都不重做——跳过那一行报的是**输出**页数。
+    let second = fixtures::run_volume(&space, &volume);
+    assert_eq!(
+        second.volumes[0].verdict,
+        Some(VolumeVerdict::Skipped { page_count: 2 })
+    );
+    assert_eq!(second.volumes[0].source_pages, 1);
+    assert_eq!(second.volumes[0].decodes, 0, "跳过的卷还是解码了");
+
+    // 删掉后一半：整卷重做，两张都回来了。
+    fs::remove_file(output.join("001-2.png")).expect("删掉后一半");
+    let third = fixtures::run_volume(&space, &volume);
+    assert_redone(third.volumes[0].verdict, "输出里少了一半");
+    assert_eq!(
+        fixtures::directory_members(&third.volumes[0].output),
+        ["001-1.png", "001-2.png"]
+    );
+}
+
+/// 记录里那一项**说得出这一张来自哪个源成员、是那一族的第几张**（页几何批 04 号票）。
+///
+/// 取值一律 ASCII（tEXt 只装得下 Latin-1），序号从 1 数起。它随文件走：
+/// 一张切出来的半页离开报告的上下文之后，只有这一项还说得出它原来是哪一张跨页的一半。
+#[test]
+fn a_split_page_records_which_source_member_it_came_from() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+    volume.page("002.png", &fixtures::solid(fixtures::TINY, 128));
+
+    let report = fixtures::run_volume(&space, &volume);
+
+    let origin = |index: usize| {
+        let text = fixtures::read_png_text(&report.volumes[0].pages[index].output);
+        fixtures::png_field(&text, "tonefit:origin").expect("来路那一项没写进去")
+    };
+    assert_eq!(origin(0), "001.png 1/2");
+    assert_eq!(origin(1), "001.png 2/2");
+    // 没切开的那一张同样带着它，写的是「一族只有一张」。
+    assert_eq!(origin(2), "002.png 1/1");
 }
 
 /// 归档卷同样跳得过：记录在成员的字节里，容器是目录还是 CBZ 与它无关。

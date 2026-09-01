@@ -14,6 +14,7 @@ use crate::medium::IoPlan;
 use crate::profile::Profile;
 use crate::quantize::{Candidate, Dither};
 use crate::resample::Scaling;
+use crate::spread::{Cut, SplitRule};
 
 /// 一次处理调用的结果。
 ///
@@ -36,6 +37,12 @@ pub struct Report {
     /// 逐页那一行只在**真裁掉了东西**时才说话，而一页都没裁与整趟没开是两件事——
     /// 分辨它们只有这一项。
     pub crop: bool,
+    /// 这一趟怎么拆跨页（页几何批 04 号票）。
+    ///
+    /// 与 [`fit`](Self::fit)、[`crop`](Self::crop) 并排，理由是同一条：这一卷有几页、
+    /// 每一页是哪一块，都照它算出来。逐页那一行只在**这一张真是切出来的一半**时才说话，
+    /// 而「整卷没有一张跨页」与「整趟没开拆分」是两件事——分辨它们只有这一项。
+    pub split: SplitRule,
     pub volumes: Vec<VolumeReport>,
     /// 整趟的墙钟耗时：`run` 从进到出（加固批 11 号票）。
     ///
@@ -415,6 +422,26 @@ pub struct Processed {
     /// 大到分配不下，照着走整趟都要停（见 `crate::FitMode::target`）。
     /// 读的口子在 [`PageReport::backstopped`]，整趟的清单在 [`Report::backstopped`]。
     pub backstopped: bool,
+    /// 这一张是那一刀的产物：切在哪条装订沟上、这一张是哪一侧。
+    /// 整页出的是 `None`（页几何批 04 号票）。
+    ///
+    /// 哪一侧说的是**这张图原来长在页的哪边**，不是它排第几：先读哪一侧由阅读方向定
+    /// （见 [`ReadingOrder`](crate::ReadingOrder)），而反过阅读方向之后同一张图仍是那一侧。
+    ///
+    /// 「切没切」在报告里另有两处痕迹——[`VolumeReport::source_pages`] 与输出页数分家、
+    /// 同一个 `source` 出现两次。两处都要读的人自己去推，而这一项直说；
+    /// 三处对不上是不可能的：它们全由第一遍那一次拆分定下。
+    pub cut: Option<Cut>,
+    /// 这一张所属的源页够得上**跨页候选**吗（页几何批 04 号票）。
+    ///
+    /// 它与 [`cut`](Self::cut) 一起才说得全拆分那两级：`cut` 有值的必然是候选；
+    /// **候选而 `cut` 为空的，就是连续跨页**——够得上宽高比那一关，却找不到装订沟，
+    /// 因此不切、退回这一趟的适配方式。两项都为假的页根本没进过拆分。
+    ///
+    /// 报告非说得出这一项不可，否则「拆分把这一页放过去了」有两种读法而分不开，
+    /// 而真实素材冒烟数的**误报率**问的正是其中一种：单页卷上这一项为真的页，
+    /// 就是候选那一关漏下来的（04 号票的验收，见 `tests/smoke.rs`）。
+    pub spread_candidate: bool,
     /// 这一页实际走过的缩放：总缩放比、预缩倍数、残差比（ADR 0001）。
     ///
     /// 预缩这条路径在 B 类素材上从不触发（见 measurements 的《B 类素材普查》），
@@ -537,6 +564,25 @@ impl PageReport {
     /// 这一页裁掉了多少白边（页几何批 02 号票）。失败页没有——它没有像素可裁。
     pub fn crop(&self) -> Option<Crop> {
         self.outcome.processed().map(|page| page.crop)
+    }
+
+    /// 这一张是那一刀的产物吗；是的话，切在哪条装订沟上、这一张是哪一侧
+    /// （页几何批 04 号票）。
+    ///
+    /// 两种页都没有：整页出的那些（它们不是切出来的），以及失败页（它没有像素可切，
+    /// 恒出一张占位页）。
+    pub fn cut(&self) -> Option<Cut> {
+        self.outcome.processed().and_then(|page| page.cut)
+    }
+
+    /// 这一张所属的源页够得上**跨页候选**吗（页几何批 04 号票）。
+    ///
+    /// 失败页答否，而那是真话不是缺省：它连尺寸都没解出来，宽高比那一关无从问起。
+    /// 「候选而没切开」怎么读，见 [`Processed::spread_candidate`]。
+    pub fn spread_candidate(&self) -> bool {
+        self.outcome
+            .processed()
+            .is_some_and(|page| page.spread_candidate)
     }
 
     /// 这一页的目标尺寸是**兜底上界**改出来的吗（07 号票）。

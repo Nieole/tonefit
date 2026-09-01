@@ -9,6 +9,7 @@ use crate::profile::Profile;
 use crate::progress::ProgressSink;
 use crate::quantize::{BitDepth, Dither};
 use crate::resample::Filter;
+use crate::spread::SplitRule;
 
 /// 一次调用做到哪一步。
 ///
@@ -51,6 +52,16 @@ pub struct Request {
     /// 裁法按行列墨量占比、逐页各裁各的，详见 `crate::crop`。它改的是**适配之前**的页尺寸，
     /// 目标尺寸、几何门、判据参照与判定因此全跟着变，幂等收着它（见 `crate::metadata`）。
     pub crop: bool,
+    /// 这一趟怎么拆跨页（`--no-split`、`--split-threshold`、`--reading-order`，
+    /// 页几何批 04 号票）。**默认拆。**
+    ///
+    /// 三项收成一个类型而不是三个相邻的字段：它们总是一同传下去，
+    /// 而三个同型的裸参数换了位置编译器一句话都不会说（见 [`SplitRule`]）。
+    ///
+    /// 它改的是**这一卷有几页、每一页是哪一块**：一个源页有装订沟就切成两张输出页，
+    /// 没有就是连续跨页、原样出一张。成员名、页尺寸与判定因此全跟着变，
+    /// 幂等收着这三项（见 `crate::metadata`）。
+    pub split: SplitRule,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
     /// 位深覆盖（`--bit-depth`）。特殊卷靠它手工兜底（spec 的 story 23）。

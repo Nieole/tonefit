@@ -1044,6 +1044,387 @@ fn a_salvaged_page_keeps_the_blank_it_could_not_decode() {
     assert_eq!(page.size, Size::new(1182, 1680));
 }
 
+/// 跨页拆分那几条用例共用的一页：带装订沟的跨页，沟中心取实测最偏的那一页。
+fn spread_page() -> image::DynamicImage {
+    fixtures::spread_with_gutter(
+        fixtures::SPREAD_WITH_GUTTER,
+        fixtures::GUTTER_CENTER,
+        fixtures::GUTTER_WIDTH,
+    )
+}
+
+/// 那条沟的头一列与末一列（含），坐标在源页上。**算式只有一个出处**
+/// （`fixtures::gutter_left`），用例拿它推两半的窗口该落在哪儿。
+fn gutter_span() -> (u32, u32) {
+    let left = fixtures::gutter_left(
+        fixtures::SPREAD_WITH_GUTTER,
+        fixtures::GUTTER_CENTER,
+        fixtures::GUTTER_WIDTH,
+    );
+    (left, left + fixtures::GUTTER_WIDTH - 1)
+}
+
+/// 一卷输出页的成员名，按阅读顺序。
+fn output_names(volume: &tonefit::VolumeReport) -> Vec<String> {
+    volume
+        .pages
+        .iter()
+        .map(|page| fixtures::relative_name(&volume.output, &page.output))
+        .collect()
+}
+
+/// **切点落在装订沟上，而每半各自再裁一次**（页几何批 04 号票）。
+///
+/// 这一条把票面的三件事钉在一处，因为它们在产物上是同一组数：
+///
+/// - **切点跟着沟走，不切正中。**沟中心取 0.441（实测区间 0.401–0.538 里偏离正中较远的
+///   一侧），按正中盲切会切进右半的画面。两半的窗口因此宽度不等，
+///   而那两个数只有跟着沟走才算得出来。
+/// - **一列画面都没切掉，沟也没留在产物里。**两半的窗口严丝合缝地贴着沟的两侧：
+///   切开是从沟中心下的刀，沟剩下的那两截纸白由「每半再裁」收走。
+///   两半宽度之和恰好是页宽减去沟宽——这个等号是「每半各自再裁」量得出来的形式。
+/// - **收益是不必横向翻动。**同一页不拆的话顶到面板高要 1.86 屏宽，拆开之后每半
+///   0.81 与 1.03 屏（实测不拆的屏占比中位 1.88–1.91、拆开 0.88–0.92，
+///   见 measurements 的《跨页拆分》）。**两条路的缩放系数完全相同**：
+///   拆分不是拿分辨率换的。
+#[test]
+fn a_spread_is_cut_at_its_gutter_and_each_half_is_cropped_again() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &spread_page());
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    // 一张源页，两张输出页——报告两个数分开给（页几何批 03 号票）。
+    assert_eq!(reported.source_pages, 1);
+    assert_eq!(reported.page_count(), 2);
+    assert_eq!(reported.decodes, 1, "切开发生在解码之后，源页只解一次");
+    // 成员名一对多加序号，序号顺序就是阅读顺序；两张都指着同一个源页。
+    assert_eq!(output_names(reported), ["001-1.png", "001-2.png"]);
+    let pages = &reported.pages;
+    assert!(pages.iter().all(|page| page.source.ends_with("001.png")));
+    // 默认右开：右半在先。
+    let side = |page: &tonefit::PageReport| page.cut().expect("这是切出来的一半").side();
+    assert_eq!(
+        [side(&pages[0]), side(&pages[1])],
+        [tonefit::Side::Right, tonefit::Side::Left]
+    );
+
+    let source = fixtures::SPREAD_WITH_GUTTER;
+    let (from, to) = gutter_span();
+    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁边");
+    let (right, left) = (window(&pages[0]), window(&pages[1]));
+    // 窗口都长在源页上：裁边、切开、每半再裁三段叠成源页上的一块。
+    assert_eq!((right.before(), left.before()), (source, source));
+    assert_eq!(
+        (left.left(), left.after()),
+        (0, Size::new(from, source.height))
+    );
+    assert_eq!(
+        (right.left(), right.after()),
+        (to + 1, Size::new(source.width - to - 1, source.height))
+    );
+    // 两半之和恰好是页宽减去沟宽：一列画面都没丢，沟也没留下。
+    assert_eq!(
+        left.after().width + right.after().width,
+        source.width - fixtures::GUTTER_WIDTH
+    );
+    // **不在正中**：按正中盲切会切进右半的画面这么多列。
+    assert!(
+        source.width / 2 - (to + 1) > 100,
+        "切点离正中只有 {} 列，夹具没把「沟不在正中」造出来",
+        source.width / 2 - (to + 1)
+    );
+
+    // 每半顶到面板高，写出来的与报告说的对得上。
+    // 期望值手算：1313 × 1680 ÷ 2160 = 1021、1671 × 1680 ÷ 2160 = 1300。
+    assert_eq!(pages[0].size, Size::new(1300, 1680));
+    assert_eq!(pages[1].size, Size::new(1021, 1680));
+    for page in pages {
+        assert_eq!(fixtures::read_png(&page.output).size, page.size);
+    }
+
+    // 不拆的那一趟做对照：同一页 2352 宽，横向要平移 1.86 屏。
+    let kept = Workspace::new();
+    let whole = kept.volume("volume-a");
+    whole.page("001.png", &spread_page());
+    let unsplit = fixtures::run_volume_without_splitting(&kept, &whole);
+    let unsplit = &unsplit.volumes[0];
+    assert_eq!(unsplit.page_count(), 1);
+    assert_eq!(unsplit.pages[0].size, Size::new(2352, 1680));
+    // **缩放系数完全相同**：两条路都把源页的高顶到面板高，一像素内容占的屏幕面积一样大。
+    // 拆分省下的是横向翻动，不是分辨率。
+    let scale =
+        |page: &tonefit::PageReport| page.scaling().expect("处理成了的页有缩放").total_ratio();
+    assert_eq!(scale(&pages[0]), scale(&unsplit.pages[0]));
+    assert_eq!(scale(&pages[1]), scale(&unsplit.pages[0]));
+}
+
+/// **找不到装订沟就是连续跨页，不切**（页几何批 04 号票的硬约束）。
+///
+/// 一幅画横跨两页，切开就毁了。它退回以高为准，靠阅读器横向平移看——报告因此把它
+/// 点在「输出宽超过面板」那一小结里（页几何批 01 号票）。
+///
+/// 夹具自证：这一页**够得上跨页候选**，挡下它的是「没有沟」这一关，不是宽高比那一关。
+/// 没有这一句，一个候选那一关就把它拦下的实现在这里照样是绿的。
+#[test]
+fn a_spread_without_a_gutter_is_left_whole_and_read_by_panning() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 竖直渐变的宽幅页：每一列长得一模一样，一条空白列都挑不出来。
+    volume.page("001.png", &fixtures::gradient(fixtures::SPREAD));
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert_eq!(reported.source_pages, 1);
+    assert_eq!(reported.page_count(), 1, "连续跨页被切开了");
+    assert_eq!(output_names(reported), ["001.png"], "没切开却改了成员名");
+    let page = &reported.pages[0];
+    assert!(page.cut().is_none());
+    // 退回以高为准：宽溢出面板，靠横向平移看。
+    assert!(page.size.width > report.profile.panel().resolution.width);
+    assert_eq!(report.wider_than_the_panel().count(), 1);
+    // **夹具自证**：这一页够得上跨页候选，挡下它的只能是「没有沟」。
+    // 没有这一句，一个在候选那一关就把它拦下的实现在这里照样是绿的——
+    // 而那时红的会是别的用例，不是这一条。
+    assert!(
+        page.spread_candidate(),
+        "夹具没造对：这一页本该够得上跨页候选"
+    );
+}
+
+/// **阅读方向定两半的先后，成员名跟着反**（页几何批 04 号票，spec 的 story 3、story 4）。
+///
+/// 反过来之后同一张图仍然是原来那一侧——变的只有谁排在 `001-1.png` 上。
+/// 断言因此同时问两件事：成员名的次序反了，而两半的窗口一个像素都没变。
+#[test]
+fn the_reading_order_decides_which_half_gets_the_first_name() {
+    let run = |order: tonefit::ReadingOrder| {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &spread_page());
+        let report = tonefit::run(&Request {
+            split: tonefit::SplitRule {
+                order,
+                ..tonefit::SplitRule::default()
+            },
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("处理应当成功");
+        let reported = &report.volumes[0];
+        // 每一半落在哪个成员名上，以及它的窗口。工作区一落地就把临时目录收走，
+        // 因此在这里把要断言的都取出来。
+        let landed: Vec<(tonefit::Side, String, tonefit::Crop)> = reported
+            .pages
+            .iter()
+            .map(|page| {
+                (
+                    page.cut().expect("这是切出来的一半").side(),
+                    fixtures::relative_name(&reported.output, &page.output),
+                    page.crop().expect("处理成了的页有裁边"),
+                )
+            })
+            .collect();
+        (output_names(reported), landed)
+    };
+
+    let (names, right_open) = run(tonefit::ReadingOrder::RightToLeft);
+    let (flipped_names, left_open) = run(tonefit::ReadingOrder::LeftToRight);
+
+    // 成员名两趟一模一样：变的是哪一半落在哪个名字上。
+    assert_eq!(names, ["001-1.png", "001-2.png"]);
+    assert_eq!(flipped_names, names);
+    let landed_on = |run: &[(tonefit::Side, String, tonefit::Crop)], side| {
+        run.iter()
+            .find(|(found, ..)| *found == side)
+            .map(|(_, name, _)| name.clone())
+            .expect("两半都在")
+    };
+    // 右开：右半排在 `001-1.png` 上。反过来之后两个名字跟着对调。
+    assert_eq!(landed_on(&right_open, tonefit::Side::Right), "001-1.png");
+    assert_eq!(landed_on(&right_open, tonefit::Side::Left), "001-2.png");
+    assert_eq!(landed_on(&left_open, tonefit::Side::Left), "001-1.png");
+    assert_eq!(landed_on(&left_open, tonefit::Side::Right), "001-2.png");
+    // 两半的窗口一个像素都没变：阅读方向只改先后，不改切法。
+    let window = |run: &[(tonefit::Side, String, tonefit::Crop)], side| {
+        run.iter()
+            .find(|(found, ..)| *found == side)
+            .map(|(.., crop)| *crop)
+            .expect("两半都在")
+    };
+    for side in [tonefit::Side::Right, tonefit::Side::Left] {
+        assert_eq!(window(&right_open, side), window(&left_open, side));
+    }
+}
+
+/// **混排卷两类页都落对**（页几何批 04 号票，spec 的 story 7）。
+///
+/// 一卷里有些页已经拆好、有些还是连页，这是常态。已经拆好的单页够不上候选、原样出一张；
+/// 带沟的跨页切成两张；没有沟的连续跨页够得上候选却仍出一张。
+/// 三类页因此在同一卷里给出 1 + 2 + 1 = 4 张输出页，而源页是 3 张。
+#[test]
+fn a_volume_that_mixes_single_pages_and_spreads_lands_both_right() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
+    volume.page("002.png", &spread_page());
+    volume.page("003.png", &fixtures::gradient(fixtures::SPREAD));
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert_eq!(reported.source_pages, 3);
+    assert_eq!(reported.page_count(), 4);
+    assert_eq!(
+        output_names(reported),
+        ["001.png", "002-1.png", "002-2.png", "003.png"]
+    );
+    // 切开的只有带沟的那一张：另外两张都不是切出来的一半。
+    let cut: Vec<bool> = reported
+        .pages
+        .iter()
+        .map(|page| page.cut().is_some())
+        .collect();
+    assert_eq!(cut, [false, true, true, false]);
+    for page in &reported.pages {
+        assert_eq!(fixtures::read_png(&page.output).size, page.size);
+    }
+}
+
+/// **拆分关得掉，阈值调得动**（页几何批 04 号票的头两条验收）。
+///
+/// 关掉与把阈值抬到这一页的比值之上，两条路都让它原样出一张——而两条路**不是同一件事**，
+/// 报告分得开：关掉那一趟连跨页候选都不判（`spread_candidate` 为假，因为整卷不拆），
+/// 抬高阈值那一趟是这一页够不上候选。两处都断言，不然「阈值可调」与「开关关得掉」
+/// 在产物上长得一模一样。
+#[test]
+fn the_split_switch_and_its_threshold_both_leave_the_spread_whole() {
+    let whole = |split: tonefit::SplitRule| {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &spread_page());
+        let report = tonefit::run(&Request {
+            split,
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("处理应当成功");
+        let reported = &report.volumes[0];
+        (
+            reported.page_count(),
+            output_names(reported),
+            reported.pages[0].spread_candidate(),
+            report.split,
+        )
+    };
+
+    // 默认那一套切得开——不然下面两条什么都没证明。
+    let (count, names, candidate, rule) = whole(tonefit::SplitRule::default());
+    assert_eq!(count, 2);
+    assert_eq!(names, ["001-1.png", "001-2.png"]);
+    assert!(candidate && rule.on);
+
+    let (count, names, candidate, rule) = whole(tonefit::SplitRule {
+        on: false,
+        ..tonefit::SplitRule::default()
+    });
+    assert_eq!(count, 1, "拆分关着还是切开了");
+    assert_eq!(names, ["001.png"], "没切开却改了成员名");
+    assert!(!candidate, "拆分关着，这一页连跨页候选都不该判");
+    assert!(!rule.on, "报告没记住这一趟没开拆分");
+
+    // 这一页的比值是 (3024/2160) ÷ (1264/1680) = 1.86，抬到 2.5 就够不上跨页候选了。
+    let raised = tonefit::SplitThreshold::parse("2.5").expect("正数");
+    let (count, names, candidate, rule) = whole(tonefit::SplitRule {
+        threshold: raised,
+        ..tonefit::SplitRule::default()
+    });
+    assert_eq!(count, 1, "阈值抬到比值之上还是切开了");
+    assert_eq!(names, ["001.png"]);
+    assert!(!candidate, "阈值抬上去了，这一页不该再是跨页候选");
+    assert_eq!(rule.threshold, raised, "报告没记住这一趟的阈值");
+}
+
+/// **彩色分支上的跨页也切得开，而且切在同一处**（页几何批 04 号票）。
+///
+/// 拆分的次序（裁边 → 判跨页 → 拆分 → 每半再裁）在灰度路径与彩色分支上**各写了一遍**
+/// （`crate::Compute` 的 `gray_pages` 与 `color_pages`）。两处代码不共用，漏改一处
+/// 不会有编译错——只会让彩页在切开这件事上悄悄走另一条路。这一条把两条路并排跑一遍：
+/// 同一张跨页，一次在黑白面板上（转灰、走灰度路径）、一次在彩色面板上（走彩色分支），
+/// **两半的窗口必须逐字相同**。
+///
+/// `Split::of_gray` 与 `Split::of_color` 答不答得一样，在 `src/spread.rs` 的用例里量过；
+/// 这一条量的是它外面那一圈——切完之后每半再裁、三段窗口怎么叠起来。
+#[test]
+fn the_color_branch_splits_a_spread_at_the_very_same_place() {
+    let cut_windows = |device: &str| {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        // 彩色的跨页：把带装订沟的那一页染成彩色，纸白仍是纸白。
+        volume.page("001.png", &fixtures::colorize(&spread_page()));
+        let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(device));
+        let reported = &report.volumes[0];
+        let windows: Vec<(tonefit::Side, tonefit::Crop)> = reported
+            .pages
+            .iter()
+            .map(|page| {
+                (
+                    page.cut().expect("这是切出来的一半").side(),
+                    page.crop().expect("处理成了的页有裁边"),
+                )
+            })
+            .collect();
+        (
+            windows,
+            reported
+                .pages
+                .iter()
+                .map(|page| page.size)
+                .collect::<Vec<_>>(),
+            reported.pages[0].color(),
+        )
+    };
+
+    // 黑白面板：这一页转灰，走灰度路径。
+    let (gray_windows, gray_sizes, _) = cut_windows(fixtures::BASELINE_DEVICE);
+    // 彩色面板：同一页保留颜色，走彩色分支。
+    let (color_windows, color_sizes, identified) = cut_windows("kobo-libra-colour");
+
+    assert_eq!(identified, Some(PageColor::Color), "夹具没造出一张彩页");
+    assert_eq!(gray_windows.len(), 2, "灰度路径上这一页没切开");
+    assert_eq!(color_windows.len(), 2, "彩色分支上这一页没切开");
+    // 两条路切在同一处、每半裁掉的也一样多：窗口逐字相同。
+    assert_eq!(gray_windows, color_windows);
+    // 目标尺寸跟着窗口走，两条路因此也一样。
+    assert_eq!(gray_sizes, color_sizes);
+}
+
+/// **部分救回页不切**（页几何批 04 号票）。
+///
+/// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而一张缺了右半边的跨页按墨量看
+/// 就是「装订沟正好在中间」——切开它等于把「这一页缺了一半」变成两张各自完整的页。
+/// 与「部分救回页不裁边」是同一句话的两半：缺的那一段不是白边，也不是装订沟。
+#[test]
+fn a_salvaged_spread_is_not_cut_at_the_blank_it_could_not_decode() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 截断的跨页：解回来的那一段是画面，救不回来的那一段是纸白。
+    volume.file("001.png", &fixtures::truncated(&spread_page()));
+
+    let report = run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    let page = &reported.pages[0];
+    assert!(page.salvage().is_some(), "夹具没造出一张部分救回页");
+    assert_eq!(
+        reported.page_count(),
+        1,
+        "把救回页缺的那一段当成装订沟切开了"
+    );
+    assert!(page.cut().is_none());
+}
+
 #[test]
 fn the_target_size_comes_from_the_profiles_panel() {
     // 同一页送进三个 profile：目标尺寸随各自的面板走，没有写死的面板。
