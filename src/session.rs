@@ -114,23 +114,34 @@ fn drive(screen: &mut Screen, session: &mut Session, running: &mut Running) -> R
 
 /// 把一个键交给会话。
 ///
-/// **只有[起一趟](Action::Start)这一支不走 [`Session::press`]**：起线程、拼 `Request`、
-/// 把观察者接上去都在这一层，而状态机一个终端都不碰、也不起线程。
+/// **只有跟那条线程打交道的两支不走 [`Session::press`]**：[起一趟](Action::Start)
+/// 与[按停](Action::Stop)。起线程、拼 `Request`、把观察者接上去、把按到的那一级
+/// 送到计算线程上，都在这一层——状态机一个终端都不碰、也不起线程。
 /// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
 fn press(session: &mut Session, running: &mut Running, key: Key) -> Exit {
-    // 问一次就够：`Start` 之外的原样交回状态机，不让它再问一遍。
+    // 问一次就够：这两支之外的原样交回状态机，不让它再问一遍。
     let action = session.action(key);
-    let Action::Start(mode) = action else {
-        return session.act(action);
-    };
-    match session.request(mode) {
-        Ok(request) => {
-            running.start(request);
-            session.run_started();
+    match action {
+        Action::Start(mode) => {
+            match session.request(mode) {
+                Ok(request) => {
+                    running.start(request);
+                    session.run_started();
+                }
+                Err(error) => session.complain(format!("{error:#}")),
+            }
+            Exit::Stay
         }
-        Err(error) => session.complain(format!("{error:#}")),
+        // 按停：状态机把闩升一级（收尾 → 中止，ADR 0013），这一层把升到的那一级
+        // 交给跑着的那一趟。两处记的是同一个字，出处只有状态机那一份——
+        // 这里读的就是它刚升完的结果，不自己再算一次。
+        Action::Stop => {
+            let exit = session.act(action);
+            running.stop(session.stopping());
+            exit
+        }
+        other => session.act(other),
     }
-    Exit::Stay
 }
 
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。
@@ -251,6 +262,50 @@ mod tests {
             message.contains("Usage") || message.contains("用法"),
             "{message}"
         );
+    }
+
+    /// **按停那个键真的走到了跑着的那一趟身上。**
+    ///
+    /// 两头各自有用例（状态机那边 `one_key_pressed_twice_is_the_two_stage_stop`、
+    /// 闩那边 `the_latch_only_ever_goes_up`），接头处只有这一条——而接头处正是本层
+    /// 唯一做的事：把状态机升到的那一级交给 [`Running::stop`]。
+    ///
+    /// 不开终端：[`press`] 收的是 `&mut Session` 与 `&mut Running`，一个终端都不碰
+    /// （碰终端的是 [`drive`] 那条循环）。
+    #[test]
+    fn pressing_stop_reaches_the_run_that_is_going() {
+        let mut session = Session::new();
+        let mut running = Running::default();
+        session.run_started();
+
+        // 一次：收尾。两头记的是同一个字。
+        assert_eq!(
+            press(&mut session, &mut running, Key::Char('s')),
+            Exit::Stay
+        );
+        assert_eq!(session.stopping(), tonefit::Instruction::Finish);
+        assert_eq!(running.pressed(), tonefit::Instruction::Finish);
+
+        // 再一次：中止。
+        assert_eq!(
+            press(&mut session, &mut running, Key::Char('s')),
+            Exit::Stay
+        );
+        assert_eq!(session.stopping(), tonefit::Instruction::Abort);
+        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
+
+        // 第三次起那个键没有意义，闩两头都不再动。
+        assert_eq!(
+            press(&mut session, &mut running, Key::Char('s')),
+            Exit::Stay
+        );
+        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
+
+        // 浏览时按它什么都不发生：还没有东西可停。
+        let mut idle = Session::new();
+        let mut nothing = Running::default();
+        assert_eq!(press(&mut idle, &mut nothing, Key::Char('s')), Exit::Stay);
+        assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
     }
 
     /// 键码翻译认得会话要的那几个，别的原地放过。

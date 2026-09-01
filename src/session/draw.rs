@@ -21,7 +21,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use tonefit::Pass;
+use tonefit::{Instruction, Pass};
 
 use super::complete;
 use super::live::{Live, Walking};
@@ -59,6 +59,10 @@ const BAR_WIDTH: u64 = crate::BAR_WIDTH as u64;
 /// 而这里是提示条，长了反而读不出重点。
 const START_KEYS: &str = "t 试算 · x 执行";
 
+/// 跑起来之后左栏的抬头。**「只读」要看得出来**，不能是按了没反应
+/// （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
+const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
+
 /// 左栏在这一屏上占多宽。装得下就是 [`CONFIG_WIDTH`]，装不下就让给主区。
 fn config_width(total: u16) -> u16 {
     CONFIG_WIDTH.min(total.saturating_sub(MAIN_MIN_WIDTH))
@@ -80,7 +84,13 @@ pub fn shell(frame: &mut Frame, session: &Session, live: Option<&Live>) {
 }
 
 /// 左栏：三层，各占一块，按生命周期从上到下。
+///
+/// **跑起来之后整栏只读**，而这一条要在屏上**看得出来**，不能是「按了没反应」：
+/// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗。
+/// 真正拦住按键的不是这里——是状态机在那个状态下一个改动键都不派
+/// （见 `super::state::running_action`）；这里只把那件事说出来。
 fn config(session: &Session) -> Paragraph<'static> {
+    let running = matches!(session.mode(), Mode::Running(_));
     let focus = session.focus();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut drawn: Option<Layer> = None;
@@ -96,28 +106,33 @@ fn config(session: &Session) -> Paragraph<'static> {
             )));
             drawn = Some(layer);
         }
-        lines.push(row(session, field, field == focus));
+        // 跑着时光标不反白：那一格反白说的是「就在这一行上动手」，而这时按不动。
+        let style = match (running, field == focus) {
+            (true, _) => Style::default().add_modifier(Modifier::DIM),
+            (false, true) => Style::default().add_modifier(Modifier::REVERSED),
+            (false, false) => Style::default(),
+        };
+        lines.push(row(session, field, style));
     }
     Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("配置"))
+        .block(Block::default().borders(Borders::ALL).title(if running {
+            READ_ONLY_TITLE
+        } else {
+            "配置"
+        }))
         // 折行而不是切掉：阈值那一行要把**标定来源**原样带上来（spec 的 Further Notes），
         // 而那句话比这一栏宽；路径也一样，切掉尾巴的路径看不出是哪一个。
         // `trim: false` 让折下来的那一截保留缩进，读得出它还是上一行的。
         .wrap(Wrap { trim: false })
 }
 
-/// 左栏上的一行：名字 + 取值，光标停着的那一行反白。
-fn row(session: &Session, field: Field, focused: bool) -> Line<'static> {
+/// 左栏上的一行：名字 + 取值。怎么标（反白、压暗、还是原样）由 [`config`] 定。
+fn row(session: &Session, field: Field, style: Style) -> Line<'static> {
     let text = match field {
         // 卷那一行的取值里已经带着勾与路径，再挂一个「卷」字是废话。
         Field::Volume(_) => format!("  {}", session.shown(field)),
         Field::AddVolume => format!("  {}", field.label()),
         _ => format!("  {:　<8}{}", field.label(), session.shown(field)),
-    };
-    let style = if focused {
-        Style::default().add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
     };
     Line::from(Span::styled(text, style))
 }
@@ -368,17 +383,46 @@ fn footer(session: &Session) -> Paragraph<'static> {
     let mut lines = match session.mode() {
         Mode::Editing(edit) => editing_lines(session, edit),
         Mode::Browsing => vec![Line::from(browsing_keys(session)), Line::from("")],
-        Mode::Running => vec![Line::from(RUNNING_KEYS), Line::from("")],
+        Mode::Running(pressed) => running_lines(*pressed),
     };
     lines.push(Line::from(session.notice().unwrap_or("").to_owned()));
     Paragraph::new(lines)
 }
 
-/// 跑起来之后屏底那一行。
+/// 跑起来之后屏底那两行：**上一行说这时按得动的键，下一行说按下去之后它在等什么**
+/// （ADR 0013）。
 ///
-/// **配置这时只读**（spec 的《会话：布局与交互》），因此一个改动键都不提；
-/// 两级停那两个键归 `p1-session/10`，接上之前这里也不该先许诺出去。
-const RUNNING_KEYS: &str = " 跑着……（Ctrl-C 退出会话：当前卷中止，盘上不留半卷）";
+/// 一张表而不是两个函数：两行随的是**同一个**取值，而屏底那一格本来就是一起画的——
+/// 分成两处，改一级的措辞就要在两处对着改。
+///
+/// 上一行：配置这时只读（spec 的《会话：布局与交互》），因此一个改动键都不提；
+/// 「只读」那件事本身写在左栏抬头上（见 [`config`]）。按到中止之后 `s` 也不提了——
+/// 闩到了顶，再按一次没有更强的一级可去（`super::state::running_action` 在那一级上
+/// 派的是「没有意义」）。**屏上不摆按不动的键**，那正是「按了没反应」的来源。
+///
+/// 下一行：收尾那一句非说不可——按下去之后屏上一切照旧地往前走，几千页的卷还要跑几分钟，
+/// 不说清「在等当前卷跑完」，看上去就像那一下没按上。中止那一句说的是**盘上会剩下什么**。
+/// 没按过时它是空的，与浏览时那一行同一个样子（那一行也是空的）。
+///
+/// 措辞与报告里那两句（`crate::render::outcome` 的「按停」）说的是同一件事，
+/// 但时态不同：那两句是收场之后的结果，这两句是此刻在等的事。
+fn running_lines(pressed: Instruction) -> Vec<Line<'static>> {
+    let [keys, waiting] = match pressed {
+        Instruction::Continue => [
+            " 跑着…… · s 停（按一次收尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷）",
+            "",
+        ],
+        Instruction::Finish => [
+            " 收尾中…… · 再按一次 s 中止 · Ctrl-C 退出会话",
+            " 收尾：等当前卷跑完就停，剩下的卷一个都不开工；盘上只留完整的卷，下一趟幂等接着走",
+        ],
+        Instruction::Abort => [
+            " 中止中…… · Ctrl-C 退出会话",
+            " 中止：当前卷停在这一页上，它那格 partial 丢掉——那一卷等于没做，最终位置上一个字节都没动过",
+        ],
+    };
+    vec![Line::from(keys), Line::from(waiting)]
+}
 
 fn editing_lines(session: &Session, edit: &Edit) -> Vec<Line<'static>> {
     let keys = match edit.field.shape() {
@@ -465,6 +509,22 @@ mod tests {
             .collect()
     }
 
+    /// 左栏上有几格是反白的。**光标停在哪一行只有它看得出来**——
+    /// 逐格拼回来的文字里一点痕迹都没有，而「跑起来之后按不动」正要靠这一格说话。
+    fn reversed_rows(session: &Session) -> usize {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("测试后端起得来");
+        terminal
+            .draw(|frame| shell(frame, session, None))
+            .expect("画得出来");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .count()
+    }
+
     /// 一屏的**快照**：一行一行，每行两侧加引号，一格都不多一格不少。
     ///
     /// 走的是 `TestBackend` 自己的 `Display`——它按 `cell_width` 跳过被宽字符盖住的那一格
@@ -545,6 +605,90 @@ mod tests {
         // 一趟都没跑过时，主区说的是「按哪个键跑起来」。
         assert!(screen.contains("t试算"), "{screen}");
         assert!(screen.contains("x执行"), "{screen}");
+    }
+
+    /// **跑起来之后：三层只读这件事在屏上看得出来**，而不是按了没反应（本票的验收）。
+    ///
+    /// 三样各说一遍同一件事：抬头改口说「只读」、光标那一行不再反白、改一行的那几个键
+    /// 一个都不提。反白那一格非验不可——它说的是「就在这一行上动手」，而这时按不动。
+    #[test]
+    fn a_run_in_progress_says_on_screen_that_the_three_layers_are_read_only() {
+        let mut session = Session::new();
+        let before = tight(&screen(&session, 120, 40));
+        assert!(before.contains(&tight("←→ 换一个")), "{before}");
+        assert!(reversed_rows(&session) > 0, "浏览时光标那一行该反白");
+
+        session.run_started();
+        assert_eq!(reversed_rows(&session), 0, "跑着时光标还反白着");
+        let running = tight(&screen(&session, 120, 40));
+
+        assert!(running.contains(&tight(READ_ONLY_TITLE)), "{running}");
+        // 三层还在屏上（看得见配的是什么），只是改不动了。
+        for layer in [Layer::Device, Layer::Taste, Layer::Scope] {
+            assert!(running.contains(&tight(layer.title())), "{running}");
+        }
+        // 改一行的那几个键一个都不提。试算与执行那两个键不在这张单子上，
+        // 是因为它们还印在报告区那段「还没跑过」的说明里——真会话里那一段这时早换成了
+        // 攒着的报告（`live` 一起线程就有了），这里 `screen` 传的是 `None`。
+        // 「跑着时按不动 t 与 x」由按键表那一条钉住（`super::state` 的
+        // `which_keys_do_what_in_which_state` 第六段）。
+        for keys in ["←→ 换一个", "⏎ 改", "空格 勾上"] {
+            assert!(
+                !running.contains(&tight(keys)),
+                "{keys} 还在屏上：{running}"
+            );
+        }
+    }
+
+    /// **两级停按下去之后屏上说清它在等什么**（本票的验收）。
+    ///
+    /// 收尾那一句非说不可：按下去之后进度条照旧往前走，不说清「在等当前卷跑完」，
+    /// 看上去就像那一下没按上。中止那一句说的是盘上会剩下什么。
+    #[test]
+    fn pressing_stop_says_what_it_is_waiting_for() {
+        let mut session = Session::new();
+        session.run_started();
+
+        // 没按过：提示条上摆着那个键，按一次是收尾、再一次是中止，两级都写着。
+        let idle = tight(&screen(&session, 120, 40));
+        assert!(
+            idle.contains(&tight("s 停（按一次收尾，再按一次中止）")),
+            "{idle}"
+        );
+
+        // 按一次：收尾。屏上说清它在等当前卷跑完，也说清下一次按下去会怎样。
+        session.press(Key::Char('s'));
+        let finishing = tight(&screen(&session, 120, 40));
+        assert!(finishing.contains(&tight("收尾中")), "{finishing}");
+        assert!(
+            finishing.contains(&tight("等当前卷跑完就停")),
+            "{finishing}"
+        );
+        assert!(finishing.contains(&tight("再按一次 s 中止")), "{finishing}");
+
+        // 再按一次：中止。说的是盘上会剩下什么——那一卷等于没做。
+        session.press(Key::Char('s'));
+        let aborting = tight(&screen(&session, 120, 40));
+        assert!(aborting.contains(&tight("中止中")), "{aborting}");
+        assert!(aborting.contains(&tight("partial 丢掉")), "{aborting}");
+        // 闩到了顶，那个键从此按不动——屏上因此也不再摆它。
+        assert!(!aborting.contains(&tight("再按一次 s")), "{aborting}");
+
+        // 三级各说各的，上一行一句都不重样；没按过时下一行是空的。
+        let keys: std::collections::BTreeSet<String> = [
+            Instruction::Continue,
+            Instruction::Finish,
+            Instruction::Abort,
+        ]
+        .into_iter()
+        .map(|pressed| running_lines(pressed)[0].to_string())
+        .collect();
+        assert_eq!(keys.len(), 3, "三级里有两级说了同一句：{keys:?}");
+        assert_eq!(
+            running_lines(Instruction::Continue)[1].to_string(),
+            "",
+            "没按过时不该有话说"
+        );
     }
 
     /// 打字时屏底摆着缓冲与这一层列出来的候选。

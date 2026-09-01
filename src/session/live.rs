@@ -596,15 +596,35 @@ mod tests {
         assert_eq!(live.overall().elapsed, Duration::from_secs(42));
     }
 
-    /// 按停停下来的那一趟退出码照旧：它是用户自己的决定，不是失败。
+    /// **按停停下来的那一趟退出码照旧**：两级都一样，它是用户自己的决定，不是失败
+    /// （ADR 0013；`crate::exit_code` 的文档写着「按停停下来的那一趟不在这里露面」）。
+    ///
+    /// 「照旧」不是「恒为零」：报告里有卷被隔离、有卷没做成，那两个数照给——
+    /// 按停不改的是**这一趟收成了什么样**与退出码之间那条对应，而那条对应
+    /// 与命令行那一路是同一段代码（`crate::exit_code`）。
     #[test]
-    fn a_run_that_was_stopped_still_exits_zero() {
-        let mut live = Live::new(&fixture::request(RunMode::Process));
-        let mut report = live.report().clone();
-        report.outcome = RunOutcome::Stopped(Instruction::Abort);
-        live.returned(Ok(report));
+    fn a_run_that_was_stopped_exits_with_the_code_its_report_earns() {
+        for level in [Instruction::Finish, Instruction::Abort] {
+            // 停之前跑完的那几卷干干净净：全部成功那个数。
+            let mut clean = Live::new(&fixture::request(RunMode::Process));
+            let mut report = clean.report().clone();
+            report.volumes.push(fixture::skipped_volume("卷一", 20));
+            report.outcome = RunOutcome::Stopped(level);
+            clean.returned(Ok(report.clone()));
+            assert_eq!(clean.exit_code(), crate::SUCCESS_EXIT, "{level:?}");
+            assert_eq!(clean.exit_code(), crate::exit_code(&report), "{level:?}");
 
-        assert_eq!(live.exit_code(), crate::SUCCESS_EXIT);
+            // 其中一卷带着坏页进了隔离：仍是「有卷被隔离」那个数，按停没把它盖掉。
+            let mut isolated = Live::new(&fixture::request(RunMode::Process));
+            let mut report = isolated.report().clone();
+            report
+                .volumes
+                .push(fixture::processed_volume("卷一", Some("解不出来")));
+            report.outcome = RunOutcome::Stopped(level);
+            isolated.returned(Ok(report.clone()));
+            assert_eq!(isolated.exit_code(), crate::ISOLATED_EXIT, "{level:?}");
+            assert_eq!(isolated.exit_code(), crate::exit_code(&report), "{level:?}");
+        }
     }
 
     /// 剩余时间按至今为止的平均步速外推；走完就是零，一步没走就答不出来。

@@ -31,8 +31,8 @@
 use std::path::PathBuf;
 
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Mode as RunMode, Profile, ReadingOrder,
-    Request, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Profile,
+    ReadingOrder, Request, SplitThreshold,
 };
 
 use super::complete;
@@ -94,6 +94,16 @@ pub enum Action {
     /// 真把线程起起来的那件事**不在状态机里**（见 [`Session::apply`]）：
     /// 本模块一个终端都不碰，也不该起线程。
     Start(RunMode),
+    /// **按停**：把[闩](Session::stopping)往上升一级——没按过就是收尾，按过一次就是中止
+    /// （ADR 0013）。
+    ///
+    /// 一个动作，不是两个：两级停是**同一个键按两次**（`CONTEXT.md` 的《会话》：
+    /// 「中止是**再按一次**」）。分成 `Finish` 与 `Abort` 两个动作，
+    /// 「再按一次退不回上一级」就得靠键盘上有没有第二个键来保证，而那不是一条性质。
+    ///
+    /// 升到哪一级由状态机自己记（[`Mode::Running`] 那一格）；把它交给跑着的那一趟
+    /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
+    Stop,
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -295,12 +305,19 @@ pub enum Mode {
     Browsing,
     /// 某一行正在被打字改。
     Editing(Edit),
-    /// 一趟正跑着。**设备层与口味层这时只读**（spec 的《会话：布局与交互》）：
-    /// 卷与卷之间换参数，报告顶上那行 `profile` 就开始撒谎。
+    /// 一趟正跑着，带着**按停按到哪一级了**。
+    ///
+    /// **三层全只读**，两层各错在什么地方见 `CONTEXT.md` 的《会话》（`p1-session/10`
+    /// 把范围层也算了进来，停车场 Q69）。
     ///
     /// 「只读」不是靠画法上灰，是靠 [`Session::action`] 在这个状态下一个改动键都不派
-    /// （见 [`running_action`]）。
-    Running,
+    /// （见 [`running_action`]）。画法那一侧另有一份**看得出来**的交代
+    /// （左栏抬头写着「只读」、光标不反白），那是 [`super::draw::config`] 的事。
+    ///
+    /// 那一格装的是[闩](Session::stopping)：`Continue` 是没按过、`Finish` 是按过一次
+    /// （收尾）、`Abort` 是再按了一次（中止）。**只升不降**——按停不是一个可以反悔的开关
+    /// （`CONTEXT.md` 的《进度》）。
+    Running(Instruction),
 }
 
 /// 正在编辑的那一行。
@@ -317,9 +334,9 @@ pub struct Edit {
 
 /// 一个会话。
 ///
-/// 三层可改、按 `t` 试算、按 `x` 执行、按键退出。两级停（`10`）、逐页展开（`11`）、
-/// 预设的存取（`12`）、一键出标定图（`13`）、单卷续做（`14`）都还没接上，
-/// 它们各自会往这里加状态。
+/// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
+/// 按键退出。逐页展开（`11`）、预设的存取（`12`）、一键出标定图（`13`）、
+/// 单卷续做（`14`）都还没接上，它们各自会往这里加状态。
 ///
 /// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
 /// 攒着的那份报告与两条进度在 [`super::live::Live`] 上。分开是因为它们的寿命不同——
@@ -399,9 +416,13 @@ impl Session {
     }
 
     /// 一趟跑起来了：进 [`Mode::Running`]，配置从这一刻起只读。
+    ///
+    /// 闩从[继续](Instruction::Continue)起——**一趟一份**。上一趟按下的停不该跟着漏到
+    /// 下一趟去，理由与库那一侧把闩放在 `run` 的栈上是同一条（见 `tonefit` 的
+    /// `progress::Events`）。跑着的那一趟那一份见 [`super::run::Running::start`]。
     pub fn run_started(&mut self) {
         self.notice = None;
-        self.mode = Mode::Running;
+        self.mode = Mode::Running(Instruction::Continue);
     }
 
     /// 那一趟收场了：回到浏览，配置又改得动。
@@ -409,8 +430,22 @@ impl Session {
     /// **不叫 `Live::run_finished`。** 那一个折的是 `RunFinished` 那条**事件**
     /// （库说「这一趟完了」），这一个改的是**会话**此刻在做什么——两件事，两个接收者。
     pub fn run_finished(&mut self) {
-        if self.mode == Mode::Running {
+        if matches!(self.mode, Mode::Running(_)) {
             self.mode = Mode::Browsing;
+        }
+    }
+
+    /// **按停按到哪一级了**：没按过是[继续](Instruction::Continue)，按过一次是
+    /// [收尾](Instruction::Finish)，再按一次是[中止](Instruction::Abort)（ADR 0013）。
+    ///
+    /// 没跑着的时候恒是继续：按停是跑起来之后才有的事，浏览时那个键根本不派动作。
+    ///
+    /// 屏底那两行照它写（[`super::draw`]），而跑着的那一趟收到的是同一个字——
+    /// [`super::press`] 按下之后把它交给 [`super::run::Running::stop`]。
+    pub fn stopping(&self) -> Instruction {
+        match self.mode {
+            Mode::Running(pressed) => pressed,
+            Mode::Browsing | Mode::Editing(_) => Instruction::Continue,
         }
     }
 
@@ -469,7 +504,7 @@ impl Session {
         match &self.mode {
             Mode::Browsing => self.browsing_action(key),
             Mode::Editing(edit) => editing_action(edit, key),
-            Mode::Running => running_action(key),
+            Mode::Running(pressed) => running_action(key, *pressed),
         }
     }
 
@@ -538,10 +573,26 @@ impl Session {
             // 本模块一个终端都不碰，也不该起线程。那一层把 `Start` 接走之后才调
             // [`act`](Self::act)，因此这里到不了——真到了也只是这一下没起来，不是错。
             Action::Start(_) => {}
+            // 升一级就在这里；把升到的那一级交给跑着的那一趟在 [`super::press`]。
+            Action::Stop => self.raise_stop(),
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
         }
         Exit::Stay
+    }
+
+    /// 把闩往上升一级：继续 → 收尾 → 中止 → 中止（ADR 0013）。
+    ///
+    /// **只升不降**是这个函数的形状本身：升到中止之后它就是个不动点，
+    /// 而键盘上没有第二个键能往回按——两级停是同一个键按两次（见 [`Action::Stop`]）。
+    /// 库那一侧的闩用 `fetch_max` 说同一件事（`tonefit::Instruction` 的序即力度）。
+    fn raise_stop(&mut self) {
+        if let Mode::Running(pressed) = &mut self.mode {
+            *pressed = match *pressed {
+                Instruction::Continue => Instruction::Finish,
+                Instruction::Finish | Instruction::Abort => Instruction::Abort,
+            };
+        }
     }
 
     fn move_cursor(&mut self, step: Step) {
@@ -616,18 +667,26 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
     }
 }
 
-/// 跑起来之后的按键表：**一个改动键都不派**。
+/// 跑起来之后的按键表：**一个改动键都不派，只留按停与退出**。
 ///
-/// 「跑起来之后设备层与口味层只读」（spec 的《会话：布局与交互》）因此是结构上成立的，
+/// 「跑起来之后三层只读」（`CONTEXT.md` 的《会话》）因此是结构上成立的，
 /// 不是画法上把它们涂灰：改一行的那几个动作在这个状态下根本不存在。
 ///
-/// **两级停那两个键不在这里**——它们归 `p1-session/10`，本票一个都不占。
-/// 留在这里的只有 [`Key::Interrupt`]：它在**每一个**状态下都是退出，跑到一半也是
-/// （见 `Key::Interrupt` 自己的文档）。退出时那条还在写盘的线程怎么收，
-/// 见 [`super::run::Running::leave`]。
-fn running_action(key: Key) -> Action {
+/// **按停只有 `s` 一个键，按两次**（ADR 0013：中止是「再按一次」）：
+/// 第一次升到收尾，第二次升到中止。升到中止之后它**不再有意义**——闩到了顶，
+/// 再按一次没有更强的一级可去，因此派 [`Action::Ignored`] 而不是一个什么都不改的动作。
+/// 「按了中止之后退不回收尾」于是不必靠任何一处代码守着：键盘上没有那个键。
+///
+/// 退出这一路照旧只有 [`Key::Interrupt`]：它在**每一个**状态下都是退出，跑到一半也是
+/// （见 `Key::Interrupt` 自己的文档）。**`q` 与 `Esc` 跑着时按不动**，
+/// 而这是本票拿的一个主意（停车场 Q63）：退出会话要连着把当前卷丢掉，
+/// 那是中止那一级的事——而中止现在有专门的键，按两次 `s` 就到。
+/// 让 `q`／`Esc` 也能一下子把当前卷丢掉，等于给最容易手滑的两个键挂上最重的后果。
+/// 退出时那条还在写盘的线程怎么收，见 [`super::run::Running::leave`]。
+fn running_action(key: Key, pressed: Instruction) -> Action {
     match key {
         Key::Interrupt => Action::Quit,
+        Key::Char('s') if pressed < Instruction::Abort => Action::Stop,
         Key::Up
         | Key::Down
         | Key::Left
@@ -1164,7 +1223,8 @@ mod tests {
         session.press(Key::Enter);
         assert_eq!(session.action(Key::Tab), Action::Ignored);
 
-        // 六、跑起来之后：配置只读，试算与执行也按不动（一趟里跑不了第二趟）。
+        // 六、跑起来之后：三层只读，试算与执行也按不动（一趟里跑不了第二趟）。
+        // 按得动的只剩两个：`s`（按停）与 Ctrl-C（退出）。
         session.press(Key::Esc);
         session.run_started();
         for key in [
@@ -1188,11 +1248,57 @@ mod tests {
                 "{key:?} 跑着时不该生效"
             );
         }
+        assert_eq!(session.action(Key::Char('s')), Action::Stop);
         // Ctrl-C 仍旧退得出去：它在**每一个**状态下都是退出。
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
-        // 收场之后配置又改得动。
+        // 收场之后配置又改得动，而按停那个键在浏览时没有意义——还没有东西可停。
         session.run_finished();
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('s')), Action::Ignored);
+    }
+
+    /// **两级停：同一个键按两次。** 一次收尾，再一次中止，第三次没有意义。
+    ///
+    /// 两级的定义在 ADR 0013：收尾是当前卷跑完才停，中止是当场停。
+    /// 这一条问的是「按下去之后闩升到哪一级」，停出来的现场对不对是库那一侧的事
+    /// （`tests/events.rs` 的两个检查点）。
+    #[test]
+    fn one_key_pressed_twice_is_the_two_stage_stop() {
+        let mut session = Session::new();
+        // 还没跑起来：按停没有意义，闩也不动。
+        assert_eq!(session.press(Key::Char('s')), Exit::Stay);
+        assert_eq!(session.stopping(), Instruction::Continue);
+
+        session.run_started();
+        assert_eq!(session.stopping(), Instruction::Continue, "起手没按过");
+
+        // 一次收尾。
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Finish);
+        // 再一次中止。
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Abort);
+        // 第三次起没有更强的一级可去：那个键从此没有意义，闩也不再动。
+        assert_eq!(session.action(Key::Char('s')), Action::Ignored);
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Abort, "闩退回去了");
+
+        // 按停之后会话仍开着——停下来不是退出（本票的验收）。
+        assert_eq!(session.press(Key::Char('s')), Exit::Stay);
+        assert!(matches!(session.mode(), Mode::Running(_)));
+
+        // 那一趟收场：回到浏览，配置又改得动，闩跟着这一趟一起走。
+        session.run_finished();
+        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.stopping(), Instruction::Continue);
+
+        // 下一趟从头起：上一趟按下的停没有漏过来。
+        session.run_started();
+        assert_eq!(
+            session.stopping(),
+            Instruction::Continue,
+            "上一趟的停漏过来了"
+        );
     }
 
     /// 试算与执行拼出来的 `Request` **只差 `mode` 一格**，其余逐项相同。
@@ -1295,6 +1401,7 @@ mod tests {
             Key::Tab,
             Key::Backspace,
             Key::Char('x'),
+            Key::Char('s'),
         ] {
             assert_eq!(session.press(key), Exit::Stay, "{key:?} 不该退出");
         }
