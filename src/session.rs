@@ -47,7 +47,7 @@ use ratatui::crossterm::terminal::{
 };
 
 use run::Running;
-use state::{Action, Exit, Key, Session};
+use state::{Action, Exit, Expansion, Key, Session};
 
 /// 没等到按键时隔多久重画一帧。
 ///
@@ -114,12 +114,14 @@ fn drive(screen: &mut Screen, session: &mut Session, running: &mut Running) -> R
 
 /// 把一个键交给会话。
 ///
-/// **只有跟那条线程打交道的两支不走 [`Session::press`]**：[起一趟](Action::Start)
-/// 与[按停](Action::Stop)。起线程、拼 `Request`、把观察者接上去、把按到的那一级
-/// 送到计算线程上，都在这一层——状态机一个终端都不碰、也不起线程。
+/// **只有够得着那一趟的那几支不走 [`Session::press`]**：[起一趟](Action::Start)、
+/// [按停](Action::Stop)、[展开](Action::Expand)与[换一卷](Action::Turn)。
+/// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
+/// 从攒着的那份报告上数出有几卷与那一卷落在第几行，都在这一层——
+/// 状态机一个终端都不碰、不起线程，也读不到那一趟攒下来的东西。
 /// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
 fn press(session: &mut Session, running: &mut Running, key: Key) -> Exit {
-    // 问一次就够：这两支之外的原样交回状态机，不让它再问一遍。
+    // 问一次就够：这几支之外的原样交回状态机，不让它再问一遍。
     let action = session.action(key);
     match action {
         Action::Start(mode) => {
@@ -140,8 +142,45 @@ fn press(session: &mut Session, running: &mut Running, key: Key) -> Exit {
             running.stop(session.stopping());
             exit
         }
+        // 展开与换一卷：要读那一趟攒下来的报告（有几卷、那一卷落在第几行），
+        // 而状态机读不到它。收起（`Action::Collapse`）不在这里——它不必读报告。
+        Action::Expand | Action::Turn(_) => {
+            expand(session, running, action);
+            Exit::Stay
+        }
         other => session.act(other),
     }
+}
+
+/// 展开一卷的逐页，或者换到下一卷。
+///
+/// **展开那一下从第一卷起，且报告从头画**（`from` 取零）：抬头那几行
+/// （profile、适配方式、裁边、拆分）跟着跑的时候早滚出了格子（停车场 Q64），
+/// 而展开正是把它们找回来的那一下。往后翻一卷则把视口对到那一卷的抬头上
+/// （[`draw::opens_at`]）——不对准的话，换没换成屏上第一眼看不出来。
+///
+/// 一卷都没有就说一句、不进展开态：展开的是**报告上的一卷**，
+/// 而这一趟还没跑过或者第一卷还没跑完时，那样东西根本不在。
+fn expand(session: &mut Session, running: &Running, action: Action) {
+    let Some(live) = running.live() else {
+        session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
+        return;
+    };
+    let volumes = live.report().volumes.len();
+    if volumes == 0 {
+        session.complain("报告里还没有卷：一卷跑完才有它的逐页那几行".to_owned());
+        return;
+    }
+    let opened = match (action, session.expansion()) {
+        // 换一卷：两头都转一圈（`Expansion::next`），视口对到那一卷的抬头上。
+        (Action::Turn(step), Some(expansion)) => {
+            let next = expansion.next(step);
+            Expansion::new(next, volumes, draw::opens_at(&live, next))
+        }
+        _ => Expansion::new(0, volumes, 0),
+    };
+    drop(live);
+    session.expand(opened);
 }
 
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。
@@ -160,6 +199,8 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
         KeyCode::Right => Key::Right,
         KeyCode::Enter => Key::Enter,
         KeyCode::Tab => Key::Tab,
+        // `⇧⇥` 是一个**单独的**键码，不是 Tab 加一个修饰键。
+        KeyCode::BackTab => Key::BackTab,
         KeyCode::Backspace => Key::Backspace,
         KeyCode::Esc => Key::Esc,
         KeyCode::Char(' ') => Key::Space,
@@ -247,6 +288,8 @@ fn no_terminal_error() -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     /// 「这里没有终端」那条错误里，**clap 那条必填项提示一个字都没被吃掉**。
@@ -308,6 +351,76 @@ mod tests {
         assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
     }
 
+    /// **展开那个键找那一趟要报告，而报告不在时它说一句、不进展开态。**
+    ///
+    /// 接头处与按停那一条同一个位置：状态机读不到那一趟攒下来的东西，
+    /// 「有几卷」「那一卷落在第几行」两个数都由本层从 [`Running::live`] 上数出来。
+    /// 不开终端——[`press`] 收的是 `&mut Session` 与 `&mut Running`。
+    #[test]
+    fn expanding_asks_the_run_for_its_report_and_says_so_when_there_is_none() {
+        let mut session = Session::new();
+        let mut running = Running::default();
+
+        // 一趟都没跑过：说一句，会话原地不动。
+        assert_eq!(
+            press(&mut session, &mut running, Key::Char('e')),
+            Exit::Stay
+        );
+        assert!(session.expansion().is_none(), "没有报告却展开了");
+        let said = session.notice().expect("该说一句").to_owned();
+        assert!(said.contains("还没跑过"), "{said}");
+
+        // 跑过一趟、报告里有两卷：展开落在第一卷上，报告从头画（抬头那几行回来了）。
+        // 两个只装透传文件的卷：一页都没有，因此不必在用例里造图片，
+        // 而这一条要问的（几卷、落在第几行、转不转得回去）一件都不少。
+        let workspace = tempfile::tempdir().expect("建得出临时目录");
+        let inputs: Vec<PathBuf> = ["卷一", "卷二"]
+            .iter()
+            .map(|name| {
+                let volume = workspace.path().join(name);
+                std::fs::create_dir_all(&volume).expect("建得出卷");
+                std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
+                volume
+            })
+            .collect();
+        running.start(tonefit::Request {
+            inputs,
+            output_root: workspace.path().join("出"),
+            ..live::fixture::request(tonefit::Mode::DryRun)
+        });
+        while !running.reap() {
+            std::thread::yield_now();
+        }
+        session.run_finished();
+        press(&mut session, &mut running, Key::Char('e'));
+        let expansion = session.expansion().expect("该展开了");
+        assert_eq!(expansion.volume, 0);
+        assert_eq!(expansion.volumes, 2);
+        assert_eq!(expansion.from, 0, "展开那一下该从报告头一行画起");
+        assert!(session.notice().is_none(), "展开之后上一句话没抹掉");
+
+        // `⇥` 往后一卷，视口对到那一卷的抬头上；再按一次转一圈回到第一卷。
+        press(&mut session, &mut running, Key::Tab);
+        let second = session.expansion().expect("还展开着").clone();
+        assert_eq!(second.volume, 1);
+        assert!(second.from > 0, "换过一卷之后视口没对上去");
+        press(&mut session, &mut running, Key::Tab);
+        assert_eq!(session.expansion().expect("还展开着").volume, 0, "没转回去");
+
+        // `⇧⇥` 是另一头：往前一卷，同样转得回去。**两头都有**，
+        // 因为几十卷的一趟里往回看一卷不该按二十九下（票面：选中一卷）。
+        press(&mut session, &mut running, Key::BackTab);
+        let back = session.expansion().expect("还展开着").clone();
+        assert_eq!(back.volume, 1, "⇧⇥ 没往前转");
+        assert_eq!(back.from, second.from, "两头转到同一卷，落位却不一样");
+        press(&mut session, &mut running, Key::BackTab);
+        assert_eq!(session.expansion().expect("还展开着").volume, 0);
+
+        // 收起：一个键回到配置，展开态没了。
+        assert_eq!(press(&mut session, &mut running, Key::Esc), Exit::Stay);
+        assert!(session.expansion().is_none());
+    }
+
     /// 键码翻译认得会话要的那几个，别的原地放过。
     ///
     /// 这一层薄到只剩一张对照表，规矩在 [`state`]——那边的用例问的是
@@ -319,6 +432,8 @@ mod tests {
         assert_eq!(translate(&press(KeyCode::Up)), Some(Key::Up));
         assert_eq!(translate(&press(KeyCode::Enter)), Some(Key::Enter));
         assert_eq!(translate(&press(KeyCode::Tab)), Some(Key::Tab));
+        // `⇧⇥` 报的是一个单独的键码，不是 Tab 加一个修饰键。
+        assert_eq!(translate(&press(KeyCode::BackTab)), Some(Key::BackTab));
         assert_eq!(translate(&press(KeyCode::Esc)), Some(Key::Esc));
         assert_eq!(translate(&press(KeyCode::Char(' '))), Some(Key::Space));
         assert_eq!(translate(&press(KeyCode::Char('q'))), Some(Key::Char('q')));

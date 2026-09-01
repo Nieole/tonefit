@@ -462,12 +462,107 @@ pub(crate) mod fixture {
         }
     }
 
+    /// 一份**三种页各一张**的卷报告：完好的灰度页、走彩色分支的页、失败页。
+    ///
+    /// 展开那几条要的正是这一种（`p1-session/11` 的验收后两条）：
+    /// 失败页说得出它的尺寸是**卷内统一尺寸**、彩页说得出它不量化也不进上包络，
+    /// 而这两句话只有逐页那几行说得出来——卷级那几行一句都没有。
+    ///
+    /// 它与 [`processed_volume`] 分开而不是给后者加一个开关：那两张快照
+    /// （`p1-session/09` 录的）钉的是卷级那几行，添一张彩页会让它们一起重录，
+    /// 而彩页与那两张快照要说的事无关。
+    pub fn three_kinds_of_page(name: &str) -> VolumeReport {
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let source = Size::new(1441, 2048);
+        let target = Size::new(1182, 1680);
+        let whole = |at: &str, color: PageColor, branch: PageBranch| PageReport {
+            source: PathBuf::from(format!("库/{name}/{at}.jpg")),
+            output: PathBuf::from(format!("出/隔离/{name}/{at}.png")),
+            size: target,
+            outcome: PageOutcome::Whole(Processed {
+                crop: Crop::keeping_all(source),
+                backstopped: false,
+                cut: None,
+                spread_candidate: false,
+                scaling: Scaling::plan(source, target),
+                color,
+                branch,
+            }),
+        };
+        let pages = vec![
+            whole(
+                "001",
+                PageColor::Gray,
+                PageBranch::Gray {
+                    gate: GeometryGate::Holds,
+                    // 四个候选各一个数——**逐页那两行轻松过 100 列**（票面原话）就是
+                    // 这么来的。摆一个候选的话那一行短得放得进 60 列，
+                    // 而「宽度是稀缺资源」这件事就演不出来了。
+                    scores: every_candidate(),
+                    verdict: Verdict {
+                        candidate,
+                        reason: Reason::LowestWithinThreshold,
+                    },
+                },
+            ),
+            whole("002", PageColor::Color, PageBranch::Color),
+            PageReport {
+                source: PathBuf::from(format!("库/{name}/017.jpg")),
+                output: PathBuf::from(format!("出/隔离/{name}/017.png")),
+                size: target,
+                outcome: PageOutcome::Failed {
+                    reason: "解不出完整尺寸：JPEG 数据截断".to_owned(),
+                },
+            },
+        ];
+        VolumeReport {
+            volume: PathBuf::from(format!("库/{name}")),
+            output: PathBuf::from(format!("出/隔离/{name}")),
+            superseded: None,
+            source_pages: pages.len(),
+            verdict: Some(VolumeVerdict::Envelope(Envelope {
+                base: candidate,
+                driver: 0,
+                body_pages: 1,
+                outlier_pages: 0,
+                raised_pages: 0,
+            })),
+            pages,
+            cache: cache_usage(),
+            io: io_plan(),
+            decodes: 2,
+            timing: VolumeTiming::default(),
+        }
+    }
+
     /// 一个判据值。从公开 seam 上真算一个——摆一个编出来的数上去，
     /// 快照就钉不住「报告说的是判据算出来的东西」。
     fn a_score() -> tonefit::Score {
+        a_score_of(136)
+    }
+
+    /// 一个判据值，深浅由 `shade` 定。候选各不相同的那几个数由它来。
+    fn a_score_of(shade: u8) -> tonefit::Score {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
-        tonefit::score(&reference, &GrayImage::new(Size::new(1, 1), vec![136]))
+        tonefit::score(&reference, &GrayImage::new(Size::new(1, 1), vec![shade]))
+    }
+
+    /// 一页上各候选各一个数，档位由低到高——**逐页那一行印的就是这一串**
+    /// （`render::score_line`）。
+    fn every_candidate() -> Vec<CandidateScore> {
+        [
+            (BitDepth::One, Dither::FloydSteinberg, 160),
+            (BitDepth::Two, Dither::Off, 148),
+            (BitDepth::Four, Dither::Off, 136),
+            (BitDepth::Eight, Dither::Off, 130),
+        ]
+        .into_iter()
+        .map(|(depth, dither, shade)| CandidateScore {
+            candidate: Candidate::new(depth, dither),
+            score: a_score_of(shade),
+        })
+        .collect()
     }
 
     /// 一份读取计划：探到固态盘、并发读八条。「这一趟怎么读的」那一行印的就是它。

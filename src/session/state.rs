@@ -48,6 +48,9 @@ pub enum Key {
     Enter,
     Space,
     Tab,
+    /// `⇧⇥`。终端把它报成一个**单独的**键码（crossterm 的 `BackTab`），
+    /// 不是「Tab 加一个修饰键」——认它的地方因此与 [`Self::Tab`] 各占一支。
+    BackTab,
     Backspace,
     Esc,
     Char(char),
@@ -61,6 +64,22 @@ pub enum Step {
     Next,
     Back,
 }
+
+/// 报告区往哪边挪一下。**四个方向不是两个 [`Step`]**：上下挪的是行、左右挪的是列，
+/// 两根轴上一格的大小都不同（见 [`SIDEWAYS`]），合成一个取值只会让调用方再分一次岔。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toward {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// 报告区横着滚一下走几列。
+///
+/// 一列一列太慢：逐页那两行轻松过 100 列，而窄终端上要挪的正是那几十列。
+/// 取八列——比一个汉字宽，按一下看得出屏在动，又不至于一下跳过半屏。
+const SIDEWAYS: u16 = 8;
 
 /// 一个键在当前状态下会做的那件事。**这就是「哪些键在哪个状态下有效」那张表的值域。**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +123,28 @@ pub enum Action {
     /// 升到哪一级由状态机自己记（[`Mode::Running`] 那一格）；把它交给跑着的那一趟
     /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
     Stop,
+    /// **展开**：把报告上第一卷的逐页那几行摊开来，左栏跟着收起
+    /// （`CONTEXT.md` 的《会话》：展开）。
+    ///
+    /// 展开哪一卷、报告从第几行画起，都要读那一趟攒下来的报告，而本模块读不到它
+    /// （攒着的那一份在 [`super::live::Live`] 上）。真做这件事的因此是
+    /// [`super::press`]——与[起一趟](Self::Start)同一条分法。
+    Expand,
+    /// 换展开的那一卷：往后一卷或往前一卷，两头都转一圈。
+    ///
+    /// 带方向而不是只往后：几十卷的一趟里，往回看一卷不该按二十九下
+    /// （票面：**选中一卷**可展开逐页）。方向用 [`Step`]，与三层那几个取值环
+    /// 同一个取值——两处都是「在一圈上挪一格」。
+    ///
+    /// 与[展开](Self::Expand)同样落在 [`super::press`] 那一层：换完要把视口对到
+    /// 那一卷的抬头上，而那是数报告有几行的事。
+    Turn(Step),
+    /// **收起**：逐页那几行收起来，左栏回来。
+    ///
+    /// 与展开不对称——收起不必读报告，因此它就在本模块做掉。
+    Collapse,
+    /// 展开着的报告区往那个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
+    Scroll(Toward),
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -318,6 +359,66 @@ pub enum Mode {
     /// （收尾）、`Abort` 是再按了一次（中止）。**只升不降**——按停不是一个可以反悔的开关
     /// （`CONTEXT.md` 的《进度》）。
     Running(Instruction),
+    /// 报告区**展开**着一卷的逐页，左栏收着（`CONTEXT.md` 的《会话》：展开）。
+    ///
+    /// 「展开」与「左栏收起」是**同一件事**，不是两个开关：spec 的《会话：布局与交互》
+    /// 写的是「展开逐页时左栏收起、主区吃满宽度」——逐页那两行轻松过 100 列，
+    /// 而左栏那 52 列在这一刻是宽度里最贵的一截。分成两个开关的话，
+    /// 「展开着而左栏还在」这种没人要的组合就得靠某处代码守着。
+    ///
+    /// **收起不是删掉**：收起来的那些行原样回得来（[`Action::Collapse`] 只把这个状态
+    /// 换回 [`Browsing`](Self::Browsing)，三层一格没动，光标也还停在原处）。
+    ///
+    /// **跑着的时候展不开**，而这是本票拿的主意（停车场 Q72）：报告那时还在长，
+    /// 而那一刻按得动的只有停。`Mode` 因此仍是一维的，与 `p1-session/10` 拿的那一条
+    /// （范围层跟着冻住、不把 `Mode` 拆成两维）同一个形状。
+    Expanded(Expansion),
+}
+
+/// 展开着的那一卷，以及报告区滚到哪儿了。
+///
+/// **不叫 `Reading`。** 展开是屏上那件事本身（报告区摊开了一卷的逐页、左栏收着），
+/// 「在读」是用户的意图——后者会让人以为还有一个「不展开地读」的状态，而那个状态
+/// 不存在（见 [`Mode::Expanded`]）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expansion {
+    /// 展开的是报告上的第几卷。
+    pub volume: usize,
+    /// 这一趟的报告里有几卷。**进来那一刻记下的**：`⇥` 转一圈靠它，而本模块读不到
+    /// 那一趟攒的报告。展开着的时候报告不会再长——展开只从浏览进得去，
+    /// 而浏览意味着没有一趟正跑着。
+    pub volumes: usize,
+    /// 报告从第几行开始画。**从顶数**，不是从底数：往回翻到零就是抬头那几行
+    /// （profile、适配方式、裁边、拆分），而那正是跟着跑的时候滚出格子的那一截
+    /// （停车场 Q64）。
+    pub from: u16,
+    /// 往右滚了几列。逐页那两行**不折行**（票面：逐页行不被折断），
+    /// 窄终端上要看到行尾只能横着滚。
+    pub right: u16,
+}
+
+impl Expansion {
+    /// 摊开第 `volume` 卷，报告从第 `from` 行画起。
+    ///
+    /// 三个数由 [`super::press`] 一起算好——**它们是一伙的**：换一卷就要跟着换落位，
+    /// 而「有几卷」是这两个数的定义域。横向那一格不在参数里：
+    /// 它恒从零起，换一卷之后停在上一卷滚到的那几十列上，读的人会以为行是空的。
+    pub(super) fn new(volume: usize, volumes: usize, from: u16) -> Self {
+        Self {
+            volume,
+            volumes,
+            from,
+            right: 0,
+        }
+    }
+
+    /// 往一边挪一卷，两头都转一圈——与三层那几个取值环同一条（见 [`ring`]）。
+    pub(super) fn next(&self, step: Step) -> usize {
+        match step {
+            Step::Next => (self.volume + 1) % self.volumes,
+            Step::Back => (self.volume + self.volumes - 1) % self.volumes,
+        }
+    }
 }
 
 /// 正在编辑的那一行。
@@ -335,7 +436,7 @@ pub struct Edit {
 /// 一个会话。
 ///
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
-/// 按键退出。逐页展开（`11`）、预设的存取（`12`）、一键出标定图（`13`）、
+/// 按 `e` 展开逐页（左栏跟着收起）、按键退出。预设的存取（`12`）、一键出标定图（`13`）、
 /// 单卷续做（`14`）都还没接上，它们各自会往这里加状态。
 ///
 /// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
@@ -445,7 +546,16 @@ impl Session {
     pub fn stopping(&self) -> Instruction {
         match self.mode {
             Mode::Running(pressed) => pressed,
-            Mode::Browsing | Mode::Editing(_) => Instruction::Continue,
+            Mode::Browsing | Mode::Editing(_) | Mode::Expanded(_) => Instruction::Continue,
+        }
+    }
+
+    /// 报告区此刻展开着哪一卷、滚到哪儿了。没展开就是 `None`——那是默认的那一档：
+    /// **报告区只给卷级**，左栏在场（票面第一条）。
+    pub fn expansion(&self) -> Option<&Expansion> {
+        match &self.mode {
+            Mode::Expanded(expansion) => Some(expansion),
+            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) => None,
         }
     }
 
@@ -505,6 +615,7 @@ impl Session {
             Mode::Browsing => self.browsing_action(key),
             Mode::Editing(edit) => editing_action(edit, key),
             Mode::Running(pressed) => running_action(key, *pressed),
+            Mode::Expanded(_) => expanded_action(key),
         }
     }
 
@@ -530,8 +641,11 @@ impl Session {
             // 而这一路上没有第二道确认（`t` 只算不写，`x` 真写）。
             Key::Char('t') => Action::Start(RunMode::DryRun),
             Key::Char('x') => Action::Start(RunMode::Process),
+            // 展开逐页。它与光标停在哪一行无关：报告区是右边那一大格的事，
+            // 而左栏此刻只是让位的那一方。
+            Key::Char('e') => Action::Expand,
             Key::Char('q') | Key::Esc | Key::Interrupt => Action::Quit,
-            Key::Char(_) | Key::Tab | Key::Backspace => Action::Ignored,
+            Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
         }
     }
 
@@ -575,10 +689,59 @@ impl Session {
             Action::Start(_) => {}
             // 升一级就在这里；把升到的那一级交给跑着的那一趟在 [`super::press`]。
             Action::Stop => self.raise_stop(),
+            // 展开与换卷要读那一趟攒下来的报告（有几卷、那一卷从第几行起），
+            // 而本模块读不到它——真做这两件事的是 [`super::press`]，它随后调
+            // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
+            // 因此这里到不了；真到了也只是这一下没展开，不是错。
+            Action::Expand | Action::Turn(_) => {}
+            Action::Collapse => self.mode = Mode::Browsing,
+            Action::Scroll(toward) => self.scroll(toward),
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
         }
         Exit::Stay
+    }
+
+    /// 展开一卷的逐页，左栏跟着收起。
+    ///
+    /// 那一份 [`Expansion`] 由 [`super::press`] 拼好送进来：它读得到那一趟攒的报告，
+    /// 本模块读不到。`from` 是报告从第几行画起——展开那一下是零（抬头那几行跟着回来，
+    /// 见 [`Expansion::from`]），换卷那一下是那一卷的抬头在第几行。
+    pub(super) fn expand(&mut self, expansion: Expansion) {
+        // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
+        self.notice = None;
+        self.mode = Mode::Expanded(expansion);
+    }
+
+    /// 报告区往一个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
+    ///
+    /// **往上、往左都收在零上**（`saturating_sub`）：零就是报告的头一行、行首那一列。
+    /// 另外两头收在哪儿这里答不出——那要知道这一格装得下几行几列，
+    /// 而本模块一个终端都不碰。画法那一层每帧收一次（[`Self::clamp_report`]）。
+    fn scroll(&mut self, toward: Toward) {
+        let Mode::Expanded(expansion) = &mut self.mode else {
+            return;
+        };
+        match toward {
+            Toward::Up => expansion.from = expansion.from.saturating_sub(1),
+            Toward::Down => expansion.from = expansion.from.saturating_add(1),
+            Toward::Left => expansion.right = expansion.right.saturating_sub(SIDEWAYS),
+            Toward::Right => expansion.right = expansion.right.saturating_add(SIDEWAYS),
+        }
+    }
+
+    /// 把滚动量收进这一格真滚得动的范围：最多滚到 `down` 行、`right` 列。
+    ///
+    /// **画法那一层每帧调一次**（见 [`super::draw::report_pane`]），因为只有它知道
+    /// 这一格装得下几行几列。不收的话，往下翻过了头之后再往回翻，头几下会**按了没反应**
+    /// ——而那正是本仓库反复要躲的那件事（`p1-session/10` 的「屏上不摆按不动的键」）。
+    ///
+    /// 只往下收、不往上抬：`0` 恒是合法的落点。
+    pub(super) fn clamp_report(&mut self, down: u16, right: u16) {
+        if let Mode::Expanded(expansion) = &mut self.mode {
+            expansion.from = expansion.from.min(down);
+            expansion.right = expansion.right.min(right);
+        }
     }
 
     /// 把闩往上升一级：继续 → 收尾 → 中止 → 中止（ADR 0013）。
@@ -663,7 +826,7 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
         Key::Enter => Action::Commit,
         Key::Esc => Action::Cancel,
         Key::Interrupt => Action::Quit,
-        Key::Up | Key::Down | Key::Left | Key::Right => Action::Ignored,
+        Key::BackTab | Key::Up | Key::Down | Key::Left | Key::Right => Action::Ignored,
     }
 }
 
@@ -683,6 +846,9 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
 /// 那是中止那一级的事——而中止现在有专门的键，按两次 `s` 就到。
 /// 让 `q`／`Esc` 也能一下子把当前卷丢掉，等于给最容易手滑的两个键挂上最重的后果。
 /// 退出时那条还在写盘的线程怎么收，见 [`super::run::Running::leave`]。
+///
+/// **展开那个键（`e`）跑着时同样按不动**（停车场 Q72）：报告那时还在长，
+/// 而这一刻按得动的只该有停。要展开就等这一趟收场——它跑完之后报告一行不少。
 fn running_action(key: Key, pressed: Instruction) -> Action {
     match key {
         Key::Interrupt => Action::Quit,
@@ -694,9 +860,47 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
         | Key::Enter
         | Key::Space
         | Key::Tab
+        | Key::BackTab
         | Key::Backspace
         | Key::Esc
         | Key::Char(_) => Action::Ignored,
+    }
+}
+
+/// 展开之后的按键表：**报告区在两根轴上滚，`⇥` 换一卷，`e`／`Esc` 收起。**
+///
+/// 上下左右那几个键在这里改的是报告区，不是左栏——左栏此刻不在屏上
+/// （见 [`Mode::Expanded`]），把它们留给一栏看不见的东西才是「按了没反应」。
+/// `j`／`k` 跟着 `↑↓`，与浏览时一个待遇（见 [`Session::browsing_action`]）。
+/// 两根轴上一格的大小不同：上下一行，左右 [`SIDEWAYS`] 列（逐页那两行过 100 列）。
+///
+/// **换卷用 `⇥` 与 `⇧⇥`**：`⇥` 在浏览时没有意义、在编辑路径时是「下一层」，
+/// 两处都是「往下一个去」，这里接着用同一个意思；`⇧⇥` 是它的另一头。
+/// 两头都有而不是只往后转一圈，是因为票面要的是**选中一卷**——
+/// 几十卷的一趟里往回看一卷不该按二十九下。
+///
+/// **收起有两个键，而这不是重复**：`e` 是展开那个键的另一半（同一个键按回去），
+/// `Esc` 是「退一步」——编辑到一半按它是丢掉缓冲回浏览，这里按它是收起回配置，
+/// 同一个意思。两级停那个 `s` 不给第二个键，因为**中止退不回收尾**；
+/// 收起退得回去，因此不必守着只有一个入口。
+///
+/// **`q` 仍是退出会话**（与浏览时同一件事）：展开只是在读报告，
+/// 没有「按错一下就丢掉一卷」那种后果，不必像跑着时那样把它按不动
+/// （`p1-session/10` 的停车场 Q63）。
+///
+/// **`t` 与 `x` 在这里按不动**：起一趟要先收起——报告区正摊着上一趟的逐页，
+/// 而新的一趟会当场把它换掉。收起是一个键的事。
+fn expanded_action(key: Key) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Scroll(Toward::Up),
+        Key::Down | Key::Char('j') => Action::Scroll(Toward::Down),
+        Key::Left => Action::Scroll(Toward::Left),
+        Key::Right => Action::Scroll(Toward::Right),
+        Key::Tab => Action::Turn(Step::Next),
+        Key::BackTab => Action::Turn(Step::Back),
+        Key::Char('e') | Key::Esc => Action::Collapse,
+        Key::Char('q') | Key::Interrupt => Action::Quit,
+        Key::Enter | Key::Space | Key::Backspace | Key::Char(_) => Action::Ignored,
     }
 }
 
@@ -1241,6 +1445,8 @@ mod tests {
             Key::Char('x'),
             Key::Char('q'),
             Key::Char('d'),
+            // 展开那个键跑着时同样按不动（停车场 Q72）：报告还在长。
+            Key::Char('e'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1255,6 +1461,120 @@ mod tests {
         session.run_finished();
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
         assert_eq!(session.action(Key::Char('s')), Action::Ignored);
+        // 浏览时 `e` 展开，而它与光标停在哪一行无关。
+        assert_eq!(session.action(Key::Char('e')), Action::Expand);
+        session.focus_on(Field::Out);
+        assert_eq!(session.action(Key::Char('e')), Action::Expand);
+
+        // 七、展开之后：上下左右改的是报告区，`⇥` 换一卷，`e`／`Esc` 收起。
+        // 起一趟的那两个键在这里按不动——报告区正摊着上一趟的逐页。
+        session.expand(Expansion::new(0, 3, 0));
+        assert_eq!(session.action(Key::Up), Action::Scroll(Toward::Up));
+        assert_eq!(session.action(Key::Char('k')), Action::Scroll(Toward::Up));
+        assert_eq!(session.action(Key::Down), Action::Scroll(Toward::Down));
+        assert_eq!(session.action(Key::Char('j')), Action::Scroll(Toward::Down));
+        assert_eq!(session.action(Key::Left), Action::Scroll(Toward::Left));
+        assert_eq!(session.action(Key::Right), Action::Scroll(Toward::Right));
+        assert_eq!(session.action(Key::Tab), Action::Turn(Step::Next));
+        assert_eq!(session.action(Key::BackTab), Action::Turn(Step::Back));
+        assert_eq!(session.action(Key::Char('e')), Action::Collapse);
+        assert_eq!(session.action(Key::Esc), Action::Collapse);
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        for key in [
+            Key::Enter,
+            Key::Space,
+            Key::Backspace,
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('s'),
+            Key::Char('d'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 展开着时不该生效"
+            );
+        }
+    }
+
+    /// **展开把左栏收起，收起把它原样还回来**（票面第三条）。
+    ///
+    /// 收起不是删掉：三层一格没动，光标还停在原处——那正是「一键回到配置」的意思。
+    #[test]
+    fn collapsing_gives_back_everything_expanding_took_away() {
+        let mut session = Session::new();
+        session.scope.volumes.push(Picked {
+            path: PathBuf::from("卷一"),
+            on: true,
+        });
+        session.focus_on(Field::Volume(0));
+        session.taste.bit_depth = Some(BitDepth::Four);
+        let before = session.clone();
+
+        // 展开：报告区摊开第一卷，左栏这一刻不在屏上（画法那一侧，见 `super::draw`）。
+        session.expand(Expansion::new(0, 2, 0));
+        assert_eq!(
+            session.expansion().map(|expansion| expansion.volume),
+            Some(0)
+        );
+        // 三层在展开着的时候一格都没动——收起来的东西还在原处。
+        assert_eq!(session.taste.bit_depth, Some(BitDepth::Four));
+
+        // 收起：一个键（`Esc` 或 `e`）就回到配置，会话与展开之前逐格相同。
+        assert_eq!(session.press(Key::Esc), Exit::Stay);
+        assert!(session.expansion().is_none(), "收起之后还展开着");
+        assert_eq!(session, before, "收起之后会话与展开之前不一样了");
+
+        // 另一个键也收得起来：`e` 是展开那个键按回去。
+        session.expand(Expansion::new(1, 2, 40));
+        assert_eq!(session.press(Key::Char('e')), Exit::Stay);
+        assert_eq!(session, before);
+    }
+
+    /// **报告区在两根轴上翻得动，两头都收得住**（票面第四条与停车场 Q64）。
+    ///
+    /// 往上、往左收在零上——零就是报告的头一行、行首那一列，
+    /// 而抬头那几行（profile、适配方式、裁边、拆分）正躺在那儿。
+    /// 另外两头由画法那一层每帧收一次：只有它知道这一格装得下几行几列。
+    #[test]
+    fn the_expanded_report_scrolls_on_both_axes_and_stops_at_both_ends() {
+        let mut session = Session::new();
+        session.expand(Expansion::new(0, 1, 0));
+
+        // 往上翻不过头一行：报告的第零行就是抬头。
+        for _ in 0..5 {
+            session.press(Key::Up);
+        }
+        assert_eq!(session.expansion().expect("展开着").from, 0);
+
+        // 往下翻一行是一行。
+        for _ in 0..3 {
+            session.press(Key::Down);
+        }
+        assert_eq!(session.expansion().expect("展开着").from, 3);
+
+        // 横着滚一下走 `SIDEWAYS` 列，往左同样收在行首。
+        session.press(Key::Right);
+        session.press(Key::Right);
+        assert_eq!(session.expansion().expect("展开着").right, 2 * SIDEWAYS);
+        for _ in 0..5 {
+            session.press(Key::Left);
+        }
+        assert_eq!(session.expansion().expect("展开着").right, 0);
+
+        // 画法那一层每帧把它收进真滚得动的范围。
+        session.press(Key::Down);
+        session.press(Key::Right);
+        session.clamp_report(1, 0);
+        let expansion = session.expansion().expect("展开着");
+        assert_eq!(expansion.from, 1, "往下翻过了头没被收回来");
+        assert_eq!(expansion.right, 0, "往右滚过了头没被收回来");
+
+        // 没展开的时候收不出事来：那时报告区滚到底，滚动量不是状态。
+        session.press(Key::Esc);
+        session.clamp_report(0, 0);
+        assert!(session.expansion().is_none());
     }
 
     /// **两级停：同一个键按两次。** 一次收尾，再一次中止，第三次没有意义。
