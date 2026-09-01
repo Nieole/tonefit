@@ -372,11 +372,12 @@ fn finishing_up_after_the_second_volume_leaves_two_whole_volumes() {
     );
 }
 
-/// 中止此刻至少停得下来：力度更强的那个字不该比收尾停得更晚。
+/// 中止在**卷边界上**也停得下来：力度更强的那个字不该比收尾停得更晚。
 ///
-/// **它自己那个页边界检查点与丢弃 `partial` 由 04 号票落地**，本票只认下这个字。
-/// 这条用例钉的正是那一层：卷边界上它照停，因此 04 号票要加的是「更早停」，
-/// 而不是「让它开始起作用」。
+/// 它按在一卷跑完那条事件上，而那正是收尾生效的地方——两级停在这一道上给出同一个答案。
+/// 中止**更早**停的那一道在页边界上，见
+/// [`aborting_at_a_page_boundary_throws_the_partial_container_away`]
+/// 与 [`the_two_checkpoints_stop_at_two_different_boundaries`]。
 #[test]
 fn aborting_stops_at_least_as_early_as_finishing_up() {
     let space = Workspace::new();
@@ -393,6 +394,500 @@ fn aborting_stops_at_least_as_early_as_finishing_up() {
     .expect("按停不是失败");
 
     assert_eq!(report.volumes.len(), 1, "中止之后还接着做了下一卷");
+}
+
+/// 观察者在**页边界**上答中止：那一卷当场停下，它那格 `partial` 被丢掉
+/// （04 号票，ADR 0013 决定第 2 条）。
+///
+/// 三件事在这一条里连成一串，缺一件断言就落空：
+///
+/// 一是按下那个字的**当口**——第二遍已经写出一张页，那格 `partial` 真的在盘上。
+/// 不看这一眼，「丢弃」测的就可能只是「它压根没建出来过」。
+///
+/// 二是中止之后**最终位置上没有它这一趟的任何痕迹**：既没有 `volume-a`，
+/// 也没有那格 `volume-a.partial`。看的是那个目录本身，不是 `run` 的返回值——
+/// ADR 0013 的核心承诺是盘上的事实，返回值证明不了它。
+///
+/// 三是**下一趟整卷重做**：那一卷等于没做，幂等不该把它误判成做完了。
+#[test]
+fn aborting_at_a_page_boundary_throws_the_partial_container_away() {
+    let space = Workspace::new();
+    let volume = three_page_volume(&space, "volume-a");
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a",
+        Pass::Second,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(
+        stop.names_when_pressed(),
+        Some(vec!["volume-a.partial".to_owned()]),
+        "按下中止的那一刻盘上不是一格写了一半的临时容器"
+    );
+    assert!(
+        report.volumes.is_empty(),
+        "被中止的那一卷进了报告：{:?}",
+        report.volumes
+    );
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "中止之后输出根下还留着东西"
+    );
+
+    // 下一趟：整卷重做，一张不少。
+    let again = fixtures::run_paths(&space, [volume.path()]);
+    assert!(
+        !again.volumes[0].skipped(),
+        "被中止的那一卷下一趟被当成做完了"
+    );
+    assert_eq!(
+        fixtures::directory_members(&again.volumes[0].output),
+        ["001.png", "002.png", "003.png"],
+        "重做出来的不是完整的一卷"
+    );
+}
+
+/// 页边界那个检查点在**每一遍**上都在：第一遍答中止，第二遍连开工都没有。
+///
+/// 「立刻停」不能等到写出那一遍才生效——一个几千页的卷，第一遍是解码、缩放、算判据，
+/// 那是这一趟最贵的一段。停在第一遍的页边界上，第二遍那格 `partial` 因此连建都没建过。
+///
+/// 判别式是**点名那个卷走过哪几遍**：第二遍不在那张单子上，就说明中止没有等到写出才停。
+/// 光看盘上没东西是不够的——中止在第二遍写完第一张之后才停，盘上同样什么都不剩。
+#[test]
+fn aborting_in_the_first_pass_never_lets_the_second_one_start() {
+    let space = Workspace::new();
+    let volume = three_page_volume(&space, "volume-a");
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a",
+        Pass::First,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(
+        stop.passes(),
+        vec![Pass::Fingerprint, Pass::First],
+        "中止在第一遍上按下，第二遍却照样开了工"
+    );
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "第二遍都没开工，输出根下却有东西"
+    );
+}
+
+/// 页边界那个检查点在**幂等这一道**上也在：那一遍答中止，它后面两遍一遍都不开工。
+///
+/// 两个数一起断言，各钉一头：
+///
+/// - **走过哪几遍**只有幂等那一道——中止没有等到解码开始才生效；
+/// - **那一道停在第几步**是按下去的那一步，不是整卷的成员数——循环头上那个检查点
+///   真的拦住了后面的成员。只看前一个数的话，把循环头上的 `break` 删掉它照样绿。
+#[test]
+fn aborting_in_the_fingerprint_pass_never_lets_the_passes_after_it_start() {
+    let space = Workspace::new();
+    let volume = three_page_volume(&space, "volume-a");
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a",
+        Pass::Fingerprint,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(
+        stop.passes(),
+        vec![Pass::Fingerprint],
+        "中止在幂等这一道上按下，后面的遍却照样开了工"
+    );
+    assert_eq!(
+        stop.steps(),
+        AFTER_THE_FIRST_PAGE,
+        "幂等这一道在中止之后把余下的成员也读完了"
+    );
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "第二遍都没开工，输出根下却有东西"
+    );
+}
+
+/// 透传文件也在页边界那个检查点的管辖里：页写完了才答中止，那个透传成员就不再写。
+///
+/// 第二遍写出的是**输出成员**，页与透传文件都算（`CONTEXT.md` 的《进度》：第二遍写全部
+/// 输出成员）。页写完之后还有一截，那一截同样要停得下来。
+///
+/// 判别式只能是**步数**：这一卷横竖要被丢掉，写没写那个透传文件在盘上留不下痕迹。
+/// 停在最后一张页上，第二遍就该正好走 [`PAGES`] 步；透传那个循环头拦不住的话是 `PAGES + 1`。
+#[test]
+fn aborting_after_the_last_page_stops_before_the_pass_through_files() {
+    let space = Workspace::new();
+    let volume = three_page_volume(&space, "volume-a");
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a",
+        Pass::Second,
+        AFTER_THE_LAST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(stop.steps(), PAGES, "中止之后第二遍还把透传文件写了出去");
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "中止之后输出根下还留着东西"
+    );
+}
+
+/// 中止只丢**它自己建的那一格**，别的一样都不碰（ADR 0013 的《后果》与《不要做的「简化」》）。
+///
+/// 场上摆了三样上一趟留下的东西，中止之后三样都要原封不动：
+///
+/// - 这一趟先做完并**已经改名**到位的那个卷（`volume-a`）——中止发生在它之后；
+/// - 被中止的那个卷在最终位置上**上一趟的成品**（`volume-b`）——逐字节比，
+///   收尾改名是最终位置唯一被碰到的那一步，不走它就一个字节都没动过；
+/// - 隔离目录里那份**过期副本**——它是上一趟的产物，去留由用户定，
+///   中止清的只有本次运行自己建的那一格。
+#[test]
+fn aborting_touches_nothing_but_the_partial_it_built_itself() {
+    let space = Workspace::new();
+    let done = small_volume(&space, "volume-a");
+    let stopped = three_page_volume(&space, "volume-b");
+
+    // 上一趟：两卷都做完。
+    fixtures::run_paths(&space, [done.path(), stopped.path()]);
+    let previous = fixtures::fingerprint(&space.out().join("volume-b"));
+    // 手摆一份过期副本在另一个去处：上一趟这一卷有坏页时留下的就是这个样子。
+    let superseded = space.out().join("_isolated").join("volume-b");
+    std::fs::create_dir_all(&superseded).expect("建隔离目录");
+    std::fs::write(superseded.join("001.png"), b"shabby but the user's").expect("摆一份过期副本");
+    let stale = fixtures::fingerprint(&superseded);
+
+    // 两卷的源都添一页，这一趟谁都不被幂等跳过。
+    let page = fixtures::full_bleed_gradient(TINY);
+    done.page("003.png", &page);
+    stopped.page("004.png", &page);
+
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-b",
+        Pass::Second,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [done.path(), stopped.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(report.volumes.len(), 1, "报告里不是只剩做完的那一卷");
+    assert_eq!(
+        fixtures::directory_members(&space.out().join("volume-a")),
+        ["001.png", "002.png", "003.png"],
+        "已经改名成功的那一卷被中止动过了"
+    );
+    assert_eq!(
+        fixtures::fingerprint(&space.out().join("volume-b")),
+        previous,
+        "被中止的那一卷在最终位置上的上一趟成品被动过了"
+    );
+    assert_eq!(
+        fixtures::fingerprint(&superseded),
+        stale,
+        "隔离目录里那份过期副本被中止碰了"
+    );
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        ["_isolated", "volume-a", "volume-b"],
+        "中止之后输出根下多了或少了东西"
+    );
+}
+
+/// 归档卷那一格 `partial` 是个**文件**，中止照样把它丢掉。
+///
+/// 两种容器形态同形——改名成功才算数（`CONTEXT.md` 的《会话》）——因此这一条与目录卷那一条
+/// 断言的是同一件事。分开跑是因为丢弃走的是两条不同的路：一条 `remove_dir_all`，
+/// 一条先放掉写入器再 `remove_file`（Windows 上还开着句柄的文件删不掉）。
+#[test]
+fn aborting_an_archive_volume_throws_its_partial_file_away() {
+    let space = Workspace::new();
+    let page = fixtures::full_bleed_gradient(TINY);
+    let mut cbz = space.cbz("volume-a");
+    for name in ["001.png", "002.png", "003.png"] {
+        cbz.page(name, &page);
+    }
+    let packed = cbz.write();
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a.cbz",
+        Pass::Second,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [packed.as_path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(
+        stop.names_when_pressed(),
+        Some(vec!["volume-a.cbz.partial".to_owned()]),
+        "按下中止的那一刻盘上不是一格写了一半的临时归档"
+    );
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "中止之后输出根下还留着东西"
+    );
+}
+
+/// 卷边界与页边界**各有一个**检查点，两者停出来的结果分得开（ADR 0013 的《后果》）。
+///
+/// 同一个夹具、同一个按下去的时机，只换那一个字：
+///
+/// - **收尾**问的是卷边界——当前卷照样写完并改名，盘上留下一整卷，下一趟幂等接着走；
+/// - **中止**问的是页边界——那一卷当场停下、`partial` 丢掉，等于没做。
+///
+/// 一个检查点做两件事、或者收尾误落到页边界上，这一条当场红：那时两支给出同一个答案。
+///
+/// 收尾那一支按了**两处**页边界：第二遍上一次、第一遍上一次。页边界那个检查点在每一遍上
+/// 都在（见上面那三条），因此「收尾不抢它的活」也要在每一遍上都成立——
+/// 只在第二遍上对照的话，第一遍那个循环头误认了收尾，这一条看不出来。
+#[test]
+fn the_two_checkpoints_stop_at_two_different_boundaries() {
+    let finishing = Workspace::new();
+    let volume = three_page_volume(&finishing, "volume-a");
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(StopsAtAPageBoundary::new(
+            &finishing,
+            "volume-a",
+            Pass::Second,
+            AFTER_THE_FIRST_PAGE,
+            Instruction::Finish,
+        ))),
+        ..fixtures::request(&finishing, [volume.path()])
+    })
+    .expect("按停不是失败");
+    assert_eq!(report.volumes.len(), 1, "收尾没让当前卷跑完");
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        ["001.png", "002.png", "003.png"],
+        "收尾在页边界上就把当前卷截断了"
+    );
+    assert_eq!(
+        fixtures::names_in(&finishing.out()),
+        ["volume-a"],
+        "收尾之后盘上不是一整卷"
+    );
+
+    // 同一个字按在第一遍的页边界上，答案该一模一样：收尾不在页边界上生效。
+    let finishing_early = Workspace::new();
+    let volume = three_page_volume(&finishing_early, "volume-a");
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(StopsAtAPageBoundary::new(
+            &finishing_early,
+            "volume-a",
+            Pass::First,
+            AFTER_THE_FIRST_PAGE,
+            Instruction::Finish,
+        ))),
+        ..fixtures::request(&finishing_early, [volume.path()])
+    })
+    .expect("按停不是失败");
+    assert_eq!(report.volumes.len(), 1, "收尾在第一遍上就把当前卷停掉了");
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        ["001.png", "002.png", "003.png"],
+        "收尾在第一遍的页边界上截断了当前卷"
+    );
+
+    let aborting = Workspace::new();
+    let volume = three_page_volume(&aborting, "volume-a");
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(StopsAtAPageBoundary::new(
+            &aborting,
+            "volume-a",
+            Pass::Second,
+            AFTER_THE_FIRST_PAGE,
+            Instruction::Abort,
+        ))),
+        ..fixtures::request(&aborting, [volume.path()])
+    })
+    .expect("按停不是失败");
+    assert!(report.volumes.is_empty(), "中止把当前卷跑完了");
+    assert_eq!(
+        fixtures::names_in(&aborting.out()),
+        Vec::<String>::new(),
+        "中止之后盘上还留着那一卷"
+    );
+}
+
+/// [`three_page_volume`] 有几页。按停那几条按下去的时机按它数出来，因此只此一个出处。
+const PAGES: usize = 3;
+
+/// 第二遍写完**头一张**页就按下去：那一刻 `partial` 里正好装着一张页，
+/// 后面还有页没写——「当场停下」因此看得出来。幂等那一道上它是「头一个成员刚喂进哈希」。
+const AFTER_THE_FIRST_PAGE: usize = 1;
+
+/// 第二遍写完**最后一张**页才按下去：页都写完了，下一个要写的是透传文件。
+/// 拿它问的是透传那个循环头拦不拦得住。
+const AFTER_THE_LAST_PAGE: usize = PAGES;
+
+/// 一个 [`PAGES`] 页的卷。中止那几条要它有页可写——第二遍写完第一张才有一格装着东西的 `partial`。
+fn three_page_volume(space: &Workspace, name: &str) -> fixtures::Volume {
+    let volume = space.volume(name);
+    let page = fixtures::full_bleed_gradient(TINY);
+    for ordinal in 1..=PAGES {
+        volume.page(&format!("{ordinal:03}.png"), &page);
+    }
+    volume
+}
+
+/// 在点名那个卷**某一遍的页边界**上按下一个字，并在按下的那一刻看一眼输出根。
+///
+/// 点名遍与点名卷都是为了让按下去的时机**落得准**：一趟里每一卷各走三遍，
+/// 不点名就只按得到头一卷的头一遍。
+///
+/// 看那一眼是「`partial` 确实建出来过」唯一能测到的形式：跑完再看只看得见它已经不在了，
+/// 而「从没建过」与「建了又丢掉」在那个形式上分不开（同一个手法见 `tests/container.rs`
+/// 的 `WatchDuringRun`）。有东西可看的只有第二遍——写出去的页都在那格 `partial` 里。
+#[derive(Clone)]
+struct StopsAtAPageBoundary {
+    /// 输出根。按下那个字的一刻看的就是它。
+    out: PathBuf,
+    /// 只在这个卷上按。卷标识的末一段与它相等即是它。
+    volume: String,
+    /// 只在这一遍上按。
+    pass: Pass,
+    /// 这一遍走完几步之后按。取值见 [`AFTER_THE_FIRST_PAGE`] 与 [`AFTER_THE_LAST_PAGE`]。
+    after: usize,
+    /// 按的是哪个字。
+    instruction: Instruction,
+    /// 观察者要交给库，用例又要读回它看见的那一眼，因此这一格共享。
+    seen: Arc<Mutex<Pressed>>,
+}
+
+#[derive(Default)]
+struct Pressed {
+    /// 当前这一卷是点名的那个吗。
+    named: bool,
+    /// 点名那个卷走过哪几遍，按到达顺序。「中止之后第二遍还开不开工」问的就是它。
+    passes: Vec<Pass>,
+    /// 正在走的是点名那一遍吗。
+    walking: bool,
+    /// 点名那一遍走了几步。**只在进入那一遍时归零**，此后一路留着——
+    /// 用例要读的是它最后停在第几步（透传那个循环头有没有拦住，只看得出这一个数），
+    /// 而那一遍走完之后还会有别的遍开工。
+    steps: usize,
+    /// 按下那个字的一刻输出根下有哪些名字。没按过就是 `None`。
+    names_when_pressed: Option<Vec<String>>,
+}
+
+impl StopsAtAPageBoundary {
+    fn new(
+        space: &Workspace,
+        volume: &str,
+        pass: Pass,
+        after: usize,
+        instruction: Instruction,
+    ) -> Self {
+        Self {
+            out: space.out(),
+            volume: volume.to_owned(),
+            pass,
+            after,
+            instruction,
+            seen: Arc::new(Mutex::new(Pressed::default())),
+        }
+    }
+
+    /// 按下那个字的一刻输出根下有哪些名字。一趟里只看一眼——第一眼。
+    fn names_when_pressed(&self) -> Option<Vec<String>> {
+        self.seen
+            .lock()
+            .expect("记账没有中毒")
+            .names_when_pressed
+            .clone()
+    }
+
+    /// 点名那个卷走过哪几遍。
+    fn passes(&self) -> Vec<Pass> {
+        self.seen.lock().expect("记账没有中毒").passes.clone()
+    }
+
+    /// 点名那一遍统共走了几步。
+    fn steps(&self) -> usize {
+        self.seen.lock().expect("记账没有中毒").steps
+    }
+}
+
+impl Progress for StopsAtAPageBoundary {
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        let mut seen = self.seen.lock().expect("记账没有中毒");
+        match event {
+            Event::VolumeStarted { volume, .. } => {
+                seen.named = volume
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy() == self.volume);
+                seen.walking = false;
+            }
+            Event::PassStarted { pass, .. } => {
+                if seen.named {
+                    seen.passes.push(pass);
+                }
+                seen.walking = seen.named && pass == self.pass;
+                if seen.walking {
+                    seen.steps = 0;
+                }
+            }
+            Event::Stepped { .. } if seen.walking => seen.steps += 1,
+            _ => {}
+        }
+        if !seen.walking || seen.steps < self.after {
+            return Instruction::Continue;
+        }
+        if seen.names_when_pressed.is_none() {
+            seen.names_when_pressed = Some(fixtures::names_in(&self.out));
+        }
+        self.instruction
+    }
 }
 
 /// 开工那条事件带的全局总步数，**等于各卷预告之和**（会话批 03 号票）。

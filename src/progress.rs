@@ -96,6 +96,10 @@ pub enum Event<'a> {
     ///
     /// 幂等命中而跳过的卷同样报这一条：那也是一份完整的 [`VolumeReport`]，
     /// 只是判定是 `VolumeVerdict::Skipped`。「跳过」在屏幕上不该长成「卡住」。
+    ///
+    /// **被[中止](Instruction::Abort)掉的那一卷不报这一条**：它那格 `partial` 已经丢掉，
+    /// 那一卷等于没做，没有报告可带。流上因此看得见一条开卷、没有与它配对的这一条——
+    /// 那正是「这一卷被中止了」在事件流上的样子。
     #[non_exhaustive]
     VolumeFinished {
         /// 这一卷的报告。攒下来即是 `Report::volumes`，一字不差。
@@ -148,8 +152,11 @@ pub enum Instruction {
     Finish,
     /// 中止：立刻停（ADR 0013 决定第 2 条）。
     ///
-    /// **页边界那个检查点与丢弃 `partial` 那一格由 04 号票落地。** 本票只把这个字认下来：
-    /// 卷边界上它与 [`Finish`](Self::Finish) 一样让整趟停下——力度更强的指令
+    /// 检查点在**页边界**上（见 `Events::aborting` 与 `crate::process_volume`）：
+    /// 当前卷不跑完，它那格 `partial`
+    /// 直接丢弃——那一卷等于没做，最终位置上一个字节都没动过。它因此不进报告。
+    ///
+    /// 卷边界上它与 [`Finish`](Self::Finish) 一样让整趟停下：力度更强的指令
     /// 不该比更弱的那个停得更晚。
     Abort,
 }
@@ -253,17 +260,33 @@ impl<'a> Events<'a> {
     /// 发一条事件，把回来的指令记进[闩](Standing)。
     ///
     /// 指令在这里只被**记下**、不被就地执行：事件从计算线程上报出来，而停在哪一道边界上
-    /// 是管线的事。眼下检查点**只有一个**，在 `crate::run` 的逐卷循环里——那就是卷边界
-    /// （ADR 0013 决定第 1 条）。页边界那一个由 04 号票加，第二遍之前那一个由 06 号票加。
+    /// 是管线的事。检查点眼下有两个，各在一道边界上（ADR 0013 的《后果》）：
+    /// 卷边界那个在 `crate::run` 的逐卷循环里，问的是 [`standing`](Self::standing)；
+    /// 页边界那个是 [`aborting`](Self::aborting)，由 `crate::process_volume` 摆在它每一个
+    /// 逐成员的循环头上——**摆在哪几处只在那里数得清**，本条不复述。
+    /// 第二遍之前那一个由 06 号票加。
     fn report(self, event: Event<'_>) {
         if let Some(sink) = self.sink {
             self.standing.record(sink.0.observe(event));
         }
     }
 
-    /// 至今为止收到过的最强指令。检查点问的就是它。
+    /// 至今为止收到过的最强指令。**卷边界**那个检查点问的就是它。
     pub(crate) fn standing(self) -> Instruction {
         self.standing.get()
+    }
+
+    /// **页边界那个检查点**：这一趟按下中止了吗（ADR 0013 决定第 2 条）。
+    ///
+    /// 逐个成员往下走的每一个循环在自己的循环头上问它一次（清单见 `crate::process_volume`），
+    /// 答是就当场停下，剩下的成员不做了。停下来之后调用方还要再问一次它，
+    /// 决定这一卷算不算做完；**再问一次恒得同一个答案**，因为闩[只升不降](Standing)——
+    /// 中止之上没有更强的指令了。各段因此不必把「我是被中止的」当成返回值往上传。
+    ///
+    /// 只认中止这一级：[收尾](Instruction::Finish)停在卷边界上，页边界不该抢它的活
+    /// （ADR 0013 决定第 1 条：收尾要当前卷跑完，盘上只留完整的卷）。
+    pub(crate) fn aborting(self) -> bool {
+        self.standing() == Instruction::Abort
     }
 
     pub(crate) fn run_started(self, volumes: usize, steps: u64) {

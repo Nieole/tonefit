@@ -124,15 +124,21 @@ pub fn run(request: &Request) -> Result<Report> {
     for surveyed in survey.into_volumes() {
         // **卷边界上的检查点**（ADR 0013 决定第 1 条）：收尾让当前卷跑完就停，
         // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
-        // 中止在这一道上与收尾同样停下；它自己那个**页边界**检查点与丢弃 `partial`
-        // 由 04 号票落地（见 [`Instruction::Abort`]）。
+        // 中止在这一道上与收尾同样停下：力度更强的指令不该比更弱的那个停得更晚。
         if events.standing() != Instruction::Continue {
             break;
         }
         // 探的是卷根，而卷根就是点名的那个路径（见 `source::open`）：目录卷是那个目录，
         // 归档卷是那个文件。
         let medium = probes.medium(&surveyed.volume.root);
-        volumes.push(process_volume(surveyed, request, medium, events)?);
+        let Some(report) = process_volume(surveyed, request, medium, events)? else {
+            // **中止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial` 已经丢掉，
+            // 它等于没做，报告里因此没有它这一条。下一卷更不必开工——卷边界那个检查点
+            // 也会拦下它，这里明写是为了让「中止掉的卷不进报告」与「后面的卷不做」
+            // 在同一处看得见。
+            break;
+        };
+        volumes.push(report);
     }
     events.run_finished();
     Ok(Report {
@@ -265,12 +271,26 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// 收的是一个**预扫过的卷**（见 `survey`），不是一个路径：卷在开工之前就已经打开、
 /// 成员也已经列好，这里不再开第二次。为什么不能开第二次，见 `survey` 的模块文档。
+///
+/// # 中止：回 `None`
+///
+/// **[页边界那个检查点](progress::Events::aborting)在这里**（ADR 0013 决定第 2 条）：
+/// 凡是**逐个成员**往下走的循环，循环头上都问一次——幂等这一道、第一遍、第二遍写页、
+/// 第二遍搬透传文件。答中止就当场停下，这一卷回的是 `None`。
+/// 不逐个数它们，也不在别处复述这个清单：数目会随管线长，而这里是它唯一的出处。
+///
+/// `None` 说的是**那一卷等于没做**：它那格 `partial` 没有收尾、由析构丢掉
+/// （见 `crate::sink` 的两个 `Drop`），最终位置上一个字节都没动过，报告里因此
+/// 也不该有它的位置。第二遍开始之前中止的话连那一格都还没建。
+///
+/// 每一段停下之后都**再问一次**闩，而不是把「我是被中止的」当成返回值一层层传上来：
+/// 闩只升不降，再问一次恒得同一个答案（见 [`progress::Events::aborting`]）。
 fn process_volume(
     surveyed: survey::Surveyed,
     request: &Request,
     medium: Medium,
     events: progress::Events,
-) -> Result<VolumeReport> {
+) -> Result<Option<VolumeReport>> {
     let survey::Surveyed {
         mut volume,
         members,
@@ -308,13 +328,23 @@ fn process_volume(
         events.pass_started(Pass::Fingerprint);
         timed(&mut timing.fingerprint, || -> Result<_> {
             let fingerprint = volume_fingerprint(&mut volume, request, &io, events)?;
-            written_pages = can_skip(&clean, &volume, &fingerprint);
+            // 中止之后**不再问幂等**。不是因为答案会错——下一句就把整卷连同这个答案一起
+            // 丢掉了——而是因为问一次要开上一趟的输出容器、逐页读回记录，那是实打实的 I/O。
+            // 「立刻停」停的正是这种活。手上那份哈希此刻也只喂了一半，它同样走不出这一卷。
+            if !events.aborting() {
+                written_pages = can_skip(&clean, &volume, &fingerprint);
+            }
             Ok(Some(fingerprint))
         })?
     } else {
         // 掐表在这个 `if` 之内：整道不在时那一段是零，而不是一个「什么都没做」的很小的数。
         None
     };
+    if events.aborting() {
+        // 中止停在幂等这一道上：第二遍还没开始，一格 `partial` 都还没建，
+        // 最终位置纹丝不动（见本函数的《中止：回 `None`》）。
+        return Ok(None);
+    }
     if let Some(output_pages) = written_pages {
         let report = VolumeReport {
             volume: volume.root,
@@ -338,7 +368,7 @@ fn process_volume(
         // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
         // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
         events.volume_finished(&report);
-        return Ok(report);
+        return Ok(Some(report));
     }
 
     // dry-run 没有第二遍，缓存于是只记账不留页：用量照旧预告得出，临时文件一个不建。
@@ -363,6 +393,14 @@ fn process_volume(
             events,
         )
     })?;
+    if events.aborting() {
+        // 中止停在第一遍的页边界上：手上这半份逐页结果连同这一卷一起丢掉。
+        // 第二遍还没开始，一格 `partial` 都还没建，最终位置纹丝不动。
+        //
+        // 它排在下面那条 `debug_assert!` **之前**：半份结果本来就凑不齐预告的张数，
+        // 而那条断言问的是「拆分与预告有没有分家」，中止不是它要抓的东西。
+        return Ok(None);
+    }
     // 预告的张数与真产出的张数在这里第一次同时在手上。预告是**上界**（页几何批 04 号票：
     // 一个源页产出几张由内容决定），因此比的是区间而不是等号：下界是一张源页至少出一张，
     // 上界是每张都被切开。越出这个区间说明拆分与预告分了家，而那是一种静默的错——
@@ -406,12 +444,27 @@ fn process_volume(
             };
             second_pass(&scored, &verdicts, &encode, &mut sink, events)?;
             for extra in &volume.extras {
+                // 透传文件也是第二遍写出的成员，页边界那个检查点照样在循环头上。
+                if events.aborting() {
+                    break;
+                }
                 let bytes = volume.reader.read(extra)?;
                 sink.write_extra(&extra.relative, &bytes)?;
                 events.step();
             }
+            if events.aborting() {
+                // **中止：不收尾。** `sink` 在这里走出作用域，它那格 `partial` 由析构丢掉
+                // （见 `crate::sink` 的两个 `Drop`）——收尾改名是最终位置唯一被碰到的那一步，
+                // 不走它，最终位置上就一个字节都没动过（ADR 0013 决定第 2 条）。
+                return Ok(());
+            }
             sink.finish()
         })?;
+        // 闭包里那一次问的是「收不收尾」，这一次问的是「这一卷算不算做完」——
+        // 两个不同的问题，各在自己那一层。再问一次恒得同一个答案，闩只升不降。
+        if events.aborting() {
+            return Ok(None);
+        }
     }
 
     let pages = scored
@@ -439,7 +492,7 @@ fn process_volume(
         },
     };
     events.volume_finished(&report);
-    Ok(report)
+    Ok(Some(report))
 }
 
 /// 这一卷在另一个去处留着的上一趟输出，没有就是 `None`（12 号票的「过期副本」）。
@@ -912,6 +965,10 @@ impl Candidates {
 /// **读取与计算在这里分成两层**（13 号票，见 `read` 与 `medium`）：读取按介质定并发度，
 /// 计算走 rayon 满核，两层之间是一道按在途字节背压的有界通道。页因此**乱序算完**，
 /// 页序在收尾处按序号归位——除此之外，这一遍的产物与一页一页顺着做完全相同。
+///
+/// **中止让它回一份不全的清单**（ADR 0013 决定第 2 条）：发页那一侧的循环头上问一次闩，
+/// 答中止就不再往下发。回来的因此可能短于源页数——[`process_volume`] 紧接着问一次闩，
+/// 是中止就把整卷丢掉，那半份清单谁也看不见。
 fn first_pass(
     volume: &mut Volume,
     request: &Request,
@@ -942,6 +999,11 @@ fn first_pass(
     };
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
         read::reads(reader, &members, io.readers, read::BUDGET)
+            // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止就不再往下发页。
+            // 它拦在 `par_bridge` **之前**，因此停下来的不止计算层——读取层的发号闸
+            // 跟着关上，那几条读取线程当场收摊（见 `read::Throttle::stop`）。
+            // 停在这儿手上只有半份逐页结果，[`process_volume`] 随后连同整卷丢掉。
+            .take_while(|_| !events.aborting())
             .par_bridge()
             .map(|read| {
                 let index = read.index;
@@ -1338,6 +1400,10 @@ impl Placement {
 /// 走的是**输出页**那个序列（页几何批 03 号票）：一步一张输出页，成员名跟着页走
 /// （[`OutputPage::target`]），不由这一遍按源页序数出来——一个源页产出几张时，
 /// 数出来的那个序号会静默地把另一张的字节写到这一张的位置上。
+///
+/// **中止让它半路回来**（ADR 0013 决定第 2 条）：写出那一层的循环头上问一次闩，
+/// 答中止就当场 `Ok(())`。它不必把这件事写进返回值——闩只升不降，调用方再问一次
+/// 恒得同一个答案（见 [`progress::Events::aborting`]），而那里正是决定收不收尾的地方。
 fn second_pass(
     pages: &[OutputPage],
     verdicts: &[Option<Verdict>],
@@ -1356,6 +1422,13 @@ fn second_pass(
             .map(|(page, verdict)| encode.page(page, *verdict))
             .collect::<Result<Vec<_>>>()?;
         for ((page, _), bytes) in batch.iter().zip(&encoded) {
+            // **页边界那个检查点**（ADR 0013 决定第 2 条），而且是三段里唯一一个此刻
+            // 真有东西可丢的：写进去的页都在那格 `partial` 里，不收尾就整格丢掉。
+            // 停在写出这一侧而不是编码那一侧：白编一批（至多核数张）远比多写一页便宜，
+            // 而「已经写了几页」才是中止要回答的那个问题。
+            if events.aborting() {
+                return Ok(());
+            }
             sink.write_page(&page.target, bytes)?;
             events.step();
         }
@@ -1448,6 +1521,12 @@ fn volume_fingerprint(
     let members: Vec<&Member> = pages.iter().chain(extras.iter()).collect();
     let mut hasher = metadata::SourceHasher::new();
     for read in read::reads(reader, &members, io.readers, read::BUDGET) {
+        // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止停在成员边界上。
+        // 喂了一半的哈希不是这一卷的指纹，[`process_volume`] 不拿它去问幂等，
+        // 也不让它走出那一卷（见那里的《中止：回 `None`》）。
+        if events.aborting() {
+            break;
+        }
         let relative = &members[read.index].relative;
         // 读不出字节的成员在这一遍不算失败：它在第一遍里才变成失败页（12 号票），
         // 而这一遍排在第一遍之前。这里把它记成「读不出来」照样喂进哈希——

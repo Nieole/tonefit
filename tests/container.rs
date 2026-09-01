@@ -706,7 +706,7 @@ fn a_directory_volume_that_fails_partway_leaves_no_half_written_output() {
 
     let message = format!("{error:#}");
     assert!(message.contains("ComicInfo.xml"), "{message}");
-    let left = left_in(&space.out());
+    let left = fixtures::names_in(&space.out());
     assert!(left.is_empty(), "输出里留下了 {left:?}");
 }
 
@@ -731,7 +731,57 @@ fn a_run_that_fails_leaves_the_previous_output_directory_intact() {
         before,
         "上一次的成品被这次失败毁掉了"
     );
-    assert_eq!(left_in(&space.out()), ["volume-a"], "输出根里多了东西");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        ["volume-a"],
+        "输出根里多了东西"
+    );
+}
+
+/// 上一趟**异常死亡**留下的那格临时容器，这一趟认得出来，也清得掉。
+///
+/// 正常收场时它由析构收走：跑完改名到位（本文件上面那几条），或者中途失败、被中止
+/// （`tests/events.rs` 里中止那几条）。进程被硬杀掉时析构跑不到，盘上就留着一格
+/// 改不了名的临时容器——而临时名字是**推得出来**的，下一趟因此认得出它。
+/// 那正是它不取随机名字的理由（见 `tonefit` 的 `sink` 里 `partial_path` 那一段）。
+///
+/// 它落在本文件而不是中止那几条旁边，因为问的是**容器怎么收尾**，不是按停：
+/// 清残留这条能力是 `p0-hardening/03` 落地的，本条只是补上它一直没有的用例
+/// （会话批 04 号票要求「异常死亡留下的残留，下一趟能识别并清理」，而那件事在这一层）。
+///
+/// 两种形态各摆一格：目录卷的是目录，归档卷的是文件。里面都塞着上一趟的垃圾——
+/// 断言的不只是「残留不见了」，还有「它带的成员没有混进这一趟的输出」。
+#[test]
+fn a_partial_left_behind_by_a_hard_kill_is_cleaned_up_by_the_next_run() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let loose = space.volume("volume-a");
+    loose.page("001.png", &page);
+    let mut cbz = space.cbz("volume-b");
+    cbz.page("001.png", &page);
+    let packed = cbz.write();
+
+    let stale_directory = space.out().join("volume-a.partial");
+    std::fs::create_dir_all(&stale_directory).expect("摆一格残留的临时目录");
+    std::fs::write(stale_directory.join("999.png"), b"junk from a killed run")
+        .expect("往残留里塞一个成员");
+    let stale_file = space.out().join("volume-b.cbz.partial");
+    std::fs::write(&stale_file, b"half an archive, no central directory")
+        .expect("摆一格残留的临时文件");
+
+    let report = run_paths(&space, [loose.path(), packed.as_path()]);
+
+    assert_eq!(
+        fixtures::directory_members(&report.volumes[0].output),
+        ["001.png"],
+        "残留临时目录里的成员混进了这一趟的输出"
+    );
+    assert_eq!(member_names(&report.volumes[1].output), ["001.png"]);
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        ["volume-a", "volume-b.cbz"],
+        "残留的那两格临时容器还在"
+    );
 }
 
 /// 同一批输入在两种容器形态上给出**一致的输出成员**——源里删掉一页之后也一致。
@@ -783,24 +833,6 @@ fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> anyhow:
         ..fixtures::request(space, [volume.path()])
     })
     .expect_err("处理应当失败")
-}
-
-/// 输出根下留着的那些名字，按名字排序。半成品也在这个清单里——正是要断言它不在的东西。
-fn left_in(root: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .map(|entry| {
-            entry
-                .expect("列输出")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    names.sort();
-    names
 }
 
 /// 跑到一半时最终位置上有多少个成员——每报到一步问一次，留下见过的最大值。

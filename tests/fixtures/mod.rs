@@ -930,6 +930,31 @@ pub fn written_bits(depth: png::BitDepth) -> u32 {
     u32::from(depth as u8)
 }
 
+/// 一个目录**顶层**有哪些名字，按名字排序。目录不递归进去，就问这一层。
+///
+/// 与 [`directory_members`] 分工：那一个铺平整棵树、答「这个容器里装着什么」，
+/// 这一个只看一层、答「这个目录下此刻摆着哪几样」。**半成品因此看得见**——
+/// 输出根下那格 `<卷名>.partial` 在这个清单里，而它在铺平的成员清单里认不出来。
+/// 断言「中止之后输出根干净」「残留的临时容器不在了」用的都是它。
+///
+/// 根还没建出来就是「里面什么都没有」：还没轮到输出落盘的用例正要这个答案。
+pub fn names_in(root: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .map(|entry| {
+            entry
+                .expect("列目录项")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// 一个目录容器里的成员名清单，按名字排序，分隔符归一成 `/`。
 ///
 /// 归档那一侧的清单按**写入顺序**（见 `container.rs` 的 `member_names`），目录没有顺序，
