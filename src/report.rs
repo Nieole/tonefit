@@ -152,7 +152,7 @@ pub struct VolumeReport {
     ///
     /// 一个源页产出一到多张输出页（页几何批 03 号票），同一源页切出来的那几张挨着排。
     /// 因此这里的条数是输出那一侧的数，源那一侧的数在 [`source_pages`](Self::source_pages)。
-    /// 几张由 `crate::OUTPUTS_PER_SOURCE_PAGE` 说了算。
+    /// 一张源页切成几张由跨页拆分说了算（页几何批 04 号票），上界是 `crate::MAX_OUTPUTS_PER_SOURCE_PAGE`。
     pub pages: Vec<PageReport>,
     /// 本卷的**源页数**：这一卷有几张待处理的图片（页几何批 03 号票）。
     ///
