@@ -37,6 +37,7 @@ mod resample;
 mod sink;
 mod source;
 mod spread;
+mod survey;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -113,11 +114,14 @@ pub fn run(request: &Request) -> Result<Report> {
     // （见 [`progress::Events`] 的 `standing`）。
     let standing = progress::Standing::default();
     let events = progress::Events::new(request.progress.as_ref(), &standing);
-    // 开工前那几道检查排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
-    // 全局总步数将来也落在这一条上（03 号票：预扫）。
-    events.run_started(request.inputs.len());
+    // **预扫**：开工之前把点名的卷全枚举一遍，算出这一趟的全局总步数（ADR 0011 决定第 3 条）。
+    // 它排在开工那条事件**之前**，因为那条事件要带着那个数；坏路径因此在任何卷级事件之前
+    // 就把整趟拒掉——输出根下一个文件都没有（见 `survey`）。
+    let survey = survey::Survey::of(request)?;
+    // 开工前那几道检查与预扫都排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
+    events.run_started(request.inputs.len(), survey.steps());
     let mut volumes = Vec::with_capacity(request.inputs.len());
-    for input in &request.inputs {
+    for surveyed in survey.into_volumes() {
         // **卷边界上的检查点**（ADR 0013 决定第 1 条）：收尾让当前卷跑完就停，
         // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
         // 中止在这一道上与收尾同样停下；它自己那个**页边界**检查点与丢弃 `partial`
@@ -125,8 +129,10 @@ pub fn run(request: &Request) -> Result<Report> {
         if events.standing() != Instruction::Continue {
             break;
         }
-        let medium = probes.medium(input);
-        volumes.push(process_volume(input, request, medium, events)?);
+        // 探的是卷根，而卷根就是点名的那个路径（见 `source::open`）：目录卷是那个目录，
+        // 归档卷是那个文件。
+        let medium = probes.medium(&surveyed.volume.root);
+        volumes.push(process_volume(surveyed, request, medium, events)?);
     }
     events.run_finished();
     Ok(Report {
@@ -151,6 +157,9 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 }
 
 /// 这一卷要走多少步（spec 的 story 30）。
+///
+/// **预扫**算它，一卷一次（见 `survey`）：开卷那条事件报的是它，这一趟的全局总步数是
+/// 它们的和。两个数因此不会分家——不是各算一遍，是加出来的。
 ///
 /// 三段：幂等这一道读全部**源**成员，第一遍走每一张**源页**，第二遍写全部**输出**成员。
 /// 源那一侧与输出那一侧不是同一个数——一个源页产出一到多张输出页（页几何批 03 号票），
@@ -188,6 +197,8 @@ fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
 }
 
 /// 一个卷这一趟要碰的成员数，源那一侧与输出那一侧分开数（页几何批 03 号票）。
+///
+/// **预扫**数出来（见 `survey`），一卷一份，此后原样传下去。
 ///
 /// 三个数绑成一个类型而不是三个相邻的 `usize` 参数：它们总是一同算出、一同传下去，
 /// 而三个同型的裸数换了位置编译器一句话都不会说，[`volume_steps`] 却会当场少报或多报一整段。
@@ -251,16 +262,26 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
 /// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
+///
+/// 收的是一个**预扫过的卷**（见 `survey`），不是一个路径：卷在开工之前就已经打开、
+/// 成员也已经列好，这里不再开第二次。为什么不能开第二次，见 `survey` 的模块文档。
 fn process_volume(
-    input: &Path,
+    surveyed: survey::Surveyed,
     request: &Request,
     medium: Medium,
     events: progress::Events,
 ) -> Result<VolumeReport> {
-    // 这一卷的表：总的从打开卷之前起算，三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。
+    let survey::Surveyed {
+        mut volume,
+        members,
+        steps,
+        enumerating,
+    } = surveyed;
+    // 这一卷的表：三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
+    // **再把预扫枚举这一卷花掉的那一截加回去**——打开卷只是挪到了开工之前，并没有变便宜，
+    // 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
     let started = Instant::now();
     let mut timing = VolumeTiming::default();
-    let mut volume = source::open(input)?;
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
     let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
@@ -269,17 +290,11 @@ fn process_volume(
     // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
     // 真正产出的那批名字等第一遍走完再查一遍。早查这一遍买的是**别白做一整卷**。
     ensure_one_member_per_output(&volume, &one_to_one_targets(&volume))?;
-    let source_pages = volume.pages.len();
-    let members = MemberCounts {
-        source_pages,
-        // 上界，不是承诺：一卷里真被切开的页越少，第二遍走过的步越少（见 [`volume_steps`]）。
-        output_pages: source_pages * max_outputs_per_source_page(request),
-        extras: volume.extras.len(),
-    };
+    let source_pages = members.source_pages;
 
     let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
     let writes = request.mode == Mode::Process;
-    events.volume_started(&volume.root, volume_steps(members, request));
+    events.volume_started(&volume.root, steps);
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     //
@@ -316,7 +331,7 @@ fn process_volume(
             io,
             // 两遍一遍都不走，三段里只有幂等那一段有数。
             timing: VolumeTiming {
-                elapsed: started.elapsed(),
+                elapsed: enumerating + started.elapsed(),
                 ..timing
             },
         };
@@ -419,7 +434,7 @@ fn process_volume(
         decodes: decoder.decodes(),
         io,
         timing: VolumeTiming {
-            elapsed: started.elapsed(),
+            elapsed: enumerating + started.elapsed(),
             ..timing
         },
     };

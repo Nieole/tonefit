@@ -28,10 +28,10 @@ use crate::report::VolumeReport;
 ///
 /// **非穷尽做了两层**：枚举自己，加**每一个**变体自己——包括眼下不带字段的那两个。
 /// 以后多报一件事，无论是多一个变体还是往已有的变体里多塞一个数，都不该逼着现有的实现方
-/// 跟着改。现在有三个实现方：CLI 的进度条、会话、用例里的记账本，而两件事已经排着队了：
-/// 03 号票要往 [`RunStarted`](Self::RunStarted) 里加全局总步数，
-/// [`RunFinished`](Self::RunFinished) 迟早要说得出这一趟是怎么收的场（停车场 Q39）。
-/// 库外的 `match` 因此一律要带 `..` 与 `_`，那正是这条性质起作用的样子。
+/// 跟着改。现在有三个实现方：CLI 的进度条、会话、用例里的记账本。这条性质已经兑现过一次——
+/// 03 号票往 [`RunStarted`](Self::RunStarted) 里加了全局总步数，三个实现方一个都没被逼着改；
+/// 还有一件排着队：[`RunFinished`](Self::RunFinished) 迟早要说得出这一趟是怎么收的场
+/// （停车场 Q39）。库外的 `match` 因此一律要带 `..` 与 `_`，那正是这条性质起作用的样子。
 ///
 /// 事件带的是**借用**：一卷跑完那条带着的 [`VolumeReport`] 还在库的手上，
 /// 要留下来的观察者自己克隆（[`VolumeReport`] 是 `Clone`）。这样不留的那些实现方
@@ -39,15 +39,22 @@ use crate::report::VolumeReport;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event<'a> {
-    /// 这一趟开始了，点名了 `volumes` 个卷。
+    /// 这一趟开始了，点名了 `volumes` 个卷，这一趟最多走 `steps` 步。
     ///
-    /// 排在开工前那几道检查**之后**：范围为空、输出落在源里、两个卷撞同一个去处，
-    /// 三者都让 `run` 当场返回 `Err`，一条事件都不发。预扫连同全局总步数
-    /// 也将落在这条事件上（03 号票）。
+    /// 排在开工前那几道检查与**预扫**之后：范围为空、输出落在源里、两个卷撞同一个去处、
+    /// 有卷点不开，四者都让 `run` 当场返回 `Err`，一条事件都不发。
+    /// 「一卷点不开就整趟拒绝」因此天然发生在任何卷级事件之前（见 `crate::survey`）。
     #[non_exhaustive]
     RunStarted {
         /// 这一趟点名了几个卷。
         volumes: usize,
+        /// 这一趟最多走多少步——**各卷步数之和**（见 `crate::survey`）。
+        ///
+        /// 与单卷那个数同一个性质：**上界**，不是承诺（`CONTEXT.md` 的《进度》：
+        /// 预告的步数是上界，两处各出一次）。拿它画全局进度的实现方因此**要在一卷跑完时
+        /// 结清**那一卷预告剩下的步——这是这个字段对实现方的要求，不是一句建议。
+        /// CLI 那一份见二进制侧的 `Bar::finish_volume`。
+        steps: u64,
     },
     /// 一个卷开始了，这一卷这一趟最多走 `steps` 步。
     ///
@@ -259,8 +266,8 @@ impl<'a> Events<'a> {
         self.standing.get()
     }
 
-    pub(crate) fn run_started(self, volumes: usize) {
-        self.report(Event::RunStarted { volumes });
+    pub(crate) fn run_started(self, volumes: usize, steps: u64) {
+        self.report(Event::RunStarted { volumes, steps });
     }
 
     pub(crate) fn volume_started(self, volume: &Path, steps: u64) {
@@ -346,7 +353,7 @@ mod tests {
         let standing = Standing::default();
 
         let watched = Events::new(Some(&sink), &standing);
-        watched.run_started(2);
+        watched.run_started(2, 30);
         watched.volume_started(Path::new("卷一"), 10);
         watched.pass_started(Pass::First);
         watched.step();
@@ -359,7 +366,7 @@ mod tests {
         assert_eq!(
             tally.seen(),
             [
-                "RunStarted { volumes: 2 }",
+                "RunStarted { volumes: 2, steps: 30 }",
                 r#"VolumeStarted { volume: "卷一", steps: 10 }"#,
                 "PassStarted { pass: First }",
                 "Stepped",
@@ -372,7 +379,7 @@ mod tests {
         // 同一个记账本还在场上，而这一端没装它：几条报到一条都不该落到它那里。
         let elsewhere = Standing::default();
         let unwatched = Events::new(None, &elsewhere);
-        unwatched.run_started(2);
+        unwatched.run_started(2, 30);
         unwatched.volume_started(Path::new("卷二"), 10);
         unwatched.step();
         unwatched.run_finished();

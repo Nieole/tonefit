@@ -329,6 +329,8 @@ struct Tally(Arc<Counts>);
 
 #[derive(Default)]
 struct Counts {
+    /// 这一趟开始时预告的**全局**总步数（预扫算出来的那个数）。
+    named: AtomicU64,
     /// 每个卷开始时预告的步数，按开始顺序。
     started: Mutex<Vec<u64>>,
     /// 实际走过的步数总和。
@@ -340,6 +342,9 @@ struct Counts {
 impl Progress for Tally {
     fn observe(&self, event: Event<'_>) -> Instruction {
         match event {
+            Event::RunStarted { steps, .. } => {
+                self.0.named.store(steps, Ordering::Relaxed);
+            }
             Event::VolumeStarted { steps, .. } => {
                 self.0.started.lock().expect("记账没有中毒").push(steps);
             }
@@ -356,6 +361,11 @@ impl Progress for Tally {
 }
 
 impl Tally {
+    /// 开工那条事件预告的全局总步数。
+    fn named(&self) -> u64 {
+        self.0.named.load(Ordering::Relaxed)
+    }
+
     fn started(&self) -> Vec<u64> {
         self.0.started.lock().expect("记账没有中毒").clone()
     }
@@ -443,6 +453,10 @@ fn a_dry_run_announces_only_the_passes_it_will_make() {
 /// 幂等命中的卷提前收摊：预告的是上界，走过的只有幂等那一道，而它照样收得了尾。
 ///
 /// 不收尾的话进度条会停在三分之一处等下一个卷——「跳过」在屏幕上就成了「卡住」。
+///
+/// 全局那个数**照样按上界预告**（会话批 03 号票）：预扫只列成员，判不出这一卷会不会命中幂等——
+/// 那要读回上一趟写在输出里的记录，是幂等那一道自己的事。差额归谁处理，
+/// 见 `tonefit::Event::RunStarted` 的 `steps`。
 #[test]
 fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
     let space = Workspace::new();
@@ -465,4 +479,9 @@ fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
     );
     assert_eq!(tally.advanced(), 25, "跳过的卷只该走幂等那一道");
     assert_eq!(tally.finished(), 1, "跳过的卷没有收尾");
+    assert_eq!(
+        tally.named(),
+        tally.started()[0],
+        "全局那个数没按上界预告：预扫判不出这一卷会命中幂等"
+    );
 }

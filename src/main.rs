@@ -8,10 +8,11 @@ mod render;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
     Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
@@ -397,7 +398,7 @@ fn execute() -> Result<u8> {
     let cache_budget = cli.cache_budget()?;
     let io_mode = cli.io_mode()?;
     let mode = cli.mode();
-    let bar = Bar::new();
+    let bar = Bar::new(cli.inputs.len());
     let report = tonefit::run(&Request {
         inputs: cli.inputs,
         output_root: cli.out.expect(REQUIRED_BY_CLAP),
@@ -439,9 +440,27 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
 /// indicatif 自己认得出对面不是终端，那时它一个字节都不写，管道与用例因此干净
 /// （见 `ProgressDrawTarget::term`）。
 ///
-/// 一卷一条，走完即抹掉：几十卷跑下来，屏幕上留下的只有报告。留着一排走完的进度条
-/// 是另一种噪声，而「这一趟做了什么」报告说得更清楚。
+/// 屏上最多三行，按这一趟走到哪儿依次登场：**预扫**那一条转轮、**整趟**那一条、
+/// **当前卷**那一条。一卷走完抹掉那一卷的，整趟走完全抹掉——几十卷跑下来，
+/// 屏幕上留下的只有报告。留着一排走完的进度条是另一种噪声，
+/// 而「这一趟做了什么」报告说得更清楚。
 struct Bar {
+    /// 几条一起画。两条 `ProgressBar` 各画各的会互相抹掉，`MultiProgress` 是 indicatif
+    /// 那一侧把它们排成上下几行的办法。
+    frame: MultiProgress,
+    /// 开工之前那一段的转轮（03 号票）。
+    ///
+    /// 它在 `run` **之前**就起来了，`RunStarted` 一到就收掉：预扫排在那条事件之前
+    /// （见 `tonefit::Event::RunStarted`），因此库这一侧报不出「预扫开始了」——
+    /// 那一段的交代只能由这一层自己给。几十个归档卷在慢盘上要列一阵中央目录，
+    /// 而静默的空白与卡死在屏幕上分不开。
+    ///
+    /// 它盖住的**不止预扫**：开工前那几道检查（输出不在源里、两个卷不撞同一个去处）
+    /// 也在这条事件之前，而它们同样要摸文件系统。措辞因此把两件事都说了——
+    /// 只说「预扫」的话，被那几道检查拒掉的那一趟屏上就写着一件根本没发生的事。
+    survey: Mutex<Option<ProgressBar>>,
+    /// 整趟那一条：全局进度与**剩余时间**，长任务里唯一有人真想知道的数（ADR 0011）。
+    global: Mutex<Option<ProgressBar>>,
     /// 当下这一卷的那一条。卷与卷之间是空的。
     ///
     /// 每卷新起一条而不是复用同一条：走完的那一条已经收了尾，再往它身上设长度、加位置，
@@ -449,63 +468,134 @@ struct Bar {
     volume: Mutex<Option<ProgressBar>>,
 }
 
+/// 一条横条的样子：名字、格子、走了几步、已用多久、还剩多久。
+///
+/// 整趟那条与当前卷那条共用它——两条长得一样，靠 `{msg}` 分辨是哪一条。
+/// 模板编不出来时退回 indicatif 的默认样式：进度条画得难看不该让这一趟跑不成。
+fn bar_style() -> ProgressStyle {
+    ProgressStyle::with_template("{msg} [{bar:30}] {pos}/{len} 步 · 已用 {elapsed} · 剩 {eta}")
+        .unwrap_or_else(|_| ProgressStyle::default_bar())
+        .progress_chars("=> ")
+}
+
 impl Bar {
-    fn new() -> Self {
+    /// 起一份进度显示，预扫那条转轮当场登场。
+    ///
+    /// `named` 是这一趟点名了几个卷。它取自命令行而不是等库来报：转轮要在 `run` 之前起来，
+    /// 而那时一条事件都还没有。
+    fn new(named: usize) -> Self {
+        let frame = MultiProgress::new();
+        let survey = frame.add(ProgressBar::new_spinner());
+        survey.set_message(format!("点名 {named} 个卷：查去处、预扫成员……"));
+        // 转轮自己转起来：预扫期间这一层收不到任何事件，没有人来推它。
+        survey.enable_steady_tick(Duration::from_millis(120));
         Self {
+            frame,
+            survey: Mutex::new(Some(survey)),
+            global: Mutex::new(None),
             volume: Mutex::new(None),
         }
     }
 
-    fn current(&self) -> MutexGuard<'_, Option<ProgressBar>> {
-        self.volume
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    /// 中毒了照样用：里面是一个画横条的句柄，一条线程恐慌不该让进度显示从此哑掉
+    /// （与 `tonefit` 那一侧锁缓存同一条规矩）。
+    fn held(slot: &Mutex<Option<ProgressBar>>) -> MutexGuard<'_, Option<ProgressBar>> {
+        slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
 
-impl Bar {
+    fn current(&self) -> MutexGuard<'_, Option<ProgressBar>> {
+        Self::held(&self.volume)
+    }
+
+    /// 预扫完了：收掉转轮，把整趟那一条摆上。
+    fn start_run(&self, volumes: usize, steps: u64) {
+        if let Some(spinner) = Self::held(&self.survey).take() {
+            spinner.finish_and_clear();
+        }
+        let bar = self.frame.add(ProgressBar::new(steps));
+        bar.set_style(bar_style());
+        bar.set_message(format!("整趟 {volumes} 卷"));
+        *Self::held(&self.global) = Some(bar);
+    }
+
     /// 起一条新的：这一卷叫什么、这一趟最多走多少步。
     fn start(&self, volume: &Path, steps: u64) {
         let name = volume.file_name().map_or_else(
             || volume.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let bar = ProgressBar::new(steps);
-        bar.set_style(
-            ProgressStyle::with_template(
-                "{msg} [{bar:30}] {pos}/{len} 步 · 已用 {elapsed} · 剩 {eta}",
-            )
-            .unwrap_or_else(|_| ProgressStyle::default_bar())
-            .progress_chars("=> "),
-        );
+        let bar = self.frame.add(ProgressBar::new(steps));
+        bar.set_style(bar_style());
         bar.set_message(name);
         *self.current() = Some(bar);
+    }
+
+    /// 又走完一步：当前卷那条与整趟那条各进一格。
+    ///
+    /// 两把锁**依次取、不嵌套**：这个方法是从计算线程上被调到的，嵌套持有两把锁就得开始
+    /// 讲取锁次序，而这里根本不需要同时持有。
+    fn step(&self) {
+        if let Some(bar) = self.current().as_ref() {
+            bar.inc(1);
+        }
+        if let Some(bar) = Self::held(&self.global).as_ref() {
+            bar.inc(1);
+        }
+    }
+
+    /// 一卷收摊：抹掉那一条，并把它**预告了却没走**的那几步结清到整趟那一条上。
+    ///
+    /// 为什么非结清不可，见 `tonefit::Event::RunStarted` 的 `steps`——那一条要求每个
+    /// 画全局进度的实现方都这么做。这里只说**怎么**做：差额从那一卷自己那条横条上读，
+    /// 它的长度是预告、位置是真走过的步数，两个数都已经在手上。
+    fn finish_volume(&self) {
+        let Some(bar) = self.current().take() else {
+            return;
+        };
+        let left = bar.length().unwrap_or(0).saturating_sub(bar.position());
+        bar.finish_and_clear();
+        if let Some(global) = Self::held(&self.global).as_ref() {
+            global.inc(left);
+        }
+    }
+
+    /// 每一条都收掉，一行不留。
+    ///
+    /// 也挂在 [`Drop`] 上：这一趟被拒绝时（预扫发现坏路径就是其中一种）`run` 直接返回 `Err`，
+    /// 收场那条事件根本不来，而屏上那条转轮还转着。
+    fn clear(&self) {
+        for slot in [&self.survey, &self.global, &self.volume] {
+            if let Some(bar) = Self::held(slot).take() {
+                bar.finish_and_clear();
+            }
+        }
+    }
+}
+
+impl Drop for Bar {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 
 impl Progress for Bar {
-    /// 事件流里它只认三条：开卷起一条、走一步进一格、跑完抹掉。
+    /// 事件流里它认五条：开工摆上整趟那条、开卷起一条、走一步两条各进一格、
+    /// 一卷收摊结清差额、收场全抹掉。
     ///
     /// 其余的事件命令行这一路当下没有去处——「在走哪一遍」与「哪一页失败了」
-    /// 报告里说得更全，而全局那一条要等预扫（03 号票）。`_` 那一支不是遗漏：
-    /// [`Event`] 非穷尽，多一个变体不该逼着这里跟着改（ADR 0011 的《后果》）。
+    /// 报告里说得更全。`_` 那一支不是遗漏：[`Event`] 非穷尽，多一个变体不该逼着这里跟着改
+    /// （ADR 0011 的《后果》）。
     ///
     /// 回的恒是[继续](Instruction::Continue)：两级停要有人按，而命令行这一路
     /// 还没有那个键——它是会话那一头的事（ADR 0013 决定第 3 条说命令行同样用得上，
     /// 接线留给按停那几张票）。
     fn observe(&self, event: Event<'_>) -> Instruction {
         match event {
+            Event::RunStarted { volumes, steps, .. } => self.start_run(volumes, steps),
             Event::VolumeStarted { volume, steps, .. } => self.start(volume, steps),
-            Event::Stepped { .. } => {
-                if let Some(bar) = self.current().as_ref() {
-                    bar.inc(1);
-                }
-            }
-            Event::VolumeFinished { .. } => {
-                if let Some(bar) = self.current().take() {
-                    bar.finish_and_clear();
-                }
-            }
+            Event::Stepped { .. } => self.step(),
+            Event::VolumeFinished { .. } => self.finish_volume(),
+            Event::RunFinished { .. } => self.clear(),
             _ => {}
         }
         Instruction::Continue
@@ -520,6 +610,71 @@ mod tests {
     #[test]
     fn the_command_line_is_wired_up() {
         Cli::command().debug_assert();
+    }
+
+    /// 全局条走到哪儿了。用例问的就是它——`ProgressBar` 记着位置，画不画得出来是另一回事。
+    fn global_position(bar: &Bar) -> (u64, u64) {
+        let held = Bar::held(&bar.global);
+        let global = held.as_ref().expect("整趟那一条该在场");
+        (global.position(), global.length().unwrap_or(0))
+    }
+
+    /// 开工之前那一段有一条转轮顶着，开工那条事件一到就换成整趟那一条（03 号票）。
+    ///
+    /// 钉的是「那一段不是静默的空白」：预扫在慢盘上要花时间，而它排在开工事件之前，
+    /// 库这一侧一句话都说不出来——屏上有没有东西，全看这一层在 `run` 之前有没有先摆一条。
+    #[test]
+    fn something_is_on_screen_before_the_run_even_starts() {
+        let bar = Bar::new(3);
+        assert!(
+            Bar::held(&bar.survey).is_some(),
+            "`run` 还没开始，屏上一条都没有"
+        );
+
+        bar.start_run(3, 100);
+        assert!(
+            Bar::held(&bar.survey).is_none(),
+            "开工了，开工前那条转轮还留着"
+        );
+        assert!(
+            Bar::held(&bar.global).is_some(),
+            "开工了，整趟那一条没摆上来"
+        );
+    }
+
+    /// 一卷提前收摊，全局条**结清**它预告剩下的那几步（03 号票，见 [`Bar::finish_volume`]）。
+    ///
+    /// 钉的是那笔算术的结果：无论哪一卷走了几步，全局条最终恰好收在预告的总数上。
+    ///
+    /// 调的是这一层自己那几个方法，不是喂一串事件：[`Event`] 的每一个变体都非穷尽，
+    /// 库外根本造不出一条来（ADR 0011 的《后果》）。`observe` 因此只是一层分派，
+    /// 真的算术在这几个方法里，而这条用例问的正是算术。管线报得对不对是另一侧的事，
+    /// 在 `tests/concurrency.rs`。
+    #[test]
+    fn a_volume_that_stops_early_settles_up_on_the_global_bar() {
+        let bar = Bar::new(2);
+        bar.start_run(2, 100);
+
+        // 头一个卷预告 70 步，只走了 5 步就收摊——幂等命中就是这个样子。
+        bar.start(Path::new("卷一"), 70);
+        for _ in 0..5 {
+            bar.step();
+        }
+        assert_eq!(global_position(&bar).0, 5, "走过的步没进全局条");
+        bar.finish_volume();
+        assert_eq!(
+            global_position(&bar).0,
+            70,
+            "提前收摊的卷没有把预告剩下的步结清"
+        );
+
+        // 第二个卷预告 30 步，一步不差地走完：全局条恰好收在预告的总数上。
+        bar.start(Path::new("卷二"), 30);
+        for _ in 0..30 {
+            bar.step();
+        }
+        bar.finish_volume();
+        assert_eq!(global_position(&bar), (100, 100), "全局条没有走到头");
     }
 
     /// `calibrate` 点名一台设备与一个去处，此外什么都不要（14 号票）。
