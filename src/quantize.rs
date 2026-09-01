@@ -108,7 +108,9 @@ impl Dither {
     ///
     /// 与 [`Filter::name`](crate::resample::Filter::name) 同一个用途：参数哈希要一个钉死的写法。
     /// `Display` 顶不了它——那一份是中文，而 tEXt 只装得下 Latin-1。
-    pub(crate) fn name(self) -> &'static str {
+    ///
+    /// 它是公开的，也与 `Filter::name` 同一条理由：**预设**要把这一项写回盘上。
+    pub fn name(self) -> &'static str {
         DITHERS
             .iter()
             .find(|(_, dither)| *dither == self)

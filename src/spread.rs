@@ -118,7 +118,9 @@ impl ReadingOrder {
     ///
     /// 参数哈希拿它当稳定写法（见 `crate::metadata`），与 `FitMode::name` 同一个理由：
     /// 那串字节要落进输出文件、几个月后还要比对。
-    pub(crate) fn name(self) -> &'static str {
+    ///
+    /// 它是公开的，同样与 `FitMode::name` 同一条理由：**预设**要把这一项写回盘上。
+    pub fn name(self) -> &'static str {
         READING_ORDERS
             .iter()
             .find(|(_, order)| *order == self)

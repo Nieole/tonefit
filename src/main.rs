@@ -3,6 +3,7 @@
 //! 出来的文字长什么样不在这里，在 [`render`]——命令行与会话共用同一套措辞，
 //! 那一套因此不该长在任何一个入口里面。
 
+mod preset;
 mod render;
 
 use std::path::{Path, PathBuf};
@@ -10,13 +11,15 @@ use std::process::ExitCode;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
     Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
 };
+
+use preset::Preset;
 
 #[derive(Parser)]
 // 不点子命令就是「处理点名的若干卷」这一件事，那是绝大多数时候要做的：
@@ -42,8 +45,36 @@ struct Cli {
     #[arg(short, long, required = true, value_name = "目录")]
     out: Option<PathBuf>,
 
+    /// 套用一份命名预设：**设备层**（型号、感知可分辨级数、阈值）与**口味层**（这一趟的立场）
+    /// 从盘上那份配置里来。
+    ///
+    /// **只在点名它的时候读盘。** 不点名的那一趟命令行仍是全部输入，同一条命令在两台机器上
+    /// 行为相同。
+    ///
+    /// **命令行上显式点到的那一项赢**：`--preset 漫画 --filter hamming` 就是「套那一份，
+    /// 再改这一项」。三个关掉什么的开关（--no-crop、--no-split、--per-page）只说得出一个方向，
+    /// 预设把裁边关掉之后这一趟没有再开回来的写法。
+    ///
+    /// 预设**不装处理范围与输出根**——那两样每趟都不同，混进去会让人套用预设时误写到上一次的
+    /// 输出目录。`--out` 因此照旧必填，`--profile` 只在预设供了型号时才不必填。
+    ///
+    /// 一份文件装多个命名预设，落在用户配置目录下的 tonefit/presets.toml
+    /// （Windows 取 %APPDATA%，其余平台取 $XDG_CONFIG_HOME、没设就是 ~/.config）。
+    /// 每个预设两节：`[preset."名字".device]` 装型号、感知可分辨级数与阈值，
+    /// `[preset."名字".taste]` 装这一趟的立场；键名就是去掉 `--` 的 flag 名
+    /// （`gray-levels`、`split-threshold`、`cache-budget`……），
+    /// 取值的写法与命令行上一模一样。名字带中文要按 TOML 的规矩加引号。
+    ///
+    /// 那份文件还不在时，`--preset` 会把一份可以照抄的样例连同位置一起印出来。
+    ///
+    /// 读不懂的预设（字段过时、型号已删、取值拼错）当场报错，不静默套默认值。
+    #[arg(long, value_name = "名字")]
+    preset: Option<String>,
+
     /// 目标设备型号。内置表覆盖 Kobo、BOOX、Kindle 的主力型号，型号名不区分大小写与分隔符。
-    #[arg(short, long, required = true, value_name = "型号")]
+    ///
+    /// 点了 `--preset` 而那份预设的设备层供了型号时，这一项可以不填。
+    #[arg(short, long, required_unless_present = "preset", value_name = "型号")]
     profile: Option<String>,
 
     /// 覆盖面板灰阶数。内置表没收录的设备、或在真机上数出的实际可分辨级数走这里。
@@ -159,8 +190,34 @@ struct Cli {
     no_metadata: bool,
 }
 
+/// 命令行与预设合起来定出这一趟的每一项（p1-session 的 07 号票）。
+///
+/// 规矩只有一条：**命令行上显式点到的那一项赢。** 预设是存着的立场，命令行是这一趟当场的
+/// 指令——「套一份预设，再改其中一项」因此写作 `--preset 漫画 --filter hamming`。
+/// 命令行没点到的落到预设上，预设也没说的落到默认值上，而那些默认值仍在原来的地方
+/// （库那一侧的 `Default`），这里一个都不复述。
+///
+/// **不点名预设时行为一字不变**：那一趟拿到的是一份 [`Preset::default`]——每一项都是「没说」，
+/// 于是每一项都落到默认值上，与本票之前逐字相同。这不是靠比对来保证的，是同一段代码走过去
+/// 的结果。
+///
+/// **三个布尔开关的覆盖是单向的。** `--no-crop`、`--no-split`、`--per-page` 在命令行上
+/// 只说得出一个方向，说不出它们的反面；预设把裁边关掉之后，这一趟没有再把它开回来的写法
+/// （要开回来就改预设，或者这一趟不套它）。取值一致性因此仍然成立——预设里的 `crop = false`
+/// 与命令行上的 `--no-crop` 是同一件事——只是覆盖不对称。
 impl Cli {
+    /// 这一趟要套用的预设。**只在显式点名时读盘。**
+    fn preset(&self) -> Result<Preset> {
+        match &self.preset {
+            Some(name) => preset::load(name),
+            None => Ok(Preset::default()),
+        }
+    }
+
     /// 本次做到哪一步。
+    ///
+    /// 不收预设：`--dry-run` 说的是这一趟做到哪一步，不是一份存得住的立场
+    /// （见 `preset::TasteLayer`）。
     fn mode(&self) -> Mode {
         if self.dry_run {
             Mode::DryRun
@@ -170,73 +227,136 @@ impl Cli {
     }
 
     /// 本次的适配方式。不点名就是默认的以高为准（01 号票）。
-    fn fit_mode(&self) -> Result<FitMode> {
+    fn fit_mode(&self, preset: &Preset) -> Result<FitMode> {
         match &self.fit {
             Some(name) => FitMode::resolve(name),
-            None => Ok(FitMode::default()),
+            None => Ok(preset.taste.fit.unwrap_or_default()),
         }
+    }
+
+    /// 本次裁不裁边（02 号票）。**默认裁**，`--no-crop` 关掉它。
+    fn crop(&self, preset: &Preset) -> bool {
+        // 默认值写在这里而不是库那一侧：`Request::crop` 是个裸 `bool`，没有第二个出处。
+        !self.no_crop && preset.taste.crop.unwrap_or(true)
+    }
+
+    /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它。
+    fn per_page(&self, preset: &Preset) -> bool {
+        self.per_page || preset.taste.per_page.unwrap_or(false)
     }
 
     /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
     ///
     /// 不点名就是默认那一套：拆、阈值 1.5、右开。三项各自的默认在库那一侧
     /// （`SplitRule::default`），这里只把命令行点到的那几项盖上去——写死一份就是第二个出处。
-    fn split_rule(&self) -> Result<SplitRule> {
+    fn split_rule(&self, preset: &Preset) -> Result<SplitRule> {
         let default = SplitRule::default();
         Ok(SplitRule {
-            on: !self.no_split,
+            on: !self.no_split && preset.taste.split.unwrap_or(default.on),
             threshold: match &self.split_threshold {
                 Some(text) => SplitThreshold::parse(text)?,
-                None => default.threshold,
+                None => preset.taste.split_threshold.unwrap_or(default.threshold),
             },
             order: match &self.reading_order {
                 Some(name) => ReadingOrder::resolve(name)?,
-                None => default.order,
+                None => preset.taste.reading_order.unwrap_or(default.order),
             },
         })
     }
 
     /// 本次残差段用哪个滤波器。不点名就是默认的 lanczos3（ADR 0001）。
-    fn residual_filter(&self) -> Result<Filter> {
+    fn residual_filter(&self, preset: &Preset) -> Result<Filter> {
         match &self.filter {
             Some(name) => Filter::resolve(name),
-            None => Ok(Filter::default()),
+            None => Ok(preset.taste.filter.unwrap_or_default()),
         }
     }
 
     /// 本次要不要点名位深。不点名就由判据说了算。
-    fn bit_depth_override(&self) -> Result<Option<BitDepth>> {
-        self.bit_depth.map(BitDepth::from_bits).transpose()
+    fn bit_depth_override(&self, preset: &Preset) -> Result<Option<BitDepth>> {
+        match self.bit_depth {
+            Some(bits) => BitDepth::from_bits(bits).map(Some),
+            None => Ok(preset.taste.bit_depth),
+        }
     }
 
     /// 本次要不要点名抖动模式。不点名就由判据在几何门放行的那几种里选。
-    fn dither_override(&self) -> Result<Option<Dither>> {
-        self.dither.as_deref().map(Dither::resolve).transpose()
+    fn dither_override(&self, preset: &Preset) -> Result<Option<Dither>> {
+        match self.dither.as_deref() {
+            Some(name) => Dither::resolve(name).map(Some),
+            None => Ok(preset.taste.dither),
+        }
     }
 
     /// 本次的缓存预算。不点名就是默认的那一档。
-    fn cache_budget(&self) -> Result<CacheBudget> {
+    fn cache_budget(&self, preset: &Preset) -> Result<CacheBudget> {
         match &self.cache_budget {
             Some(text) => CacheBudget::parse(text),
-            None => Ok(CacheBudget::default()),
+            None => Ok(preset.taste.cache_budget.unwrap_or_default()),
         }
     }
 
     /// 本次的读取策略。不点名就按路径探测介质（ADR 0009）。
-    fn io_mode(&self) -> Result<IoMode> {
+    fn io_mode(&self, preset: &Preset) -> Result<IoMode> {
         match &self.io_mode {
             Some(text) => IoMode::resolve(text),
-            None => Ok(IoMode::default()),
+            None => Ok(preset.taste.io_mode.unwrap_or_default()),
         }
     }
 
     /// 把 `--profile`、`--gray-levels` 与 `--threshold` 合成本次要用的 profile。
-    fn target_profile(&self) -> Result<Profile> {
+    ///
+    /// 三项都在**设备层**，因此预设供得出它们中的任何一项。型号两处都没有时当场停下：
+    /// clap 那道必填只放行「点了 `--preset`」这一种，而那份预设有没有型号只有读了才知道。
+    fn target_profile(&self, preset: &Preset) -> Result<Profile> {
+        let device = self
+            .profile
+            .as_deref()
+            .or(preset.device.profile.as_deref())
+            .ok_or_else(|| self.no_device_error())?;
         target_profile(
-            self.profile.as_deref().expect(REQUIRED_BY_CLAP),
-            self.gray_levels,
-            self.threshold,
+            device,
+            self.gray_levels.or(preset.device.gray_levels),
+            self.threshold.or(preset.device.threshold),
         )
+    }
+
+    /// 预设点了名却没供出型号时的说法。
+    ///
+    /// 走到这里就一定点过 `--preset`：命令行上没有型号时，clap 的
+    /// `required_unless_present = "preset"` 只放行那一种。
+    fn no_device_error(&self) -> anyhow::Error {
+        let name = self.preset.as_deref().expect(NAMED_A_PRESET);
+        anyhow!(
+            "预设「{name}」的设备层没有型号，`--profile` 因此仍然必填。\
+             要么在命令行上点名，要么往那份预设的 [preset.\"{name}\".device] 里写一行 profile = \"…\"。"
+        )
+    }
+
+    /// 把命令行与这一趟的预设合成 [`Request`]。
+    ///
+    /// 进度观察者不在这里装：那是界面的事，而这个方法答的是「这一趟的参数是什么」。
+    /// **参数哈希收的正是这里算出来的这些值**——它由 `Request` 求出（见 `tonefit` 的
+    /// `metadata`），而预设的名字一个字都没进来。改了预设的内容而名字没变，
+    /// 下一趟因此照样重做。
+    fn request(self, preset: &Preset) -> Result<Request> {
+        Ok(Request {
+            profile: self.target_profile(preset)?,
+            fit: self.fit_mode(preset)?,
+            crop: self.crop(preset),
+            split: self.split_rule(preset)?,
+            filter: self.residual_filter(preset)?,
+            bit_depth: self.bit_depth_override(preset)?,
+            dither: self.dither_override(preset)?,
+            per_page: self.per_page(preset),
+            cache_budget: self.cache_budget(preset)?,
+            mode: self.mode(),
+            io_mode: self.io_mode(preset)?,
+            metadata: !self.no_metadata,
+            progress: None,
+            output_root: self.out.expect(REQUIRED_BY_CLAP),
+            inputs: self.inputs,
+        })
     }
 }
 
@@ -268,12 +388,20 @@ fn interlock_help() -> String {
 /// 两者都带着「开关互锁」四个字，而短帮助里该有的只有路标。
 const INTERLOCK_HEADING: &str = "开关互锁（几项凑在一起会互相削弱的那几种组合）:";
 
-/// 处理卷那一路的必填项走到这里就一定有值：`required = true` 挡在 clap 那一层。
+/// 输出根走到这里就一定有值：`required = true` 挡在 clap 那一层。
 ///
-/// 字段类型仍是 `Option`——`subcommand_negates_reqs` 让子命令那一路不必交出它们
+/// 字段类型仍是 `Option`——`subcommand_negates_reqs` 让子命令那一路不必交出它
 /// （`calibrate` 根本不收输出根与卷），字段就得容得下「没有」。
 /// 必填这道关因此留在 clap：错在哪、该怎么敲，它说得比这里好。
+///
+/// **型号不走这一条**：它的必填是有条件的（`required_unless_present = "preset"`），
+/// 而「那份预设到底有没有型号」只有读了盘才知道——那一头的说法在
+/// [`Cli::no_device_error`]。
 const REQUIRED_BY_CLAP: &str = "clap 的 required = true 已经挡在前面";
+
+/// 命令行上没有型号却走到了拼 profile 那一步，只可能是因为点了 `--preset`：
+/// `required_unless_present = "preset"` 放行的就是这一种（见 [`Cli::no_device_error`]）。
+const NAMED_A_PRESET: &str = "clap 的 required_unless_present = \"preset\" 已经挡在前面";
 
 /// 处理卷之外的那些事，各占一个子命令。
 #[derive(clap::Subcommand)]
@@ -410,33 +538,13 @@ fn execute() -> Result<u8> {
     {
         return calibrate(profile, *gray_levels, out);
     }
-    let profile = cli.target_profile()?;
-    let fit = cli.fit_mode()?;
-    let split = cli.split_rule()?;
-    let filter = cli.residual_filter()?;
-    let bit_depth = cli.bit_depth_override()?;
-    let dither = cli.dither_override()?;
-    let cache_budget = cli.cache_budget()?;
-    let io_mode = cli.io_mode()?;
-    let mode = cli.mode();
+    // 预设先读：它供得出型号，而下面每一项都可能落到它身上。**不点名就一个字节都不读盘。**
+    let preset = cli.preset()?;
     let bar = Bar::new(cli.inputs.len());
-    let report = tonefit::run(&Request {
-        inputs: cli.inputs,
-        output_root: cli.out.expect(REQUIRED_BY_CLAP),
-        profile,
-        fit,
-        crop: !cli.no_crop,
-        split,
-        filter,
-        bit_depth,
-        dither,
-        per_page: cli.per_page,
-        cache_budget,
-        mode,
-        io_mode,
-        progress: Some(ProgressSink::new(bar)),
-        metadata: !cli.no_metadata,
-    })?;
+    let mut request = cli.request(&preset)?;
+    let mode = request.mode;
+    request.progress = Some(ProgressSink::new(bar));
+    let report = tonefit::run(&request)?;
     print!("{}", render::report(&report, mode));
     Ok(exit_code(&report))
 }
@@ -638,6 +746,260 @@ mod tests {
     #[test]
     fn the_command_line_is_wired_up() {
         Cli::command().debug_assert();
+    }
+
+    /// 没点名 `--preset` 那一趟拿到的东西：每一项都是「没说」。
+    ///
+    /// 各项默认值的用例都拿它——它们问的是「命令行不点名时落到哪里」，
+    /// 而预设不点名正是那个前提的另一半。
+    fn no_preset() -> Preset {
+        Preset::default()
+    }
+
+    /// 一条完整的处理卷命令行，卷与输出根固定，其余由调用方补。
+    fn parse(arguments: &[&str]) -> Cli {
+        let mut line = vec!["tonefit", "--out", "out"];
+        line.extend_from_slice(arguments);
+        line.push("volume-a");
+        Cli::try_parse_from(line).expect("参数应当可解析")
+    }
+
+    /// 这一条命令行加这一份预设，合出来的 [`Request`] 长什么样。
+    ///
+    /// 比的是**整份 `Request` 的 `Debug`**，不是挑几个字段：参数哈希收的是这里头
+    /// 会改变输出的每一项（`tonefit` 的 `metadata`），挑着比就等于自己重列一遍那张单子，
+    /// 而漏掉一项恰恰是这批用例要防的事。观察者两边都是 `None`，比得起来。
+    fn request_line(arguments: &[&str], preset: &Preset) -> String {
+        format!(
+            "{:?}",
+            parse(arguments).request(preset).expect("合得出 Request")
+        )
+    }
+
+    /// 一份把每一项都说满的预设，连同把它逐项敲出来的那条命令行。
+    ///
+    /// 两者是同一套值的两种写法——本票的验收「效果与把那几个 flag 逐个敲出来完全一致」
+    /// 说的就是它们该合出同一个 `Request`。
+    fn every_field() -> (Preset, Vec<&'static str>) {
+        let text = "\
+[preset.\"漫画\".device]
+profile = \"boox-poke6\"
+gray-levels = 12
+threshold = 4.75
+
+[preset.\"漫画\".taste]
+fit = \"inside\"
+crop = false
+split = false
+split-threshold = 1.75
+reading-order = \"ltr\"
+filter = \"hamming\"
+bit-depth = 2
+dither = \"fs\"
+per-page = true
+cache-budget = \"1G\"
+io-mode = \"concurrent\"
+";
+        let flags = vec![
+            "--profile",
+            "boox-poke6",
+            "--gray-levels",
+            "12",
+            "--threshold",
+            "4.75",
+            "--fit",
+            "inside",
+            "--no-crop",
+            "--no-split",
+            "--split-threshold",
+            "1.75",
+            "--reading-order",
+            "ltr",
+            "--filter",
+            "hamming",
+            "--bit-depth",
+            "2",
+            "--dither",
+            "fs",
+            "--per-page",
+            "--cache-budget",
+            "1G",
+            "--io-mode",
+            "concurrent",
+        ];
+        (preset::read(text, "漫画").expect("读得懂"), flags)
+    }
+
+    /// **套一份预设，与把那几个 flag 逐个敲出来，合出同一个 `Request`**（07 号票的验收）。
+    ///
+    /// 这一条同时是「参数哈希收的是展开后的值」那一条的一半：哈希由 `Request` 求出，
+    /// 而两条路交出的是同一个 `Request`，预设的名字一个字都没进去。另一半是
+    /// [`changing_what_a_preset_says_changes_the_run`]——改了内容就换一个 `Request`，
+    /// 于是换一个哈希、下一趟重做（那一步在 `tests/idempotency.rs` 的
+    /// `a_changed_parameter_redoes_the_volume` 上）。
+    #[test]
+    fn a_preset_expands_to_the_same_run_as_typing_the_flags_out() {
+        let (preset, flags) = every_field();
+
+        assert_eq!(
+            request_line(&["--preset", "漫画"], &preset),
+            request_line(&flags, &no_preset()),
+            "套预设与逐个敲 flag 合出来的不是同一趟"
+        );
+    }
+
+    /// 改了预设的内容而名字没变，这一趟的 `Request` 就跟着变。
+    ///
+    /// 与上一条合起来钉住「参数哈希收的是**展开后的值**」：名字进不去哈希，内容进得去。
+    #[test]
+    fn changing_what_a_preset_says_changes_the_run() {
+        let before = preset::read("[preset.\"漫画\".taste]\nfilter = \"hamming\"\n", "漫画")
+            .expect("读得懂");
+        let after = preset::read("[preset.\"漫画\".taste]\nfilter = \"bicubic\"\n", "漫画")
+            .expect("读得懂");
+
+        assert_ne!(
+            request_line(&["--preset", "漫画", "--profile", "kobo-libra-2"], &before),
+            request_line(&["--preset", "漫画", "--profile", "kobo-libra-2"], &after),
+            "预设的内容换了，这一趟却一模一样"
+        );
+    }
+
+    /// 显式 flag 与预设撞上时**命令行赢**（07 号票的验收）。
+    ///
+    /// 逐项都验：每一项各被预设与命令行各说一次，合出来的必须与只敲命令行那一趟相同。
+    #[test]
+    fn an_explicit_flag_beats_the_preset() {
+        let (preset, _) = every_field();
+        // 与预设里那一份处处不同的另一套值。
+        let flags = [
+            "--profile",
+            "kobo-libra-2",
+            "--gray-levels",
+            "8",
+            "--threshold",
+            "6.25",
+            "--fit",
+            "height",
+            "--split-threshold",
+            "2.5",
+            "--reading-order",
+            "rtl",
+            "--filter",
+            "bicubic",
+            "--bit-depth",
+            "4",
+            "--dither",
+            "off",
+            "--cache-budget",
+            "64M",
+            "--io-mode",
+            "serial",
+        ];
+        let mut with_preset = vec!["--preset", "漫画"];
+        with_preset.extend_from_slice(&flags);
+
+        // 裁边、拆分、逐页三项不在这里：命令行只说得出一个方向，而预设把前两项已经关到了
+        // 命令行说得出的那一侧、把第三项开到了那一侧——「命令行赢」在它们身上无从分辨。
+        // 单向那条规矩由 `the_switches_that_only_say_one_thing_stay_one_way` 钉。
+        let mut typed_out = flags.to_vec();
+        typed_out.extend(["--no-crop", "--no-split", "--per-page"]);
+
+        assert_eq!(
+            request_line(&with_preset, &preset),
+            request_line(&typed_out, &no_preset()),
+            "预设盖过了命令行上显式点到的那一项"
+        );
+    }
+
+    /// 三个只说得出一个方向的开关：预设关得掉，命令行关不回来。
+    ///
+    /// 钉的是那条**单向**的规矩本身（见 `Cli` 那个 `impl` 的抬头）——它是有意的取舍，
+    /// 不是漏了三个 flag，因此得有一行说得出它当下是什么样。
+    #[test]
+    fn the_switches_that_only_say_one_thing_stay_one_way() {
+        let off = preset::read(
+            "[preset.\"漫画\".taste]\ncrop = false\nsplit = false\nper-page = true\n",
+            "漫画",
+        )
+        .expect("读得懂");
+        let on = preset::read(
+            "[preset.\"漫画\".taste]\ncrop = true\nsplit = true\nper-page = false\n",
+            "漫画",
+        )
+        .expect("读得懂");
+        let line = ["--preset", "漫画", "--profile", "kobo-libra-2"];
+
+        // 预设关得掉，命令行上没有把它开回来的写法。
+        let cli = parse(&line);
+        assert!(!cli.crop(&off), "预设关不掉裁边");
+        assert!(!cli.split_rule(&off).expect("合得出").on, "预设关不掉拆分");
+        assert!(cli.per_page(&off), "预设开不了逐页");
+
+        // 反过来，命令行说得出的那一个方向压得过预设。
+        let mut relented = line.to_vec();
+        relented.extend(["--no-crop", "--no-split", "--per-page"]);
+        let cli = parse(&relented);
+        assert!(!cli.crop(&on), "--no-crop 没压过预设");
+        assert!(
+            !cli.split_rule(&on).expect("合得出").on,
+            "--no-split 没压过预设"
+        );
+        assert!(cli.per_page(&on), "--per-page 没压过预设");
+    }
+
+    /// 不点名 `--preset` 时命令行行为一字不变（07 号票的验收）。
+    ///
+    /// 钉的是「空预设 == 从前那一趟」：每一项都落到默认值上，一项都不落到预设上。
+    #[test]
+    fn a_run_that_names_no_preset_is_the_run_it_always_was() {
+        let plain = parse(&["--profile", "kobo-libra-2"]);
+        let preset = plain.preset().expect("不点名不读盘，因此不会失败");
+
+        assert_eq!(preset, no_preset(), "不点名却拿到了一份有内容的预设");
+        assert_eq!(
+            request_line(&["--profile", "kobo-libra-2"], &preset),
+            request_line(&["--profile", "kobo-libra-2"], &no_preset())
+        );
+    }
+
+    /// `--preset` 供了型号时 `-p` 不再必填；其余情况必填照旧（07 号票的验收）。
+    #[test]
+    fn a_preset_can_stand_in_for_the_required_profile() {
+        // clap 那一层：点了 `--preset` 就放行，没点就照旧拦下。
+        assert!(
+            Cli::try_parse_from(["tonefit", "--out", "out", "--preset", "漫画", "volume-a"])
+                .is_ok(),
+            "点了 --preset 仍被 clap 拦下"
+        );
+        let missing = match Cli::try_parse_from(["tonefit", "--out", "out", "volume-a"]) {
+            Ok(_) => panic!("没点 --preset 也没点 --profile，该被 clap 拦下"),
+            Err(error) => error.to_string(),
+        };
+        assert!(missing.contains("--profile"), "{missing}");
+
+        // 放行之后由预设自己交出型号。
+        let supplies = preset::read(
+            "[preset.\"漫画\".device]\nprofile = \"boox-poke6\"\n",
+            "漫画",
+        )
+        .expect("读得懂");
+        let profile = parse(&["--preset", "漫画"])
+            .target_profile(&supplies)
+            .expect("预设供得出型号");
+        assert_eq!(profile.device(), "boox-poke6");
+
+        // 预设没有型号那一种：clap 放行了，这一层得说得出话来，不能崩。
+        let silent =
+            preset::read("[preset.\"漫画\".taste]\nfit = \"inside\"\n", "漫画").expect("读得懂");
+        let error = parse(&["--preset", "漫画"])
+            .target_profile(&silent)
+            .expect_err("两处都没有型号")
+            .to_string();
+        assert!(
+            error.contains("漫画") && error.contains("--profile"),
+            "{error}"
+        );
     }
 
     /// 全局条走到哪儿了。用例问的就是它——`ProgressBar` 记着位置，画不画得出来是另一回事。
@@ -898,7 +1260,9 @@ mod tests {
         ])
         .expect("参数应当可解析");
 
-        let profile = cli.target_profile().expect("profile 应当解析成功");
+        let profile = cli
+            .target_profile(&no_preset())
+            .expect("profile 应当解析成功");
 
         assert_eq!(profile.device(), "kobo-libra-2");
         assert_eq!(profile.panel().gray_levels, 8);
@@ -919,20 +1283,23 @@ mod tests {
 
         assert_eq!(
             parse(&["--fit", "INSIDE"])
-                .fit_mode()
+                .fit_mode(&no_preset())
                 .expect("inside 应当认得"),
             FitMode::Inside
         );
         assert_eq!(
             parse(&["--fit", "height"])
-                .fit_mode()
+                .fit_mode(&no_preset())
                 .expect("height 应当认得"),
             FitMode::Height
         );
         // 不点名就是以高为准。
-        assert_eq!(parse(&[]).fit_mode().expect("默认值"), FitMode::Height);
+        assert_eq!(
+            parse(&[]).fit_mode(&no_preset()).expect("默认值"),
+            FitMode::Height
+        );
         // 认不出的名字在拼 Request 之前就被挡下。
-        assert!(parse(&["--fit", "stretch"]).fit_mode().is_err());
+        assert!(parse(&["--fit", "stretch"]).fit_mode(&no_preset()).is_err());
     }
 
     /// 帮助里要把这一趟的**行为变化与代价**说出来：默认是以高为准、跨页卷体积涨、
@@ -1043,22 +1410,27 @@ mod tests {
             Cli::try_parse_from(line).expect("参数应当可解析")
         };
 
-        let default = parse(&[]).split_rule().expect("默认值");
+        let default = parse(&[]).split_rule(&no_preset()).expect("默认值");
         assert!(default.on, "不点名就该拆");
         assert_eq!(default.threshold, SplitThreshold::default());
         assert_eq!(default.order, ReadingOrder::RightToLeft);
 
-        assert!(!parse(&["--no-split"]).split_rule().expect("认得").on);
+        assert!(
+            !parse(&["--no-split"])
+                .split_rule(&no_preset())
+                .expect("认得")
+                .on
+        );
         assert_eq!(
             parse(&["--split-threshold", "2.5"])
-                .split_rule()
+                .split_rule(&no_preset())
                 .expect("2.5 应当认得")
                 .threshold,
             SplitThreshold::parse("2.5").expect("正数")
         );
         assert_eq!(
             parse(&["--reading-order", "LTR"])
-                .split_rule()
+                .split_rule(&no_preset())
                 .expect("ltr 应当认得")
                 .order,
             ReadingOrder::LeftToRight
@@ -1066,11 +1438,19 @@ mod tests {
         // 认不出的取值在拼 Request 之前就被挡下。
         assert!(
             parse(&["--reading-order", "japanese"])
-                .split_rule()
+                .split_rule(&no_preset())
                 .is_err()
         );
-        assert!(parse(&["--split-threshold", "0"]).split_rule().is_err());
-        assert!(parse(&["--split-threshold", "很宽"]).split_rule().is_err());
+        assert!(
+            parse(&["--split-threshold", "0"])
+                .split_rule(&no_preset())
+                .is_err()
+        );
+        assert!(
+            parse(&["--split-threshold", "很宽"])
+                .split_rule(&no_preset())
+                .is_err()
+        );
     }
 
     /// 帮助里要说清**默认是拆的**、切点由什么定、以及不切的那一种是什么
@@ -1108,17 +1488,21 @@ mod tests {
         // `box` 与 `area` 是同一个滤波器，大小写不论。
         assert_eq!(
             parse(&["--filter", "BOX"])
-                .residual_filter()
+                .residual_filter(&no_preset())
                 .expect("box 应当认得"),
             Filter::Area
         );
         // 不点名就是 ADR 0001 定的默认。
         assert_eq!(
-            parse(&[]).residual_filter().expect("默认值"),
+            parse(&[]).residual_filter(&no_preset()).expect("默认值"),
             Filter::Lanczos3
         );
         // 认不出的名字在拼 Request 之前就被挡下。
-        assert!(parse(&["--filter", "mitchell"]).residual_filter().is_err());
+        assert!(
+            parse(&["--filter", "mitchell"])
+                .residual_filter(&no_preset())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1132,14 +1516,21 @@ mod tests {
 
         assert_eq!(
             parse(&["--bit-depth", "2"])
-                .bit_depth_override()
+                .bit_depth_override(&no_preset())
                 .expect("2 应当认得"),
             Some(BitDepth::Two)
         );
         // 不点名就由判据说了算。
-        assert_eq!(parse(&[]).bit_depth_override().expect("默认值"), None);
+        assert_eq!(
+            parse(&[]).bit_depth_override(&no_preset()).expect("默认值"),
+            None
+        );
         // 全集之外的比特数在拼 Request 之前就被挡下。
-        assert!(parse(&["--bit-depth", "3"]).bit_depth_override().is_err());
+        assert!(
+            parse(&["--bit-depth", "3"])
+                .bit_depth_override(&no_preset())
+                .is_err()
+        );
     }
 
     /// `--no-metadata` 关掉记录，幂等能力随之关闭——两件事是同一个开关，
@@ -1181,19 +1572,26 @@ mod tests {
 
         assert_eq!(
             parse(&["--dither", "FS"])
-                .dither_override()
+                .dither_override(&no_preset())
                 .expect("fs 应当认得"),
             Some(Dither::FloydSteinberg)
         );
         assert_eq!(
             parse(&["--dither", "none"])
-                .dither_override()
+                .dither_override(&no_preset())
                 .expect("none 应当认得"),
             Some(Dither::Off)
         );
         // 不点名就由判据在几何门放行的那几种里选。
-        assert_eq!(parse(&[]).dither_override().expect("默认值"), None);
+        assert_eq!(
+            parse(&[]).dither_override(&no_preset()).expect("默认值"),
+            None
+        );
         // 认不出的名字在拼 Request 之前就被挡下。
-        assert!(parse(&["--dither", "bayer"]).dither_override().is_err());
+        assert!(
+            parse(&["--dither", "bayer"])
+                .dither_override(&no_preset())
+                .is_err()
+        );
     }
 }

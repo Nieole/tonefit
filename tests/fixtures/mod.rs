@@ -583,6 +583,15 @@ impl Workspace {
         assert_ne!(name, "out", "另起的输出根不该与默认那个撞名");
         self.tmp.path().join(name)
     }
+
+    /// 工作区里一个与卷、输出根并列的目录，此刻还不存在。
+    ///
+    /// 预设那一路拿它当**用户配置目录**：子进程的 `%APPDATA%` / `$XDG_CONFIG_HOME`
+    /// 指到这里，跑起来的 tonefit 就在临时目录里找预设文件，碰不到这台机器上真正的那一份
+    /// （见 `tests/preset.rs`）。
+    pub fn dir(&self, name: &str) -> PathBuf {
+        self.tmp.path().join(name)
+    }
 }
 
 impl Default for Workspace {

@@ -62,19 +62,38 @@ pub enum IoMode {
     Concurrent,
 }
 
+/// 名字 → 读取策略。第一个指向某个策略的名字是它的规范名（见 [`IoMode::name`]）。
+const IO_MODES: &[(&str, IoMode)] = &[
+    ("auto", IoMode::Auto),
+    ("serial", IoMode::Serial),
+    ("concurrent", IoMode::Concurrent),
+];
+
 impl IoMode {
     /// 按 `--io-mode` 的写法解析。取值集合不进 CLI 的类型，库这一侧对 CLI 无知——
     /// 与 `--filter`、`--dither` 同一套分工。
     pub fn resolve(name: &str) -> Result<Self> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "auto" => Ok(IoMode::Auto),
-            "serial" => Ok(IoMode::Serial),
-            "concurrent" => Ok(IoMode::Concurrent),
-            _ => anyhow::bail!(
+        let key = name.trim().to_ascii_lowercase();
+        match IO_MODES.iter().find(|(listed, _)| *listed == key) {
+            Some((_, mode)) => Ok(*mode),
+            None => anyhow::bail!(
                 "认不出 I/O 模式 {name}：写 auto（按路径探测介质）、serial（读取串行）\
                  或 concurrent（读取并发）"
             ),
         }
+    }
+
+    /// 这个读取策略的规范名，取表里第一个指向它的那个。
+    ///
+    /// 它不进参数哈希——读取策略改的是这一趟怎么读，不改写出的像素（见 `crate::metadata`）。
+    /// 有这个方法是因为**预设**要把这一项写回盘上，而写出去的那个词必须就是
+    /// [`resolve`](Self::resolve) 认得的那个词。
+    pub fn name(self) -> &'static str {
+        IO_MODES
+            .iter()
+            .find(|(_, mode)| *mode == self)
+            .map(|(name, _)| *name)
+            .expect("表覆盖全部读取策略")
     }
 }
 
@@ -586,6 +605,19 @@ mod tests {
         );
         for text in ["", "ssd", "parallel", "1"] {
             assert!(IoMode::resolve(text).is_err(), "{text} 不该解析出 I/O 模式");
+        }
+    }
+
+    /// 规范名与解析是同一张表的两头：写出去的那个词读得回同一个策略。
+    ///
+    /// 预设把这一项写回盘上，靠的就是这条等式（见二进制侧的 `preset`）。
+    #[test]
+    fn every_canonical_name_reads_back_as_the_mode_it_names() {
+        for (_, mode) in IO_MODES {
+            assert_eq!(
+                IoMode::resolve(mode.name()).expect("规范名解析得出来"),
+                *mode
+            );
         }
     }
 }

@@ -64,7 +64,11 @@ impl FitMode {
     ///
     /// 参数哈希拿它当稳定写法（见 `crate::metadata`）：那串字节要落进输出文件、
     /// 几个月后还要比对，因此不能搭在 `Debug` 那种没有稳定承诺的写法上。
-    pub(crate) fn name(self) -> &'static str {
+    ///
+    /// 它是公开的，因为**预设**要把这一项写回盘上（`CONTEXT.md` 的《会话》）：
+    /// 写出去的那个词必须就是 [`resolve`](Self::resolve) 认得的那个词，
+    /// 而两处各写一份迟早会走散。
+    pub fn name(self) -> &'static str {
         FIT_MODES
             .iter()
             .find(|(_, mode)| *mode == self)

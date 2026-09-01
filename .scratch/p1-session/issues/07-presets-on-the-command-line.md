@@ -17,14 +17,217 @@
 把它们一并列上即可，不必回头补。**阅读方向按口味层放**，不留逐卷口子——用户一批一批
 处理，一批内同质，混批跑两趟。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 一份 TOML 装多个命名预设，落在用户配置目录下
-- [ ] `--preset 名字` 跑得起来，效果与把那几个 flag 逐个敲出来完全一致
-- [ ] 不点名 `--preset` 时命令行行为一字不变
-- [ ] 预设不含处理范围与输出根
-- [ ] 读不懂的预设（字段过时、型号已删）**当场报错**，不静默套默认值
-- [ ] 显式 flag 与预设同时出现时的优先级有定义，且有用例钉住
-- [ ] `--preset` 供了 profile 时 `-p` 不再必填；其余情况必填照旧
-- [ ] **参数哈希收的是展开后的值**：改了预设内容而名字没变，下一趟必须重做
-- [ ] 往返：存出来再读回去等价
+- [x] 一份 TOML 装多个命名预设，落在用户配置目录下
+- [x] `--preset 名字` 跑得起来，效果与把那几个 flag 逐个敲出来完全一致
+- [x] 不点名 `--preset` 时命令行行为一字不变
+- [x] 预设不含处理范围与输出根
+- [x] 读不懂的预设（字段过时、型号已删）**当场报错**，不静默套默认值
+- [x] 显式 flag 与预设同时出现时的优先级有定义，且有用例钉住
+- [x] `--preset` 供了 profile 时 `-p` 不再必填；其余情况必填照旧
+- [x] **参数哈希收的是展开后的值**：改了预设内容而名字没变，下一趟必须重做
+- [x] 往返：存出来再读回去等价
+
+## 落地记录
+
+预设整件事在**二进制 crate 内**（`src/preset.rs`），不进库——spec 的《Seam》定死了这一条：
+「会话自身（状态机、三层配置、预设、布局、按键）全部在二进制 crate 内，不进库。」
+库那一侧只多了五个访问器（见下面《库那一侧动的五行》）。
+
+### 盘上长什么样
+
+一份 TOML 装多个命名预设，落在**用户配置目录**下的 `tonefit/presets.toml`
+（Windows 取 `%APPDATA%`，其余平台取 `$XDG_CONFIG_HOME`、没设就是 `~/.config`）。
+不引管目录的包：要问的只有那两个环境变量。
+
+```toml
+[preset."漫画".device]
+profile = "kobo-libra-2"
+gray-levels = 12
+threshold = 5.2
+
+[preset."漫画".taste]
+fit = "inside"
+crop = false
+split = false
+split-threshold = 1.75
+reading-order = "ltr"
+filter = "hamming"
+bit-depth = 2
+dither = "fs"
+per-page = true
+cache-budget = "1G"
+io-mode = "concurrent"
+```
+
+**两层在文件里是两节，不是一堆平铺的键。** 分界线画在生命周期上（`CONTEXT.md` 的《会话》），
+而只写在文档里的分界线拦不住把 `filter` 填进设备层。两节各写着 `deny_unknown_fields`，
+填错节与写进范围层因此都是**格式的错误**，不是「我们没去读它」。
+
+顶层留了 `preset` 这一层而不是让预设名直接当顶层键：预设的字段演进是未决问题
+（`CONTEXT.md` 的《尚未确立》），那件事真要落地时第一个要加的多半是个文件级版本号。
+
+`gray-levels` 与 `threshold` **要连同 `profile` 一起写**（理由见下一节）。
+
+CJK 的预设名在 TOML 里要加引号——裸键只收字母、数字、`-`、`_`。文档、错误示例与用例
+一律写引号形式。
+
+### 两层各收了哪些项
+
+| 层 | 项 | 对应的 flag |
+|---|---|---|
+| 设备层 | 型号、感知可分辨级数、**阈值** | `--profile`、`--gray-levels`、`--threshold` |
+| 口味层 | 适配方式、裁边、拆分、拆分阈值、阅读方向、滤波器、位深、抖动、逐页、缓存预算、读取策略 | `--fit`、`--no-crop`、`--no-split`、`--split-threshold`、`--reading-order`、`--filter`、`--bit-depth`、`--dither`、`--per-page`、`--cache-budget`、`--io-mode` |
+
+口味层十一项：spec 原本列的六项（滤波器、位深、抖动、逐页、缓存预算、读取策略），
+加上页几何那一批添的五项（适配方式、裁边、拆分与阈值、阅读方向）。
+
+**`--threshold` 判进设备层**，三条理由都在既有决定里，逐条写在 `preset::DeviceLayer`
+的文档上；一句话说完就是：**它是 profile 的一部分，是标定的产物，改了它是判定的依据变了**——
+而设备层那一行自己写着「设备层错了是判定的依据错了」。判进口味层要主张它是「这一趟的立场」，
+而它由真机盲测夹出，不是取舍。
+
+**设备层那两个覆盖项要连同型号一起写。** `gray-levels` / `threshold` 都是在**某一块面板上**
+量出来的数（ADR 0002：判据跟着面板走、不可跨面板比较），一份不说是哪块面板的「12 级」
+套到下一台设备上就是一次无声的跨面板搬运。这条规矩顺带让校验完整：那两个数的界挂在 profile 上，
+不要求型号在场，越界的值就会在「这一趟拿命令行盖掉了它」时被静默放过。
+
+**`--dry-run` 与 `--no-metadata` 不在预设里**，按它们各自是什么判：前者是这一趟做到哪一步
+（`Mode`），试算与执行是同一条回路的两半；后者一开就把记录与幂等一起关掉，那是对**这一批输出**
+的处置——存进预设就等于「这一套参数从此不留记录」，而那是每一趟各自要拿的主意。
+
+《会话》那两行词条落后于实现——设备层的括号里没有阈值，口味层只列了六项（页几何那五项没进去）。
+改写已有词条是领域决定，记进停车场 Q54 与 Q57，`CONTEXT.md` 一个字没动。
+
+### 优先级：命令行上显式点到的那一项赢
+
+规矩只有一条，写在 `Cli` 那个 `impl` 的抬头与 `--preset` 的帮助里：
+**命令行 > 预设 > 默认值**。「套一份预设，再改其中一项」因此写作
+`--preset 漫画 --filter hamming`。
+
+**不点名预设时行为一字不变**不是靠比对保证的：那一趟拿到的是一份 `Preset::default()`——
+每一项都是「没说」，于是每一项都落到原来那个默认值上，走的是同一段代码。
+
+**三个布尔开关的覆盖是单向的**（`--no-crop`、`--no-split`、`--per-page`）：取值一致性仍然成立，
+不对称的只是覆盖。整条规矩连同它为什么不咬人，写在 `Cli` 那个 `impl` 的抬头。
+要不要给这三项各加一个反向 flag 是命令行表面的扩张，记进停车场 Q55。
+
+`--profile` 的必填变成有条件的（clap 的 `required_unless_present = "preset"`）：
+点了 `--preset` 就放行，由预设自己交出型号；预设也没有型号时由 `Cli::no_device_error`
+当场说话（clap 看不见文件里有什么）。`--out` **照旧无条件必填**——范围层不进预设。
+
+### 参数哈希收展开值：怎么验的
+
+哈希由 `Request` 求出（`tonefit` 的 `metadata::params_hash`），而预设是在**拼 `Request` 之前**
+展开完的——`Cli::request` 把命令行与预设合成 `Request`，预设的名字一个字都没进去。
+这不是主张，是三条用例夹出来的：
+
+| 用例 | 在哪 | 钉的是 |
+|---|---|---|
+| `a_preset_expands_to_the_same_run_as_typing_the_flags_out` | `src/main.rs` | 套预设与把十四个 flag 逐个敲出来，合出**整份 `Request` 的 `Debug` 逐字相同** |
+| `changing_what_a_preset_says_changes_the_run` | `src/main.rs` | 名字没变而内容变了，`Request` 跟着变 |
+| `a_preset_hashes_to_what_it_expands_to_not_to_its_name` | `tests/preset.rs` | 两趟写出的 PNG 里 `tonefit:params` **逐字相同**，页字节也相同 |
+| `changing_a_presets_content_without_changing_its_name_redoes_the_volume` | `tests/preset.rs` | 同一个输出根上跑两趟，改了预设内容之后那一页的哈希**换了**——被跳过的话它还会是旧的 |
+| `a_rerun_with_the_same_preset_still_skips_the_volume` | `tests/preset.rs` | 上一条不是靠「每趟都重做」蒙对的 |
+
+进程那一层的四条是必要的：参数哈希不是公开 API，它只在写出去的 tEXt 里露一次面。
+比 `Request` 的 `Debug` 而不是挑几个字段：挑着比就等于自己重列一遍「会改变输出的每一项」
+那张单子，而漏掉一项恰恰是这批用例要防的事。
+
+### 读不懂就报错
+
+- **字段过时** → 两层的 `deny_unknown_fields`。
+- **型号已删** → `Profile::resolve` 当场解析，错误里带着内置清单。
+- **取值拼错** → 每一项在读进来时就解析成它的类型，走的是命令行那几个函数
+  （`FitMode::resolve`、`CacheBudget::parse`、……）。**预设不是第二套语法。**
+- **范围层混进来** → 同样是 `deny_unknown_fields`：`inputs`、`out`、`[…​.scope]` 都被挡下。
+
+**点名的那个预设整份都要读得懂**，与这一趟有没有拿命令行盖掉其中某一项无关——错误因此是
+确定的，不随手上敲了哪几个 flag 忽有忽无。这句话没有例外，靠的是上面那条
+「覆盖项要连同型号一起写」：设备层那两个数的界挂在 profile 上
+（`Profile::with_gray_levels` 与 `with_threshold` 是唯一出处），型号一定在场，就一定验得动。
+
+**只有点名的那一个要读得懂**：同一份文件里另一个预设字段过时了，不该让今天要用的这个跑不起来。
+代价是行号——整份文件按类型解析时 toml 报得出「第几行第几列」，而这里先把各预设按
+`toml::Value` 原样收下，再单独解析点名的那一个，错误里因此只有字段名。
+
+### 往返
+
+`preset::write` 把若干命名预设写成正文，`preset::read` 读回来。写出去的每一项都是它那个类型的
+**规范名**（`FitMode::name` 那一族），而规范名按定义读得回同一个值——往返比的是**值**，
+不是文本：用户手写的可能是另一个别名（`floyd-steinberg` 之于 `fs`），文本本来就不必逐字相同。
+
+两处转了一道文本：拆分阈值的界只有 `SplitThreshold::parse` 一处出处而它收文本
+（`f64` 的 `Display` 是能原样读回来的最短写法，不丢精度）；缓存预算的 `Display` 是给人看的
+`512 MiB`、`parse` 读不回来，因此另写了一个 `spell_budget`（整 G/M/K 带后缀，其余写字节数），
+往返逐个验 `parse(spell(x)) == x`。
+
+`write` 眼下只有往返用例调得到，挂着一条带 `reason` 的 `allow(dead_code)`：命令行只读不写，
+会话里那个「把当前两层存成一份命名预设」的手势归 `12`，它调的就是这里。
+
+### 库那一侧动的五行
+
+`FitMode::name`、`Filter::name`、`Dither::name`、`ReadingOrder::name` 由 `pub(crate)` 放开成
+`pub`，`IoMode` 新增一个同形的 `name`（`resolve` 顺带改成查表，错误措辞一字未动，
+另加一条 `every_canonical_name_reads_back_as_the_mode_it_names` 把表的两头拴住）。
+
+理由只有一条：**预设要把这些项写回盘上，而写出去的那个词必须就是 `resolve` 认得的那个词。**
+各写一份迟早走散。它们不是新 seam——是已经公开的类型上的访问器，
+spec 的「库这一侧不新增 seam」没有被动到。
+
+### 没做的
+
+- **`calibrate` 读不到预设**（`args_conflicts_with_subcommands` 让顶层参数与子命令互斥）。
+  它自己收 `-p` 与 `--gray-levels`，两项都填得出来。停车场 Q56，归 `13`。
+- **会话那一侧的存取**归 `12`，UI 一个字都没碰。
+- **报告里不提预设名**：参数哈希收的是展开后的值，报告抬头照旧只说 profile 与各开关。
+
+### review 之后改的
+
+`/code-review` 两轴各出了几条，收了这些：
+
+- **「整份都要读得懂」有一条口子**（Spec 轴）。设备层的覆盖项校验挂在 profile 那一支上，
+  而预设不带型号时那一支不走——`gray-levels = 0` 配上命令行的 `--profile X --gray-levels 8`
+  会一趟跑到底、零报错，而模块文档把「与这一趟有没有拿命令行盖掉它无关」写成了不变式。
+  **补法不是放松文档，是补上规矩**：设备层写了 `gray-levels` 或 `threshold` 就必须写 `profile`。
+  这条不是为了让校验好写——那两个数**本来就绑着一块面板**（ADR 0002），
+  一份不说是哪块面板的「12 级 / 阈值 5.2」，套到下一台设备上就是一次无声的跨面板搬运。
+  校验因此顺带完整了，不变式不必再带例外。
+  用例 `a_calibrated_override_must_name_the_panel_it_was_measured_on` 钉三件事：
+  没型号的覆盖项被挡下、越界的数不再依赖「这一趟有没有盖掉它」、一项覆盖都没有的设备层照旧收下。
+- **`--preset` 的长帮助里那段 TOML 样例印出来是一坨**（自查）。clap 把段内的换行折成空格，
+  七行样例挤成两行。样例从帮助里撤掉，换成一句说得清形状的话（两节各叫什么、键名就是去掉
+  `--` 的 flag 名、中文名要加引号），并点出「文件还不在时 `--preset` 会印一份可以照抄的」——
+  那一份走的是 `no_preset_file_error`，`\n` 原样出，格式因此仍有一处教得会人的出处。
+- **口味层那张单子当不了论据**（Standards 轴）。`--dry-run` 与 `--no-metadata` 不进预设，
+  原先是靠「它们不在 `CONTEXT.md` 给口味层列的那张单子上」立的——而那张单子同时漏掉了
+  页几何添的五项。论证换成按它们各自是什么判，那张单子的滞后记进停车场 Q57。
+- **同一条理由复述了三四遍**（Standards 轴）。阈值归设备层的三条理由只留在
+  `preset::DeviceLayer` 的文档里，Q54 与本记录各留一句结论加一句指路；
+  单向那条规矩只留在 `Cli` 那个 `impl` 的抬头，Q55 与本记录同样只留指路。
+- **`no_device_error` 拿 `unwrap_or_default` 兜一个到不了的分支**（Standards 轴），
+  印出来会是「预设「」…」。改成 `expect(NAMED_A_PRESET)`，与仓库处理
+  「clap 已经挡在前面」的既有写法（`REQUIRED_BY_CLAP`）同一个形状。
+- **`read` 在相邻两行挂了两次同样的上下文**（Standards 轴）。并成一次。
+- **`const PRESET_FILE: [&str; 2]` 读作 `PRESET_FILE[0]` / `[1]`**（Standards 轴）。
+  换成一个 `"tonefit/presets.toml"`。
+
+两条没收，各有理由：
+
+- **六个 `Cli` 访问器里那个 `match` 的形状重复了九次**（Standards 轴，Repeated Switches）。
+  收成一个泛型合并步骤要引一个高阶辅助函数，而每个访问器身上那句「不点名就是 ADR 000x 定的
+  默认」会跟着没地方挂——那几句是本仓库既有的写法，且九项的类型与默认值各不相同。
+  规矩本身**只说了一次**（`impl` 抬头），代码只是逐项应用它。
+- **`TasteLayer` 与 `OnDiskTaste` 逐字段并行**（Standards 轴，Data Clumps）。
+  那是**验过的值**与**盘上的写法**之间的一道缝，不是巧合的重复：往返、`deny_unknown_fields`、
+  「读进来那一刻就解析成类型」三件事都搭在它上面。合成一个要给六个类型各写一个 serde
+  辅助模块，代码更多。
+
+### 数
+
+全量 **446 通过 0 失败**（基线 421），**16** 个测试二进制（多的是 `tests/preset.rs`）。
+`cargo fmt --check`、`cargo clippy --all-targets` 干净，`cargo doc --no-deps` 与 HEAD
+同为 14 条既有告警。**黄金快照未变、未重录**——预设不改变任何一趟的默认行为。
+`CONTEXT.md` 一个字没动（**预设**那一行本来就写着「装设备层与口味层两层。CLI 只在显式点名时读它」）。
+停车场新增 Q54、Q55、Q56、Q57，一条都没了结。
