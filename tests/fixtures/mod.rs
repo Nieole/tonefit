@@ -1102,3 +1102,32 @@ pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
         .map(|page| relative_name(&volume.volume, &page.source))
         .unwrap_or_else(|| format!("第 {index} 页"))
 }
+
+/// 预扫走完的那一刻，把源里的一个文件抽走。
+///
+/// 造「预扫时打得开、轮到它时做不成」用它：**预扫排在开工那条事件之前**
+/// （见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读它的字节要等到管线真走到那儿。
+/// 抽走一个**透传文件**得到的是一个卷级失败（透传文件搬不动就交不出这一卷，
+/// `CONTEXT.md` 的《失败》）；透传文件排在页之后写，那一刻半卷已经进了临时容器，
+/// 「写到一半才失败」因此也由它造。
+///
+/// 目录卷没有归档那种坏 CRC 可造——文件系统上一个文件要么读得出来，要么根本不在。
+/// 归档卷那一侧的同一件事由 `Cbz::rotten_file` 造。
+pub struct RemoveOnceTheSurveyIsDone {
+    path: PathBuf,
+}
+
+impl RemoveOnceTheSurveyIsDone {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl tonefit::Progress for RemoveOnceTheSurveyIsDone {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if matches!(event, tonefit::Event::RunStarted { .. }) {
+            fs::remove_file(&self.path).expect("抽走那个文件");
+        }
+        tonefit::Instruction::Continue
+    }
+}

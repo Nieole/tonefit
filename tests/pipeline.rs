@@ -1744,8 +1744,13 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
     assert_eq!(written, ["volume-a/ch1/001.png", "volume-b/001.png"]);
 }
 
+/// 两个源成员要写到同一个输出上就拦下，不静默覆盖——**拦的是那一卷**（05 号票）。
+///
+/// 撞名是**那一卷内容**的性质：换一卷根本不成立。它因此走卷级失败那条路，
+/// 而不是整趟拒绝（那一种留给「错在这一趟参数上」的，见 `src/lib.rs` 的 `Refusal`）。
+/// 拦下这件事一点没松：这一卷一个字节都没写出去，报告里指名道姓说着为什么。
 #[test]
-fn two_pages_that_would_share_one_output_are_refused() {
+fn two_pages_that_would_share_one_output_take_only_their_own_volume_down() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     let page = fixtures::cheap_page();
@@ -1753,9 +1758,15 @@ fn two_pages_that_would_share_one_output_are_refused() {
     volume.page("001.jpg", &page);
     volume.page("001.png", &page);
 
-    let error = fixtures::run_paths_expecting_failure(&space, [volume.path()]);
+    let report = fixtures::run_paths(&space, [volume.path()]);
 
-    assert!(error.to_string().contains("都要写到"), "{error}");
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("撞名没被拦下：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, volume.path());
+    assert!(failed.reason.contains("都要写到"), "{}", failed.reason);
+    assert!(report.volumes.is_empty(), "撞名的卷还是做出了东西");
+    assert!(!space.out().join("volume-a").exists(), "撞名的卷写了输出");
 }
 
 #[test]

@@ -492,3 +492,74 @@ fn isolating_a_volume_leaves_the_source_untouched() {
 
     assert_eq!(fixtures::fingerprint(volume.path()), before);
 }
+
+/// 预扫之后才做不成的那一卷**不再毁掉整趟**：其余卷照做，报告照出（05 号票）。
+///
+/// 这是本票的要害。整趟当场失败在长任务里是最难受的一种结局——前面几十卷的输出还好好地
+/// 躺在盘上，而那份说得清它们各是什么的报告全丢了，退出码只说得出「这一趟没做成」。
+///
+/// 四件事一起断言，缺一件这条就漏得掉：做完的卷有报告、也有盘上的输出；没做成的那一卷
+/// 指得出自己是谁、说得出为什么；排在它**后面**的卷照常做完（拿三个卷、坏的夹在中间，
+/// 就是为了问这一条）；那一卷在输出根下一个字节都没留。
+///
+/// 触发方式是**预扫之后把源里的透传文件抽走**——文件被删、盘拔了、权限变了，
+/// 在管线看来是同一件事。抽在开工那条事件上：预扫排在它之前（见 `tonefit` 的 `survey`），
+/// 成员因此已经枚举完了，而读到它是第二遍的事。那正是「预扫时打得开、轮到它时做不成」。
+/// 透传文件没有页那条出路：页读不出来变成失败页、整卷进隔离目录，
+/// 而透传文件搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
+#[test]
+fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let first = space.volume("volume-a");
+    first.page("001.png", &page);
+    let doomed = space.volume("volume-b");
+    doomed.page("001.png", &page);
+    doomed.file("ComicInfo.xml", COMIC_INFO);
+    let last = space.volume("volume-c");
+    last.page("001.png", &page);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(
+            fixtures::RemoveOnceTheSurveyIsDone::new(doomed.path().join("ComicInfo.xml")),
+        )),
+        ..fixtures::request(&space, [first.path(), doomed.path(), last.path()])
+    })
+    .expect("一卷做不成不该毁掉整趟");
+
+    // 做出了东西的那两卷都在报告里，按点名顺序，坏的那一卷不占位。
+    assert_eq!(
+        report
+            .volumes
+            .iter()
+            .map(|volume| volume.volume.clone())
+            .collect::<Vec<_>>(),
+        [first.path().to_path_buf(), last.path().to_path_buf()],
+        "做完的卷没有原样留在报告里"
+    );
+    // 报告不是唯一的证据：两卷的输出真的在盘上，页也真的写了出来。
+    for volume in &report.volumes {
+        assert!(
+            volume.output.is_dir(),
+            "{} 没写出来",
+            volume.output.display()
+        );
+        assert!(volume.pages[0].output.is_file(), "做完的卷少了页");
+    }
+
+    // 没做成的那一卷指得出自己是谁，也说得出为什么。
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("这一卷没被记成卷级失败：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    assert!(
+        failed.reason.contains("ComicInfo.xml"),
+        "没说清是哪个成员搬不动：{}",
+        failed.reason
+    );
+    // 它在输出根下一个字节都没留：半成品不算输出。
+    assert!(
+        !space.out().join("volume-b").exists(),
+        "没做成的卷在输出根下留了东西"
+    );
+}

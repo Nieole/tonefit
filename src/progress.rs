@@ -22,16 +22,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::report::VolumeReport;
+use crate::report::{RunOutcome, VolumeReport};
 
 /// 库向外报的一条消息（ADR 0011 决定第 1 条）。
 ///
-/// **非穷尽做了两层**：枚举自己，加**每一个**变体自己——包括眼下不带字段的那两个。
-/// 以后多报一件事，无论是多一个变体还是往已有的变体里多塞一个数，都不该逼着现有的实现方
-/// 跟着改。现在有三个实现方：CLI 的进度条、会话、用例里的记账本。这条性质已经兑现过一次——
+/// **非穷尽做了两层**：枚举自己，加**每一个**变体自己——包括眼下不带字段的
+/// [`Stepped`](Self::Stepped)。以后多报一件事，无论是多一个变体还是往已有的变体里多塞一个数，
+/// 都不该逼着现有的实现方跟着改。现在有三个实现方：CLI 的进度条、会话、用例里的记账本。
+/// 这条性质已经兑现过两次——
 /// 03 号票往 [`RunStarted`](Self::RunStarted) 里加了全局总步数，三个实现方一个都没被逼着改；
-/// 还有一件排着队：[`RunFinished`](Self::RunFinished) 迟早要说得出这一趟是怎么收的场
-/// （停车场 Q39）。库外的 `match` 因此一律要带 `..` 与 `_`，那正是这条性质起作用的样子。
+/// 05 号票加了 [`VolumeFailed`](Self::VolumeFailed)、并往 [`RunFinished`](Self::RunFinished)
+/// 里塞进「这一趟是怎么收的场」，也只有真要用那件事的实现方动了手。
+/// 库外的 `match` 因此一律要带 `..` 与 `_`，那正是这条性质起作用的样子。
 ///
 /// 事件带的是**借用**：一卷跑完那条带着的 [`VolumeReport`] 还在库的手上，
 /// 要留下来的观察者自己克隆（[`VolumeReport`] 是 `Clone`）。这样不留的那些实现方
@@ -98,19 +100,48 @@ pub enum Event<'a> {
     /// 只是判定是 `VolumeVerdict::Skipped`。「跳过」在屏幕上不该长成「卡住」。
     ///
     /// **被[中止](Instruction::Abort)掉的那一卷不报这一条**：它那格 `partial` 已经丢掉，
-    /// 那一卷等于没做，没有报告可带。流上因此看得见一条开卷、没有与它配对的这一条——
-    /// 那正是「这一卷被中止了」在事件流上的样子。
+    /// 那一卷等于没做，没有报告可带。它也不报 [`VolumeFailed`](Self::VolumeFailed)——
+    /// 被停下来不是失败。流上因此看得见一条开卷、后面两条一条都没有，
+    /// 那正是「这一卷被中止了」在事件流上的样子；收场那一条会把它再说一次
+    /// （[`RunOutcome::Stopped`]）。
     #[non_exhaustive]
     VolumeFinished {
         /// 这一卷的报告。攒下来即是 `Report::volumes`，一字不差。
         report: &'a VolumeReport,
     },
-    /// 这一趟完了。
+    /// 一整卷**没做成**，附上给人读的那句原因（05 号票：卷级失败）。
     ///
-    /// 只在**正常收场**时报——`run` 返回 `Err` 时不报，那时调用方拿到的是那个错误本身。
-    /// 收尾停下来的那一趟照报：它是正常收场的一种，只是卷没做完。
+    /// 它与 [`VolumeFinished`](Self::VolumeFinished) 二选一：一条开卷之后到得了的只有其中
+    /// 一条——那一卷要么交出一份报告，要么交出这一句原因。两条都没有的只剩一种情形，
+    /// 就是[中止](Instruction::Abort)。
+    ///
+    /// 同一句原因随后也会在 `Report::failed_volumes` 里出现一次——那一份是结果，
+    /// 这一条是增量，与 [`PageFailed`](Self::PageFailed) 同一个待遇。
+    ///
+    /// **这一趟不因此停下**：其余卷照做，收场那一条照报。画进度的实现方要在这里
+    /// 把那一卷的横条收掉、把它预告剩下的步结清——与一卷跑完那一条一样，
+    /// 理由见 [`RunStarted`](Self::RunStarted) 的 `steps`。
     #[non_exhaustive]
-    RunFinished {},
+    VolumeFailed {
+        /// 是哪一卷：源目录路径，或源归档的文件路径，与 `VolumeReport::volume` 同一个身份。
+        volume: &'a Path,
+        /// 为什么没做成，由内到外的错误链。
+        reason: &'a str,
+    },
+    /// 这一趟完了，带着**它是怎么收的场**（停车场 Q39）。
+    ///
+    /// **报过开工，就一定报得到这一条**，拒绝执行的那一趟也不例外——那时 `outcome` 是
+    /// [`RunOutcome::Refused`]，紧接着 `run` 返回那个错误本身（信息因此不少一条：
+    /// 事件说了「完了」，返回值说了「为什么」）。
+    ///
+    /// 开工那条事件**之前**被拒的那几种（范围为空、输出落在源里、两个卷撞同一个去处、
+    /// 有卷点不开）仍是一条事件都不发：那一趟连开工都没有，也就谈不上收场。
+    #[non_exhaustive]
+    RunFinished {
+        /// 这一趟是怎么收的场。攒报告的那一端拿它填 `Report::outcome`——
+        /// 拒绝执行那一种除外，那一趟没有报告可填。
+        outcome: RunOutcome,
+    },
 }
 
 /// 一个卷这一趟要走的那几遍中的一遍（`CONTEXT.md` 的《进度》：步的三段）。
@@ -314,8 +345,12 @@ impl<'a> Events<'a> {
         self.report(Event::VolumeFinished { report });
     }
 
-    pub(crate) fn run_finished(self) {
-        self.report(Event::RunFinished {});
+    pub(crate) fn volume_failed(self, volume: &Path, reason: &str) {
+        self.report(Event::VolumeFailed { volume, reason });
+    }
+
+    pub(crate) fn run_finished(self, outcome: RunOutcome) {
+        self.report(Event::RunFinished { outcome });
     }
 }
 
@@ -381,11 +416,12 @@ mod tests {
         watched.pass_started(Pass::First);
         watched.step();
         watched.page_failed(Path::new("卷一/003.png"), "解不出来");
-        watched.run_finished();
+        watched.volume_failed(Path::new("卷二"), "盘拔了");
+        watched.run_finished(RunOutcome::Completed);
 
-        // 六条整份比对，不是逐条挑几个字：少报一条进度条会停在半路，多报一条它会冲过头，
-        // 而带着的东西报错了——卷路径、预告的步数、失败原因——挑着比就漏得掉，
-        // 其中预告的步数报错正是进度条「停在某个百分比上再也不动」的样子。
+        // 七条整份比对，不是逐条挑几个字：少报一条进度条会停在半路，多报一条它会冲过头，
+        // 而带着的东西报错了——卷路径、预告的步数、失败原因、这一趟怎么收的场——
+        // 挑着比就漏得掉，其中预告的步数报错正是进度条「停在某个百分比上再也不动」的样子。
         assert_eq!(
             tally.seen(),
             [
@@ -394,7 +430,8 @@ mod tests {
                 "PassStarted { pass: First }",
                 "Stepped",
                 r#"PageFailed { page: "卷一/003.png", reason: "解不出来" }"#,
-                "RunFinished",
+                r#"VolumeFailed { volume: "卷二", reason: "盘拔了" }"#,
+                "RunFinished { outcome: Completed }",
             ],
             "报到的那几条与发出去的对不上"
         );
@@ -405,9 +442,9 @@ mod tests {
         unwatched.run_started(2, 30);
         unwatched.volume_started(Path::new("卷二"), 10);
         unwatched.step();
-        unwatched.run_finished();
+        unwatched.run_finished(RunOutcome::Completed);
 
-        assert_eq!(tally.seen().len(), 6, "没装观察者，事件却到了某处");
+        assert_eq!(tally.seen().len(), 7, "没装观察者，事件却到了某处");
         assert_eq!(
             unwatched.standing(),
             Instruction::Continue,

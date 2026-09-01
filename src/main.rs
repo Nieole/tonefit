@@ -353,6 +353,17 @@ const ISOLATED_EXIT: u8 = 2;
 /// 全部成功的退出码。
 const SUCCESS_EXIT: u8 = 0;
 
+/// 有卷**没做成**时的退出码（05 号票：卷级失败）。
+///
+/// 与 [`ISOLATED_EXIT`] 分成两个数，理由与当初把它从「拒绝执行」里分出来的是同一条：
+/// 脚本要分得开。隔离过的那一卷**交出来了**——输出齐着、页数齐着，只是其中几页是占位页，
+/// 修好坏页重跑一趟就好；没做成的那一卷**一个字节都没交出来**，盘上根本没有它，
+/// 该去查的是文件还在不在、盘还挂着没有、权限变没变。
+///
+/// 它压过 `ISOLATED_EXIT`：两件事同时成立时报更重的那一件（本票的验收）。
+/// 一个数只说得出一件事，而「有卷根本没做成」是那两件里更该让人停下来看的。
+const FAILED_VOLUME_EXIT: u8 = 3;
+
 fn main() -> ExitCode {
     match execute() {
         Ok(code) => ExitCode::from(code),
@@ -364,15 +375,25 @@ fn main() -> ExitCode {
     }
 }
 
-/// 这一趟的退出码：全部成功是 [`SUCCESS_EXIT`]，有卷被隔离是 [`ISOLATED_EXIT`]。
+/// 这一趟的退出码：全部成功是 [`SUCCESS_EXIT`]，有卷没做成是 [`FAILED_VOLUME_EXIT`]，
+/// 有卷被隔离是 [`ISOLATED_EXIT`]。
 ///
 /// 拒绝执行那一种走不到这里——它在 `run` 里就返回了 `Err`，退出码是 `ExitCode::FAILURE`（1）。
-/// 三个数因此各说一件事：做完了、做完了但有卷带着坏页、没做成。
+/// 四个数因此各说一件事：做完了、做完了但有卷带着坏页、做完了但有卷根本没做成、
+/// 这一趟没做成（`CONTEXT.md` 的《失败》）。
+///
+/// **次序就是取舍**：一个进程只交得出一个数，两件事同时成立时报更重的那一件
+/// （05 号票的验收）。为什么那两件是两个不同的决定，见 [`FAILED_VOLUME_EXIT`]。
+///
+/// 按停停下来的那一趟**不在这里露面**：它是用户自己的决定，不是失败，退出码照旧
+/// （`Report::outcome` 说得出它，见 `tonefit::RunOutcome`）。命令行这一路眼下也按不出来。
 ///
 /// 出的是 `u8` 而不是 `ExitCode`：后者不可比较，这条规则也就测不了，
-/// 而「退出码分得开这两种」正是本票要钉住的那一条。
+/// 而「退出码分得开这几种」正是本票要钉住的那一条。
 fn exit_code(report: &Report) -> u8 {
-    if report.any_isolated() {
+    if report.any_volume_failed() {
+        FAILED_VOLUME_EXIT
+    } else if report.any_isolated() {
         ISOLATED_EXIT
     } else {
         SUCCESS_EXIT
@@ -561,8 +582,11 @@ impl Bar {
 
     /// 每一条都收掉，一行不留。
     ///
-    /// 也挂在 [`Drop`] 上：这一趟被拒绝时（预扫发现坏路径就是其中一种）`run` 直接返回 `Err`，
-    /// 收场那条事件根本不来，而屏上那条转轮还转着。
+    /// 也挂在 [`Drop`] 上：**开工之前**被拒的那一趟（预扫发现坏路径就是其中一种）
+    /// 一条事件都不发，收场那一条因此根本不来，而屏上那条转轮还转着。
+    ///
+    /// 开工**之后**才撞上的那一种拒绝照发收场（见 `tonefit::Event::RunFinished`），
+    /// 这里因此会被调到两次——`take()` 让第二次是空操作。
     fn clear(&self) {
         for slot in [&self.survey, &self.global, &self.volume] {
             if let Some(bar) = Self::held(slot).take() {
@@ -579,8 +603,12 @@ impl Drop for Bar {
 }
 
 impl Progress for Bar {
-    /// 事件流里它认五条：开工摆上整趟那条、开卷起一条、走一步两条各进一格、
-    /// 一卷收摊结清差额、收场全抹掉。
+    /// 事件流里它认六条：开工摆上整趟那条、开卷起一条、走一步两条各进一格、
+    /// 一卷收摊结清差额、一卷**没做成**同样收摊结清、收场全抹掉。
+    ///
+    /// 没做成那一条与跑完那一条在这一层做同一件事，而两条都得接：一卷开过头就一定要收摊，
+    /// 不然那条横条留在屏上不走，整趟那条也少了它预告的那几步、永远走不到头
+    /// （见 `tonefit::Event::VolumeFailed`）。
     ///
     /// 其余的事件命令行这一路当下没有去处——「在走哪一遍」与「哪一页失败了」
     /// 报告里说得更全。`_` 那一支不是遗漏：[`Event`] 非穷尽，多一个变体不该逼着这里跟着改
@@ -594,7 +622,7 @@ impl Progress for Bar {
             Event::RunStarted { volumes, steps, .. } => self.start_run(volumes, steps),
             Event::VolumeStarted { volume, steps, .. } => self.start(volume, steps),
             Event::Stepped { .. } => self.step(),
-            Event::VolumeFinished { .. } => self.finish_volume(),
+            Event::VolumeFinished { .. } | Event::VolumeFailed { .. } => self.finish_volume(),
             Event::RunFinished { .. } => self.clear(),
             _ => {}
         }

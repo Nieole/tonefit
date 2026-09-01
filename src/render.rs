@@ -148,16 +148,20 @@ pub fn pages(volume: &VolumeReport) -> String {
     text
 }
 
-/// 末尾那四小结：输出宽超过面板、兜底上界退回、部分救回、隔离。
-/// 各自一页都没有就一个字都不说。
+/// 末尾那五小结：输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
+/// 各自一页（一卷）都没有就一个字都不说。
 ///
 /// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
+///
+/// 次序按**这一趟出的事有多重**往下排，最重的压在末尾——终端上它离提示符最近，
+/// 也是几十卷跑下来最不该被往回翻的那一条。
 pub fn tail(report: &Report) -> String {
     let mut text = overflow_tail(report);
     text.push_str(&backstop_tail(report));
     text.push_str(&salvage_tail(report));
     text.push_str(&isolation_tail(report));
+    text.push_str(&failed_volume_tail(report));
     text
 }
 
@@ -236,6 +240,46 @@ fn isolation_tail(report: &Report) -> String {
         "隔离 {volumes} 卷 · 失败 {} 页：失败页以卷内统一尺寸留白占位，原因逐条列在上面\n",
         report.failures().count()
     )
+}
+
+/// 卷级失败那一小结，压在整份报告的最末尾（05 号票）。
+///
+/// 这几卷在报告正文里**一行都没有**：正文逐卷那几段来自 `Report::volumes`，
+/// 而没做成的卷不在那一列里——它没有去处、没有页数、没有判定可印。
+/// 这一小结因此不是「再说一遍」，它是这几卷在报告里唯一的位置：
+/// 少了它，用户看到的是一份少了几卷而不说为什么的报告，比报错更糟。
+///
+/// **逐条带上原因**，形状照预扫那条拒绝办（见 `tonefit` 的 `survey`）：路径一行、
+/// 原因一行，多了只列前几条并说还有多少。一屏放不下的清单等于没有清单。
+/// 截断只发生在**这一层**：`Report::failed_volumes` 一卷不少、每一卷都带着自己那句原因，
+/// 要全部的调用方读那一列。
+///
+/// 排在隔离那一小结之后：两者是同一件事的两个轻重——那一头是卷交出来了、带着坏页，
+/// 这一头是卷根本没交出来。退出码上同样是后者压过前者（见 `crate::exit_code`）。
+fn failed_volume_tail(report: &Report) -> String {
+    /// 最多列几条。
+    const SHOWN: usize = 5;
+
+    if report.failed_volumes.is_empty() {
+        return String::new();
+    }
+    let mut text = format!(
+        "卷级失败 {} 卷：预扫时打得开，轮到它们时没做成，一个字节都没交出来。\
+         这一趟没有因此停下——别的卷该做的照做，上面那些就是做出来的\n",
+        report.failed_volumes.len()
+    );
+    for failure in report.failed_volumes.iter().take(SHOWN) {
+        text.push_str(&format!(
+            "  {}\n    {}\n",
+            failure.volume.display(),
+            failure.reason
+        ));
+    }
+    let rest = report.failed_volumes.len().saturating_sub(SHOWN);
+    if rest > 0 {
+        text.push_str(&format!("  ……另有 {rest} 卷\n"));
+    }
+    text
 }
 
 /// 部分救回那一小结，与隔离那一小结并排摆在报告末尾（04 号票）。
@@ -588,11 +632,11 @@ mod tests {
     // 退出码不是渲染的事，用例却要问它：「报告说得出隔离」与「退出码分得开隔离」是同一条
     // 验收的两半（12 号票），拆到两个用例就得把那一大摊报告再拼一遍。
     // 够得着命令行那一侧的只有这个 `#[cfg(test)]` 块：上面那些渲染函数一个符号都不碰它。
-    use crate::{ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
+    use crate::{FAILED_VOLUME_EXIT, ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
         GeometryGate, GrayImage, Interlock, IoPlan, Medium, PageOutcome, Processed, Reason,
-        Reference, Salvage, Scaling, Size, Verdict, VolumeTiming,
+        Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure, VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -650,6 +694,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1288,6 +1334,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1339,6 +1387,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1381,6 +1431,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -1454,6 +1506,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/_isolated/volume-a"),
@@ -1499,6 +1553,53 @@ mod tests {
         assert!(text.contains("删不删由你"), "{text}");
         // 退出码分得开「全部成功」与「有卷被隔离」。
         assert_eq!(exit_code(&report), ISOLATED_EXIT);
+
+        // **两件事同时成立时报更重的那一件**（05 号票）：同一份报告上再添一卷没做成的，
+        // 退出码就得让给 `3`。隔离的卷交出来了、只是带着坏页，没做成的卷一个字节都没交出来——
+        // 脚本据此做的是两个不同的决定，而一个进程只交得出一个数。
+        let mut also_a_failed_volume = report.clone();
+        also_a_failed_volume.failed_volumes.push(VolumeFailure {
+            volume: PathBuf::from("library/volume-b"),
+            reason: "打开 library/volume-b: 拒绝访问".to_owned(),
+        });
+        assert_eq!(exit_code(&also_a_failed_volume), FAILED_VOLUME_EXIT);
+    }
+
+    /// 没做成的卷在报告里**有自己的位置**，而且说得出为什么（05 号票）。
+    ///
+    /// 正文逐卷那几段只画得出做出了东西的卷——没做成的卷没有去处、没有页数、没有判定可印，
+    /// 末尾这一小结是它在报告里唯一的位置。少了它，用户拿到的是一份少了几卷
+    /// 却不说为什么的报告，那比当场报错更糟。
+    ///
+    /// 退出码那一半同在这里，与隔离那一条同一个理由：「报告说得出」与「脚本分得开」
+    /// 是同一条验收的两半，拆到两个用例就得把那一摊报告再拼一遍。
+    #[test]
+    fn the_report_names_every_volume_that_never_got_done_and_why() {
+        let report = Report {
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
+            crop: true,
+            split: SplitRule::default(),
+            // 点名一个卷、它没做成：做出了东西的卷一个都没有。
+            volumes: Vec::new(),
+            failed_volumes: vec![VolumeFailure {
+                volume: PathBuf::from("library/volume-b"),
+                reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
+            }],
+            outcome: RunOutcome::Completed,
+            elapsed: Duration::ZERO,
+        };
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(text.contains("卷级失败 1 卷"), "{text}");
+        assert!(text.contains("library/volume-b"), "{text}");
+        // 为什么没做成要逐条说出来：只报个数，用户不知道该去修什么。
+        assert!(text.contains("ComicInfo.xml"), "{text}");
+        // 「这一趟没有因此停下」也要说：报告少了一卷，读的人得知道别的卷没跟着遭殃。
+        // 这句话**不许断言别的卷做成了**——这份报告里一卷都没做成，那样说就是假话。
+        assert!(text.contains("这一趟没有因此停下"), "{text}");
+        assert_eq!(exit_code(&report), FAILED_VOLUME_EXIT);
     }
 
     /// 部分救回页在报告里认得出来，而且**只有报告认得出来**（04 号票）。
@@ -1549,6 +1650,8 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            failed_volumes: Vec::new(),
+            outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),

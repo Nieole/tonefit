@@ -18,13 +18,17 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fixtures::{TINY, Workspace};
-use tonefit::{Event, Instruction, Mode, Pass, Progress, ProgressSink, Request, VolumeReport};
+use tonefit::{
+    Dither, Event, FitMode, Instruction, Mode, Pass, Progress, ProgressSink, Request, RunOutcome,
+    VolumeReport,
+};
 
 /// 记录型观察者：事件收下来，一条不落。
 ///
-/// 记两样。**卷报告**整份克隆一份——本文件头一条用例要拿它与 `run` 的返回值比，
-/// 而事件带的是借用（见 `tonefit::Event`），不克隆就留不下。**别的事件**只留一个
-/// 印出来的字样：那几条用来看流的形状，不用来比内容。
+/// **卷报告**整份克隆一份——本文件头一条用例要拿它与 `run` 的返回值比，
+/// 而事件带的是借用（见 `tonefit::Event`），不克隆就留不下。带字段的另外几条
+/// （失败页、卷级失败、收场）各留下它带的那几样，因为有用例要拿它们与报告比。
+/// **其余事件**只留一个印出来的字样：那几条用来看流的形状，不用来比内容。
 ///
 /// 答什么由用例事先摆好：默认继续，[`stopping_after`](Recorder::stopping_after) 摆的是
 /// 「收下第 n 卷之后改口」。
@@ -39,6 +43,10 @@ struct Recorded {
     volumes: Mutex<Vec<VolumeReport>>,
     /// 每一条「一页失败了」带着的那两样。
     failures: Mutex<Vec<(PathBuf, String)>>,
+    /// 每一条「一整卷没做成」带着的那两样（05 号票）。
+    volume_failures: Mutex<Vec<(PathBuf, String)>>,
+    /// 收场那一条带着的「这一趟是怎么收的场」。没收到那一条就是 `None`。
+    outcome: Mutex<Option<RunOutcome>>,
     /// 走过哪几遍，按到达顺序。
     passes: Mutex<Vec<Pass>>,
     /// 这一趟点名了几个卷（`RunStarted` 带的那个数）。
@@ -88,7 +96,18 @@ impl Progress for Recorder {
                     .push(report.clone());
                 "VolumeFinished"
             }
-            Event::RunFinished { .. } => "RunFinished",
+            Event::VolumeFailed { volume, reason, .. } => {
+                self.0
+                    .volume_failures
+                    .lock()
+                    .expect("记账没有中毒")
+                    .push((volume.to_path_buf(), reason.to_owned()));
+                "VolumeFailed"
+            }
+            Event::RunFinished { outcome, .. } => {
+                *self.0.outcome.lock().expect("记账没有中毒") = Some(outcome);
+                "RunFinished"
+            }
             _ => "别的",
         };
         self.0.shape.lock().expect("记账没有中毒").push(name);
@@ -124,6 +143,16 @@ impl Recorder {
 
     fn failures(&self) -> Vec<(PathBuf, String)> {
         self.0.failures.lock().expect("记账没有中毒").clone()
+    }
+
+    fn volume_failures(&self) -> Vec<(PathBuf, String)> {
+        self.0.volume_failures.lock().expect("记账没有中毒").clone()
+    }
+
+    /// 收场那一条报的是什么。一条都没收到时是 `None`——「报过开工就一定报得到收场」
+    /// 正是靠这个分得开（停车场 Q39）。
+    fn outcome(&self) -> Option<RunOutcome> {
+        *self.0.outcome.lock().expect("记账没有中毒")
     }
 
     fn passes(&self) -> Vec<Pass> {
@@ -1085,4 +1114,183 @@ fn a_slow_observer_does_not_wedge_the_pipeline() {
     .expect("慢观察者不该让这一趟跑不完");
 
     assert_eq!(report.volumes[0].page_count(), 2, "跑是跑完了，但少出了页");
+}
+
+/// 一整卷没做成也**当场**报出去，带着原因——不等这一趟跑完（05 号票）。
+///
+/// 与「一页失败了」同一条规矩，理由也一样：会话的主区要在出事的当口就说得出口，
+/// 而这一趟后面还有几十卷要跑。次序在这里钉住两件事——那一条排在**下一卷开工之前**，
+/// 而且那一卷**没有**与它配对的「一卷跑完」：一条开卷之后到得了的只有其中一条。
+///
+/// 事件带的那两样与报告里那一条是同一份（一份是增量，一份是结果），
+/// 与失败页那一对同一个待遇。
+#[test]
+fn a_volume_that_never_got_done_is_reported_the_moment_it_fails() {
+    let space = Workspace::new();
+    // 归档结构完好、中央目录列得出这个透传成员，坏的是它的字节——预扫打得开，
+    // 真去读才看得出来。那正是「预扫之后才做不成」。
+    let mut doomed = space.cbz("volume-a");
+    doomed
+        .page("001.png", &fixtures::full_bleed_gradient(TINY))
+        .rotten_file("ComicInfo.xml", b"<?xml version=\"1.0\"?>");
+    let doomed = doomed.write();
+    let good = small_volume(&space, "volume-b");
+    let recorder = Recorder::default();
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [doomed.as_path(), good.path()])
+    })
+    .expect("一卷做不成不该毁掉整趟");
+
+    let failures = recorder.volume_failures();
+    assert_eq!(failures.len(), 1, "卷级失败没有报出来：{failures:?}");
+    assert_eq!(failures[0].0, doomed, "指错了卷：{failures:?}");
+    assert!(failures[0].1.contains("ComicInfo.xml"), "{failures:?}");
+
+    // 同一卷在报告里也有一份，两处指的是同一卷，说的是同一句。
+    assert_eq!(
+        report
+            .failed_volumes
+            .iter()
+            .map(|failure| (failure.volume.clone(), failure.reason.clone()))
+            .collect::<Vec<_>>(),
+        failures,
+        "事件说的那一卷与报告里的那一卷对不上"
+    );
+
+    let shape = recorder.shape();
+    let failed_at = shape
+        .iter()
+        .position(|name| *name == "VolumeFailed")
+        .expect("卷级失败那一条");
+    let next_volume = shape
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| **name == "VolumeStarted")
+        .nth(1)
+        .map(|(at, _)| at);
+    assert!(
+        Some(failed_at) < next_volume,
+        "没做成的卷要等下一卷开工之后才说得出口：{shape:?}"
+    );
+    // 那一卷只有开卷与没做成两条，没有「一卷跑完」——两条出口二选一。
+    assert_eq!(
+        shape
+            .iter()
+            .filter(|name| **name == "VolumeFinished")
+            .count(),
+        1,
+        "没做成的卷也报了「一卷跑完」：{shape:?}"
+    );
+    // 后面那一卷照做，收场那一条照报。
+    assert_eq!(report.volumes.len(), 1, "没做成的卷把后面那一卷也带走了");
+    assert_eq!(recorder.outcome(), Some(RunOutcome::Completed));
+}
+
+/// 收场那一条说得出**这一趟是怎么收的场**，三种各说一种（停车场 Q39、Q46）。
+///
+/// 中止掉的那一卷既不进报告、也不报「一卷跑完」——它等于没做（ADR 0013 决定第 2 条）。
+/// 从前那件事在库的出口上**没有形式**：中止掉的卷与「压根没点名它」在 `Report` 上
+/// 一模一样，事件流那一侧也只剩「一条没有配对的开卷」要调用方自己去认。这一条把那个形式
+/// 钉住：收场那一条带着它，`Report` 上也带着同一个值。
+///
+/// 三种一起断言，因为分得开才有意义：走到头的那一趟不许说自己停过，
+/// 收尾与中止不许混成同一个字——两者停下来的现场不同（前者盘上留着完整的卷，
+/// 后者连当前那一卷都丢了）。
+#[test]
+fn the_last_event_says_how_the_run_ended() {
+    let space = Workspace::new();
+    let volumes: Vec<fixtures::Volume> = ["volume-a", "volume-b", "volume-c"]
+        .into_iter()
+        .map(|name| small_volume(&space, name))
+        .collect();
+    let inputs: Vec<&std::path::Path> = volumes.iter().map(fixtures::Volume::path).collect();
+
+    let run = |recorder: &Recorder, out: PathBuf| {
+        tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            output_root: out,
+            ..fixtures::request(&space, inputs.iter().copied())
+        })
+        .expect("按停不是失败")
+    };
+
+    // 一趟顺当跑下来：点名的卷都走过一遍了。
+    let clean = Recorder::default();
+    let report = run(&clean, space.out_named("走到头"));
+    assert_eq!(clean.outcome(), Some(RunOutcome::Completed));
+    assert_eq!(
+        report.outcome,
+        RunOutcome::Completed,
+        "报告与事件说的不是同一件事"
+    );
+
+    // 收尾：当前卷跑完就停，剩下的卷没有开工。
+    let winding_up = Recorder::stopping_after(1, Instruction::Finish);
+    let report = run(&winding_up, space.out_named("收尾"));
+    assert_eq!(
+        winding_up.outcome(),
+        Some(RunOutcome::Stopped(Instruction::Finish))
+    );
+    assert_eq!(report.outcome, RunOutcome::Stopped(Instruction::Finish));
+
+    // 中止：当前那一卷也丢掉，而它两列报告里都没有——这一项是它唯一的痕迹。
+    let aborting = Recorder::stopping_after(1, Instruction::Abort);
+    let report = run(&aborting, space.out_named("中止"));
+    assert_eq!(
+        aborting.outcome(),
+        Some(RunOutcome::Stopped(Instruction::Abort))
+    );
+    assert_eq!(report.outcome, RunOutcome::Stopped(Instruction::Abort));
+    assert_eq!(report.volumes.len(), 1, "中止之后还接着做了下一卷");
+}
+
+/// **报过开工，就一定报得到收场**——拒绝执行的那一趟也不例外（停车场 Q39）。
+///
+/// 从前 `run` 返回 `Err` 时收场那一条根本不发，屏上那条横条因此要靠析构去收。
+/// 现在那一趟照发，只是收场说的是「拒绝执行」，紧接着 `run` 才把错误交出去：
+/// 事件说了「完了」，返回值说了「为什么」，信息一条不少。
+///
+/// 拿来撞的是互锁 ③：`--dither fs` 撞上一页贴不住面板，处置是**维持拒绝**
+/// （页几何批 05 号票）。它是唯一一种在开工**之后**才撞得上的拒绝——
+/// 门是页的几何事实，一卷里可能一页都不撞。这一条同时钉住它没有降级成卷级失败：
+/// 用户点的 `--dither fs` 对每一卷都错，整趟当场停才对。
+#[test]
+fn a_refusal_after_the_run_started_still_says_the_run_is_over() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 源两边都比面板小的页在 fit-inside 上按不放大原样输出，一条边都贴不住：门不成立。
+    volume.page(
+        "001.png",
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    let recorder = Recorder::default();
+
+    let error = tonefit::run(&Request {
+        dither: Some(Dither::FloydSteinberg),
+        fit: FitMode::Inside,
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect_err("几何门不成立时点名抖动应当整趟被拒");
+
+    assert!(format!("{error:#}").contains("几何门"), "{error:#}");
+    assert_eq!(
+        recorder.outcome(),
+        Some(RunOutcome::Refused),
+        "拒绝执行的那一趟没有报出收场"
+    );
+    let shape = recorder.shape();
+    assert_eq!(
+        shape.last(),
+        Some(&"RunFinished"),
+        "末一条不是「这一趟完了」：{shape:?}"
+    );
+    // 拒绝不是卷级失败：这一趟一卷都没「没做成」，它整趟当场停。
+    assert!(
+        recorder.volume_failures().is_empty(),
+        "拒绝执行被记成了卷级失败：{:?}",
+        recorder.volume_failures()
+    );
 }

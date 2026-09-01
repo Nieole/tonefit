@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
 pub use cache::{CacheBudget, CacheUsage};
@@ -63,8 +63,8 @@ pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
-    PageBranch, PageOutcome, PageReport, Processed, Report, VolumeReport, VolumeTiming,
-    VolumeVerdict,
+    PageBranch, PageOutcome, PageReport, Processed, Report, RunOutcome, VolumeFailure,
+    VolumeReport, VolumeTiming, VolumeVerdict,
 };
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
@@ -95,6 +95,20 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 }
 
 /// 处理点名的若干卷，产出设备优化副本。源卷只读。
+///
+/// # 两种失败分得开（05 号票）
+///
+/// **拒绝执行**回的是 `Err`：范围为空、输出落在源里、两个卷撞同一个去处、预扫发现有卷
+/// 点不开、覆盖项把候选集裁空——这几种错在这一趟的**参数**上，换一个卷不会变好，
+/// 整趟因此当场停（见库内的 `Refusal` 与 `crate::survey`）。
+/// 前四种发生在开工之前，一页都不做；**末一种不是**——几何门是页的事实，
+/// 要真撞上那一页才拦得住（见 `Candidates::for_gate`），那时先做完的卷已经在盘上，
+/// 而调用方拿到的是错误、没有报告。那是这条路唯一说不出「一页都没做」的地方。
+///
+/// **卷级失败**回的是 `Ok`：预扫时打得开、轮到它却做不成的卷（文件被删、盘拔了、
+/// 权限变了、透传文件搬不动）记进 [`Report::failed_volumes`]，其余卷照做、报告照出。
+/// 「一卷点不开就毁掉整趟」正是这条分岔要改掉的毛病——那时前面几十卷的输出还在盘上，
+/// 而那份说得清它们是什么的报告全丢了。
 pub fn run(request: &Request) -> Result<Report> {
     // 整趟的表从这里开始掐：开工前那几道检查也要摸文件系统，摊在计时之外
     // 只会让报出来的总耗时比调用方自己在外面掐的那个小一截（加固批 11 号票）。
@@ -121,35 +135,88 @@ pub fn run(request: &Request) -> Result<Report> {
     // 开工前那几道检查与预扫都排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
     events.run_started(request.inputs.len(), survey.steps());
     let mut volumes = Vec::with_capacity(request.inputs.len());
+    let mut failed_volumes = Vec::new();
+    let mut outcome = RunOutcome::Completed;
     for surveyed in survey.into_volumes() {
         // **卷边界上的检查点**（ADR 0013 决定第 1 条）：收尾让当前卷跑完就停，
         // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
         // 中止在这一道上与收尾同样停下：力度更强的指令不该比更弱的那个停得更晚。
         if events.standing() != Instruction::Continue {
+            outcome = RunOutcome::of(events.standing());
             break;
         }
         // 探的是卷根，而卷根就是点名的那个路径（见 `source::open`）：目录卷是那个目录，
         // 归档卷是那个文件。
         let medium = probes.medium(&surveyed.volume.root);
-        let Some(report) = process_volume(surveyed, request, medium, events)? else {
-            // **中止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial` 已经丢掉，
-            // 它等于没做，报告里因此没有它这一条。下一卷更不必开工——卷边界那个检查点
-            // 也会拦下它，这里明写是为了让「中止掉的卷不进报告」与「后面的卷不做」
-            // 在同一处看得见。
-            break;
-        };
-        volumes.push(report);
+        // 卷根在这里先留一份：`process_volume` 要把整个卷吃进去，而没做成的那一卷
+        // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
+        let root = surveyed.volume.root.clone();
+        match process_volume(surveyed, request, medium, events) {
+            Ok(Some(report)) => volumes.push(report),
+            Ok(None) => {
+                // **中止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial` 已经丢掉，
+                // 它等于没做，报告里因此没有它这一条。下一卷更不必开工——卷边界那个检查点
+                // 也会拦下它，这里明写是为了让「中止掉的卷不进报告」与「后面的卷不做」
+                // 在同一处看得见。
+                outcome = RunOutcome::of(events.standing());
+                break;
+            }
+            // **拒绝执行**：错在这一趟的参数上，换一个卷不会变好（见 [`Refusal`]）。
+            // 整趟当场停，返回的是那个错误本身——退出码 `1`，不是卷级失败那个 `3`。
+            // 收场那一条照发：开工报过了，收场就得报得到（见 `Event::RunFinished`）。
+            Err(error) if error.downcast_ref::<Refusal>().is_some() => {
+                events.run_finished(RunOutcome::Refused);
+                return Err(error);
+            }
+            // **卷级失败**（05 号票）：预扫时打得开、轮到它却做不成的卷记一笔，
+            // 其余卷照做、报告照出。整趟当场失败的话，前面几十卷的报告跟着一起没了，
+            // 而它们的输出还好好地躺在盘上——那是几十卷的长任务里最难受的一种结局。
+            Err(error) => {
+                let reason = format!("{error:#}");
+                events.volume_failed(&root, &reason);
+                failed_volumes.push(VolumeFailure {
+                    volume: root,
+                    reason,
+                });
+            }
+        }
     }
-    events.run_finished();
+    events.run_finished(outcome);
     Ok(Report {
         profile: request.profile.clone(),
         fit: request.fit,
         crop: request.crop,
         split: request.split,
         volumes,
+        failed_volumes,
+        outcome,
         elapsed: started.elapsed(),
     })
 }
+
+/// **拒绝执行**：错在这一趟的参数上，不在这一卷上（`CONTEXT.md` 的《失败》）。
+///
+/// 卷级失败与拒绝执行在 [`process_volume`] 的返回值上长得一样——都是 `Err`——
+/// 而两者的处置正相反：前者记一笔、其余卷照做（退出码 `3`），后者整趟当场停
+/// （退出码 `1`）。分辨它们的只有这个标记，`run` 靠 `downcast_ref` 认它。
+///
+/// **眼下只有一处**戴它：覆盖项把候选集裁空（见 [`nothing_left_error`]）。
+/// 其中互锁 ③ 那一支的处置明写着「维持拒绝」（页几何批 05 号票），而它撞得上的时机
+/// 在第一遍里、一页一页地判（见 [`Candidates::for_gate`])——真落到卷级失败那条路上，
+/// 「拒绝」就悄悄降级成了「这一卷没做成」，而用户点的 `--dither fs` 对每一卷都错。
+///
+/// 装的是那句话本身而不是包一层 `anyhow::Error`：那一句要在**每一张**撞上门的页上
+/// 各说一遍，而 `anyhow::Error` 复制不了（见 [`Candidates::for_gate`]）。
+#[derive(Debug)]
+struct Refusal(String);
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refusal {}
 
 /// 掐一段的表：跑一遍 `work`，把这一段的墙钟耗时写进 `segment`。
 ///
@@ -285,6 +352,17 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// 每一段停下之后都**再问一次**闩，而不是把「我是被中止的」当成返回值一层层传上来：
 /// 闩只升不降，再问一次恒得同一个答案（见 [`progress::Events::aborting`]）。
+///
+/// # 失败：回 `Err`
+///
+/// 这一卷做不成就回 `Err`，**整趟不因此停下**（05 号票）：`run` 把它记成一笔
+/// [卷级失败](VolumeFailure)，其余卷照做（见 `run` 的《两种失败分得开》）。
+/// 撞名、指纹那一道读不出字节、第一遍读不出源、建不出输出容器、透传文件搬不动，
+/// 都从这条路出去。
+///
+/// **一个例外**：戴着 [`Refusal`] 的那种错误说的是「这一趟的参数错了」，
+/// `run` 认出它就整趟当场停。这里不必分辨两者——标记在造错误的地方戴上，
+/// 这一层只管把错误交出去。
 fn process_volume(
     surveyed: survey::Surveyed,
     request: &Request,
@@ -305,6 +383,11 @@ fn process_volume(
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
     let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
+    // 开卷那一条排在**这一卷的第一件事之前**：往后每一条出口——一卷跑完、卷级失败、
+    // 中止——都在它之后，画进度的那一层因此不必分「这一卷开过头没有」两种情形
+    // （见 `progress::Event::VolumeFailed`）。它排在下面那道撞名校验之前正是为了这个：
+    // 那一道是这一卷最早的一个 `Err`。
+    events.volume_started(&volume.root, steps);
     // 这一卷的输出成员名此刻只预告得出**一对一那一套**：一个源页产出几张要解了像素才知道
     // （有没有装订沟，页几何批 04 号票），而这一步在解码之前。撞名因此查两遍——
     // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
@@ -314,7 +397,6 @@ fn process_volume(
 
     let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
     let writes = request.mode == Mode::Process;
-    events.volume_started(&volume.root, steps);
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     //
@@ -920,10 +1002,16 @@ impl Candidates {
     ///
     /// 裁空那一支上**重说一遍**错误，而不是把它搬走：撞上门的页可能有好几张，
     /// 每一张都要指得出自己，而 `anyhow::Error` 复制不了。
+    ///
+    /// 重说的那一份仍戴着 [`Refusal`]：这一支的处置是「维持拒绝」（互锁 ③），
+    /// 摘掉标记它就降级成了「这一卷没做成」，而 `--dither fs` 对每一卷都错。
     fn for_gate(&self, gate: GeometryGate) -> Result<&[Candidate]> {
         match gate {
             GeometryGate::Holds => Ok(&self.holds),
-            GeometryGate::Broken => self.broken.as_deref().map_err(|error| anyhow!("{error:#}")),
+            GeometryGate::Broken => self
+                .broken
+                .as_deref()
+                .map_err(|error| Refusal(format!("{error:#}")).into()),
         }
     }
 }
@@ -1689,17 +1777,20 @@ fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
 ///
 /// 两道界只有一道动得了：面板灰阶数走 `--gray-levels`（ADR 0003），几何门动不了——
 /// 它是页的几何事实，不是一个可以放宽的档位。
+///
+/// 出来的错误戴着 [`Refusal`]：两支都是**覆盖项**与面板对不上，错在这一趟的参数上，
+/// 换一个卷不会变好（05 号票）。
 fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
     let panel = request.profile.panel();
     let depths = BitDepth::candidates(panel.gray_levels);
-    match request.bit_depth {
+    let said = match request.bit_depth {
         Some(bit_depth) if !depths.contains(&bit_depth) => {
             let listed = depths
                 .iter()
                 .map(BitDepth::to_string)
                 .collect::<Vec<_>>()
                 .join("、");
-            anyhow!(
+            format!(
                 "{bit_depth} 越过了面板的 {} 级灰阶：这块面板上写得出的是 {listed}。\
                  真要写 {bit_depth}，先按实测用 --gray-levels 抬高上界",
                 panel.gray_levels
@@ -1714,7 +1805,8 @@ fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
             );
             dither_outside_the_gate_error(request.fit)
         }
-    }
+    };
+    Refusal(said).into()
 }
 
 /// 互锁 ③ 咬上时那条拒绝的说法（05 号票的处置 ③：**维持拒绝**）。
@@ -1736,7 +1828,10 @@ fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
 /// 这里判不出手上这一页是哪一种：错误在碰卷之前就备好（[`Candidates::new`]），
 /// 那时没有页可量。**能做的是把话说全**——真要按页分岔，得把这条拒绝挪到判门的地方，
 /// 那是另一件事（停车场 Q33）。
-fn dither_outside_the_gate_error(fit: FitMode) -> anyhow::Error {
+///
+/// 出来的是那句话本身，不是一个错误：戴 [`Refusal`] 那一步由 [`nothing_left_error`]
+/// 统一做，两支因此不会一支戴一支忘（05 号票）。
+fn dither_outside_the_gate_error(fit: FitMode) -> String {
     let way_out = match fit {
         FitMode::Inside => format!(
             "改得动的是几何：--fit height 把这一页放大到面板高，门跟着成立。\
@@ -1752,7 +1847,7 @@ fn dither_outside_the_gate_error(fit: FitMode) -> anyhow::Error {
             max_target_pixels()
         ),
     };
-    anyhow!(
+    format!(
         "{}。{way_out}。剩下两条路——不点 --dither fs（判据自己会替这一页把抖动关掉），\
          或换一张宽高比没这么极端的源页",
         Interlock::DitherOutsideTheGate

@@ -13,6 +13,7 @@ use crate::geometry::{FitMode, GeometryGate, Size};
 use crate::interlock::Interlock;
 use crate::medium::IoPlan;
 use crate::profile::Profile;
+use crate::progress::Instruction;
 use crate::quantize::{Candidate, Dither};
 use crate::resample::Scaling;
 use crate::spread::{Cut, SplitRule};
@@ -45,6 +46,25 @@ pub struct Report {
     /// 而「整卷没有一张跨页」与「整趟没开拆分」是两件事——分辨它们只有这一项。
     pub split: SplitRule,
     pub volumes: Vec<VolumeReport>,
+    /// 这一趟**没做成**的那几卷，按点名顺序（05 号票：卷级失败）。
+    ///
+    /// 它与 [`volumes`](Self::volumes) 并列而不是并进去：那一列装的是**做出了东西**的卷——
+    /// 有去处、有页数、有判定、有计时，而这一列里的卷一样都没有。混成一列就得给每一项
+    /// 编一个缺省值，而报告不该有编出来的字段（同一条理由见 [`Processed`]）。
+    ///
+    /// 预扫之后才出的那种失败才落在这里：预扫**当场**发现的坏路径整趟拒绝、一页不做
+    /// （见 `crate::survey`），那一趟根本没有报告。
+    pub failed_volumes: Vec<VolumeFailure>,
+    /// 这一趟是怎么收的场（停车场 Q39、Q46）。
+    ///
+    /// 它答的是「点名的卷都走过了吗」——[`volumes`](Self::volumes) 与
+    /// [`failed_volumes`](Self::failed_volumes) 加起来短了一截时，短的那一截是**按停**
+    /// 拿走的，而不是调用方少点了几个卷。中止掉的那一卷两列里都没有（它等于没做，
+    /// ADR 0013 决定第 2 条），这一项是它在返回值上唯一的痕迹。
+    ///
+    /// [`RunOutcome::Refused`] 在这里出不来，而那不是漏：拒绝执行的那一趟 `run` 返回的是
+    /// `Err`，这份结构存在本身就是它没被拒的证据（同一条理由见 [`Report::interlocks`]）。
+    pub outcome: RunOutcome,
     /// 整趟的墙钟耗时：`run` 从进到出（加固批 11 号票）。
     ///
     /// 它**装得下**各卷 [`VolumeTiming::elapsed`]，而不等于它们的和：开工前那几道检查
@@ -125,6 +145,78 @@ impl Report {
     /// 本次有没有卷被隔离。退出码要分得开「全部成功」与「有卷被隔离」，问的就是它。
     pub fn any_isolated(&self) -> bool {
         self.volumes.iter().any(VolumeReport::isolated)
+    }
+
+    /// 本次有没有卷**没做成**。退出码要分得开「有卷被隔离」与「有卷没做成」，问的就是它
+    /// （05 号票；两者为什么是两个决定，见二进制侧的 `FAILED_VOLUME_EXIT`）。
+    ///
+    /// 判据只有一条——[`failed_volumes`](Self::failed_volumes) 空不空，与那一列不许分家。
+    pub fn any_volume_failed(&self) -> bool {
+        !self.failed_volumes.is_empty()
+    }
+}
+
+/// 一个卷**没做成**（`CONTEXT.md` 的《失败》：卷级失败）。
+///
+/// 预扫时打得开、轮到它时却做不成的卷落在这里：文件被删、盘拔了、权限变了、
+/// 透传文件搬不动、卷内成员名撞到同一个输出上。其余卷照做，报告照出。
+///
+/// 它不是一份缩水的 [`VolumeReport`]：那一份的每一项都以「这一卷做出了东西」为前提，
+/// 而这里连去处都定不下来——去处要等第一遍走完才知道（有没有失败页，见 `crate::process_volume`）。
+#[derive(Debug, Clone)]
+pub struct VolumeFailure {
+    /// 卷标识：源目录路径，或源归档的文件路径。与 [`VolumeReport::volume`] 同一个身份。
+    pub volume: PathBuf,
+    /// 这一卷为什么没做成，给人当场读的那一句：由内到外的错误链。
+    ///
+    /// 与 [`PageOutcome::Failed`] 那一句同一个待遇——报告里的失败非说得出原因不可，
+    /// 不然用户只知道少了一卷，不知道该去修什么。
+    pub reason: String,
+}
+
+/// 这一趟是怎么收的场（停车场 Q39、Q46）。
+///
+/// 三种，而 `run` 的两条出口各只说得出其中一部分：正常收场的两种带在 [`Report::outcome`] 上，
+/// [`Refused`](Self::Refused) 只出现在事件流里——那一趟返回的是 `Err`，没有报告可带。
+/// 事件流那一侧因此三种都到得了：**报过开工，就一定报得到收场**
+/// （见 [`Event::RunFinished`](crate::Event::RunFinished)）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// 点名的卷都走过一遍了。其中可能有卷被隔离、有卷没做成——那是**卷**的结局，
+    /// 不是这一趟的。
+    #[default]
+    Completed,
+    /// 按停停在半路：剩下的卷一个都没开工（ADR 0013 的两级停）。
+    ///
+    /// 带着按下的那一级，因为两级停下来的现场不同：[收尾](Instruction::Finish)之后
+    /// 盘上只有完整的卷，[中止](Instruction::Abort)还额外丢掉了当前那一卷——
+    /// 那一卷两列报告里都没有，这里是它唯一的痕迹。
+    ///
+    /// 里面**恒不是** [`Instruction::Continue`]：它只由库内的 `RunOutcome::of` 造得出来，
+    /// 而那一个把「继续」映成 [`Completed`](Self::Completed)。
+    ///
+    /// 装的是 [`Instruction`] 而不是另立一个只有两支的「停到哪一级」：两级停是
+    /// `CONTEXT.md` 的《会话》定下的同一套词（收尾、中止），另立一个就是第二个出处，
+    /// 而两处早晚会走散。代价是这里要靠一句文档守住「不会是继续」，
+    /// 换来的是三级只有一个定义。
+    Stopped(Instruction),
+    /// 拒绝执行：错在这一趟的参数上，换一个卷不会变好（`CONTEXT.md` 的《失败》）。
+    ///
+    /// 只在事件流里出现，[`Report::outcome`] 上出不来——那一趟 `run` 返回的是错误本身。
+    Refused,
+}
+
+impl RunOutcome {
+    /// 闩上那个字定出来的收场：没人按停就是走到头了。
+    ///
+    /// 只在**真被拿走了东西**的那两处叫得到（`crate::run` 的两条 `break`），
+    /// 因此 [`Stopped`](Self::Stopped) 里恒是收尾或中止。收尾按在最后一卷上、
+    /// 一卷都没被拿走的那一趟不走这里——那一趟点名的卷全做完了，说它「停在半路」是假话。
+    pub(crate) fn of(standing: Instruction) -> Self {
+        match standing {
+            Instruction::Continue => Self::Completed,
+            stop => Self::Stopped(stop),
+        }
     }
 }
 

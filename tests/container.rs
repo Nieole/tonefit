@@ -376,8 +376,12 @@ fn an_archive_whose_structure_cannot_be_read_is_refused_without_leaving_output()
 /// 页不再走这条路——坏页变成失败页，整卷进隔离目录（12 号票，见 `isolation.rs`）。
 /// 透传文件没有那条出路：它逐字节照搬，搬不动就交不出这一卷，
 /// 编一份空的 ComicInfo.xml 顶上去只会让阅读器读到假的书籍元信息。
+///
+/// **卷级失败不再毁掉整趟**（05 号票）：`run` 回的是 `Ok`，那一卷记在
+/// `Report::failed_volumes` 里，指名与原因都在那一条上。整趟当场失败的老样子换掉了——
+/// 那时前面几十卷的输出还在盘上，而说得清它们是什么的报告全丢了。
 #[test]
-fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_error() {
+fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_failed_volume() {
     let space = Workspace::new();
     let mut cbz = space.cbz("volume-a");
     // 归档结构完好，坏的是这一个成员的字节——只有读到它才看得出来。
@@ -385,10 +389,17 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_error() {
         .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
-    let error = run_paths_expecting_failure(&space, [path.as_path()]);
+    let report = run_paths(&space, [path.as_path()]);
 
-    let message = format!("{error:#}");
-    assert!(message.contains("ComicInfo.xml"), "{message}");
+    assert!(
+        report.volumes.is_empty(),
+        "没做成的卷混进了做出东西的那一列"
+    );
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("这一卷没被记成卷级失败：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, path, "卷级失败指错了卷");
+    assert!(failed.reason.contains("ComicInfo.xml"), "{}", failed.reason);
 }
 
 #[test]
@@ -431,9 +442,9 @@ fn an_archive_that_fails_partway_leaves_no_half_written_output() {
         .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let path = cbz.write();
 
-    let error = run_paths_expecting_failure(&space, [path.as_path()]);
+    let report = run_paths(&space, [path.as_path()]);
 
-    let message = format!("{error:#}");
+    let message = &report.failed_volumes[0].reason;
     assert!(message.contains("ComicInfo.xml"), "{message}");
     let left_behind: Vec<_> = std::fs::read_dir(space.out())
         .expect("输出根目录")
@@ -467,7 +478,8 @@ fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
         .page("002.png", &page)
         .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     broken.write();
-    tonefit::run(&request).expect_err("第二次处理应当失败");
+    let report = tonefit::run(&request).expect("卷级失败不该毁掉整趟");
+    assert_eq!(report.failed_volumes.len(), 1, "这一卷没被记成卷级失败");
 
     assert_eq!(
         member_names(&output),
@@ -702,9 +714,9 @@ fn a_directory_volume_that_fails_partway_leaves_no_half_written_output() {
     volume.page("002.png", &page);
     volume.file("ComicInfo.xml", COMIC_INFO.as_bytes());
 
-    let error = run_losing_the_extra(&space, &volume);
+    let report = run_losing_the_extra(&space, &volume);
 
-    let message = format!("{error:#}");
+    let message = &report.failed_volumes[0].reason;
     assert!(message.contains("ComicInfo.xml"), "{message}");
     let left = fixtures::names_in(&space.out());
     assert!(left.is_empty(), "输出里留下了 {left:?}");
@@ -821,18 +833,26 @@ fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
     assert_eq!(packed_members, ["001.png", "ComicInfo.xml"]);
 }
 
-/// 跑一趟，开工那一刻把源里的透传文件抽走，返回那个错误。
+/// 跑一趟，**预扫走完那一刻**把源里的透传文件抽走，返回那份报告。
 ///
-/// 造「写到一半才失败」用它：成员在 `Event::VolumeStarted` 之前就枚举完了，读到它是第二遍的事，
-/// 那时页已经写进临时容器。目录卷没有归档那种坏 CRC 可造——文件系统上一个文件
-/// 要么读得出来，要么根本不在。
-fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> anyhow::Error {
-    let removal = RemoveAtStart::new(&volume.path().join("ComicInfo.xml"));
-    tonefit::run(&tonefit::Request {
+/// 造「写到一半才失败」用它：成员在预扫里就枚举完了，读到它是第二遍的事，那时页已经写进
+/// 临时容器。抽走那一刻与判别式的理由都在 `fixtures::RemoveOnceTheSurveyIsDone` 上。
+///
+/// 回的是报告而不是错误：**预扫之后才出的卷级失败不毁掉整趟**（05 号票），
+/// 那一卷记在 `Report::failed_volumes` 里，原因也在那一条上。
+fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit::Report {
+    let removal = fixtures::RemoveOnceTheSurveyIsDone::new(volume.path().join("ComicInfo.xml"));
+    let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(removal)),
         ..fixtures::request(space, [volume.path()])
     })
-    .expect_err("处理应当失败")
+    .expect("卷级失败不该毁掉整趟");
+    assert_eq!(
+        report.failed_volumes.len(),
+        1,
+        "抽走透传文件之后这一卷没被记成卷级失败"
+    );
+    report
 }
 
 /// 跑到一半时最终位置上有多少个成员——每报到一步问一次，留下见过的最大值。
@@ -890,28 +910,6 @@ impl tonefit::Progress for WatchDuringRun {
                 self.look();
             }
             _ => {}
-        }
-        tonefit::Instruction::Continue
-    }
-}
-
-/// 开工那一刻把源里的一个文件抽走：成员已经枚举过，读到它时就读不出来了。
-struct RemoveAtStart {
-    path: PathBuf,
-}
-
-impl RemoveAtStart {
-    fn new(path: &Path) -> Self {
-        Self {
-            path: path.to_path_buf(),
-        }
-    }
-}
-
-impl tonefit::Progress for RemoveAtStart {
-    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
-        if matches!(event, tonefit::Event::VolumeStarted { .. }) {
-            let _ = std::fs::remove_file(&self.path);
         }
         tonefit::Instruction::Continue
     }
