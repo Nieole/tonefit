@@ -98,3 +98,33 @@ p95 的秩 57 落在最后一张填充页（060.png）上，基准档因此是 `
 其余是并行下与别的用例抢核。**绝对秒数随机器与负载走**（同一份 `tests/golden.rs`
 在两台上量到 101 与 130.8 秒），因此这里只报得出「一卷约 1.2 秒」这个可比的数；
 `tests/golden.rs` 改动前的时间没有量，那个二进制的差额报不出来。
+
+## 停车场结转
+
+落地途中记在停车场、由本票了结的条目，原文照搬。
+
+### Q6 — 迟滞升档在默认那条路上一处覆盖都没有了
+
+  `page-geometry/01` 把三个长卷（`envelope-hysteresis` 与两个 `envelope-outlier`）留在了
+  `--fit inside` 上，`tests/pipeline.rs` 的 `a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not`
+  同样点名了它——两处的理由都是「小页只在 fit-inside 上还是小页」。
+  于是「连续够了才升档」（ADR 0006 决定第 4 条）在**默认路径**上一条端到端用例都没有。
+  `src/envelope.rs` 那一层的单元用例不碰几何，覆盖没有丢，丢的是「默认这一趟真跑一遍」。
+  出路是给 `volume_of_solids` 换一个两种适配方式下都恒等通过的小页尺寸（高等于面板高），
+  代价是几何门跟着成立、候选集多出抖动那一维，`NEEDS_TWO_BITS` / `NEEDS_FOUR_BITS`
+  那两个占位取值要按新候选集重新定，而定不好会把「哪一档更优」这件事测虚。
+  不当场处理：重定卷级夹具的取值是改上包络那批用例的立论基础，与适配方式无关，
+  该由所有者拍板要不要花这一笔。
+
+  **处置**：所有者立了 `page-geometry/08`，已落地——默认路径上补了两处覆盖
+  （`tests/pipeline.rs` 的 `a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_does_not`
+  与黄金快照里的 `envelope-hysteresis-gate-holds`）。`inside` 那一侧的**行为**一条没动，
+  名字与共用体有改（详见该票《落地记录》开头那一段）。
+  与本条的猜测差在三处：**没有换 `volume_of_solids` 的尺寸**（那会把 inside 那一侧的
+  覆盖一并搬走），而是给它加了一路点名尺寸的入口；两个占位取值**重新推过之后没有变**
+  （85 与 96 在两套候选集上都落在基准档之上，只是机制不同），改的是名字——
+  `NEEDS_FOUR_BITS` 在默认路径上是假话，那里升到的是 `2bit+FS`；「哪一档更优」也没有被
+  测虚，因为纯色页在门成立的候选集上**根本升不到 4bit**，那件事本来就不该挂在这批夹具上。
+  依据与判据读数见 `tests/fixtures/mod.rs` 的 `ONE_STEP_ABOVE_TWO_BITS`。
+
+- **State:** settled
