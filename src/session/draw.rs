@@ -593,7 +593,11 @@ struct Unrolled {
     opens_at: u16,
 }
 
-/// 屏底：正在打字就显示缓冲与这一层列出来的候选，否则显示按键提示。
+/// 屏底：正在打字就显示缓冲与这一层列出来的候选，否则显示按键提示。末一行是要说的那句话。
+///
+/// **这一格恒是 [`FOOTER_HEIGHT`] 行，说的话有几行就从上面让几行。** 会话里只有出标定图
+/// 那一下要说两行（图在哪儿、以及此刻要做对的那一件事，见 `crate::render::calibration_notice`）；
+/// 别处都是一行，那时这一格与从前逐格相同。
 ///
 /// 收 `live` 只为一件事：**没有报告可展开的时候不摆展开那个键**
 /// （见 [`browsing_keys`]）——屏上不摆按不动的键，那正是「按了没反应」的来源。
@@ -605,7 +609,18 @@ fn footer(session: &Session, live: Option<&Live>) -> Paragraph<'static> {
         Mode::Expanded(_) => expanded_lines(),
         Mode::Picking(picker) => picking_lines(picker),
     };
-    lines.push(Line::from(session.notice().unwrap_or("").to_owned()));
+    // **要说的话有几行，上面那几行就让出几行**（与 [`listed`] 同一条规矩）：
+    // 屏底那一格恒是 [`FOOTER_HEIGHT`] 行，而这一格不折行——多说的那一行摆不下就等于没说。
+    // 说一行时这里一格都不动（上面那两副本来就是两行），出标定图那两行才让掉一行。
+    let said: Vec<Line<'static>> = session
+        .notice()
+        .unwrap_or("")
+        .split('\n')
+        .take(FOOTER_HEIGHT as usize)
+        .map(|row| Line::from(row.to_owned()))
+        .collect();
+    lines.truncate(FOOTER_HEIGHT as usize - said.len());
+    lines.extend(said);
     Paragraph::new(lines)
 }
 
@@ -767,12 +782,30 @@ fn listed(session: &Session, edit: &Edit) -> String {
 /// 它挤进来时展开那个键从「展开逐页」缩成「展开」——这一行在窄终端上是从行尾切掉的
 /// （屏底那一格不折行），每多一个键，尾巴上那个键就少露一截，而尾巴上摆的是退出。
 /// 「展开」与报告区抬头上那句「展开 卷二（第 2/2 卷）」是同一个词，缩了也认得出。
+///
+/// **出标定图那个键只在设备层那三行上摆**（会话批的 13 号票）：它在别的层上根本不派动作
+/// （`super::state::Session::browsing_action`），摆出来就是一个按不动的键。
+/// 它挨着行内那个动作、排在通用的那几个键之前，因为它与它们是同一类——
+/// **这一行上按得动什么**，而不是「这一屏上按得动什么」。
+///
+/// 型号还没挑时它照样摆着：按下去说的是「先挑型号」，与 `t`／`x` 那时的待遇一样。
+/// 那不是按不动，是**按了有话说**。
 fn browsing_keys(session: &Session, live: Option<&Live>) -> String {
+    let focus = session.focus();
     let expand = if expandable(live) { " · e 展开" } else { "" };
+    let chart = if focus.layer() == Layer::Device {
+        " · c 出标定图"
+    } else {
+        ""
+    };
     let common = format!("↑↓ 选 · {START_KEYS}{expand} · p 预设 · q 退出");
-    match session.focus().shape() {
-        Shape::Cycle => format!(" ←→ 换一个 · {common}"),
-        Shape::Text => format!(" ⏎ 改 · {common}"),
+    match focus.shape() {
+        // 只有这两副落得到设备层上（`Field::shape` 与 `Field::layer`：型号是环，
+        // 灰阶数与阈值是打字改的），标定图那个键因此只插在这两支里。
+        Shape::Cycle => format!(" ←→ 换一个{chart} · {common}"),
+        Shape::Text => format!(" ⏎ 改{chart} · {common}"),
+        // 底下两副恒落在范围层上（输出根、「＋ 再打一个卷进来」、卷行），
+        // 插进去也永远是空的——摆一个点不着的洞，改的人迟早当它是活的。
         Shape::Path => format!(" ⏎ 打一个路径进来（⇥ 逐层补全）· {common}"),
         Shape::Volume => format!(" 空格 勾上／勾掉 · d 删掉这一条 · {common}"),
     }
@@ -1059,6 +1092,44 @@ mod tests {
         );
     }
 
+    /// **出标定图那个键只摆在设备层那三行上，而它说的那两行屏上都在**（13 号票）。
+    ///
+    /// 两半各是一条性质：**摆不摆**（屏上不摆按不动的键）与**说得下说不下**
+    /// （屏底那一格恒三行，说两行就让掉一行提示）。后者非验不可——那两行里一行是路径，
+    /// 挤成一行就会被切掉，而「图在哪儿」正是用户此刻唯一要读的东西。
+    #[test]
+    fn the_chart_key_sits_on_the_device_layer_and_what_it_says_fits() {
+        let mut session = Session::new();
+
+        // 设备层那三行上都摆着它。
+        for field in [Field::Profile, Field::GrayLevels, Field::Threshold] {
+            session.focus_on(field);
+            let screen = tight(&screen(&mut session, None, 120, 40));
+            assert!(screen.contains(&tight("c 出标定图")), "{field:?}：{screen}");
+        }
+        // 别的两层上不摆：它在那儿根本不派动作。
+        for field in [Field::Filter, Field::Out] {
+            session.focus_on(field);
+            let screen = tight(&screen(&mut session, None, 120, 40));
+            assert!(
+                !screen.contains(&tight("c 出标定图")),
+                "{field:?}：{screen}"
+            );
+        }
+
+        // 出完图说的那两行**都在屏上**：图在哪儿，以及此刻要做对的那一件事。
+        session.focus_on(Field::Profile);
+        session.charted(Path::new("图/tonefit-calibration-boox-poke6-16-levels.png"));
+        let screen = tight(&screen(&mut session, None, 120, 40));
+        assert!(
+            screen.contains(&tight("tonefit-calibration-boox-poke6-16-levels.png")),
+            "{screen}"
+        );
+        assert!(screen.contains(&tight("以原尺寸打开")), "{screen}");
+        // 让掉的是提示那一行里的空行，按得动的那几个键仍在。
+        assert!(screen.contains(&tight("c 出标定图")), "{screen}");
+    }
+
     /// 打字时屏底摆着缓冲与这一层列出来的候选。
     #[test]
     fn typing_a_path_shows_the_buffer_and_the_level_underneath() {
@@ -1188,7 +1259,9 @@ mod tests {
         assert_eq!(config_width(120, true), 0, "展开着左栏该收起");
 
         // 快照钉的是**整屏**：左栏让到 30 列、主区拿到 34 列，三段一段不少，
-        // 而报告区那几行按显示宽度折了行。
+        // 而报告区那几行按显示宽度折了行。屏底那一行是从行尾切掉的——光标停在设备层
+        // 头一行上，`c 出标定图` 因此摆着，而尾巴上那两个键在这个宽度上露不出来
+        // （见 [`browsing_keys`]：这一行不折行，每多一个键尾巴上就少露一截）。
         same_screen(
             &snapshot(|frame| shell(frame, &mut session, Some(&live)), 64, 18),
             TOO_NARROW_FOR_TWO_COLUMNS,
@@ -1216,7 +1289,7 @@ mod tests {
 "│  裁边　　　　　　默认（裁）    ││4.0 MiB），未溢写（预算     │"
 "│  跨页拆分　　　　默认（拆）    ││512.0 MiB）                 │"
 "└────────────────────────────────┘└────────────────────────────┘"
-" ←→ 换一个 · ↑↓ 选 · t 试算 · x 执行 · e 展开 · p 预设 · q 退出 "
+" ←→ 换一个 · c 出标定图 · ↑↓ 选 · t 试算 · x 执行 · e 展开 · p  "
 "                                                                "
 "                                                                "
 "#;

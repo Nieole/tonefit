@@ -164,6 +164,17 @@ pub enum Action {
     /// 撞上同名的那一份时**不覆盖**——那一层先说一句，再按一次这个键才覆盖
     /// （见 [`Session::name_is_taken`]）。
     Store,
+    /// **出标定图**：按当前设备层那块面板画一张，写到盘上（`CONTEXT.md` 的《会话》：
+    /// 设备层里还挂着标定图）。
+    ///
+    /// **只在光标停在设备层上时派得出来**（见 [`Session::browsing_action`]）：
+    /// 它出的那个数——感知可分辨级数——正是设备层唯一填不出来的一格，
+    /// 而这个键与那一格挨着才说得出它是干什么用的。停在别的层上按它是 [`Ignored`](Self::Ignored)。
+    ///
+    /// 落在 [`super::press`]，与预设那三支同一条：它要往盘上写东西，而本模块碰不到盘。
+    /// 真正画图与落盘的是库里那第三个 seam（[`tonefit::write_calibration_chart`]）——
+    /// 会话一格像素都不拼、一个目录都不建。
+    Chart,
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -576,7 +587,10 @@ pub struct Edit {
 ///
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
 /// 按 `e` 展开逐页（左栏跟着收起）、按 `p` 开预设那一栏（存下当前两层，或套用一份）、
-/// 按键退出。一键出标定图（`13`）与单卷续做（`14`）还没接上，它们各自会往这里加状态。
+/// 停在设备层上按 `c` 出标定图、按键退出。单卷续做（`14`）还没接上，它会往这里加状态。
+///
+/// **出标定图不往这里加状态**：它一按就完，屏底说一句就是全部结果——
+/// 会话此刻在做什么一格没变（见 [`Action::Chart`] 与 [`Self::charted`]）。
 ///
 /// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
 /// 攒着的那份报告与两条进度在 [`super::live::Live`] 上。分开是因为它们的寿命不同——
@@ -772,6 +786,36 @@ impl Session {
         })
     }
 
+    /// 标定图要按哪块面板画：把设备层拼成一个 [`Profile`]。
+    ///
+    /// **阈值恒不带**（传 `None`），与命令行那一路逐字同一条：标定图是量具，不经判定
+    /// （见 `crate::target_profile` 与 `crate::calibrate`）。合 profile 走的也是那一个函数——
+    /// 处理卷、`calibrate` 子命令、会话，三处解析出来的必须是同一块面板。
+    ///
+    /// **型号没挑就说一句**，与拼不出 [`Request`](Self::request) 时同一个待遇：
+    /// 那一格没有默认值可退，图按面板分辨率排布，没有面板就无从画起。
+    ///
+    /// **不是 [`calibrated_profile`](Self::calibrated_profile)。** 那一个是给左栏
+    /// 阈值那一行印数用的：它**要**阈值（印的就是它），而且拼不出来只意味着那一行印不出来，
+    /// 因此吞成 `None`。这一个反过来：阈值一格不带，而拼不出来要说得出口。
+    pub(super) fn chart_profile(&self) -> anyhow::Result<Profile> {
+        let Some(device) = self.device.profile.as_deref() else {
+            anyhow::bail!("先挑型号：标定图按那块面板的分辨率排布，没有它画不出来");
+        };
+        crate::target_profile(device, self.device.gray_levels, None)
+    }
+
+    /// 标定图写出去了：屏底说清**图在哪儿**，以及**此刻**要做对的那一件事。
+    ///
+    /// 措辞取自界面文案那一份（[`crate::render::calibration_notice`]），本模块不另编一套：
+    /// 同一件事命令行那一路也要说，而措辞只有一处出处。
+    ///
+    /// **怎么数不在这里重抄**：图内中英两份都印着，`calibrate --help` 里也写着。
+    /// 屏上只说在别处来不及的那一条——图一旦被缩着显示过，它答的两件事一件都不作数了。
+    pub(super) fn charted(&mut self, out: &Path) {
+        self.notice = Some(crate::render::calibration_notice(out));
+    }
+
     /// 这个键在当前状态下做什么。**「哪些键在哪个状态下有效」这张表就是它。**
     ///
     /// 纯函数：不改任何东西，用例问得动它，也因此不必去数「按下去之后屏幕变成什么样」。
@@ -812,6 +856,11 @@ impl Session {
             Key::Char('e') => Action::Expand,
             // 预设那一栏。同样与光标停在哪一行无关：存的是**整两层**，不是这一行。
             Key::Char('p') => Action::Pick,
+            // 出标定图。**这是唯一一个认层的键**：它出的那个数是设备层唯一填不出来的
+            // 一格，停在口味层或范围层上按它没有意义（见 [`Action::Chart`]）。
+            // 「按当前 profile 出图」在那两层上也说得通，但那时屏上摆的是别的事——
+            // 一个键在它够不着的地方仍旧有效，等于把这三行与那张图的关系抹掉了。
+            Key::Char('c') if self.focus().layer() == Layer::Device => Action::Chart,
             Key::Char('q') | Key::Esc | Key::Interrupt => Action::Quit,
             Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
         }
@@ -867,6 +916,10 @@ impl Session {
             // [`took`](Self::took)、[`saved`](Self::saved) 那几个。与上面两支同一条分法，
             // 因此这里到不了——真到了也只是这一下没动，不是错。
             Action::Pick | Action::Take | Action::Store => {}
+            // 出标定图同样要碰盘（真画图与落盘的是 `tonefit::write_calibration_chart`），
+            // 走的是 [`super::press`]，它随后调 [`charted`](Self::charted)。
+            // 与上面那三支同一条分法，因此这里到不了——真到了也只是这一下没出图，不是错。
+            Action::Chart => {}
             Action::Collapse => self.mode = Mode::Browsing,
             Action::Scroll(toward) => self.scroll(toward),
             Action::Quit => return Exit::Leave,
@@ -1719,6 +1772,15 @@ mod tests {
         );
         // 预设那一栏也在每一行上开得动：存的是整两层，与光标停在哪儿无关。
         assert_eq!(session.action(Key::Char('p')), Action::Pick);
+        // 出标定图**只在设备层上**按得动，而「型号」正是设备层的头一行。
+        // 型号还没挑也照样派得出来：说不出话的是那一层，不是这张表（见 `chart_profile`）。
+        assert_eq!(session.action(Key::Char('c')), Action::Chart);
+        // 设备层另外两行上也一样：认的是层，不是某一行。
+        for field in [Field::GrayLevels, Field::Threshold] {
+            session.focus_on(field);
+            assert_eq!(session.action(Key::Char('c')), Action::Chart, "{field:?}");
+        }
+        session.focus_on(Field::Profile);
         // 打字与补全在浏览时没有意义；删卷的键在不是卷的行上也没有。
         assert_eq!(session.action(Key::Char('z')), Action::Ignored);
         assert_eq!(session.action(Key::Char('d')), Action::Ignored);
@@ -1730,6 +1792,8 @@ mod tests {
         assert_eq!(session.action(Key::Enter), Action::Edit);
         assert_eq!(session.action(Key::Left), Action::Ignored);
         assert_eq!(session.action(Key::Right), Action::Ignored);
+        // 出标定图那个键在**口味层**上没有意义：它出的数是设备层那一格的。
+        assert_eq!(session.action(Key::Char('c')), Action::Ignored);
 
         // 三、浏览，光标停在一个卷行上：空格勾，d 删，左右转不动。
         session.scope.volumes.push(Picked {
@@ -1741,6 +1805,8 @@ mod tests {
         assert_eq!(session.action(Key::Enter), Action::Toggle);
         assert_eq!(session.action(Key::Char('d')), Action::Remove);
         assert_eq!(session.action(Key::Left), Action::Ignored);
+        // **范围层**上同样没有意义。
+        assert_eq!(session.action(Key::Char('c')), Action::Ignored);
 
         // 四、编辑一个路径：字进缓冲，Tab 补全，回车收下，Esc 丢掉。
         session.focus_on(Field::Out);
@@ -1790,6 +1856,9 @@ mod tests {
             Key::Char('e'),
             // 预设那一栏也开不了：套用一份预设就是把两层整个换掉，而这时三层只读。
             Key::Char('p'),
+            // 出标定图也按不动：光标此刻不在设备层上——跑着时它根本没停在任何一行上
+            // （左栏一格都不反白），而这一刻按得动的只该有停。
+            Key::Char('c'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1834,6 +1903,8 @@ mod tests {
             Key::Char('d'),
             // 预设那一栏在这里也开不了：它占的是主区，而主区此刻正摊着逐页。
             Key::Char('p'),
+            // 出标定图同理：左栏此刻收着，设备层不在屏上。
+            Key::Char('c'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1867,6 +1938,9 @@ mod tests {
             Key::Char('t'),
             Key::Char('x'),
             Key::Char('e'),
+            // 出标定图也一样：这一栏开着时左栏虽在屏上，光标却归这一栏管
+            // （见 `move_cursor`），设备层那三行此刻停不上去。
+            Key::Char('c'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1911,6 +1985,69 @@ mod tests {
         );
         session.press(Key::Esc);
         assert_eq!(session.mode(), &Mode::Browsing);
+    }
+
+    /// **标定图按设备层那块面板画，而阈值一格都不带**（13 号票的第六条：它仍是量具）。
+    ///
+    /// 型号与灰阶数进图——图的尺寸恒等于面板分辨率，排几条阶梯由灰阶数定；阈值不进，
+    /// 因为标定图不经判定。会话这一路与命令行那一路走的是同一个 [`crate::target_profile`]，
+    /// 两处解析出来的必须是同一块面板，因此这里问的是**这一层交出去了什么**。
+    ///
+    /// 同一份设备层拼出的 `Request` 带着那个阈值：两个出口分得开，才谈得上「不带」。
+    #[test]
+    fn the_chart_is_drawn_for_the_panel_and_carries_no_threshold() {
+        let mut session = Session::new();
+        session.device.profile = Some("boox-poke6".to_owned());
+        session.device.gray_levels = Some(8);
+        session.device.threshold = Some(3.0);
+        session.scope.out = Some(PathBuf::from("出"));
+
+        let chart = session.chart_profile().expect("设备层填齐了");
+        assert_eq!(chart.device(), "boox-poke6");
+        assert_eq!(chart.panel().gray_levels, 8, "灰阶数没进图");
+        assert_eq!(
+            chart.threshold(),
+            Profile::resolve("boox-poke6")
+                .expect("内置型号")
+                .threshold(),
+            "标定图带上了判定用的界"
+        );
+        // 同一份设备层，跑一趟用的那个 profile 带着它——两个出口分得开。
+        let running = session.request(RunMode::DryRun).expect("三层填齐了");
+        assert_eq!(running.profile.threshold().value(), 3.0);
+
+        // 型号没挑：说一句，不是画一张空图。
+        let said = Session::new()
+            .chart_profile()
+            .expect_err("没有型号该说不出话")
+            .to_string();
+        assert!(said.contains("先挑型号"), "{said}");
+    }
+
+    /// **屏底那两行说得出图在哪儿，也说得出此刻要做对的那一件事**（13 号票第三、四条）。
+    ///
+    /// 措辞取自界面文案那一份，本模块只问它说到了没有：路径、以及「以原尺寸打开」
+    /// 连同要关掉的那三个开关。**怎么数不在屏上**——图内已印，`--help` 里也写着。
+    #[test]
+    fn what_the_screen_says_after_the_chart_is_written() {
+        let mut session = Session::new();
+        session.charted(Path::new("图/标定.png"));
+
+        let said = session.notice().expect("出完图要说一句");
+        assert!(said.contains("标定.png"), "{said}");
+        assert!(said.contains("原尺寸"), "{said}");
+        for switch in ["缩放", "适配屏幕", "白边裁切"] {
+            assert!(said.contains(switch), "少说了「{switch}」：{said}");
+        }
+        // 两行：屏底那一格不折行，路径与那句话挤在一行必被切掉。
+        assert_eq!(said.lines().count(), 2, "{said}");
+        // 怎么数不在屏上重抄一遍。
+        for copied in ["先看像素完整性", "最右", "回填"] {
+            assert!(!said.contains(copied), "屏上抄了「{copied}」：{said}");
+        }
+        // 下一次按键就把它抹掉，与别处那几句同一条。
+        session.press(Key::Down);
+        assert!(session.notice().is_none(), "上一句话没抹掉");
     }
 
     /// **「没说」与「说了一个恰好等于默认值的值」存出去是两份不同的 TOML**（停车场 Q58）。

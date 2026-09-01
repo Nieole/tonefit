@@ -618,9 +618,9 @@ fn score_line(scores: &[CandidateScore]) -> String {
 /// 命令行不画它：那一路攒完才印，那时逐页那几行已经把话说全了。
 /// 措辞仍然只有这一处——会话画的是它，不是自己另编的一句。
 ///
-/// 它因此是本模块**唯一**挂着特性开关的一个：关掉 `tui` 就没有会话，
-/// 也就没有人读它。措辞留在这里而不是搬进会话，是为了让它与 [`pages`] 里那一句
-/// 挨着——两句说的是同一件事，走散了没人发现。
+/// 它因此挂着特性开关：关掉 `tui` 就没有会话，也就没有人读它
+/// （[`outcome`] 与 [`calibration_notice`] 同理）。措辞留在这里而不是搬进会话，
+/// 是为了让它与 [`pages`] 里那一句挨着——两句说的是同一件事，走散了没人发现。
 #[cfg(feature = "tui")]
 pub fn failing_pages<'a>(pages: impl Iterator<Item = (&'a Path, &'a str)>) -> String {
     let mut text = String::new();
@@ -678,10 +678,10 @@ pub fn volume_name(volume: &Path) -> String {
     )
 }
 
-/// 标定图写出去之后印的那几行：图在哪儿，以及**此刻**要做对的那一件事。
+/// 标定图写出去之后**此刻**要做对的那一件事：以原尺寸打开它。
 ///
-/// 它不从报告来，却与报告同属界面文案：会话里按键出图印的也是它（会话批的 13 号票），
-/// 措辞因此和别处一样只留一套。
+/// 命令行印的那几行与会话屏底那两行**共用这一句**（[`calibration_note`] 与
+/// [`calibration_notice`]）：同一件事从两张嘴里出来，措辞只能有一处出处。
 ///
 /// 只说这一件。判读顺序、怎么数、数出来的数是什么意思，图内中英两份都印着，
 /// `--help` 里也写着——同一套说法在终端上再抄一遍，改的时候就得记着改三处。
@@ -691,18 +691,51 @@ pub fn volume_name(volume: &Path) -> String {
 ///
 /// **白边裁切**要单独点名，不并进笼统的一句「缩放」：糊的来源实测就是它
 /// （measurements 的《真机像素完整性》），而它在阅读器里通常另占一个开关。
+const OPEN_IT_AT_NATIVE_SIZE: &str = "拷进设备，以原尺寸打开：关掉缩放、适配屏幕与白边裁切——\
+     图被缩过一次，它答的两件事一件都不作数了";
+
+/// 那几句完整的说法在哪儿。**怎么数不在这一行里**——图内已印，`--help` 里也写着。
+///
+/// 只有命令行那一路印它：会话屏底那一格总共三行，多说一行就少一行按键提示，
+/// 而此刻非说不可的只有[以原尺寸打开](OPEN_IT_AT_NATIVE_SIZE)那一句。
+const WHERE_THE_FULL_STORY_IS: &str = "判读说明中英两份都印在图内，先看像素完整性再数灰阶；\
+     完整说法见 tonefit calibrate --help";
+
+/// 图写到哪儿了。命令行那几行与会话屏底那两行都从这一行起头，
+/// 「标定图」三个字与路径怎么排因此只有这一处。
+fn chart_landed_at(out: &Path) -> String {
+    format!("标定图 {}", out.display())
+}
+
+/// 标定图写出去之后**命令行**印的那几行：图在哪儿，此刻要做对的那一件事，以及去哪儿看全套说法。
+///
+/// 它不从报告来，却与报告同属界面文案。会话屏底那两行是 [`calibration_notice`]——
+/// 同一件事，格子不同。
 ///
 /// 面板规格不重复——头一行的 `profile` 里已经有了。
 pub fn calibration_note(profile: &Profile, out: &Path) -> String {
     format!(
-        "profile {profile}\n\
-         标定图 {}\n  \
-         拷进设备，以原尺寸打开：关掉缩放、适配屏幕与白边裁切——\
-         图被缩过一次，它答的两件事一件都不作数了\n  \
-         判读说明中英两份都印在图内，先看像素完整性再数灰阶；\
-         完整说法见 tonefit calibrate --help\n",
-        out.display(),
+        "profile {profile}\n{}\n  {OPEN_IT_AT_NATIVE_SIZE}\n  {WHERE_THE_FULL_STORY_IS}\n",
+        chart_landed_at(out),
     )
+}
+
+/// 标定图写出去之后**会话屏底**那两行（会话批的 13 号票）。
+///
+/// 与命令行那几行共用要紧的那一句（[`OPEN_IT_AT_NATIVE_SIZE`]），少的是两样：
+///
+/// - **`profile` 那一行**——左栏上正摆着设备层，屏上已经有了。
+/// - **[指路那一行](WHERE_THE_FULL_STORY_IS)**——屏底那一格总共三行，
+///   说的话多占一行，按键提示就少一行。
+///
+/// 两行而不是一行：屏底那一格不折行，一条绝对路径接上那句话必被切掉，
+/// 而路径就是「图在哪儿」的全部内容。存预设那一句避得开路径（`Session::saved`），
+/// 靠的是预设那一栏自己摆着文件位置；标定图没有那样一个去处。
+///
+/// 关掉 `tui` 就没有会话，也就没有人读它——与 [`outcome`] 同一条。
+#[cfg(feature = "tui")]
+pub fn calibration_notice(out: &Path) -> String {
+    format!("{}\n{OPEN_IT_AT_NATIVE_SIZE}", chart_landed_at(out))
 }
 
 #[cfg(test)]

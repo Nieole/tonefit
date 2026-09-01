@@ -34,6 +34,7 @@ mod run;
 mod state;
 
 use std::io::{IsTerminal, Stderr, stderr};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -76,7 +77,15 @@ pub fn enter() -> Result<u8> {
     // 预设文件那一份。**找不到用户配置目录不在这里拦**：那台机器上会话照进，
     // 只是按下 `p` 那一刻它说得出为什么（见 `preset::Presets`）。
     let presets = Presets::found();
-    let outcome = drive(&mut screen, &mut session, &mut running, &presets);
+    // 标定图落在会话是从哪儿敲起来的那个目录里（见 [`chart_file`]）。**一次问出来**：
+    // 一趟会话里当前目录不会变，而按一次 `c` 问一次只会让两张图落在两个地方。
+    // 问不出来（那个目录被删了）时退回空路径，`chart_file` join 出来的于是是个**裸文件名**：
+    // 图仍旧落在同一处（进程的当前目录，只是这一头叫不出它的名字），
+    // 而屏底那两行头一行也退成那个裸名——「图在哪儿」那一半这时说不全。
+    // 仍旧写、仍旧说，因为另一条路是一个键按下去什么都不做，那更坏；
+    // 而 `current_dir` 答不出话的机器上，别的路径也一样叫不出名字。
+    let here = std::env::current_dir().unwrap_or_default();
+    let outcome = drive(&mut screen, &mut session, &mut running, &presets, &here);
     drop(screen);
     outcome?;
     // 报告印在终端还回去**之后**：印进 alternate screen 的话它会随着那一屏一起消失。
@@ -92,6 +101,7 @@ fn drive(
     session: &mut Session,
     running: &mut Running,
     presets: &Presets,
+    here: &Path,
 ) -> Result<()> {
     loop {
         {
@@ -108,7 +118,7 @@ fn drive(
             };
             if pressed.kind == KeyEventKind::Press
                 && let Some(key) = translate(&pressed)
-                && press(session, running, presets, key) == Exit::Leave
+                && press(session, running, presets, here, key) == Exit::Leave
             {
                 running.leave();
                 return Ok(());
@@ -126,12 +136,22 @@ fn drive(
 /// **只有够得着那一趟、或者够得着盘的那几支不走 [`Session::press`]**：
 /// [起一趟](Action::Start)、[按停](Action::Stop)、[展开](Action::Expand)与
 /// [换一卷](Action::Turn)，加上预设那三支（[列出来](Action::Pick)、
-/// [套用](Action::Take)、[存下来](Action::Store)）。
+/// [套用](Action::Take)、[存下来](Action::Store)）与[出标定图](Action::Chart)。
 /// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
-/// 从攒着的那份报告上数出有几卷与那一卷落在第几行、读写用户配置目录下那份 TOML，
+/// 从攒着的那份报告上数出有几卷与那一卷落在第几行、读写用户配置目录下那份 TOML、
+/// 把标定图交给库里那第三个 seam，
 /// 都在这一层——状态机一个终端都不碰、不起线程，也读不到那一趟攒下来的东西与盘上的东西。
 /// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
-fn press(session: &mut Session, running: &mut Running, presets: &Presets, key: Key) -> Exit {
+///
+/// `here` 是标定图落在哪个目录下（见 [`chart_file`]）：真会话里是进程的当前目录，
+/// 由 [`enter`] 一次问出来。
+fn press(
+    session: &mut Session,
+    running: &mut Running,
+    presets: &Presets,
+    here: &Path,
+    key: Key,
+) -> Exit {
     // 问一次就够：这几支之外的原样交回状态机，不让它再问一遍。
     let action = session.action(key);
     match action {
@@ -173,6 +193,12 @@ fn press(session: &mut Session, running: &mut Running, presets: &Presets, key: K
         }
         Action::Store => {
             store_preset(session, presets);
+            Exit::Stay
+        }
+        // 出标定图：画图与落盘整件事在库里那第三个 seam 上，而状态机碰不到盘。
+        // 与预设那三支同一条分法。
+        Action::Chart => {
+            write_chart(session, here);
             Exit::Stay
         }
         other => session.act(other),
@@ -244,6 +270,49 @@ fn store_preset(session: &mut Session, presets: &Presets) {
         Ok(Saved::Taken) => session.name_is_taken(name),
         Err(error) => session.complain(format!("{error:#}")),
     }
+}
+
+/// **出标定图**：按设备层那块面板画一张，写到 [`chart_file`] 点的那个文件上。
+///
+/// 落盘整件事在库里（[`tonefit::write_calibration_chart`]）：这一层建的不是目录、
+/// 写的不是文件，只是**点了个名**——父目录不在就建出来也是那一头的事
+/// （加固批 12 号票把它移进库正是为了这个）。会话因此不必知道 PNG 长什么样，
+/// 也不可能在这里给量具掺进一条管线。
+///
+/// **写不出去就说一句，会话原地不动**（票面第五条）：父目录建不了、盘满，
+/// 库那一侧回的都是 `Err`，措辞里已经带着是哪一步、在哪条路径上出的事，
+/// 这一层原样端到屏底、不另编一份——与套一份读不懂的预设同一条待遇。
+fn write_chart(session: &mut Session, here: &Path) {
+    let written = session.chart_profile().and_then(|profile| {
+        let out = chart_file(here, &profile);
+        tonefit::write_calibration_chart(&profile, &out).map(|()| out)
+    });
+    match written {
+        Ok(out) => session.charted(&out),
+        Err(error) => session.complain(format!("{error:#}")),
+    }
+}
+
+/// 标定图落在哪个文件上：`here` 下面一个**照 profile 取名**的 PNG。
+///
+/// **不落在输出根下面。** 那是被处理的页的去处，而标定图是量具——
+/// 两者走的不是同一条路（`lib.rs` 的第三个 seam）；何况按 `c` 那一刻输出根多半还空着，
+/// 而「先填一个输出根才出得了标定图」把设备层的事拴在了范围层上。
+/// 落在会话是从哪儿敲起来的那个目录里：那是用户此刻人在的地方，图出来就在手边。
+///
+/// 名字里带着**型号与灰阶数**，因为图跟着这两项变（灰阶数决定排几条阶梯）：
+/// 换一台设备出的是另一张图，不该盖掉上一张。同一个 profile 再按一次写的是同样的字节——
+/// 标定图不带记录、不带时间戳，重写一遍等于没变（见 `crate::calibrate`）。
+///
+/// 全用 ASCII：这张图是要**拷进设备**看的，而那一头认不认得中文文件名说不准
+/// （图内留着英文说明也是这个理由）。型号名本来就是内置表里的规范名，
+/// 已经是小写连字符那一套。
+fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
+    here.join(format!(
+        "tonefit-calibration-{}-{}-levels.png",
+        profile.device(),
+        profile.panel().gray_levels,
+    ))
 }
 
 /// 展开一卷的逐页，或者换到下一卷。
@@ -395,6 +464,26 @@ mod tests {
         Presets::at(space.path().join("tonefit").join("presets.toml"))
     }
 
+    /// 按一个**不出标定图**的键。
+    ///
+    /// [`press`] 收的那个「图落在哪个目录下」只有 `c` 那一个键用得到，而这几条用例
+    /// 一个都不按它。去处仍旧点在**临时目录**里（那份预设文件的上一层，见 [`presets`]）：
+    /// 万一往后有人往这几条里加一下 `c`，写出去的东西也落在那儿，
+    /// 不会掉进跑用例的那个目录——相对路径会。
+    ///
+    /// 出标定图那两条不走这里：它们要说的正是「写到哪儿了、写不出去时怎么办」，
+    /// 因此自己直接调 [`press`]，把去处摆在明面上。
+    fn tap(session: &mut Session, running: &mut Running, presets: &Presets, key: Key) -> Exit {
+        let file = presets.path().expect("用例里那份预设文件的位置是定死的");
+        press(
+            session,
+            running,
+            presets,
+            file.parent().unwrap_or(file),
+            key,
+        )
+    }
+
     /// 「这里没有终端」那条错误里，**clap 那条必填项提示一个字都没被吃掉**。
     #[test]
     fn the_no_terminal_error_keeps_what_clap_has_to_say() {
@@ -429,7 +518,7 @@ mod tests {
 
         // 一次：收尾。两头记的是同一个字。
         assert_eq!(
-            press(&mut session, &mut running, &nowhere, Key::Char('s')),
+            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
         );
         assert_eq!(session.stopping(), tonefit::Instruction::Finish);
@@ -437,7 +526,7 @@ mod tests {
 
         // 再一次：中止。
         assert_eq!(
-            press(&mut session, &mut running, &nowhere, Key::Char('s')),
+            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
         );
         assert_eq!(session.stopping(), tonefit::Instruction::Abort);
@@ -445,7 +534,7 @@ mod tests {
 
         // 第三次起那个键没有意义，闩两头都不再动。
         assert_eq!(
-            press(&mut session, &mut running, &nowhere, Key::Char('s')),
+            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
         );
         assert_eq!(running.pressed(), tonefit::Instruction::Abort);
@@ -455,7 +544,7 @@ mod tests {
         let mut nothing = Running::default();
         let nowhere = presets(&space);
         assert_eq!(
-            press(&mut idle, &mut nothing, &nowhere, Key::Char('s')),
+            tap(&mut idle, &mut nothing, &nowhere, Key::Char('s')),
             Exit::Stay
         );
         assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
@@ -476,7 +565,7 @@ mod tests {
 
         // 一趟都没跑过：说一句，会话原地不动。
         assert_eq!(
-            press(&mut session, &mut running, &nowhere, Key::Char('e')),
+            tap(&mut session, &mut running, &nowhere, Key::Char('e')),
             Exit::Stay
         );
         assert!(session.expansion().is_none(), "没有报告却展开了");
@@ -504,7 +593,7 @@ mod tests {
             std::thread::yield_now();
         }
         session.run_finished();
-        press(&mut session, &mut running, &nowhere, Key::Char('e'));
+        tap(&mut session, &mut running, &nowhere, Key::Char('e'));
         let expansion = session.expansion().expect("该展开了");
         assert_eq!(expansion.volume, 0);
         assert_eq!(expansion.volumes, 2);
@@ -512,28 +601,130 @@ mod tests {
         assert!(session.notice().is_none(), "展开之后上一句话没抹掉");
 
         // `⇥` 往后一卷，视口对到那一卷的抬头上；再按一次转一圈回到第一卷。
-        press(&mut session, &mut running, &nowhere, Key::Tab);
+        tap(&mut session, &mut running, &nowhere, Key::Tab);
         let second = session.expansion().expect("还展开着").clone();
         assert_eq!(second.volume, 1);
         assert!(second.from > 0, "换过一卷之后视口没对上去");
-        press(&mut session, &mut running, &nowhere, Key::Tab);
+        tap(&mut session, &mut running, &nowhere, Key::Tab);
         assert_eq!(session.expansion().expect("还展开着").volume, 0, "没转回去");
 
         // `⇧⇥` 是另一头：往前一卷，同样转得回去。**两头都有**，
         // 因为几十卷的一趟里往回看一卷不该按二十九下（票面：选中一卷）。
-        press(&mut session, &mut running, &nowhere, Key::BackTab);
+        tap(&mut session, &mut running, &nowhere, Key::BackTab);
         let back = session.expansion().expect("还展开着").clone();
         assert_eq!(back.volume, 1, "⇧⇥ 没往前转");
         assert_eq!(back.from, second.from, "两头转到同一卷，落位却不一样");
-        press(&mut session, &mut running, &nowhere, Key::BackTab);
+        tap(&mut session, &mut running, &nowhere, Key::BackTab);
         assert_eq!(session.expansion().expect("还展开着").volume, 0);
 
         // 收起：一个键回到配置，展开态没了。
         assert_eq!(
-            press(&mut session, &mut running, &nowhere, Key::Esc),
+            tap(&mut session, &mut running, &nowhere, Key::Esc),
             Exit::Stay
         );
         assert!(session.expansion().is_none());
+    }
+
+    /// **停在设备层上按一个键，标定图就落在盘上**（13 号票第一、二、三条）。
+    ///
+    /// 接头处在这一层：状态机派得出[出标定图](Action::Chart)那个动作，落盘整件事在库里
+    /// （[`tonefit::write_calibration_chart`]）。写出来的字节**与库直接写的逐字节相同**——
+    /// 这一条就是「会话只是调那个接口」的说法：会话若自己拼过一格像素，两份就分得开。
+    /// 图仍是量具（不判定、不量化、无损写出、不带记录）由库那一侧的用例钉着。
+    ///
+    /// 型号没挑那一下也在这里：说一句，盘上一个字节都不多。
+    #[test]
+    fn the_chart_key_hands_the_device_layer_to_the_library_seam() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let here = space.path().join("会话是从这儿敲起来的");
+        std::fs::create_dir_all(&here).expect("建得出那个目录");
+        let mut session = Session::new();
+        let mut running = Running::default();
+        // 这一条一个预设键都不按（见 [`presets`]）。
+        let nowhere = presets(&space);
+        session.focus_on(state::Field::Profile);
+
+        // 型号还没挑：说一句，会话原地不动，那个目录里一个文件都没多。
+        assert_eq!(
+            press(&mut session, &mut running, &nowhere, &here, Key::Char('c')),
+            Exit::Stay
+        );
+        let said = session.notice().expect("该说一句").to_owned();
+        assert!(said.contains("先挑型号"), "{said}");
+        assert_eq!(
+            std::fs::read_dir(&here).expect("读得出那个目录").count(),
+            0,
+            "型号没挑却写出了东西"
+        );
+
+        // 挑一个型号、覆盖一次灰阶数，再按一次：图落在那个目录下。
+        session.device.profile = Some("boox-poke6".to_owned());
+        session.device.gray_levels = Some(8);
+        press(&mut session, &mut running, &nowhere, &here, Key::Char('c'));
+
+        let written: Vec<PathBuf> = std::fs::read_dir(&here)
+            .expect("读得出那个目录")
+            .map(|entry| entry.expect("读得出那一条").path())
+            .collect();
+        assert_eq!(written.len(), 1, "{written:?}");
+        let chart = &written[0];
+        // 名字里带着型号与灰阶数：换一台设备出的是另一张图，不该盖掉上一张。
+        let name = chart.file_name().expect("有名字").to_string_lossy();
+        assert!(name.contains("boox-poke6") && name.contains("8"), "{name}");
+        assert!(name.ends_with(".png"), "{name}");
+        // 与库直接写出来的逐字节相同——会话一格像素都没自己拼。
+        let straight = space.path().join("库自己写的.png");
+        tonefit::write_calibration_chart(
+            &session.chart_profile().expect("设备层填齐了"),
+            &straight,
+        )
+        .expect("库写得出来");
+        assert_eq!(
+            std::fs::read(chart).expect("读得出图"),
+            std::fs::read(&straight).expect("读得出库写的那张"),
+            "会话写出来的图与库直接写的不一样"
+        );
+        // 屏上说清图在哪儿，以及此刻要做对的那一件事。
+        let said = session.notice().expect("出完图要说一句").to_owned();
+        assert!(said.contains(&*name), "{said}");
+        assert!(said.contains("原尺寸"), "{said}");
+        // 会话还在浏览：出图不改变它此刻在做什么。
+        assert_eq!(session.mode(), &state::Mode::Browsing);
+    }
+
+    /// **写不出去时会话说得清，而且不崩**（13 号票第五条）。
+    ///
+    /// 逼出来的是「父目录建不了」那一种：把图该落的那个目录的位置摆一个**文件**，
+    /// 库那一侧 `create_dir_all` 当场失败。盘满那一种走的是同一条回路
+    /// （都是库交回一个 `Err`，见 `crate::calibrate::write_chart`），
+    /// 在用例里造不出来，也不必造第二遍。
+    #[test]
+    fn a_chart_that_cannot_be_written_says_so_and_the_session_stays_open() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        // 这儿本该是个目录，摆的却是个文件——图落不进去，父目录也建不出来。
+        let here = space.path().join("这是个文件");
+        std::fs::write(&here, "不是目录").expect("写得出那个文件");
+        let mut session = Session::new();
+        let mut running = Running::default();
+        let nowhere = presets(&space);
+        session.device.profile = Some("boox-poke6".to_owned());
+
+        assert_eq!(
+            press(&mut session, &mut running, &nowhere, &here, Key::Char('c')),
+            Exit::Stay,
+            "写不出去把会话带走了"
+        );
+
+        // 说得清是哪一步、在哪条路径上出的事——库那一侧的原话，这一层不另编一份。
+        let said = session.notice().expect("写不出去要说一句").to_owned();
+        assert!(said.contains("标定图"), "{said}");
+        assert!(said.contains("这是个文件"), "{said}");
+        // 三层一格没动，会话还在浏览：下一个键照按。
+        assert_eq!(session.mode(), &state::Mode::Browsing);
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Down),
+            Exit::Stay
+        );
     }
 
     /// **存出去再套回来，两层逐格相同，而范围层一格没动**（本票的四条验收）。
@@ -562,14 +753,14 @@ mod tests {
         let scope = session.scope.clone();
 
         // 存：`p` 开那一栏，光标落在唯一那一行（＋ 存成一份新的）上，打个名字按 ⏎。
-        press(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
         let picker = session.picking().expect("那一栏该开着");
         assert!(picker.names().is_empty(), "临时目录下还不该有预设");
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         for character in "漫画".chars() {
-            press(&mut session, &mut running, &presets, Key::Char(character));
+            tap(&mut session, &mut running, &presets, Key::Char(character));
         }
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         let said = session.notice().expect("存完要说一句").to_owned();
         assert!(said.contains("漫画") && said.contains("--preset"), "{said}");
         // 存好的那一份就摆在眼前的列表上，光标停在它上面。
@@ -578,12 +769,12 @@ mod tests {
         assert_eq!(picker.picked(), Some("漫画"));
 
         // 改乱两层，再把那一份套回来。
-        press(&mut session, &mut running, &presets, Key::Esc);
+        tap(&mut session, &mut running, &presets, Key::Esc);
         session.taste.filter = Some(tonefit::Filter::Area);
         session.taste.fit = None;
         session.device.profile = Some("kobo-libra-2".to_owned());
-        press(&mut session, &mut running, &presets, Key::Char('p'));
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Enter);
 
         assert_eq!(session.preset(), stored, "套回来的两层与存出去的不一样");
         assert_eq!(session.scope, scope, "套用预设动了范围层");
@@ -617,18 +808,18 @@ mod tests {
             on: true,
         });
 
-        press(&mut session, &mut running, &presets, Key::Char('p'));
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Enter);
         for character in "漫画".chars() {
-            press(&mut session, &mut running, &presets, Key::Char(character));
+            tap(&mut session, &mut running, &presets, Key::Char(character));
         }
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
             session.notice().is_some_and(|said| said.contains("存好了")),
             "{:?}",
             session.notice()
         );
-        press(&mut session, &mut running, &presets, Key::Esc);
+        tap(&mut session, &mut running, &presets, Key::Esc);
 
         // 命令行那一路读盘上那份文件的正文，拿到的是同一份预设。
         let text = std::fs::read_to_string(presets.path().expect("说得出位置")).expect("读得出来");
@@ -670,20 +861,20 @@ mod tests {
         std::fs::write(&file, by_hand).expect("写得出来");
 
         // `p` 开那一栏，`↑` 绕到末尾那一行上，`⏎` 打一个名字。
-        press(&mut session, &mut running, &presets, Key::Char('p'));
-        press(&mut session, &mut running, &presets, Key::Up);
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Up);
         assert_eq!(
             session.picking().expect("那一栏该开着").picked(),
             None,
             "↑ 没绕到末尾那一行上"
         );
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         for character in "漫画".chars() {
-            press(&mut session, &mut running, &presets, Key::Char(character));
+            tap(&mut session, &mut running, &presets, Key::Char(character));
         }
 
         // 打的是已经有的那个名字：说一句，盘上一个字节都没动。
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         let said = session.notice().expect("要说一句").to_owned();
         assert!(said.contains("再按一次"), "{said}");
         assert!(said.contains("注释"), "覆盖的代价没说出口：{said}");
@@ -695,12 +886,12 @@ mod tests {
 
         // 名字改成另一个**也已经有的**：上一次那一问不作数，这一下仍是先问一句。
         for _ in 0..2 {
-            press(&mut session, &mut running, &presets, Key::Backspace);
+            tap(&mut session, &mut running, &presets, Key::Backspace);
         }
         for character in "画集".chars() {
-            press(&mut session, &mut running, &presets, Key::Char(character));
+            tap(&mut session, &mut running, &presets, Key::Char(character));
         }
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
             session
                 .notice()
@@ -715,7 +906,7 @@ mod tests {
         );
 
         // 再按一次：这一下才覆盖，而另一份一个字都没丢。
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
             session.notice().is_some_and(|said| said.contains("存好了")),
             "{:?}",
@@ -749,13 +940,13 @@ mod tests {
         session.taste.filter = Some(tonefit::Filter::Hamming);
         let before = session.preset();
 
-        press(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
         // 列出来这一步只读名字：那一份读不懂，仍列得出来。
         assert_eq!(
             session.picking().expect("那一栏该开着").names(),
             ["旧的".to_owned()]
         );
-        press(&mut session, &mut running, &presets, Key::Enter);
+        tap(&mut session, &mut running, &presets, Key::Enter);
 
         let said = session.notice().expect("要说一句").to_owned();
         assert!(said.contains("旧的"), "{said}");
