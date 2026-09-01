@@ -4,15 +4,18 @@
 //! 红绿交给当时的负载。断言的是**结构**——这一趟走过的段该有数、没走过的段该是零、
 //! 段与段不重叠、段装得进总耗时。
 //!
+//! 断言里出现的唯一一个具体时长是**用例自己等掉的那一段**（见末一条：决策点上等人的那一截
+//! 不算进计时）。它不是机器快慢，是用例摆好的输入，因此可以钉。
+//!
 //! 「计时不进渲染出的文字」不在这里：那是界面层的事实，由 `src/render.rs` 的
 //! `the_rendered_text_says_nothing_about_how_long_it_took` 钉着。
 
 mod fixtures;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fixtures::{Volume, Workspace};
-use tonefit::{Mode, Request, VolumeTiming};
+use tonefit::{Event, Instruction, Mode, Pass, Progress, ProgressSink, Request, VolumeTiming};
 
 /// 两页加一个透传文件的目录卷。
 ///
@@ -116,5 +119,67 @@ fn without_metadata_there_is_no_idempotency_pass_to_time() {
     assert_eq!(timing.fingerprint, Duration::ZERO, "关了记录还在算指纹");
     assert!(timing.first_pass > Duration::ZERO, "第一遍没有耗时");
     assert!(timing.second_pass > Duration::ZERO, "第二遍没有耗时");
+    assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
+}
+
+/// 在**决策点**上等人的那几分钟不算进计时，两处墙钟都不算（停车场 Q41，ADR 0012）。
+///
+/// 会话在那里把报告画出来、等用户拿主意，人会看着报告去泡茶（ADR 0012 的《后果》）。
+/// 算进来的话，`elapsed` 报出来的就不再是「库做了多久」，而是「用户拿主意花了多久」——
+/// 同一个卷、同一台机器，两趟能差出几个数量级。
+///
+/// 断言不带余量，因此不看机器快慢：在外面掐的那个表**至少**比报出来的多一个 `WAITS`。
+/// 报的数要是把等人那段算进去了，两者之差就只剩 `run` 进出之间那点零头，当场红。
+#[test]
+fn waiting_at_the_decision_point_is_charged_to_nobody() {
+    /// 观察者在决策点上等这么久。够长，`run` 自己的零头淹不掉它；够短，用例不因此变慢。
+    const WAITS: Duration = Duration::from_millis(200);
+
+    /// 只在决策点上磨蹭的观察者，答的是继续——第二遍照走，等的那一段却不该算进它。
+    ///
+    /// `src/progress.rs` 的 `only_the_wait_at_the_decision_point_is_clocked_as_deliberation`
+    /// 有一个同形的，隔着 crate 边界共用不了。那一个问「掐出来的那个数对不对」，
+    /// 这一个问「报告上的两个数减掉它没有」——同一件事的两头。
+    struct Ponders;
+
+    impl Progress for Ponders {
+        fn observe(&self, event: Event<'_>) -> Instruction {
+            if matches!(
+                event,
+                Event::PassStarted {
+                    pass: Pass::Second,
+                    ..
+                }
+            ) {
+                std::thread::sleep(WAITS);
+            }
+            Instruction::Continue
+        }
+    }
+
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space, "volume-a");
+
+    let outside = Instant::now();
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(Ponders)),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+    let outside = outside.elapsed();
+
+    assert!(
+        outside.saturating_sub(report.elapsed) >= WAITS,
+        "整趟的耗时把等人的那一截算进去了：外面掐的是 {outside:?}，报的是 {:?}",
+        report.elapsed
+    );
+    let timing = report.volumes[0].timing;
+    assert!(
+        outside.saturating_sub(timing.elapsed) >= WAITS,
+        "这一卷的耗时把等人的那一截算进去了：外面掐的是 {outside:?}，报的是 {:?}",
+        timing.elapsed
+    );
+    // 减掉一截之后段与总仍然对得上：等人不在任何一段里，因此三段一个都没变短。
+    assert!(timing.second_pass > Duration::ZERO, "第二遍没走");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }

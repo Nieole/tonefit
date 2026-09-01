@@ -20,7 +20,8 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::report::{RunOutcome, VolumeReport};
 
@@ -159,7 +160,11 @@ pub enum Pass {
     ///
     /// 这一条报出去的那一刻**汇总已经做完、第二遍还没开始**，而那正是续做的决策点
     /// （ADR 0012 决定第 2 条）：答继续就往下做，答收尾就停在这儿——那就是 dry-run 的效果。
-    /// 06 号票落地的是「停在这儿」，本票先把这个点报出去。
+    /// 观察者答的那个字在这一条上**当场作数**，不进闩就算数，见库内的
+    /// `Events::ask_before_the_second_pass`。
+    ///
+    /// 它因此是唯一一条**答复会改变库下一步做什么**的事件：答收尾的话，这一卷的第二遍
+    /// 一步都不走，报告照出（`CONTEXT.md` 的《会话》：决策点）。
     Second,
 }
 
@@ -270,6 +275,39 @@ impl Standing {
     }
 }
 
+/// 观察者在**决策点**上把人等掉的那一截，一次运行一份（停车场 Q41）。
+///
+/// 它不是任何一段的耗时，也不是段外那一截：那几个数说的是**库做了多久**，而这一截
+/// 库一步都没走——人在看报告拿主意（ADR 0012 决定第 3 条）。两处墙钟
+/// （[`VolumeTiming::elapsed`](crate::VolumeTiming::elapsed) 与
+/// [`Report::elapsed`](crate::Report::elapsed)）因此各自把它减掉，
+/// 减法在 `crate::process_volume` 与 `crate::run` 各做一次。
+///
+/// 掐的是**那一次问话的全程**，而不是「全程减去观察者自己那点开销」：在这一处，
+/// 观察者要做的事就是等人拿主意，整段都不是库的账。其余报到点**一纳秒都不掐**——
+/// 那几处观察者花掉的时间（进度条一次 `inc(1)`）是它自己的成本，本来就该算进这一趟。
+///
+/// 与 [`Standing`] 同一个理由用原子量而不是锁：本模块头上那条硬规矩说观察者可能很久
+/// 不返回，而这一格记的正是它等了多久——拿锁来记，规矩当场就不成立了。
+#[derive(Debug, Default)]
+pub(crate) struct Deliberation(AtomicU64);
+
+impl Deliberation {
+    /// 记下等掉的一截。
+    ///
+    /// 换算成纳秒时**饱和**：`Duration` 的 `u128` 纳秒装得下的比 `u64` 多，真越界了
+    /// 让它停在最大值，不绕回零。累加本身不设防，那不是漏——`u64` 纳秒是五百八十四年，
+    /// 而这一格一卷只加一次。
+    fn add(&self, waited: Duration) {
+        let nanos = u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX);
+        self.0.fetch_add(nanos, Ordering::Relaxed);
+    }
+
+    fn total(&self) -> Duration {
+        Duration::from_nanos(self.0.load(Ordering::Relaxed))
+    }
+}
+
 /// 管线内部报到用的那一端：没有观察者时每一条事件都是空操作。
 ///
 /// 调用处因此不必到处判空——那种判空写着写着就会漏掉一处，而漏掉的那一处正是进度条卡住的地方。
@@ -281,25 +319,81 @@ pub(crate) struct Events<'a> {
     /// 存进 [`ProgressSink`] 是不行的：那一格在 `Request` 里，而 `Request` 会被复用，
     /// 上一趟按的停会跟着漏到下一趟去。
     standing: &'a Standing,
+    /// 在决策点上等人等掉的那一截。与[闩](Standing)同一条寿命：活在 `run` 的栈上，
+    /// 一次运行一份。
+    deliberation: &'a Deliberation,
 }
 
 impl<'a> Events<'a> {
-    pub(crate) fn new(sink: Option<&'a ProgressSink>, standing: &'a Standing) -> Self {
-        Self { sink, standing }
+    pub(crate) fn new(
+        sink: Option<&'a ProgressSink>,
+        standing: &'a Standing,
+        deliberation: &'a Deliberation,
+    ) -> Self {
+        Self {
+            sink,
+            standing,
+            deliberation,
+        }
     }
 
-    /// 发一条事件，把回来的指令记进[闩](Standing)。
+    /// 发一条事件，把回来的指令记进[闩](Standing)，并**把那个字交回来**。
     ///
-    /// 指令在这里只被**记下**、不被就地执行：事件从计算线程上报出来，而停在哪一道边界上
-    /// 是管线的事。检查点眼下有两个，各在一道边界上（ADR 0013 的《后果》）：
+    /// 交回来的那个字只有决策点用得着（见 [`ask_before_the_second_pass`](Self::ask_before_the_second_pass)）；
+    /// 其余报到点走 [`report`](Self::report)，指令在那里只被**记下**、不被就地执行：
+    /// 事件从计算线程上报出来，而停在哪一道边界上是管线的事。
+    ///
+    /// 停下来的检查点眼下有两个，各在一道边界上（ADR 0013 的《后果》）：
     /// 卷边界那个在 `crate::run` 的逐卷循环里，问的是 [`standing`](Self::standing)；
     /// 页边界那个是 [`aborting`](Self::aborting)，由 `crate::process_volume` 摆在它每一个
     /// 逐成员的循环头上——**摆在哪几处只在那里数得清**，本条不复述。
-    /// 第二遍之前那一个由 06 号票加。
+    ///
+    /// 没有观察者时答的是[继续](Instruction::Continue)：没人可问就等于没人拦。
+    fn ask(self, event: Event<'_>) -> Instruction {
+        let Some(sink) = self.sink else {
+            return Instruction::Continue;
+        };
+        let answer = sink.0.observe(event);
+        self.standing.record(answer);
+        answer
+    }
+
+    /// 发一条事件，答的那个字只进[闩](Standing)。
     fn report(self, event: Event<'_>) {
-        if let Some(sink) = self.sink {
-            self.standing.record(sink.0.observe(event));
+        let _ = self.ask(event);
+    }
+
+    /// **续做的决策点**：把「第二遍要开始了」报出去，回的是观察者**当场答的那个字**
+    /// （ADR 0012 决定第 2 条，`CONTEXT.md` 的《会话》：决策点）。
+    ///
+    /// 回的**不是**[闩](Self::standing)，而这是这一处与两个检查点唯一的差别，理由是问题不同：
+    /// 闩答的是「这一趟还走不走」，这里问的是「这一卷的第二遍还做不做」。拿闩来答的话，
+    /// 第一遍里按下的**收尾**会顺手把当前卷的第二遍也吃掉，而收尾的定义正是
+    /// 「当前卷跑完才停」（ADR 0013 决定第 1 条）——盘上会因此少一整卷。
+    /// 答复照样进闩：这一卷停在这儿之后，剩下的卷也不必开工了。
+    ///
+    /// 观察者在这里**按设计会等人**（ADR 0012 决定第 3 条：等不等人是调用方的策略）。
+    /// 这一次问话的**全程**掐出来记进 [`Deliberation`]，两处墙钟各自减掉它——
+    /// 掐全程而不是掐「等人那一半」的理由，见那个类型。
+    ///
+    /// **没人可问就连表都不掐**：那一趟根本没有人在这里等，掐出来的会是两次取时刻之差，
+    /// 而那是库自己的开销，不该从这一趟的墙钟里减掉。命令行不带进度条的那条路走的正是这里。
+    pub(crate) fn ask_before_the_second_pass(self) -> Instruction {
+        if self.sink.is_none() {
+            return Instruction::Continue;
         }
+        let asked = Instant::now();
+        let answer = self.ask(Event::PassStarted { pass: Pass::Second });
+        self.deliberation.add(asked.elapsed());
+        answer
+    }
+
+    /// 这一趟至今在决策点上等掉的那一截，累计（停车场 Q41）。
+    ///
+    /// 只升不降，因此两次读数之差就是这中间等掉的时间——`crate::process_volume` 拿它
+    /// 算这一卷该减掉多少。
+    pub(crate) fn deliberated(self) -> Duration {
+        self.deliberation.total()
     }
 
     /// 至今为止收到过的最强指令。**卷边界**那个检查点问的就是它。
@@ -328,6 +422,11 @@ impl<'a> Events<'a> {
         self.report(Event::VolumeStarted { volume, steps });
     }
 
+    /// 某一遍开工了。
+    ///
+    /// [第二遍](Pass::Second)不走这里，走
+    /// [`ask_before_the_second_pass`](Self::ask_before_the_second_pass)——同一条事件，
+    /// 只是那一处要把答复接回来。事件的形状因此没有分家。
     pub(crate) fn pass_started(self, pass: Pass) {
         self.report(Event::PassStarted { pass });
     }
@@ -409,8 +508,9 @@ mod tests {
         let tally = Tally::default();
         let sink = ProgressSink::new(tally.clone());
         let standing = Standing::default();
+        let deliberation = Deliberation::default();
 
-        let watched = Events::new(Some(&sink), &standing);
+        let watched = Events::new(Some(&sink), &standing, &deliberation);
         watched.run_started(2, 30);
         watched.volume_started(Path::new("卷一"), 10);
         watched.pass_started(Pass::First);
@@ -438,7 +538,8 @@ mod tests {
 
         // 同一个记账本还在场上，而这一端没装它：几条报到一条都不该落到它那里。
         let elsewhere = Standing::default();
-        let unwatched = Events::new(None, &elsewhere);
+        let unhurried = Deliberation::default();
+        let unwatched = Events::new(None, &elsewhere, &unhurried);
         unwatched.run_started(2, 30);
         unwatched.volume_started(Path::new("卷二"), 10);
         unwatched.step();
@@ -461,7 +562,8 @@ mod tests {
         let tally = Tally::default();
         let sink = ProgressSink::new(tally.clone());
         let standing = Standing::default();
-        let events = Events::new(Some(&sink), &standing);
+        let deliberation = Deliberation::default();
+        let events = Events::new(Some(&sink), &standing, &deliberation);
 
         events.step();
         assert_eq!(
@@ -487,6 +589,113 @@ mod tests {
         tally.answers(Instruction::Abort);
         events.step();
         assert_eq!(events.standing(), Instruction::Abort, "升不到中止那一级");
+    }
+
+    /// 决策点回的是观察者**当场答的那个字**，不是闩（ADR 0012 决定第 2 条）。
+    ///
+    /// 分开它们要一个特定的现场：闩已经落在收尾上，而观察者当场答继续——那正是
+    /// 「第一遍里按下收尾」（ADR 0013 决定第 1 条：收尾要**当前卷跑完**）。
+    /// 决策点拿闩当答复的话，那一卷的第二遍会被顺手吃掉，盘上少一整卷。
+    /// 在 `run` 那个 seam 上这两者多数情形下同值，分不开。
+    #[test]
+    fn the_decision_point_answers_with_the_word_just_said_not_the_latch() {
+        let tally = Tally::default();
+        let sink = ProgressSink::new(tally.clone());
+        let standing = Standing::default();
+        let deliberation = Deliberation::default();
+        let events = Events::new(Some(&sink), &standing, &deliberation);
+
+        // 第一遍的页边界上按下收尾：闩记住了它。
+        tally.answers(Instruction::Finish);
+        events.step();
+        assert_eq!(events.standing(), Instruction::Finish, "按下的停没记住");
+
+        // 手指离开键盘，决策点上答的是继续——这一卷的第二遍照走。
+        tally.answers(Instruction::Continue);
+        assert_eq!(
+            events.ask_before_the_second_pass(),
+            Instruction::Continue,
+            "决策点拿闩当了答复，第一遍里按下的收尾把当前卷的第二遍也吃掉了"
+        );
+        assert_eq!(
+            events.standing(),
+            Instruction::Finish,
+            "决策点把闩降回去了：这一卷之后剩下的卷会接着做"
+        );
+
+        // 反过来：决策点上答的那个字照样进闩——那一卷停在这儿之后，剩下的卷也不必开工。
+        let deciding = Tally::default();
+        let sink = ProgressSink::new(deciding.clone());
+        let fresh = Standing::default();
+        let unhurried = Deliberation::default();
+        let events = Events::new(Some(&sink), &fresh, &unhurried);
+        deciding.answers(Instruction::Finish);
+        assert_eq!(
+            events.ask_before_the_second_pass(),
+            Instruction::Finish,
+            "决策点没把当场答的那个字交回来"
+        );
+        assert_eq!(
+            events.standing(),
+            Instruction::Finish,
+            "决策点上答的收尾没进闩"
+        );
+    }
+
+    /// 决策点上等人的那一截掐得出来，别处报到的不掐（停车场 Q41）。
+    ///
+    /// 会话要在这里把报告画出来并等用户拿主意，而人会看着报告去泡茶（ADR 0012 的《后果》）。
+    /// 那几分钟原样计进墙钟的话，报出来的耗时说的就不再是「库做了多久」。
+    /// [`VolumeTiming::elapsed`](crate::VolumeTiming::elapsed) 与
+    /// [`Report::elapsed`](crate::Report::elapsed) 各自减掉的就是这个数。
+    #[test]
+    fn only_the_wait_at_the_decision_point_is_clocked_as_deliberation() {
+        /// 观察者在决策点上等这么久。够长，调度抖动淹不掉它；够短，用例不因此变慢。
+        const WAITS: Duration = Duration::from_millis(20);
+
+        /// 只在决策点上磨蹭的观察者。
+        ///
+        /// `tests/timing.rs` 的 `waiting_at_the_decision_point_is_charged_to_nobody`
+        /// 有一个同形的：那一个隔着 crate 边界，共用不了代码。两处问的不是同一件事——
+        /// 这一个问「掐出来的那个数对不对」（那一格是私有的，只有这里读得到），
+        /// 那一个问「报告上的两个数减掉了它没有」。
+        struct Ponders;
+
+        impl Progress for Ponders {
+            fn observe(&self, event: Event<'_>) -> Instruction {
+                if matches!(
+                    event,
+                    Event::PassStarted {
+                        pass: Pass::Second,
+                        ..
+                    }
+                ) {
+                    std::thread::sleep(WAITS);
+                }
+                Instruction::Continue
+            }
+        }
+
+        let sink = ProgressSink::new(Ponders);
+        let standing = Standing::default();
+        let deliberation = Deliberation::default();
+        let events = Events::new(Some(&sink), &standing, &deliberation);
+
+        assert_eq!(events.deliberated(), Duration::ZERO, "还没问就等上了");
+        events.pass_started(Pass::First);
+        events.step();
+        assert_eq!(
+            events.deliberated(),
+            Duration::ZERO,
+            "别处报到也算进了等人的那一截"
+        );
+
+        events.ask_before_the_second_pass();
+        assert!(
+            events.deliberated() >= WAITS,
+            "决策点上等掉的那一截没掐出来：{:?}",
+            events.deliberated()
+        );
     }
 
     /// 三级的序就是力度，而记进原子量的那个数与它同序。

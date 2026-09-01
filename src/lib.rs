@@ -125,9 +125,10 @@ pub fn run(request: &Request) -> Result<Report> {
     // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
     let mut probes = medium::Probes::new();
     // 这一趟的事件流。闩活在这里——一次运行一份，`Request` 复用不到它
-    // （见 [`progress::Events`] 的 `standing`）。
+    // （见 [`progress::Events`] 的 `standing`）。在决策点上等人等掉的那一截同一条寿命。
     let standing = progress::Standing::default();
-    let events = progress::Events::new(request.progress.as_ref(), &standing);
+    let deliberation = progress::Deliberation::default();
+    let events = progress::Events::new(request.progress.as_ref(), &standing, &deliberation);
     // **预扫**：开工之前把点名的卷全枚举一遍，算出这一趟的全局总步数（ADR 0011 决定第 3 条）。
     // 它排在开工那条事件**之前**，因为那条事件要带着那个数；坏路径因此在任何卷级事件之前
     // 就把整趟拒掉——输出根下一个文件都没有（见 `survey`）。
@@ -190,7 +191,9 @@ pub fn run(request: &Request) -> Result<Report> {
         volumes,
         failed_volumes,
         outcome,
-        elapsed: started.elapsed(),
+        // 在决策点上等人的那几分钟不算这一趟的账（停车场 Q41）：库那时一步都没走。
+        // 各卷的 `VolumeTiming::elapsed` 各自减掉自己那一截，这里减的是全部卷的和。
+        elapsed: started.elapsed().saturating_sub(events.deliberated()),
     })
 }
 
@@ -353,6 +356,22 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// 每一段停下之后都**再问一次**闩，而不是把「我是被中止的」当成返回值一层层传上来：
 /// 闩只升不降，再问一次恒得同一个答案（见 [`progress::Events::aborting`]）。
 ///
+/// # 收尾：停在决策点上
+///
+/// **续做的决策点**在「汇总之后、第二遍之前」，一卷一次（ADR 0012 决定第 2 条）：
+/// 答继续就往下做，答收尾就**停在这儿**。停下来的现场与中止不同，两件事都要看清——
+///
+/// - 回的是 `Ok(Some(report))`，不是 `None`：这一卷**做过事**，判定、逐页结果、缓存用量、
+///   解码计数都是真的，只是第二遍一步没走。那正是 dry-run 的效果（spec 的 story 6），
+///   而报告本来就是试算要看的那份东西。
+/// - **输出一个字节都不写**：输出容器连建都不建，`partial` 因此也没有。
+/// - **参照还在缓存里**：这一卷的缓存活到 `run` 走完（ADR 0012 决定第 4 条），
+///   会话答继续的那一次由同一趟 `run` 接着做——续做不跨调用。
+/// - 这个字照样进闩，所以**剩下的卷不必开工**：卷边界那个检查点接着拦下它们。
+///
+/// 这一处认的是**当场答的那个字**，不是闩——为什么，见
+/// [`progress::Events::ask_before_the_second_pass`]。
+///
 /// # 失败：回 `Err`
 ///
 /// 这一卷做不成就回 `Err`，**整趟不因此停下**（05 号票）：`run` 把它记成一笔
@@ -379,6 +398,15 @@ fn process_volume(
     // **再把预扫枚举这一卷花掉的那一截加回去**——打开卷只是挪到了开工之前，并没有变便宜，
     // 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
     let started = Instant::now();
+    // **开卷时**的累计读数，与 `started` 成一对。这一卷的墙钟要减掉「在决策点上等人」
+    // 的那一截（停车场 Q41），而那一截就是这个快照与拼报告时那个读数之差——
+    // 累计只升不降，见 `progress::Deliberation`。
+    let deliberated_at_open = events.deliberated();
+    // 这一卷的墙钟：从打开卷（含预扫枚举它的那一截）算到这份报告成型，减去等人的那一截。
+    let wall_clock = || {
+        let deliberated = events.deliberated().saturating_sub(deliberated_at_open);
+        enumerating + started.elapsed().saturating_sub(deliberated)
+    };
     let mut timing = VolumeTiming::default();
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
     let clean = volume.output_path(&request.output_root);
@@ -443,7 +471,7 @@ fn process_volume(
             io,
             // 两遍一遍都不走，三段里只有幂等那一段有数。
             timing: VolumeTiming {
-                elapsed: enumerating + started.elapsed(),
+                elapsed: wall_clock(),
                 ..timing
             },
         };
@@ -508,12 +536,28 @@ fn process_volume(
     };
     let superseded = superseded(&elsewhere);
 
-    // dry-run 一个文件都不落盘，输出容器因此连建都不建（spec 的 story 6）。
+    // **续做的决策点就在这一句上**（ADR 0012 决定第 2 条）：汇总已经做完、第二遍还没开始。
+    // 三个字各有一种去处，`match` 因此穷尽写开——`Instruction` 不非穷尽，多一级的那一天
+    // 这里当场编译不过，而那正是要的（ADR 0013 拍死了三级）。
+    // 它答的是**当场那个字**而不是闩，为什么，见 `progress::Events::ask_before_the_second_pass`。
+    let walks_the_second_pass = if writes {
+        match events.ask_before_the_second_pass() {
+            // 答继续：往下做。参照还在缓存里，第一遍不重算——那正是续做买的东西。
+            Instruction::Continue => true,
+            // 答收尾：**停在这儿**。那一卷等于走了一次试算，输出一个字节都不写、报告照出
+            // （见本函数的《收尾：停在决策点上》）。
+            Instruction::Finish => false,
+            // 答中止：这一卷等于没做，与页边界上按下它一个待遇（见《中止：回 `None`》）。
+            // 一格 `partial` 都还没建，最终位置纹丝不动。
+            Instruction::Abort => return Ok(None),
+        }
+    } else {
+        // dry-run 一个文件都不落盘，第二遍无从谈起，也就没有「还做不做」可问：
+        // 决策点连报都不报（spec 的 story 6）。
+        false
+    };
     // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
-    if writes {
-        // **续做的决策点就在这一句上**（ADR 0012 决定第 2 条）：汇总已经做完、
-        // 第二遍还没开始。本票只把它报出去，「答收尾就停在这儿」由 06 号票落地。
-        events.pass_started(Pass::Second);
+    if walks_the_second_pass {
         timed(&mut timing.second_pass, || -> Result<()> {
             let mut sink = Sink::create(&output, volume.container)?;
             let recorder = fingerprint
@@ -569,7 +613,7 @@ fn process_volume(
         decodes: decoder.decodes(),
         io,
         timing: VolumeTiming {
-            elapsed: enumerating + started.elapsed(),
+            elapsed: wall_clock(),
             ..timing
         },
     };
@@ -2524,6 +2568,7 @@ mod tests {
         let tally = Tally::default();
         let watching = ProgressSink::new(tally.clone());
         let standing = progress::Standing::default();
+        let deliberation = progress::Deliberation::default();
 
         let mut sink = Sink::create(&out, Container::Directory).expect("建输出容器");
         second_pass(
@@ -2531,7 +2576,7 @@ mod tests {
             &[verdict, verdict],
             &encode,
             &mut sink,
-            progress::Events::new(Some(&watching), &standing),
+            progress::Events::new(Some(&watching), &standing, &deliberation),
         )
         .expect("写出这两张");
         sink.finish().expect("收尾");
