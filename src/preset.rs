@@ -12,6 +12,8 @@
 //!
 //! **不读盘，除非被点名。** [`load`] 只在 `--preset` 出现时才被调到。不点名的那一趟
 //! 命令行仍是全部输入，同一条命令在两台机器上因此行为相同（spec 的 story 13）。
+//! 写盘同理，而且更紧一道：只有**会话里按下存**那一下写得动它（`p1-session/12`），
+//! 而它盖不掉同名的那一份——覆盖是另一个动作（见 [`Presets::save`] 与 [`Presets::replace`]）。
 //!
 //! **不猜。** 读不懂的预设——字段过时、型号已删、取值拼错——当场报错，不静默套默认值
 //! （spec 的 story 39）。字段怎么迁移是未决问题（`CONTEXT.md` 的《尚未确立》：预设的字段演进），
@@ -172,17 +174,155 @@ impl TasteLayer {
     }
 }
 
-/// 按名字读一份预设。**这是本仓库唯一一处为了预设去碰文件系统的地方。**
+/// 按名字读一份预设。命令行那一路只用得到这一件事（`Cli::preset`）。
 pub fn load(name: &str) -> Result<Preset> {
-    let path = file()?;
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(no_preset_file_error(&path));
+    Presets::found().read(name)
+}
+
+/// 盘上那份预设文件。**这是本仓库唯一一处为了预设去碰文件系统的地方。**
+///
+/// 位置在造出来那一刻定死，因此用例拿得到一份指向临时目录的它，**不必去改进程的环境变量**
+/// （`tests/preset.rs` 已经说过为什么不改：edition 2024 里 `set_var` 是 `unsafe` 的，
+/// 而一个进程里的用例并行跑，改全局环境会互相打架）。
+///
+/// **位置本身答不出来时不在造它那一刻报**（这台机器连 `APPDATA` 都没设）：
+/// 会话不该因为一个环境变量没设就进不去，而按下存或取的那一刻它说得出为什么。
+pub struct Presets {
+    /// 那份文件在哪，或者**为什么答不出来**。
+    at: Result<PathBuf, String>,
+}
+
+// 列出来、存、覆盖三件事**只有会话按得动**（`p1-session/12`），而会话整个在 `tui`
+// 那个特性后面：关掉它这几个方法就没有调用方了。`cargo clippy --no-default-features`
+// 那一趟因此要在这里放行一次——挪不走，命令行那一路本来就只读预设、不写。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(
+        dead_code,
+        reason = "预设的存与列出只有会话调得到，而会话在 tui 特性后面"
+    )
+)]
+impl Presets {
+    /// 用户配置目录下的那一份（见 [`file`]）。
+    pub fn found() -> Self {
+        Self {
+            at: file().map_err(|error| format!("{error:#}")),
         }
-        Err(error) => return Err(anyhow::Error::new(error).context(format!("读不出 {path:?}"))),
-    };
-    read(&text, name).with_context(|| format!("预设文件是 {}", path.display()))
+    }
+
+    /// 点名一个位置。**只给用例用**：真会话与命令行读的都是用户配置目录下那一份。
+    #[cfg(test)]
+    pub fn at(path: impl Into<PathBuf>) -> Self {
+        Self {
+            at: Ok(path.into()),
+        }
+    }
+
+    /// 那份文件在哪。
+    pub fn path(&self) -> Result<&Path> {
+        self.at.as_deref().map_err(|said| anyhow!("{said}"))
+    }
+
+    /// 文件里有的那几个预设的名字，按字典序。
+    ///
+    /// **只读名字，不读内容**——与 [`read`] 的「只有点名的那一个要读得懂」同一条：
+    /// 一份字段过时的预设不该让别的几份列不出来。
+    ///
+    /// **文件还不在就是一个都没有**，不是错误：那正是要按下存的那一刻
+    /// （`Presets::read` 那一侧不同，见 [`no_preset_file_error`]）。
+    pub fn names(&self) -> Result<Vec<String>> {
+        let path = self.path()?;
+        let Some(text) = self.text()? else {
+            return Ok(Vec::new());
+        };
+        names(&text).with_context(|| format!("预设文件是 {}", path.display()))
+    }
+
+    /// 按名字读一份预设。文件不在、或者点名的那一份读不懂，都是一条说得清的错误。
+    pub fn read(&self, name: &str) -> Result<Preset> {
+        let path = self.path()?;
+        let Some(text) = self.text()? else {
+            return Err(no_preset_file_error(path));
+        };
+        read(&text, name).with_context(|| format!("预设文件是 {}", path.display()))
+    }
+
+    /// 存一份预设。**盖不掉同名的那一份**——撞上了就是 [`Saved::Taken`]，一个字节都不写。
+    ///
+    /// 覆盖是**另一个动作**（[`replace`](Self::replace)），不是这一个动作的一个参数：
+    /// 会话里那两下（撞名先说一句、再按一次才覆盖）因此不必靠调用方记得传对那个布尔。
+    pub fn save(&self, name: &str, preset: &Preset) -> Result<Saved> {
+        let text = self.text()?.unwrap_or_default();
+        if names(&text)?.iter().any(|taken| taken == name) {
+            return Ok(Saved::Taken);
+        }
+        self.put(&insert(&text, name, preset)?)?;
+        Ok(Saved::Written)
+    }
+
+    /// 覆盖同名的那一份。名字还空着时它与 [`save`](Self::save) 做的是同一件事。
+    ///
+    /// **只有用户当场确认过才走得到这里**（见 `session::press`）：盖掉的可能是别人手写的
+    /// 一份预设，而重排会连那份文件里的注释与排版一起丢掉（见 [`insert`]）。
+    pub fn replace(&self, name: &str, preset: &Preset) -> Result<()> {
+        let text = self.text()?.unwrap_or_default();
+        self.put(&insert(&text, name, preset)?)
+    }
+
+    /// 那份文件的正文。**还不在就是 `None`**——那不是一条错误，各调用方自己判。
+    fn text(&self) -> Result<Option<String>> {
+        let path = self.path()?;
+        match std::fs::read_to_string(path) {
+            Ok(text) => Ok(Some(text)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(anyhow::Error::new(error).context(format!("读不出 {path:?}"))),
+        }
+    }
+
+    /// 把正文写到位。**先写到同一层的临时文件、再改名**——与输出容器同一条规矩
+    /// （`crate::sink`：最终位置上要么是上一份、要么是完整的这一份，中间那一份不出现）。
+    /// 这里更该如此：盖的是用户自己手写的一份配置。
+    ///
+    /// 临时名字是**推得出来的**，因此有一个远角上的代价（与 `crate::sink` 那一处同一条）：
+    /// 两个会话在同一秒里各存一份预设时，两者写的是同一个临时文件。换成随机名字能躲开，
+    /// 代价是硬停留下的那一份就再也认不出、也没有下一趟去清它。存预设是用户按一下的事，
+    /// 不是几十分钟的一趟，这一头因此照 `sink` 那一处的取舍来。
+    fn put(&self, text: &str) -> Result<()> {
+        let path = self.path()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("建配置目录 {}", parent.display()))?;
+        }
+        let partial = partial_path(path);
+        std::fs::write(&partial, text).with_context(|| format!("写 {}", partial.display()))?;
+        std::fs::rename(&partial, path)
+            .with_context(|| format!("把 {} 改名到 {}", partial.display(), path.display()))
+    }
+}
+
+/// 存一份预设的结果。
+///
+/// **撞名不是一条错误，是一个答案**：存这个动作走到底之前要先问一句
+/// （会话里屏上说一句，再按一次 `⏎` 才覆盖，见 `session::press`）。
+/// 写成错误的话，调用方就得靠比对错误文本才分得出「名字占着」与「盘满了」。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "存预设只有会话按得动，而会话在 tui 特性后面")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Saved {
+    /// 写进去了。
+    Written,
+    /// 那个名字已经有人占着，一个字节都没动。
+    Taken,
+}
+
+/// 临时文件的位置：在最终名字后面接一段固定后缀，与最终位置**同一层**，
+/// 改名因此不跨卷（与 `crate::sink` 的那一个同一条理由，两处各自只此一用）。
+fn partial_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".partial");
+    path.with_file_name(name)
 }
 
 /// 从一份预设文件的正文里读出点名的那一个。
@@ -204,18 +344,22 @@ pub fn read(text: &str, name: &str) -> Result<Preset> {
         .with_context(|| format!("读不懂预设「{name}」"))
 }
 
+/// 一份预设文件里有的那几个名字，按字典序。**只读名字，不读内容。**
+///
+/// 会话里那一栏列的就是它（`p1-session/12`）：列一份清单不该因为其中一份的字段过时
+/// 而整个列不出来——与 [`read`] 的「只有点名的那一个要读得懂」同一条。
+pub fn names(text: &str) -> Result<Vec<String>> {
+    let file: File<toml::Value> = toml::from_str(text).context("预设文件不是一份读得懂的 TOML")?;
+    Ok(file.preset.into_keys().collect())
+}
+
 /// 把若干命名预设写成一份预设文件的正文。
 ///
 /// 与 [`read`] 是一对：写出去的每一项都用它那个类型的**规范名**（`FitMode::name` 那一族），
 /// 而规范名按定义读得回同一个值——往返因此是等价的，不是「差不多」。
 ///
-/// **眼下只有往返用例调得到它**：命令行这一路只读预设，不写。会话里那个「把当前两层存成
-/// 一份命名预设」的手势归 `p1-session/12`，它调的就是这里——格式两侧同一份，
-/// 而格式的往返在本票就得钉住（spec 的 story 46）。
-#[allow(
-    dead_code,
-    reason = "会话那一侧的存取归 p1-session/12，本票先把格式的往返钉住"
-)]
+/// 真往盘上写的那一路（会话里按下存，`p1-session/12`）走 [`insert`]，而它写出去的那一份
+/// 就是这里给的——格式两侧同一份，往返由本模块的用例钉住（spec 的 story 46）。
 pub fn write(presets: &BTreeMap<String, Preset>) -> Result<String> {
     let file = File {
         preset: presets
@@ -224,6 +368,84 @@ pub fn write(presets: &BTreeMap<String, Preset>) -> Result<String> {
             .collect(),
     };
     toml::to_string_pretty(&file).context("预设写不成 TOML")
+}
+
+/// 把一份预设放进一份预设文件的正文里，**其余的东西一样都不动**。
+///
+/// 两条路，差别在「别人手写的那些字节活不活得下来」：
+///
+/// - **名字还空着**：那两节**追加**在末尾，原文一个字节都不改——注释、排版、
+///   连本模块读不懂的那几份预设，全部原样留着。
+/// - **名字已经有了**：整份**重排**。那一份要换掉，而 `toml` 1.1 给不出「只改这一段、
+///   别的字节不动」的写法（它没有保留格式的编辑端；`toml_edit` 是另一个包，
+///   而引一个依赖是一条依赖面上的决定，不是本票该顺手拿的——停车场 Q73）。
+///   重排之后每一份预设的**内容**都还在（读不懂的那几份按不透明的 [`toml::Value`]
+///   原样搬过去），丢掉的是注释与手写的排版。**会话在覆盖之前把这句话说出口**
+///   （见 `session::state` 那句「再按一次 ⏎ 覆盖」）。
+///
+/// **读不懂的整份文件当场报错、一个字节都不写**：拿一份自己都没读懂的文件去覆盖，
+/// 是这一路上最不该做的事。
+pub fn insert(text: &str, name: &str, preset: &Preset) -> Result<String> {
+    let file: File<toml::Value> = toml::from_str(text).context("预设文件不是一份读得懂的 TOML")?;
+    let added = write(&BTreeMap::from([(name.to_owned(), preset.clone())]))?;
+    if !file.preset.contains_key(name) {
+        let appended = append(text, &added);
+        // 追加完仍要**验一遍**：`preset` 那张表写成内联表时（`preset = { 漫画 = … }`），
+        // 后面再摆一节 `[preset."名字".device]` 是接不上去的。验不过就走重排那一条。
+        if appends_cleanly(&appended, name, preset, &file.preset) {
+            return Ok(appended);
+        }
+    }
+    let mut sections: BTreeMap<&str, String> = BTreeMap::new();
+    for (other, value) in &file.preset {
+        sections.insert(other, section(other, value)?);
+    }
+    sections.insert(name, added);
+    Ok(sections.into_values().collect::<Vec<_>>().join("\n"))
+}
+
+/// 一份预设在文件里的那两节，连同它的名字。
+///
+/// 只有[重排](insert)那一条用得到它，而且**收的是不透明的 [`toml::Value`]**：
+/// 那一路要把本模块读不懂的几份原样搬过去。点名的那一份走的仍是 [`write`]——
+/// 写出去的形状因此只有一处出处。
+fn section<P: Serialize>(name: &str, preset: P) -> Result<String> {
+    toml::to_string_pretty(&File {
+        preset: BTreeMap::from([(name.to_owned(), preset)]),
+    })
+    .context("预设写不成 TOML")
+}
+
+/// 把新的那两节接在原文后面。原文那一截**一个字节都不改**。
+fn append(text: &str, added: &str) -> String {
+    let mut appended = text.to_owned();
+    if !appended.is_empty() {
+        if !appended.ends_with('\n') {
+            appended.push('\n');
+        }
+        appended.push('\n');
+    }
+    appended.push_str(added);
+    appended
+}
+
+/// 追加出来的那一份读得回去吗：点名的那一份如数读得回来，原来那几份一个都没变样。
+///
+/// 验它而不是信它：TOML 里同一张表有好几种写法，而追加只对其中一种成立。
+fn appends_cleanly(
+    appended: &str,
+    name: &str,
+    preset: &Preset,
+    before: &BTreeMap<String, toml::Value>,
+) -> bool {
+    let Ok(after) = toml::from_str::<File<toml::Value>>(appended) else {
+        return false;
+    };
+    after.preset.len() == before.len() + 1
+        && before
+            .iter()
+            .all(|(other, value)| after.preset.get(other) == Some(value))
+        && read(appended, name).is_ok_and(|read_back| read_back == *preset)
 }
 
 /// 预设文件的位置：用户配置目录下的 `tonefit/presets.toml`。
@@ -720,6 +942,116 @@ reading-order = \"left-to-right\"
         assert_eq!(preset.taste.filter, Some(Filter::Area));
         assert_eq!(preset.taste.dither, Some(Dither::FloydSteinberg));
         assert_eq!(preset.taste.reading_order, Some(ReadingOrder::LeftToRight));
+    }
+
+    /// **存一份新的：原文一个字节都不改。**
+    ///
+    /// 注释、排版、连本模块读不懂的那几份预设，全部原样留在原处（[`insert`] 的追加那一条）。
+    #[test]
+    fn saving_a_new_preset_leaves_every_byte_of_the_file_where_it_was() {
+        let by_hand = "\
+# 我手写的
+[preset.\"旧的\".taste]
+# 这一项本模块读不懂
+sharpen = true
+";
+
+        let after = insert(by_hand, "漫画", &every_field()).expect("存得进去");
+
+        assert!(after.starts_with(by_hand), "原文那一截被改动了：\n{after}");
+        assert_eq!(read(&after, "漫画").expect("读得回来"), every_field());
+        assert!(after.contains("# 这一项本模块读不懂"), "{after}");
+        assert!(read(&after, "旧的").is_err(), "读不懂的那一份被悄悄改写了");
+        assert_eq!(names(&after).expect("列得出来"), ["旧的", "漫画"]);
+    }
+
+    /// **覆盖同名的那一份：其余几份一个都不少**，包括本模块读不懂的那几份。
+    ///
+    /// 代价一并钉在这里：整份**重排**，注释与手写的排版留不下来。会话在按下去之前
+    /// 把这句话说出口（`session::state::Session::name_is_taken`）——`toml` 1.1
+    /// 给不出保留格式的编辑端（停车场 Q73）。
+    #[test]
+    fn overwriting_one_preset_keeps_the_others_but_not_the_comments() {
+        let by_hand = "\
+# 我手写的
+[preset.\"漫画\".taste]
+filter = \"box\"
+
+[preset.\"旧的\".taste]
+sharpen = true
+";
+
+        let after = insert(by_hand, "漫画", &every_field()).expect("覆盖得了");
+
+        assert_eq!(read(&after, "漫画").expect("读得回来"), every_field());
+        assert!(
+            after.contains("sharpen = true"),
+            "另一份预设丢了：\n{after}"
+        );
+        assert_eq!(names(&after).expect("列得出来"), ["旧的", "漫画"]);
+        assert!(
+            !after.contains("# 我手写的"),
+            "重排之后注释还在——那说明格式其实保得住，这一条与它的文档都该改：\n{after}"
+        );
+    }
+
+    /// **读不懂的整份文件当场报错，一个字节都不写。**
+    ///
+    /// 拿一份自己都没读懂的文件去覆盖，是这一路上最不该做的事。
+    #[test]
+    fn a_file_that_does_not_parse_is_never_written_over() {
+        for text in ["这不是一份 TOML", "[preset.\"漫画\"\n", "另有一节 = 1\n"] {
+            assert!(
+                insert(text, "漫画", &every_field()).is_err(),
+                "读不懂却写了：{text}"
+            );
+        }
+    }
+
+    /// 盘上那一份：**列、读、存、覆盖**四件事在一个真文件上走一遍。
+    ///
+    /// 文件摆在临时目录下（[`Presets::at`]），一个用户的东西都不碰。
+    #[test]
+    fn the_file_on_disk_takes_a_preset_and_gives_it_back() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let home = space.path().join("配置").join("tonefit");
+        let presets = Presets::at(home.join("presets.toml"));
+
+        // 文件还不在：列出来是一个都没有（不是错误），而读一份是一条说得清的错误。
+        assert!(presets.names().expect("列得出来").is_empty());
+        assert!(presets.read("漫画").is_err());
+
+        // 存：上一层目录跟着建出来。
+        assert_eq!(
+            presets.save("漫画", &every_field()).expect("存得进去"),
+            Saved::Written
+        );
+        assert_eq!(presets.names().expect("列得出来"), ["漫画"]);
+        assert_eq!(presets.read("漫画").expect("读得回来"), every_field());
+        // 改名到位之后不留临时文件。
+        let left: Vec<_> = std::fs::read_dir(&home)
+            .expect("读得出配置目录")
+            .filter_map(|entry| Some(entry.ok()?.file_name()))
+            .collect();
+        assert_eq!(left, ["presets.toml"], "写完留下了临时文件：{left:?}");
+
+        // 同一个名字再存：**盖不掉**，一个字节都没动。
+        let before = std::fs::read_to_string(home.join("presets.toml")).expect("读得出来");
+        assert_eq!(
+            presets.save("漫画", &Preset::default()).expect("问得出来"),
+            Saved::Taken
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("presets.toml")).expect("读得出来"),
+            before,
+            "存那一下把同名的那一份盖了"
+        );
+
+        // 覆盖是另一个动作，走到底才换得掉。
+        presets
+            .replace("漫画", &Preset::default())
+            .expect("覆盖得了");
+        assert_eq!(presets.read("漫画").expect("读得回来"), Preset::default());
     }
 
     /// 预设文件的位置在用户配置目录之下，文件名是 `presets.toml`。

@@ -28,7 +28,7 @@
 //! 「没说」与「说了一个恰好等于默认值的值」因此在屏上分得开，
 //! 而那正是存成预设时两者的差别。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Profile,
@@ -36,7 +36,7 @@ use tonefit::{
 };
 
 use super::complete;
-use crate::preset::{DeviceLayer, TasteLayer};
+use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +145,25 @@ pub enum Action {
     Collapse,
     /// 展开着的报告区往那个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
     Scroll(Toward),
+    /// **去预设那一栏**：把盘上那份文件里有的那几份列出来（`CONTEXT.md` 的《会话》：预设栏）。
+    ///
+    /// 列什么要读盘，而本模块读不到——真做这件事的是 [`super::press`]，它随后调
+    /// [`pick`](Session::pick)。与[展开](Self::Expand)同一条分法：那一支要读那一趟攒的报告，
+    /// 这一支要读用户配置目录下那份 TOML；名字也照那一对取
+    /// （`Expand` 进 [`Mode::Expanded`]，`Pick` 进 [`Mode::Picking`]）。
+    Pick,
+    /// **套用**光标停着的那一份预设：两层整个换成它，范围层一格不动。
+    ///
+    /// 同样落在 [`super::press`]：那一份的内容要现读（[`Presets::read`](crate::preset::Presets::read)），
+    /// 而**读不懂的预设当场报错、不静默套默认值**（spec 的 story 39）——报出来的那句话
+    /// 是库那一侧的原话，会话不另编一份。
+    Take,
+    /// **存**：把当前两层存成缓冲里打的那个名字。
+    ///
+    /// 落在 [`super::press`]，理由与上面两支同一条：它要往盘上写东西。
+    /// 撞上同名的那一份时**不覆盖**——那一层先说一句，再按一次这个键才覆盖
+    /// （见 [`Session::name_is_taken`]）。
+    Store,
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -373,6 +392,126 @@ pub enum Mode {
     /// 而那一刻按得动的只有停。`Mode` 因此仍是一维的，与 `p1-session/10` 拿的那一条
     /// （范围层跟着冻住、不把 `Mode` 拆成两维）同一个形状。
     Expanded(Expansion),
+    /// **预设那一栏**开着：盘上有的那几份摆成一列，末尾一行是「存成一份新的」。
+    ///
+    /// 与[展开](Self::Expanded)同一个形状：一个从浏览进得去、一个键退得回来的状态，
+    /// 三层一格没动（**套用**才动，而那是用户在这一栏上按下去的那一下）。
+    ///
+    /// **跑着的时候开不了**：套用一份预设就是把两层整个换掉，而跑起来之后三层只读
+    /// （`CONTEXT.md` 的《会话》）。这与 `e` 跑着时按不动（停车场 Q72）是同一条。
+    Picking(Picker),
+}
+
+/// 预设那一栏：**盘上有的那几份**，加上末尾「存成一份新的」那一行。
+///
+/// 列的是**进这一栏那一刻**盘上有的（[`super::press`] 读的，见 [`Action::Pick`]）：
+/// 本模块碰不到盘。这与 [`Expansion::volumes`] 是同一种「进来那一刻记下的数」。
+///
+/// 末尾那一行照范围层「＋ 再打一个卷进来」的样子（[`Field::AddVolume`]）：
+/// **列一份清单与往清单里添一条是同一栏上的两件事**，分成两个键就要多记一个键。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picker {
+    /// 这一栏是**哪一份文件**列出来的。
+    ///
+    /// 屏上要说得出它（见 [`super::draw`]）：存出去的东西落在用户自己的配置目录里，
+    /// 而下一次多半是在命令行上用它——「那份文件在哪」是接着要做的事的前提。
+    /// 摆在这一栏里而不是摆进那句话里，是因为**那句话在窄终端上会被切掉**
+    /// （屏底那一格不折行），而这一栏折行。
+    file: PathBuf,
+    /// 盘上那份文件里有的那几个名字，按字典序（`preset::names`）。
+    names: Vec<String>,
+    /// 光标停在第几行。`names.len()` 就是末尾那一行——「存成一份新的」。
+    at: usize,
+    /// 正在打的那个新名字。`None` 是在列表上走。
+    naming: Option<Naming>,
+}
+
+impl Picker {
+    pub(super) fn new(names: Vec<String>, file: PathBuf) -> Self {
+        Self {
+            file,
+            names,
+            at: 0,
+            naming: None,
+        }
+    }
+
+    /// 这一栏是哪一份文件列出来的。
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
+
+    /// 盘上有的那几份，按字典序。
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    /// 光标停在第几行。
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
+    /// 这一栏有几行：盘上那几份，加上末尾「存成一份新的」那一行。
+    pub fn rows(&self) -> usize {
+        self.names.len() + 1
+    }
+
+    /// 光标停着的那一份预设。停在末尾那一行上就是 `None`——那一行不是一份预设。
+    pub fn picked(&self) -> Option<&str> {
+        self.names.get(self.at).map(String::as_str)
+    }
+
+    /// 正在打的那个名字。
+    pub fn naming(&self) -> Option<&Naming> {
+        self.naming.as_ref()
+    }
+
+    /// `name` 那一份刚存到盘上：名字进清单（还没有的话），光标停到它上面，名字不用打了。
+    ///
+    /// 清单按字典序（`preset::names` 给的就是这个次序），因此插在二分找到的那一格上——
+    /// 重新排一遍会让光标那个下标失效，而下一屏正要按它反白。
+    fn stored(&mut self, name: &str) {
+        self.naming = None;
+        self.at = match self
+            .names
+            .binary_search_by(|listed| listed.as_str().cmp(name))
+        {
+            Ok(at) => at,
+            Err(at) => {
+                self.names.insert(at, name.to_owned());
+                at
+            }
+        };
+    }
+}
+
+/// 正在打的新预设名，以及**撞名之后问过一次了没有**。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Naming {
+    /// 打到哪儿了。
+    pub buffer: String,
+    /// 撞上同名的那一份、屏上已经说过一句了：**再按一次 `⏎` 才真覆盖**
+    /// （见 [`Session::name_is_taken`]）。
+    ///
+    /// 与两级停同一个形状（同一个键按两次，ADR 0013），但多一条：
+    /// **缓冲一改它就作废**（见 [`Session::edit_mut`]）——问的是「盖掉这一个名字吗」，
+    /// 名字改了，那一问就不再作数。
+    asked: bool,
+}
+
+impl Naming {
+    /// 打出来的这个名字。**两头的空白不算数**，而这条规矩只有这一处：
+    /// 「一个字都没打就按回车是算了」（见 [`naming_action`]）与「存成这个名字」
+    /// （见 `super::store_preset`）问的是同一件事，各写一遍就会有一处忘了 `trim`。
+    pub(super) fn name(&self) -> &str {
+        self.buffer.trim()
+    }
+
+    /// 撞名那一句问过了没有。press 那一层照它分岔：问过了才走覆盖那一条
+    /// （`preset::Presets::replace`），没问过走盖不掉同名的那一条（`save`）。
+    pub(super) fn asked(&self) -> bool {
+        self.asked
+    }
 }
 
 /// 展开着的那一卷，以及报告区滚到哪儿了。
@@ -436,8 +575,8 @@ pub struct Edit {
 /// 一个会话。
 ///
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
-/// 按 `e` 展开逐页（左栏跟着收起）、按键退出。预设的存取（`12`）、一键出标定图（`13`）、
-/// 单卷续做（`14`）都还没接上，它们各自会往这里加状态。
+/// 按 `e` 展开逐页（左栏跟着收起）、按 `p` 开预设那一栏（存下当前两层，或套用一份）、
+/// 按键退出。一键出标定图（`13`）与单卷续做（`14`）还没接上，它们各自会往这里加状态。
 ///
 /// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
 /// 攒着的那份报告与两条进度在 [`super::live::Live`] 上。分开是因为它们的寿命不同——
@@ -546,7 +685,9 @@ impl Session {
     pub fn stopping(&self) -> Instruction {
         match self.mode {
             Mode::Running(pressed) => pressed,
-            Mode::Browsing | Mode::Editing(_) | Mode::Expanded(_) => Instruction::Continue,
+            Mode::Browsing | Mode::Editing(_) | Mode::Expanded(_) | Mode::Picking(_) => {
+                Instruction::Continue
+            }
         }
     }
 
@@ -555,7 +696,31 @@ impl Session {
     pub fn expansion(&self) -> Option<&Expansion> {
         match &self.mode {
             Mode::Expanded(expansion) => Some(expansion),
-            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) => None,
+            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) | Mode::Picking(_) => None,
+        }
+    }
+
+    /// 预设那一栏此刻的样子。没开着就是 `None`。
+    pub fn picking(&self) -> Option<&Picker> {
+        match &self.mode {
+            Mode::Picking(picker) => Some(picker),
+            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) | Mode::Expanded(_) => None,
+        }
+    }
+
+    /// 当前的设备层与口味层，装成一份**预设**。**范围层不进去**——
+    /// 它每趟都不同，混进预设会让人套用时误写到上一次的输出目录（`crate::preset` 的抬头）。
+    ///
+    /// 「不含范围层」在这里不必靠自觉：这一层拼得出来的只有那两个字段，
+    /// 而盘上那两节各自写着 `deny_unknown_fields`。
+    ///
+    /// **「没说」原样带过去。** 屏上那一格「默认（lanczos3）」与「说了 lanczos3」
+    /// 在这里是 `None` 与 `Some(Lanczos3)` 两个值，写进 TOML 就是「这一项不写」与
+    /// 「这一项写着 `filter = "lanczos3"`」——两者的差别到这一步才落到盘上（停车场 Q58）。
+    pub fn preset(&self) -> Preset {
+        Preset {
+            device: self.device.clone(),
+            taste: self.taste.clone(),
         }
     }
 
@@ -616,6 +781,7 @@ impl Session {
             Mode::Editing(edit) => editing_action(edit, key),
             Mode::Running(pressed) => running_action(key, *pressed),
             Mode::Expanded(_) => expanded_action(key),
+            Mode::Picking(picker) => picking_action(picker, key),
         }
     }
 
@@ -644,6 +810,8 @@ impl Session {
             // 展开逐页。它与光标停在哪一行无关：报告区是右边那一大格的事，
             // 而左栏此刻只是让位的那一方。
             Key::Char('e') => Action::Expand,
+            // 预设那一栏。同样与光标停在哪一行无关：存的是**整两层**，不是这一行。
+            Key::Char('p') => Action::Pick,
             Key::Char('q') | Key::Esc | Key::Interrupt => Action::Quit,
             Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
         }
@@ -676,13 +844,13 @@ impl Session {
             Action::Toggle => self.toggle_volume(),
             Action::Edit => self.begin_edit(),
             Action::Remove => self.remove_volume(),
-            Action::Insert(character) => self.edit_mut(|edit| edit.buffer.push(character)),
-            Action::Backspace => self.edit_mut(|edit| {
-                edit.buffer.pop();
+            Action::Insert(character) => self.edit_mut(|buffer| buffer.push(character)),
+            Action::Backspace => self.edit_mut(|buffer| {
+                buffer.pop();
             }),
             Action::Complete => self.complete(),
             Action::Commit => self.commit(),
-            Action::Cancel => self.mode = Mode::Browsing,
+            Action::Cancel => self.cancel(),
             // 起线程、拼 `Request`、把观察者接上去，都在 [`super::press`] 那一层：
             // 本模块一个终端都不碰，也不该起线程。那一层把 `Start` 接走之后才调
             // [`act`](Self::act)，因此这里到不了——真到了也只是这一下没起来，不是错。
@@ -694,6 +862,11 @@ impl Session {
             // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
             // 因此这里到不了；真到了也只是这一下没展开，不是错。
             Action::Expand | Action::Turn(_) => {}
+            // 预设那三支都要碰盘（列出来、读一份、写一份），而本模块碰不到盘：
+            // 真做这三件事的是 [`super::press`]，它随后调 [`pick`](Self::pick)、
+            // [`took`](Self::took)、[`saved`](Self::saved) 那几个。与上面两支同一条分法，
+            // 因此这里到不了——真到了也只是这一下没动，不是错。
+            Action::Pick | Action::Take | Action::Store => {}
             Action::Collapse => self.mode = Mode::Browsing,
             Action::Scroll(toward) => self.scroll(toward),
             Action::Quit => return Exit::Leave,
@@ -711,6 +884,68 @@ impl Session {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
         self.notice = None;
         self.mode = Mode::Expanded(expansion);
+    }
+
+    /// 进预设那一栏，列的是 `names`。
+    ///
+    /// 列什么、从哪一份文件列的，都由 [`super::press`] 从盘上读来（[`Action::Pick`]），
+    /// 与[展开](Self::expand)收下一份 [`Expansion`] 是同一条：那一层读得到，本模块读不到。
+    pub(super) fn pick(&mut self, names: Vec<String>, file: PathBuf) {
+        self.notice = None;
+        self.mode = Mode::Picking(Picker::new(names, file));
+    }
+
+    /// 套用一份预设：**两层整个换成它，范围层一格不动**（票面第三条）。
+    ///
+    /// 整个换而不是「只盖它说到的那几项」：一份预设就是一整份两层的立场，
+    /// 套上它之后屏上看到的必须就是那一份——否则「存出去再套回来」不是一次往返，
+    /// 而是与上一次配置的一次合并，而合出来的东西没人说得清是什么。
+    /// 它说「没说」的那几项因此也换成「没说」（屏上落回`默认（…）`那一格）。
+    ///
+    /// 套完回浏览：这一栏的事做完了，而改完接着要看的是左栏。
+    pub(super) fn took(&mut self, name: &str, preset: Preset) {
+        self.device = preset.device;
+        self.taste = preset.taste;
+        self.mode = Mode::Browsing;
+        self.notice = Some(format!(
+            "套上了「{name}」：设备层与口味层换成了它，范围层一格没动"
+        ));
+    }
+
+    /// 存好了：那个名字进这一栏的列表，光标停到它上面。
+    ///
+    /// **不退出这一栏**：刚存出去的那一份就摆在眼前的列表上，「存成了什么」因此看得见。
+    /// 说的那句话里带着**命令行上怎么用它**——存预设是为了下一次不必重配，
+    /// 而下一次多半在命令行上（spec 的 story 12）。**写到哪儿了不在这句话里**：
+    /// 屏底那一格不折行，一条长路径会被切掉；那份文件的位置摆在这一栏自己身上
+    /// （见 [`Picker::file`]），它折得下来。
+    pub(super) fn saved(&mut self, name: &str) {
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.stored(name);
+        }
+        self.notice = Some(format!(
+            "存好了：「{name}」——命令行上 --preset {name} 就是它"
+        ));
+    }
+
+    /// 那个名字已经有人占着：**说一句，闩上「再按一次就覆盖」**。
+    ///
+    /// 两下而不是一下，理由与两级停同一条（ADR 0013：中止是「再按一次」）：
+    /// 盖掉的可能是别人手写的一份预设，而那一步不可逆。
+    /// 这一句非说不可的还有第二半——**覆盖会把那份文件整个重排**，
+    /// 手写的注释与排版留不下来（见 `preset::insert`）。
+    pub(super) fn name_is_taken(&mut self, name: &str) {
+        if let Mode::Picking(Picker {
+            naming: Some(naming),
+            ..
+        }) = &mut self.mode
+        {
+            naming.asked = true;
+        }
+        self.notice = Some(format!(
+            "已经有一份「{name}」了：再按一次 ⏎ 覆盖它。\
+             覆盖会把那份预设文件整个照标准格式重排，手写的注释与排版留不下来"
+        ));
     }
 
     /// 报告区往一个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
@@ -758,24 +993,45 @@ impl Session {
         }
     }
 
+    /// 光标挪一行。**预设那一栏开着时挪的是那一栏**——左栏此刻不在屏上
+    /// （与展开那一副同一条：`↑↓` 改的恒是眼前这一列，见 [`expanded_action`]）。
     fn move_cursor(&mut self, step: Step) {
-        let rows = self.rows().len();
-        self.cursor = match step {
-            Step::Next => (self.cursor + 1) % rows,
-            Step::Back => (self.cursor + rows - 1) % rows,
-        };
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.at = around(picker.at, picker.rows(), step);
+            return;
+        }
+        self.cursor = around(self.cursor, self.rows().len(), step);
     }
 
-    fn edit_mut(&mut self, change: impl FnOnce(&mut Edit)) {
-        if let Mode::Editing(edit) = &mut self.mode {
-            change(edit);
-            // 缓冲一变，上一次列出来的那一层就不作数了。
-            edit.candidates.clear();
+    /// 缓冲改一个字。**两处缓冲同一条规矩**：改完把上一次问出去的那件事作废——
+    /// 编辑一行时那是列出来的候选，打预设名时那是「盖掉同名的那一份吗」这一问
+    /// （见 [`Naming::asked`]）。
+    fn edit_mut(&mut self, change: impl FnOnce(&mut String)) {
+        match &mut self.mode {
+            Mode::Editing(edit) => {
+                change(&mut edit.buffer);
+                edit.candidates.clear();
+            }
+            Mode::Picking(Picker {
+                naming: Some(naming),
+                ..
+            }) => {
+                change(&mut naming.buffer);
+                naming.asked = false;
+            }
+            Mode::Browsing | Mode::Running(_) | Mode::Expanded(_) | Mode::Picking(_) => {}
         }
     }
 
     /// 进入编辑，缓冲里先摆着当前的取值——改一个字比重打一遍便宜。
+    ///
+    /// **预设那一栏上是打一个新名字**：那一行本来就是「存成一份新的」，缓冲从空的起
+    /// （与「＋ 再打一个卷进来」同一条——那一行也没有「当前取值」可摆）。
     fn begin_edit(&mut self) {
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.naming = Some(Naming::default());
+            return;
+        }
         let field = self.focus();
         let buffer = match field {
             Field::AddVolume => String::new(),
@@ -786,6 +1042,17 @@ impl Session {
             buffer,
             candidates: Vec::new(),
         });
+    }
+
+    /// 丢掉眼下这一步。**退一步，不是退到底**：打预设名打到一半退回那一栏的列表上，
+    /// 再按一次才出这一栏（见 [`naming_action`]）。
+    fn cancel(&mut self) {
+        if let Mode::Picking(picker) = &mut self.mode
+            && picker.naming.take().is_some()
+        {
+            return;
+        }
+        self.mode = Mode::Browsing;
     }
 
     /// **逐层补全**：只列打到的那一层，不递归、不建索引、不缓存（ADR 0009）。
@@ -901,6 +1168,72 @@ fn expanded_action(key: Key) -> Action {
         Key::Char('e') | Key::Esc => Action::Collapse,
         Key::Char('q') | Key::Interrupt => Action::Quit,
         Key::Enter | Key::Space | Key::Backspace | Key::Char(_) => Action::Ignored,
+    }
+}
+
+/// 预设那一栏的按键表。两副样子：在列表上走，或者正在打一个新名字。
+fn picking_action(picker: &Picker, key: Key) -> Action {
+    match &picker.naming {
+        Some(naming) => naming_action(naming, key),
+        None => listing_action(picker, key),
+    }
+}
+
+/// 在预设那一栏的列表上走时的按键表。
+///
+/// **上下与回车照左栏那一副**（`↑↓`／`kj` 挪一行、`⏎`／空格「就在这一行上动手」）：
+/// 这一栏与左栏是同一种东西——一列可以停上去的行，停在哪一行决定那一下做什么。
+/// 停在一份预设上是**套用**，停在末尾那一行上是**打一个名字存下来**，
+/// 与范围层「＋ 再打一个卷进来」逐字同一个手势。
+///
+/// **`p` 与 `Esc` 都退得回配置**，理由与展开那一副的 `e`／`Esc` 同一条：
+/// 前者是开这一栏那个键按回去，后者是「退一步」。左右键在这里没有意义——
+/// 这一栏上一行只有一个名字，没有取值环。
+fn listing_action(picker: &Picker, key: Key) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Move(Step::Back),
+        Key::Down | Key::Char('j') => Action::Move(Step::Next),
+        Key::Enter | Key::Space => match picker.picked() {
+            Some(_) => Action::Take,
+            None => Action::Edit,
+        },
+        Key::Char('p') | Key::Esc => Action::Cancel,
+        Key::Char('q') | Key::Interrupt => Action::Quit,
+        Key::Left | Key::Right | Key::Tab | Key::BackTab | Key::Backspace | Key::Char(_) => {
+            Action::Ignored
+        }
+    }
+}
+
+/// 正在打一个新预设名时的按键表。**与编辑左栏一行同一副样子**
+/// （见 [`editing_action`]）：字进缓冲、`⏎` 收下、`Esc` 丢掉、上下左右一个都不接。
+///
+/// 三处不同，各有理由：
+///
+/// - **`⇥` 在这里没有意义**：预设名不是路径，没有「下一层」可补（补全那件事在 `complete`）。
+/// - **一个字都没打就按回车是「算了」**，与「再打一个卷进来」那一行同一条
+///   （见 [`Session::take`]）：那不是要存一份没有名字的预设。
+/// - **`Esc` 退回的是这一栏的列表，不是配置**：打名字是这一栏里的一步，
+///   退一步该退到上一步（再按一次才出这一栏）。
+fn naming_action(naming: &Naming, key: Key) -> Action {
+    match key {
+        Key::Char(character) => Action::Insert(character),
+        Key::Space => Action::Insert(' '),
+        Key::Backspace => Action::Backspace,
+        Key::Enter if naming.name().is_empty() => Action::Cancel,
+        Key::Enter => Action::Store,
+        Key::Esc => Action::Cancel,
+        Key::Interrupt => Action::Quit,
+        Key::Tab | Key::BackTab | Key::Up | Key::Down | Key::Left | Key::Right => Action::Ignored,
+    }
+}
+
+/// 一列 `rows` 行里挪一格，**两头都绕回去**。左栏与预设那一栏共用它——
+/// 「挪到头就绕回来」是同一条规矩，写两份就会有一处忘了绕。
+fn around(at: usize, rows: usize, step: Step) -> usize {
+    match step {
+        Step::Next => (at + 1) % rows,
+        Step::Back => (at + rows - 1) % rows,
     }
 }
 
@@ -1335,6 +1668,12 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    /// 预设那一栏是哪一份文件列出来的。真会话里由 `super::press` 从盘上读来，
+    /// 而本模块碰不到盘——这几条用例问的也不是它。
+    fn presets_file() -> PathBuf {
+        PathBuf::from("配置/tonefit/presets.toml")
+    }
+
     /// 每一个环转一圈都回得到出发点，而且**转一圈的长度就是那一项的取值个数**。
     fn ring_of<T: Clone + PartialEq + std::fmt::Debug>(start: T, next: impl Fn(T) -> T) -> Vec<T> {
         let mut seen = vec![start.clone()];
@@ -1378,6 +1717,8 @@ mod tests {
             session.action(Key::Char('x')),
             Action::Start(RunMode::Process)
         );
+        // 预设那一栏也在每一行上开得动：存的是整两层，与光标停在哪儿无关。
+        assert_eq!(session.action(Key::Char('p')), Action::Pick);
         // 打字与补全在浏览时没有意义；删卷的键在不是卷的行上也没有。
         assert_eq!(session.action(Key::Char('z')), Action::Ignored);
         assert_eq!(session.action(Key::Char('d')), Action::Ignored);
@@ -1447,6 +1788,8 @@ mod tests {
             Key::Char('d'),
             // 展开那个键跑着时同样按不动（停车场 Q72）：报告还在长。
             Key::Char('e'),
+            // 预设那一栏也开不了：套用一份预设就是把两层整个换掉，而这时三层只读。
+            Key::Char('p'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1489,6 +1832,8 @@ mod tests {
             Key::Char('x'),
             Key::Char('s'),
             Key::Char('d'),
+            // 预设那一栏在这里也开不了：它占的是主区，而主区此刻正摊着逐页。
+            Key::Char('p'),
         ] {
             assert_eq!(
                 session.action(key),
@@ -1496,6 +1841,152 @@ mod tests {
                 "{key:?} 展开着时不该生效"
             );
         }
+
+        // 八、预设那一栏，在列表上走：`↑↓` 挪一行，`⏎`／空格随停在哪一行分派
+        // （停在一份预设上是套用它），`p`／`Esc` 回配置。
+        session.press(Key::Esc);
+        session.pick(vec!["漫画".to_owned(), "画集".to_owned()], presets_file());
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Enter), Action::Take);
+        assert_eq!(session.action(Key::Space), Action::Take);
+        assert_eq!(session.action(Key::Char('p')), Action::Cancel);
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 这一栏上一行只有一个名字：没有取值环，也没有第二件事可做。
+        for key in [
+            Key::Left,
+            Key::Right,
+            Key::Tab,
+            Key::BackTab,
+            Key::Backspace,
+            Key::Char('d'),
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('e'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在预设那一栏上不该生效"
+            );
+        }
+
+        // 九、停在末尾那一行（＋ 存成一份新的）上：`⏎` 是「打个名字」，不是套用。
+        session.press(Key::Up);
+        assert_eq!(session.picking().expect("那一栏开着").picked(), None);
+        assert_eq!(session.action(Key::Enter), Action::Edit);
+        session.press(Key::Enter);
+
+        // 十、正在打名字：字进缓冲，`⏎` 存下，`Esc` 退回列表。
+        assert_eq!(session.action(Key::Char('漫')), Action::Insert('漫'));
+        assert_eq!(session.action(Key::Space), Action::Insert(' '));
+        assert_eq!(session.action(Key::Backspace), Action::Backspace);
+        // 名字不是路径，没有「下一层」可补。
+        assert_eq!(session.action(Key::Tab), Action::Ignored);
+        // 一个字都没打就按回车是「算了」，与「再打一个卷进来」那一行同一条。
+        assert_eq!(session.action(Key::Enter), Action::Cancel);
+        session.press(Key::Char('漫'));
+        assert_eq!(session.action(Key::Enter), Action::Store);
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        for key in [Key::Up, Key::Down, Key::Left, Key::Right, Key::BackTab] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 打名字时不该生效"
+            );
+        }
+
+        // `Esc` 退的是一步：先回到那一栏的列表上，再按一次才出这一栏。
+        session.press(Key::Esc);
+        assert!(
+            session
+                .picking()
+                .is_some_and(|picker| picker.naming().is_none()),
+            "Esc 一下就把整栏关掉了"
+        );
+        session.press(Key::Esc);
+        assert_eq!(session.mode(), &Mode::Browsing);
+    }
+
+    /// **「没说」与「说了一个恰好等于默认值的值」存出去是两份不同的 TOML**（停车场 Q58）。
+    ///
+    /// 屏上那一格的差别（`默认（height）` 与 `height`）到这一步才落到盘上：前者那一项
+    /// **不写**，后者写。不分开的话，存一份「只说了两项」的预设就无从谈起——只能十一项
+    /// 全写满，而那意味着套用它时把每一项都盖了一遍，命令行上再想只改一项就没有余地了。
+    #[test]
+    fn what_was_never_said_is_not_written_and_a_default_that_was_said_is() {
+        let spelled = |session: &Session| {
+            crate::preset::write(&std::collections::BTreeMap::from([(
+                "存出去".to_owned(),
+                session.preset(),
+            )]))
+            .expect("写得出来")
+        };
+
+        // 一项都没碰过的会话：两节都在，一个键都没有。
+        let untouched = spelled(&Session::new());
+        assert!(
+            untouched.contains("[preset.\"存出去\".taste]"),
+            "{untouched}"
+        );
+        assert!(
+            !untouched.contains("fit"),
+            "一项都没说却写出了取值：{untouched}"
+        );
+
+        // 把适配方式转到**恰好等于默认值**的那一档上：屏上从「默认（…）」变成那个值本身。
+        let mut session = Session::new();
+        session.focus_on(Field::Fit);
+        assert!(session.shown(Field::Fit).starts_with("默认"));
+        session.press(Key::Right);
+        assert_eq!(session.taste.fit, Some(FitMode::default()));
+        assert_eq!(session.shown(Field::Fit), FitMode::default().name());
+
+        let said = spelled(&session);
+        assert!(
+            said.contains(&format!("fit = \"{}\"", FitMode::default().name())),
+            "说了一个恰好等于默认值的值，盘上却没有它：{said}"
+        );
+        // 别的项仍是「没说」，一项都没跟着写出去。
+        assert!(!said.contains("filter"), "{said}");
+    }
+
+    /// 套用一份预设：**两层整个换成它，范围层一格不动**（票面第三条）。
+    ///
+    /// 「整个换」包括它没说的那几项——套完屏上看到的就是那一份，
+    /// 而不是它与上一次配置合出来的某种东西。范围层那一半在这里就地验：
+    /// [`Session::preset`] 拼得出来的只有两层，而套用只动那两个字段。
+    #[test]
+    fn taking_a_preset_swaps_both_layers_and_leaves_the_scope_alone() {
+        let mut session = Session::new();
+        session.scope.out = Some(PathBuf::from("出"));
+        session.scope.volumes.push(Picked {
+            path: PathBuf::from("库/卷一"),
+            on: true,
+        });
+        let scope = session.scope.clone();
+        // 上一次配的：位深点了名，滤波器也点了名。
+        session.taste.bit_depth = Some(BitDepth::Eight);
+        session.taste.filter = Some(Filter::Bicubic);
+
+        session.pick(vec!["漫画".to_owned()], presets_file());
+        session.took("漫画", crate::preset::every_field());
+
+        assert_eq!(session.preset(), crate::preset::every_field());
+        assert_eq!(session.scope, scope, "套用预设动了范围层");
+        assert_eq!(session.mode(), &Mode::Browsing, "套完没回到配置上");
+
+        // 套一份**什么都没说的**：上一次点过的那几项跟着回到「没说」，不是留在原处。
+        session.pick(vec!["空的".to_owned()], presets_file());
+        session.took("空的", crate::preset::Preset::default());
+        assert_eq!(session.taste.bit_depth, None);
+        assert!(session.shown(Field::Filter).starts_with("默认"));
+        assert_eq!(session.scope, scope);
     }
 
     /// **展开把左栏收起，收起把它原样还回来**（票面第三条）。

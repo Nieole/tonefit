@@ -26,7 +26,7 @@ use tonefit::{Instruction, Pass};
 
 use super::complete;
 use super::live::{Live, Walking};
-use super::state::{Edit, Field, Layer, Mode, Session, Shape};
+use super::state::{Edit, Field, Layer, Mode, Picker, Session, Shape};
 
 /// 左栏的宽度。配置一直在场，改一下就能在右边看到影响。
 ///
@@ -64,6 +64,11 @@ const START_KEYS: &str = "t 试算 · x 执行";
 /// （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
 const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
 
+/// 预设那一栏末尾那一行。**说的是「当前两层」而不是「这一份配置」**：
+/// 存出去的不含范围层，而那一行是屏上唯一说得到这件事的地方
+/// （抬头说的是这一栏装什么，这一行说的是按下去会存什么）。
+const ADD_PRESET: &str = "＋ 把当前的设备层与口味层存成一份预设";
+
 /// 左栏在这一屏上占多宽。装得下就是 [`CONFIG_WIDTH`]，装不下就让给主区。
 ///
 /// **展开着的时候是零**：那一刻左栏整个收起，主区吃满宽度
@@ -95,8 +100,79 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
     if !expanded {
         frame.render_widget(config(session), left);
     }
-    main_pane(frame, main, session, live);
+    // 预设那一栏**占的是主区，左栏照旧在场**：存出去的就是左栏上那两层，
+    // 而「存的是什么」在按下去之前得看得见。它与展开那一副因此正好相反——
+    // 那一副要的是宽度（逐页那两行过 100 列），这一副要的是**对照**。
+    match session.picking() {
+        Some(picker) => frame.render_widget(presets(picker, main), main),
+        None => main_pane(frame, main, session, live),
+    }
     frame.render_widget(self::footer(session, live), footer);
+}
+
+/// 预设那一栏：盘上有的那几份摆成一列，末尾一行是「存成一份新的」。
+///
+/// **抬头把「不装范围层」说出来**（`crate::preset` 的抬头写着为什么）：
+/// 套用一份预设不会动输出根与卷清单，而那正是用户按下这个键之前最该放心的一件事。
+/// 与左栏范围层那一块的抬头（`Layer::Scope`）说的是同一件事的两半。
+///
+/// 光标那一行反白，与左栏同一副样子（见 [`config`]）：反白说的是「就在这一行上动手」。
+///
+/// **头一行说这一栏是哪一份文件列出来的**：存出去的东西落在用户自己的配置目录里，
+/// 而下一次多半是在命令行上 `--preset` 用它。这句话摆在这一格而不是屏底那一句里，
+/// 是因为**屏底那一格不折行**，一条长路径会被切掉，而这一格折得下来。
+///
+/// **名字多过这一格装得下的行数时，视口跟着光标走**（见 [`opens_from`]）：
+/// 末尾那一行是唯一存得出去的入口，它掉出屏外就等于这一栏没有出路了。
+fn presets(picker: &Picker, area: Rect) -> Paragraph<'static> {
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(Span::styled(
+            format!(" {}", picker.file().display()),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+    ];
+    if picker.names().is_empty() {
+        lines.push(Line::from(" 这份文件里还没有预设——末尾那一行存下第一份。"));
+        lines.push(Line::from(""));
+    }
+    let rows = picker
+        .names()
+        .iter()
+        .map(|name| format!("  {name}"))
+        .chain([format!("  {ADD_PRESET}")]);
+    let listed_from = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    for (at, text) in rows.enumerate() {
+        let style = if at == picker.at() {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("预设 · 装设备层与口味层，范围层不进"),
+        )
+        .scroll((opens_from(picker, area, listed_from), 0))
+        .wrap(Wrap { trim: false })
+}
+
+/// 预设那一栏从第几行画起。**只往下滚到「光标那一行还在格子里」为止，不多滚一行。**
+///
+/// 滚动量是**算出来的，不是记着的**：这一栏没有自己的滚动状态——光标在哪儿，
+/// 视口就跟到哪儿。列表短于这一格时它恒是零（`saturating_sub`），因此常见的那几份
+/// 预设摆在最上面，与没有这一段时一模一样。
+///
+/// `listed` 是清单在正文里从第几行开始（前面那几行是文件位置与空行）。
+/// 一行一行地数够用：这一栏每一行都是一个名字，不像报告那样会折行
+/// （名字长过这一格的话折下来的那一截会挤掉一行，代价是滚多了一行，不是滚丢了光标）。
+fn opens_from(picker: &Picker, area: Rect, listed: u16) -> u16 {
+    let inside = area.height.saturating_sub(2);
+    let cursor = listed.saturating_add(u16::try_from(picker.at()).unwrap_or(u16::MAX));
+    cursor.saturating_add(1).saturating_sub(inside)
 }
 
 /// 左栏：三层，各占一块，按生命周期从上到下。
@@ -105,8 +181,14 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
 /// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗。
 /// 真正拦住按键的不是这里——是状态机在那个状态下一个改动键都不派
 /// （见 `super::state::running_action`）；这里只把那件事说出来。
+///
+/// **反白只在左栏就是眼下动手的地方时才给**：那一格反白说的是「就在这一行上动手」。
+/// 跑着时按不动（上面那一条），预设那一栏开着时按键**全归那一栏**——左栏此刻在屏上
+/// 只为让人对照着看存出去的是什么（见 [`shell`]），反白它就是在指一个按不动的地方。
+/// 压暗仍只给跑着那一种：那一种是「这一趟没跑完都改不动」，而预设那一栏一个 `Esc` 就回来了。
 fn config(session: &Session) -> Paragraph<'static> {
     let running = matches!(session.mode(), Mode::Running(_));
+    let acting = matches!(session.mode(), Mode::Browsing | Mode::Editing(_));
     let focus = session.focus();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut drawn: Option<Layer> = None;
@@ -122,8 +204,7 @@ fn config(session: &Session) -> Paragraph<'static> {
             )));
             drawn = Some(layer);
         }
-        // 跑着时光标不反白：那一格反白说的是「就在这一行上动手」，而这时按不动。
-        let style = match (running, field == focus) {
+        let style = match (running, acting && field == focus) {
             (true, _) => Style::default().add_modifier(Modifier::DIM),
             (false, true) => Style::default().add_modifier(Modifier::REVERSED),
             (false, false) => Style::default(),
@@ -522,6 +603,7 @@ fn footer(session: &Session, live: Option<&Live>) -> Paragraph<'static> {
         Mode::Browsing => vec![Line::from(browsing_keys(session, live)), Line::from("")],
         Mode::Running(pressed) => running_lines(*pressed),
         Mode::Expanded(_) => expanded_lines(),
+        Mode::Picking(picker) => picking_lines(picker),
     };
     lines.push(Line::from(session.notice().unwrap_or("").to_owned()));
     Paragraph::new(lines)
@@ -607,6 +689,41 @@ fn expanded_lines() -> Vec<Line<'static>> {
     ]
 }
 
+/// 预设那一栏屏底那两行：**上一行说这时按得动的键**，下一行说这一栏与三层的关系。
+///
+/// 上一行随光标停在哪一行而变，与浏览时同一条（见 [`browsing_keys`]）：停在一份预设上
+/// 是套用它——**把名字摆进那句话里**，因为套上去之后两层整个换掉，而那不可撤销；
+/// 停在末尾那一行上是打一个名字存下来。
+///
+/// 打名字那一副照编辑一行的样子（见 [`editing_lines`]）：缓冲加一句按键提示。
+/// 下一行这时说的是**存出去的是哪两层**——范围层不进预设是这一栏最要紧的一条性质
+/// （票面第三条），而用户按下 `⏎` 之前唯一会读的就是屏底这两行。
+fn picking_lines(picker: &Picker) -> Vec<Line<'static>> {
+    let Some(naming) = picker.naming() else {
+        let [keys, what] = match picker.picked() {
+            Some(name) => [
+                format!(" ↑↓ 选 · ⏎ 套用「{name}」 · p／Esc 回配置 · q 退出"),
+                // 套用把两层**整个**换掉，包括眼下配好的那几项——那一下不可撤销，
+                // 因此在按下去之前说，与覆盖那一句同一条规矩。
+                " 套用把设备层与口味层整个换成那一份（它没说的那几项跟着回到「默认」），\
+                 眼下配好的两层随之丢掉；范围层不动"
+                    .to_owned(),
+            ],
+            None => [
+                " ↑↓ 选 · ⏎ 打个名字存下来 · p／Esc 回配置 · q 退出".to_owned(),
+                " 存的是设备层与口味层。范围层（输出根与卷）不进预设".to_owned(),
+            ],
+        };
+        return vec![Line::from(keys), Line::from(what)];
+    };
+    vec![
+        Line::from(format!(" 预设名 {}▏   ⏎ 存下 · Esc 回列表", naming.buffer)),
+        Line::from(
+            " 存的是设备层与口味层。范围层（输出根与卷）不进预设，套用时因此写不到上一次的目录去",
+        ),
+    ]
+}
+
 fn editing_lines(session: &Session, edit: &Edit) -> Vec<Line<'static>> {
     let keys = match edit.field.shape() {
         Shape::Path => "⇥ 补这一层 · ⏎ 收下 · Esc 丢掉",
@@ -645,13 +762,14 @@ fn listed(session: &Session, edit: &Edit) -> String {
 ///
 /// **展开那个键只在有卷可展开时才摆**（见 [`expandable`]）：一趟都没跑过时按下去
 /// 只换来一句话，而摆一个只会说「还没跑过」的键与「屏上不摆按不动的键」相左。
+///
+/// **预设那个键每一行上都在**，与试算和执行同一条：存的是整两层，与光标停在哪儿无关。
+/// 它挤进来时展开那个键从「展开逐页」缩成「展开」——这一行在窄终端上是从行尾切掉的
+/// （屏底那一格不折行），每多一个键，尾巴上那个键就少露一截，而尾巴上摆的是退出。
+/// 「展开」与报告区抬头上那句「展开 卷二（第 2/2 卷）」是同一个词，缩了也认得出。
 fn browsing_keys(session: &Session, live: Option<&Live>) -> String {
-    let expand = if expandable(live) {
-        " · e 展开逐页"
-    } else {
-        ""
-    };
-    let common = format!("↑↓ 选 · {START_KEYS}{expand} · q 退出");
+    let expand = if expandable(live) { " · e 展开" } else { "" };
+    let common = format!("↑↓ 选 · {START_KEYS}{expand} · p 预设 · q 退出");
     match session.focus().shape() {
         Shape::Cycle => format!(" ←→ 换一个 · {common}"),
         Shape::Text => format!(" ⏎ 改 · {common}"),
@@ -700,13 +818,34 @@ mod tests {
             .collect()
     }
 
-    /// 左栏上有几格是反白的。**光标停在哪一行只有它看得出来**——
-    /// 逐格拼回来的文字里一点痕迹都没有，而「跑起来之后按不动」正要靠这一格说话。
+    /// **左栏**上有几格是反白的。**光标停在哪一行只有它看得出来**——
+    /// 逐格拼回来的文字里一点痕迹都没有，而「跑起来之后按不动」与「预设那一栏开着时
+    /// 按键不归左栏」两条都要靠这一格说话。
+    ///
+    /// 只数左栏那几列：主区自己也有反白的一行（预设那一栏的光标），一起数就分不出是谁。
     fn reversed_rows(session: &mut Session) -> usize {
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("测试后端起得来");
+        const WIDE: usize = 120;
+        let mut terminal =
+            Terminal::new(TestBackend::new(WIDE as u16, 40)).expect("测试后端起得来");
         terminal
             .draw(|frame| shell(frame, session, None))
             .expect("画得出来");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .enumerate()
+            .filter(|(at, cell)| {
+                at % WIDE < CONFIG_WIDTH as usize && cell.modifier.contains(Modifier::REVERSED)
+            })
+            .count()
+    }
+
+    /// 一格里有几处反白。预设那一栏的光标靠它验（[`reversed_rows`] 只数左栏）。
+    fn reversed_cells(draw: impl FnOnce(&mut Frame), width: u16, height: u16) -> usize {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
+        terminal.draw(draw).expect("画得出来");
         terminal
             .backend()
             .buffer()
@@ -1077,7 +1216,7 @@ mod tests {
 "│  裁边　　　　　　默认（裁）    ││4.0 MiB），未溢写（预算     │"
 "│  跨页拆分　　　　默认（拆）    ││512.0 MiB）                 │"
 "└────────────────────────────────┘└────────────────────────────┘"
-" ←→ 换一个 · ↑↓ 选 · t 试算 · x 执行 · e 展开逐页 · q 退出      "
+" ←→ 换一个 · ↑↓ 选 · t 试算 · x 执行 · e 展开 · p 预设 · q 退出 "
 "                                                                "
 "                                                                "
 "#;
@@ -1366,6 +1505,115 @@ mod tests {
         assert_eq!(spell(Duration::from_secs(42)), "42s");
         assert_eq!(spell(Duration::from_secs(400)), "6m40s");
         assert_eq!(spell(Duration::from_secs(3960)), "1h06m");
+    }
+
+    /// 一个开着预设那一栏的会话。文件位置照真会话那一份的样子（`press` 从盘上读来）。
+    fn picking(names: &[&str]) -> Session {
+        let mut session = Session::new();
+        session.pick(
+            names.iter().map(|name| (*name).to_owned()).collect(),
+            std::path::PathBuf::from("C:/配置/tonefit/presets.toml"),
+        );
+        session
+    }
+
+    /// 把预设那一栏单独画进一格里。
+    fn preset_snapshot(session: &Session, width: u16, height: u16) -> String {
+        let picker = session.picking().expect("那一栏开着");
+        snapshot(
+            |frame| frame.render_widget(presets(picker, frame.area()), frame.area()),
+            width,
+            height,
+        )
+    }
+
+    /// **快照：预设那一栏。** 只钉这一格，与 [`main_snapshot`] 同一条理由——
+    /// 左栏此刻在场（见下一条用例），把它一起钉进来，改一行配置标签就要重录这一段。
+    #[test]
+    fn the_preset_column_lists_what_is_on_disk_and_a_row_to_store_into() {
+        same_screen(
+            &preset_snapshot(&picking(&["漫画", "画集"]), 52, 9),
+            THE_PRESET_COLUMN,
+        );
+
+        // 一份都还没有时那一栏自己说得出来，末尾那一行仍在——它是唯一的出路。
+        let nothing = preset_snapshot(&picking(&[]), 52, 8);
+        assert!(nothing.contains("还没有预设"), "{nothing}");
+        assert!(nothing.contains(ADD_PRESET), "{nothing}");
+
+        // **名字多过这一格装得下的行数时，视口跟着光标走。** 光标绕到末尾那一行上
+        // （唯一存得出去的入口）时它仍在屏上——掉出去就等于这一栏没有出路了。
+        let mut many = picking(&["一", "二", "三", "四", "五", "六", "七", "八"]);
+        let top = preset_snapshot(&many, 52, 8);
+        assert!(top.contains("  一"), "开头几份该在屏上：{top}");
+        many.press(Key::Up);
+        let bottom = preset_snapshot(&many, 52, 8);
+        assert!(bottom.contains(ADD_PRESET), "末尾那一行掉出去了：{bottom}");
+        assert!(!bottom.contains("  一"), "视口没跟着光标走：{bottom}");
+    }
+
+    /// 见 [`the_preset_column_lists_what_is_on_disk_and_a_row_to_store_into`]。
+    const THE_PRESET_COLUMN: &str = r#"
+"┌预设 · 装设备层与口味层，范围层不进───────────────┐"
+"│ C:/配置/tonefit/presets.toml                     │"
+"│                                                  │"
+"│  漫画                                            │"
+"│  画集                                            │"
+"│  ＋ 把当前的设备层与口味层存成一份预设           │"
+"│                                                  │"
+"│                                                  │"
+"└──────────────────────────────────────────────────┘"
+"#;
+
+    /// **预设那一栏开着时左栏照旧在场**：存出去的就是它上面那两层，
+    /// 而「存的是什么」在按下去之前得看得见（与展开那一副正相反——那一副要的是宽度）。
+    ///
+    /// 顺带钉住光标与屏底那一行：停在一份预设上时那一行说的是「套用哪一个」，
+    /// 停在末尾那一行上说的是「打个名字」，打起字来摆的是缓冲——三副样子各说各的。
+    #[test]
+    fn the_preset_column_keeps_the_config_in_sight_and_says_which_key_does_what() {
+        let mut session = picking(&["漫画", "画集"]);
+
+        let listing = tight(&screen(&mut session, None, 120, 40));
+        assert!(listing.contains(&tight(Layer::Device.title())), "左栏没了");
+        assert!(
+            listing.contains("漫画") && listing.contains("画集"),
+            "{listing}"
+        );
+        assert!(listing.contains(&tight("⏎ 套用「漫画」")), "{listing}");
+        // 套用把两层整个换掉，而那一下不可撤销——按下去之前就说在屏上。
+        assert!(
+            listing.contains(&tight("眼下配好的两层随之丢掉")),
+            "{listing}"
+        );
+        // 反白的是**这一栏**的光标，不是左栏那一行的：按键这时全归这一栏，
+        // 而反白说的是「就在这一行上动手」（见 [`config`]）。
+        assert_eq!(
+            reversed_rows(&mut session),
+            0,
+            "预设那一栏开着，左栏那一行却还反白着"
+        );
+        let picker = session.picking().expect("那一栏开着");
+        assert!(
+            reversed_cells(
+                |frame| frame.render_widget(presets(picker, frame.area()), frame.area()),
+                52,
+                9
+            ) > 0,
+            "这一栏的光标那一行没反白"
+        );
+
+        // 挪到末尾那一行上：屏底改口说「打个名字」。
+        session.press(Key::Up);
+        let last = tight(&screen(&mut session, None, 120, 40));
+        assert!(last.contains(&tight("⏎ 打个名字存下来")), "{last}");
+
+        // 打起字来：缓冲在屏底，而**范围层不进预设**这句话就摆在它下面一行。
+        session.press(Key::Enter);
+        session.press(Key::Char('新'));
+        let naming = tight(&screen(&mut session, None, 120, 40));
+        assert!(naming.contains(&tight("预设名 新")), "{naming}");
+        assert!(naming.contains(&tight("范围层")), "{naming}");
     }
 
     /// 快照比对。对不上就把**实际那一屏**整个印出来——改的人照着它逐行确认，
