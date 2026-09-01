@@ -23,6 +23,7 @@ mod encode;
 mod envelope;
 mod geometry;
 mod gray;
+mod interlock;
 mod medium;
 mod metadata;
 mod metric;
@@ -54,6 +55,7 @@ pub use decode::Salvage;
 pub use envelope::Envelope;
 pub use geometry::{FitMode, GeometryGate, Size, max_target_pixels};
 pub use gray::GrayImage;
+pub use interlock::{Interlock, Voice};
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
 pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
@@ -1522,7 +1524,7 @@ fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
         })
         .collect();
     if picked.is_empty() {
-        return Err(nothing_left_error(request));
+        return Err(nothing_left_error(request, gate));
     }
     Ok(picked)
 }
@@ -1539,7 +1541,7 @@ fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
 ///
 /// 两道界只有一道动得了：面板灰阶数走 `--gray-levels`（ADR 0003），几何门动不了——
 /// 它是页的几何事实，不是一个可以放宽的档位。
-fn nothing_left_error(request: &Request) -> anyhow::Error {
+fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
     let panel = request.profile.panel();
     let depths = BitDepth::candidates(panel.gray_levels);
     match request.bit_depth {
@@ -1556,18 +1558,57 @@ fn nothing_left_error(request: &Request) -> anyhow::Error {
             )
         }
         // 位深那一维过得去，裁空的只能是抖动那一维：几何门不成立，而 `--dither` 点了抖动。
-        //
-        // 门本身仍然放宽不了——它是页的几何事实。但**几何**动得了：以高为准把这一页放大到
-        // 面板高，门跟着成立（页几何批 01 号票）。那是唯一一条出路，说出来，
-        // 不然用户手上只剩「换一批源页」。
-        _ => anyhow!(
-            "点名的抖动模式越过了几何门：这一页源比目标尺寸还小，按不放大原样输出，\
-             阅读器显示时还要再缩一次，抖动推到高频的误差会被折回低频。\
-             门在这一页上不成立，抖动因此关闭，--dither 覆盖不了它——它是页的几何事实，\
-             不是一个可以放宽的档位（ADR 0007）。\
-             改得动的是几何：--fit height 把这一页放大到面板高，门跟着成立"
-        ),
+        // 那正是互锁 ③，处置是维持拒绝（页几何批 05 号票）。
+        _ => {
+            debug_assert!(
+                Interlock::dither_outside_the_gate(request.dither, gate),
+                "候选集被裁空了，而两道界一道都没拦"
+            );
+            dither_outside_the_gate_error(request.fit)
+        }
     }
+}
+
+/// 互锁 ③ 咬上时那条拒绝的说法（05 号票的处置 ③：**维持拒绝**）。
+///
+/// 规则那一句由 [`Interlock`] 自己说——同一句还要从 `--help` 里出来，措辞只有那一份。
+/// 这里补的是**这一趟**才知道的那件事：适配方式那一侧还有没有出路。撞上的是哪一页
+/// 由错误链外层带着（见 [`Candidates::broken`]）。
+///
+/// 两条路上说法不同，而且**两边都不许把话说满**——把话说满正是本票要改掉的毛病：
+///
+/// - **fit-inside 上**，`--fit height` 把这一页放大到面板高，门跟着成立（页几何批 01 号票）。
+///   **但不是每一页都够得着这条出路**：宽高比极端到以高为准算出的目标尺寸越过
+///   [兜底上界](FitMode::target)的页会被退回 fit-inside，换过去仍是这条拒绝（07 号票）。
+///   那道例外要跟着说出来，不然用户照着敲一遍只会撞第二次。
+/// - **以高为准上**根本没有出路：那条路上每一页的高都等于面板高，门恒成立；
+///   走得到这里的只能是被兜底上界退回去的页——它已经是一张 fit-inside 的页了。
+///   那时劝人换 `--fit height` 是**假话**，改说剩下的那两条路。
+///
+/// 这里判不出手上这一页是哪一种：错误在碰卷之前就备好（[`Candidates::new`]），
+/// 那时没有页可量。**能做的是把话说全**——真要按页分岔，得把这条拒绝挪到判门的地方，
+/// 那是另一件事（停车场 Q33）。
+fn dither_outside_the_gate_error(fit: FitMode) -> anyhow::Error {
+    let way_out = match fit {
+        FitMode::Inside => format!(
+            "改得动的是几何：--fit height 把这一页放大到面板高，门跟着成立。\
+             够不着这条出路的只有一种页——宽高比极端到以高为准算出的目标尺寸越过 {} 像素、\
+             会被兜底上界退回 fit-inside 的那种（07 号票）；那种页换过去仍是这条拒绝，\
+             走下面那两条",
+            max_target_pixels()
+        ),
+        FitMode::Height => format!(
+            "适配方式这一侧已经没有出路：以高为准让每一页都贴住面板高，\
+             走到这里的只能是目标尺寸越过 {} 像素、被兜底上界退回 fit-inside 出的那种页\
+             （07 号票），门是在那张退回来的页上判的",
+            max_target_pixels()
+        ),
+    };
+    anyhow!(
+        "{}。{way_out}。剩下两条路——不点 --dither fs（判据自己会替这一页把抖动关掉），\
+         或换一张宽高比没这么极端的源页",
+        Interlock::DitherOutsideTheGate
+    )
 }
 
 /// 一个源页**最多**产出几张输出页：跨页从装订沟上切一刀，因此是两张（页几何批 04 号票）。

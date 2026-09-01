@@ -10,6 +10,7 @@ use crate::decide::{CandidateScore, Verdict};
 use crate::decode::Salvage;
 use crate::envelope::Envelope;
 use crate::geometry::{FitMode, GeometryGate, Size};
+use crate::interlock::Interlock;
 use crate::medium::IoPlan;
 use crate::profile::Profile;
 use crate::quantize::{Candidate, Dither};
@@ -57,6 +58,18 @@ pub struct Report {
 }
 
 impl Report {
+    /// 这一趟的开关咬上了哪几条互锁（页几何批 05 号票）。
+    ///
+    /// 规则不在这里，在 [`Interlock`]：报告只把自己带着的那几项开关交给它。
+    /// 哪几条落到报告上、落在报告的哪一段，界面层照 [`Interlock::voice`] 挑
+    /// （见二进制侧的 `render::header`）——三条处置各不相同，报告不替它们挑。
+    ///
+    /// [`Interlock::DitherOutsideTheGate`] 出不来，而那不是漏：它的处置是**当场拒绝**，
+    /// 咬上了 `run` 就返回 `Err`——这份结构存在本身，就是它没咬上的证据。
+    pub fn interlocks(&self) -> impl Iterator<Item = Interlock> {
+        Interlock::engaged(self.fit, self.crop, self.split)
+    }
+
     /// 本次每一个失败页，按卷序、卷内按阅读顺序（spec 的 story 26）。
     ///
     /// 页自己说得出它是哪一卷的哪一页——`source` 是卷根接上成员的相对路径。

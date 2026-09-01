@@ -2205,10 +2205,14 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
 }
 
 /// 几何门是**页的**几何事实，不是自动选择：`--dither` 覆盖不了它
-/// （ADR 0007：不成立时整体关闭，不降级）。
+/// （ADR 0007：不成立时整体关闭，不降级）。那是互锁 ③，处置是**维持拒绝**
+/// （页几何批 05 号票）。
 ///
 /// 门逐页判之后拒绝仍是**整趟**的：覆盖项是用户的显式指令，不是可以按页悄悄放弃的东西
 /// （ADR 0007 的《后果》）。撞上的是哪一页因此要说出来——那是唯一能让用户看懂这条拒绝的信息。
+///
+/// 这一条走 fit-inside；默认那条路上的那一缝在
+/// [`on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing`]。
 #[test]
 fn a_dither_the_geometry_gate_forbids_is_refused() {
     let space = Workspace::new();
@@ -2220,8 +2224,9 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
 
     let error = tonefit::run(&Request {
         dither: Some(Dither::FloydSteinberg),
-        // 拒绝那条路只在 fit-inside 上打得着（页几何批 01 号票）：以高为准让每一页的高
-        // 都等于面板高，没有页贴不住面板，`--dither fs` 也就撞不上门。
+        // 这一条走 fit-inside：源两边都比面板小的页在那条路上按不放大原样输出，
+        // 一条边都贴不住（页几何批 01 号票）。以高为准上门恒成立，
+        // 只有兜底上界退回去的页是例外（见下一条用例，07 号票）。
         fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
     })
@@ -2234,6 +2239,56 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     // 门放宽不了，几何却动得了：换个适配方式这一页就贴住面板了（页几何批 01 号票）。
     // 不说这一句，用户手上只剩「换一批源页」。
     assert!(format!("{error:#}").contains("--fit height"), "{error:#}");
+}
+
+/// **以高为准上 `--dither fs` 仍撞得上几何门，而那时那条出路是假话**
+/// （页几何批 05 号票的处置 ③，07 号票开的那个例外）。
+///
+/// 以高为准让每一页的高都等于面板高，门恒成立——除了被兜底上界退回 fit-inside 的那几页：
+/// 退回之后它是一张 fit-inside 的页，源两边都比面板小时一条边都贴不住。
+/// 这一趟走的正是那条缝。
+///
+/// 处置仍是**维持拒绝**：覆盖项是显式指令，不按页悄悄放弃。要钉住的是**措辞**——
+/// 同一张页在两种适配方式上都被拒，而 fit-inside 那一侧原本无条件劝人「换 --fit height，
+/// 门跟着成立」。这一张页正是那句话的反例：换过去照样被拒。两条路因此一起断言，
+/// 一条说「以高为准上不再提那个开关」，一条说「fit-inside 上提了，但把例外也说了」。
+#[test]
+fn on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 整页纯墨：裁边一个像素都拿不走，走得到的只有兜底那一条。
+    volume.page(
+        "001.png",
+        &fixtures::solid(fixtures::DEGENERATE_STRIP_SMALLER_THAN_PANEL, 0),
+    );
+    let refused = |fit| {
+        format!(
+            "{:#}",
+            tonefit::run(&Request {
+                dither: Some(Dither::FloydSteinberg),
+                fit,
+                ..fixtures::request(&space, [volume.path()])
+            })
+            .expect_err("这一页两种适配方式下都贴不住面板，点名抖动应当被拒绝")
+        )
+    };
+
+    let on_height = refused(FitMode::Height);
+    assert!(on_height.contains("几何门"), "{on_height}");
+    // 是哪一页关的门照旧说得出来。
+    assert!(on_height.contains("001.png"), "{on_height}");
+    // **不再劝人换适配方式**：这一趟用的就是以高为准。
+    assert!(!on_height.contains("--fit height"), "{on_height}");
+    // 换成说清这一页是怎么走到这儿的，以及剩下的那两条路。
+    assert!(on_height.contains("兜底上界"), "{on_height}");
+    assert!(on_height.contains("不点 --dither fs"), "{on_height}");
+
+    // 同一张页在 fit-inside 上也被拒，那一侧仍指 `--fit height`——但**这一张页是它的例外**，
+    // 例外因此得跟着说出来，否则用户照着敲一遍只会撞第二次。
+    let on_inside = refused(FitMode::Inside);
+    assert!(on_inside.contains("--fit height"), "{on_inside}");
+    assert!(on_inside.contains("兜底上界"), "{on_inside}");
+    assert!(on_inside.contains("仍是这条拒绝"), "{on_inside}");
 }
 
 #[test]

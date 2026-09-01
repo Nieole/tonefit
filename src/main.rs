@@ -13,8 +13,8 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Mode, Profile, Progress, ProgressSink,
-    ReadingOrder, Report, Request, SplitRule, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, Interlock, IoMode, Mode, Profile, Progress,
+    ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
 };
 
 #[derive(Parser)]
@@ -25,7 +25,8 @@ use tonefit::{
     about = "把漫画页适配到电子墨水阅读设备",
     version,
     args_conflicts_with_subcommands = true,
-    subcommand_negates_reqs = true
+    subcommand_negates_reqs = true,
+    after_long_help = interlock_help()
 )]
 struct Cli {
     /// 另做一件事，而不是处理卷。
@@ -66,19 +67,22 @@ struct Cli {
     ///
     /// inside 是从前那条路：整页放进面板，源比面板小时不放大，页两侧留边。
     /// 它对阅读器的要求更松——留边只要阅读器填背景不重采样，溢出要它平移不缩放。
+    ///
+    /// 它与别的开关咬在一起时会怎样，见 `--help` 末尾的《开关互锁》。
     #[arg(long, value_name = "方式")]
     fit: Option<String>,
 
     /// 不裁掉页面白边。**默认是裁的**：tonefit 自己按行列墨量占比逐页裁边。
     ///
-    /// 裁边的要点不是省白边，是让你**关得掉阅读器那一侧的裁切**：阅读器裁白边会改变页尺寸，
-    /// 随后的适配于是不再是 1.0 倍，抖动连同 1 像素周期的结构一起被抹平、字节白付。
+    /// 裁边的要点不是省白边，是让你**关得掉阅读器那一侧的裁切**：
     /// tonefit 裁完之后好处已经烤进产物，阅读器那个开关变成空操作，1:1 恢复。
-    /// 关掉本项就得把阅读器那一侧的裁切留着，抖动会被它抹平。
+    /// 留着它要付什么，见下面那句指路。
     ///
     /// 裁法按**行列墨量占比**，不是内容外接框：白边里的孤立噪点不算内容，
     /// 边缘一个墨点不会让裁边整个失效。逐页各裁各的，**页与页的字号因此会跳动**——
     /// 那是要更大实际利用面积的代价，不是缺陷。整页空白的页原样通过。
+    ///
+    /// 它与别的开关咬在一起时会怎样，见 `--help` 末尾的《开关互锁》。
     #[arg(long)]
     no_crop: bool,
 
@@ -95,6 +99,8 @@ struct Cli {
     /// **找不到装订沟的是连续跨页，不切**：那是为视觉效果画满两页的一幅整画，切开就毁了。
     /// 不切的页照这一趟的适配方式出——默认 height 下宽溢出面板，靠阅读器横向平移看。
     /// 关掉本项，所有跨页都走那条路。
+    ///
+    /// 它与别的开关咬在一起时会怎样，见 `--help` 末尾的《开关互锁》。
     #[arg(long)]
     no_split: bool,
 
@@ -121,9 +127,9 @@ struct Cli {
     bit_depth: Option<u32>,
 
     /// 覆盖自动选择的抖动模式：off（= none）、fs（= floyd-steinberg）。
-    /// 抖动只在输出不被下游缩放时才谈得上，而这是**每一页**各自的事实：
-    /// 卷里只要有一页源比目标尺寸小，点名 fs 就会被**拒绝**——错误指得出是哪一页，
-    /// 不会静默照抖。
+    /// 抖动只在输出不被下游缩放时才谈得上，而这是**每一页**各自的事实——
+    /// 点名 fs 因此会撞上几何门，那条互锁见 `--help` 末尾的《开关互锁》。
+    /// 错误指得出是哪一页，不会静默照抖。
     #[arg(long, value_name = "模式")]
     dither: Option<String>,
 
@@ -232,6 +238,34 @@ impl Cli {
         )
     }
 }
+
+/// `--help` 末尾那一节：互锁**逐条列全**（页几何批 05 号票）。
+///
+/// 这是互锁在文档这一侧的唯一落点。处置 ② 明写着「只进文档与 `--help`」，
+/// 而另外两条也不该各自散回自己那个开关的帮助里——互锁说的是**几项凑在一起**之后的事，
+/// 挂在任何一项名下都缺了另一半。各开关那一侧留的是指路，不是第二份说法。
+///
+/// **逐条都列，与各自的处置无关。** 处置说的是咬上之后**这一趟**怎么交代
+/// （`tonefit::Voice`），这一节是说明书：拒绝那一条要让人事先躲得开，
+/// 一趟不吭声的那一条更是只剩这里说得到。
+///
+/// 措辞不在这里，在 `tonefit::Interlock`——同一句还要从报告抬头与那条拒绝的错误里出来。
+/// 这一层只管排版：一条一行，挂个圆点。
+///
+/// 只进长帮助（`--help`），不进 `-h`：短帮助一项只印一行，塞不下也不该塞。
+fn interlock_help() -> String {
+    let mut text = format!("{INTERLOCK_HEADING}\n");
+    for interlock in Interlock::ALL {
+        text.push_str(&format!("  · {interlock}\n"));
+    }
+    text
+}
+
+/// 《开关互锁》那一节的标题。
+///
+/// 它自成一个常量，是为了让用例分得开**那一节本体**与各开关帮助里指向它的那句路标——
+/// 两者都带着「开关互锁」四个字，而短帮助里该有的只有路标。
+const INTERLOCK_HEADING: &str = "开关互锁（几项凑在一起会互相削弱的那几种组合）:";
 
 /// 处理卷那一路的必填项走到这里就一定有值：`required = true` 挡在 clap 那一层。
 ///
@@ -731,22 +765,66 @@ mod tests {
         assert!(parse(&["--no-crop"]).no_crop);
     }
 
-    /// 帮助里要说清**默认是裁的**、以及关掉它要付什么——抖动会被阅读器那一侧的裁切抹平。
+    /// 帮助里要说清**默认是裁的**，以及裁法与它认下的那两件事。
     ///
-    /// 这一条只进 `--help` 与文档，不进每趟报告（页几何批 05 号票的处置 ②）：
-    /// 抖动被抹平只在用户的阅读器会裁时才发生，而 tonefit 看不到那一层。
-    /// 少了这几句，用户不会知道这个开关与抖动是一件事。
+    /// 关掉它要付的那笔账**不在这里断言**：那是互锁 ②，与另外两条一起写在
+    /// `--help` 末尾的《开关互锁》里，由 [`the_help_lists_every_interlock_in_one_place`]
+    /// 钉着（页几何批 05 号票：三条互锁只写一处）。这一条留下的只是一句指路。
     #[test]
-    fn the_crop_help_says_it_is_on_by_default_and_what_turning_it_off_costs() {
+    fn the_crop_help_says_it_is_on_by_default_and_how_the_margins_come_off() {
         let help = Cli::command().render_long_help().to_string();
         assert!(help.contains("--no-crop"), "{help}");
         assert!(help.contains("默认是裁的"), "{help}");
-        // 关掉它的代价：阅读器那一侧的裁切留着，抖动被抹平。
-        assert!(help.contains("抹平"), "{help}");
         // 裁法与它认下的两件事：孤立噪点不算内容，页间字号会跳动。
         assert!(help.contains("行列墨量占比"), "{help}");
         assert!(help.contains("孤立噪点"), "{help}");
         assert!(help.contains("字号因此会跳动"), "{help}");
+        // 指路要在：互锁那一节是关掉裁边这件事唯一说得到代价的地方。
+        assert!(help.contains("开关互锁"), "{help}");
+    }
+
+    /// 互锁**逐条**列在 `--help` 末尾那一节里，一条都不少（页几何批 05 号票）。
+    ///
+    /// 断言问的是 `after_long_help` 那一段原文，不是渲染出来的整份帮助：
+    /// 渲染那一步会按终端宽度折行，而互锁每一句都长，`contains` 会被折行折断。
+    /// 拿原文比，`Interlock::ALL` 加一条却忘了写进帮助时这条用例当场变红——
+    /// 那正是「只写一处」要防的漂移。
+    ///
+    /// **处置不筛。** 一趟不吭声的那一条（裁边关着）与当场拒绝的那一条
+    /// （`--dither fs` 撞上门）都在里面：处置说的是咬上之后这一趟怎么交代，
+    /// 而这一节是说明书——躲得开的前提是事先看得到。
+    ///
+    /// 只进长帮助：`-h` 一项只印一行，那一节塞不进去。
+    #[test]
+    fn the_help_lists_every_interlock_in_one_place() {
+        let command = Cli::command();
+        let section = command
+            .get_after_long_help()
+            .expect("--help 末尾要有《开关互锁》那一节")
+            .to_string();
+
+        assert!(section.contains(INTERLOCK_HEADING), "{section}");
+        for interlock in Interlock::ALL {
+            assert!(section.contains(&interlock.to_string()), "{section}");
+        }
+
+        // 短帮助不带那一节：`-h` 一项只印一行。
+        // 各开关那句路标仍在，路标不是第二份说法。
+        assert!(
+            !Cli::command()
+                .render_help()
+                .to_string()
+                .contains(INTERLOCK_HEADING),
+            "短帮助里不该有那一节"
+        );
+        // 长帮助真的印得出来——用户找得到它才谈得上「写在一处」。
+        assert!(
+            Cli::command()
+                .render_long_help()
+                .to_string()
+                .contains(INTERLOCK_HEADING),
+            "长帮助里没有那一节"
+        );
     }
 
     /// `--no-split` 关得掉拆分，阈值与阅读方向点得动，**不点名就是拆、1.5、右开**

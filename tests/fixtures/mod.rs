@@ -68,6 +68,19 @@ const SPREAD_INK_BORDER: u32 = 16;
 /// 见 `tonefit` 的 `crop` 里那条同名用例）。
 pub const DEGENERATE_STRIP: Size = Size::new(3000, 100);
 
+/// 宽高比 50:1 的**小**长条：以高为准算出的目标尺寸越过兜底上界，而退回的 fit-inside
+/// 两边都比面板小——它因此**一条边都贴不住面板**，几何门在默认适配方式上不成立。
+///
+/// 那是 07 号票给「以高为准下门恒成立」开的唯一一个例外（见 `tonefit` 的
+/// `GeometryGate::Broken`），也是互锁 ③ 在默认那条路上够得着的唯一形态
+/// （页几何批 05 号票）。与 [`DEGENERATE_STRIP`] 差的正是这一条：那一根宽 3000，
+/// 退回之后贴住了面板宽，门仍成立。
+///
+/// 在基准面板（1264×1680）上以高为准算出 84000×1680，1.41 亿像素，远过上界；
+/// 退回 fit-inside 之后按不放大原样输出 1000×20。
+/// 拿它跑的用例一律配 [`solid`] 的纯墨，理由同 [`DEGENERATE_STRIP`]。
+pub const DEGENERATE_STRIP_SMALLER_THAN_PANEL: Size = Size::new(1000, 20);
+
 /// 两边都小于面板：**fit-inside 下**不该被放大。
 ///
 /// 以高为准会把它放大到面板高（页几何批 01 号票），几何门跟着成立——问「不放大」

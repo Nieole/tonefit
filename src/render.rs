@@ -3,6 +3,11 @@
 //! 它在**界面层**，不进库：措辞是给人读的，库那一侧只出数据。位置在二进制 crate 内——
 //! `lib.rs` 顶上那张模块清单之外的 `src/*.rs` 都是这一侧的。
 //!
+//! **一处有理由的例外**：互锁那几句话在库里（`tonefit::Interlock` 的 `Display`）。
+//! 同一句要从三张嘴里出来——报告抬头、`--help`、以及那条拒绝的错误，
+//! 而最后一张嘴在库内；挤在这里就给库里那一份留了第二个出处（理由写在那个模块的文档里）。
+//! 本模块对它只做**呈现**：话落在哪一段、前面挂什么标签（见 [`interlock_lines`]）。
+//!
 //! 大头是把 [`Report`] 渲染成文字，分四段，调用方各取所需：[`header`] 一趟只出一次，
 //! [`volume`] 与 [`pages`] 逐卷出，[`tail`] 收在末尾。命令行攒完在最后把四段一次性
 //! 拼起来（[`report`]）；会话攒到哪儿画到哪儿——卷级事件带着 `VolumeReport`，
@@ -15,7 +20,7 @@
 use std::path::Path;
 
 use tonefit::{
-    CandidateScore, Mode, PageBranch, PageColor, PageReport, Profile, Report, VolumeReport,
+    CandidateScore, Mode, PageBranch, PageColor, PageReport, Profile, Report, Voice, VolumeReport,
     VolumeVerdict, aggregation, composition,
 };
 
@@ -51,6 +56,9 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // 而一卷里可能一张跨页都没有。「这一趟没开」与「这一卷没有跨页」在逐页那几行上
     // 长得一样，只有这一行分得开。阈值与阅读方向跟着印出来，与裁法那两个数同一条规矩。
     text.push_str(&format!("跨页拆分 {}\n", report.split));
+    // 这一趟的开关咬上的那几条互锁（页几何批 05 号票）。它接在四个开关后面，
+    // 因为它说的正是那四项凑在一起之后的事。
+    text.push_str(&interlock_lines(report));
     // 逐页那一行的每个数由两项合成，其中颗粒项那道地板与阈值同一批盲测标定
     // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
@@ -64,6 +72,23 @@ pub fn header(report: &Report, mode: Mode) -> String {
         text.push_str("dry-run：只算不写，下面的路径都还没落盘\n");
     }
     text
+}
+
+/// 抬头那几行里说互锁的那一段：这一趟咬上、**而且处置是「报告抬头提一次」**的那几条
+/// （页几何批 05 号票的处置 ①）。
+///
+/// 一条都没有就一个字都不说，与末尾那几小结同一条规矩——默认那一套开关一条都不咬。
+///
+/// **筛的是 [`Voice::Header`]，不是「咬上的全部」。** 三条处置各不相同，而哪一条落到
+/// 报告上由规则说了算（`tonefit::Interlock::voice`），不由这一层挑：裁边关着那一条
+/// 咬上了也不在这里露面，它只进 `--help` 与文档。措辞同理不在这里——同一句话还要从
+/// `--help` 与那条拒绝的错误里出来（见 `tonefit::Interlock`），这里只管挂标签与换行。
+fn interlock_lines(report: &Report) -> String {
+    report
+        .interlocks()
+        .filter(|interlock| interlock.voice() == Voice::Header)
+        .map(|interlock| format!("互锁 {interlock}\n"))
+        .collect()
 }
 
 /// 一个卷的**卷级**那几行：去处与页数、过期副本、判定、这一趟怎么读的、缓存用量。
@@ -566,8 +591,8 @@ mod tests {
     use crate::{ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
-        GeometryGate, GrayImage, IoPlan, Medium, PageOutcome, Processed, Reason, Reference,
-        Salvage, Scaling, Size, Verdict, VolumeTiming,
+        GeometryGate, GrayImage, Interlock, IoPlan, Medium, PageOutcome, Processed, Reason,
+        Reference, Salvage, Scaling, Size, Verdict, VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -810,6 +835,145 @@ mod tests {
             text.contains("几何门 判定范围 灰度页 1 页 · 不成立 0 页 · 本卷 不抖动"),
             "{text}"
         );
+    }
+
+    /// 一份最省事的一页报告，只为问抬头：判定与判据在这几条用例里一个字都不看。
+    ///
+    /// 它与 [`one_page_report`] 分开，是因为那一个每次都要现算一个判据值——
+    /// 互锁问的是**开关**，与页上有什么无关。
+    fn switches_report(fit: FitMode, crop: bool, split: SplitRule) -> Report {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Two, Dither::Off);
+        let mut report = one_page_report(
+            profile,
+            VolumeVerdict::Envelope(envelope(candidate)),
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: Vec::new(),
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::VolumeEnvelope,
+                        },
+                    },
+                }),
+            },
+        );
+        report.fit = fit;
+        report.crop = crop;
+        report.split = split;
+        report
+    }
+
+    /// 互锁 ① 咬上时抬头**提一次**：拆分开着，适配方式却是 fit-inside
+    /// （页几何批 05 号票的处置 ①）。
+    ///
+    /// 「一次」是字面的：那句话不逐卷、不逐页重复——组合本身成立，说清楚就够，
+    /// 每一页再喊一遍就成了噪音。措辞不在这一层，用例因此拿 `Interlock` 自己那句话去比。
+    #[test]
+    fn the_header_says_once_that_splitting_meets_fit_inside() {
+        let report = switches_report(FitMode::Inside, true, SplitRule::default());
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(
+            text.contains(&Interlock::SpreadsStayFlattened.to_string()),
+            "{text}"
+        );
+        assert_eq!(text.matches("互锁 ").count(), 1, "{text}");
+        // 它落在抬头，不在卷级也不在逐页：卷那一行之前就说完了。
+        let header = super::header(&report, Mode::Process);
+        assert!(
+            header.contains(&Interlock::SpreadsStayFlattened.to_string()),
+            "{header}"
+        );
+        // 拦不住任何东西：这一趟照常写，报告的其余部分一个字都不改。
+        assert!(text.contains("out/volume-a/001.png"), "{text}");
+    }
+
+    /// ① 只在那一格上咬：另外三种开关组合的报告里一个「互锁」都没有。
+    ///
+    /// 默认那一套（拆、以高为准）尤其要钉住——绝大多数趟走的是它，
+    /// 抬头多出一行就是每个人每一趟都要读一遍的噪音。
+    #[test]
+    fn the_other_three_combinations_of_fit_and_splitting_say_nothing() {
+        let split_off = SplitRule {
+            on: false,
+            ..SplitRule::default()
+        };
+        for (fit, split) in [
+            (FitMode::Height, SplitRule::default()),
+            (FitMode::Height, split_off),
+            (FitMode::Inside, split_off),
+        ] {
+            let text = super::report(&switches_report(fit, true, split), Mode::Process);
+            assert!(!text.contains("互锁"), "{fit:?} {split:?}\n{text}");
+        }
+    }
+
+    /// 互锁 ② 咬上了报告仍然**一个字都不说**（页几何批 05 号票的处置 ②）。
+    ///
+    /// 关掉裁边完全合法，而抖动被抹平只在用户的阅读器会裁时才发生——tonefit 看不到那一层，
+    /// 逐卷提醒等于噪音。那句话在 `--help` 与文档里（见命令行的 `interlock_help`）。
+    ///
+    /// 抬头那一行仍照实说「裁边 关」：那是**事实**，与那句提醒不是一回事。
+    #[test]
+    fn turning_crop_off_engages_an_interlock_that_the_report_never_mentions() {
+        let report = switches_report(FitMode::Height, false, SplitRule::default());
+        // 规则那一侧确实咬上了——报告不说，不是因为它没发生。
+        assert!(
+            report
+                .interlocks()
+                .any(|interlock| interlock == Interlock::ReaderCropWipesTheDither),
+            "裁边关着却没咬上"
+        );
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(!text.contains("互锁"), "{text}");
+        assert!(
+            !text.contains(&Interlock::ReaderCropWipesTheDither.to_string()),
+            "{text}"
+        );
+        // 事实照说：这一趟没裁，逐页那几行分不出来，只有这一行分得开（02 号票）。
+        assert!(text.contains("裁边 关（页按解出来的原尺寸适配）"), "{text}");
+    }
+
+    /// 报告上露不露面，**由处置说了算**：露面的恰好是处置为 [`Voice::Header`] 的那些
+    /// （页几何批 05 号票）。
+    ///
+    /// 这一趟两条一起咬上——拆分开着配 fit-inside（抬头提一次）与裁边关着（一趟不吭声），
+    /// 用例因此不是空转：一条该在、一条该不在。渲染这一层不记着谁该露面，
+    /// 它只照 `voice` 筛；处置改了，报告跟着改口。
+    ///
+    /// 处置是「当场拒绝」的那一条永远进不了任何报告：它咬上时 `run` 返回的是 `Err`，
+    /// 压根没有报告可渲染（那条路由 `tests/pipeline.rs` 的
+    /// `a_dither_the_geometry_gate_forbids_is_refused` 钉着）。
+    #[test]
+    fn only_the_interlocks_whose_voice_is_the_header_reach_the_report() {
+        let report = switches_report(FitMode::Inside, false, SplitRule::default());
+        let engaged: Vec<Interlock> = report.interlocks().collect();
+        assert_eq!(engaged.len(), 2, "{engaged:?}");
+
+        let text = super::report(&report, Mode::Process);
+
+        for interlock in engaged {
+            assert_eq!(
+                text.contains(&interlock.to_string()),
+                interlock.voice() == Voice::Header,
+                "{interlock:?}\n{text}"
+            );
+        }
     }
 
     /// 几何门那一段要说出**判定范围**与**被排除的页**（06 号票）：门逐页判，
