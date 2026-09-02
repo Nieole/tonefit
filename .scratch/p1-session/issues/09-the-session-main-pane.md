@@ -168,3 +168,31 @@ drive 这条循环（UI 线程）              另一条线程
 `cargo doc --no-deps` 与 HEAD 同为 **14** 条既有告警。
 **黄金快照未变、未重录**——命令行那一路一字未动。
 停车场新增 Q63–Q69 七条，一条都没了结。
+
+## 停车场结转
+
+本票记下、由 `p2-loose-ends/01` 了结的条目，原文照搬。
+
+### Q68 — `tui` 关掉之后，本票新添的那三十几条用例同样一条都不跑
+
+- **From:** 票 `p1-session/09`
+- **Kind:** 路过发现
+- **Where:** `Cargo.toml` 的 `[features]`；`src/session/`
+- **Why it did not block:** 与 Q61 同一个洞，
+  本票把它变大了：`live`、`run`、`draw`、`state` 四个模块新添的那三十几条用例
+  整个在 `tui` 后面，`cargo test --no-default-features` 那一趟一条都编译不到。
+  票面要的「`--no-default-features` 下仍要能编译」成立
+  （`cargo clippy --all-targets --no-default-features` 干净）。
+  `render::failing_pages` 是本票唯一因此挂上 `#[cfg(feature = "tui")]` 的东西——
+  关掉之后没有人读它，不挂就是一条 `dead_code` 告警。
+- **What this ticket actually did:** **没有搬。** 与 Q61 走同一条路：会话没有终端库以外的
+  用户，把它搬到 feature 之外只为测试好看。默认那一趟（`tui` 开着）跑得到全部，
+  基线因此从 474 涨到 493。
+- **Whose call:** 拍板的人（同 Q61：关掉终端库那条路要不要有行为断言）
+- **处置：** 由 `p2-loose-ends/01` 了结，与 Q61 同一刀（处置全文见 `p1-session/08` 的
+  《停车场结转》）。本票新添的那三十几条里，`live`（9 条）与 `run`（15 条）跟着状态机
+  搬到了 `tui` 特性外面，`cargo test --no-default-features` 那一趟从此跑得到；
+  `draw` 那 23 条留在特性后面——它们画的正是终端，搬不出去，也不该搬。
+  `render::failing_pages` 照旧挂 `#[cfg(feature = "tui")]`（读它的是画法）；
+  同一批里的 `render::calibration_notice` 改成了 `any(feature = "tui", test)`——
+  读它的是状态机，而状态机现在摆在特性外面。

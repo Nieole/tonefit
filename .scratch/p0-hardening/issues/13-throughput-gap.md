@@ -73,7 +73,8 @@
 
 ## 停车场结转
 
-落地途中由本票了结的条目，原文照搬。
+落地途中由本票了结的条目，以及本票记下、后来由别的票了结的那几条——原文照搬，
+处置注明是哪张票做的。
 
 ### Q77 — 卷报告现在每卷拼两次，而命令行那一趟只用得上第二次
 
@@ -109,3 +110,30 @@
   这条不再需要拍板。
 
 - **State:** settled
+
+### Q79 — `profiling` 特性不在 `cargo test` 的闸门里，clippy 也扫不到它
+
+- **From:** 票 `p0-hardening/13`
+- **Kind:** 路过发现（本票引进的）
+- **Where:** `Cargo.toml` 的 `[features]`；`src/cost.rs`
+- **Why it did not block:** 闸门只有 `cargo test` 一条，而它按默认特性走；
+  `cargo clippy --all-targets` 同理。`profiling` 不在 `default` 里，
+  于是 `src/cost.rs` 里 `tally` 那一半一条自动检查都没有——`profiling` 关着时它整个不编译。
+  把它塞进 `default` 不对——那会让每一次量化、每一次低通都多掐两次表，
+  而这个量具存在的前提正是「默认整个不在」。
+  真要盖住，得让闸门变成两条命令（`cargo test` 再加一条 `cargo check --features profiling`），
+  那是改闸门，不是改代码，本票不擅自动。
+- **What this ticket actually did:** **把够得着的那一半拉进了闸门，其余手动过。**
+  `ALL` 与 `Stage::name` 的 `cfg` 写成 `any(feature = "profiling", test)`，
+  于是默认特性的 `cargo test` 也编译它们，`the_stages_are_their_own_index` 与
+  `every_stage_has_a_name_of_its_own` 两条用例跟着跑——「加一格却漏在 `ALL` 里」
+  这种静默漂移现在红得出来。计数那一半（`tally`）仍在闸门之外：
+  落地前手动跑过 `cargo check --features profiling`、`cargo check`、
+  `cargo check --no-default-features` 与 `cargo clippy --features profiling`，均无告警。
+  复现剖面的命令写在 `src/cost.rs` 的模块文档与 measurements 的《分阶段耗时剖面》施测行里。
+- **处置：** 由 `p2-loose-ends/01` 了结。**闸门真的变成了三条**，第三条正是本条预言的那一句
+  `cargo check --features profiling`（三条与各自盖住什么见 `docs/agents/gate.md`）。
+  代码这一侧比本条预期的多动了一刀：挑行与排版从 `tally` 里摘成两个纯函数，
+  默认那一趟就验得到，`tally` 里只剩往原子表上加数与从它上面读回来。
+  **`profiling` 仍然不在 `default` 里**——那个量具存在的前提没有松动。
+  改法与数在 `p2-loose-ends/01` 的《落地记录》里，本条不复述。

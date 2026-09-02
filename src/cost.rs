@@ -80,8 +80,10 @@ pub(crate) enum Stage {
     Assemble,
 }
 
-// `test` 也开着：闸门只有 `cargo test` 一条，而它按默认特性走。不带上 test，
-// 下面那条「判别式即下标」的用例就没有 `ALL` 可比，枚举与数组分家一声不吭。
+// `test` 也开着：闸门第一条（`cargo test`）按**默认特性**走，而 `profiling` 不在 `default` 里。
+// 不带上 test，下面那条「判别式即下标」的用例就没有 `ALL` 可比，枚举与数组分家一声不吭。
+// 第三条闸门（`cargo check --features profiling`）验的是这一格之外的那一半，
+// 三条各盖什么见 `docs/agents/gate.md`。
 #[cfg(any(feature = "profiling", test))]
 impl Stage {
     /// 印在表上的名字。
@@ -129,6 +131,60 @@ const ALL: &[Stage] = &[
     Stage::Summarize,
     Stage::Assemble,
 ];
+
+/// 表上的那几行：**碰过的格子**（纳秒非零），按耗时降序。
+///
+/// 两串按判别式寻址，与两张计数表同一个下标（[`the_stages_are_their_own_index`] 钉着这一条）。
+///
+/// **纯函数，数从哪儿来它不管**：`profiling` 关着的那一趟也编译得到、验得到
+/// （`cfg` 上那一格 `test`）。计数那一半因此不是只有「编译得过」这一条自动检查——
+/// 挑哪几行、按什么排，闸门第一条就盖得住（`docs/agents/gate.md`）。
+/// 留给 `profiling` 那一趟的只剩往原子表上加数与从它上面读回来。
+#[cfg(any(feature = "profiling", test))]
+fn rows(nanos: &[u64; ALL.len()], hits: &[u64; ALL.len()]) -> Vec<(Stage, u64, u64)> {
+    let mut rows: Vec<(Stage, u64, u64)> = ALL
+        .iter()
+        .map(|&stage| {
+            let slot = stage as usize;
+            (stage, nanos[slot], hits[slot])
+        })
+        .filter(|&(_, nanos, _)| nanos > 0)
+        .collect();
+    rows.sort_by_key(|&(_, nanos, _)| std::cmp::Reverse(nanos));
+    rows
+}
+
+/// 印出来的那张表。**一格都没碰过就是 `None`**——那时一个字都不印。
+///
+/// 与 [`rows`] 同一条：纯函数，闸门第一条盖得住。
+#[cfg(any(feature = "profiling", test))]
+fn table(rows: &[(Stage, u64, u64)]) -> Option<String> {
+    let total: u64 = rows.iter().map(|&(_, nanos, _)| nanos).sum();
+    if total == 0 {
+        return None;
+    }
+    let mut text = "分阶段耗时剖面（各线程墙钟之和，占比可比、绝对值不是 CPU 时间）\n".to_owned();
+    text.push_str(&format!(
+        "{:<16} {:>10} {:>8} {:>12}\n",
+        "阶段", "秒", "占比", "次"
+    ));
+    for &(stage, nanos, hits) in rows {
+        text.push_str(&format!(
+            "{:<16} {:>10.3} {:>7.1}% {:>12}\n",
+            stage.name(),
+            nanos as f64 / 1e9,
+            nanos as f64 * 100.0 / total as f64,
+            hits,
+        ));
+    }
+    text.push_str(&format!(
+        "{:<16} {:>10.3} {:>7.1}%\n",
+        "合计",
+        total as f64 / 1e9,
+        100.0
+    ));
+    Some(text)
+}
 
 /// 掐一个阶段：跑一遍 `work`，把这一次的耗时累加到 `stage` 那一格。
 ///
@@ -199,47 +255,22 @@ mod tally {
         HITS[slot].fetch_add(1, Ordering::Relaxed);
     }
 
+    /// 把两张原子表读成两串数，交给[挑行](super::rows)与[排版](super::table)那两个纯函数。
+    ///
+    /// **这一层只做「读回来」这一件事**：挑哪几行、按什么排、印成什么样都在特性外面，
+    /// 默认那一趟的用例验得到（`docs/agents/gate.md`）。
     pub(super) fn print_profile() {
-        let mut rows: Vec<(Stage, u64, u64)> = ALL
-            .iter()
-            .map(|&stage| {
-                let slot = stage as usize;
-                (
-                    stage,
-                    NANOS[slot].load(Ordering::Relaxed),
-                    HITS[slot].load(Ordering::Relaxed),
-                )
-            })
-            .filter(|&(_, nanos, _)| nanos > 0)
-            .collect();
-        rows.sort_by_key(|&(_, nanos, _)| std::cmp::Reverse(nanos));
-        let total: u64 = rows.iter().map(|&(_, nanos, _)| nanos).sum();
-        if total == 0 {
-            return;
+        let nanos = std::array::from_fn(|slot| NANOS[slot].load(Ordering::Relaxed));
+        let hits = std::array::from_fn(|slot| HITS[slot].load(Ordering::Relaxed));
+        if let Some(table) = super::table(&super::rows(&nanos, &hits)) {
+            eprint!("{table}");
         }
-        eprintln!("分阶段耗时剖面（各线程墙钟之和，占比可比、绝对值不是 CPU 时间）");
-        eprintln!("{:<16} {:>10} {:>8} {:>12}", "阶段", "秒", "占比", "次");
-        for (stage, nanos, hits) in rows {
-            eprintln!(
-                "{:<16} {:>10.3} {:>7.1}% {:>12}",
-                stage.name(),
-                nanos as f64 / 1e9,
-                nanos as f64 * 100.0 / total as f64,
-                hits,
-            );
-        }
-        eprintln!(
-            "{:<16} {:>10.3} {:>7.1}%",
-            "合计",
-            total as f64 / 1e9,
-            100.0
-        );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ALL;
+    use super::{ALL, Stage, rows, table};
 
     /// **判别式就是下标**，而 [`ALL`] 按同一个次序排开。
     ///
@@ -268,5 +299,66 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), total, "有两格重名");
         assert!(names.iter().all(|name| !name.is_empty()), "有一格没有名字");
+    }
+
+    /// 一格都没碰过就**一个字都不印**。
+    ///
+    /// 拒绝执行那一路走到的正是这一种（`crate::run` 一页都没做）：那时印一张全是零的表，
+    /// 读的人会以为每一步都花了零秒，而事实是一步都没走过。
+    #[test]
+    fn a_table_nobody_touched_prints_nothing() {
+        let untouched = [0; ALL.len()];
+
+        assert_eq!(rows(&untouched, &untouched), vec![]);
+        assert_eq!(table(&[]), None);
+    }
+
+    /// 表上**只有碰过的那几格**，按耗时降序，各格的数落在自己那一行上。
+    ///
+    /// 三件事一条用例：挑行（没碰过的不占一行）、排序（最贵的排头）、
+    /// 以及两串数按判别式各归各位（[`the_stages_are_their_own_index`] 钉的是同一个下标）。
+    #[test]
+    fn the_table_lists_what_was_touched_worst_first() {
+        let mut nanos = [0; ALL.len()];
+        let mut hits = [0; ALL.len()];
+        for (stage, spent, times) in [
+            (Stage::Encode, 3_000_000_000, 7),
+            (Stage::Decode, 9_000_000_000, 4),
+            (Stage::Crop, 1, 1),
+        ] {
+            nanos[stage as usize] = spent;
+            hits[stage as usize] = times;
+        }
+
+        assert_eq!(
+            rows(&nanos, &hits),
+            vec![
+                (Stage::Decode, 9_000_000_000, 4),
+                (Stage::Encode, 3_000_000_000, 7),
+                (Stage::Crop, 1, 1),
+            ]
+        );
+    }
+
+    /// 印出来的那张表：两行抬头、碰过的那几格各一行、末尾一行合计，占比按总数折算。
+    #[test]
+    fn the_table_names_each_stage_and_totals_the_shares() {
+        let mut nanos = [0; ALL.len()];
+        let hits = [1; ALL.len()];
+        nanos[Stage::Decode as usize] = 9_000_000_000;
+        nanos[Stage::Encode as usize] = 3_000_000_000;
+
+        let printed = table(&rows(&nanos, &hits)).expect("碰过两格");
+        let lines: Vec<&str> = printed.lines().collect();
+
+        assert!(printed.ends_with('\n'), "末行没有换行：{printed:?}");
+        assert_eq!(lines.len(), 5, "两行抬头 + 两行 + 合计：{printed}");
+        assert!(lines[2].starts_with("解码"), "{printed}");
+        assert!(lines[2].contains("75.0%"), "{printed}");
+        assert!(lines[3].starts_with("编码"), "{printed}");
+        assert!(lines[3].contains("25.0%"), "{printed}");
+        assert!(lines[4].starts_with("合计"), "{printed}");
+        // 没碰过的格子一行都没有——`hits` 那一串全是 1，靠的不是它。
+        assert!(!printed.contains("量化"), "{printed}");
     }
 }

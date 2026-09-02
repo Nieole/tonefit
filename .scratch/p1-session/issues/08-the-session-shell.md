@@ -210,3 +210,32 @@ main → execute
 `cargo doc --no-deps` 与 HEAD 同为 **14** 条既有告警。
 **黄金快照未变、未重录**——会话不改变任何一趟的默认行为，命令行那一路一字未动。
 停车场新增 Q58、Q59、Q60、Q61、Q62，并给 Q57 追记了《`08` 撞上之后》；一条都没了结。
+
+## 停车场结转
+
+本票记下、由 `p2-loose-ends/01` 了结的条目，原文照搬。
+
+### Q61 — `tui` 关掉之后，会话那二十几条用例一条都不跑
+
+- **From:** 票 `p1-session/08`
+- **Kind:** 票面没想到的第三种情形
+- **Where:** `Cargo.toml` 的 `[features]`；`src/main.rs` 的 `#[cfg(feature = "tui")] mod session;`
+- **Why it did not block:** 票面要的是「feature 关掉后仍要能编译」，那一条成立
+  （`cargo build --no-default-features` 与 `cargo clippy --all-targets --no-default-features`
+  都干净）。顺带的事实是：会话整个模块在 feature 后面，关掉之后它自带的那批用例
+  也跟着不编译——**`--no-default-features` 那一趟只验编译，不验行为**。
+  闸门只有一条 `cargo test`，而它走默认特性（`tui` 开着），那二十几条因此每次都跑得到
+  （默认 81 条 vs 关掉之后 58 条）。
+  要让关掉特性那一趟也覆盖到状态机，得把它搬到 feature 之外——而它没有终端库以外的用户，
+  搬出去只为测试好看。
+- **What this ticket actually did:** **没有搬。**`tests/session.rs` 里那条无参数的用例
+  **按特性分成了两半**（开着时验「这里没有终端」加退出码 1，关掉时验退回 clap 的必填项错误），
+  于是关掉那一趟不是零行为断言、而是只有那一条；会话自己那二十几条仍然只在默认那一趟跑。
+- **Whose call:** 拍板的人（关掉终端库那条路要不要有行为断言）
+- **处置：** 由 `p2-loose-ends/01` 了结。**搬了。**状态机那四个模块（`state`、`live`、
+  `run`、`complete`）挪到了 `tui` 特性**外面**，握终端的那一层连同 crossterm 键码翻译
+  下沉成 `session::terminal`，与画法一起照旧挂在 `tui` 后面。
+  本条当初判「搬出去只为测试好看」，漏掉的是**闸门**本身：闸门从此是三条命令
+  （`docs/agents/gate.md`），`tui` 关掉的那一趟不再是「只验编译」，
+  本条问的「要不要有行为断言」因此答成了「有，会话那 54 条」。
+  怎么搬的、放松了什么、数是多少，都在 `p2-loose-ends/01` 的《落地记录》里，本条不复述。

@@ -732,8 +732,10 @@ pub fn calibration_note(profile: &Profile, out: &Path) -> String {
 /// 而路径就是「图在哪儿」的全部内容。存预设那一句避得开路径（`Session::saved`），
 /// 靠的是预设那一栏自己摆着文件位置；标定图没有那样一个去处。
 ///
-/// 关掉 `tui` 就没有会话，也就没有人读它——与 [`outcome`] 同一条。
-#[cfg(feature = "tui")]
+/// 关掉 `tui` 就没有会话，也就没有人读它——与 [`outcome`] 同一条。**只多一格 `test`**：
+/// 读它的是状态机（`session::state`），而状态机摆在特性外面，关掉终端库那一趟仍要跑它的用例
+/// （`docs/agents/gate.md` 的第二条闸门）。
+#[cfg(any(feature = "tui", test))]
 pub fn calibration_notice(out: &Path) -> String {
     format!("{}\n{OPEN_IT_AT_NATIVE_SIZE}", chart_landed_at(out))
 }

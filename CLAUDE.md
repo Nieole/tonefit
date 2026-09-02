@@ -17,6 +17,18 @@ See `docs/agents/triage-labels.md`.
 Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`.
 See `docs/agents/domain.md`.
 
+## 闸门
+
+**三条命令，三条都要绿**——三种构建各一条：
+
+```
+cargo test
+cargo test --no-default-features
+cargo check --features profiling
+```
+
+三条各盖住什么、哪种改动必须跑满三条、结果怎么读，见 `docs/agents/gate.md`。
+
 ## 写代码前
 
 `CONTEXT.md` 定义领域术语——类型名、模块名、测试名、issue 标题一律取自它。
