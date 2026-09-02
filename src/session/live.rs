@@ -29,8 +29,32 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tonefit::{
-    Event, Mode as RunMode, Pass, Report, Request, RunOutcome, VolumeFailure, VolumeReport,
+    Event, Instruction, Mode as RunMode, Pass, Report, Request, RunOutcome, VolumeFailure,
+    VolumeReport,
 };
+
+/// 这一趟**在决策点上等不等人**（`CONTEXT.md` 的《会话》：续做、等答话）。
+///
+/// 一个枚举而不是一个 `bool`：它从 [`super::resuming`] 一路传到 [`Live::new`] 与
+/// [`super::run::Running::start`]，而调用处一个裸 `false` 说不出它否掉的是哪件事
+/// （与 `super::draw` 那个 `Unrolled` 同一条理由——本仓库不爱看不出意思的裸值）。
+///
+/// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 1、3 条：续做只在单卷试算上成立，
+/// 而等不等人是调用方的策略、不是库的行为。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resuming {
+    /// **续做**：跑到决策点停下来等人拿主意（单卷试算）。
+    Waits,
+    /// **不续做**：决策点上不等人，一趟走到底（多卷试算与执行）。
+    GoesOn,
+}
+
+impl Resuming {
+    /// 这一趟会停下来等人吗。
+    fn waits(self) -> bool {
+        self == Self::Waits
+    }
+}
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
 #[derive(Debug, Clone)]
@@ -49,10 +73,39 @@ pub struct Walking {
 /// 跑完仍留着——退出会话时印到 stdout 的就是它这一份报告。
 #[derive(Debug, Clone)]
 pub struct Live {
-    /// 这一趟做到哪一步：试算就是 `DryRun`，执行就是 `Process`
-    /// （`CONTEXT.md` 的《会话》：试算就是会话里按下去的那一次 dry-run）。
-    /// 报告抬头照它印，因此得留着。
-    mode: RunMode,
+    /// 库那一侧真收到的那个 mode。**屏上照哪一种印走 [`mode`](Self::mode)**，
+    /// 不直接读它：单卷试算走的是 `Mode::Process`（参照要留着，ADR 0012 决定第 5 条），
+    /// 而在决策点上答收尾之前它一个字节都没写。
+    ran_as: RunMode,
+    /// 这一趟**在决策点上等人**吗（`CONTEXT.md` 的《会话》：续做）。
+    ///
+    /// 只有单卷试算是。多卷试算另走一次 dry-run，执行一趟走到底——两者在决策点上都不停。
+    /// 起手那一刻就定死（[`super::press`] 拼 `Request` 时判的），跑起来之后不再变。
+    resumes: Resuming,
+    /// 在决策点上答过的那个字。还没答、或者这一趟根本不在那儿停就是 `None`。
+    ///
+    /// 屏上那句话与报告抬头都要它：**试算答了收尾，这一趟就等于一次 dry-run**
+    /// （见 [`mode`](Self::mode)）。
+    decided: Option<Instruction>,
+    /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
+    ///
+    /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
+    /// 第二遍一步没走。报告区把它接在那几卷后面画出来（见 `super::draw::report_text`），
+    /// 「主区把报告画出来等你拿主意」靠的就是它。一卷收摊时清掉——那时正式的一份在报告里了。
+    summarized: Option<VolumeReport>,
+    /// 这一趟在决策点上**等人等掉的那一截**，累计（停车场 Q41，`CONTEXT.md` 的《会话》：
+    /// 决策点上等人的那段时间不算进计时）。
+    ///
+    /// 库那一侧自己也减掉它（`Report::elapsed`、`VolumeTiming::elapsed`），但那一份要等
+    /// 这一趟收场才交得出来。会话这一头**边跑边画**，因此自己也得记一份：不记的话，
+    /// 屏上那两个数会在人看着报告的那几分钟里一路往上涨，而那几分钟里库一步都没走——
+    /// 「剩 2h13m」说的就成了「用户拿主意还要多久」。
+    deliberated: Duration,
+    /// 这一次等是从什么时候起的。没在等就是 `None`。
+    ///
+    /// 只有**续做那一趟**记它：别的趟在决策点上不等人（观察者当场答字就返回），
+    /// 那一格开了就再也关不上。
+    deliberating_since: Option<Instant>,
     /// 攒到此刻的报告。开工那一刻它是「零卷的一份」——抬头那几件事已经答得出。
     report: Report,
     /// 这一趟点名了几个卷（`RunStarted`）。
@@ -90,9 +143,14 @@ pub struct Live {
 
 impl Live {
     /// 开一趟：抬头那几件事从 [`Request`] 上就答得出，因此报告当场就有一份。
-    pub fn new(request: &Request) -> Self {
+    pub fn new(request: &Request, resumes: Resuming) -> Self {
         Self {
-            mode: request.mode,
+            ran_as: request.mode,
+            resumes,
+            decided: None,
+            summarized: None,
+            deliberated: Duration::ZERO,
+            deliberating_since: None,
             report: Report {
                 profile: request.profile.clone(),
                 fit: request.fit,
@@ -128,7 +186,7 @@ impl Live {
         match event {
             Event::RunStarted { volumes, steps, .. } => self.run_started(*volumes, *steps),
             Event::VolumeStarted { volume, steps, .. } => self.volume_started(volume, *steps),
-            Event::PassStarted { pass, .. } => self.pass_started(*pass),
+            Event::PassStarted { pass, so_far, .. } => self.pass_started(*pass, *so_far),
             Event::Stepped { .. } => self.stepped(),
             Event::PageFailed { page, reason, .. } => self.page_failed(page, reason),
             Event::VolumeFinished { report, .. } => self.volume_finished(report),
@@ -157,9 +215,20 @@ impl Live {
     }
 
     /// 当前卷开始走某一遍。「进度条现在在走哪一遍」只有它答得出来。
-    pub fn pass_started(&mut self, pass: Pass) {
+    ///
+    /// **决策点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
+    /// 报告区就画得出「拿什么主意」。另外两遍那一格是 `None`，这里因此不动它。
+    pub fn pass_started(&mut self, pass: Pass, so_far: Option<&VolumeReport>) {
         if let Some(walking) = &mut self.volume {
             walking.pass = Some(pass);
+        }
+        if let Some(so_far) = so_far {
+            self.summarized = Some(so_far.clone());
+            // 决策点那一条报出来的下一刻，观察者就停在闸上了（见 `super::run::Watch`）。
+            // 等人那一截从这里起算——但只有真等人的那一趟（见 [`Self::deliberating_since`]）。
+            if self.resumes.waits() {
+                self.deliberating_since = Some(Instant::now());
+            }
         }
     }
 
@@ -183,6 +252,14 @@ impl Live {
         self.finish_volume();
     }
 
+    /// 这一卷收摊了：决策点上摆着的那份「到此刻为止」作废。
+    ///
+    /// 一卷跑完那一条带的是同一卷正式的一份（报告里已经有了），一卷没做成那一条说的是
+    /// 它连报告都没有——两种情形下再画那一份都是在画一件已经不成立的事。
+    fn summary_is_stale(&mut self) {
+        self.summarized = None;
+    }
+
     /// 一整卷没做成：记一笔原因，其余卷照做。
     pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
         self.report.failed_volumes.push(VolumeFailure {
@@ -196,6 +273,11 @@ impl Live {
     pub fn run_finished(&mut self, outcome: RunOutcome) {
         self.report.outcome = outcome;
         self.volume = None;
+        // 停在决策点上被中止的那一趟从这里出去：那一等到此为止，没有人会来答它。
+        self.stop_deliberating();
+        // 停在决策点上被中止的那一卷不报「一卷跑完」（`Event::VolumeFinished` 的文档）：
+        // 它那份「到此刻为止」到这一刻为止也就作废了，而没有别人会来清它。
+        self.summary_is_stale();
     }
 
     /// 一卷收摊：抹掉当前卷那一条，并把它**预告了却没走**的那几步结清到全局那一条上。
@@ -203,6 +285,7 @@ impl Live {
     /// 为什么非结清不可，见 [`tonefit::Event::RunStarted`] 的 `steps`：预告的是上界，
     /// 幂等命中的卷提前收摊——不结清，全局条就永远走不到头。
     fn finish_volume(&mut self) {
+        self.summary_is_stale();
         self.finished += 1;
         if let Some(walking) = self.volume.take() {
             self.walked = self
@@ -235,9 +318,70 @@ impl Live {
         self.undone.as_deref()
     }
 
-    /// 这一趟做到哪一步。
+    /// 报告抬头照哪一种印。
+    ///
+    /// **单卷试算在答继续之前印的是 dry-run**，虽然它走的是 `Mode::Process`：
+    /// 那条路留参照是为了答继续时第一遍不重算（ADR 0012 决定第 5 条），
+    /// 而在决策点上答出继续之前，输出根一个字节都没有——抬头那一行
+    /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
+    /// 答了收尾或中止同理：那一趟就此收场，盘上仍旧什么都没有。
+    ///
+    /// 别的三种（多卷试算、执行、一趟都没跑过）照库收到的那个字印，这一格与从前逐字相同。
     pub fn mode(&self) -> RunMode {
-        self.mode
+        match (self.resumes, self.decided) {
+            // 中止那一支眼下到不了：会话在决策点上只答得出继续与收尾，
+            // 中止走的是「退出会话」那条路（`Running::leave` 直接推闩，不记这一格）。
+            // 仍旧写开，因为 `Instruction` 不非穷尽——多一级的那一天这里编译不过；
+            // 而真到了也是同一个答案：那一卷等于没做，盘上一个字节都没有。
+            (Resuming::Waits, None | Some(Instruction::Finish | Instruction::Abort)) => {
+                RunMode::DryRun
+            }
+            _ => self.ran_as,
+        }
+    }
+
+    /// 这一趟在决策点上等人吗（`CONTEXT.md` 的《会话》：续做）。
+    pub fn resumes(&self) -> bool {
+        self.resumes.waits()
+    }
+
+    /// 决策点上答过的那个字。还没答、或者这一趟不在那儿停就是 `None`。
+    ///
+    /// **只给用例用**——屏上要的是它的**后件**（报告抬头照哪一种印，见
+    /// [`mode`](Self::mode)），而那一件由那个函数一处答完。
+    #[cfg(test)]
+    pub fn decided(&self) -> Option<Instruction> {
+        self.decided
+    }
+
+    /// 记下决策点上答的那个字。**由会话那一头记**（[`super::run::Running::decide`]）：
+    /// 答话的是用户，而观察者那一侧只是把它转交给库。
+    pub fn decide(&mut self, said: Instruction) {
+        self.decided = Some(said);
+        self.stop_deliberating();
+    }
+
+    /// 等人那一截收口，累进 [`deliberated`](Self::deliberated)。没在等就什么都不做。
+    ///
+    /// 两条出路：用户答了话（那条线程接着跑），或者这一趟就此收场
+    /// （停在决策点上被中止的那一趟走的是这一条，没有人会来答它）。
+    fn stop_deliberating(&mut self) {
+        if let Some(since) = self.deliberating_since.take() {
+            self.deliberated = self.deliberated.saturating_add(since.elapsed());
+        }
+    }
+
+    /// 至今为止等人等掉的那一截，**含正等着的这一次**。
+    fn deliberated(&self) -> Duration {
+        let waiting = self
+            .deliberating_since
+            .map_or(Duration::ZERO, |since| since.elapsed());
+        self.deliberated.saturating_add(waiting)
+    }
+
+    /// 决策点上那一卷到此刻为止的报告。没停在决策点上就是 `None`。
+    pub fn summarized(&self) -> Option<&VolumeReport> {
+        self.summarized.as_ref()
     }
 
     /// 攒到此刻的报告。
@@ -254,7 +398,10 @@ impl Live {
         let elapsed = if self.ended {
             self.report.elapsed
         } else {
-            self.started.elapsed()
+            // 减掉在决策点上等人的那一截（停车场 Q41）：库在那段里一步都没走，
+            // 算进来的话「剩多久」说的就成了「用户拿主意还要多久」。
+            // 收场之后换成库交出来的那一个——它减的是同一件事，只是准到纳秒。
+            self.started.elapsed().saturating_sub(self.deliberated())
         };
         Overall {
             volume: self
@@ -595,7 +742,7 @@ mod tests {
     #[test]
     fn the_event_stream_adds_up_to_the_report_and_the_two_bars() {
         let request = fixture::request(RunMode::Process);
-        let mut live = Live::new(&request);
+        let mut live = Live::new(&request, Resuming::GoesOn);
 
         live.run_started(2, 10);
         assert_eq!(live.overall().volumes, 2);
@@ -604,7 +751,7 @@ mod tests {
         assert_eq!(live.overall().left, None);
 
         live.volume_started(Path::new("库/卷一"), 6);
-        live.pass_started(Pass::First);
+        live.pass_started(Pass::First, None);
         live.stepped();
         let walking = live.walking().expect("有一卷在走");
         assert_eq!(walking.pass, Some(Pass::First));
@@ -631,7 +778,7 @@ mod tests {
     /// 失败页在**出现的当场**就收得下，带着原因，不必等那一卷跑完。
     #[test]
     fn a_failed_page_is_visible_the_moment_it_happens() {
-        let mut live = Live::new(&fixture::request(RunMode::Process));
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.run_started(1, 4);
         live.volume_started(Path::new("库/卷一"), 4);
         live.page_failed(
@@ -652,7 +799,7 @@ mod tests {
     fn the_exit_code_is_the_one_the_command_line_would_have_given() {
         let request = fixture::request(RunMode::Process);
 
-        let mut refused = Live::new(&request);
+        let mut refused = Live::new(&request, Resuming::GoesOn);
         refused.returned(Err(anyhow::anyhow!("处理范围为空")));
         assert_eq!(refused.exit_code(), crate::REFUSED_EXIT);
         assert!(refused.ended(), "那条线程回来了");
@@ -661,7 +808,7 @@ mod tests {
             "没做成的那一趟要说得出为什么"
         );
 
-        let mut isolated = Live::new(&request);
+        let mut isolated = Live::new(&request, Resuming::GoesOn);
         let mut report = isolated.report().clone();
         report
             .volumes
@@ -669,7 +816,7 @@ mod tests {
         isolated.returned(Ok(report));
         assert_eq!(isolated.exit_code(), crate::ISOLATED_EXIT);
 
-        let mut clean = Live::new(&request);
+        let mut clean = Live::new(&request, Resuming::GoesOn);
         let mut report = clean.report().clone();
         report.volumes.push(fixture::skipped_volume("卷一", 20));
         clean.returned(Ok(report));
@@ -679,7 +826,7 @@ mod tests {
     /// 跑完之后「已用」就定住了：那个数是库交出来的，不是会话接着读自己那块表。
     #[test]
     fn the_elapsed_time_stops_moving_once_the_run_is_over() {
-        let mut live = Live::new(&fixture::request(RunMode::Process));
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.run_started(1, 10);
         let mut report = live.report().clone();
         report.elapsed = Duration::from_secs(42);
@@ -701,7 +848,7 @@ mod tests {
     fn a_run_that_was_stopped_exits_with_the_code_its_report_earns() {
         for level in [Instruction::Finish, Instruction::Abort] {
             // 停之前跑完的那几卷干干净净：全部成功那个数。
-            let mut clean = Live::new(&fixture::request(RunMode::Process));
+            let mut clean = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
             let mut report = clean.report().clone();
             report.volumes.push(fixture::skipped_volume("卷一", 20));
             report.outcome = RunOutcome::Stopped(level);
@@ -710,7 +857,7 @@ mod tests {
             assert_eq!(clean.exit_code(), crate::exit_code(&report), "{level:?}");
 
             // 其中一卷带着坏页进了隔离：仍是「有卷被隔离」那个数，按停没把它盖掉。
-            let mut isolated = Live::new(&fixture::request(RunMode::Process));
+            let mut isolated = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
             let mut report = isolated.report().clone();
             report
                 .volumes
@@ -720,6 +867,147 @@ mod tests {
             assert_eq!(isolated.exit_code(), crate::ISOLATED_EXIT, "{level:?}");
             assert_eq!(isolated.exit_code(), crate::exit_code(&report), "{level:?}");
         }
+    }
+
+    /// **决策点上那一卷的报告摆得住，也收得掉**（停车场 Q52，`p1-session/14`）。
+    ///
+    /// 它不进 [`Live::report`]：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
+    /// 第二遍一步没走。混进去的话，退出会话时印到 stdout 的那一份里会多一卷
+    /// 「写在那里、盘上却没有」的东西。
+    ///
+    /// 三条出路各收一次：一卷跑完（正式那一份进了报告）、一卷没做成（它连报告都没有）、
+    /// 这一趟收场（停在决策点上被中止的那一卷两条都不报，没有别人会来清它）。
+    #[test]
+    fn the_summary_at_the_decision_point_stands_until_that_volume_lands() {
+        let summarized = fixture::processed_volume("卷一", None);
+
+        // 一卷跑完：正式那一份进报告，摆着的那一份作废。
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.volume_started(Path::new("库/卷一"), 6);
+        live.pass_started(Pass::Second, Some(&summarized));
+        assert_eq!(
+            live.summarized().map(|volume| volume.volume.clone()),
+            Some(summarized.volume.clone()),
+            "决策点上那一份没收下"
+        );
+        assert!(
+            live.report().volumes.is_empty(),
+            "它混进收摊了的那几卷里去了"
+        );
+        live.volume_finished(&summarized);
+        assert!(live.summarized().is_none(), "这一卷收摊了，那一份还摆着");
+        assert_eq!(live.report().volumes.len(), 1);
+
+        // 一卷没做成：同样作废——它连报告都没有。
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.volume_started(Path::new("库/卷一"), 6);
+        live.pass_started(Pass::Second, Some(&summarized));
+        live.volume_failed(Path::new("库/卷一"), "盘拔了");
+        assert!(live.summarized().is_none());
+
+        // 这一趟收场（决策点上被中止就是这一条）：同样作废。
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.volume_started(Path::new("库/卷一"), 6);
+        live.pass_started(Pass::Second, Some(&summarized));
+        live.run_finished(RunOutcome::Stopped(Instruction::Abort));
+        assert!(live.summarized().is_none());
+
+        // 别的两遍那一格是 `None`，不该把摆着的那一份抹掉——它只在决策点上有。
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.volume_started(Path::new("库/卷一"), 6);
+        live.pass_started(Pass::Second, Some(&summarized));
+        live.pass_started(Pass::First, None);
+        assert!(live.summarized().is_some(), "另一遍开工把它抹掉了");
+    }
+
+    /// **等答话的那几分钟谁都不算**（停车场 Q41，`CONTEXT.md` 的《会话》：
+    /// 决策点上等人的那段时间不算进计时）。
+    ///
+    /// 不减的话，屏上那两个数会在人看着报告拿主意的那几分钟里一路往上涨，
+    /// 而那几分钟里库一步都没走——「剩多久」说的就成了「用户拿主意还要多久」。
+    ///
+    /// 断言不带余量：把开工那一刻往回拨一段，「已用」就该是那一段；等一小会儿再问，
+    /// 它**一格都不该多**（拨回去的那一段远大于这中间的调度抖动）。
+    ///
+    /// **不等人的那一趟一格不减**：执行那一趟同样走到决策点，但观察者当场答字就返回——
+    /// 那一段是库自己的开销，本来就该算进这一趟。
+    #[test]
+    fn the_minutes_spent_deciding_are_charged_to_nobody() {
+        /// 往回拨这么久。够长，调度抖动淹不掉它。
+        const RAN_FOR: Duration = Duration::from_secs(300);
+        let summarized = fixture::processed_volume("卷一", None);
+
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(1, 1000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.stepped();
+        live.rewind(RAN_FOR);
+        // 决策点：等人那一截从这里起算。
+        live.pass_started(Pass::Second, Some(&summarized));
+        let waiting = live.overall().elapsed;
+        assert!(waiting >= RAN_FOR, "等之前那一段被减掉了：{waiting:?}");
+
+        // 人在看报告：屏上那个数一格都不该多。
+        std::thread::yield_now();
+        let still = live.overall().elapsed;
+        assert!(
+            still.saturating_sub(waiting) < Duration::from_secs(1),
+            "等人的那一截算进了「已用」：{waiting:?} → {still:?}"
+        );
+
+        // 答完话接着跑：等掉的那一截留在账上，往后的时间照旧算。
+        live.decide(Instruction::Continue);
+        let resumed = live.overall().elapsed;
+        assert!(
+            resumed >= RAN_FOR && resumed.saturating_sub(waiting) < Duration::from_secs(1),
+            "答完话之后那一截又被算回来了：{resumed:?}"
+        );
+
+        // 不等人的那一趟：决策点照样报，但那一格不开——观察者当场答字就返回。
+        let mut going = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        going.run_started(1, 1000);
+        going.volume_started(Path::new("库/卷一"), 1000);
+        going.rewind(RAN_FOR);
+        going.pass_started(Pass::Second, Some(&summarized));
+        assert!(
+            going.overall().elapsed >= RAN_FOR,
+            "不等人的那一趟也开始减了"
+        );
+    }
+
+    /// **单卷试算在答继续之前印的是 dry-run**（`p1-session/14`，ADR 0012 决定第 5 条）。
+    ///
+    /// 那一趟走的是 `Mode::Process`——参照要留着，答继续时第一遍才不必重算——
+    /// 而在决策点上答出继续之前，输出根一个字节都没有。抬头那一行
+    /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
+    ///
+    /// 别的三种照库收到的那个字印，这一格与从前逐字相同。
+    #[test]
+    fn a_trial_that_never_walked_the_second_pass_prints_as_a_dry_run() {
+        // 续做那一趟：起手、答收尾、答中止，三处都是 dry-run；只有答继续那一处不是。
+        for (said, shown) in [
+            (None, RunMode::DryRun),
+            (Some(Instruction::Finish), RunMode::DryRun),
+            (Some(Instruction::Abort), RunMode::DryRun),
+            (Some(Instruction::Continue), RunMode::Process),
+        ] {
+            let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+            if let Some(said) = said {
+                live.decide(said);
+            }
+            assert_eq!(live.decided(), said);
+            assert_eq!(live.mode(), shown, "答了 {said:?}");
+        }
+
+        // 不续做的那两趟一格不改：执行印执行，多卷试算印 dry-run。
+        assert_eq!(
+            Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn).mode(),
+            RunMode::Process
+        );
+        assert_eq!(
+            Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn).mode(),
+            RunMode::DryRun
+        );
     }
 
     /// 剩余时间按至今为止的平均步速外推；走完就是零，一步没走就答不出来。

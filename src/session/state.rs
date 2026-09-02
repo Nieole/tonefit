@@ -123,6 +123,23 @@ pub enum Action {
     /// 升到哪一级由状态机自己记（[`Mode::Running`] 那一格）；把它交给跑着的那一趟
     /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
     Stop,
+    /// **在决策点上答一个字**（`CONTEXT.md` 的《会话》：决策点）。
+    ///
+    /// 只在 [`Mode::Deciding`] 那个状态下派得出来，而那个状态只有单卷试算到得了。
+    /// 两个字各有一个键：`x` 答[继续](Instruction::Continue)——第一遍不重算，直接进第二遍；
+    /// `s` 答[收尾](Instruction::Finish)——这一卷一个字节都不写，等价于一次 dry-run。
+    ///
+    /// **它带着那个字，而不是像[按停](Self::Stop)那样让状态机自己升一级**：
+    /// 决策点回的是**当场那个字**，不是闩（ADR 0012 决定第 2 条）。两个键因此是两个方向，
+    /// 不是同一个键按两次。
+    ///
+    /// [中止](Instruction::Abort)不从这条路出去：等答话时按 `Ctrl-C` 是[退出会话](Self::Quit)，
+    /// 而退出会话本来就走中止（`super::run::Running::leave`，停车场 Q63）——
+    /// 那一卷等于没做，`partial` 也没留下。
+    ///
+    /// 把那个字送到计算线程上在 [`super::press`] 那一层（`Running::decide`），
+    /// 与[按停](Self::Stop)同一条规矩：本模块不碰线程。
+    Answer(Instruction),
     /// **展开**：把报告上第一卷的逐页那几行摊开来，左栏跟着收起
     /// （`CONTEXT.md` 的《会话》：展开）。
     ///
@@ -389,6 +406,24 @@ pub enum Mode {
     /// （收尾）、`Abort` 是再按了一次（中止）。**只升不降**——按停不是一个可以反悔的开关
     /// （`CONTEXT.md` 的《进度》）。
     Running(Instruction),
+    /// 一趟**停在决策点上等人拿主意**（`CONTEXT.md` 的《会话》：续做与决策点，
+    /// ADR 0012 决定第 3 条）。
+    ///
+    /// 只有**单卷试算**到得了这里：多卷不续做（决定第 1 条，理由是内存不是口味），
+    /// 执行那一趟也不在这儿停——用户按 `x` 的时候已经拿过主意了。
+    ///
+    /// **它是一个状态，不是 [`Running`](Self::Running) 上的一个开关。**跑着与等答话
+    /// 按得动的键是两套：跑着时按得动的只有停（`s`），等答话时按得动的是答话那两个
+    /// （`x` 接着做、`s` 收尾）。两套摆进同一个状态，屏底那一行就要靠一个 flag 分岔，
+    /// 而「哪些键在哪个状态下有效」那张表正是本模块唯一的产出。
+    ///
+    /// 三层在这一刻**仍然只读**，与跑着时一个待遇：`Request` 在起线程那一刻就是一份快照，
+    /// 而这一趟还没收场（见 [`deciding_action`]）。
+    ///
+    /// 那一格装的还是[闩](Session::stopping)：在决策点上等着的时候，闩记着的是这一趟
+    /// **此前**按过的停。答完话回 [`Running`](Self::Running) 时它原样带回去——
+    /// 决策点上答的字不是闩，两者互不覆盖。
+    Deciding(Instruction),
     /// 报告区**展开**着一卷的逐页，左栏收着（`CONTEXT.md` 的《会话》：展开）。
     ///
     /// 「展开」与「左栏收起」是**同一件事**，不是两个开关：spec 的《会话：布局与交互》
@@ -587,7 +622,9 @@ pub struct Edit {
 ///
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
 /// 按 `e` 展开逐页（左栏跟着收起）、按 `p` 开预设那一栏（存下当前两层，或套用一份）、
-/// 停在设备层上按 `c` 出标定图、按键退出。单卷续做（`14`）还没接上，它会往这里加状态。
+/// 停在设备层上按 `c` 出标定图、按键退出。
+/// **单卷试算跑到决策点会停下来等人**（[`Mode::Deciding`]），那时按 `x` 接着做第二遍、
+/// 按 `s` 收尾。
 ///
 /// **出标定图不往这里加状态**：它一按就完，屏底说一句就是全部结果——
 /// 会话此刻在做什么一格没变（见 [`Action::Chart`] 与 [`Self::charted`]）。
@@ -684,8 +721,35 @@ impl Session {
     /// **不叫 `Live::run_finished`。** 那一个折的是 `RunFinished` 那条**事件**
     /// （库说「这一趟完了」），这一个改的是**会话**此刻在做什么——两件事，两个接收者。
     pub fn run_finished(&mut self) {
-        if matches!(self.mode, Mode::Running(_)) {
+        if matches!(self.mode, Mode::Running(_) | Mode::Deciding(_)) {
             self.mode = Mode::Browsing;
+        }
+    }
+
+    /// **那一趟到决策点了没有**：在[跑着](Mode::Running)与[等答话](Mode::Deciding)
+    /// 之间转（`p1-session/14`）。
+    ///
+    /// 会话每帧问一次，与 `reap` 同一条（见 `super::drive`）：停在决策点上的是
+    /// **计算线程**，而本模块碰不到线程——那一层问得到（`super::run::Running::deciding`），
+    /// 把答案交进来。
+    ///
+    /// 别的状态一格不动：这一问只在这两者之间转场。答完话那一下不必等下一帧
+    /// ——[`Action::Answer`] 当场就把状态放回去（见 [`Self::answered`]）。
+    pub fn at_the_decision_point(&mut self, waiting: bool) {
+        self.mode = match (&self.mode, waiting) {
+            (Mode::Running(pressed), true) => Mode::Deciding(*pressed),
+            (Mode::Deciding(pressed), false) => Mode::Running(*pressed),
+            _ => return,
+        };
+    }
+
+    /// 决策点上答完话了：回[跑着](Mode::Running)那一副，闩原样带回去。
+    ///
+    /// **当场就转，不等下一帧**：那条线程收到那个字就接着跑，而屏底那两行要跟着换——
+    /// 慢一帧的话，答完之后那两个答话键还在屏上摆着，按下去却已经没有人收了。
+    fn answered(&mut self) {
+        if let Mode::Deciding(pressed) = self.mode {
+            self.mode = Mode::Running(pressed);
         }
     }
 
@@ -698,11 +762,18 @@ impl Session {
     /// [`super::press`] 按下之后把它交给 [`super::run::Running::stop`]。
     pub fn stopping(&self) -> Instruction {
         match self.mode {
-            Mode::Running(pressed) => pressed,
+            Mode::Running(pressed) | Mode::Deciding(pressed) => pressed,
             Mode::Browsing | Mode::Editing(_) | Mode::Expanded(_) | Mode::Picking(_) => {
                 Instruction::Continue
             }
         }
+    }
+
+    /// **此刻停在决策点上等人拿主意吗**（`CONTEXT.md` 的《会话》：决策点）。
+    ///
+    /// 屏上那几处照它写：全局条那一格的抬头、屏底那两行（见 `super::draw`）。
+    pub fn deciding(&self) -> bool {
+        matches!(self.mode, Mode::Deciding(_))
     }
 
     /// 报告区此刻展开着哪一卷、滚到哪儿了。没展开就是 `None`——那是默认的那一档：
@@ -710,7 +781,11 @@ impl Session {
     pub fn expansion(&self) -> Option<&Expansion> {
         match &self.mode {
             Mode::Expanded(expansion) => Some(expansion),
-            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) | Mode::Picking(_) => None,
+            Mode::Browsing
+            | Mode::Editing(_)
+            | Mode::Running(_)
+            | Mode::Deciding(_)
+            | Mode::Picking(_) => None,
         }
     }
 
@@ -718,7 +793,11 @@ impl Session {
     pub fn picking(&self) -> Option<&Picker> {
         match &self.mode {
             Mode::Picking(picker) => Some(picker),
-            Mode::Browsing | Mode::Editing(_) | Mode::Running(_) | Mode::Expanded(_) => None,
+            Mode::Browsing
+            | Mode::Editing(_)
+            | Mode::Running(_)
+            | Mode::Deciding(_)
+            | Mode::Expanded(_) => None,
         }
     }
 
@@ -824,6 +903,7 @@ impl Session {
             Mode::Browsing => self.browsing_action(key),
             Mode::Editing(edit) => editing_action(edit, key),
             Mode::Running(pressed) => running_action(key, *pressed),
+            Mode::Deciding(_) => deciding_action(key),
             Mode::Expanded(_) => expanded_action(key),
             Mode::Picking(picker) => picking_action(picker, key),
         }
@@ -906,6 +986,9 @@ impl Session {
             Action::Start(_) => {}
             // 升一级就在这里；把升到的那一级交给跑着的那一趟在 [`super::press`]。
             Action::Stop => self.raise_stop(),
+            // 状态转回「跑着」就在这里；把那个字交给停在决策点上的那条线程
+            // 在 [`super::press`]（`Running::decide`）——与按停同一条分工。
+            Action::Answer(_) => self.answered(),
             // 展开与换卷要读那一趟攒下来的报告（有几卷、那一卷从第几行起），
             // 而本模块读不到它——真做这两件事的是 [`super::press`]，它随后调
             // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
@@ -1072,7 +1155,11 @@ impl Session {
                 change(&mut naming.buffer);
                 naming.asked = false;
             }
-            Mode::Browsing | Mode::Running(_) | Mode::Expanded(_) | Mode::Picking(_) => {}
+            Mode::Browsing
+            | Mode::Running(_)
+            | Mode::Deciding(_)
+            | Mode::Expanded(_)
+            | Mode::Picking(_) => {}
         }
     }
 
@@ -1173,6 +1260,46 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
     match key {
         Key::Interrupt => Action::Quit,
         Key::Char('s') if pressed < Instruction::Abort => Action::Stop,
+        Key::Up
+        | Key::Down
+        | Key::Left
+        | Key::Right
+        | Key::Enter
+        | Key::Space
+        | Key::Tab
+        | Key::BackTab
+        | Key::Backspace
+        | Key::Esc
+        | Key::Char(_) => Action::Ignored,
+    }
+}
+
+/// **停在决策点上等人拿主意时的按键表**：`x` 接着做第二遍，`s` 收尾，`Ctrl-C` 退出会话
+/// （`p1-session/14`，ADR 0012）。
+///
+/// 两个方向各拿一个**已经有主的键**，因为它们在这里做的正是那个键一直在做的事：
+/// `x` 是执行——「接着做第二遍」就是把这一趟做完；`s` 是停——「收尾」是它的第一级，
+/// 而决策点上答收尾停出来的现场恰好也是「盘上不留半卷」（这一卷一个字节都不写）。
+/// 另取两个新键的话，屏上就要多记两个只在这一刻有效的记号，而它们与已有的那两个
+/// 说的是同一件事。
+///
+/// **`s` 在这里不是两级停。**跑着时 `s` 升的是[闩](Session::stopping)，一次收尾、
+/// 再一次中止；这里 `s` 答的是**当场那个字**，答完那条线程就接着走，没有第二次可按
+/// （`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。
+///
+/// **`x` 在这里不是「起一趟」。**浏览时 `x` 起的是新的一趟，这里它答的是眼前这一趟的
+/// 那一问——两者都是「把它做出来」，而在这个状态下根本没有第二趟可起：三层此刻只读。
+///
+/// 退出照旧只有 [`Key::Interrupt`]，与跑着时同一条（停车场 Q63）：`q`／`Esc` 按不动。
+/// 退出会话走中止，那一卷等于没做、`partial` 也没留下——最容易手滑的两个键不该挂这个后果。
+///
+/// **三层仍旧只读**：一个改动键都不派，与 [`running_action`] 同一条。
+/// 这一趟还没收场，`Request` 也早在起线程那一刻就是一份快照了。
+fn deciding_action(key: Key) -> Action {
+    match key {
+        Key::Interrupt => Action::Quit,
+        Key::Char('x') => Action::Answer(Instruction::Continue),
+        Key::Char('s') => Action::Answer(Instruction::Finish),
         Key::Up
         | Key::Down
         | Key::Left
@@ -1869,6 +1996,57 @@ mod tests {
         assert_eq!(session.action(Key::Char('s')), Action::Stop);
         // Ctrl-C 仍旧退得出去：它在**每一个**状态下都是退出。
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
+
+        // 六之二、**停在决策点上等人拿主意**（`p1-session/14`）：三层照旧只读，
+        // 而按得动的换成了答话那两个——`x` 接着做第二遍，`s` 收尾。
+        session.at_the_decision_point(true);
+        assert!(session.deciding(), "没进等答话那个状态");
+        for key in [
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+            Key::Enter,
+            Key::Space,
+            Key::Tab,
+            Key::BackTab,
+            Key::Backspace,
+            // `q`／`Esc` 与跑着时同一条（停车场 Q63）：退出会话走中止，
+            // 而那一卷此刻正停在决策点上——最容易手滑的两个键不该挂这个后果。
+            Key::Esc,
+            Key::Char('q'),
+            // 起一趟那两个键里 `t` 仍旧按不动：这一趟还没收场。
+            Key::Char('t'),
+            // 别的那几个照旧：三层只读，报告展不开，预设栏开不了，标定图出不了。
+            Key::Char('d'),
+            Key::Char('e'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('z'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在决策点上不该生效"
+            );
+        }
+        // 答话那两个键。**`x` 在这里不是「起一趟」，`s` 也不是升闩**——
+        // 决策点回的是当场那个字（ADR 0012 决定第 2 条）。
+        assert_eq!(
+            session.action(Key::Char('x')),
+            Action::Answer(Instruction::Continue)
+        );
+        assert_eq!(
+            session.action(Key::Char('s')),
+            Action::Answer(Instruction::Finish)
+        );
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 答完话回「跑着」那一副，按停那个键又是升闩了。
+        session.press(Key::Char('x'));
+        assert!(!session.deciding(), "答完话还停在决策点上");
+        assert_eq!(session.action(Key::Char('s')), Action::Stop);
+        assert_eq!(session.action(Key::Char('x')), Action::Ignored);
+
         // 收场之后配置又改得动，而按停那个键在浏览时没有意义——还没有东西可停。
         session.run_finished();
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
@@ -2203,6 +2381,44 @@ mod tests {
         session.press(Key::Esc);
         session.clamp_report(0, 0);
         assert!(session.expansion().is_none());
+    }
+
+    /// **跑着 ⇄ 等答话是同一趟的两副样子**（`p1-session/14`）：转过去、转回来，
+    /// 中间那个闩一格没动。
+    ///
+    /// 闩非钉不可：决策点上答的字**不是闩**（ADR 0012 决定第 2 条）。第一遍里按下的收尾
+    /// 要在答完话之后照旧作数——被决策点抹掉的话，那一趟会一直跑到最后一卷。
+    /// 反过来，答话也不该把闩往上推：`s` 在决策点上答的是「这一卷的第二遍不做了」，
+    /// 而不是「这一趟不走了」。
+    #[test]
+    fn the_decision_point_is_a_second_face_of_the_same_run_and_leaves_the_latch_alone() {
+        let mut session = Session::new();
+        // 没跑着的时候这一问不作数：决策点是一趟跑起来之后才有的事。
+        session.at_the_decision_point(true);
+        assert_eq!(session.mode(), &Mode::Browsing, "没跑着也进了等答话");
+        assert!(!session.deciding());
+
+        session.run_started();
+        // 第一遍里按了一次停：闩记着收尾。
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Finish);
+
+        // 决策点到了：换一副样子，闩原样带过去。
+        session.at_the_decision_point(true);
+        assert!(matches!(session.mode(), Mode::Deciding(_)));
+        assert_eq!(session.stopping(), Instruction::Finish, "转过去把闩弄丢了");
+
+        // 答一个收尾：状态当场转回「跑着」，而闩仍旧是那一级——答话不是升闩。
+        assert_eq!(session.press(Key::Char('s')), Exit::Stay);
+        assert!(matches!(session.mode(), Mode::Running(_)), "答完话没转回去");
+        assert_eq!(session.stopping(), Instruction::Finish, "答话把闩推上去了");
+
+        // 那一趟停在决策点上被中止时收不到「跑完」以外的东西，收场那一下照样回浏览。
+        session.at_the_decision_point(true);
+        assert!(session.deciding());
+        session.run_finished();
+        assert_eq!(session.mode(), &Mode::Browsing, "等答话时收场没回浏览");
+        assert_eq!(session.stopping(), Instruction::Continue);
     }
 
     /// **两级停：同一个键按两次。** 一次收尾，再一次中止，第三次没有意义。

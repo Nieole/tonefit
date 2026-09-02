@@ -22,7 +22,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use tonefit::{Instruction, Pass};
+use tonefit::{Instruction, Mode as RunMode, Pass};
 
 use super::complete;
 use super::live::{Live, Walking};
@@ -247,7 +247,10 @@ pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Opt
     ])
     .areas(area);
 
-    frame.render_widget(overall_bar(live, session.stopping()), overall);
+    frame.render_widget(
+        overall_bar(live, session.stopping(), session.deciding()),
+        overall,
+    );
     frame.render_widget(volume_bar(live), current);
     frame.render_widget(report_pane(session, live, report), report);
 }
@@ -263,13 +266,19 @@ pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Opt
 /// 抬头摆在**边框**上，一列正文都不占（Q71 记着的第一条代价：那一行在 96 列的屏上
 /// 只剩十几列空白），也不随卷与卷之间那一段空白消失（第二条代价：当前卷条会）。
 /// 措辞与屏底那一行同一个出处（[`stopping_name`]）。
-fn overall_bar(live: Option<&Live>, pressed: Instruction) -> Paragraph<'static> {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(match stopping_name(pressed) {
-            Some(name) => format!("整趟 · {name}"),
-            None => "整趟".to_owned(),
-        });
+///
+/// **停在决策点上等人时抬头写的是那件事**（`p1-session/14`）：横条这时一动不动，
+/// 而「它为什么不动」眼睛盯着横条的人第一眼要看到的就是它。它排在按停那一级之前——
+/// 等答话是此刻更要紧的那一件（按过的停要等答完话才继续作数）。
+fn overall_bar(live: Option<&Live>, pressed: Instruction, deciding: bool) -> Paragraph<'static> {
+    let block =
+        Block::default()
+            .borders(Borders::ALL)
+            .title(match (deciding, stopping_name(pressed)) {
+                (true, _) => "整趟 · 等你拿主意".to_owned(),
+                (false, Some(name)) => format!("整趟 · {name}"),
+                (false, None) => "整趟".to_owned(),
+            });
     let Some(live) = live else {
         return Paragraph::new(format!(" 还没跑过。{START_KEYS}")).block(block);
     };
@@ -575,6 +584,13 @@ fn report_text(live: &Live, expand: Option<usize>) -> Unrolled {
             text.push_str(&crate::render::pages(volume));
         }
     }
+    // 决策点上那一卷**到此刻为止**的那一份，接在收摊了的那几卷后面（停车场 Q52）。
+    // 「主区把报告画出来等你拿主意」就是这一段：判定、逐页结果、缓存用量都是真的，
+    // 只有第二遍一步没走。逐页那几行这里不给——与卷级默认那一副同一条（票面第一条），
+    // 它也展不开：展开索引数的是报告上收摊了的那几卷，而这一卷还不在里面。
+    if let Some(summarized) = live.summarized() {
+        text.push_str(&crate::render::volume(summarized));
+    }
     text.push_str(&crate::render::failing_pages(live.failed_pages()));
     if live.ended() {
         text.push_str(&crate::render::tail(report));
@@ -605,7 +621,8 @@ fn footer(session: &Session, live: Option<&Live>) -> Paragraph<'static> {
     let mut lines = match session.mode() {
         Mode::Editing(edit) => editing_lines(session, edit),
         Mode::Browsing => vec![Line::from(browsing_keys(session, live)), Line::from("")],
-        Mode::Running(pressed) => running_lines(*pressed),
+        Mode::Running(pressed) => running_lines(*pressed, live),
+        Mode::Deciding(_) => deciding_lines(),
         Mode::Expanded(_) => expanded_lines(),
         Mode::Picking(picker) => picking_lines(picker),
     };
@@ -641,11 +658,11 @@ fn footer(session: &Session, live: Option<&Live>) -> Paragraph<'static> {
 ///
 /// 措辞与报告里那两句（`crate::render::outcome` 的「按停」）说的是同一件事，
 /// 但时态不同：那两句是收场之后的结果，这两句是此刻在等的事。
-fn running_lines(pressed: Instruction) -> Vec<Line<'static>> {
+fn running_lines(pressed: Instruction, live: Option<&Live>) -> Vec<Line<'static>> {
     let [keys, waiting] = match pressed {
         Instruction::Continue => [
             "s 停（按一次收尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷）",
-            "",
+            resuming_line(live),
         ],
         Instruction::Finish => [
             "再按一次 s 中止 · Ctrl-C 退出会话",
@@ -668,6 +685,50 @@ fn running_lines(pressed: Instruction) -> Vec<Line<'static>> {
         } else {
             format!(" {waiting}")
         }),
+    ]
+}
+
+/// 还没按过停的时候，屏底第二行说的那件事：**这一趟续不续做**（ADR 0012，`p1-session/14`）。
+///
+/// 两句都要在**跑起来的当口**说，不能等到停下来才说：
+///
+/// - **续做那一趟**要预告它会停：单卷试算跑到第二遍之前就不走了，不预告的话，
+///   横条停住看上去与卡住没有分别。
+/// - **不续做那一趟**要说清代价：多卷时试算与执行各跑一趟，第一遍照付两遍的价
+///   （缓存预算是**每卷**的，ADR 0012 决定第 1 条）。不说的话，用户会以为批量跑
+///   也像单卷那样免费。
+///
+/// 执行那一趟与还没跑过时这一行是空的，与从前逐格相同：那两种没有「续不续做」可言。
+fn resuming_line(live: Option<&Live>) -> &'static str {
+    let Some(live) = live else {
+        return "";
+    };
+    if live.resumes() {
+        return "续做：第一遍走完会停在决策点上等你拿主意——那时按 x 接着做第二遍（第一遍不重算），按 s 收尾";
+    }
+    if live.mode() == RunMode::DryRun {
+        return "这一趟不续做：多卷时试算与执行各跑一趟，按 x 那一趟第一遍要重算一遍（缓存预算是每卷的）";
+    }
+    ""
+}
+
+/// **停在决策点上等人拿主意**时屏底那两行（`p1-session/14`，ADR 0012）。
+///
+/// 上一行是这时按得动的三个键，下一行说**此刻盘上是什么样**——决策点问的是
+/// 「这一卷的第二遍还做不做」，而答这一问要知道的正是「现在还什么都没写」。
+///
+/// 两个答话键各带一句它买的东西：`x` 那一句是**第一遍不重算**（续做整件事就是为了它），
+/// `s` 那一句是**等价于 dry-run**（`CONTEXT.md` 的《会话》：决策点）。
+/// 措辞里不提「收尾」那一级的定义——那是按停的第一级，说的是「当前卷跑完才停」，
+/// 与这里停出来的现场恰好相反（见 `super::state::deciding_action`）。
+fn deciding_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from(
+            " 等你拿主意…… · x 接着做第二遍（第一遍不重算）· s 收尾（这一卷不写，等价 dry-run）· Ctrl-C 退出会话",
+        ),
+        Line::from(
+            " 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有第二遍一步没走——输出根此刻一个字节都没有",
+        ),
     ]
 }
 
@@ -816,7 +877,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::session::live::fixture;
+    use crate::session::live::{Resuming, fixture};
     use crate::session::state::{Expansion, Key};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -933,7 +994,7 @@ mod tests {
     /// 时钟往回拨一段固定的量，快照因此不随机器快慢而变——与黄金快照同一条规矩
     /// （`tonefit::Report::elapsed`：计时只进结构，不进渲染出的文字）。
     fn a_run_in_flight(failures: bool) -> Live {
-        let mut live = Live::new(&fixture::request(RunMode::Process));
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.run_started(3, 5000);
         live.volume_started(Path::new("库/卷一"), 1000);
         live.volume_finished(&fixture::skipped_volume("卷一", 180));
@@ -944,7 +1005,7 @@ mod tests {
         }
         live.volume_finished(&fixture::processed_volume("卷二", broken));
         live.volume_started(Path::new("库/卷三"), 3000);
-        live.pass_started(tonefit::Pass::Second);
+        live.pass_started(tonefit::Pass::Second, None);
         for _ in 0..1000 {
             live.stepped();
         }
@@ -957,7 +1018,7 @@ mod tests {
     /// 展开那几条要的是跑完的那一份：展开只从浏览进得去（`super::state` 的
     /// `expanded_action`，停车场 Q72），而浏览意味着没有一趟正跑着。
     fn a_run_worth_expanding() -> Live {
-        let mut live = Live::new(&fixture::request(RunMode::DryRun));
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
         live.volume_finished(&fixture::skipped_volume("卷一", 180));
@@ -1082,13 +1143,112 @@ mod tests {
             Instruction::Abort,
         ]
         .into_iter()
-        .map(|pressed| running_lines(pressed)[0].to_string())
+        .map(|pressed| running_lines(pressed, None)[0].to_string())
         .collect();
         assert_eq!(keys.len(), 3, "三级里有两级说了同一句：{keys:?}");
         assert_eq!(
-            running_lines(Instruction::Continue)[1].to_string(),
+            running_lines(Instruction::Continue, None)[1].to_string(),
             "",
             "没按过时不该有话说"
+        );
+    }
+
+    /// **停在决策点上等人拿主意时屏上是什么样**（`p1-session/14`，ADR 0012）。
+    ///
+    /// 三处一次问齐，各是票面上的一条：
+    ///
+    /// - **全局条那一格的抬头说得出「它为什么不动」**——横条这时一步都不走，
+    ///   而眼睛盯着横条的人不会往下扫一行（与按停那一级挂在同一处，停车场 Q71）。
+    /// - **报告区把那一卷画出来了**（停车场 Q52）：判定与逐页那几个数就是拿主意的依据，
+    ///   而那一卷此刻还没收摊，报告里没有它。
+    /// - **屏底摆着答话那两个键**，各带着它买的东西：`x` 是第一遍不重算，
+    ///   `s` 是等价 dry-run。跑着时那一副（`s` 停、两级）在这里一个字都不该剩下。
+    #[test]
+    fn waiting_at_the_decision_point_shows_the_report_and_the_two_ways_out() {
+        let summarized = fixture::processed_volume("卷一", None);
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(1, 1000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.pass_started(tonefit::Pass::Second, Some(&summarized));
+        live.rewind(Duration::from_secs(300));
+
+        let mut session = Session::new();
+        session.run_started();
+        // 跑着的时候屏底摆的是按停那一副，而续做那一趟先预告它会停下来。
+        let running = tight(&screen(&mut session, Some(&live), 120, 40));
+        assert!(running.contains(&tight("s 停（按一次收尾")), "{running}");
+        assert!(
+            running.contains(&tight("会停在决策点上等你拿主意")),
+            "{running}"
+        );
+
+        session.at_the_decision_point(true);
+        let waiting = tight(&screen(&mut session, Some(&live), 120, 40));
+
+        // 一、抬头。
+        assert!(waiting.contains(&tight("整趟 · 等你拿主意")), "{waiting}");
+        // 二、那一卷画出来了：它的去处、卷级基准档与驱动页都在屏上——
+        // 拿主意要看的正是这几个数。整段逐字比不了，那一段在这一格里会折行
+        // （报告区默认那一副折行，见 [`report_pane`]）。
+        for said in ["库/卷一→出/卷一", "卷级基准档", "驱动页"] {
+            assert!(waiting.contains(&tight(said)), "{said} 没画出来：{waiting}");
+        }
+        // 抬头那一行说清这一趟此刻只算不写——盘上一个字节都没有。
+        assert!(waiting.contains(&tight("dry-run")), "{waiting}");
+        // 三、答话那两个键，连同它们各自买的东西。
+        for key in [
+            "x 接着做第二遍",
+            "第一遍不重算",
+            "s 收尾",
+            "等价 dry-run",
+            "Ctrl-C 退出会话",
+        ] {
+            assert!(waiting.contains(&tight(key)), "{key}：{waiting}");
+        }
+        // 跑着那一副在这里一个字都不剩：两级停不是这一刻的事。
+        assert!(
+            !waiting.contains(&tight("按一次收尾，再按一次中止")),
+            "{waiting}"
+        );
+
+        // 对照：那一份没交进来的时候，逐卷那几行一个都不在——那一卷还没收摊，
+        // 报告里因此没有它（停车场 Q52 记的正是这一处缺口）。
+        let mut running_only = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        running_only.run_started(1, 1000);
+        running_only.volume_started(Path::new("库/卷一"), 1000);
+        running_only.pass_started(tonefit::Pass::Second, None);
+        let before = tight(&screen(&mut session, Some(&running_only), 120, 40));
+        assert!(!before.contains(&tight("驱动页")), "{before}");
+    }
+
+    /// **多卷试算在跑起来的当口就说清这一趟不续做**（`p1-session/14` 票面第四条）。
+    ///
+    /// 非说不可：单卷那一趟停下来等人、第一遍不重算，而多卷那一趟按 x 时第一遍要重算
+    /// 一遍（缓存预算是每卷的，ADR 0012 决定第 1 条）。不说的话，用户会以为批量跑
+    /// 也像单卷那样免费。
+    ///
+    /// 执行那一趟这一行仍旧是空的：它没有「续不续做」可言，与从前逐格相同。
+    #[test]
+    fn a_trial_that_will_not_resume_says_so_while_it_runs() {
+        // 多卷试算：另走一次 dry-run，不等人。
+        let mut trial = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        trial.run_started(2, 2000);
+        let said = running_lines(Instruction::Continue, Some(&trial))[1].to_string();
+        assert!(said.contains("不续做"), "{said}");
+        assert!(said.contains("各跑一趟"), "{said}");
+
+        // 单卷试算：预告它会停下来。
+        let resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        let said = running_lines(Instruction::Continue, Some(&resuming))[1].to_string();
+        assert!(said.contains("续做"), "{said}");
+        assert!(!said.contains("不续做"), "{said}");
+
+        // 执行：这一行空着。
+        let processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        assert_eq!(
+            running_lines(Instruction::Continue, Some(&processing))[1].to_string(),
+            "",
+            "执行那一趟不该多说一句"
         );
     }
 
@@ -1311,7 +1471,7 @@ mod tests {
     /// 拒绝执行的那一趟：会话不退出，把那句话画在全局条上，用户当场改。
     #[test]
     fn a_refused_run_says_why_on_the_overall_bar() {
-        let mut live = Live::new(&fixture::request(RunMode::Process));
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.returned(Err(anyhow::anyhow!("处理范围为空：至少点名一个卷")));
 
         let snapshot = main_snapshot(&live, 78, 10);
@@ -1502,7 +1662,7 @@ mod tests {
     /// 逐页那两行照出（尺寸、缩放、判定、判据），隔离与失败那两句一句不出。
     #[test]
     fn a_volume_without_a_failed_page_expands_to_page_rows_and_nothing_about_failure() {
-        let mut live = Live::new(&fixture::request(RunMode::DryRun));
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         live.run_started(1, 1000);
         live.volume_started(Path::new("库/卷三"), 1000);
         live.volume_finished(&fixture::processed_volume("卷三", None));
@@ -1554,7 +1714,7 @@ mod tests {
         for pressed in [Instruction::Finish, Instruction::Abort] {
             let name = stopping_name(pressed).expect("按过的那两级都有名字");
             assert!(
-                running_lines(pressed)[0].to_string().contains(name),
+                running_lines(pressed, None)[0].to_string().contains(name),
                 "屏底那一行没用 stopping_name：{pressed:?}"
             );
         }

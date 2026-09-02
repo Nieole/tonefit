@@ -536,12 +536,42 @@ fn process_volume(
     };
     let superseded = superseded(&elsewhere);
 
+    // **这一卷的报告拼两次，拼法只有这一处。**一次在下面那个决策点上——交给观察者的就是它
+    // （停车场 Q52：不给它，要在那里等人拿主意的调用方屏上画不出任何东西）；
+    // 一次在这一卷收摊时。两次之间夹着第二遍，因此逐页那一步是**借着算**的
+    // （见 [`OutputPage::to_report`]），差的只有交进来的那份计时。
+    // 各拼各的话，屏上那一份与最终报告迟早会分家。
+    //
+    // 用量在拼进结构体**之前**读回来，而那把锁掐在这个闭包自己这一句里：
+    // 拼完就要把它交给观察者，而观察者可能很久不返回（见 `progress` 的模块文档）。
+    let assemble = |timing: VolumeTiming| VolumeReport {
+        volume: volume.root.clone(),
+        output: output.clone(),
+        superseded: superseded.clone(),
+        pages: scored
+            .iter()
+            .zip(&verdicts)
+            .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
+            .collect(),
+        source_pages,
+        verdict,
+        cache: lock(&cache).usage(),
+        decodes: decoder.decodes(),
+        io: io.clone(),
+        timing,
+    };
+
     // **续做的决策点就在这一句上**（ADR 0012 决定第 2 条）：汇总已经做完、第二遍还没开始。
     // 三个字各有一种去处，`match` 因此穷尽写开——`Instruction` 不非穷尽，多一级的那一天
     // 这里当场编译不过，而那正是要的（ADR 0013 拍死了三级）。
     // 它答的是**当场那个字**而不是闩，为什么，见 `progress::Events::ask_before_the_second_pass`。
     let walks_the_second_pass = if writes {
-        match events.ask_before_the_second_pass() {
+        match events.ask_before_the_second_pass(|| {
+            assemble(VolumeTiming {
+                elapsed: wall_clock(),
+                ..timing
+            })
+        }) {
             // 答继续：往下做。参照还在缓存里，第一遍不重算——那正是续做买的东西。
             Instruction::Continue => true,
             // 答收尾：**停在这儿**。那一卷等于走了一次试算，输出一个字节都不写、报告照出
@@ -593,30 +623,10 @@ fn process_volume(
         }
     }
 
-    let pages = scored
-        .into_iter()
-        .zip(verdicts)
-        .map(|(page, verdict)| page.into_report(&output, verdict, uniform))
-        .collect();
-    // 缓存的用量在拼报告**之前**读回来：读它要抢那一把锁，而下一句就要把报告交给观察者，
-    // 而观察者可能很久不返回（见 `progress` 的模块文档）。写在结构体字面量里的话，
-    // 那个临时的 guard 要活到整条 `let` 语句结束——这一行把它掐在自己这一句里。
-    let cache = lock(&cache).usage();
-    let report = VolumeReport {
-        volume: volume.root,
-        output,
-        superseded,
-        pages,
-        source_pages,
-        verdict,
-        cache,
-        decodes: decoder.decodes(),
-        io,
-        timing: VolumeTiming {
-            elapsed: wall_clock(),
-            ..timing
-        },
-    };
+    let report = assemble(VolumeTiming {
+        elapsed: wall_clock(),
+        ..timing
+    });
     events.volume_finished(&report);
     Ok(Some(report))
 }
@@ -967,9 +977,15 @@ impl OutputPage {
     ///
     /// `output` 是这一卷的去处，接上这一张的成员名就是它写出去的位置。
     /// `uniform` 只对失败页说话：它写出去用的就是这个尺寸。
-    fn into_report(self, output: &Path, verdict: Option<Verdict>, uniform: Size) -> PageReport {
+    /// **借着算，不吃掉这一页**：同一批页要拼两次报告——一次在[决策点](progress::Events::ask_before_the_second_pass)
+    /// 上（那一份交给观察者拿主意，停车场 Q52），一次在这一卷收摊时——而第二遍夹在两者中间，
+    /// 它读的是这同一批页。拿走所有权的话，第一次拼完第二遍就没得读了。
+    ///
+    /// 复制掉的只有报告要的那几格（源路径、判据曲线、失败那句话）：编好的字节与缓存序号
+    /// 是管线内部的东西，本来就不进报告，因此这一份**不含**页像素那一侧的任何东西。
+    fn to_report(&self, output: &Path, verdict: Option<Verdict>, uniform: Size) -> PageReport {
         let output = output.join(&self.target);
-        let (size, outcome) = match self.outcome {
+        let (size, outcome) = match &self.outcome {
             Outcome::Processed {
                 size,
                 crop,
@@ -982,17 +998,17 @@ impl OutputPage {
                 salvage,
             } => {
                 let processed = Processed {
-                    crop,
-                    backstopped,
-                    cut,
-                    spread_candidate,
-                    scaling,
-                    color,
+                    crop: *crop,
+                    backstopped: *backstopped,
+                    cut: *cut,
+                    spread_candidate: *spread_candidate,
+                    scaling: *scaling,
+                    color: *color,
                     branch: match branch {
                         Branch::Gray { scores, gate, .. } => PageBranch::Gray {
-                            scores,
+                            scores: scores.clone(),
                             verdict: verdict.expect("灰度路径上必有判定"),
-                            gate,
+                            gate: *gate,
                         },
                         Branch::Color { .. } => PageBranch::Color,
                     },
@@ -1000,16 +1016,21 @@ impl OutputPage {
                 let outcome = match salvage {
                     Some(salvage) => PageOutcome::Salvaged {
                         page: processed,
-                        salvage,
+                        salvage: *salvage,
                     },
                     None => PageOutcome::Whole(processed),
                 };
-                (size, outcome)
+                (*size, outcome)
             }
-            Outcome::Failed { reason } => (uniform, PageOutcome::Failed { reason }),
+            Outcome::Failed { reason } => (
+                uniform,
+                PageOutcome::Failed {
+                    reason: reason.clone(),
+                },
+            ),
         };
         PageReport {
-            source: self.source,
+            source: self.source.clone(),
             output,
             size,
             outcome,
@@ -2504,7 +2525,7 @@ mod tests {
             ),
         ]
         .into_iter()
-        .map(|page| page.into_report(out, verdict, size))
+        .map(|page| page.to_report(out, verdict, size))
         .collect();
 
         assert_eq!(reports[0].output, PathBuf::from("out/volume-a/001-1.png"));

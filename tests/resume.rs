@@ -69,6 +69,11 @@ struct Seen {
     at_each_decision_point: Vec<Vec<String>>,
     /// 报了「一卷跑完」的卷，按到达顺序。
     finished: Vec<String>,
+    /// 每一个决策点那一条**带着的那份报告**，按到达顺序。没带就是 `None`。
+    ///
+    /// 会话要在这里把报告画出来等人拿主意（ADR 0012 决定第 3 条），而拿主意要看的
+    /// 那几件事——卷级判定、逐页结果、缓存用量、解码计数——只有这一份说得出。
+    so_far: Vec<Option<tonefit::VolumeReport>>,
 }
 
 impl AtTheDecisionPoint {
@@ -99,6 +104,11 @@ impl AtTheDecisionPoint {
     fn finished(&self) -> Vec<String> {
         self.seen.lock().expect("记账没有中毒").finished.clone()
     }
+
+    /// 每一个决策点带着的那份报告。
+    fn so_far(&self) -> Vec<Option<tonefit::VolumeReport>> {
+        self.seen.lock().expect("记账没有中毒").so_far.clone()
+    }
 }
 
 impl Progress for AtTheDecisionPoint {
@@ -106,10 +116,11 @@ impl Progress for AtTheDecisionPoint {
         let mut seen = self.seen.lock().expect("记账没有中毒");
         match event {
             Event::VolumeStarted { volume, .. } => seen.current = named(volume),
-            Event::PassStarted { pass, .. } => {
+            Event::PassStarted { pass, so_far, .. } => {
                 let current = seen.current.clone();
                 seen.passes.push((current.clone(), pass));
                 if pass == Pass::Second {
+                    seen.so_far.push(so_far.cloned());
                     let names = fixtures::names_in(&self.out);
                     seen.at_each_decision_point.push(names);
                     if self.volume.as_deref().is_none_or(|named| named == current) {
@@ -476,4 +487,66 @@ fn the_trial_path_spills_over_budget_pages_and_still_writes_no_output() {
     assert!(stopped.cache.spilled > 0, "预算为零却一页都没溢写");
     assert_eq!(stopped.cache.resident, 0, "预算为零却还有页留在内存里");
     assert!(!space.out().exists(), "试算那条路写了输出");
+}
+
+/// **决策点那一条带着这一卷到此刻为止的报告**（停车场 Q52，`p1-session/14`）。
+///
+/// 不带的话，要在这里等人拿主意的调用方手上只有逐步事件：卷级判定、逐页结果、
+/// 缓存用量、解码计数都要到「一卷跑完」那一条才交出去，而那一条排在决策点**之后**。
+/// 屏上因此画不出任何可供拿主意的东西——「试算跑到决策点停住，主区把报告画出来」
+/// 就落不了地。
+///
+/// 带的是**那一刻为真**的一份，不是预告：第一遍已经走完（解码计数等于源页数），
+/// 第二遍一步没走（那一段是零）。它与随后「一卷跑完」交出来的那一份的差也就只有计时——
+/// 这一条一并比一遍，两份分了家的话，屏上看到的与最终报告说的就不是同一件事。
+///
+/// **别的两遍那一条不带**：那时还没有汇总可交。
+#[test]
+fn the_decision_point_carries_the_volume_report_as_it_stands() {
+    let space = Workspace::new();
+    let volume = small_volume(&space, "volume-a");
+    let watcher = AtTheDecisionPoint::new(&space, None, Instruction::Continue);
+
+    let report = run_with(&space, std::slice::from_ref(&volume), &watcher);
+
+    let so_far = watcher.so_far();
+    assert_eq!(so_far.len(), 1, "决策点问了不止一次");
+    let so_far = so_far[0].as_ref().expect("决策点那一条没带报告");
+
+    // 第一遍走完了：判定在、逐页结果在、每张源页解码一次。
+    assert_eq!(so_far.page_count(), 2, "带的那份报告里没有逐页结果");
+    assert!(so_far.verdict.is_some(), "带的那份报告里没有卷级判定");
+    assert_eq!(so_far.decodes, so_far.source_pages, "第一遍还没走完就问了");
+    // 第二遍还没开始：那一段是零，而输出根此刻还是空的（那一眼由
+    // `every_volume_gets_one_decision_point_before_a_byte_of_it_is_written` 钉着）。
+    assert_eq!(
+        so_far.timing.second_pass,
+        std::time::Duration::ZERO,
+        "带的那份报告说第二遍已经走过了"
+    );
+
+    // 与最终那一份**只差计时**：屏上看到的与报告说的必须是同一件事。
+    let landed = &report.volumes[0];
+    assert_eq!(so_far.volume, landed.volume);
+    assert_eq!(so_far.output, landed.output);
+    assert_eq!(so_far.superseded, landed.superseded);
+    assert_eq!(so_far.source_pages, landed.source_pages);
+    assert_eq!(so_far.verdict, landed.verdict);
+    assert_eq!(so_far.decodes, landed.decodes);
+    assert_eq!(
+        so_far.pages.len(),
+        landed.pages.len(),
+        "两份的逐页结果不一样长"
+    );
+    for (early, late) in so_far.pages.iter().zip(&landed.pages) {
+        assert_eq!(early.source, late.source);
+        assert_eq!(early.output, late.output);
+        assert_eq!(early.size, late.size);
+    }
+    // 答了继续，第二遍真走过：最终那一份的第二遍不再是零，而这一卷落了盘。
+    assert!(
+        landed.timing.second_pass > std::time::Duration::ZERO,
+        "答了继续，第二遍却没走"
+    );
+    assert_eq!(fixtures::names_in(&space.out()), ["volume-a"]);
 }

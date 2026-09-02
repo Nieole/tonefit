@@ -47,7 +47,10 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
+use tonefit::{Mode as RunMode, Request};
+
 use crate::preset::{Presets, Saved};
+use live::Resuming;
 use run::Running;
 use state::{Action, Exit, Expansion, Key, Picker, Session};
 
@@ -124,6 +127,9 @@ fn drive(
                 return Ok(());
             }
         }
+        // 那一趟停在决策点上了：会话跟着停下来等人答话（`p1-session/14`）。
+        // 停在那儿的是计算线程，而状态机碰不到线程——这一层问得到，把答案交进去。
+        session.at_the_decision_point(running.deciding());
         // 那一趟跑完了：配置又改得动。
         if running.reap() {
             session.run_finished();
@@ -158,7 +164,8 @@ fn press(
         Action::Start(mode) => {
             match session.request(mode) {
                 Ok(request) => {
-                    running.start(request);
+                    let (request, resumes) = resuming(request);
+                    running.start(request, resumes);
                     session.run_started();
                 }
                 Err(error) => session.complain(format!("{error:#}")),
@@ -171,6 +178,15 @@ fn press(
         Action::Stop => {
             let exit = session.act(action);
             running.stop(session.stopping());
+            exit
+        }
+        // 决策点上答话：状态机把会话放回「跑着」那一副，这一层把那个字交给停在
+        // 决策点上的那条线程。与按停同一条分工——认键在那边，碰线程在这边。
+        // **两处记的是同一个字**，而它就在这个动作里带着：决策点回的是当场那个字、
+        // 不是闩（ADR 0012 决定第 2 条），因此这里不去问状态机再算一次。
+        Action::Answer(said) => {
+            let exit = session.act(action);
+            running.decide(said);
             exit
         }
         // 展开与换一卷：要读那一趟攒下来的报告（有几卷、那一卷落在第几行），
@@ -202,6 +218,36 @@ fn press(
             Exit::Stay
         }
         other => session.act(other),
+    }
+}
+
+/// 这一趟**在决策点上等不等人**，以及它真正走的是哪一种模式（ADR 0012）。
+///
+/// **续做只在处理范围是单卷时成立**（决定第 1 条，理由是内存不是口味：缓存逐卷建、
+/// 逐卷丢，全量试算要续做就得同时押住全部卷的参照，而缓存预算是**每卷**的）。
+/// 那一趟因此改走 `Mode::Process`——参照要留着（决定第 5 条：单卷试算走 `Retention::Keep`），
+/// 答继续时第一遍才不必重算。「只算不写」在那条路上重述为**不写输出**：
+/// 越过预算的页仍建溢写临时文件，运行结束即收走。
+///
+/// **多卷试算照旧另走一次 `Mode::DryRun`**，也不在决策点上等人：那一趟没有下一步可续，
+/// 留着参照只是白占。屏上把这件事说出来（见 `super::draw::running_lines`）——
+/// 免得用户以为批量跑也是免费的。
+///
+/// **执行那一趟一格不改**：用户按 `x` 的时候已经拿过主意了，不该在半路再问他一次。
+///
+/// 判在这一层而不在状态机里：**等不等人是调用方的策略，不是库的行为**
+/// （决定第 3 条），而状态机既碰不到线程、也不该替这一层拿这个主意。
+fn resuming(request: Request) -> (Request, Resuming) {
+    if request.mode == RunMode::DryRun && request.inputs.len() == 1 {
+        (
+            Request {
+                mode: RunMode::Process,
+                ..request
+            },
+            Resuming::Waits,
+        )
+    } else {
+        (request, Resuming::GoesOn)
     }
 }
 
@@ -550,6 +596,144 @@ mod tests {
         assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
     }
 
+    /// **答话那个键真的走到了停在决策点上的那条线程身上**（`p1-session/14`）。
+    ///
+    /// 这一条走的是整条路：按 `t` 起一趟（单卷，因此 [`resuming`] 把它改成续做的那一趟）→
+    /// 那条线程停在决策点上 → 会话跟着换一副样子 → 按 `s` 答收尾 → 那条线程接着跑完。
+    /// 两头各自有用例（状态机那边 `deciding_action`，闸那边
+    /// `answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume`），
+    /// **接头处只有这一条**——而接头处正是本层唯一做的事。
+    ///
+    /// **等答话时会话不冻屏**由它的形状说出来：那条线程停在闸上，而这一头照旧收键、
+    /// 照旧问得动 [`Session::mode`]。等的那一步走的是「转到条件成立为止」，
+    /// 不是 sleep 撞运气（见 `Running::deciding`）。
+    ///
+    /// 不开终端：[`press`] 收的是 `&mut Session` 与 `&mut Running`。
+    #[test]
+    fn answering_at_the_decision_point_reaches_the_thread_waiting_there() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let volume = space.path().join("卷一");
+        std::fs::create_dir_all(&volume).expect("建得出卷");
+        std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
+        let out = space.path().join("出");
+
+        let mut session = Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.scope.out = Some(out.clone());
+        session.scope.volumes.push(state::Picked {
+            path: volume,
+            on: true,
+        });
+        let mut running = Running::default();
+        // 这一条一个预设键都不按（见 [`presets`]）。
+        let nowhere = presets(&space);
+
+        // 按 `t`：单卷试算，因此这一趟改走 `Mode::Process` 并在决策点上等人。
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Char('t')),
+            Exit::Stay
+        );
+        assert!(matches!(session.mode(), state::Mode::Running(_)));
+
+        // 那条线程走到决策点上停住；会话每帧问一次，跟着换一副样子（见 [`drive`]）。
+        while !running.deciding() {
+            std::thread::yield_now();
+        }
+        session.at_the_decision_point(running.deciding());
+        assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
+        assert!(
+            running.live().expect("跑过一趟").summarized().is_some(),
+            "决策点上没有报告可画"
+        );
+
+        // 等答话时会话仍旧收键：按一个没有意义的键，它照旧原地不动、不退出。
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Char('e')),
+            Exit::Stay
+        );
+        assert!(session.deciding(), "按了一个没有意义的键就走掉了");
+
+        // 按 `s` 答收尾：这一卷一个字节都不写，那条线程接着跑完。
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
+            Exit::Stay
+        );
+        assert!(!session.deciding(), "答完话会话还停在决策点上");
+        while !running.reap() {
+            std::thread::yield_now();
+        }
+        session.run_finished();
+
+        assert_eq!(
+            session.mode(),
+            &state::Mode::Browsing,
+            "收场之后配置还改不动"
+        );
+        assert!(!out.exists(), "答了收尾，输出根却被建了出来");
+        let live = running.live().expect("跑过一趟");
+        assert_eq!(live.report().volumes.len(), 1, "答收尾把报告也一起停掉了");
+        assert_eq!(
+            live.decided(),
+            Some(tonefit::Instruction::Finish),
+            "答的那个字没记下来"
+        );
+    }
+
+    /// **续做只在单卷试算上成立**（ADR 0012 决定第 1、5 条，`p1-session/14` 票面）。
+    ///
+    /// 三种情形各问一次，问的是同一个函数交出来的那两样：这一趟**真走**哪一种模式、
+    /// 它**在决策点上等不等人**。
+    ///
+    /// 单卷试算那一支两样都变：模式从 `DryRun` 换成 `Process`（参照要留着，
+    /// 答继续时第一遍才不必重算），并且等人。另两支一格不动——**多卷不续做是内存上的事，
+    /// 不是口味**：缓存预算是每卷的。
+    #[test]
+    fn only_a_single_volume_trial_resumes() {
+        let one = |mode| Request {
+            inputs: vec![PathBuf::from("库/卷一")],
+            ..live::fixture::request(mode)
+        };
+        let many = |mode| Request {
+            inputs: vec![PathBuf::from("库/卷一"), PathBuf::from("库/卷二")],
+            ..live::fixture::request(mode)
+        };
+
+        // 单卷试算：改走 Process，并且在决策点上等人。
+        let (request, resumes) = resuming(one(RunMode::DryRun));
+        assert_eq!(resumes, Resuming::Waits, "单卷试算没续做");
+        assert_eq!(
+            request.mode,
+            RunMode::Process,
+            "续做那一趟得留参照（ADR 0012 决定第 5 条）"
+        );
+
+        // 多卷试算：照旧另走一次 dry-run，不等人。
+        let (request, resumes) = resuming(many(RunMode::DryRun));
+        assert_eq!(resumes, Resuming::GoesOn, "多卷续做了");
+        assert_eq!(request.mode, RunMode::DryRun, "多卷试算不该改模式");
+
+        // 执行：一格不动，无论几卷——按 x 的时候用户已经拿过主意了。
+        for request in [one(RunMode::Process), many(RunMode::Process)] {
+            let inputs = request.inputs.len();
+            let (request, resumes) = resuming(request);
+            assert_eq!(
+                resumes,
+                Resuming::GoesOn,
+                "执行那一趟停下来等人了（{inputs} 卷）"
+            );
+            assert_eq!(request.mode, RunMode::Process);
+        }
+
+        // 一个卷都没勾：范围为空由库那一侧当场拒掉，这一层不替它多编一句，
+        // 也不该把它当成「单卷」续做。
+        let (request, resumes) = resuming(Request {
+            inputs: Vec::new(),
+            ..live::fixture::request(RunMode::DryRun)
+        });
+        assert_eq!(resumes, Resuming::GoesOn, "一个卷都没有也续做了");
+        assert_eq!(request.mode, RunMode::DryRun);
+    }
+
     /// **展开那个键找那一趟要报告，而报告不在时它说一句、不进展开态。**
     ///
     /// 接头处与按停那一条同一个位置：状态机读不到那一趟攒下来的东西，
@@ -584,11 +768,15 @@ mod tests {
                 volume
             })
             .collect();
-        running.start(tonefit::Request {
-            inputs,
-            output_root: workspace.path().join("出"),
-            ..live::fixture::request(tonefit::Mode::DryRun)
-        });
+        running.start(
+            tonefit::Request {
+                inputs,
+                output_root: workspace.path().join("出"),
+                ..live::fixture::request(tonefit::Mode::DryRun)
+            },
+            // 两卷，因此不续做：这一条问的是展开，与决策点无关（见 [`resuming`]）。
+            Resuming::GoesOn,
+        );
         while !running.reap() {
             std::thread::yield_now();
         }

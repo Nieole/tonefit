@@ -75,6 +75,20 @@ pub enum Event<'a> {
     PassStarted {
         /// 在走哪一遍。
         pass: Pass,
+        /// 这一卷**到此刻为止**的报告。只有[决策点](Pass::Second)那一条带着它，
+        /// 另外两遍是 `None`（停车场 Q52）。
+        ///
+        /// 非带不可：决策点问的是「这一卷的第二遍还做不做」，而答得上这一问的东西
+        /// ——卷级判定、逐页结果、缓存用量、解码计数——要到
+        /// [`VolumeFinished`](Self::VolumeFinished) 才交出去，而那一条排在决策点**之后**。
+        /// 不带的话，要在这里等人拿主意的调用方手上只有逐步事件，屏上画不出任何
+        /// 可供拿主意的东西。
+        ///
+        /// 带的是**那一刻为真**的一份，不是预告：第二遍一步没走，因此
+        /// `timing.second_pass` 是零，`output` 指的是这一卷**会**落到的那个位置
+        /// （此刻盘上还没有它）。答收尾之后 `VolumeFinished` 交出来的那一份与它的差
+        /// 也就只有计时那一格——这一卷等于走了一次试算（`CONTEXT.md` 的《会话》：决策点）。
+        so_far: Option<&'a VolumeReport>,
     },
     /// 又走完了一步。
     ///
@@ -366,6 +380,11 @@ impl<'a> Events<'a> {
     /// **续做的决策点**：把「第二遍要开始了」报出去，回的是观察者**当场答的那个字**
     /// （ADR 0012 决定第 2 条，`CONTEXT.md` 的《会话》：决策点）。
     ///
+    /// 报出去的那一条**带着这一卷到此刻为止的报告**（见 [`Event::PassStarted`] 的 `so_far`）：
+    /// 要在这里等人拿主意的调用方靠它画出「拿什么主意」。拼那一份要遍历逐页结果、
+    /// 读一次缓存用量，因此收的是一个**闭包**——[没人可问](Self::sink)的那一趟连拼都不拼，
+    /// 而命令行不带进度条的那条路走的正是那一支。
+    ///
     /// 回的**不是**[闩](Self::standing)，而这是这一处与两个检查点唯一的差别，理由是问题不同：
     /// 闩答的是「这一趟还走不走」，这里问的是「这一卷的第二遍还做不做」。拿闩来答的话，
     /// 第一遍里按下的**收尾**会顺手把当前卷的第二遍也吃掉，而收尾的定义正是
@@ -378,12 +397,21 @@ impl<'a> Events<'a> {
     ///
     /// **没人可问就连表都不掐**：那一趟根本没有人在这里等，掐出来的会是两次取时刻之差，
     /// 而那是库自己的开销，不该从这一趟的墙钟里减掉。命令行不带进度条的那条路走的正是这里。
-    pub(crate) fn ask_before_the_second_pass(self) -> Instruction {
+    pub(crate) fn ask_before_the_second_pass(
+        self,
+        so_far: impl FnOnce() -> VolumeReport,
+    ) -> Instruction {
         if self.sink.is_none() {
             return Instruction::Continue;
         }
+        // 拼那一份报告是**库自己的工夫**，掐在等人那一截之外：表从它拼完才起
+        // （见 [`Deliberation`]：只掐观察者没返回的那一段）。
+        let so_far = so_far();
         let asked = Instant::now();
-        let answer = self.ask(Event::PassStarted { pass: Pass::Second });
+        let answer = self.ask(Event::PassStarted {
+            pass: Pass::Second,
+            so_far: Some(&so_far),
+        });
         self.deliberation.add(asked.elapsed());
         answer
     }
@@ -427,8 +455,11 @@ impl<'a> Events<'a> {
     /// [第二遍](Pass::Second)不走这里，走
     /// [`ask_before_the_second_pass`](Self::ask_before_the_second_pass)——同一条事件，
     /// 只是那一处要把答复接回来。事件的形状因此没有分家。
+    ///
+    /// 这两遍不带 `so_far`：那一格是给决策点用的，而这里还没有汇总可交
+    /// （见 [`Event::PassStarted`]）。
     pub(crate) fn pass_started(self, pass: Pass) {
-        self.report(Event::PassStarted { pass });
+        self.report(Event::PassStarted { pass, so_far: None });
     }
 
     /// 走完一步。逐页、逐成员报到的那些地方用它。
@@ -457,7 +488,34 @@ impl<'a> Events<'a> {
 mod tests {
     use super::*;
 
+    use std::path::PathBuf;
     use std::sync::Mutex;
+
+    /// 决策点那一条带的那份报告，本模块的用例用的一份空壳。
+    ///
+    /// **本模块问的不是它装了什么**——那是 `crate::process_volume` 拼出来的，
+    /// 由 `tests/resume.rs` 在真跑一趟的现场断言。这里要的只是「有这么一份可交」，
+    /// 好让[决策点](Events::ask_before_the_second_pass)那个闭包调得起来。
+    fn nothing_yet() -> VolumeReport {
+        VolumeReport {
+            volume: PathBuf::from("卷一"),
+            output: PathBuf::from("出/卷一"),
+            superseded: None,
+            pages: Vec::new(),
+            source_pages: 0,
+            verdict: None,
+            cache: crate::CacheUsage::new(crate::CacheBudget::default()),
+            io: crate::IoPlan {
+                medium: crate::Medium::Unknown {
+                    reason: "用例".to_owned(),
+                },
+                readers: 1,
+                chosen_by: crate::ChosenBy::Probe,
+            },
+            decodes: 0,
+            timing: crate::VolumeTiming::default(),
+        }
+    }
 
     /// 记账用的观察者：报到什么就记什么，回的指令由用例事先摆好。
     ///
@@ -527,7 +585,7 @@ mod tests {
             [
                 "RunStarted { volumes: 2, steps: 30 }",
                 r#"VolumeStarted { volume: "卷一", steps: 10 }"#,
-                "PassStarted { pass: First }",
+                "PassStarted { pass: First, so_far: None }",
                 "Stepped",
                 r#"PageFailed { page: "卷一/003.png", reason: "解不出来" }"#,
                 r#"VolumeFailed { volume: "卷二", reason: "盘拔了" }"#,
@@ -613,7 +671,7 @@ mod tests {
         // 手指离开键盘，决策点上答的是继续——这一卷的第二遍照走。
         tally.answers(Instruction::Continue);
         assert_eq!(
-            events.ask_before_the_second_pass(),
+            events.ask_before_the_second_pass(nothing_yet),
             Instruction::Continue,
             "决策点拿闩当了答复，第一遍里按下的收尾把当前卷的第二遍也吃掉了"
         );
@@ -631,7 +689,7 @@ mod tests {
         let events = Events::new(Some(&sink), &fresh, &unhurried);
         deciding.answers(Instruction::Finish);
         assert_eq!(
-            events.ask_before_the_second_pass(),
+            events.ask_before_the_second_pass(nothing_yet),
             Instruction::Finish,
             "决策点没把当场答的那个字交回来"
         );
@@ -690,7 +748,7 @@ mod tests {
             "别处报到也算进了等人的那一截"
         );
 
-        events.ask_before_the_second_pass();
+        events.ask_before_the_second_pass(nothing_yet);
         assert!(
             events.deliberated() >= WAITS,
             "决策点上等掉的那一截没掐出来：{:?}",
