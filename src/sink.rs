@@ -32,6 +32,15 @@ impl Sink {
     /// 在 `path` 建出输出容器：目录卷是一个目录，归档卷是一个归档文件。
     ///
     /// 这一步建出来的是临时容器，`path` 此刻还没被碰——它要等 [`finish`](Sink::finish)。
+    ///
+    /// **输出根本身写不写得进不由这里答**：那是这一趟的参数错了，开工前探一次就整趟拒掉了
+    /// （见 `crate::ensure_the_output_root_takes_a_write`，06 号票）。到得了这里的失败说的是
+    /// **这一卷**这一次建临时容器没建成——这一卷的权限与别处不同、输出根在探过之后才坏、
+    /// 盘满——那些是真的「这一卷做不成」，走卷级失败、其余卷照做。
+    ///
+    /// **最终位置被别的东西占着不在这一句上**：临时容器另占一个名字，建它照样成，
+    /// 撞上是在 [`finish`](Sink::finish) 把它改名到位那一步。两处都是卷级失败，
+    /// 只是报出来的那句话不同。
     pub fn create(path: &Path, container: Container) -> Result<Self> {
         match container {
             Container::Directory => Ok(Sink::Directory(DirectorySink::create(path)?)),

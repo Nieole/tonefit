@@ -39,6 +39,38 @@ fn assert_these_volumes_came_out_whole(report: &tonefit::Report, expected: &[&Pa
     }
 }
 
+/// 三个各装一页的卷，按点名顺序 `volume-a`、`volume-b`、`volume-c`。
+///
+/// 「坏的那一卷夹在中间」是本篇好几条用例共用的形状：排在它前后的卷都要照常做完，
+/// 而那一条只有把坏的夹在中间才问得出来。造它的那四行在 06 号票的两条用例里逐字相同，
+/// 因此收在这里；05 号票那两条各有各的形状（一条给中间那卷加一个透传成员、
+/// 一条要它有两页），仍旧各自造各自的。
+fn three_volumes(space: &Workspace) -> [fixtures::Volume; 3] {
+    let page = fixtures::gradient(fixtures::TINY);
+    ["volume-a", "volume-b", "volume-c"].map(|name| {
+        let volume = space.volume(name);
+        volume.page("001.png", &page);
+        volume
+    })
+}
+
+/// 开工那条事件一到，就把 `path` 占成一个普通文件。
+///
+/// 那一刻排在**开工前那几道检查与预扫之后**（见 `tonefit::Event::RunStarted`），
+/// 因此造得出「探那一次实实在在地过了，随后才坏」这个现场。
+/// 与 `fixtures::RemoveOnceTheSurveyIsDone` 动手的时刻逐字相同，只是它抽走东西、这个占住位置。
+/// 留在本文件里而不是收进夹具：用它的只有下面那一条。
+struct OccupyOnceTheRunStarts(std::path::PathBuf);
+
+impl tonefit::Progress for OccupyOnceTheRunStarts {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if matches!(event, tonefit::Event::RunStarted { .. }) {
+            std::fs::write(&self.0, b"occupied").expect("占住输出根");
+        }
+        tonefit::Instruction::Continue
+    }
+}
+
 /// 隔离目录在输出根下的名字。测试把它写死，因为它是用户看得见的那个事实。
 const ISOLATED: &str = "_isolated";
 
@@ -662,5 +694,174 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
     assert!(
         !report.any_isolated(),
         "卷根不见了仍被当成「有卷被隔离」，退出码分不开这两件事"
+    );
+}
+
+/// 输出根写不进去是**这一趟的参数**错了：开工前探一次，一页不做地拒掉（06 号票）。
+///
+/// 从前这句话由 `Sink::create` 在每一卷里各撞一次——三个卷就是三笔卷级失败、
+/// 同一句话说三遍，而退出码是「有卷没做成」（`3`），含义弱于本该给的那个
+/// 「这一趟没做成」（`1`）。收的是停车场 Q51。
+///
+/// 四件事一起断言：整趟当场停（`run` 回 `Err`，而 `Err` 就是那个 `1`——命令行那一路
+/// 把 `run` 的错误一律交成 `REFUSED_EXIT`）；那句话指得出是哪个输出根；
+/// **三个卷一个都没被点名**（说一次，不是三次）；盘上一个字节都没多出来。
+///
+/// 造法是让输出根落在一个**普通文件**下面：那条路径在两个平台上都建不出来，
+/// 而这不必去碰权限位——目录的只读位在 Windows 上根本不作数
+/// （见 `tonefit` 的 `ensure_the_output_root_takes_a_write`）。
+#[test]
+fn an_output_root_that_cannot_be_written_is_refused_before_any_volume() {
+    let space = Workspace::new();
+    let [first, second, third] = three_volumes(&space);
+    // 输出根落在一个普通文件下面：它底下建不出任何目录。
+    let occupied = space.stray_file("occupied", b"not a directory");
+    let output_root = occupied.join("out");
+
+    let error = tonefit::run(&tonefit::Request {
+        output_root: output_root.clone(),
+        ..fixtures::request(&space, [first.path(), second.path(), third.path()])
+    })
+    .expect_err("输出根建不出来该整趟拒掉");
+
+    let said = format!("{error:#}");
+    assert!(said.contains("写不进去"), "没说清是输出根写不进去：{said}");
+    assert!(
+        said.contains(&output_root.display().to_string()),
+        "没指出是哪个输出根：{said}"
+    );
+    // 本票的要害：这句话**只说一次**。三个卷一个都不该在里面露面——
+    // 它们各撞一次、各记一笔的那个样子正是本票要改掉的。
+    for name in ["volume-a", "volume-b", "volume-c"] {
+        assert!(!said.contains(name), "{name} 也各撞了一次：{said}");
+    }
+    // 一页不做，盘上也没多出东西：那个文件仍是文件，内容一字未改。
+    assert_eq!(
+        std::fs::read(&occupied).expect("占位文件还在"),
+        b"not a directory".to_vec(),
+        "开工前那道检查动了盘上的东西"
+    );
+    assert!(!output_root.exists(), "被拒的那一趟仍建出了输出根");
+}
+
+/// 试算照样答得出「你这个 `--out` 根本用不了」，而探那一次**不留痕迹**（06 号票）。
+///
+/// 两半是同一条性质的两面。`Mode::DryRun` 的契约是「一个文件都不落盘」，
+/// 而那说的是**输出**——页、记录、输出容器，也就是用户留得下的那些东西；
+/// 探针留不下任何东西，探完的盘与没探过逐字节一样，两者因此不冲突，这道检查也就不看模式。
+/// 反过来，试算要是答不出这一句，那份报告就在撒谎：拒绝执行说的是**参数**，
+/// 而两种模式的参数是同一份。
+///
+/// 「不留痕迹」只在**试算**上验得到：照常处理的那一趟输出根本来就要建出来，
+/// 探针建的与真写建的分不开。试算一个文件都不写，探完输出根仍**不存在**才是那条性质。
+#[test]
+fn a_dry_run_probes_the_output_root_and_leaves_nothing_behind() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+
+    // 一、写不进去的输出根在试算里照样被拒。
+    let occupied = space.stray_file("occupied", b"not a directory");
+    let error = tonefit::run(&tonefit::Request {
+        output_root: occupied.join("out"),
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect_err("试算也该说得出输出根用不了");
+    assert!(
+        format!("{error:#}").contains("写不进去"),
+        "试算没说清输出根用不了：{error:#}"
+    );
+
+    // 二、写得进的输出根探完仍不存在：探针把自己建出来的那几级收干净了。
+    let report = tonefit::run(&tonefit::Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("试算该跑得完");
+    assert_eq!(report.volumes.len(), 1, "试算没把这一卷算完");
+    assert!(
+        !space.out().exists(),
+        "探过之后输出根留在了盘上：试算该一个文件都不落盘"
+    );
+}
+
+/// 某一卷的去处被占仍是**这一卷做不成**（`3`），**其余卷照做**——开工前那道检查没把它一起
+/// 收走（06 号票的验收第 2 条）。逐卷现建输出容器那条路因此留着：单卷权限不同、去处被占，
+/// 都是真的「这一卷做不成」，不是「这一趟的参数错了」。
+///
+/// 造法是把中间那一卷的去处先占成一个**普通文件**：输出根本身好好的、探那一次照样过，
+/// 坏在收尾要把临时容器改名到位的那一步上（临时容器另占一个名字，建它是成的，
+/// 见 `tonefit` 的 `Sink::create`）。
+///
+/// 与 `an_output_root_that_cannot_be_written_is_refused_before_any_volume` 是一对：
+/// 两条只差被占的是输出根还是其中一卷的去处，而退出码一个 `1` 一个 `3`。
+/// 「探过之后才坏」那一种由
+/// `an_output_root_taken_after_the_probe_still_fails_volume_by_volume` 钉着。
+#[test]
+fn a_volume_whose_destination_is_taken_is_the_only_one_that_fails() {
+    let space = Workspace::new();
+    let [first, doomed, last] = three_volumes(&space);
+    // 输出根本身写得进——被占的只有中间那一卷的去处。
+    std::fs::create_dir_all(space.out()).expect("建输出根");
+    std::fs::write(space.out().join("volume-b"), b"occupied").expect("占住那一卷的去处");
+
+    let report = tonefit::run(&fixtures::request(
+        &space,
+        [first.path(), doomed.path(), last.path()],
+    ))
+    .expect("一卷的去处被占不该毁掉整趟");
+
+    // 没做成的只有那一卷，它指得出自己是谁。
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("去处被占没被记成卷级失败：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    // 退出码那一侧：`3`，与开工前那道检查交出的 `1` 分得开。
+    assert!(
+        report.any_volume_failed(),
+        "退出码读的就是它：单卷的去处被占该走「有卷没做成」"
+    );
+
+    // 排在它前后的卷照常做完，报告与盘上的输出都在。
+    assert_these_volumes_came_out_whole(&report, &[first.path(), last.path()]);
+}
+
+/// 探得过、真写时才坏的那一种仍走**卷级失败**（`3`），不崩——那道检查「天生有竞态」的
+/// 正面回答（06 号票的验收第 4 条）。
+///
+/// 造的是「**探过之后**输出根才被占住」：开工那条事件排在开工前那几道检查与预扫之后
+/// （见 `tonefit::Event::RunStarted`），在那一刻把输出根的名字占成一个普通文件。
+/// 探那一次因此**真的过了**——探针建出输出根、写进去、又收干净——坏的是随后每一卷
+/// 去建自己那个临时容器的那一步。盘满是同一个形状的另一种，仓库里造不出来。
+///
+/// 三件事一起断言：整趟**回 `Ok`**（不是恐慌，也不是拒绝执行）；三个卷各记一笔卷级失败；
+/// 退出码那一侧读得出「有卷没做成」。这一条与
+/// `an_output_root_that_cannot_be_written_is_refused_before_any_volume` 划的是同一条界：
+/// **开工前拦得住的才拒**，拦不住的照旧一卷一卷地记——那不是缺陷，是那道检查的边界。
+#[test]
+fn an_output_root_taken_after_the_probe_still_fails_volume_by_volume() {
+    let space = Workspace::new();
+    let [first, second, third] = three_volumes(&space);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(OccupyOnceTheRunStarts(
+            space.out(),
+        ))),
+        ..fixtures::request(&space, [first.path(), second.path(), third.path()])
+    })
+    .expect("输出根探过之后才坏不该毁掉整趟，也不该崩");
+
+    // 探那一次真的过了：它没在开工之前把这一趟拒掉。坏在后面，因此三个卷各记一笔。
+    assert_eq!(
+        report.failed_volumes.len(),
+        3,
+        "探过之后才坏的没被记成卷级失败：{:?}",
+        report.failed_volumes
+    );
+    assert!(report.volumes.is_empty(), "占着的输出根下不该有卷做成");
+    assert!(
+        report.any_volume_failed(),
+        "退出码读的就是它：探过之后才坏该走「有卷没做成」"
     );
 }
