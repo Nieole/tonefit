@@ -21,6 +21,7 @@ use std::thread::JoinHandle;
 
 use anyhow::Result;
 
+use crate::cost;
 use crate::source::{Member, Reader, read_file};
 
 /// 在途字节的预算：读取层最多让这么多源字节同时待在通道里。
@@ -115,7 +116,7 @@ impl Iterator for Reads<'_> {
                 throttle,
             } => {
                 let claim = throttle.claim()?;
-                let bytes = reader.read(members[claim.index]);
+                let bytes = cost::stage(cost::Stage::Read, || reader.read(members[claim.index]));
                 Some(Read {
                     index: claim.index,
                     bytes,
@@ -173,7 +174,8 @@ impl Concurrent {
                 let sender: Sender<Read> = sender.clone();
                 std::thread::spawn(move || {
                     while let Some(claim) = throttle.claim() {
-                        let bytes = read_file(&paths[claim.index]);
+                        let bytes =
+                            cost::stage(cost::Stage::Read, || read_file(&paths[claim.index]));
                         let read = Read {
                             index: claim.index,
                             bytes,

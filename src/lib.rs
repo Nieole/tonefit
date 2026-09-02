@@ -16,6 +16,7 @@
 mod cache;
 mod calibrate;
 mod color;
+mod cost;
 mod crop;
 mod decide;
 mod decode;
@@ -113,6 +114,9 @@ pub fn run(request: &Request) -> Result<Report> {
     // 整趟的表从这里开始掐：开工前那几道检查也要摸文件系统，摊在计时之外
     // 只会让报出来的总耗时比调用方自己在外面掐的那个小一截（加固批 11 号票）。
     let started = Instant::now();
+    // 分阶段耗时剖面的表在这里清零：它说的是**这一趟**（见 `cost::start`）。
+    // 特性关着时这一句什么都不做。
+    cost::start();
     if request.inputs.is_empty() {
         bail!("处理范围为空：至少点名一个卷（ADR 0009：处理点名的子集）");
     }
@@ -183,6 +187,8 @@ pub fn run(request: &Request) -> Result<Report> {
         }
     }
     events.run_finished(outcome);
+    // 分阶段耗时剖面（加固批 13 号票的量具）。特性关着时这一句什么都不做，见 `cost`。
+    cost::print_profile();
     Ok(Report {
         profile: request.profile.clone(),
         fit: request.fit,
@@ -526,7 +532,9 @@ fn process_volume(
     // （源里同时有 `001.jpg` 与 `001-1.png`），而那一撞要在写出第一个字节之前拦下。
     ensure_no_two_outputs_collide(&volume, &scored)?;
 
-    let (verdicts, verdict) = summarize_volume(&scored, request);
+    let (verdicts, verdict) = cost::stage(cost::Stage::Summarize, || {
+        summarize_volume(&scored, request)
+    });
     let uniform = uniform_size(&scored, request.profile.panel().resolution);
     // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
     let (output, elsewhere) = if scored.iter().any(OutputPage::failed) {
@@ -544,21 +552,23 @@ fn process_volume(
     //
     // 用量在拼进结构体**之前**读回来，而那把锁掐在这个闭包自己这一句里：
     // 拼完就要把它交给观察者，而观察者可能很久不返回（见 `progress` 的模块文档）。
-    let assemble = |timing: VolumeTiming| VolumeReport {
-        volume: volume.root.clone(),
-        output: output.clone(),
-        superseded: superseded.clone(),
-        pages: scored
-            .iter()
-            .zip(&verdicts)
-            .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
-            .collect(),
-        source_pages,
-        verdict,
-        cache: lock(&cache).usage(),
-        decodes: decoder.decodes(),
-        io: io.clone(),
-        timing,
+    let assemble = |timing: VolumeTiming| {
+        cost::stage(cost::Stage::Assemble, || VolumeReport {
+            volume: volume.root.clone(),
+            output: output.clone(),
+            superseded: superseded.clone(),
+            pages: scored
+                .iter()
+                .zip(&verdicts)
+                .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
+                .collect(),
+            source_pages,
+            verdict,
+            cache: lock(&cache).usage(),
+            decodes: decoder.decodes(),
+            io: io.clone(),
+            timing,
+        })
     };
 
     // **续做的决策点就在这一句上**（ADR 0012 决定第 2 条）：汇总已经做完、第二遍还没开始。
@@ -1237,8 +1247,7 @@ impl Compute<'_> {
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
         let read = bytes.and_then(|bytes| {
-            self.decoder
-                .decode(&bytes)
+            cost::stage(cost::Stage::Decode, || self.decoder.decode(&bytes))
                 .with_context(|| format!("解 {} 这一页", source.display()))
         });
         let (decoded, salvage) = match read {
@@ -1257,12 +1266,14 @@ impl Compute<'_> {
                 )]);
             }
         };
-        let color = color::identify(&decoded);
+        let color = cost::stage(cost::Stage::Identify, || color::identify(&decoded));
         let panel = self.request.profile.panel();
         if panel.color && color.is_color() {
-            self.color_pages(source, relative, color::to_color(&decoded), color, salvage)
+            let image = cost::stage(cost::Stage::ToColor, || color::to_color(&decoded));
+            self.color_pages(source, relative, image, color, salvage)
         } else {
-            self.gray_pages(source, relative, gray::to_gray(&decoded), color, salvage)
+            let image = cost::stage(cost::Stage::ToGray, || gray::to_gray(&decoded));
+            self.gray_pages(source, relative, image, color, salvage)
         }
     }
 
@@ -1285,17 +1296,24 @@ impl Compute<'_> {
     ) -> Result<Vec<OutputPage>> {
         let request = self.request;
         let panel = request.profile.panel().resolution;
-        let crop = Crop::of_gray(&image, request.crop, salvage);
-        let image = crop.apply_gray(image);
-        let split = Split::of_gray(&image, panel, request.split, salvage);
+        let (crop, image) = cost::stage(cost::Stage::Crop, || {
+            let crop = Crop::of_gray(&image, request.crop, salvage);
+            let image = crop.apply_gray(image);
+            (crop, image)
+        });
+        let split = cost::stage(cost::Stage::Split, || {
+            Split::of_gray(&image, panel, request.split, salvage)
+        });
         let pieces: Vec<(GrayImage, Piece)> = match split.halves() {
             None => vec![(image, Piece::whole(crop, split))],
             Some(halves) => halves
                 .iter()
                 .map(|half| {
-                    let piece = half.window().take_gray(&image);
-                    let inner = Crop::of_gray(&piece, request.crop, salvage);
-                    (inner.apply_gray(piece), Piece::half(crop, *half, inner))
+                    let piece = cost::stage(cost::Stage::Split, || half.window().take_gray(&image));
+                    cost::stage(cost::Stage::Crop, || {
+                        let inner = Crop::of_gray(&piece, request.crop, salvage);
+                        (inner.apply_gray(piece), Piece::half(crop, *half, inner))
+                    })
                 })
                 .collect(),
         };
@@ -1333,17 +1351,25 @@ impl Compute<'_> {
     ) -> Result<Vec<OutputPage>> {
         let request = self.request;
         let panel = request.profile.panel().resolution;
-        let crop = Crop::of_color(&image, request.crop, salvage);
-        let image = crop.apply_color(image);
-        let split = Split::of_color(&image, panel, request.split, salvage);
+        let (crop, image) = cost::stage(cost::Stage::Crop, || {
+            let crop = Crop::of_color(&image, request.crop, salvage);
+            let image = crop.apply_color(image);
+            (crop, image)
+        });
+        let split = cost::stage(cost::Stage::Split, || {
+            Split::of_color(&image, panel, request.split, salvage)
+        });
         let pieces: Vec<(ColorImage, Piece)> = match split.halves() {
             None => vec![(image, Piece::whole(crop, split))],
             Some(halves) => halves
                 .iter()
                 .map(|half| {
-                    let piece = half.window().take_color(&image);
-                    let inner = Crop::of_color(&piece, request.crop, salvage);
-                    (inner.apply_color(piece), Piece::half(crop, *half, inner))
+                    let piece =
+                        cost::stage(cost::Stage::Split, || half.window().take_color(&image));
+                    cost::stage(cost::Stage::Crop, || {
+                        let inner = Crop::of_color(&piece, request.crop, salvage);
+                        (inner.apply_color(piece), Piece::half(crop, *half, inner))
+                    })
                 })
                 .collect(),
         };
@@ -1384,15 +1410,19 @@ impl Compute<'_> {
             .fit
             .target(image.size(), request.profile.panel().resolution);
         let size = fit.size();
-        let (scaled, scaling) = resample::resize_color(image, size, request.filter)?;
+        let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
+            resample::resize_color(image, size, request.filter)
+        })?;
         // dry-run 一个文件都不落盘，编出来的字节没人要。
         let record = self
             .fingerprint
             .map(|fingerprint| Record::color(fingerprint, &placement.origin, salvage));
         let encoded = match request.mode {
             Mode::Process => Some(
-                encode::color_png(&scaled, record.as_ref())
-                    .with_context(|| format!("编 {} 这一页", source.display()))?,
+                cost::stage(cost::Stage::Encode, || {
+                    encode::color_png(&scaled, record.as_ref())
+                })
+                .with_context(|| format!("编 {} 这一页", source.display()))?,
             ),
             Mode::DryRun => None,
         };
@@ -1434,13 +1464,22 @@ impl Compute<'_> {
             .candidates
             .for_gate(gate)
             .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
-        let (scaled, scaling) = resample::resize(&image, size, request.filter)?;
-        let reference = Reference::new(panel, scaled);
-        let scores = candidate_scores(&reference, allowed);
-        let block = cache::compress(reference.image());
-        let slot = lock(self.cache)
-            .insert(block)
-            .with_context(|| format!("缓存 {} 这一页", source.display()))?;
+        let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
+            resample::resize(&image, size, request.filter)
+        })?;
+        // 建参照与六个候选合在同一格里：参照那一侧的低通、掩蔽加权与高频起伏
+        // 也是判据的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，
+        // 「判据占多少」就少算了一截，而剖面存在的理由正是这个数。
+        let (reference, scores) = cost::stage(cost::Stage::Metric, || {
+            let reference = Reference::new(panel, scaled);
+            let scores = candidate_scores(&reference, allowed);
+            (reference, scores)
+        });
+        let slot = cost::stage(cost::Stage::CacheIn, || {
+            let block = cache::compress(reference.image());
+            lock(self.cache).insert(block)
+        })
+        .with_context(|| format!("缓存 {} 这一页", source.display()))?;
         Ok(placement.into_page(
             source,
             Outcome::Processed {
@@ -1582,7 +1621,7 @@ fn second_pass(
             if events.aborting() {
                 return Ok(());
             }
-            sink.write_page(&page.target, bytes)?;
+            cost::stage(cost::Stage::Write, || sink.write_page(&page.target, bytes))?;
             events.step();
         }
     }
@@ -1616,9 +1655,11 @@ impl Encode<'_> {
                 // 位深是编码属性（`CONTEXT.md`），而整页只有一个取值时 1bit 恰好装得下它；
                 // 换个更宽的档也写不出别的字节，编码器那一层照旧会挑最窄的（ADR 0004）。
                 let record = recorder.map(|recorder| recorder.failed(&page.origin));
-                encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
-                    .map(Cow::Owned)
-                    .with_context(|| format!("编 {source} 这一页的占位页"))
+                cost::stage(cost::Stage::Encode, || {
+                    encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
+                })
+                .map(Cow::Owned)
+                .with_context(|| format!("编 {source} 这一页的占位页"))
             }
             Outcome::Processed {
                 branch: Branch::Color { encoded },
@@ -1633,15 +1674,18 @@ impl Encode<'_> {
             } => {
                 let verdict = verdict.expect("灰度路径上必有判定");
                 // 取页要动缓存那本账，因此在锁里；量化与编码在锁外——贵的是后两件。
-                let reference = lock(cache)
-                    .load(*slot)
+                let reference = cost::stage(cost::Stage::CacheOut, || lock(cache).load(*slot))
                     .with_context(|| format!("从缓存取 {source} 这一页"))?;
-                let quantized = quantize::quantize(&reference, verdict.candidate);
+                let quantized = cost::stage(cost::Stage::Quantize, || {
+                    quantize::quantize(&reference, verdict.candidate)
+                });
                 let record =
                     recorder.map(|recorder| recorder.gray(&page.origin, verdict, *salvage));
-                encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
-                    .map(Cow::Owned)
-                    .with_context(|| format!("编 {source} 这一页"))
+                cost::stage(cost::Stage::Encode, || {
+                    encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
+                })
+                .map(Cow::Owned)
+                .with_context(|| format!("编 {source} 这一页"))
             }
         }
     }
@@ -1685,7 +1729,7 @@ fn volume_fingerprint(
         // 而这一遍排在第一遍之前。这里把它记成「读不出来」照样喂进哈希——
         // 拦在这里，一个坏成员就会毁掉整卷，正是本票要拆掉的那件事。
         match &read.bytes {
-            Ok(bytes) => hasher.member(relative, bytes),
+            Ok(bytes) => cost::stage(cost::Stage::Hash, || hasher.member(relative, bytes)),
             Err(_) => hasher.unreadable(relative),
         }
         events.step();

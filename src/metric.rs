@@ -169,6 +169,10 @@ fn low_pass_kernel(ppi: u32) -> u32 {
 /// 而判据在纯色页上要读出手算得出的那个数（见 `tests/metric.rs`）。
 fn low_pass(pixels: &[u8], size: Size, kernel: u32) -> Vec<f32> {
     let (width, height) = (size.width as usize, size.height as usize);
+    // 一格都没有的页：下面两趟都要有「最近的那一个」才成立，而空页上没有。
+    if pixels.is_empty() {
+        return Vec::new();
+    }
     // 核边长是偶数时窗口无法严格居中，左右差一格。参照与候选走同一个窗口，差值不受影响。
     let before = ((kernel - 1) / 2) as usize;
     let after = (kernel - 1) as usize - before;
@@ -182,19 +186,69 @@ fn low_pass(pixels: &[u8], size: Size, kernel: u32) -> Vec<f32> {
     }
     let mut out = vec![0f32; pixels.len()];
     let area = (kernel * kernel) as f64;
-    let last = (height - 1) * width;
-    for x in 0..width {
-        // 切成**恰好**这一列的那几格：走几格由 out 与 stride 一起定，切多了就是走多了。
-        sliding_sum(
-            before,
-            after,
-            1.0 / area,
-            &mut out[x..=x + last],
-            width,
-            |y| f64::from(rows[y * width + x]),
-        );
-    }
+    sweep_columns(before, after, 1.0 / area, &rows, &mut out, width, height);
     out
+}
+
+/// 纵向那一趟一次走多少列。取 16：16 个 `f32` 正好一条 64 字节缓存行。
+const LANES: usize = 16;
+
+/// 纵向的滑动窗口，**一次走 [`LANES`] 列**。
+///
+/// 与逐列调用 [`sliding_sum`] **逐位相同**：每一列各有一个累加器，加与减的次序、
+/// 起始窗口的折叠次序都一格没动，变的只是列与列之间谁先走完。
+/// `f64` 的加法不结合，因此「一格没动」是这里唯一站得住的写法——
+/// 把加减并成一句 `sum += add - subtract` 就少了一次舍入，判据会静默地漂。
+/// [`the_column_sweep_matches_one_column_at_a_time`] 把这条钉成逐位相等的断言。
+///
+/// 为什么不逐列走：逐列取数要沿着列跨 `width` 个 `f32`，一页 1.5 兆像素上
+/// 每取一个数就是一条新缓存行，而一条线只用得上其中一个 `f32`。分带之后一行只碰一条，
+/// 取数的次数不变、缺失的次数降到十六分之一（见 measurements 的《分阶段耗时剖面》）。
+fn sweep_columns(
+    before: usize,
+    after: usize,
+    scale: f64,
+    rows: &[f32],
+    out: &mut [f32],
+    width: usize,
+    height: usize,
+) {
+    debug_assert_eq!(rows.len(), out.len(), "两侧是同一页");
+    debug_assert!(
+        height > 0 && width > 0,
+        "空页在 low_pass 里就早退了：延拓要有一个「最近的那一行」才成立"
+    );
+    let last = height as isize - 1;
+    // 越界的一律按最近的那一行算，与 [`sliding_sum`] 的延拓同一条。
+    let clamped = |y: isize| (y.clamp(0, last) as usize) * width;
+    let mut sums = [0f64; LANES];
+    for x0 in (0..width).step_by(LANES) {
+        let lanes = LANES.min(width - x0);
+        let sums = &mut sums[..lanes];
+        sums.fill(0.0);
+        for y in -(before as isize)..=after as isize {
+            let row = clamped(y) + x0;
+            for (sum, &value) in sums.iter_mut().zip(&rows[row..row + lanes]) {
+                *sum += f64::from(value);
+            }
+        }
+        for y in 0..height {
+            let row = y * width + x0;
+            let entering = clamped(y as isize + 1 + after as isize) + x0;
+            let leaving = clamped(y as isize - before as isize) + x0;
+            // 三件事并在一个循环里：一条线的累加器每格只读写一次。
+            // 拆成三个循环，累加器那一摊装不进寄存器，每格要多走四趟栈。
+            // **一条线之内的次序仍是「先写出、再加进、再减去」**，与逐列走一格不差。
+            let out = &mut out[row..row + lanes];
+            let entering = &rows[entering..entering + lanes];
+            let leaving = &rows[leaving..leaving + lanes];
+            for lane in 0..lanes {
+                out[lane] = (sums[lane] * scale) as f32;
+                sums[lane] += f64::from(entering[lane]);
+                sums[lane] -= f64::from(leaving[lane]);
+            }
+        }
+    }
 }
 
 /// 一维滑动窗口求和：`out[i * stride]` 收下 `value(i-before ..= i+after)` 的和乘 `scale`，
@@ -382,22 +436,29 @@ struct Tile {
 impl Tile {
     /// 块内每一格算一个数，取平均。三个读数——局部均值误差、高频起伏、掩蔽活动度——
     /// 走的是同一趟遍历，只有格子上算什么不同。
-    fn mean(&self, stride: usize, at: impl Fn(usize) -> f32) -> f32 {
+    ///
+    /// 交给闭包的是**一行的下标区间**，不是一格的下标：调用方切成片再走，
+    /// 一行只查一次边界，而不是一格查两次（页尺寸上的差别见 measurements 的
+    /// 《分阶段耗时剖面》）。累加器**由本函数持有并原样传进去**——三个读数都是
+    /// 单精度的连加，换一个折叠次序判据就漂了，而按行各求各的再加起来正是换了次序。
+    fn mean(&self, stride: usize, mut row: impl FnMut(&mut f32, std::ops::Range<usize>)) -> f32 {
         let mut sum = 0f32;
         for y in self.y..self.y + self.height {
-            let row = y as usize * stride;
-            for x in self.x..self.x + self.width {
-                sum += at(row + x as usize);
-            }
+            let start = y as usize * stride + self.x as usize;
+            row(&mut sum, start..start + self.width as usize);
         }
         sum / (self.width * self.height) as f32
     }
 
     /// 块内的局部均值误差，即**低通项**。
     fn low_pass_error(&self, reference: &[f32], candidate: &[f32], stride: usize) -> f32 {
-        self.mean(stride, |index| {
-            let difference = reference[index] - candidate[index];
-            difference * difference
+        self.mean(stride, |sum, row| {
+            let reference = &reference[row.clone()];
+            let candidate = &candidate[row];
+            for (&reference, &candidate) in reference.iter().zip(candidate) {
+                let difference = reference - candidate;
+                *sum += difference * difference;
+            }
         })
         .sqrt()
     }
@@ -408,17 +469,25 @@ impl Tile {
     /// 它量的是低通丢掉的那一段——低通那一层量什么、这一层就量它丢了什么，两者拼起来
     /// 才是一整个误差。
     fn grain(&self, pixels: &[u8], low_pass: &[f32], stride: usize) -> f32 {
-        self.mean(stride, |index| {
-            let difference = f32::from(pixels[index]) - low_pass[index];
-            difference * difference
+        self.mean(stride, |sum, row| {
+            let pixels = &pixels[row.clone()];
+            let low_pass = &low_pass[row];
+            for (&pixel, &low_pass) in pixels.iter().zip(low_pass) {
+                let difference = f32::from(pixel) - low_pass;
+                *sum += difference * difference;
+            }
         })
         .sqrt()
     }
 
     /// 块内的掩蔽活动度：像素离**块尺度**局部均值有多远（见 [`STRUCTURE_KERNEL`]）。
     fn activity(&self, pixels: &[u8], structure: &[f32], stride: usize) -> f32 {
-        self.mean(stride, |index| {
-            (f32::from(pixels[index]) - structure[index]).abs()
+        self.mean(stride, |sum, row| {
+            let pixels = &pixels[row.clone()];
+            let structure = &structure[row];
+            for (&pixel, &structure) in pixels.iter().zip(structure) {
+                *sum += (f32::from(pixel) - structure).abs();
+            }
         })
     }
 }
@@ -515,6 +584,126 @@ mod tests {
                     "核 {kernel} 的第 {index} 格：逐格 {want}，滑窗 {got}"
                 );
             }
+        }
+    }
+
+    /// 分带扫列与逐列扫**逐位相同**。
+    ///
+    /// 判据的读数最终要与阈值比大小，而 `f64` 的加法不结合：把一列的加减并成一句、
+    /// 或者换一个折叠次序，判据都只是**略微**偏一点——性质测试全绿，黄金快照整片挪几个
+    /// 字节。断言取的是逐位相等（`to_bits`），不是「差得不多」：分带买的是缓存局部性，
+    /// 一个 ULP 都不该拿它去换。
+    ///
+    /// 宽度取得跨过带边界（16 与 16 的倍数各走到），核边长奇偶与两个尺度都走到。
+    #[test]
+    fn the_column_sweep_matches_one_column_at_a_time() {
+        for width in [1u32, 15, 16, 17, 32, 33, 40] {
+            let size = Size::new(width, 11);
+            let pixels: Vec<u8> = (0..(size.width * size.height))
+                .map(|index| (index * 37 % 251) as u8)
+                .collect();
+            for kernel in [2, 3, 4, TILE] {
+                let (width, height) = (size.width as usize, size.height as usize);
+                let before = ((kernel - 1) / 2) as usize;
+                let after = (kernel - 1) as usize - before;
+                let mut rows = vec![0f32; pixels.len()];
+                for y in 0..height {
+                    let row = y * width;
+                    sliding_sum(before, after, 1.0, &mut rows[row..row + width], 1, |x| {
+                        f64::from(pixels[row + x])
+                    });
+                }
+                let scale = 1.0 / (kernel * kernel) as f64;
+
+                // 逐列走一遍：本次改动之前纵向那一趟就是这么写的。
+                let mut want = vec![0f32; pixels.len()];
+                let last = (height - 1) * width;
+                for x in 0..width {
+                    sliding_sum(before, after, scale, &mut want[x..=x + last], width, |y| {
+                        f64::from(rows[y * width + x])
+                    });
+                }
+
+                let mut got = vec![0f32; pixels.len()];
+                sweep_columns(before, after, scale, &rows, &mut got, width, height);
+
+                for (index, (want, got)) in want.iter().zip(&got).enumerate() {
+                    assert_eq!(
+                        want.to_bits(),
+                        got.to_bits(),
+                        "宽 {width} 核 {kernel} 的第 {index} 格：逐列 {want}，分带 {got}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 三个块读数与**逐格累加**逐位相同。
+    ///
+    /// `Tile::mean` 现在把一行的下标区间交给闭包，调用方切成片再走。切片只该省掉边界检查，
+    /// 不该动折叠次序——单精度的连加换个次序就漂，而漂出来的判据只是**略微**偏一点：
+    /// 性质测试全绿，黄金快照整片挪几个字节。断言因此取 `to_bits()`。
+    ///
+    /// 逐格那一版就是改动之前的写法：一个 `f32` 累加器，行优先，一格一加。
+    #[test]
+    fn the_tile_readings_match_adding_one_cell_at_a_time() {
+        let size = Size::new(70, 40);
+        let stride = size.width as usize;
+        let pixels: Vec<u8> = (0..(size.width * size.height))
+            .map(|index| (index * 37 % 251) as u8)
+            .collect();
+        let one: Vec<f32> = (0..pixels.len()).map(|i| (i % 97) as f32 * 0.37).collect();
+        let two: Vec<f32> = (0..pixels.len()).map(|i| (i % 89) as f32 * 0.53).collect();
+
+        // 逐格累加：改动之前 `Tile::mean` 的形状。
+        let cell_by_cell = |tile: &Tile, at: &dyn Fn(usize) -> f32| {
+            let mut sum = 0f32;
+            for y in tile.y..tile.y + tile.height {
+                let row = y as usize * stride;
+                for x in tile.x..tile.x + tile.width {
+                    sum += at(row + x as usize);
+                }
+            }
+            sum / (tile.width * tile.height) as f32
+        };
+
+        for tile in tiles(size) {
+            let want = cell_by_cell(&tile, &|index| {
+                let difference = one[index] - two[index];
+                difference * difference
+            })
+            .sqrt();
+            assert_eq!(
+                want.to_bits(),
+                tile.low_pass_error(&one, &two, stride).to_bits(),
+                "低通项在 ({}, {}) 那一块上对不上",
+                tile.x,
+                tile.y
+            );
+
+            let want = cell_by_cell(&tile, &|index| {
+                let difference = f32::from(pixels[index]) - one[index];
+                difference * difference
+            })
+            .sqrt();
+            assert_eq!(
+                want.to_bits(),
+                tile.grain(&pixels, &one, stride).to_bits(),
+                "颗粒项在 ({}, {}) 那一块上对不上",
+                tile.x,
+                tile.y
+            );
+
+            let want = cell_by_cell(&tile, &|index| {
+                (f32::from(pixels[index]) - two[index]).abs()
+            });
+            assert_eq!(
+                want.to_bits(),
+                tile.activity(&pixels, &two, stride).to_bits(),
+                "掩蔽活动度在 ({}, {}) 那一块上对不上",
+                tile.x,
+                tile.y
+            );
         }
     }
 

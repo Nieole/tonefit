@@ -43,6 +43,8 @@ windows-sys = { version = "0.61.2", features = [
 
 [features]
 default = ["tui"]
+# 分阶段耗时剖面（加固批 13 号票的量具）。默认不在，口径与用法见 `src/cost.rs`。
+profiling = []
 ssimulacra2 = ["dep:ssimulacra2"]
 tui = ["dep:ratatui"]
 

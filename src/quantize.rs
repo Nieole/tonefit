@@ -246,7 +246,7 @@ fn floyd_steinberg(image: &GrayImage, depth: BitDepth) -> GrayImage {
         next.fill(0.0);
         for x in 0..width {
             let wanted = f32::from(row[x]) + current[x];
-            let level = table[wanted.clamp(0.0, 255.0).round() as usize];
+            let level = table[nearest_index(wanted.clamp(0.0, 255.0))];
             pixels.push(level);
             let residual = wanted - f32::from(level);
             if x + 1 < width {
@@ -260,6 +260,31 @@ fn floyd_steinberg(image: &GrayImage, depth: BitDepth) -> GrayImage {
         }
     }
     GrayImage::new(size, pixels)
+}
+
+/// `0.0..=255.0` 上的就近取整，与 [`f32::round`] **逐位相同**，用作量化表的下标。
+///
+/// 不直接写 `.round()`：它的语义是「五入远离零」，而 x86-64 的基线指令集里没有这一条
+/// （SSE4.1 的 `roundss` 取的是就近偶入），编译器只能退到 libm 的 `roundf`——
+/// **一个像素一次函数调用**，而误差扩散一页要走几百万次。它是判据里最贵的一块
+/// （见 measurements 的《分阶段耗时剖面》）。
+///
+/// 也不写成 `(value + 0.5).floor()`：那一条在 `0.5` 下方最近的那个 f32 上答错。
+/// `0.5 - 2⁻²⁵` 是个正经的 f32，加上 `0.5` 得 `1 - 2⁻²⁵`，而它在 f32 上不可表示，
+/// 正落在两个相邻值的正中，取偶入到 `1.0`——于是 floor 答 1，而 round 答 0。
+///
+/// 这里取的是「整数部分 ＋ 小数部分够不够半格」。两步都**精确**：`value` 落在
+/// `0.0..=255.0`，截断得到的 `whole` 与 `value` 至多差一个二进制区间，
+/// 相减不丢位（`whole == 0` 时更是原样）。小数部分因此是真的小数部分，
+/// 「够不够半格」就是「五入远离零」本身。[`rounding_agrees_with_the_standard_one`] 钉住它。
+fn nearest_index(value: f32) -> usize {
+    debug_assert!(
+        (0.0..=255.0).contains(&value),
+        "取整之前已经夹进 0..=255：{value}"
+    );
+    let whole = value as u32;
+    let fraction = value - whole as f32;
+    (whole + u32::from(fraction >= 0.5)) as usize
 }
 
 /// 一个格点上的 8 位取值在 `depth` 上的序号。[`quantize`] 的反函数，编码要拿它写进文件。
@@ -292,6 +317,43 @@ fn levels_table(depth: BitDepth) -> [u8; 256] {
 mod tests {
     use super::*;
     use crate::geometry::Size;
+
+    /// 自家的就近取整与 [`f32::round`] 在整个 `0.0..=255.0` 上答得一样。
+    ///
+    /// 一个像素答错一格，抖动那一路就换一个格点，而判据只会**略微**偏一点——
+    /// 性质测试全绿，黄金快照整片挪几个字节。断言因此取逐位相等。
+    ///
+    /// 走两片：每个半格前后各 64 个相邻 f32（换写法要出岔就出在这儿，逐位走满），
+    /// 外加整个区间上的一遍等距**抽样**——后一片是抽的，不是穷举。
+    #[test]
+    fn rounding_agrees_with_the_standard_one() {
+        let mut checked = 0u64;
+        let mut check = |value: f32| {
+            assert_eq!(
+                nearest_index(value) as u32,
+                value.round() as u32,
+                "{value} 的就近取整对不上"
+            );
+            checked += 1;
+        };
+        for whole in 0..255u32 {
+            let half = whole as f32 + 0.5;
+            for step in -64i32..=64 {
+                let value = f32::from_bits(half.to_bits().wrapping_add_signed(step));
+                if (0.0..=255.0).contains(&value) {
+                    check(value);
+                }
+            }
+        }
+        let mut bits = 0f32.to_bits();
+        while f32::from_bits(bits) <= 255.0 {
+            check(f32::from_bits(bits));
+            bits += 4099;
+        }
+        check(0.0);
+        check(255.0);
+        assert!(checked > 200_000, "扫得太少，只走了 {checked} 个取值");
+    }
 
     /// 格点的两侧对得上：第 `index` 个格点的取值量化回去还是 `index`，
     /// 而落在格点上的取值经量化表照样不动。标定图的阶梯与编码器写出的取值因此是同一批数。
