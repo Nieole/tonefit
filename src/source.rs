@@ -52,6 +52,10 @@ impl Volume {
 }
 
 /// 卷内的一个成员：一页，或一个原样透传的文件。
+///
+/// **可克隆**：读取层的并发那一支要把这张表整个搬进读取线程里（线程活得比那次借用长，
+/// 借不过去），而一个成员就是三个小字段（见 `crate::read`）。
+#[derive(Clone)]
 pub struct Member {
     /// 相对卷根的路径。输出按它镜像出结构。
     pub relative: PathBuf,
@@ -63,22 +67,42 @@ pub struct Member {
     /// 归档卷在中央目录里写着。
     pub bytes: u64,
     /// 归档内的成员序号。目录卷不用它。
+    ///
+    /// 它是**中央目录里的下标**，因此同一个归档文件另开一个句柄也指得回同一个成员——
+    /// [`Reader::independent`] 靠的就是这一条。
     entry: usize,
 }
 
 /// 取成员字节的那一半。
+///
+/// 它是**可再开的**：[`independent`](Self::independent) 按同一个源要出第二份，两份互不影响。
+/// 读取层的并发那一支给每条读取线程发一份（见 `crate::read`）。
 pub enum Reader {
-    Directory { root: PathBuf },
-    Archive(zip::ZipArchive<BufReader<File>>),
+    Directory {
+        root: PathBuf,
+    },
+    Archive {
+        /// 归档文件的路径。再开一份独立句柄只要它。
+        path: PathBuf,
+        archive: zip::ZipArchive<BufReader<File>>,
+    },
 }
 
 impl Reader {
-    /// 目录卷的卷根。归档卷没有——它的成员待在一个游标背后，因此并发读无从谈起
-    /// （见 `crate::read`）。
-    pub fn directory_root(&self) -> Option<&Path> {
+    /// 再要一份读取端：读的是同一个源，与自己**互不影响**。
+    ///
+    /// 目录卷只是把卷根抄一份，不碰盘。归档卷是**另开一个文件句柄、另解一遍中央目录**——
+    /// 一个 `ZipArchive` 就是一个游标，几条读取线程共用一个游标无从谈起，各开各的才谈得上并发。
+    ///
+    /// 归档卷这一份因此**不便宜**：一次开文件加一次中央目录解析。按**读取线程**要一份、
+    /// 一道读取要一次，不是按成员要一次。
+    pub fn independent(&self) -> Result<Reader> {
         match self {
-            Reader::Directory { root } => Some(root),
-            Reader::Archive(_) => None,
+            Reader::Directory { root } => Ok(Reader::Directory { root: root.clone() }),
+            Reader::Archive { path, .. } => Ok(Reader::Archive {
+                path: path.clone(),
+                archive: open_archive_handle(path)?,
+            }),
         }
     }
 
@@ -86,7 +110,7 @@ impl Reader {
     pub fn read(&mut self, member: &Member) -> Result<Vec<u8>> {
         match self {
             Reader::Directory { root } => read_file(&root.join(&member.relative)),
-            Reader::Archive(archive) => {
+            Reader::Archive { archive, .. } => {
                 let mut entry = archive
                     .by_index(member.entry)
                     .with_context(|| format!("取归档成员 {}", member.relative.display()))?;
@@ -102,9 +126,10 @@ impl Reader {
 
 /// 读一个文件的全部字节。
 ///
-/// 目录卷的读取只此一条路：串行那条与并发那条都走它（见 `crate::read`），
-/// 「读不出来」那句话才不会有两个版本。
-pub fn read_file(path: &Path) -> Result<Vec<u8>> {
+/// 目录卷的读取只此一条路：串行那条与并发那条都经 [`Reader::read`] 走它，
+/// 「读不出来」那句话才不会有两个版本。读取层不再自己调它——并发那一支也拿一个
+/// [`Reader`] 去读（见 `crate::read`），因此这里不必是 `pub`。
+fn read_file(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("读 {}", path.display()))
 }
 
@@ -208,14 +233,20 @@ fn open_directory(root: &Path, name: String) -> Result<Volume> {
     })
 }
 
-fn open_archive(path: &Path, name: String) -> Result<Volume> {
+/// 在一个归档文件上开一个句柄，中央目录跟着解一遍。开卷那一次与再开一份
+/// （[`Reader::independent`]）共用它——「这个文件读不出归档结构」那句话因此只有一个版本。
+fn open_archive_handle(path: &Path) -> Result<zip::ZipArchive<BufReader<File>>> {
     let file = File::open(path).with_context(|| format!("打开 {}", path.display()))?;
-    let mut archive = zip::ZipArchive::new(BufReader::new(file)).with_context(|| {
+    zip::ZipArchive::new(BufReader::new(file)).with_context(|| {
         format!(
             "读不出 {} 的归档结构：CBZ 就是 ZIP，这个文件可能已损坏或根本不是 ZIP",
             path.display()
         )
-    })?;
+    })
+}
+
+fn open_archive(path: &Path, name: String) -> Result<Volume> {
+    let mut archive = open_archive_handle(path)?;
 
     let mut members = Vec::with_capacity(archive.len());
     for entry in 0..archive.len() {
@@ -247,7 +278,10 @@ fn open_archive(path: &Path, name: String) -> Result<Volume> {
         container: Container::Archive,
         pages,
         extras,
-        reader: Reader::Archive(archive),
+        reader: Reader::Archive {
+            path: path.to_path_buf(),
+            archive,
+        },
     })
 }
 

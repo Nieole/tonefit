@@ -497,8 +497,8 @@ pub(crate) mod fixture {
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
         Envelope, GeometryGate, GrayImage, IoPlan, Medium, Mode as RunMode, PageBranch, PageColor,
-        PageOutcome, PageReport, Processed, Profile, Reason, Reference, Request, Scaling, Size,
-        Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
+        PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Scaling,
+        Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
     };
 
     /// 这一趟的参数。抬头那几行照它印。
@@ -714,10 +714,14 @@ pub(crate) mod fixture {
 
     /// 一份读取计划：探到固态盘、并发读八条。「这一趟怎么读的」那一行印的就是它。
     fn io_plan() -> IoPlan {
+        let readers = Readers {
+            count: 8,
+            chosen_by: ChosenBy::Probe,
+        };
         IoPlan {
             medium: Medium::Solid,
-            readers: 8,
-            chosen_by: ChosenBy::Probe,
+            readers,
+            fingerprint: readers,
         }
     }
 

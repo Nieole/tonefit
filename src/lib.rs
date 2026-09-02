@@ -59,7 +59,7 @@ pub use envelope::Envelope;
 pub use geometry::{FitMode, GeometryGate, Size, max_target_pixels};
 pub use gray::GrayImage;
 pub use interlock::{Interlock, Voice};
-pub use medium::{ChosenBy, IoMode, IoPlan, Medium};
+pub use medium::{ChosenBy, IoMode, IoPlan, Medium, Readers};
 pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
@@ -1235,7 +1235,7 @@ fn first_pass(
         events,
     };
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
-        read::reads(reader, &members, io.readers, read::BUDGET)
+        read::reads(reader, &members, io.readers.count, read::BUDGET)
             // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止就不再往下发页。
             // 它拦在 `par_bridge` **之前**，因此停下来的不止计算层——读取层的发号闸
             // 跟着关上，那几条读取线程当场收摊（见 `read::Throttle::stop`）。
@@ -1777,6 +1777,11 @@ impl Encode<'_> {
 /// 它走的是与第一遍同一个[读取层](read)，因此在没有寻道惩罚的盘上这一遍也是并发读的。
 /// 喂哈希那一端仍**严格按成员次序**——源哈希是有序的，乱一位整卷的指纹就变了，
 /// 而读取层交付本来就有序（见 `read` 的模块头）。
+///
+/// **归档卷上它也并发**，与第一遍不同：并发度取的是 [`IoPlan::fingerprint`] 那一格，
+/// 不是 [`IoPlan::readers`]（为什么两路各有一个数，见 [`IoPlan`] 的《为什么是两路》）。
+/// 并行的是**解**，不是**喂**：几条读取线程各拿一个自己的归档句柄各解各的成员，
+/// 交付仍按成员序号，因此同一卷串行与并行两趟的指纹**逐字节相同**。
 fn volume_fingerprint(
     volume: &mut Volume,
     request: &Request,
@@ -1791,8 +1796,11 @@ fn volume_fingerprint(
     } = volume;
     let members: Vec<&Member> = pages.iter().chain(extras.iter()).collect();
     let mut hasher = metadata::SourceHasher::new();
-    for read in read::reads(reader, &members, io.readers, read::BUDGET) {
+    for read in read::reads(reader, &members, io.fingerprint.count, read::BUDGET) {
         // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止停在成员边界上。
+        // 并发之下这一条不变：交付按成员序号，`break` 因此停在一个真正的成员边界上；
+        // 走出去的这个循环把 `Reads` 丢掉，几条读取线程当场收摊（见 `read::Throttle::stop`）。
+        // 抢跑解出来的那几个成员的字节跟着一起丢掉——停的是**喂**，解到哪儿不影响这份哈希。
         // 喂了一半的哈希不是这一卷的指纹，[`process_volume`] 不拿它去问幂等，
         // 也不让它走出那一卷（见那里的《中止：回 `None`》）。
         if events.aborting() {

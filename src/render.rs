@@ -753,8 +753,9 @@ mod tests {
     use crate::{FAILED_VOLUME_EXIT, ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
-        GeometryGate, GrayImage, Interlock, IoPlan, Medium, PageOutcome, Processed, Reason,
-        Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure, VolumeTiming,
+        GeometryGate, GrayImage, Interlock, IoPlan, Medium, PageOutcome, Processed, Readers,
+        Reason, Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure,
+        VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
@@ -772,7 +773,15 @@ mod tests {
     fn io_plan() -> IoPlan {
         IoPlan {
             medium: Medium::Solid,
-            readers: 8,
+            readers: probed(8),
+            fingerprint: probed(8),
+        }
+    }
+
+    /// 探出来的一路读取，派 `count` 条。
+    fn probed(count: usize) -> Readers {
+        Readers {
+            count,
             chosen_by: ChosenBy::Probe,
         }
     }
@@ -1569,8 +1578,8 @@ mod tests {
             medium: Medium::Unknown {
                 reason: r"\\nas\share\ 是网络路径，介质无从探测".to_owned(),
             },
-            readers: 1,
-            chosen_by: ChosenBy::Probe,
+            readers: probed(1),
+            fingerprint: probed(1),
         };
 
         let text = super::report(&report, Mode::Process);

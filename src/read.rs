@@ -12,9 +12,13 @@
 //! 序号，乱序也归得了位；有序是为了另一个调用方：幂等那一道要按成员次序喂哈希
 //! （见 `crate::metadata` 的 `SourceHasher`），而它没有第二种喂法。
 //! 一套读取层供两处用，比两套各自为政要省心。
+//!
+//! **并发那一支不问容器是什么**：每条读取线程拿一份自己的[读取端](Reader::independent)——
+//! 目录卷是抄一份卷根，归档卷是另开一个文件句柄。因此「一个 ZipArchive 就是一个游标」
+//! 拦住的只是**共用**那一个游标，各开各的不在此列。派不派得动并发由
+//! [读取计划](crate::medium::IoPlan)定，这一层照它做（`CONTEXT.md` 的《I/O 与并发》）。
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -22,7 +26,7 @@ use std::thread::JoinHandle;
 use anyhow::Result;
 
 use crate::cost;
-use crate::source::{Member, Reader, read_file};
+use crate::source::{Member, Reader};
 
 /// 在途字节的预算：读取层最多让这么多源字节同时待在通道里。
 ///
@@ -54,8 +58,18 @@ pub struct Read {
 
 /// 按计划读一批成员。
 ///
-/// `readers` 是[读取计划](crate::medium::IoPlan)定下的并发度，1 即串行。归档卷在那一层
-/// 已经被按到 1（一个 `ZipArchive` 就是一个游标），这里再兜一次底：拿不到卷根的源没有并发可言。
+/// `readers` 是[读取计划](crate::medium::IoPlan)定下的并发度，1 即串行。归档卷上
+/// 两遍那一路仍恒为 1，幂等那一道不是——两个数各由计划里的一格给出，这一层只照它做。
+///
+/// **开不出那么多读取端就用开出来的那几条。**归档卷每条线程要一个自己的文件句柄
+/// （见 [`Reader::independent`]），句柄开不出来时少几条读取只是慢一点，
+/// 而在这里当场失败会毁掉一整卷——读取层的规矩是「读不出来是一个结果，不是一个错误」，
+/// 开不出句柄同理。**开出的不到两条就退回串行**：一条时并发与串行本来就是同一件事，
+/// 而一条都没开出来时并发那一支根本走不动（没有线程去领号，取的一端会一直等）。
+///
+/// 降下来的这个条数**不进报告**：报告印的是[读取计划](crate::medium::IoPlan)——
+/// 定下来要派几条，以及那个数是谁定的。真派出去几条是这一层的实况，两者可以不等
+/// （停车场 Q98）。
 pub fn reads<'a>(
     reader: &'a mut Reader,
     members: &'a [&'a Member],
@@ -68,22 +82,25 @@ pub fn reads<'a>(
     ));
     // 比成员还多的读取线程是白开的：它们生下来就领不到号。
     let readers = readers.min(members.len());
-    match reader.directory_root() {
-        Some(root) if readers > 1 => {
-            let root = root.to_path_buf();
-            let paths: Arc<Vec<PathBuf>> = Arc::new(
-                members
-                    .iter()
-                    .map(|member| root.join(&member.relative))
-                    .collect(),
-            );
-            Reads::Concurrent(Concurrent::spawn(paths, throttle, readers, members.len()))
+    if readers > 1 {
+        let mut own: Vec<Reader> = Vec::with_capacity(readers);
+        while own.len() < readers {
+            match reader.independent() {
+                Ok(opened) => own.push(opened),
+                Err(_) => break,
+            }
         }
-        _ => Reads::Serial {
-            reader,
-            members,
-            throttle,
-        },
+        if own.len() > 1 {
+            // 成员表要整个搬进线程里：线程活得比这次借用长，借不过去（见 `Member` 的《可克隆》）。
+            let owned: Arc<Vec<Member>> =
+                Arc::new(members.iter().map(|member| (*member).clone()).collect());
+            return Reads::Concurrent(Concurrent::spawn(own, owned, throttle));
+        }
+    }
+    Reads::Serial {
+        reader,
+        members,
+        throttle,
     }
 }
 
@@ -160,22 +177,20 @@ pub struct Concurrent {
 }
 
 impl Concurrent {
-    fn spawn(
-        paths: Arc<Vec<PathBuf>>,
-        throttle: Arc<Throttle>,
-        readers: usize,
-        total: usize,
-    ) -> Self {
+    /// `readers` 一条线程一份，各读各的（见 [`Reader::independent`]）。
+    fn spawn(readers: Vec<Reader>, members: Arc<Vec<Member>>, throttle: Arc<Throttle>) -> Self {
+        let total = members.len();
         let (sender, done) = channel();
-        let workers = (0..readers)
-            .map(|_| {
-                let paths = Arc::clone(&paths);
+        let workers = readers
+            .into_iter()
+            .map(|mut reader| {
+                let members = Arc::clone(&members);
                 let throttle = Arc::clone(&throttle);
                 let sender: Sender<Read> = sender.clone();
                 std::thread::spawn(move || {
                     while let Some(claim) = throttle.claim() {
                         let bytes =
-                            cost::stage(cost::Stage::Read, || read_file(&paths[claim.index]));
+                            cost::stage(cost::Stage::Read, || reader.read(&members[claim.index]));
                         let read = Read {
                             index: claim.index,
                             bytes,
@@ -364,6 +379,26 @@ mod tests {
         (root, volume)
     }
 
+    /// 同上，装成一个归档卷。页的内容与 [`volume`] 那一份逐字节相同。
+    ///
+    /// 成员**不压缩**（`Stored`）：本模块要量的是交付的次序与字节，不是 deflate。
+    fn archive(sizes: &[usize]) -> (tempfile::TempDir, source::Volume) {
+        let dir = tempfile::tempdir().expect("建目录");
+        let path = dir.path().join("卷一.cbz");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).expect("建归档"));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (index, &size) in sizes.iter().enumerate() {
+            writer
+                .start_file(format!("{index:03}.png"), options)
+                .expect("起一个成员");
+            std::io::Write::write_all(&mut writer, &vec![index as u8; size]).expect("写成员");
+        }
+        writer.finish().expect("收尾归档");
+        let volume = source::open(&path).expect("打开归档卷");
+        (dir, volume)
+    }
+
     /// 逐页取一遍，顺便把在途字节的峰值记下来。
     fn drain(reads: &mut Reads<'_>) -> Vec<(usize, Vec<u8>)> {
         let mut taken = Vec::new();
@@ -373,32 +408,35 @@ mod tests {
         taken
     }
 
-    /// 串行与并发交出的是同一批字节，且都按成员序号有序。
+    /// 串行与并发交出的是同一批字节，且都按成员序号有序——**目录卷与归档卷都是**。
     ///
     /// 有序这一条是幂等那一道的前提：源哈希按成员次序喂，乱一位整卷的指纹就变了。
+    /// 归档卷也在这条用例里，是 11 号票的硬约束：并行的是**解**，不是**喂**。
     #[test]
     fn serial_and_concurrent_hand_over_the_same_bytes_in_reading_order() {
         let sizes: Vec<usize> = (0..24).map(|index| 1024 + index * 97).collect();
-        let (_dir, mut volume) = volume(&sizes);
-        let members: Vec<&Member> = volume.pages.iter().collect();
+        for (label, mut opened) in [("目录卷", volume(&sizes)), ("归档卷", archive(&sizes))] {
+            let volume = &mut opened.1;
+            let members: Vec<&Member> = volume.pages.iter().collect();
 
-        let mut serial = reads(&mut volume.reader, &members, 1, BUDGET);
-        let taken = drain(&mut serial);
-        drop(serial);
-        let mut concurrent = reads(&mut volume.reader, &members, 8, BUDGET);
-        let also = drain(&mut concurrent);
-        drop(concurrent);
+            let mut serial = reads(&mut volume.reader, &members, 1, BUDGET);
+            let taken = drain(&mut serial);
+            drop(serial);
+            let mut concurrent = reads(&mut volume.reader, &members, 8, BUDGET);
+            let also = drain(&mut concurrent);
+            drop(concurrent);
 
-        assert_eq!(taken.len(), sizes.len());
-        for (index, (order, bytes)) in taken.iter().enumerate() {
-            assert_eq!(*order, index, "第 {index} 份的序号不对");
-            assert_eq!(bytes.len(), sizes[index], "第 {index} 份的长度不对");
-            assert!(
-                bytes.iter().all(|&byte| byte == index as u8),
-                "第 {index} 份串了页"
-            );
+            assert_eq!(taken.len(), sizes.len(), "{label}");
+            for (index, (order, bytes)) in taken.iter().enumerate() {
+                assert_eq!(*order, index, "{label}第 {index} 份的序号不对");
+                assert_eq!(bytes.len(), sizes[index], "{label}第 {index} 份的长度不对");
+                assert!(
+                    bytes.iter().all(|&byte| byte == index as u8),
+                    "{label}第 {index} 份串了页"
+                );
+            }
+            assert_eq!(taken, also, "{label}并发交出的与串行不是同一批");
         }
-        assert_eq!(taken, also, "并发交出的与串行不是同一批");
     }
 
     /// 预算是在途字节的界：读取跑在计算前面，但跑不出这个数（13 号票）。
@@ -504,36 +542,60 @@ mod tests {
         assert_eq!(drain(&mut again).len(), 64);
     }
 
-    /// 归档卷拿不到卷根，因此再怎么点名都走串行那一支。
+    /// 归档卷点名并发就真走并发那一支：每条线程一个自己的句柄（11 号票）。
     ///
-    /// 判定本身在 `crate::medium` 那一层（`ChosenBy::ArchiveScan`），这里兜的是底：
-    /// 一个 `ZipArchive` 就是一个游标，读取层不该有第二条路把它并发起来。
+    /// 这一层**不判该不该并发**——那是 `crate::medium` 那一层的事（归档卷的两遍恒为一条，
+    /// 幂等那一道按介质走）。这里钉的是「点名了就派得动」：从前它在这里被兜底按回串行，
+    /// 那条兜底连同「一个游标」那条理由一起没了。
     #[test]
-    fn an_archive_falls_back_to_the_serial_path() {
-        let dir = tempfile::tempdir().expect("建目录");
-        let path = dir.path().join("卷一.cbz");
-        let file = std::fs::File::create(&path).expect("建归档");
-        let mut writer = zip::ZipWriter::new(file);
-        for index in 0..8 {
-            writer
-                .start_file(
-                    format!("{index:03}.png"),
-                    zip::write::SimpleFileOptions::default(),
-                )
-                .expect("起一个成员");
-            std::io::Write::write_all(&mut writer, &vec![index as u8; 512]).expect("写成员");
-        }
-        writer.finish().expect("收尾归档");
-        let mut volume = source::open(&path).expect("打开归档卷");
+    fn an_archive_takes_the_concurrent_path_when_it_is_asked_to() {
+        let (_dir, mut volume) = archive(&[512; 8]);
         let members: Vec<&Member> = volume.pages.iter().collect();
 
         let mut taking = reads(&mut volume.reader, &members, 8, BUDGET);
 
         assert!(
-            matches!(taking, Reads::Serial { .. }),
-            "归档卷不该走并发那一支"
+            matches!(taking, Reads::Concurrent { .. }),
+            "归档卷点名并发还是走了串行那一支"
         );
         assert_eq!(drain(&mut taking).len(), 8);
+    }
+
+    /// 并发那一支同时攥着几个读取端：**一条线程一个**，条数是 `min(点名的条数, 成员数)`。
+    ///
+    /// 归档卷上一个读取端就是一个打开的文件句柄，这个数因此是「一卷同时开几个句柄」的
+    /// 全部答案——外加卷自己那一个（`Volume::reader`，并发这一趟它闲着）。它随点名的并发度
+    /// 与这一卷的成员数变，不随卷数变。要不要为它划一道上界，归 `p2-loose-ends/12`。
+    #[test]
+    fn a_concurrent_read_holds_one_reader_per_worker() {
+        for (asked, members, expected) in [(8, 24, 8), (32, 4, 4), (2, 2, 2)] {
+            let (_dir, mut volume) = archive(&vec![512; members]);
+            let list: Vec<&Member> = volume.pages.iter().collect();
+
+            let taking = reads(&mut volume.reader, &list, asked, BUDGET);
+
+            let Reads::Concurrent(concurrent) = &taking else {
+                panic!("点名 {asked} 条、{members} 个成员，该走并发那一支")
+            };
+            assert_eq!(
+                concurrent.workers.len(),
+                expected,
+                "点名 {asked} 条、{members} 个成员"
+            );
+        }
+    }
+
+    /// 派一条就是串行那一支，归档卷也一样：那时并发与串行本来就是同一件事，
+    /// 而多开一个句柄是白开的。
+    #[test]
+    fn one_reader_is_the_serial_path_whatever_the_container() {
+        for (_dir, mut volume) in [volume(&[512; 8]), archive(&[512; 8])] {
+            let members: Vec<&Member> = volume.pages.iter().collect();
+
+            let taking = reads(&mut volume.reader, &members, 1, BUDGET);
+
+            assert!(matches!(taking, Reads::Serial { .. }));
+        }
     }
 
     /// 一个成员都没有的卷：一份都不交，也不挂住。

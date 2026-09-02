@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use fixtures::{SMALLER_THAN_TARGET, Workspace};
 use tonefit::{
     ChosenBy, Dither, Event, FitMode, GeometryGate, Instruction, IoMode, Mode, Progress,
-    ProgressSink, Request, Size, Verdict,
+    ProgressSink, Request, Size, Verdict, VolumeVerdict,
 };
 
 /// 一条贴住面板高边的窄页：几何门成立，而像素少到几十页连跑也不慢。
@@ -169,20 +169,23 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
     let serial = plan(IoMode::Serial, "serial");
     let concurrent = plan(IoMode::Concurrent, "concurrent");
 
-    assert_eq!(automatic.chosen_by, ChosenBy::Probe);
-    assert_eq!(serial.chosen_by, ChosenBy::Named);
-    assert_eq!(serial.readers, 1, "点名串行还派了不止一条读取");
-    assert_eq!(concurrent.chosen_by, ChosenBy::Named);
+    assert_eq!(automatic.readers.chosen_by, ChosenBy::Probe);
+    assert_eq!(serial.readers.chosen_by, ChosenBy::Named);
+    assert_eq!(serial.readers.count, 1, "点名串行还派了不止一条读取");
+    assert_eq!(concurrent.readers.chosen_by, ChosenBy::Named);
     // 断言的是一个**等号**，不是「不少于串行那一档」：串行恒为 1，那个不等号展开就是
     // 「不小于 1」，把并发悄悄退化成串行照样绿——一条永真的断言在 CI 日志里与真断言长得一样。
     // 点名并发派几条由核数定（`crate::cores`），本进程问到的是同一个数。
     // 单核机器上并发与串行本就分不开，这个等号在那里退成 `1 == 1`；
     // 「Concurrent 映射到核数」与主机无关的那一半钉在 `src/medium.rs` 的单元用例里。
     assert_eq!(
-        concurrent.readers,
+        concurrent.readers.count,
         num_cpus::get().max(1),
         "点名并发没有派满核数：{concurrent}"
     );
+    // 目录卷两路恒相同：幂等那一道与两遍拿的是同一个数（11 号票不动目录卷这一路）。
+    assert_eq!(concurrent.fingerprint, concurrent.readers, "{concurrent}");
+    assert_eq!(serial.fingerprint, serial.readers, "{serial}");
     // 探到的介质与点名无关：三趟说的是同一块盘。
     assert_eq!(automatic.medium, serial.medium);
     assert_eq!(automatic.medium, concurrent.medium);
@@ -193,8 +196,9 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
 
 /// 一次运行里，两个卷各拿各的读取计划——不是一趟只判一次（ADR 0009 决定第 2 条）。
 ///
-/// 真实机器上只有一块盘，两个路径的**介质**必然相同；分得开的是另一维：归档卷恒串行。
-/// 点名并发之后两个卷仍给出不同的答案，「按卷判定」这件事因此在 seam 上看得见。
+/// 真实机器上只有一块盘，两个路径的**介质**必然相同；分得开的是另一维：**归档卷的两遍**
+/// 恒串行（幂等那一道不在此列，11 号票）。点名并发之后两个卷仍给出不同的答案，
+/// 「按卷判定」这件事因此在 seam 上看得见。
 #[test]
 fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
     let space = Workspace::new();
@@ -216,11 +220,63 @@ fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
 
     assert_eq!(report.volumes.len(), 2);
     let (directory, archive) = (&report.volumes[0].io, &report.volumes[1].io);
-    assert_eq!(directory.chosen_by, ChosenBy::Named);
-    // 归档卷点名并发也改不了：一个 ZipArchive 就是一个游标。
-    assert_eq!(archive.chosen_by, ChosenBy::ArchiveScan);
-    assert_eq!(archive.readers, 1);
+    assert_eq!(directory.readers.chosen_by, ChosenBy::Named);
+    // 归档卷的**两遍**点名并发也改不了：一个 ZipArchive 就是一个游标。
+    assert_eq!(archive.readers.chosen_by, ChosenBy::ArchiveScan);
+    assert_eq!(archive.readers.count, 1);
     assert!(archive.to_string().contains("顺序扫"), "{archive}");
+    // 幂等那一道不吃这一条：它各开各的句柄，点名并发就真派得动（11 号票）。
+    // 断言的是「与目录卷拿同一个数」，不是一个写死的数——派几条由核数定。
+    assert_eq!(archive.fingerprint, directory.readers, "{archive}");
+    // 报告一行里两路分得开。单核机器上并发与串行本就分不开，那里这一句退成「串行」。
+    assert!(archive.to_string().contains("幂等那一道"), "{archive}");
+}
+
+/// 归档卷换一种读法重跑，这一卷**照旧被跳过**（11 号票）。
+///
+/// 指纹不进报告，在 seam 上量「两趟的指纹逐字节相同」因此只有这一种形式：
+/// 跳过要四项依据全对，卷级源哈希是其中一项。两趟的幂等那一道一趟串行、一趟并发，
+/// 而它仍然对得上——**并行的是解，不是喂**。两个方向各来一趟：
+/// 串行写下的指纹并发读得回，并发写下的串行也读得回。
+#[test]
+fn an_archive_is_still_skipped_when_the_fingerprint_pass_changes_how_it_reads() {
+    for (first, again) in [
+        (IoMode::Serial, IoMode::Concurrent),
+        (IoMode::Concurrent, IoMode::Serial),
+    ] {
+        let space = Workspace::new();
+        let mut archive = space.cbz("volume-a");
+        for index in 0..24 {
+            archive.page(
+                &format!("{index:03}.png"),
+                &fixtures::full_bleed_gradient(TOUCHING),
+            );
+        }
+        archive.file("ComicInfo.xml", b"<ComicInfo/>");
+        let archive = archive.write();
+
+        let plan = |mode: IoMode| Request {
+            io_mode: mode,
+            ..fixtures::request(&space, [archive.as_path()])
+        };
+        let done = tonefit::run(&plan(first)).expect("头一趟应当成功");
+        let written = fixtures::fingerprint(&done.volumes[0].output);
+        let rerun = tonefit::run(&plan(again)).expect("重跑应当成功");
+
+        let skipped = &rerun.volumes[0];
+        assert_eq!(
+            skipped.verdict,
+            Some(VolumeVerdict::Skipped { page_count: 24 }),
+            "{first:?} 写下的指纹，{again:?} 读回来对不上"
+        );
+        // 跳过的依据一项不少：一页都没解码，输出一个字节都没动。
+        assert_eq!(skipped.decodes, 0, "跳过的卷还是解码了");
+        assert_eq!(
+            fixtures::fingerprint(&skipped.output),
+            written,
+            "跳过的那一趟动了输出"
+        );
+    }
 }
 
 /// 并发读之下每页仍然只解码一次（ADR 0005 的那条不变量）。

@@ -42,7 +42,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 pub(crate) enum Stage {
-    /// 取源字节。归档卷上它是一条顺序扫，目录卷上可能并发。
+    /// 取源字节。目录卷上可能并发；归档卷上两遍是一条顺序扫，幂等那一道各开各的句柄
+    /// （见 `crate::medium::IoPlan` 的《为什么是两路》）。
     Read,
     /// 喂源哈希（幂等这一道）。读字节那一截不在里面。
     Hash,

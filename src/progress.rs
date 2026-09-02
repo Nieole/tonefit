@@ -613,6 +613,10 @@ mod tests {
     /// 由 `tests/resume.rs` 在真跑一趟的现场断言。这里要的只是「有这么一份可交」，
     /// 好让[决策点](Events::ask_before_the_second_pass)那个闭包调得起来。
     fn nothing_yet() -> VolumeReport {
+        let serial = crate::Readers {
+            count: 1,
+            chosen_by: crate::ChosenBy::Probe,
+        };
         VolumeReport {
             volume: PathBuf::from("卷一"),
             output: PathBuf::from("出/卷一"),
@@ -625,8 +629,8 @@ mod tests {
                 medium: crate::Medium::Unknown {
                     reason: "用例".to_owned(),
                 },
-                readers: 1,
-                chosen_by: crate::ChosenBy::Probe,
+                readers: serial,
+                fingerprint: serial,
             },
             decodes: 0,
             timing: crate::VolumeTiming::default(),
