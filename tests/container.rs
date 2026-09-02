@@ -841,7 +841,7 @@ fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
 /// 回的是报告而不是错误：**预扫之后才出的卷级失败不毁掉整趟**（05 号票），
 /// 那一卷记在 `Report::failed_volumes` 里，原因也在那一条上。
 fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit::Report {
-    let removal = fixtures::RemoveOnceTheSurveyIsDone::new(volume.path().join("ComicInfo.xml"));
+    let removal = fixtures::RemoveOnceTheSurveyIsDone::file(volume.path().join("ComicInfo.xml"));
     let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(removal)),
         ..fixtures::request(space, [volume.path()])

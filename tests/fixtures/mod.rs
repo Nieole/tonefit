@@ -1112,7 +1112,7 @@ pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
         .unwrap_or_else(|| format!("第 {index} 页"))
 }
 
-/// 预扫走完的那一刻，把源里的一个文件抽走。
+/// 预扫走完的那一刻，把源里的一个文件——或者整个卷根——抽走。
 ///
 /// 造「预扫时打得开、轮到它时做不成」用它：**预扫排在开工那条事件之前**
 /// （见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读它的字节要等到管线真走到那儿。
@@ -1120,22 +1120,47 @@ pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
 /// `CONTEXT.md` 的《失败》）；透传文件排在页之后写，那一刻半卷已经进了临时容器，
 /// 「写到一半才失败」因此也由它造。
 ///
+/// [`volume_root`](Self::volume_root) 抽走的是**整个卷根**：那是另一种卷级失败
+/// （`p2-loose-ends/05`），与「卷里每一页都读不出来」分得开——后者仍走隔离。
+/// 两种由同一个观察者造，抽走的那一刻因此逐字相同，两条用例之间只差抽的是哪一样东西。
+///
 /// 目录卷没有归档那种坏 CRC 可造——文件系统上一个文件要么读得出来，要么根本不在。
 /// 归档卷那一侧的同一件事由 `Cbz::rotten_file` 造。
+///
+/// **抽卷根只对目录卷成立**：归档卷的那个文件在预扫时就被打开并一直握着句柄，
+/// Windows 上删不掉（同 `events.rs` 里丢弃 `partial` 那一对用例的理由）。
 pub struct RemoveOnceTheSurveyIsDone {
     path: PathBuf,
+    /// 抽走的是整棵目录树，不是一个文件。
+    whole_tree: bool,
 }
 
 impl RemoveOnceTheSurveyIsDone {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+    /// 抽走卷里的一个文件。两个构造都说得出抽的是什么，没有一个叫 `new`。
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            whole_tree: false,
+        }
+    }
+
+    /// 抽走整个卷根（目录卷）。
+    pub fn volume_root(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            whole_tree: true,
+        }
     }
 }
 
 impl tonefit::Progress for RemoveOnceTheSurveyIsDone {
     fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
         if matches!(event, tonefit::Event::RunStarted { .. }) {
-            fs::remove_file(&self.path).expect("抽走那个文件");
+            if self.whole_tree {
+                fs::remove_dir_all(&self.path).expect("抽走整个卷根");
+            } else {
+                fs::remove_file(&self.path).expect("抽走那个文件");
+            }
         }
         tonefit::Instruction::Continue
     }

@@ -9,8 +9,35 @@
 
 mod fixtures;
 
+use std::path::Path;
+
 use fixtures::{Workspace, run_paths, run_volume};
 use tonefit::{Mode, Size};
+
+/// 点名的这几卷都做出来了：报告里按点名顺序一卷不多一卷不少，输出与页也真在盘上。
+///
+/// 两条「一卷做不成不毁掉整趟」的用例共用它——坏的那一卷夹在中间，
+/// 而这一句问的是它两边的卷。两处各写一份的话，断言会各自漂。
+fn assert_these_volumes_came_out_whole(report: &tonefit::Report, expected: &[&Path]) {
+    assert_eq!(
+        report
+            .volumes
+            .iter()
+            .map(|volume| volume.volume.as_path())
+            .collect::<Vec<_>>(),
+        expected,
+        "做完的卷没有原样留在报告里"
+    );
+    // 报告不是唯一的证据：输出真的在盘上，页也真的写了出来。
+    for volume in &report.volumes {
+        assert!(
+            volume.output.is_dir(),
+            "{} 没写出来",
+            volume.output.display()
+        );
+        assert!(volume.pages[0].output.is_file(), "做完的卷少了页");
+    }
+}
 
 /// 隔离目录在输出根下的名字。测试把它写死，因为它是用户看得见的那个事实。
 const ISOLATED: &str = "_isolated";
@@ -333,6 +360,15 @@ fn the_copy_left_in_the_other_place_is_named_in_the_report() {
 }
 
 /// 一页好页都没有的卷仍然出得来：卷内统一尺寸退到面板分辨率。
+///
+/// **它同时钉住「一页都没成」不是「这一卷没做成」**（`p2-loose-ends/05` 把这条写实）。
+/// 从前这条只说得出「整卷进隔离目录」；05 号票让**卷根不见了**的那一卷改走卷级失败（`3`），
+/// 而分开两者的判据是**卷根还在不在**，不是「成了几页」——拿「成功页数为 0」当判据的话，
+/// 这一卷会跟着一起被收走，而 p0 的 12 号票定死的正是它：一页读不出来不毁掉整卷。
+///
+/// 这一卷的卷根好端端地在那儿，坏的是里面的字节：它**做出来了**——页序、卷内统一尺寸、
+/// 占位页一样不少，只是内容全是坏的，所以走隔离（`2`）。反过来那一种见
+/// `a_volume_whose_root_is_gone_did_not_get_made`，两条各自把一个退出码钉住。
 #[test]
 fn a_volume_whose_every_page_fails_still_comes_out_whole() {
     let space = Workspace::new();
@@ -350,6 +386,17 @@ fn a_volume_whose_every_page_fails_still_comes_out_whole() {
         assert_eq!(page.size, PANEL);
         assert_eq!(fixtures::read_png(&page.output).size, PANEL);
     }
+    // 退出码那一侧：`2`，不是 `3`。两句都要——只问失败清单空不空，
+    // 「整卷静默地不出现在任何一列里」也能骗过去。
+    assert!(
+        report.failed_volumes.is_empty(),
+        "一页都没成被记成了「这一卷没做成」：{:?}",
+        report.failed_volumes
+    );
+    assert!(
+        report.any_isolated(),
+        "退出码读的就是它：`exit_code` 靠它把「有卷被隔离」与「全部成功」分开"
+    );
 }
 
 /// 隔离的卷每一趟都重做，不被幂等跳过：它不是一份做完了的输出，
@@ -521,31 +568,14 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
 
     let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(
-            fixtures::RemoveOnceTheSurveyIsDone::new(doomed.path().join("ComicInfo.xml")),
+            fixtures::RemoveOnceTheSurveyIsDone::file(doomed.path().join("ComicInfo.xml")),
         )),
         ..fixtures::request(&space, [first.path(), doomed.path(), last.path()])
     })
     .expect("一卷做不成不该毁掉整趟");
 
     // 做出了东西的那两卷都在报告里，按点名顺序，坏的那一卷不占位。
-    assert_eq!(
-        report
-            .volumes
-            .iter()
-            .map(|volume| volume.volume.clone())
-            .collect::<Vec<_>>(),
-        [first.path().to_path_buf(), last.path().to_path_buf()],
-        "做完的卷没有原样留在报告里"
-    );
-    // 报告不是唯一的证据：两卷的输出真的在盘上，页也真的写了出来。
-    for volume in &report.volumes {
-        assert!(
-            volume.output.is_dir(),
-            "{} 没写出来",
-            volume.output.display()
-        );
-        assert!(volume.pages[0].output.is_file(), "做完的卷少了页");
-    }
+    assert_these_volumes_came_out_whole(&report, &[first.path(), last.path()]);
 
     // 没做成的那一卷指得出自己是谁，也说得出为什么。
     let [failed] = &report.failed_volumes[..] else {
@@ -561,5 +591,76 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
     assert!(
         !space.out().join("volume-b").exists(),
         "没做成的卷在输出根下留了东西"
+    );
+}
+
+/// 卷根在预扫之后整个消失是**这一卷没做成**（`3`），不是「这一卷全是坏页」（`2`）——
+/// `p2-loose-ends/05` 的要害。
+///
+/// 缺陷本身是这样的：卷根一消失，它的每一个成员都读不出字节，而那按 p0 的 12 号票是
+/// **页级**失败，于是整卷变成一沓占位白页进隔离目录——报告说得出「这一卷全是坏页」，
+/// 却不说它压根不在了。那不是一卷做出来了。
+///
+/// 五件事一起断言，缺一件这条就漏得掉：没做成的那一卷指得出自己是谁、说得出为什么；
+/// 它在输出根下**两处**都一个字节没留（干净的去处，以及从前那一沓白页真正落脚的隔离目录）；
+/// 排在它前后的卷照常做完、输出也真在盘上；退出码那一侧读得出 `3` 而不是 `2`。
+///
+/// 抽走的那一刻与 `a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone`
+/// 逐字相同（见 `fixtures::RemoveOnceTheSurveyIsDone`），两条只差抽的是哪一样东西：
+/// 那一条抽一个透传文件，这一条抽整个卷根。分开这两种与「卷里每一页都读不出来」的判据
+/// 是**卷根还在不在**，另一侧由 `a_volume_whose_every_page_fails_still_comes_out_whole` 钉着。
+#[test]
+fn a_volume_whose_root_is_gone_did_not_get_made() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let first = space.volume("volume-a");
+    first.page("001.png", &page);
+    let doomed = space.volume("volume-b");
+    doomed.page("001.png", &page);
+    doomed.page("002.png", &page);
+    let last = space.volume("volume-c");
+    last.page("001.png", &page);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(
+            fixtures::RemoveOnceTheSurveyIsDone::volume_root(doomed.path()),
+        )),
+        ..fixtures::request(&space, [first.path(), doomed.path(), last.path()])
+    })
+    .expect("一卷不见了不该毁掉整趟");
+
+    // 没做成的那一卷指得出自己是谁，也说得出为什么。
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("卷根不见了没被记成卷级失败：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    assert!(
+        failed.reason.contains("不见了"),
+        "没说清这一卷是整个不在了：{}",
+        failed.reason
+    );
+
+    // 两处都没留下东西。隔离目录那一句是本票的分水岭：从前整卷白页正是写在那儿。
+    assert!(
+        !space.out().join("volume-b").exists(),
+        "没做成的卷在输出根下留了东西"
+    );
+    assert!(
+        !space.out().join(ISOLATED).join("volume-b").exists(),
+        "没做成的卷在隔离目录里留下了一沓占位白页"
+    );
+
+    // 排在它前后的卷照常做完，报告与盘上的输出都在。
+    assert_these_volumes_came_out_whole(&report, &[first.path(), last.path()]);
+
+    // 退出码那一侧：`3`，不是 `2`。两句都要——只问失败清单不空，
+    // 「整卷白页照旧写进隔离目录、外加一笔卷级失败」也能骗过去。
+    assert!(
+        report.any_volume_failed(),
+        "退出码读的就是它：`exit_code` 靠它把「有卷没做成」与「有卷被隔离」分开"
+    );
+    assert!(
+        !report.any_isolated(),
+        "卷根不见了仍被当成「有卷被隔离」，退出码分不开这两件事"
     );
 }
