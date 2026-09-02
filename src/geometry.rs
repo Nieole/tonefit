@@ -158,10 +158,36 @@ impl Fit {
 /// 解得进来的页，缩出去必定也分配得下。
 ///
 /// **它定在「肯定跑得完」那一侧，离真实素材很远。** 实测最宽的一页是面板宽的 3.22 倍
-/// （改革之獸 7162×3000，见 measurements 的《适配方式：fit-inside 与以高为准》）；
-/// 这道线在 1072×1448 的面板上是 21.6 倍面板宽、在 1264×1680 上是 15.8 倍。
-/// 换成源页的形状：宽高比要超过 12:1 才够得着——那不是一页漫画，是一根长条
-/// （实测最宽那一页是 2.4:1）。
+/// （改革之獸 7162×3000，见 measurements 的《适配方式：fit-inside 与以高为准》），
+/// 而这道线在同一块面板上是 21.6 倍面板宽——够得着它的不是一页漫画，是一根长条。
+///
+/// # 多瘦长的页够得着这道线
+///
+/// **这道线不是一个数：它随面板高走。**本仓库只在这里算它，别处引这一段、不另抄一个数。
+///
+/// 以高为准让目标高恒等于面板高、宽随源宽高比算出，目标像素数因此是
+/// `面板高² × 源宽高比`。够得着这道线的源页于是是
+///
+/// ```text
+/// 源宽高比 > MAX_TARGET_PIXELS ÷ 面板高²
+/// ```
+///
+/// 面板越高，那道线越低。代进内置的两块面板（用例
+/// `the_backstop_line_follows_the_panel_height` 把这两个数钉住）：
+///
+/// | 面板 | 那道线 | 同一道线换成面板宽 |
+/// |---|---|---|
+/// | 1264×1680 | **11.9:1** | 15.8 倍面板宽 |
+/// | 1072×1448 | **16.0:1** | 21.6 倍面板宽 |
+///
+/// 实测最宽的一页是 2.4:1（7162×3000，出处同上一段），两块面板上都够不着；
+/// 余量有多大随面板走，measurements 那一节按它自己那块面板给。
+///
+/// **「退回之后门还不成立」不是一道更高的线。**那一支多出来的条件是「源两边都比面板小」
+/// （见 [`GeometryGate::Broken`]），宽高比照旧只要越过上表那道线：1264×1680 上
+/// 1263×105 那种页（12.0:1）就掉得进去，用例
+/// `a_page_barely_over_the_backstop_can_break_the_gate_after_falling_back_to_fit_inside`
+/// 里有。
 ///
 /// # ADR 0003 那笔账
 ///
@@ -294,7 +320,10 @@ pub enum GeometryGate {
     /// **走得到它的是 fit-inside 出的页。**以高为准让每一页的高恒等于面板高，
     /// 一条边永远贴着（见 [`GeometryGate::of`]）——除非[兜底上界](MAX_TARGET_PIXELS)
     /// 把这一页退了回去：退回之后它就是一张 fit-inside 的页，门照 fit-inside 那条判
-    /// （07 号票）。够得着那道线的是宽高比超过 24:1 的源页，真实素材里没有。
+    /// （07 号票）。**退回去的页也不是都掉进这一支**：源两边都比面板小、按不放大原样输出的
+    /// 那些才一条边都贴不住；比面板大的那些缩进面板时贴住一条边，门照旧成立。
+    /// 多瘦长的页够得着那道线，见 `MAX_TARGET_PIXELS` 的《多瘦长的页够得着这道线》
+    /// ——它随面板高走，真实素材里一页都够不着。
     Broken,
 }
 
@@ -595,6 +624,72 @@ mod tests {
         );
         // 实测最宽那一页（改革之獸，3457×1448）离这道线还有 6 倍：上界不贴着真实素材的上沿卡。
         assert!(pixels(Size::new(3457, 1448)) * 6 < max_target_pixels());
+    }
+
+    /// 够得着兜底上界的源页宽高比，照 [`MAX_TARGET_PIXELS`] 的
+    /// 《多瘦长的页够得着这道线》算。**用例这一侧也只算一处**，两条用例都问它。
+    fn backstop_line(panel: Size) -> f64 {
+        MAX_TARGET_PIXELS as f64 / f64::from(panel.height).powi(2)
+    }
+
+    /// **多瘦长的页够得着那道线，随面板高走**（`p2-loose-ends/03`）。
+    ///
+    /// 算法只有一处出处——[`MAX_TARGET_PIXELS`] 的《多瘦长的页够得着这道线》。
+    /// 这一条把它代进内置的两块面板（`profile` 的表里只有这两种分辨率），
+    /// 钉住那张表里的两个数，并在线两侧各取一页（差 1%）：低的那一页不触发兜底，
+    /// 高的那一页触发——那道线就在那儿，不是个约数。
+    #[test]
+    fn the_backstop_line_follows_the_panel_height() {
+        for (panel, documented) in [
+            (Size::new(1264, 1680), 11.9_f64),
+            (Size::new(1072, 1448), 16.0_f64),
+        ] {
+            let line = backstop_line(panel);
+            assert!(
+                (line - documented).abs() < 0.05,
+                "{panel} 上那道线算出来是 {line:.2}:1，文档写的是 {documented}:1"
+            );
+            // 源高固定 1000，宽由宽高比给出。
+            let source = |aspect: f64| Size::new((aspect * 1000.0) as u32, 1000);
+            assert!(
+                !FitMode::Height
+                    .target(source(line * 0.99), panel)
+                    .backstopped(),
+                "{panel}：差 1% 够不着那道线的页竟触发了兜底"
+            );
+            assert!(
+                FitMode::Height
+                    .target(source(line * 1.01), panel)
+                    .backstopped(),
+                "{panel}：越过那道线 1% 的页竟没触发兜底"
+            );
+        }
+    }
+
+    /// **退回 fit-inside 之后门还不成立，不需要一页更瘦长的源页**（`p2-loose-ends/03`）。
+    ///
+    /// 那一支多出来的条件是「源两边都比面板小」——按不放大原样输出，一条边都贴不住；
+    /// 宽高比照旧只要越过[那道线](MAX_TARGET_PIXELS)。内置的两块面板上各取一张紧贴着线的页，
+    /// 两张都掉得进去：**「要更瘦长才够得着」那种更高的门槛不存在**。
+    #[test]
+    fn a_page_barely_over_the_backstop_can_break_the_gate_after_falling_back_to_fit_inside() {
+        for (panel, source) in [
+            (Size::new(1264, 1680), Size::new(1263, 105)),
+            (Size::new(1072, 1448), Size::new(1071, 66)),
+        ] {
+            let line = backstop_line(panel);
+            let aspect = f64::from(source.width) / f64::from(source.height);
+            assert!(
+                line < aspect && aspect < line * 1.05,
+                "{source} 的 {aspect:.2}:1 不算紧贴着 {panel} 上那道 {line:.2}:1"
+            );
+
+            let fitted = FitMode::Height.target(source, panel);
+            assert!(fitted.backstopped(), "{source} 在 {panel} 上没够着兜底上界");
+            // 两边都比面板小：退回之后按不放大原样输出，一条边都贴不住。
+            assert_eq!(fitted.size(), source);
+            assert_eq!(GeometryGate::of(fitted.size(), panel), GeometryGate::Broken);
+        }
     }
 
     /// 取整不许把哪条边压成 0：0 像素的页写不出去。
