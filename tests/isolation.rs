@@ -19,15 +19,7 @@ use tonefit::{Mode, Size};
 /// 两条「一卷做不成不毁掉整趟」的用例共用它——坏的那一卷夹在中间，
 /// 而这一句问的是它两边的卷。两处各写一份的话，断言会各自漂。
 fn assert_these_volumes_came_out_whole(report: &tonefit::Report, expected: &[&Path]) {
-    assert_eq!(
-        report
-            .volumes
-            .iter()
-            .map(|volume| volume.volume.as_path())
-            .collect::<Vec<_>>(),
-        expected,
-        "做完的卷没有原样留在报告里"
-    );
+    assert_the_report_names_exactly(report, expected);
     // 报告不是唯一的证据：输出真的在盘上，页也真的写了出来。
     for volume in &report.volumes {
         assert!(
@@ -37,6 +29,22 @@ fn assert_these_volumes_came_out_whole(report: &tonefit::Report, expected: &[&Pa
         );
         assert!(volume.pages[0].output.is_file(), "做完的卷少了页");
     }
+}
+
+/// 报告里按点名顺序恰好是这几卷，一卷不多一卷不少。
+///
+/// 从 [`assert_these_volumes_came_out_whole`] 里摘出来，因为归档卷用得上这一半、
+/// 用不上另一半：归档卷的去处是一个**文件**，而它的页在容器里面，盘上没有各自的路径。
+fn assert_the_report_names_exactly(report: &tonefit::Report, expected: &[&Path]) {
+    assert_eq!(
+        report
+            .volumes
+            .iter()
+            .map(|volume| volume.volume.as_path())
+            .collect::<Vec<_>>(),
+        expected,
+        "做完的卷没有原样留在报告里"
+    );
 }
 
 /// 三个各装一页的卷，按点名顺序 `volume-a`、`volume-b`、`volume-c`。
@@ -581,9 +589,10 @@ fn isolating_a_volume_leaves_the_source_untouched() {
 /// 指得出自己是谁、说得出为什么；排在它**后面**的卷照常做完（拿三个卷、坏的夹在中间，
 /// 就是为了问这一条）；那一卷在输出根下一个字节都没留。
 ///
-/// 触发方式是**预扫之后把源里的透传文件抽走**——文件被删、盘拔了、权限变了，
-/// 在管线看来是同一件事。抽在开工那条事件上：预扫排在它之前（见 `tonefit` 的 `survey`），
-/// 成员因此已经枚举完了，而读到它是第二遍的事。那正是「预扫时打得开、轮到它时做不成」。
+/// 触发方式是**这一卷重开之后把源里的透传文件抽走**——文件被删、盘拔了、权限变了，
+/// 在管线看来是同一件事。抽在这一卷的第一条走遍事件上：管线在开卷那条事件之后按路径把
+/// 这一卷重开一次（见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读到它是第二遍的事。
+/// 那正是「预扫时打得开、轮到它时做不成」。
 /// 透传文件没有页那条出路：页读不出来变成失败页、整卷进隔离目录，
 /// 而透传文件搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
 #[test]
@@ -600,7 +609,7 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
 
     let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(
-            fixtures::RemoveOnceTheSurveyIsDone::file(doomed.path().join("ComicInfo.xml")),
+            fixtures::RemoveOnceTheVolumeIsOpen::member(doomed.path(), "ComicInfo.xml"),
         )),
         ..fixtures::request(&space, [first.path(), doomed.path(), last.path()])
     })
@@ -637,10 +646,13 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
 /// 它在输出根下**两处**都一个字节没留（干净的去处，以及从前那一沓白页真正落脚的隔离目录）；
 /// 排在它前后的卷照常做完、输出也真在盘上；退出码那一侧读得出 `3` 而不是 `2`。
 ///
-/// 抽走的那一刻与 `a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone`
-/// 逐字相同（见 `fixtures::RemoveOnceTheSurveyIsDone`），两条只差抽的是哪一样东西：
-/// 那一条抽一个透传文件，这一条抽整个卷根。分开这两种与「卷里每一页都读不出来」的判据
-/// 是**卷根还在不在**，另一侧由 `a_volume_whose_every_page_fails_still_comes_out_whole` 钉着。
+/// 抽走的是**整个卷根**，而且抽在开工那条事件上（见 `fixtures::RemoveOnceTheSurveyIsDone`）：
+/// 那一刻这一卷还没重开，路径已经不在，管线单问的那一句因此答得出「它是在预扫之后不见的」。
+/// 与它成对的 `a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone`
+/// 抽的是**卷里的一个透传文件**，动手的时刻也因此晚一步——那一样要等这一卷重开之后才抽得掉
+/// （见 `fixtures::RemoveOnceTheVolumeIsOpen`），不然它根本不进成员表。
+/// 分开这两种与「卷里每一页都读不出来」的判据是**卷根还在不在**，
+/// 另一侧由 `a_volume_whose_every_page_fails_still_comes_out_whole` 钉着。
 #[test]
 fn a_volume_whose_root_is_gone_did_not_get_made() {
     let space = Workspace::new();
@@ -655,7 +667,7 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
 
     let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(
-            fixtures::RemoveOnceTheSurveyIsDone::volume_root(doomed.path()),
+            fixtures::RemoveOnceTheSurveyIsDone::directory(doomed.path()),
         )),
         ..fixtures::request(&space, [first.path(), doomed.path(), last.path()])
     })
@@ -695,6 +707,79 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
         !report.any_isolated(),
         "卷根不见了仍被当成「有卷被隔离」，退出码分不开这两件事"
     );
+}
+
+/// 归档卷的**卷根就是那个文件**，它在预扫之后不见了同样是这一卷没做成
+/// （`volume-discovery/01`）。
+///
+/// 从前这一条不成立，而且不该成立：预扫打开归档卷之后一直握着那个句柄，文件被删掉也照读
+/// 不误，那一卷仍旧完完整整地做得出来，报「没做成」是撒谎。预扫改成**只数不留**之后，
+/// 归档卷与目录卷走同一条路——轮到它时按路径重开——这一条于是与
+/// `a_volume_whose_root_is_gone_did_not_get_made` 同形，那一条的五件事这里同样问。
+///
+/// 它**同时是「句柄真放掉了」的判别式**，而且两个平台上都算数：还攥着的话这一卷会照常
+/// 做出来，报告里没有这一笔。库那一侧另有一条只问句柄的（`survey` 的
+/// `a_survey_keeps_no_archive_open`），两条一里一外。
+#[test]
+fn an_archive_volume_whose_file_is_gone_did_not_get_made() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let mut first = space.cbz("volume-a");
+    first.page("001.png", &page);
+    let first = first.write();
+    let mut doomed = space.cbz("volume-b");
+    doomed.page("001.png", &page);
+    let doomed = doomed.write();
+    let mut last = space.cbz("volume-c");
+    last.page("001.png", &page);
+    let last = last.write();
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(
+            // 抽走的是归档文件本身，也就是这一卷的卷根。
+            fixtures::RemoveOnceTheSurveyIsDone::archive(doomed.clone()),
+        )),
+        ..fixtures::request(&space, [first.as_path(), doomed.as_path(), last.as_path()])
+    })
+    .expect("一卷不见了不该毁掉整趟");
+
+    // 没做成的那一卷指得出自己是谁，也说得出为什么。
+    let [failed] = &report.failed_volumes[..] else {
+        panic!(
+            "归档卷不见了没被记成卷级失败：{:?}。预扫还攥着它的句柄的话正是这个样子",
+            report.failed_volumes
+        );
+    };
+    assert_eq!(failed.volume, doomed, "卷级失败指错了卷");
+    assert!(
+        failed.reason.contains("不见了"),
+        "没说清这一卷是整个不在了：{}",
+        failed.reason
+    );
+
+    // 两处都没留下东西。归档卷的去处是一个同名文件，不是目录。
+    assert!(
+        !space.out().join("volume-b.cbz").exists(),
+        "没做成的卷在输出根下留了东西"
+    );
+    assert!(
+        !space.out().join(ISOLATED).join("volume-b.cbz").exists(),
+        "没做成的卷在隔离目录里留下了一个壳"
+    );
+
+    // 排在它前后的卷照常做完，报告与盘上的输出都在。
+    assert_the_report_names_exactly(&report, &[first.as_path(), last.as_path()]);
+    for volume in &report.volumes {
+        assert!(
+            volume.output.is_file(),
+            "{} 没写出来",
+            volume.output.display()
+        );
+    }
+
+    // 退出码那一侧：`3`，不是 `2`。判别的理由与上一条逐字相同。
+    assert!(report.any_volume_failed(), "退出码读的就是它");
+    assert!(!report.any_isolated(), "卷根不见了被当成「有卷被隔离」");
 }
 
 /// 输出根写不进去是**这一趟的参数**错了：开工前探一次，一页不做地拒掉（06 号票）。

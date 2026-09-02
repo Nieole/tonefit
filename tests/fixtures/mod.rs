@@ -11,6 +11,7 @@ mod cbz;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
 use tonefit::{BitDepth, Dither, GrayImage, Profile, Size};
@@ -1112,23 +1113,19 @@ pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
         .unwrap_or_else(|| format!("第 {index} 页"))
 }
 
-/// 预扫走完的那一刻，把源里的一个文件——或者整个卷根——抽走。
+/// 预扫走完的那一刻，把一个**卷根**抽走。
 ///
-/// 造「预扫时打得开、轮到它时做不成」用它：**预扫排在开工那条事件之前**
-/// （见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读它的字节要等到管线真走到那儿。
-/// 抽走一个**透传文件**得到的是一个卷级失败（透传文件搬不动就交不出这一卷，
-/// `CONTEXT.md` 的《失败》）；透传文件排在页之后写，那一刻半卷已经进了临时容器，
-/// 「写到一半才失败」因此也由它造。
+/// 造「预扫时打得开、轮到它时整个不在了」用它（`p2-loose-ends/05`）：**预扫排在开工那条
+/// 事件之前**（见 `tonefit` 的 `survey`），这一卷因此已经点开过一次，而轮到它时那个路径
+/// 已经不在——管线单问的那一句正好答得出「它是在预扫之后不见的，不是它里面的页坏了」。
+/// 它与「卷里每一页都读不出来」分得开，后者仍走隔离。
 ///
-/// [`volume_root`](Self::volume_root) 抽走的是**整个卷根**：那是另一种卷级失败
-/// （`p2-loose-ends/05`），与「卷里每一页都读不出来」分得开——后者仍走隔离。
-/// 两种由同一个观察者造，抽走的那一刻因此逐字相同，两条用例之间只差抽的是哪一样东西。
+/// 两种容器形态各有一个构造，抽走的那一刻逐字相同，两条用例之间只差卷根是一棵树还是一个
+/// 文件。归档卷那一个从前造不出来——预扫打开它之后一直握着句柄——预扫改成只数不留之后
+/// 造得出来了（`volume-discovery/01`）。
 ///
-/// 目录卷没有归档那种坏 CRC 可造——文件系统上一个文件要么读得出来，要么根本不在。
-/// 归档卷那一侧的同一件事由 `Cbz::rotten_file` 造。
-///
-/// **抽卷根只对目录卷成立**：归档卷的那个文件在预扫时就被打开并一直握着句柄，
-/// Windows 上删不掉（同 `events.rs` 里丢弃 `partial` 那一对用例的理由）。
+/// 抽走**卷里的一个成员**是另一件事，那要等这一卷重开之后才动手，见
+/// [`RemoveOnceTheVolumeIsOpen`]。
 pub struct RemoveOnceTheSurveyIsDone {
     path: PathBuf,
     /// 抽走的是整棵目录树，不是一个文件。
@@ -1136,16 +1133,17 @@ pub struct RemoveOnceTheSurveyIsDone {
 }
 
 impl RemoveOnceTheSurveyIsDone {
-    /// 抽走卷里的一个文件。两个构造都说得出抽的是什么，没有一个叫 `new`。
-    pub fn file(path: impl Into<PathBuf>) -> Self {
+    /// 抽走一个**归档卷**：它的卷根就是那个文件。
+    /// 两个构造都说得出抽的是什么，没有一个叫 `new`。
+    pub fn archive(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             whole_tree: false,
         }
     }
 
-    /// 抽走整个卷根（目录卷）。
-    pub fn volume_root(path: impl Into<PathBuf>) -> Self {
+    /// 抽走一个**目录卷**：它的卷根是整棵树。
+    pub fn directory(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             whole_tree: true,
@@ -1159,8 +1157,60 @@ impl tonefit::Progress for RemoveOnceTheSurveyIsDone {
             if self.whole_tree {
                 fs::remove_dir_all(&self.path).expect("抽走整个卷根");
             } else {
-                fs::remove_file(&self.path).expect("抽走那个文件");
+                fs::remove_file(&self.path).expect("抽走那个卷");
             }
+        }
+        tonefit::Instruction::Continue
+    }
+}
+
+/// 点名那一卷**刚被重开**的那一刻，抽走它里面的一个成员。
+///
+/// 造「预扫时打得开、轮到它时做不成」用它。抽走一个**透传文件**得到的是一个卷级失败
+/// （透传文件搬不动就交不出这一卷，`CONTEXT.md` 的《失败》）；透传文件排在页之后写，
+/// 那一刻半卷已经进了临时容器，「写到一半才失败」因此也由它造。
+///
+/// 「刚被重开」在事件流上的位置是**这一卷的第一条 `PassStarted`**：管线在 `VolumeStarted`
+/// 之后按路径把这一卷重开一次（见 `tonefit` 的 `survey`），成员表因此已经列好，
+/// 而一个字节都还没读。这个观察者于是记着「点名的那一卷开工了没有」，
+/// 见到它的第一条 `PassStarted` 才动手。
+///
+/// **抽在 `RunStarted` 上不行**（`volume-discovery/01` 之前正是那样）：那一刻这一卷还没
+/// 重开，抽走的成员根本不会进成员表，这一卷于是照常做完，只是少一个成员。
+///
+/// 目录卷没有归档那种坏 CRC 可造——文件系统上一个文件要么读得出来，要么根本不在。
+/// 归档卷那一侧的同一件事由 `Cbz::rotten_file` 造。
+pub struct RemoveOnceTheVolumeIsOpen {
+    /// 点名的那一卷的卷根。
+    volume: PathBuf,
+    /// 抽走的那个成员，相对卷根。
+    member: String,
+    /// 那一卷开工了吗。`VolumeStarted` 立起它，紧接着的第一条 `PassStarted` 动手并放倒它。
+    armed: AtomicBool,
+}
+
+impl RemoveOnceTheVolumeIsOpen {
+    /// 点名一卷与它里面的一个成员（相对卷根）。名字说得出抽的是什么，没有叫 `new`。
+    pub fn member(volume: impl Into<PathBuf>, member: &str) -> Self {
+        Self {
+            volume: volume.into(),
+            member: member.to_owned(),
+            armed: AtomicBool::new(false),
+        }
+    }
+}
+
+impl tonefit::Progress for RemoveOnceTheVolumeIsOpen {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if let tonefit::Event::VolumeStarted { volume, .. } = event {
+            self.armed
+                .store(volume == self.volume.as_path(), Ordering::SeqCst);
+        }
+        // 立起来之后的**第一条**走遍事件才动手：那一刻这一卷刚重开完，一个字节都还没读。
+        let opened = matches!(event, tonefit::Event::PassStarted { .. })
+            && self.armed.swap(false, Ordering::SeqCst);
+        if opened {
+            fs::remove_file(self.volume.join(&self.member)).expect("抽走那个成员");
         }
         tonefit::Instruction::Continue
     }

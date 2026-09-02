@@ -159,10 +159,10 @@ pub fn run(request: &Request) -> Result<Report> {
         }
         // 探的是卷根，而卷根就是点名的那个路径（见 `source::open`）：目录卷是那个目录，
         // 归档卷是那个文件。
-        let medium = probes.medium(&surveyed.volume.root);
-        // 卷根在这里先留一份：`process_volume` 要把整个卷吃进去，而没做成的那一卷
+        let medium = probes.medium(&surveyed.root);
+        // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
         // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
-        let root = surveyed.volume.root.clone();
+        let root = surveyed.root.clone();
         match process_volume(surveyed, request, medium, events) {
             Ok(Some(report)) => volumes.push(report),
             Ok(None) => {
@@ -287,7 +287,8 @@ fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
 
 /// 一个卷这一趟要碰的成员数，源那一侧与输出那一侧分开数（页几何批 03 号票）。
 ///
-/// **预扫**数出来（见 `survey`），一卷一份，此后原样传下去。
+/// 数**两遍**（见 [`MemberCounts::of`]）：预扫数一遍算出步数，处理那一卷时按重开的那一份
+/// 再数一遍。报告里的数出自后一遍——它才是真做了的那一卷。
 ///
 /// 三个数绑成一个类型而不是三个相邻的 `usize` 参数：它们总是一同算出、一同传下去，
 /// 而三个同型的裸数换了位置编译器一句话都不会说，[`volume_steps`] 却会当场少报或多报一整段。
@@ -300,6 +301,24 @@ struct MemberCounts {
     output_pages: usize,
     /// 透传文件数。它不经切开，两侧数的是同一批。
     extras: usize,
+}
+
+impl MemberCounts {
+    /// 数一个打开了的卷。
+    ///
+    /// 两个调用点各数各的那一遍：预扫按它算这一卷的步数（见 `survey`），
+    /// [`process_volume`] 按**重开的那一份**再数一次。公式因此只有一处——
+    /// 两边各写一份的话，「预告了多少步」与「报告说做了多少页」会各自漂。
+    fn of(volume: &Volume, request: &Request) -> Self {
+        let source_pages = volume.pages.len();
+        Self {
+            source_pages,
+            // 上界，不是承诺：一卷里真被切开的页越少，第二遍走过的步越少
+            // （见 [`volume_steps`]）。
+            output_pages: source_pages * max_outputs_per_source_page(request),
+            extras: volume.extras.len(),
+        }
+    }
 }
 
 /// 锁上这一卷的缓存。
@@ -385,8 +404,10 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
 /// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
 ///
-/// 收的是一个**预扫过的卷**（见 `survey`），不是一个路径：卷在开工之前就已经打开、
-/// 成员也已经列好，这里不再开第二次。为什么不能开第二次，见 `survey` 的模块文档。
+/// 收的是一份**预扫摘要**（见 `survey`）——这一卷的路径与几个数，不是卷本身：
+/// 预扫数完就把卷放掉了，这里**按那个路径再开一次**。为什么宁可读两遍中央目录也不攥着它，
+/// 见 `survey` 的模块文档。重开这一遍落在这一卷的墙钟之内，成员也按重开的这一份重新数
+/// （见 [`MemberCounts::of`]）。
 ///
 /// # 中止：回 `None`
 ///
@@ -422,8 +443,8 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// 这一卷做不成就回 `Err`，**整趟不因此停下**（05 号票）：`run` 把它记成一笔
 /// [卷级失败](VolumeFailure)，其余卷照做（见 `run` 的《两种失败分得开》）。
-/// 卷根整个不见了（见 [`ensure_the_volume_root_is_still_there`]）、撞名、
-/// 指纹那一道读不出字节、第一遍读不出源、建不出输出容器、透传文件搬不动，
+/// 卷根整个不见了（见 [`ensure_the_volume_root_is_still_there`]）、重开这一卷点不开、
+/// 撞名、指纹那一道读不出字节、第一遍读不出源、建不出输出容器、透传文件搬不动，
 /// 都从这条路出去。
 ///
 /// **一个例外**：戴着 [`Refusal`] 的那种错误说的是「这一趟的参数错了」，
@@ -436,37 +457,43 @@ fn process_volume(
     events: progress::Events,
 ) -> Result<Option<VolumeReport>> {
     let survey::Surveyed {
-        mut volume,
-        members,
+        root,
         steps,
         enumerating,
     } = surveyed;
     // 这一卷的表：三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
-    // **再把预扫枚举这一卷花掉的那一截加回去**——打开卷只是挪到了开工之前，并没有变便宜，
+    // 也就是**在重开这一卷之前**；**再把预扫枚举它的那一截加回去**——枚举两遍都是这一卷
+    // 真花掉的时间，一遍在这个表里，一遍由预扫交过来（见 `survey::Surveyed::enumerating`），
     // 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
     let started = Instant::now();
     // **开卷时**的累计读数，与 `started` 成一对。这一卷的墙钟要减掉「在决策点上等人」
     // 的那一截（停车场 Q41），而那一截就是这个快照与拼报告时那个读数之差——
     // 累计只升不降，见 `progress::Deliberation`。
     let deliberated_at_open = events.deliberated();
-    // 这一卷的墙钟：从打开卷（含预扫枚举它的那一截）算到这份报告成型，减去等人的那一截。
+    // 这一卷的墙钟：从重开这一卷（外加预扫枚举它的那一截）算到这份报告成型，减去等人的那一截。
     let wall_clock = || {
         let deliberated = events.deliberated().saturating_sub(deliberated_at_open);
         enumerating + started.elapsed().saturating_sub(deliberated)
     };
     let mut timing = VolumeTiming::default();
-    // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
-    let clean = volume.output_path(&request.output_root);
-    let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
     // 开卷那一条排在**这一卷的第一件事之前**：往后每一条出口——一卷跑完、卷级失败、
     // 中止——都在它之后，画进度的那一层因此不必分「这一卷开过头没有」两种情形
     // （见 `progress::Event::VolumeFailed`）。它排在下面那道「卷根还在不在」之前
     // 正是为了这个：那一道是这一卷最早的一个 `Err`。
-    events.volume_started(&volume.root, steps);
+    // 它报得出卷根与步数，靠的正是预扫留下的那两样——重开还没发生，这里也不需要它发生。
+    events.volume_started(&root, steps);
     // 卷根在预扫之后整个消失是**这一卷没做成**，不是「这一卷全是坏页」（05 号票）。
-    // 判据、为什么非得在这里单问一句、以及归档卷为什么不问，见
-    // [`ensure_the_volume_root_is_still_there`]。
-    ensure_the_volume_root_is_still_there(&volume)?;
+    // 判据、为什么非得在这里单问一句，见 [`ensure_the_volume_root_is_still_there`]。
+    ensure_the_volume_root_is_still_there(&root)?;
+    // **按路径再开一次**：预扫只数不留，卷在它手上已经放掉了（见 `survey`）。
+    // 开在这里而不是更早，是因为上面那两句一个要在最前、一个要抢在真读字节之前。
+    let mut volume = source::open(&root)?;
+    // 成员按**重开的这一份**数，不是预扫那一份：报告说的得是真做了的这一卷
+    // （见 [`MemberCounts::of`]）。
+    let members = MemberCounts::of(&volume, request);
+    // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
+    let clean = volume.output_path(&request.output_root);
+    let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
     // 这一卷的输出成员名此刻只预告得出**一对一那一套**：一个源页产出几张要解了像素才知道
     // （有没有装订沟，页几何批 04 号票），而这一步在解码之前。撞名因此查两遍——
     // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
@@ -2107,20 +2134,25 @@ fn one_to_one_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
 /// 拿「成功页数为 0」当判据会把前一种一起收走，而那一种正是 p0 的 12 号票定死的东西：
 /// 一页读不出来不毁掉整卷。本票改的是它上面一层，不是推翻它。
 ///
-/// # 只问目录卷
+/// # 两种容器形态都问
 ///
-/// 问的是**读取层真会去走的那条路**：目录卷的每一个成员都现拿卷根接上相对路径开一次文件
-/// （见 [`source::read_file`]），卷根没了就一个字节也读不出来。
+/// 问的是**读取层真会去走的那条路**，而两种形态走的是同一条：卷在预扫里已经放掉，
+/// 轮到它时按路径重开（见 `survey`）——路径不在，[`source::open`] 第一步就走不下去。
 ///
-/// 归档卷不问。它的字节从**预扫时就打开、此后一直握着**的那个句柄里出
-/// （见 [`source::Reader`]），卷根被删掉也照读不误：那一卷仍旧完完整整地做得出来，
-/// 报「没做成」是撒谎。Windows 上那个文件还开着更是根本删不掉。
-/// 换句话说 Q50 那个缺陷本来就只在目录卷这一侧——归档卷上没有一沓白页可出。
+/// 归档卷从前不问：它的字节从预扫时就打开、此后一直握着的那个句柄里出，卷根被删掉
+/// 也照读不误，报「没做成」是撒谎。预扫不再攥着那个句柄，这条豁免跟着没了
+/// （`volume-discovery/01`）。
+///
+/// 那一版里 Q50 那个缺陷因此只在目录卷这一侧；现在两侧同形，一句话说得完两种。
 ///
 /// # 问在这里，也只问这一次
 ///
 /// 问在**这一卷的第一件事上**：往下每一步都要读它的字节，卷根不在的话那几步全是白工——
-/// 幂等把整卷哈希一遍、第一遍逐页解一遍、第二遍再写一整卷白页出去。
+/// 重开一次、幂等把整卷哈希一遍、第一遍逐页解一遍、第二遍再写一整卷白页出去。
+///
+/// 重开那一次**自己也会失败**，因此这一问买的不是「早一步发现」，是**那句话**：
+/// 不问的话报出来的是 `source::open` 的「X 不存在」，说不出「它是在预扫之后不见的、
+/// 不是它里面的页坏了」。两者落在同一个退出码上，读的人却只在后一句里看得出发生了什么。
 ///
 /// 卷根是在这一问**之后**才消失的那一种仍旧落回页级失败那条路。一次 stat 拦不住这种竞态，
 /// 而管线也无处去拿「整卷读到一半才发现根没了」这个事实——那时它手上只有一页一页读不出来，
@@ -2128,10 +2160,7 @@ fn one_to_one_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
 ///
 /// 「探不到」与「不在」都算这一卷做不成：权限变了、盘拔了、路径中间少了一节，
 /// 三样都到不了这一卷的字节，而这一层能说的正是这一句。
-fn ensure_the_volume_root_is_still_there(volume: &Volume) -> Result<()> {
-    let Some(root) = volume.reader.directory_root() else {
-        return Ok(());
-    };
+fn ensure_the_volume_root_is_still_there(root: &Path) -> Result<()> {
     let there = std::fs::exists(root).with_context(|| format!("查 {} 还在不在", root.display()))?;
     if !there {
         bail!(
@@ -2434,7 +2463,9 @@ mod tests {
     ];
 
     /// 一份最小的请求。各用例只改自己那一处。
-    fn request() -> Request {
+    ///
+    /// `pub(crate)` 是给 `survey` 那几条用例的：它们要的也是这一份，只改点名的卷与输出根。
+    pub(crate) fn request() -> Request {
         Request {
             inputs: vec![PathBuf::from("library/volume-a")],
             output_root: PathBuf::from("out"),

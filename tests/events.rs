@@ -995,17 +995,21 @@ fn a_path_that_cannot_be_opened_refuses_the_whole_run_before_any_volume_event() 
     }
 }
 
-/// 管线用的是**预扫列出来的那份成员表**，同一个卷不被枚举两次（会话批 03 号票）。
+/// 处理那一卷时**按路径再开一次**：预扫只数不留（`volume-discovery/01`）。
 ///
-/// 「不扫两次」值多少，见库那一侧 `survey` 的模块文档。这里说的是它**怎么测得出来**：
-/// 预扫排在开工那条事件**之前**，因此在收到开工事件的那一刻往源卷里塞一张新页，
-/// 管线要是自己再列一遍就会把它一起做掉。
+/// 「不攥着几千个句柄」值多少，见库那一侧 `survey` 的模块文档。这里说的是**重开**
+/// 这件事怎么测得出来：预扫排在开工那条事件**之前**，因此在收到开工事件的那一刻
+/// 往源卷里塞一张新页——卷还留在预扫手上的话那张页不会被做掉，重开一次就会。
 ///
-/// 用的是**目录卷**。归档卷不另测：`source::open` 在这个 crate 里只剩一个调用点
-/// （预扫那一个），会让这一条红的那种改动——把开卷挪回 `process_volume`——两种容器形态
-/// 一起红。
+/// 它钉的是重开，**不是**「源在跑的中途改了要跟着变」那条性质：那是一种竞态，
+/// 谁也没有承诺过它。源没动的那一趟里重开与不重开产出逐字节相同，本票要的正是这一条，
+/// 而「相同」在这里恰恰无从当作判别式——所以拿这个竞态当探针。
+///
+/// 用的是**目录卷**。归档卷那一侧的句柄由 `tests/isolation.rs` 的
+/// `an_archive_volume_whose_file_is_gone_did_not_get_made` 单独钉着：这个探针在归档上
+/// 造不出来——往一个已经打开的归档里塞成员不是文件系统做得到的事。
 #[test]
-fn the_pipeline_reuses_what_the_survey_enumerated() {
+fn the_pipeline_opens_the_volume_again_by_path() {
     /// 收到开工事件就往源卷里塞一张新页。别的事件一概不管。
     struct SlipsInAPage {
         root: PathBuf,
@@ -1034,12 +1038,12 @@ fn the_pipeline_reuses_what_the_survey_enumerated() {
     assert!(root.join("003.png").exists(), "这条用例没塞进去那张页");
     assert_eq!(
         report.volumes[0].page_count(),
-        2,
-        "开工之后才出现的页被做掉了：这一卷被枚举了两次"
+        3,
+        "开工之后才出现的页没被做掉：这一卷没有按路径重开，成员表还是预扫那一份"
     );
     assert!(
-        !report.volumes[0].output.join("003.png").exists(),
-        "开工之后才出现的页落到了输出里"
+        report.volumes[0].output.join("003.png").exists(),
+        "报告说做了三页，输出里却没有那一张"
     );
 }
 
@@ -1050,8 +1054,8 @@ fn the_pipeline_reuses_what_the_survey_enumerated() {
 /// 而它其实一个字节都没读，管线随后才去读，读到的是坏字节，于是这一页失败。
 /// **那一页失败正是证据。**
 ///
-/// 这一条与「不扫两次」是一对：那一条问预扫**列**的东西还在不在用，这一条问它有没有
-/// 顺手多做一步。两条都测得出来，靠的都是「预扫在开工事件之前」这个时序。
+/// 这一条与「按路径再开一次」是一对：那一条问预扫**留**下的是不是只有数与路径，
+/// 这一条问它有没有顺手多做一步。两条都测得出来，靠的都是「预扫在开工事件之前」这个时序。
 #[test]
 fn the_survey_lists_members_without_reading_a_single_pixel() {
     /// 收到开工事件就把点名的那张页改写成坏字节。

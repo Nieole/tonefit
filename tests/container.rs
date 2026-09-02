@@ -833,15 +833,15 @@ fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
     assert_eq!(packed_members, ["001.png", "ComicInfo.xml"]);
 }
 
-/// 跑一趟，**预扫走完那一刻**把源里的透传文件抽走，返回那份报告。
+/// 跑一趟，**这一卷刚被重开那一刻**把源里的透传文件抽走，返回那份报告。
 ///
-/// 造「写到一半才失败」用它：成员在预扫里就枚举完了，读到它是第二遍的事，那时页已经写进
-/// 临时容器。抽走那一刻与判别式的理由都在 `fixtures::RemoveOnceTheSurveyIsDone` 上。
+/// 造「写到一半才失败」用它：成员在那一刻就枚举完了，读到它是第二遍的事，那时页已经写进
+/// 临时容器。抽走那一刻与判别式的理由都在 `fixtures::RemoveOnceTheVolumeIsOpen` 上。
 ///
 /// 回的是报告而不是错误：**预扫之后才出的卷级失败不毁掉整趟**（05 号票），
 /// 那一卷记在 `Report::failed_volumes` 里，原因也在那一条上。
 fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit::Report {
-    let removal = fixtures::RemoveOnceTheSurveyIsDone::file(volume.path().join("ComicInfo.xml"));
+    let removal = fixtures::RemoveOnceTheVolumeIsOpen::member(volume.path(), "ComicInfo.xml");
     let report = tonefit::run(&tonefit::Request {
         progress: Some(tonefit::ProgressSink::new(removal)),
         ..fixtures::request(space, [volume.path()])
