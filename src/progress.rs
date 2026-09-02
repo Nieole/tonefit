@@ -16,7 +16,8 @@
 //! **观察者可能很久不返回**：会话要在决策点上等人拿主意（ADR 0012 的《后果》）。
 //! 库这一侧因此有一条硬规矩——**任何持锁的地方都不许调它**。本模块自己那一格
 //! 「至今为止收到过的最强指令」用的是原子量而不是锁（见 [`Standing`]），
-//! 调用处则各自把它记在注释里。
+//! 而卷缓存那把锁由[哨兵](LockSentinel)守着：调试构建上持着它走到报到就当场恐慌，
+//! 发布构建上哨兵整个不在。
 
 use std::path::Path;
 use std::sync::Arc;
@@ -157,6 +158,38 @@ pub enum Event<'a> {
         /// 拒绝执行那一种除外，那一趟没有报告可填。
         outcome: RunOutcome,
     },
+}
+
+#[cfg(debug_assertions)]
+impl Event<'_> {
+    /// [`PassStarted`](Self::PassStarted) 的名字。见 [`name`](Self::name) 末段：
+    /// 决策点在造出这一条之前就要报给哨兵。
+    const PASS_STARTED: &'static str = "PassStarted";
+
+    /// 这一条事件的名字，[哨兵](LockSentinel)恐慌时指名的就是它。
+    ///
+    /// **穷尽写开，不留 `_`**：多一个变体时这里当场编译不过，而那正是要的——
+    /// 新添的那一条报到点也该报得出自己叫什么。非穷尽拦的是库外的 `match`，
+    /// 本模块自己在里面（见本枚举的《非穷尽做了两层》）。
+    ///
+    /// 报名字而不是 `Debug` 整份：一卷跑完那一条带着整份 `VolumeReport`，
+    /// 印出来能把恐慌消息淹掉，而要答的问题只是「哪一处报到」。
+    ///
+    /// [决策点](Events::ask_before_the_second_pass)那一处要在**造出事件之前**就问哨兵
+    /// （它有自己一道判空，绕得过 [`Events::ask`]），因此那一条的名字单拎成
+    /// [`PASS_STARTED`](Self::PASS_STARTED)——两处报的是同一个字。
+    fn name(&self) -> &'static str {
+        match self {
+            Self::RunStarted { .. } => "RunStarted",
+            Self::VolumeStarted { .. } => "VolumeStarted",
+            Self::PassStarted { .. } => Self::PASS_STARTED,
+            Self::Stepped { .. } => "Stepped",
+            Self::PageFailed { .. } => "PageFailed",
+            Self::VolumeFinished { .. } => "VolumeFinished",
+            Self::VolumeFailed { .. } => "VolumeFailed",
+            Self::RunFinished { .. } => "RunFinished",
+        }
+    }
 }
 
 /// 一个卷这一趟要走的那几遍中的一遍（`CONTEXT.md` 的《进度》：步的三段）。
@@ -322,6 +355,67 @@ impl Deliberation {
     }
 }
 
+/// **持锁哨兵**：调试构建上守住本模块头上那条硬规矩——不得在持锁处调观察者。
+///
+/// 规矩说的是「**没有**发生某件事」，而一把 guard 活到哪儿是编译期的作用域问题，
+/// 跑起来看不见：往管线里加一条报到，摆错了地方不会红，会死锁（停车场 Q40）。
+/// 哨兵把它变成看得见的——持着[卷缓存那把锁](crate::lock)走到报到那一步，
+/// [`Events::ask`] 当场恐慌，消息里指名是哪一处报到。
+///
+/// 它是一枚 RAII 凭据：`crate::lock` 每交出一把锁就造一枚，锁放掉时它跟着析构。
+/// 数的是**这条线程**手上有几把——第一遍每条 rayon 线程各拿各的缓存锁，
+/// 一格全局计数会把别的线程的那把算到自己头上。计数而不是布尔，多握一把不抹掉前一把。
+///
+/// **只守卷缓存那一把。** 报到时手里还攥着一条 rayon 工作线程与读取层的在途字节额度
+/// （`crate::read` 的额度），两样都不是锁、都不会死锁：观察者久不返回只把读取层背压闸住，
+/// 而消费不动就别再读多半正是想要的。观察者**自己**拿的锁更不在这套里——
+/// 会话那一端本来就要拿锁画屏。
+///
+/// **发布构建上整个不在**（`cfg(debug_assertions)`）：为一个调试期的检查给每张页加开销，
+/// 得不偿失。`crate::CacheGuard` 那一格因此在发布构建上退化成一把裸 `MutexGuard`。
+#[cfg(debug_assertions)]
+pub(crate) struct LockSentinel(());
+
+#[cfg(debug_assertions)]
+thread_local! {
+    /// 这条线程此刻攥着几把守着的锁。
+    static LOCKS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(debug_assertions)]
+impl LockSentinel {
+    /// 记下「这条线程又拿了一把」。
+    pub(crate) fn new() -> Self {
+        LOCKS_HELD.with(|held| held.set(held.get() + 1));
+        Self(())
+    }
+
+    /// 报到之前问一次：此刻一把守着的锁都没攥着吧。
+    ///
+    /// **不问有没有观察者**：只在没人可问的那一趟才走到的报到点，正是最容易漏掉的一处，
+    /// 而漏掉它的那一天有人接上观察者就死锁。[`Events::ask`] 因此把这一问摆在
+    /// 「有没有观察者」那道判空**之前**，[决策点](Events::ask_before_the_second_pass)
+    /// 自带的那道判空同理——它绕得过 `ask`，于是在它自己那一句上再问一次。
+    ///
+    /// 收的是**名字**而不是一条 [`Event`]：决策点那一处要在造出事件之前就问
+    /// （造它要先拼一份报告）。
+    #[track_caller]
+    fn assert_none_held(event: &str) {
+        assert!(
+            LOCKS_HELD.with(std::cell::Cell::get) == 0,
+            "在持着卷缓存那把锁的地方报到了：{event}（{}）。观察者可能很久不返回（见本模块的模块文档），持锁报到会把整条管线挂在一个外人手上——把那把锁掐在报到之前的那一句里。",
+            std::panic::Location::caller(),
+        );
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for LockSentinel {
+    fn drop(&mut self) {
+        LOCKS_HELD.with(|held| held.set(held.get() - 1));
+    }
+}
+
 /// 管线内部报到用的那一端：没有观察者时每一条事件都是空操作。
 ///
 /// 调用处因此不必到处判空——那种判空写着写着就会漏掉一处，而漏掉的那一处正是进度条卡住的地方。
@@ -363,7 +457,15 @@ impl<'a> Events<'a> {
     /// 逐成员的循环头上——**摆在哪几处只在那里数得清**，本条不复述。
     ///
     /// 没有观察者时答的是[继续](Instruction::Continue)：没人可问就等于没人拦。
+    #[cfg_attr(debug_assertions, track_caller)]
     fn ask(self, event: Event<'_>) -> Instruction {
+        // **哨兵**：此刻一把守着的锁都不许攥着（见 [`LockSentinel`]）。问在判空**之前**，
+        // 因此没有观察者的那一趟也照问不误。
+        //
+        // 报到点的位置由 `#[track_caller]` 一路传下来，恐慌消息里指的是 `crate` 那一侧
+        // 真正报到的那一行；两个属性都挂在 `debug_assertions` 上，发布构建上整个不在。
+        #[cfg(debug_assertions)]
+        LockSentinel::assert_none_held(event.name());
         let Some(sink) = self.sink else {
             return Instruction::Continue;
         };
@@ -373,6 +475,7 @@ impl<'a> Events<'a> {
     }
 
     /// 发一条事件，答的那个字只进[闩](Standing)。
+    #[cfg_attr(debug_assertions, track_caller)]
     fn report(self, event: Event<'_>) {
         let _ = self.ask(event);
     }
@@ -397,10 +500,15 @@ impl<'a> Events<'a> {
     ///
     /// **没人可问就连表都不掐**：那一趟根本没有人在这里等，掐出来的会是两次取时刻之差，
     /// 而那是库自己的开销，不该从这一趟的墙钟里减掉。命令行不带进度条的那条路走的正是这里。
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn ask_before_the_second_pass(
         self,
         so_far: impl FnOnce() -> VolumeReport,
     ) -> Instruction {
+        // **哨兵**：下面那道判空绕得过 [`Self::ask`] 里那一问，而这一处正是按设计要等人的
+        // 那一处——没人可问的那一趟（命令行不带进度条）也照问不误，见 [`LockSentinel`]。
+        #[cfg(debug_assertions)]
+        LockSentinel::assert_none_held(Event::PASS_STARTED);
         if self.sink.is_none() {
             return Instruction::Continue;
         }
@@ -442,10 +550,12 @@ impl<'a> Events<'a> {
         self.standing() == Instruction::Abort
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn run_started(self, volumes: usize, steps: u64) {
         self.report(Event::RunStarted { volumes, steps });
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn volume_started(self, volume: &Path, steps: u64) {
         self.report(Event::VolumeStarted { volume, steps });
     }
@@ -458,27 +568,33 @@ impl<'a> Events<'a> {
     ///
     /// 这两遍不带 `so_far`：那一格是给决策点用的，而这里还没有汇总可交
     /// （见 [`Event::PassStarted`]）。
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn pass_started(self, pass: Pass) {
         self.report(Event::PassStarted { pass, so_far: None });
     }
 
     /// 走完一步。逐页、逐成员报到的那些地方用它。
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn step(self) {
         self.report(Event::Stepped {});
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn page_failed(self, page: &Path, reason: &str) {
         self.report(Event::PageFailed { page, reason });
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn volume_finished(self, report: &VolumeReport) {
         self.report(Event::VolumeFinished { report });
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn volume_failed(self, volume: &Path, reason: &str) {
         self.report(Event::VolumeFailed { volume, reason });
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn run_finished(self, outcome: RunOutcome) {
         self.report(Event::RunFinished { outcome });
     }

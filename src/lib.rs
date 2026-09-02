@@ -42,6 +42,7 @@ mod survey;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -300,10 +301,43 @@ struct MemberCounts {
 /// 中毒了照样用：里面是这一卷的账本，而一条计算线程恐慌不该让其余每一条跟着恐慌——
 /// 那会把一处失败放大成整趟失败，真正的恐慌还被「锁中毒了」这句话盖住。
 /// 与读取层那道闸同一条规矩（见 `read` 的 `Throttle::lock`）。
-fn lock(cache: &Mutex<cache::PageCache>) -> MutexGuard<'_, cache::PageCache> {
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+///
+/// 交出来的不是一把裸 `MutexGuard` 而是 [`CacheGuard`]：调试构建上它多带一枚
+/// [哨兵](progress::LockSentinel)，好让「持着它去报到」当场炸掉。
+fn lock(cache: &Mutex<cache::PageCache>) -> CacheGuard<'_> {
+    CacheGuard {
+        held: cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        #[cfg(debug_assertions)]
+        _sentinel: progress::LockSentinel::new(),
+    }
+}
+
+/// 持着这一卷缓存那把锁的凭据：一把 `MutexGuard`，外加调试构建上的那枚
+/// [哨兵](progress::LockSentinel)。
+///
+/// 用起来与 `MutexGuard` 无异（`Deref`/`DerefMut`），[`lock`] 的调用处一个字都不必改。
+/// 发布构建上那一格不在（见 [`progress::LockSentinel`]），它退化成 `MutexGuard` 本身。
+struct CacheGuard<'a> {
+    held: MutexGuard<'a, cache::PageCache>,
+    /// 只为存在与析构，没人读它。发布构建上这一格不在。
+    #[cfg(debug_assertions)]
+    _sentinel: progress::LockSentinel,
+}
+
+impl Deref for CacheGuard<'_> {
+    type Target = cache::PageCache;
+
+    fn deref(&self) -> &Self::Target {
+        &self.held
+    }
+}
+
+impl DerefMut for CacheGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.held
+    }
 }
 
 /// 计算层这一趟摊得开多少条。
@@ -550,8 +584,10 @@ fn process_volume(
     // （见 [`OutputPage::to_report`]），差的只有交进来的那份计时。
     // 各拼各的话，屏上那一份与最终报告迟早会分家。
     //
-    // 用量在拼进结构体**之前**读回来，而那把锁掐在这个闭包自己这一句里：
-    // 拼完就要把它交给观察者，而观察者可能很久不返回（见 `progress` 的模块文档）。
+    // 读缓存用量要的那把锁**掐在这个闭包里**：拼完就要把这份报告交给观察者，
+    // 而观察者可能很久不返回（见 `progress` 的模块文档）。guard 是 `usage()` 这一句的临时量，
+    // 闭包一返回它就没了，因此走到下面那个决策点时手上已经空了。
+    // 全卷最容易踩的就是这一处，现在不再只靠人核——[哨兵](progress::LockSentinel)守着它。
     let assemble = |timing: VolumeTiming| {
         cost::stage(cost::Stage::Assemble, || VolumeReport {
             volume: volume.root.clone(),
@@ -2665,6 +2701,90 @@ mod tests {
         );
         // 一张输出页一步，不是一张源页一步。
         assert_eq!(tally.steps(), 2);
+    }
+
+    /// **哨兵真的炸**：持着卷缓存那把锁走到报到，当场恐慌，消息指得出是哪一处报到。
+    ///
+    /// 这条性质说的是「**没有**发生某件事」——读代码相信它是不够的。`p1-session/02`
+    /// 逐个调用点核过一遍，但那是一次性的：下一个往管线里加报到的人漏了不会红、会死锁
+    /// （停车场 Q40）。这里故意踩上去一次，问的就是「踩上去真的会红吗」。
+    ///
+    /// **两样都断言**：哪一条事件，以及**哪一行**。只比事件名的话，
+    /// `#[track_caller]` 那一串掉了任意一处都不会红——消息会改口指进 `progress.rs`，
+    /// 而「指得出是哪一处报到」当场落空，又回到靠人核。
+    ///
+    /// 踩法与真实的报到点无关：那五处一处都不该触发它，而**整个测试套件跑一遍**
+    /// 就是那一侧的证据（哨兵不问有没有观察者，每一条走管线的用例都替它们验了一次）。
+    ///
+    /// 只在调试构建上跑：哨兵在发布构建上整个不在（见 [`CacheGuard`]）。
+    #[test]
+    #[cfg(debug_assertions)]
+    fn reporting_a_step_while_holding_the_cache_lock_blows_up() {
+        let fell_over = std::panic::catch_unwind(|| {
+            let cache = Mutex::new(cache::PageCache::new(
+                CacheBudget::default(),
+                Retention::Keep,
+            ));
+            let watching = ProgressSink::new(Tally::default());
+            let standing = progress::Standing::default();
+            let deliberation = progress::Deliberation::default();
+            let events = progress::Events::new(Some(&watching), &standing, &deliberation);
+
+            let _held = lock(&cache);
+            events.step();
+        })
+        .expect_err("持着缓存那把锁报到，哨兵该炸");
+
+        let message = panic_message(fell_over);
+        assert!(
+            message.contains("在持着卷缓存那把锁的地方报到了：Stepped"),
+            "消息没指出是哪一条事件：{message}"
+        );
+        assert!(
+            message.contains(file!()),
+            "消息指的不是报到那一行，`#[track_caller]` 那一串断了：{message}"
+        );
+    }
+
+    /// **决策点也在哨兵里**，哪怕这一趟根本没有观察者可问。
+    ///
+    /// 它有自己一道判空（没人可问就连报告都不拼），绕得过 `Events::ask` 里那一问——
+    /// 命令行不带进度条的那条路走的正是这一支。而这一处**按设计要等人**
+    /// （ADR 0012 决定第 3 条），持着锁停在这儿是最坏的一种。
+    #[test]
+    #[cfg(debug_assertions)]
+    fn the_decision_point_trips_the_sentinel_even_with_no_observer_to_ask() {
+        let fell_over = std::panic::catch_unwind(|| {
+            let cache = Mutex::new(cache::PageCache::new(
+                CacheBudget::default(),
+                Retention::Keep,
+            ));
+            let standing = progress::Standing::default();
+            let deliberation = progress::Deliberation::default();
+            let events = progress::Events::new(None, &standing, &deliberation);
+
+            let _held = lock(&cache);
+            events.ask_before_the_second_pass(|| unreachable!("哨兵该在拼报告之前就炸"))
+        })
+        .expect_err("没有观察者也该炸：漏掉的正是这一支");
+
+        let message = panic_message(fell_over);
+        assert!(
+            message.contains("在持着卷缓存那把锁的地方报到了：PassStarted"),
+            "消息没指出是哪一条事件：{message}"
+        );
+        assert!(
+            message.contains(file!()),
+            "消息指的不是报到那一行，`#[track_caller]` 那一串断了：{message}"
+        );
+    }
+
+    /// 从一次恐慌里把那句话捞回来。哨兵那两条用例共用。
+    #[cfg(debug_assertions)]
+    fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+        *payload
+            .downcast::<String>()
+            .expect("哨兵恐慌时带的是一句话")
     }
 
     /// 数第二遍报到了几步。观察者那一端只关心「走完一步」这一种事件，
