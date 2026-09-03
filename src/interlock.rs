@@ -113,9 +113,21 @@ impl Interlock {
     /// 它单独一个入口，不并进 [`engaged`](Self::engaged)：别的几条只看开关，这一条还要一页——
     /// 几何门是**页**的几何事实，一卷里可能一页都不撞（ADR 0007 决定第 1 条）。
     ///
-    /// 点名「不抖动」撞不上：门拿走的只有抖动那一档，`Dither::Off` 在门的两侧都在候选集里。
+    /// **那条拒绝就由这一处判出来**（见 `crate::why_nothing_is_left`）：候选集抖动那一维被裁空
+    /// 与这一问是同一件事，不是拿它去核对的第二个说法。
+    ///
+    /// 问的是「这一趟点名的那一档，门放不放行」——门放行哪几档只有
+    /// [`Dither::candidates`] 一个出处，这里问它，不另写一遍「门拿走的是 FS」。
+    /// 两件事因此是推论，不是各写一遍的巧合：点名「不抖动」撞不上（`Dither::Off`
+    /// 在门的两侧都在里面），不点名也撞不上（没有覆盖项可顶，判据自己会替这一页
+    /// 把抖动关掉）。
+    ///
+    /// **判据这么写，措辞没跟着广**：本条对门拿走的**任何**一档都成立，而
+    /// [`DitherOutsideTheGate`](Self::DitherOutsideTheGate) 的 `Display` 写死着
+    /// `--dither fs`。今天抖动只有两档、两者重合；再添一档就得同一口气改那句话，
+    /// 否则拒绝报的是一档、说的是另一档。
     pub(crate) fn dither_outside_the_gate(dither: Option<Dither>, gate: GeometryGate) -> bool {
-        dither == Some(Dither::FloydSteinberg) && !gate.holds()
+        dither.is_some_and(|named| !Dither::candidates(gate).contains(&named))
     }
 }
 
@@ -149,6 +161,9 @@ impl std::fmt::Display for Interlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::Request;
+    use crate::quantize::{BitDepth, Candidate};
 
     /// 三条处置照票面钉死（05 号票的处置 ①②③）。
     ///
@@ -234,6 +249,52 @@ mod tests {
             None,
             GeometryGate::Broken
         ));
+    }
+
+    /// **③ 咬上与「候选集抖动那一维被裁空」是同一件事**——那条拒绝因此只有这一处判它。
+    ///
+    /// 从前候选集那一侧另有一处形态（「两维一起裁完还剩几个」），两处靠一句
+    /// `debug_assert!` 拴着，只在调试构建上验。这一条接下那份工，两种构建上都跑。
+    ///
+    /// 扫的是两个覆盖项 × 两种门的全部组合，逐格问三件事：裁完还剩不剩、
+    /// `crate::why_nothing_is_left` 说不说得出话、以及说话的是不是本条。
+    /// 第三问只在位深那一维过得去时问——两维一起对不上时报的是位深那一句
+    /// （见 `crate::why_nothing_is_left`）。
+    #[test]
+    fn the_refusal_is_driven_by_this_interlock_alone() {
+        let panel = crate::tests::request().profile.panel();
+        let depths = BitDepth::candidates(panel.gray_levels);
+        for gate in [GeometryGate::Holds, GeometryGate::Broken] {
+            for bit_depth in std::iter::once(None).chain(BitDepth::ALL.map(Some)) {
+                for dither in [None, Some(Dither::Off), Some(Dither::FloydSteinberg)] {
+                    let request = Request {
+                        bit_depth,
+                        dither,
+                        ..crate::tests::request()
+                    };
+                    // 独立数一遍：两维一起裁完，还剩不剩。这一路不问互锁。
+                    let empty =
+                        !Candidate::all(panel.gray_levels, gate)
+                            .into_iter()
+                            .any(|candidate| {
+                                bit_depth.is_none_or(|named| candidate.bit_depth == named)
+                                    && dither.is_none_or(|named| candidate.dither == named)
+                            });
+                    let said = crate::why_nothing_is_left(&request, gate);
+                    let at = format!("{bit_depth:?} {dither:?} {gate:?}");
+
+                    assert_eq!(empty, said.is_some(), "{at}");
+                    assert_eq!(empty, crate::candidates(&request, gate).is_err(), "{at}");
+                    if bit_depth.is_none_or(|named| depths.contains(&named)) {
+                        assert_eq!(
+                            said.is_some(),
+                            Interlock::dither_outside_the_gate(dither, gate),
+                            "{at}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// 三条都说得出话，而且各说各的：措辞只有这一份，报告、`--help` 与那条拒绝都取它。

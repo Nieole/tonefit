@@ -216,7 +216,7 @@ pub fn run(request: &Request) -> Result<Report> {
 /// 而两者的处置正相反：前者记一笔、其余卷照做（退出码 `3`），后者整趟当场停
 /// （退出码 `1`）。分辨它们的只有这个标记，`run` 靠 `downcast_ref` 认它。
 ///
-/// **眼下只有一处**戴它：覆盖项把候选集裁空（见 [`nothing_left_error`]）。
+/// **眼下只有一处**戴它：覆盖项把候选集裁空（见 [`candidates`] 与 [`why_nothing_is_left`]）。
 /// 其中互锁 ③ 那一支的处置明写着「维持拒绝」（页几何批 05 号票），而它撞得上的时机
 /// 在第一遍里、一页一页地判（见 [`Candidates::for_gate`])——真落到卷级失败那条路上，
 /// 「拒绝」就悄悄降级成了「这一卷没做成」，而用户点的 `--dither fs` 对每一卷都错。
@@ -1932,12 +1932,21 @@ fn candidate_scores(reference: &Reference, allowed: &[Candidate]) -> Vec<Candida
 /// （ADR 0007），`--bit-depth` 与 `--dither` 各再裁自己那一维。前两道是界，后两道是覆盖项，
 /// 但作用方式是同一个——都只从候选集里拿走东西，谁都放不回被拿走的。
 ///
-/// 裁空了就报错：面板显示不出来、或几何上到不了眼睛的那些候选，写出去也是白写，
-/// 宁可当场拒绝也不静默照写。门那一维裁空的时候，拒绝的报出的是**哪一页**撞上的门
-/// （见 [`Candidates::for_gate`]）。
+/// 裁空了就报错，而**那件事在裁之前问**（见 [`why_nothing_is_left`]）：面板显示不出来、
+/// 或几何上到不了眼睛的那些候选，写出去也是白写，宁可当场拒绝也不静默照写。
+/// 门那一维裁空的时候，拒绝的报出的是**哪一页**撞上的门（见 [`Candidates::for_gate`]）。
+///
+/// 回来的这一套因此**非空**，这里不再数一遍：候选集是两维的全积（[`Candidate::all`]），
+/// 积空当且仅当有一维空，而两维各自那一问都过了。**两维本身也空不了**——位深那一维
+/// 1bit 恒在里面（面板灰阶数至少 2 级，[`Profile::with_gray_levels`] 挡着），
+/// 抖动那一维门的两侧都留着 `Dither::Off`（见 [`Dither::candidates`]）。
+/// 数一遍就是把同一件事判第二次。
 fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
+    if let Some(said) = why_nothing_is_left(request, gate) {
+        return Err(Refusal(said).into());
+    }
     let panel = request.profile.panel();
-    let picked: Vec<Candidate> = Candidate::all(panel.gray_levels, gate)
+    Ok(Candidate::all(panel.gray_levels, gate)
         .into_iter()
         .filter(|candidate| {
             request
@@ -1949,11 +1958,7 @@ fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
                 .dither
                 .is_none_or(|dither| candidate.dither == dither)
         })
-        .collect();
-    if picked.is_empty() {
-        return Err(nothing_left_error(request, gate));
-    }
-    Ok(picked)
+        .collect())
 }
 
 /// 覆盖项与面板对不对得上，在碰卷之前先问一次。
@@ -1964,40 +1969,41 @@ fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
     candidates(request, GeometryGate::Holds).map(|_| ())
 }
 
-/// 覆盖项裁空了候选集的说法：指出是哪道界拦下的，以及那道界本身还有没有得动。
+/// 覆盖项把哪一维裁空了——裁空了给出那句话，两维都过得去回 `None`。
+///
+/// **两维各判各的，各只有一处判定。**位深那一维问「点名的那一档，这块面板写不写得出」
+/// （ADR 0003 的硬上界）；抖动那一维问「这一趟咬上互锁 ③ 了吗」，判定在
+/// [`Interlock::dither_outside_the_gate`]，这里只取它的答案——那条拒绝**由互锁驱动**，
+/// 不再有第二处形态拿去核对。
+///
+/// 次序不是随手排的：两维一起对不上时报的是位深那一句。它指得出一道**动得了**的界，
+/// 而抖动那一句指的是页的几何事实。
 ///
 /// 两道界只有一道动得了：面板灰阶数走 `--gray-levels`（ADR 0003），几何门动不了——
 /// 它是页的几何事实，不是一个可以放宽的档位。
 ///
-/// 出来的错误戴着 [`Refusal`]：两支都是**覆盖项**与面板对不上，错在这一趟的参数上，
+/// 出来的是那句话本身，不是一个错误：戴 [`Refusal`] 那一步由 [`candidates`] 统一做，
+/// 两支因此不会一支戴一支忘。两支都是**覆盖项**与面板对不上，错在这一趟的参数上，
 /// 换一个卷不会变好（05 号票）。
-fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
+fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> {
     let panel = request.profile.panel();
     let depths = BitDepth::candidates(panel.gray_levels);
-    let said = match request.bit_depth {
-        Some(bit_depth) if !depths.contains(&bit_depth) => {
-            let listed = depths
-                .iter()
-                .map(BitDepth::to_string)
-                .collect::<Vec<_>>()
-                .join("、");
-            format!(
-                "{bit_depth} 越过了面板的 {} 级灰阶：这块面板上写得出的是 {listed}。\
-                 真要写 {bit_depth}，先按实测用 --gray-levels 抬高上界",
-                panel.gray_levels
-            )
-        }
-        // 位深那一维过得去，裁空的只能是抖动那一维：几何门不成立，而 `--dither` 点了抖动。
-        // 那正是互锁 ③，处置是维持拒绝（页几何批 05 号票）。
-        _ => {
-            debug_assert!(
-                Interlock::dither_outside_the_gate(request.dither, gate),
-                "候选集被裁空了，而两道界一道都没拦"
-            );
-            dither_outside_the_gate_error(request.fit)
-        }
-    };
-    Refusal(said).into()
+    if let Some(bit_depth) = request.bit_depth.filter(|depth| !depths.contains(depth)) {
+        let listed = depths
+            .iter()
+            .map(BitDepth::to_string)
+            .collect::<Vec<_>>()
+            .join("、");
+        return Some(format!(
+            "{bit_depth} 越过了面板的 {} 级灰阶：这块面板上写得出的是 {listed}。\
+             真要写 {bit_depth}，先按实测用 --gray-levels 抬高上界",
+            panel.gray_levels
+        ));
+    }
+    // 抖动那一维：几何门不成立而 `--dither` 点了抖动。那正是互锁 ③，
+    // 处置是维持拒绝（页几何批 05 号票）。
+    Interlock::dither_outside_the_gate(request.dither, gate)
+        .then(|| dither_outside_the_gate_error(request.fit))
 }
 
 /// 互锁 ③ 咬上时那条拒绝的说法（05 号票的处置 ③：**维持拒绝**）。
@@ -2017,11 +2023,16 @@ fn nothing_left_error(request: &Request, gate: GeometryGate) -> anyhow::Error {
 ///   那时劝人换 `--fit height` 是**假话**，改说剩下的那两条路。
 ///
 /// 这里判不出手上这一页是哪一种：错误在碰卷之前就备好（[`Candidates::new`]），
-/// 那时没有页可量。**能做的是把话说全**——真要按页分岔，得把这条拒绝挪到判门的地方，
-/// 那是另一件事（停车场 Q33）。
+/// 那时没有页可量。**能做的是把话说全**——两条路各自的例外都写进去，
+/// 用户照着敲不会撞第二次。
 ///
-/// 出来的是那句话本身，不是一个错误：戴 [`Refusal`] 那一步由 [`nothing_left_error`]
-/// 统一做，两支因此不会一支戴一支忘（05 号票）。
+/// **按页分岔没有做。**判门的地方（[`Compute::gray_page`]）手上有这一页的源尺寸，
+/// 也有 [`geometry::Fit::backstopped`]，答得出「这一页换个适配方式解不解得了」——挪得动，
+/// 不是做不到。不做的理由是那一步改的**不是这句话摆在哪里，是这句话说什么**：
+/// 分岔之后够得着出路的页只听见前半句，够不着的只听见后半句，而对用户说什么
+/// 是拍板的事，不是这一处的实现细节（停车场 Q102）。
+///
+/// 出来的是那句话本身，不是一个错误，理由见 [`why_nothing_is_left`]（05 号票）。
 fn dither_outside_the_gate_error(fit: FitMode) -> String {
     let way_out = match fit {
         FitMode::Inside => format!(
