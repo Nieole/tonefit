@@ -181,6 +181,18 @@ pub enum Action {
     /// 撞上同名的那一份时**不覆盖**——那一层先说一句，再按一次这个键才覆盖
     /// （见 [`Session::name_is_taken`]）。
     Store,
+    /// **删**：把光标停着的那一份预设从盘上删掉。
+    ///
+    /// 落在 [`super::press`]，与上面那三支同一条：它要动用户配置目录下那份 TOML。
+    ///
+    /// **要按两下**（与两级停、与覆盖同一个形状，ADR 0013）：第一下只说一句
+    /// （见 [`Session::ask_before_erasing`]），第二下才真删。
+    /// **不叫 `Remove`**——那个是[删掉卷清单上的一行](Self::Remove)，
+    /// 而两者不是一个量级：那一条是这一趟屏上的一行，这一条是盘上长期存着的东西，
+    /// 按错一下没有撤销。
+    ///
+    /// **停在末尾那一行上派不出它**（见 [`listing_action`]）：那一行不是一份预设。
+    Erase,
     /// **出标定图**：按当前设备层那块面板画一张，写到盘上（`CONTEXT.md` 的《会话》：
     /// 设备层里还挂着标定图）。
     ///
@@ -470,6 +482,15 @@ pub struct Picker {
     at: usize,
     /// 正在打的那个新名字。`None` 是在列表上走。
     naming: Option<Naming>,
+    /// **问过一次「真删掉它吗」的是哪一份**（见 [`Session::ask_before_erasing`]）。
+    /// `None` 是没问过。
+    ///
+    /// 与撞名那一问同一个形状（同一个键按两次，ADR 0013），也多同一条：
+    /// **屏底那句话一换，它就作废**（见 [`Session::says`]）——那一问就摆在那句话里，
+    /// 而屏底只摆得下一句。挪一行、按一个别的键、以及套用失败时报出的那句错，
+    /// 因此都把它清掉。收的是名字而不是一个布尔，因为答的那一下与问的那一下
+    /// 要点的是同一份，而这句话由这一格自己说得出来。
+    asked: Option<String>,
 }
 
 impl Picker {
@@ -479,6 +500,7 @@ impl Picker {
             names,
             at: 0,
             naming: None,
+            asked: None,
         }
     }
 
@@ -512,6 +534,12 @@ impl Picker {
         self.naming.as_ref()
     }
 
+    /// 「真删掉它吗」这一问已经问过的是哪一份。press 那一层照它分岔：
+    /// 问的与眼下停着的是同一份才真删，否则先问一句（见 `super::erase_preset`）。
+    pub(super) fn asked(&self) -> Option<&str> {
+        self.asked.as_deref()
+    }
+
     /// `name` 那一份刚存到盘上：名字进清单（还没有的话），光标停到它上面，名字不用打了。
     ///
     /// 清单按字典序（`preset::names` 给的就是这个次序），因此插在二分找到的那一格上——
@@ -528,6 +556,22 @@ impl Picker {
                 at
             }
         };
+    }
+
+    /// `name` 那一份刚从盘上删掉：名字出清单，那一问跟着作废。
+    ///
+    /// **光标留在原来那一格上**——删掉一份之后接着往下看的是它下面那一份，
+    /// 而不是跳回开头。清单短到光标那一格没了时落在末尾那一行上
+    /// （[`rows`](Self::rows) 恒有它，删到最后一份也还在）。
+    fn gone(&mut self, name: &str) {
+        self.asked = None;
+        if let Ok(at) = self
+            .names
+            .binary_search_by(|listed| listed.as_str().cmp(name))
+        {
+            self.names.remove(at);
+        }
+        self.at = self.at.min(self.names.len());
     }
 }
 
@@ -703,7 +747,22 @@ impl Session {
 
     /// 说一句。跑不起来的那几种（型号没挑、输出根没填）就是靠它说出口的。
     pub fn complain(&mut self, said: String) {
-        self.notice = Some(said);
+        self.says(Some(said));
+    }
+
+    /// 屏底那一句换成 `said`（`None` 是把上一句抹掉）。**本模块每一句话都从这里出去。**
+    ///
+    /// 它多做一件事：**把「真删掉它吗」那一问作废**（见 [`Picker::asked`]）。
+    /// 那一问就摆在它自己那句话里（「再按一次 `d` 删掉它」），而屏底只摆得下一句——
+    /// 换一句话说出口，读的人就再也看不见那一问了，闩因此不能比它活得长。
+    /// 一处出口而不是各处各清一次：漏掉一处，那一下按 `d` 就成了不问自删。
+    /// [`ask_before_erasing`](Self::ask_before_erasing) 自己那一句也走这里——
+    /// 它是先说、后闩。
+    fn says(&mut self, said: Option<String>) {
+        self.notice = said;
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.asked = None;
+        }
     }
 
     /// 一趟跑起来了：进 [`Mode::Running`]，配置从这一刻起只读。
@@ -712,7 +771,7 @@ impl Session {
     /// 下一趟去，理由与库那一侧把闩放在 `run` 的栈上是同一条（见 `tonefit` 的
     /// `progress::Events`）。跑着的那一趟那一份见 [`super::run::Running::start`]。
     pub fn run_started(&mut self) {
-        self.notice = None;
+        self.says(None);
         self.mode = Mode::Running(Instruction::Continue);
     }
 
@@ -892,7 +951,7 @@ impl Session {
     /// **怎么数不在这里重抄**：图内中英两份都印着，`calibrate --help` 里也写着。
     /// 屏上只说在别处来不及的那一条——图一旦被缩着显示过，它答的两件事一件都不作数了。
     pub(super) fn charted(&mut self, out: &Path) {
-        self.notice = Some(crate::render::calibration_notice(out));
+        self.says(Some(crate::render::calibration_notice(out)));
     }
 
     /// 这个键在当前状态下做什么。**「哪些键在哪个状态下有效」这张表就是它。**
@@ -961,8 +1020,9 @@ impl Session {
     /// [`super::press`] 先把[起一趟](Action::Start)那一支接走，剩下的原样交回来，
     /// 不必再问一次。
     pub(super) fn act(&mut self, action: Action) -> Exit {
-        // 上一个动作说的那句话到这里就作废了：下一次按键就抹掉。
-        self.notice = None;
+        // 上一个动作说的那句话到这里就作废了：下一次按键就抹掉（连同它里面那一问，
+        // 见 [`says`](Self::says)）。
+        self.says(None);
         self.apply(action)
     }
 
@@ -994,11 +1054,11 @@ impl Session {
             // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
             // 因此这里到不了；真到了也只是这一下没展开，不是错。
             Action::Expand | Action::Turn(_) => {}
-            // 预设那三支都要碰盘（列出来、读一份、写一份），而本模块碰不到盘：
-            // 真做这三件事的是 [`super::press`]，它随后调 [`pick`](Self::pick)、
-            // [`took`](Self::took)、[`saved`](Self::saved) 那几个。与上面两支同一条分法，
-            // 因此这里到不了——真到了也只是这一下没动，不是错。
-            Action::Pick | Action::Take | Action::Store => {}
+            // 预设那四支都要碰盘（列出来、读一份、写一份、删一份），而本模块碰不到盘：
+            // 真做这四件事的是 [`super::press`]，它随后调 [`pick`](Self::pick)、
+            // [`took`](Self::took)、[`saved`](Self::saved)、[`erased`](Self::erased) 那几个。
+            // 与上面两支同一条分法，因此这里到不了——真到了也只是这一下没动，不是错。
+            Action::Pick | Action::Take | Action::Store | Action::Erase => {}
             // 出标定图同样要碰盘（真画图与落盘的是 `tonefit::write_calibration_chart`），
             // 走的是 [`super::press`]，它随后调 [`charted`](Self::charted)。
             // 与上面那三支同一条分法，因此这里到不了——真到了也只是这一下没出图，不是错。
@@ -1018,7 +1078,7 @@ impl Session {
     /// 见 [`Expansion::from`]），换卷那一下是那一卷的抬头在第几行。
     pub(super) fn expand(&mut self, expansion: Expansion) {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
-        self.notice = None;
+        self.says(None);
         self.mode = Mode::Expanded(expansion);
     }
 
@@ -1027,7 +1087,7 @@ impl Session {
     /// 列什么、从哪一份文件列的，都由 [`super::press`] 从盘上读来（[`Action::Pick`]），
     /// 与[展开](Self::expand)收下一份 [`Expansion`] 是同一条：那一层读得到，本模块读不到。
     pub(super) fn pick(&mut self, names: Vec<String>, file: PathBuf) {
-        self.notice = None;
+        self.says(None);
         self.mode = Mode::Picking(Picker::new(names, file));
     }
 
@@ -1043,9 +1103,9 @@ impl Session {
         self.device = preset.device;
         self.taste = preset.taste;
         self.mode = Mode::Browsing;
-        self.notice = Some(format!(
+        self.says(Some(format!(
             "套上了「{name}」：设备层与口味层换成了它，范围层一格没动"
-        ));
+        )));
     }
 
     /// 存好了：那个名字进这一栏的列表，光标停到它上面。
@@ -1059,17 +1119,22 @@ impl Session {
         if let Mode::Picking(picker) = &mut self.mode {
             picker.stored(name);
         }
-        self.notice = Some(format!(
+        self.says(Some(format!(
             "存好了：「{name}」——命令行上 --preset {name} 就是它"
-        ));
+        )));
     }
 
     /// 那个名字已经有人占着：**说一句，闩上「再按一次就覆盖」**。
     ///
     /// 两下而不是一下，理由与两级停同一条（ADR 0013：中止是「再按一次」）：
     /// 盖掉的可能是别人手写的一份预设，而那一步不可逆。
-    /// 这一句非说不可的还有第二半——**覆盖会把那份文件整个重排**，
-    /// 手写的注释与排版留不下来（见 `preset::insert`）。
+    /// 这一句要说的因此是**盖掉之后什么没了**——那一份原来的内容。
+    /// 后半句说的是**没跟着没的**：那份文件里其余几份预设照旧留着，而这一条无条件成立
+    /// （见 `preset::insert`：换掉的只有那一份自己的那几节，而剪不动那种文件退回重排时，
+    /// 每一份预设的内容也都还在）。
+    ///
+    /// **注释不写进这一句**：它在退回重排那一条路上留不下来，而屏上这一句不该说一件
+    /// 只在多数文件上成立的事——说出口的每一句都要无条件为真（停车场 Q108）。
     pub(super) fn name_is_taken(&mut self, name: &str) {
         if let Mode::Picking(Picker {
             naming: Some(naming),
@@ -1078,10 +1143,41 @@ impl Session {
         {
             naming.asked = true;
         }
-        self.notice = Some(format!(
+        self.says(Some(format!(
             "已经有一份「{name}」了：再按一次 ⏎ 覆盖它。\
-             覆盖会把那份预设文件整个照标准格式重排，手写的注释与排版留不下来"
-        ));
+             它原来的内容换成眼下这两层，撤不回来；那份文件里其余几份预设照旧留着"
+        )));
+    }
+
+    /// 要删的是这一份：**说一句，闩上「再按一次就删」**。
+    ///
+    /// 两下而不是一下，与覆盖同一条（ADR 0013：中止是「再按一次」）——
+    /// 删的是盘上长期存着的东西，按错一下没有撤销。闩记的是**问的哪一份**
+    /// （见 [`Picker::asked`]）：光标挪到别的一行、或者屏底换一句别的话，那一问就作废。
+    ///
+    /// **先说、后闩**：那一问与说出它的那句话同生共死（见 [`says`](Self::says)），
+    /// 而 `says` 恰恰要把上一问清掉——顺序反过来，刚闩上的这一个就被自己清掉了。
+    pub(super) fn ask_before_erasing(&mut self, name: &str) {
+        self.says(Some(format!(
+            "真要删掉「{name}」吗：再按一次 d 删掉它。\
+             那一份从预设文件里没了，撤不回来；文件里其余几份预设照旧留着"
+        )));
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.asked = Some(name.to_owned());
+        }
+    }
+
+    /// 删掉了：那个名字出这一栏的清单，光标落在它下面那一份上。
+    ///
+    /// **不退出这一栏**，与[存好了](Self::saved)同一条：删完接着挑下一份的多得是，
+    /// 而「删成了什么样」就摆在眼前这份清单上。
+    pub(super) fn erased(&mut self, name: &str) {
+        if let Mode::Picking(picker) = &mut self.mode {
+            picker.gone(name);
+        }
+        self.says(Some(format!(
+            "删掉了：「{name}」——那份文件里其余几份原样留着"
+        )));
     }
 
     /// 报告区往一个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
@@ -1131,6 +1227,12 @@ impl Session {
 
     /// 光标挪一行。**预设那一栏开着时挪的是那一栏**——左栏此刻不在屏上
     /// （与展开那一副同一条：`↑↓` 改的恒是眼前这一列，见 [`expanded_action`]）。
+    ///
+    /// 挪一行**把「真删掉它吗」那一问作废**（见 [`Picker::asked`]），
+    /// 与改一个字把撞名那一问作废是同一条（见 [`edit_mut`](Self::edit_mut)）：
+    /// 问的是「删掉这一份吗」，换了一行，那一问就不再作数。
+    /// 这一下不必自己去清：按键走的是 [`act`](Self::act)，而它从
+    /// [`says`](Self::says) 出去——那里连同屏底那句话一起清掉。
     fn move_cursor(&mut self, step: Step) {
         if let Mode::Picking(picker) = &mut self.mode {
             picker.at = around(picker.at, picker.rows(), step);
@@ -1212,7 +1314,7 @@ impl Session {
         let nothing_there = listed.is_empty();
         edit.candidates = listed;
         if nothing_there {
-            self.notice = Some("这一层下面没有对得上的东西".to_owned());
+            self.says(Some("这一层下面没有对得上的东西".to_owned()));
         }
     }
 }
@@ -1369,6 +1471,11 @@ fn picking_action(picker: &Picker, key: Key) -> Action {
 /// **`p` 与 `Esc` 都退得回配置**，理由与展开那一副的 `e`／`Esc` 同一条：
 /// 前者是开这一栏那个键按回去，后者是「退一步」。左右键在这里没有意义——
 /// 这一栏上一行只有一个名字，没有取值环。
+///
+/// **`d` 是删掉停着的那一份**，与范围层那一栏上它一直在做的事同一个字面
+/// （那里是删掉一行卷）。**停在末尾那一行上它按不动**：那一行不是一份预设，
+/// 而屏上不摆按不动的键（见 `super::draw::picking_prompt`）。
+/// 真删要按两下，那一半在 [`Action::Erase`] 与 press 那一层。
 fn listing_action(picker: &Picker, key: Key) -> Action {
     match key {
         Key::Up | Key::Char('k') => Action::Move(Step::Back),
@@ -1377,6 +1484,7 @@ fn listing_action(picker: &Picker, key: Key) -> Action {
             Some(_) => Action::Take,
             None => Action::Edit,
         },
+        Key::Char('d') if picker.picked().is_some() => Action::Erase,
         Key::Char('p') | Key::Esc => Action::Cancel,
         Key::Char('q') | Key::Interrupt => Action::Quit,
         Key::Left | Key::Right | Key::Tab | Key::BackTab | Key::Backspace | Key::Char(_) => {
@@ -1641,7 +1749,7 @@ impl Session {
         let (field, typed) = (edit.field, edit.buffer.trim().to_owned());
         match self.take(field, &typed) {
             Ok(()) => self.mode = Mode::Browsing,
-            Err(error) => self.notice = Some(format!("{error}")),
+            Err(error) => self.says(Some(format!("{error}"))),
         }
     }
 
@@ -2092,7 +2200,7 @@ mod tests {
         }
 
         // 八、预设那一栏，在列表上走：`↑↓` 挪一行，`⏎`／空格随停在哪一行分派
-        // （停在一份预设上是套用它），`p`／`Esc` 回配置。
+        // （停在一份预设上是套用它），`d` 删掉停着的那一份，`p`／`Esc` 回配置。
         session.press(Key::Esc);
         session.pick(vec!["漫画".to_owned(), "画集".to_owned()], presets_file());
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
@@ -2101,18 +2209,18 @@ mod tests {
         assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
         assert_eq!(session.action(Key::Enter), Action::Take);
         assert_eq!(session.action(Key::Space), Action::Take);
+        assert_eq!(session.action(Key::Char('d')), Action::Erase);
         assert_eq!(session.action(Key::Char('p')), Action::Cancel);
         assert_eq!(session.action(Key::Esc), Action::Cancel);
         assert_eq!(session.action(Key::Char('q')), Action::Quit);
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
-        // 这一栏上一行只有一个名字：没有取值环，也没有第二件事可做。
+        // 这一栏上一行只有一个名字：没有取值环，也没有第三件事可做。
         for key in [
             Key::Left,
             Key::Right,
             Key::Tab,
             Key::BackTab,
             Key::Backspace,
-            Key::Char('d'),
             Key::Char('t'),
             Key::Char('x'),
             Key::Char('e'),
@@ -2127,10 +2235,12 @@ mod tests {
             );
         }
 
-        // 九、停在末尾那一行（＋ 存成一份新的）上：`⏎` 是「打个名字」，不是套用。
+        // 九、停在末尾那一行（＋ 存成一份新的）上：`⏎` 是「打个名字」，不是套用；
+        // 而 `d` 在这一行上按不动——那一行不是一份预设，没有东西可删。
         session.press(Key::Up);
         assert_eq!(session.picking().expect("那一栏开着").picked(), None);
         assert_eq!(session.action(Key::Enter), Action::Edit);
+        assert_eq!(session.action(Key::Char('d')), Action::Ignored);
         session.press(Key::Enter);
 
         // 十、正在打名字：字进缓冲，`⏎` 存下，`Esc` 退回列表。
@@ -2302,6 +2412,47 @@ mod tests {
         assert_eq!(session.taste.bit_depth, None);
         assert!(session.shown(Field::Filter).starts_with("默认"));
         assert_eq!(session.scope, scope);
+    }
+
+    /// **删掉一份之后这一栏还站得住**：名字出清单，光标落在它下面那一份上。
+    ///
+    /// 删到最后一份也不塌：末尾那一行（＋ 存成一份新的）恒在，光标退到它上面——
+    /// 这一栏因此永远有一条出路。真去动盘的那一半在 `super::erase_preset`。
+    #[test]
+    fn erasing_a_preset_takes_it_out_of_the_column_and_keeps_the_cursor_in_range() {
+        let mut session = Session::new();
+        // 清单按字典序，与盘上那一侧给的次序同一个（`preset::names`）。
+        session.pick(
+            vec!["杂志".to_owned(), "漫画".to_owned(), "画集".to_owned()],
+            presets_file(),
+        );
+        session.press(Key::Down);
+        assert_eq!(
+            session.picking().expect("那一栏开着").picked(),
+            Some("漫画")
+        );
+
+        session.erased("漫画");
+
+        let picker = session.picking().expect("删完还在这一栏上");
+        assert_eq!(picker.names(), ["杂志", "画集"]);
+        // 光标停在原来那一格上：接着往下看的是清单上它下面那一份。
+        assert_eq!(picker.picked(), Some("画集"));
+        assert!(
+            session.notice().is_some_and(|said| said.contains("漫画")),
+            "{:?}",
+            session.notice()
+        );
+
+        // 删到最后一份：清单空了，光标退到末尾那一行上（那一行不是一份预设）。
+        session.erased("画集");
+        session.erased("杂志");
+        let picker = session.picking().expect("删完还在这一栏上");
+        assert!(picker.names().is_empty());
+        assert_eq!(picker.at(), 0);
+        assert_eq!(picker.rows(), 1);
+        assert_eq!(picker.picked(), None);
+        assert_eq!(session.action(Key::Char('d')), Action::Ignored);
     }
 
     /// **展开把左栏收起，收起把它原样还回来**（票面第三条）。

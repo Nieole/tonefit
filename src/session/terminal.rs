@@ -119,8 +119,9 @@ fn drive(
 ///
 /// **只有够得着那一趟、或者够得着盘的那几支不走 [`Session::press`]**：
 /// [起一趟](Action::Start)、[按停](Action::Stop)、[展开](Action::Expand)与
-/// [换一卷](Action::Turn)，加上预设那三支（[列出来](Action::Pick)、
-/// [套用](Action::Take)、[存下来](Action::Store)）与[出标定图](Action::Chart)。
+/// [换一卷](Action::Turn)，加上预设那四支（[列出来](Action::Pick)、
+/// [套用](Action::Take)、[存下来](Action::Store)、[删掉](Action::Erase)）
+/// 与[出标定图](Action::Chart)。
 /// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
 /// 从攒着的那份报告上数出有几卷与那一卷落在第几行、读写用户配置目录下那份 TOML、
 /// 把标定图交给库里那第三个 seam，
@@ -173,9 +174,9 @@ fn press(
             expand(session, running, action);
             Exit::Stay
         }
-        // 预设那三支：列出来、套一份、存一份，三件都要碰盘，而状态机碰不到盘。
-        // 三支各走各的函数，不合成一个收 `Action` 的分派——合起来就要留一支
-        // 「到不了」的 `_`，而那正是新添一支动作（比如停车场 Q74 的「删一份」）
+        // 预设那四支：列出来、套一份、存一份、删一份，四件都要碰盘，而状态机碰不到盘。
+        // 四支各走各的函数，不合成一个收 `Action` 的分派——合起来就要留一支
+        // 「到不了」的 `_`，而那正是新添一支动作（删一份就是这么添进来的，停车场 Q74）
         // 会被静默吃掉的地方。
         Action::Pick => {
             list_presets(session, presets);
@@ -187,6 +188,10 @@ fn press(
         }
         Action::Store => {
             store_preset(session, presets);
+            Exit::Stay
+        }
+        Action::Erase => {
+            erase_preset(session, presets);
             Exit::Stay
         }
         // 出标定图：画图与落盘整件事在库里那第三个 seam 上，而状态机碰不到盘。
@@ -274,7 +279,7 @@ fn take_preset(session: &mut Session, presets: &Presets) {
 /// **第一下盖不掉同名的那一份**：[`Presets::save`] 撞上就是 [`Saved::Taken`]，
 /// 屏上说一句、闩上「再按一次」（[`Session::name_is_taken`]），第二下才走
 /// [`Presets::replace`]。两下不是防手滑的礼节——盖掉的可能是别人手写的一份预设，
-/// 而重排会连那份文件里的注释一起丢掉。
+/// 而那一份原来的内容换掉之后撤不回来（文件里别的字节动不着，见 `preset::insert`）。
 ///
 /// 撞名的判断**落在盘那一侧**，不落在这一栏进来时列的那份名单上：名单是进来那一刻的
 /// 快照，而这中间别处可能刚添了一份同名的。
@@ -292,6 +297,32 @@ fn store_preset(session: &mut Session, presets: &Presets) {
     match written {
         Ok(Saved::Written) => session.saved(name),
         Ok(Saved::Taken) => session.name_is_taken(name),
+        Err(error) => session.complain(format!("{error:#}")),
+    }
+}
+
+/// **删一份**：把光标停着的那一份从盘上删掉。
+///
+/// **第一下只问一句**（[`Session::ask_before_erasing`]），盘一个字节都不碰；
+/// 第二下——问的与眼下停着的是**同一份**时——才走 [`Presets::remove`]。
+/// 两下不是防手滑的礼节：删的是盘上长期存着的东西，而按错一下没有撤销
+/// （停车场 Q74 把这条约束说死了）。
+///
+/// 那一份在这中间被别处删掉了、或者那份文件整个读不懂了，回的都是库那一侧的原话
+/// （已经说清是哪一份、有的是哪几份），这一层原样端到屏底——与套一份读不懂的预设同一条待遇。
+fn erase_preset(session: &mut Session, presets: &Presets) {
+    let Some(picker) = session.picking() else {
+        return;
+    };
+    let Some(name) = picker.picked().map(str::to_owned) else {
+        return;
+    };
+    if picker.asked() != Some(name.as_str()) {
+        session.ask_before_erasing(&name);
+        return;
+    }
+    match presets.remove(&name) {
+        Ok(()) => session.erased(&name),
         Err(error) => session.complain(format!("{error:#}")),
     }
 }
@@ -1013,8 +1044,8 @@ mod tests {
     /// **撞上同名的那一份：先说一句，再按一次才覆盖**——不静默盖掉别人手写的东西。
     ///
     /// 三件事一条钉住：第一下一个字节都不写；**名字一改那一问就作废**（不然改成另一个
-    /// 已有的名字就被上一次的确认捎带着盖掉了）；覆盖之后**别的那几份预设仍在**。
-    /// 重排之后注释留不下来那一半在 `preset::insert` 那一侧说，这里只问手势。
+    /// 已有的名字就被上一次的确认捎带着盖掉了）；覆盖之后**别的那几份预设与手写的注释仍在**。
+    /// 换掉的恰好是那一份自己那几节，逐字节那一条在 `preset::insert` 那一侧钉着。
     #[test]
     fn overwriting_a_preset_takes_a_second_press() {
         let space = tempfile::tempdir().expect("建得出临时目录");
@@ -1046,7 +1077,7 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Enter);
         let said = session.notice().expect("要说一句").to_owned();
         assert!(said.contains("再按一次"), "{said}");
-        assert!(said.contains("注释"), "覆盖的代价没说出口：{said}");
+        assert!(said.contains("撤不回来"), "覆盖的代价没说出口：{said}");
         assert_eq!(
             std::fs::read_to_string(&file).expect("读得出来"),
             by_hand,
@@ -1091,6 +1122,147 @@ mod tests {
             Some(tonefit::Filter::Area),
             "覆盖一份把另一份也改了"
         );
+        // 换掉的只有那一份自己那几节：手写的那行注释还在盘上（本票第三条）。
+        let after = std::fs::read_to_string(&file).expect("读得出来");
+        assert!(after.starts_with("# 手写的\n"), "手写的注释没了：\n{after}");
+    }
+
+    /// **删一份要按两下，而按错一下没有撤销**（停车场 Q74，本票第一、二条）。
+    ///
+    /// 三件事一条钉住：第一下盘上一个字节都不动；**光标一挪那一问就作废**
+    /// （不然挪到另一份上再按一下，就被上一次的确认捎带着删了）；
+    /// 删掉之后那份文件里其余的字节逐个在原处，手写的注释与本版本读不懂的那一份都在。
+    #[test]
+    fn erasing_a_preset_takes_a_second_press() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let presets = presets(&space);
+        let mut session = Session::new();
+        let mut running = Running::default();
+        let file = presets.path().expect("说得出位置").to_path_buf();
+        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
+        // 盘上两份手写的预设，连注释一起；后一份本版本读不懂。
+        let head = "# 我手写的\n";
+        let mine = "[preset.\"漫画\".taste]\nfilter = \"box\"\n\n";
+        let tail = "# 这一项本模块读不懂\n[preset.\"画集\".taste]\nsharpen = true\n";
+        let by_hand = format!("{head}{mine}{tail}");
+        std::fs::write(&file, &by_hand).expect("写得出来");
+
+        // `p` 开那一栏，光标停在第一份上。`d` 第一下只问一句，盘上一个字节都没动。
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        assert_eq!(
+            session.picking().expect("那一栏该开着").picked(),
+            Some("漫画")
+        );
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        let said = session.notice().expect("要说一句").to_owned();
+        assert!(said.contains("漫画") && said.contains("再按一次"), "{said}");
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("读得出来"),
+            by_hand,
+            "第一下就把那一份删了"
+        );
+
+        // 挪到另一份上：上一次那一问不作数，这一下仍是先问一句。
+        tap(&mut session, &mut running, &presets, Key::Down);
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        assert!(
+            session
+                .notice()
+                .is_some_and(|said| said.contains("画集") && said.contains("再按一次")),
+            "挪过一行之后那一问该重新来一遍：{:?}",
+            session.notice()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("读得出来"),
+            by_hand,
+            "挪了一行就被上一次的确认捎带着删了"
+        );
+
+        // 挪回来按两下：这一下才真删，而删掉的恰好是那一份自己写下的那几节。
+        tap(&mut session, &mut running, &presets, Key::Up);
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        assert!(
+            session.notice().is_some_and(|said| said.contains("删掉了")),
+            "{:?}",
+            session.notice()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("读得出来"),
+            format!("{head}\n{tail}"),
+            "删掉的不止那一份自己"
+        );
+        assert!(presets.read("漫画").is_err(), "删完还读得回来");
+        assert_eq!(
+            session.picking().expect("删完还在这一栏上").names(),
+            ["画集"]
+        );
+    }
+
+    /// **屏底换了一句别的话，那一问就不作数了**——不然下一下 `d` 成了不问自删。
+    ///
+    /// 中间那一句由**套用一份读不懂的预设**顶上来（`complain` 那一条路，留在这一栏上）：
+    /// 「再按一次 d」四个字被顶掉之后，用户看见的是一条错误，而不是一问——
+    /// 闩不该比说出它的那句话活得长（见 `Session::says`）。
+    #[test]
+    fn a_question_that_scrolled_off_the_screen_is_no_longer_a_question() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let presets = presets(&space);
+        let mut session = Session::new();
+        let mut running = Running::default();
+        let file = presets.path().expect("说得出位置").to_path_buf();
+        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
+        // 这一份本版本读不懂：套用它是一条错误，而会话留在这一栏上。
+        let by_hand = "[preset.\"漫画\".taste]\nsharpen = true\n";
+        std::fs::write(&file, by_hand).expect("写得出来");
+
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        // 套用失败：屏底改说那条错误，「再按一次 d」没了。
+        tap(&mut session, &mut running, &presets, Key::Enter);
+        let said = session.notice().expect("要说一句").to_owned();
+        assert!(!said.contains("再按一次"), "那一问还摆在屏上：{said}");
+
+        // 这一下 `d` 是**重新问一句**，不是删。
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        assert!(
+            session
+                .notice()
+                .is_some_and(|said| said.contains("再按一次")),
+            "{:?}",
+            session.notice()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("读得出来"),
+            by_hand,
+            "那一问被一句别的话顶掉之后，下一下 d 不问自删了"
+        );
+    }
+
+    /// **那一份在这中间没了：说得清，不崩，那一栏还开着**（本票第六条）。
+    ///
+    /// 这一栏列的是**进来那一刻**盘上有的（`Picker`），而删是盘那一侧的事——
+    /// 两下之间别处把它删掉了，这一下报的是库那一侧的原话（哪一份不在、有的是哪几份）。
+    #[test]
+    fn erasing_a_preset_that_is_no_longer_on_disk_says_so_and_stays_open() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let presets = presets(&space);
+        let mut session = Session::new();
+        let mut running = Running::default();
+        let file = presets.path().expect("说得出位置").to_path_buf();
+        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
+        std::fs::write(&file, "[preset.\"漫画\".taste]\nfilter = \"box\"\n").expect("写得出来");
+
+        tap(&mut session, &mut running, &presets, Key::Char('p'));
+        // 开了那一栏之后，别处把它换成了另一份内容。
+        std::fs::write(&file, "[preset.\"画集\".taste]\nper-page = true\n").expect("写得出来");
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+        tap(&mut session, &mut running, &presets, Key::Char('d'));
+
+        let said = session.notice().expect("要说一句").to_owned();
+        assert!(said.contains("漫画"), "没说清点的是哪一份：{said}");
+        assert!(said.contains("画集"), "没说有的是哪几份：{said}");
+        assert!(session.picking().is_some(), "说完把那一栏关掉了");
     }
 
     /// **读不懂的预设在会话里当场报错，不静默套默认值**（本票的第四条验收，spec 的 story 39）。

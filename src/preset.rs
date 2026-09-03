@@ -12,8 +12,10 @@
 //!
 //! **不读盘，除非被点名。** [`load`] 只在 `--preset` 出现时才被调到。不点名的那一趟
 //! 命令行仍是全部输入，同一条命令在两台机器上因此行为相同（spec 的 story 13）。
-//! 写盘同理，而且更紧一道：只有**会话里按下存**那一下写得动它（`p1-session/12`），
-//! 而它盖不掉同名的那一份——覆盖是另一个动作（见 [`Presets::save`] 与 [`Presets::replace`]）。
+//! 写盘同理，而且更紧一道：只有**会话里按下存或删**那几下写得动它（`p1-session/12`、
+//! `p2-loose-ends/09`），而按下存盖不掉同名的那一份——覆盖是另一个动作
+//! （见 [`Presets::save`]、[`Presets::replace`] 与 [`Presets::remove`]）。
+//! 覆盖与删各要**按两下**，理由在它们各自身上。
 //!
 //! **不猜。** 读不懂的预设——字段过时、型号已删、取值拼错——当场报错，不静默套默认值
 //! （spec 的 story 39）。字段怎么迁移是未决问题（`CONTEXT.md` 的《尚未确立》：预设的字段演进），
@@ -192,9 +194,10 @@ pub struct Presets {
     at: Result<PathBuf, String>,
 }
 
-// 列出来、存、覆盖三件事**只有会话按得动**（`p1-session/12`），而会话整个在 `tui`
-// 那个特性后面：关掉它这几个方法就没有调用方了。`cargo clippy --no-default-features`
-// 那一趟因此要在这里放行一次——挪不走，命令行那一路本来就只读预设、不写。
+// 列出来、存、覆盖、删四件事**只有会话按得动**（`p1-session/12` 与 `p2-loose-ends/09`），
+// 而会话整个在 `tui` 那个特性后面：关掉它这几个方法就没有调用方了。
+// `cargo clippy --no-default-features` 那一趟因此要在这里放行一次——挪不走，
+// 命令行那一路本来就只读预设、不写。
 #[cfg_attr(
     not(feature = "tui"),
     allow(
@@ -263,10 +266,28 @@ impl Presets {
     /// 覆盖同名的那一份。名字还空着时它与 [`save`](Self::save) 做的是同一件事。
     ///
     /// **只有用户当场确认过才走得到这里**（见 `session::press`）：盖掉的可能是别人手写的
-    /// 一份预设，而重排会连那份文件里的注释与排版一起丢掉（见 [`insert`]）。
+    /// 一份预设，而那一份的内容换掉之后撤不回来。换掉的只有它那几节
+    /// （文件里别的字节一个不动，见 [`insert`]）。
     pub fn replace(&self, name: &str, preset: &Preset) -> Result<()> {
         let text = self.text()?.unwrap_or_default();
         self.put(&insert(&text, name, preset)?)
+    }
+
+    /// 删掉点名的那一份。**这是本模块唯一一个把东西从盘上拿走的动作。**
+    ///
+    /// **只有用户当场确认过才走得到这里**（见 `session::press` 的「再按一次 `d`」）：
+    /// 删一份预设与删掉这一趟卷清单上的一行不是一个量级——后者是屏上的一行，
+    /// 前者是盘上长期存着的东西，按错一下没有撤销。
+    ///
+    /// 文件还不在、或者那个名字不在文件里，都是一条说得清的错误（见 [`remove`]）——
+    /// 与 [`names`](Self::names) 那一侧不同：列一份空清单是常态，删一份不存在的不是。
+    pub fn remove(&self, name: &str) -> Result<()> {
+        let path = self.path()?;
+        let Some(text) = self.text()? else {
+            return Err(no_preset_file_error(path));
+        };
+        let left = remove(&text, name).with_context(|| format!("预设文件是 {}", path.display()))?;
+        self.put(&left)
     }
 
     /// 那份文件的正文。**还不在就是 `None`**——那不是一条错误，各调用方自己判。
@@ -370,43 +391,110 @@ pub fn write(presets: &BTreeMap<String, Preset>) -> Result<String> {
     toml::to_string_pretty(&file).context("预设写不成 TOML")
 }
 
-/// 把一份预设放进一份预设文件的正文里，**其余的东西一样都不动**。
+/// 把一份预设放进一份预设文件的正文里，**其余的字节一样都不动**。
 ///
-/// 两条路，差别在「别人手写的那些字节活不活得下来」：
+/// 两条路，差别只在那几节摆在哪儿：
 ///
-/// - **名字还空着**：那两节**追加**在末尾，原文一个字节都不改——注释、排版、
-///   连本模块读不懂的那几份预设，全部原样留着。
-/// - **名字已经有了**：整份**重排**。那一份要换掉，而 `toml` 1.1 给不出「只改这一段、
-///   别的字节不动」的写法（它没有保留格式的编辑端；`toml_edit` 是另一个包，
-///   而引一个依赖是一条依赖面上的决定，不是本票该顺手拿的——停车场 Q73）。
-///   重排之后每一份预设的**内容**都还在（读不懂的那几份按不透明的 [`toml::Value`]
-///   原样搬过去），丢掉的是注释与手写的排版。**会话在覆盖之前把这句话说出口**
-///   （见 `session::state` 那句「再按一次 ⏎ 覆盖」）。
+/// - **名字还空着**：那两节**追加**在末尾。
+/// - **名字已经有了**：原来那几节**就地换掉**——位置不动，前后手写的注释还在原处。
+///
+/// 两条路都不碰别的字节：注释、排版、连本模块读不懂的那几份预设，全部原样留着。
+/// 剪不动的那种文件退回整份[重排](rewrite)，那一条丢注释——[动刀那一步](edited)说清了两条路。
 ///
 /// **读不懂的整份文件当场报错、一个字节都不写**：拿一份自己都没读懂的文件去覆盖，
 /// 是这一路上最不该做的事。
 pub fn insert(text: &str, name: &str, preset: &Preset) -> Result<String> {
     let file: File<toml::Value> = toml::from_str(text).context("预设文件不是一份读得懂的 TOML")?;
-    let added = write(&BTreeMap::from([(name.to_owned(), preset.clone())]))?;
+    edited(text, &file.preset, name, Wanted::This(preset))
+}
+
+/// 从一份预设文件的正文里**删掉**点名的那一份，其余的字节一样都不动。
+///
+/// 与[存](insert)动的是同一把刀（见 [`edited`]）：剪掉那一份自己占的那几节，
+/// 验过才作数，验不过退回整份[重排](rewrite)。
+///
+/// **不在这份文件里就是一条说得清的错误**（[`no_such_preset_error`] 一并列出有的那几个）：
+/// 删一份根本不在的预设是点错了，而「什么都没发生」与「删掉了」在屏上长得一样。
+///
+/// **读不懂的整份文件当场报错、一个字节都不写**，与[存](insert)同一条。
+pub fn remove(text: &str, name: &str) -> Result<String> {
+    let file: File<toml::Value> = toml::from_str(text).context("预设文件不是一份读得懂的 TOML")?;
     if !file.preset.contains_key(name) {
-        let appended = append(text, &added);
-        // 追加完仍要**验一遍**：`preset` 那张表写成内联表时（`preset = { 漫画 = … }`），
-        // 后面再摆一节 `[preset."名字".device]` 是接不上去的。验不过就走重排那一条。
-        if appends_cleanly(&appended, name, preset, &file.preset) {
-            return Ok(appended);
+        return Err(no_such_preset_error(name, &file.preset));
+    }
+    edited(text, &file.preset, name, Wanted::Gone)
+}
+
+/// 动完刀之后，点名那一份**该是什么**。
+///
+/// 一个取值而不是两个 `Option`：[存](insert)与[删](remove)走的是同一把刀，
+/// 而「换上一份」与「拿掉一份」是它的两个方向。两处各摆一个 `Option` 的话，
+/// 「换上什么」与「验的是什么」就成了两格必须自己对上的东西。
+#[derive(Debug, Clone, Copy)]
+enum Wanted<'a> {
+    /// 换成这一份（名字还空着就是新添一份）。
+    This(&'a Preset),
+    /// 没了。
+    Gone,
+}
+
+/// 动一刀：点名那一份变成 [`wanted`](Wanted)，**其余的字节一个不动**。
+///
+/// 三条路，都只碰那一份自己的那几节：名字还空着就[追加](append)在末尾，
+/// 已经有了就[剪掉](cut)再[摆回原处](splice)，删就只剪不摆。
+///
+/// **算出来的那一份要[验过](keeps_faith)才作数**，验不过退回整份[重排](rewrite)——
+/// 剪不动的那几种写法（见 [`header_of`]）走的也是这一条。重排恒是对的，只是丢注释。
+///
+/// 收的是**已经解析过的那张表**：两个调用方各有各的前提要先判（存要不要追加、
+/// 删的那一份在不在），而那两条都要先读懂这份文件。
+fn edited(
+    text: &str,
+    before: &BTreeMap<String, toml::Value>,
+    name: &str,
+    wanted: Wanted,
+) -> Result<String> {
+    let added = match wanted {
+        Wanted::This(preset) => Some(write(&BTreeMap::from([(name.to_owned(), preset.clone())]))?),
+        Wanted::Gone => None,
+    };
+    let touched = match (&added, before.contains_key(name)) {
+        (Some(added), false) => Some(append(text, added)),
+        (Some(added), true) => cut(text, name).map(|(kept, at)| splice(&kept, at, added)),
+        (None, _) => cut(text, name).map(|(kept, _)| kept),
+    };
+    if let Some(touched) = touched
+        && keeps_faith(&touched, name, wanted, before)
+    {
+        return Ok(touched);
+    }
+    rewrite(before, name, added)
+}
+
+/// 整份**重排**：每一份按标准格式重写一遍，点名的那一份换成 `added`（`None` 就是删掉它）。
+///
+/// **剪不动、接不上的那种文件才走到这里**，而它恒是对的：每一份预设的**内容**都还在
+/// （读不懂的那几份按不透明的 [`toml::Value`] 原样搬过去），丢掉的是注释与手写的排版。
+fn rewrite(
+    before: &BTreeMap<String, toml::Value>,
+    name: &str,
+    added: Option<String>,
+) -> Result<String> {
+    let mut sections: BTreeMap<&str, String> = BTreeMap::new();
+    for (other, value) in before {
+        if other != name {
+            sections.insert(other, section(other, value)?);
         }
     }
-    let mut sections: BTreeMap<&str, String> = BTreeMap::new();
-    for (other, value) in &file.preset {
-        sections.insert(other, section(other, value)?);
+    if let Some(added) = added {
+        sections.insert(name, added);
     }
-    sections.insert(name, added);
     Ok(sections.into_values().collect::<Vec<_>>().join("\n"))
 }
 
 /// 一份预设在文件里的那两节，连同它的名字。
 ///
-/// 只有[重排](insert)那一条用得到它，而且**收的是不透明的 [`toml::Value`]**：
+/// 只有[重排](rewrite)那一条用得到它，而且**收的是不透明的 [`toml::Value`]**：
 /// 那一路要把本模块读不懂的几份原样搬过去。点名的那一份走的仍是 [`write`]——
 /// 写出去的形状因此只有一处出处。
 fn section<P: Serialize>(name: &str, preset: P) -> Result<String> {
@@ -429,23 +517,139 @@ fn append(text: &str, added: &str) -> String {
     appended
 }
 
-/// 追加出来的那一份读得回去吗：点名的那一份如数读得回来，原来那几份一个都没变样。
+/// 把新的那两节摆回**原来那一份占的位置上**（[`cut`] 给的那个剪口），前后的字节一个不动。
+fn splice(kept: &str, at: usize, added: &str) -> String {
+    let mut spliced = String::with_capacity(kept.len() + added.len());
+    spliced.push_str(&kept[..at]);
+    spliced.push_str(added);
+    spliced.push_str(&kept[at..]);
+    spliced
+}
+
+/// 剪掉点名那一份占的那几节，连同**剪口在哪儿**——换上新的那一份就摆在那儿。
 ///
-/// 验它而不是信它：TOML 里同一张表有好几种写法，而追加只对其中一种成立。
-fn appends_cleanly(
-    appended: &str,
+/// 一节从它的**表头那一行**起，到下一个表头之前最后一行**有字**的行为止：
+/// 尾巴上的空行与注释不算它的，注释说的是紧跟它的那一节。剪掉的因此恰好是那一份
+/// 自己写下的字节，前后手写的东西一个不动——那正是这一路存在的理由。
+///
+/// **这一份正文的形状认不出来就答 `None`**——认不出的是哪几种，[`header_of`] 那儿列着，
+/// 这里不复述。调用方那时退回[重排](rewrite)。认得出也不算数：
+/// 剪出来的那一份还要[验过](keeps_faith)。
+fn cut(text: &str, name: &str) -> Option<(String, usize)> {
+    let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut at = 0;
+    let mut open: Option<usize> = None;
+    let mut ends = 0;
+    for line in text.split_inclusive('\n') {
+        let end = at + line.len();
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if let Some(start) = open.take() {
+                spans.push(start..ends);
+            }
+            if header_of(trimmed)? == name {
+                open = Some(at);
+                ends = end;
+            }
+        } else if open.is_some() && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            ends = end;
+        }
+        at = end;
+    }
+    if let Some(start) = open {
+        spans.push(start..ends);
+    }
+    // 一节都没找着：那一份是用别的写法写下的（点号键、内联表），这里剪不动。
+    let cut_at = spans.first()?.start;
+    let mut kept = String::with_capacity(text.len());
+    let mut from = 0;
+    for span in &spans {
+        kept.push_str(&text[from..span.start]);
+        from = span.end;
+    }
+    kept.push_str(&text[from..]);
+    Some((kept, cut_at))
+}
+
+/// 一行表头点的是哪一份预设：`[preset."漫画".taste]` 就是「漫画」。
+///
+/// **这里只认形状，不解释内容**——内容那一遍由 [`toml`] 解析过了，
+/// 这一遍要的只是「这一行起的是谁的那一节」。认不出来就 `None`，[剪](cut)那一路整个作废：
+/// 不是 `preset` 底下的、光秃秃一节 `[preset]`（点号键藏得进它正文）、
+/// 表数组那一头 `[[`、以及写法这里不认得的，一律算认不出。
+///
+/// **认得的只有一种：普通的一节。** 多认一种就多一条没有用例走过的路，
+/// 而认不出的那一条恒是对的（退回重排）——本模块自己写出去的、文档里教出去的，
+/// 都只有这一种。
+fn header_of(line: &str) -> Option<String> {
+    let mut rest = line.strip_prefix('[')?.trim_start();
+    let mut path = Vec::new();
+    loop {
+        let (key, tail) = key_of(rest)?;
+        path.push(key);
+        rest = tail.trim_start();
+        match rest.strip_prefix('.') {
+            Some(tail) => rest = tail.trim_start(),
+            None => break,
+        }
+    }
+    let closed = rest.strip_prefix(']')?.trim_start();
+    if !closed.is_empty() && !closed.starts_with('#') {
+        return None;
+    }
+    let mut path = path.into_iter();
+    if path.next()? != "preset" {
+        return None;
+    }
+    path.next()
+}
+
+/// 表头里的一段键，连同它后面剩下的那一截：裸键、`"…"`、`'…'` 三种写法。
+///
+/// **转义过的基本字符串这里不猜**（`\"` 会把「引号到哪儿为止」骗过去），当场答认不出——
+/// 退回重排恒是对的，而猜错一节要剪掉别人的字节。
+fn key_of(rest: &str) -> Option<(String, &str)> {
+    if let Some(tail) = rest.strip_prefix('"') {
+        let end = tail.find('"')?;
+        let key = &tail[..end];
+        (!key.contains('\\')).then(|| (key.to_owned(), &tail[end + 1..]))
+    } else if let Some(tail) = rest.strip_prefix('\'') {
+        let end = tail.find('\'')?;
+        Some((tail[..end].to_owned(), &tail[end + 1..]))
+    } else {
+        let end = rest.find(|character: char| {
+            !(character.is_ascii_alphanumeric() || character == '_' || character == '-')
+        })?;
+        (end > 0).then(|| (rest[..end].to_owned(), &rest[end..]))
+    }
+}
+
+/// 动完刀的那一份正文**验得过吗**：其余几份逐个原样在，而点名的那一份正是
+/// [`wanted`](Wanted) 说的那样。
+///
+/// 验它而不是信它：TOML 里同一张表有好几种写法，而按节接、按节剪都只对其中一种成立
+/// （`preset` 那张表写成内联表时，后面再摆一节 `[preset."名字".device]` 是接不上去的）。
+/// 验不过的那一份当场作废，调用方退回[重排](rewrite)——**盘上因此不会出现一份没验过的正文**。
+fn keeps_faith(
+    after: &str,
     name: &str,
-    preset: &Preset,
+    wanted: Wanted,
     before: &BTreeMap<String, toml::Value>,
 ) -> bool {
-    let Ok(after) = toml::from_str::<File<toml::Value>>(appended) else {
+    let Ok(file) = toml::from_str::<File<toml::Value>>(after) else {
         return false;
     };
-    after.preset.len() == before.len() + 1
+    let others = before.len() - usize::from(before.contains_key(name));
+    let kept = matches!(wanted, Wanted::This(_));
+    file.preset.len() == others + usize::from(kept)
         && before
             .iter()
-            .all(|(other, value)| after.preset.get(other) == Some(value))
-        && read(appended, name).is_ok_and(|read_back| read_back == *preset)
+            .filter(|(other, _)| other.as_str() != name)
+            .all(|(other, value)| file.preset.get(other) == Some(value))
+        && match wanted {
+            Wanted::This(preset) => read(after, name).is_ok_and(|read_back| read_back == *preset),
+            Wanted::Gone => !file.preset.contains_key(name),
+        }
 }
 
 /// 预设文件的位置：用户配置目录下的 `tonefit/presets.toml`。
@@ -965,39 +1169,102 @@ sharpen = true
         assert_eq!(names(&after).expect("列得出来"), ["旧的", "漫画"]);
     }
 
-    /// **覆盖同名的那一份：其余几份一个都不少**，包括本模块读不懂的那几份。
+    /// **覆盖同名的那一份：换掉的只有它自己那几节，别的字节逐个在原处。**
     ///
-    /// 代价一并钉在这里：整份**重排**，注释与手写的排版留不下来。会话在按下去之前
-    /// 把这句话说出口（`session::state::Session::name_is_taken`）——`toml` 1.1
-    /// 给不出保留格式的编辑端（停车场 Q73）。
+    /// 这一条从前钉的是反面——重排把注释丢了。`p2-loose-ends/09` 把写入端换成
+    /// 「按节剪、按节接」（见 [`cut`]），手写的注释与排版因此留得住，
+    /// 而这里比的是**盘上的字节**：手写的那两截原样接在新的那几节前后。
+    ///
+    /// 其余几份一个都不少，包括本模块读不懂的那几份。
     #[test]
-    fn overwriting_one_preset_keeps_the_others_but_not_the_comments() {
-        let by_hand = "\
-# 我手写的
-[preset.\"漫画\".taste]
-filter = \"box\"
+    fn overwriting_one_preset_keeps_the_others_and_the_comments() {
+        let head = "# 我手写的\n";
+        let mine = "[preset.\"漫画\".taste]\nfilter = \"box\"\n\n";
+        let tail = "# 这一项本模块读不懂\n[preset.\"旧的\".taste]\nsharpen = true\n";
+        let by_hand = format!("{head}{mine}{tail}");
 
-[preset.\"旧的\".taste]
-sharpen = true
-";
+        let after = insert(&by_hand, "漫画", &every_field()).expect("覆盖得了");
+
+        assert_eq!(
+            after,
+            format!("{head}{}\n{tail}", one("漫画", &every_field())),
+            "换掉的不止那一份自己的那几节"
+        );
+        assert_eq!(read(&after, "漫画").expect("读得回来"), every_field());
+        assert!(read(&after, "旧的").is_err(), "读不懂的那一份被悄悄改写了");
+        assert_eq!(names(&after).expect("列得出来"), ["旧的", "漫画"]);
+    }
+
+    /// **删掉一份：其余的字节逐个在原处**（票面第二条）。
+    ///
+    /// 剪掉的恰好是那一份自己写下的那几节。它前后手写的注释与排版、
+    /// 以及本模块读不懂的那几份预设，一样都不动——不认识不等于可以丢。
+    #[test]
+    fn deleting_one_preset_leaves_every_other_byte_where_it_was() {
+        let head = "# 我手写的\n";
+        let mine = "[preset.\"漫画\".taste]\nfilter = \"box\"\n\n";
+        let tail = "# 这一项本模块读不懂\n[preset.\"旧的\".taste]\nsharpen = true\n";
+        let by_hand = format!("{head}{mine}{tail}");
+
+        let after = remove(&by_hand, "漫画").expect("删得掉");
+
+        assert_eq!(after, format!("{head}\n{tail}"), "剪掉的不止那一份自己");
+        assert_eq!(names(&after).expect("列得出来"), ["旧的"]);
+        assert!(read(&after, "旧的").is_err(), "读不懂的那一份被悄悄改写了");
+    }
+
+    /// **删到最后一份：文件里的预设一个不剩，而手写的东西还在。**
+    ///
+    /// 这不是一种要拦的情形：一份预设都没有的文件正是[列出来](names)那一侧的常态
+    /// （会话里那一栏自己说得出「还没有预设」），也正是按下第一次存之前的样子。
+    #[test]
+    fn deleting_the_last_preset_leaves_a_file_with_no_presets_in_it() {
+        let by_hand = "# 只有这一份\n[preset.\"漫画\".taste]\nfilter = \"box\"\n";
+
+        let after = remove(by_hand, "漫画").expect("删得掉");
+
+        assert_eq!(after, "# 只有这一份\n");
+        assert!(names(&after).expect("列得出来").is_empty());
+    }
+
+    /// **删一份不在的：说得清点的是哪一份、有的是哪几份。**
+    ///
+    /// 「什么都没发生」与「删掉了」在屏上长得一样，因此这一下是错误、不是一次静默的成功。
+    #[test]
+    fn deleting_a_preset_that_is_not_there_names_the_ones_that_are() {
+        let by_hand = "[preset.\"漫画\".taste]\nfilter = \"box\"\n";
+
+        let said = format!("{:#}", remove(by_hand, "画集").expect_err("删不掉"));
+
+        assert!(said.contains("画集"), "{said}");
+        assert!(said.contains("漫画"), "有的那几份没列出来：{said}");
+    }
+
+    /// **剪不动的那种写法退回整份重排**：内容一份不少，丢掉的只有注释。
+    ///
+    /// 点号键那种写法（`preset."漫画".taste.filter = …`）没有一节表头可剪，[`cut`]
+    /// 因此当场答认不出。存与删都仍走得通——**安全的下限是从前的行为，不是一种新的失败**。
+    #[test]
+    fn a_file_the_cut_cannot_fit_falls_back_to_a_rewrite() {
+        let by_hand = "# 我手写的\npreset.\"漫画\".taste.filter = \"box\"\n\
+                       preset.\"旧的\".taste.sharpen = true\n";
 
         let after = insert(by_hand, "漫画", &every_field()).expect("覆盖得了");
-
         assert_eq!(read(&after, "漫画").expect("读得回来"), every_field());
-        assert!(
-            after.contains("sharpen = true"),
-            "另一份预设丢了：\n{after}"
-        );
-        assert_eq!(names(&after).expect("列得出来"), ["旧的", "漫画"]);
+        assert!(after.contains("sharpen = true"), "另一份丢了：\n{after}");
         assert!(
             !after.contains("# 我手写的"),
-            "重排之后注释还在——那说明格式其实保得住，这一条与它的文档都该改：\n{after}"
+            "这一条走的该是重排：\n{after}"
         );
+
+        let left = remove(by_hand, "漫画").expect("删得掉");
+        assert_eq!(names(&left).expect("列得出来"), ["旧的"]);
+        assert!(left.contains("sharpen = true"), "另一份丢了：\n{left}");
     }
 
     /// **读不懂的整份文件当场报错，一个字节都不写。**
     ///
-    /// 拿一份自己都没读懂的文件去覆盖，是这一路上最不该做的事。
+    /// 拿一份自己都没读懂的文件去覆盖或者去删，是这一路上最不该做的事。
     #[test]
     fn a_file_that_does_not_parse_is_never_written_over() {
         for text in ["这不是一份 TOML", "[preset.\"漫画\"\n", "另有一节 = 1\n"] {
@@ -1005,10 +1272,11 @@ sharpen = true
                 insert(text, "漫画", &every_field()).is_err(),
                 "读不懂却写了：{text}"
             );
+            assert!(remove(text, "漫画").is_err(), "读不懂却删了：{text}");
         }
     }
 
-    /// 盘上那一份：**列、读、存、覆盖**四件事在一个真文件上走一遍。
+    /// 盘上那一份：**列、读、存、覆盖、删**五件事在一个真文件上走一遍。
     ///
     /// 文件摆在临时目录下（[`Presets::at`]），一个用户的东西都不碰。
     #[test]
@@ -1017,9 +1285,10 @@ sharpen = true
         let home = space.path().join("配置").join("tonefit");
         let presets = Presets::at(home.join("presets.toml"));
 
-        // 文件还不在：列出来是一个都没有（不是错误），而读一份是一条说得清的错误。
+        // 文件还不在：列出来是一个都没有（不是错误），而读一份、删一份都是一条说得清的错误。
         assert!(presets.names().expect("列得出来").is_empty());
         assert!(presets.read("漫画").is_err());
+        assert!(presets.remove("漫画").is_err());
 
         // 存：上一层目录跟着建出来。
         assert_eq!(
@@ -1052,6 +1321,20 @@ sharpen = true
             .replace("漫画", &Preset::default())
             .expect("覆盖得了");
         assert_eq!(presets.read("漫画").expect("读得回来"), Preset::default());
+
+        // 删：那一份从文件里没了，而文件还在——列出来是一个都没有。
+        presets.remove("漫画").expect("删得掉");
+        assert!(presets.names().expect("列得出来").is_empty());
+        assert!(presets.read("漫画").is_err());
+
+        // 再删一次：一条说得清的错误，盘上一个字节都没动。
+        let left = std::fs::read_to_string(home.join("presets.toml")).expect("读得出来");
+        assert!(presets.remove("漫画").is_err());
+        assert_eq!(
+            std::fs::read_to_string(home.join("presets.toml")).expect("读得出来"),
+            left,
+            "删一份不在的动了盘上的字节"
+        );
     }
 
     /// 预设文件的位置在用户配置目录之下，文件名是 `presets.toml`。

@@ -817,6 +817,11 @@ fn expanded_prompt() -> Prompt {
 /// 是套用它——**把名字摆进那句话里**，因为套上去之后两层整个换掉，而那不可撤销；
 /// 停在末尾那一行上是打一个名字存下来。
 ///
+/// **`d` 只在停着一份预设时摆出来**：那一行不是预设时它按不动（见
+/// `super::state::listing_action`），而屏上不摆按不动的键。删要按两下，
+/// 而第一下问的那句话走的是屏底那句要说的话（[`Session::ask_before_erasing`]）——
+/// 与撞名那一问同一条路，按键这一行因此不必为它改口。
+///
 /// 打名字那一副照编辑一行的样子（见 [`editing_prompt`]）：缓冲加一句按键提示。
 /// 下一行这时说的是**存出去的是哪两层**——范围层不进预设是这一栏最要紧的一条性质
 /// （票面第三条），而用户按下 `⏎` 之前唯一会读的就是屏底这两行。
@@ -824,7 +829,7 @@ fn picking_prompt(picker: &Picker) -> Prompt {
     let Some(naming) = picker.naming() else {
         let [keys, what] = match picker.picked() {
             Some(name) => [
-                format!(" ↑↓ 选 · ⏎ 套用「{name}」 · p／Esc 回配置 · q 退出"),
+                format!(" ↑↓ 选 · ⏎ 套用「{name}」 · d 删掉 · p／Esc 回配置 · q 退出"),
                 // 套用把两层**整个**换掉，包括眼下配好的那几项——那一下不可撤销，
                 // 因此在按下去之前说，与覆盖那一句同一条规矩。
                 " 套用把设备层与口味层整个换成那一份（它没说的那几项跟着回到「默认」），\
@@ -1901,6 +1906,7 @@ mod tests {
             "{listing}"
         );
         assert!(listing.contains(&tight("⏎ 套用「漫画」")), "{listing}");
+        assert!(listing.contains(&tight("d 删掉")), "{listing}");
         // 套用把两层整个换掉，而那一下不可撤销——按下去之前就说在屏上。
         assert!(
             listing.contains(&tight("眼下配好的两层随之丢掉")),
@@ -1923,10 +1929,12 @@ mod tests {
             "这一栏的光标那一行没反白"
         );
 
-        // 挪到末尾那一行上：屏底改口说「打个名字」。
+        // 挪到末尾那一行上：屏底改口说「打个名字」，而删那个键不摆了——
+        // 那一行不是一份预设，它在那儿按不动（屏上不摆按不动的键）。
         session.press(Key::Up);
         let last = tight(&screen(&mut session, None, 120, 40));
         assert!(last.contains(&tight("⏎ 打个名字存下来")), "{last}");
+        assert!(!last.contains(&tight("d 删掉")), "{last}");
 
         // 打起字来：缓冲在屏底，而**范围层不进预设**这句话就摆在它下面一行。
         session.press(Key::Enter);
