@@ -49,11 +49,12 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// 要处理的卷：一个目录，或一个 CBZ。源只读。
+    /// 要处理的卷：一个目录，或一个归档（.cbz / .zip）。源只读。
     #[arg(required = true, value_name = "卷")]
     inputs: Vec<PathBuf>,
 
-    /// 输出根目录。每个卷在它下面得到一份同名副本，容器形态与输入一致。
+    /// 输出根目录。每个卷在它下面得到一份同名副本，容器形态与输入一致；
+    /// 归档卷的扩展名一律写成 .cbz。
     #[arg(short, long, required = true, value_name = "目录")]
     out: Option<PathBuf>,
 

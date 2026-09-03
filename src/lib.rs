@@ -2268,6 +2268,12 @@ fn ensure_distinct_outputs<'a, M: Copy>(
 /// 一次点名多部，后到的会把先到的**整卷盖掉**——一句告警都没有，在阅读器里也与真卷
 /// 毫无分别。因此开工前就查：撞车要在写出第一个字节之前说。
 ///
+/// 归档卷的扩展名还要再归一一道（ADR 0015），于是**同一目录下**的 `第10话.zip` 与
+/// `第10话.cbz` 也撞在一起。同一道拒绝管两种来由，而**那句话按撞上的那几组现拼**：
+/// 出路不同——卷名撞车换个输出根就分得开，扩展名归一撞的这一对分不开——
+/// 一句把两条出路都念出来，对其中一种必然是错的指引（判据见
+/// [`normalises_an_extension`]）。
+///
 /// 不替用户改名。「输出名就是卷名」这条约定要能反着用——看着输出得认得出是哪一卷——
 /// 自动加后缀会让它失效，而失效的方式还是静默的。
 fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
@@ -2300,8 +2306,42 @@ fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
     if collisions.len() > SHOWN {
         said.push_str(&format!("  ……另有 {} 处\n", collisions.len() - SHOWN));
     }
-    said.push_str("输出名取自卷名，同名的卷因此撞在一起。分批处理，每批给一个自己的输出根。");
+    // 两条出路各按自己那一种撞车出场：混着念，对其中一种必然是错的指引。
+    let by_volume_name = collisions.iter().any(|by| !normalises_an_extension(by));
+    let by_extension = collisions.iter().any(|by| normalises_an_extension(by));
+    said.push_str("输出名取自卷名，同名的卷因此撞在一起。");
+    if by_volume_name {
+        said.push_str("分批处理，每批给一个自己的输出根。");
+    }
+    if by_extension {
+        said.push_str(&format!(
+            "\n上面有一对只差扩展名：归档卷的输出扩展名一律归一成 .{}，源那一头叫什么\
+             扩展名都不带过来，两份包因此指着同一个去处。这一对换输出根分不开\
+             ——卷名本来就相同——只点名其中一份。",
+            source::OUTPUT_ARCHIVE_EXTENSION
+        ));
+    }
     bail!(said)
+}
+
+/// 这一组撞在一起的卷里，有没有**扩展名归一**的份。
+///
+/// 判据是**文件名不同**。卷名撞车的两个源文件名必然相同（`甲部/第1话` 与 `乙部/第1话`
+/// 都叫 `第1话`）；文件名不同还撞得上同一个去处，只可能是归档卷的扩展名在
+/// [`source::planned_output`] 那一步被归一掉了（`第10话.zip` 与 `第10话.cbz`）。
+///
+/// 比文件名用的是 [`collision_key`]：与比去处同一把尺子，不然 Windows 上
+/// `第1话.CBZ` 与 `第1话.cbz` 会被这里当成两个名字、报成扩展名归一，而它撞的其实是大小写。
+fn normalises_an_extension(group: &[&Path]) -> bool {
+    let mut names = group.iter().map(|input| {
+        collision_key(Path::new(
+            input.file_name().unwrap_or_else(|| input.as_os_str()),
+        ))
+    });
+    let Some(first) = names.next() else {
+        return false;
+    };
+    names.any(|name| name != first)
 }
 
 /// 撞车比的是文件系统认不认成同一个去处。

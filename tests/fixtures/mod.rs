@@ -563,7 +563,16 @@ impl Workspace {
 
     /// 建一个空的 CBZ 卷。加完成员要调 `Cbz::write` 才落盘。
     pub fn cbz(&self, name: &str) -> Cbz {
-        Cbz::new(self.tmp.path().join(format!("{name}.cbz")))
+        self.archive(&format!("{name}.cbz"))
+    }
+
+    /// 建一个空的归档卷，扩展名由 `file_name` 自己带。
+    ///
+    /// `.zip` 与 `.cbz` 是同一种字节，夹具因此只有一套（ADR 0015）——
+    /// 扩展名归一那几条用它造出「同内容、两个扩展名」的一对。
+    /// 搭建器仍叫 `Cbz`：它搭的就是一串 ZIP 字节，扩展名只是文件名的一部分。
+    pub fn archive(&self, file_name: &str) -> Cbz {
+        Cbz::new(self.tmp.path().join(file_name))
     }
 
     /// 在工作区根下写一个不属于任何卷的文件。用来造「扩展名像卷、内容不是」的输入。

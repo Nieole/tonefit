@@ -41,8 +41,13 @@ use tonefit::{
 /// 指向本机素材目录的环境变量。没设就跳过。
 const SAMPLES: &str = "TONEFIT_SAMPLES";
 
-/// 归档卷的扩展名。素材目录里的 `.cbz` 各算一个卷。
-const ARCHIVE: &str = "cbz";
+/// 素材目录里点得动的归档扩展名（ADR 0015 的格式集里已经开了的那两个）。
+/// 直接子项里带这些扩展名的各算一个卷。
+const ARCHIVES: [&str; 2] = ["cbz", "zip"];
+
+/// 归档卷的**输出**扩展名。输入是哪一个都归一成它（ADR 0015），
+/// 因此认输出是不是归档只比这一个——一个叫 `第10话.zip` 的**目录**卷的输出仍是目录。
+const OUTPUT_ARCHIVE: &str = "cbz";
 
 /// 这一条用例的名字。自带 harness 之后，命令行的过滤词要自己拿它比对，落款也用它。
 const NAME: &str = "real_material_runs_through_the_pipeline";
@@ -151,7 +156,7 @@ fn samples() -> Option<PathBuf> {
     Some(root)
 }
 
-/// 素材目录里的卷：直接子项中的目录与 `.cbz`，按路径排好。
+/// 素材目录里的卷：直接子项中的目录与归档，按路径排好。
 ///
 /// 一个都没有时把指过来的这个目录本身当成一个卷——手头只有一卷样本的人会直接指它，
 /// 那时报一句「这里没有卷」纯属添堵。
@@ -159,7 +164,7 @@ fn volumes(root: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(root)
         .unwrap_or_else(|error| panic!("列 {}：{error}", root.display()))
         .map(|entry| entry.expect("读目录项").path())
-        .filter(|path| path.is_dir() || is_archive(path))
+        .filter(|path| path.is_dir() || has_extension(path, &ARCHIVES))
         .collect();
     found.sort();
     if found.is_empty() {
@@ -169,10 +174,14 @@ fn volumes(root: &Path) -> Vec<PathBuf> {
     }
 }
 
-fn is_archive(path: &Path) -> bool {
+fn has_extension(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(ARCHIVE))
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+        })
 }
 
 /// 一个卷的产出合法吗。返回这一卷真正处理成了的页数。
@@ -282,7 +291,7 @@ enum Written {
 
 impl Written {
     fn open(volume: &VolumeReport) -> Self {
-        if !is_archive(&volume.output) {
+        if !has_extension(&volume.output, &[OUTPUT_ARCHIVE]) {
             return Written::Directory;
         }
         let file = File::open(&volume.output)

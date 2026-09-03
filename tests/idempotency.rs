@@ -237,6 +237,51 @@ fn the_record_survives_moving_renaming_and_repacking_the_page() {
     );
 }
 
+/// 扩展名归一之后，幂等的去处仍对得上：`第10话.zip` 与 `第10话.cbz` 指着同一份输出。
+///
+/// 去处按**源卷名**算，而归档卷的扩展名在算去处那一步就归一掉了（ADR 0015）。
+/// 因此把源换个扩展名重打一遍——内容一字不改——下一趟仍找得到上一趟写在 `第10话.cbz`
+/// 上的那份输出，一页都不重做。这一条断了的话症状是静默的：换个扩展名重打一次包，
+/// 整库无声地重跑一遍。
+#[test]
+fn the_same_volume_packed_as_zip_or_cbz_lands_on_the_same_output_and_still_skips() {
+    let space = Workspace::new();
+    let page = fixtures::cheap_page();
+    let extra = b"<?xml version=\"1.0\"?>\n<ComicInfo/>\n";
+
+    let mut as_cbz = space.archive("第10话.cbz");
+    as_cbz.page("001.png", &page).file("ComicInfo.xml", extra);
+    let as_cbz = as_cbz.write();
+
+    let first = fixtures::run_paths(&space, [as_cbz.as_path()]);
+    assert_eq!(first.volumes[0].output, space.out().join("第10话.cbz"));
+    let written = fixtures::fingerprint(&first.volumes[0].output);
+
+    // 同一卷换个扩展名重打一遍。
+    let mut as_zip = space.archive("第10话.zip");
+    as_zip.page("001.png", &page).file("ComicInfo.xml", extra);
+    let as_zip = as_zip.write();
+
+    let second = fixtures::run_paths(&space, [as_zip.as_path()]);
+
+    let skipped = &second.volumes[0];
+    assert_eq!(
+        skipped.output,
+        space.out().join("第10话.cbz"),
+        "去处没按源卷名算"
+    );
+    assert_eq!(
+        skipped.verdict,
+        Some(VolumeVerdict::Skipped { page_count: 1 }),
+        "换个扩展名重打的同一卷没被认出来"
+    );
+    assert_eq!(
+        fixtures::fingerprint(&skipped.output),
+        written,
+        "跳过的那一趟动了输出"
+    );
+}
+
 /// 输出里少了一个透传文件同样要重做。
 ///
 /// 记录只随页走，透传文件不带记录——只比指纹的话，有人从输出里删掉 ComicInfo.xml 之后

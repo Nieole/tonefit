@@ -402,18 +402,79 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_failed_volume() {
     assert!(failed.reason.contains("ComicInfo.xml"), "{}", failed.reason);
 }
 
+/// 认得的归档扩展名是一个**集合**，拒绝那句话要把这个集合报出来。
+///
+/// `.rar` / `.7z` 也在格式集里（ADR 0015），但本版本点名即拒：它们要先摊到临时目录
+/// 才谈得上读，而那条路还没开。拒得跟一个 `.txt` 一样，理由那句话报的是同一串扩展名。
 #[test]
-fn a_file_that_is_neither_a_directory_nor_an_archive_is_refused() {
+fn a_file_that_is_neither_a_directory_nor_a_known_archive_is_refused() {
     let space = Workspace::new();
-    let path = space.stray_file("volume-a.txt", b"just a note");
 
-    let error = run_paths_expecting_failure(&space, [path.as_path()]);
+    for name in ["volume-a.txt", "volume-a.rar", "volume-a.7z"] {
+        let path = space.stray_file(name, b"just a note");
 
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("一个卷是一个目录或一个 CBZ 归档"),
-        "{message}"
+        let error = run_paths_expecting_failure(&space, [path.as_path()]);
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("一个卷是一个目录或一个归档（.cbz / .zip）"),
+            "{name}：{message}"
+        );
+    }
+}
+
+/// `.zip` 与 `.cbz` 是同一种字节：同内容的一对，产物逐字节相同，去处也是同一个名字。
+///
+/// 两个扩展名各跑一趟、各写一个输出根，比的才是「读法有没有分岔」这一件事——
+/// 同一个输出根下这一对是撞车（见 `tests/pipeline.rs`），比不成。
+#[test]
+fn a_zip_is_read_as_a_cbz_and_comes_back_out_as_a_cbz() {
+    let space = Workspace::new();
+    let page = fixtures::cheap_page();
+
+    let mut as_cbz = space.archive("第10话.cbz");
+    as_cbz.page("2.png", &page).page("1.png", &page);
+    let as_cbz = as_cbz.write();
+    let mut as_zip = space.archive("第10话.zip");
+    as_zip.page("2.png", &page).page("1.png", &page);
+    let as_zip = as_zip.write();
+
+    let from_cbz = run_paths(&space, [as_cbz.as_path()]);
+    let from_zip = tonefit::run(&tonefit::Request {
+        output_root: space.out_named("out-zip"),
+        ..fixtures::request(&space, [as_zip.as_path()])
+    })
+    .expect("点名 .zip 应当处理成功");
+
+    // 输出扩展名归一：点名 `.zip`，写出来的仍是 `.cbz`——产物是给阅读器的。
+    assert_eq!(from_cbz.volumes[0].output, space.out().join("第10话.cbz"));
+    assert_eq!(
+        from_zip.volumes[0].output,
+        space.out_named("out-zip").join("第10话.cbz")
     );
+    // 逐字节相同：同一种字节走的是同一条读法，扩展名一点都没进到产物里。
+    //
+    // 比的是**成员**，不是整个归档文件：归档的头里带着写出那一刻的时钟
+    // （`zip` 的 `DateTime::default_for_write`），整文件的字节因此两趟之间本来就不同，
+    // 与读的是 `.zip` 还是 `.cbz` 无关（停车场 Q109）。
+    assert_eq!(
+        fixtures::read_cbz(&from_zip.volumes[0].output),
+        fixtures::read_cbz(&from_cbz.volumes[0].output),
+        "同内容的 .zip 与 .cbz 产出了不同的成员"
+    );
+}
+
+/// 大小写不敏感这一条管整个格式集，不只管 `.cbz`。
+#[test]
+fn an_uppercase_archive_extension_is_recognised_too() {
+    let space = Workspace::new();
+    let mut archive = space.archive("第10话.ZIP");
+    archive.page("001.png", &fixtures::cheap_page());
+    let path = archive.write();
+
+    let report = run_paths(&space, [path.as_path()]);
+
+    assert_eq!(report.volumes[0].output, space.out().join("第10话.cbz"));
 }
 
 #[test]

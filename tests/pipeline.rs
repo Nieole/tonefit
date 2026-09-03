@@ -3073,6 +3073,10 @@ fn two_volumes_that_would_write_to_the_same_place_are_refused() {
     // 撞在一起的两个卷都要点名：只说「撞车了」，用户无从知道是哪两卷。
     assert!(error.contains("甲部"), "{error}");
     assert!(error.contains("乙部"), "{error}");
+    // 出路是分批处理，而**只有这一条**：这两个卷的文件名相同，与扩展名归一无关，
+    // 把那一条也念出来就是给了一句对不上号的指引（下一条是它的反面）。
+    assert!(error.contains("分批处理"), "{error}");
+    assert!(!error.contains("只差扩展名"), "{error}");
     // 拒绝要发生在写出第一个字节之前，输出根因此根本不该被建出来。
     assert!(
         !space.out().exists(),
@@ -3096,4 +3100,48 @@ fn a_directory_and_an_archive_of_the_same_name_do_not_collide() {
 
     assert_eq!(report.volumes.len(), 2);
     assert_ne!(report.volumes[0].output, report.volumes[1].output);
+}
+
+/// 输出扩展名归一带出的第二种撞车：同一目录下的 `第10话.zip` 与 `第10话.cbz`。
+///
+/// 拒绝本身与卷名撞车共用一道（上上一条），但**说法要分得开**：卷名撞车分批处理就绕过去了，
+/// 这一对不行——它们的卷名本来就相同，怎么分批都还是同一个去处。那句话因此得点出
+/// 扩展名归一这条规则（ADR 0015），不然用户看着两个不同的文件名想不出为什么会撞。
+///
+/// 退出码不在这里测：拒绝执行恒是 `REFUSED_EXIT`，那条映射由 `tests/exit_code.rs`
+/// 与 `src/render.rs` 的用例钉着，与撞车是哪一种无关。
+#[test]
+fn a_zip_and_a_cbz_of_the_same_name_collide_and_the_message_says_why() {
+    let space = Workspace::new();
+    let mut as_zip = space.archive("第10话.zip");
+    as_zip.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let as_zip = as_zip.write();
+    let mut as_cbz = space.archive("第10话.cbz");
+    as_cbz.page("001.png", &fixtures::line_art(fixtures::TINY));
+    let as_cbz = as_cbz.write();
+
+    let error = fixtures::run_paths_expecting_failure(&space, [as_zip.as_path(), as_cbz.as_path()])
+        .to_string();
+
+    // 撞在一起的两个卷都要点名，去处也要报出来——它是那个被两卷共用的名字。
+    assert!(
+        error.contains(&format!("← {}", as_zip.display())),
+        "{error}"
+    );
+    assert!(
+        error.contains(&format!("← {}", as_cbz.display())),
+        "{error}"
+    );
+    assert!(
+        error.contains(&space.out().join("第10话.cbz").display().to_string()),
+        "{error}"
+    );
+    // 说得出是扩展名归一造成的：这一对只差扩展名，以及归一成的是哪一个。
+    assert!(error.contains("只差扩展名"), "{error}");
+    assert!(error.contains("扩展名一律归一成 .cbz"), "{error}");
+    // 而**不**给「分批处理」那条出路：这一对的卷名本来就相同，换输出根分不开
+    // （上一条是它的反面）。
+    assert!(!error.contains("分批处理"), "{error}");
+    // 拒绝要发生在写出第一个字节之前。
+    assert!(!space.out().exists(), "拒之前已经动过输出根");
 }

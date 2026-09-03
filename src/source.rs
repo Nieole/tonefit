@@ -1,6 +1,6 @@
 //! 源：输入容器抽象。按阅读顺序吐出页，非图片文件原样透传。
 //!
-//! 目录与 CBZ 在这里收敛成同一个 [`Volume`]，调用方不必区分是哪一种。
+//! 目录与归档在这里收敛成同一个 [`Volume`]，调用方不必区分是哪一种。
 
 use std::cmp::Ordering;
 use std::fs::File;
@@ -11,10 +11,20 @@ use anyhow::{Context, Result, bail};
 
 use crate::decode;
 
-/// 归档卷的扩展名。CBZ 就是 ZIP，本版本只认这一个扩展名。
-pub const ARCHIVE_EXTENSION: &str = "cbz";
+/// 点名一个归档卷时认得的扩展名。
+///
+/// `.cbz` 就是 ZIP，`.zip` 与它是同一种字节，因此走同一条读法、不各开一条路。
+/// `.rar` / `.7z` 也在格式集里，但本版本点名即拒——它们要先摊到临时目录才谈得上读
+/// （见 ADR 0015）。
+const ARCHIVE_EXTENSIONS: [&str; 2] = ["cbz", "zip"];
 
-/// 卷的容器形态。输出容器随输入而定：输入是 CBZ，输出也是 CBZ。
+/// 归档卷的**输出**扩展名：一律 `.cbz`，输入是哪一个都不影响它。
+///
+/// 产物是给阅读器的，而 `.cbz` 是那边认的名字（ADR 0015）。归一在这里发生，
+/// 因此幂等的去处也按它算：`第10话.zip` 与 `第10话.cbz` 指着同一份输出。
+pub const OUTPUT_ARCHIVE_EXTENSION: &str = "cbz";
+
+/// 卷的容器形态。输出容器随输入而定：输入是归档，输出也是归档。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Container {
     Directory,
@@ -38,7 +48,7 @@ pub struct Volume {
 }
 
 impl Volume {
-    /// 本卷的输出位置：目录卷是同名目录，归档卷是同名归档文件。
+    /// 本卷的输出位置：目录卷是同名目录，归档卷是同名 `.cbz`。
     pub fn output_path(&self, output_root: &Path) -> PathBuf {
         output_path_of(&self.name, self.container, output_root)
     }
@@ -205,8 +215,9 @@ fn identity_of(path: &Path) -> Result<(String, Container)> {
     }
     if !is_archive(path) {
         bail!(
-            "{} 既不是目录，也不是 .{ARCHIVE_EXTENSION}：一个卷是一个目录或一个 CBZ 归档",
-            path.display()
+            "{} 既不是目录，也不是认得的归档：一个卷是一个目录或一个归档（{}）",
+            path.display(),
+            listed_archive_extensions()
         );
     }
     let name = path
@@ -216,11 +227,14 @@ fn identity_of(path: &Path) -> Result<(String, Container)> {
     Ok((name, Container::Archive))
 }
 
-/// 卷名 + 容器形态 → 输出位置。目录卷是同名目录，归档卷是同名归档文件。
+/// 卷名 + 容器形态 → 输出位置。目录卷是同名目录，归档卷是同名 `.cbz`。
+///
+/// 归档卷的扩展名在这里**归一**：输入的扩展名一点都不带过来。去处因此只取决于卷名，
+/// 同名的 `.zip` 与 `.cbz` 也就撞在一起——那道拒绝见 `crate::run`。
 fn output_path_of(name: &str, container: Container, output_root: &Path) -> PathBuf {
     match container {
         Container::Directory => output_root.join(name),
-        Container::Archive => output_root.join(format!("{name}.{ARCHIVE_EXTENSION}")),
+        Container::Archive => output_root.join(format!("{name}.{OUTPUT_ARCHIVE_EXTENSION}")),
     }
 }
 
@@ -228,7 +242,23 @@ fn output_path_of(name: &str, container: Container, output_root: &Path) -> PathB
 fn is_archive(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(ARCHIVE_EXTENSION))
+        .is_some_and(|extension| {
+            ARCHIVE_EXTENSIONS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+        })
+}
+
+/// 认得的归档扩展名，拼成给人看的一串（`.cbz / .zip`）。
+///
+/// 拒绝那句话由它拼出，格式集与措辞因此只有一个出处：往 [`ARCHIVE_EXTENSIONS`] 里加一项，
+/// 那句话自己跟着走。
+fn listed_archive_extensions() -> String {
+    ARCHIVE_EXTENSIONS
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 fn open_directory(root: &Path, name: String) -> Result<Volume> {
