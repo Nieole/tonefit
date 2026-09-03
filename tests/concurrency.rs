@@ -541,3 +541,180 @@ fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
         "全局那个数没按上界预告：预扫判不出这一卷会命中幂等"
     );
 }
+
+/// 点名很多归档卷跑一整趟：**跑得动**，而同时开着的句柄不随点名的卷数长
+/// （`p2-loose-ends/12`）。
+///
+/// 整笔句柄账在 `source::Reader` 的《一趟同时开着几个句柄》里，这一条钉的是里面最容易
+/// 失守的一格——**正在处理的那一卷是 1，不是点名的卷数**。另两格各有自己的钉子：
+/// 带乘数的那一格是 `src/read.rs` 的 `a_concurrent_read_holds_one_reader_per_worker`，
+/// 预扫那一半是 `src/survey.rs` 的 `a_survey_keeps_no_archive_open`。
+///
+/// 问的时刻是**每一卷开工那一条事件**：那一刻上一卷已经收摊、这一卷还没按路径重开，
+/// 因此整趟任何一处攥住某个归档不放，都会在这里露馅。
+///
+/// 「还攥着没有」照 `a_survey_keeps_no_archive_open` 的办法两个平台各答一半，两句都在：
+///
+/// - Linux 上 `/proc/self/fd` 直接数得出来（见 [`open_files_under`]）。
+/// - Windows 上问不出句柄数，改问一件等价的事：**装着这些归档的目录还改不改得动名**。
+///   那个平台上目录里只要还开着一个文件，重命名就会被拒。改完当场改回来，
+///   这一卷接着按原路重开。
+///
+/// 两句在对方的平台上都恒成立，因此谁也不会误报。
+///
+/// **同一对问题在「开遍」那条事件上再问一遍，那是阳性对照**：那一刻这一卷正开着，
+/// 两句都该报「还开着」。少了它，这条用例会在「开工那条事件挪到重开之后」这类改动下
+/// **静默失去检出力**——问的时刻不对了，而两句照旧一片安静。
+///
+/// 两个时刻都出自 `run` 那条线程（开工与开遍都由 `process_volume` 自己发）。
+/// **不问「走完一步」那一条**：它从计算线程上报出来、同一卷内可能并发到达
+/// （`tonefit::Event::Stepped`），在那里改名会与自己撞车。
+#[test]
+fn many_archive_volumes_never_hold_more_than_the_one_being_processed() {
+    /// 点名这么多卷。这条性质两个卷就问得出来（第二卷开工时露馅），取几十个是为了让
+    /// 「不随卷数长」这句话在读的人眼里也站得住——处理范围本来就是用户点名的子集
+    /// （ADR 0009 决定第 1 条）。
+    const VOLUMES: usize = 32;
+
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir(&library).expect("建库目录");
+    let inputs: Vec<PathBuf> = (0..VOLUMES)
+        .map(|n| {
+            let mut cbz = fixtures::Cbz::new(library.join(format!("第{n:02}话.cbz")));
+            cbz.page("001.png", &fixtures::full_bleed_gradient(fixtures::TINY));
+            cbz.write()
+        })
+        .collect();
+
+    let watch = Handles::new(&library);
+    let report = tonefit::run(&Request {
+        // 几十卷各走一整趟管线，因此拿这批夹具里最便宜的一张页：`TINY` 配 fit-inside
+        // 不放大、`full_bleed_gradient` 那圈墨边让裁边也不起作用，每一卷于是只剩
+        // 「开卷、读、写出」这几笔——本条问的正是它们，不是像素。
+        fit: FitMode::Inside,
+        progress: Some(ProgressSink::new(watch.clone())),
+        ..fixtures::request(&space, inputs.iter().map(PathBuf::as_path))
+    })
+    .expect("几十个归档卷该跑得动");
+
+    assert_eq!(report.volumes.len(), VOLUMES, "点名的卷没有全跑完");
+
+    let between = &watch.0.between;
+    assert_eq!(between.asked(), VOLUMES, "不是每一卷开工时都问过一次");
+    assert_eq!(between.open(), 0, "开工那一刻还开着别的卷的归档");
+    assert_eq!(
+        between.refused(),
+        0,
+        "开工那一刻装着这些归档的目录改不动名，说明还开着其中某个文件"
+    );
+
+    // 阳性对照：开一遍那一刻这一卷正开着，两句各在自己的平台上都该报「还开着」。
+    let during = &watch.0.during;
+    assert!(during.asked() >= VOLUMES, "每卷至少开一遍，怎么会没问到");
+    if open_files_under(&library).is_some() {
+        assert!(
+            during.open() >= 1,
+            "开一遍那一刻也数不出开着的归档：`/proc/self/fd` 那一句已经失去检出力"
+        );
+    } else {
+        assert_eq!(
+            during.refused(),
+            during.asked(),
+            "开一遍那一刻目录竟改得动名：重命名那一句已经失去检出力"
+        );
+    }
+}
+
+/// 数一数这个进程还开着几个落在 `root` 底下的文件。
+///
+/// 与 `src/survey.rs` 的同名函数逐字相同，而两者分处两个 crate（那一份在库的
+/// `#[cfg(test)]` 里），共享不了——这一份重复是认下来的。
+///
+/// 只有 Linux 答得出（`/proc/self/fd`），别的平台回 `None`——那边由重命名那一句去问。
+/// 按路径过滤，因此同一个测试二进制里别的用例开着的文件干扰不到它。
+fn open_files_under(root: &Path) -> Option<usize> {
+    let held = std::fs::read_dir("/proc/self/fd").ok()?;
+    Some(
+        held.filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.starts_with(root))
+            .count(),
+    )
+}
+
+/// 在两个时刻各问一次「这些归档还有开着的没有」：每一卷开工那一条事件，与走一步那一条。
+#[derive(Clone)]
+struct Handles(Arc<Watch>);
+
+struct Watch {
+    /// 装着点名的那些归档的目录。
+    library: PathBuf,
+    /// 开工那一刻的答案。这一趟要的就是它：一个都不该开着。
+    between: Answers,
+    /// 开一遍那一刻的答案。阳性对照：那一刻这一卷正开着。
+    during: Answers,
+}
+
+/// 一个时刻上两个平台各答的那一半。
+#[derive(Default)]
+struct Answers {
+    /// 问过几次。
+    asked: AtomicUsize,
+    /// Linux 上数出来的峰值。数不出来的平台上恒 0，见用例文档。
+    open: AtomicUsize,
+    /// 目录改不动名的次数。改得动名的平台上恒 0。
+    refused: AtomicUsize,
+}
+
+impl Answers {
+    /// 问一次，两句都问，答案记进自己这三格。
+    fn ask(&self, library: &Path) {
+        self.asked.fetch_add(1, Ordering::Relaxed);
+        if let Some(held) = open_files_under(library) {
+            self.open.fetch_max(held, Ordering::Relaxed);
+        }
+        // 改名与改回来夹在这一条事件里：观察者不返回，被测的那一趟就走不下去。
+        // 这两条事件都出自 `run` 那条线程，因此这两句之间没有第二个观察者在跑
+        // （「走完一步」那一条不是，见用例文档）。
+        let moved = library.with_file_name("改过名");
+        match std::fs::rename(library, &moved) {
+            Ok(()) => std::fs::rename(&moved, library).expect("改回原名"),
+            Err(_) => {
+                self.refused.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(Ordering::Relaxed)
+    }
+
+    fn open(&self) -> usize {
+        self.open.load(Ordering::Relaxed)
+    }
+
+    fn refused(&self) -> usize {
+        self.refused.load(Ordering::Relaxed)
+    }
+}
+
+impl Handles {
+    fn new(library: &Path) -> Self {
+        Self(Arc::new(Watch {
+            library: library.to_path_buf(),
+            between: Answers::default(),
+            during: Answers::default(),
+        }))
+    }
+}
+
+impl Progress for Handles {
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        match event {
+            Event::VolumeStarted { .. } => self.0.between.ask(&self.0.library),
+            Event::PassStarted { .. } => self.0.during.ask(&self.0.library),
+            _ => {}
+        }
+        Instruction::Continue
+    }
+}
