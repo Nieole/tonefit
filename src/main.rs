@@ -9,6 +9,7 @@
 
 mod preset;
 mod render;
+mod wrap;
 // 会话的状态机那四个模块一个终端库都不 `use`，因此 `tui` 关掉的那一趟仍编译、仍跑它们
 // 自带的用例（闸门的第二条，`docs/agents/gate.md`）。这两句 `cfg` 各自为什么必要——
 // `test` 那一格与那笔 `dead_code` 放松——见 `session` 模块文档的《终端库在哪一半》。
@@ -22,7 +23,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use clap::Parser;
+use clap::builder::{Resettable, StyledStr};
+use clap::{CommandFactory, FromArgMatches, Parser};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
@@ -393,6 +395,71 @@ fn interlock_help() -> String {
     text
 }
 
+/// **长**帮助折到多宽：[`wrap::TERMINAL_WIDTH`] 减去 clap 给 `--help` 那一档缩进（10 格）。
+///
+/// 折的是原文，缩进由 clap 加在外面，因此要先扣掉。
+const LONG_HELP_WIDTH: u16 = wrap::TERMINAL_WIDTH - 10;
+
+/// **短**帮助折到多宽。
+///
+/// `-h` 把每一项的短帮助摆在**开关那一列后面**，缩进因此比长帮助深得多——它随这份命令行上
+/// 最长的那个开关走，眼下是 31 格。clap 不交出这个数，只能照它排出来的帮助**数格子**
+/// （与 `docs/measurements.md` 那种实测数字无关，那里装的是图像处理量出来的东西）：
+/// [`tests::the_help_folds_every_line_into_the_terminal`] 钉着「`-h` 没有一行过
+/// [`wrap::TERMINAL_WIDTH`]」，添一个更长的开关时它当场变红。
+const SHORT_HELP_WIDTH: u16 = wrap::TERMINAL_WIDTH - 31;
+
+/// 交给 clap 之前，把每一条帮助按显示宽度折一遍（[`wrap`]）。
+///
+/// **clap 一行都不折**：折行挂在它的 `wrap_help` 特性后面，本仓库没开。
+/// 开了也治不了中文——它按**空格**断，而中文长句里一个空格都没有，整句仍是「一个词」。
+/// 落地这一票之前 `--help` 里最长的一行有 412 格、`-h` 有 300 格（停车场 Q32）。
+/// 折的是**原文**——clap 认原文里的换行，折好的每一行都短过它的排版，它一行都不必再动。
+///
+/// 只在真要跑的那一趟折得着：用例问的是 [`Cli::command`] 那一份**原文**
+/// （见 [`tests::the_help_lists_every_interlock_in_one_place`]），
+/// 折过的文字里 `contains` 一条长句会被折行折断。
+fn folded_help(command: clap::Command) -> clap::Command {
+    // `about` 是**短**的那一份：它还要摆进上一级那张子命令表里，与短帮助同一档。
+    // 长的那三份只印在第 0 列上，长帮助那一档够宽。
+    let about = fold_help(command.get_about(), SHORT_HELP_WIDTH);
+    let long_about = fold_help(command.get_long_about(), LONG_HELP_WIDTH);
+    let after_help = fold_help(command.get_after_help(), LONG_HELP_WIDTH);
+    let after_long_help = fold_help(command.get_after_long_help(), LONG_HELP_WIDTH);
+    let arguments: Vec<clap::Id> = command
+        .get_arguments()
+        .map(|argument| argument.get_id().clone())
+        .collect();
+    let subcommands: Vec<String> = command
+        .get_subcommands()
+        .map(|subcommand| subcommand.get_name().to_owned())
+        .collect();
+
+    let mut command = command
+        .about(about)
+        .long_about(long_about)
+        .after_help(after_help)
+        .after_long_help(after_long_help);
+    for argument in arguments {
+        command = command.mut_arg(argument, |argument| {
+            let help = fold_help(argument.get_help(), SHORT_HELP_WIDTH);
+            let long_help = fold_help(argument.get_long_help(), LONG_HELP_WIDTH);
+            argument.help(help).long_help(long_help)
+        });
+    }
+    for subcommand in subcommands {
+        command = command.mut_subcommand(subcommand, folded_help);
+    }
+    command
+}
+
+/// 一条帮助折好之后的样子。没有这一条就还是没有——`Reset` 落在本来就空着的那一格上
+/// 什么都不改。
+fn fold_help(text: Option<&StyledStr>, width: u16) -> Resettable<StyledStr> {
+    text.map(|text| StyledStr::from(wrap::fold(&text.to_string(), width).join("\n")))
+        .into()
+}
+
 /// 《开关互锁》那一节的标题。
 ///
 /// 它自成一个常量，是为了让用例分得开**那一节本体**与各开关帮助里指向它的那句路标——
@@ -574,7 +641,8 @@ fn execute() -> Result<u8> {
     if let Some(session) = without_arguments() {
         return session;
     }
-    let cli = Cli::parse();
+    let cli = Cli::from_arg_matches(&folded_help(Cli::command()).get_matches())
+        .unwrap_or_else(|error| error.exit());
     if let Some(Command::Calibrate {
         profile,
         gray_levels,
@@ -590,7 +658,13 @@ fn execute() -> Result<u8> {
     let mode = request.mode;
     request.progress = Some(ProgressSink::new(bar));
     let report = tonefit::run(&request)?;
-    print!("{}", render::report(&report, mode));
+    // 印出去之前折一遍行。措辞归 [`render`]，**印在多宽的地方上归这里**：
+    // 报告里那几句长的（末尾几小结、互锁那几行）一句里一个空格都没有，
+    // 不折就是一行几百格（见 [`wrap`]）。
+    print!(
+        "{}",
+        wrap::folded_text(&render::report(&report, mode), wrap::TERMINAL_WIDTH)
+    );
     Ok(exit_code(&report))
 }
 
@@ -1441,6 +1515,52 @@ io-mode = \"concurrent\"
                 .contains(INTERLOCK_HEADING),
             "长帮助里没有那一节"
         );
+    }
+
+    /// **印出去的帮助没有一行过 [`wrap::TERMINAL_WIDTH`]**（票面第一条的帮助那一半）。
+    ///
+    /// 从前一行都不折：`--help` 里最长的那一行有 412 格，`-h` 有 300 格——
+    /// clap 按空格折行，而中文长句里一个空格都没有（停车场 Q32）。
+    ///
+    /// 四份都问：`-h` 与 `--help` 缩进不同一档（见 [`SHORT_HELP_WIDTH`] 与
+    /// [`LONG_HELP_WIDTH`]），子命令那一份还要再套一层。
+    /// [`SHORT_HELP_WIDTH`] 里那个 31 是量出来的——添一个更长的开关时这一条当场变红。
+    #[test]
+    fn the_help_folds_every_line_into_the_terminal() {
+        let folded = folded_help(Cli::command());
+        let printed = [
+            folded.clone().render_help().to_string(),
+            folded.clone().render_long_help().to_string(),
+            folded
+                .clone()
+                .find_subcommand_mut("calibrate")
+                .expect("calibrate 子命令在")
+                .render_help()
+                .to_string(),
+            folded
+                .clone()
+                .find_subcommand_mut("calibrate")
+                .expect("calibrate 子命令在")
+                .render_long_help()
+                .to_string(),
+        ];
+
+        for help in &printed {
+            for line in help.lines() {
+                assert!(
+                    wrap::width(line) <= wrap::TERMINAL_WIDTH,
+                    "这一行 {} 格：{line}",
+                    wrap::width(line)
+                );
+            }
+        }
+
+        // 折行不吃字：互锁那一节逐条都还在（折过之后按行找，整句已经被折断了）。
+        let long = printed[1].replace(['\n', ' '], "");
+        for interlock in Interlock::ALL {
+            let said = interlock.to_string().replace(' ', "");
+            assert!(long.contains(&said), "折没了：{said}");
+        }
     }
 
     /// `--no-split` 关得掉拆分，阈值与阅读方向点得动，**不点名就是拆、1.5、右开**

@@ -26,6 +26,10 @@ ssimulacra2 = { version = "0.5.1", optional = true }
 tempfile = "3.24.0"
 thiserror = "2.0.20"
 toml = "1.1.4"
+# 折行要按**显示宽度**算（`src/wrap.rs`），而中文一个字占两格。这一条**不是新的一棵树**：
+# indicatif 与 ratatui 都传递依赖着同一个版本，直接列出来只是把它变成本仓库自己说得出口的
+# 一条依赖——折行工具在 `tui` 之外，不能靠终端库那一份。
+unicode-width = "0.2.2"
 walkdir = "2.5.0"
 zip = "8"
 
