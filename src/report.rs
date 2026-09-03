@@ -265,7 +265,8 @@ pub struct VolumeReport {
     pub source_pages: usize,
     /// 本卷的卷级判定：这一卷的候选从哪来。抖动模式在这个候选里。
     ///
-    /// 一页都没有的卷（只装着透传文件）是 `None`：那样的卷没有候选可判。
+    /// 一张**灰度页**都没有的卷是 `None`：只装着彩页的、整卷全失败的，都没有候选可判。
+    /// 一页都没有的东西根本不是卷，走不到这里（ADR 0014 决定第 3 条）。
     pub verdict: Option<VolumeVerdict>,
     /// 本卷缓存的用量（ADR 0005）。
     pub cache: CacheUsage,

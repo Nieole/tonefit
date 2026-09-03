@@ -30,7 +30,6 @@ toml = "1.1.4"
 # indicatif 与 ratatui 都传递依赖着同一个版本，直接列出来只是把它变成本仓库自己说得出口的
 # 一条依赖——折行工具在 `tui` 之外，不能靠终端库那一份。
 unicode-width = "0.2.2"
-walkdir = "2.5.0"
 zip = "8"
 
 # 介质探测在 Windows 上要问存储栈本身有没有寻道惩罚（ADR 0009：介质按路径探测），
@@ -67,3 +66,6 @@ crc32fast = "1.5.1"
 # 就够——非可选项对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着
 # 只列在那边的 `num_cpus`）。`image` 不同：dev 侧要的 `avif` 编码特性运行时那一份没有。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
+# 铺平一棵树、答「这个容器里装着什么」——只有断言用得着。库这一侧从 ADR 0014 起
+# 不再递归遍历任何东西：目录卷只列直接那一层，发现自己走一个显式的栈（`src/discover.rs`）。
+walkdir = "2.5.0"

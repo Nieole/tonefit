@@ -1,6 +1,11 @@
 //! 源：输入容器抽象。按阅读顺序吐出页，非图片文件原样透传。
 //!
 //! 目录与归档在这里收敛成同一个 [`Volume`]，调用方不必区分是哪一种。
+//!
+//! **收敛的是读取与输出，不是卷边界**（ADR 0014）：归档的边界由打包者定死了，
+//! 内部结构照收；目录的边界可以再分，因此[目录卷只收直接那一层](open_directory)，
+//! 子目录与躺在里面的归档各自成卷。哪些路径成卷由 [`crate::discover`] 定，本模块只管
+//! 「给定一个卷根，它里面有什么」。
 
 use std::cmp::Ordering;
 use std::fs::File;
@@ -35,8 +40,6 @@ pub enum Container {
 pub struct Volume {
     /// 卷标识：源目录路径，或归档文件路径。
     pub root: PathBuf,
-    /// 卷名。目录取目录名，归档取去掉扩展名的文件名。
-    pub name: String,
     /// 本卷的容器形态。
     pub container: Container,
     /// 按阅读顺序排好的页。
@@ -48,11 +51,6 @@ pub struct Volume {
 }
 
 impl Volume {
-    /// 本卷的输出位置：目录卷是同名目录，归档卷是同名 `.cbz`。
-    pub fn output_path(&self, output_root: &Path) -> PathBuf {
-        output_path_of(&self.name, self.container, output_root)
-    }
-
     /// 一个成员的身份：卷根接上它的相对路径。报告与错误信息用它指人。
     ///
     /// 归档成员因此长成 `卷.cbz/001.png`——包内没有文件系统路径，这是它最接近的说法。
@@ -95,7 +93,7 @@ pub struct Member {
 /// - **正在处理的那一卷**：归档卷 **1** 个（[`Reader::Archive`] 那个 `ZipArchive`），
 ///   目录卷 **0** 个（[`Reader::Directory`] 只是一个卷根路径）。卷一个一个地处理、
 ///   处理完当场析构，而预扫**一个都不攥**（见 `crate::survey`）——这一格因此是 1，
-///   **不是点名的卷数**。
+///   **不是这一趟有几个卷**。
 /// - **正在读的那几个成员**：一条读取线程一个（见 [`independent`](Self::independent)
 ///   与 `crate::read` 的 `reads`）。真读源字节的只有两处，各按[读取计划](crate::medium::IoPlan)
 ///   里自己那一格派：幂等那一道 `min(fingerprint.count, 成员数)` 条、
@@ -111,7 +109,8 @@ pub struct Member {
 /// （[读取计划](crate::medium::IoPlan)按 `--io-mode` 与介质定它）。主项在两种容器上同形：
 /// 归档卷的幂等那一段是「卷自己那一个 + 几条读取线程」，即 `1 + min(fingerprint.count, 成员数)`。
 /// 自变量只有三个：**并发度**、**这一卷的成员数**、**容器形态**。
-/// **点名的卷数不在里面**——它是**核数量级，不是卷数量级**。
+/// **这一趟有几个卷不在里面**——它是**核数量级，不是卷数量级**。
+/// 发现落地之后这一句更要紧了：点名一个库，卷数由用户的目录树说了算（ADR 0014）。
 ///
 /// ## 没有一道句柄上限，为什么
 ///
@@ -181,33 +180,23 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 
 /// 打开一个卷。源只读，这里不写任何东西。
 pub fn open(path: &Path) -> Result<Volume> {
-    let (name, container) = identity_of(path)?;
-    match container {
-        Container::Directory => open_directory(path, name),
-        Container::Archive => open_archive(path, name),
+    match identity_of(path)?.1 {
+        Container::Directory => open_directory(path),
+        Container::Archive => open_archive(path),
     }
-}
-
-/// 这个输入将要写到哪里——**不打开卷**。
-///
-/// 卷名与容器形态只取决于路径本身，因此去处在读任何字节之前就算得出来。
-/// 开工前查同名撞车要的就是它（见 `crate::run`）：撞车要在写出第一个字节之前说，
-/// 不是写到一半才说。
-pub fn planned_output(input: &Path, output_root: &Path) -> Result<PathBuf> {
-    let (name, container) = identity_of(input)?;
-    Ok(output_path_of(&name, container, output_root))
 }
 
 /// 卷名与容器形态。两者都只看路径，不看内容。
 ///
-/// `open` 与 [`planned_output`] 共用它：算去处的那一趟与真去写的那一趟必须得出同一个名字，
-/// 不然查出来的撞车与实际发生的撞车是两回事。
-fn identity_of(path: &Path) -> Result<(String, Container)> {
+/// **它认「这是不是一个卷」**：路径既不是目录也不是认得的归档时当场拒绝，
+/// 那句话说得出格式集（见 [`listed_archive_extensions`]）。因此[点名的那个路径](open)
+/// 与[发现的起点](crate::discover::of)都经它。
+///
+/// 发现**往下走**的时候不经它：候选的形态在列目录时就知道了，只差一个卷名，走 [`name_of`]。
+pub(crate) fn identity_of(path: &Path) -> Result<(String, Container)> {
     if path.is_dir() {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .with_context(|| format!("{} 没有目录名，无法决定输出位置", path.display()))?;
+        let name = name_of(path, Container::Directory)
+            .with_context(|| format!("{} 没有目录名，说不出这是哪一个卷", path.display()))?;
         return Ok((name, Container::Directory));
     }
     if !path.exists() {
@@ -220,26 +209,39 @@ fn identity_of(path: &Path) -> Result<(String, Container)> {
             listed_archive_extensions()
         );
     }
-    let name = path
-        .file_stem()
-        .map(|name| name.to_string_lossy().into_owned())
-        .with_context(|| format!("{} 没有文件名，无法决定输出位置", path.display()))?;
+    let name = name_of(path, Container::Archive)
+        .with_context(|| format!("{} 没有文件名，说不出这是哪一个卷", path.display()))?;
     Ok((name, Container::Archive))
 }
 
-/// 卷名 + 容器形态 → 输出位置。目录卷是同名目录，归档卷是同名 `.cbz`。
+/// 卷名：目录取目录名，归档取去掉扩展名的文件名。形态已经知道时取它。
 ///
-/// 归档卷的扩展名在这里**归一**：输入的扩展名一点都不带过来。去处因此只取决于卷名，
-/// 同名的 `.zip` 与 `.cbz` 也就撞在一起——那道拒绝见 `crate::run`。
-fn output_path_of(name: &str, container: Container, output_root: &Path) -> PathBuf {
+/// 路径连一个普通的末级分量都没有（`/`、`.`、`..`）时是 `None`——那样的路径给不出卷名，
+/// 也就决定不了输出位置。
+pub(crate) fn name_of(path: &Path, container: Container) -> Option<String> {
+    let raw = match container {
+        Container::Directory => path.file_name(),
+        Container::Archive => path.file_stem(),
+    }?;
+    Some(raw.to_string_lossy().into_owned())
+}
+
+/// 卷名 + 容器形态 → 输出**那一级的名字**。目录卷是同名目录，归档卷是同名 `.cbz`。
+///
+/// 归档卷的扩展名在这里**归一**：输入的扩展名一点都不带过来。去处因此只取决于卷名与
+/// 它在源里的位置，同一目录下同名的 `.zip` 与 `.cbz` 也就撞在一起——那道拒绝见 `crate::run`。
+///
+/// 整条去处由 [`crate::discover`] 拼出来：输出镜像源的结构，这里只管末一级
+/// （见 ADR 0014 决定第 4 条）。
+pub(crate) fn output_name_of(name: &str, container: Container) -> String {
     match container {
-        Container::Directory => output_root.join(name),
-        Container::Archive => output_root.join(format!("{name}.{OUTPUT_ARCHIVE_EXTENSION}")),
+        Container::Directory => name.to_owned(),
+        Container::Archive => format!("{name}.{OUTPUT_ARCHIVE_EXTENSION}"),
     }
 }
 
 /// 扩展名是否表明这是一个归档卷。大小写不敏感。
-fn is_archive(path: &Path) -> bool {
+pub(crate) fn is_archive(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -261,22 +263,31 @@ fn listed_archive_extensions() -> String {
         .join(" / ")
 }
 
-fn open_directory(root: &Path, name: String) -> Result<Volume> {
+/// 目录卷：**只收直接那一层**（ADR 0014 决定第 2 条，理由见本模块抬头）。
+///
+/// 子目录不是这一卷的成员——它自己是不是卷由发现说了算（见 [`crate::discover`]），
+/// 而一页被两个卷各收一次就会被处理两遍。躺在这一层的**归档**同理：它是一个卷，
+/// 不是这一卷的透传文件；当透传搬过去，那批 cbz 就又原样进了输出。
+///
+/// 符号链接与 junction **不跟进**：`DirEntry::file_type` 问的是链接自己，不是它指向的东西，
+/// 因此链接既不当成员也不当子目录。
+fn open_directory(root: &Path) -> Result<Volume> {
     let mut members = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = entry.with_context(|| format!("遍历 {}", root.display()))?;
-        if !entry.file_type().is_file() {
+    let entries =
+        std::fs::read_dir(root).with_context(|| format!("列出 {} 这一层", root.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("列出 {} 这一层", root.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("问 {:?} 是什么", entry.path().display()))?;
+        if !file_type.is_file() {
             continue;
         }
-        let relative = entry
-            .path()
-            .strip_prefix(root)
-            .expect("遍历结果恒在卷根之下")
-            .to_path_buf();
-        if is_junk(&relative) {
+        let relative = PathBuf::from(entry.file_name());
+        if is_junk(&relative) || is_archive(&relative) {
             continue;
         }
-        // 遍历时已经 stat 过一次，这里拿的是那一次的结果，不再多问一次文件系统。
+        // 列目录时已经 stat 过一次，这里拿的是那一次的结果，不再多问一次文件系统。
         // 问不出大小的成员按 0 算：它只是在读取层的预算上不占位，读法一点不变。
         let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
         members.push(Member {
@@ -289,7 +300,6 @@ fn open_directory(root: &Path, name: String) -> Result<Volume> {
     let (pages, extras) = split_and_sort(members);
     Ok(Volume {
         root: root.to_path_buf(),
-        name,
         container: Container::Directory,
         pages,
         extras,
@@ -311,7 +321,8 @@ fn open_archive_handle(path: &Path) -> Result<zip::ZipArchive<BufReader<File>>> 
     })
 }
 
-fn open_archive(path: &Path, name: String) -> Result<Volume> {
+/// 归档卷：**内部结构照收**。它与 [`open_directory`] 的不对称由本模块抬头那一段交代。
+fn open_archive(path: &Path) -> Result<Volume> {
     let mut archive = open_archive_handle(path)?;
 
     let mut members = Vec::with_capacity(archive.len());
@@ -340,7 +351,6 @@ fn open_archive(path: &Path, name: String) -> Result<Volume> {
     let (pages, extras) = split_and_sort(members);
     Ok(Volume {
         root: path.to_path_buf(),
-        name,
         container: Container::Archive,
         pages,
         extras,
@@ -436,14 +446,25 @@ fn is_drive_letter(part: &str) -> bool {
 /// 打包环境留下的目录：整个子树都不是卷的内容。
 ///
 /// `__MACOSX` 是 macOS 的「压缩」菜单写出来的兄弟目录，里面按原结构镜像着每个成员的
-/// AppleDouble 边车；其余几个是各家文件管理器与 NAS 自己的索引目录。
-const JUNK_DIRECTORIES: [&str; 6] = [
+/// AppleDouble 边车；其余几个是各家文件管理器、版本控制与 NAS 自己的索引与回收站目录。
+///
+/// 后四个是**发现**才撞得到的（ADR 0014）：从前只在归档成员名里比它，一份包里不会有
+/// `.git`；如今发现要走进真实的库目录，而回收站里躺着的正是用户删掉的那些卷——
+/// 走进去就是把删掉的东西又转一遍。
+///
+/// 这一组在**两处**同时作数：卷内不当成员（见 [`is_junk`]），发现时整棵子树不进去
+/// （见 [`is_junk_directory`]）。
+const JUNK_DIRECTORIES: [&str; 10] = [
     "__MACOSX",
     ".Spotlight-V100",
     ".Trashes",
     ".TemporaryItems",
     ".fseventsd",
     "@eaDir",
+    ".git",
+    "#recycle",
+    "@Recycle",
+    ".@__thumb",
 ];
 
 /// 打包环境留下的单个文件。
@@ -469,6 +490,14 @@ fn is_junk(relative: &Path) -> bool {
         return false;
     };
     name.starts_with(APPLE_DOUBLE_PREFIX) || is_one_of(&JUNK_FILES, name)
+}
+
+/// 这个目录名是不是打包环境留下的目录。发现走到它就整棵子树不进去（见 [`crate::discover`]）。
+///
+/// 与 [`is_junk`] 同一份名单：同一个 `__MACOSX`，在归档成员名里不算成员，
+/// 在盘上也不该被走进去找卷。
+pub(crate) fn is_junk_directory(name: &str) -> bool {
+    is_one_of(&JUNK_DIRECTORIES, name)
 }
 
 /// 名字命中这一组里的哪一个吗。
@@ -520,7 +549,10 @@ fn strip_wrapper_directory(members: &mut [Member]) {
 /// 阅读顺序：逐层比路径分量，分量内数字段按数值比。
 ///
 /// 字典序会把 `10.png` 排到 `2.png` 前面，而页号正是漫画的阅读顺序本身。
-fn reading_order(a: &Path, b: &Path) -> Ordering {
+///
+/// 卷内的成员与**发现出来的那批卷**共用它：一个作品目录下的 `第2话.cbz` 与 `第10话.cbz`
+/// 要按同一条规矩排（见 [`crate::discover`]），不然报告里的卷序与卷内的页序两套说法。
+pub(crate) fn reading_order(a: &Path, b: &Path) -> Ordering {
     let mut a = a.components();
     let mut b = b.components();
     loop {

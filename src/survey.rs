@@ -1,23 +1,39 @@
-//! 预扫：开工之前把点名的卷全枚举一遍，算出这一趟的**全局总步数**（ADR 0011 决定第 3 条）。
+//! 预扫：开工之前**发现**这一趟有哪些卷，再把它们全枚举一遍，算出这一趟的
+//! **全局总步数**（ADR 0011 决定第 3 条）。
+//!
+//! 两步，都在开工前：
+//!
+//! 1. **发现**——点名的每一个路径展开成一批卷（ADR 0014，见 [`crate::discover`]）。
+//!    这一步不碰卷的内容，只看盘上的形状。
+//! 2. **计数**——每一个卷开一次、列一遍成员、算出它这一趟要走多少步。
 //!
 //! 一个卷要走多少步，得先枚举它的成员才知道，而枚举原先发生在处理那一卷的时候——
 //! 「整趟还要多久」因此在开工时无从算起，屏上那条横条只说得出当前这一卷走到哪儿了。
 //! 几十卷跑下来唯一有人真想知道的数是**整趟**还剩多久，本模块把枚举提到开工之前，
-//! 就为了给出那个数。
+//! 就为了给出那个数。发现本身不碰像素、不占步；慢盘上它要花时间，
+//! 而命令行那条转轮已经在了（ADR 0011）。
 //!
-//! 只列成员，**不碰像素**：目录卷走一遍目录，归档卷读中央目录，两样都是 [`source::open`]
+//! 只列成员，**不碰像素**：目录卷列一层目录，归档卷读中央目录，两样都是 [`source::open`]
 //! 本来就要做的事，一个像素都不解。数完就**把卷放掉**——[`Surveyed`] 里只剩这一卷的路径
 //! 与几个数，处理那一卷时按那个路径再开一次。
-//! 扫两遍买的不是省事，是**不攥着几千个句柄**：卷留在预扫手上的那一版里，点名 N 个归档卷
-//! 就整趟同时开着 N 个文件、常驻 N 份中央目录，那笔开销随**点名的卷数**长，
-//! 成百上千个卷就把一趟胀死。买下来之后一趟同时开着几个，见 `source::Reader` 的
-//! 《一趟同时开着几个句柄》——本模块是那笔账里「不是点名的卷数」这一句的来处。
+//! 扫两遍买的不是省事，是**不攥着几千个句柄**：卷留在预扫手上的那一版里，N 个归档卷
+//! 就整趟同时开着 N 个文件、常驻 N 份中央目录，那笔开销随**卷数**长，
+//! 成百上千个卷就把一趟胀死——而发现落地之后，点名一个库就是几千个卷（ADR 0014）。
+//! 买下来之后一趟同时开着几个，见 `source::Reader` 的《一趟同时开着几个句柄》——
+//! 本模块是那笔账里「不是这一趟有几个卷」这一句的来处。
 //!
-//! 它顺带把「一卷点不开」提前到一页都没做之前：这里发现的坏路径**整趟拒绝**、逐条列出
-//! （见 [`refuse`]）。理由与「处理范围为空是错误」同一条（ADR 0009 的《不要做的「简化」》）——
-//! 范围层错了可能写到别人的目录里，而那一趟已经写出去的卷收不回来。
-//! 预扫**之后**才出的卷级失败不走这条路：那时其余卷照做，报告照出
+//! 它顺带把「一卷点不开」提前到一页都没做之前：**点名的**那一种点不开在这里
+//! **整趟拒绝**、逐条列出（见 [`refuse`]）。理由与「处理范围为空是错误」同一条
+//! （ADR 0009 的《不要做的「简化」》）——范围层错了可能写到别人的目录里，
+//! 而那一趟已经写出去的卷收不回来。
+//! **发现出来的**那一种点不开不走这条路：记下来、其余照做（ADR 0014 决定第 5 条）——
+//! 对推测出来的东西不用最重的处置，一个坏 zip 不该把几百卷挡在门外。
+//! 预扫**之后**才出的卷级失败也不走这条路：那时其余卷照做，报告照出
 //! （`CONTEXT.md` 的《失败》：卷级失败）。
+//!
+//! **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：开出来一页都没有的候选在这里
+//! 就被丢掉，此后的每一层都不知道它存在过——输出里因此一个字节都没有。
+//! 字体包、源码包、空目录、只装着别的卷的目录都落在这一支上。
 //!
 //! **不落盘。** 预扫的作用域是这一趟点名的卷，活在一次运行之内。把成员表存下来下趟再用
 //! 就是一份全库索引，而那正是 ADR 0009 关掉的东西。
@@ -32,10 +48,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 
+use crate::discover::{self, Provenance};
 use crate::source;
 use crate::{MemberCounts, Request, volume_steps};
 
-/// 这一趟预扫出来的东西：点名的每一个卷一份，外加它们步数之和。
+/// 这一趟预扫出来的东西：**发现出来的**每一个卷一份，外加它们步数之和。
 pub(crate) struct Survey {
     volumes: Vec<Surveyed>,
     /// 各卷步数之和。这个数由 [`Surveyed::steps`] **加**出来，不是另算一遍——
@@ -48,8 +65,15 @@ pub(crate) struct Survey {
 /// 它是那个卷的一份摘要，不是那个卷：预扫数完就把卷放掉，处理那一卷时按
 /// [`root`](Self::root) 再开一次（见本模块的模块文档）。
 pub(crate) struct Surveyed {
-    /// 卷根，也就是点名的那个路径（见 [`source::open`]）。处理这一卷时按它再开一次。
+    /// 卷根：目录路径，或归档文件路径（见 [`source::open`]）。处理这一卷时按它再开一次。
+    ///
+    /// 它**不一定是点名的那个路径**——发现出来的卷躺在点名的路径底下（ADR 0014）。
     pub(crate) root: PathBuf,
+    /// 这一卷在**输出根之下**的去处，相对路径（见 [`discover::Candidate::output_relative`]）。
+    ///
+    /// 私有：外面要的是接好的那条路径，走 [`output_path`](Self::output_path)——
+    /// 「输出根接上镜像出来的那几级」只有那一处会拼。
+    output_relative: PathBuf,
     /// 这一卷这一趟最多走多少步。开卷那条事件报的就是它。
     ///
     /// 它算在**预扫这一遍**数出来的成员上。重开之后成员数可能与它对不上（两遍之间源变了），
@@ -68,28 +92,68 @@ pub(crate) struct Surveyed {
     pub(crate) enumerating: Duration,
 }
 
+impl Surveyed {
+    /// 这一卷写到 `root` 之下的哪里：`root` 接上镜像出来的那几级。
+    ///
+    /// **接这条路径只有这一处**。它被叫三次，各喂一个不同的根：这一卷干净的去处
+    /// （输出根）、隔离目录里那个去处（输出根 + `_isolated`）、以及开工前那道撞名校验
+    /// 手上那个根。三处必须得出同一套算法——不然查出来的撞车与实际发生的撞车是两回事
+    /// （见 `crate::ensure_no_two_volumes_share_an_output`）。
+    pub(crate) fn output_path(&self, root: &Path) -> PathBuf {
+        root.join(&self.output_relative)
+    }
+}
+
 impl Survey {
-    /// 预扫点名的那些卷。一个都点不开的话整趟当场拒绝，一条事件都不发。
+    /// 发现这一趟有哪些卷，再把它们逐个枚举一遍。
+    ///
+    /// **点名的**路径里有一个点不开就整趟当场拒绝，一条事件都不发；发现出来的点不开的
+    /// 归档跳过，其余照做。开出来一页都没有的候选一并跳过——它不是卷。
     pub(crate) fn of(request: &Request) -> Result<Self> {
-        let mut volumes = Vec::with_capacity(request.inputs.len());
-        // 坏路径**收齐了再报**，不是撞上第一个就返回：点名十个卷、其中三个路径写错了，
+        let mut volumes = Vec::new();
+        // 坏路径**收齐了再报**，不是撞上第一个就返回：点名十个路径、其中三个写错了，
         // 一次说清三个才改得完一遍，逐个报要来回三趟。
         let mut refused = Vec::new();
         for input in &request.inputs {
-            let started = Instant::now();
-            match source::open(input) {
-                Ok(volume) => {
-                    let enumerating = started.elapsed();
-                    volumes.push(Surveyed {
-                        steps: volume_steps(MemberCounts::of(&volume, request), request),
-                        root: volume.root,
-                        enumerating,
-                    });
-                    // 卷在这一格的末尾**放掉**：归档卷那个 `ZipArchive` 连同它的文件句柄
-                    // 跟着析构，预扫因此不随点名的卷数攥住句柄（见本模块的模块文档）。
-                    // 上面那一句只留下了它的路径。
+            // 点名的路径**自己**点不开（不存在、既不是目录也不是认得的归档）在这里就定了：
+            // 发现连一个候选都给不出来。
+            let candidates = match discover::of(input) {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    refused.push((input.as_path(), error));
+                    continue;
                 }
-                Err(error) => refused.push((input.as_path(), error)),
+            };
+            for candidate in candidates {
+                let started = Instant::now();
+                match source::open(&candidate.root) {
+                    Ok(volume) => {
+                        // **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：只装着别的卷的目录、
+                        // 空目录、字体包都落在这里，此后每一层都不知道它存在过。
+                        if volume.pages.is_empty() {
+                            continue;
+                        }
+                        let enumerating = started.elapsed();
+                        volumes.push(Surveyed {
+                            steps: volume_steps(MemberCounts::of(&volume, request), request),
+                            root: volume.root,
+                            output_relative: candidate.output_relative,
+                            enumerating,
+                        });
+                        // 卷在这一格的末尾**放掉**：归档卷那个 `ZipArchive` 连同它的文件句柄
+                        // 跟着析构，预扫因此不随卷数攥住句柄（见本模块的模块文档）。
+                        // 上面那一句只留下了它的路径。
+                    }
+                    // **点名的 / 发现的**只决定这一件事（ADR 0014 决定第 5 条）。
+                    // 点名的那个恒是候选里的头一个，因此这里报的路径就是 `input`。
+                    Err(error) => match candidate.provenance {
+                        Provenance::Named => refused.push((input.as_path(), error)),
+                        // 发现出来的点不开的归档进**非卷文件**清单，其余照做。
+                        // 那张清单本身是 `volume-discovery/04` 的事，本版本只保证它
+                        // 不产出任何字节、也不改退出码。
+                        Provenance::Discovered => {}
+                    },
+                }
             }
         }
         if !refused.is_empty() {
@@ -106,13 +170,23 @@ impl Survey {
         self.steps
     }
 
-    /// 按点名顺序交出预扫过的那些卷。
+    /// 发现出来的那些卷。开工前那道撞名校验按它查
+    /// （见 `crate::ensure_no_two_volumes_share_an_output`）——撞车要在发现之后才查得准：
+    /// 点名的是**在哪里找**，撞在一起的是**找到的那些**。
+    pub(crate) fn volumes(&self) -> &[Surveyed] {
+        &self.volumes
+    }
+
+    /// 按发现顺序交出预扫过的那些卷。
     pub(crate) fn into_volumes(self) -> Vec<Surveyed> {
         self.volumes
     }
 }
 
-/// 点不开的那几条路径**逐条列出**，整趟拒绝。
+/// **点名的**那几条路径里点不开的逐条列出，整趟拒绝。
+///
+/// 只有点名的进得来。发现出来的点不开的归档不在这张清单上——它进的是非卷文件那一张
+/// （ADR 0014 决定第 5 条），退出码一格不动。
 ///
 /// 形状照开工前那道撞名校验办（见 `crate::ensure_no_two_volumes_share_an_output`）：
 /// 先说有几个、总共点名了几个，再逐条缩进列出，多了只列前几条并说还有多少。
@@ -125,7 +199,7 @@ fn refuse(refused: &[(&Path, anyhow::Error)], named: usize) -> anyhow::Error {
     const SHOWN: usize = 5;
 
     let mut said = format!(
-        "点名的 {named} 个卷里有 {} 个点不开，整趟不做。点不开的是：\n",
+        "点名的 {named} 个路径里有 {} 个点不开，整趟不做。点不开的是：\n",
         refused.len()
     );
     for (input, error) in refused.iter().take(SHOWN) {
@@ -182,13 +256,21 @@ mod tests {
     /// 点名的归档卷数。「成百上千个卷」正是本票要拆掉的那个上限，用例照几百这一档造。
     const MANY: usize = 300;
 
-    /// 一个**空归档**：ZIP 的中央目录结束记录那 22 个字节，一个成员都没有。
+    /// 一个**最小的卷**：装着一个叫 `001.png` 的空成员的 ZIP。
     ///
-    /// 手搓而不是拿 `zip` 的写入端拼：这一条要几百个归档卷，而它问的只有
-    /// 「预扫开完还攥不攥着它们」——成员一个都不需要，页更不需要。
-    const EMPTY_ARCHIVE: [u8; 22] = [
-        b'P', b'K', 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ];
+    /// 成员一个都不能少：一页都没有的东西不是卷（ADR 0014 决定第 3 条），
+    /// 空归档在预扫里当场被丢掉，这条用例就一个卷都数不到了。
+    /// 页是不是解得出来这里不问——`decode::is_page` 只看扩展名，而这条用例问的只有
+    /// 「预扫开完还攥不攥着它们」。
+    ///
+    /// 字节拼一次、几百个文件共用：拼它比写它贵得多。
+    fn one_page_archive() -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file::<_, ()>("001.png", zip::write::SimpleFileOptions::default())
+            .expect("起一个成员");
+        writer.finish().expect("收尾").into_inner()
+    }
 
     /// 这个进程此刻开着的、落在 `root` 之下的文件有几个。问不出来就回 `None`。
     ///
@@ -219,10 +301,11 @@ mod tests {
         let space = tempfile::tempdir().expect("建临时目录");
         let library = space.path().join("库");
         std::fs::create_dir(&library).expect("建库目录");
+        let archive = one_page_archive();
         let inputs: Vec<PathBuf> = (0..MANY)
             .map(|n| {
                 let path = library.join(format!("第{n:03}话.cbz"));
-                std::fs::write(&path, EMPTY_ARCHIVE).expect("写空归档");
+                std::fs::write(&path, &archive).expect("写归档");
                 path
             })
             .collect();
@@ -234,7 +317,7 @@ mod tests {
             output_root: space.path().join("out"),
             ..crate::tests::request()
         })
-        .expect("几百个空归档都该点得开");
+        .expect("几百个归档都该点得开");
 
         if let Some(held) = open_files_under(&library) {
             assert_eq!(held, 0, "预扫开完还攥着 {held} 个句柄");

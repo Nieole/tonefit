@@ -174,8 +174,8 @@ fn pages_come_out_in_reading_order() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     let page = fixtures::line_art(fixtures::PASSES_THROUGH);
-    // 故意让字典序（1、10、2）与阅读顺序（1、2、10）分道扬镳，章节目录同理。
-    for name in ["10.png", "2.png", "1.png", "ch10/1.png", "ch2/1.png"] {
+    // 故意让字典序（1、10、2）与阅读顺序（1、2、10）分道扬镳。
+    for name in ["10.png", "2.png", "1.png"] {
         volume.page(name, &page);
     }
 
@@ -186,9 +186,36 @@ fn pages_come_out_in_reading_order() {
         .iter()
         .map(|page| slash_path(page.source.strip_prefix(volume.path()).unwrap()))
         .collect();
+    assert_eq!(order, ["1.png", "2.png", "10.png"]);
+}
+
+/// 分层的成员**逐层比**：`ch2/` 整章排在 `ch10/` 之前，章内再按页号排。
+///
+/// 造在**归档**上而不是目录上：目录卷只收直接那一层（ADR 0014 决定第 2 条），
+/// 章节目录在它身上各自成卷，一个卷里根本排不出两层来。归档的边界由打包者定死了、
+/// 内部结构照收，分目录装的包因此是这条顺序唯一还落得到实处的地方——
+/// 这一条从前挂在同一个目录卷上，随发现落地移到了这里。
+#[test]
+fn the_members_of_an_archive_are_ordered_level_by_level() {
+    let space = Workspace::new();
+    let mut cbz = space.cbz("volume-a");
+    let page = fixtures::line_art(fixtures::PASSES_THROUGH);
+    // 两章并列，`ch10` 因此不是包装层，成员名里留得住这一级。
+    for name in ["ch10/2.png", "ch10/1.png", "ch2/10.png", "ch2/1.png"] {
+        cbz.page(name, &page);
+    }
+    let path = cbz.write();
+
+    let report = fixtures::run_paths(&space, [path.as_path()]);
+
+    let order: Vec<_> = report.volumes[0]
+        .pages
+        .iter()
+        .map(|page| slash_path(page.source.strip_prefix(&path).unwrap()))
+        .collect();
     assert_eq!(
         order,
-        ["1.png", "2.png", "10.png", "ch2/1.png", "ch10/1.png"]
+        ["ch2/1.png", "ch2/10.png", "ch10/1.png", "ch10/2.png"]
     );
 }
 
@@ -1717,12 +1744,18 @@ fn files_that_are_not_pages_are_not_pages() {
     assert!(pages[0].source.ends_with("001.png"));
 }
 
+/// 每个卷写到自己那一份输出里，成员按源里的相对路径镜像，扩展名一律换成 png。
+///
+/// 两个卷都只有**直接那一层**：目录卷不再递归收页（ADR 0014 决定第 2 条），
+/// 从前这一条拿 `volume-a/ch1/001.png` 造那个「源里的一层目录」，而如今 `ch1`
+/// 自己就是一个卷。归档那一侧的多级镜像仍在，问它的是 `tests/container.rs` 的
+/// `parallel_top_level_directories_are_not_a_wrapper_and_stay`。
 #[test]
 fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
     let space = Workspace::new();
     let page = fixtures::cheap_page();
     let first = space.volume("volume-a");
-    first.page("ch1/001.png", &page);
+    first.page("001.png", &page);
     let second = space.volume("volume-b");
     second.page("001.jpg", &page);
 
@@ -1741,7 +1774,7 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
             slash_path(page.output.strip_prefix(space.out()).unwrap())
         })
         .collect();
-    assert_eq!(written, ["volume-a/ch1/001.png", "volume-b/001.png"]);
+    assert_eq!(written, ["volume-a/001.png", "volume-b/001.png"]);
 }
 
 /// 两个源成员要写到同一个输出上就拦下，不静默覆盖——**拦的是那一卷**（05 号票）。

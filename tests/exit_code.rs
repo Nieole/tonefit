@@ -2,7 +2,7 @@
 //!
 //! 这一条只有在进程那一层才成立：`exit_code` 那个纯函数说得出该返回几，说不出 `main`
 //! 有没有把它交出去。spec 的 story 33 要的是「测试不必启动子进程」，不是「一律不许」——
-//! 退出码本身就是进程那一层的事实，别处观察不到。整份用例只此一条。
+//! 退出码本身就是进程那一层的事实，别处观察不到。为退出码启动子进程的用例只在这一份里。
 
 mod fixtures;
 
@@ -71,6 +71,44 @@ fn the_exit_code_tells_the_four_ways_a_run_can_end_apart() {
         tonefit(&space, &[&clean.path().join("根本不存在的卷")]),
         Some(1),
         "拒绝执行的一趟不是 1"
+    );
+}
+
+/// **同一个坏归档，点名它得 `1`，发现它得 `0`**（ADR 0014 决定第 5 条）。
+///
+/// 「点名的 / 发现的」只决定这一件事——点不开时的处置——而处置的差别就是这个数：
+/// 点名的整趟拒绝（他明说了要处理它），发现的记下来、其余卷照常跑完。
+/// 对推测出来的东西不用最重的处置，一个坏 zip 不该把整座库挡在门外。
+///
+/// 两趟点的是**同一个文件**，差别只在点名的是它自己还是装着它的那个目录。
+#[test]
+fn a_broken_archive_is_refused_when_named_and_skipped_when_discovered() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+    let mut broken = fixtures::Cbz::new(library.join("坏的.cbz"));
+    broken.page("001.png", &fixtures::cheap_page());
+    // 中央目录与尾记录都不见了：归档结构根本读不出来。
+    let broken = broken.write_truncated();
+
+    assert_eq!(
+        tonefit(&space, &[broken.as_path()]),
+        Some(1),
+        "点名一个点不开的归档，这一趟该整个被拒"
+    );
+    assert_eq!(
+        tonefit(&space, &[library.as_path()]),
+        Some(0),
+        "发现出来的一个坏归档把整趟拖下了水"
+    );
+    // 「其余卷照常跑完」不只是退出码：好的那一卷真在盘上。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照常跑完"
     );
 }
 

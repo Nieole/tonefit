@@ -20,6 +20,7 @@ mod cost;
 mod crop;
 mod decide;
 mod decode;
+mod discover;
 mod encode;
 mod envelope;
 mod geometry;
@@ -96,13 +97,16 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
     calibrate::write_chart(profile, out)
 }
 
-/// 处理点名的若干卷，产出设备优化副本。源卷只读。
+/// 在点名的若干路径底下**发现**卷，逐卷处理，产出设备优化副本。源库只读。
+///
+/// 点名的是**在哪里找**，不是**找到什么**：一个路径展开成它底下的那一批卷
+/// （ADR 0014，见 `crate::discover`），输出按源的结构镜像到输出根下。
 ///
 /// # 两种失败分得开（05 号票）
 ///
 /// **拒绝执行**回的是 `Err`：范围为空、输出落在源里、两个卷撞同一个去处、**输出根写不进去**、
-/// 预扫发现有卷点不开、覆盖项把候选集裁空——这几种错在这一趟的**参数**上，换一个卷不会变好，
-/// 整趟因此当场停（见库内的 `Refusal` 与 `crate::survey`）。
+/// 预扫发现**点名的**路径点不开、覆盖项把候选集裁空——这几种错在这一趟的**参数**上，
+/// 换一个卷不会变好，整趟因此当场停（见库内的 `Refusal` 与 `crate::survey`）。
 /// 前五种发生在开工之前，一页都不做；**末一种不是**——几何门是页的事实，
 /// 要真撞上那一页才拦得住（见 `Candidates::for_gate`），那时先做完的卷已经在盘上，
 /// 而调用方拿到的是错误、没有报告。那是这条路唯一说不出「一页都没做」的地方。
@@ -112,6 +116,9 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// 其余卷照做、报告照出。
 /// 「一卷点不开就毁掉整趟」正是这条分岔要改掉的毛病——那时前面几十卷的输出还在盘上，
 /// 而那份说得清它们是什么的报告全丢了。
+///
+/// **两样都不是**：发现出来的归档点不开、一页都没有的东西——它们连卷都不是，
+/// 进的是非卷文件那一栏，退出码一格不动（ADR 0014 决定第 3、5 条）。
 pub fn run(request: &Request) -> Result<Report> {
     // 整趟的表从这里开始掐：开工前那几道检查也要摸文件系统，摊在计时之外
     // 只会让报出来的总耗时比调用方自己在外面掐的那个小一截（加固批 11 号票）。
@@ -120,17 +127,17 @@ pub fn run(request: &Request) -> Result<Report> {
     // 特性关着时这一句什么都不做。
     cost::start();
     if request.inputs.is_empty() {
-        bail!("处理范围为空：至少点名一个卷（ADR 0009：处理点名的子集）");
+        bail!("处理范围为空：至少点名一个在里面找卷的地方（ADR 0009：处理点名的子集）");
     }
     ensure_the_overrides_leave_a_candidate(request)?;
     for input in &request.inputs {
         ensure_output_is_elsewhere(input, &request.output_root)?;
     }
-    ensure_no_two_volumes_share_an_output(request)?;
-    // 排在开工前那几道检查的**最后一道**，也排在预扫之前：它是这几道里唯一往盘上写东西的，
-    // 因此让答得起而不必动盘的那几道先说话；而预扫要把点名的每一个卷都枚举一遍，
-    // 输出根根本没地方落时那一趟枚举是白付的（06 号票，见
-    // [`ensure_the_output_root_takes_a_write`]）。
+    // 排在预扫之前：它是开工前这几道里唯一往盘上写东西的，而预扫要走一遍点名的那几棵树、
+    // 把发现出来的每一个卷都枚举一遍，输出根根本没地方落时那一趟是白付的（06 号票，见
+    // [`ensure_the_output_root_takes_a_write`]）。撞名那一道排在预扫**之后**——
+    // 撞在一起的是发现出来的那些卷，发现之前问不出来（见
+    // [`ensure_no_two_volumes_share_an_output`]）。
     ensure_the_output_root_takes_a_write(&request.output_root)?;
     // 介质**按路径**探测，一次运行共用一份缓存（ADR 0009 决定第 2 条，见 `medium`）：
     // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
@@ -140,13 +147,19 @@ pub fn run(request: &Request) -> Result<Report> {
     let standing = progress::Standing::default();
     let deliberation = progress::Deliberation::default();
     let events = progress::Events::new(request.progress.as_ref(), &standing, &deliberation);
-    // **预扫**：开工之前把点名的卷全枚举一遍，算出这一趟的全局总步数（ADR 0011 决定第 3 条）。
-    // 它排在开工那条事件**之前**，因为那条事件要带着那个数；坏路径因此在任何卷级事件之前
-    // 就把整趟拒掉——输出根下一个文件都没有（见 `survey`）。
+    // **预扫**：开工之前发现这一趟有哪些卷，把它们全枚举一遍，算出这一趟的全局总步数
+    // （ADR 0011 决定第 3 条、ADR 0014）。它排在开工那条事件**之前**，因为那条事件要带着
+    // 那个数；点名的坏路径因此在任何卷级事件之前就把整趟拒掉——输出根下一个文件都没有
+    // （见 `survey`）。
     let survey = survey::Survey::of(request)?;
+    // 撞名要在写出第一个字节之前说，而**撞在一起的是发现出来的那些卷**——点名的是
+    // 「在哪里找」，不是「找到什么」（ADR 0009 决定第 1 条）。这一道因此排在预扫之后、
+    // 开工那条事件之前。
+    ensure_no_two_volumes_share_an_output(survey.volumes(), &request.output_root)?;
     // 开工前那几道检查与预扫都排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
-    events.run_started(request.inputs.len(), survey.steps());
-    let mut volumes = Vec::with_capacity(request.inputs.len());
+    // 报的是**发现出来的卷数**，不是点名了几个路径：进度条上那个分母得是真要做的那些。
+    events.run_started(survey.volumes().len(), survey.steps());
+    let mut volumes = Vec::with_capacity(survey.volumes().len());
     let mut failed_volumes = Vec::new();
     let mut outcome = RunOutcome::Completed;
     for surveyed in survey.into_volumes() {
@@ -456,10 +469,18 @@ fn process_volume(
     medium: Medium,
     events: progress::Events,
 ) -> Result<Option<VolumeReport>> {
+    // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
+    //
+    // 两个都由预扫交过来的那条**镜像相对路径**接出来（见 `survey::Surveyed::output_path`）：
+    // 输出镜像源的结构，基准点是点名路径的父目录（ADR 0014 决定第 4 条）。
+    // 隔离目录只是在中间插一级 `_isolated`，镜像出来的结构一模一样。
+    let clean = surveyed.output_path(&request.output_root);
+    let isolated = surveyed.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
     let survey::Surveyed {
         root,
         steps,
         enumerating,
+        ..
     } = surveyed;
     // 这一卷的表：三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
     // 也就是**在重开这一卷之前**；**再把预扫枚举它的那一截加回去**——枚举两遍都是这一卷
@@ -491,9 +512,6 @@ fn process_volume(
     // 成员按**重开的这一份**数，不是预扫那一份：报告说的得是真做了的这一卷
     // （见 [`MemberCounts::of`]）。
     let members = MemberCounts::of(&volume, request);
-    // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
-    let clean = volume.output_path(&request.output_root);
-    let isolated = volume.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
     // 这一卷的输出成员名此刻只预告得出**一对一那一套**：一个源页产出几张要解了像素才知道
     // （有没有装订沟，页几何批 04 号票），而这一步在解码之前。撞名因此查两遍——
     // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
@@ -826,7 +844,7 @@ fn summarize_volume(
     };
 
     let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
-    // 一张灰度页都没有的卷没有候选可判：只装着彩页的、一页都没有的、整卷全失败的，都是这一支。
+    // 一张灰度页都没有的卷没有候选可判：只装着彩页的、整卷全失败的，都是这一支。
     let Some(&first) = inside.first() else {
         return (verdicts, None);
     };
@@ -1827,8 +1845,9 @@ fn volume_fingerprint(
 /// 一页读不出记录就整卷重做，不逐页续做：判定是卷级的（ADR 0006 决定第 3 条），
 /// 补写的那几页会拿到一个由**当前**全卷算出的基准档，与旁边幸存的旧页对不上。
 ///
-/// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。那样的卷每一趟
-/// 都把透传文件重写一遍——它们本来就是逐字节照搬，重写一遍与跳过没有可观察的差别。
+/// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。这一支从 ADR 0014
+/// 之后**够不着了**——一页都没有的东西不是卷，预扫就把它丢掉了；留着这一句，
+/// 是因为「记录随页走」这条不变量要写在它成立的地方。
 ///
 /// 一个源页产出的那几张输出页**每一张**都要带着这份指纹，少一张就重做。
 ///
@@ -2264,52 +2283,66 @@ fn ensure_distinct_outputs<'a, M: Copy>(
 /// 源库只读（ADR 0009）：输出与源卷互相嵌套时直接拒绝，不去猜用户的意思。
 /// 两个卷不能写到同一个地方。
 ///
-/// 输出名取自卷名，而卷名重复得很自然：一部漫画一个目录，每部里都有「第 1 话」。
-/// 一次点名多部，后到的会把先到的**整卷盖掉**——一句告警都没有，在阅读器里也与真卷
-/// 毫无分别。因此开工前就查：撞车要在写出第一个字节之前说。
+/// 输出镜像源的结构（ADR 0014 决定第 4 条），因此**同一棵树底下的卷自己就分得开**——
+/// 一个作品目录下四个「第01话.cbz」各自躺在各自的作品目录里，镜像出来也各在各的一级。
+/// 撞得上的只剩两种：
 ///
-/// 归档卷的扩展名还要再归一一道（ADR 0015），于是**同一目录下**的 `第10话.zip` 与
-/// `第10话.cbz` 也撞在一起。同一道拒绝管两种来由，而**那句话按撞上的那几组现拼**：
-/// 出路不同——卷名撞车换个输出根就分得开，扩展名归一撞的这一对分不开——
-/// 一句把两条出路都念出来，对其中一种必然是错的指引（判据见
-/// [`normalises_an_extension`]）。
+/// - **一次点名了多个地方**，两边各有一部叫「第 1 话」的卷。后到的会把先到的**整卷盖掉**
+///   ——一句告警都没有，在阅读器里也与真卷毫无分别。
+/// - **归档卷的扩展名归一**（ADR 0015），同一目录下的 `第10话.zip` 与 `第10话.cbz`
+///   落到同一个去处。
+///
+/// 同一道拒绝管两种来由，而**那句话按撞上的那几组现拼**：出路不同——点名多处撞车分批处理
+/// 就分得开，扩展名归一撞的这一对分不开——一句把两条出路都念出来，对其中一种必然是错的指引
+/// （判据见 [`normalises_an_extension`]）。
+///
+/// **查的是发现出来的那些卷**，不是点名的那几个路径：点名的是「在哪里找」，
+/// 不是「找到什么」。这一道因此排在预扫之后（见 `run`），撞车仍在写出第一个字节之前说。
 ///
 /// 不替用户改名。「输出名就是卷名」这条约定要能反着用——看着输出得认得出是哪一卷——
 /// 自动加后缀会让它失效，而失效的方式还是静默的。
-fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
-    let mut by_target: HashMap<String, Vec<&Path>> = HashMap::new();
-    for input in &request.inputs {
-        let target = source::planned_output(input, &request.output_root)?;
+fn ensure_no_two_volumes_share_an_output(
+    volumes: &[survey::Surveyed],
+    output_root: &Path,
+) -> Result<()> {
+    let mut by_target: HashMap<String, (PathBuf, Vec<&Path>)> = HashMap::new();
+    for surveyed in volumes {
+        let target = surveyed.output_path(output_root);
         by_target
             .entry(collision_key(&target))
-            .or_default()
-            .push(input.as_path());
+            .or_insert_with(|| (target, Vec::new()))
+            .1
+            .push(surveyed.root.as_path());
     }
-    let mut collisions: Vec<_> = by_target.into_values().filter(|by| by.len() > 1).collect();
+    let mut collisions: Vec<_> = by_target
+        .into_values()
+        .filter(|(_, by)| by.len() > 1)
+        .collect();
     if collisions.is_empty() {
         return Ok(());
     }
     // 顺序取自第一个卷的路径：报错要可复现，而 `HashMap` 的遍历序不是。
-    collisions.sort_by(|a, b| a[0].cmp(b[0]));
+    collisions.sort_by(|(_, a), (_, b)| a[0].cmp(b[0]));
 
-    let total: usize = collisions.iter().map(|by| by.len()).sum();
+    let total: usize = collisions.iter().map(|(_, by)| by.len()).sum();
     let mut said =
         format!("{total} 个卷要写到同一批去处，后到的会把先到的整卷盖掉。撞在一起的是：\n");
     const SHOWN: usize = 5;
-    for group in collisions.iter().take(SHOWN) {
-        let target = source::planned_output(group[0], &request.output_root)?;
+    for (target, group) in collisions.iter().take(SHOWN) {
         said.push_str(&format!("  {}\n", target.display()));
-        for input in group {
-            said.push_str(&format!("    ← {}\n", input.display()));
+        for root in group {
+            said.push_str(&format!("    ← {}\n", root.display()));
         }
     }
     if collisions.len() > SHOWN {
         said.push_str(&format!("  ……另有 {} 处\n", collisions.len() - SHOWN));
     }
     // 两条出路各按自己那一种撞车出场：混着念，对其中一种必然是错的指引。
-    let by_volume_name = collisions.iter().any(|by| !normalises_an_extension(by));
-    let by_extension = collisions.iter().any(|by| normalises_an_extension(by));
-    said.push_str("输出名取自卷名，同名的卷因此撞在一起。");
+    let by_volume_name = collisions
+        .iter()
+        .any(|(_, by)| !normalises_an_extension(by));
+    let by_extension = collisions.iter().any(|(_, by)| normalises_an_extension(by));
+    said.push_str("输出按源的结构镜像，末一级取自卷名，同名的卷因此撞在一起。");
     if by_volume_name {
         said.push_str("分批处理，每批给一个自己的输出根。");
     }
@@ -2328,7 +2361,7 @@ fn ensure_no_two_volumes_share_an_output(request: &Request) -> Result<()> {
 ///
 /// 判据是**文件名不同**。卷名撞车的两个源文件名必然相同（`甲部/第1话` 与 `乙部/第1话`
 /// 都叫 `第1话`）；文件名不同还撞得上同一个去处，只可能是归档卷的扩展名在
-/// [`source::planned_output`] 那一步被归一掉了（`第10话.zip` 与 `第10话.cbz`）。
+/// [`source::output_name_of`] 那一步被归一掉了（`第10话.zip` 与 `第10话.cbz`）。
 ///
 /// 比文件名用的是 [`collision_key`]：与比去处同一把尺子，不然 Windows 上
 /// `第1话.CBZ` 与 `第1话.cbz` 会被这里当成两个名字、报成扩展名归一，而它撞的其实是大小写。

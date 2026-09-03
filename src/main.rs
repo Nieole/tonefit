@@ -49,12 +49,13 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// 要处理的卷：一个目录，或一个归档（.cbz / .zip）。源只读。
-    #[arg(required = true, value_name = "卷")]
+    /// 在哪里找卷：一个归档（.cbz / .zip），或一个目录——目录里直接躺着页就是一个卷，
+    /// 底下的子目录与归档也各自成卷。源只读。
+    #[arg(required = true, value_name = "路径")]
     inputs: Vec<PathBuf>,
 
-    /// 输出根目录。每个卷在它下面得到一份同名副本，容器形态与输入一致；
-    /// 归档卷的扩展名一律写成 .cbz。
+    /// 输出根目录。产物按源的结构镜像到它下面，点名路径自己的名字打头；
+    /// 容器形态与输入一致，归档卷的扩展名一律写成 .cbz。
     #[arg(short, long, required = true, value_name = "目录")]
     out: Option<PathBuf>,
 
@@ -736,12 +737,13 @@ const BAR_WIDTH: usize = 30;
 impl Bar {
     /// 起一份进度显示，预扫那条转轮当场登场。
     ///
-    /// `named` 是这一趟点名了几个卷。它取自命令行而不是等库来报：转轮要在 `run` 之前起来，
-    /// 而那时一条事件都还没有。
+    /// `named` 是这一趟点名了几个**路径**——不是几个卷：一个路径底下有几个卷，
+    /// 要等预扫发现完才知道（ADR 0014）。它取自命令行而不是等库来报：
+    /// 转轮要在 `run` 之前起来，而那时一条事件都还没有。
     fn new(named: usize) -> Self {
         let frame = MultiProgress::new();
         let survey = frame.add(ProgressBar::new_spinner());
-        survey.set_message(format!("点名 {named} 个卷：查去处、预扫成员……"));
+        survey.set_message(format!("点名 {named} 个路径：发现卷、预扫成员……"));
         // 转轮自己转起来：预扫期间这一层收不到任何事件，没有人来推它。
         survey.enable_steady_tick(Duration::from_millis(120));
         Self {

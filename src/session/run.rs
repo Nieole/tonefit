@@ -451,17 +451,10 @@ mod tests {
         }
     }
 
-    /// 一趟处理：一个**只装透传文件**的卷，连同它的输出根。
-    ///
-    /// **一页都没有**，因此不必在用例里造图片，而本模块要问的那几件事一件都不少——
-    /// 第二遍写的是**全部成员**，透传文件也在里面（`tests/resume.rs` 的 `small_volume`
-    /// 特意留一个透传成员正是这个理由），因此「写没写出去」在它身上照样看得见。
-    fn a_pass_through_volume(workspace: &tempfile::TempDir) -> Request {
-        let volume = workspace.path().join("卷一");
-        std::fs::create_dir_all(&volume).expect("建得出卷");
-        std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
+    /// 一趟处理：一个真跑得动的卷（见 [`fixture::a_real_volume`]），连同它的输出根。
+    fn a_one_volume_run(workspace: &tempfile::TempDir) -> Request {
         Request {
-            inputs: vec![volume],
+            inputs: vec![fixture::a_real_volume(workspace.path(), "卷一")],
             output_root: workspace.path().join("出"),
             ..fixture::request(RunMode::Process)
         }
@@ -492,12 +485,12 @@ mod tests {
     /// 退出码与命令行那一路一致，stdout 那一份**逐字**就是命令行印的那一份。
     #[test]
     fn a_run_goes_through_the_thread_and_comes_back_as_a_report() {
-        // 只装一个透传文件的卷（见 [`a_pass_through_volume`]）：这一条要问的
+        // 一页加一个透传文件的卷（见 [`fixture::a_real_volume`]）：这一条要问的
         // （事件→报告→退出码→stdout）一件都不少。
         let workspace = tempfile::tempdir().expect("建得出临时目录");
 
         let mut running = Running::default();
-        running.start(a_pass_through_volume(&workspace), Resuming::GoesOn);
+        running.start(a_one_volume_run(&workspace), Resuming::GoesOn);
         until_done(&mut running);
 
         let live = running.live().expect("跑过一趟");
@@ -628,10 +621,10 @@ mod tests {
             }
         }
 
-        // 只装一个透传文件的卷（见 [`a_pass_through_volume`]）：第二遍照样要走，
+        // 一页加一个透传文件的卷（见 [`fixture::a_real_volume`]）：第二遍照样要走，
         // 它写的是那个透传成员。
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
         let latch = Arc::new(Latch::default());
         let live = Arc::new(Mutex::new(Live::new(&request, Resuming::GoesOn)));
@@ -669,7 +662,7 @@ mod tests {
     #[test]
     fn a_resuming_trial_waits_at_the_decision_point_and_goes_on_when_told_to() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();
@@ -724,7 +717,7 @@ mod tests {
     #[test]
     fn answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();
@@ -768,7 +761,7 @@ mod tests {
     #[test]
     fn leaving_while_the_decision_point_waits_throws_that_volume_away() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();
@@ -803,7 +796,7 @@ mod tests {
     #[test]
     fn an_abort_pressed_before_the_decision_point_does_not_stop_to_ask() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();
@@ -834,7 +827,7 @@ mod tests {
     #[test]
     fn a_run_that_does_not_resume_never_waits_for_anybody() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();
@@ -906,7 +899,7 @@ mod tests {
     #[test]
     fn a_stopped_run_comes_back_with_the_same_exit_code_and_no_half_volume() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
-        let request = a_pass_through_volume(&workspace);
+        let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
 
         let mut running = Running::default();

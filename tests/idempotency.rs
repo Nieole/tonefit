@@ -551,9 +551,17 @@ fn an_archive_volume_is_skipped_too() {
     assert_eq!(second.volumes[0].decodes, 0);
 }
 
-/// 一页都没有的卷永远不跳过：记录随页走，没有页就没有地方放记录。
+/// 一页都没有的东西**不是卷**（ADR 0014 决定第 3 条），幂等因此根本问不到它。
+///
+/// 从前它是一个合法的卷：每一趟都把透传文件重写一遍、判定恒是 `None`，理由是
+/// 「记录随页走，没有页就没有地方放记录」。发现落地之后那条理由不必再用了——
+/// 它连卷都不是，报告里一条都没有。跑两趟才问，是因为这一条要排除的正是
+/// 「第二趟被上一趟的输出蒙混成跳过」。
+///
+/// 「输出里一个字节都没有」那一半由 `tests/discovery.rs` 的
+/// `nothing_without_a_page_writes_a_single_byte` 钉着，这里不复述。
 #[test]
-fn a_volume_without_pages_is_never_skipped() {
+fn something_without_a_page_never_gets_as_far_as_idempotency() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.file("ComicInfo.xml", b"<ComicInfo/>");
@@ -561,7 +569,11 @@ fn a_volume_without_pages_is_never_skipped() {
     fixtures::run_volume(&space, &volume);
     let report = fixtures::run_volume(&space, &volume);
 
-    assert_eq!(report.volumes[0].verdict, None);
+    assert!(
+        report.volumes.is_empty(),
+        "一页都没有的东西成了卷：{:?}",
+        report.volumes.len()
+    );
 }
 
 /// 两页加一个透传文件的卷。两页都小于面板，几何门在两页上都不成立——本文件测的每一条都与门无关。

@@ -491,8 +491,11 @@ fn eta(elapsed: Duration, walked: u64, steps: u64) -> Option<Duration> {
 pub(crate) mod fixture {
     //! 报告的夹具。`draw` 那一侧的快照用例与本模块的用例共用它——
     //! 两边要的是同一份东西，各搓一份就会在改动时走散。
+    //!
+    //! [`a_real_volume`] 是里面唯一**落到盘上**的一个：真起一条线程跑一趟的那几条用例
+    //! （`super::super::run`、`super::super::terminal`）共用它。
 
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
@@ -500,6 +503,38 @@ pub(crate) mod fixture {
         PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Scaling,
         Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
     };
+
+    /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
+    /// 建出目录，返回卷根。
+    ///
+    /// 页非有不可：一页都没有的东西不是卷（ADR 0014 决定第 3 条），预扫当场把它丢掉，
+    /// 那条线程于是根本走不到决策点。从前这几条用例只摆一个透传文件，为的是不必造图片。
+    ///
+    /// 透传文件仍留着：第二遍写的是**全部成员**，它也在里面
+    /// （`tests/resume.rs` 的 `small_volume` 特意留一个透传成员正是这个理由），
+    /// 因此「写没写出去」在它身上看得见。
+    ///
+    /// 页是这批用例里最便宜的一张：高恰是基准面板的高，纯墨到边——两样都是为了让管线
+    /// 在它身上不做工作（不缩放、裁边一个像素都拿不走）。这几条问的是线程、闩与决策点，
+    /// 页上画着什么一概不影响。
+    pub fn a_real_volume(root: &Path, name: &str) -> PathBuf {
+        /// 基准面板的高（`kobo-libra-2`，见 [`request`]）。
+        const PANEL_HEIGHT: u32 = 1680;
+
+        let volume = root.join(name);
+        std::fs::create_dir_all(&volume).expect("建得出卷");
+        let page = image::DynamicImage::ImageLuma8(image::ImageBuffer::from_pixel(
+            64,
+            PANEL_HEIGHT,
+            image::Luma([85u8]),
+        ));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        page.write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("编得出一页 PNG");
+        std::fs::write(volume.join("001.png"), bytes.into_inner()).expect("写得出页");
+        std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
+        volume
+    }
 
     /// 这一趟的参数。抬头那几行照它印。
     pub fn request(mode: RunMode) -> Request {

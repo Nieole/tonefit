@@ -443,7 +443,7 @@ fn color_page_note(volume: &VolumeReport) -> String {
 /// 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
 /// 上包络不在场时说清是为什么不在场——那正是翻页跳变回来的时候，报告不能看起来还是一样。
 fn verdict_lines(volume: &VolumeReport) -> String {
-    // 一页都没有的卷只装着透传文件，没有候选可判，几何门也就无从谈起。
+    // 一张灰度页都没有的卷（只装着彩页的、整卷全失败的）没有候选可判，几何门也就无从谈起。
     let Some(verdict) = &volume.verdict else {
         return String::new();
     };

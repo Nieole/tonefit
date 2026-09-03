@@ -624,9 +624,9 @@ mod tests {
     #[test]
     fn answering_at_the_decision_point_reaches_the_thread_waiting_there() {
         let space = tempfile::tempdir().expect("建得出临时目录");
-        let volume = space.path().join("卷一");
-        std::fs::create_dir_all(&volume).expect("建得出卷");
-        std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
+        // 一页加一个透传文件（见 [`super::live::fixture::a_real_volume`]）：页非有不可，
+        // 一页都没有的东西不是卷，那条线程根本走不到决策点。
+        let volume = crate::session::live::fixture::a_real_volume(space.path(), "卷一");
         let out = space.path().join("出");
 
         let mut session = Session::new();
@@ -769,16 +769,11 @@ mod tests {
         assert!(said.contains("还没跑过"), "{said}");
 
         // 跑过一趟、报告里有两卷：展开落在第一卷上，报告从头画（抬头那几行回来了）。
-        // 两个只装透传文件的卷：一页都没有，因此不必在用例里造图片，
-        // 而这一条要问的（几卷、落在第几行、转不转得回去）一件都不少。
+        // 两个真跑得动的卷（见 [`live::fixture::a_real_volume`]）：这一条要问的
+        // （几卷、落在第几行、转不转得回去）一件都不少。
         let inputs: Vec<PathBuf> = ["卷一", "卷二"]
             .iter()
-            .map(|name| {
-                let volume = workspace.path().join(name);
-                std::fs::create_dir_all(&volume).expect("建得出卷");
-                std::fs::write(volume.join("说明.txt"), "透传").expect("写得出成员");
-                volume
-            })
+            .map(|name| live::fixture::a_real_volume(workspace.path(), name))
             .collect();
         running.start(
             tonefit::Request {
