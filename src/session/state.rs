@@ -2733,6 +2733,23 @@ mod tests {
             "会话另编了一套说法"
         );
         assert!(printed.contains("其余面板未复核"), "{printed}");
+
+        // 会话里点了名的那个数同样照库那一份印，而那句话**不提入口**——在会话里打的数
+        // 说成「命令行指定」是停车场 Q62 记的那件事。
+        session.device.threshold = Some(2.0);
+        let pinned = session.shown(Field::Threshold);
+
+        assert_eq!(
+            pinned,
+            Profile::resolve("boox-poke6")
+                .expect("内置型号")
+                .with_threshold(2.0)
+                .expect("2.0 在界的取值范围内")
+                .threshold()
+                .to_string(),
+            "会话另编了一套说法"
+        );
+        assert!(pinned.contains("点名指定"), "{pinned}");
     }
 
     /// 换型号把设备层那两个覆盖项一起清掉：它们是在**上一块面板**上量出来的（ADR 0002）。

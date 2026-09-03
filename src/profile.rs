@@ -62,7 +62,10 @@ pub struct Threshold {
 pub enum ThresholdSource {
     /// 内置值，由真实素材上的人工盲测定出（见 measurements 的《位深盲测》）。
     Calibrated,
-    /// `--threshold` 点名。用户在自己那台设备上数出来的界走这一条。
+    /// 用户**点名**的界。他在自己那台设备上数出来的那个数走这一条。
+    ///
+    /// 这一项分的是「这个数怎么定出来的」，不是「从哪个入口点的名」（`p1-session/12` 判的），
+    /// `Display` 因此**不提入口**——入口有哪几个，见 [`Profile::with_threshold`]。
     Pinned,
 }
 
@@ -99,7 +102,7 @@ impl std::fmt::Display for Threshold {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let source = match self.source {
             ThresholdSource::Calibrated => "盲测标定于 boox-poke6，其余面板未复核",
-            ThresholdSource::Pinned => "命令行指定",
+            ThresholdSource::Pinned => "点名指定",
         };
         write!(f, "阈值 {:.3}（{source}）", self.value)
     }
@@ -115,7 +118,7 @@ impl std::fmt::Display for Threshold {
 /// （见 measurements 的《位深盲测》的卷级扫描）。
 ///
 /// 判据跟着面板走、不可跨面板比较（ADR 0002），而这里是一个常数——**其余面板沿用这个数，
-/// 没有复核**。`Display` 把这句话写在数值旁边，`--threshold` 是出口。
+/// 没有复核**。`Display` 把这句话写在数值旁边，[`Profile::with_threshold`] 是出口。
 ///
 /// **它仍然挡掉 2bit 不抖**——那一档真机排第 2、比 2bit+FS 省 18% 体积，而判据在棋魂两页上
 /// 读它 8.250 与 18.878。那不是界的问题，是判据认为那两页的灰调塌陷值这么多；
@@ -166,7 +169,11 @@ impl Profile {
         Ok(self)
     }
 
-    /// 覆盖判定用的界（`--threshold`）。
+    /// 覆盖判定用的界——**点名那一种唯一的入口**。
+    ///
+    /// 点得动它的地方有三处：命令行 `--threshold`、预设的设备层、会话里那一行。
+    /// 三处都经这里，出来的都是 [`ThresholdSource::Pinned`]（为什么是一种而不是三种，
+    /// 见那个变体的文档）。
     ///
     /// 判据跟着面板走、不可跨面板比较（ADR 0002），而内置值是一个常数（见 [`DEFAULT_THRESHOLD`]）。
     /// 在自己那台设备上盲测出来的界走这一条：把同一页的各档输出拷进设备，

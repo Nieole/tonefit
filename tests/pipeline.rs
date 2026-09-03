@@ -2421,7 +2421,10 @@ fn the_threshold_says_where_it_came_from() {
         .with_threshold(2.0)
         .expect("2.0 在界的取值范围内")
         .to_string();
-    assert!(pinned.contains("阈值 2.000（命令行指定）"), "{pinned}");
+    assert!(pinned.contains("阈值 2.000（点名指定）"), "{pinned}");
+    // 那句话**不提入口**：同一个数从命令行、预设、会话三处点进来都是这一句
+    // （`p1-session/12` 判的：来源分的是这个数怎么定出来的，不是从哪个入口点的名）。
+    assert!(!pinned.contains("命令行"), "{pinned}");
 }
 
 #[test]

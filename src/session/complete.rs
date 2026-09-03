@@ -6,12 +6,25 @@
 //! 而「大库里补全一个路径」这件事本来就只要问一层。
 //!
 //! 列出来的东西**按用户打的写法拼回去**：分隔符照他敲的那一个（Windows 上两种都认），
-//! 前缀原样留着。补全不该顺手替他把路径重写一遍。
+//! 打到一半那一层**之前**的路径原样留着。补全不该顺手替他把路径重写一遍。
+//!
+//! **大小写按平台的规矩办**（见 [`CASE_INSENSITIVE`]）：不认大小写的文件系统上敲 `d`
+//! 补得出 `Doraemon`，而补回来的是**盘上那个写法**——打到一半的那一截因此是补全
+//! 唯一会改写的地方，改的也只有大小写。认大小写的平台上一个字都不放宽。
 
 use std::path::Path;
 
 /// 路径分隔符，两种都认——Windows 上用户敲哪一个的都有。
 const SEPARATORS: [char; 2] = ['/', '\\'];
+
+/// 本平台的文件系统认不认大小写。
+///
+/// Windows 不认：`D:\Comics` 与 `d:\comics` 是同一个目录，那一层点得开，
+/// 打到一半的 `c` 因此也该筛得出 `Comics`。其余平台认——那儿两个只差大小写的目录
+/// 是两个目录，一律折大小写来比会让它们互相污染（停车场 Q59 摆的两条路，走的是这一条）。
+///
+/// `cfg!` 是个**表达式**：两支在所有平台上都编译得到，模块里因此不必架 `#[cfg]` 那道墙。
+const CASE_INSENSITIVE: bool = cfg!(windows);
 
 /// 打到这儿时，**这一层**里对得上的有哪些。
 ///
@@ -32,7 +45,7 @@ pub fn level(typed: &str) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.starts_with(prefix) {
+            if !matches_prefix(&name, prefix) {
                 return None;
             }
             let descend = entry.file_type().is_ok_and(|kind| kind.is_dir());
@@ -78,6 +91,35 @@ fn split(typed: &str) -> (&str, &str) {
         Some(at) => typed.split_at(at + 1),
         None => ("", typed),
     }
+}
+
+/// 这一层里的一个名字，对不对得上打到一半的那个前缀。
+///
+/// 认大小写的平台上就是 `str::starts_with`，**一个字都不放宽**；不认的那一支走
+/// [`starts_with_folded`]。分岔的判据是 [`CASE_INSENSITIVE`]。
+fn matches_prefix(name: &str, prefix: &str) -> bool {
+    if CASE_INSENSITIVE {
+        starts_with_folded(name, prefix)
+    } else {
+        name.starts_with(prefix)
+    }
+}
+
+/// 折一次大小写再比前缀。
+///
+/// **逐字折**，不把两边整串 `to_lowercase` 了再比：一来那样每个候选都要新分配一个串，
+/// 二来两者在「一个字折出好几个字」的那种字上分岔（土耳其语的 `İ` 折成 `i` 加一个组合点），
+/// 逐字的那一种更**严**——敲 `i` 补不出 `İ`，而 Windows 自己那张表也是逐码点折的，
+/// 不做多字折叠。
+///
+/// 它不看 [`CASE_INSENSITIVE`]，因此**每个平台上都测得到**。
+fn starts_with_folded(name: &str, prefix: &str) -> bool {
+    let mut listed = name.chars();
+    prefix.chars().all(|typed| {
+        listed
+            .next()
+            .is_some_and(|here| here == typed || here.to_lowercase().eq(typed.to_lowercase()))
+    })
 }
 
 /// 补出来的目录后面挂哪一个分隔符：照用户这一层敲的那一个，没敲过就按本平台的。
@@ -210,5 +252,43 @@ mod tests {
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert!(listed[0].ends_with("棋魂\\"), "{listed:?}");
         assert!(listed[0].starts_with(&root.path().display().to_string()));
+    }
+
+    /// 折法本身，**每个平台上都跑得到**：`starts_with_folded` 不看 `CASE_INSENSITIVE`，
+    /// 看它的是 `matches_prefix`。
+    #[test]
+    fn folding_lets_the_other_case_through_and_nothing_else() {
+        assert!(starts_with_folded("Doraemon 01", "d"));
+        assert!(starts_with_folded("Doraemon 01", "DORAEMON"));
+        assert!(starts_with_folded("哆啦A梦 01", "哆啦a"));
+        assert!(!starts_with_folded("棋魂", "d"));
+        // 前缀比名字长：够不着，不算对得上。
+        assert!(!starts_with_folded("d", "doraemon"));
+    }
+
+    /// 大小写按平台的规矩筛：不认大小写的平台上敲 `d` 两个都补得出，**补回来的是盘上那个写法**；
+    /// 认大小写的平台上只补得出敲对了的那一个——那一支一个字都没放宽。
+    ///
+    /// 一条用例问两边，不挂 `cfg`：两支的代码在所有平台上都编译得到（`cfg!` 是表达式），
+    /// 分岔的只有断言。
+    #[test]
+    fn case_is_folded_only_where_the_file_system_folds_it() {
+        let root = tempfile::tempdir().expect("建临时目录");
+        std::fs::create_dir(root.path().join("Doraemon 01")).expect("建目录");
+        std::fs::create_dir(root.path().join("doraemon 02")).expect("建目录");
+        let typed = format!("{}/d", root.path().display());
+
+        let listed = level(&typed);
+
+        if CASE_INSENSITIVE {
+            assert_eq!(listed.len(), 2, "{listed:?}");
+            assert!(
+                listed.iter().any(|hit| hit.ends_with("Doraemon 01/")),
+                "补回来的不是盘上那个写法：{listed:?}"
+            );
+        } else {
+            assert_eq!(listed.len(), 1, "{listed:?}");
+            assert!(listed[0].ends_with("doraemon 02/"), "{listed:?}");
+        }
     }
 }

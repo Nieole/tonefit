@@ -970,6 +970,36 @@ io-mode = \"concurrent\"
         );
     }
 
+    /// **预设点的阈值与命令行点的印出同一句话**（`p2-loose-ends/10` 的验收：
+    /// 三个入口下印出来的话都对）。
+    ///
+    /// 第三个入口（会话）由 `session::state` 的
+    /// `the_threshold_row_prints_the_source_the_report_prints` 问同一件事。
+    /// 三处共用 [`Profile::with_threshold`]，来源因此只有一种——那一句不提入口
+    /// （`p1-session/12` 判的：来源分的是这个数怎么定出来的，不是从哪个入口点的名）。
+    #[test]
+    fn a_threshold_from_a_preset_says_what_the_command_line_says() {
+        let (preset, _) = every_field();
+
+        let from_preset = parse(&["--preset", "漫画"])
+            .target_profile(&preset)
+            .expect("合得出 profile");
+        let from_flags = parse(&["--profile", "boox-poke6", "--threshold", "4.75"])
+            .target_profile(&no_preset())
+            .expect("合得出 profile");
+
+        assert_eq!(
+            from_preset.threshold().to_string(),
+            from_flags.threshold().to_string(),
+            "同一个数，两个入口印出两句话"
+        );
+        assert!(
+            from_preset.threshold().to_string().contains("点名指定"),
+            "{}",
+            from_preset.threshold()
+        );
+    }
+
     /// 改了预设的内容而名字没变，这一趟的 `Request` 就跟着变。
     ///
     /// 与上一条合起来钉住「参数哈希收的是**展开后的值**」：名字进不去哈希，内容进得去。
