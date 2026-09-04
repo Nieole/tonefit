@@ -15,7 +15,7 @@ use super::FOOTER_HEIGHT;
 use super::report::expandable;
 use crate::session::complete;
 use crate::session::live::Live;
-use crate::session::state::{Edit, Layer, Mode, Picker, Session, Shape};
+use crate::session::state::{Edit, Layer, Mode, Picker, Session, Shape, Values};
 use crate::session::viewport::Viewport;
 use crate::wrap;
 
@@ -78,6 +78,7 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
         Mode::Deciding(_) => deciding_prompt(),
         Mode::Expanded(_) => expanded_prompt(),
         Mode::Picking(picker) => picking_prompt(picker),
+        Mode::Valuing(values) => valuing_prompt(values),
     };
     let said = wrap::fold(session.notice().unwrap_or(""), width);
     let mut rows = wrap::fold(&keys, width);
@@ -266,6 +267,30 @@ fn picking_prompt(picker: &Picker) -> Prompt {
     )
 }
 
+/// **取值栏摊着时**屏底那两行（`CONTEXT.md` 的《会话》：取值栏）。
+///
+/// 上一行的行首是**摊开的是哪一行**：那一列摊在左栏里，而屏窄到左栏让出宽度那一档上
+/// 它整个不在屏上——不说一句，屏上就没有一处答得出「这一列是谁的」。
+/// 措辞取那一行自己的标签（`Field::label`），不另编一份。
+///
+/// **`←→` 摆出来**：它们在这个状态下归这一列（`→` 定、`←` 退回去，见
+/// `super::super::state::valuing_action`），而屏上不摆按不动的键的另一半是
+/// **按得动的键要摆出来**——不摆的话，习惯了 `←→` 就地转一格的人在这里会以为它们没了。
+///
+/// 下一行说的是**第一格那件事**：「没说」与「说了一个恰好等于默认的值」在屏上长得像，
+/// 而两者的差别要到存成预设那一刻才看得见（`CONTEXT.md` 的《会话》：
+/// 存出去的只有「说了的那几项」）。看不见的差别用户改不动，所以在这儿说。
+fn valuing_prompt(values: &Values) -> Prompt {
+    Prompt::new(
+        format!(
+            " {} · ↑↓ 选 · ⏎／→ 定 · Esc／← 一格不改地回去 · q 退出",
+            values.field().label()
+        ),
+        " 第一格是「没说」：它跟着默认值走，存成预设时那一项不写进去——\
+         与「说了一个恰好等于默认的值」是两件事，后者往后默认改了也仍是那个值",
+    )
+}
+
 /// 编辑一行时按键那一行：缓冲加这时按得动的几个键。
 ///
 /// 下面那一行（这一层列出来的候选）不在这里拼——它要等 [`footer`] 算出这一格
@@ -373,6 +398,14 @@ fn browsing_keys(session: &Session, live: Option<&Live>) -> String {
     match focus.shape() {
         // 只有这两副落得到设备层上（`Field::shape` 与 `Field::layer`：型号是环，
         // 灰阶数与阈值是打字改的），标定图那个键因此只插在这两支里。
+        //
+        // 摊开与转一格两条都摆着：**两条改的是同一格**，而它们各配一种人——
+        // 知道自己要什么的按 `←→`，不知道这一项有哪几个取值的按 `⏎`（票面）。
+        // **哪几行摊得开只有一处出处**（`Field::unfolds`），屏上因此不会摆一个
+        // 那一行上按不动的键。
+        Shape::Cycle if focus.unfolds() => format!(" ←→ 换一个 · ⏎ 摊开 · {common}"),
+        // 摊不开的那一行眼下只有型号（归 `p3-session-legibility/06`），
+        // 而它恰好是设备层上唯一一个转得动的行——标定图那个键因此只落在这一支里。
         Shape::Cycle => format!(" ←→ 换一个{chart} · {common}"),
         Shape::Text => format!(" ⏎ 改{chart} · {common}"),
         // 底下两副恒落在范围层上（输出根、「＋ 再打一个卷进来」、卷行），
@@ -391,6 +424,47 @@ mod tests {
     use crate::session::live::{Reach, Resuming, fixture};
     use crate::session::state::{Field, Key};
     use tonefit::Mode as RunMode;
+
+    /// **取值栏摊着时屏底摆的是这一列的键，摊得开的行上摆的是「⏎ 摊开」**。
+    ///
+    /// 三件事：
+    ///
+    /// - 转得动的行上两条路都摆着——`←→` 就地转一格与 `⏎` 摊开（票面：环那一套保留）；
+    /// - 摊开之后屏底换成这一列的键，而**「一格不改」写在按键那一行上**：
+    ///   `Esc` 买的是什么，用户按下去之前就该读得到；
+    /// - 下一行说清**第一格那件事**——「没说」与「说了一个恰好等于默认的值」的分别
+    ///   只有存成预设时才看得见，而看不见的差别用户改不动。
+    #[test]
+    fn the_unfolded_values_put_their_own_keys_on_the_bottom_row() {
+        let mut session = Session::new();
+        session.focus_on(Field::Filter);
+        let browsing = tight(&screen(&mut session, None, 120, 40));
+        assert!(browsing.contains(&tight("←→ 换一个")), "{browsing}");
+        assert!(browsing.contains(&tight("⏎ 摊开")), "{browsing}");
+
+        session.press(Key::Enter);
+        let unfolded = tight(&screen(&mut session, None, 120, 40));
+        assert!(
+            unfolded.contains(&tight(Field::Filter.label())),
+            "{unfolded}"
+        );
+        assert!(unfolded.contains(&tight("↑↓ 选")), "{unfolded}");
+        assert!(unfolded.contains(&tight("⏎／→ 定")), "{unfolded}");
+        assert!(
+            unfolded.contains(&tight("Esc／← 一格不改地回去")),
+            "{unfolded}"
+        );
+        assert!(unfolded.contains(&tight("第一格是「没说」")), "{unfolded}");
+        // 就地转一格那一副此刻不在屏上：`←→` 归这一列了（票面第五条）。
+        assert!(!unfolded.contains(&tight("←→ 换一个")), "{unfolded}");
+
+        // **型号那一行摊不开**（归 `p3-session-legibility/06`）：屏上因此不摆那个键。
+        session.press(Key::Esc);
+        session.focus_on(Field::Profile);
+        let profile = tight(&screen(&mut session, None, 120, 40));
+        assert!(profile.contains(&tight("←→ 换一个")), "{profile}");
+        assert!(!profile.contains(&tight("⏎ 摊开")), "{profile}");
+    }
 
     /// **两级停按下去之后屏上说清它在等什么**（本票的验收）。
     ///

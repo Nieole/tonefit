@@ -7,8 +7,11 @@
 //! 那是布局的事；本模块只画格子里的东西。折行走终端库自己的 [`Wrap`]
 //! （理由见 `crate::wrap` 的模块文档）。
 //!
-//! **卷打得多了这一栏就装不下**（行数是 21 加卷数）：从第几行画起由
+//! **卷打得多了这一栏就装不下**（行数是 21 加卷数，再加摊开那一列）：从第几行画起由
 //! [`Viewport`] 算，滚动条与正文一起画（见 [`super::scrolling`]）。
+//!
+//! **取值栏就地摊在这一栏里**（`CONTEXT.md` 的《会话》：取值栏）——摊在那一行下面，
+//! 左栏其余各行还在场。预设栏占的是主区，那是另一个状态、另一块（[`super::picker`]）。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -16,12 +19,21 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::session::state::{Field, Layer, Mode, Session};
+use crate::session::state::{Field, Layer, Mode, Session, Values};
 use crate::session::viewport::Viewport;
 
 /// 跑起来之后左栏的抬头。**「只读」要看得出来**，不能是按了没反应
 /// （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
 const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
+
+/// 取值栏上**此刻生效的那一格**行首那个记号，以及别的那几格行首那个。
+///
+/// 两个记号而不是「有记号／没记号」：一列里只有一格是实心的，扫一眼就找得到它，
+/// 而空着的那一格会与缩进糊成一片。**它与光标那一格分得开**（票面第二条）——
+/// 光标靠反白，这一个靠记号，两者可以落在同一格上，也可以不落在同一格上，
+/// 而那正是「我在看的」与「我选的」的分别。
+const CHOSEN: char = '●';
+const UNCHOSEN: char = '○';
 
 /// 左栏：三层，各占一块，按生命周期从上到下。
 ///
@@ -34,6 +46,11 @@ const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
 /// 跑着时按不动（上面那一条），预设那一栏开着时按键**全归那一栏**——左栏此刻在屏上
 /// 只为让人对照着看存出去的是什么（见 [`super::shell`]），反白它就是在指一个按不动的地方。
 /// 压暗仍只给跑着那一种：那一种是「这一趟没跑完都改不动」，而预设那一栏一个 `Esc` 就回来了。
+///
+/// **取值栏摊着时那一列摊在那一行下面**（`CONTEXT.md` 的《会话》：取值栏），
+/// 而**反白落在那一列上、不落在那一行上**：屏上只有一处反白，它说的恒是
+/// 「就在这一格上动手」，而此刻动手的地方是那一格取值。生效着的那一格另有一个记号
+/// （[`CHOSEN`]），两者因此分得开。
 ///
 /// **打进来的卷多过这一格装得下的行数时，视口跟着光标走**（见 [`Viewport`]）：
 /// 从前这一栏一点滚动都没有——行数是 21 加卷数，24 行的终端上打进三个卷，
@@ -70,6 +87,18 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             cursor = lines.len();
         }
         lines.push(row(session, field, style));
+        // 取值栏就摊在这一行下面。视口要跟的因此是**那一列上的光标**，不是这一行——
+        // 摊开之后左栏长出十来行，跟着这一行走的话，摊开那一列的末几格照旧掉在屏外。
+        if let Some(values) = session.valuing()
+            && values.field() == field
+        {
+            for at in 0..values.cells().len() {
+                if at == values.at() {
+                    cursor = lines.len();
+                }
+                lines.push(choice(values, at));
+            }
+        }
     }
     let view = Viewport::new(
         lines.len(),
@@ -87,6 +116,31 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
         // `trim: false` 让折下来的那一截保留缩进，读得出它还是上一行的。
         .wrap(Wrap { trim: false });
     super::scrolling(frame, area, body, &view);
+}
+
+/// 取值栏上的第 `at` 格：记号 + 取值。
+///
+/// 比那一行的取值再缩进一层：它摊在那一行**下面**，而缩进是屏上唯一说得出
+/// 「这几格是上面那一行的」的东西——这一栏没有第二级框线。
+///
+/// **两个记号在这一处一起定**：实心的那个说的是「生效的是它」，反白说的是
+/// 「光标停在它上面」——两者读的是 [`Values`] 上两个各不相干的数，
+/// 拆成两个参数递进来就等于让调用方替它们各判一次。
+fn choice(values: &Values, at: usize) -> Line<'static> {
+    let mark = if at == values.chosen() {
+        CHOSEN
+    } else {
+        UNCHOSEN
+    };
+    let style = if at == values.at() {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    };
+    Line::from(Span::styled(
+        format!("    {mark} {}", values.cells()[at]),
+        style,
+    ))
 }
 
 /// 左栏上的一行：名字 + 取值。怎么标（反白、压暗、还是原样）由 [`config`] 定。
@@ -154,7 +208,10 @@ mod tests {
         // 攒着的报告（`live` 一起线程就有了），这里 `screen` 传的是 `None`。
         // 「跑着时按不动 t 与 x」由按键表那一条钉住（`super::state` 的
         // `which_keys_do_what_in_which_state` 第六段）。
-        for keys in ["←→ 换一个", "⏎ 改", "空格 勾上"] {
+        // **取值栏那个键也不提**：跑起来之后摊不开，而三层只读那一条不因它松动
+        // （`CONTEXT.md` 的《会话》；按键表那一头见 `super::super::state` 的
+        // `which_keys_do_what_in_which_state` 第六段）。
+        for keys in ["←→ 换一个", "⏎ 摊开", "⏎ 改", "空格 勾上"] {
             assert!(
                 !running.contains(&tight(keys)),
                 "{keys} 还在屏上：{running}"
@@ -241,6 +298,155 @@ mod tests {
             !fits.contains('▲') && !fits.contains('▼'),
             "装得下还画了滚动条：{fits}"
         );
+    }
+
+    /// 摊开一行的取值栏，把左栏画出来。
+    fn unfolding(session: &mut Session, field: Field) {
+        session.focus_on(field);
+        session.press(Key::Enter);
+        assert!(session.valuing().is_some(), "{field:?} 没摊开");
+    }
+
+    /// **快照：取值栏摊开着的一张**（本票的验收第八条前一半）。
+    ///
+    /// 钉的是三件事：那一列摊在**那一行下面**、比它再缩进一层（读得出这几格是谁的）；
+    /// **第一格是「没说」那一格**（`默认（lanczos3）`）；**此刻生效的那一格前面是实心
+    /// 记号**，别的几格是空心的。左栏其余各行还在场——改一个值时看得见它在整份配置里
+    /// 的位置（spec 的 story 10）。
+    ///
+    /// 光标那一格靠反白，快照读不出来，另有一条问它（见
+    /// [`the_unfolded_values_keep_the_cursor_on_screen`]）。
+    #[test]
+    fn the_unfolded_values() {
+        let mut session = Session::new();
+        // 先说一个值，记号与第一格才分得开：不然两者落在同一格上，
+        // 这张快照就说不出「记号指的是生效的那一格」。
+        session.focus_on(Field::Filter);
+        session.press(Key::Right);
+        unfolding(&mut session, Field::Filter);
+        same_screen(&config_pane(&session, 52, 30), THE_UNFOLDED_VALUES);
+    }
+
+    /// 见 [`the_unfolded_values`]。
+    const THE_UNFOLDED_VALUES: &str = r#"
+"┌配置──────────────────────────────────────────────┐"
+"│设备层 · 判定的依据，绑面板，改一次管很久         │"
+"│  型号　　　　　　未挑（跑起来之前必填）          │"
+"│  感知可分辨级数　默认（跟随面板）                │"
+"│  阈值　　　　　　跟着型号走（先挑一个）          │"
+"│                                                  │"
+"│口味层 · 这一趟的立场                             │"
+"│  适配方式　　　　默认（height）                  │"
+"│  裁边　　　　　　默认（裁）                      │"
+"│  跨页拆分　　　　默认（拆）                      │"
+"│  拆分阈值　　　　默认（1.5）                     │"
+"│  阅读方向　　　　默认（rtl）                     │"
+"│  滤波器　　　　　area                            │"
+"│    ○ 默认（lanczos3）                            │"
+"│    ● area                                        │"
+"│    ○ bilinear                                    │"
+"│    ○ hamming                                     │"
+"│    ○ bicubic                                     │"
+"│    ○ lanczos3                                    │"
+"│  位深　　　　　　自动（判据说了算）              │"
+"│  抖动　　　　　　自动（判据说了算）              │"
+"│  逐页　　　　　　默认（关）                      │"
+"│  缓存预算　　　　默认（512.0 MiB）               │"
+"│  读取策略　　　　默认（auto）                    │"
+"│                                                  │"
+"│范围层 · 每趟都不同，不进预设                     │"
+"│  输出根　　　　　未填（跑起来之前必填）          │"
+"│  ＋ 再打一个卷进来                               │"
+"│                                                  │"
+"└──────────────────────────────────────────────────┘"
+"#;
+
+    /// **快照：摊开到左栏装不下的一张**（本票的验收第八条后一半）。
+    ///
+    /// 摊开之后左栏纵向变长——21 行加卷数，再加摊开那一列的格数。
+    /// 装不下的那一刻滚动条画出来（`▲`／`▼` 两头加中间那一截滑块），
+    /// 而**摊开那一列一格不少地跟着正文滚**：它是左栏正文的一部分，不另占一格。
+    ///
+    /// 光标停在那一列的**末一格**上，视口因此跟到了那儿：开头那几行让了出去
+    /// （设备层整块不在屏上），而那一格在屏上。这张钉的正是「摊开之后视口接得住」
+    /// （本票的验收第四条）画出来是什么样。
+    #[test]
+    fn the_unfolded_values_that_do_not_fit() {
+        let mut session = with_volumes(3);
+        unfolding(&mut session, Field::Filter);
+        // 走到那一列的末一格上（`↑` 两头绕回去）：视口要跟到的是它。
+        session.press(Key::Up);
+        same_screen(
+            &config_pane(&session, 52, 16),
+            THE_UNFOLDED_VALUES_THAT_DO_NOT_FIT,
+        );
+    }
+
+    /// 见 [`the_unfolded_values_that_do_not_fit`]。
+    const THE_UNFOLDED_VALUES_THAT_DO_NOT_FIT: &str = r#"
+"┌配置──────────────────────────────────────────────┐"
+"│                                                  ▲"
+"│口味层 · 这一趟的立场                             ║"
+"│  适配方式　　　　默认（height）                  █"
+"│  裁边　　　　　　默认（裁）                      █"
+"│  跨页拆分　　　　默认（拆）                      █"
+"│  拆分阈值　　　　默认（1.5）                     █"
+"│  阅读方向　　　　默认（rtl）                     ║"
+"│  滤波器　　　　　默认（lanczos3）                ║"
+"│    ● 默认（lanczos3）                            ║"
+"│    ○ area                                        ║"
+"│    ○ bilinear                                    ║"
+"│    ○ hamming                                     ║"
+"│    ○ bicubic                                     ║"
+"│    ○ lanczos3                                    ▼"
+"└──────────────────────────────────────────────────┘"
+"#;
+
+    /// **摊开之后左栏变长，而视口接得住：光标不掉出屏**（本票的验收第四条）。
+    ///
+    /// 视口跟的是**那一列上的光标**，不是摊开的那一行——跟着那一行走的话，
+    /// 摊开那一列的末几格照旧掉在格子下面，而那正是本票要修的毛病的另一面。
+    ///
+    /// 两头各问一次：光标走到那一列的末一格时开头那几行让出去，回到第一格时反过来。
+    /// **反白那一格非验不可**——逐格拼回来的文字看不出光标停在哪一格。
+    ///
+    /// **只问一行都不折的宽度**，与 [`a_config_column_taller_than_its_box_scrolls_with_the_cursor`]
+    /// 同一条（停车场 Q136）。
+    #[test]
+    fn the_unfolded_values_keep_the_cursor_on_screen() {
+        let mut session = with_volumes(3);
+        unfolding(&mut session, Field::Filter);
+        session.press(Key::Up);
+
+        // 光标停在那一列的末一格上：它在屏上，而开头那几行让了出去。
+        // **比的是带着记号的那一整格**：光比 `lanczos3` 的话，第一格
+        // 「● 默认（lanczos3）」也含着它，末一格掉出屏外这一条照样绿。
+        let bottom = tight(&config_pane(&session, 52, 16));
+        assert!(
+            bottom.contains(&tight("○ lanczos3")),
+            "光标那一格掉出屏外了：{bottom}"
+        );
+        assert!(
+            !bottom.contains(&tight(Layer::Device.title())),
+            "视口没跟着光标走：{bottom}"
+        );
+        let cells = |session: &Session| {
+            reversed_cells(|frame| config(frame, frame.area(), session), 52, 16)
+        };
+        assert!(cells(&session) > 0, "光标那一格不在屏上：{bottom}");
+
+        // 走回那一列的第一格：这一回让出去的是末尾那几行。
+        session.press(Key::Down);
+        let top = tight(&config_pane(&session, 52, 16));
+        assert!(
+            top.contains(&tight("● 默认（lanczos3）")),
+            "翻不回去：{top}"
+        );
+        assert!(
+            !top.contains(&tight(Field::AddVolume.label())),
+            "末尾那一行也在屏上：{top}"
+        );
+        assert!(cells(&session) > 0, "光标那一格不在屏上：{top}");
     }
 
     /// 见 [`the_config_column_that_does_not_fit`]。

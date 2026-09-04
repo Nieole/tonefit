@@ -89,6 +89,25 @@ pub enum Action {
     Move(Step),
     /// 就地把当前项换成取值环上的下一个（或上一个）。
     Cycle(Step),
+    /// **摊开取值栏**：在光标那一行**下面**摊开它那一列取值
+    /// （`CONTEXT.md` 的《会话》：取值栏）。
+    ///
+    /// 只有转得动的行派得出它（[`Shape::Cycle`]），**型号那一行除外**——
+    /// 它摊开的是面板、还要再下钻一层，归 `p3-session-legibility/06`；
+    /// 在那之前它照旧就地转一格（见 [`Session::browsing_action`]）。
+    ///
+    /// 它要的东西本模块全有（那一行的取值环就在这里），因此不必像[展开](Self::Expand)
+    /// 那样落到 [`super::press`] 去：真做这件事的就是 [`Session::unfold`]。
+    Unfold,
+    /// **定**：把取值栏上光标停着的那一格收下（票面：`⏎` 定）。
+    ///
+    /// **走的就是环那一套本身**（[`Session::cycle`] 转的那个环）：摊开选出来的值与
+    /// 就地转出来的值因此改的是同一格、走的是同一条写入路径，
+    /// 「摊开选一个」与「转一格」改出两种结果那件事结构上不存在（票面第五条一带）。
+    ///
+    /// **不叫 `Commit`。** 那个是[收下编辑缓冲里的东西](Self::Commit)，
+    /// 而这一下没有缓冲可收——它挑的是一列现成的取值里的一格。
+    Choose,
     /// 把这一卷勾上或勾掉。只有范围层的卷行有它。
     Toggle,
     /// 进入编辑：文本项与路径项走这条。
@@ -103,7 +122,11 @@ pub enum Action {
     Complete,
     /// 编辑中：收下缓冲里的东西。
     Commit,
-    /// 编辑中：丢掉缓冲，回到浏览。
+    /// **退一步**：丢掉眼下这一步，回到上一步。
+    ///
+    /// 编辑中是丢掉缓冲回浏览；打预设名时是退回那一栏的列表（见 [`naming_action`]）；
+    /// **取值栏上是一格不改地回左栏**（票面第三条）——「一格不改」不必靠任何一处代码
+    /// 守着：这一支根本不写取值，写的只有[定](Self::Choose)那一支。
     Cancel,
     /// 起一趟：[试算](RunMode::DryRun)或[执行](RunMode::Process)。
     ///
@@ -360,6 +383,28 @@ impl Field {
         }
     }
 
+    /// **这一行摊得开吗**（`CONTEXT.md` 的《会话》：取值栏）。
+    ///
+    /// **「哪几行摊得开」只有这一处出处**：按键表（[`Session::browsing_action`]）、
+    /// 屏底那一行摆不摆那个键（`super::draw::footer::browsing_keys`）、
+    /// 摊开那一下自己（[`Session::unfold`]）问的都是它。与 [`around`] 那条
+    /// 「写两份就会有一处忘了绕」同一条规矩——写三份，`p3-session-legibility/06`
+    /// 落地时就要同时改三处才不出错。
+    ///
+    /// 取值是[环](Shape::Cycle)的行都摊得开，**型号那一行除外**：它摊开的是
+    /// **面板**（八块，每块带着分辨率 · PPI · 灰阶数 · 黑白／彩色），`→` 再下钻到
+    /// 那块面板下的型号——两层，与别处那一层不是一个形状（spec 的《取值栏》：
+    /// 下钻只有那一处有两层）。那一副归 `p3-session-legibility/06`；
+    /// 在它落地之前型号那一行照旧就地转一格，屏上一格不变。
+    ///
+    /// **它还是「取值恒在环上」那条前提的守门人**：摊得开的这几行取值都是枚举或布尔，
+    /// 一格不落地都在自己的环上；唯一可能落在环外的是型号
+    /// （预设里塞进来的一个已删型号，见 [`next_device`]），而它正被挡在外面。
+    /// [`Session::unfold`] 数「此刻生效的是第几格」靠的就是这条前提。
+    pub fn unfolds(self) -> bool {
+        self.shape() == Shape::Cycle && self != Field::Profile
+    }
+
     /// 这一行怎么改。逐个变体都列出来，理由与 [`layer`](Self::layer) 同一条。
     pub fn shape(self) -> Shape {
         match self {
@@ -470,6 +515,71 @@ pub enum Mode {
     /// **跑着的时候开不了**：套用一份预设就是把两层整个换掉，而跑起来之后三层只读
     /// （`CONTEXT.md` 的《会话》）。这与 `e` 跑着时按不动（停车场 Q72）是同一条。
     Picking(Picker),
+    /// **取值栏**摊着：左栏上那一行的取值就地摊成一列（`CONTEXT.md` 的《会话》：取值栏）。
+    ///
+    /// 与[预设栏](Self::Picking)是**两个状态、两个词**：这一个就地摊在左栏那一行
+    /// **下面**，左栏其余各行还在场（改一个值时看得见它在整份配置里的位置）；
+    /// 那一个占主区。两者摆在同一维上是因为它们是同一种东西——一个从浏览进得去、
+    /// 一个键退得回来、退回来时三层一格没动的状态。
+    ///
+    /// **跑着的时候摊不开**：一趟跑起来之后三层都只读（`CONTEXT.md` 的《会话》），
+    /// 而摊开这一列正是为了改它。这与 `p`／`e` 跑着时按不动是同一条——
+    /// 靠的也是同一件事：那个状态下的按键表一个改动键都不派（见 [`running_action`]）。
+    Valuing(Values),
+}
+
+/// **取值栏**：左栏上就地摊开的那一列取值（`CONTEXT.md` 的《会话》：取值栏）。
+///
+/// 环让「**这一项有哪几个取值**」在屏上根本不存在——用户只有把它轮询过一整圈，
+/// 才知道自己有哪些选择。这一列把那件事摆上屏。
+///
+/// 列的是**摊开那一刻**那一行的取值环（见 [`Session::unfold`]），
+/// 与 [`Picker::names`]、[`Expansion::volumes`] 是同一种「进来那一刻记下的数」：
+/// 摊着的时候没有一个键改得动那一行，它因此不会中途变。
+///
+/// **下钻那一层不在这里**：型号那一行摊开的是面板、`→` 再下钻到那块面板下的型号，
+/// 归 `p3-session-legibility/06`（spec 的《取值栏》：下钻只有那一处有两层）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Values {
+    /// 摊开的是左栏上哪一行。
+    field: Field,
+    /// 那一列取值**在屏上的写法**，一格一条（出处是 [`Session::shown`]，
+    /// 与那一行自己印的是同一份）。
+    ///
+    /// **第一格恒是「没说」那一格**（屏上多半印成`默认（…）`）：两层的每一格都有
+    /// 一个「没说」的位置，而那正是存成预设时写不写进那份 TOML 的分别
+    /// （`CONTEXT.md` 的《会话》：存出去的只有「说了的那几项」）。
+    cells: Vec<String>,
+    /// 光标停在第几格。
+    at: usize,
+    /// **此刻真正生效的是第几格**——屏上那个记号画在它前面，与光标那一格分得开
+    /// （票面第二条）。
+    ///
+    /// 摊得开的那几行取值恒在自己的环上（[`Field::unfolds`] 是那条前提的守门人），
+    /// 因此它恒指得出一格来。
+    chosen: usize,
+}
+
+impl Values {
+    /// 摊开的是左栏上哪一行。
+    pub fn field(&self) -> Field {
+        self.field
+    }
+
+    /// 那一列取值在屏上的写法，第一格恒是「没说」那一格。
+    pub fn cells(&self) -> &[String] {
+        &self.cells
+    }
+
+    /// 光标停在第几格。
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
+    /// 此刻真正生效的是第几格。
+    pub fn chosen(&self) -> usize {
+        self.chosen
+    }
 }
 
 /// 预设那一栏：**盘上有的那几份**，加上末尾「存成一份新的」那一行。
@@ -834,9 +944,11 @@ impl Session {
     pub fn stopping(&self) -> Instruction {
         match self.mode {
             Mode::Running(pressed) | Mode::Deciding(pressed) => pressed,
-            Mode::Browsing | Mode::Editing(_) | Mode::Expanded(_) | Mode::Picking(_) => {
-                Instruction::Continue
-            }
+            Mode::Browsing
+            | Mode::Editing(_)
+            | Mode::Expanded(_)
+            | Mode::Picking(_)
+            | Mode::Valuing(_) => Instruction::Continue,
         }
     }
 
@@ -856,7 +968,8 @@ impl Session {
             | Mode::Editing(_)
             | Mode::Running(_)
             | Mode::Deciding(_)
-            | Mode::Picking(_) => None,
+            | Mode::Picking(_)
+            | Mode::Valuing(_) => None,
         }
     }
 
@@ -868,7 +981,26 @@ impl Session {
             | Mode::Editing(_)
             | Mode::Running(_)
             | Mode::Deciding(_)
-            | Mode::Expanded(_) => None,
+            | Mode::Expanded(_)
+            | Mode::Valuing(_) => None,
+        }
+    }
+
+    /// **取值栏此刻摊着的那一列**。没摊开就是 `None`——那是默认的那一档：
+    /// 左栏一行是一行，取值只印当前那一个（票面要修的那个毛病）。
+    ///
+    /// 与 [`picking`](Self::picking) 分开两个读法，而不是合成一个「眼下摊着什么」：
+    /// **两个状态、两个词**（`CONTEXT.md` 的《会话》：取值栏与预设栏），
+    /// 而画它们的是屏上两块各不相干的地方（左栏与主区）。
+    pub fn valuing(&self) -> Option<&Values> {
+        match &self.mode {
+            Mode::Valuing(values) => Some(values),
+            Mode::Browsing
+            | Mode::Editing(_)
+            | Mode::Running(_)
+            | Mode::Deciding(_)
+            | Mode::Expanded(_)
+            | Mode::Picking(_) => None,
         }
     }
 
@@ -977,6 +1109,7 @@ impl Session {
             Mode::Deciding(_) => deciding_action(key),
             Mode::Expanded(_) => expanded_action(key),
             Mode::Picking(picker) => picking_action(picker, key),
+            Mode::Valuing(_) => valuing_action(key),
         }
     }
 
@@ -989,7 +1122,15 @@ impl Session {
             Key::Left => cycle_or(shape, Step::Back, Action::Ignored),
             Key::Right => cycle_or(shape, Step::Next, Action::Ignored),
             // 浏览时空格与回车**同义**：两个都是「就在这一行上动手」，做什么随行状分派。
+            //
+            // 转得动的行上「动手」是**摊开取值栏**（票面第一条），不再是就地转一格：
+            // 转一格的那一副仍旧在（`←→`，见上面两支），而这一下答的是
+            // 「这一项有哪几个取值」——环答不出那个问题，那正是本票要修的毛病。
+            //
+            // **哪几行摊得开只有一处出处**（[`Field::unfolds`]）：摊不开的那一行
+            // ——眼下只有型号，它归 `p3-session-legibility/06`——照旧就地转一格。
             Key::Space | Key::Enter => match shape {
+                Shape::Cycle if self.focus().unfolds() => Action::Unfold,
                 Shape::Cycle => Action::Cycle(Step::Next),
                 Shape::Text | Shape::Path => Action::Edit,
                 Shape::Volume => Action::Toggle,
@@ -1042,6 +1183,10 @@ impl Session {
         match action {
             Action::Move(step) => self.move_cursor(step),
             Action::Cycle(step) => self.cycle(step),
+            // 摊开与定都只碰本模块自己的东西（那一行的取值环就在这里），
+            // 因此不必像展开与预设那几支那样落到 [`super::press`] 去。
+            Action::Unfold => self.unfold(),
+            Action::Choose => self.choose(),
             Action::Toggle => self.toggle_volume(),
             Action::Edit => self.begin_edit(),
             Action::Remove => self.remove_volume(),
@@ -1250,6 +1395,13 @@ impl Session {
             picker.at = around(picker.at, picker.rows(), step);
             return;
         }
+        // 取值栏摊着时挪的是**那一列**：左栏那一行此刻只是它的抬头，
+        // 而屏上只有一处反白（见 `super::draw::config::config`）。
+        // 那一列至少有一格（「没说」那一格恒在），`around` 因此除得动。
+        if let Mode::Valuing(values) = &mut self.mode {
+            values.at = around(values.at, values.cells.len(), step);
+            return;
+        }
         self.cursor = around(self.cursor, self.rows().len(), step);
     }
 
@@ -1273,7 +1425,8 @@ impl Session {
             | Mode::Running(_)
             | Mode::Deciding(_)
             | Mode::Expanded(_)
-            | Mode::Picking(_) => {}
+            | Mode::Picking(_)
+            | Mode::Valuing(_) => {}
         }
     }
 
@@ -1300,6 +1453,10 @@ impl Session {
 
     /// 丢掉眼下这一步。**退一步，不是退到底**：打预设名打到一半退回那一栏的列表上，
     /// 再按一次才出这一栏（见 [`naming_action`]）。
+    ///
+    /// **取值栏上这一下一格不改**（票面第三条）：它只把状态换回浏览，
+    /// 三层一个字节都不碰——「看一眼有哪些值」不该付出改掉它的代价。
+    /// 那件事不必靠任何一处代码守着：这个函数根本没有写取值的路子。
     fn cancel(&mut self) {
         if let Mode::Picking(picker) = &mut self.mode
             && picker.naming.take().is_some()
@@ -1534,6 +1691,39 @@ fn naming_action(naming: &Naming, key: Key) -> Action {
     }
 }
 
+/// **取值栏摊着时的按键表**：`↑↓` 在那一列上挪一格，`⏎` 定，`Esc` 一格不改地回去。
+///
+/// **上下改的恒是眼前这一列**，与展开那一副、预设那一栏同一条（见 [`expanded_action`]
+/// 与 [`listing_action`]）：光标此刻停在这一列上，把 `↑↓` 留给底下那一栏配置
+/// 就是「按了没反应」。`j`／`k` 跟着 `↑↓`，与浏览时一个待遇。
+///
+/// **`←→` 归这一层，不再就地转那一行**（票面第五条）。它们走的是这一列的两头：
+/// `→` 与 `⏎` 同义——定下停着的那一格；`←` 与 `Esc` 同义——一格不改地退回左栏。
+/// 转一格那一副此刻不在场，而那**不是**把环收走了：退回左栏之后 `←→` 照旧转得动
+/// （票面：环那一套保留）。
+///
+/// **`Esc` 一格不改**是这张表的形状本身：这里派得出的动作里只有
+/// [`Action::Choose`] 写取值，[`Action::Cancel`] 一格都不碰
+/// （见 [`Session::choose`] 与 [`Session::cancel`]）。「看一眼有哪些值」
+/// 因此不必付出改掉它的代价。
+///
+/// **打字与补全在这里没有意义**：这一列是一份现成的取值，不是一个缓冲。
+/// `⇥` 同理——没有「下一层」可补，也没有第二栏可切（切焦点归
+/// `p3-session-legibility/07`）。
+///
+/// `q` 仍是退出会话，与浏览、展开、预设那一栏同一件事：这一列只是在看有哪些值，
+/// 没有「按错一下就丢掉什么」那种后果。
+fn valuing_action(key: Key) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Move(Step::Back),
+        Key::Down | Key::Char('j') => Action::Move(Step::Next),
+        Key::Enter | Key::Space | Key::Right => Action::Choose,
+        Key::Esc | Key::Left => Action::Cancel,
+        Key::Char('q') | Key::Interrupt => Action::Quit,
+        Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
+    }
+}
+
 /// 一列 `rows` 行里挪一格，**两头都绕回去**。左栏与预设那一栏共用它——
 /// 「挪到头就绕回来」是同一条规矩，写两份就会有一处忘了绕。
 fn around(at: usize, rows: usize, step: Step) -> usize {
@@ -1657,7 +1847,17 @@ fn next_device(device: Option<&str>) -> Option<String> {
 impl Session {
     /// 把光标那一行的取值往前（或往后）转一格。
     fn cycle(&mut self, step: Step) {
-        match self.focus() {
+        self.turn_field(self.focus(), step);
+    }
+
+    /// 把**某一行**的取值往前（或往后）转一格。
+    ///
+    /// 拆出这一支只为一件事：**取值栏摊开的那一列与定下来的那一下走的就是它**
+    /// （见 [`Self::unfold`] 与 [`Self::choose`]）。两条路因此改的是同一格、
+    /// 走的是同一条写入路径——分成两份就会有一处忘了跟着改（型号那一下要清掉
+    /// 标定出来的两个数，就是这种一处忘了就错的东西）。
+    fn turn_field(&mut self, field: Field, step: Step) {
+        match field {
             Field::Profile => {
                 let current = self.device.profile.clone();
                 self.device.profile = turn(current, step, |device: Option<String>| {
@@ -1709,6 +1909,115 @@ impl Session {
             | Field::Out
             | Field::Volume(_)
             | Field::AddVolume => {}
+        }
+    }
+
+    /// 这一行此刻停在「**没说**」那一格上吗（`CONTEXT.md` 的《会话》：
+    /// 「存出去的只有『说了的那几项』」）。
+    ///
+    /// 两层的每一格都有这个位置，而它正是存成预设时**写不写进那份 TOML** 的分别：
+    /// 「没说」跟着默认值走，「说了一个恰好等于默认的值」写下来、往后默认改了它也不变。
+    ///
+    /// 取值栏靠它认路：那一列从这一格起摊、走一圈落回它为止
+    /// （见 [`Self::unfold`] 与 [`Self::choose`]）。逐个变体都列出来，
+    /// 理由与 [`Field::layer`] 同一条。
+    fn unsaid(&self, field: Field) -> bool {
+        match field {
+            Field::Profile => self.device.profile.is_none(),
+            Field::GrayLevels => self.device.gray_levels.is_none(),
+            Field::Threshold => self.device.threshold.is_none(),
+            Field::Fit => self.taste.fit.is_none(),
+            Field::Crop => self.taste.crop.is_none(),
+            Field::Split => self.taste.split.is_none(),
+            Field::SplitThreshold => self.taste.split_threshold.is_none(),
+            Field::ReadingOrder => self.taste.reading_order.is_none(),
+            Field::Filter => self.taste.filter.is_none(),
+            Field::BitDepth => self.taste.bit_depth.is_none(),
+            Field::Dither => self.taste.dither.is_none(),
+            Field::PerPage => self.taste.per_page.is_none(),
+            Field::CacheBudget => self.taste.cache_budget.is_none(),
+            Field::IoMode => self.taste.io_mode.is_none(),
+            Field::Out => self.scope.out.is_none(),
+            // 卷那两行没有「没说」那一格：一条路径加一个勾，打进来了就是打进来了，
+            // 而「＋ 再打一个卷进来」根本不是一个取值。
+            Field::Volume(_) | Field::AddVolume => false,
+        }
+    }
+
+    /// **一直往前转到「没说」那一格上**，答走了几步。
+    ///
+    /// 环上从任何一格出发都到得了它（走完一圈必落回它，见 [`ring`]），
+    /// 因此这个循环停得下来。取值栏摊开与定下来都从这一格起算
+    /// （见 [`Self::unfold`] 与 [`Self::choose`]），两处共用它——
+    /// 写两份就会有一处忘了跟着改，与 [`around`] 同一条规矩。
+    fn turn_to_unsaid(&mut self, field: Field) -> usize {
+        let mut steps = 0;
+        while !self.unsaid(field) {
+            self.turn_field(field, Step::Next);
+            steps += 1;
+        }
+        steps
+    }
+
+    /// **摊开光标那一行的取值栏**（票面第一条）。
+    ///
+    /// 那一列**就是那一行的取值环**，从「没说」那一格起走一圈落回它为止——
+    /// 一步一步走的就是 [`Self::turn_field`]，因此这里没有第二份清单：
+    /// 环上加一个取值，摊开那一列当场跟着多一格。
+    /// 每一格印成什么走 [`Self::shown`]，与那一行自己印的是同一份。
+    ///
+    /// **此刻生效的是第几格，是数出来的、不是认字认出来的**：从这一行此刻停的那一格
+    /// 起走 `back` 步到得了「没说」，它就在环上倒数第 `back` 格。
+    /// 这一步的前提是「那一行的取值在环上」，而守门的是 [`Field::unfolds`]。
+    ///
+    /// **摊不开的行在这里到不了**：按键表在那几行上根本不派这个动作
+    /// （见 [`Self::browsing_action`]），这里的卫语句只是不让这个函数自己出岔子。
+    fn unfold(&mut self) {
+        let field = self.focus();
+        if !field.unfolds() {
+            return;
+        }
+        let mut probe = self.clone();
+        let back = probe.turn_to_unsaid(field);
+        let mut cells = Vec::new();
+        loop {
+            cells.push(probe.shown(field));
+            probe.turn_field(field, Step::Next);
+            if probe.unsaid(field) {
+                break;
+            }
+        }
+        let chosen = (cells.len() - back) % cells.len();
+        self.mode = Mode::Valuing(Values {
+            field,
+            cells,
+            at: chosen,
+            chosen,
+        });
+    }
+
+    /// **定下取值栏上停着的那一格**，回左栏。
+    ///
+    /// 做法是**转到那一格上**：先转到「没说」那一格，再往前走 `at` 格——
+    /// 走的每一步都是 [`Self::turn_field`]，也就是 `←→` 就地转一格走的那一条。
+    /// 「两条路改的是同一格」因此不必靠自觉：摊开这一路根本没有自己的写入路径。
+    ///
+    /// **停着的还是生效着的那一格时一步都不走**：那一下与 `Esc` 一样一格不改。
+    /// 不然型号那一行摊得开之后（`p3-session-legibility/06`），
+    /// 「摊开、什么都不改、按 `⏎`」会把标定出来的两个数清掉
+    /// （ADR 0002 那一下跟着换型号走，而这一下根本没换）。
+    fn choose(&mut self) {
+        let Mode::Valuing(values) = &self.mode else {
+            return;
+        };
+        let (field, at, chosen) = (values.field, values.at, values.chosen);
+        self.mode = Mode::Browsing;
+        if chosen == at {
+            return;
+        }
+        self.turn_to_unsaid(field);
+        for _ in 0..at {
+            self.turn_field(field, Step::Next);
         }
     }
 
@@ -2061,6 +2370,60 @@ mod tests {
         // **范围层**上同样没有意义。
         assert_eq!(session.action(Key::Char('c')), Action::Ignored);
 
+        // 三之二、**取值栏摊着**（`CONTEXT.md` 的《会话》：取值栏）：`↑↓` 在那一列上
+        // 挪一格，`⏎`／`→` 定，`Esc`／`←` 一格不改地回去。`←→` 归这一层，
+        // **不再就地转那一行**（票面第五条）。
+        session.focus_on(Field::Filter);
+        // 摊开的是「就在这一行上动手」那个键——转得动的行上它从前是就地转一格。
+        assert_eq!(session.action(Key::Enter), Action::Unfold);
+        assert_eq!(session.action(Key::Space), Action::Unfold);
+        // **环那一套照旧**：`←→` 在浏览时仍是就地转一格（票面：环保留）。
+        assert_eq!(session.action(Key::Right), Action::Cycle(Step::Next));
+        assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
+        session.press(Key::Enter);
+        assert!(session.valuing().is_some(), "没摊开");
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Enter), Action::Choose);
+        assert_eq!(session.action(Key::Space), Action::Choose);
+        // 摊开时 `←→` 走的是这一列的两头，不是那一行的取值环。
+        assert_eq!(session.action(Key::Right), Action::Choose);
+        assert_eq!(session.action(Key::Left), Action::Cancel);
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 这一列是一份现成的取值，不是一个缓冲：打字、补全、切一栏都没有意义；
+        // 起一趟、展开、预设、标定图都要先退回左栏，而那是一个键的事。
+        for key in [
+            Key::Tab,
+            Key::BackTab,
+            Key::Backspace,
+            Key::Char('z'),
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('e'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('d'),
+            Key::Char('s'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在取值栏上不该生效"
+            );
+        }
+        session.press(Key::Esc);
+        assert_eq!(session.mode(), &Mode::Browsing, "Esc 没退回左栏");
+
+        // 三之三、**型号那一行摊不开**：它摊开的是面板、还要再下钻一层，
+        // 归 `p3-session-legibility/06`；在那之前它照旧就地转一格。
+        session.focus_on(Field::Profile);
+        assert_eq!(session.action(Key::Enter), Action::Cycle(Step::Next));
+        assert_eq!(session.action(Key::Space), Action::Cycle(Step::Next));
+
         // 四、编辑一个路径：字进缓冲，Tab 补全，回车收下，Esc 丢掉。
         session.focus_on(Field::Out);
         session.press(Key::Enter);
@@ -2096,6 +2459,8 @@ mod tests {
             Key::Down,
             Key::Left,
             Key::Right,
+            // 回车与空格按不动，**取值栏因此摊不开**：三层只读那一条不因取值栏松动
+            // （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
             Key::Enter,
             Key::Space,
             Key::Tab,
@@ -2895,6 +3260,172 @@ mod tests {
         let devices = Profile::devices().count();
         let ring = ring_of(None::<String>, |device| next_device(device.as_deref()));
         assert_eq!(ring.len(), devices + 1);
+    }
+
+    /// 左栏上**摊得开的那几行**。问的是 [`Field::unfolds`]——
+    /// 「哪几行摊得开」只有那一处出处，用例这边也不抄第二份。
+    fn unfoldable() -> Vec<Field> {
+        Session::new()
+            .rows()
+            .into_iter()
+            .filter(|field| field.unfolds())
+            .collect()
+    }
+
+    /// 摊开一行，把那一列取值取回来。
+    fn unfolded(field: Field) -> Values {
+        let mut session = Session::new();
+        session.focus_on(field);
+        session.press(Key::Enter);
+        session.valuing().expect("没摊开").clone()
+    }
+
+    /// **摊得开的那几行都摊得开，而摊开那一列就是那一行的取值环**（票面第一条）。
+    ///
+    /// 一列至少两格：只有一个取值的行摊开来没有意义，而那种行本仓库一个都没有
+    /// （见 `the_value_rings_come_back_around`）。
+    ///
+    /// **一列一列不是手抄的**：这一条走一遍环、与摊开那一列逐格对，
+    /// 环上加一个取值而摊开那一列没跟着多一格的话，这里当场红。
+    #[test]
+    fn every_row_whose_value_is_a_ring_unfolds_into_that_ring() {
+        let rows = unfoldable();
+        assert_eq!(rows.len(), 9, "摊得开的行数变了：{rows:?}");
+
+        for field in rows {
+            let cells = unfolded(field).cells;
+            assert!(cells.len() >= 2, "{field:?} 摊开来只有一格：{cells:?}");
+
+            // 就地转一圈，一格一格与摊开那一列对。
+            let mut session = Session::new();
+            session.focus_on(field);
+            for cell in &cells {
+                assert_eq!(
+                    &session.shown(field),
+                    cell,
+                    "{field:?} 摊开那一列与环对不上"
+                );
+                session.press(Key::Right);
+            }
+            // 转完一圈落回出发点：那一列摊的正是一整圈，不多一格也不少一格。
+            assert_eq!(session.shown(field), cells[0], "{field:?} 摊的不是一整圈");
+        }
+    }
+
+    /// **摊开的第一格是「没说」那一格，此刻生效的那一格另有一个记号**（票面第二条）。
+    ///
+    /// 两件事分得开：第一格恒是「没说」（它跟着默认走，存成预设时那一项不写进去），
+    /// 而 [`Values::chosen`] 指的是**此刻生效的**那一格——两者只在这一行还没说过话时
+    /// 落在同一格上。
+    ///
+    /// **「没说」那一格印成什么，照那一行自己的写法**（[`Session::shown`]）：
+    /// 十行里八行印成`默认（…）`，位深与抖动那两行印的是「自动（判据说了算）」——
+    /// 那一格照样是「没说」，只是那两行的默认不是一个定值（停车场 Q139）。
+    #[test]
+    fn the_first_cell_is_the_says_nothing_one_and_the_one_in_effect_is_marked() {
+        let fresh = Session::new();
+        for field in unfoldable() {
+            let values = unfolded(field);
+            assert_eq!(
+                values.cells()[0],
+                fresh.shown(field),
+                "{field:?} 的第一格不是「没说」那一格"
+            );
+            assert!(
+                values.cells()[0].starts_with("默认")
+                    || matches!(field, Field::BitDepth | Field::Dither),
+                "{field:?} 的第一格印成了 {}",
+                values.cells()[0]
+            );
+            // 还没说过话：记号与光标都停在第一格上。
+            assert_eq!(values.chosen(), 0, "{field:?}");
+            assert_eq!(values.at(), 0, "{field:?}");
+
+            // 说了一个值之后：记号跟着挪到那一格上，而第一格还是「没说」。
+            let mut session = Session::new();
+            session.focus_on(field);
+            session.press(Key::Right);
+            session.press(Key::Enter);
+            let said = session.valuing().expect("没摊开");
+            assert_eq!(said.chosen(), 1, "{field:?} 记号没跟着生效的那一格");
+            assert_eq!(said.at(), 1, "{field:?} 光标没落在生效的那一格上");
+            assert_eq!(said.cells()[0], fresh.shown(field), "{field:?}");
+        }
+    }
+
+    /// **`Esc` 从摊开的取值里退出来，那一行一格不改**（票面第三条）。
+    ///
+    /// 「看一眼有哪些值」不该付出改掉它的代价。走遍摊得开的每一行，
+    /// 在那一列上**走到别的格子上去**再退出来——光标挪过窝而取值没动，
+    /// 才谈得上「一格不改」。
+    ///
+    /// 比的是三层的全部内容，不是那一行印出来的那句话：`Esc` 不该改动**任何**一格
+    /// （型号那一行换一下会连带清掉标定出来的两个数，那种连带同样落在这个断言里）。
+    #[test]
+    fn escaping_out_of_the_unfolded_values_changes_not_one_cell() {
+        let mut session = Session::new();
+        session.device.profile = Some("boox-poke6".to_owned());
+        session.device.gray_levels = Some(8);
+        session.taste.filter = Some(Filter::Bicubic);
+        session.taste.crop = Some(false);
+        session.scope.out = Some(PathBuf::from("出"));
+
+        for field in unfoldable() {
+            let before = session.clone();
+            session.focus_on(field);
+            session.press(Key::Enter);
+            // 在那一列上走两格：退出来之后光标停在哪儿不算数，取值才算数。
+            session.press(Key::Down);
+            session.press(Key::Down);
+            let looking = session.valuing().expect("没摊开");
+            assert_ne!(
+                looking.at(),
+                looking.chosen(),
+                "{field:?} 光标没挪过窝，这一条就没问到东西"
+            );
+            session.press(Key::Esc);
+
+            assert_eq!(session.mode(), &Mode::Browsing, "{field:?} Esc 没退回左栏");
+            assert_eq!(session.device, before.device, "{field:?} Esc 改了设备层");
+            assert_eq!(session.taste, before.taste, "{field:?} Esc 改了口味层");
+            assert_eq!(session.scope, before.scope, "{field:?} Esc 改了范围层");
+        }
+    }
+
+    /// **摊开选出来的值与就地转出来的值改的是同一格**（票面：两条路改的是同一格）。
+    ///
+    /// 逐行逐格问一遍：摊开来走到第 k 格按 `⏎`，与从「没说」那一格起就地转 k 下，
+    /// 两条路走完之后**两层逐格相同**。两条路各写一份的话，这里当场红。
+    ///
+    /// **停着的还是生效着的那一格时一步都不走**：第 0 格那一趟两边都是零下，
+    /// 而那一趟正是「摊开、什么都不改、按 `⏎`」——它与 `Esc` 一样一格不改。
+    #[test]
+    fn unfolding_and_turning_in_place_write_the_same_cell() {
+        for field in unfoldable() {
+            let cells = unfolded(field).cells;
+            for (at, cell) in cells.iter().enumerate() {
+                // 一条路：摊开来，走到第 at 格，定。
+                let mut picked = Session::new();
+                picked.focus_on(field);
+                picked.press(Key::Enter);
+                for _ in 0..at {
+                    picked.press(Key::Down);
+                }
+                picked.press(Key::Enter);
+
+                // 另一条路：就地转 at 下。
+                let mut turned = Session::new();
+                turned.focus_on(field);
+                for _ in 0..at {
+                    turned.press(Key::Right);
+                }
+
+                assert_eq!(picked.mode(), &Mode::Browsing, "{field:?} 定完没回左栏");
+                assert_eq!(&picked.shown(field), cell, "{field:?} 第 {at} 格定错了");
+                assert_eq!(picked.device, turned.device, "{field:?} 第 {at} 格：设备层");
+                assert_eq!(picked.taste, turned.taste, "{field:?} 第 {at} 格：口味层");
+            }
+        }
     }
 
     /// 阈值那一行印的是**数值加标定来源**，与报告里那一行逐字相同。
