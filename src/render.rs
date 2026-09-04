@@ -8,11 +8,20 @@
 //! 而最后一张嘴在库内；挤在这里就给库里那一份留了第二个出处（理由写在那个模块的文档里）。
 //! 本模块对它只做**呈现**：话落在哪一段、前面挂什么标签（见 [`interlock_lines`]）。
 //!
-//! 大头是把 [`Report`] 渲染成文字，分四段，调用方各取所需：[`header`] 一趟只出一次，
-//! [`volume`] 与 [`pages`] 逐卷出，[`tail`] 收在末尾。命令行攒完在最后把四段一次性
-//! 拼起来（[`report`]）；会话攒到哪儿画到哪儿——卷级事件带着 `VolumeReport`，
-//! 那一卷跑完就画得出它那一段（ADR 0011）。卷级与逐页分成两个函数，
-//! 是因为会话的报告区默认只给卷级，展开才逐页。
+//! 大头是把 [`Report`] 渲染成四段，调用方各取所需：[`header`] 一趟只出一次，
+//! [`volume`] 与 [`pages`] 逐卷出，[`tail`] 收在末尾。会话攒到哪儿画到哪儿——
+//! 卷级事件带着 `VolumeReport`，那一卷跑完就画得出它那一段（ADR 0011）。
+//! 卷级与逐页分成两个函数，是因为会话的报告区默认只给卷级，展开才逐页。
+//!
+//! # 措辞一处，排版两处（ADR 0016）
+//!
+//! 抬头与末尾那两段**本来就是成句的**，出的仍是文字。卷级与逐页那两段出的是一组
+//! [行](Row)——每一行带着[它是什么行](RowKind)，以及若干[格](Cell)。
+//!
+//! **在这里的是「一件事怎么说」**：一个值怎么写、成句的那几段怎么措辞。
+//! **不在这里的是「摆在哪儿」**：缩进、前缀、分隔与单位跟着排版走，一副一份。
+//! 纯文本那一副在 [`plain`]——命令行印出去的、以及会话眼下画的就是它；
+//! 表那一副是会话自己的事（P3 的卷表与逐页表）。
 //!
 //! 两边拿的是同一份数据，措辞因此只有一套。同一个理由把[标定图那几行](calibration_note)
 //! 也收在这里：它不从报告来，但它同样是界面文案，会话按键出图时印的也是它。
@@ -33,17 +42,164 @@ use tonefit::{
 #[cfg(feature = "tui")]
 use tonefit::{Instruction, RunOutcome};
 
-/// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
+/// **命令行那一侧的拼装**：把[行](Row)与[格](Cell)摆成纯文本那一副（ADR 0016）。
+pub mod plain;
+
+/// 报告上的**一行**：[它是什么行](RowKind)，加上若干[格](Cell)。
 ///
-/// 四段按顺序拼起来，中间不加任何东西——会话逐段画出来的与这里拼出来的逐字节相同。
-pub fn report(report: &Report, mode: Mode) -> String {
-    let mut text = header(report, mode);
-    for volume in &report.volumes {
-        text.push_str(&self::volume(volume));
-        text.push_str(&self::pages(volume));
+/// 卷级（[`volume`]）与逐页（[`pages`]）那两段出的就是它。一行对应印出来的一行，
+/// 而**缩进、前缀与换行不在里面**——那些跟着排版走（ADR 0016）。
+///
+/// **成句的那几行只有一格**，装着整句话（[`Field::Sentence`]）：它们本来就是句子，
+/// 拆开没有意义，画它的那一头把它当整段文字折行。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// 这是什么行。摆法、行首记号与颜色都从它来。
+    pub kind: RowKind,
+    /// 这一行的那几格，按印出来的先后。
+    pub cells: Vec<Cell>,
+}
+
+impl Row {
+    /// 一行，收下它那几格。
+    fn new(kind: RowKind, cells: Vec<Cell>) -> Self {
+        Self { kind, cells }
     }
-    text.push_str(&tail(report));
-    text
+
+    /// 只有一格的那种行，多半是[成句的那一种](Field::Sentence)。
+    fn one(kind: RowKind, cell: Cell) -> Self {
+        Self::new(kind, vec![cell])
+    }
+
+    /// 取一格的文字。**不在场就是 `None`**——一格在不在场本身就是一句话：
+    /// 一张彩页都没有的卷没有彩页那一格，跳过的卷没有基准档那一格。
+    pub fn cell(&self, field: Field) -> Option<&str> {
+        self.cells
+            .iter()
+            .find(|cell| cell.field == field)
+            .map(|cell| cell.text.as_str())
+    }
+}
+
+/// 一**格**：它是[哪一格](Field)，以及那一格怎么说。
+///
+/// 装的是**值**：单位、列头与分隔符都不在里面，那些跟着排版走（ADR 0016）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cell {
+    /// 这是哪一格。
+    pub field: Field,
+    /// 这一格怎么说。
+    pub text: String,
+}
+
+impl Cell {
+    /// 一格。
+    fn new(field: Field, text: impl Into<String>) -> Self {
+        Self {
+            field,
+            text: text.into(),
+        }
+    }
+}
+
+/// 一行是**什么行**。
+///
+/// 排版按它分派：纯文本那一副按它定缩进与前缀（见 [`plain`]），
+/// 表那一副按它挑列、上色、给行首记号。
+///
+/// 一个变体对应报告上的一种行，**不多不少**：`--per-page` 与覆盖顶掉判定各是一种，
+/// 而不是「卷级那一行的三种写法」——表要照它们各自的说法填基准档那一列，
+/// 分不开就得回头去认字符串。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    /// 卷那一行：去处与页数。
+    Volume,
+    /// 过期副本那一行（成句）。
+    Superseded,
+    /// 幂等命中而跳过那一行（成句）。
+    Skipped,
+    /// 隔离那一行（成句）。
+    Isolated,
+    /// 部分救回那一行（成句）。
+    Salvaged,
+    /// 几何门那一行：判定范围、不成立几页、本卷抖不抖。
+    Gate,
+    /// 几何门那一行底下的注解（成句）。
+    GateNote,
+    /// 卷级判定：上包络。
+    Envelope,
+    /// 上包络指出的驱动页。
+    Driver,
+    /// 卷级判定：覆盖项顶掉了判定（成句）。
+    Override,
+    /// 卷级判定：`--per-page`，没有卷级基准档（成句）。
+    PerPage,
+    /// 这一趟怎么读的。
+    Reading,
+    /// 开工前摊到临时目录的那一笔。
+    Extraction,
+    /// 缓存用量。
+    Cache,
+    /// 一页的几何那一行：尺寸怎么来的、写到哪儿。
+    PageGeometry,
+    /// 一页的判定那一行：灰度路径。
+    PageVerdict,
+    /// 一页的判定那一行：彩色分支（成句）。
+    PageColor,
+    /// 一页失败那一行（成句）。
+    PageFailure,
+}
+
+/// 一格是**哪一格**。
+///
+/// 挑值靠它，不靠位置：一行上哪几格在场随这一卷、这一页而变
+/// （见 [`Row::cell`]），按位置数格早晚数错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    /// 成句的那一份：整句话，不再拆。
+    Sentence,
+    /// 源：卷的路径，或驱动页的路径。
+    Source,
+    /// 去处：卷的输出目录，或一页的输出文件。
+    Output,
+    /// 输出页数。
+    PageCount,
+    /// 彩页几张。**一张都没有就不在场。**
+    ColorPages,
+    /// 几何门的判定范围有几页。
+    GateScope,
+    /// 判定范围里几页不成立。
+    GateBroken,
+    /// 本卷抖不抖。
+    Dither,
+    /// 基准档。**表要的就是这一格**，而成句的那一格里说的是同一个数。
+    Base,
+    /// 上包络那一整句（四个数与「均未标定」那一句，出处在库里）。
+    Envelope,
+    /// 一个候选：覆盖顶掉判定时是那个覆盖值，逐页判定时是这一页判成的那一档。
+    Candidate,
+    /// 判成这一档的理由。
+    Reason,
+    /// 各候选的判据值排成一串。
+    Scores,
+    /// 这一趟怎么读的。
+    Reading,
+    /// 缓存用量。
+    Cache,
+    /// 一页的输出尺寸。
+    Size,
+    /// 裁边裁掉了多少。**一个像素都没裁就不在场。**
+    Crop,
+    /// 缩放怎么算的；失败页说的是它的尺寸从哪来。
+    Scaling,
+    /// 跨页切出来的哪一半。**不是切出来的就不在场。**
+    Cut,
+    /// 兜底上界退回过。**没退回过就不在场。**
+    Backstop,
+    /// 部分救回了多少。**不是部分救回的页就不在场。**
+    Salvage,
+    /// 这一页是彩页转灰。**不是就不在场。**
+    ColorToGray,
 }
 
 /// 抬头：这批输出给哪台设备、页尺寸照哪种适配方式算出、判据是怎么聚合出来的，
@@ -100,65 +256,73 @@ fn interlock_lines(report: &Report) -> String {
         .collect()
 }
 
-/// 一个卷的**卷级**那几行：去处与页数、过期副本、判定、这一趟怎么读的、缓存用量。
+/// 一个卷的**卷级**那几[行](Row)：去处与页数、过期副本、判定、这一趟怎么读的、缓存用量。
 ///
 /// 逐页那些行不在里面，它们在 [`pages`]。分成两个函数是给会话用的：报告区默认只给卷级，
-/// 展开某一卷才逐页（p1 spec 的《会话：布局与交互》）。命令行两段都要，接连拼上去
-/// 就是从前那一整段。
+/// 展开某一卷才逐页（p1 spec 的《会话：布局与交互》）。命令行两段都要，接连摆下去
+/// 就是从前那一整段（[`plain`]）。
+///
+/// **哪几行在场随这一卷而变**，摆的次序不变：跳过的卷没有几何门、没有卷级判定、
+/// 也没有缓存用量——那三样它一样都没算过。
 ///
 /// 那个页数是**输出**页数——用户打开的那本书里躺着几页。源页数是另一个数
 /// （`VolumeReport::source_pages`，页几何批 03 号票），一个源页可以产出多张输出页；
 /// 两者眼下相等，这一行因此还没有分开说的必要。
-pub fn volume(volume: &VolumeReport) -> String {
-    let mut text = format!(
-        "{} → {}（{} 页{}）\n",
-        volume.volume.display(),
-        volume.output.display(),
-        volume.page_count(),
-        color_page_note(volume)
-    );
-    text.push_str(&superseded_line(volume));
-    text.push_str(&verdict_lines(volume));
+pub fn volume(volume: &VolumeReport) -> Vec<Row> {
+    let mut rows = vec![Row::new(RowKind::Volume, volume_cells(volume))];
+    rows.extend(superseded_row(volume));
+    rows.extend(verdict_rows(volume));
     // 这一卷是怎么读的（13 号票）。它排在跳过那一支**之前**：幂等命中的卷同样把整卷的字节
     // 读了一遍，读法与做事的那一趟是同一个，而「跳过一卷为什么也要等这么久」正问在这里。
-    text.push_str(&format!("  {}\n", volume.io));
+    rows.push(Row::one(
+        RowKind::Reading,
+        Cell::new(Field::Reading, volume.io.to_string()),
+    ));
     // 开工前摊到临时目录的那一笔（ADR 0015）。它同样排在跳过那一支**之前**，
     // 理由与上一行同一条：幂等那一道要把整卷的字节读一遍，而读之前得先摊开——
     // 跳过的卷付了这笔磁盘，报告里就得说得出。
-    text.push_str(&extraction_line(volume));
-    // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`verdict_lines` 那一行已经说完了。
+    rows.extend(extraction_row(volume));
+    // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`verdict_rows` 那一行已经说完了。
     if volume.skipped() {
-        return text;
+        return rows;
     }
     // 卷成为不可分割的处理单元，峰值内存随卷大小走（ADR 0005）：这一行是那条代价的现场。
-    text.push_str(&format!("  缓存 {}\n", volume.cache));
-    text
+    rows.push(Row::one(
+        RowKind::Cache,
+        Cell::new(Field::Cache, volume.cache.to_string()),
+    ));
+    rows
 }
 
-/// 一个卷的逐页那些行：每页两行，一行几何、一行判定。
+/// 卷那一行的那几格：源、去处、页数，以及彩页几张。
+fn volume_cells(volume: &VolumeReport) -> Vec<Cell> {
+    let mut cells = vec![
+        Cell::new(Field::Source, volume.volume.display().to_string()),
+        Cell::new(Field::Output, volume.output.display().to_string()),
+        Cell::new(Field::PageCount, volume.page_count().to_string()),
+    ];
+    cells.extend(color_pages(volume));
+    cells
+}
+
+/// 一个卷的逐页那些[行](Row)：每页两行，一行[几何](RowKind::PageGeometry)、
+/// 一行判定（[灰度](RowKind::PageVerdict)、[彩色分支](RowKind::PageColor)
+/// 或[失败](RowKind::PageFailure)三者之一）。
 ///
 /// 跳过的卷一行都不出：那一趟根本没算过逐页结果，摆出任何一项都是编的。
 /// 这里问的是 [`VolumeReport::skipped`]——跳过在那个结构上由两处一起体现，
 /// 而认哪一处只许有一个出处（见 `VolumeReport::skipped` 的文档）。
 /// 拆分之前这道守卫与 [`volume`] 里那道是同一句 `continue`。
-pub fn pages(volume: &VolumeReport) -> String {
+pub fn pages(volume: &VolumeReport) -> Vec<Row> {
     if volume.skipped() {
-        return String::new();
+        return Vec::new();
     }
-    let mut text = String::new();
+    let mut rows = Vec::new();
     for page in &volume.pages {
-        text.push_str(&format!(
-            "  {}  {}{}{}{}  {}\n",
-            page.size,
-            crop_note(page),
-            scaling_note(page),
-            cut_note(page),
-            backstop_note(page),
-            page.output.display()
-        ));
-        text.push_str(&format!("    {}\n", page_line(page)));
+        rows.push(Row::new(RowKind::PageGeometry, geometry_cells(page)));
+        rows.push(page_row(page));
     }
-    text
+    rows
 }
 
 /// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
@@ -375,7 +539,7 @@ fn failed_volume_tail(report: &Report) -> String {
 /// 几十卷跑下来，逐页那几行早滚出屏幕了，不在末尾说一句就等于没说。
 ///
 /// 这一行只报数，不重复「它们没参与卷级的哪两件事」——那句话在卷级那一行上，
-/// 而这一行与它出现在同一份报告里（见 [`salvaged_line`]）。
+/// 而这一行与它出现在同一份报告里（见 [`salvaged_row`]）。
 ///
 /// 一页都没有就一个字都不说，与隔离那一行同一条规矩。
 fn salvage_tail(report: &Report) -> String {
@@ -398,15 +562,16 @@ fn salvage_tail(report: &Report) -> String {
 /// 报告因此要指名道姓地说出它在哪儿，删不删由用户定。
 ///
 /// 这一行排在卷级各行之前：它说的不是这一趟做了什么，而是上一趟留下了什么。
-fn superseded_line(volume: &VolumeReport) -> String {
-    match &volume.superseded {
-        Some(path) => format!(
-            "  过期副本 {}：上一趟写在那儿，这一趟没有覆盖它。\
-             那一份当初若是被隔离过的，它整卷都是白页——删不删由你\n",
+fn superseded_row(volume: &VolumeReport) -> Option<Row> {
+    let path = volume.superseded.as_ref()?;
+    Some(sentence_row(
+        RowKind::Superseded,
+        format!(
+            "过期副本 {}：上一趟写在那儿，这一趟没有覆盖它。\
+             那一份当初若是被隔离过的，它整卷都是白页——删不删由你",
             path.display()
         ),
-        None => String::new(),
-    }
+    ))
 }
 
 /// 摊开那一行（ADR 0015 决定第 3 条）。**只有摊开过的卷才有它**。
@@ -417,14 +582,17 @@ fn superseded_line(volume: &VolumeReport) -> String {
 /// 恒是 0 的那些卷（`.cbz` / `.zip` 与目录卷）一个字都不说——那一行在它们身上没有信息，
 /// 与末尾那几小结同一条规矩。字节数走库那一份进位（[`tonefit::format_bytes`]），
 /// 好让这一行与上一行的缓存用量在同一屏上是同一种单位。
-fn extraction_line(volume: &VolumeReport) -> String {
+fn extraction_row(volume: &VolumeReport) -> Option<Row> {
     if volume.extracted == 0 {
-        return String::new();
+        return None;
     }
-    format!(
-        "  摊开 {}（开工前整卷解到临时目录，跑完就收）\n",
-        tonefit::format_bytes(volume.extracted)
-    )
+    Some(sentence_row(
+        RowKind::Extraction,
+        format!(
+            "摊开 {}（开工前整卷解到临时目录，跑完就收）",
+            tonefit::format_bytes(volume.extracted)
+        ),
+    ))
 }
 
 /// 卷级那一段里说部分救回的那一行，排在隔离那一行之后（04 号票）。
@@ -432,16 +600,19 @@ fn extraction_line(volume: &VolumeReport) -> String {
 /// 隔离那一行说的是「这一卷有页根本没出来」，这一行说的是「有页出来了，但不全」。
 /// 两句分开，因为后果不同：前者整卷换了去处，后者没有——这一卷仍在干净的去处，
 /// 而卷级的档是在**没有**这几页的情况下定出来的，那正是这一行要交代的事。
-fn salvaged_line(volume: &VolumeReport) -> String {
+fn salvaged_row(volume: &VolumeReport) -> Option<Row> {
     let pages = volume.salvaged().count();
     if pages == 0 {
-        return String::new();
+        return None;
     }
-    format!(
-        "  部分救回 {pages} 页：整解失败，按文件头的尺寸救回了一段，缺的那一段留成纸白。\
-         它们不参与卷级上包络，各自单独定档。几何门照旧问它们——那是文件头里的真尺寸；\
-         门在哪一页上也不成立，那一页就改按门那一条来（见上）\n"
-    )
+    Some(sentence_row(
+        RowKind::Salvaged,
+        format!(
+            "部分救回 {pages} 页：整解失败，按文件头的尺寸救回了一段，缺的那一段留成纸白。\
+             它们不参与卷级上包络，各自单独定档。几何门照旧问它们——那是文件头里的真尺寸；\
+             门在哪一页上也不成立，那一页就改按门那一条来（见上）"
+        ),
+    ))
 }
 
 /// 抬头那一行里说裁边的那一小截：开着就把裁法那两个数一并印出来。
@@ -456,115 +627,122 @@ fn crop_rule(on: bool) -> String {
     }
 }
 
-/// 一页那一行里说裁边的那一小截，排在缩放**之前**——裁边发生在适配之前。
+/// 一页几何那一行的那几格：这一页的尺寸是怎么来的，以及它写到哪儿。
 ///
-/// **真裁掉了东西才说话**：一页都没裁的页在这里一个字不说，与彩页那一小截同一条规矩
-/// （见 [`color_page_note`]）。这一趟开没开裁边由抬头那一行说，两件事分得开。
-/// 失败页也不说：它没有像素可裁，那一格由 [`scaling_note`] 顶着。
-fn crop_note(page: &PageReport) -> String {
-    match page.crop() {
-        Some(crop) if crop.trimmed() => format!("{crop} · "),
-        _ => String::new(),
+/// 那一行顺着「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」读下来，
+/// 这几格因此按那个次序摆：裁边在缩放**之前**（裁边发生在适配之前），
+/// 跨页与兜底在它**之后**（兜底改的是最后那一步的规矩，07 号票）。
+///
+/// **四格各自只在真发生过时在场**（见 [`Field`] 上那几条）：
+///
+/// - **裁边**——一个像素都没裁的页不占这一格。这一趟开没开裁边由抬头那一行说，
+///   两件事分得开。失败页也没有：它没有像素可裁。
+/// - **缩放**——恒在场。失败页没有缩放可说（ADR 0001 那三个数一个都不成立），
+///   那一格于是改说它的尺寸是从哪来的：卷内统一，不是它自己的。
+/// - **跨页**——说的是**哪一侧**，不是排第几：排第几看成员名上那个序号就行，
+///   而「这张图原来长在页的哪边」没有第二处说得出来（见 `tonefit::Side`）。
+///   「这一卷没有跨页」与「整趟没开拆分」在逐页那几行上长得一样，后者由抬头那一行说。
+/// - **兜底退回**——末尾那一小结数的是**这一趟**有几页，而且只点名头几页；
+///   「哪一页」要逐页翻得到，靠的就是这一格（07 号票：退回这件事逐页可指认）。
+fn geometry_cells(page: &PageReport) -> Vec<Cell> {
+    let mut cells = vec![Cell::new(Field::Size, page.size.to_string())];
+    if let Some(crop) = page.crop().filter(|crop| crop.trimmed()) {
+        cells.push(Cell::new(Field::Crop, crop.to_string()));
     }
-}
-
-/// 一页那一行里说这一张是跨页哪一半的那一小截（04 号票）。
-///
-/// **真是切出来的一半才说话**，与裁边那一小截同一条规矩：整页出的页在这里一个字不说。
-/// 这一趟开没开拆分由抬头那一行说，两件事分得开——「这一卷没有跨页」与「整趟没开拆分」
-/// 在逐页那几行上长得一样。
-///
-/// 说的是**哪一侧**，不是排第几：排第几看成员名上那个序号就行，而「这张图原来长在页的哪边」
-/// 没有第二处说得出来（见 `tonefit::Side`）。
-fn cut_note(page: &PageReport) -> String {
-    match page.cut() {
-        Some(cut) => format!(" · {cut}"),
-        None => String::new(),
+    cells.push(Cell::new(
+        Field::Scaling,
+        match page.scaling() {
+            Some(scaling) => scaling.to_string(),
+            None => "失败页 · 卷内统一尺寸留白".to_owned(),
+        },
+    ));
+    if let Some(cut) = page.cut() {
+        cells.push(Cell::new(Field::Cut, cut.to_string()));
     }
-}
-
-/// 一页那一行里说兜底上界的那一小截，排在最后（07 号票）。
-///
-/// **真退回过才说话**，与裁边那一小截同一条规矩。它排在缩放后面：那一行顺着
-/// 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」读下来，而兜底改的是最后那一步的规矩。
-///
-/// 末尾那一小结数的是**这一趟**有几页，而且只点名头几页；「哪一页」要逐页翻得到，
-/// 靠的是这一小截（07 号票：退回这件事逐页可指认）。
-fn backstop_note(page: &PageReport) -> String {
     if page.backstopped() {
-        " · 兜底退回 fit-inside".to_owned()
-    } else {
-        String::new()
+        cells.push(Cell::new(Field::Backstop, "兜底退回 fit-inside"));
     }
+    cells.push(Cell::new(Field::Output, page.output.display().to_string()));
+    cells
 }
 
-/// 一页那一行里说缩放的那一小截。
-///
-/// 失败页没有缩放可说——它没被缩放过（ADR 0001 那三个数一个都不成立）。
-/// 那一格于是改说它的尺寸是从哪来的：卷内统一，不是它自己的。
-fn scaling_note(page: &PageReport) -> String {
-    match page.scaling() {
-        Some(scaling) => scaling.to_string(),
-        None => "失败页 · 卷内统一尺寸留白".to_owned(),
-    }
-}
-
-/// 幂等命中而跳过的卷那一行。
+/// 幂等命中而跳过的卷那一句。
 ///
 /// 「跳过」本身不够——用户要能分清「这一卷没变」与「工具没做事」。四项依据点名摆出来，
 /// 改了其中哪一项会让它重做，一眼看得见（spec 的 story 8、story 9）。
-const SKIPPED_LINE: &str =
-    "  跳过 幂等命中：工具版本、profile、参数、源均未变，上一趟的输出还在，这一卷一页都没有重做\n";
+const SKIPPED: &str =
+    "跳过 幂等命中：工具版本、profile、参数、源均未变，上一趟的输出还在，这一卷一页都没有重做";
 
-/// 卷那一行里说彩页有几张的那一小截。
+/// 卷那一行里说彩页有几张的那一格。
 ///
-/// 一张都没有就不说——绝大多数卷是这个样子（见 measurements 的《B 类素材普查》：97% 近灰度），
-/// 每卷都挂一句「彩页 0 页」只是噪声。数的是**彩页**，与它走了哪条分支无关。
-fn color_page_note(volume: &VolumeReport) -> String {
+/// 一张都没有就**不在场**——绝大多数卷是这个样子（见 measurements 的《B 类素材普查》：
+/// 97% 近灰度），每卷都挂一句「彩页 0 页」只是噪声。数的是**彩页**，与它走了哪条分支无关。
+fn color_pages(volume: &VolumeReport) -> Option<Cell> {
     let count = volume
         .pages
         .iter()
         .filter(|page| page.color() == Some(PageColor::Color))
         .count();
-    if count == 0 {
-        String::new()
-    } else {
-        format!("，其中彩页 {count} 页")
-    }
+    (count > 0).then(|| Cell::new(Field::ColorPages, count.to_string()))
 }
 
 /// 卷级那几行里说判定的那一段：几何门的判定结果，加上这一卷的候选从哪来。
 ///
 /// 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
 /// 上包络不在场时说清是为什么不在场——那正是翻页跳变回来的时候，报告不能看起来还是一样。
-fn verdict_lines(volume: &VolumeReport) -> String {
+fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
     // 一张灰度页都没有的卷（只装着彩页的、整卷全失败的）没有候选可判，几何门也就无从谈起。
     let Some(verdict) = &volume.verdict else {
-        return String::new();
+        return Vec::new();
     };
-    // 跳过的卷同样没有几何门可说——它一页都没算。这一支要排在 `gate_line` 之前：
+    // 跳过的卷同样没有几何门可说——它一页都没算。这一支要排在 `gate_rows` 之前：
     // 那里读的 `volume.gate` 只有算过的卷才有。
     if volume.skipped() {
-        return SKIPPED_LINE.to_owned();
+        return vec![sentence_row(RowKind::Skipped, SKIPPED)];
     }
-    let mut text = isolated_line(volume);
-    text.push_str(&salvaged_line(volume));
-    text.push_str(&gate_line(volume, verdict));
-    text.push_str(&match verdict {
-        VolumeVerdict::Envelope(envelope) => format!(
-            "  卷级 {envelope}\n    驱动页 {}\n",
-            volume.pages[envelope.driver].source.display()
-        ),
-        VolumeVerdict::Override(candidate) => format!(
-            "  卷级 判定 {candidate}（覆盖项裁到只剩一个候选）：判定被顶掉，卷级基准档无从谈起\n"
-        ),
-        VolumeVerdict::PerPage => {
-            "  卷级 无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档\n".to_owned()
-        }
+    let mut rows: Vec<Row> = Vec::new();
+    rows.extend(isolated_row(volume));
+    rows.extend(salvaged_row(volume));
+    rows.extend(gate_rows(volume, verdict));
+    rows.extend(match verdict {
+        // 上包络与它指出的驱动页是**两行**：驱动页是一页的名字，而上包络那一句是这一卷的判定。
+        // 表要的基准档另占一格——它与那一句里说的是同一个数，取值不必回头认字符串。
+        VolumeVerdict::Envelope(envelope) => vec![
+            Row::new(
+                RowKind::Envelope,
+                vec![
+                    Cell::new(Field::Base, envelope.base.to_string()),
+                    Cell::new(Field::Envelope, envelope.to_string()),
+                ],
+            ),
+            Row::one(
+                RowKind::Driver,
+                Cell::new(
+                    Field::Source,
+                    volume.pages[envelope.driver].source.display().to_string(),
+                ),
+            ),
+        ],
+        VolumeVerdict::Override(candidate) => vec![Row::new(
+            RowKind::Override,
+            vec![
+                Cell::new(Field::Candidate, candidate.to_string()),
+                Cell::new(
+                    Field::Sentence,
+                    format!(
+                        "判定 {candidate}（覆盖项裁到只剩一个候选）：判定被顶掉，卷级基准档无从谈起"
+                    ),
+                ),
+            ],
+        )],
+        VolumeVerdict::PerPage => vec![sentence_row(
+            RowKind::PerPage,
+            "无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档",
+        )],
         // 上面那一支已经把跳过的卷送走了。
-        VolumeVerdict::Skipped { .. } => String::new(),
+        VolumeVerdict::Skipped { .. } => Vec::new(),
     });
-    text
+    rows
 }
 
 /// 被隔离的卷那一行，排在卷级各行之首（12 号票：含失败页的卷被标记）。
@@ -572,16 +750,19 @@ fn verdict_lines(volume: &VolumeReport) -> String {
 /// 卷那一行里的去处已经指着隔离目录了，但那要用户认得出那个目录名才读得懂。
 /// 这一行把话说完：几页失败、这一卷因此去了哪儿、坏页在输出里是什么样子。
 /// 后面几行照常——隔离的卷是**处理过**的卷，几何门、卷级判定、逐页结果一样不少。
-fn isolated_line(volume: &VolumeReport) -> String {
+fn isolated_row(volume: &VolumeReport) -> Option<Row> {
     let failed = volume.failures().count();
     if failed == 0 {
-        return String::new();
+        return None;
     }
-    format!(
-        "  隔离 {failed} 页失败：本卷整卷写到隔离目录 {}，\
-         失败页以卷内统一尺寸留白占位，页序不断\n",
-        volume.output.display()
-    )
+    Some(sentence_row(
+        RowKind::Isolated,
+        format!(
+            "隔离 {failed} 页失败：本卷整卷写到隔离目录 {}，\
+             失败页以卷内统一尺寸留白占位，页序不断",
+            volume.output.display()
+        ),
+    ))
 }
 
 /// 几何门那一段：门的**判定范围**、范围里有几页不成立，加上本卷最终抖不抖。
@@ -594,42 +775,59 @@ fn isolated_line(volume: &VolumeReport) -> String {
 /// **被排除的页要指得出来**，与上包络指出驱动页同一个做法：不指名，用户就无从判断
 /// 这一卷该不该换个 profile。逐页那几行各自标着理由（`几何门不成立，本页不抖动`），
 /// 这里只给个抓手——页数多起来时全列一遍只会把卷级那几行淹掉。
-fn gate_line(volume: &VolumeReport, verdict: &VolumeVerdict) -> String {
+fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
     let judged = volume.judged_by_the_gate().count();
     let broken: Vec<&PageReport> = volume.outside_the_gate().collect();
     // `--per-page` 一开就没有卷级的抖动模式：它跟着位深一起逐页可变。
     let dither = verdict
         .dither()
         .map_or_else(|| "逐页".to_owned(), |dither| dither.to_string());
-    let mut text = format!(
-        "  几何门 判定范围 灰度页 {judged} 页 · 不成立 {} 页 · 本卷 {dither}\n",
-        broken.len()
-    );
+    let mut rows = vec![Row::new(
+        RowKind::Gate,
+        vec![
+            Cell::new(Field::GateScope, judged.to_string()),
+            Cell::new(Field::GateBroken, broken.len().to_string()),
+            Cell::new(Field::Dither, dither),
+        ],
+    )];
     if broken.is_empty() {
-        return text;
+        return rows;
     }
     if broken.len() == judged {
         // 一页成立的都没有：没有别人可护，这些页自己就是主体，卷级那一档由它们定出
         // ——那一档必然不抖（ADR 0007 决定第 5 条）。
-        text.push_str(
-            "    范围内一页都不成立：每一页源都比目标小，按不放大原样输出，\
-             阅读器还要再缩一次。没有别人可护，卷级基准档由它们自己定出，抖动因此整卷关闭\n",
-        );
+        rows.push(gate_note(
+            "范围内一页都不成立：每一页源都比目标小，按不放大原样输出，\
+             阅读器还要再缩一次。没有别人可护，卷级基准档由它们自己定出，抖动因此整卷关闭",
+        ));
     } else {
-        text.push_str(&format!("    不成立：{}\n", first_few_names(&broken)));
-        text.push_str(
-            "    这几页源比目标小，原样输出，阅读器还要再缩一次：它们不进卷级上包络，\
-             抖动单独关掉，位深仍跟着卷级基准档、不低于它\n",
-        );
+        rows.push(gate_note(format!("不成立：{}", first_few_names(&broken))));
+        rows.push(gate_note(
+            "这几页源比目标小，原样输出，阅读器还要再缩一次：它们不进卷级上包络，\
+             抖动单独关掉，位深仍跟着卷级基准档、不低于它",
+        ));
     }
     // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
     // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
     // 报告因此得把这句话说出来，而不是让它烂在一句注释里。
-    text.push_str(
-        "    面板灰阶上界的依据在这几页上随门一起失效，\
-         P0 仍按它裁候选位深（ADR 0003：该用哪个集合尚未测量）\n",
-    );
-    text
+    rows.push(gate_note(
+        "面板灰阶上界的依据在这几页上随门一起失效，\
+         P0 仍按它裁候选位深（ADR 0003：该用哪个集合尚未测量）",
+    ));
+    rows
+}
+
+/// 几何门那一行底下的一句注解。
+fn gate_note(sentence: impl Into<String>) -> Row {
+    sentence_row(RowKind::GateNote, sentence)
+}
+
+/// **成句的那一种行**：一行只有一格，装着整句话（[`Field::Sentence`]）。
+///
+/// 它们本来就是句子，拆开没有意义——拆的那一刀会把措辞挪到排版那一层去，
+/// 而措辞只许有一处出处（ADR 0016）。画它的那一头把这样的一行当整段文字折行。
+fn sentence_row(kind: RowKind, sentence: impl Into<String>) -> Row {
+    Row::one(kind, Cell::new(Field::Sentence, sentence))
 }
 
 /// 头几页的名字排成一句，剩下的报个数收口。
@@ -660,32 +858,38 @@ fn first_few_names(pages: &[&PageReport]) -> String {
 ///
 /// 失败页那一行说的是**原因**（spec 的 story 26）：报告要让用户知道该去修哪几张。
 /// 原因是由内到外的整条错误链，最外一环指得出是哪一页、卡在哪一步。
-fn page_line(page: &PageReport) -> String {
+fn page_row(page: &PageReport) -> Row {
     let Some(branch) = page.branch() else {
-        return failure_line(page.failure().expect("没有分支的页必是失败页"));
+        return sentence_row(
+            RowKind::PageFailure,
+            failure_line(page.failure().expect("没有分支的页必是失败页")),
+        );
     };
     // 部分救回页标在行首（04 号票）：它有判定、有判据、有自己的尺寸，逐页那一行因此
     // 与一张完好页长得一模一样，而它的判据是在一页大半留白的图上求出来的。
-    let salvaged = match page.salvage() {
-        Some(salvage) => format!("{salvage} · "),
-        None => String::new(),
-    };
+    let mut cells: Vec<Cell> = page
+        .salvage()
+        .map(|salvage| Cell::new(Field::Salvage, salvage.to_string()))
+        .into_iter()
+        .collect();
     match branch {
         PageBranch::Gray {
             scores, verdict, ..
-        } => format!(
-            "{salvaged}{}判定 {}（{}）  判据 {}",
+        } => {
             if page.color() == Some(PageColor::Color) {
-                "彩页转灰 · "
-            } else {
-                ""
-            },
-            verdict.candidate,
-            verdict.reason,
-            score_line(scores)
-        ),
+                cells.push(Cell::new(Field::ColorToGray, "彩页转灰"));
+            }
+            cells.push(Cell::new(Field::Candidate, verdict.candidate.to_string()));
+            cells.push(Cell::new(Field::Reason, verdict.reason.to_string()));
+            cells.push(Cell::new(Field::Scores, score_line(scores)));
+            Row::new(RowKind::PageVerdict, cells)
+        }
         PageBranch::Color => {
-            format!("{salvaged}彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络")
+            cells.push(Cell::new(
+                Field::Sentence,
+                "彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络",
+            ));
+            Row::new(RowKind::PageColor, cells)
         }
     }
 }
@@ -698,7 +902,10 @@ fn failure_line(reason: &str) -> String {
     format!("失败 {reason}")
 }
 
-/// 一页各候选的判据值排成一行，候选由小到大。
+/// 一页各候选的判据值排成一串，候选由小到大——[判据那一格](Field::Scores)装的就是它。
+///
+/// **串起来的那个 `·` 是措辞，不是排版**：一格装一个值，而这一格的值本身是一串东西，
+/// 「一串东西怎么说」与「一个数怎么写」同属措辞（ADR 0016 决定第 2 条）。
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
         .iter()
@@ -714,7 +921,7 @@ fn score_line(scores: &[CandidateScore]) -> String {
 /// 它与逐页那一行（[`pages`] 里失败页那一支）说的是同一件事、同一份原因——
 /// 那一份是结果，这一段是**增量**（见 `tonefit::Event::PageFailed`）。
 /// 会话非要它不可，是因为报告区默认只给卷级，而卷级那几行只说得出「几页失败」、
-/// 说不出为什么（见 [`isolated_line`]），何况那一行要等整卷跑完才有。
+/// 说不出为什么（见 [`isolated_row`]），何况那一行要等整卷跑完才有。
 ///
 /// 命令行不画它：那一路攒完才印，那时逐页那几行已经把话说全了。
 /// 措辞仍然只有这一处——会话画的是它，不是自己另编的一句。
@@ -981,7 +1188,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::DryRun);
+        let text = plain::report(&report, Mode::DryRun);
 
         assert!(text.contains("dry-run"), "{text}");
         assert!(text.contains("还没落盘"), "{text}");
@@ -1031,7 +1238,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行（构成与聚合）、
         // 卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
@@ -1160,7 +1367,7 @@ mod tests {
     fn the_header_says_once_that_splitting_meets_fit_inside() {
         let report = switches_report(FitMode::Inside, true, SplitRule::default());
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(
             text.contains(&Interlock::SpreadsStayFlattened.to_string()),
@@ -1192,7 +1399,7 @@ mod tests {
             (FitMode::Height, split_off),
             (FitMode::Inside, split_off),
         ] {
-            let text = super::report(&switches_report(fit, true, split), Mode::Process);
+            let text = plain::report(&switches_report(fit, true, split), Mode::Process);
             assert!(!text.contains("互锁"), "{fit:?} {split:?}\n{text}");
         }
     }
@@ -1214,7 +1421,7 @@ mod tests {
             "裁边关着却没咬上"
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(!text.contains("互锁"), "{text}");
         assert!(
@@ -1241,7 +1448,7 @@ mod tests {
         let engaged: Vec<Interlock> = report.interlocks().collect();
         assert_eq!(engaged.len(), 2, "{engaged:?}");
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         for interlock in engaged {
             assert_eq!(
@@ -1287,7 +1494,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // 判定范围与不成立的页数并排：一卷全是彩页时门同样成立，那是「无人可关」，
         // 不是「每一页都贴住了面板」。
@@ -1344,7 +1551,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("输出宽超过面板 1 页"), "{text}");
         assert!(text.contains("最宽 5056×1680"), "{text}");
@@ -1397,7 +1604,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("兜底上界 1 页"), "{text}");
         // 是哪一页要点名——报告里翻不回去就等于没说。
@@ -1451,7 +1658,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(!text.contains("兜底"), "{text}");
     }
@@ -1494,7 +1701,7 @@ mod tests {
         };
         let trimmed = Crop::new(Size::new(1441, 2048), (120, 100), Size::new(1200, 1600));
 
-        let text = super::report(
+        let text = plain::report(
             &one_page_report(
                 profile.clone(),
                 VolumeVerdict::Envelope(envelope(candidate)),
@@ -1512,7 +1719,7 @@ mod tests {
         assert!(crop_at < scaling_at, "裁边排到了缩放后面：{text}");
 
         // 一个像素都没裁的那一页：逐页那一行一个字不说，抬头那一行照旧说得出裁边开着。
-        let untouched = super::report(
+        let untouched = plain::report(
             &one_page_report(
                 profile,
                 VolumeVerdict::Envelope(envelope(candidate)),
@@ -1594,7 +1801,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // 卷那一行数得出彩页有几张：走哪条分支不影响它是不是彩页。
         assert!(text.contains("3 页，其中彩页 2 页"), "{text}");
@@ -1638,7 +1845,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行、卷两行，
         // 加上读取那一行——跳过的卷同样把整卷读了一遍。
@@ -1691,7 +1898,7 @@ mod tests {
             fingerprint: probed(1),
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("读取串行"), "{text}");
         assert!(text.contains("是网络路径"), "{text}");
@@ -1763,7 +1970,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // 卷级那一行说得出几页失败、整卷去了哪儿。
         assert!(text.contains("隔离 1 页失败"), "{text}");
@@ -1829,7 +2036,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("卷级失败 1 卷"), "{text}");
         assert!(text.contains("library/volume-b"), "{text}");
@@ -1888,7 +2095,7 @@ mod tests {
             },
         ];
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("非卷文件 3 个"), "{text}");
         // 逐条带路径：只报个数的话，用户还得自己回源库里对一遍才知道是哪几个。
@@ -1998,7 +2205,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         // 逐页那一行：救回了多少，摆在判定前面。
         assert!(text.contains("救回 62.5% · 判定 4bit"), "{text}");
@@ -2057,7 +2264,7 @@ mod tests {
             },
         );
 
-        let text = super::report(&report, Mode::Process);
+        let text = plain::report(&report, Mode::Process);
 
         assert!(!text.contains("隔离"), "{text}");
         assert!(!text.contains("失败"), "{text}");
@@ -2067,10 +2274,272 @@ mod tests {
         assert_eq!(exit_code(&report), SUCCESS_EXIT);
     }
 
+    /// 一个说得上话的卷：过期副本、摊开、隔离、上包络与驱动页，一张好页加一张失败页。
+    ///
+    /// 行与格那几条用它——一份报告上摆得出的行有大半在这里。
+    fn a_volume_worth_a_row_of_each_kind() -> VolumeReport {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let score = tonefit::score(
+            &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
+            &GrayImage::new(Size::new(1, 1), vec![136]),
+        );
+        VolumeReport {
+            volume: PathBuf::from("library/volume-a"),
+            output: PathBuf::from("out/_isolated/volume-a"),
+            superseded: Some(PathBuf::from("out/volume-a")),
+            verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
+            cache: cache_usage(),
+            extracted: 3 * 1024 * 1024,
+            io: io_plan(),
+            decodes: 2,
+            timing: VolumeTiming::default(),
+            source_pages: 2,
+            pages: vec![
+                PageReport {
+                    source: PathBuf::from("library/volume-a/001.jpg"),
+                    output: PathBuf::from("out/_isolated/volume-a/001.png"),
+                    size: Size::new(1264, 1680),
+                    outcome: PageOutcome::Whole(Processed {
+                        crop: nothing_trimmed(),
+                        backstopped: false,
+                        cut: None,
+                        spread_candidate: false,
+                        scaling: typical_scaling(),
+                        color: PageColor::Gray,
+                        branch: PageBranch::Gray {
+                            gate: GeometryGate::Holds,
+                            scores: vec![CandidateScore { candidate, score }],
+                            verdict: Verdict {
+                                candidate,
+                                reason: Reason::VolumeEnvelope,
+                            },
+                        },
+                    }),
+                },
+                PageReport {
+                    source: PathBuf::from("library/volume-a/002.jpg"),
+                    output: PathBuf::from("out/_isolated/volume-a/002.png"),
+                    // 失败页照卷内统一尺寸出：与上面那张好页一模一样。
+                    size: Size::new(1264, 1680),
+                    outcome: PageOutcome::Failed {
+                        reason: "解 library/volume-a/002.jpg 这一页: 判定格式".to_owned(),
+                    },
+                },
+            ],
+        }
+    }
+
+    /// **卷级与逐页出的是行，每一行说得出它是什么行**（ADR 0016）。
+    ///
+    /// 断言的是次序与种类，不是拼出来的那段文字——那一段由 [`plain`] 那一副钉着
+    /// （见 `drawing_the_four_parts_one_by_one_gives_the_same_bytes_as_one_shot`）。
+    /// 两者分开问，正是「措辞一处、排版两处」那条分界在用例上的样子。
+    #[test]
+    fn the_volume_and_page_lines_are_rows_that_each_say_what_they_are() {
+        let isolated = a_volume_worth_a_row_of_each_kind();
+
+        assert_eq!(
+            volume(&isolated)
+                .iter()
+                .map(|row| row.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                RowKind::Volume,
+                RowKind::Superseded,
+                RowKind::Isolated,
+                RowKind::Gate,
+                RowKind::Envelope,
+                RowKind::Driver,
+                RowKind::Reading,
+                RowKind::Extraction,
+                RowKind::Cache,
+            ]
+        );
+        // 一页两行：一行几何、一行判定，而失败那一页的判定是**另一种行**。
+        assert_eq!(
+            pages(&isolated)
+                .iter()
+                .map(|row| row.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                RowKind::PageGeometry,
+                RowKind::PageVerdict,
+                RowKind::PageGeometry,
+                RowKind::PageFailure,
+            ]
+        );
+
+        let rows = volume(&isolated);
+        // 卷那一行三格：源、去处、页数。一张彩页都没有，彩页那一格因此不在场。
+        assert_eq!(rows[0].cells.len(), 3);
+        assert_eq!(rows[0].cell(Field::PageCount), Some("2"));
+        assert_eq!(rows[0].cell(Field::ColorPages), None);
+        // 几何门那一行三格，三个数各占一格。
+        assert_eq!(rows[3].cells.len(), 3);
+        assert_eq!(rows[3].cell(Field::GateScope), Some("1"));
+        assert_eq!(rows[3].cell(Field::GateBroken), Some("0"));
+        // 基准档单占一格：表要的就是这一个值，不必回头去认那一整句话。
+        assert_eq!(rows[4].cell(Field::Base), Some("4bit"));
+        assert!(
+            rows[4]
+                .cell(Field::Envelope)
+                .expect("上包络那一格")
+                .starts_with("基准档 4bit"),
+            "{:?}",
+            rows[4]
+        );
+    }
+
+    /// **跳过的卷少的是格，不是话**：它没算过的那几项一格都不在场。
+    ///
+    /// 「跳过」本身仍是完整的一句（[`Field::Sentence`]），而基准档、几何门那三个数、
+    /// 缓存用量一个都取不出来——取不出来正是对的，那一趟根本没算过它们。
+    #[test]
+    fn a_skipped_volume_is_short_of_the_cells_it_never_computed() {
+        let mut skipped = extracted_by(512 * 1024);
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+
+        let rows = volume(&skipped);
+
+        assert_eq!(
+            rows.iter().map(|row| row.kind).collect::<Vec<_>>(),
+            // 摊开那一行在场：幂等那一道要把整卷读一遍，而读之前得先摊开。
+            vec![
+                RowKind::Volume,
+                RowKind::Skipped,
+                RowKind::Reading,
+                RowKind::Extraction,
+            ]
+        );
+        for field in [
+            Field::Base,
+            Field::GateScope,
+            Field::GateBroken,
+            Field::Dither,
+            Field::Cache,
+        ] {
+            assert!(
+                rows.iter().all(|row| row.cell(field).is_none()),
+                "跳过的卷不该有 {field:?} 那一格"
+            );
+        }
+        // 页数照旧在场：它是源那一侧的事实。
+        assert_eq!(rows[0].cell(Field::PageCount), Some("12"));
+        // 跳过那一行成句，只有一格。
+        assert_eq!(rows[1].cells.len(), 1);
+        assert!(
+            rows[1]
+                .cell(Field::Sentence)
+                .expect("跳过那一句")
+                .starts_with("跳过 幂等命中"),
+            "{:?}",
+            rows[1]
+        );
+        // 逐页一行都没有：那一趟根本没算过逐页结果。
+        assert!(pages(&skipped).is_empty());
+    }
+
+    /// **出了事的那一页与被它拖进隔离的那一卷各是一种行**，失败原因仍是整段文字。
+    ///
+    /// 「失败的卷是哪一种行」问的是卷级那一段：有页失败的卷多出一行
+    /// [`RowKind::Isolated`]，而不是在卷那一行上多一格——排版据此上色、给行首记号，
+    /// 不必回头去认那一句话里有没有「隔离」两个字。
+    ///
+    /// **卷级失败**（一个字节都没交出来的那种卷）不在这里：它连 `VolumeReport` 都没有，
+    /// 至今只活在末尾那一小结里（`failed_volume_tail`）。卷表要给它一行，
+    /// 那是画卷表那一张票的事，记在停车场 Q133。
+    ///
+    /// 失败原因是句子，拆开没有意义——会话把这样的一行当整段文字折行画。
+    /// 失败页那一行因此只有一格，而那一格装的是[逐页与增量共用的那一句](failure_line)。
+    #[test]
+    fn a_failed_page_and_the_volume_it_isolates_are_each_their_own_kind_of_row() {
+        let isolated = a_volume_worth_a_row_of_each_kind();
+        // 失败的卷是这一种行：卷级那一段里多出来的那一行，成句、只有一格。
+        let volume_rows = volume(&isolated);
+        let marked = volume_rows
+            .iter()
+            .find(|row| row.kind == RowKind::Isolated)
+            .expect("有页失败的卷该有隔离那一行");
+        assert_eq!(marked.cells.len(), 1);
+        assert!(
+            marked
+                .cell(Field::Sentence)
+                .expect("隔离那一句")
+                .starts_with("隔离 1 页失败"),
+            "{marked:?}"
+        );
+        // 一页都没失败的卷没有这一行——一行在不在场本身就是一句话。
+        let mut skipped = extracted_by(0);
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+        assert!(
+            volume(&skipped)
+                .iter()
+                .all(|row| row.kind != RowKind::Isolated)
+        );
+
+        let rows = pages(&isolated);
+
+        let failure = rows.last().expect("末一行是失败那一页的判定");
+        assert_eq!(failure.kind, RowKind::PageFailure);
+        assert_eq!(failure.cells.len(), 1);
+        assert_eq!(
+            failure.cell(Field::Sentence),
+            Some("失败 解 library/volume-a/002.jpg 这一页: 判定格式")
+        );
+        // 失败页的几何那一行说得出它的尺寸是**卷内统一**的，不是它自己缩出来的。
+        assert_eq!(
+            rows[2].cell(Field::Scaling),
+            Some("失败页 · 卷内统一尺寸留白")
+        );
+        // 没裁过、不是跨页、没退回过——那三格一个都不在场。
+        for field in [Field::Crop, Field::Cut, Field::Backstop] {
+            assert_eq!(rows[2].cell(field), None, "{field:?} 那一格不该在场");
+        }
+    }
+
+    /// **格里装的是值，不是摆法**（ADR 0016）：缩进、换行与行尾那些分隔符一个都不在里面。
+    ///
+    /// 这一条挡的是把排版偷偷搬回措辞那一层的改动：真有人把那两个空格写进某一格，
+    /// 纯文本那一副看不出任何异样，而表那一副会莫名其妙多出两格。
+    #[test]
+    fn a_cell_carries_a_value_and_never_an_indent_or_a_line_break() {
+        let isolated = a_volume_worth_a_row_of_each_kind();
+        let mut skipped = extracted_by(512 * 1024);
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+
+        let rows: Vec<Row> = [&isolated, &skipped]
+            .into_iter()
+            .flat_map(|each| volume(each).into_iter().chain(pages(each)))
+            .collect();
+
+        assert!(rows.len() > 10, "问这一条要先有足够多的行：{}", rows.len());
+        for row in &rows {
+            for cell in &row.cells {
+                assert!(
+                    !cell.text.contains('\n'),
+                    "{:?} 的 {:?} 那一格里有换行：{}",
+                    row.kind,
+                    cell.field,
+                    cell.text
+                );
+                assert_eq!(
+                    cell.text.trim(),
+                    cell.text,
+                    "{:?} 的 {:?} 那一格前后带着空白",
+                    row.kind,
+                    cell.field
+                );
+            }
+        }
+    }
+
     /// 四段各画各的，拼起来与一次性渲染出的**逐字节相同**（会话批的 02、09 号票）。
     ///
     /// 会话就是这么画的：抬头一次，卷级与逐页逐卷出，末尾收口。这一条钉住的是
-    /// 「两边措辞只有一套」——真有人在 [`report`] 里插了一行别处没有的东西，这里当场红。
+    /// 「两边措辞只有一套」——真有人在 [`plain::report`] 里插了一行别处没有的东西，
+    /// 这里当场红。**它同时是这一票的验收**：卷级与逐页降到行与格之后，
+    /// 拼回去的那一段仍旧与从前逐字节相同（ADR 0016）。
     #[test]
     fn drawing_the_four_parts_one_by_one_gives_the_same_bytes_as_one_shot() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -2125,12 +2594,12 @@ mod tests {
 
         let mut drawn = header(&report, Mode::Process);
         for each in &report.volumes {
-            drawn.push_str(&volume(each));
-            drawn.push_str(&pages(each));
+            drawn.push_str(&plain::volume(each));
+            drawn.push_str(&plain::pages(each));
         }
         drawn.push_str(&tail(&report));
 
-        assert_eq!(drawn, super::report(&report, Mode::Process));
+        assert_eq!(drawn, plain::report(&report, Mode::Process));
     }
 
     /// 计时**不进渲染出的文字**：印不印、印在哪由调用方定（加固批 11 号票）。
@@ -2195,8 +2664,8 @@ mod tests {
         }
         assert_eq!(tail(&slow), tail(&quick));
         assert_eq!(
-            super::report(&slow, Mode::Process),
-            super::report(&quick, Mode::Process)
+            plain::report(&slow, Mode::Process),
+            plain::report(&quick, Mode::Process)
         );
     }
 
@@ -2213,12 +2682,12 @@ mod tests {
     fn a_volume_that_was_extracted_says_how_many_bytes_it_took() {
         let untouched = extracted_by(0);
         assert!(
-            !volume(&untouched).contains("摊开"),
+            !plain::volume(&untouched).contains("摊开"),
             "没摊开的卷也印了那一行：{}",
-            volume(&untouched)
+            plain::volume(&untouched)
         );
 
-        let said = volume(&extracted_by(3 * 1024 * 1024));
+        let said = plain::volume(&extracted_by(3 * 1024 * 1024));
         assert!(said.contains("摊开 3.0 MiB"), "{said}");
         // 字节数走库那一份进位：同一屏上它与缓存那一行得是同一种单位。
         assert!(
@@ -2228,7 +2697,7 @@ mod tests {
 
         let mut skipped = extracted_by(512 * 1024);
         skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 1 });
-        let said = volume(&skipped);
+        let said = plain::volume(&skipped);
         assert!(
             said.contains("摊开 512.0 KiB"),
             "跳过的卷没说摊了多少：{said}"

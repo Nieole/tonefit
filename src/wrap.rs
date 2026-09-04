@@ -64,7 +64,7 @@ pub fn fold(text: &str, width: u16) -> Vec<String> {
 /// 折好之后拼回一段文字，每一行后面一个换行。
 ///
 /// 命令行印报告用它：报告本来就是每一段都以换行收尾的一段文字
-/// （见 [`crate::render::report`]），折过之后仍是。
+/// （见 [`crate::render::plain::report`]），折过之后仍是。
 pub fn folded_text(text: &str, width: u16) -> String {
     let mut out = String::with_capacity(text.len());
     for row in fold(text, width) {

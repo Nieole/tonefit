@@ -192,9 +192,9 @@ fn report_text(live: &Live, expand: Option<usize>) -> Unrolled {
         if expand == Some(at) {
             opens_at = rows(&text);
         }
-        text.push_str(&crate::render::volume(volume));
+        text.push_str(&crate::render::plain::volume(volume));
         if expand == Some(at) {
-            text.push_str(&crate::render::pages(volume));
+            text.push_str(&crate::render::plain::pages(volume));
         }
     }
     // 决策点上那一卷**到此刻为止**的那一份，接在收摊了的那几卷后面（停车场 Q52）。
@@ -202,7 +202,7 @@ fn report_text(live: &Live, expand: Option<usize>) -> Unrolled {
     // 只有第二遍一步没走。逐页那几行这里不给——与卷级默认那一副同一条（票面第一条），
     // 它也展不开：展开索引数的是报告上收摊了的那几卷，而这一卷还不在里面。
     if let Some(summarized) = live.summarized() {
-        text.push_str(&crate::render::volume(summarized));
+        text.push_str(&crate::render::plain::volume(summarized));
     }
     text.push_str(&crate::render::failing_pages(live.failed_pages()));
     if live.ended() {
@@ -346,7 +346,7 @@ mod tests {
     fn the_per_page_rows_come_from_render_and_only_for_the_volume_that_is_open() {
         let live = a_run_worth_expanding();
         let opened = &live.report().volumes[1];
-        let pages = crate::render::pages(opened);
+        let pages = crate::render::plain::pages(opened);
 
         let folded = report_text(&live, None).text;
         let unfolded = report_text(&live, Some(1)).text;
@@ -362,7 +362,7 @@ mod tests {
         assert!(folded.contains("库/卷二 → 出/隔离/卷二"), "{folded}");
         assert!(unfolded.contains("库/卷二 → 出/隔离/卷二"), "{unfolded}");
         // 幂等命中的卷展开了也一行逐页都没有（`render::pages` 那道守卫），不恐慌。
-        assert_eq!(crate::render::pages(&live.report().volumes[0]), "");
+        assert_eq!(crate::render::plain::pages(&live.report().volumes[0]), "");
         assert!(!report_text(&live, Some(0)).text.contains("判定 4bit"));
     }
 
@@ -375,7 +375,7 @@ mod tests {
     fn the_expanded_report_scrolls_sideways_instead_of_folding_a_page_row() {
         let (mut session, live) = expanded(1, opens_at(&a_run_worth_expanding(), 1));
         // 判据那一串的最后一个候选——逐页那一行的行尾。
-        let pages = crate::render::pages(&live.report().volumes[1]);
+        let pages = crate::render::plain::pages(&live.report().volumes[1]);
         let tail = pages
             .lines()
             .find(|line| line.contains("判据"))

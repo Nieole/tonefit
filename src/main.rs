@@ -688,7 +688,7 @@ fn execute() -> Result<u8> {
     // 不折就是一行几百格（见 [`wrap`]）。
     print!(
         "{}",
-        wrap::folded_text(&render::report(&report, mode), wrap::TERMINAL_WIDTH)
+        wrap::folded_text(&render::plain::report(&report, mode), wrap::TERMINAL_WIDTH)
     );
     Ok(exit_code(&report))
 }
