@@ -16,17 +16,17 @@
 //! # 三层与终端分开
 //!
 //! 状态机在 [`state`]，一个终端都不碰；边跑边攒的那一份在 [`live`]，同样不碰；
-//! 逐层补全在 [`complete`]；起线程在 [`run`]。画法在 [`draw`]，
-//! 进出终端、键码翻译与那条循环在 [`terminal`]。
+//! 逐层补全在 [`complete`]；起线程在 [`run`]；一个列表在一个格子里露出哪一段在
+//! [`viewport`]。画法在 [`draw`]，进出终端、键码翻译与那条循环在 [`terminal`]。
 //!
 //! 画法自己按**屏上那几块**又分了几个模块（左栏、预设栏、两条横条、报告区、屏底），
 //! 那张表在 [`draw`] 的模块文档里。
 //!
 //! # 终端库在哪一半
 //!
-//! **分界就是这几行 `mod`。**上面四个模块（[`state`]、[`live`]、[`run`]、[`complete`]）
-//! 一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features` 那一趟照编、
-//! 照跑它们自带的用例（`p2-loose-ends/01`，闸门的第二条）。真要终端库的那两个
+//! **分界就是这几行 `mod`。**上面五个模块（[`state`]、[`live`]、[`run`]、[`complete`]、
+//! [`viewport`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
+//! 那一趟照编、照跑它们自带的用例（`p2-loose-ends/01`，闸门的第二条）。真要终端库的那两个
 //! （[`draw`] 画，[`terminal`] 进出终端并翻译 crossterm 键码）留在 `tui` 后面——
 //! [`draw`] 底下那几个模块跟着它整棵在后面，新拆一块不必再挂一次 `cfg`。
 //!
@@ -51,6 +51,7 @@ mod complete;
 mod live;
 mod run;
 mod state;
+mod viewport;
 
 #[cfg(feature = "tui")]
 mod draw;

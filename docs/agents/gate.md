@@ -10,7 +10,7 @@
 | | 命令 | 盖住的那一趟 |
 |---|---|---|
 | 1 | `cargo test` | **默认构建**（`tui` 开着）。库、命令行、会话，加上 `tests/` 那十几个二进制。 |
-| 2 | `cargo test --no-default-features` | **甩掉终端库**那一趟。会话的状态机（`session` 下的 `state`、`live`、`run`、`complete`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
+| 2 | `cargo test --no-default-features` | **甩掉终端库**那一趟。会话里不碰终端的那几个模块（`session` 下的 `state`、`live`、`run`、`complete`、`viewport`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
 | 3 | `cargo check --features profiling` | **开着量具**那一趟。`src/cost.rs` 的 `tally`（两张原子计数表）只有这一条够得着。 |
 
 **三条互相说明不了对方**：

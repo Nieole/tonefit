@@ -16,6 +16,7 @@ use super::report::expandable;
 use crate::session::complete;
 use crate::session::live::Live;
 use crate::session::state::{Edit, Layer, Mode, Picker, Session, Shape};
+use crate::session::viewport::Viewport;
 use crate::wrap;
 
 /// 试算与执行那两个键。屏上提到它们的地方都用这一句——
@@ -69,7 +70,9 @@ impl Prompt {
 /// （见 [`browsing_keys`]）——屏上不摆按不动的键，那正是「按了没反应」的来源。
 pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<Line<'static>> {
     let Prompt { keys, what } = match session.mode() {
-        Mode::Editing(edit) => editing_prompt(session, edit),
+        // 编辑一行时说明那一半摆的是**补全候选**，而「列得下几条」要等这一格分给它
+        // 几行才算得出来——它因此不在这张表里拼，在下面 `room` 出来之后才补上。
+        Mode::Editing(edit) => Prompt::new(editing_keys(edit), ""),
         Mode::Browsing => Prompt::new(browsing_keys(session, live), ""),
         Mode::Running(pressed) => running_prompt(*pressed, live),
         Mode::Deciding(_) => deciding_prompt(),
@@ -78,14 +81,14 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
     };
     let said = wrap::fold(session.notice().unwrap_or(""), width);
     let mut rows = wrap::fold(&keys, width);
-    let room = usize::from(FOOTER_HEIGHT)
-        .saturating_sub(said.len())
-        .max(rows.len());
-    rows.extend(
-        wrap::fold(&what, width)
-            .into_iter()
-            .take(room.saturating_sub(rows.len())),
-    );
+    // 说明那一半分得到几行：按键那几行与要说的那句话先占（让位的次序见上）。
+    // **只算这一次**：补全候选列得下几条按的是同一个数（见 [`listed`]）。
+    let room = usize::from(FOOTER_HEIGHT).saturating_sub(rows.len().saturating_add(said.len()));
+    let what = match session.mode() {
+        Mode::Editing(edit) => listed(session, edit, width, room),
+        _ => what,
+    };
+    rows.extend(wrap::fold(&what, width).into_iter().take(room));
     // 要说的那句话贴着底：中间垫空行。没有话要说时垫到 [`FOOTER_HEIGHT`] 为止，
     // 与从前那一格逐格相同。
     while rows.len() + said.len() < usize::from(FOOTER_HEIGHT) {
@@ -263,25 +266,37 @@ fn picking_prompt(picker: &Picker) -> Prompt {
     )
 }
 
-fn editing_prompt(session: &Session, edit: &Edit) -> Prompt {
+/// 编辑一行时按键那一行：缓冲加这时按得动的几个键。
+///
+/// 下面那一行（这一层列出来的候选）不在这里拼——它要等 [`footer`] 算出这一格
+/// 分给它几行（见 [`listed`]）。
+fn editing_keys(edit: &Edit) -> String {
     let keys = match edit.field.shape() {
         Shape::Path => "⇥ 补这一层 · ⏎ 收下 · Esc 丢掉",
         _ => "⏎ 收下 · Esc 丢掉",
     };
-    Prompt::new(
-        format!(" {} {}▏   {keys}", edit.field.label(), edit.buffer),
-        // 只列打到的那一层，且**只是列出来**：不留索引、不留缓存（ADR 0009）。
-        format!(" {}", listed(session, edit)),
-    )
+    format!(" {} {}▏   {keys}", edit.field.label(), edit.buffer)
 }
 
-/// 补全列出来的那一层，摆成一行。空着就说一句这一层还没列过。
-fn listed(session: &Session, edit: &Edit) -> String {
+/// 补全列出来的那一层，摆在屏底。空着就说一句这一层还没列过。
+///
+/// **列得下几条列几条，剩下几条说出来。** 从前这里硬性只列 12 条，第 13 条起
+/// 没有任何交代——一层里有三十个目录时，屏上说的是「这一层有十二个东西」。
+///
+/// 「列得下几条」按**这一格真有多宽、分得到几行**（`room`，[`footer`] 算的那一个）：
+/// 一条一条往上加，加到摆不下为止。加不进去的那几条由 [`Viewport`] 数出来
+/// （`hidden`），与别处的「还有多少没露面」是同一份实现。
+///
+/// **这一处没有光标、也没有滚动条**，理由与别处的分别见 [`Viewport`] 那张表——
+/// 「还有 N 条」就是它说这件事的方式。
+///
+/// 只列打到的那一层，且**只是列出来**：不留索引、不留缓存（ADR 0009）。
+fn listed(session: &Session, edit: &Edit, width: u16, room: usize) -> String {
     if edit.candidates.is_empty() {
         // 有话要说时这一行让位——那句话就印在下一行。
         return match session.notice() {
             Some(_) => String::new(),
-            None => "按 ⇥ 列出这一层".to_owned(),
+            None => " 按 ⇥ 列出这一层".to_owned(),
         };
     }
     // 只留这一层里的那个名字，切法在 `complete` 那一侧——分隔符表只有一份。
@@ -289,9 +304,40 @@ fn listed(session: &Session, edit: &Edit) -> String {
         .candidates
         .iter()
         .map(|hit| complete::name(hit))
-        .take(12)
         .collect();
-    format!("这一层：{}", names.join("  "))
+    let view = Viewport::new(names.len(), fitting(&names, width, room), 0);
+    spelled(&names[..view.shown()], view.hidden())
+}
+
+/// 这一格摆得下几条候选：**一条一条往上加，加到折出来的行数超出 `room` 为止**。
+///
+/// 折的是 [`spelled`] 拼出来的那一整行，走的是 [`crate::wrap`]——屏底那一格真正折行
+/// 的也是它（见 [`footer`]），两处因此不会一处说摆得下、另一处画不出来。
+///
+/// **先砍一刀再逐条试**：一条候选最少占三格（一个字加两个空格的间隔），
+/// 这一格顶天摆得下 `宽 × 行 / 3` 条。一层里有上千个名字是常事，
+/// 而逐条试一遍是平方的——砍掉之后每一帧最多试几十次。
+fn fitting(names: &[&str], width: u16, room: usize) -> usize {
+    let ceiling = usize::from(width).saturating_mul(room) / 3 + 1;
+    let mut fits = 0;
+    for take in 1..=names.len().min(ceiling) {
+        if wrap::fold(&spelled(&names[..take], names.len() - take), width).len() > room {
+            break;
+        }
+        fits = take;
+    }
+    fits
+}
+
+/// 候选那一行的写法：列出来的那几条，外加**没露面的还剩几条**。
+///
+/// 「还有 N 条」只在真有剩的时候说：一层里就那么几个东西时多这么一句是噪音。
+fn spelled(names: &[&str], left: usize) -> String {
+    let listed = names.join("  ");
+    match left {
+        0 => format!(" 这一层：{listed}"),
+        left => format!(" 这一层：{listed}  …还有 {left} 条"),
+    }
 }
 
 /// 浏览时的按键提示，随光标停的那一行而变——按不动的键不该印在屏上。
@@ -472,6 +518,60 @@ mod tests {
         assert!(screen.contains(&tight("以原尺寸打开")), "{screen}");
         // 让掉的是提示那一行里的空行，按得动的那几个键仍在。
         assert!(screen.contains(&tight("c 出标定图")), "{screen}");
+    }
+
+    /// **补全候选：列得下几条列几条，剩下多少条说得出来**（本票的验收第三条）。
+    ///
+    /// 从前这里硬性只列 12 条，第 13 条起没有任何交代——一层下面有四十个目录时，
+    /// 屏上说的是「这一层有十二个东西」。眼下列的是这一格真摆得下的那几条，
+    /// 没露面的那些由那一套视口数出来（见 [`listed`]）。
+    ///
+    /// **这一处没有滚动条**：它列而不选，一个键都不派，「还有 N 条」就是它说这件事的方式。
+    #[test]
+    fn the_completion_candidates_fill_the_room_and_say_how_many_are_left() {
+        let session = Session::new();
+        let edit = Edit {
+            field: Field::Out,
+            buffer: "库/".to_owned(),
+            candidates: (1..=40).map(|at| format!("库/第{at:02}卷/")).collect(),
+        };
+        let names = |line: &str| line.matches("卷").count();
+
+        // 宽终端上一行摆得下的比十二条多——那条硬上限撤掉之后它就列得出来。
+        let wide = listed(&session, &edit, 120, 2);
+        assert!(names(&wide) > 12, "还卡在十二条上：{wide}");
+        assert!(wide.contains("还有"), "没说还剩多少条：{wide}");
+
+        // 说得出的那个数与列出来的那几条对得上：两者加起来就是这一层的全部。
+        let left: usize = wide
+            .rsplit_once("还有 ")
+            .and_then(|(_, tail)| tail.trim_end_matches(" 条").parse().ok())
+            .unwrap_or_else(|| panic!("「还有 N 条」没说出一个数来：{wide}"));
+        assert_eq!(
+            names(&wide) + left,
+            40,
+            "列出来的加上剩下的不是全部：{wide}"
+        );
+
+        // 窄终端上列得少——这一格真摆得下几条就是几条，而剩下的照旧说得出来。
+        let narrow = listed(&session, &edit, 40, 2);
+        assert!(
+            names(&narrow) < names(&wide),
+            "窄终端上列得一样多：{narrow}"
+        );
+        assert!(narrow.contains("还有"), "没说还剩多少条：{narrow}");
+
+        // 一层下面就那么几个东西时不多说一句：没有剩下的，「还有」二字就是噪音。
+        let few = Edit {
+            candidates: vec!["库/第01卷/".to_owned(), "库/第02卷/".to_owned()],
+            ..edit.clone()
+        };
+        let all = listed(&session, &few, 120, 2);
+        assert!(!all.contains("还有"), "全列出来了还说剩下几条：{all}");
+
+        // 屏底那一格一行都匀不出来时：一条都不列，而这一句仍旧算得出来、不恐慌。
+        let none = listed(&session, &edit, 120, 0);
+        assert!(none.contains("还有 40 条"), "{none}");
     }
 
     /// 打字时屏底摆着缓冲与这一层列出来的候选。

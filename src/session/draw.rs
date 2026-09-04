@@ -21,6 +21,14 @@
 //! 该归哪一边。整层连同这几个模块都在 `tui` 后面（分界见 `super` 的《终端库在哪一半》）。
 //! 那几块共用的测试探针在 `probe`（`#[cfg(test)]`，不进非 test 那一趟的文档）。
 //!
+//! # 纵向摆不下的时候
+//!
+//! **从第几行画起是算出来的**，由 [`Viewport`] 那个纯函数答——它摆在终端库外面
+//! （分界见 `super` 的《终端库在哪一半》）。**哪几块共用它、哪一块画滚动条，
+//! 那张表在 [`Viewport`] 上**，本模块不抄第二份。
+//!
+//! 这一层要做的只有一件事：**正文与那一条滚动条一起画的地方只有 [`scrolling`] 一处**。
+//!
 //! # 措辞在这里长第二份的只有两样
 //!
 //! 报告区画的是 [`crate::render`] 那几个函数——命令行与会话共用，一个字都不在这里重写。
@@ -49,11 +57,12 @@ mod probe;
 pub(super) use report::opens_at;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::Paragraph;
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::widgets::{Paragraph, ScrollbarOrientation, ScrollbarState};
 
 use super::live::Live;
 use super::state::Session;
+use super::viewport::Viewport;
 use bars::{BAR_HEIGHT, overall_bar, volume_bar};
 use config::config;
 use footer::footer;
@@ -119,13 +128,13 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
     // 收起的左栏一格都不画。给它一个零宽的格子也画不出东西来，
     // 但那样读代码的人得自己去推——「收起」这件事该在这一层看得见。
     if !expanded {
-        frame.render_widget(config(session), left);
+        config(frame, left, session);
     }
     // 预设那一栏**占的是主区，左栏照旧在场**：存出去的就是左栏上那两层，
     // 而「存的是什么」在按下去之前得看得见。它与展开那一副因此正好相反——
     // 那一副要的是宽度（逐页那两行过 100 列），这一副要的是**对照**。
     match session.picking() {
-        Some(picker) => frame.render_widget(presets(picker, main), main),
+        Some(picker) => presets(frame, main, picker),
         None => main_pane(frame, main, session, live),
     }
     frame.render_widget(Paragraph::new(bottom_rows), bottom);
@@ -143,6 +152,34 @@ fn footer_height(rows: usize, total: u16) -> u16 {
         FOOTER_HEIGHT,
         total.saturating_sub(MAIN_MIN_HEIGHT).max(FOOTER_HEIGHT),
     )
+}
+
+/// 一格正文，连同它那条滚动条。**画滚动条的地方只有这一处**（哪几块用得上它，
+/// 见 [`Viewport`] 那张表）。
+///
+/// 滚动量与滚动条那三个数都从 [`Viewport`] 来，这里只把它们交给终端库：
+/// **滚动条走终端库自带的那个 widget，不自己画一条**；**没有可滚的东西时不画**
+/// （[`Viewport::scrollbar`] 那时给 `None`）。
+///
+/// 它落在这一格**右边那条框线上**（上下各让一格给两个角），因此一列正文都不吃：
+/// 有没有它，格子里的字一模一样。
+fn scrolling(frame: &mut Frame, area: Rect, body: Paragraph<'static>, view: &Viewport) {
+    frame.render_widget(body.scroll((view.from(), 0)), area);
+    let Some(bar) = view.scrollbar() else {
+        return;
+    };
+    frame.render_stateful_widget(
+        // 全名摆在这儿：上一行那个 `bar` 也叫 `Scrollbar`（[`Viewport`] 出的那三个数），
+        // 而这一个是**终端库的 widget**。两者在这一行上碰头，写全就不必猜是哪一个。
+        ratatui::widgets::Scrollbar::new(ScrollbarOrientation::VerticalRight),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut ScrollbarState::new(bar.rows)
+            .position(bar.at)
+            .viewport_content_length(bar.window),
+    );
 }
 
 /// 右边那一大格，自上而下三段。
@@ -378,10 +415,15 @@ mod tests {
     /// 让的是左栏（见 [`MAIN_MIN_WIDTH`]）：主区仍留得下 [`MAIN_MIN_WIDTH`] 列，
     /// 三段一段不少。再窄到连主区都放不下时**不恐慌**——画得难看是一回事，崩掉是另一回事。
     ///
-    /// **屏底那一行在这一档上折成两行，`q 退出` 因此仍在屏上**（本票的目的）。
+    /// **屏底那一行在这一档上折成两行，`q 退出` 因此仍在屏上**（`p2-loose-ends/07` 的目的）。
     /// 从前这一行是从行尾切掉的，每多一个键尾巴上那个键就少露一截，而尾巴上摆的正是退出
     /// （停车场 Q75）。这一档上屏底那一格仍是 [`FOOTER_HEIGHT`] 行——折出来的两行加上
     /// 说明那一行正好摆得下，主区一行都没让（见 [`footer_height`]）。
+    ///
+    /// **左栏这一档上装不下，那条滚动条因此画在它右边那条框线上**（见 [`scrolling`]）：
+    /// 十八行的屏留给左栏十三行，而三层一共二十一行。`▲`／`▼` 两头加中间那一截滑块
+    /// 说的就是「上面还有、下面还有」——从前这一栏一点滚动都没有，掉出去的那几行
+    /// 屏上一个字都不提。
     #[test]
     fn a_terminal_too_narrow_for_two_columns_gives_the_width_to_the_main_pane() {
         let mut session = Session::new();
@@ -422,19 +464,19 @@ mod tests {
     /// 见 [`a_terminal_too_narrow_for_two_columns_gives_the_width_to_the_main_pane`]。
     const TOO_NARROW_FOR_TWO_COLUMNS: &str = r#"
 "┌配置────────────────────────────┐┌整趟────────────────────────┐"
-"│设备层 ·                        ││ 3/3 卷 [==================>│"
-"│判定的依据，绑面板，改一次管很久│└────────────────────────────┘"
-"│  型号                          │┌当前卷──────────────────────┐"
-"│未挑（跑起来之前必填）          ││ 卷三 · 第二遍 [==========> │"
-"│  感知可分辨级数                │└────────────────────────────┘"
-"│默认（跟随面板）                │┌报告────────────────────────┐"
-"│  阈值                          ││  未标定）                  │"
-"│跟着型号走（先挑一个）          ││    定档页 库/卷二/001.jpg  │"
-"│                                ││  介质 无寻道惩罚（固态盘） │"
-"│口味层 · 这一趟的立场           ││  · 读取并发 8              │"
-"│  适配方式　　　　默认（height）││  缓存 1 页 1.0 MiB（压缩前 │"
-"│  裁边　　　　　　默认（裁）    ││  4.0 MiB），未溢写（预算   │"
-"│  跨页拆分　　　　默认（拆）    ││  512.0 MiB）               │"
+"│设备层 ·                        ▲│ 3/3 卷 [==================>│"
+"│判定的依据，绑面板，改一次管很久█└────────────────────────────┘"
+"│  型号                          █┌当前卷──────────────────────┐"
+"│未挑（跑起来之前必填）          █│ 卷三 · 第二遍 [==========> │"
+"│  感知可分辨级数                █└────────────────────────────┘"
+"│默认（跟随面板）                ║┌报告────────────────────────┐"
+"│  阈值                          ║│  未标定）                  │"
+"│跟着型号走（先挑一个）          ║│    定档页 库/卷二/001.jpg  │"
+"│                                ║│  介质 无寻道惩罚（固态盘） │"
+"│口味层 · 这一趟的立场           ║│  · 读取并发 8              │"
+"│  适配方式　　　　默认（height）║│  缓存 1 页 1.0 MiB（压缩前 │"
+"│  裁边　　　　　　默认（裁）    ║│  4.0 MiB），未溢写（预算   │"
+"│  跨页拆分　　　　默认（拆）    ▼│  512.0 MiB）               │"
 "└────────────────────────────────┘└────────────────────────────┘"
 " ←→ 换一个 · c 出标定图 · ↑↓ 选 · t 试算 · x 执行 · e 展开 · p  "
 " 预设 · q 退出                                                  "

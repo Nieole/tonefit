@@ -5,15 +5,17 @@
 //! 而「存的是什么」在按下去之前得看得见。这一栏此刻按得动哪几个键写在屏底，
 //! 归 [`super::footer`]。
 //!
-//! 名字多过这一格装得下的行数时视口跟着光标走（[`opens_from`]）——
+//! 名字多过这一格装得下的行数时视口跟着光标走（[`Viewport`]）——
 //! 这一栏自己没有滚动状态。
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::session::state::Picker;
+use crate::session::viewport::Viewport;
 
 /// 预设那一栏末尾那一行。**说的是「当前两层」而不是「这一份配置」**：
 /// 存出去的不含范围层，而那一行是屏上唯一说得到这件事的地方
@@ -33,9 +35,10 @@ const ADD_PRESET: &str = "＋ 把当前的设备层与口味层存成一份预�
 /// 而下一次多半是在命令行上 `--preset` 用它。这句话摆在这一格而不是屏底那一句里，
 /// 是因为**屏底那一格不折行**，一条长路径会被切掉，而这一格折得下来。
 ///
-/// **名字多过这一格装得下的行数时，视口跟着光标走**（见 [`opens_from`]）：
+/// **名字多过这一格装得下的行数时，视口跟着光标走**（见 [`Viewport`]）：
 /// 末尾那一行是唯一存得出去的入口，它掉出屏外就等于这一栏没有出路了。
-pub(super) fn presets(picker: &Picker, area: Rect) -> Paragraph<'static> {
+/// 滚动条与正文一起画（[`super::scrolling`]），一份都不多时不画。
+pub(super) fn presets(frame: &mut Frame, area: Rect, picker: &Picker) {
     let mut lines: Vec<Line<'static>> = vec![
         Line::from(Span::styled(
             format!(" {}", picker.file().display()),
@@ -52,7 +55,10 @@ pub(super) fn presets(picker: &Picker, area: Rect) -> Paragraph<'static> {
         .iter()
         .map(|name| format!("  {name}"))
         .chain([format!("  {ADD_PRESET}")]);
-    let listed_from = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    // 清单在正文里从第几行开始：前面那几行是文件位置与空行。
+    // 一行一行地数够用：这一栏每一行都是一个名字，不像报告那样会折行
+    // （名字长过这一格的话折下来的那一截会挤掉一行，代价是滚少了一行，不是滚丢了光标）。
+    let listed_from = lines.len();
     for (at, text) in rows.enumerate() {
         let style = if at == picker.at() {
             Style::default().add_modifier(Modifier::REVERSED)
@@ -61,29 +67,19 @@ pub(super) fn presets(picker: &Picker, area: Rect) -> Paragraph<'static> {
         };
         lines.push(Line::from(Span::styled(text, style)));
     }
-    Paragraph::new(lines)
+    let view = Viewport::new(
+        lines.len(),
+        usize::from(area.height.saturating_sub(2)),
+        listed_from + picker.at(),
+    );
+    let body = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("预设 · 装设备层与口味层，范围层不进"),
         )
-        .scroll((opens_from(picker, area, listed_from), 0))
-        .wrap(Wrap { trim: false })
-}
-
-/// 预设那一栏从第几行画起。**只往下滚到「光标那一行还在格子里」为止，不多滚一行。**
-///
-/// 滚动量是**算出来的，不是记着的**：这一栏没有自己的滚动状态——光标在哪儿，
-/// 视口就跟到哪儿。列表短于这一格时它恒是零（`saturating_sub`），因此常见的那几份
-/// 预设摆在最上面，与没有这一段时一模一样。
-///
-/// `listed` 是清单在正文里从第几行开始（前面那几行是文件位置与空行）。
-/// 一行一行地数够用：这一栏每一行都是一个名字，不像报告那样会折行
-/// （名字长过这一格的话折下来的那一截会挤掉一行，代价是滚多了一行，不是滚丢了光标）。
-fn opens_from(picker: &Picker, area: Rect, listed: u16) -> u16 {
-    let inside = area.height.saturating_sub(2);
-    let cursor = listed.saturating_add(u16::try_from(picker.at()).unwrap_or(u16::MAX));
-    cursor.saturating_add(1).saturating_sub(inside)
+        .wrap(Wrap { trim: false });
+    super::scrolling(frame, area, body, &view);
 }
 
 #[cfg(test)]
@@ -107,11 +103,7 @@ mod tests {
     /// 把预设那一栏单独画进一格里。
     fn preset_snapshot(session: &Session, width: u16, height: u16) -> String {
         let picker = session.picking().expect("那一栏开着");
-        snapshot(
-            |frame| frame.render_widget(presets(picker, frame.area()), frame.area()),
-            width,
-            height,
-        )
+        snapshot(|frame| presets(frame, frame.area(), picker), width, height)
     }
 
     /// **快照：预设那一栏。** 只钉这一格，与 [`main_snapshot`] 同一条理由——
@@ -127,6 +119,8 @@ mod tests {
         let nothing = preset_snapshot(&picking(&[]), 52, 8);
         assert!(nothing.contains("还没有预设"), "{nothing}");
         assert!(nothing.contains(ADD_PRESET), "{nothing}");
+        // **没有可滚的东西时不画滚动条**：上面那张快照因此逐格照旧。
+        assert!(!nothing.contains('▲'), "装得下还画了滚动条：{nothing}");
 
         // **名字多过这一格装得下的行数时，视口跟着光标走。** 光标绕到末尾那一行上
         // （唯一存得出去的入口）时它仍在屏上——掉出去就等于这一栏没有出路了。
@@ -137,6 +131,12 @@ mod tests {
         let bottom = preset_snapshot(&many, 52, 8);
         assert!(bottom.contains(ADD_PRESET), "末尾那一行掉出去了：{bottom}");
         assert!(!bottom.contains("  一"), "视口没跟着光标走：{bottom}");
+        // **装不下时右边那条框线上画着滚动条**（本票）：`▲`／`▼` 两头说的是
+        // 「上面还有、下面还有」——从前这一栏滚归滚，屏上一个记号都没有。
+        for edge in ['▲', '▼'] {
+            assert!(top.contains(edge), "上下两头的记号没画出来：{top}");
+            assert!(bottom.contains(edge), "上下两头的记号没画出来：{bottom}");
+        }
     }
 
     /// 见 [`the_preset_column_lists_what_is_on_disk_and_a_row_to_store_into`]。
@@ -183,11 +183,7 @@ mod tests {
         );
         let picker = session.picking().expect("那一栏开着");
         assert!(
-            reversed_cells(
-                |frame| frame.render_widget(presets(picker, frame.area()), frame.area()),
-                52,
-                9
-            ) > 0,
+            reversed_cells(|frame| presets(frame, frame.area(), picker), 52, 9) > 0,
             "这一栏的光标那一行没反白"
         );
 
