@@ -26,8 +26,8 @@
 use std::path::Path;
 
 use tonefit::{
-    CandidateScore, Mode, PageBranch, PageColor, PageReport, Profile, Report, Voice, VolumeReport,
-    VolumeVerdict, aggregation, composition,
+    CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
+    Voice, VolumeReport, VolumeVerdict, aggregation, composition,
 };
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
@@ -157,21 +157,94 @@ pub fn pages(volume: &VolumeReport) -> String {
     text
 }
 
-/// 末尾那五小结：输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
-/// 各自一页（一卷）都没有就一个字都不说。
+/// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
+/// 各自一个（一页、一卷）都没有就一个字都不说。
 ///
 /// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
 ///
 /// 次序按**这一趟出的事有多重**往下排，最重的压在末尾——终端上它离提示符最近，
-/// 也是几十卷跑下来最不该被往回翻的那一条。
+/// 也是几十卷跑下来最不该被往回翻的那一条。非卷文件因此打头：它是这一列里唯一
+/// **连失败都不是**的一种（`CONTEXT.md` 的《失败》：非卷文件不是失败），
+/// 退出码一格都不动它。
 pub fn tail(report: &Report) -> String {
-    let mut text = overflow_tail(report);
+    let mut text = non_volume_tail(report);
+    text.push_str(&overflow_tail(report));
     text.push_str(&backstop_tail(report));
     text.push_str(&salvage_tail(report));
     text.push_str(&isolation_tail(report));
     text.push_str(&failed_volume_tail(report));
     text
+}
+
+/// 非卷文件那一小结，打头摆在末尾那几小结的最前面（`volume-discovery/04`）。
+///
+/// 这几个文件在报告正文里**一行都没有**，与卷级失败那一小结同一个处境：正文逐卷那几段
+/// 来自 `Report::volumes`，而它们连卷都不是。这一小结因此是它们在报告里唯一的位置——
+/// 少了它，用户看到的是「输出目录里没有这些东西」，却不知道是漏了还是本来就不该有。
+/// 那正是发现落地之前的老毛病：没被当成页的一律透传，产物里混着源库的杂物，
+/// 而报告里没有一处列得出它们（ADR 0014 的《背景》）。
+///
+/// **打头而不是压尾**：末尾那几小结按出的事有多重往下排，而它是唯一连失败都不是的一种——
+/// 退出码一格不动（`CONTEXT.md` 的《失败》）。
+///
+/// **逐条带上路径与一句为什么**，三类各说各的（见 [`non_volume_reason`]）：只说个数的话，
+/// 用户还得自己去源库里对一遍才知道是哪几个。形状照卷级失败那一小结办
+/// （见 [`failed_volume_tail`]）：路径一行、原因一行，多了只列前几条并说还有多少——
+/// 一屏放不下的清单等于没有清单。截断只发生在**这一层**，`Report::non_volume_files`
+/// 一条不少。
+///
+/// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]
+/// （见 `crate::session::draw` 的报告区），而数据只有 `Report` 上那一列。
+fn non_volume_tail(report: &Report) -> String {
+    /// 最多列几条。
+    const SHOWN: usize = 5;
+
+    if report.non_volume_files.is_empty() {
+        return String::new();
+    }
+    let mut text = format!(
+        "非卷文件 {} 个：发现走完之后没被任何卷收下，既没转也没拷——输出里一个字节都没有。\
+         这**不是失败**，退出码一格没变；源库一个字节没动，要它们的话去源里自己拿\n",
+        report.non_volume_files.len()
+    );
+    for file in report.non_volume_files.iter().take(SHOWN) {
+        text.push_str(&format!(
+            "  {}\n    {}\n",
+            file.path.display(),
+            non_volume_reason(&file.reason)
+        ));
+    }
+    let rest = report.non_volume_files.len().saturating_sub(SHOWN);
+    if rest > 0 {
+        text.push_str(&format!("  ……另有 {rest} 个\n"));
+    }
+    text
+}
+
+/// 一个非卷文件**为什么**没被任何卷收下，那一句话。
+///
+/// 三类分得开，各说各的来由——三者的处置一模一样（不转、不拷），而用户要做的事不一样：
+/// 头一种是源库里的杂物，第二种多半是拿错了包，第三种是**真有东西坏了**，
+/// 那一条还带着由内到外的错误链。
+///
+/// 逐个变体都列出来、不留 `_`：[`NonVolumeReason`] 不是非穷尽的，
+/// 多一类该怎么说是个要当场拿的主意（同一条规矩见 [`outcome`]）。
+fn non_volume_reason(reason: &NonVolumeReason) -> String {
+    match reason {
+        NonVolumeReason::NeitherPageNorArchive => {
+            "它躺着的那一层一页都没有、不是卷，而它自己既不是页也不是归档——没有卷收得下它。\
+             同一个文件躺在一个有页的目录里则是那一卷的透传成员，照旧搬进输出容器"
+                .to_owned()
+        }
+        NonVolumeReason::ArchiveWithoutAPage => {
+            "一页都没有的归档：一页都没有的东西不是卷，输出里因此没有一个空容器".to_owned()
+        }
+        NonVolumeReason::Unopenable(reason) => format!(
+            "发现出来却点不开：{reason}。点名的路径点不开是整趟拒绝，\
+             而它是发现出来的——其余卷照做"
+        ),
+    }
 }
 
 /// 输出宽超过面板的那些页，摆在报告末尾（页几何批 01 号票）。
@@ -759,8 +832,8 @@ mod tests {
     use crate::{FAILED_VOLUME_EXIT, ISOLATED_EXIT, SUCCESS_EXIT, exit_code};
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
-        GeometryGate, GrayImage, Interlock, IoPlan, Medium, PageOutcome, Processed, Readers,
-        Reason, Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure,
+        GeometryGate, GrayImage, Interlock, IoPlan, Medium, NonVolumeFile, PageOutcome, Processed,
+        Readers, Reason, Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure,
         VolumeTiming,
     };
 
@@ -828,6 +901,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -1468,6 +1542,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -1521,6 +1596,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -1565,6 +1641,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
@@ -1640,6 +1717,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -1719,6 +1797,7 @@ mod tests {
                 volume: PathBuf::from("library/volume-b"),
                 reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
             }],
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             elapsed: Duration::ZERO,
         };
@@ -1733,6 +1812,96 @@ mod tests {
         // 这句话**不许断言别的卷做成了**——这份报告里一卷都没做成，那样说就是假话。
         assert!(text.contains("这一趟没有因此停下"), "{text}");
         assert_eq!(exit_code(&report), FAILED_VOLUME_EXIT);
+    }
+
+    /// 非卷文件在报告里**有自己的位置**，三类各印各的那句为什么（`volume-discovery/04`）。
+    ///
+    /// 与卷级失败那一小结同一个处境：这几个文件在正文里一行都没有，末尾这一小结是它们
+    /// 在报告里唯一的位置。三句话要**分得开**——三者的处置一样，用户要做的事却不一样：
+    /// 一种是源库的杂物，一种多半是拿错了包，一种是真有东西坏了。
+    ///
+    /// 退出码那一半同在这里，与卷级失败那一条同一个理由：「报告说得出」与「脚本一格不动」
+    /// 是同一条验收的两半。
+    ///
+    /// 这一趟**真做成了一卷**，清单却不空：退出码因此仍是「全部成功」那一个。
+    /// 拿一份空报告去问这个数是问不出东西的——那种报告本来就是 `0`，
+    /// 断言会在清单被记成失败的那天照旧通过。
+    #[test]
+    fn the_report_names_every_file_no_volume_took_and_why() {
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::PerPage,
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Color,
+                    branch: PageBranch::Color,
+                }),
+            },
+        );
+        report.non_volume_files = vec![
+            NonVolumeFile {
+                path: PathBuf::from("library/答案.txt"),
+                reason: NonVolumeReason::NeitherPageNorArchive,
+            },
+            NonVolumeFile {
+                path: PathBuf::from("library/字体包.zip"),
+                reason: NonVolumeReason::ArchiveWithoutAPage,
+            },
+            NonVolumeFile {
+                path: PathBuf::from("library/坏的.cbz"),
+                reason: NonVolumeReason::Unopenable("读不出归档结构".to_owned()),
+            },
+        ];
+
+        let text = super::report(&report, Mode::Process);
+
+        assert!(text.contains("非卷文件 3 个"), "{text}");
+        // 逐条带路径：只报个数的话，用户还得自己回源库里对一遍才知道是哪几个。
+        for path in ["library/答案.txt", "library/字体包.zip", "library/坏的.cbz"] {
+            assert!(text.contains(path), "清单里没有 {path}：{text}");
+        }
+        // 点不开那一条把错误链原样带上来——那是三类里唯一「真有东西坏了」的一种。
+        assert!(text.contains("读不出归档结构"), "{text}");
+        // 三句为什么两两不同：印成同一句就等于这张表只有一类。
+        let reasons: Vec<String> = report
+            .non_volume_files
+            .iter()
+            .map(|file| super::non_volume_reason(&file.reason))
+            .collect();
+        let mut distinct = reasons.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), reasons.len(), "三类没分开：{reasons:?}");
+        // **不是失败**：这一列不空，退出码照旧是「全部成功」那一个。
+        assert_eq!(exit_code(&report), SUCCESS_EXIT);
+    }
+
+    /// 一个都没有就一个字都不说，与末尾那几小结同一条规矩——绝大多数一趟是这个样子。
+    #[test]
+    fn a_run_that_left_nothing_behind_says_nothing_about_non_volume_files() {
+        let report = Report {
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
+            crop: true,
+            split: SplitRule::default(),
+            volumes: Vec::new(),
+            failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
+            outcome: RunOutcome::Completed,
+            elapsed: Duration::ZERO,
+        };
+
+        let text = super::tail(&report);
+
+        assert!(text.is_empty(), "什么都没出事的一趟还说了话：{text}");
     }
 
     /// 部分救回页在报告里认得出来，而且**只有报告认得出来**（04 号票）。
@@ -1784,6 +1953,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
+            non_volume_files: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),

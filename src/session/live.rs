@@ -158,6 +158,10 @@ impl Live {
                 split: request.split,
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
+                // 非卷文件整份在预扫走完就齐了，而事件流不报它——攒到一半的这一份因此
+                // 恒是空的，跑完换成库交出来的那一份（见 [`returned`](Self::returned)）。
+                // 末尾那几小结本来也只在收场之后画（见 `crate::session::draw`）。
+                non_volume_files: Vec::new(),
                 outcome: RunOutcome::Completed,
                 // 计时只进结构、不进渲染出的文字（见 `tonefit::Report::elapsed`），
                 // 攒到一半的这一份因此填零就够——跑完会换成库交出来的那一份。

@@ -26,7 +26,7 @@
 //! **整趟拒绝**、逐条列出（见 [`refuse`]）。理由与「处理范围为空是错误」同一条
 //! （ADR 0009 的《不要做的「简化」》）——范围层错了可能写到别人的目录里，
 //! 而那一趟已经写出去的卷收不回来。
-//! **发现出来的**那一种点不开不走这条路：记下来、其余照做（ADR 0014 决定第 5 条）——
+//! **发现出来的**那一种点不开不走这条路：记进非卷文件、其余照做（ADR 0014 决定第 5 条）——
 //! 对推测出来的东西不用最重的处置，一个坏 zip 不该把几百卷挡在门外。
 //! 预扫**之后**才出的卷级失败也不走这条路：那时其余卷照做，报告照出
 //! （`CONTEXT.md` 的《失败》：卷级失败）。
@@ -34,6 +34,15 @@
 //! **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：开出来一页都没有的候选在这里
 //! 就被丢掉，此后的每一层都不知道它存在过——输出里因此一个字节都没有。
 //! 字体包、源码包、空目录、只装着别的卷的目录都落在这一支上。
+//!
+//! # 另一半产出：非卷文件
+//!
+//! 同一遍开卷答的是两件事：**这是一个卷**，与**这个不是、而且是为什么**。后者攒成
+//! [`Survey`] 的第二半，一路走到 [`crate::Report::non_volume_files`]——三类都在这一处出
+//! （见 [`nothing_took_it`] 与上面点不开的那一支）。**它不是失败，退出码一格不动。**
+//!
+//! 非说不可，是因为「输出里一个字节都没有」自己会变成另一个毛病：东西没被转，而报告里
+//! 没有一处列得出它们（ADR 0014 的《背景》第 2 条）。两件事是同一条决定的两半。
 //!
 //! **不落盘。** 预扫的作用域是这一趟点名的卷，活在一次运行之内。把成员表存下来下趟再用
 //! 就是一份全库索引，而那正是 ADR 0009 关掉的东西。
@@ -49,15 +58,23 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
-use crate::source;
+use crate::report::{NonVolumeFile, NonVolumeReason};
+use crate::source::{self, Container};
 use crate::{MemberCounts, Request, volume_steps};
 
-/// 这一趟预扫出来的东西：**发现出来的**每一个卷一份，外加它们步数之和。
+/// 这一趟预扫出来的东西：**发现出来的**每一个卷一份，外加它们步数之和，
+/// 再外加没被任何卷收下的那些[非卷文件](NonVolumeFile)。
 pub(crate) struct Survey {
     volumes: Vec<Surveyed>,
     /// 各卷步数之和。这个数由 [`Surveyed::steps`] **加**出来，不是另算一遍——
     /// 「全局总步数等于各卷步数之和」因此是构造出来的，不是一条要靠人守住的约定。
     steps: u64,
+    /// 发现走完之后没被任何卷收下的那些文件，按发现顺序（`volume-discovery/04`）。
+    ///
+    /// 它与 [`volumes`](Self::volumes) 是预扫的**两半**：同一遍开卷，一半答出「这是一个卷」，
+    /// 另一半答出「这个不是，而且是为什么」。三类各自的来处见 [`nothing_took_it`] 与
+    /// [`Survey::of`] 里点不开的那一支。
+    non_volume_files: Vec<NonVolumeFile>,
 }
 
 /// 预扫过的一个卷：**只有数与路径**，没有卷本身。
@@ -108,9 +125,11 @@ impl Survey {
     /// 发现这一趟有哪些卷，再把它们逐个枚举一遍。
     ///
     /// **点名的**路径里有一个点不开就整趟当场拒绝，一条事件都不发；发现出来的点不开的
-    /// 归档跳过，其余照做。开出来一页都没有的候选一并跳过——它不是卷。
+    /// 归档进非卷文件那张表，其余照做。开出来一页都没有的候选一并跳过——它不是卷，
+    /// 它那一层里没被收下的东西同样进那张表（见 [`nothing_took_it`]）。
     pub(crate) fn of(request: &Request) -> Result<Self> {
         let mut volumes = Vec::new();
+        let mut non_volume_files = Vec::new();
         // 坏路径**收齐了再报**，不是撞上第一个就返回：点名十个路径、其中三个写错了，
         // 一次说清三个才改得完一遍，逐个报要来回三趟。
         let mut refused = Vec::new();
@@ -130,7 +149,10 @@ impl Survey {
                     Ok(volume) => {
                         // **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：只装着别的卷的目录、
                         // 空目录、字体包都落在这里，此后每一层都不知道它存在过。
+                        // 走之前先把它没能收下的那些文件记进第三张表——「输出里一个字节都没有」
+                        // 与「说得出什么没被转」是同一条决定的两半。
                         if volume.pages.is_empty() {
+                            non_volume_files.extend(nothing_took_it(&volume));
                             continue;
                         }
                         let enumerating = started.elapsed();
@@ -146,12 +168,22 @@ impl Survey {
                     }
                     // **点名的 / 发现的**只决定这一件事（ADR 0014 决定第 5 条）。
                     // 点名的那个恒是候选里的头一个，因此这里报的路径就是 `input`。
-                    Err(error) => match candidate.provenance {
-                        Provenance::Named => refused.push((input.as_path(), error)),
-                        // 发现出来的点不开的归档进**非卷文件**清单，其余照做。
-                        // 那张清单本身是 `volume-discovery/04` 的事，本版本只保证它
-                        // 不产出任何字节、也不改退出码。
-                        Provenance::Discovered => {}
+                    Err(error) => match (candidate.provenance, candidate.container) {
+                        (Provenance::Named, _) => refused.push((input.as_path(), error)),
+                        // 发现出来的点不开的**归档**进非卷文件清单，其余照做：
+                        // 退出码一格不动，而报告说得出是哪一个、为什么。
+                        (Provenance::Discovered, Container::Archive) => {
+                            non_volume_files.push(NonVolumeFile {
+                                path: candidate.root,
+                                reason: NonVolumeReason::Unopenable(format!("{error:#}")),
+                            });
+                        }
+                        // 发现出来的点不开的**目录**不进那张表：那张表列的是**文件**
+                        // （`CONTEXT.md` 的《处理对象》把三类都写成文件，spec 与 ADR 0014
+                        // 决定第 5 条同样只说归档）。一个目录读不动就整棵子树跳过——
+                        // 与 `discover::push_children` 里「列不动这一层」同一条处置，
+                        // 也与它一样至今说不出口（停车场 Q117）。
+                        (Provenance::Discovered, Container::Directory) => {}
                     },
                 }
             }
@@ -162,6 +194,7 @@ impl Survey {
         Ok(Self {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
+            non_volume_files,
         })
     }
 
@@ -177,9 +210,43 @@ impl Survey {
         &self.volumes
     }
 
-    /// 按发现顺序交出预扫过的那些卷。
-    pub(crate) fn into_volumes(self) -> Vec<Surveyed> {
-        self.volumes
+    /// 按发现顺序交出预扫的**两半**：那些卷，与那些非卷文件。
+    ///
+    /// 一次交出而不是分两个取数：非卷文件要跟着卷一路走到 [`crate::Report`] 上，
+    /// 而卷这一半是被吃掉的（处理一卷就消费一份摘要）——分两次取就得给这一半留一份克隆。
+    pub(crate) fn into_volumes_and_non_volume_files(self) -> (Vec<Surveyed>, Vec<NonVolumeFile>) {
+        (self.volumes, self.non_volume_files)
+    }
+}
+
+/// 一个候选**开出来一页都没有**时，它在非卷文件那张表上留下的那几条。
+///
+/// 两种容器留下的不是一回事：
+///
+/// - **归档**留下它自己一条（[`NonVolumeReason::ArchiveWithoutAPage`]）——包是一个整体，
+///   用户要知道的是「这个包里没有页」，不是包里那几个文件分别叫什么。
+/// - **目录**留下的是它这一层里那些既不是页也不是归档的文件，逐条列
+///   （[`NonVolumeReason::NeitherPageNorArchive`]）。**目录自己不上表**：一个只装着别的卷的
+///   目录是库的正常形状，不是一件要报的事（ADR 0014 决定第 1 条：不给「装卷的目录」造词条）。
+///   空目录因此一条都不留——它没有落下任何东西。
+///
+/// 收下与没收下的分界由 [`source`] 一处说了算：躺在这一层的归档是卷不是成员、打包环境
+/// 留下的边车与索引文件根本不算成员（见 `source::open_directory` 与 `source::is_junk`）。
+/// 这里读的是它分好的那两摞，不另立一套「什么算页」。
+fn nothing_took_it(volume: &source::Volume) -> Vec<NonVolumeFile> {
+    match volume.container {
+        Container::Archive => vec![NonVolumeFile {
+            path: volume.root.clone(),
+            reason: NonVolumeReason::ArchiveWithoutAPage,
+        }],
+        Container::Directory => volume
+            .extras
+            .iter()
+            .map(|member| NonVolumeFile {
+                path: volume.identity(member),
+                reason: NonVolumeReason::NeitherPageNorArchive,
+            })
+            .collect(),
     }
 }
 
@@ -327,6 +394,7 @@ mod tests {
 
         // 断言排在放句柄那两句**之后**：`survey` 因此活到这里，
         // 上面问的是「攥着这一份摘要的同时」还开不开着文件。
-        assert_eq!(survey.into_volumes().len(), MANY, "点名的卷没全数进来");
+        let (volumes, _) = survey.into_volumes_and_non_volume_files();
+        assert_eq!(volumes.len(), MANY, "点名的卷没全数进来");
     }
 }

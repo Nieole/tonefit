@@ -112,6 +112,46 @@ fn a_broken_archive_is_refused_when_named_and_skipped_when_discovered() {
     );
 }
 
+/// **非卷文件一整张表也不动退出码**（ADR 0014 决定第 3、5 条，`volume-discovery/04`）。
+///
+/// 三类一次全摆上：卷架上的 txt、一页都没有的归档、发现出来但点不开的归档。
+/// 这一趟因此有一份不空的清单，而脚本那一侧看到的与全部成功一模一样——
+/// 它们既没被转，也不是「没做成」，只是不属于这一趟的产物（`CONTEXT.md` 的《失败》）。
+///
+/// 非在真进程上问不可：清单不空这件事在库那一侧断言得了（见 `tests/discovery.rs`），
+/// 而「四个码一格不动」只有退出码说得出，退出码只在进程那一层观察得到。
+#[test]
+fn a_list_of_non_volume_files_never_changes_the_exit_code() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+    // ① 卷架上既不是页也不是归档的文件。
+    std::fs::write(library.join("答案.txt"), b"a note the owner left here").expect("摆一份 txt");
+    // ② 一页都没有的归档。
+    let mut fonts = fixtures::Cbz::new(library.join("字体包.zip"));
+    fonts.file("readme.txt", b"no pages in here");
+    fonts.write();
+    // ③ 发现出来但点不开的归档。
+    let mut broken = fixtures::Cbz::new(library.join("坏的.cbz"));
+    broken.page("001.png", &fixtures::cheap_page());
+    broken.write_truncated();
+
+    assert_eq!(
+        tonefit(&space, &[library.as_path()]),
+        Some(0),
+        "一份不空的非卷文件清单改了退出码"
+    );
+    // 「其余照做」不只是退出码：好的那一卷真在盘上，那三个一个字节都没有。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "非卷文件跟着进了输出，或者好的那一卷没做"
+    );
+}
+
 /// 跑一趟 tonefit，返回它的退出码。进程被信号打断时是 `None`。
 fn tonefit(space: &Workspace, inputs: &[&Path]) -> Option<i32> {
     Command::new(env!("CARGO_BIN_EXE_tonefit"))

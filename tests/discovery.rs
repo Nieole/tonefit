@@ -169,7 +169,8 @@ fn a_directory_that_keeps_its_chapters_in_folders_splits_into_one_volume_each() 
 ///
 /// 四种形状一次问全：一页都没有的归档（字体包就是这个样子）、空目录、
 /// 底下一个卷都没有的目录、卷旁边那份既不是页也不是归档的 txt、以及点名的那个目录自己。
-/// 清单本身是 `volume-discovery/04` 的事，这一条只问**盘上有没有多出字节**。
+/// 这一条只问**盘上有没有多出字节**；它们在报告上占哪一格，是
+/// [`every_file_no_volume_took_is_listed_with_a_reason_of_its_own`] 那一条的事。
 #[test]
 fn nothing_without_a_page_writes_a_single_byte() {
     let space = Workspace::new();
@@ -187,6 +188,91 @@ fn nothing_without_a_page_writes_a_single_byte() {
     assert_eq!(report.volumes.len(), 1, "不是卷的东西成了卷");
     assert!(report.failed_volumes.is_empty(), "非卷文件被记成了失败");
     assert_eq!(fixtures::directory_members(&space.out()), ["库/第1话.cbz"]);
+}
+
+/// 非卷文件那张表：三类各带路径与一句为什么，**与输出树的形状逐条对得上**（`volume-discovery/04`）。
+///
+/// 一棵树一次问全 spec《非卷文件》点名的那几种形状：两层 cbz、混装目录、
+/// 一页都没有的 zip、坏 zip、卷架上的 txt。清单与输出树是**互补**的两张表——
+/// 清单上的在输出里一个字节都没有，输出里的在清单上一条都没有——这一条同时钉这两半。
+/// 缺了任何一半这条用例都不成立：只看输出，「什么没被转」照旧说不出；只看清单，
+/// 说不出它到底转没转。
+///
+/// 比的是**排过序的**清单而不是发现顺序：同层的次序由 `source::reading_order` 说了算，
+/// 而那条顺序在 `src/discover.rs` 的单元用例里已经钉着，这里再钉一遍就成了第二个出处。
+#[test]
+fn every_file_no_volume_took_is_listed_with_a_reason_of_its_own() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    // ① 卷架上既不是页也不是归档的文件：`库` 这一层一页都没有，它因此不是卷，收不下它。
+    std::fs::write(space.dir("库/答案.txt"), b"a note the owner left here").expect("摆一份 txt");
+    // ② 一页都没有的归档——字体包就是这个样子。
+    let mut fonts = space.archive("库/字体包.zip");
+    fonts.file("readme.txt", b"no pages in here");
+    fonts.write();
+    // ③ 发现出来但点不开的归档：中央目录与尾记录都不见了，归档结构根本读不出来。
+    let mut broken = space.archive("库/坏的.cbz");
+    broken.page("001.png", &fixtures::cheap_page());
+    broken.write_truncated();
+    // 混装目录：封面自成一个一页的卷，两话各自成卷，而 `说明.txt` 是**封面那一卷的
+    // 透传成员**——它躺的那一层有页，因此不在清单上，照旧搬进输出容器。
+    let mixed = space.volume("库/N和S");
+    mixed.page("cover.png", &fixtures::cheap_page());
+    mixed.file("说明.txt", b"this volume's note");
+    write_archive(&space, "库/N和S/第1话.cbz", 2);
+    write_archive(&space, "库/N和S/第2话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [library.as_path()]);
+
+    // 三类各一条，各说各的为什么。
+    assert_eq!(
+        listed(&space, &report),
+        [
+            "库/坏的.cbz · 点不开",
+            "库/字体包.zip · 一页都没有的归档",
+            "库/答案.txt · 既不是页也不是归档",
+        ]
+    );
+    // 清单不为空，而这一趟一卷都没失败：非卷文件不是失败（`CONTEXT.md` 的《失败》）。
+    assert!(report.failed_volumes.is_empty(), "非卷文件被记成了失败");
+    assert_eq!(report.volumes.len(), 3, "封面与两话没各自成卷");
+    // 输出树里**只有产物**：清单上那三个一个字节都没有，而卷内的透传文件照旧在。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        [
+            "库/N和S/cover.png",
+            "库/N和S/第1话.cbz",
+            "库/N和S/第2话.cbz",
+            "库/N和S/说明.txt",
+        ]
+    );
+}
+
+/// 卷内的透传文件**照旧搬**，而且不出现在清单里（`volume-discovery/04`）。
+///
+/// 与上一条的分界只有一条：`ComicInfo.xml` 躺的那一层**有页**。阅读器靠它读作者、
+/// 卷号与阅读方向，砍掉是净损失——非卷文件那张表收的是没有任何卷要的那些，不是它。
+#[test]
+fn a_pass_through_member_of_a_real_volume_is_never_listed() {
+    let space = Workspace::new();
+    let volume = space.volume("第10话");
+    volume.page("001.png", &fixtures::cheap_page());
+    volume.file(
+        "ComicInfo.xml",
+        b"<ComicInfo><Number>10</Number></ComicInfo>",
+    );
+
+    let report = fixtures::run_paths(&space, [volume.path()]);
+
+    assert!(
+        report.non_volume_files.is_empty(),
+        "卷内的透传文件进了非卷文件清单：{:?}",
+        listed(&space, &report)
+    );
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["第10话/001.png", "第10话/ComicInfo.xml"]
+    );
 }
 
 /// 输出根落在点名路径底下仍然当场拒绝——发现因此不会把上一趟的产物当成源。
@@ -243,6 +329,31 @@ fn discovery_does_not_follow_a_symlink() {
 
     assert_eq!(report.volumes.len(), 1, "跟进了符号链接");
     assert_eq!(fixtures::directory_members(&space.out()), ["库/第1话.cbz"]);
+}
+
+/// 非卷文件那张表，摊成一行一条的 `工作区相对路径 · 哪一类`，按名字排序。
+///
+/// 类那一半只取一个短标签，不取界面上那句完整的话：措辞归界面层
+/// （`src/render.rs` 的 `non_volume_reason`，那一句在那里钉着），
+/// 这一份要分得开的是**哪三类**。
+fn listed(space: &Workspace, report: &tonefit::Report) -> Vec<String> {
+    let mut lines: Vec<String> = report
+        .non_volume_files
+        .iter()
+        .map(|file| {
+            let kind = match file.reason {
+                tonefit::NonVolumeReason::NeitherPageNorArchive => "既不是页也不是归档",
+                tonefit::NonVolumeReason::ArchiveWithoutAPage => "一页都没有的归档",
+                tonefit::NonVolumeReason::Unopenable(_) => "点不开",
+            };
+            format!(
+                "{} · {kind}",
+                fixtures::relative_name(space.root(), &file.path)
+            )
+        })
+        .collect();
+    lines.sort();
+    lines
 }
 
 /// 建一级目录（父目录一起建出来），返回它的路径。

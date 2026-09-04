@@ -582,6 +582,12 @@ impl Workspace {
         path
     }
 
+    /// 这个工作区的根。断言里要把绝对路径缩回相对路径时拿它当基准点
+    /// （配 [`relative_name`]）——临时目录那一长串前缀进了断言就既读不动、也随机器而变。
+    pub fn root(&self) -> &Path {
+        self.tmp.path()
+    }
+
     /// 输出根目录。此刻还不存在，由被测代码建出来。
     pub fn out(&self) -> PathBuf {
         self.tmp.path().join("out")

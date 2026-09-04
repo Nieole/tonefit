@@ -13,7 +13,8 @@
 //!
 //! 本模块**不打开任何东西**：它按盘上的形状列出一批[候选](Candidate)，
 //! 「里面到底有没有页」由预扫开卷时才答得出（见 `crate::survey`）。
-//! 一页都没有的候选在那里被丢掉——**一页都没有的东西不是卷**，输出里一个字节都没有。
+//! 一页都没有的候选在那里被丢掉——**一页都没有的东西不是卷**，输出里一个字节都没有，
+//! 而它没能收下的那些进**非卷文件**那张表（见 `crate::survey` 的《另一半产出》）。
 //!
 //! 因此这里列出的目录候选比真正的卷多：一个只装着子目录与 cbz 的目录也会被列出来，
 //! 开出来是空的，随即丢掉。这笔多余换掉的是在两处各写一遍「什么算页」。
@@ -57,6 +58,12 @@ pub(crate) struct Candidate {
     pub(crate) output_relative: PathBuf,
     /// 点名的还是发现的。
     pub(crate) provenance: Provenance,
+    /// 这个候选在盘上是哪一种形状：一个目录，还是一个归档文件。
+    ///
+    /// 列目录时就知道了，不必再 stat 一次（见 [`Child`]）。预扫按它分岔**点不开时**
+    /// 的处置：点不开的**归档**进非卷文件那张表，而点不开的目录不进——那张表列的是
+    /// 文件（`CONTEXT.md` 的《处理对象》：非卷文件，ADR 0014 决定第 5 条）。
+    pub(crate) container: Container,
 }
 
 /// 点名的一个路径展开成一批候选，按**发现顺序**排好。
@@ -73,6 +80,7 @@ pub(crate) fn of(named: &Path) -> Result<Vec<Candidate>> {
         root: named.to_path_buf(),
         output_relative: mirrored(named, named, &source::output_name_of(&name, container)),
         provenance: Provenance::Named,
+        container,
     }];
     if container == Container::Directory {
         expand(named, &mut found);
@@ -101,6 +109,7 @@ fn expand(named: &Path, found: &mut Vec<Candidate>) {
                 &source::output_name_of(&name, child.container),
             ),
             provenance: Provenance::Discovered,
+            container: child.container,
         });
         if child.container == Container::Directory {
             push_children(&child.path, &mut stack);
@@ -122,7 +131,8 @@ struct Child {
 /// 三样东西被挡在外面：[打包环境留下的目录](source::is_junk_directory)、
 /// 符号链接与 junction（`file_type` 问的是链接自己，因此它既不是目录也不是文件，
 /// **环进不来**，深度不必设上界）、以及既不是目录也不是认得的归档的文件——
-/// 后者要么是某个卷的透传成员，要么是**非卷文件**（那张清单是 04 号票的事）。
+/// 后者要么是某个卷的透传成员，要么是**非卷文件**——分界是它躺的那一层有没有页，
+/// 而那要开卷才答得出，因此不在这里定（见 `crate::survey` 的《另一半产出》）。
 fn push_children(dir: &Path, stack: &mut Vec<Child>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
