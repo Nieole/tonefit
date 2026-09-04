@@ -204,6 +204,38 @@ impl Profile {
         DEVICES.iter().map(|(device, _)| *device)
     }
 
+    /// 内置清单**按面板归并**：一块面板一项，底下是共用它的那几个型号。
+    ///
+    /// 面板按分辨率从小到大排，同分辨率再按 PPI、再按彩色——**替身是照分辨率挑的**。
+    ///
+    /// **分组的规矩只有这一处出处**：未知型号那条错误消息（`unknown_device_error`）
+    /// 与会话里型号那一行摊开的第一层（`p3-session-legibility/06`）端的是同一份。
+    /// 两处要的本来就是同一件事——「内置表里没有你那台设备时，你要挑的从来不是名字，
+    /// 是那块屏」，而**设备只是面板的别名，多对一**（`CONTEXT.md`）：面板相同的型号
+    /// 输出完全一致，所以挑替身该从面板挑起。抄第二份就会有一处漏掉新加的型号。
+    ///
+    /// 与 [`devices`](Self::devices) 同一条：它不是新 seam，是既有类型上的一个读法
+    /// ——这份分组本来就从 [`resolve`](Self::resolve) 的错误里出得来，
+    /// 这里只是不必先制造一次失败，也不必再把那段文字解析回来。
+    pub fn devices_by_panel() -> Vec<(Panel, Vec<&'static str>)> {
+        let mut groups: Vec<(Panel, Vec<&'static str>)> = Vec::new();
+        for (device, panel) in DEVICES {
+            match groups.iter_mut().find(|(seen, _)| seen == panel) {
+                Some((_, devices)) => devices.push(device),
+                None => groups.push((*panel, vec![device])),
+            }
+        }
+        groups.sort_by_key(|(panel, _)| {
+            (
+                panel.resolution.height,
+                panel.resolution.width,
+                panel.ppi,
+                panel.color,
+            )
+        });
+        groups
+    }
+
     /// 解析到的型号规范名。
     pub fn device(&self) -> &'static str {
         self.device
@@ -232,31 +264,11 @@ impl std::fmt::Display for Profile {
 /// 灰阶数是唯一挑不出来的那项，走 `--gray-levels`（ADR 0003）。
 fn unknown_device_error(device: &str) -> anyhow::Error {
     let mut text = format!("未知型号「{device}」。内置型号按面板分组：\n");
-    for (panel, devices) in devices_by_panel() {
+    for (panel, devices) in Profile::devices_by_panel() {
         writeln!(text, "  {panel}\n    {}", devices.join(" ")).expect("写进 String 不会失败");
     }
     text.push_str("设备不在表里：挑一个面板相同的型号，再按实测用 --gray-levels 覆盖灰阶数。");
     anyhow!(text)
-}
-
-/// 内置清单按面板归并。面板按分辨率从小到大排，同分辨率再按 PPI、再按彩色——替身是照分辨率挑的。
-fn devices_by_panel() -> Vec<(Panel, Vec<&'static str>)> {
-    let mut groups: Vec<(Panel, Vec<&'static str>)> = Vec::new();
-    for (device, panel) in DEVICES {
-        match groups.iter_mut().find(|(seen, _)| seen == panel) {
-            Some((_, devices)) => devices.push(device),
-            None => groups.push((*panel, vec![device])),
-        }
-    }
-    groups.sort_by_key(|(panel, _)| {
-        (
-            panel.resolution.height,
-            panel.resolution.width,
-            panel.ppi,
-            panel.color,
-        )
-    });
-    groups
 }
 
 /// 型号名归一：全小写、连字符分隔。用户怎么敲都落到表里的规范名上。
@@ -398,13 +410,33 @@ mod tests {
     /// 表的形状是「少量面板 + 型号别名」：新增型号只加一行别名，不新增面板。
     #[test]
     fn the_table_is_a_few_panels_with_many_aliases() {
-        let panels = devices_by_panel();
+        let panels = Profile::devices_by_panel();
         assert!(
             DEVICES.len() >= panels.len() * 2,
             "{} 个型号只归并出 {} 块面板，别名表退化成了设备清单",
             DEVICES.len(),
             panels.len()
         );
+    }
+
+    /// **每一个内置型号恰好落在一块面板底下**，一个不多、一个不少。
+    ///
+    /// [`Profile::devices_by_panel`] 是分组那条规矩的唯一出处，两处消费它：未知型号那条
+    /// 错误消息，与会话里型号那一行摊开的第一层。后者要靠这条性质**走得到每一个型号**
+    /// ——归并时漏掉一个，屏上那两层就再也点不到它，而错误消息里也不会列出它。
+    #[test]
+    fn every_model_sits_under_exactly_one_panel() {
+        let mut listed: Vec<&str> = Vec::new();
+        for (panel, devices) in Profile::devices_by_panel() {
+            assert!(!devices.is_empty(), "{panel} 底下一个型号都没有");
+            for device in devices {
+                assert!(!listed.contains(&device), "{device} 落在两块面板底下");
+                listed.push(device);
+                let profile = Profile::resolve(device).expect("内置型号");
+                assert_eq!(profile.panel(), panel, "{device} 归错了面板");
+            }
+        }
+        assert_eq!(listed.len(), DEVICES.len(), "归并把型号丢了或多出来");
     }
 
     /// 彩色面板与黑白面板是**两块**面板：彩色那一项进主键，因此同分辨率同 PPI 的

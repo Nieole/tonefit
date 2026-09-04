@@ -31,8 +31,8 @@
 use std::path::{Path, PathBuf};
 
 use tonefit::{
-    BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Profile,
-    ReadingOrder, Request, SplitThreshold,
+    BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Panel,
+    Profile, ReadingOrder, Request, SplitThreshold,
 };
 
 use super::complete;
@@ -92,13 +92,28 @@ pub enum Action {
     /// **摊开取值栏**：在光标那一行**下面**摊开它那一列取值
     /// （`CONTEXT.md` 的《会话》：取值栏）。
     ///
-    /// 只有转得动的行派得出它（[`Shape::Cycle`]），**型号那一行除外**——
-    /// 它摊开的是面板、还要再下钻一层，归 `p3-session-legibility/06`；
-    /// 在那之前它照旧就地转一格（见 [`Session::browsing_action`]）。
+    /// 只有[转得动的行](Shape::Cycle)派得出它。摊开的是什么随那一行而变：九行摊的是
+    /// **那一行的取值环**，**型号那一行摊的是面板**——它是两层的那一行
+    /// （[`Field::drills`]），第二层由[下钻](Self::Drill)进去。
     ///
-    /// 它要的东西本模块全有（那一行的取值环就在这里），因此不必像[展开](Self::Expand)
-    /// 那样落到 [`super::press`] 去：真做这件事的就是 [`Session::unfold`]。
+    /// 它要的东西本模块全有（那一行的取值环、内置表的分组都在手边），因此不必像
+    /// [展开](Self::Expand)那样落到 [`super::press`] 去：真做这件事的就是
+    /// [`Session::unfold`]。
     Unfold,
+    /// **下钻**：进到取值栏上停着的那一格**底下那一层**
+    /// （`CONTEXT.md` 的《会话》：下钻）。
+    ///
+    /// **只有型号那一行有第二层**（[`Field::drills`]，spec 的《取值栏》：
+    /// 下钻只有那一处有两层）：第一层摆的是**面板**，而面板不是型号那一行的一个取值
+    /// ——定不下来，只能进去看它底下有哪几个型号。**设备只是面板的别名，多对一**
+    /// （`CONTEXT.md`），面板相同的型号输出完全一致，挑替身因此从面板挑起。
+    ///
+    /// **它与[定](Self::Choose)是两个动作**：一个换一层看，一个写取值。派哪一个
+    /// 随光标停着的那一格而变（[`Values::at_a_panel`]）——面板那一层的第一格「没挑」
+    /// 是型号那一行真正的一个取值，它派的是定。
+    ///
+    /// 退回上一层走的是[退一步](Self::Cancel)，与打预设名退回那一栏的列表同一条。
+    Drill,
     /// **定**：把取值栏上光标停着的那一格收下（票面：`⏎` 定）。
     ///
     /// **走的就是环那一套本身**（[`Session::cycle`] 转的那个环）：摊开选出来的值与
@@ -125,8 +140,12 @@ pub enum Action {
     /// **退一步**：丢掉眼下这一步，回到上一步。
     ///
     /// 编辑中是丢掉缓冲回浏览；打预设名时是退回那一栏的列表（见 [`naming_action`]）；
-    /// **取值栏上是一格不改地回左栏**（票面第三条）——「一格不改」不必靠任何一处代码
-    /// 守着：这一支根本不写取值，写的只有[定](Self::Choose)那一支。
+    /// **取值栏上是一格不改地回左栏**（`p3-session-legibility/05` 票面第三条），
+    /// [下钻](Self::Drill)进去之后则是**退回上一层**（型号那一行的面板那一层）——
+    /// 「退一步，不是退到底」在三处是同一个形状。
+    ///
+    /// 「一格不改」不必靠任何一处代码守着：这一支根本不写取值，
+    /// 写的只有[定](Self::Choose)那一支。
     Cancel,
     /// 起一趟：[试算](RunMode::DryRun)或[执行](RunMode::Process)。
     ///
@@ -383,26 +402,26 @@ impl Field {
         }
     }
 
-    /// **这一行摊得开吗**（`CONTEXT.md` 的《会话》：取值栏）。
+    /// **这一行摊开的是两层吗**（`CONTEXT.md` 的《会话》：下钻）。
     ///
-    /// **「哪几行摊得开」只有这一处出处**：按键表（[`Session::browsing_action`]）、
-    /// 屏底那一行摆不摆那个键（`super::draw::footer::browsing_keys`）、
-    /// 摊开那一下自己（[`Session::unfold`]）问的都是它。与 [`around`] 那条
-    /// 「写两份就会有一处忘了绕」同一条规矩——写三份，`p3-session-legibility/06`
-    /// 落地时就要同时改三处才不出错。
+    /// **摊得开的就是取值是[环](Shape::Cycle)的那几行**，不必另立一个谓词；
+    /// 分岔只剩这一处：**型号那一行摊开的是面板**（内置表里有几块就是几块，
+    /// 每一行是那块面板自己的 `Display`：分辨率 · PPI · 灰阶数 · 黑白／彩色），
+    /// `→` 再[下钻](Action::Drill)到那块面板底下的型号——两层，与别处那一层不是一个
+    /// 形状（spec 的《取值栏》：下钻只有那一处有两层）。
     ///
-    /// 取值是[环](Shape::Cycle)的行都摊得开，**型号那一行除外**：它摊开的是
-    /// **面板**（八块，每块带着分辨率 · PPI · 灰阶数 · 黑白／彩色），`→` 再下钻到
-    /// 那块面板下的型号——两层，与别处那一层不是一个形状（spec 的《取值栏》：
-    /// 下钻只有那一处有两层）。那一副归 `p3-session-legibility/06`；
-    /// 在它落地之前型号那一行照旧就地转一格，屏上一格不变。
+    /// **「哪一行是两层」只有这一处出处**：摊开那一下（[`Session::unfold`]）、
+    /// 光标停着的这一格是不是一块面板（[`Values::at_a_panel`]）、退一步退到哪儿
+    /// （[`Session::cancel`]）问的都是它。与 [`around`] 那条「写两份就会有一处忘了绕」
+    /// 同一条规矩。
     ///
-    /// **它还是「取值恒在环上」那条前提的守门人**：摊得开的这几行取值都是枚举或布尔，
-    /// 一格不落地都在自己的环上；唯一可能落在环外的是型号
-    /// （预设里塞进来的一个已删型号，见 [`next_device`]），而它正被挡在外面。
-    /// [`Session::unfold`] 数「此刻生效的是第几格」靠的就是这条前提。
-    pub fn unfolds(self) -> bool {
-        self.shape() == Shape::Cycle && self != Field::Profile
+    /// **它还是「取值恒在环上」那条前提的守门人**：摊开走**环**那一路的九行取值都是
+    /// 枚举或布尔，一格不落地都在自己的环上——[`Session::unfold`] 数「此刻生效的是
+    /// 第几格」靠的就是这条前提。唯一可能落在环外的是型号（预设里塞进来的一个已删型号，
+    /// 见 [`next_device`]），而它走的正是另一路：面板那一层认的是**这个名字在哪一块
+    /// 面板底下**，认不出来就一格都不标（`p3-session-legibility/06` 票面第七条）。
+    pub fn drills(self) -> bool {
+        self == Field::Profile
     }
 
     /// 这一行怎么改。逐个变体都列出来，理由与 [`layer`](Self::layer) 同一条。
@@ -537,27 +556,42 @@ pub enum Mode {
 /// 与 [`Picker::names`]、[`Expansion::volumes`] 是同一种「进来那一刻记下的数」：
 /// 摊着的时候没有一个键改得动那一行，它因此不会中途变。
 ///
-/// **下钻那一层不在这里**：型号那一行摊开的是面板、`→` 再下钻到那块面板下的型号，
-/// 归 `p3-session-legibility/06`（spec 的《取值栏》：下钻只有那一处有两层）。
+/// **它带着「下钻到第几层」**（spec 的《取值栏》）：型号那一行摊开的第一层是**面板**，
+/// [下钻](Action::Drill)进去才是那块面板底下的型号。装的不是一个层号，是
+/// [下钻进了哪一块面板](Self::panel)——层号答不出「进的是哪一块」，而屏上那一行要印它。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Values {
     /// 摊开的是左栏上哪一行。
     field: Field,
+    /// **下钻进了哪一块面板**；`None` 是第一层（`CONTEXT.md` 的《会话》：下钻）。
+    ///
+    /// 只有型号那一行到得了 `Some`（[`Field::drills`]）：第一层摆的是面板，
+    /// 这一格记着从哪一块进来的——屏上要印它（那一列此刻列的是型号名，
+    /// 不说一句就没有一处答得出「这几个型号是哪块屏的」），
+    /// 退一步也要靠它回到那一块上（[`Session::cancel`]）。
+    panel: Option<Panel>,
     /// 那一列取值**在屏上的写法**，一格一条（出处是 [`Session::shown`]，
     /// 与那一行自己印的是同一份）。
     ///
     /// **第一格恒是「没说」那一格**（屏上多半印成`默认（…）`）：两层的每一格都有
     /// 一个「没说」的位置，而那正是存成预设时写不写进那份 TOML 的分别
     /// （`CONTEXT.md` 的《会话》：存出去的只有「说了的那几项」）。
+    ///
+    /// **下钻进去那一层没有这一格**：那一层列的是**一块面板底下的型号**，一格一个型号，
+    /// 而「没挑」是型号那一行的取值、不是某一块面板底下的取值——它就摆在上一层的第一格，
+    /// 一个 `Esc` 之外（停车场 Q143）。
     cells: Vec<String>,
     /// 光标停在第几格。
     at: usize,
     /// **此刻真正生效的是第几格**——屏上那个记号画在它前面，与光标那一格分得开
     /// （票面第二条）。
     ///
-    /// 摊得开的那几行取值恒在自己的环上（[`Field::unfolds`] 是那条前提的守门人），
-    /// 因此它恒指得出一格来。
-    chosen: usize,
+    /// 摊开走环那一路的行取值恒在自己的环上（[`Field::drills`] 是那条前提的守门人），
+    /// 那几行上它恒指得出一格来。**型号那两层上它答得出「一格都不是」**：
+    /// 型号停在内置表外的一个名字上时（预设里塞进来的一个已删型号）没有它的那一块面板，
+    /// 而下钻进一块不含当前型号的面板时，这一层里也没有一格是生效着的
+    /// （`p3-session-legibility/06` 票面第七条）。
+    chosen: Option<usize>,
 }
 
 impl Values {
@@ -576,9 +610,31 @@ impl Values {
         self.at
     }
 
-    /// 此刻真正生效的是第几格。
-    pub fn chosen(&self) -> usize {
+    /// 此刻真正生效的是第几格，`None` 是「这一层里一格都不是」。
+    pub fn chosen(&self) -> Option<usize> {
         self.chosen
+    }
+
+    /// **下钻进了哪一块面板**；`None` 是第一层。
+    pub fn panel(&self) -> Option<Panel> {
+        self.panel
+    }
+
+    /// **光标停着的这一格是一块面板吗**——是的话按下去是[下钻](Action::Drill)进去看，
+    /// 不是的话按下去是[定](Action::Choose)。
+    ///
+    /// 只有型号那一行的**第一层**上会是「是」：那一层摆的是面板，而面板不是型号那一行的
+    /// 一个取值——定不下来，只能进去看它底下有哪几个型号。**第一格「没挑」不是面板**：
+    /// 它是型号那一行真正的一个取值（`CONTEXT.md` 的《会话》：两层的每一格都有一个
+    /// 「没说」的位置），定得下来。下钻进去那一层的每一格都是一个型号，同样定得下来。
+    ///
+    /// **与 [`Field::drills`] 问的不是一件事**：那一条问「**这一行**摊开的是不是两层」，
+    /// 这一条问「**这一格**按下去会怎样」。按键表（[`valuing_action`]）与屏底那一行
+    /// （`super::draw::footer::valuing_prompt`）问的都是后者：**屏上不摆按不动的键**的
+    /// 另一半是「这一格上按下去会怎样，按之前就该读得到」——同一个 `⏎` 在这一格上是
+    /// 进去看，在下一格上是定。
+    pub fn at_a_panel(&self) -> bool {
+        self.field.drills() && self.panel.is_none() && self.at > 0
     }
 }
 
@@ -1109,7 +1165,7 @@ impl Session {
             Mode::Deciding(_) => deciding_action(key),
             Mode::Expanded(_) => expanded_action(key),
             Mode::Picking(picker) => picking_action(picker, key),
-            Mode::Valuing(_) => valuing_action(key),
+            Mode::Valuing(values) => valuing_action(values, key),
         }
     }
 
@@ -1123,15 +1179,15 @@ impl Session {
             Key::Right => cycle_or(shape, Step::Next, Action::Ignored),
             // 浏览时空格与回车**同义**：两个都是「就在这一行上动手」，做什么随行状分派。
             //
-            // 转得动的行上「动手」是**摊开取值栏**（票面第一条），不再是就地转一格：
-            // 转一格的那一副仍旧在（`←→`，见上面两支），而这一下答的是
-            // 「这一项有哪几个取值」——环答不出那个问题，那正是本票要修的毛病。
+            // 转得动的行上「动手」是**摊开取值栏**（`p3-session-legibility/05` 票面
+            // 第一条），不再是就地转一格：转一格的那一副仍旧在（`←→`，见上面两支），
+            // 而这一下答的是「这一项有哪几个取值」——环答不出那个问题。
             //
-            // **哪几行摊得开只有一处出处**（[`Field::unfolds`]）：摊不开的那一行
-            // ——眼下只有型号，它归 `p3-session-legibility/06`——照旧就地转一格。
+            // **转得动的行一律摊得开**，型号那一行也在内：它摊开的是面板、`→` 再下钻
+            // 一层（[`Field::drills`]），而那仍是同一个「摊开」——分岔在摊开**之后**，
+            // 不在这个键上。
             Key::Space | Key::Enter => match shape {
-                Shape::Cycle if self.focus().unfolds() => Action::Unfold,
-                Shape::Cycle => Action::Cycle(Step::Next),
+                Shape::Cycle => Action::Unfold,
                 Shape::Text | Shape::Path => Action::Edit,
                 Shape::Volume => Action::Toggle,
             },
@@ -1186,6 +1242,7 @@ impl Session {
             // 摊开与定都只碰本模块自己的东西（那一行的取值环就在这里），
             // 因此不必像展开与预设那几支那样落到 [`super::press`] 去。
             Action::Unfold => self.unfold(),
+            Action::Drill => self.drill(),
             Action::Choose => self.choose(),
             Action::Toggle => self.toggle_volume(),
             Action::Edit => self.begin_edit(),
@@ -1454,13 +1511,24 @@ impl Session {
     /// 丢掉眼下这一步。**退一步，不是退到底**：打预设名打到一半退回那一栏的列表上，
     /// 再按一次才出这一栏（见 [`naming_action`]）。
     ///
-    /// **取值栏上这一下一格不改**（票面第三条）：它只把状态换回浏览，
-    /// 三层一个字节都不碰——「看一眼有哪些值」不该付出改掉它的代价。
+    /// **取值栏上这一下一格不改**（`p3-session-legibility/05` 票面第三条）：
+    /// 它只把状态换回浏览，三层一个字节都不碰——「看一眼有哪些值」不该付出改掉它的代价。
     /// 那件事不必靠任何一处代码守着：这个函数根本没有写取值的路子。
+    ///
+    /// **型号那一行下钻进去之后，这一下退回的是面板那一层**
+    /// （`p3-session-legibility/06` 票面第三条），
+    /// 再按一次才出这一栏——与打预设名那一条同一个形状。**光标落回进来的那一块面板上**，
+    /// 不落回「当前型号的那一块」：退一步该退到刚才站的地方去。
     fn cancel(&mut self) {
         if let Mode::Picking(picker) = &mut self.mode
             && picker.naming.take().is_some()
         {
+            return;
+        }
+        if let Mode::Valuing(values) = &self.mode
+            && let Some(panel) = values.panel
+        {
+            self.mode = Mode::Valuing(self.panels(Some(panel)));
             return;
         }
         self.mode = Mode::Browsing;
@@ -1697,8 +1765,9 @@ fn naming_action(naming: &Naming, key: Key) -> Action {
 /// 与 [`listing_action`]）：光标此刻停在这一列上，把 `↑↓` 留给底下那一栏配置
 /// 就是「按了没反应」。`j`／`k` 跟着 `↑↓`，与浏览时一个待遇。
 ///
-/// **`←→` 归这一层，不再就地转那一行**（票面第五条）。它们走的是这一列的两头：
-/// `→` 与 `⏎` 同义——定下停着的那一格；`←` 与 `Esc` 同义——一格不改地退回左栏。
+/// **`←→` 归这一层，不再就地转那一行**（`p3-session-legibility/05` 票面第五条）。
+/// 它们走的是这一列的两头：`→` 与 `⏎` 同义——**就在停着的那一格上动手**；
+/// `←` 与 `Esc` 同义——一格不改地[退一步](Action::Cancel)。
 /// 转一格那一副此刻不在场，而那**不是**把环收走了：退回左栏之后 `←→` 照旧转得动
 /// （票面：环那一套保留）。
 ///
@@ -1713,16 +1782,30 @@ fn naming_action(naming: &Naming, key: Key) -> Action {
 ///
 /// `q` 仍是退出会话，与浏览、展开、预设那一栏同一件事：这一列只是在看有哪些值，
 /// 没有「按错一下就丢掉什么」那种后果。
-fn valuing_action(key: Key) -> Action {
+fn valuing_action(values: &Values, key: Key) -> Action {
     match key {
         Key::Up | Key::Char('k') => Action::Move(Step::Back),
         Key::Down | Key::Char('j') => Action::Move(Step::Next),
-        Key::Enter | Key::Space | Key::Right => Action::Choose,
+        // 「动手」在这一格上是什么，随这一格而变（[`Values::at_a_panel`]）：面板那一层上
+        // 停在一块面板上是**进去看**（面板不是一个取值，定不下来），别处一律是**定**。
+        // 与浏览时 `⏎` 随行状分派同一条——一个键的意思由它落在哪一格上说了算。
+        Key::Enter | Key::Space | Key::Right => match values.at_a_panel() {
+            true => Action::Drill,
+            false => Action::Choose,
+        },
         Key::Esc | Key::Left => Action::Cancel,
         Key::Char('q') | Key::Interrupt => Action::Quit,
         Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
     }
 }
+
+/// **面板那一层里，面板从第几格起排。**
+///
+/// 第一格是「没挑」（型号那一行真正的一个取值），面板跟在它后面——这条偏移两头都要用：
+/// 摊开那一列时「第几块面板在第几格上」（[`Session::panels`]），
+/// 下钻时「第几格对着第几块面板」（[`Session::drill`]）。**写成一个常量而不是两处
+/// `+1`／`-1`**：一头改了另一头忘了跟着改，光标就会停到隔壁那块屏上。
+const PANELS_START_AT: usize = 1;
 
 /// 一列 `rows` 行里挪一格，**两头都绕回去**。左栏与预设那一栏共用它——
 /// 「挪到头就绕回来」是同一条规矩，写两份就会有一处忘了绕。
@@ -1744,12 +1827,24 @@ fn cycle_or(shape: Shape, step: Step, otherwise: Action) -> Action {
 /// 一个取值环上的上一格：一直往前走，走到「再走一步就回到出发点」为止。
 ///
 /// 各项的环只写一遍（往前那一份），倒着转不必再写一份反向的表。
+///
+/// **出发点不在环上时落回环上**（停车场 Q140）：这个循环因此有两个出口。
+/// 型号那一环上**表外的名字不在环上**——`next_device` 对它给「没挑」，
+/// 从它出发永远走不回它自己，而只认头一个出口的写法会在那里**转不回来**：
+/// 套用一份写着已删型号的预设之后，停在型号那一行上按一下 `←` 就到得了。
+/// 走满一圈仍没经过出发点，说明出发点在环外；这时落回的是**往前一步落到的那一格**
+/// ——环外那个值两个方向都只能回到环上，而落回哪一格由环自己说了算
+/// （型号那一环上正是「没挑」，见 [`next_device`]）。
 fn back<T: Clone + PartialEq>(value: T, next: impl Fn(T) -> T) -> T {
-    let mut cursor = value.clone();
+    let ahead_of_start = next(value.clone());
+    let mut cursor = ahead_of_start.clone();
     loop {
         let ahead = next(cursor.clone());
         if ahead == value {
             return cursor;
+        }
+        if ahead == ahead_of_start {
+            return ahead_of_start;
         }
         cursor = ahead;
     }
@@ -1860,12 +1955,10 @@ impl Session {
         match field {
             Field::Profile => {
                 let current = self.device.profile.clone();
-                self.device.profile = turn(current, step, |device: Option<String>| {
+                let turned = turn(current, step, |device: Option<String>| {
                     next_device(device.as_deref())
                 });
-                // 型号一换，标定出来的那两个数就不再是这块面板上的（ADR 0002）。
-                self.device.gray_levels = None;
-                self.device.threshold = None;
+                self.set_device(turned);
             }
             Field::Fit => {
                 self.taste.fit = turn(self.taste.fit, step, |fit| {
@@ -1959,7 +2052,7 @@ impl Session {
         steps
     }
 
-    /// **摊开光标那一行的取值栏**（票面第一条）。
+    /// **摊开光标那一行的取值栏**（`p3-session-legibility/05` 票面第一条）。
     ///
     /// 那一列**就是那一行的取值环**，从「没说」那一格起走一圈落回它为止——
     /// 一步一步走的就是 [`Self::turn_field`]，因此这里没有第二份清单：
@@ -1968,13 +2061,18 @@ impl Session {
     ///
     /// **此刻生效的是第几格，是数出来的、不是认字认出来的**：从这一行此刻停的那一格
     /// 起走 `back` 步到得了「没说」，它就在环上倒数第 `back` 格。
-    /// 这一步的前提是「那一行的取值在环上」，而守门的是 [`Field::unfolds`]。
+    /// 这一步的前提是「那一行的取值在环上」，而守门的是 [`Field::drills`]——
+    /// **型号那一行走的是另一路**（[`Self::panels`]：摊开的是面板，不是环）。
     ///
     /// **摊不开的行在这里到不了**：按键表在那几行上根本不派这个动作
     /// （见 [`Self::browsing_action`]），这里的卫语句只是不让这个函数自己出岔子。
     fn unfold(&mut self) {
         let field = self.focus();
-        if !field.unfolds() {
+        if field.shape() != Shape::Cycle {
+            return;
+        }
+        if field.drills() {
+            self.mode = Mode::Valuing(self.panels(None));
             return;
         }
         let mut probe = self.clone();
@@ -1990,10 +2088,112 @@ impl Session {
         let chosen = (cells.len() - back) % cells.len();
         self.mode = Mode::Valuing(Values {
             field,
+            panel: None,
             cells,
             at: chosen,
-            chosen,
+            chosen: Some(chosen),
         });
+    }
+
+    /// 型号那一行摊开的**第一层：面板**（`p3-session-legibility/06` 票面第一条）。
+    ///
+    /// 每一行印的是那块面板自己的 `Display`——**分辨率 · PPI · 灰阶数 · 黑白／彩色**，
+    /// 会话这一侧不另写一份格式（`tonefit::Panel` 那一份是唯一出处）。
+    /// 分组走 [`Profile::devices_by_panel`]，与未知型号那条错误消息**同一份**
+    /// （本票票面第五条）：内置表里加一个型号、多一块面板，这一列当场跟着变。
+    ///
+    /// 第一格仍是**「没挑」那一格**，与别的行同一条（`CONTEXT.md` 的《会话》：
+    /// 两层的每一格都有一个「没说」的位置）；印成什么走 [`Self::shown`]。
+    /// **它是这一层唯一定得下来的一格**——别的几格是面板，而面板不是型号那一行的取值
+    /// （见 [`Values::drills`]）。
+    ///
+    /// **光标停在当前型号所在的那块面板上**（本票票面第四条），`cursor` 给了就停在它上面
+    /// （从下钻那一层[退一步](Self::cancel)回来时用的正是它）。型号停在**表外的一个名字**
+    /// 上时没有它的那一块面板：记号一格都不画，光标落回「没挑」那一格（本票票面第七条）。
+    ///
+    /// **不叫 `device_level` 一类的名字**：`CONTEXT.md` 的《会话》里**设备层**是三层配置的
+    /// 第一层（[`Layer::Device`]），与这两层毫无关系——领域词一词一义。
+    fn panels(&self, cursor: Option<Panel>) -> Values {
+        let groups = Profile::devices_by_panel();
+        let mut probe = self.clone();
+        probe.device.profile = None;
+        let mut cells = vec![probe.shown(Field::Profile)];
+        cells.extend(groups.iter().map(|(panel, _)| panel.to_string()));
+        // 认的是**这个名字在哪一块面板底下**，与型号那一环认名字用的是同一个比法
+        // （见 [`next_device`]）：内置表里没有的那个名字两处一致地认不出来。
+        let chosen = match self.device.profile.as_deref() {
+            None => Some(0),
+            Some(current) => groups
+                .iter()
+                .position(|(_, devices)| devices.contains(&current))
+                .map(|at| at + PANELS_START_AT),
+        };
+        let at = cursor
+            .and_then(|wanted| groups.iter().position(|(panel, _)| *panel == wanted))
+            .map(|at| at + PANELS_START_AT)
+            .or(chosen)
+            .unwrap_or(0);
+        Values {
+            field: Field::Profile,
+            panel: None,
+            cells,
+            at,
+            chosen,
+        }
+    }
+
+    /// 型号那一行下钻进去那一层：**这块面板底下的型号**
+    /// （`p3-session-legibility/06` 票面第二条）。
+    ///
+    /// 一格一个型号，**没有「没挑」那一格**——它是型号那一行的取值、不是某一块面板底下的
+    /// 取值，就摆在上一层的第一格（停车场 Q143）。这一层里挑哪一个输出都一样
+    /// （面板相同的型号输出完全一致，见 [`Profile::devices_by_panel`]），
+    /// 一块面板底下**只有一个型号**时这一层也照走：那一格答的是「这块屏只有这一台设备」，
+    /// 而那是一句有内容的话（停车场 Q142）。
+    ///
+    /// **面板与它底下那几个型号一起收进来**：调用方（[`Self::drill`]）从分组里取出的
+    /// 本来就是这一对，再按面板去查一次等于把同一张表翻两遍。
+    ///
+    /// **光标停在当前型号上**（本票票面第四条）；当前型号不在这块面板底下时没有一格是
+    /// 生效着的，光标停在头一格上。
+    fn devices_under(&self, panel: Panel, devices: &[&'static str]) -> Values {
+        let chosen = self
+            .device
+            .profile
+            .as_deref()
+            .and_then(|current| devices.iter().position(|device| *device == current));
+        Values {
+            field: Field::Profile,
+            panel: Some(panel),
+            cells: devices.iter().copied().map(str::to_owned).collect(),
+            at: chosen.unwrap_or(0),
+            chosen,
+        }
+    }
+
+    /// **下钻到光标停着的那一块面板底下**（`p3-session-legibility/06` 票面第二条）。
+    ///
+    /// 面板那一层的第几格对着哪一块面板，问的是 [`Profile::devices_by_panel`]——
+    /// 与摊开那一列时问的是同一份，因此不必把面板逐块记在 [`Values`] 里
+    /// （内置表在一趟会话里不会变）。
+    ///
+    /// **别的格子在这里到不了**：按键表在那几格上派的是[定](Action::Choose)
+    /// （见 [`Values::at_a_panel`]），这里的卫语句只是不让这个函数自己出岔子。
+    fn drill(&mut self) {
+        let Mode::Valuing(values) = &self.mode else {
+            return;
+        };
+        if !values.at_a_panel() {
+            return;
+        }
+        let at = values.at;
+        let Some((panel, devices)) = Profile::devices_by_panel()
+            .into_iter()
+            .nth(at - PANELS_START_AT)
+        else {
+            return;
+        };
+        self.mode = Mode::Valuing(self.devices_under(panel, &devices));
     }
 
     /// **定下取值栏上停着的那一格**，回左栏。
@@ -2003,22 +2203,53 @@ impl Session {
     /// 「两条路改的是同一格」因此不必靠自觉：摊开这一路根本没有自己的写入路径。
     ///
     /// **停着的还是生效着的那一格时一步都不走**：那一下与 `Esc` 一样一格不改。
-    /// 不然型号那一行摊得开之后（`p3-session-legibility/06`），
-    /// 「摊开、什么都不改、按 `⏎`」会把标定出来的两个数清掉
-    /// （ADR 0002 那一下跟着换型号走，而这一下根本没换）。
+    /// 不然「摊开、什么都不改、按 `⏎`」会把标定出来的两个数清掉——ADR 0002 那一下
+    /// 跟着**换**型号走，而这一下根本没换。
+    ///
+    /// **型号那一行定的是一个型号名，不是环上走几步**：那两层列的是面板与面板底下的
+    /// 型号，环上第几格答不出来。它写下去走的仍是[同一条写入路径](Self::set_device)
+    /// ——`←→` 就地转一格落到的也是它，ADR 0002 那一下清空因此不会有一处忘了跟着做。
     fn choose(&mut self) {
         let Mode::Valuing(values) = &self.mode else {
             return;
         };
         let (field, at, chosen) = (values.field, values.at, values.chosen);
+        if field.drills() {
+            let device = match values.panel {
+                // 下钻进去那一层：每一格是一个型号名。
+                Some(_) => Some(values.cells[at].clone()),
+                // 面板那一层定得下来的只有第一格「没挑」；别的几格上派的是
+                // [下钻](Action::Drill)，走不到这里（见 [`Values::at_a_panel`]）。
+                None if at == 0 => None,
+                None => return,
+            };
+            self.mode = Mode::Browsing;
+            if chosen == Some(at) {
+                return;
+            }
+            self.set_device(device);
+            return;
+        }
         self.mode = Mode::Browsing;
-        if chosen == at {
+        if chosen == Some(at) {
             return;
         }
         self.turn_to_unsaid(field);
         for _ in 0..at {
             self.turn_field(field, Step::Next);
         }
+    }
+
+    /// **换掉型号。写型号只有这一条路。**
+    ///
+    /// `←→` 就地转一格（[`Self::turn_field`] 的型号那一支）与取值栏上定下来的那一下
+    /// （[`Self::choose`]）走的都是它：**换掉型号仍旧把标定出来的灰阶数与阈值清空**
+    /// （ADR 0002：判据与阈值跟着面板走、不可跨面板比较），而那件事分成两份写就会有
+    /// 一处忘了跟着做。
+    fn set_device(&mut self, device: Option<String>) {
+        self.device.profile = device;
+        self.device.gray_levels = None;
+        self.device.threshold = None;
     }
 
     fn toggle_volume(&mut self) {
@@ -2318,8 +2549,9 @@ mod tests {
         assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
         assert_eq!(session.action(Key::Right), Action::Cycle(Step::Next));
         assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
-        assert_eq!(session.action(Key::Enter), Action::Cycle(Step::Next));
-        assert_eq!(session.action(Key::Space), Action::Cycle(Step::Next));
+        // 转得动的行上「动手」是摊开那一列取值；型号那一行摊的是面板，见三之三。
+        assert_eq!(session.action(Key::Enter), Action::Unfold);
+        assert_eq!(session.action(Key::Space), Action::Unfold);
         assert_eq!(session.action(Key::Char('q')), Action::Quit);
         assert_eq!(session.action(Key::Esc), Action::Quit);
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
@@ -2418,11 +2650,86 @@ mod tests {
         session.press(Key::Esc);
         assert_eq!(session.mode(), &Mode::Browsing, "Esc 没退回左栏");
 
-        // 三之三、**型号那一行摊不开**：它摊开的是面板、还要再下钻一层，
-        // 归 `p3-session-legibility/06`；在那之前它照旧就地转一格。
+        // 三之三、**型号那一行摊开的是两层**（`CONTEXT.md` 的《会话》：下钻）：
+        // 第一层是面板，`⏎`／`→` 在一块面板上是**进去看**（面板不是一个取值），
+        // 在第一格「没挑」上仍是定；下钻那一层上一律是定，而 `Esc`／`←` 退回的是
+        // **面板那一层**，再按一次才出这一栏。
         session.focus_on(Field::Profile);
-        assert_eq!(session.action(Key::Enter), Action::Cycle(Step::Next));
-        assert_eq!(session.action(Key::Space), Action::Cycle(Step::Next));
+        // 摊开的键与别的转得动的行一个样：分岔在摊开**之后**，不在这个键上。
+        assert_eq!(session.action(Key::Enter), Action::Unfold);
+        assert_eq!(session.action(Key::Space), Action::Unfold);
+        assert_eq!(session.action(Key::Right), Action::Cycle(Step::Next));
+        assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
+        session.press(Key::Enter);
+        let panels = session.valuing().expect("没摊开").clone();
+        assert_eq!(panels.panel(), None, "摊开落在第一层上");
+        assert_eq!(panels.at(), 0, "还没挑型号，光标停在「没挑」那一格上");
+
+        // 面板那一层，光标停在第一格「没挑」上：它是型号那一行真正的一个取值，定得下来。
+        assert!(!panels.at_a_panel(), "「没挑」那一格该是定，不是下钻");
+        assert_eq!(session.action(Key::Enter), Action::Choose);
+        assert_eq!(session.action(Key::Space), Action::Choose);
+        assert_eq!(session.action(Key::Right), Action::Choose);
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        assert_eq!(session.action(Key::Left), Action::Cancel);
+
+        // 挪到一块面板上：同一个键换了意思——进去看它底下有哪几个型号。
+        session.press(Key::Down);
+        assert!(
+            session.valuing().expect("没摊开").at_a_panel(),
+            "停的不是一块面板"
+        );
+        assert_eq!(session.action(Key::Enter), Action::Drill);
+        assert_eq!(session.action(Key::Space), Action::Drill);
+        assert_eq!(session.action(Key::Right), Action::Drill);
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        assert_eq!(session.action(Key::Left), Action::Cancel);
+
+        // 下钻进去那一层：每一格是一个型号，一律定得下来。
+        session.press(Key::Enter);
+        let inside = session.valuing().expect("没下钻").clone();
+        assert!(inside.panel().is_some(), "没进到面板底下");
+        assert!(!inside.at_a_panel(), "下钻那一层上没有第三层可进");
+        assert_eq!(session.action(Key::Enter), Action::Choose);
+        assert_eq!(session.action(Key::Space), Action::Choose);
+        assert_eq!(session.action(Key::Right), Action::Choose);
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 那十一个在这两层上同样没有意义：这一列仍是一份现成的取值，不是一个缓冲。
+        for key in [
+            Key::Tab,
+            Key::BackTab,
+            Key::Backspace,
+            Key::Char('z'),
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('e'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('d'),
+            Key::Char('s'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在下钻那一层上不该生效"
+            );
+        }
+
+        // **退一步，不是退到底**：`Esc` 退回面板那一层，光标落回进来的那一块上；
+        // 再按一次才出这一栏。
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        session.press(Key::Esc);
+        let back_out = session.valuing().expect("退过头了，出了这一栏").clone();
+        assert_eq!(back_out.panel(), None, "没退回面板那一层");
+        assert_eq!(back_out.at(), 1, "光标没落回进来的那一块面板上");
+        session.press(Key::Esc);
+        assert_eq!(session.mode(), &Mode::Browsing, "第二下 Esc 没退回左栏");
 
         // 四、编辑一个路径：字进缓冲，Tab 补全，回车收下，Esc 丢掉。
         session.focus_on(Field::Out);
@@ -3262,13 +3569,19 @@ mod tests {
         assert_eq!(ring.len(), devices + 1);
     }
 
-    /// 左栏上**摊得开的那几行**。问的是 [`Field::unfolds`]——
-    /// 「哪几行摊得开」只有那一处出处，用例这边也不抄第二份。
+    /// 左栏上**摊开的是一个取值环**的那几行。
+    ///
+    /// 「哪几行摊得开」如今**就是[取值是环](Shape::Cycle)那一条本身**——它是那条谓词的
+    /// 出处，`p3-session-legibility/05` 那个 `Field::unfolds` 包一层的写法本票撤掉了
+    /// （型号放开之后它恒等于这一条）。这里再问一次 [`Field::drills`] 把**型号那一行摘出去**
+    /// ——它摊开的是面板、`→` 再下钻一层，与环那一路不是同一个形状；
+    /// 下面这几条问的是环那一路，型号那两层另有几条问它
+    /// （[`the_model_row_unfolds_into_panels`] 一带）。
     fn unfoldable() -> Vec<Field> {
         Session::new()
             .rows()
             .into_iter()
-            .filter(|field| field.unfolds())
+            .filter(|field| field.shape() == Shape::Cycle && !field.drills())
             .collect()
     }
 
@@ -3338,7 +3651,7 @@ mod tests {
                 values.cells()[0]
             );
             // 还没说过话：记号与光标都停在第一格上。
-            assert_eq!(values.chosen(), 0, "{field:?}");
+            assert_eq!(values.chosen(), Some(0), "{field:?}");
             assert_eq!(values.at(), 0, "{field:?}");
 
             // 说了一个值之后：记号跟着挪到那一格上，而第一格还是「没说」。
@@ -3347,7 +3660,7 @@ mod tests {
             session.press(Key::Right);
             session.press(Key::Enter);
             let said = session.valuing().expect("没摊开");
-            assert_eq!(said.chosen(), 1, "{field:?} 记号没跟着生效的那一格");
+            assert_eq!(said.chosen(), Some(1), "{field:?} 记号没跟着生效的那一格");
             assert_eq!(said.at(), 1, "{field:?} 光标没落在生效的那一格上");
             assert_eq!(said.cells()[0], fresh.shown(field), "{field:?}");
         }
@@ -3379,7 +3692,7 @@ mod tests {
             session.press(Key::Down);
             let looking = session.valuing().expect("没摊开");
             assert_ne!(
-                looking.at(),
+                Some(looking.at()),
                 looking.chosen(),
                 "{field:?} 光标没挪过窝，这一条就没问到东西"
             );
@@ -3426,6 +3739,266 @@ mod tests {
                 assert_eq!(picked.taste, turned.taste, "{field:?} 第 {at} 格：口味层");
             }
         }
+    }
+
+    /// 型号那一行摊开的**第一层是面板**，每一行带着那块面板的
+    /// 分辨率、PPI、灰阶数、黑白／彩色（`p3-session-legibility/06` 票面第一条）。
+    ///
+    /// **一行不多、一行不少**：这一列与 [`Profile::devices_by_panel`] 逐格对——
+    /// 分组的规矩只有那一处出处（同一张票面第五条），内置表里加一块面板，这一列当场跟着多一格。
+    /// **面板有几块不写死在用例里**：票面说的「八块」与实现对不上（停车场 Q141），
+    /// 而照票面写死的话，内置表加一个型号就要来改这一条。
+    ///
+    /// 每一格的字面走 `tonefit::Panel` 自己的 `Display`，会话这一侧不另写一份格式。
+    /// 第一格仍是「没挑」那一格，与别的行同一条。
+    #[test]
+    fn the_model_row_unfolds_into_panels() {
+        let groups = Profile::devices_by_panel();
+        let mut session = Session::new();
+        session.focus_on(Field::Profile);
+        session.press(Key::Enter);
+        let values = session.valuing().expect("型号那一行没摊开");
+
+        assert_eq!(values.field(), Field::Profile);
+        assert_eq!(values.panel(), None, "摊开落在第一层上");
+        assert_eq!(
+            values.cells().len(),
+            groups.len() + 1,
+            "面板那一层与分组对不上：{:?}",
+            values.cells()
+        );
+        assert_eq!(
+            values.cells()[0],
+            Session::new().shown(Field::Profile),
+            "第一格不是「没挑」那一格"
+        );
+        for (at, (panel, _)) in groups.iter().enumerate() {
+            assert_eq!(
+                &values.cells()[at + 1],
+                &panel.to_string(),
+                "第 {at} 块面板"
+            );
+            // 每一行四样俱全：分辨率 · PPI · 灰阶数 · 黑白／彩色。
+            let printed = &values.cells()[at + 1];
+            assert!(printed.contains(&panel.resolution.to_string()), "{printed}");
+            assert!(printed.contains(&format!("{} PPI", panel.ppi)), "{printed}");
+            assert!(
+                printed.contains(&format!("{} 级灰阶", panel.gray_levels)),
+                "{printed}"
+            );
+            assert!(
+                printed.contains(if panel.color { "彩色" } else { "黑白" }),
+                "{printed}"
+            );
+        }
+    }
+
+    /// **每一块面板都下钻得进去，进去列的正是共用它的那几个型号**
+    /// （`p3-session-legibility/06` 票面第二条）。
+    ///
+    /// 逐块问一遍，包括**底下只有一个型号的那几块**——它们照走下钻这一步
+    /// （停车场 Q142）：那一格答的是「这块屏只有这一台设备」，而那是一句有内容的话。
+    ///
+    /// 定完**回型号那一行**，而定下来的那个名字解析出来的面板就是进去的那一块——
+    /// 「设备只是面板的别名」这条走了一遍全程。
+    #[test]
+    fn drilling_into_a_panel_lists_the_models_that_share_it() {
+        let groups = Profile::devices_by_panel();
+        for (at, (panel, devices)) in groups.iter().enumerate() {
+            let mut session = Session::new();
+            session.focus_on(Field::Profile);
+            session.press(Key::Enter);
+            for _ in 0..=at {
+                session.press(Key::Down);
+            }
+            session.press(Key::Right);
+
+            let inside = session.valuing().expect("没下钻").clone();
+            assert_eq!(inside.panel(), Some(*panel));
+            assert_eq!(
+                inside.cells(),
+                devices.as_slice(),
+                "{panel} 底下的型号对不上"
+            );
+
+            for (step, device) in devices.iter().enumerate() {
+                let mut picking = session.clone();
+                for _ in 0..step {
+                    picking.press(Key::Down);
+                }
+                picking.press(Key::Enter);
+                assert_eq!(picking.mode(), &Mode::Browsing, "定完没回型号那一行");
+                assert_eq!(picking.device.profile.as_deref(), Some(*device));
+                assert_eq!(
+                    Profile::resolve(device).expect("内置型号").panel(),
+                    *panel,
+                    "{device} 定出来的不是进去的那一块面板"
+                );
+            }
+        }
+    }
+
+    /// **进去时光标停在当前型号所在的那块面板／那一个型号上，不是停在表头**
+    /// （`p3-session-legibility/06` 票面第四条）。
+    ///
+    /// 两层各问一次，另加**退一步落回进来的那一块面板上**：退一步该退到刚才站的地方去，
+    /// 而不是退到「当前型号的那一块」——进的是别的一块时那两块不是同一块，
+    /// 而用户正是从进去的那一块往下看的（那一趟由按键表 `which_keys_do_what_in_which_state`
+    /// 的三之三段问，那里当前型号还没挑，两块分得开）。
+    #[test]
+    fn the_two_levels_open_on_the_model_in_effect() {
+        let groups = Profile::devices_by_panel();
+        let (at, (panel, devices)) = groups
+            .iter()
+            .enumerate()
+            .find(|(_, (_, devices))| devices.len() > 1)
+            .expect("总有一块面板底下不止一个型号");
+        let device = devices[1];
+
+        let mut session = Session::new();
+        session.device.profile = Some(device.to_owned());
+        session.focus_on(Field::Profile);
+        session.press(Key::Enter);
+        let values = session.valuing().expect("没摊开");
+        assert_eq!(values.at(), at + 1, "光标没停在当前型号的那块面板上");
+        assert_eq!(values.chosen(), Some(at + 1), "记号没画在那块面板前面");
+
+        session.press(Key::Right);
+        let inside = session.valuing().expect("没下钻");
+        assert_eq!(inside.panel(), Some(*panel));
+        assert_eq!(inside.at(), 1, "光标没停在当前型号上");
+        assert_eq!(inside.chosen(), Some(1), "记号没画在当前型号前面");
+
+        // 退一步：落回**进来的那一块**面板上——这里它恰好就是当前型号那一块；
+        // 进的是别的一块时同样落回它（按键表三之三那一段问的正是那一趟）。
+        session.press(Key::Esc);
+        let outside = session.valuing().expect("退过头了");
+        assert_eq!(outside.panel(), None);
+        assert_eq!(outside.at(), at + 1, "没落回进来的那一块面板上");
+    }
+
+    /// **摊开挑出来的型号与就地转出来的型号改的是同一格**，
+    /// 而两条路都把标定出来的两个数清空（`p3-session-legibility/06` 票面第六条，ADR 0002）。
+    ///
+    /// 逐个内置型号问一遍：摊开→下钻→定，与从「没挑」那一格起就地转到它，
+    /// **两条路走完之后设备层逐格相同**。写型号只有 [`Session::set_device`] 一条路，
+    /// 两条路各写一份的话，这里当场红。
+    #[test]
+    fn picking_a_model_and_turning_in_place_write_the_same_cell() {
+        for (at, (_, devices)) in Profile::devices_by_panel().into_iter().enumerate() {
+            for (step, device) in devices.iter().enumerate() {
+                // 一条路：摊开、下钻、定。
+                let mut picked = Session::new();
+                picked.device.gray_levels = Some(12);
+                picked.device.threshold = Some(5.2);
+                picked.focus_on(Field::Profile);
+                picked.press(Key::Enter);
+                for _ in 0..=at {
+                    picked.press(Key::Down);
+                }
+                picked.press(Key::Right);
+                for _ in 0..step {
+                    picked.press(Key::Down);
+                }
+                picked.press(Key::Enter);
+
+                // 另一条路：就地一格一格转到它。
+                let mut turned = Session::new();
+                turned.device.gray_levels = Some(12);
+                turned.device.threshold = Some(5.2);
+                turned.focus_on(Field::Profile);
+                while turned.device.profile.as_deref() != Some(*device) {
+                    turned.press(Key::Right);
+                }
+
+                assert_eq!(picked.device.profile.as_deref(), Some(*device));
+                assert_eq!(picked.device, turned.device, "{device} 两条路写得不一样");
+                assert_eq!(picked.device.gray_levels, None, "{device}：灰阶数没清空");
+                assert_eq!(picked.device.threshold, None, "{device}：阈值没清空");
+            }
+        }
+    }
+
+    /// **`Esc` 从型号那两层退出来，一格不改**（`p3-session-legibility/06` 票面第三条）。
+    ///
+    /// 两层各问一次，而且**先在那一列上走到别的格子上去**——光标挪过窝而取值没动，
+    /// 才谈得上「一格不改」。比的是三层的全部内容：换掉型号会连带清掉标定出来的两个数，
+    /// 那种连带同样落在这个断言里。
+    #[test]
+    fn escaping_out_of_the_two_levels_changes_not_one_cell() {
+        let mut session = Session::new();
+        session.device.profile = Some("boox-poke6".to_owned());
+        session.device.gray_levels = Some(8);
+        session.device.threshold = Some(5.2);
+        let before = session.clone();
+
+        // 面板那一层：走到别的面板上再退。
+        session.focus_on(Field::Profile);
+        session.press(Key::Enter);
+        session.press(Key::Down);
+        session.press(Key::Esc);
+        assert_eq!(session.mode(), &Mode::Browsing, "Esc 没退回左栏");
+        assert_eq!(session.device, before.device, "面板那一层的 Esc 改了设备层");
+
+        // 下钻那一层：进去、走到别的型号上，再退两下。
+        session.press(Key::Enter);
+        session.press(Key::Down);
+        session.press(Key::Right);
+        session.press(Key::Down);
+        session.press(Key::Esc);
+        session.press(Key::Esc);
+        assert_eq!(session.mode(), &Mode::Browsing, "两下 Esc 没退回左栏");
+        assert_eq!(session.device, before.device, "下钻那一层的 Esc 改了设备层");
+        assert_eq!(session.taste, before.taste);
+        assert_eq!(session.scope, before.scope);
+    }
+
+    /// **型号停在内置表外的一个名字上时不崩、也不挂，落回「没挑」**
+    /// （`p3-session-legibility/06` 票面第七条，
+    /// 停车场 Q140）。
+    ///
+    /// 那个名字从预设里来：`Session::took` 原样收下 TOML 里写的型号名，
+    /// 而那份预设可能是上一版写的、型号后来删了。
+    ///
+    /// 三件事：
+    ///
+    /// - **`←` 转得回来**。从前 `back` 一路往前走、走到「再走一步就回到出发点」为止，
+    ///   而表外的名字不在环上——那个循环不停。**这一条要是回归，它不是红，是挂住**。
+    /// - **`→` 与 `←` 落到同一格**：环外那个值两个方向都只能回到环上，
+    ///   而落回哪一格由环自己说了算（`next_device`：落回「没挑」）。
+    /// - **摊开来那一列一格都不标**：那个名字不在任何一块面板底下，
+    ///   随便点实一格就是在指一个用户没挑过的型号。光标落回「没挑」那一格。
+    #[test]
+    fn a_model_outside_the_table_falls_back_to_nothing_picked() {
+        let outside = || {
+            let mut session = Session::new();
+            session.device.profile = Some("kobo-glo-hd".to_owned());
+            session.focus_on(Field::Profile);
+            session
+        };
+        assert!(
+            !Profile::devices().any(|device| device == "kobo-glo-hd"),
+            "这个名字进了内置表，这一条就没问到东西"
+        );
+
+        let mut turning_back = outside();
+        turning_back.press(Key::Left);
+        assert_eq!(turning_back.device.profile, None, "`←` 没落回「没挑」");
+
+        let mut turning_on = outside();
+        turning_on.press(Key::Right);
+        assert_eq!(turning_on.device.profile, None, "`→` 没落回「没挑」");
+
+        let mut session = outside();
+        session.press(Key::Enter);
+        let values = session.valuing().expect("没摊开");
+        assert_eq!(values.chosen(), None, "表外的名字不该标在任何一块面板上");
+        assert_eq!(values.at(), 0, "光标没落回「没挑」那一格");
+
+        // 就在那一格上定下来：那个名字换成了「没挑」，而这一下走的是同一条写入路径。
+        session.press(Key::Enter);
+        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.device.profile, None);
     }
 
     /// 阈值那一行印的是**数值加标定来源**，与报告里那一行逐字相同。

@@ -35,6 +35,22 @@ const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
 const CHOSEN: char = '●';
 const UNCHOSEN: char = '○';
 
+/// **下钻进去的那一块面板**行首那个记号（`CONTEXT.md` 的《会话》：下钻）。
+///
+/// 与上面那两个不是一回事，因此不是第三种「选中」：那一行不是这一列上的一格
+/// ——它是**抬头**，光标落不到它上面，也没有「生效不生效」可言。
+/// 一个朝里的箭头说的正是「这几格在它底下」。
+const INSIDE: char = '▸';
+
+/// 取值栏那几格的缩进：摊开那一列比它挂着的那一行再缩进一层，
+/// 下钻进去那一层（抬头是 [`INSIDE`]）再缩进一层。
+///
+/// **缩进是屏上唯一说得出「这几格是上面那一行的」的东西**——这一栏没有第二级框线，
+/// 而两层各深一级正是「它在哪一层」在屏上的样子。两个数摆在一处定，
+/// 一个改了另一个忘了跟着改的话，两层就对不齐。
+const UNFOLDED_INDENT: &str = "    ";
+const DRILLED_INDENT: &str = "      ";
+
 /// 左栏：三层，各占一块，按生命周期从上到下。
 ///
 /// **跑起来之后整栏只读**，而这一条要在屏上**看得出来**，不能是「按了没反应」：
@@ -92,6 +108,13 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
         if let Some(values) = session.valuing()
             && values.field() == field
         {
+            // 下钻进去那一层的抬头：**进的是哪一块面板**。这一列此刻列的是型号名，
+            // 不印它就没有一处答得出这几个型号是哪块屏的——而屏窄到左栏让出宽度那一档上
+            // 屏底那一行也不在场（见 [`super::footer::valuing_prompt`]）。
+            // 字面走 `tonefit::Panel` 自己的写法，会话这一侧不另编一份。
+            if let Some(panel) = values.panel() {
+                lines.push(Line::from(format!("{UNFOLDED_INDENT}{INSIDE} {panel}")));
+            }
             for at in 0..values.cells().len() {
                 if at == values.at() {
                     cursor = lines.len();
@@ -122,12 +145,17 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
 ///
 /// 比那一行的取值再缩进一层：它摊在那一行**下面**，而缩进是屏上唯一说得出
 /// 「这几格是上面那一行的」的东西——这一栏没有第二级框线。
+/// **下钻进去那一层再缩进一层**：那几格挂在面板那一行底下，缩进说的是同一件事。
 ///
 /// **两个记号在这一处一起定**：实心的那个说的是「生效的是它」，反白说的是
 /// 「光标停在它上面」——两者读的是 [`Values`] 上两个各不相干的数，
 /// 拆成两个参数递进来就等于让调用方替它们各判一次。
+///
+/// **一格都不实心是有的**：型号停在内置表外的一个名字上时那一列里没有一格生效着
+/// （见 `super::super::state::Values::chosen`），这一列因此全是空心的——
+/// 那正是屏上该说的话，随便挑一格点实了就是在指一个用户没挑过的型号。
 fn choice(values: &Values, at: usize) -> Line<'static> {
-    let mark = if at == values.chosen() {
+    let mark = if values.chosen() == Some(at) {
         CHOSEN
     } else {
         UNCHOSEN
@@ -137,8 +165,13 @@ fn choice(values: &Values, at: usize) -> Line<'static> {
     } else {
         Style::default()
     };
+    let indent = if values.panel().is_some() {
+        DRILLED_INDENT
+    } else {
+        UNFOLDED_INDENT
+    };
     Line::from(Span::styled(
-        format!("    {mark} {}", values.cells()[at]),
+        format!("{indent}{mark} {}", values.cells()[at]),
         style,
     ))
 }
@@ -448,6 +481,146 @@ mod tests {
         );
         assert!(cells(&session) > 0, "光标那一格不在屏上：{top}");
     }
+
+    /// **快照：型号那一行摊开的第一层——面板**（本票的验收第八条前一半）。
+    ///
+    /// 钉的是三件事：那一列摊在型号那一行**下面**、比它再缩进一层；**第一格是「没挑」**；
+    /// **每一行是一块面板**，带着分辨率 · PPI · 灰阶数 · 黑白／彩色——字面走
+    /// `tonefit::Panel` 自己的写法，会话这一侧不另写一份格式。
+    ///
+    /// **高度按实现给的面板数取**，不照票面那个「八块」（停车场 Q141）：
+    /// 这一张要把整层摆出来看，而面板不止八块。
+    ///
+    /// 后半段问的正是**「八行放得下」那条布局假设不成立**：同一层画进 24 行的终端里，
+    /// 滚动条画得出来（`▲`／`▼`），末几块面板走到跟前时视口跟得上去——
+    /// 接住它的仍是 `p3/04` 那**一份**视口，本票一行实现都没新造。
+    #[test]
+    fn the_unfolded_panels() {
+        let mut session = Session::new();
+        unfolding(&mut session, Field::Profile);
+        same_screen(&config_pane(&session, 52, 36), THE_UNFOLDED_PANELS);
+
+        // 24 行的终端上这一层装不下：滚动条画出来，走到末一块面板时它在屏上。
+        let squeezed = config_pane(&session, 52, 24);
+        assert!(
+            squeezed.contains('▲') || squeezed.contains('▼'),
+            "面板那一层在 24 行里装不下，却没画滚动条：{squeezed}"
+        );
+        session.press(Key::Up);
+        let last = session
+            .valuing()
+            .expect("没摊开")
+            .cells()
+            .last()
+            .expect("那一列不是空的")
+            .clone();
+        let bottom = tight(&config_pane(&session, 52, 24));
+        assert!(
+            bottom.contains(&tight(&format!("{UNCHOSEN} {last}"))),
+            "末一块面板掉出屏外了：{bottom}"
+        );
+        assert!(
+            reversed_cells(|frame| config(frame, frame.area(), &session), 52, 24) > 0,
+            "光标那一格不在屏上：{bottom}"
+        );
+    }
+
+    /// 见 [`the_unfolded_panels`]。
+    const THE_UNFOLDED_PANELS: &str = r#"
+"┌配置──────────────────────────────────────────────┐"
+"│设备层 · 判定的依据，绑面板，改一次管很久         │"
+"│  型号　　　　　　未挑（跑起来之前必填）          │"
+"│    ● 未挑（跑起来之前必填）                      │"
+"│    ○ 1072×1448 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1072×1448 · 300 PPI · 16 级灰阶 · 彩色      │"
+"│    ○ 824×1648 · 300 PPI · 16 级灰阶 · 黑白       │"
+"│    ○ 1236×1648 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1264×1680 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1264×1680 · 300 PPI · 16 级灰阶 · 彩色      │"
+"│    ○ 1404×1872 · 227 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1404×1872 · 227 PPI · 16 级灰阶 · 彩色      │"
+"│    ○ 1404×1872 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1440×1920 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1650×2200 · 207 PPI · 16 级灰阶 · 黑白      │"
+"│    ○ 1860×2480 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│  感知可分辨级数　默认（跟随面板）                │"
+"│  阈值　　　　　　跟着型号走（先挑一个）          │"
+"│                                                  │"
+"│口味层 · 这一趟的立场                             │"
+"│  适配方式　　　　默认（height）                  │"
+"│  裁边　　　　　　默认（裁）                      │"
+"│  跨页拆分　　　　默认（拆）                      │"
+"│  拆分阈值　　　　默认（1.5）                     │"
+"│  阅读方向　　　　默认（rtl）                     │"
+"│  滤波器　　　　　默认（lanczos3）                │"
+"│  位深　　　　　　自动（判据说了算）              │"
+"│  抖动　　　　　　自动（判据说了算）              │"
+"│  逐页　　　　　　默认（关）                      │"
+"│  缓存预算　　　　默认（512.0 MiB）               │"
+"│  读取策略　　　　默认（auto）                    │"
+"│                                                  │"
+"│范围层 · 每趟都不同，不进预设                     │"
+"│  输出根　　　　　未填（跑起来之前必填）          │"
+"│  ＋ 再打一个卷进来                               │"
+"└──────────────────────────────────────────────────┘"
+"#;
+
+    /// **快照：下钻进一块面板之后的那一层——型号**（本票的验收第八条后一半）。
+    ///
+    /// 钉的是三件事：**行首那一行印着进的是哪一块面板**（`▸`，它是抬头，不是这一列上的
+    /// 一格）；型号那几格比它**再缩进一层**；**记号画在当前型号前面**，光标也停在它上面
+    /// （`p3-session-legibility/06` 票面第四条）。左栏其余各行还在场。
+    #[test]
+    fn the_unfolded_models_under_one_panel() {
+        let mut session = Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        unfolding(&mut session, Field::Profile);
+        session.press(Key::Right);
+        assert!(
+            session.valuing().expect("没摊开").panel().is_some(),
+            "没下钻"
+        );
+        same_screen(
+            &config_pane(&session, 52, 32),
+            THE_UNFOLDED_MODELS_UNDER_ONE_PANEL,
+        );
+    }
+
+    /// 见 [`the_unfolded_models_under_one_panel`]。
+    const THE_UNFOLDED_MODELS_UNDER_ONE_PANEL: &str = r#"
+"┌配置──────────────────────────────────────────────┐"
+"│设备层 · 判定的依据，绑面板，改一次管很久         │"
+"│  型号　　　　　　kobo-libra-2                    │"
+"│    ▸ 1264×1680 · 300 PPI · 16 级灰阶 · 黑白      │"
+"│      ○ kobo-libra-h2o                            │"
+"│      ● kobo-libra-2                              │"
+"│      ○ boox-leaf2                                │"
+"│      ○ boox-page                                 │"
+"│      ○ kindle-oasis-2                            │"
+"│      ○ kindle-oasis-3                            │"
+"│      ○ kindle-paperwhite-12                      │"
+"│  感知可分辨级数　默认（跟随面板）                │"
+"│  阈值　　　　　　阈值 5.500（盲测标定于          │"
+"│boox-poke6，其余面板未复核）                      │"
+"│                                                  │"
+"│口味层 · 这一趟的立场                             │"
+"│  适配方式　　　　默认（height）                  │"
+"│  裁边　　　　　　默认（裁）                      │"
+"│  跨页拆分　　　　默认（拆）                      │"
+"│  拆分阈值　　　　默认（1.5）                     │"
+"│  阅读方向　　　　默认（rtl）                     │"
+"│  滤波器　　　　　默认（lanczos3）                │"
+"│  位深　　　　　　自动（判据说了算）              │"
+"│  抖动　　　　　　自动（判据说了算）              │"
+"│  逐页　　　　　　默认（关）                      │"
+"│  缓存预算　　　　默认（512.0 MiB）               │"
+"│  读取策略　　　　默认（auto）                    │"
+"│                                                  │"
+"│范围层 · 每趟都不同，不进预设                     │"
+"│  输出根　　　　　未填（跑起来之前必填）          │"
+"│  ＋ 再打一个卷进来                               │"
+"└──────────────────────────────────────────────────┘"
+"#;
 
     /// 见 [`the_config_column_that_does_not_fit`]。
     const THE_CONFIG_COLUMN_THAT_DOES_NOT_FIT: &str = r#"

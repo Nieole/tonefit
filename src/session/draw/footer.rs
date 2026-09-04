@@ -280,12 +280,37 @@ fn picking_prompt(picker: &Picker) -> Prompt {
 /// 下一行说的是**第一格那件事**：「没说」与「说了一个恰好等于默认的值」在屏上长得像，
 /// 而两者的差别要到存成预设那一刻才看得见（`CONTEXT.md` 的《会话》：
 /// 存出去的只有「说了的那几项」）。看不见的差别用户改不动，所以在这儿说。
+///
+/// **型号那一行的两层各有一副**（`CONTEXT.md` 的《会话》：下钻）：
+///
+/// - **面板那一层**上停在一块面板上时 `⏎`／`→` 是**进去看**，不是定——面板不是型号
+///   那一行的一个取值（`super::super::state::Values::at_a_panel`）；停在第一格「没挑」上时
+///   它照旧是定，措辞因此随光标停的那一格换，屏上不摆一个这一格上按不动的键。
+///   下一行说的是**为什么摊开的是面板**：设备只是面板的别名，面板相同的型号输出完全一致
+///   ——内置表里没有你那台设备时，你要挑的从来不是名字，是那块屏。
+/// - **下钻那一层**上行首多印**进的是哪一块面板**（`tonefit::Panel` 自己的写法，
+///   会话不另编一份）：这一列此刻列的是型号名，不说一句就没有一处答得出这几个是哪块屏的。
+///   `Esc`／`←` 在这一层上退回的是**面板那一层**，措辞照实写。
 fn valuing_prompt(values: &Values) -> Prompt {
+    let label = values.field().label();
+    if let Some(panel) = values.panel() {
+        return Prompt::new(
+            format!(" {label} · {panel} · ↑↓ 选 · ⏎／→ 定 · Esc／← 回到面板那一层 · q 退出"),
+            " 这块面板底下的型号输出完全一致，挑哪一个都一样；\
+             换掉型号会把标定出来的灰阶数与阈值清空",
+        );
+    }
+    if values.at_a_panel() {
+        return Prompt::new(
+            format!(
+                " {label} · ↑↓ 选 · ⏎／→ 看这块面板底下的型号 · Esc／← 一格不改地回去 · q 退出"
+            ),
+            " 设备只是面板的别名，面板相同的型号输出完全一致——\
+             内置表里没有你那台设备时，挑一个面板相同的顶上，再按实测填感知可分辨级数",
+        );
+    }
     Prompt::new(
-        format!(
-            " {} · ↑↓ 选 · ⏎／→ 定 · Esc／← 一格不改地回去 · q 退出",
-            values.field().label()
-        ),
+        format!(" {label} · ↑↓ 选 · ⏎／→ 定 · Esc／← 一格不改地回去 · q 退出"),
         " 第一格是「没说」：它跟着默认值走，存成预设时那一项不写进去——\
          与「说了一个恰好等于默认的值」是两件事，后者往后默认改了也仍是那个值",
     )
@@ -401,12 +426,10 @@ fn browsing_keys(session: &Session, live: Option<&Live>) -> String {
         //
         // 摊开与转一格两条都摆着：**两条改的是同一格**，而它们各配一种人——
         // 知道自己要什么的按 `←→`，不知道这一项有哪几个取值的按 `⏎`（票面）。
-        // **哪几行摊得开只有一处出处**（`Field::unfolds`），屏上因此不会摆一个
-        // 那一行上按不动的键。
-        Shape::Cycle if focus.unfolds() => format!(" ←→ 换一个 · ⏎ 摊开 · {common}"),
-        // 摊不开的那一行眼下只有型号（归 `p3-session-legibility/06`），
-        // 而它恰好是设备层上唯一一个转得动的行——标定图那个键因此只落在这一支里。
-        Shape::Cycle => format!(" ←→ 换一个{chart} · {common}"),
+        // **转得动的行一律摊得开**，型号那一行也在内（它摊开的是面板，多一层下钻，
+        // 而那是摊开之后的事，见 `valuing_prompt`）；标定图那个键落在这一支里，
+        // 是因为设备层上转得动的行只有型号那一行。
+        Shape::Cycle => format!(" ←→ 换一个 · ⏎ 摊开{chart} · {common}"),
         Shape::Text => format!(" ⏎ 改{chart} · {common}"),
         // 底下两副恒落在范围层上（输出根、「＋ 再打一个卷进来」、卷行），
         // 插进去也永远是空的——摆一个点不着的洞，改的人迟早当它是活的。
@@ -458,12 +481,54 @@ mod tests {
         // 就地转一格那一副此刻不在屏上：`←→` 归这一列了（票面第五条）。
         assert!(!unfolded.contains(&tight("←→ 换一个")), "{unfolded}");
 
-        // **型号那一行摊不开**（归 `p3-session-legibility/06`）：屏上因此不摆那个键。
+        // **型号那一行也摊得开**：转得动的行一律摊得开，而它多一层下钻
+        // （见 [`the_two_levels_of_the_model_row_each_put_their_own_keys_up`]）。
+        // 设备层那个键在这一行上照旧摆着。
         session.press(Key::Esc);
         session.focus_on(Field::Profile);
         let profile = tight(&screen(&mut session, None, 120, 40));
         assert!(profile.contains(&tight("←→ 换一个")), "{profile}");
-        assert!(!profile.contains(&tight("⏎ 摊开")), "{profile}");
+        assert!(profile.contains(&tight("⏎ 摊开")), "{profile}");
+        assert!(profile.contains(&tight("c 出标定图")), "{profile}");
+    }
+
+    /// **型号那两层各把自己的键摆出来**（`CONTEXT.md` 的《会话》：下钻）。
+    ///
+    /// 屏上不摆按不动的键，另一半是**这一格上按下去会怎样，按之前就该读得到**：
+    /// 同一个 `⏎` 停在一块面板上是进去看，停在「没挑」上是定，下钻那一层上是定。
+    /// 三副措辞因此不同。
+    ///
+    /// 下钻那一层还多印一样：**进的是哪一块面板**。那一列此刻列的是型号名，
+    /// 而屏窄到左栏让出宽度那一档上左栏整个不在场——不说一句，屏上就没有一处答得出
+    /// 这几个型号是哪块屏的。
+    #[test]
+    fn the_two_levels_of_the_model_row_each_put_their_own_keys_up() {
+        let mut session = Session::new();
+        session.focus_on(Field::Profile);
+        session.press(Key::Enter);
+
+        // 面板那一层，光标停在第一格「没挑」上：`⏎` 是定。
+        let unsaid = tight(&screen(&mut session, None, 120, 40));
+        assert!(unsaid.contains(&tight("⏎／→ 定")), "{unsaid}");
+        assert!(unsaid.contains(&tight("Esc／← 一格不改地回去")), "{unsaid}");
+
+        // 挪到一块面板上：同一个键换了意思，措辞跟着换。
+        session.press(Key::Down);
+        let panels = tight(&screen(&mut session, None, 120, 40));
+        assert!(
+            panels.contains(&tight("⏎／→ 看这块面板底下的型号")),
+            "{panels}"
+        );
+        assert!(!panels.contains(&tight("⏎／→ 定")), "{panels}");
+        assert!(panels.contains(&tight("设备只是面板的别名")), "{panels}");
+
+        // 下钻进去：`⏎` 是定，而 `Esc` 退回的是面板那一层——照实写。
+        session.press(Key::Right);
+        let panel = session.valuing().expect("没下钻").panel().expect("没进去");
+        let inside = tight(&screen(&mut session, None, 120, 40));
+        assert!(inside.contains(&tight(&panel.to_string())), "{inside}");
+        assert!(inside.contains(&tight("⏎／→ 定")), "{inside}");
+        assert!(inside.contains(&tight("Esc／← 回到面板那一层")), "{inside}");
     }
 
     /// **两级停按下去之后屏上说清它在等什么**（本票的验收）。
