@@ -2374,7 +2374,7 @@ fn ensure_no_two_volumes_share_an_output(
 fn normalises_an_extension(group: &[&Path]) -> bool {
     let mut names = group.iter().map(|input| {
         collision_key(Path::new(
-            input.file_name().unwrap_or_else(|| input.as_os_str()),
+            input.file_name().unwrap_or(input.as_os_str()),
         ))
     });
     let Some(first) = names.next() else {

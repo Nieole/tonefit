@@ -376,10 +376,15 @@ impl Live {
     }
 
     /// 至今为止等人等掉的那一截，**含正等着的这一次**。
-    fn deliberated(&self) -> Duration {
+    ///
+    /// **`now` 由调用方给**，本函数一次表都不读：减掉这一截的那一处
+    /// （[`overall`](Self::overall)）要拿同一个时刻算两个数，各读各的表就会
+    /// 让减出来的那个数小一格——两次读表之间被调度器抢走多久，就少多久
+    /// （停车场 Q118 实测到 299.9999981s < 300s）。
+    fn deliberated(&self, now: Instant) -> Duration {
         let waiting = self
             .deliberating_since
-            .map_or(Duration::ZERO, |since| since.elapsed());
+            .map_or(Duration::ZERO, |since| now.saturating_duration_since(since));
         self.deliberated.saturating_add(waiting)
     }
 
@@ -405,7 +410,12 @@ impl Live {
             // 减掉在决策点上等人的那一截（停车场 Q41）：库在那段里一步都没走，
             // 算进来的话「剩多久」说的就成了「用户拿主意还要多久」。
             // 收场之后换成库交出来的那一个——它减的是同一件事，只是准到纳秒。
-            self.started.elapsed().saturating_sub(self.deliberated())
+            //
+            // **一次读表算两个数**：被减数与减数都从这一个 `now` 起算。各读各的表时，
+            // 减数读得晚一点、因而多算一点，减出来的那个数就小一格（停车场 Q118）。
+            let now = Instant::now();
+            now.saturating_duration_since(self.started)
+                .saturating_sub(self.deliberated(now))
         };
         Overall {
             volume: self
