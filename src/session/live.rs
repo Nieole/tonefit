@@ -39,13 +39,13 @@ use tonefit::{
 /// [`super::run::Running::start`]，而调用处一个裸 `false` 说不出它否掉的是哪件事
 /// （与 `super::draw` 那个 `Unrolled` 同一条理由——本仓库不爱看不出意思的裸值）。
 ///
-/// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 1、3 条：续做只在单卷试算上成立，
-/// 而等不等人是调用方的策略、不是库的行为。
+/// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 3 条：**试算逐卷等答话**
+/// （几卷都一样），而等不等人是调用方的策略、不是库的行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resuming {
-    /// **续做**：跑到决策点停下来等人拿主意（单卷试算）。
+    /// **续做**：每走到一个决策点就停下来等人拿主意（试算，几卷都一样）。
     Waits,
-    /// **不续做**：决策点上不等人，一趟走到底（多卷试算与执行）。
+    /// **不续做**：决策点上不等人，一趟走到底（执行）。
     GoesOn,
 }
 
@@ -54,6 +54,23 @@ impl Resuming {
     fn waits(self) -> bool {
         self == Self::Waits
     }
+}
+
+/// 决策点上答的那个字**管几卷**（`CONTEXT.md` 的《会话》：都这样）。
+///
+/// 与 [`Resuming`] 同一副形状、同一条理由（不爱看不出意思的裸值）：它从
+/// [`super::state::Action::Answer`] 一路传到 [`Live::decide`] 与
+/// [`super::run::Running::decide`]，而调用处一个裸 `true` 说不出它说的是哪件事。
+///
+/// **它不是闩**：闩只升不降，记的是「这一趟还走不走」；这一格记的是一个**可以是「继续」
+/// 的粘性答案**，摆在观察者那一侧的「决策点的默认答案」上
+/// （见 `super::run::Gate`）。两者分开放，按停按到的那一级因此一格不动。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// 只答**这一卷**：下一卷的决策点照旧停下来问（`x` 与 `s`）。
+    ThisVolume,
+    /// **剩下的卷都这样**：这个字连往下每一卷一起答了，从此不再停（`a`）。
+    ForTheRest,
 }
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
@@ -74,19 +91,32 @@ pub struct Walking {
 #[derive(Debug, Clone)]
 pub struct Live {
     /// 库那一侧真收到的那个 mode。**屏上照哪一种印走 [`mode`](Self::mode)**，
-    /// 不直接读它：单卷试算走的是 `Mode::Process`（参照要留着，ADR 0012 决定第 5 条），
-    /// 而在决策点上答收尾之前它一个字节都没写。
+    /// 不直接读它：试算走的是 `Mode::Process`（参照要留着，ADR 0012 决定第 5 条），
+    /// 而在决策点上答出继续之前它一个字节都没写。
     ran_as: RunMode,
     /// 这一趟**在决策点上等人**吗（`CONTEXT.md` 的《会话》：续做）。
     ///
-    /// 只有单卷试算是。多卷试算另走一次 dry-run，执行一趟走到底——两者在决策点上都不停。
+    /// 试算是，几卷都一样；执行一趟走到底，在决策点上不停。
     /// 起手那一刻就定死（[`super::press`] 拼 `Request` 时判的），跑起来之后不再变。
     resumes: Resuming,
-    /// 在决策点上答过的那个字。还没答、或者这一趟根本不在那儿停就是 `None`。
+    /// 在决策点上答过的那几个字里**最弱**的那一个。一次都没答过就是 `None`。
     ///
-    /// 屏上那句话与报告抬头都要它：**试算答了收尾，这一趟就等于一次 dry-run**
+    /// 屏上那句话与报告抬头都要它，而它们问的是**这一趟落过盘没有**：
+    /// 答过一次继续就有一卷写了出去，答收尾的那几卷一个字节都没写
     /// （见 [`mode`](Self::mode)）。
+    ///
+    /// **取最弱的那一个，与闩正好相反**（闩取最强的，`super::run::Latch`）：
+    /// 两者问的不是同一件事——闩问「这一趟还走不走」，越强越说明要停；
+    /// 这一格问「落过盘没有」，而落过盘的证据是那个最弱的字。
     decided: Option<Instruction>,
+    /// 「剩下的卷都这样」摆下的那个**默认答案**（`CONTEXT.md` 的《会话》：都这样）。
+    /// 没答过这个手势就是 `None`。
+    ///
+    /// 真替往下那几卷答话的是观察者那一侧（`super::run::Gate`）；这一份是给**屏**的：
+    /// 屏底那一行要说清「往下不再问了」，而[等人那一截](Self::deliberating_since)
+    /// 也要从这一刻起不再开——不再停下来问，人就没有在等，
+    /// 而那一格开了就再也关不上（决策点上的答话是关它的唯一一条路）。
+    for_the_rest: Option<Instruction>,
     /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
     ///
     /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
@@ -148,6 +178,7 @@ impl Live {
             ran_as: request.mode,
             resumes,
             decided: None,
+            for_the_rest: None,
             summarized: None,
             deliberated: Duration::ZERO,
             deliberating_since: None,
@@ -230,7 +261,11 @@ impl Live {
             self.summarized = Some(so_far.clone());
             // 决策点那一条报出来的下一刻，观察者就停在闸上了（见 `super::run::Watch`）。
             // 等人那一截从这里起算——但只有真等人的那一趟（见 [`Self::deliberating_since`]）。
-            if self.resumes.waits() {
+            //
+            // **答过「剩下的卷都这样」之后就不再等**：那一刻起观察者当场照默认答案答字
+            // （`super::run::Gate`），没有人在等。这一格照开的话它再也关不上——
+            // 关它的只有决策点上的答话，而往下不会再有一次，屏上那两个数于是从此不动。
+            if self.resumes.waits() && self.for_the_rest.is_none() {
                 self.deliberating_since = Some(Instant::now());
             }
         }
@@ -324,13 +359,16 @@ impl Live {
 
     /// 报告抬头照哪一种印。
     ///
-    /// **单卷试算在答继续之前印的是 dry-run**，虽然它走的是 `Mode::Process`：
+    /// **试算在答出第一个继续之前印的是 dry-run**，虽然它走的是 `Mode::Process`：
     /// 那条路留参照是为了答继续时第一遍不重算（ADR 0012 决定第 5 条），
     /// 而在决策点上答出继续之前，输出根一个字节都没有——抬头那一行
     /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
     /// 答了收尾或中止同理：那一趟就此收场，盘上仍旧什么都没有。
     ///
-    /// 别的三种（多卷试算、执行、一趟都没跑过）照库收到的那个字印，这一格与从前逐字相同。
+    /// **几十卷的一趟里只要答过一次继续，印的就是执行**：那一卷真写了出去
+    /// （见 [`decided`](Self::decided) 那条「取最弱的那一个」）。
+    ///
+    /// 别的两种（执行、一趟都没跑过）照库收到的那个字印，这一格与从前逐字相同。
     pub fn mode(&self) -> RunMode {
         match (self.resumes, self.decided) {
             // 中止那一支眼下到不了：会话在决策点上只答得出继续与收尾，
@@ -358,10 +396,21 @@ impl Live {
         self.decided
     }
 
-    /// 记下决策点上答的那个字。**由会话那一头记**（[`super::run::Running::decide`]）：
-    /// 答话的是用户，而观察者那一侧只是把它转交给库。
-    pub fn decide(&mut self, said: Instruction) {
-        self.decided = Some(said);
+    /// 记下决策点上答的那个字，以及它[管几卷](Reach)。
+    /// **由会话那一头记**（[`super::run::Running::decide`]）：答话的是用户，
+    /// 而观察者那一侧只是把它转交给库。
+    ///
+    /// 记下来的是答过的那几个字里**最弱**的那一个（见 [`decided`](Self::decided)）：
+    /// 一趟里每一卷各答一次，而抬头那一行问的是「这一趟落过盘没有」——
+    /// 头一卷答了继续、第二卷答了收尾的那一趟，盘上有头一卷。
+    pub fn decide(&mut self, said: Instruction, reach: Reach) {
+        self.decided = Some(match self.decided {
+            Some(before) => before.min(said),
+            None => said,
+        });
+        if reach == Reach::ForTheRest {
+            self.for_the_rest = Some(said);
+        }
         self.stop_deliberating();
     }
 
@@ -386,6 +435,15 @@ impl Live {
             .deliberating_since
             .map_or(Duration::ZERO, |since| now.saturating_duration_since(since));
         self.deliberated.saturating_add(waiting)
+    }
+
+    /// 「剩下的卷都这样」摆下的那个默认答案。没答过这个手势就是 `None`。
+    ///
+    /// 屏底那一行要它：往下的决策点不再停，而这件事得说出来
+    /// （见 `super::draw::resuming_line`）——不说的话，一趟几十卷的批量跑
+    /// 看上去与「它忘了问」没有分别。
+    pub fn for_the_rest(&self) -> Option<Instruction> {
+        self.for_the_rest
     }
 
     /// 决策点上那一卷到此刻为止的报告。没停在决策点上就是 `None`。
@@ -1012,11 +1070,37 @@ mod tests {
         );
 
         // 答完话接着跑：等掉的那一截留在账上，往后的时间照旧算。
-        live.decide(Instruction::Continue);
+        live.decide(Instruction::Continue, Reach::ThisVolume);
         let resumed = live.overall().elapsed;
         assert!(
             resumed >= RAN_FOR && resumed.saturating_sub(waiting) < Duration::from_secs(1),
             "答完话之后那一截又被算回来了：{resumed:?}"
+        );
+
+        // 下一卷的决策点：照旧等人，那一格照旧开——一趟里每一卷各等一次
+        // （`volume-discovery/07`）。
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.pass_started(Pass::Second, Some(&summarized));
+        assert!(
+            live.deliberating_since.is_some(),
+            "第二卷的决策点上没开始等人"
+        );
+        let waiting = live.overall().elapsed;
+        std::thread::yield_now();
+        assert!(
+            live.overall().elapsed.saturating_sub(waiting) < Duration::from_secs(1),
+            "第二卷的决策点上等人的那一截被算进了「已用」"
+        );
+
+        // **答「剩下的卷都这样」之后那一格再也不开**：往下的决策点由观察者那一侧
+        // 当场答掉，没有人在等。照开的话它再也关不上——关它的只有决策点上的答话，
+        // 而往下不会再有一次，屏上那两个数于是从此不动。
+        live.decide(Instruction::Continue, Reach::ForTheRest);
+        live.volume_started(Path::new("库/卷三"), 1000);
+        live.pass_started(Pass::Second, Some(&summarized));
+        assert!(
+            live.deliberating_since.is_none(),
+            "答过「剩下的卷都这样」，等人那一格又开了——没有人在等，而它再也关不上"
         );
 
         // 不等人的那一趟：决策点照样报，但那一格不开——观察者当场答字就返回。
@@ -1031,13 +1115,17 @@ mod tests {
         );
     }
 
-    /// **单卷试算在答继续之前印的是 dry-run**（`p1-session/14`，ADR 0012 决定第 5 条）。
+    /// **试算在答出第一个继续之前印的是 dry-run**（`p1-session/14`，ADR 0012 决定第 5 条）。
     ///
     /// 那一趟走的是 `Mode::Process`——参照要留着，答继续时第一遍才不必重算——
     /// 而在决策点上答出继续之前，输出根一个字节都没有。抬头那一行
     /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
     ///
-    /// 别的三种照库收到的那个字印，这一格与从前逐字相同。
+    /// **一趟里每一卷各答一次**（`volume-discovery/07`），而抬头那一行只有一句：
+    /// 答过一次继续就有一卷写了出去，那一趟因此印执行——记下来的是那几个字里
+    /// **最弱**的那一个（见 [`Live::decided`]）。
+    ///
+    /// 执行那一趟照库收到的那个字印，这一格与从前逐字相同。
     #[test]
     fn a_trial_that_never_walked_the_second_pass_prints_as_a_dry_run() {
         // 续做那一趟：起手、答收尾、答中止，三处都是 dry-run；只有答继续那一处不是。
@@ -1049,13 +1137,40 @@ mod tests {
         ] {
             let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
             if let Some(said) = said {
-                live.decide(said);
+                live.decide(said, Reach::ThisVolume);
             }
             assert_eq!(live.decided(), said);
             assert_eq!(live.mode(), shown, "答了 {said:?}");
         }
 
-        // 不续做的那两趟一格不改：执行印执行，多卷试算印 dry-run。
+        // 几十卷的一趟：头一卷答继续（它写出去了），第二卷答收尾（这一趟到此为止）。
+        // 盘上有头一卷，抬头因此不能说「只算不写」——两个次序都问一遍，
+        // 记的是最弱的那一个，与答话的先后无关。
+        for said in [
+            [Instruction::Continue, Instruction::Finish],
+            [Instruction::Finish, Instruction::Continue],
+        ] {
+            let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+            for said in said {
+                live.decide(said, Reach::ThisVolume);
+            }
+            assert_eq!(live.decided(), Some(Instruction::Continue));
+            assert_eq!(
+                live.mode(),
+                RunMode::Process,
+                "答过一次继续，抬头却说这一趟一个字节都没写：{said:?}"
+            );
+        }
+
+        // 「剩下的卷都这样」摆下的那个默认答案单独记一格：它不是闩，也不替
+        // [`Live::decided`] 作答——那一格记的仍是答过的字。
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        assert_eq!(live.for_the_rest(), None, "没答过那个手势就该是空的");
+        live.decide(Instruction::Continue, Reach::ForTheRest);
+        assert_eq!(live.for_the_rest(), Some(Instruction::Continue));
+        assert_eq!(live.decided(), Some(Instruction::Continue));
+
+        // 执行那一趟一格不改：印执行。
         assert_eq!(
             Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn).mode(),
             RunMode::Process

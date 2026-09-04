@@ -36,6 +36,7 @@ use tonefit::{
 };
 
 use super::complete;
+use super::live::Reach;
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -123,15 +124,22 @@ pub enum Action {
     /// 升到哪一级由状态机自己记（[`Mode::Running`] 那一格）；把它交给跑着的那一趟
     /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
     Stop,
-    /// **在决策点上答一个字**（`CONTEXT.md` 的《会话》：决策点）。
+    /// **在决策点上答一个字**，连同这个字[管几卷](Reach)（`CONTEXT.md` 的《会话》：
+    /// 决策点、都这样）。
     ///
-    /// 只在 [`Mode::Deciding`] 那个状态下派得出来，而那个状态只有单卷试算到得了。
-    /// 两个字各有一个键：`x` 答[继续](Instruction::Continue)——第一遍不重算，直接进第二遍；
-    /// `s` 答[收尾](Instruction::Finish)——这一卷一个字节都不写，等价于一次 dry-run。
+    /// 只在 [`Mode::Deciding`] 那个状态下派得出来，而**每一卷的试算都到得了**那个状态。
+    /// 三个字各有一个键：`x` 答[继续](Instruction::Continue)——第一遍不重算，直接进第二遍；
+    /// `s` 答[收尾](Instruction::Finish)——这一卷一个字节都不写，等价于一次 dry-run；
+    /// `a` 答的是**同一个继续，外加剩下的卷都这样**（[`Reach::ForTheRest`]）——
+    /// 往下的决策点不再停，几十卷的一趟因此按一下就挂得住。
     ///
     /// **它带着那个字，而不是像[按停](Self::Stop)那样让状态机自己升一级**：
-    /// 决策点回的是**当场那个字**，不是闩（ADR 0012 决定第 2 条）。两个键因此是两个方向，
-    /// 不是同一个键按两次。
+    /// 决策点回的是**当场那个字**，不是闩（ADR 0012 决定第 2 条）。三个键因此是三个方向，
+    /// 不是同一个键按几次。
+    ///
+    /// **「剩下的卷都这样」同样不进闩**：闩只升不降，而它是个可以是「继续」的粘性答案。
+    /// 它记在观察者那一侧的「决策点的默认答案」上（`super::run::Gate`），
+    /// 与库那一侧记「至今收到过最强指令」的那一格分开放——按停按到的那一级一格不动。
     ///
     /// [中止](Instruction::Abort)不从这条路出去：等答话时按 `Ctrl-C` 是[退出会话](Self::Quit)，
     /// 而退出会话本来就走中止（`super::run::Running::leave`，停车场 Q63）——
@@ -139,7 +147,7 @@ pub enum Action {
     ///
     /// 把那个字送到计算线程上在 [`super::press`] 那一层（`Running::decide`），
     /// 与[按停](Self::Stop)同一条规矩：本模块不碰线程。
-    Answer(Instruction),
+    Answer(Instruction, Reach),
     /// **展开**：把报告上第一卷的逐页那几行摊开来，左栏跟着收起
     /// （`CONTEXT.md` 的《会话》：展开）。
     ///
@@ -421,12 +429,16 @@ pub enum Mode {
     /// 一趟**停在决策点上等人拿主意**（`CONTEXT.md` 的《会话》：续做与决策点，
     /// ADR 0012 决定第 3 条）。
     ///
-    /// 只有**单卷试算**到得了这里：多卷不续做（决定第 1 条，理由是内存不是口味），
-    /// 执行那一趟也不在这儿停——用户按 `x` 的时候已经拿过主意了。
+    /// **试算到得了这里，几卷都一样，一卷一次**（决定第 3 条，`volume-discovery/07`）：
+    /// 决策点本来就是逐卷的，逐卷停下来问，缓存始终只押着当前那一卷，内存一点不涨。
+    /// 执行那一趟不在这儿停——用户按 `x` 的时候已经拿过主意了。
+    /// 答过[「剩下的卷都这样」](Action::Answer)之后也不再到这里：往下的决策点由观察者
+    /// 那一侧的默认答案当场答掉（`super::run::Gate`），那条线程根本不停下来。
     ///
     /// **它是一个状态，不是 [`Running`](Self::Running) 上的一个开关。**跑着与等答话
-    /// 按得动的键是两套：跑着时按得动的只有停（`s`），等答话时按得动的是答话那两个
-    /// （`x` 接着做、`s` 收尾）。两套摆进同一个状态，屏底那一行就要靠一个 flag 分岔，
+    /// 按得动的键是两套：跑着时按得动的只有停（`s`），等答话时按得动的是答话那三个
+    /// （`x` 接着做、`a` 剩下的卷都这样、`s` 收尾）。两套摆进同一个状态，
+    /// 屏底那一行就要靠一个 flag 分岔，
     /// 而「哪些键在哪个状态下有效」那张表正是本模块唯一的产出。
     ///
     /// 三层在这一刻**仍然只读**，与跑着时一个待遇：`Request` 在起线程那一刻就是一份快照，
@@ -667,8 +679,8 @@ pub struct Edit {
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
 /// 按 `e` 展开逐页（左栏跟着收起）、按 `p` 开预设那一栏（存下当前两层，或套用一份）、
 /// 停在设备层上按 `c` 出标定图、按键退出。
-/// **单卷试算跑到决策点会停下来等人**（[`Mode::Deciding`]），那时按 `x` 接着做第二遍、
-/// 按 `s` 收尾。
+/// **试算每走完一卷的第一遍都会停下来等人**（[`Mode::Deciding`]），那时按 `x` 接着做
+/// 第二遍、按 `a` 剩下的卷都这样、按 `s` 收尾。
 ///
 /// **出标定图不往这里加状态**：它一按就完，屏底说一句就是全部结果——
 /// 会话此刻在做什么一格没变（见 [`Action::Chart`] 与 [`Self::charted`]）。
@@ -1048,7 +1060,7 @@ impl Session {
             Action::Stop => self.raise_stop(),
             // 状态转回「跑着」就在这里；把那个字交给停在决策点上的那条线程
             // 在 [`super::press`]（`Running::decide`）——与按停同一条分工。
-            Action::Answer(_) => self.answered(),
+            Action::Answer(..) => self.answered(),
             // 展开与换卷要读那一趟攒下来的报告（有几卷、那一卷从第几行起），
             // 而本模块读不到它——真做这两件事的是 [`super::press`]，它随后调
             // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
@@ -1376,14 +1388,19 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
     }
 }
 
-/// **停在决策点上等人拿主意时的按键表**：`x` 接着做第二遍，`s` 收尾，`Ctrl-C` 退出会话
-/// （`p1-session/14`，ADR 0012）。
+/// **停在决策点上等人拿主意时的按键表**：`x` 接着做第二遍，`a` 剩下的卷都这样，
+/// `s` 收尾，`Ctrl-C` 退出会话（`p1-session/14`、`volume-discovery/07`，ADR 0012）。
 ///
-/// 两个方向各拿一个**已经有主的键**，因为它们在这里做的正是那个键一直在做的事：
+/// 那两个方向各拿一个**已经有主的键**，因为它们在这里做的正是那个键一直在做的事：
 /// `x` 是执行——「接着做第二遍」就是把这一趟做完；`s` 是停——「收尾」是它的第一级，
 /// 而决策点上答收尾停出来的现场恰好也是「盘上不留半卷」（这一卷一个字节都不写）。
 /// 另取两个新键的话，屏上就要多记两个只在这一刻有效的记号，而它们与已有的那两个
 /// 说的是同一件事。
+///
+/// **`a` 是这个状态自己的键**（`all`：剩下的卷都这样）。它没有一个「一直在做这件事」
+/// 的旧主可借——它答的字与 `x` 逐字相同，差别只在[管几卷](Reach)，而那件事别处不存在。
+/// 借 `x` 按两下也说不出它：两级停那个形状说的是「再按一次更重一级」，
+/// 而这一下不比 `x` 更重，只是更远。
 ///
 /// **`s` 在这里不是两级停。**跑着时 `s` 升的是[闩](Session::stopping)，一次收尾、
 /// 再一次中止；这里 `s` 答的是**当场那个字**，答完那条线程就接着走，没有第二次可按
@@ -1400,8 +1417,9 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
 fn deciding_action(key: Key) -> Action {
     match key {
         Key::Interrupt => Action::Quit,
-        Key::Char('x') => Action::Answer(Instruction::Continue),
-        Key::Char('s') => Action::Answer(Instruction::Finish),
+        Key::Char('x') => Action::Answer(Instruction::Continue, Reach::ThisVolume),
+        Key::Char('a') => Action::Answer(Instruction::Continue, Reach::ForTheRest),
+        Key::Char('s') => Action::Answer(Instruction::Finish, Reach::ThisVolume),
         Key::Up
         | Key::Down
         | Key::Left
@@ -2105,8 +2123,9 @@ mod tests {
         // Ctrl-C 仍旧退得出去：它在**每一个**状态下都是退出。
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
 
-        // 六之二、**停在决策点上等人拿主意**（`p1-session/14`）：三层照旧只读，
-        // 而按得动的换成了答话那两个——`x` 接着做第二遍，`s` 收尾。
+        // 六之二、**停在决策点上等人拿主意**（`p1-session/14`、`volume-discovery/07`）：
+        // 三层照旧只读，而按得动的换成了答话那三个——`x` 接着做第二遍，
+        // `a` 剩下的卷都这样，`s` 收尾。
         session.at_the_decision_point(true);
         assert!(session.deciding(), "没进等答话那个状态");
         for key in [
@@ -2138,15 +2157,20 @@ mod tests {
                 "{key:?} 在决策点上不该生效"
             );
         }
-        // 答话那两个键。**`x` 在这里不是「起一趟」，`s` 也不是升闩**——
+        // 答话那三个键。**`x` 在这里不是「起一趟」，`s` 也不是升闩**——
         // 决策点回的是当场那个字（ADR 0012 决定第 2 条）。
+        // `a` 答的字与 `x` 逐字相同，差别只在它管几卷（`volume-discovery/07`）。
         assert_eq!(
             session.action(Key::Char('x')),
-            Action::Answer(Instruction::Continue)
+            Action::Answer(Instruction::Continue, Reach::ThisVolume)
+        );
+        assert_eq!(
+            session.action(Key::Char('a')),
+            Action::Answer(Instruction::Continue, Reach::ForTheRest)
         );
         assert_eq!(
             session.action(Key::Char('s')),
-            Action::Answer(Instruction::Finish)
+            Action::Answer(Instruction::Finish, Reach::ThisVolume)
         );
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
         // 答完话回「跑着」那一副，按停那个键又是升闩了。
@@ -2563,6 +2587,19 @@ mod tests {
         assert_eq!(session.press(Key::Char('s')), Exit::Stay);
         assert!(matches!(session.mode(), Mode::Running(_)), "答完话没转回去");
         assert_eq!(session.stopping(), Instruction::Finish, "答话把闩推上去了");
+
+        // **「剩下的卷都这样」同样不动那个闩**（`volume-discovery/07` 票面第四条）：
+        // 它是个可以是「继续」的粘性答案，记在观察者那一侧的默认答案上，
+        // 而按停按到的那一级答完话照旧作数。
+        session.at_the_decision_point(true);
+        assert!(session.deciding());
+        assert_eq!(session.press(Key::Char('a')), Exit::Stay);
+        assert!(matches!(session.mode(), Mode::Running(_)), "答完话没转回去");
+        assert_eq!(
+            session.stopping(),
+            Instruction::Finish,
+            "「剩下的卷都这样」把闩推上去了"
+        );
 
         // 那一趟停在决策点上被中止时收不到「跑完」以外的东西，收场那一下照样回浏览。
         session.at_the_decision_point(true);

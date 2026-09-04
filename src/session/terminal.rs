@@ -163,9 +163,11 @@ fn press(
         // 决策点上的那条线程。与按停同一条分工——认键在那边，碰线程在这边。
         // **两处记的是同一个字**，而它就在这个动作里带着：决策点回的是当场那个字、
         // 不是闩（ADR 0012 决定第 2 条），因此这里不去问状态机再算一次。
-        Action::Answer(said) => {
+        // 它管几卷（「剩下的卷都这样」）同样带在动作里，摆到那道闸的默认答案上去
+        // （`Running::decide`）——那一格也不是闩。
+        Action::Answer(said, reach) => {
             let exit = session.act(action);
-            running.decide(said);
+            running.decide(said, reach);
             exit
         }
         // 展开与换一卷：要读那一趟攒下来的报告（有几卷、那一卷落在第几行），
@@ -204,24 +206,27 @@ fn press(
     }
 }
 
-/// 这一趟**在决策点上等不等人**，以及它真正走的是哪一种模式（ADR 0012）。
+/// 这一趟**在决策点上等不等人**，以及它真正走的是哪一种模式（ADR 0012 决定第 3 条）。
 ///
-/// **续做只在处理范围是单卷时成立**（决定第 1 条，理由是内存不是口味：缓存逐卷建、
-/// 逐卷丢，全量试算要续做就得同时押住全部卷的参照，而缓存预算是**每卷**的）。
-/// 那一趟因此改走 `Mode::Process`——参照要留着（决定第 5 条：单卷试算走 `Retention::Keep`），
+/// **试算一律续做，点名了几个路径都一样**（决定第 3 条，`volume-discovery/07`）。
+/// 那一趟因此改走 `Mode::Process`——参照要留着（决定第 5 条：试算走 `Retention::Keep`），
 /// 答继续时第一遍才不必重算。「只算不写」在那条路上重述为**不写输出**：
 /// 越过预算的页仍建溢写临时文件，运行结束即收走。
 ///
-/// **多卷试算照旧另走一次 `Mode::DryRun`**，也不在决策点上等人：那一趟没有下一步可续，
-/// 留着参照只是白占。屏上把这件事说出来（见 `super::draw::running_prompt`）——
-/// 免得用户以为批量跑也是免费的。
+/// **不按卷数分岔，也不按点名了几个路径分岔。** 从前这里判的是
+/// `inputs.len() == 1`，而那判的是「点名了一个**路径**」——发现落地之后
+/// （`volume-discovery/03`：`inputs` 的语义是「一批**在里面找卷的地方**」），
+/// 一个路径常常就是几十卷，这两件事早已脱钩。决定第 1 条那条内存理由拦的是
+/// 「一次押住**全部卷**的参照」，而决策点本来就是逐卷的：逐卷停下来问，
+/// 缓存始终只押着当前那一卷，内存一点不涨（见 ADR 0012
+/// 《决定第 1 条那条内存理由不覆盖逐卷决策点》）。
 ///
 /// **执行那一趟一格不改**：用户按 `x` 的时候已经拿过主意了，不该在半路再问他一次。
 ///
 /// 判在这一层而不在状态机里：**等不等人是调用方的策略，不是库的行为**
 /// （决定第 3 条），而状态机既碰不到线程、也不该替这一层拿这个主意。
 fn resuming(request: Request) -> (Request, Resuming) {
-    if request.mode == RunMode::DryRun && request.inputs.len() == 1 {
+    if request.mode == RunMode::DryRun {
         (
             Request {
                 mode: RunMode::Process,
@@ -610,7 +615,7 @@ mod tests {
 
     /// **答话那个键真的走到了停在决策点上的那条线程身上**（`p1-session/14`）。
     ///
-    /// 这一条走的是整条路：按 `t` 起一趟（单卷，因此 [`resuming`] 把它改成续做的那一趟）→
+    /// 这一条走的是整条路：按 `t` 起一趟（试算，因此 [`resuming`] 把它改成续做的那一趟）→
     /// 那条线程停在决策点上 → 会话跟着换一副样子 → 按 `s` 答收尾 → 那条线程接着跑完。
     /// 两头各自有用例（状态机那边 `deciding_action`，闸那边
     /// `answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume`），
@@ -640,7 +645,7 @@ mod tests {
         // 这一条一个预设键都不按（见 [`presets`]）。
         let nowhere = presets(&space);
 
-        // 按 `t`：单卷试算，因此这一趟改走 `Mode::Process` 并在决策点上等人。
+        // 按 `t`：试算，因此这一趟改走 `Mode::Process` 并在决策点上等人。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('t')),
             Exit::Stay
@@ -691,16 +696,20 @@ mod tests {
         );
     }
 
-    /// **续做只在单卷试算上成立**（ADR 0012 决定第 1、5 条，`p1-session/14` 票面）。
+    /// **试算一律续做，点名了几个路径都一样**（ADR 0012 决定第 3、5 条，
+    /// `volume-discovery/07` 票面）。
     ///
-    /// 三种情形各问一次，问的是同一个函数交出来的那两样：这一趟**真走**哪一种模式、
+    /// 各情形问的是同一个函数交出来的那两样：这一趟**真走**哪一种模式、
     /// 它**在决策点上等不等人**。
     ///
-    /// 单卷试算那一支两样都变：模式从 `DryRun` 换成 `Process`（参照要留着，
-    /// 答继续时第一遍才不必重算），并且等人。另两支一格不动——**多卷不续做是内存上的事，
-    /// 不是口味**：缓存预算是每卷的。
+    /// 试算那几支两样都变：模式从 `DryRun` 换成 `Process`（参照要留着，
+    /// 答继续时第一遍才不必重算），并且等人。**这一处不再数点名了几个路径**——
+    /// 从前数的是 `inputs.len() == 1`，而发现落地之后一个路径常常就是几十卷
+    /// （`volume-discovery/03`），那个数早就不说明有几卷了。
+    ///
+    /// 执行那几支一格不动：按 `x` 的时候用户已经拿过主意了。
     #[test]
-    fn only_a_single_volume_trial_resumes() {
+    fn every_trial_resumes_however_many_paths_it_names() {
         let one = |mode| Request {
             inputs: vec![PathBuf::from("库/卷一")],
             ..live::fixture::request(mode)
@@ -710,40 +719,100 @@ mod tests {
             ..live::fixture::request(mode)
         };
 
-        // 单卷试算：改走 Process，并且在决策点上等人。
-        let (request, resumes) = resuming(one(RunMode::DryRun));
-        assert_eq!(resumes, Resuming::Waits, "单卷试算没续做");
-        assert_eq!(
-            request.mode,
-            RunMode::Process,
-            "续做那一趟得留参照（ADR 0012 决定第 5 条）"
-        );
+        // 试算：改走 Process，并且在决策点上等人——点名一个路径与点名两个一个待遇。
+        for request in [one(RunMode::DryRun), many(RunMode::DryRun)] {
+            let inputs = request.inputs.len();
+            let (request, resumes) = resuming(request);
+            assert_eq!(resumes, Resuming::Waits, "试算没续做（{inputs} 个路径）");
+            assert_eq!(
+                request.mode,
+                RunMode::Process,
+                "续做那一趟得留参照（ADR 0012 决定第 5 条）"
+            );
+        }
 
-        // 多卷试算：照旧另走一次 dry-run，不等人。
-        let (request, resumes) = resuming(many(RunMode::DryRun));
-        assert_eq!(resumes, Resuming::GoesOn, "多卷续做了");
-        assert_eq!(request.mode, RunMode::DryRun, "多卷试算不该改模式");
-
-        // 执行：一格不动，无论几卷——按 x 的时候用户已经拿过主意了。
+        // 执行：一格不动，几个路径都一样——按 x 的时候用户已经拿过主意了。
         for request in [one(RunMode::Process), many(RunMode::Process)] {
             let inputs = request.inputs.len();
             let (request, resumes) = resuming(request);
             assert_eq!(
                 resumes,
                 Resuming::GoesOn,
-                "执行那一趟停下来等人了（{inputs} 卷）"
+                "执行那一趟停下来等人了（{inputs} 个路径）"
             );
             assert_eq!(request.mode, RunMode::Process);
         }
 
-        // 一个卷都没勾：范围为空由库那一侧当场拒掉，这一层不替它多编一句，
-        // 也不该把它当成「单卷」续做。
+        // 一个卷都没勾：范围为空由库那一侧当场拒掉——那一趟一条事件都不发，
+        // 决策点根本到不了，等不等人因此不影响任何事（见 `Running::start` 起的那道闸）。
         let (request, resumes) = resuming(Request {
             inputs: Vec::new(),
             ..live::fixture::request(RunMode::DryRun)
         });
-        assert_eq!(resumes, Resuming::GoesOn, "一个卷都没有也续做了");
-        assert_eq!(request.mode, RunMode::DryRun);
+        assert_eq!(resumes, Resuming::Waits);
+        assert_eq!(request.mode, RunMode::Process);
+    }
+
+    /// **「剩下的卷都这样」那个键真的走到了停在决策点上的那条线程身上**
+    /// （`volume-discovery/07`，spec 的 story 13）。
+    ///
+    /// 与答话那一条同一个位置：接头处是本层唯一做的事——把状态机认出来的那个字
+    /// **连同它管几卷**交给 [`Running::decide`]。两头各自有用例（状态机那边
+    /// `which_keys_do_what_in_which_state`，闸那边
+    /// `answering_for_the_rest_once_stops_the_asking_and_leaves_the_latch_alone`）。
+    ///
+    /// 走的是整条路：按 `t` 起一趟**两个卷**的试算 → 停在头一卷的决策点上 →
+    /// 按 `a` → 那条线程一路把两卷都做完，一次都不再停。
+    #[test]
+    fn pressing_the_rest_too_reaches_the_thread_waiting_at_the_decision_point() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let out = space.path().join("出");
+
+        let mut session = Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.scope.out = Some(out.clone());
+        for name in ["卷一", "卷二"] {
+            session.scope.volumes.push(state::Picked {
+                path: crate::session::live::fixture::a_real_volume(space.path(), name),
+                on: true,
+            });
+        }
+        let mut running = Running::default();
+        // 这一条一个预设键都不按（见 [`presets`]）。
+        let nowhere = presets(&space);
+
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Char('t')),
+            Exit::Stay
+        );
+        while !running.deciding() {
+            std::thread::yield_now();
+        }
+        session.at_the_decision_point(running.deciding());
+        assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
+
+        // 按 `a`：这一卷接着做，剩下的卷都这样。
+        assert_eq!(
+            tap(&mut session, &mut running, &nowhere, Key::Char('a')),
+            Exit::Stay
+        );
+        assert!(!session.deciding(), "答完话会话还停在决策点上");
+        while !running.reap() {
+            // 真停下来的话当场红，而不是挂在那儿等一个不会来的人。
+            assert!(
+                !running.deciding(),
+                "答过「剩下的卷都这样」，它却又停下来问了"
+            );
+            session.at_the_decision_point(running.deciding());
+            std::thread::yield_now();
+        }
+        session.run_finished();
+
+        assert!(out.join("卷一").is_dir(), "头一卷没写出来");
+        assert!(out.join("卷二").is_dir(), "剩下的那一卷没写出来");
+        let live = running.live().expect("跑过一趟");
+        assert_eq!(live.for_the_rest(), Some(tonefit::Instruction::Continue));
+        assert_eq!(live.report().volumes.len(), 2);
     }
 
     /// **展开那个键找那一趟要报告，而报告不在时它说一句、不进展开态。**

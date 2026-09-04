@@ -27,7 +27,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use tonefit::{Instruction, Mode as RunMode, Pass};
+use tonefit::{Instruction, Pass};
 
 use super::complete;
 use super::live::{Live, Walking};
@@ -740,43 +740,58 @@ fn running_prompt(pressed: Instruction, live: Option<&Live>) -> Prompt {
     )
 }
 
-/// 还没按过停的时候，屏底第二行说的那件事：**这一趟续不续做**（ADR 0012，`p1-session/14`）。
+/// 还没按过停的时候，屏底第二行说的那件事：**这一趟在决策点上怎么走**
+/// （ADR 0012 决定第 3 条，`p1-session/14`、`volume-discovery/07`）。
 ///
 /// 两句都要在**跑起来的当口**说，不能等到停下来才说：
 ///
-/// - **续做那一趟**要预告它会停：单卷试算跑到第二遍之前就不走了，不预告的话，
-///   横条停住看上去与卡住没有分别。
-/// - **不续做那一趟**要说清代价：多卷时试算与执行各跑一趟，第一遍照付两遍的价
-///   （缓存预算是**每卷**的，ADR 0012 决定第 1 条）。不说的话，用户会以为批量跑
-///   也像单卷那样免费。
+/// - **续做那一趟**要预告它会停：每一卷跑到第二遍之前都不走了，不预告的话，
+///   横条停住看上去与卡住没有分别。答话那三个键连同「一卷一次」一起预告出来——
+///   几十卷的一趟里，「还要按几下」是用户当场就想知道的那件事。
+/// - **答过「剩下的卷都这样」之后**要说清它不再问了：往下的决策点当场照那个默认答案答掉
+///   （`super::run::Gate`），横条从此一路走到底。不说的话，「它怎么不问了」
+///   与「它忘了问」在屏上没有分别。
 ///
 /// 执行那一趟与还没跑过时这一行是空的，与从前逐格相同：那两种没有「续不续做」可言。
 fn resuming_line(live: Option<&Live>) -> &'static str {
     let Some(live) = live else {
         return "";
     };
-    if live.resumes() {
-        return "续做：第一遍走完会停在决策点上等你拿主意——那时按 x 接着做第二遍（第一遍不重算），按 s 收尾";
+    if !live.resumes() {
+        return "";
     }
-    if live.mode() == RunMode::DryRun {
-        return "这一趟不续做：多卷时试算与执行各跑一趟，按 x 那一趟第一遍要重算一遍（缓存预算是每卷的）";
+    if live.for_the_rest().is_some() {
+        return "剩下的卷都这样：往下的决策点不再停下来问，这一趟一路做到底";
     }
-    ""
+    "续做：每一卷第一遍走完都会停下来等你拿主意——那时按 x 接着做第二遍（第一遍不重算），按 a 剩下的卷都这样，按 s 收尾"
 }
 
-/// **停在决策点上等人拿主意**时屏底那两行（`p1-session/14`，ADR 0012）。
+/// **停在决策点上等人拿主意**时屏底那两行（`p1-session/14`、`volume-discovery/07`，
+/// ADR 0012）。
 ///
-/// 上一行是这时按得动的三个键，下一行说**此刻盘上是什么样**——决策点问的是
-/// 「这一卷的第二遍还做不做」，而答这一问要知道的正是「现在还什么都没写」。
+/// 上一行是这时按得动的四个键，下一行说**此刻这一卷是什么样**——决策点问的是
+/// 「这一卷的第二遍还做不做」，而答这一问要知道的正是「这一卷现在还什么都没写」。
 ///
-/// 两个答话键各带一句它买的东西：`x` 那一句是**第一遍不重算**（续做整件事就是为了它），
+/// **说的是这一卷，不是输出根**：一趟里每一卷各停一次，答过继续的那几卷早就写出去了
+/// （`volume-discovery/07`）。说成「输出根一个字节都没有」的话，
+/// 第二卷停下来的那一刻它就是一句假话。
+///
+/// 三个答话键各带一句它买的东西：`x` 那一句是**第一遍不重算**（续做整件事就是为了它），
+/// `a` 那一句是**往下不再问**（几十卷的一趟按一下就挂得住），
 /// `s` 那一句是**等价于 dry-run**（`CONTEXT.md` 的《会话》：决策点）。
 /// 措辞里不提「收尾」那一级的定义——那是按停的第一级，说的是「当前卷跑完才停」，
 /// 与这里停出来的现场恰好相反（见 `super::state::deciding_action`）。
+///
+/// **`s` 那一句还得说出「剩下的卷也不开工」**：决策点上答的字照样进库那一侧的闩
+/// （`CONTEXT.md` 的《会话》：「那一卷停在这儿之后，剩下的卷也不必开工」，
+/// 用例见 `tests/resume.rs` 的
+/// `finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_starts_no_more`）。
+/// 一卷的时候那件事说不说都一样；五十卷的时候它是这个键**最大的后果**，
+/// 而只说「这一卷不写」的话，它读起来像是「跳过这一卷」。
 fn deciding_prompt() -> Prompt {
     Prompt::new(
-        " 等你拿主意…… · x 接着做第二遍（第一遍不重算）· s 收尾（这一卷不写，等价 dry-run）· Ctrl-C 退出会话",
-        " 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有第二遍一步没走——输出根此刻一个字节都没有",
+        " 等你拿主意…… · x 接着做第二遍（第一遍不重算）· a 剩下的卷都这样（往下不再问）· s 收尾（这一卷不写，等价 dry-run；剩下的卷也不开工）· Ctrl-C 退出会话",
+        " 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有第二遍一步没走——这一卷此刻一个字节都没写",
     )
 }
 
@@ -927,7 +942,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::session::live::{Resuming, fixture};
+    use crate::session::live::{Reach, Resuming, fixture};
     use crate::session::state::{Expansion, Key};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1211,10 +1226,11 @@ mod tests {
     ///   而眼睛盯着横条的人不会往下扫一行（与按停那一级挂在同一处，停车场 Q71）。
     /// - **报告区把那一卷画出来了**（停车场 Q52）：判定与逐页那几个数就是拿主意的依据，
     ///   而那一卷此刻还没收摊，报告里没有它。
-    /// - **屏底摆着答话那两个键**，各带着它买的东西：`x` 是第一遍不重算，
-    ///   `s` 是等价 dry-run。跑着时那一副（`s` 停、两级）在这里一个字都不该剩下。
+    /// - **屏底摆着答话那三个键**，各带着它买的东西：`x` 是第一遍不重算，
+    ///   `a` 是往下不再问，`s` 是等价 dry-run**外加剩下的卷也不开工**。
+    ///   跑着时那一副（`s` 停、两级）在这里一个字都不该剩下。
     #[test]
-    fn waiting_at_the_decision_point_shows_the_report_and_the_two_ways_out() {
+    fn waiting_at_the_decision_point_shows_the_report_and_the_three_ways_out() {
         let summarized = fixture::processed_volume("卷一", None);
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         live.run_started(1, 1000);
@@ -1228,7 +1244,7 @@ mod tests {
         let running = tight(&screen(&mut session, Some(&live), 120, 40));
         assert!(running.contains(&tight("s 停（按一次收尾")), "{running}");
         assert!(
-            running.contains(&tight("会停在决策点上等你拿主意")),
+            running.contains(&tight("每一卷第一遍走完都会停下来等你拿主意")),
             "{running}"
         );
 
@@ -1245,12 +1261,15 @@ mod tests {
         }
         // 抬头那一行说清这一趟此刻只算不写——盘上一个字节都没有。
         assert!(waiting.contains(&tight("dry-run")), "{waiting}");
-        // 三、答话那两个键，连同它们各自买的东西。
+        // 三、答话那三个键，连同它们各自买的东西。
         for key in [
             "x 接着做第二遍",
             "第一遍不重算",
+            "a 剩下的卷都这样",
+            "往下不再问",
             "s 收尾",
             "等价 dry-run",
+            "剩下的卷也不开工",
             "Ctrl-C 退出会话",
         ] {
             assert!(waiting.contains(&tight(key)), "{key}：{waiting}");
@@ -1271,27 +1290,35 @@ mod tests {
         assert!(!before.contains(&tight("驱动页")), "{before}");
     }
 
-    /// **多卷试算在跑起来的当口就说清这一趟不续做**（`p1-session/14` 票面第四条）。
+    /// **试算在跑起来的当口就预告它会逐卷停下来**（`p1-session/14` 票面第四条，
+    /// `volume-discovery/07`）。
     ///
-    /// 非说不可：单卷那一趟停下来等人、第一遍不重算，而多卷那一趟按 x 时第一遍要重算
-    /// 一遍（缓存预算是每卷的，ADR 0012 决定第 1 条）。不说的话，用户会以为批量跑
-    /// 也像单卷那样免费。
+    /// 非说不可：横条会在每一卷的第二遍之前停住，而停住与卡住在屏上没有分别。
+    /// 「一卷一次」与答话那三个键一起预告出来——几十卷的一趟里，
+    /// 「还要按几下」是用户当场就想知道的那件事。
+    ///
+    /// **答过「剩下的卷都这样」之后换一句**：往下不再问了，而「它怎么不问了」
+    /// 与「它忘了问」在屏上同样没有分别。
     ///
     /// 执行那一趟这一行仍旧是空的：它没有「续不续做」可言，与从前逐格相同。
     #[test]
-    fn a_trial_that_will_not_resume_says_so_while_it_runs() {
-        // 多卷试算：另走一次 dry-run，不等人。
-        let mut trial = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
-        trial.run_started(2, 2000);
-        let said = running_prompt(Instruction::Continue, Some(&trial)).what;
-        assert!(said.contains("不续做"), "{said}");
-        assert!(said.contains("各跑一趟"), "{said}");
-
-        // 单卷试算：预告它会停下来。
-        let resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+    fn a_trial_says_it_will_stop_at_every_volume_while_it_runs() {
+        // 试算：预告它会停下来，一卷一次，三个键都摆出来。
+        let mut resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        resuming.run_started(20, 20_000);
         let said = running_prompt(Instruction::Continue, Some(&resuming)).what;
         assert!(said.contains("续做"), "{said}");
-        assert!(!said.contains("不续做"), "{said}");
+        assert!(said.contains("每一卷"), "{said}");
+        for key in ["x 接着做第二遍", "a 剩下的卷都这样", "s 收尾"] {
+            assert!(said.contains(key), "{key}：{said}");
+        }
+
+        // 答过「剩下的卷都这样」：换成「往下不再问」那一句。
+        resuming.decide(Instruction::Continue, Reach::ForTheRest);
+        let said = running_prompt(Instruction::Continue, Some(&resuming)).what;
+        assert!(said.contains("剩下的卷都这样"), "{said}");
+        assert!(said.contains("不再停下来问"), "{said}");
+        assert!(!said.contains("等你拿主意"), "{said}");
 
         // 执行：这一行空着。
         let processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
