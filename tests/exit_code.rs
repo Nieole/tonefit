@@ -152,17 +152,66 @@ fn a_list_of_non_volume_files_never_changes_the_exit_code() {
     );
 }
 
+/// **摊不下就是卷级失败，其余卷照做，退出码 `3`**（`volume-discovery/05`，ADR 0015）。
+///
+/// 固实归档开工前要整卷摊到系统临时目录，而这一趟的临时目录**根本不在**——
+/// 子进程的 `TMP` / `TEMP` / `TMPDIR` 指着一个没建出来的路径。「磁盘不够」在用例里造不出来，
+/// 而它与这一种走的是同一条路（`source::extract` 的每一个 `Err`）：摊开这一步失败，
+/// 那一卷交不出来。
+///
+/// 非在真进程上问不可，理由与本文件其余几条同一个：退出码只在进程那一层观察得到，
+/// 而 `TMP` 是进程级的东西——在库那一侧改它会波及同时在跑的别的用例。
+#[test]
+fn a_volume_that_cannot_be_extracted_fails_alone_and_the_run_ends_with_three() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let mut solid = fixtures::SevenZip::new(library.join("固实的.7z"));
+    solid.page("001.png", &fixtures::gradient(fixtures::TINY));
+    solid.write();
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::gradient(fixtures::TINY));
+    good.write();
+    // 建都没建出来：`tempfile` 在它底下建不出目录，摊开那一步于是当场失败。
+    let nowhere = space.dir("没有这个临时目录");
+
+    assert_eq!(
+        tonefit_with_temp(&space, &[library.as_path()], Some(nowhere.as_path())),
+        Some(3),
+        "摊不开的那一卷没被记成卷级失败"
+    );
+    // 「其余卷照做」不只是退出码：好的那一卷真在盘上，摊不开的那一卷一个字节都没有。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照做，或者摊不开的那一卷也写出了东西"
+    );
+}
+
 /// 跑一趟 tonefit，返回它的退出码。进程被信号打断时是 `None`。
 fn tonefit(space: &Workspace, inputs: &[&Path]) -> Option<i32> {
-    Command::new(env!("CARGO_BIN_EXE_tonefit"))
+    tonefit_with_temp(space, inputs, None)
+}
+
+/// 同上，但把子进程的**系统临时目录**指到别处。
+///
+/// 三个变量一起设：`std::env::temp_dir()` 在 Windows 上看 `TMP` / `TEMP`，
+/// 在别的平台上看 `TMPDIR`，而这条用例两个平台都要成立。
+fn tonefit_with_temp(space: &Workspace, inputs: &[&Path], temp: Option<&Path>) -> Option<i32> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tonefit"));
+    command
         .arg("--out")
         .arg(space.out())
         .args(["--profile", fixtures::BASELINE_DEVICE])
         .args(inputs)
         // 报告与错误都不进测试日志：这条用例只看退出码，那两样别处已经测过了。
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("启动 tonefit")
-        .code()
+        .stderr(Stdio::null());
+    if let Some(temp) = temp {
+        command
+            .env("TMP", temp)
+            .env("TEMP", temp)
+            .env("TMPDIR", temp);
+    }
+    command.status().expect("启动 tonefit").code()
 }

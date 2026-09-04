@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
-pub use cache::{CacheBudget, CacheUsage};
+pub use cache::{CacheBudget, CacheUsage, format_bytes};
 pub use color::PageColor;
 pub use crop::{Crop, InkRule, ink_rule};
 pub use decide::{CandidateScore, Reason, Verdict};
@@ -72,6 +72,9 @@ pub use report::{
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 pub use spread::{Cut, Gutter, ReadingOrder, Side, SplitRule, SplitThreshold};
+// 认得的归档扩展名那一串：命令行的 `--help` 也要说它，而格式集只有一个出处
+// （`source::ARCHIVE_FORMATS`）。见二进制侧的 `inputs_help`。
+pub use source::listed_archive_extensions;
 
 use color::ColorImage;
 use metadata::{Fingerprint, Origin, PageRecord, Record, Recorder};
@@ -514,7 +517,13 @@ fn process_volume(
     ensure_the_volume_root_is_still_there(&root)?;
     // **按路径再开一次**：预扫只数不留，卷在它手上已经放掉了（见 `survey`）。
     // 开在这里而不是更早，是因为上面那两句一个要在最前、一个要抢在真读字节之前。
+    //
+    // **固实归档就在这一句里摊到临时目录**（ADR 0015 决定第 3 条）——「开工前」指的正是
+    // 这个位置：卷根还在的那一道已经过了，而下面每一件要源字节的事都还没开始。
+    // 摊不下（磁盘不够）从这里回 `Err`，那是卷级失败，其余卷照做。
     let mut volume = source::open(&root)?;
+    // 摊了多少字节先留一份：报告两处都要它，而其中一处（跳过那一支）会把卷根搬走。
+    let extracted = volume.extracted();
     // 成员按**重开的这一份**数，不是预扫那一份：报告说的得是真做了的这一卷
     // （见 [`MemberCounts::of`]）。
     let members = MemberCounts::of(&volume, request);
@@ -569,6 +578,9 @@ fn process_volume(
                 page_count: output_pages,
             }),
             cache: CacheUsage::new(request.cache_budget),
+            // 跳过的卷这一格**不是零**：幂等那一道照样把整卷的字节读了一遍，
+            // 而读之前得先摊开（见 `VolumeReport::extracted`）。
+            extracted,
             decodes: 0,
             io,
             // 两遍一遍都不走，三段里只有幂等那一段有数。
@@ -663,6 +675,7 @@ fn process_volume(
             source_pages,
             verdict,
             cache: lock(&cache).usage(),
+            extracted,
             decodes: decoder.decodes(),
             io: io.clone(),
             timing,
@@ -2372,11 +2385,9 @@ fn ensure_no_two_volumes_share_an_output(
 /// 比文件名用的是 [`collision_key`]：与比去处同一把尺子，不然 Windows 上
 /// `第1话.CBZ` 与 `第1话.cbz` 会被这里当成两个名字、报成扩展名归一，而它撞的其实是大小写。
 fn normalises_an_extension(group: &[&Path]) -> bool {
-    let mut names = group.iter().map(|input| {
-        collision_key(Path::new(
-            input.file_name().unwrap_or(input.as_os_str()),
-        ))
-    });
+    let mut names = group
+        .iter()
+        .map(|input| collision_key(Path::new(input.file_name().unwrap_or(input.as_os_str()))));
     let Some(first) = names.next() else {
         return false;
     };

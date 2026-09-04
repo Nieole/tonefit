@@ -20,9 +20,23 @@ ratatui = { version = "0.30.2", optional = true }
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# `.7z` 取纯 Rust 实现（ADR 0015），点名的是这一个：原 `sevenz-rust` 已停更，
+# 它是接手的那一支，同一个 Apache-2.0，作者也是底下 `lzma-rust2` 的作者。
+# 整份实现**一个 `unsafe` 都没有**，而 `zip 8` 早已把它要的那几个解码器
+# （`lzma-rust2`、`bzip2`、`ppmd-rust`、`zstd`）拉进树里——收下它只多两个包。
+# 选型的完整理由在 `.scratch/volume-discovery/issues/05-sevenzip.md` 的《落地记录》。
+#
+# **默认特性全关，只留解码那一半**：`compress` 是写 7z 的那一半，而输出一律 `.cbz`
+# （ADR 0015 决定第 2 条），永远用不上；`aes256` 是带口令的包，而本工具没有问口令的地方；
+# 留下的四个是 LZMA/LZMA2 之外真在流通的编码方式，各自那个包已经在树里，收下它们不多一个包。
+# 夹具那一侧另要 `compress`——它要写得出 7z 才造得出用例，见 `[dev-dependencies]`。
+sevenz-rust2 = { version = "0.22.2", default-features = false, features = ["bzip2", "deflate", "ppmd", "zstd"] }
 ssimulacra2 = { version = "0.5.1", optional = true }
 # 缓存的溢写文件要匿名（Unix 上 unlink，Windows 上 delete-on-close），
-# 中断时才不留下孤儿。集成测试也拿它建工作区。
+# 中断时才不留下孤儿。固实归档**摊开**的那个临时目录也是它建的（ADR 0015），
+# 落在同一个系统临时目录下，磁盘那一侧因此照旧没有第二个旋钮；那一份不能匿名
+# （成员要按名字读回来），靠析构收——差别写在 `source::Extraction` 上。
+# 集成测试也拿它建工作区。
 tempfile = "3.24.0"
 thiserror = "2.0.20"
 toml = "1.1.4"
@@ -66,6 +80,10 @@ crc32fast = "1.5.1"
 # 就够——非可选项对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着
 # 只列在那边的 `num_cpus`）。`image` 不同：dev 侧要的 `avif` 编码特性运行时那一份没有。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
+# 夹具要**写得出** 7z 才造得出 `.7z` 的用例，而运行时那一份只解不压（见 `[dependencies]`）。
+# 与上面 `image` 那一行同一条道理、同一条依据：resolver v2 不把 dev-dependencies 的特性
+# 并进非 dev 构建，`cargo build` 因此不会带上 7z 的编码器。
+sevenz-rust2 = { version = "0.22.2", default-features = false, features = ["compress"] }
 # 铺平一棵树、答「这个容器里装着什么」——只有断言用得着。库这一侧从 ADR 0014 起
 # 不再递归遍历任何东西：目录卷只列直接那一层，发现自己走一个显式的栈（`src/discover.rs`）。
 walkdir = "2.5.0"

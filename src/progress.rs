@@ -625,6 +625,7 @@ mod tests {
             source_pages: 0,
             verdict: None,
             cache: crate::CacheUsage::new(crate::CacheBudget::default()),
+            extracted: 0,
             io: crate::IoPlan {
                 medium: crate::Medium::Unknown {
                     reason: "用例".to_owned(),

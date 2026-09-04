@@ -404,23 +404,44 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_failed_volume() {
 
 /// 认得的归档扩展名是一个**集合**，拒绝那句话要把这个集合报出来。
 ///
-/// `.rar` / `.7z` 也在格式集里（ADR 0015），但本版本点名即拒：它们要先摊到临时目录
-/// 才谈得上读，而那条路还没开。拒得跟一个 `.txt` 一样，理由那句话报的是同一串扩展名。
+/// `.rar` 也在格式集里（ADR 0015 决定第 1 条），但本版本点名即拒：它要先摊到临时目录
+/// 才谈得上读，而那条路还没开（`volume-discovery/06`）。拒得跟一个 `.txt` 一样，
+/// 理由那句话报的是**已经收下的**那几个扩展名——`.7z` 从 `volume-discovery/05` 起在里面。
 #[test]
 fn a_file_that_is_neither_a_directory_nor_a_known_archive_is_refused() {
     let space = Workspace::new();
 
-    for name in ["volume-a.txt", "volume-a.rar", "volume-a.7z"] {
+    for name in ["volume-a.txt", "volume-a.rar"] {
         let path = space.stray_file(name, b"just a note");
 
         let error = run_paths_expecting_failure(&space, [path.as_path()]);
 
         let message = format!("{error:#}");
         assert!(
-            message.contains("一个卷是一个目录或一个归档（.cbz / .zip）"),
+            message.contains("一个卷是一个目录或一个归档（.cbz / .zip / .7z）"),
             "{name}：{message}"
         );
     }
+}
+
+/// 扩展名**像**一个 `.7z`、内容不是：那是「读不出归档结构」，不是「不认得这个扩展名」。
+///
+/// 两句话分得开才有用：前者说的是这个文件坏了，后者说的是这个格式没收。
+/// 点名的这一种整趟拒绝（发现出来的那一种进非卷文件清单，见 `tests/exit_code.rs`）。
+#[test]
+fn a_file_that_only_looks_like_a_seven_zip_is_refused_for_being_unreadable() {
+    let space = Workspace::new();
+    let path = space.stray_file("volume-a.7z", b"just a note");
+
+    let message = format!(
+        "{:#}",
+        run_paths_expecting_failure(&space, [path.as_path()])
+    );
+
+    assert!(
+        message.contains("读不出") && message.contains("归档结构"),
+        "{message}"
+    );
 }
 
 /// `.zip` 与 `.cbz` 是同一种字节：同内容的一对，产物逐字节相同，去处也是同一个名字。
@@ -982,4 +1003,208 @@ fn member_names(archive: &std::path::Path) -> Vec<String> {
         .into_iter()
         .map(|(name, _)| name)
         .collect()
+}
+
+/// **点名一个 `.7z` 直接就能跑，产物与同内容的 `.cbz` 逐字节相同**
+/// （`volume-discovery/05`，ADR 0015 决定第 3 条）。
+///
+/// 两种格式两条路——`.7z` 开工前整卷摊到临时目录、之后按目录卷走，`.cbz` 随机取——
+/// 而这一条钉的正是**下游看不出分别**：读法的差异被关在源那一层里，
+/// 判定、几何、量化、编码、透传一件都不知道「固实」这个词。
+///
+/// 报告那一格一并比：`.cbz` 那一卷摊了 0 字节，也就是它**没走摊开那一条**。
+#[test]
+fn a_seven_zip_comes_out_byte_for_byte_the_same_as_the_cbz_holding_the_same_pages() {
+    let space = Workspace::new();
+    let page = fixtures::cheap_page();
+    let other = fixtures::gradient(fixtures::TINY);
+
+    let mut cbz = space.cbz("volume-a");
+    cbz.page("ch1/002.jpg", &other)
+        .page("ch1/001.png", &page)
+        .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let packed = cbz.write();
+
+    let mut sevenz = space.sevenz("volume-a");
+    sevenz
+        .page("ch1/002.jpg", &other)
+        .page("ch1/001.png", &page)
+        .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let solid = sevenz.write();
+
+    // 两趟各写各的输出根：两个卷同名，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
+    let from_cbz = run_paths(&space, [packed.as_path()]);
+    let from_seven_zip = tonefit::run(&tonefit::Request {
+        output_root: space.out_named("out-7z"),
+        ..fixtures::request(&space, [solid.as_path()])
+    })
+    .expect("点名一个 .7z 该跑得起来");
+
+    // 输出仍一律 `.cbz`：输入是哪一个扩展名都不带过来（ADR 0015 决定第 2 条）。
+    assert_eq!(
+        from_seven_zip.volumes[0].output,
+        space.out_named("out-7z").join("volume-a.cbz")
+    );
+    assert_eq!(
+        fixtures::read_cbz(&from_seven_zip.volumes[0].output),
+        fixtures::read_cbz(&from_cbz.volumes[0].output),
+        "两种格式的同一卷，产物不是同一串字节"
+    );
+
+    // 摊了多少字节进了报告：那笔磁盘账没有旋钮，这个数是它唯一可见的形式。
+    assert!(
+        from_seven_zip.volumes[0].extracted > 0,
+        "点名一个 .7z，报告里却说一个字节都没摊开"
+    );
+    assert_eq!(
+        from_cbz.volumes[0].extracted, 0,
+        "`.cbz` 走了摊开那一条：它该是随机取"
+    );
+}
+
+/// **摊开的临时目录跑到一半在、跑完不在、中止之后也不在**（`volume-discovery/05`）。
+///
+/// 三问一次答完，因为它们是同一条寿命的三个时刻：那一份活在卷上，卷一放掉就收
+/// （见 `source::Extraction`）。中止走的是既有的两级停——那一卷当场返回，卷跟着析构
+/// （ADR 0013 决定第 2 条）。
+///
+/// 「跑到一半」只有**跑到一半**才看得见，因此从观察者那一侧看（与本文件
+/// `WatchDuringRun` 同一条道理）。认哪个目录是这一卷摊开的那一份，靠的是包里一个
+/// 别处不会出现的成员名：系统临时目录是公共的，光按名字前缀筛会把别的用例正在用的
+/// 那一份也筛进来。
+///
+/// **它证的不是「摊开途中按得停」。**观察者要先**看见**那个目录才改口答中止，
+/// 也就是说中止落在摊开**之后**。摊开那一整段里没有检查点——按下中止要等它解完——
+/// 那是停车场 Q121 记着的一个空档，这条用例够不着它，别把它当成有人守着。
+#[test]
+fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted() {
+    /// 这个成员只在本用例的包里出现，认摊开的那个目录靠它。
+    const MARKER: &str = "只此一份的页.png";
+
+    let space = Workspace::new();
+    let mut sevenz = space.sevenz("volume-a");
+    sevenz.page(MARKER, &fixtures::cheap_page());
+    let solid = sevenz.write();
+
+    for (name, answer) in [
+        ("out-完整", tonefit::Instruction::Continue),
+        ("out-中止", tonefit::Instruction::Abort),
+    ] {
+        let watcher = WatchTheExtraction::answering(MARKER, answer);
+        let report = tonefit::run(&tonefit::Request {
+            output_root: space.out_named(name),
+            progress: Some(tonefit::ProgressSink::new(watcher.clone())),
+            ..fixtures::request(&space, [solid.as_path()])
+        })
+        .expect("摊开这件事本身不该让整趟失败");
+        if answer == tonefit::Instruction::Abort {
+            assert!(report.volumes.is_empty(), "中止掉的那一卷进了报告");
+        }
+
+        let seen = watcher.seen();
+        assert!(
+            !seen.is_empty(),
+            "跑到一半临时目录里一个摊开的目录都没有（{name}）"
+        );
+        for dir in seen {
+            assert!(!dir.exists(), "跑完之后 {} 还在（{name}）", dir.display());
+        }
+    }
+}
+
+/// **摊不开是卷级失败，其余卷照做**（`volume-discovery/05`，ADR 0015）。
+///
+/// 造它的是一个**压缩流被打坏的** `.7z`：归档头完好，预扫列得出成员——那一卷因此
+/// 既不是「点名的点不开」也不是非卷文件；坏的是那一段字节，只有真去摊开才看得出来。
+/// 磁盘不够走的是同一条路（[`source::extract`] 的每一个 `Err`），
+/// 而那一种在用例里造不出来。退出码那一格由 `tests/exit_code.rs` 钉着。
+#[test]
+fn a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+
+    let mut broken = fixtures::SevenZip::new(library.join("坏的.7z"));
+    broken.page("001.png", &fixtures::cheap_page());
+    let broken = broken.write_with_a_broken_stream();
+
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+
+    let report = run_paths(&space, [library.as_path()]);
+
+    assert_eq!(
+        report.failed_volumes.len(),
+        1,
+        "摊不开的那一卷没被记成卷级失败"
+    );
+    assert_eq!(report.failed_volumes[0].volume, broken);
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照做，或者摊不开的那一卷也写出了东西"
+    );
+}
+
+/// 跑到一半时**摊开的那些临时目录**是哪几个——每报到一步问一次，见过的都留下。
+///
+/// 认它靠的是包里那个别处不会出现的成员名：系统临时目录是公共的，光按名字前缀筛
+/// 会把别的用例正在用的那一份也筛进来。前缀那一道仍在，为的是不去 stat 一整个临时目录。
+#[derive(Clone)]
+struct WatchTheExtraction {
+    marker: &'static str,
+    answer: tonefit::Instruction,
+    seen: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl WatchTheExtraction {
+    fn answering(marker: &'static str, answer: tonefit::Instruction) -> Self {
+        Self {
+            marker,
+            answer,
+            seen: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// 见过的那些目录，去重。
+    fn seen(&self) -> Vec<PathBuf> {
+        let mut seen = self.seen.lock().expect("读回见过的目录").clone();
+        seen.sort();
+        seen.dedup();
+        seen
+    }
+
+    fn look(&self) {
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // `source::EXTRACTION_PREFIX`。前缀不对就不必再去 stat 里面那个成员。
+            if !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("tonefit-"))
+            {
+                continue;
+            }
+            if path.join(self.marker).is_file() {
+                self.seen.lock().expect("记一个目录").push(path);
+            }
+        }
+    }
+}
+
+impl tonefit::Progress for WatchTheExtraction {
+    /// 每条事件都看一眼，而那个字**要等摊开真的发生了才答**。
+    ///
+    /// 开工那一条上就答中止的话，卷边界那个检查点当场停下，摊开压根没发生——
+    /// 这条用例要问的正是「摊开之后中止，那一份收不收得走」。
+    fn observe(&self, _event: tonefit::Event<'_>) -> tonefit::Instruction {
+        self.look();
+        if self.seen.lock().expect("读回见过的目录").is_empty() {
+            return tonefit::Instruction::Continue;
+        }
+        self.answer
+    }
 }

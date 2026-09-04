@@ -122,6 +122,10 @@ pub fn volume(volume: &VolumeReport) -> String {
     // 这一卷是怎么读的（13 号票）。它排在跳过那一支**之前**：幂等命中的卷同样把整卷的字节
     // 读了一遍，读法与做事的那一趟是同一个，而「跳过一卷为什么也要等这么久」正问在这里。
     text.push_str(&format!("  {}\n", volume.io));
+    // 开工前摊到临时目录的那一笔（ADR 0015）。它同样排在跳过那一支**之前**，
+    // 理由与上一行同一条：幂等那一道要把整卷的字节读一遍，而读之前得先摊开——
+    // 跳过的卷付了这笔磁盘，报告里就得说得出。
+    text.push_str(&extraction_line(volume));
     // 跳过的卷什么都没做：缓存用量与逐页结果无从谈起，`verdict_lines` 那一行已经说完了。
     if volume.skipped() {
         return text;
@@ -403,6 +407,24 @@ fn superseded_line(volume: &VolumeReport) -> String {
         ),
         None => String::new(),
     }
+}
+
+/// 摊开那一行（ADR 0015 决定第 3 条）。**只有摊开过的卷才有它**。
+///
+/// 这个数为什么非说不可，写在它那一格上（`tonefit::VolumeReport` 的 `extracted`），
+/// 这里不复述。本函数只管**呈现**：
+///
+/// 恒是 0 的那些卷（`.cbz` / `.zip` 与目录卷）一个字都不说——那一行在它们身上没有信息，
+/// 与末尾那几小结同一条规矩。字节数走库那一份进位（[`tonefit::format_bytes`]），
+/// 好让这一行与上一行的缓存用量在同一屏上是同一种单位。
+fn extraction_line(volume: &VolumeReport) -> String {
+    if volume.extracted == 0 {
+        return String::new();
+    }
+    format!(
+        "  摊开 {}（开工前整卷解到临时目录，跑完就收）\n",
+        tonefit::format_bytes(volume.extracted)
+    )
 }
 
 /// 卷级那一段里说部分救回的那一行，排在隔离那一行之后（04 号票）。
@@ -909,6 +931,7 @@ mod tests {
                 superseded: None,
                 verdict: Some(verdict),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 1,
                 timing: VolumeTiming::default(),
@@ -1557,6 +1580,7 @@ mod tests {
                     raised_pages: 0,
                 })),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 3,
                 timing: VolumeTiming::default(),
@@ -1606,6 +1630,7 @@ mod tests {
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 0,
                 timing: VolumeTiming::default(),
@@ -1651,6 +1676,7 @@ mod tests {
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 0,
                 timing: VolumeTiming::default(),
@@ -1727,6 +1753,7 @@ mod tests {
                 // 驱动页必须是一张好页：失败页没有判据曲线，指不出档来。
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 2,
                 timing: VolumeTiming::default(),
@@ -1961,6 +1988,7 @@ mod tests {
                 superseded: None,
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
                 cache: cache_usage(),
+                extracted: 0,
                 io: io_plan(),
                 decodes: 2,
                 timing: VolumeTiming::default(),
@@ -2089,6 +2117,7 @@ mod tests {
             source_pages: 12,
             verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
             cache: cache_usage(),
+            extracted: 0,
             io: io_plan(),
             decodes: 0,
             timing: VolumeTiming::default(),
@@ -2169,5 +2198,57 @@ mod tests {
             super::report(&slow, Mode::Process),
             super::report(&quick, Mode::Process)
         );
+    }
+
+    /// **摊了多少字节印进那一卷的报告**，而没摊开的卷一个字都不说
+    /// （`volume-discovery/05`，ADR 0015 决定第 3 条）。
+    ///
+    /// 那笔代价落在磁盘上，而磁盘这一侧没有旋钮——这一行是它唯一可见的形式。
+    /// 恒是 0 的那些卷（`.cbz` / `.zip` 与目录卷）印出来只是噪声，与末尾那几小结同一条规矩。
+    ///
+    /// **跳过的卷也说**：幂等那一道要把整卷的字节读一遍，而读之前得先摊开。
+    /// 那一支排在跳过那道守卫**之前**，与「这一趟怎么读的」那一行同一条理由——
+    /// 「跳过一卷为什么也占着几百兆临时目录」只有这一行答得出。
+    #[test]
+    fn a_volume_that_was_extracted_says_how_many_bytes_it_took() {
+        let untouched = extracted_by(0);
+        assert!(
+            !volume(&untouched).contains("摊开"),
+            "没摊开的卷也印了那一行：{}",
+            volume(&untouched)
+        );
+
+        let said = volume(&extracted_by(3 * 1024 * 1024));
+        assert!(said.contains("摊开 3.0 MiB"), "{said}");
+        // 字节数走库那一份进位：同一屏上它与缓存那一行得是同一种单位。
+        assert!(
+            said.contains(&tonefit::format_bytes(3 * 1024 * 1024)),
+            "{said}"
+        );
+
+        let mut skipped = extracted_by(512 * 1024);
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 1 });
+        let said = volume(&skipped);
+        assert!(
+            said.contains("摊开 512.0 KiB"),
+            "跳过的卷没说摊了多少：{said}"
+        );
+    }
+
+    /// 一份摊开了 `extracted` 字节的卷报告，逐页那一摞是空的——这一条只问卷级那几行。
+    fn extracted_by(extracted: u64) -> VolumeReport {
+        VolumeReport {
+            volume: PathBuf::from("library/volume-a.7z"),
+            output: PathBuf::from("out/volume-a.cbz"),
+            superseded: None,
+            verdict: None,
+            cache: cache_usage(),
+            extracted,
+            io: io_plan(),
+            decodes: 0,
+            timing: VolumeTiming::default(),
+            pages: Vec::new(),
+            source_pages: 0,
+        }
     }
 }

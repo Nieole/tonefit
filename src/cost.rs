@@ -42,6 +42,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 pub(crate) enum Stage {
+    /// 摊开：固实归档开工前整卷解到临时目录（ADR 0015 决定第 3 条）。
+    ///
+    /// 一卷走一次，而且只有 `.7z` 那种卷走——排一格是因为它一次就吃掉整卷的解压加整卷的写盘，
+    /// 单独摘出来必然改变前三大开销的名单（本类型开头那条判据）。
+    /// 摊开之后那几步与目录卷一模一样，[读字节](Self::Read)因此照旧只记读，不记这一笔。
+    Extract,
     /// 取源字节。目录卷上可能并发；归档卷上两遍是一条顺序扫，幂等那一道各开各的句柄
     /// （见 `crate::medium::IoPlan` 的《为什么是两路》）。
     Read,
@@ -90,6 +96,7 @@ impl Stage {
     /// 印在表上的名字。
     const fn name(self) -> &'static str {
         match self {
+            Self::Extract => "摊开",
             Self::Read => "读字节",
             Self::Hash => "源哈希",
             Self::Decode => "解码",
@@ -114,6 +121,7 @@ impl Stage {
 /// 全部阶段，**按声明次序**，也就是按判别式次序。表按耗时降序印，这一串只定次序与个数。
 #[cfg(any(feature = "profiling", test))]
 const ALL: &[Stage] = &[
+    Stage::Extract,
     Stage::Read,
     Stage::Hash,
     Stage::Decode,

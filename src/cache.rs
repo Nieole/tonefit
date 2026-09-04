@@ -356,7 +356,10 @@ impl Spill {
 ///
 /// 进位按 1024，单位就标 KiB/MiB/GiB——`--cache-budget` 那一侧也按 1024 收，
 /// 标成 KB/MB/GB 会让报告里的数与用户敲进去的那个数不是同一个量。
-fn format_bytes(bytes: u64) -> String {
+///
+/// **公开**是因为界面层也要说字节数：报告里[摊了多少字节](crate::VolumeReport::extracted)
+/// 那一行与这里的缓存用量说的是同一个量，各写一套进位就会在同一屏上出现两种单位。
+pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
     let mut value = bytes as f64;
     let mut unit = 0;

@@ -183,7 +183,11 @@ fn shared_fields(member: &Member) -> Vec<u8> {
     fields
 }
 
-fn encode_page(name: &str, image: &DynamicImage) -> Vec<u8> {
+/// 按成员名的扩展名把一页编成字节。
+///
+/// `.7z` 那份夹具（`super::sevenz`）也用它：「成员名的扩展名决定格式」这条规矩
+/// 两种归档共用一份，各写一套的话，同一个成员名在两种包里会编出两种格式。
+pub fn encode_page(name: &str, image: &DynamicImage) -> Vec<u8> {
     let extension = Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())

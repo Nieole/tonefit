@@ -49,9 +49,17 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// 在哪里找卷：一个归档（.cbz / .zip），或一个目录——目录里直接躺着页就是一个卷，
+    /// 在哪里找卷：一个归档，或一个目录——目录里直接躺着页就是一个卷，
     /// 底下的子目录与归档也各自成卷。源只读。
-    #[arg(required = true, value_name = "路径")]
+    ///
+    /// 认得的扩展名**不写在这条注释里**：格式集由库那一份拼出来（见 [`inputs_help`]），
+    /// 抄在这里就等于给它开第二个出处，而那一份加一项时这里不会跟着走。
+    #[arg(
+        required = true,
+        value_name = "路径",
+        help = inputs_help(),
+        long_help = inputs_help()
+    )]
     inputs: Vec<PathBuf>,
 
     /// 输出根目录。产物按源的结构镜像到它下面，点名路径自己的名字打头；
@@ -389,6 +397,21 @@ impl Cli {
 /// 这一层只管排版：一条一行，挂个圆点。
 ///
 /// 只进长帮助（`--help`），不进 `-h`：短帮助一项只印一行，塞不下也不该塞。
+/// `--help` 里说「在哪里找卷」那一句。
+///
+/// 认得的归档扩展名**从库那一份取**（[`tonefit::listed_archive_extensions`]）：
+/// 格式集只有一个出处（`source::ARCHIVE_FORMATS`），加一项时这句话与那条拒绝
+/// 一起跟着走。抄一串字面量在这里，`.7z` 落地那天帮助里就写着假话——它真发生过。
+///
+/// 与 [`interlock_help`] 同一条道理：clap 的 `help` 收得下一个运行期算出来的串，
+/// 而文档注释收不下。
+fn inputs_help() -> String {
+    format!(
+        "在哪里找卷：一个归档（{}），或一个目录——目录里直接躺着页就是一个卷，         底下的子目录与归档也各自成卷。源只读。",
+        tonefit::listed_archive_extensions()
+    )
+}
+
 fn interlock_help() -> String {
     let mut text = format!("{INTERLOCK_HEADING}\n");
     for interlock in Interlock::ALL {
@@ -702,7 +725,7 @@ struct Bar {
     ///
     /// 它在 `run` **之前**就起来了，`RunStarted` 一到就收掉：预扫排在那条事件之前
     /// （见 `tonefit::Event::RunStarted`），因此库这一侧报不出「预扫开始了」——
-    /// 那一段的交代只能由这一层自己给。几十个归档卷在慢盘上要列一阵中央目录，
+    /// 那一段的交代只能由这一层自己给。几十个归档卷在慢盘上要列一阵归档头，
     /// 而静默的空白与卡死在屏幕上分不开。
     ///
     /// 它盖住的**不止预扫**：开工前那几道检查（输出不在源里、两个卷不撞同一个去处、

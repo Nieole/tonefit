@@ -6,7 +6,8 @@
 // 每个测试二进制都单独编一份夹具，各自只用得上其中一部分。
 #![allow(dead_code, unused_imports)]
 
-mod cbz;
+pub mod cbz;
+mod sevenz;
 
 use std::fs;
 use std::io::Cursor;
@@ -17,6 +18,7 @@ use image::{DynamicImage, ImageBuffer, Luma, Rgb, Rgba};
 use tonefit::{BitDepth, Dither, GrayImage, Profile, Size};
 
 pub use cbz::{Cbz, read_cbz};
+pub use sevenz::SevenZip;
 
 /// B 类素材的中位尺寸（见 measurements 的《B 类素材普查》）。缩放比含小数。
 pub const TYPICAL: Size = Size::new(1441, 2048);
@@ -573,6 +575,14 @@ impl Workspace {
     /// 搭建器仍叫 `Cbz`：它搭的就是一串 ZIP 字节，扩展名只是文件名的一部分。
     pub fn archive(&self, file_name: &str) -> Cbz {
         Cbz::new(self.tmp.path().join(file_name))
+    }
+
+    /// 建一个空的 `.7z` 卷。加完成员要调 `SevenZip::write` 才落盘。
+    ///
+    /// 与 [`cbz`](Self::cbz) 并列而不是共用一个搭建器：两种格式的字节是两回事，
+    /// 而**读法也是两条**——`.7z` 开工前整卷摊到临时目录（ADR 0015 决定第 3 条）。
+    pub fn sevenz(&self, name: &str) -> SevenZip {
+        SevenZip::new(self.tmp.path().join(format!("{name}.7z")))
     }
 
     /// 在工作区根下写一个不属于任何卷的文件。用来造「扩展名像卷、内容不是」的输入。
