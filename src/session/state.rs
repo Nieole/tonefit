@@ -420,7 +420,7 @@ pub enum Mode {
     ///
     /// 「只读」不是靠画法上灰，是靠 [`Session::action`] 在这个状态下一个改动键都不派
     /// （见 [`running_action`]）。画法那一侧另有一份**看得出来**的交代
-    /// （左栏抬头写着「只读」、光标不反白），那是 [`super::draw::config`] 的事。
+    /// （左栏抬头写着「只读」、光标不反白），那是 [`super::draw::config::config`] 的事。
     ///
     /// 那一格装的是[闩](Session::stopping)：`Continue` 是没按过、`Finish` 是按过一次
     /// （收尾）、`Abort` 是再按了一次（中止）。**只升不降**——按停不是一个可以反悔的开关
@@ -1211,7 +1211,7 @@ impl Session {
 
     /// 把滚动量收进这一格真滚得动的范围：最多滚到 `down` 行、`right` 列。
     ///
-    /// **画法那一层每帧调一次**（见 [`super::draw::report_pane`]），因为只有它知道
+    /// **画法那一层每帧调一次**（见 [`super::draw::report::report_pane`]），因为只有它知道
     /// 这一格装得下几行几列。不收的话，往下翻过了头之后再往回翻，头几下会**按了没反应**
     /// ——而那正是本仓库反复要躲的那件事（`p1-session/10` 的「屏上不摆按不动的键」）。
     ///
@@ -1492,7 +1492,7 @@ fn picking_action(picker: &Picker, key: Key) -> Action {
 ///
 /// **`d` 是删掉停着的那一份**，与范围层那一栏上它一直在做的事同一个字面
 /// （那里是删掉一行卷）。**停在末尾那一行上它按不动**：那一行不是一份预设，
-/// 而屏上不摆按不动的键（见 `super::draw::picking_prompt`）。
+/// 而屏上不摆按不动的键（见 `super::draw::footer::picking_prompt`）。
 /// 真删要按两下，那一半在 [`Action::Erase`] 与 press 那一层。
 fn listing_action(picker: &Picker, key: Key) -> Action {
     match key {

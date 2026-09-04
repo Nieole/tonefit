@@ -120,7 +120,7 @@ pub struct Live {
     /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
     ///
     /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
-    /// 第二遍一步没走。报告区把它接在那几卷后面画出来（见 `super::draw::report_text`），
+    /// 第二遍一步没走。报告区把它接在那几卷后面画出来（见 `super::draw::report::report_text`），
     /// 「主区把报告画出来等你拿主意」靠的就是它。一卷收摊时清掉——那时正式的一份在报告里了。
     summarized: Option<VolumeReport>,
     /// 这一趟在决策点上**等人等掉的那一截**，累计（停车场 Q41，`CONTEXT.md` 的《会话》：
@@ -440,7 +440,7 @@ impl Live {
     /// 「剩下的卷都这样」摆下的那个默认答案。没答过这个手势就是 `None`。
     ///
     /// 屏底那一行要它：往下的决策点不再停，而这件事得说出来
-    /// （见 `super::draw::resuming_line`）——不说的话，一趟几十卷的批量跑
+    /// （见 `super::draw::footer::resuming_line`）——不说的话，一趟几十卷的批量跑
     /// 看上去与「它忘了问」没有分别。
     pub fn for_the_rest(&self) -> Option<Instruction> {
         self.for_the_rest

@@ -31,7 +31,7 @@
 //! # 三个名字，一件事
 //!
 //! [`fold`] 给**那几行**（`Vec<String>`），[`folded_text`] 把它们拼回**一段文字**，
-//! `crate::session::draw::folded_lines` 拼成终端库的 `Line`。折法只有 [`fold`] 那一处，
+//! `crate::session::draw::report::folded_lines` 拼成终端库的 `Line`。折法只有 [`fold`] 那一处，
 //! 另外两个各只管把它交出来的东西装成调用方要的形状。
 
 use unicode_width::UnicodeWidthChar;
@@ -54,7 +54,7 @@ pub fn width(text: &str) -> u16 {
 ///
 /// `width` 是零就一行不折——折不出比一个字更窄的行，硬折只会折出一堆空行。
 /// 那种格子本来也画不出东西（会话在报告区那一格上真会遇到，见
-/// `crate::session::draw::report_pane`）。
+/// `crate::session::draw::report::report_pane`）。
 pub fn fold(text: &str, width: u16) -> Vec<String> {
     text.lines()
         .flat_map(|line| fold_line(line, width))
