@@ -380,7 +380,7 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
         .pages
         .iter()
         .find(|page| fixtures::verdict(page).reason == Reason::VolumeEnvelope)
-        .expect("卷内主体至少有一页");
+        .expect("卷内其余页至少有一页");
     let text = fixtures::read_png_text(&page.output);
     let field = |keyword: &str| fixtures::png_field(&text, keyword);
 
@@ -398,7 +398,7 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
             "{keyword} 不是十六进制哈希：{value}"
         );
     }
-    // 判定与理由：ADR 0006 要的那一句，驱动页指名道姓。
+    // 判定与理由：ADR 0006 要的那一句，定档页指名道姓。
     assert_eq!(
         field("tonefit:verdict"),
         Some(fixtures::verdict(page).candidate.to_string())

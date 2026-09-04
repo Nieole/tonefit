@@ -93,7 +93,7 @@ fn line(row: &Row) -> String {
         RowKind::Envelope => format!("  卷级 {}\n", cell(row, Field::Envelope)),
         // 覆盖与逐页那两种同样挂在「卷级」后面：三种判定在纸上是同一行的三种说法。
         RowKind::Override | RowKind::PerPage => format!("  卷级 {}\n", cell(row, Field::Sentence)),
-        RowKind::Driver => format!("    驱动页 {}\n", cell(row, Field::Source)),
+        RowKind::Driver => format!("    定档页 {}\n", cell(row, Field::Source)),
         RowKind::Reading => format!("  {}\n", cell(row, Field::Reading)),
         RowKind::Cache => format!("  缓存 {}\n", cell(row, Field::Cache)),
         // 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」一行读下来，

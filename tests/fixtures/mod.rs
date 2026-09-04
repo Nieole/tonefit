@@ -116,11 +116,11 @@ pub const NARROW_PASSES_THROUGH: Size = Size::new(64, 1680);
 // 下面三个是**卷级用例造分布用的纯色取值**，本仓库测试侧唯一的出处。
 //
 // 判据在纯色页上算得出准数——量化误差就是取值到格点的距离，低通与掩蔽加权都不改它——
-// 逐页判定因此由取值直接定死，而卷级那一层（上包络、离群、迟滞）要的正是一条排得开的分布。
+// 逐页判定因此由取值直接定死，而卷级那一层（上包络、特例、迟滞）要的正是一条排得开的分布。
 // 三个取值摆在夹具这一侧而不是某个测试二进制里：`tests/golden.rs` 与 `tests/pipeline.rs`
 // 是两个 crate，各写一份就会各自漂（`CLAUDE.md`《文档写作》：单一出处）。
 //
-// 判据读数一律取自基准设备（`BASELINE_DEVICE`），界是 5.5、离群线是 3 倍即 16.5。
+// 判据读数一律取自基准设备（`BASELINE_DEVICE`），界是 5.5、特例线是 3 倍即 16.5。
 
 /// 逐页判定要 `2bit` 的纯色页：85 正落在 2bit 的格点上（255 = 3×85）。
 ///
@@ -130,7 +130,7 @@ pub const NEEDS_TWO_BITS: u8 = 85;
 
 /// 逐页判定**落在 [`NEEDS_TWO_BITS`] 那一档之上**的纯色页：96 在 2bit 上读 11.000——
 /// 过了界（5.5），又远够不上「显著偏离」（16.5）。卷级迟滞那几条用例要的正是这个位置：
-/// 基准档过不了它的界，它却不该被当成离群页摘走。
+/// 基准档过不了它的界，它却不该被当成特例页摘走。
 ///
 /// **落到哪一档由候选集说了算，而候选集由几何门裁**（ADR 0007），两条路上的机制并不相同：
 ///
@@ -147,7 +147,7 @@ pub const NEEDS_TWO_BITS: u8 = 85;
 pub const ONE_STEP_ABOVE_TWO_BITS: u8 = 96;
 
 /// 逐页判定落在 `4bit` 的纯色页，且在 2bit 上读 42.000：**远在界外**（超过 16.5），
-/// 离群页判据要的就是这一量级。用它的几条用例都跑在 fit-inside 上。
+/// 特例页判据要的就是这一量级。用它的几条用例都跑在 fit-inside 上。
 pub const FAR_OUTSIDE: u8 = 128;
 
 /// **两种适配方式下都恒等通过**的尺寸：高已经等于基准面板的高，宽不到面板宽。
@@ -1114,7 +1114,7 @@ pub fn relative_name(root: &Path, path: &Path) -> String {
 
 /// 一个卷的卷级判定，写成一行给人读的话。
 ///
-/// 用词取自 `CONTEXT.md`：上包络定出的那一档叫**基准档**，站在分位秩上的那一页叫**驱动页**，
+/// 用词取自 `CONTEXT.md`：上包络定出的那一档叫**基准档**，站在分位秩上的那一页叫**定档页**，
 /// 因迟滞升上去的那些页叫**迟滞升档**。`Envelope` 自己的 `Display` 另有一份，那一份还带着
 /// 「四者均未标定」那句注脚——快照要的是钉死的一行，注脚每趟都一样，摆进去只是噪声。
 ///
@@ -1122,7 +1122,7 @@ pub fn relative_name(root: &Path, path: &Path) -> String {
 pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
     match volume.verdict {
         Some(tonefit::VolumeVerdict::Envelope(envelope)) => format!(
-            "基准档 {} · 驱动页 {} · 主体 {} 页 · 离群 {} 页 · 迟滞升档 {} 页",
+            "基准档 {} · 定档页 {} · 其余 {} 页 · 特例 {} 页 · 迟滞升档 {} 页",
             envelope.base,
             page_at(volume, envelope.driver),
             envelope.body_pages,
@@ -1140,7 +1140,7 @@ pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
     }
 }
 
-/// 卷内第 `index` 页在卷里的名字。驱动页靠它指人。
+/// 卷内第 `index` 页在卷里的名字。定档页靠它指人。
 pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
     volume
         .pages

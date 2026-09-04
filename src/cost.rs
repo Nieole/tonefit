@@ -81,7 +81,7 @@ pub(crate) enum Stage {
     Encode,
     /// 写进输出容器。
     Write,
-    /// 汇总：上包络、迟滞、离群。
+    /// 汇总：上包络、迟滞、特例。
     Summarize,
     /// 拼卷报告。命令行那一趟每卷拼两次（停车场 Q77）。
     Assemble,

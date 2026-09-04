@@ -128,7 +128,7 @@ pub enum RowKind {
     GateNote,
     /// 卷级判定：上包络。
     Envelope,
-    /// 上包络指出的驱动页。
+    /// 上包络指出的定档页。
     Driver,
     /// 卷级判定：覆盖项顶掉了判定（成句）。
     Override,
@@ -158,7 +158,7 @@ pub enum RowKind {
 pub enum Field {
     /// 成句的那一份：整句话，不再拆。
     Sentence,
-    /// 源：卷的路径，或驱动页的路径。
+    /// 源：卷的路径，或定档页的路径。
     Source,
     /// 去处：卷的输出目录，或一页的输出文件。
     Output,
@@ -688,7 +688,7 @@ fn color_pages(volume: &VolumeReport) -> Option<Cell> {
 
 /// 卷级那几行里说判定的那一段：几何门的判定结果，加上这一卷的候选从哪来。
 ///
-/// 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006），这几行就是它。
+/// 「这卷为什么是这个候选」要有一个指得出定档页的答案（ADR 0006），这几行就是它。
 /// 上包络不在场时说清是为什么不在场——那正是翻页跳变回来的时候，报告不能看起来还是一样。
 fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
     // 一张灰度页都没有的卷（只装着彩页的、整卷全失败的）没有候选可判，几何门也就无从谈起。
@@ -705,7 +705,7 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
     rows.extend(salvaged_row(volume));
     rows.extend(gate_rows(volume, verdict));
     rows.extend(match verdict {
-        // 上包络与它指出的驱动页是**两行**：驱动页是一页的名字，而上包络那一句是这一卷的判定。
+        // 上包络与它指出的定档页是**两行**：定档页是一页的名字，而上包络那一句是这一卷的判定。
         // 表要的基准档另占一格——它与那一句里说的是同一个数，取值不必回头认字符串。
         VolumeVerdict::Envelope(envelope) => vec![
             Row::new(
@@ -769,10 +769,10 @@ fn isolated_row(volume: &VolumeReport) -> Option<Row> {
 ///
 /// 三件事写在一起，因为只有并排才解释得了对方。门逐页判（ADR 0007 决定第 1 条），
 /// 「成立」这句话因此得连着范围一起读——一卷全是彩页时门同样成立，而那是「无人可关」，
-/// 不是「每一页都贴住了面板」。本卷那个抖动模式同理：门在主体那一组上开着时它才是判据选的，
-/// 主体一页都不成立时它只是被关掉的结果。
+/// 不是「每一页都贴住了面板」。本卷那个抖动模式同理：门在其余页那一组上开着时它才是判据选的，
+/// 其余页一页都不成立时它只是被关掉的结果。
 ///
-/// **被排除的页要指得出来**，与上包络指出驱动页同一个做法：不指名，用户就无从判断
+/// **被排除的页要指得出来**，与上包络指出定档页同一个做法：不指名，用户就无从判断
 /// 这一卷该不该换个 profile。逐页那几行各自标着理由（`几何门不成立，本页不抖动`），
 /// 这里只给个抓手——页数多起来时全列一遍只会把卷级那几行淹掉。
 fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
@@ -794,7 +794,7 @@ fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
         return rows;
     }
     if broken.len() == judged {
-        // 一页成立的都没有：没有别人可护，这些页自己就是主体，卷级那一档由它们定出
+        // 一页成立的都没有：没有别人可护，这些页自己就当其余页，卷级那一档由它们定出
         // ——那一档必然不抖（ADR 0007 决定第 5 条）。
         rows.push(gate_note(
             "范围内一页都不成立：每一页源都比目标小，按不放大原样输出，\
@@ -1066,7 +1066,7 @@ mod tests {
         VolumeTiming,
     };
 
-    /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作驱动页。
+    /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作定档页。
     fn envelope(base: Candidate) -> Envelope {
         Envelope {
             base,
@@ -1241,7 +1241,7 @@ mod tests {
         let text = plain::report(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行（构成与聚合）、
-        // 卷六行（去处、几何门、卷级、驱动页、读取、缓存），页两行：一行几何，一行判定。
+        // 卷六行（去处、几何门、卷级、定档页、读取、缓存），页两行：一行几何，一行判定。
         assert_eq!(text.lines().count(), 14);
         // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
@@ -1301,15 +1301,15 @@ mod tests {
         // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
         assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
         assert!(text.contains("未溢写"), "{text}");
-        // 「这卷为什么是这个候选」要有一个指得出驱动页的答案（ADR 0006）。
+        // 「这卷为什么是这个候选」要有一个指得出定档页的答案（ADR 0006）。
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
-        assert!(text.contains("驱动页 library/volume-a/001.jpg"), "{text}");
-        // 上包络不承诺卷内绝对一致：离群与迟滞升档各出了多少页，报告要说出来。
-        // 离群那一处还带着占比——「一页都没摘出来」要在报告里看得见，而光看计数分不清
-        // 「本来就没有离群页」与「离群判定整个失灵」（加固批 01 号票）。
-        assert!(text.contains("离群 0 页（0.0%）"), "{text}");
+        assert!(text.contains("定档页 library/volume-a/001.jpg"), "{text}");
+        // 上包络不承诺卷内绝对一致：特例与迟滞升档各出了多少页，报告要说出来。
+        // 特例那一处还带着占比——「一页都没摘出来」要在报告里看得见，而光看计数分不清
+        // 「本来就没有特例页」与「特例判定整个失灵」（加固批 01 号票）。
+        assert!(text.contains("特例 0 页（0.0%）"), "{text}");
         assert!(text.contains("迟滞升档 0 页"), "{text}");
-        // 上包络的分位、迟滞页数、离群页判据的立脚点分位与倍数，四者均未标定，
+        // 上包络的分位、迟滞页数、特例页判据的立脚点分位与倍数，四者均未标定，
         // 报告显式标注（ADR 0006）。
         assert!(text.contains("四者均未标定"), "{text}");
         // 几何门的判定范围与本卷的抖动模式都要报出来（ADR 0007、06 号票）：
@@ -1778,7 +1778,7 @@ mod tests {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
-                // 驱动页必须是一张灰度页：彩页不进上包络，指不出档来。
+                // 定档页必须是一张灰度页：彩页不进上包络，指不出档来。
                 verdict: Some(VolumeVerdict::Envelope(Envelope {
                     base: candidate,
                     driver: 2,
@@ -1812,7 +1812,7 @@ mod tests {
         assert!(text.contains("彩页转灰 · 判定 4bit"), "{text}");
         // 灰度页那一行不多带任何标记：四个空格之后直接是判定。
         assert!(text.contains("    判定 4bit"), "{text}");
-        assert!(text.contains("驱动页 library/volume-a/003.png"), "{text}");
+        assert!(text.contains("定档页 library/volume-a/003.png"), "{text}");
     }
 
     /// 跳过的卷只占两行：去处那一行，加上说清它为什么什么都没有的那一行。
@@ -1957,7 +1957,7 @@ mod tests {
                 output: PathBuf::from("out/_isolated/volume-a"),
                 // 上一趟这一卷是干净的，那一份还在 out/volume-a 留着。
                 superseded: Some(PathBuf::from("out/volume-a")),
-                // 驱动页必须是一张好页：失败页没有判据曲线，指不出档来。
+                // 定档页必须是一张好页：失败页没有判据曲线，指不出档来。
                 verdict: Some(VolumeVerdict::Envelope(envelope(candidate))),
                 cache: cache_usage(),
                 extracted: 0,
@@ -2274,7 +2274,7 @@ mod tests {
         assert_eq!(exit_code(&report), SUCCESS_EXIT);
     }
 
-    /// 一个说得上话的卷：过期副本、摊开、隔离、上包络与驱动页，一张好页加一张失败页。
+    /// 一个说得上话的卷：过期副本、摊开、隔离、上包络与定档页，一张好页加一张失败页。
     ///
     /// 行与格那几条用它——一份报告上摆得出的行有大半在这里。
     fn a_volume_worth_a_row_of_each_kind() -> VolumeReport {

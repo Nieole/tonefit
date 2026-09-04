@@ -805,7 +805,7 @@ fn placeholder(size: Size) -> GrayImage {
 ///
 /// **第一刀按几何门切**（ADR 0007 决定第 2 条）。门成立的页与门不成立的页候选集不是同一套：
 /// 后者少了抖动那一维，而上包络取的是 (位深, 抖动模式) 这个组合——候选集不同的页
-/// 排不进同一条序列。卷级那一层因此只在其中**一组**上做，主体取门成立的那一组；
+/// 排不进同一条序列。卷级那一层因此只在其中**一组**上做，其余页取门成立的那一组；
 /// 那一组一页都没有时才轮到另一组，摘一页是为了护着别人，而那时没有别人可护
 /// （ADR 0007 决定第 5 条）。
 ///
@@ -815,10 +815,10 @@ fn placeholder(size: Size) -> GrayImage {
 /// 反过来只给基准档也不行：抖动被拿走之后同一档位深保真更差，那一页可能真的还要高一档。
 ///
 /// **第二刀按页残缺切**（04 号票）。部分救回页有判据曲线，那条曲线却是在一页大半留白的图上
-/// 求出来的，代表不了这一卷。它因此不进上包络，按自己那条曲线单独定档——与离群页同一个待遇
+/// 求出来的，代表不了这一卷。它因此不进上包络，按自己那条曲线单独定档——与特例页同一个待遇
 /// （ADR 0006 决定第 5 条），只是摘它的理由是页残缺，不是判据偏离。
-/// 一页不剩地落在救回那一侧时一页都不摘：主体不能空着，与门那一刀同一条规矩
-/// （也与 `envelope::summarize` 里「一页不剩地落到离群侧」同一条）。
+/// 一页不剩地落在救回那一侧时一页都不摘：其余页不能空着，与门那一刀同一条规矩
+/// （也与 `envelope::summarize` 里「一页不剩地落到特例侧」同一条）。
 ///
 /// **两刀落在同一页上时，门那一刀在外层**（ADR 0007 决定第 3 条）：既没解全、又贴不住面板的页
 /// 拿的是「基准档的位深，不低于它，抖动关掉」，不是 04 号票那条「按自己那条曲线单独定档」。
@@ -834,7 +834,7 @@ fn placeholder(size: Size) -> GrayImage {
 ///
 /// 进来的是**输出页**，不是源页（页几何批 03 号票）：一个源页产出的那几张各有各的几何、各有各的
 /// 判据曲线，卷级那一层因此在切开之后取——序号也都指进输出页那个序列，
-/// 上包络的驱动页序号跟着（见 [`Envelope::driver`]）。
+/// 上包络的定档页序号跟着（见 [`Envelope::driver`]）。
 fn summarize_volume(
     pages: &[OutputPage],
     request: &Request,
@@ -854,7 +854,7 @@ fn summarize_volume(
         .iter()
         .copied()
         .partition(|&index| pages[index].gate() == Some(GeometryGate::Holds));
-    // 一页门成立的灰度页都没有时，不成立的那些页就是这一卷的主体，基准档由它们定出
+    // 一页门成立的灰度页都没有时，不成立的那些页就当这一卷的其余页，基准档由它们定出
     // ——那一档必然不抖（ADR 0007 决定第 5 条）。
     let (inside, outside) = if holding.is_empty() {
         (broken, Vec::new())
@@ -870,7 +870,7 @@ fn summarize_volume(
     let scores = |index: usize| pages[index].scores().expect("灰度路径上必有判据曲线");
 
     let threshold = request.profile.threshold();
-    // 「覆盖项裁到只剩一个候选」问的是**主体那一组**的候选集：门那两组不一样长，
+    // 「覆盖项裁到只剩一个候选」问的是**其余页那一组**的候选集：门那两组不一样长，
     // 拿门不成立的页去问，答案会随卷里第一张灰度页碰巧是哪一种而变。
     let pinned = pinned(request, scores(first));
     // 逐页先各判各的。摘出去的两组都还用得上自己这一档：部分救回页直接用它，
@@ -886,14 +886,14 @@ fn summarize_volume(
         return (verdicts, Some(VolumeVerdict::PerPage));
     }
 
-    // 上包络只在主体那一组的完好页上取（04 号票）。两条出口上不分这一刀：覆盖项顶掉了判定、
+    // 上包络只在其余页那一组的完好页上取（04 号票）。两条出口上不分这一刀：覆盖项顶掉了判定、
     // `--per-page` 关掉了卷级那一层，两种情形下都没有一个「卷级的档」可供谁去污染。
     // 摘出去的部分救回页留着逐页判定：`verdicts` 里已经是它了，不必再写一遍。
     let (body, salvaged): (Vec<usize>, Vec<usize>) = inside
         .iter()
         .copied()
         .partition(|&index| !pages[index].salvaged());
-    // 一页不剩地落在救回那一侧时一页都不摘：主体不能空着。
+    // 一页不剩地落在救回那一侧时一页都不摘：其余页不能空着。
     let body = if body.is_empty() { salvaged } else { body };
 
     let inputs: Vec<envelope::Page> = body
@@ -906,7 +906,7 @@ fn summarize_volume(
     let envelope::Summary {
         envelope,
         verdicts: refined,
-    } = envelope::summarize(&inputs, threshold).expect("主体非空");
+    } = envelope::summarize(&inputs, threshold).expect("其余页非空");
     for (&index, verdict) in body.iter().zip(refined) {
         verdicts[index] = Some(verdict);
     }
@@ -919,7 +919,7 @@ fn summarize_volume(
             reason: Reason::OutsideTheGate,
         });
     }
-    // 驱动页的序号在上包络那一侧指进**主体页**的序列，报告里那个序号指进整卷的页。
+    // 定档页的序号在上包络那一侧指进**其余页**的序列，报告里那个序号指进整卷的页。
     // 卷内混着彩页、门不成立的页或部分救回页时两者不重合，这一步把它换回去——不换，
     // 报告会指着另一页说「就是它定的档」。
     let envelope = Envelope {
@@ -934,10 +934,10 @@ fn summarize_volume(
 /// 「裁到只剩一个」与「有覆盖项」两条都要：`--gray-levels 2` 撞上几何门不成立同样只剩一个候选，
 /// 但那一档是判出来的，不是被顶掉的——理由分得清，报告才解释得了它是怎么来的。
 ///
-/// 反过来，只点了一维的覆盖项裁不到只剩一个：`--bit-depth 4` 而主体那一组的门开着时，
+/// 反过来，只点了一维的覆盖项裁不到只剩一个：`--bit-depth 4` 而其余页那一组的门开着时，
 /// 抖动那一维还有得判，判据照旧说了算。
 ///
-/// `scores` 取的是**主体那一组**里的一页（见 [`summarize_volume`]）。裁到只剩一个的
+/// `scores` 取的是**其余页那一组**里的一页（见 [`summarize_volume`]）。裁到只剩一个的
 /// 覆盖项落在门不成立那一组上时，那一组的候选集必然也只剩同一个——门只拿走抖动，
 /// 而剩下的那一个既然过得了门，它本来就不抖。
 fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
@@ -1939,9 +1939,9 @@ fn written_family(
         .then_some(count)
 }
 
-/// 卷级上包络的驱动页序号，写进 tEXt 那句 `volume-p95, driven by page 087` 用它。
+/// 卷级上包络的定档页序号，写进 tEXt 那句 `volume-p95, driven by page 087` 用它。
 ///
-/// 另外三种卷级判定没有驱动页可指：覆盖项顶掉了判定，`--per-page` 关掉了卷级那一层，
+/// 另外三种卷级判定没有定档页可指：覆盖项顶掉了判定，`--per-page` 关掉了卷级那一层，
 /// 而跳过的卷根本走不到写出这一步。
 fn driver(verdict: Option<VolumeVerdict>) -> Option<usize> {
     match verdict {
@@ -2856,7 +2856,7 @@ mod tests {
     /// 汇总那一层的序号指进**输出页**那个序列，不是源页那个（页几何批 03 号票）。
     ///
     /// 头一张源页的两半走彩色分支、不进上包络，灰度页因此排在第 2、3 位上——
-    /// 按源页数的话驱动页会指到 0 或 1，而那是另一张页。
+    /// 按源页数的话定档页会指到 0 或 1，而那是另一张页。
     #[test]
     fn the_volume_level_summary_indexes_output_pages_not_source_pages() {
         let size = Size::new(600, 800);
@@ -2881,7 +2881,7 @@ mod tests {
         };
         assert!(
             matches!(envelope.driver, 2 | 3),
-            "驱动页指到了第 {} 张，那不是一张灰度页",
+            "定档页指到了第 {} 张，那不是一张灰度页",
             envelope.driver
         );
     }

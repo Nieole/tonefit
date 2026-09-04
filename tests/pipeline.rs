@@ -500,7 +500,7 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
         Dither::FloydSteinberg,
         "一张救回来的小页把另一页的抖动也带走了"
     );
-    // 上包络那一侧照旧摘它：主体只剩那一张完好页。
+    // 上包络那一侧照旧摘它：其余页只剩那一张完好页。
     assert_eq!(envelope_of(reported).body_pages, 1);
 }
 
@@ -540,7 +540,7 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
         "夹具不对：那一页没被截断"
     );
     assert_eq!(reported.pages[0].gate(), Some(GeometryGate::Broken));
-    // 主体只剩三页完好正片：两刀摘的是同一页，各摘各的理由。
+    // 其余页只剩三页完好正片：两刀摘的是同一页，各摘各的理由。
     let base = envelope_of(reported).base;
     assert_eq!(envelope_of(reported).body_pages, 3);
 
@@ -573,9 +573,9 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
 /// 而那时没有别人可护（04 号票）。
 ///
 /// 几何门那一侧同理（ADR 0007 决定第 5 条）：两页都贴不住面板，一页成立的都没有——
-/// 它们于是自己就是主体，卷级基准档由它们定出、必然不抖。这一条要是不成立，
+/// 它们于是自己就当其余页，卷级基准档由它们定出、必然不抖。这一条要是不成立，
 /// 一整卷会被下游再缩一次的页会带着抖动写出去，正是 ADR 0007 拦的那件事。
-/// 主体不能空着，这两页因此照旧定得出一个基准档，理由也仍是「卷级上包络」——
+/// 其余页不能空着，这两页因此照旧定得出一个基准档，理由也仍是「卷级上包络」——
 /// 不是「几何门不成立」：那一种说的是「摘出去了」，而这一卷没有别人可摘给。
 #[test]
 fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
@@ -607,7 +607,7 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
     // 一页成立的都没有，抖动因此整卷关闭（ADR 0007 决定第 5 条）。
     let envelope = envelope_of(reported);
     assert_eq!(envelope.base.dither, Dither::Off);
-    // 一页不剩地落在救回那一侧，上包络那一侧同样一页都不摘：两页都进主体。
+    // 一页不剩地落在救回那一侧，上包络那一侧同样一页都不摘：两页都进其余页。
     assert_eq!(envelope.body_pages, 2);
     for page in &reported.pages {
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
@@ -2642,7 +2642,7 @@ fn volume_of_solids_sized(space: &Workspace, size: Size, levels: &[u8]) -> fixtu
 
 #[test]
 fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_set_it() {
-    // 位深不再逐页各判各的（ADR 0006）：主体页共用一个基准档，翻页时不逐页变动。
+    // 位深不再逐页各判各的（ADR 0006）：其余页共用一个基准档，翻页时不逐页变动。
     // 九页只要 1bit、十页要 2bit：p95 站在 2bit 上，那九页跟着多付一档——
     // 体积不再最优是明知故犯的交换。
     let space = Workspace::new();
@@ -2661,7 +2661,7 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
     }
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -2679,22 +2679,22 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
         );
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     }
-    // 驱动页指得出来，而且它的需求就是基准档：站在 p95 秩上的正是它。
+    // 定档页指得出来，而且它的需求就是基准档：站在 p95 秩上的正是它。
     let driver = &volume_report.pages[envelope.driver];
     assert_eq!(lowest_within_threshold(driver, &report), BitDepth::Two);
 }
 
 #[test]
 fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own() {
-    // 离群页不参与上包络，单独定档（ADR 0006 决定第 5 条）。
-    // 卷内只有一页远在界外：它自己拿 4bit，主体照旧留在 2bit 上。
+    // 特例页不参与上包络，单独定档（ADR 0006 决定第 5 条）。
+    // 卷内只有一页远在界外：它自己拿 4bit，其余页照旧留在 2bit 上。
     let space = Workspace::new();
     let mut levels = vec![fixtures::NEEDS_TWO_BITS; 19];
     levels.push(fixtures::FAR_OUTSIDE);
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -2702,7 +2702,7 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
     assert_eq!(envelope.outlier_pages, 1);
     assert_eq!(envelope.body_pages, 19);
-    assert_ne!(envelope.driver, 19, "离群页不该定出基准档");
+    assert_ne!(envelope.driver, 19, "特例页不该定出基准档");
 
     let outlier = &volume_report.pages[19];
     assert_eq!(
@@ -2710,17 +2710,17 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
         BitDepth::Four
     );
     assert_eq!(fixtures::verdict(outlier).reason, Reason::Outlier);
-    // 交界处那一次跳变是认下的代价，位置指得出来就行：主体一页不动。
+    // 交界处那一次跳变是认下的代价，位置指得出来就行：其余页一页不动。
     for page in &volume_report.pages[..19] {
         assert_eq!(fixtures::verdict(page).candidate.bit_depth, BitDepth::Two);
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     }
 }
 
-/// 二十页里两页远在界外，占一成：主体那十八页留在自己要的那一档上，不被这两页拖高。
+/// 二十页里两页远在界外，占一成：其余页那十八页留在自己要的那一档上，不被这两页拖高。
 ///
-/// 与上一条用例的差别只有离群页的**页数**：一页与两页在 `run` 这个 seam 上必须同一个结论。
-/// 离群页多到什么程度才不再算离群，由立脚点那一层说了算（见 `envelope` 的 `ANCHOR_QUANTILE`），
+/// 与上一条用例的差别只有特例页的**页数**：一页与两页在 `run` 这个 seam 上必须同一个结论。
+/// 特例页多到什么程度才不再算特例，由立脚点那一层说了算（见 `envelope` 的 `ANCHOR_QUANTILE`），
 /// 而不该由「恰好有几页」说了算。
 #[test]
 fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
@@ -2730,16 +2730,16 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
     assert_eq!(envelope.outlier_pages, 2);
     assert_eq!(envelope.body_pages, 18);
-    // 主体档不被那两页抬高：十八页主体页要的仍然是 2bit。
+    // 其余页那一档不被那两页抬高：剩下那十八页要的仍然是 2bit。
     assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
-    // 占比进报告：「一页都没摘出来」与「本来就没有离群页」要分得开（01 号票）。
+    // 占比进报告：「一页都没摘出来」与「本来就没有特例页」要分得开（01 号票）。
     assert_eq!(envelope.outlier_share(), 0.1);
 
     for page in &volume_report.pages[18..] {
@@ -2758,9 +2758,9 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
 }
 
 /// 彩页不污染灰度页的卷级上包络（ADR 0006 决定第 5 条：彩色 profile 下彩页
-/// 根本不进灰度上包络）。同一批灰度页，把彩页混进去前后，基准档、驱动页与逐页判定一个不变。
+/// 根本不进灰度上包络）。同一批灰度页，把彩页混进去前后，基准档、定档页与逐页判定一个不变。
 ///
-/// 混排还钉住驱动页那个序号：上包络在**灰度页**的序列上取分位，报告里的序号却指进整卷的页。
+/// 混排还钉住定档页那个序号：上包络在**灰度页**的序列上取分位，报告里的序号却指进整卷的页。
 /// 卷内混着彩页时两者不重合，换算漏掉一次，报告就会指着另一页说「就是它定的档」。
 #[test]
 fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
@@ -2794,18 +2794,18 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
         "混进彩页之后灰度页的判定变了"
     );
 
-    // 上包络只数灰度页：主体 19 页 + 离群 1 页，彩页一页不算。
+    // 上包络只数灰度页：其余 19 页 + 特例 1 页，彩页一页不算。
     let envelope = envelope_of(&mixed);
     assert_eq!(envelope.base, envelope_of(&alone).base);
     assert_eq!(envelope.body_pages, 19);
     assert_eq!(envelope.outlier_pages, 1);
 
-    // 驱动页指的仍是同一张灰度页——序号已经从灰度序换回页序。
+    // 定档页指的仍是同一张灰度页——序号已经从灰度序换回页序。
     let driver_rank = |volume: &tonefit::VolumeReport| {
         let driver = envelope_of(volume).driver;
         assert!(
             volume.pages[driver].verdict().is_some(),
-            "驱动页必须是一张灰度页"
+            "定档页必须是一张灰度页"
         );
         volume.pages[..driver]
             .iter()
@@ -2815,12 +2815,12 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
     assert_eq!(
         driver_rank(&alone),
         driver_rank(&mixed),
-        "驱动页指到了另一页上"
+        "定档页指到了另一页上"
     );
     assert_ne!(
         envelope_of(&alone).driver,
         envelope_of(&mixed).driver,
-        "夹具不对：混排没有把驱动页的序号推开，这条用例就什么都没钉住"
+        "夹具不对：混排没有把定档页的序号推开，这条用例就什么都没钉住"
     );
 }
 
@@ -2829,14 +2829,14 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
 /// 它的判据是在一页大半留白的图上求出来的：留白在任何位深上都是格点、误差恒为零，
 /// 那条曲线代表不了这一卷。让它进上包络，一张残页就替整卷定了档。
 ///
-/// 夹具让那一页**比主体更吃位深**：三页主体加它一共四页，p95 的秩落在最后一名上，
+/// 夹具让那一页**比其余页更吃位深**：其余页三页加它一共四页，p95 的秩落在最后一名上，
 /// 它一旦进得去，基准档就是它那一档。断言因此钉得住「摘出去改变了结果」，
 /// 而不只是「字段填对了」。
 #[test]
 fn salvaged_pages_stay_out_of_the_volume_envelope() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 主体三页纯白：任何位深上都是格点，判据恒为零，定的是最低那一档。
+    // 其余页三页纯白：任何位深上都是格点，判据恒为零，定的是最低那一档。
     for name in ["001.png", "002.png", "003.png"] {
         volume.page(name, &fixtures::solid(fixtures::TINY, 255));
     }
@@ -2847,7 +2847,7 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
     );
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
@@ -2857,33 +2857,33 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
         "夹具不对：那一页没被救回，这条用例就什么都没钉住"
     );
 
-    // 主体只有三页：救回来的那一页不在里面。
+    // 其余页只有三页：救回来的那一页不在里面。
     let envelope = envelope_of(reported);
     assert_eq!(envelope.body_pages, 3);
     assert_eq!(envelope.outlier_pages, 0);
-    // 驱动页指的是一张完好页——序号已经从主体序换回页序。
+    // 定档页指的是一张完好页——序号已经从其余页序换回页序。
     assert!(
         reported.pages[envelope.driver].salvage().is_none(),
-        "驱动页是一张部分救回页"
+        "定档页是一张部分救回页"
     );
 
     // 它自己那一档由它自己的判据定，理由因此不是「卷级上包络」。
     let decided = fixtures::verdict(salvaged);
     assert_ne!(decided.reason, Reason::VolumeEnvelope);
-    // 而它确实比主体更吃位深：进得去的话，基准档就是它那一档。
+    // 而它确实比其余页更吃位深：进得去的话，基准档就是它那一档。
     assert!(
         decided.candidate > envelope.base,
-        "夹具不对：这一页不比主体更吃位深（{} 对 {}），摘不摘它都是同一个基准档",
+        "夹具不对：这一页不比其余页更吃位深（{} 对 {}），摘不摘它都是同一个基准档",
         decided.candidate,
         envelope.base
     );
-    // 主体三页仍然跟着基准档走。
+    // 其余页三页仍然跟着基准档走。
     for page in &reported.pages[..3] {
         assert_eq!(fixtures::verdict(page).candidate, envelope.base);
     }
 }
 
-/// 二十页灰度纯色页（十九页主体 + 一页远在界外），每 `every` 页之前插一张彩页。
+/// 二十页灰度纯色页（其余页十九页 + 一页远在界外），每 `every` 页之前插一张彩页。
 /// `every` 为 0 就一张彩页都不插。跑的是彩色 profile——彩页只在那上面才走彩色分支。
 fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
     let space = Workspace::new();
@@ -2951,9 +2951,9 @@ fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
     }
 }
 
-/// 六十页的取值：第 31 页起 `length` 页要求高于基准档，其余都是主体页。
+/// 六十页的取值：第 31 页起 `length` 页要求高于基准档，剩下的都是其余页。
 ///
-/// **六十页是 p95 撑得住一段三页的最小规模**：秩 `ceil(0.95n)` 要落在主体页上，
+/// **六十页是 p95 撑得住一段三页的最小规模**：秩 `ceil(0.95n)` 要落在其余页上，
 /// 即 `ceil(0.95n) ≤ n-3`，解得 n ≥ 60；60 页时秩是 57，基准档之上还剩得下三页。
 /// 这条不等式数的是页在判定序列上的**名次**，与候选集是三个还是六个无关——
 /// 两条适配方式因此喂同一串取值，差别全在页尺寸上（08 号票）。
@@ -2969,7 +2969,7 @@ fn run_with_a_run_of_fitted_inside(length: usize) -> tonefit::VolumeReport {
     let volume = volume_of_solids(&space, &levels_with_a_run_of(length));
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、离群与迟滞，与几何无关。
+    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
     let report = fixtures::run_volume_fitted_inside(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")

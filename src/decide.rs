@@ -7,7 +7,7 @@
 //! 抖动模式按几何门裁（ADR 0007）。被裁掉的候选不在这里出现，`--bit-depth` 与 `--dither`
 //! 也够不着它们——那两道界只有 `--gray-levels` 与几何本身动得了。
 //!
-//! 这里只有逐页判定。卷级的上包络、迟滞与离群页在 `envelope`，那一层建在这一层之上，
+//! 这里只有逐页判定。卷级的上包络、迟滞与特例页在 `envelope`，那一层建在这一层之上，
 //! 并会把这里给出的档重定一遍（ADR 0006）。
 
 use crate::metric::Score;
@@ -45,7 +45,7 @@ pub struct Verdict {
 /// `--per-page` 关掉它，覆盖项顶掉它。
 ///
 /// `Hysteresis` 在 spec 点名的那几种之外，理由在 ADR 0006 的后果里：
-/// 上包络**不承诺**卷内绝对一致。升上去的那一段与主体之间就是一次翻页跳变，
+/// 上包络**不承诺**卷内绝对一致。升上去的那一段与其余页之间就是一次翻页跳变，
 /// 并进 `VolumeEnvelope` 就等于把这句话藏起来。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
@@ -55,11 +55,11 @@ pub enum Reason {
     NoneWithinThreshold,
     /// 覆盖项裁到只剩一个候选，判定被顶掉（spec 的 story 23）。
     Override,
-    /// 卷级上包络定的基准档：这一页跟着卷内主体走（ADR 0006 决定第 3 条）。
+    /// 卷级上包络定的基准档：这一页跟着卷内其余页走（ADR 0006 决定第 3 条）。
     VolumeEnvelope,
     /// 连续够了迟滞页数的一段，整段升到满足整段的最低一档（ADR 0006 决定第 4 条）。
     Hysteresis,
-    /// 离群页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
+    /// 特例页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
     Outlier,
     /// 这一页的几何门不成立：它会被下游再缩一次，抖动因此关掉（ADR 0007 决定第 2、3 条）。
     ///
@@ -67,7 +67,7 @@ pub enum Reason {
     /// 这一页在剩下的那套候选里自己判一次，判出来更高的就用更高的那一档。
     ///
     /// 它与 [`Outlier`](Self::Outlier) 摘的理由不同：那一页偏离卷内分布，这一页只是尺寸不同。
-    /// 整卷的灰度页一页不剩地落在门这一侧时不走这里——那时它们就是主体，
+    /// 整卷的灰度页一页不剩地落在门这一侧时不走这里——那时它们就当其余页，
     /// 拿到的是 [`VolumeEnvelope`](Self::VolumeEnvelope)。
     OutsideTheGate,
 }
@@ -80,7 +80,7 @@ impl std::fmt::Display for Reason {
             Reason::Override => "覆盖项顶掉判定",
             Reason::VolumeEnvelope => "卷级上包络",
             Reason::Hysteresis => "迟滞升档",
-            Reason::Outlier => "离群页单独定档",
+            Reason::Outlier => "特例页单独定档",
             Reason::OutsideTheGate => "几何门不成立，本页不抖动",
         })
     }
