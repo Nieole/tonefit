@@ -40,6 +40,22 @@ ssimulacra2 = { version = "0.5.1", optional = true }
 tempfile = "3.24.0"
 thiserror = "2.0.20"
 toml = "1.1.4"
+# `.rar` 只能走 UnRAR 那份 C++ 源码：ADR 0015 把它单独成篇，正是因为 UnRAR 许可禁止据其
+# 反推解压算法——一个纯 Rust 的 rar 解码器要么是那件被禁的事，要么许可说不清楚。
+# 点名的是这一个：原 `unrar`（`muja`）停在 2025-02，`unrar-ng` 是接手的那一支，随的 UnRAR
+# 新得多，另外补了一条**一趟顺序扫**的批量入口（原来那份逐个成员各搜一遍块头，
+# 成员一多就是白付的 O(N²)）。选型的完整理由在
+# `.scratch/volume-discovery/issues/06-rar.md` 的《落地记录》。
+#
+# **随二进制分发的那份许可要留字**，两处都要：`THIRD-PARTY-NOTICES.md` 的《UnRAR》一节
+# （随的是哪一版 UnRAR 也只在那里说）与 `licenses/UnRAR.txt`。这一条与 `sevenz-rust2`
+# 不同——那边是 Apache-2.0，走的是与仓库其余依赖同一条路。
+#
+# **默认特性全关**：那个默认特性管的是 `extract_all` 在 Linux 上写盘时的文件名编码，
+# 而本仓不走它——摊开这一层的落盘自己做（`source::write_extracted_member`），
+# 成员字节从 `read()` 出来就是一个 `Vec<u8>`，libunrar 一处路径都不碰。
+# （它省不掉 `libc`：那是 `unrar-ng-sys` 的非可选依赖，而树里本来就有一份。）
+unrar-ng = { version = "0.7.7", default-features = false }
 # 折行要按**显示宽度**算（`src/wrap.rs`），而中文一个字占两格。这一条**不是新的一棵树**：
 # indicatif 与 ratatui 都传递依赖着同一个版本，直接列出来只是把它变成本仓库自己说得出口的
 # 一条依赖——折行工具在 `tui` 之外，不能靠终端库那一份。

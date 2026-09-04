@@ -188,6 +188,42 @@ fn a_volume_that_cannot_be_extracted_fails_alone_and_the_run_ends_with_three() {
     );
 }
 
+/// **加密卷点名得 `1`、发现得 `0`**（`volume-discovery/06`，ADR 0014 决定第 5 条）。
+///
+/// 加密**不另开一种结局**：头是密的就列不出成员，那一卷点不开，而点不开的处置早就定死了。
+/// 这一条与本文件那条坏 zip 是同一副骨架——换的只是「点不开」的来处，
+/// 而这正是它要钉住的：两个数一格不动。
+///
+/// 库那一侧的两半（拒绝那句话说得出是口令、发现的进非卷文件清单）由 `tests/container.rs`
+/// 钉着；这里只问进程那一层看得见的那个数。
+#[test]
+fn an_encrypted_rar_is_refused_when_named_and_skipped_when_discovered() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let locked = fixtures::rar::write(library.join("加密的.rar"), fixtures::rar::ENCRYPTED);
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::gradient(fixtures::TINY));
+    good.write();
+
+    assert_eq!(
+        tonefit(&space, &[locked.as_path()]),
+        Some(1),
+        "点名一个加密卷，这一趟该整个被拒"
+    );
+    assert_eq!(
+        tonefit(&space, &[library.as_path()]),
+        Some(0),
+        "发现出来的一个加密卷把整趟拖下了水"
+    );
+    // 「其余卷照常跑完」不只是退出码：好的那一卷真在盘上。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照常跑完"
+    );
+}
+
 /// 跑一趟 tonefit，返回它的退出码。进程被信号打断时是 `None`。
 fn tonefit(space: &Workspace, inputs: &[&Path]) -> Option<i32> {
     tonefit_with_temp(space, inputs, None)

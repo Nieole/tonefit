@@ -7,6 +7,7 @@
 //! 子目录与躺在里面的归档各自成卷。哪些路径成卷由 [`crate::discover`] 定，本模块只管
 //! 「给定一个卷根，它里面有什么」。
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
@@ -22,20 +23,22 @@ use crate::{cost, decode};
 ///
 /// 判定只看扩展名、大小写不敏感，不去嗅内容（ADR 0015 决定第 1 条）。
 /// **加一项就只改这一处**：拒绝那句话由它拼出（见 [`listed_archive_extensions`]），
-/// 该怎么读也由它定（见 [`archive_reading`]）。
+/// 该怎么读也由它定（见 [`archive_reading`]）——摊开那一档连去哪个解码器要字节
+/// 都写在这张表上（见 [`SolidFormat`]），因此没有第二处 `match` 要跟着加一支。
 ///
-/// `.rar` 还不在里面：它是格式集里的第四个，落在 `volume-discovery/06`。
-const ARCHIVE_FORMATS: [(&str, ArchiveReading); 3] = [
+/// 四个格式全在里面了（ADR 0015 决定第 1 条），次序照那条决定写的来。
+const ARCHIVE_FORMATS: [(&str, ArchiveReading); 4] = [
     ("cbz", ArchiveReading::Random),
     ("zip", ArchiveReading::Random),
-    ("7z", ArchiveReading::Extracted),
+    ("rar", ArchiveReading::Extracted(RAR)),
+    ("7z", ArchiveReading::Extracted(SEVEN_ZIP)),
 ];
 
 /// 一种归档格式**怎么读**（ADR 0015 决定第 3 条）。
 ///
 /// 按格式分，**不逐卷探固实与否**：逐卷探要先读一遍归档头，而那正是这条决定想省掉的
 /// 那一次。代价是关掉了固实的包也照样摊开，白付一次全量写盘。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum ArchiveReading {
     /// **随机取**：每个成员各自压缩，按下标直接定位，一次 O(1)。`.cbz` / `.zip` 走它。
     Random,
@@ -43,8 +46,39 @@ enum ArchiveReading {
     ///
     /// 固实归档取第 N 个成员要从它所在的块头一路解起，单次 O(N)、整卷 O(N²)，
     /// 而一卷的源字节本来就要读两遍（幂等那一道一遍、第一遍一遍）。
-    Extracted,
+    Extracted(SolidFormat),
 }
+
+/// 摊开那一档的一个格式：**它那两条路**。
+///
+/// 摊开那一层（临时目录、寿命、落盘、那笔字节账）是两个格式共用的，
+/// 去哪个解码器要字节的不是——不同的就这两个入口，因此它们直接坐在
+/// [格式集](ARCHIVE_FORMATS)里，而不是另立一个标签再到别处 `match` 一遍。
+///
+/// **「固实」在这里是格式的名字，不是这一卷的性质**：一个打包时关掉了固实的 `.rar`
+/// 走的仍是这一条，白付一次全量写盘。逐卷探要先读一遍归档头，而那正是
+/// ADR 0015 决定第 3 条省掉的那一次。
+#[derive(Clone, Copy)]
+struct SolidFormat {
+    /// 摊开并备好读取端。[`open`] 那一条从这里进去。
+    open: OpenVolume,
+    /// 只列成员，一个内容字节都不解。[`enumerate`] 那一条从这里进去。
+    list: OpenVolume,
+}
+
+/// 「拿一个卷根，交出一个卷」——[`open`] 与 [`enumerate`] 两条路同一个形状，
+/// [`SolidFormat`] 那两格装的就是它。
+type OpenVolume = fn(&Path) -> Result<Volume>;
+
+const RAR: SolidFormat = SolidFormat {
+    open: open_rar,
+    list: list_rar,
+};
+
+const SEVEN_ZIP: SolidFormat = SolidFormat {
+    open: open_seven_zip,
+    list: list_seven_zip,
+};
 
 /// 归档卷的**输出**扩展名：一律 `.cbz`，输入是哪一个都不影响它。
 ///
@@ -179,7 +213,8 @@ pub struct Member {
 ///   目录卷 **0** 个（[`Reader::Directory`] 只是一个卷根路径）。卷一个一个地处理、
 ///   处理完当场析构，而预扫**一个都不攥**（见 `crate::survey`）——这一格因此是 1，
 ///   **不是这一趟有几个卷**。摊开的卷落在目录卷那一档、是 **0**：摊开那一段自己开着
-///   两个（源包一个、正在写的成员一个），但它整个发生在第一次读**之前**，
+///   两个（源包一个、正在写的成员一个；`.rar` 还要在那之前单开一次把归档头读完，
+///   读完就放，与这两个不重叠——见 [`rar_headers`]），但它整个发生在第一次读**之前**，
 ///   与下面两格不重叠（见 [`extract`]）。
 /// - **正在读的那几个成员**：一条读取线程一个（见 [`independent`](Self::independent)
 ///   与 `crate::read` 的 `reads`）。真读源字节的只有两处，各按[读取计划](crate::medium::IoPlan)
@@ -262,12 +297,20 @@ impl Reader {
                 let mut bytes = Vec::with_capacity(entry.size() as usize);
                 entry
                     .read_to_end(&mut bytes)
-                    .with_context(|| format!("解出归档成员 {}", member.relative.display()))?;
+                    .with_context(|| member_is_unreadable(&member.relative))?;
                 Ok(bytes)
             }
             Reader::Unextracted { path } => bail!(not_extracted_yet(path)),
         }
     }
+}
+
+/// 「这个成员解不出来」，那一句话。
+///
+/// 两处共用：随机取那条路上是[取字节](Reader::read)时解不开，摊开那条路上是
+/// [摊开](spread_rar)时解不开。同一件事各写一遍，改的那天只会改掉一句。
+fn member_is_unreadable(relative: &Path) -> String {
+    format!("解出归档成员 {}", relative.display())
 }
 
 /// [`Reader::Unextracted`] 上取字节时的那句话。
@@ -296,7 +339,7 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 ///
 /// 只列成员、不摊开的那一条是 [`enumerate`]，预扫走它。
 pub fn open(path: &Path) -> Result<Volume> {
-    open_taking_solid_archives(path, open_solid_archive)
+    open_taking_solid_archives(path, |format| format.open)
 }
 
 /// **只列成员**：一个像素不解，固实归档也**不摊开**。预扫走这一条（见 `crate::survey`）。
@@ -307,7 +350,7 @@ pub fn open(path: &Path) -> Result<Volume> {
 /// 非分两条不可：摊开一整卷只为数几个成员是白付一次全量写盘，而预扫要在开工之前把
 /// 这一趟**每一个**卷都数一遍——点名一个库就是几千个卷（ADR 0014）。
 pub(crate) fn enumerate(path: &Path) -> Result<Volume> {
-    open_taking_solid_archives(path, list_solid_archive)
+    open_taking_solid_archives(path, |format| format.list)
 }
 
 /// 打开一个卷的**那一副分岔**，[`open`] 与 [`enumerate`] 共用。
@@ -318,11 +361,18 @@ pub(crate) fn enumerate(path: &Path) -> Result<Volume> {
 ///
 /// 交一个函数指针进来而不是一个 `bool`：调用处读出来的是**要走哪一条**，
 /// 不是一个要回头查含义的真假（`crate::medium::Probes` 的两个探测函数同一条道理）。
-fn open_taking_solid_archives(path: &Path, solid: fn(&Path) -> Result<Volume>) -> Result<Volume> {
+///
+/// 摊开那一档有两个格式，而两条路的差别与格式无关，因此交进来的是**在一个格式的两个入口里
+/// 挑哪一个**（见 [`SolidFormat`]），不是「哪一个格式怎么走」。加一个摊开的格式因此
+/// 不必回到这里改一支。
+fn open_taking_solid_archives(
+    path: &Path,
+    solid: fn(&SolidFormat) -> OpenVolume,
+) -> Result<Volume> {
     match identity_of(path)?.1 {
         Container::Directory => open_directory(path),
         Container::Archive => match archive_reading(path) {
-            Some(ArchiveReading::Extracted) => solid(path),
+            Some(ArchiveReading::Extracted(format)) => solid(&format)(path),
             // 随机取那一条也兜住「取不出读取形态」：`identity_of` 上一句已经确认过
             // 这是认得的归档，`None` 那一支够不着。
             Some(ArchiveReading::Random) | None => open_archive(path),
@@ -401,7 +451,7 @@ fn archive_reading(path: &Path) -> Option<ArchiveReading> {
         .map(|(_, reading)| *reading)
 }
 
-/// 认得的归档扩展名，拼成给人看的一串（`.cbz / .zip / .7z`）。
+/// 认得的归档扩展名，拼成给人看的一串（`.cbz / .zip / .rar / .7z`）。
 ///
 /// 拒绝那句话由它拼出，格式集与措辞因此只有一个出处：往 [`ARCHIVE_FORMATS`] 里加一项，
 /// 那句话自己跟着走。
@@ -517,15 +567,52 @@ fn open_archive(path: &Path) -> Result<Volume> {
     })
 }
 
-/// 固实归档（`.7z`）：**开工前整卷摊到临时目录，之后完全按目录卷走**（ADR 0015 决定第 3 条）。
+/// 摊开好了的那一卷。摊开那一档的两个格式共用它。
+///
+/// 三条不变量写在这一处：[`Volume::root`] 仍指着那个**归档文件**（报告、幂等的去处、
+/// 成员身份都按它算），[`Container::Archive`] 仍是归档（输出因此仍一律 `.cbz`），
+/// 而读取端是一个**目录**——下游看到的是一个归档卷，只是它的字节此刻躺在别处。
+fn extracted_volume(path: &Path, members: Vec<Member>, extraction: Extraction) -> Volume {
+    let (pages, extras) = split_and_sort(members);
+    Volume {
+        root: path.to_path_buf(),
+        container: Container::Archive,
+        pages,
+        extras,
+        reader: Reader::Directory {
+            root: extraction.dir.path().to_path_buf(),
+        },
+        extraction: Some(extraction),
+    }
+}
+
+/// 只列了成员、**还没摊开**的那一卷。摊开那一档的两个格式共用它。
+///
+/// 读取端取不出字节（见 [`Reader::Unextracted`]），而预扫要的就是这个：
+/// 摊开一整卷只为数几个成员是白付一次全量写盘。
+fn unextracted_volume(path: &Path, members: Vec<Member>) -> Volume {
+    let (pages, extras) = split_and_sort(members);
+    Volume {
+        root: path.to_path_buf(),
+        container: Container::Archive,
+        pages,
+        extras,
+        reader: Reader::Unextracted {
+            path: path.to_path_buf(),
+        },
+        extraction: None,
+    }
+}
+
+/// `.7z`：**开工前整卷摊到临时目录，之后完全按目录卷走**（ADR 0015 决定第 3 条）。
 ///
 /// 归档头解一遍就够：成员表与摊开用的是同一份 `files`，两者的下标因此对得上
 /// （见 [`Member::entry`]）。摊开之后读取端是一个目录，而 [`Volume::root`] 仍指着这个
 /// `.7z` 文件——下游看到的是一个**归档卷**，只是它的字节此刻躺在别处。
-fn open_solid_archive(path: &Path) -> Result<Volume> {
+fn open_seven_zip(path: &Path) -> Result<Volume> {
     let mut reader = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::empty())
-        .map_err(|error| solid_archive_is_unreadable(path, error))?;
-    let members = solid_members(path, &reader.archive().files)?;
+        .map_err(|error| seven_zip_is_unreadable(path, error))?;
+    let members = seven_zip_members(path, &reader.archive().files)?;
     // 包里那个原名 → 成员表里那条相对路径。**摊开按后者落盘**：包装层已经剥掉、
     // 垃圾成员已经摘掉，读取端于是与一个目录卷同形。
     // 拿的是拥有的 `String` 而不是借用：下一句要 `&mut reader`，而借用还挂在它身上。
@@ -541,73 +628,79 @@ fn open_solid_archive(path: &Path) -> Result<Volume> {
     // 摊开自成一个[阶段](crate::cost::Stage::Extract)：它一次吃掉整卷的解压加整卷的写盘，
     // 落在 `--features profiling` 那张表上才看得出这一笔有多大。
     let extraction = cost::stage(cost::Stage::Extract, || {
-        extract(path, &targets, &mut reader)
+        extract(path, |root| spread_seven_zip(root, &targets, &mut reader))
     })?;
-
-    let (pages, extras) = split_and_sort(members);
-    Ok(Volume {
-        root: path.to_path_buf(),
-        container: Container::Archive,
-        pages,
-        extras,
-        reader: Reader::Directory {
-            root: extraction.dir.path().to_path_buf(),
-        },
-        extraction: Some(extraction),
-    })
+    Ok(extracted_volume(path, members, extraction))
 }
 
-/// 固实归档**只列成员**那一条：解归档头，一个内容字节都不解。预扫走它（见 [`enumerate`]）。
+/// `.7z` **只列成员**那一条：解归档头，一个内容字节都不解。预扫走它（见 [`enumerate`]）。
 ///
 /// 归档头解完就把文件放掉——`Archive::open` 不留读取端，预扫因此在这种卷上同样
 /// 一个句柄都不攥（见 `crate::survey`）。
-fn list_solid_archive(path: &Path) -> Result<Volume> {
-    let archive = sevenz_rust2::Archive::open(path)
-        .map_err(|error| solid_archive_is_unreadable(path, error))?;
-    let members = solid_members(path, &archive.files)?;
-    let (pages, extras) = split_and_sort(members);
-    Ok(Volume {
-        root: path.to_path_buf(),
-        container: Container::Archive,
-        pages,
-        extras,
-        reader: Reader::Unextracted {
-            path: path.to_path_buf(),
-        },
-        extraction: None,
-    })
+fn list_seven_zip(path: &Path) -> Result<Volume> {
+    let archive =
+        sevenz_rust2::Archive::open(path).map_err(|error| seven_zip_is_unreadable(path, error))?;
+    Ok(unextracted_volume(
+        path,
+        seven_zip_members(path, &archive.files)?,
+    ))
 }
 
-/// 「这个文件读不出归档结构」——固实归档那一版。两条路共用它，那句话因此只有一个版本
-/// （与 [`open_archive_handle`] 里 ZIP 那一句同一条规矩）。
-fn solid_archive_is_unreadable(path: &Path, error: sevenz_rust2::Error) -> anyhow::Error {
+/// 「这个文件读不出归档结构」——`.7z` 那一版。两条路共用它，那句话因此只有一个版本
+/// （与 [`open_archive_handle`] 里 ZIP 那一句、[`rar_is_unreadable`] 同一条规矩）。
+fn seven_zip_is_unreadable(path: &Path, error: sevenz_rust2::Error) -> anyhow::Error {
     anyhow::Error::new(error).context(format!(
         "读不出 {} 的归档结构：这个文件可能已损坏、带着口令，或者根本不是 7z",
         path.display()
     ))
 }
 
-/// 归档头里那批条目 → 成员表。固实归档的两条路共用它。
+/// `.7z` 的归档头条目 → 成员表。摘成[三样](solid_members)交上去，规矩在那一处。
 ///
-/// 与 [`open_archive`] 那一段同形：目录项不算成员、名字要能[当作卷内相对路径](relative_path)、
-/// [打包环境留下的东西](is_junk)摘掉、[包装层](strip_wrapper_directory)剥掉。
-/// **只有名字这一处不同**：7z 把成员名存成 UTF-16，解出来就是一个 `String`，
+/// **只有名字这一处要说**：7z 把成员名存成 UTF-16，解出来就是一个 `String`，
 /// 没有 ZIP 那个「置没置 UTF-8 标志」的启发式（见 [`decode_name`]）。
-fn solid_members(path: &Path, files: &[sevenz_rust2::ArchiveEntry]) -> Result<Vec<Member>> {
-    let mut members = Vec::with_capacity(files.len());
-    for (entry, file) in files.iter().enumerate() {
-        if file.is_directory {
+fn seven_zip_members(path: &Path, files: &[sevenz_rust2::ArchiveEntry]) -> Result<Vec<Member>> {
+    solid_members(
+        path,
+        files.iter().map(|file| {
+            (
+                Cow::Borrowed(file.name.as_str()),
+                file.size,
+                file.is_directory,
+            )
+        }),
+    )
+}
+
+/// 归档头里那批条目 → 成员表。**摊开那一档的两个格式共用它**。
+///
+/// 一个条目在这里只剩三样：**名字、多少字节、是不是目录项**。两个库各自那种条目类型
+/// 由调用方摘成这三样交进来（见 [`seven_zip_members`] 与 [`rar_members`]），
+/// 摘的那一句就是两个格式唯一不同的地方。
+///
+/// 规矩与 [`open_archive`] 那一段同形，而且**只写在这一处**：目录项不算成员、
+/// 名字要能[当作卷内相对路径](relative_path)、[打包环境留下的东西](is_junk)摘掉、
+/// [包装层](strip_wrapper_directory)剥掉。
+///
+/// `entry` 是**归档头里的下标**（见 [`Member::entry`]），因此数的是交进来的全部条目、
+/// 不是留下的那些——摊开要靠它把成员表里那条相对路径与包里那个原名对上。
+fn solid_members<'a>(
+    path: &Path,
+    entries: impl Iterator<Item = (Cow<'a, str>, u64, bool)>,
+) -> Result<Vec<Member>> {
+    let mut members = Vec::new();
+    for (entry, (name, bytes, is_directory)) in entries.enumerate() {
+        if is_directory {
             continue;
         }
-        let name = &file.name;
-        let relative = relative_path(name)
+        let relative = relative_path(&name)
             .with_context(|| format!("{} 的成员名 {name} 不能当作输出路径", path.display()))?;
         if is_junk(&relative) {
             continue;
         }
         members.push(Member {
             relative,
-            bytes: file.size,
+            bytes,
             entry,
         });
     }
@@ -615,23 +708,116 @@ fn solid_members(path: &Path, files: &[sevenz_rust2::ArchiveEntry]) -> Result<Ve
     Ok(members)
 }
 
+/// `.rar`：**开工前整卷摊到临时目录，之后完全按目录卷走**（ADR 0015 决定第 3 条）。
+///
+/// 与 `.7z` 那一条同形，只有一处不同：**归档头要读两遍**。UnRAR 交出来的是一个只能往前走
+/// 的游标，而摊开的去处要等成员表齐了才定得下来——[包装层](strip_wrapper_directory)
+/// 剥几层，得看全卷共有的前缀是什么。因此先 [`rar_headers`] 列一遍，再从头解一遍。
+/// 两个句柄**不重叠**：列成员那一个在 [`rar_headers`] 返回时就放掉了。
+fn open_rar(path: &Path) -> Result<Volume> {
+    let headers = rar_headers(path)?;
+    let members = rar_members(path, &headers)?;
+    // 包里那个原名 → 成员表里那条相对路径，用意与 [`open_seven_zip`] 那一份相同：
+    // **摊开按后者落盘**，读取端于是与一个目录卷同形。
+    let targets: HashMap<PathBuf, PathBuf> = members
+        .iter()
+        .map(|member| {
+            (
+                headers[member.entry].filename.clone(),
+                member.relative.clone(),
+            )
+        })
+        .collect();
+    let extraction = cost::stage(cost::Stage::Extract, || {
+        extract(path, |root| spread_rar(root, path, &targets))
+    })?;
+    Ok(extracted_volume(path, members, extraction))
+}
+
+/// `.rar` **只列成员**那一条：解归档头，一个内容字节都不解。预扫走它（见 [`enumerate`]）。
+fn list_rar(path: &Path) -> Result<Volume> {
+    let headers = rar_headers(path)?;
+    Ok(unextracted_volume(path, rar_members(path, &headers)?))
+}
+
+/// 解一遍 `.rar` 的归档头，把条目全收下来。**句柄在这一句里就放掉**。
+///
+/// 预扫因此在这种卷上照旧不攥句柄（见 `crate::survey`）：`.7z` 那边连开都不开，
+/// 这边开一次、读完就关，两者交出来的都只是一张表。
+///
+/// **加密卷从这里出去**：头是密的，UnRAR 在第一条上就回「没给口令」。之后走的是
+/// 「点名的 / 发现的」那条既有分别（ADR 0014 决定第 5 条）——点名的整趟拒绝，
+/// 发现的进非卷文件那张表——加密**不另开一种结局**。
+fn rar_headers(path: &Path) -> Result<Vec<unrar_ng::FileHeader>> {
+    unrar_ng::Archive::new(path)
+        .open_for_listing()
+        .map_err(|error| rar_is_unreadable(path, error))?
+        .map(|entry| entry.map_err(|error| rar_is_unreadable(path, error)))
+        .collect()
+}
+
+/// `.rar` 的归档头条目 → 成员表。摘成[三样](solid_members)交上去，规矩在那一处。
+///
+/// **只有名字这一处要说**：UnRAR 按包里那个 UTF-16 名字建好一个 `PathBuf` 交出来，
+/// 因此同样没有 ZIP 那个「置没置 UTF-8 标志」的启发式（见 [`decode_name`]）；
+/// 而分隔符跟着打包的那台机器走，Windows 上打的包写的是 `\`。两种分隔符在
+/// [`relative_path`] 里归一，与 ZIP 那边同一条路。
+fn rar_members(path: &Path, headers: &[unrar_ng::FileHeader]) -> Result<Vec<Member>> {
+    solid_members(
+        path,
+        headers.iter().map(|header| {
+            (
+                header.filename.to_string_lossy(),
+                header.unpacked_size,
+                header.is_directory(),
+            )
+        }),
+    )
+}
+
+/// 「这个文件读不出归档结构」——`.rar` 那一版。两条路共用它，那句话因此只有一个版本
+/// （与 [`seven_zip_is_unreadable`] 同一条规矩）。
+///
+/// **带口令的包与坏掉的包分开说**：口令不是坏，是这个工具没有那一半——tonefit 没有一处
+/// 问得出口令，输出也一律 `.cbz`（ADR 0015 决定第 2 条）。合成一句的话，一个加密卷在
+/// 报告里会被说成「可能已损坏」，而用户手上那份包好好的。
+fn rar_is_unreadable(path: &Path, error: unrar_ng::error::UnrarError) -> anyhow::Error {
+    use unrar_ng::error::Code;
+
+    let why = match error.code {
+        Code::MissingPassword | Code::BadPassword => "它带着口令，而 tonefit 没有问口令的地方",
+        _ => "这个文件可能已损坏，或者根本不是 rar",
+    };
+    anyhow::Error::new(error).context(format!("读不出 {} 的归档结构：{why}", path.display()))
+}
+
 /// 把整卷摊到一个临时目录里，返回那一份。
 ///
-/// 走的是**一条顺序扫**：`for_each_entries` 按块依次解，而固实归档的成员本就压在一条
-/// 连续的流里——顺着解一遍是它唯一便宜的读法，也正是不按成员随机取的理由（ADR 0015）。
+/// **格式那一半交给 `spread`**：临时目录、它的[前缀](EXTRACTION_PREFIX)、
+/// 摊不下就整份收走，都在这里；一个格式一份的只有「按什么次序把成员的字节交出来」，
+/// 见 [`spread_seven_zip`] 与 [`spread_rar`]。两份都走**一条顺序扫**——固实归档的成员
+/// 压在一条连续的流里，顺着解一遍是它唯一便宜的读法，也正是不按成员随机取的理由
+/// （ADR 0015）。
 ///
 /// 摊不下一律回 `Err`：临时目录建不出来、某个成员写不进去、**磁盘不够**，都从这里出去，
 /// 那是**卷级失败**，其余卷照做（见 `crate::process_volume`）。半摊开的那些字节不必手动收——
 /// [`TempDir`] 在这个函数返回时就析构了。
-fn extract(
-    path: &Path,
-    targets: &HashMap<String, PathBuf>,
-    reader: &mut sevenz_rust2::ArchiveReader<File>,
-) -> Result<Extraction> {
+fn extract(path: &Path, spread: impl FnOnce(&Path) -> Result<u64>) -> Result<Extraction> {
     let dir = tempfile::Builder::new()
         .prefix(EXTRACTION_PREFIX)
         .tempdir()
         .with_context(|| format!("给 {} 建摊开用的临时目录", path.display()))?;
+    let bytes =
+        spread(dir.path()).with_context(|| format!("把 {} 摊到临时目录", path.display()))?;
+    Ok(Extraction { dir, bytes })
+}
+
+/// `.7z` 那一遍顺序扫：`for_each_entries` 按块依次解，解出一个就落一个盘。
+fn spread_seven_zip(
+    root: &Path,
+    targets: &HashMap<String, PathBuf>,
+    reader: &mut sevenz_rust2::ArchiveReader<File>,
+) -> Result<u64> {
     let mut bytes = 0;
     // 写不下的那个错原样带出来：`for_each_entries` 只收得下它自己那种错误，
     // 而「磁盘不够」那句话要一路带到卷级失败那一行上去。
@@ -644,7 +830,7 @@ fn extract(
             // 目录项、垃圾成员：成员表没收下它们，盘上也就不该有。
             return Ok(true);
         };
-        match write_extracted_member(dir.path(), relative, data) {
+        match write_extracted_member(root, relative, data) {
             Ok(written) => {
                 bytes += written;
                 Ok(true)
@@ -658,10 +844,35 @@ fn extract(
     if let Some(error) = failed {
         return Err(error);
     }
-    scanned.map_err(|error| {
-        anyhow::Error::new(error).context(format!("把 {} 摊到临时目录", path.display()))
-    })?;
-    Ok(Extraction { dir, bytes })
+    scanned.map_err(anyhow::Error::new)?;
+    Ok(bytes)
+}
+
+/// `.rar` 那一遍顺序扫：按归档里的次序逐个成员往前走，成员表收下的落盘、没收下的跳过。
+///
+/// **一个成员先整个进内存再落盘**，与 `.7z` 那边边解边写不同：UnRAR 只给两种取法——
+/// 由它自己写文件，或者交出一个 `Vec<u8>`。让它写文件就等于把[路径那一道](relative_path)
+/// 交给 C++ 那一侧，而包装层剥到哪一级、垃圾成员摘不摘、`..` 与盘符收不收，
+/// 都是这一侧的规矩。多出来的那一份内存是**一个成员**，而一个成员本来就整个进内存
+/// （见 [`Reader::read`]）。
+fn spread_rar(root: &Path, path: &Path, targets: &HashMap<PathBuf, PathBuf>) -> Result<u64> {
+    let mut archive = unrar_ng::Archive::new(path)
+        .open_for_processing()
+        .map_err(|error| rar_is_unreadable(path, error))?;
+    let mut bytes = 0;
+    while let Some(cursor) = archive.read_header().map_err(anyhow::Error::new)? {
+        let Some(relative) = targets.get(&cursor.entry().filename) else {
+            // 目录项、垃圾成员：成员表没收下它们，盘上也就不该有。
+            archive = cursor.skip().map_err(anyhow::Error::new)?;
+            continue;
+        };
+        let (member, next) = cursor
+            .read()
+            .map_err(|error| anyhow::Error::new(error).context(member_is_unreadable(relative)))?;
+        archive = next;
+        bytes += write_extracted_member(root, relative, &mut member.as_slice())?;
+    }
+    Ok(bytes)
 }
 
 /// 写下摊开的一个成员，返回它有多少字节。
@@ -968,12 +1179,12 @@ mod tests {
         path.to_path_buf()
     }
 
-    /// 格式集加进 `.7z` 之后，**拒绝那句话自己跟着走**——它由格式集拼出来
+    /// 四个格式全收下之后，**拒绝那句话自己跟着走**——它由格式集拼出来
     /// （02 号票立的，见 [`listed_archive_extensions`]）。
     #[test]
     fn the_refusal_names_every_format_the_set_knows() {
         let said = listed_archive_extensions();
-        for extension in [".cbz", ".zip", ".7z"] {
+        for extension in [".cbz", ".zip", ".rar", ".7z"] {
             assert!(
                 said.contains(extension),
                 "格式集那句话里没有 {extension}：{said}"
@@ -981,29 +1192,37 @@ mod tests {
         }
     }
 
-    /// 读取形态**按格式分**：`.cbz` / `.zip` 随机取，`.7z` 摊开（ADR 0015 决定第 3 条）。
+    /// 读取形态**按格式分**：`.cbz` / `.zip` 随机取，`.rar` / `.7z` 摊开
+    /// （ADR 0015 决定第 3 条）。
     ///
     /// 大小写不敏感这一条一并钉住：判定只看扩展名，而扩展名的大小写不是格式的一部分。
+    ///
+    /// **只问走哪一条，不问接的是哪个解码器**：后者是[格式集](ARCHIVE_FORMATS)里那两个
+    /// 函数指针，在这里比等于比函数地址——而「`.rar` 真接上了 rar 那一支」由
+    /// `tests/container.rs` 拿真包答，那才是它说得清的地方。
     #[test]
     fn each_format_carries_its_own_way_of_being_read() {
         for name in ["卷.cbz", "卷.ZIP"] {
-            assert_eq!(
-                archive_reading(Path::new(name)),
-                Some(ArchiveReading::Random),
+            assert!(
+                matches!(
+                    archive_reading(Path::new(name)),
+                    Some(ArchiveReading::Random)
+                ),
                 "{name} 不该走摊开那一条"
             );
         }
-        for name in ["卷.7z", "卷.7Z"] {
-            assert_eq!(
-                archive_reading(Path::new(name)),
-                Some(ArchiveReading::Extracted),
+        for name in ["卷.rar", "卷.RAR", "卷.7z", "卷.7Z"] {
+            assert!(
+                matches!(
+                    archive_reading(Path::new(name)),
+                    Some(ArchiveReading::Extracted(_))
+                ),
                 "{name} 没走摊开那一条"
             );
         }
-        assert_eq!(
-            archive_reading(Path::new("卷.rar")),
-            None,
-            ".rar 还不在格式集里"
+        assert!(
+            archive_reading(Path::new("卷.txt")).is_none(),
+            "不认得的扩展名不该有读取形态"
         );
     }
 

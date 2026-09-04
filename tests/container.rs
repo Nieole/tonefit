@@ -404,44 +404,45 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_failed_volume() {
 
 /// 认得的归档扩展名是一个**集合**，拒绝那句话要把这个集合报出来。
 ///
-/// `.rar` 也在格式集里（ADR 0015 决定第 1 条），但本版本点名即拒：它要先摊到临时目录
-/// 才谈得上读，而那条路还没开（`volume-discovery/06`）。拒得跟一个 `.txt` 一样，
-/// 理由那句话报的是**已经收下的**那几个扩展名——`.7z` 从 `volume-discovery/05` 起在里面。
+/// 四个格式全收下之后（`volume-discovery/06` 收下最后那个 `.rar`），这句话报的就是
+/// 四个；不认得的扩展名照旧拒得跟一个 `.txt` 一样。
 #[test]
 fn a_file_that_is_neither_a_directory_nor_a_known_archive_is_refused() {
     let space = Workspace::new();
+    let path = space.stray_file("volume-a.txt", b"just a note");
 
-    for name in ["volume-a.txt", "volume-a.rar"] {
-        let path = space.stray_file(name, b"just a note");
+    let error = run_paths_expecting_failure(&space, [path.as_path()]);
 
-        let error = run_paths_expecting_failure(&space, [path.as_path()]);
-
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("一个卷是一个目录或一个归档（.cbz / .zip / .7z）"),
-            "{name}：{message}"
-        );
-    }
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("一个卷是一个目录或一个归档（.cbz / .zip / .rar / .7z）"),
+        "{message}"
+    );
 }
 
-/// 扩展名**像**一个 `.7z`、内容不是：那是「读不出归档结构」，不是「不认得这个扩展名」。
+/// 扩展名**像**一个摊开那一档的归档、内容不是：那是「读不出归档结构」，
+/// 不是「不认得这个扩展名」。
 ///
 /// 两句话分得开才有用：前者说的是这个文件坏了，后者说的是这个格式没收。
 /// 点名的这一种整趟拒绝（发现出来的那一种进非卷文件清单，见 `tests/exit_code.rs`）。
+/// 两个格式各问一遍：那句话一格式一份（`source` 的 `seven_zip_is_unreadable` 与
+/// `rar_is_unreadable`），少测一个就少守一句。
 #[test]
-fn a_file_that_only_looks_like_a_seven_zip_is_refused_for_being_unreadable() {
-    let space = Workspace::new();
-    let path = space.stray_file("volume-a.7z", b"just a note");
+fn a_file_that_only_looks_like_a_solid_archive_is_refused_for_being_unreadable() {
+    for name in ["volume-a.7z", "volume-a.rar"] {
+        let space = Workspace::new();
+        let path = space.stray_file(name, b"just a note");
 
-    let message = format!(
-        "{:#}",
-        run_paths_expecting_failure(&space, [path.as_path()])
-    );
+        let message = format!(
+            "{:#}",
+            run_paths_expecting_failure(&space, [path.as_path()])
+        );
 
-    assert!(
-        message.contains("读不出") && message.contains("归档结构"),
-        "{message}"
-    );
+        assert!(
+            message.contains("读不出") && message.contains("归档结构"),
+            "{name}：{message}"
+        );
+    }
 }
 
 /// `.zip` 与 `.cbz` 是同一种字节：同内容的一对，产物逐字节相同，去处也是同一个名字。
@@ -1144,6 +1145,199 @@ fn a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume() {
         fixtures::directory_members(&space.out()),
         ["库/好的.cbz"],
         "其余卷没照做，或者摊不开的那一卷也写出了东西"
+    );
+}
+
+/// **四个格式装同一批页，出来是同一串字节**（批 spec 的《Testing Decisions》，
+/// ADR 0015 决定第 1、2、3 条）。
+///
+/// `volume-discovery/06` 收下最后那个 `.rar`，格式集因此齐了，这一条才摆得出来。
+/// 它一次钉住三件事：
+///
+/// - **读法的差异被关在源那一层里**——两条读法（随机取、摊开）在这里各走两个格式，
+///   而判定、几何、量化、编码、透传一件都不知道这一卷原来是什么包。
+/// - **输出扩展名归一**：四份产物都叫 `.cbz`，输入是哪一个都不带过来（决定第 2 条）。
+/// - **摊开只发生在该发生的两个格式上**：`.cbz` / `.zip` 那两卷摊了 0 字节。
+///
+/// 四个包装的是同一份内容，那个前提的出处只有一处：`.rar` 那一侧是签进仓的字节
+/// （造它的命令行见 `fixtures::rar` 抬头），另外三个照 `fixtures::rar::members()` 灌。
+/// 四卷各写各的输出根：卷名都一样，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
+#[test]
+fn every_archive_format_turns_the_same_pages_into_the_same_product() {
+    let space = Workspace::new();
+    let members = fixtures::rar::members();
+
+    let mut cbz = space.cbz("volume-a");
+    let mut zip = space.archive("volume-a.zip");
+    let mut sevenz = space.sevenz("volume-a");
+    for (name, bytes) in &members {
+        cbz.file(name, bytes);
+        zip.file(name, bytes);
+        sevenz.file(name, bytes);
+    }
+
+    let packed = [
+        ("out-cbz", cbz.write(), 0),
+        ("out-zip", zip.write(), 0),
+        ("out-rar", space.rar("volume-a", fixtures::rar::SOLID), 1),
+        ("out-7z", sevenz.write(), 1),
+    ];
+
+    let mut products = Vec::new();
+    for (out, volume, extracts) in &packed {
+        let report = tonefit::run(&tonefit::Request {
+            output_root: space.out_named(out),
+            ..fixtures::request(&space, [volume.as_path()])
+        })
+        .unwrap_or_else(|error| panic!("点名 {} 该跑得起来：{error:#}", volume.display()));
+
+        assert_eq!(
+            report.volumes[0].output,
+            space.out_named(out).join("volume-a.cbz"),
+            "{} 的产物没归一到 .cbz",
+            volume.display()
+        );
+        // 摊了多少字节进了报告：那笔磁盘账没有旋钮，这个数是它唯一可见的形式。
+        assert_eq!(
+            report.volumes[0].extracted > 0,
+            *extracts == 1,
+            "{} 走岔了读取形态：摊开了 {} 字节",
+            volume.display(),
+            report.volumes[0].extracted
+        );
+        products.push((
+            volume.clone(),
+            fixtures::read_cbz(&report.volumes[0].output),
+        ));
+    }
+
+    let (first, expected) = &products[0];
+    for (volume, product) in &products[1..] {
+        assert_eq!(
+            product,
+            expected,
+            "{} 与 {} 装着同一批页，产物却不是同一串字节",
+            volume.display(),
+            first.display()
+        );
+    }
+}
+
+/// **固实压的与存储的走同一条，产物相同**（`volume-discovery/06`，ADR 0015 决定第 3 条）。
+///
+/// 读取形态**按格式分，不逐卷探固实与否**：逐卷探要先读一遍归档头，而那正是这条决定
+/// 想省掉的那一次。因此一份打包时关掉了固实的 `.rar` 也照样摊开——白付一次全量写盘，
+/// 那是那条决定认下的代价，而这一条钉的是**代价之外什么都没变**。
+///
+/// 两份夹具的成员逐一相同，差的只有 `-s -m5` 与 `-s- -m0`（见 `fixtures::rar` 抬头）。
+#[test]
+fn a_solid_rar_and_a_stored_one_come_out_the_same() {
+    let space = Workspace::new();
+    let solid = space.rar("固实", fixtures::rar::SOLID);
+    let stored = space.rar("存储", fixtures::rar::STORED);
+
+    let report = run_paths(&space, [solid.as_path(), stored.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2, "两卷没都跑起来");
+    assert_eq!(
+        fixtures::read_cbz(&report.volumes[0].output),
+        fixtures::read_cbz(&report.volumes[1].output),
+        "固实压的与存储的出来不是同一串字节"
+    );
+    for volume in &report.volumes {
+        assert!(
+            volume.extracted > 0,
+            "{} 没走摊开那一条：固实与否不该改读法",
+            volume.volume.display()
+        );
+    }
+}
+
+/// **摊不开的 `.rar` 是卷级失败，其余卷照做**（ADR 0015 决定第 3 条，
+/// 与 `.7z` 那一条 `a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume` 并列）。
+///
+/// 造它的是一份**成员字节被打坏的** `.rar`：归档头完好，预扫列得出成员——那一卷因此
+/// 既不是「点名的点不开」也不是非卷文件；坏的是那一段字节，只有真去摊开才看得出来。
+/// 「磁盘不够」走的是同一条路（`source::extract` 的每一个 `Err`），而那一种在用例里
+/// 造不出来；退出码那一格由 `tests/exit_code.rs` 钉着，且那一条对格式无所谓——
+/// 它断在临时目录根本不在上，摊开那一层是两个格式共用的。
+#[test]
+fn a_rar_that_cannot_be_extracted_fails_only_its_own_volume() {
+    /// 存储不压的那份夹具里，这个位置落在头一页的字节中段：两头的归档头都碰不到。
+    const INSIDE_THE_FIRST_PAGE: usize = 2000;
+
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let broken =
+        fixtures::rar::write_with_a_broken_member(library.join("坏的.rar"), INSIDE_THE_FIRST_PAGE);
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+
+    let report = run_paths(&space, [library.as_path()]);
+
+    assert_eq!(
+        report.failed_volumes.len(),
+        1,
+        "摊不开的那一卷没被记成卷级失败"
+    );
+    assert_eq!(report.failed_volumes[0].volume, broken);
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照做，或者摊不开的那一卷也写出了东西"
+    );
+}
+
+/// **加密卷不另开一种结局**：走「点名的 / 发现的」那条既有分别（`volume-discovery/06`，
+/// ADR 0014 决定第 5 条）。
+///
+/// 头都是密的，列成员就要口令，而 tonefit 一处都问不出口令——这一卷因此**点不开**。
+/// 点不开的处置早就定死了：点名的整趟拒绝（他明说了要处理它），发现的进非卷文件那张表、
+/// 其余卷照做。加密只是「点不开」的又一个来处，不是第五种结局。
+///
+/// 那句话要说得出**为什么**：一个带口令的包没有坏，说成「可能已损坏」会把用户支去修
+/// 一份好好的包（见 `source` 的 `rar_is_unreadable`）。退出码那一格由 `tests/exit_code.rs` 钉着。
+#[test]
+fn an_encrypted_rar_is_refused_when_named_and_listed_as_a_non_volume_file_when_discovered() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let locked = fixtures::rar::write(library.join("加密的.rar"), fixtures::rar::ENCRYPTED);
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+
+    // 点名它：整趟拒绝，那句话说得出是口令。
+    let message = format!(
+        "{:#}",
+        run_paths_expecting_failure(&space, [locked.as_path()])
+    );
+    assert!(
+        message.contains("口令"),
+        "拒绝那句话没说是口令的事：{message}"
+    );
+
+    // 发现它：进非卷文件那张表，其余卷照做。
+    let report = run_paths(&space, [library.as_path()]);
+    let listed: Vec<&std::path::Path> = report
+        .non_volume_files
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect();
+    assert_eq!(listed, [locked.as_path()], "加密卷没进非卷文件清单");
+    assert!(
+        matches!(
+            report.non_volume_files[0].reason,
+            tonefit::NonVolumeReason::Unopenable(_)
+        ),
+        "加密卷进清单的理由不是「点不开」"
+    );
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照做，或者加密卷也写出了东西"
     );
 }
 

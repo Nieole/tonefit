@@ -7,6 +7,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod cbz;
+pub mod rar;
 mod sevenz;
 
 use std::fs;
@@ -583,6 +584,16 @@ impl Workspace {
     /// 而**读法也是两条**——`.7z` 开工前整卷摊到临时目录（ADR 0015 决定第 3 条）。
     pub fn sevenz(&self, name: &str) -> SevenZip {
         SevenZip::new(self.tmp.path().join(format!("{name}.7z")))
+    }
+
+    /// 把一份**签进仓的** `.rar` 夹具落到工作区，返回它的路径。
+    ///
+    /// 与 [`cbz`](Self::cbz) / [`sevenz`](Self::sevenz) 那两个**不是一回事**：那两个是
+    /// 搭建器，成员由用例现加；`.rar` 造不出来（Rust 这边没有写入端，理由见 `rar` 模块抬头），
+    /// 只能挑一份现成的落盘。挑哪一份由 `bytes` 说了算——`rar::SOLID` / `rar::STORED` /
+    /// `rar::ENCRYPTED`。
+    pub fn rar(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        rar::write(self.tmp.path().join(format!("{name}.rar")), bytes)
     }
 
     /// 在工作区根下写一个不属于任何卷的文件。用来造「扩展名像卷、内容不是」的输入。
