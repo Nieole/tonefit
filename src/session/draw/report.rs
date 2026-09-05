@@ -9,7 +9,7 @@
 //! [`report_pane`] 那张表。折行走 [`crate::wrap`]，本模块只交代**折到多宽**——
 //! `--help` 与命令行印出来的报告折的是同一套，而那两处根本没有终端库。
 //!
-//! 这一段在主区占几行由 [`super::main_pane`] 分；上面那两条横条在 [`super::bars`]。
+//! 这一段在主区占几行由 [`super::main_pane`] 分；上面那一块总览在 [`super::overview`]。
 
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -227,7 +227,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use super::super::bars::BAR_HEIGHT;
+    use super::super::overview::OVERVIEW_HEIGHT;
     use super::super::probe::{
         a_run_in_flight, main_snapshot, same_screen, screen, snapshot_of, tight,
     };
@@ -275,7 +275,7 @@ mod tests {
         let last = full.lines().next_back().expect("报告不是空的");
 
         // 只给四行的格子：最后那一行仍在，头一行已经让位。
-        let squeezed = main_snapshot(&live, 96, 4 + BAR_HEIGHT * 2);
+        let squeezed = main_snapshot(&live, 96, 4 + OVERVIEW_HEIGHT);
 
         assert!(squeezed.contains(last), "最新的那一行掉出去了：{squeezed}");
         assert!(
@@ -309,13 +309,13 @@ mod tests {
 
     /// 见 [`expanding_a_volume_collapses_the_left_column_and_shows_the_pages`]。
     const EXPANDED_TO_ONE_VOLUME: &str = r#"
-"┌整趟──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ 收场 点名的卷都走过了 · 2 卷 · 用了 0s                                                                               │"
-"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌当前卷────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│                                                                                                                      │"
+"┌收场 点名的卷都走过了 · 2 卷 · 用了 0s────────────────────────────────────────────────────────────────────────────────┐"
+"│ 总体 [==============================] 2000/2000 步                                                                   │"
+"│ 判定 1 卷 4bit · 1 卷 跳过                                                                                           │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌报告 · 展开 卷二（第 2/2 卷）─────────────────────────────────────────────────────────────────────────────────────────┐"
+"│  跳过 幂等命中：工具版本、profile、参数、源均未变，上一趟的输出还在，这一卷一页都没有重做                            │"
+"│  介质 无寻道惩罚（固态盘） · 读取并发 8                                                                              │"
 "│库/卷二 → 出/隔离/卷二（3 页，其中彩页 1 页）                                                                         │"
 "│  隔离 1 页失败：本卷整卷写到隔离目录 出/隔离/卷二，失败页以卷内统一尺寸留白占位，页序不断                            │"
 "│  几何门 判定范围 灰度页 1 页 · 不成立 0 页 · 本卷 不抖动                                                             │"
@@ -389,7 +389,7 @@ mod tests {
         );
         assert!(!narrow.contains(tail), "行尾折下来了：\n{narrow}");
         let frame: Vec<&str> = narrow.lines().collect();
-        assert!(frame[0].starts_with("\"┌整趟"), "{narrow}");
+        assert!(frame[0].starts_with("\"┌收场"), "{narrow}");
 
         // 往右滚到底：行尾回来了，而滚动量停在真滚得动的那一格上（不是按了没反应）。
         for _ in 0..20 {

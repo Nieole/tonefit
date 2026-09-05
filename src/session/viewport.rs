@@ -49,7 +49,7 @@ pub(super) struct Viewport {
 /// （`ratatui::widgets::Scrollbar`），本仓库不自己画一条。没有可滚的东西时
 /// 根本拿不到它（[`Viewport::scrollbar`] 给 `None`）。
 ///
-/// 名字里的「条」是**滚动**条，与两条进度条（`super::draw::bars`）不是一回事。
+/// 名字里的「条」是**滚动**条，与总览块那两条进度条（`super::draw::overview`）不是一回事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Scrollbar {
     /// 列表一共有多少行。

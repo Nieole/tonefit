@@ -132,7 +132,7 @@ pub(super) fn running_prompt(pressed: Instruction, live: Option<&Live>) -> Promp
         ],
     };
     Prompt::new(
-        // 行首那一截与全局条那一格的抬头同一个出处（见 [`stopping_name`]）。
+        // 行首那一截与总览块那一格的抬头同一个出处（见 [`stopping_name`]）。
         // 没按过时它是「跑着」——那不是按停的一级，因此不在那张表里。
         format!(" {}…… · {keys}", stopping_name(pressed).unwrap_or("跑着")),
         if waiting.is_empty() {
@@ -201,7 +201,7 @@ fn deciding_prompt() -> Prompt {
 /// 按停按到的那一级**叫什么**。没按过就没有名字——那不是按停的一级。
 ///
 /// **屏上提到它的两处都用这一个**：屏底那一行的行首（[`running_prompt`]），
-/// 与全局条那一格的抬头（[`super::bars::overall_bar`]，停车场 Q71）。
+/// 与总览块那一格的抬头（[`super::overview::overview`]，停车场 Q71）。
 /// 两处说的是同一件事，措辞因此只有这一处。
 pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
     match pressed {

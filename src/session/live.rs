@@ -1,4 +1,4 @@
-//! 一趟跑起来之后攒下来的东西：**主区三段各取所需**（`p1-session/09`）。
+//! 一趟跑起来之后攒下来的东西：**主区那两块各取所需**（`p1-session/09`、`p3/07`）。
 //!
 //! **这个模块一个终端都不碰**，与 [`super::state`] 同一条规矩：它只把事件流折成几个数
 //! 加一份报告，画成什么样是 [`super::draw`] 的事。本模块的用例因此连终端库都编译不到。
@@ -12,12 +12,13 @@
 //! 报告攒到一半也答得出抬头那几件事（`render::header` 吃的是整份报告，不是一个 profile），
 //! 「已完成卷的判定、定档页、失败页当场可见」于是不必等整趟跑完。
 //!
-//! # 三段各自的来源
+//! # 屏上那几行各自的来源
 //!
-//! | 段 | 来源 |
+//! | 屏上那一行 | 来源 |
 //! |---|---|
-//! | 全局条 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的预扫），加 [`Live::walked`] |
-//! | 当前卷条 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
+//! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的预扫），加 [`Live::walked`] |
+//! | 总览块的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
+//! | 总览块的结论行与出事行 | 攒到此刻的 [`Live::report`]，按[这一趟是什么](Live::mode)分岔 |
 //! | 报告区 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句、`PageFailed` 那几条 |
 //!
 //! 预告的步数是**上界**不是承诺（`CONTEXT.md` 的《进度》）。拿它画全局进度的实现方
@@ -144,7 +145,7 @@ pub struct Live {
     steps: u64,
     /// 全局走过的步数，含各卷收摊时结清的那一截。
     walked: u64,
-    /// 已经收摊的卷数（跑完的与没做成的都算）。全局条那个「第几卷」用它。
+    /// 已经收摊的卷数（跑完的与没做成的都算）。总览块抬头那个「第几卷」用它。
     finished: usize,
     /// 开工那一刻。剩余时间由它与 [`walked`](Self::walked) 算出。
     started: Instant,
@@ -231,7 +232,7 @@ impl Live {
         }
     }
 
-    /// 预扫完了，开工：全局条那两个数就是 `RunStarted` 报的这两个（03 号票）。
+    /// 预扫完了，开工：总览块那两个数就是 `RunStarted` 报的这两个（03 号票）。
     pub fn run_started(&mut self, volumes: usize, steps: u64) {
         self.volumes = volumes;
         self.steps = steps;
@@ -322,7 +323,7 @@ impl Live {
     /// 一卷收摊：抹掉当前卷那一条，并把它**预告了却没走**的那几步结清到全局那一条上。
     ///
     /// 为什么非结清不可，见 [`tonefit::Event::RunStarted`] 的 `steps`：预告的是上界，
-    /// 幂等命中的卷提前收摊——不结清，全局条就永远走不到头。
+    /// 幂等命中的卷提前收摊——不结清，那条横条就永远走不到头。
     fn finish_volume(&mut self) {
         self.summary_is_stale();
         self.finished += 1;
@@ -456,7 +457,7 @@ impl Live {
         &self.report
     }
 
-    /// 全局条那几个数：第几卷 / 共几卷、走了几步 / 共几步、已用多久、还剩多久。
+    /// 总览块要的那几个数：第几卷 / 共几卷、走了几步 / 共几步、已用多久、还剩多久。
     ///
     /// **收场之后「已用」就定住了**：那时用的是库交出来的 [`Report::elapsed`]——
     /// 它是这一趟真做了多久，扣掉了在决策点上等人的那几分钟（停车场 Q41）。
@@ -523,7 +524,7 @@ impl Live {
     }
 }
 
-/// 全局条那一行要的几个数。
+/// 总览块那一块要的几个数（抬头与全局那一行分着用，见 `super::draw::overview`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Overall {
     /// 走到第几卷（含正在走的那一个）。
@@ -882,7 +883,7 @@ mod tests {
         // 一卷没做成：同样收摊、同样结清，原因进报告。
         live.volume_started(Path::new("库/卷二"), 4);
         live.volume_failed(Path::new("库/卷二"), "盘拔了");
-        assert_eq!(live.overall().walked, 10, "全局条走不到头");
+        assert_eq!(live.overall().walked, 10, "那条横条走不到头");
         assert_eq!(live.report().failed_volumes.len(), 1);
 
         live.run_finished(RunOutcome::Completed);

@@ -1010,7 +1010,7 @@ impl Session {
 
     /// **此刻停在决策点上等人拿主意吗**（`CONTEXT.md` 的《会话》：决策点）。
     ///
-    /// 屏上那几处照它写：全局条那一格的抬头、屏底那两行（见 `super::draw`）。
+    /// 屏上那几处照它写：总览块那一格的抬头、屏底那两行（见 `super::draw`）。
     pub fn deciding(&self) -> bool {
         matches!(self.mode, Mode::Deciding(_))
     }
