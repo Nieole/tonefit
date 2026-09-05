@@ -28,7 +28,7 @@ use tonefit::{Mode as RunMode, Request};
 use super::draw;
 use super::live::Resuming;
 use super::run::Running;
-use super::state::{Action, Exit, Expansion, Key, Picker, Session};
+use super::state::{Action, Exit, Expansion, Key, Overlay, Picker, Session};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -207,6 +207,18 @@ fn press(
         // 与预设那三支同一条分法。
         Action::Chart => {
             write_chart(session, here);
+            Exit::Stay
+        }
+        // **这一趟的前提**那一张覆盖层：它印的是这一趟的报告抬头
+        // （`crate::render::header`），而状态机读不到那一趟攒下来的东西——
+        // 与[展开](Action::Expand)同一条分法。一趟都没跑过时说一句、不掀开：
+        // 掀开一格空白比说清为什么更坏（与 [`expand`] 那一句同一个形状）。
+        // **键位表那一张不走这里**：它要的东西状态机全有（`Session::key_table`
+        // 问的就是那张按键表自己）。
+        Action::Reveal(Overlay::Premises) if running.live().is_none() => {
+            session.complain(
+                "还没跑过：先按 t 试算或 x 执行，这一趟的前提要有一份报告才说得出".to_owned(),
+            );
             Exit::Stay
         }
         other => session.act(other),

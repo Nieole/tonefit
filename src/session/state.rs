@@ -314,6 +314,21 @@ pub enum Action {
     /// 真正画图与落盘的是库里那第三个 seam（[`tonefit::write_calibration_chart`]）——
     /// 会话一格像素都不拼、一个目录都不建。
     Chart,
+    /// **掀开一张[覆盖层](Overlay)**：屏上那几块整个让位，只摆它那一份
+    /// （`p3-session-legibility/12`）。
+    ///
+    /// **两张共一个动作**，与[切焦点](Self::Focus)、[换一副列法](Self::List)同一个形状：
+    /// 带着**掀开的是哪一张**，而不是两个动作——两张是同一副形状（一张画法，两份内容），
+    /// 分成两个动作就要在按键表、屏底那一行、画法三处各分一次岔。
+    ///
+    /// **掀着一张时按另一张那个键是换过去**，不叠第二层（见 [`Session::reveal`]）：
+    /// 覆盖层盖住的恒是**焦点那一维上的一块**，而不是另一张覆盖层。
+    ///
+    /// [这一趟的前提](Overlay::Premises)那一张落在 [`super::press`]：它印的是这一趟的
+    /// 报告抬头，而本模块读不到那一趟攒下来的东西（与[展开](Self::Expand)同一条分法）。
+    /// [键位表](Overlay::Keys)那一张就在本模块做掉——它要的东西本模块全有
+    /// （[`Session::key_table`] 问的就是这张按键表自己）。
+    Reveal(Overlay),
     /// 退出会话。
     Quit,
     /// 这个键在这个状态下没有意义。**它是一个取值，不是遗漏**——
@@ -650,6 +665,170 @@ pub enum Focus {
     /// 而摊开这一列正是为了改它。这与 `p`／`e` 跑着时按不动是同一条——
     /// 靠的也是同一件事：那个阶段的按键表一个改动键都不派（见 [`running_action`]）。
     Valuing(Values),
+    /// **一张[覆盖层](Overlay)掀着**，屏上那几块整个让位（`p3-session-legibility/12`）。
+    ///
+    /// 与另外四个带东西的取值同一个形状：一个键掀开、一个键关掉，关掉时**底下那一块
+    /// 原样回来**（[`Covered::under`]）——覆盖层**盖住**一块焦点，不替掉它。
+    ///
+    /// **进去之后别的键一律不派**（票面第五条）：按停与答话那三个在这一块上也按不动，
+    /// 而它是**跑着时进得去、却一个都不派**的唯一一块（左栏、报告区、展开着三块都派，
+    /// 取值栏与预设栏跑起来之后根本进不去——ADR 0017 决定第 4 与第 8 条）。
+    /// 这一条记在停车场 Q164。
+    Overlaid(Covered),
+}
+
+/// **覆盖层**：一个键掀开、盖住屏上那几块的那一张（`CONTEXT.md` 的《会话》：覆盖层）。
+///
+/// **两张是同一副形状，不是两套画法**（`p3-session-legibility/12` 票面第四条）：
+/// 一张画法在 `super::draw::overlay`，这个枚举说的是**那一份内容是哪一份**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
+    /// **全部键**：此刻按得动的那些键，按[焦点](Focus)分组（见 [`Session::key_table`]）。
+    ///
+    /// 屏底那一行只摆得下最常用的四五个，而键变多之后「有哪些键」在屏上根本不存在
+    /// ——用户只能试。这一张把那件事摆上屏。
+    Keys,
+    /// **这一趟的前提**：profile · 适配方式 · 裁边 · 跨页拆分 · 互锁 · 判据构成与聚合
+    /// （措辞出自 [`crate::render::header`]，会话不另编一份）。
+    ///
+    /// 它们从前摆在卷表**上方**、跟着表滚（`p3-session-legibility/08`）：一趟只说一次，
+    /// 在长任务里没人会反复看，而它们占的正是卷表要的行。
+    Premises,
+}
+
+impl Overlay {
+    /// 两张，次序就是屏底那一行上的次序。
+    pub const ALL: [Overlay; 2] = [Overlay::Keys, Overlay::Premises];
+
+    /// **掀开它的那个键。唯一出处**——按键表（[`revealing`]）与屏底那一行都读它，
+    /// 各写一遍就会有一处对不上。
+    ///
+    /// 两个都**不在别处派过**——这一条由用例逐块问出来
+    /// （`the_key_table_is_asked_of_the_key_table_itself`：六组各问这两个键一遍，
+    /// 六组都答[没有意义](Action::Ignored)）。各块此刻占着的字母是
+    /// 左栏 `j k d t x e p c q`、报告区 `k j e g`、展开着 `k j a e`、
+    /// 预设栏 `k j d p q`、取值栏 `k j q`，阶段那一维 `s x a q`——
+    /// `a` 那种撞车（停车场 Q161）因此在这两个键上不存在。
+    pub fn key(self) -> char {
+        match self {
+            Self::Keys => '?',
+            Self::Premises => 'i',
+        }
+    }
+
+    /// 这一张叫什么。**屏底那一行与这一格的抬头共用它**，两处不会各叫一个名字。
+    pub fn what(self) -> &'static str {
+        match self {
+            Self::Keys => "全部键",
+            Self::Premises => "这一趟的前提",
+        }
+    }
+
+    /// 屏底那一行上「掀开它」怎么写：`? 全部键`、`i 这一趟的前提`。
+    pub fn prompt(self) -> String {
+        format!("{} {}", self.key(), self.what())
+    }
+}
+
+/// 掀着的那一张覆盖层，连同**它盖住的是哪一块**。
+///
+/// 盖住的那一块**整份带着**（一个 `Box<Focus>`）而不是记一个「回哪儿去」的小枚举：
+/// 展开的那一卷、摊着的那一列、预设那一栏各带着一份东西，而关掉覆盖层要的是
+/// **原样回去**——记一个枚举就要在关掉的那一刻把那几份东西重新拼一遍。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Covered {
+    /// 掀开的是哪一张。
+    pub overlay: Overlay,
+    /// 盖住的那一块焦点。`Esc` 原样回到它（见 [`Session::cancel`]）。
+    under: Box<Focus>,
+    /// **从第几行画起**：这一格摆不下时 `↑↓` 挪的就是它。
+    ///
+    /// **这一处记的是滚动量，不是光标**——而屏上别处一处都不记它
+    /// （`CONTEXT.md` 的《视口》：滚动量是算出来的，不是记着的）。差别在于覆盖层是
+    /// **读物**：一行上没有第二步可走，一个光标都停不上去，而「视口跟着光标走」
+    /// 要先有个光标。[视口](super::viewport::Viewport)那一份照旧用，它收着
+    /// 「往下滚到哪儿为止」；越界由画法那一层每帧收一次
+    /// （[`Session::clamp_overlay`]，与逐页表那一处同一条）。这一笔记在停车场 Q163。
+    from: usize,
+}
+
+impl Covered {
+    /// 从第几行画起。
+    pub fn from(&self) -> usize {
+        self.from
+    }
+}
+
+/// `?` 那张键位表的**头一层分岔**：[焦点](Focus)那一维上的一块，外加「任何时候」那一组。
+///
+/// **就是[按键表](Session::action)自己的头一层分岔**（ADR 0017 决定第 2 条：先按焦点
+/// 分岔，落到哪一块再按阶段分）——票面说的「按焦点分组」正是它，这里不另立一套分法。
+///
+/// **「任何时候」那一组是[阶段那一维](stage_action)**：按停、答话那三个、退出会话，
+/// 加上掀开覆盖层那两个（[`revealing`]）。它们在哪一块上都按得动，因此不进任何一块。
+///
+/// **打字的那两块不在这张表上**（编辑一行、打预设名）：那儿每一个字符都是一个字，
+/// 一张按键表说不出「a 到 z 各进缓冲」；`?` 在那两块上也因此不派
+/// （见 [`minds_its_own_letters`]，停车场 Q165）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyGroup {
+    /// 左栏：三层配置。
+    Config,
+    /// 取值栏：就地摊开的那一列取值。
+    Valuing,
+    /// 报告区：卷表。
+    Report,
+    /// 展开着：逐页表。
+    Expanded,
+    /// 预设栏。
+    Picking,
+    /// 任何时候：阶段那一维派得出的那几个，加上覆盖层那两个。
+    Always,
+}
+
+impl KeyGroup {
+    /// 六组，次序就是 `?` 那张表上的次序：**屏上进得去的次序**——
+    /// 左栏起头（一切从它进去），取值栏跟着它，报告区与展开着是一对，
+    /// 预设栏收尾，「任何时候」摆在最后（它不是屏上的一块）。
+    pub const ALL: [KeyGroup; 6] = [
+        KeyGroup::Config,
+        KeyGroup::Valuing,
+        KeyGroup::Report,
+        KeyGroup::Expanded,
+        KeyGroup::Picking,
+        KeyGroup::Always,
+    ];
+
+    /// **这一组此刻进得去吗**——进不去的整组不列（屏上不摆按不动的键，
+    /// 而一张进不去的块的键位表是同一件事）。
+    ///
+    /// 两条，都由[阶段](Stage)那一维说了算，与 ADR 0017 逐条对得上：
+    ///
+    /// - **取值栏与预设栏只从左栏进得去，而跑起来之后左栏一个改动键都不派**
+    ///   ——它们与跑着、等答话**结构上碰不到面**（决定第 8 条《两维不是笛卡儿积》）。
+    /// - **一趟都没跑过时报告区里连一卷都没有**：`⇥` 那时不派动作
+    ///   （[`Session::browsing_action`]），展开也无从谈起。
+    ///
+    /// 左栏与「任何时候」恒在：一切从左栏进去，而阶段那一维在哪一块上都答得出话。
+    fn reachable(self, stage: Stage) -> bool {
+        match self {
+            Self::Valuing | Self::Picking => !stage.read_only(),
+            Self::Report | Self::Expanded => stage != Stage::Fresh,
+            Self::Config | Self::Always => true,
+        }
+    }
+
+    /// 这一组在 `?` 那张表上的抬头。
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Config => "左栏 · 三层配置",
+            Self::Valuing => "取值栏 · 摊开的那一列",
+            Self::Report => "报告区 · 卷表",
+            Self::Expanded => "展开着 · 逐页表",
+            Self::Picking => "预设栏",
+            Self::Always => "任何时候",
+        }
+    }
 }
 
 /// 焦点**切得过去**的那两块：**左栏**与**报告区**（`CONTEXT.md` 的《会话》：焦点）。
@@ -1108,6 +1287,30 @@ impl Session {
         &self.focus
     }
 
+    /// **屏底那一行末尾摆不摆 `? 全部键`**——也就是这一块上[掀不掀得开覆盖层](revealing)。
+    ///
+    /// 「末尾恒是 `? 全部键`」（票面第一条）在打字的那两块上摆不出来：那儿每一个字符
+    /// 都是一个字，而屏上不摆按不动的键（见 [`minds_its_own_letters`]，停车场 Q165）。
+    /// 覆盖层自己那一块也不摆——它摆的是「关掉」与「换一张」。
+    pub fn reveals(&self) -> bool {
+        !minds_its_own_letters(&self.focus)
+    }
+
+    /// **此刻掀着的那一张覆盖层**，没掀就是 `None`。
+    ///
+    /// 画法那一层照它分岔：掀着的时候屏上那几块整个让位（见 `super::draw::shell`）。
+    pub fn overlay(&self) -> Option<&Covered> {
+        match &self.focus {
+            Focus::Overlaid(covered) => Some(covered),
+            Focus::Config
+            | Focus::Editing(_)
+            | Focus::Report
+            | Focus::Expanded(_)
+            | Focus::Picking(_)
+            | Focus::Valuing(_) => None,
+        }
+    }
+
     /// **卷表上那个光标停在哪儿**：跟随，还是停在某一卷上
     /// （`CONTEXT.md` 的《会话》：跟随）。
     pub fn follow(&self) -> Follow {
@@ -1289,7 +1492,8 @@ impl Session {
             | Focus::Editing(_)
             | Focus::Report
             | Focus::Picking(_)
-            | Focus::Valuing(_) => None,
+            | Focus::Valuing(_)
+            | Focus::Overlaid(_) => None,
         }
     }
 
@@ -1301,7 +1505,8 @@ impl Session {
             | Focus::Editing(_)
             | Focus::Report
             | Focus::Expanded(_)
-            | Focus::Valuing(_) => None,
+            | Focus::Valuing(_)
+            | Focus::Overlaid(_) => None,
         }
     }
 
@@ -1318,7 +1523,8 @@ impl Session {
             | Focus::Editing(_)
             | Focus::Report
             | Focus::Expanded(_)
-            | Focus::Picking(_) => None,
+            | Focus::Picking(_)
+            | Focus::Overlaid(_) => None,
         }
     }
 
@@ -1432,13 +1638,150 @@ impl Session {
     /// [报告区](report_action)、[展开着](expanded_action)。
     /// **三层只读由阶段那一维说了算**，焦点落到报告区上不解锁任何一个改动键。
     pub fn action(&self, key: Key) -> Action {
-        match &self.focus {
+        self.action_in(&self.focus, key)
+    }
+
+    /// 焦点落在 `focus` 上时这个键做什么。**[`action`](Self::action) 就是它**，
+    /// 只是那一条问的恒是眼下这一块。
+    ///
+    /// 分出来是给 [`key_table`](Self::key_table) 用的：`?` 那张表要列**每一块**上
+    /// 派得出的键，而它一次只站在一块上。**这张表因此仍旧只有一份**——
+    /// 覆盖层那一张是问出来的，不是抄出来的。
+    fn action_in(&self, focus: &Focus, key: Key) -> Action {
+        // **掀开覆盖层那两个键归这一处**，与按停、答话那几个归 [`stage_action`] 一处
+        // 是同一个形状（ADR 0017 决定第 2 条）：它们与眼下在看什么无关，
+        // 摆进六块里就是六份措辞、六处要跟着改。
+        //
+        // 三块除外，各有理由，都在 [`minds_its_own_letters`] 上。
+        if !minds_its_own_letters(focus)
+            && let Some(action) = revealing(key)
+        {
+            return action;
+        }
+        match focus {
             Focus::Config => self.config_action(key),
             Focus::Editing(edit) => editing_action(edit, key),
             Focus::Report => report_action(key, self.stage),
             Focus::Expanded(expansion) => expanded_action(expansion, key, self.stage),
             Focus::Picking(picker) => picking_action(picker, key),
             Focus::Valuing(values) => valuing_action(values, key),
+            Focus::Overlaid(covered) => overlay_action(covered, key),
+        }
+    }
+
+    /// **`?` 那张键位表**：按[焦点](KeyGroup)分组，每一组只列**此刻这个阶段**派得出的键
+    /// （票面第二条）。
+    ///
+    /// **一个键都不在这里另列一份**：它把[每一个键](every_key)交给那一块的按键表
+    /// （[`action_in`](Self::action_in)）问一遍，问出[没有意义](Action::Ignored)的丢掉。
+    /// 改一处按键表，这张表当场跟着变——「哪些键在哪个状态下有效」因此仍旧一处答完
+    /// （票面第五条）。
+    ///
+    /// **阶段那一维那几个键只列在「任何时候」那一组里**：那几个在哪一块上都按得动，
+    /// 而屏上同一个键说两遍就是两份措辞（见 [`keys_of`](Self::keys_of) 那一道滤）。
+    ///
+    /// 一个键都不剩的那一组整组不出（没跑过与收场了这两个阶段上「任何时候」照旧有
+    /// 退出与覆盖层那几个，因此不会整张空掉）。
+    pub fn key_table(&self) -> Vec<(KeyGroup, Vec<(Key, Action)>)> {
+        KeyGroup::ALL
+            .into_iter()
+            .filter(|group| group.reachable(self.stage))
+            .map(|group| (group, self.keys_of(group)))
+            .filter(|(_, keys)| !keys.is_empty())
+            .collect()
+    }
+
+    /// 这一组上派得出动作的那几个键，连同它们各派什么。
+    ///
+    /// **两道滤**：
+    ///
+    /// - [没有意义的](Action::Ignored)不列——屏上不摆按不动的键；
+    /// - **[「到处都是同一件事」的键](Self::means_the_same_everywhere)只在「任何时候」
+    ///   那一组里列一遍**，别处一个都不列（照实列的话 `Ctrl-C 退出会话`
+    ///   会在五组里各出现一次）；反过来，**有一块另派的键归各块自己列**，
+    ///   「任何时候」那一组不收它。
+    ///
+    /// 第二条那个反过来非有不可：`Esc` 在左栏与报告区上是退出会话，在展开着上是收起、
+    /// 在取值栏与预设栏上是退一步——摆进「任何时候」的话，这张表就在四块上说了假话。
+    fn keys_of(&self, group: KeyGroup) -> Vec<(Key, Action)> {
+        every_key()
+            .into_iter()
+            .filter_map(|key| {
+                let action = self.acts(group, key);
+                if action == Action::Ignored {
+                    return None;
+                }
+                if self.means_the_same_everywhere(key) != (group == KeyGroup::Always) {
+                    return None;
+                }
+                Some((key, action))
+            })
+            .collect()
+    }
+
+    /// 这个键**在此刻进得去的每一块上都是同一件事**吗——是的话它归「任何时候」那一组。
+    ///
+    /// 比的是[阶段那一维](KeyGroup::Always)派出的那件事：某一块**另派一件**就不算
+    /// （`Esc`：展开着上是收起）；某一块**一个动作都不派**不算另派（`s` 在取值栏上
+    /// 没有意义，而那一块跑着时根本进不去）。阶段那一维自己不派动作时也不算
+    /// ——那时这个键归各块自己（`x` 没跑过时是「执行」，只有左栏派得出）。
+    ///
+    /// **只问[此刻进得去的那几块](KeyGroup::reachable)**：进不去的那几块整组都不列，
+    /// 让它们在这里改一个键的归属就是让一块不在屏上的东西说话。
+    fn means_the_same_everywhere(&self, key: Key) -> bool {
+        let everywhere = self.acts(KeyGroup::Always, key);
+        if everywhere == Action::Ignored {
+            return false;
+        }
+        KeyGroup::ALL
+            .into_iter()
+            .filter(|group| *group != KeyGroup::Always && group.reachable(self.stage))
+            .all(|group| {
+                let here = self.acts(group, key);
+                here == everywhere || here == Action::Ignored
+            })
+    }
+
+    /// 这一组的按键表怎么问。
+    ///
+    /// **站在眼下那一块上时问的就是它本人**（展开着的那一卷、摊着的那一列、
+    /// 预设栏上停着的那一份）——而「眼下那一块」问的是[覆盖层盖住的那一块](Self::beneath)，
+    /// 不是覆盖层自己：这张表本来就是掀着覆盖层的时候在读的，照 `self.focus` 问的话，
+    /// 展开着按 `?` 看到的会是「列全部页」而屏上其实正列着全部页。
+    ///
+    /// 别的几块拿一副**代表的**问——那几块的按键表只有一处分岔看得出这一份是哪一份
+    /// （`⏎` 在一块面板上是进去看、在别处是定；`d` 只在停着一份预设时派得出来），
+    /// 而代表那一副挑的恒是**键最全**的那一格。
+    /// 代表那一份屏上一个字都读不到：这里问它的只有「这个键派不派得出动作」。
+    fn acts(&self, group: KeyGroup, key: Key) -> Action {
+        match group {
+            KeyGroup::Config => self.config_action(key),
+            KeyGroup::Valuing => match self.beneath() {
+                Focus::Valuing(values) => valuing_action(values, key),
+                _ => valuing_action(&a_column_of_values(), key),
+            },
+            KeyGroup::Report => report_action(key, self.stage),
+            KeyGroup::Expanded => match self.beneath() {
+                Focus::Expanded(expansion) => expanded_action(expansion, key, self.stage),
+                _ => expanded_action(&Expansion::new(Volume::Settled(0)), key, self.stage),
+            },
+            KeyGroup::Picking => match self.beneath() {
+                Focus::Picking(picker) => listing_action(picker, key),
+                _ => listing_action(&a_preset_standing_under_the_cursor(), key),
+            },
+            KeyGroup::Always => revealing(key).unwrap_or_else(|| stage_action(key, self.stage)),
+        }
+    }
+
+    /// **覆盖层底下那一块焦点**；没掀着覆盖层就是眼下这一块本身。
+    ///
+    /// 只给 [`acts`](Self::acts) 用：`?` 那张表是**掀着的时候**在读的，而它要说的是
+    /// 「刚才那一块上按得动什么」——问 `self.focus` 的话，六组里有三组永远问到的是
+    /// 覆盖层，一份代表的都用不上眼下那份真东西。
+    fn beneath(&self) -> &Focus {
+        match &self.focus {
+            Focus::Overlaid(covered) => &covered.under,
+            other => other,
         }
     }
 
@@ -1579,6 +1922,11 @@ impl Session {
             // 收起回的是**报告区**，不是左栏：展开是从那一块进去的（光标停着的那一卷），
             // 而左栏一个 `⇥` 之外。
             Action::Collapse => self.focus = Focus::Report,
+            // 掀开一张覆盖层就在本模块做掉：键位表那一张要的东西本模块全有
+            // （[`key_table`](Self::key_table) 问的就是这张按键表自己）。
+            // [这一趟的前提](Overlay::Premises)那一张先由 [`super::press`] 挡一道
+            // （还没跑过时它一个字都印不出来），挡过之后仍旧走这里。
+            Action::Reveal(overlay) => self.reveal(overlay),
             Action::List(listing) => self.list(listing),
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
@@ -1595,6 +1943,37 @@ impl Session {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
         self.says(None);
         self.focus = Focus::Expanded(expansion);
+    }
+
+    /// **掀开一张[覆盖层](Overlay)**：眼下那一块焦点整份[盖在底下](Covered::under)，
+    /// `Esc` 原样回到它。
+    ///
+    /// **掀着一张时按另一张那个键是换过去，不叠第二层**：盖住的仍是原来那一块焦点。
+    /// 叠起来的话，`Esc` 要按几下才回得到屏上那一块就要靠用户自己数——
+    /// 而两张覆盖层是同一副形状，换一张与掀开一张没有分别。
+    ///
+    /// 从第几行画起每一张各从头起：换一张就是换一份内容，上一份读到哪儿不作数了。
+    fn reveal(&mut self, overlay: Overlay) {
+        let under = match std::mem::replace(&mut self.focus, Focus::Config) {
+            Focus::Overlaid(covered) => covered.under,
+            other => Box::new(other),
+        };
+        self.focus = Focus::Overlaid(Covered {
+            overlay,
+            under,
+            from: 0,
+        });
+    }
+
+    /// 把覆盖层那一格「从第几行画起」收进这一格真摆得下的那一段里：最多从第 `last` 行起。
+    ///
+    /// **画法那一层每帧调一次**（见 `super::draw::overlay`），与逐页表那一处同一条
+    /// （[`clamp_report`](Self::clamp_report)）：只有它知道这一张此刻折出来几行、
+    /// 这一格有多高。不收的话，往下按过了头再往回按，头几下会**按了没反应**。
+    pub(super) fn clamp_overlay(&mut self, last: usize) {
+        if let Focus::Overlaid(covered) = &mut self.focus {
+            covered.from = covered.from.min(last);
+        }
     }
 
     /// 进预设那一栏，列的是 `names`。
@@ -1745,6 +2124,17 @@ impl Session {
     /// 这一下不必自己去清：按键走的是 [`act`](Self::act)，而它从
     /// [`says`](Self::says) 出去——那里连同屏底那句话一起清掉。
     fn move_cursor(&mut self, step: Step) {
+        // 覆盖层是**读物**：这一下挪的是[从第几行画起](Covered::from)，不是一个光标
+        // ——那一格上一行没有第二步可走，一个光标都停不上去。
+        // **两头不转圈**，与逐页表那一处同一条：往上收在零，往下由画法那一层每帧收一次
+        // （[`clamp_overlay`](Self::clamp_overlay)）。
+        if let Focus::Overlaid(covered) = &mut self.focus {
+            covered.from = match step {
+                Step::Back => covered.from.saturating_sub(1),
+                Step::Next => covered.from.saturating_add(1),
+            };
+            return;
+        }
         if let Focus::Picking(picker) = &mut self.focus {
             picker.at = around(picker.at, picker.rows(), step);
             return;
@@ -1793,7 +2183,8 @@ impl Session {
             | Focus::Report
             | Focus::Expanded(_)
             | Focus::Picking(_)
-            | Focus::Valuing(_) => {}
+            | Focus::Valuing(_)
+            | Focus::Overlaid(_) => {}
         }
     }
 
@@ -1830,6 +2221,13 @@ impl Session {
     /// 再按一次才出这一栏——与打预设名那一条同一个形状。**光标落回进来的那一块面板上**，
     /// 不落回「当前型号的那一块」：退一步该退到刚才站的地方去。
     fn cancel(&mut self) {
+        // **覆盖层：原样回到它盖住的那一块**（票面第四条一带）。这一下同样是「退一步」
+        // ——掀开覆盖层之前在看的是哪一块，关掉之后就该还在那一块上。
+        if let Focus::Overlaid(covered) = &mut self.focus {
+            let under = std::mem::replace(&mut *covered.under, Focus::Config);
+            self.focus = under;
+            return;
+        }
         if let Focus::Picking(picker) = &mut self.focus
             && picker.naming.take().is_some()
         {
@@ -1884,6 +2282,132 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
         Key::Interrupt => Action::Quit,
         Key::BackTab | Key::Up | Key::Down | Key::Left | Key::Right => Action::Ignored,
     }
+}
+
+/// **掀开覆盖层那两个键**（`?` 与 `i`）。**唯一出处**——两张各自那个字母在
+/// [`Overlay::key`] 上，这里只把它翻成一个动作。
+///
+/// 与[阶段那一维](stage_action)同一个形状：这两个键**与眼下在看什么无关**，
+/// 因此不进焦点那六块里的任何一块（见 [`Session::action_in`]）。
+fn revealing(key: Key) -> Option<Action> {
+    let Key::Char(letter) = key else {
+        return None;
+    };
+    Overlay::ALL
+        .into_iter()
+        .find(|overlay| overlay.key() == letter)
+        .map(Action::Reveal)
+}
+
+/// 这一块**自己认字母**，[掀开覆盖层那两个键](revealing)交不到它手上。三块，各有理由：
+///
+/// - **编辑一行**与**打预设名**：那儿每一个字符都是一个字，`?` 与 `i` 也是字
+///   （见 [`editing_action`] 与 [`naming_action`]）。屏底那一行在这两块上因此
+///   也不摆 `? 全部键`——屏上不摆按不动的键（停车场 Q165）。
+/// - **覆盖层自己**：那两个键在它手上是「关掉」与「换一张」（见 [`overlay_action`]），
+///   而不是再掀一层。
+fn minds_its_own_letters(focus: &Focus) -> bool {
+    match focus {
+        Focus::Editing(_) | Focus::Overlaid(_) => true,
+        Focus::Picking(picker) => picker.naming.is_some(),
+        Focus::Config | Focus::Report | Focus::Expanded(_) | Focus::Valuing(_) => false,
+    }
+}
+
+/// **一张覆盖层掀着时的按键表**：`↑↓` 读，`Esc` 关，另一张那个键换过去。
+///
+/// **别的键一律不派**（票面第五条）：按停与答话那三个在这一块上也按不动。
+/// 焦点那一维上**摆得下它们的三块**（左栏、报告区、展开着）都把自己不认的键交给
+/// [`stage_action`]，而这一块不交——「进去之后别的键一律不派」是这张表的形状本身，
+/// 不靠任何一处代码守着。（取值栏与预设栏也不交，但那两块跑起来之后根本进不去，
+/// ADR 0017 决定第 8 条；这一块是**跑着时进得去、却一个都不派**的唯一一块。）
+/// 代价记在停车场 Q164：跑着的时候掀开一张覆盖层，那一刻按不了停，`Esc` 关掉就回来了。
+///
+/// **`Ctrl-C` 照旧是退出会话**：它在每一个状态下都是（见 [`Key::Interrupt`]），
+/// 编辑到一半也是，这里不该是例外。**`q` 不派**——这一块上的「退一步」是关掉它，
+/// 而 `Esc` 已经说了那件事；`q` 留给底下那一块（关掉之后照旧按得动）。
+///
+/// **掀开它的那个键按回去就是关掉它**，与展开那一副的 `e`、预设那一栏的 `p` 同一个形状；
+/// **另一张那个键换过去**，不必先关掉这一张——两张是同一副形状，换一张与掀开一张
+/// 没有分别（见 [`Session::reveal`]）。
+fn overlay_action(covered: &Covered, key: Key) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Move(Step::Back),
+        Key::Down | Key::Char('j') => Action::Move(Step::Next),
+        Key::Esc => Action::Cancel,
+        Key::Interrupt => Action::Quit,
+        Key::Char(letter) => match Overlay::ALL
+            .into_iter()
+            .find(|overlay| overlay.key() == letter)
+        {
+            Some(same) if same == covered.overlay => Action::Cancel,
+            Some(other) => Action::Reveal(other),
+            None => Action::Ignored,
+        },
+        Key::Left
+        | Key::Right
+        | Key::Enter
+        | Key::Space
+        | Key::Tab
+        | Key::BackTab
+        | Key::Backspace => Action::Ignored,
+    }
+}
+
+/// 会话认得的**每一个键**，`?` 那张表逐个问过它们（见 [`Session::keys_of`]）。
+///
+/// 字母那一批照 a–z 排一遍，而不是手抄一份「用到的那几个」：手抄的那一份漏一个
+/// 就是屏上少一个键，而那正是这张表要治的病。非字母的那几个跟在后面
+/// （[`Overlay::key`] 里的 `?` 就是这么进来的）。
+///
+/// 次序就是那张表上一行接一行的次序：方向键、动手那几个、退出那一个，然后是字母。
+fn every_key() -> Vec<Key> {
+    let mut keys = vec![
+        Key::Up,
+        Key::Down,
+        Key::Left,
+        Key::Right,
+        Key::Enter,
+        Key::Space,
+        Key::Tab,
+        Key::BackTab,
+        Key::Backspace,
+        Key::Esc,
+        Key::Interrupt,
+    ];
+    keys.extend(('a'..='z').map(Key::Char));
+    keys.extend(
+        Overlay::ALL
+            .into_iter()
+            .map(Overlay::key)
+            .filter(|letter| !letter.is_ascii_lowercase())
+            .map(Key::Char),
+    );
+    keys
+}
+
+/// 取值栏那一组在**没摊开**的时候拿来问的那一副：一列现成的取值，光标停在第一格。
+///
+/// 只有一处分岔看得出这一份是哪一份（[`Values::at_a_panel`]：`⏎` 在一块面板上是
+/// 进去看、在别处是定），而这一副挑的是**别处**那一支——型号那一行的面板那一层
+/// 是六块里唯一一处两层的地方，拿它当代表会把另外十行的样子说错。
+/// 屏上一个字都读不到它：[`Session::keys_of`] 问它的只有「这个键派不派得出动作」。
+fn a_column_of_values() -> Values {
+    Values {
+        field: Field::Filter,
+        panel: None,
+        cells: Vec::new(),
+        at: 0,
+        chosen: None,
+    }
+}
+
+/// 预设那一组在**那一栏没开着**的时候拿来问的那一副：光标停在一份预设上。
+///
+/// 停在末尾那一行（「存成一份新的」）上 `d` 不派、`⏎` 是打一个名字，键少两个——
+/// 代表那一副因此挑**键最全**的那一格。名字是空的：屏上一个字都读不到它。
+fn a_preset_standing_under_the_cursor() -> Picker {
+    Picker::new(vec![String::new()], PathBuf::new())
 }
 
 /// **阶段那一维派得出的那几个键**：按停、答话那三个、退出会话。**唯一出处。**
@@ -3532,6 +4056,220 @@ mod tests {
         );
         session.press(Key::Esc);
         assert_eq!(session.focus(), &Focus::Config);
+
+        // 十一、**掀开覆盖层那两个键在打字之外的每一块上都按得动**
+        // （`p3-session-legibility/12`），而**打字的那两块上它们是字**。
+        assert_eq!(
+            session.action(Key::Char('?')),
+            Action::Reveal(Overlay::Keys)
+        );
+        assert_eq!(
+            session.action(Key::Char('i')),
+            Action::Reveal(Overlay::Premises)
+        );
+        session.go_to(Field::Out);
+        session.press(Key::Enter);
+        assert_eq!(session.action(Key::Char('?')), Action::Insert('?'));
+        assert_eq!(session.action(Key::Char('i')), Action::Insert('i'));
+        session.press(Key::Esc);
+
+        // 十二、**覆盖层掀着：`↑↓` 读，`Esc` 关，另一张那个键换过去，别的一律不派。**
+        session.press(Key::Char('?'));
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Esc), Action::Cancel);
+        // 掀开它的那个键按回去就是关掉它；另一张那个键换过去。
+        assert_eq!(session.action(Key::Char('?')), Action::Cancel);
+        assert_eq!(
+            session.action(Key::Char('i')),
+            Action::Reveal(Overlay::Premises)
+        );
+        // `Ctrl-C` 照旧是退出会话——它在每一个状态下都是。
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // **别的键一律不派**（票面第五条）：`q` 也在内——这一块上的「退一步」是 `Esc`。
+        for key in [
+            Key::Left,
+            Key::Right,
+            Key::Enter,
+            Key::Space,
+            Key::Tab,
+            Key::BackTab,
+            Key::Backspace,
+            Key::Char('q'),
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('e'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('z'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在覆盖层上不该派动作"
+            );
+        }
+        session.press(Key::Esc);
+        assert_eq!(session.focus(), &Focus::Config);
+    }
+
+    /// **覆盖层盖住一块焦点，不替掉它**（`p3-session-legibility/12` 票面第四条一带）。
+    ///
+    /// `Esc` 关掉之后回的是掀开之前那一块，一格没动——展开着那一块最认得出来
+    /// （它带着展开的是哪一卷、列的是哪几页、光标停在第几页三样东西）。
+    ///
+    /// **掀着一张时按另一张那个键是换过去，不叠第二层**：`Esc` 照旧一下回到屏上那一块，
+    /// 要按几下不必用户自己数。
+    #[test]
+    fn an_overlay_covers_one_block_and_gives_it_back() {
+        let mut session = Session::new();
+        session.expand(Expansion::new(Volume::Settled(2)));
+        session.press(Key::Down);
+        session.press(Key::Char('a'));
+        let expanded = session.expansion().copied().expect("展开着");
+
+        session.press(Key::Char('?'));
+        assert!(session.overlay().is_some(), "没掀开");
+        assert!(session.expansion().is_none(), "掀着的时候展开那一块还在场");
+        // **那张表问的是覆盖层盖住的那一块**：此刻列着全部页，`a` 按过去因此是
+        // 「只列要紧的页」。问 `self.focus` 的话这里会答成「列全部页」——
+        // 屏上正列着全部页，而表说按 `a` 去列全部页。
+        assert_eq!(
+            session
+                .keys_of(KeyGroup::Expanded)
+                .into_iter()
+                .find(|(key, _)| *key == Key::Char('a'))
+                .map(|(_, action)| action),
+            Some(Action::List(Listing::Notable))
+        );
+        // 换一张：盖住的仍是展开着那一块，不是上一张覆盖层。
+        session.press(Key::Char('i'));
+        assert_eq!(
+            session.overlay().map(|covered| covered.overlay),
+            Some(Overlay::Premises)
+        );
+        session.press(Key::Esc);
+        assert_eq!(session.expansion().copied(), Some(expanded), "没原样还回来");
+    }
+
+    /// **跑着与等答话时覆盖层照旧掀得开，而掀着的时候按停与答话那三个按不动**
+    /// （票面第五条，停车场 Q164 记着这一笔与 ADR 0017 决定第 4 条的差）。
+    ///
+    /// 关掉就回来：那三个键在别的每一块上都按得动，而这一块只是盖在它们上面的一张纸。
+    #[test]
+    fn the_overlay_hands_no_key_to_the_stage_while_it_is_up() {
+        let mut session = Session::new();
+        session.run_started();
+        assert_eq!(session.action(Key::Char('s')), Action::Stop);
+
+        session.press(Key::Char('?'));
+        assert_eq!(session.stage(), Stage::Running(Instruction::Continue));
+        for key in [
+            Key::Char('s'),
+            Key::Char('x'),
+            Key::Char('a'),
+            Key::Char('q'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在覆盖层上还派得出来"
+            );
+        }
+        // `Ctrl-C` 是那一个例外：它在每一个状态下都是退出。
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+
+        session.press(Key::Esc);
+        assert_eq!(
+            session.action(Key::Char('s')),
+            Action::Stop,
+            "关掉之后按不动了"
+        );
+    }
+
+    /// **`?` 那张表是按键表自己问出来的，不是另抄的一份**（票面：不许另抄一份）。
+    ///
+    /// 三条：
+    ///
+    /// - **每一组列的键都真派得出动作**，而且派的正是那一块的按键表说的那件事；
+    /// - **阶段那一维那几个键只在「任何时候」那一组里**——照实列的话 `q 退出`
+    ///   会在四组里各出现一次；
+    /// - **只列此刻这个阶段派得出的键**：跑起来之后按停在这张表上，没跑过时它不在。
+    #[test]
+    fn the_key_table_is_asked_of_the_key_table_itself() {
+        let mut session = Session::new();
+        session.press(Key::Char('?'));
+
+        let table = session.key_table();
+        assert!(
+            table.iter().any(|(group, _)| *group == KeyGroup::Config),
+            "左栏那一组不在表上"
+        );
+        // **掀开覆盖层那两个键在六块焦点上一处都没有主**——`i` 与 `?` 各在每一块的
+        // 按键表上问一遍，一处都不派动作（`a` 那种撞车因此在这两个键上不存在，
+        // 停车场 Q161 记着的是另一个字母）。
+        for group in KeyGroup::ALL {
+            if group == KeyGroup::Always {
+                continue;
+            }
+            for overlay in Overlay::ALL {
+                assert_eq!(
+                    session.acts(group, Key::Char(overlay.key())),
+                    Action::Ignored,
+                    "{:?} 在 {group:?} 上早有主了",
+                    overlay.key()
+                );
+            }
+        }
+        for (group, keys) in &table {
+            assert!(!keys.is_empty(), "{group:?} 那一组空着还列了出来");
+            assert!(
+                group.reachable(session.stage()),
+                "{group:?} 此刻进不去还列了出来"
+            );
+            for (key, action) in keys {
+                assert_ne!(*action, Action::Ignored, "{key:?} 派不出动作还列了出来");
+                // **一个键只列一处**：到处都是同一件事的归「任何时候」，
+                // 有一块另派的归各块自己（`Esc`：左栏上是退出会话，展开着上是收起）。
+                assert_eq!(
+                    session.means_the_same_everywhere(*key),
+                    *group == KeyGroup::Always,
+                    "{key:?} 归错组了：{group:?}"
+                );
+            }
+        }
+        // `Ctrl-C` 到处都是退出会话，因此只在「任何时候」那一组里；
+        // `Esc` 在展开着上是收起，因此归各块自己，「任何时候」那一组不收它。
+        assert!(session.means_the_same_everywhere(Key::Interrupt));
+        assert!(!session.means_the_same_everywhere(Key::Esc));
+        // 没跑过：按停不在这张表上（屏上不摆按不动的键）。
+        assert!(
+            !listed(&table, Key::Char('s')),
+            "没跑过时按停那个键还在表上"
+        );
+
+        // 跑起来：它在了，而且在「任何时候」那一组里。
+        session.press(Key::Esc);
+        session.run_started();
+        session.press(Key::Char('?'));
+        let running = session.key_table();
+        assert!(listed(&running, Key::Char('s')), "跑着时按停那个键不在表上");
+        assert!(
+            running
+                .iter()
+                .filter(|(_, keys)| keys.iter().any(|(key, _)| *key == Key::Char('s')))
+                .all(|(group, _)| *group == KeyGroup::Always),
+            "按停那个键列了不止一处"
+        );
+    }
+
+    /// 这张表上有没有这个键。
+    fn listed(table: &[(KeyGroup, Vec<(Key, Action)>)], key: Key) -> bool {
+        table
+            .iter()
+            .any(|(_, keys)| keys.iter().any(|(listed, _)| *listed == key))
     }
 
     /// **标定图按设备层那块面板画，而阈值一格都不带**（13 号票的第六条：它仍是量具）。
