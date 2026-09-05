@@ -1,14 +1,16 @@
-//! 报告区那两张表的**列**：有哪几列、各多宽、这个宽度上留得下哪几列、一行怎么摆出来
+//! 报告区那三张表的**列**：有哪几列、各多宽、这个宽度上留得下哪几列、一行怎么摆出来
 //! （`CONTEXT.md` 的《会话》：卷表、砍列）。
 //!
 //! 表真画出来是画法那一层的事（`super::draw::table` 与 `super::draw::pages`）；
 //! 本模块只答四件事：**列的次序**、**砍列的次序**、**一格摆不下的字怎么省略**、
 //! 以及**留下来的那几列摆成一行长什么样**。
 //!
-//! # 两张表，一套摆法
+//! # 三张表，一套摆法
 //!
-//! 卷表一卷一行（[`VolumeColumn`]），展开那一副逐页一行（[`PageColumn`]）——
-//! 两张表的**列各不相同，摆法一模一样**：一样按显示宽度对齐、一样按各自那个固定次序砍列、
+//! 目录表一枝一行（[`DirectoryColumn`]，`volume-discovery/08`），
+//! 展开一枝出来的卷表一卷一行（[`VolumeColumn`]），
+//! 展开一卷出来的逐页表一页一行（[`PageColumn`]）——
+//! 三张表的**列各不相同，摆法一模一样**：一样按显示宽度对齐、一样按各自那个固定次序砍列、
 //! 一样在砍无可砍时收窄名字那一列。摆法因此写在[一个 trait](Column) 上，
 //! 各表只交出自己那两个次序（`p3-session-legibility/11`：逐页也是一张表，
 //! 与卷表同一套视口、砍列与上色——那三样一样都不另造）。
@@ -47,7 +49,7 @@ const ELLIPSIS: char = '⋯';
 
 /// **一张表的那几列**：从左到右是哪几列、窄了按什么次序砍、砍无可砍时收窄谁。
 ///
-/// 两张表各实现一份（[`VolumeColumn`]、[`PageColumn`]），而摆法只有一份
+/// 三张表各实现一份（[`DirectoryColumn`]、[`VolumeColumn`]、[`PageColumn`]），而摆法只有一份
 /// （[`fit`]、[`plan`]、[`lay`]）：屏上砍成什么样、对齐成什么样一律问这几个函数，
 /// 画法那一层不许再写第二份次序。
 pub(super) trait Column: Copy + PartialEq + 'static {
@@ -80,6 +82,55 @@ pub(super) trait Column: Copy + PartialEq + 'static {
             .iter()
             .position(|column| *column == self)
             .expect("每一列都在 ALL 里")
+    }
+}
+
+/// **目录表**上的一列（`volume-discovery/08`）：报告区默认那一副，一个目录一行。
+///
+/// 与[卷表](VolumeColumn)同一个形状——行首记号与名字恒在，其余按一个固定次序砍。
+/// 列的选法答的是**这一枝到底怎么样**：从左到右是「这一枝出没出事 · 是哪个目录 ·
+/// 几卷 · 判成哪几档」，一路由结论走向明细。
+///
+/// **进隔离的卷数不占一列**：它跟在行尾，成句（`隔离 2 卷`）——与卷表上那个「隔离」
+/// 同一条规矩，摆不下时整行折下去，不塞进格。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DirectoryColumn {
+    /// 行首记号：这一枝怎么样，一个字符说完。**恒在。**
+    Mark,
+    /// 目录名（只印最后那一段）。**恒在**，摆不下时从中间省略。
+    Name,
+    /// 这一枝底下几卷。没做成的那几卷也算在里面。
+    Volumes,
+    /// 基准档分布：各档各有几卷，排成一串。
+    Bases,
+}
+
+impl Column for DirectoryColumn {
+    const ALL: &'static [Self] = &[Self::Mark, Self::Name, Self::Volumes, Self::Bases];
+
+    /// **砍列的次序：基准档分布 → 卷数。**
+    ///
+    /// 记号与目录名不在这里边——它们**恒在**：一行上先要认得出这是哪一枝、它出没出事。
+    ///
+    /// 分布最先让：它是这张表上最宽的一格，也是比结论深一层的明细；
+    /// 卷数压后——「这一枝有多少卷」与目录名一起就已经是一句话。
+    const DROPPED_IN_TURN: &'static [Self] = &[Self::Bases, Self::Volumes];
+
+    const NARROWED: Self = Self::Name;
+
+    fn head(self) -> &'static str {
+        match self {
+            Self::Mark => "记号",
+            Self::Name => "目录",
+            Self::Volumes => "卷数",
+            Self::Bases => "基准档分布",
+        }
+    }
+
+    /// 只有卷数靠右：它是个数，一位数与三位数靠左摆就对不齐，而「这一枝比别的枝厚多少」
+    /// 正是扫一眼要看出来的（与卷表的页数同一条）。
+    fn to_the_right(self) -> bool {
+        matches!(self, Self::Volumes)
     }
 }
 
@@ -211,7 +262,7 @@ impl Column for PageColumn {
 pub(super) struct Widths<C: Column> {
     /// 一列一格，次序与 [`Column::ALL`] 相同。
     of: Vec<usize>,
-    /// 量的是**哪一张表**的列。带上它，两张表的量不会串到一处去。
+    /// 量的是**哪一张表**的列。带上它，三张表的量不会串到一处去。
     which: PhantomData<C>,
 }
 
@@ -272,7 +323,7 @@ pub(super) fn fit<C: Column>(room: usize, widths: &Widths<C>) -> Vec<C> {
 /// **这么宽的一格上这张表怎么摆**：先[砍列](fit)，砍无可砍再把
 /// [名字那一列](Column::NARROWED)收窄到摆得下为止。出的是留下来的那几列。
 ///
-/// 两张表共用这一处，砍与收窄因此不会一张表做全、另一张只做一半。
+/// 三张表共用这一处，砍与收窄因此不会一张表做全、另一张只做一半。
 pub(super) fn plan<C: Column>(room: usize, widths: &mut Widths<C>) -> Vec<C> {
     let kept = fit(room, widths);
     let over = line_width(&kept, widths).saturating_sub(room);
@@ -468,6 +519,35 @@ mod tests {
         assert_eq!(fit(line_width(&without_driver, &widths) - 1, &widths), bare);
     }
 
+    /// **目录那张表按它自己那个次序砍：基准档分布 → 卷数**（`volume-discovery/08`）。
+    ///
+    /// 三张表并排问一遍，钉的是同一条：**各表各有各的次序，而砍的是同一套代码**。
+    /// 记号与目录名在最窄那一档上仍在——先要认得出这是哪一枝、它出没出事。
+    #[test]
+    fn the_directory_table_drops_its_own_columns_in_its_own_order() {
+        let mut widths: Widths<DirectoryColumn> = Widths::new();
+        widths.widen(DirectoryColumn::Mark, "!");
+        widths.widen(DirectoryColumn::Name, "网络资源");
+        widths.widen(DirectoryColumn::Volumes, "12");
+        widths.widen(DirectoryColumn::Bases, "2bit+FS 9 · 4bit+FS 3");
+        let all = DirectoryColumn::ALL.to_vec();
+        let full = line_width(&all, &widths);
+
+        assert_eq!(fit(full, &widths), all, "摆得下就一列都不砍");
+        // 分布最先让：它是这张表上最宽的一格，也是比结论深一层的明细。
+        let without_bases = vec![
+            DirectoryColumn::Mark,
+            DirectoryColumn::Name,
+            DirectoryColumn::Volumes,
+        ];
+        assert_eq!(fit(full - 1, &widths), without_bases);
+        // 最窄那一档：记号与目录名两列。
+        let bare = vec![DirectoryColumn::Mark, DirectoryColumn::Name];
+        for room in [0, 1, 5, line_width(&without_bases, &widths) - 1] {
+            assert_eq!(fit(room, &widths), bare, "{room} 格上砍成了别的样子");
+        }
+    }
+
     /// **逐页那张表按它自己那个次序砍：判据 → 尺寸 → 理由**
     /// （`p3-session-legibility/11`）。
     ///
@@ -608,7 +688,7 @@ mod tests {
 
     /// **砍无可砍时名字那一列收窄，这一行因此正好摆得下**（[`plan`]）。
     ///
-    /// 两张表共用这一步：收窄哪一列由 [`Column::NARROWED`] 一处说了算。
+    /// 三张表共用这一步：收窄哪一列由 [`Column::NARROWED`] 一处说了算。
     #[test]
     fn narrowing_the_name_column_makes_the_row_fit() {
         let mut widths = measured();

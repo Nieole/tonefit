@@ -205,7 +205,10 @@ fn says(group: KeyGroup, action: Action) -> &'static str {
             KeyGroup::Picking => "在这一栏上挪一份",
             _ => "在三层上挪一行",
         },
-        Action::Select(_) => "在卷表上挪一卷",
+        Action::Select(_) => match group {
+            KeyGroup::Report => "在目录表上挪一枝",
+            _ => "在卷表上挪一卷",
+        },
         Action::Cycle(_) => "就地换一个取值（不摊开）",
         Action::Unfold => "摊开这一行的取值",
         Action::Drill => "进去看这块面板底下的型号",
@@ -233,10 +236,14 @@ fn says(group: KeyGroup, action: Action) -> &'static str {
         Action::Focus(Pane::Report) => "把焦点切到报告区",
         Action::Focus(Pane::Config) => "把焦点切回左栏",
         Action::Follow => "回到跟随：光标交回给最新那一卷",
+        Action::Open => "展开这一枝：摊出它底下那几卷",
         Action::Expand => "把这一卷的逐页摊开",
         Action::Turn(Step::Next) => "换下一卷",
         Action::Turn(_) => "换上一卷",
-        Action::Collapse => "收起，左栏回来",
+        Action::Collapse => match group {
+            KeyGroup::Expanded => "收起，回这一枝的卷表（左栏回来）",
+            _ => "收起，回目录表",
+        },
         Action::List(Listing::All) => "列全部页",
         Action::List(_) => "只列要紧的页",
         Action::Pick => "开预设那一栏",
@@ -253,6 +260,8 @@ fn says(group: KeyGroup, action: Action) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::super::probe::{a_run_in_flight, same_screen, screen, snapshot, tight};
     use super::super::shell;
     use super::*;
@@ -385,9 +394,9 @@ mod tests {
     fn an_overlay_covers_a_block_and_gives_it_back_untouched() {
         let live = a_run_in_flight(false);
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(1)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(1)));
         session.press(Key::Down);
-        let expanded = session.expansion().copied().expect("展开着");
+        let expanded = session.expansion().cloned().expect("展开着");
 
         session.press(Key::Char('?'));
         assert!(
@@ -401,7 +410,7 @@ mod tests {
         assert!(!covering.contains(&tight("设备层")), "{covering}");
 
         session.press(Key::Esc);
-        assert_eq!(session.expansion().copied(), Some(expanded), "没原样还回来");
+        assert_eq!(session.expansion().cloned(), Some(expanded), "没原样还回来");
     }
 
     /// **装不下时滚得动**（票面第六条，走 `04` 那套视口）。

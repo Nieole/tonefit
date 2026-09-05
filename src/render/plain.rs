@@ -3,13 +3,23 @@
 //!
 //! 措辞不在这里（ADR 0016）。这里只有**摆法**：一行缩进几格、哪一格前面挂什么词、
 //! 格与格之间拿什么隔开、一个数后面跟什么单位。同一批行摆成一张表是**另一副**，
-//! 那一副是会话自己的事（P3 的卷表与逐页表）。
+//! 那一副是会话自己的事（目录表、卷表与逐页表）。
 //!
 //! **分界线画在「这几个字换一副排版还成不成立」上**：列头、前缀、单位与把格串起来的
 //! 那几个连接词换一副就得重写，它们在这里；一句**解释**（「开工前整卷解到临时目录，
 //! 跑完就收」这种）换一副仍是同一句话，它在 [`super`]，整句装在一格里
 //! （[`super::Field::Sentence`]）。搬错边的代价是单向的：解释落到这里，
 //! 表那一副要么抄一遍、要么把它丢了。
+//!
+//! # 目录那一级也在这一副里（`volume-discovery/08`）
+//!
+//! [`report`] 按**目录**分组（[`super::grouped`]），每一枝那几卷前面摆一行
+//! [目录行](directory)：几卷 · 基准档分布 · 几卷进了隔离。
+//! **分组与聚合都不在这里**——它们在 [`super`]，会话的目录表读的是同一份。
+//!
+//! 命令行这一副**三级一并摆出来**：它没有一个键可按，藏起来的那两级在屏上就再也
+//! 没有第二个地方看得到了（停车场 Q171 记着这一笔）。会话那一副折得起来：
+//! 默认只给目录那一级，按 `⏎` 才往下摊。
 //!
 //! # 谁在读这一副
 //!
@@ -32,19 +42,34 @@
 
 use tonefit::{Mode, Report, VolumeReport};
 
-use super::{Field, Row, RowKind};
+use super::{Field, Listed, Row, RowKind};
 
 /// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
 ///
 /// 四段按顺序拼起来，中间不加任何东西——会话逐段画出来的与这里拼出来的逐字节相同。
 pub fn report(report: &Report, mode: Mode) -> String {
     let mut text = super::header(report, mode);
-    for volume in &report.volumes {
-        text.push_str(&self::volume(volume));
-        text.push_str(&self::pages(volume));
+    let listed = super::listed(report);
+    for group in super::grouped(&listed) {
+        text.push_str(&directory(&group, &listed));
+        for at in &group.at {
+            if let Some(Listed::Settled(volume)) = listed.get(*at) {
+                text.push_str(&self::volume(volume));
+                text.push_str(&self::pages(volume));
+            }
+        }
     }
     text.push_str(&super::tail(report));
     text
+}
+
+/// 一枝的[目录那一行](super::directory)，摆成纯文本。
+///
+/// 它摆在这一枝那几卷**前面**：命令行印出来的那一份因此与会话读的是同一个层次
+/// （目录 → 卷 → 页），只是命令行三级一并摆出来——那一路没有一个键可按，
+/// 藏起来的那两级在屏上就再也没有第二个地方看得到了。
+pub fn directory(group: &super::Group, listed: &[Listed<'_>]) -> String {
+    line(&super::directory(group, listed))
 }
 
 /// 一个卷的卷级那几行，摆成纯文本（[`super::volume`] 出的行）。
@@ -73,6 +98,19 @@ fn text(rows: &[Row]) -> String {
 /// 拆开没有意义，而拆的那一刀会把措辞挪到这一层来。
 pub(super) fn line(row: &Row) -> String {
     match row.kind {
+        // **目录那一行摆在它那几卷前面**（`volume-discovery/08`）：一枝一行，
+        // 顶格摆——它比卷那一行高一级，而卷那一行本来就顶格，缩进说不出这件事。
+        // 分布与隔离那两格**在场才说**：一格在不在场本身就是一句话。
+        RowKind::Directory => format!(
+            "{}  {} 卷{}{}\n",
+            cell(row, Field::Source),
+            cell(row, Field::VolumeCount),
+            row.cell(Field::Bases)
+                .map_or_else(String::new, |spread| format!(" · {spread}")),
+            row.cell(Field::Isolated).map_or_else(String::new, |count| {
+                format!(" · {}", super::isolated_note(count))
+            }),
+        ),
         RowKind::Volume => format!(
             "{} → {}（{} 页{}）\n",
             cell(row, Field::Source),

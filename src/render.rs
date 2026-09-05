@@ -11,7 +11,11 @@
 //! 大头是把 [`Report`] 渲染成四段，调用方各取所需：[`header`] 一趟只出一次，
 //! [`volume`] 与 [`pages`] 逐卷出，[`tail`] 收在末尾。会话攒到哪儿画到哪儿——
 //! 卷级事件带着 `VolumeReport`，那一卷跑完就画得出它那一段（ADR 0011）。
-//! 卷级与逐页分成两个函数，是因为会话的报告区默认只给卷级，展开才逐页。
+//! 卷级与逐页分成两个函数，是因为会话的报告区**展开一枝**才逐卷、**展开一卷**才逐页。
+//!
+//! 它们上面还有一级：[目录那一行](directory)——卷按目录分组（[`grouped`]），
+//! 一枝一行（`volume-discovery/08`）。**分组与聚合只有那两处出处**：
+//! 命令行那一副的折叠与会话的目录表读的是同一份，两边不许各算各的。
 //!
 //! # 措辞一处，排版两处（ADR 0016）
 //!
@@ -32,7 +36,7 @@
 //! 折法只有一套（[`crate::wrap`]，各处折到多宽见那个模块）。收在这里的话，
 //! 两个去处就得共用一个宽度，而它们一个不知道终端多宽、一个每帧都知道。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tonefit::{
     CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
@@ -116,6 +120,12 @@ impl Cell {
 /// 分不开就得回头去认字符串。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
+    /// **目录那一行**：这一枝底下几卷、基准档怎么分布、几卷进了隔离
+    /// （`volume-discovery/08`）。
+    ///
+    /// 它比[卷那一行](Self::Volume)高一级：报告区默认摆的是它，展开一枝才逐卷。
+    /// 出处只有 [`directory`]。
+    Directory,
     /// 卷那一行：去处与页数。
     Volume,
     /// 过期副本那一行（成句）。
@@ -174,6 +184,13 @@ pub enum Field {
     Output,
     /// 输出页数。
     PageCount,
+    /// **一枝底下几卷**（目录那一行）。没做成的那几卷也算在里面。
+    VolumeCount,
+    /// **基准档分布**：一枝底下各档各有几卷，排成一串（目录那一行）。
+    /// **一卷都判不出档位就不在场。**
+    Bases,
+    /// **一枝底下几卷进了隔离**（目录那一行）。**一卷都没有就不在场。**
+    Isolated,
     /// 彩页几张。**一张都没有就不在场。**
     ColorPages,
     /// 几何门的判定范围有几页。
@@ -468,8 +485,9 @@ pub fn failed_volume(failure: &VolumeFailure) -> Row {
 /// （「跳过 幂等命中……」「无（--per-page）……」「判定 X（覆盖项裁到只剩一个候选）」），
 /// 表那一副只是把它压成一列摆得下的宽度，不编第二套说法（spec 的《卷表》）。
 ///
-/// 只有会话读它：命令行那一路把同一批格摆成一段散文，一个列都不分。
-#[cfg(any(feature = "tui", test))]
+/// **两路都读它**：会话的卷表把它摆成一列，而目录那一行的[基准档分布](directory)
+/// 逐卷问它一遍——命令行那一副的折叠与会话的目录表因此数的是同一批字
+/// （`volume-discovery/08`）。卷级那几行摆成散文的那一路本身不分列，不读它。
 pub fn base_column(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
         // 判出了基准档的那一种：那一格就是它（[`Field::Base`] 的文档说的正是这一处）。
@@ -485,6 +503,193 @@ pub fn base_column(rows: &[Row]) -> Option<String> {
         // 漏掉一种的后果是那一格不在场，屏上当场看得见，不是悄悄印错一个档。
         _ => None,
     })
+}
+
+/// 报告上**目录那一级要数的一条**：一个卷根，加上它这一趟交出了什么。
+///
+/// **两种，不多不少**（`CONTEXT.md` 的《失败》把它们分得很清楚）：
+/// [收摊了的那几卷](Self::Settled)带着一份卷报告，[没做成的那几卷](Self::Failed)
+/// 连一份都没有，只有一个路径与一句原因。目录那一行要数的两件事各要一种——
+/// 卷数把两种都算进去，[基准档分布](directory)照 [`base_column`] 逐条问，
+/// 而那一处对没做成的卷答的正是「没做成」。
+///
+/// **收的是引用，一条报告都不复制**：报告一趟能有几百卷，而分组只要认得出
+/// 每一条挂在树上的哪一枝（[`grouped`]）。
+#[derive(Debug, Clone, Copy)]
+pub enum Listed<'a> {
+    /// 收摊了的一卷。
+    Settled(&'a VolumeReport),
+    /// 一整卷没做成的那一卷。
+    Failed(&'a VolumeFailure),
+}
+
+impl Listed<'_> {
+    /// 这一条的**卷根**：目录路径，或归档文件路径。分组按它的父目录（见 [`grouped`]）。
+    pub fn root(&self) -> &Path {
+        match self {
+            Self::Settled(volume) => &volume.volume,
+            Self::Failed(failure) => &failure.volume,
+        }
+    }
+
+    /// 这一条在[基准档那一列](base_column)上写什么。**目录那一行的分布逐条问它**，
+    /// 不另编一套说法。
+    ///
+    /// **只建[判定那几行](verdict_rows)，不把整卷现一遍**：[`base_column`] 认的四种行
+    /// （上包络 · 覆盖 · 逐页 · 跳过）全出自那一处，而 [`volume`] 还要把两条路径与
+    /// 读法、缓存各摆一遍——目录那一行逐卷问它，几百卷的一趟每帧都要付那一笔。
+    /// 认哪几种行仍旧只有 [`base_column`] 一处，这里只是少喂它几行它本来就不看的。
+    fn base(&self) -> Option<String> {
+        match self {
+            Self::Settled(report) => base_column(&verdict_rows(report)),
+            Self::Failed(failure) => {
+                base_column(std::slice::from_ref(&self::failed_volume(failure)))
+            }
+        }
+    }
+
+    /// 这一条进没进隔离。没做成的那一卷**不算**：它连一份卷报告都没有，
+    /// 也就没有一页失败可言（两者的分别见 `CONTEXT.md` 的《失败》）。
+    fn isolated(&self) -> bool {
+        match self {
+            Self::Settled(report) => report.isolated(),
+            Self::Failed(_) => false,
+        }
+    }
+}
+
+/// 报告上收得住的那几条，**按报告上的先后**：收摊了的那几卷，然后是没做成的那几卷。
+///
+/// 命令行那一路收的就是它。会话另拼一份（决策点上攒着的那一份也占一条，
+/// 见 `crate::session::live::Live::branches`）——**拼法两处，分组只有一处**（[`grouped`]）。
+pub fn listed(report: &Report) -> Vec<Listed<'_>> {
+    report
+        .volumes
+        .iter()
+        .map(Listed::Settled)
+        .chain(report.failed_volumes.iter().map(Listed::Failed))
+        .collect()
+}
+
+/// 一个**目录**：树上的那一枝，加上它收下了哪几条。
+///
+/// `at` 是下标，指回交给 [`grouped`] 的那一列——分组不搬运卷报告，
+/// 调用方拿下标去取自己那一头的东西（会话要的是「表上第几卷」，命令行要的是那一份报告）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// 这一枝是哪个目录。
+    pub directory: PathBuf,
+    /// 它收下的那几条各是第几条，按传进来那一列的先后。
+    pub at: Vec<usize>,
+}
+
+/// 卷按**目录**分组：一个目录一组（`volume-discovery/08`）。
+///
+/// **唯一出处**：命令行那一副的折叠（[`plain::report`]）与会话的目录表读的是同一份，
+/// 两边不许各算各的。
+///
+/// 目录取的是卷根的**父目录**，那正是**发现出来那棵树**上它挂着的那一枝：
+/// `crate::discover` 列一层目录时，列出来的每一个候选的父目录就是它站着的那一层。
+/// 一个目录**既是卷又装着卷**时（ADR 0014），它自己归**它的父目录**那一组、
+/// 它装着的那几卷归它自己那一组——层次因此与那棵树逐层对得上，
+/// 而不是在这里照路径字符串另切一棵。
+///
+/// **不重排**（与卷表同一条，`CONTEXT.md` 的《会话》：卷表）：目录按它**头一条**
+/// 在报告上的先后排，组内也按报告上的先后。发现走的是先序深度优先，
+/// 同一枝底下那几卷因此**不一定在报告上挨着**（中间夹着子目录那几卷）——
+/// 分组把它们收到一处，而收进来的次序仍是报告上的次序。
+pub fn grouped(listed: &[Listed<'_>]) -> Vec<Group> {
+    let mut groups: Vec<Group> = Vec::new();
+    for (at, one) in listed.iter().enumerate() {
+        let directory = directory_of(one.root());
+        match groups.iter_mut().find(|group| group.directory == directory) {
+            Some(group) => group.at.push(at),
+            None => groups.push(Group {
+                directory: directory.to_path_buf(),
+                at: vec![at],
+            }),
+        }
+    }
+    groups
+}
+
+/// 一个卷根挂在树上的**哪一枝**：它的父目录。
+///
+/// **取不出父目录时落到当前目录（`.`）**：点名一个裸文件名（`tonefit 第1话.cbz`）
+/// 那一卷躺的正是当前目录。取它自己当一枝的话，报告上会连着两行同一个名字——
+/// 一行当目录、一行当卷，而那两行说的不是同一件东西。
+fn directory_of(root: &Path) -> &Path {
+    root.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// **目录那一行**：这一枝底下几卷、基准档怎么分布、几卷进了隔离。
+///
+/// 一趟几百卷时报告区默认摆的就是它，一个目录一行（`volume-discovery/08` 票面第一条）；
+/// 命令行那一副把它摆在这一枝那几卷**前面**（[`plain::report`]）。
+/// **两边拿的是同一份**：聚合与措辞都在这一处。
+///
+/// **哪几格在场随这一枝而变**：一卷都没判出档位的目录没有分布那一格，
+/// 一卷都没进隔离的目录没有隔离那一格——一格在不在场本身就是一句话（见 [`Row::cell`]）。
+///
+/// 卷数把**没做成的那几卷也算进去**：它们同样是这一枝底下点到过的卷，
+/// 而「几卷没做成」由分布那一格说（[`base_column`] 对它们答的是「没做成」）。
+pub fn directory(group: &Group, listed: &[Listed<'_>]) -> Row {
+    let inside: Vec<Listed<'_>> = group
+        .at
+        .iter()
+        .filter_map(|at| listed.get(*at).copied())
+        .collect();
+    let mut cells = vec![
+        Cell::new(Field::Source, group.directory.display().to_string()),
+        Cell::new(Field::VolumeCount, inside.len().to_string()),
+    ];
+    let spread = base_spread(&inside);
+    if !spread.is_empty() {
+        cells.push(Cell::new(Field::Bases, spread));
+    }
+    let isolated = inside.iter().filter(|one| one.isolated()).count();
+    if isolated > 0 {
+        cells.push(Cell::new(Field::Isolated, isolated.to_string()));
+    }
+    Row::new(RowKind::Directory, cells)
+}
+
+/// 一枝底下**几卷进了隔离**那一句：`隔离 2 卷`。
+///
+/// **一处出处**：命令行那一副接在目录那一行的行尾，会话的目录表把它当行尾那一句
+/// （两处摆的是同一串字，而不是同一个值的两种写法——后者才归排版，见 ADR 0016）。
+/// 那个数出自[隔离那一格](Field::Isolated)。
+pub fn isolated_note(count: &str) -> String {
+    format!("隔离 {count} 卷")
+}
+
+/// **基准档分布**：这一枝底下各档各有几卷，多的排在前面。
+///
+/// 各档怎么写照 [`base_column`]——卷表那一列写的是同一批字，跳过与没做成也在里面。
+/// **串起来的那个 `·` 是措辞**，与[判据那一串](score_line)同一条（ADR 0016 决定第 2 条）。
+///
+/// 排法：**卷多的在前**，一样多的按头一次出现的先后（`sort_by` 是稳定的）。
+/// 按报告先后原样排的话，一枝里最常见的那一档常常落在末尾——而扫一眼要看出来的
+/// 正是「这一枝多半判成哪一档」。
+fn base_spread(inside: &[Listed<'_>]) -> String {
+    let mut counted: Vec<(String, usize)> = Vec::new();
+    for one in inside {
+        let Some(base) = one.base() else {
+            continue;
+        };
+        match counted.iter_mut().find(|(said, _)| *said == base) {
+            Some((_, count)) => *count += 1,
+            None => counted.push((base, 1)),
+        }
+    }
+    counted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    counted
+        .iter()
+        .map(|(said, count)| format!("{said} {count}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
@@ -1400,8 +1605,9 @@ mod tests {
         let text = plain::report(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行（构成与聚合）、
+        // **目录一行**（`volume-discovery/08`：命令行那一副把这一枝摆在它那几卷前面）、
         // 卷六行（去处、几何门、卷级、定档页、读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 14);
+        assert_eq!(text.lines().count(), 15);
         // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
         assert!(text.contains("裁边 按行列墨量占比"), "{text}");
@@ -2006,9 +2212,9 @@ mod tests {
 
         let text = plain::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行、卷两行，
-        // 加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 9);
+        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行、**目录一行**、
+        // 卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 10);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -2893,10 +3099,12 @@ mod tests {
 
     /// 四段各画各的，拼起来与一次性渲染出的**逐字节相同**（会话批的 02、09 号票）。
     ///
-    /// 会话就是这么画的：抬头一次，卷级与逐页逐卷出，末尾收口。这一条钉住的是
-    /// 「两边措辞只有一套」——真有人在 [`plain::report`] 里插了一行别处没有的东西，
-    /// 这里当场红。**它同时是这一票的验收**：卷级与逐页降到行与格之后，
-    /// 拼回去的那一段仍旧与从前逐字节相同（ADR 0016）。
+    /// 会话就是这么画的：抬头一次，**目录一枝一行**、卷级与逐页逐卷出，末尾收口。
+    /// 这一条钉住的是「两边措辞只有一套」——真有人在 [`plain::report`] 里插了一行
+    /// 别处没有的东西，这里当场红。
+    ///
+    /// **分组那一级也在里面**（`volume-discovery/08`）：命令行那一副与会话的目录表
+    /// 读的是同一份（[`grouped`] 与 [`directory`]），这一条因此照着那两处逐枝拼一遍。
     #[test]
     fn drawing_the_four_parts_one_by_one_gives_the_same_bytes_as_one_shot() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -2950,9 +3158,16 @@ mod tests {
         });
 
         let mut drawn = header(&report, Mode::Process);
-        for each in &report.volumes {
-            drawn.push_str(&plain::volume(each));
-            drawn.push_str(&plain::pages(each));
+        let listed = self::listed(&report);
+        for group in grouped(&listed) {
+            drawn.push_str(&plain::directory(&group, &listed));
+            for at in &group.at {
+                let Listed::Settled(each) = listed[*at] else {
+                    continue;
+                };
+                drawn.push_str(&plain::volume(each));
+                drawn.push_str(&plain::pages(each));
+            }
         }
         drawn.push_str(&tail(&report));
 
@@ -3076,5 +3291,183 @@ mod tests {
             pages: Vec::new(),
             source_pages: 0,
         }
+    }
+
+    /// 一份**只答得出档位**的卷报告：这几条问的是分组与目录那一行，不是逐页。
+    ///
+    /// `verdict` 是 `None` 时它一档都判不出来（整卷彩页、整卷失败那一档），
+    /// [`base_column`] 对它答的正是「不在场」。
+    fn a_volume(root: &str, verdict: Option<VolumeVerdict>, broken: bool) -> VolumeReport {
+        let page = PageReport {
+            source: PathBuf::from(format!("{root}/001.jpg")),
+            output: PathBuf::from("out/001.png"),
+            size: Size::new(1264, 1680),
+            outcome: match broken {
+                true => PageOutcome::Failed {
+                    reason: "解不出完整尺寸：JPEG 数据截断".to_owned(),
+                },
+                false => PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: Vec::new(),
+                        verdict: Verdict {
+                            candidate: Candidate::new(BitDepth::Four, Dither::Off),
+                            reason: Reason::LowestWithinThreshold,
+                        },
+                    },
+                }),
+            },
+        };
+        VolumeReport {
+            volume: PathBuf::from(root),
+            output: PathBuf::from("out"),
+            superseded: None,
+            verdict,
+            cache: cache_usage(),
+            extracted: 0,
+            io: io_plan(),
+            decodes: 1,
+            timing: VolumeTiming::default(),
+            pages: vec![page],
+            source_pages: 1,
+        }
+    }
+
+    /// **分组的层次就是发现出来那棵树的层次**（`volume-discovery/08` 票面第二条）。
+    ///
+    /// 一个目录**既是卷又装着卷**（ADR 0014）时两条各归各的：那个目录卷自己归
+    /// **它的父目录**那一组，它装着的那几卷归**它自己**那一组——`crate::discover`
+    /// 列一层目录时，列出来的每个候选的父目录就是它站着的那一层，这里问的正是那条边。
+    ///
+    /// **不重排**：目录按它头一条在报告上的先后排，组内也按报告上的先后。
+    /// 发现走的是先序深度优先，同一枝底下那几卷在报告上**本来就不挨着**——
+    /// 这一条特意把子目录那一卷夹在中间，收出来的两组仍各自成序。
+    #[test]
+    fn the_directories_are_the_branches_of_the_tree_discovery_walked() {
+        let base = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        let volumes = [
+            a_volume("库/作品", base, false),
+            a_volume("库/作品/子集", base, false),
+            a_volume("库/作品/子集/第1话.cbz", base, false),
+            a_volume("库/作品/第10话.cbz", base, false),
+        ];
+        let listed: Vec<Listed<'_>> = volumes.iter().map(Listed::Settled).collect();
+
+        let groups = grouped(&listed);
+
+        let names: Vec<String> = groups
+            .iter()
+            .map(|group| group.directory.display().to_string())
+            .collect();
+        assert_eq!(names, ["库", "库/作品", "库/作品/子集"], "分的不是那棵树");
+        // 组内按报告上的先后：`库/作品` 那一枝底下的两卷在报告上隔着两条。
+        assert_eq!(groups[0].at, [0], "目录卷自己归它的父目录");
+        assert_eq!(groups[1].at, [1, 3], "它装着的那几卷归它自己那一组");
+        assert_eq!(groups[2].at, [2]);
+    }
+
+    /// **目录那一行说的是几卷 · 基准档怎么分布 · 几卷进了隔离**（票面第一条）。
+    ///
+    /// 分布逐条问 [`base_column`]——卷表那一列写的是同一批字，跳过与没做成也在里面；
+    /// **卷多的排在前**，一样多的按头一次出现的先后。
+    /// 隔离那一格**一卷都没有就不在场**（一格在不在场本身就是一句话）。
+    #[test]
+    fn a_directory_row_counts_its_volumes_and_spreads_their_bases() {
+        let four = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        let volumes = [
+            a_volume(
+                "库/第1话",
+                Some(VolumeVerdict::Skipped { page_count: 1 }),
+                false,
+            ),
+            a_volume("库/第2话", four, false),
+            a_volume("库/第3话", four, true),
+        ];
+        let failures = [VolumeFailure {
+            volume: PathBuf::from("库/第4话"),
+            reason: "卷根不在了".to_owned(),
+        }];
+        let listed: Vec<Listed<'_>> = volumes
+            .iter()
+            .map(Listed::Settled)
+            .chain(failures.iter().map(Listed::Failed))
+            .collect();
+        let groups = grouped(&listed);
+        assert_eq!(groups.len(), 1, "四条都在同一枝上");
+
+        let row = directory(&groups[0], &listed);
+
+        assert_eq!(row.kind, RowKind::Directory);
+        assert_eq!(row.cell(Field::Source), Some("库"));
+        // 没做成的那一卷也算一卷：它同样是这一枝底下点到过的卷。
+        assert_eq!(row.cell(Field::VolumeCount), Some("4"));
+        // 多的在前：4bit 两卷，跳过与没做成各一卷（后两者按头一次出现的先后）。
+        assert_eq!(row.cell(Field::Bases), Some("4bit 2 · 跳过 1 · 没做成 1"));
+        // 带失败页那一卷进了隔离，没做成那一卷不算（它连一份卷报告都没有）。
+        assert_eq!(row.cell(Field::Isolated), Some("1"));
+
+        // 一卷都没进隔离时那一格不在场。
+        let clean = [a_volume("库/第1话", four, false)];
+        let listed: Vec<Listed<'_>> = clean.iter().map(Listed::Settled).collect();
+        let row = directory(&grouped(&listed)[0], &listed);
+        assert_eq!(row.cell(Field::Isolated), None);
+        assert_eq!(row.cell(Field::VolumeCount), Some("1"));
+
+        // 一卷都判不出档位时分布那一格也不在场（整卷彩页、整卷失败那一档）。
+        let unjudged = [a_volume("库/第1话", None, true)];
+        let listed: Vec<Listed<'_>> = unjudged.iter().map(Listed::Settled).collect();
+        let row = directory(&grouped(&listed)[0], &listed);
+        assert_eq!(row.cell(Field::Bases), None);
+    }
+
+    /// **命令行那一副把目录那一行摆在它那几卷前面**（票面第三条）。
+    ///
+    /// 「两边拿的是同一份报告数据」在这里问得出来：印出去的那一行逐字就是
+    /// [`directory`] 出的那一行摆出来的样子，会话的目录表读的是同一批格。
+    #[test]
+    fn the_command_line_folds_the_report_by_directory() {
+        let base = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::Skipped { page_count: 1 },
+            a_volume("库/第1话", base, false).pages.remove(0),
+        );
+        report.volumes[0] = a_volume("库/第1话", base, false);
+        report
+            .volumes
+            .push(a_volume("库/别的作品/第1话", base, false));
+
+        let text = plain::report(&report, Mode::Process);
+
+        let listed = self::listed(&report);
+        for group in grouped(&listed) {
+            let said = plain::directory(&group, &listed);
+            assert!(text.contains(said.trim_end()), "{said} 不在报告里：{text}");
+        }
+        // 两枝各一行，摆在它那一卷**前面**。
+        let at = |said: &str| text.find(said).unwrap_or_else(|| panic!("{said}：{text}"));
+        assert!(
+            at("库  1 卷") < at("库/第1话 → "),
+            "目录那一行没摆在前面：{text}"
+        );
+        assert!(
+            at("库/别的作品  1 卷") < at("库/别的作品/第1话 → "),
+            "{text}"
+        );
     }
 }

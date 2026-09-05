@@ -193,7 +193,7 @@ use forcing::{forced, forcing};
 #[cfg(test)]
 mod tests {
     use super::super::probe::{
-        OnScreen, a_run_in_flight, every_kind_of_volume, main_snapshot, painted, tight,
+        OnScreen, a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch, painted, tight,
     };
     use super::super::yielding::CONFIG_WIDTH;
     use super::super::{main_pane, shell};
@@ -264,9 +264,14 @@ mod tests {
     }
 
     /// 六种卷都齐的那一趟，画在主区上、屏上那几行连同颜色一起取回来。
+    ///
+    /// **展开着那一枝**：六种卷各一行是**卷表**那一副的事，而报告区默认那一副是
+    /// 目录表（`volume-discovery/08`）——六种收成一行，四种语义就只剩一种。
+    /// 夹具里那几卷都躺在同一个目录底下，因此恒是头一枝。
     fn rows_of_a_run_with_every_kind(colourful: bool) -> Vec<OnScreen> {
         let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
         let mut session = Session::new();
+        session.open(only_branch(&live).directory);
         forcing(colourful, || {
             painted(
                 |frame| main_pane(frame, frame.area(), &mut session, Some(&live)),

@@ -184,8 +184,11 @@ fn elided(said: &str, room: u16) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::super::probe::{
-        a_run_in_flight, every_kind_of_volume, same_screen, screen, snapshot, snapshot_of, tight,
+        a_run_in_flight, every_kind_of_volume, only_branch, same_screen, screen, snapshot,
+        snapshot_of, tight,
     };
     use super::super::shell;
     use super::*;
@@ -286,7 +289,7 @@ mod tests {
     fn the_expanded_volume_reads_at_eighty_by_twenty_four() {
         let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(1)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(1)));
 
         same_screen(
             &snapshot_of(&mut session, &live, 80, 24),
@@ -389,6 +392,9 @@ mod tests {
     fn a_short_screen_gives_up_the_table_before_the_overview() {
         let live = a_run_in_flight(false);
         let mut session = Session::new();
+        // 卷一那一行在**展开一枝**之后那一副上（`volume-discovery/08`）：
+        // 默认那一副是目录表，一枝一行。
+        session.open(only_branch(&live).directory);
 
         let tall = tight(&screen(&mut session, Some(&live), 80, 24));
         assert!(tall.contains("总体"), "{tall}");
@@ -445,9 +451,9 @@ mod tests {
 "│  型号                          █│ 完成 1 卷 · 跳过 1 卷      │"
 "│未挑（跑起来之前必填）          █└────────────────────────────┘"
 "│  感知可分辨级数                █┌报告────────────────────────┐"
-"│默认（跟随面板）                ║│ 记号  卷名  页数  基准档   │"
-"│  阈值                          ║│ -     卷一   180  跳过     │"
-"│跟着型号走（先挑一个）          ║│ ✓     卷二     1  4bit     │"
+"│默认（跟随面板）                ║│ 记号  目录  卷数           │"
+"│  阈值                          ║│ ✓     库       2           │"
+"│跟着型号走（先挑一个）          ║│                            │"
 "│                                ║│                            │"
 "│口味层 · 这一趟的立场           ║│                            │"
 "│  适配方式　　　　默认（height）║│                            │"
@@ -516,15 +522,15 @@ mod tests {
 "│  阈值　　　　　　跟着型号走（先挑一个）        █│ 出事 隔离 1 卷 · 失败 1 页 │"
 "│                                                █└────────────────────────────┘"
 "│口味层 · 这一趟的立场                           █┌报告────────────────────────┐"
-"│  适配方式　　　　默认（height）                █│ 记号  卷名  页数  基准档   │"
-"│  裁边　　　　　　默认（裁）                    █│ -     卷一   180  跳过     │"
-"│  跨页拆分　　　　默认（拆）                    █│ !     卷二     2  4bit     │"
-"│  拆分阈值　　　　默认（1.5）                   ║│ 隔离                       │"
-"│  阅读方向　　　　默认（rtl）                   ║│失败页（出现的当场，逐页那几│"
-"│  滤波器　　　　　默认（lanczos3）              ║│行在整卷跑完后才有）        │"
-"│  位深　　　　　　自动（判据说了算）            ║│  库/卷二/017.jpg           │"
-"│  抖动　　　　　　自动（判据说了算）            ║│    失败 解不出完整尺寸：   │"
-"│  逐页　　　　　　默认（关）                    ║│    JPEG 数据截断           │"
+"│  适配方式　　　　默认（height）                █│ 记号  目录  卷数           │"
+"│  裁边　　　　　　默认（裁）                    █│ !     库       2  隔离 1 卷│"
+"│  跨页拆分　　　　默认（拆）                    █│失败页（出现的当场，逐页那几│"
+"│  拆分阈值　　　　默认（1.5）                   ║│行在整卷跑完后才有）        │"
+"│  阅读方向　　　　默认（rtl）                   ║│  库/卷二/017.jpg           │"
+"│  滤波器　　　　　默认（lanczos3）              ║│    失败 解不出完整尺寸：   │"
+"│  位深　　　　　　自动（判据说了算）            ║│    JPEG 数据截断           │"
+"│  抖动　　　　　　自动（判据说了算）            ║│                            │"
+"│  逐页　　　　　　默认（关）                    ║│                            │"
 "│  缓存预算　　　　默认（512.0 MiB）             ║│                            │"
 "│  读取策略　　　　默认（auto）                  ║│                            │"
 "│                                                ║│                            │"
@@ -605,14 +611,14 @@ mod tests {
 "│ 出事 隔离 1 卷 · 失败 1 页           │"
 "└──────────────────────────────────────┘"
 "┌报告──────────────────────────────────┐"
-"│ 记号  卷名  页数  基准档  定档页     │"
-"│ -     卷一   180  跳过               │"
-"│ !     卷二     2  4bit    001.jpg  隔│"
-"│ 离                                   │"
+"│ 记号  目录  卷数  基准档分布         │"
+"│ !     库       2  跳过 1 · 4bit 1  隔│"
+"│ 离 1 卷                              │"
 "│失败页（出现的当场，逐页那几行在整卷跑│"
 "│完后才有）                            │"
 "│  库/卷二/017.jpg                     │"
 "│    失败 解不出完整尺寸：JPEG 数据截断│"
+"│                                      │"
 "│                                      │"
 "│                                      │"
 "│                                      │"

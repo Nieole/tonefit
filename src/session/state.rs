@@ -46,7 +46,7 @@ use tonefit::{
 };
 
 use super::complete;
-use super::live::{Live, Reach, Volume};
+use super::live::{Branch, Live, Reach, Volume};
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -236,8 +236,22 @@ pub enum Action {
     /// 真做这件事的就在本模块（[`Session::follow_along`]）：它一格报告都不必读——
     /// 「跟着最新那一卷」是**算出来的**，而这一支只把那件事扳回去。
     Follow,
-    /// **展开**：把[光标停着的那一卷](Session::standing)的逐页那几行摊开来，
-    /// 左栏跟着收起（`CONTEXT.md` 的《会话》：展开）。
+    /// **展开一个目录**：把[光标停着的那一枝](Session::standing)底下那几卷摊成卷表
+    /// （`volume-discovery/08`，`CONTEXT.md` 的《会话》：展开的头一级）。
+    ///
+    /// **它是两级展开里的头一级**：报告区默认那一副是**目录表**（一个目录一行），
+    /// 这一下摊出那一枝底下那几卷，再一下（[展开](Self::Expand)）才是逐页。
+    /// 层次与**发现出来的那棵树**一致——分组只有 `crate::render::grouped` 一处出处，
+    /// 会话这一侧一棵树都不另切。
+    ///
+    /// **左栏这一级不收起**：收起是[展开到页](Self::Expand)带着的那一件事
+    /// （逐页那几行轻松过 100 列），而卷表那几列摆得下，左栏留着才对得上三层。
+    ///
+    /// 挪到哪一枝要数**此刻有哪几枝**，而本模块读不到那一趟攒下来的东西——
+    /// 真做这件事的因此是 [`super::press`]，与[展开](Self::Expand)同一条分法。
+    Open,
+    /// **展开一卷**：把[光标停着的那一卷](Session::standing)的逐页那几行摊开来，
+    /// 左栏跟着收起（`CONTEXT.md` 的《会话》：展开的第二级）。
     ///
     /// **展开的是光标停着的那一卷，不再恒是第一卷**（`p3-session-legibility/10`）：
     /// 报告区从此有自己的光标，而「展开哪一卷」正是它答的那件事。
@@ -255,11 +269,14 @@ pub enum Action {
     /// 与[展开](Self::Expand)同样落在 [`super::press`] 那一层：挪到哪一卷要数
     /// **此刻有哪几卷**，而本模块读不到那一趟攒下来的东西。
     Turn(Step),
-    /// **收起**：逐页那几行收起来，左栏回来。
+    /// **收起一级**：退回展开进来的那一级（`volume-discovery/08` 票面第二条：
+    /// 两级展开各有一个键回得去）。
     ///
-    /// 与展开不对称——收起不必读报告，因此它就在本模块做掉。
-    /// **回的是[报告区](Focus::Report)**，不是左栏：展开是从那一块进去的
-    /// （光标停着的那一卷），退一步该退到刚才站的地方去。
+    /// 与展开不对称——收起不必读报告，因此它就在本模块做掉。**退的恒是一级**：
+    /// [展开着一卷](Focus::Expanded)时回到[它那一枝的卷表](Focus::Opened)，
+    /// [展开着一枝](Focus::Opened)时回到[目录表](Focus::Report)。
+    /// 一个动作而不是两个：它答的是同一句话——「退到上一级去」，
+    /// 而退到哪一级由眼下站在哪一级说了算（与[退一步](Self::Cancel)同一个形状）。
     Collapse,
     /// **换一副列法**：只列[要紧的页](Listing::Notable) ⇄ 列[全部页](Listing::All)
     /// （`a`，票面第二条）。
@@ -634,6 +651,19 @@ pub enum Focus {
     /// 光标停在哪一卷**不装在这一格里**（在 [`Session::follow`] 上）：
     /// `⇥` 切回左栏再切回来时它还在原处——切焦点不是「重新开始读」。
     Report,
+    /// 报告区**展开着一个目录**：那一枝底下那几卷摊成卷表，左栏**还在场**
+    /// （`volume-discovery/08`）。
+    ///
+    /// **两级展开的头一级**：默认那一副是[目录表](Self::Report)——一个目录一行，
+    /// 一屏看得完；这一级摊出那一枝底下那几卷；[第二级](Self::Expanded)才是逐页。
+    ///
+    /// **这一级左栏不收起**：收起与展开**到页**才是同一件事（见 [`Self::Expanded`]）
+    /// ——卷表那几列摆得下，而左栏在这一刻仍旧答着「这一趟照哪几项跑的」。
+    ///
+    /// 那一格装的是**哪一枝**（目录路径）。光标停在哪一卷**不装在这里**
+    /// （在 [`Session::follow`] 上，与[目录表](Self::Report)共用同一个光标）：
+    /// 屏上那个光标恒是**一卷**，目录表反白的是它所在的那一枝。
+    Opened(PathBuf),
     /// 报告区**展开**着一卷的逐页，左栏收着（`CONTEXT.md` 的《会话》：展开）。
     ///
     /// 「展开」与「左栏收起」是**同一件事**，不是两个开关：spec 的《会话：布局与交互》
@@ -776,9 +806,11 @@ pub enum KeyGroup {
     Config,
     /// 取值栏：就地摊开的那一列取值。
     Valuing,
-    /// 报告区：卷表。
+    /// 报告区：目录表。
     Report,
-    /// 展开着：逐页表。
+    /// 展开着一枝：卷表。
+    Opened,
+    /// 展开着一卷：逐页表。
     Expanded,
     /// 预设栏。
     Picking,
@@ -787,13 +819,15 @@ pub enum KeyGroup {
 }
 
 impl KeyGroup {
-    /// 六组，次序就是 `?` 那张表上的次序：**屏上进得去的次序**——
-    /// 左栏起头（一切从它进去），取值栏跟着它，报告区与展开着是一对，
-    /// 预设栏收尾，「任何时候」摆在最后（它不是屏上的一块）。
-    pub const ALL: [KeyGroup; 6] = [
+    /// 七组，次序就是 `?` 那张表上的次序：**屏上进得去的次序**——
+    /// 左栏起头（一切从它进去），取值栏跟着它，报告区与展开着那两级是一串
+    /// （目录表 → 卷表 → 逐页表），预设栏收尾，
+    /// 「任何时候」摆在最后（它不是屏上的一块）。
+    pub const ALL: [KeyGroup; 7] = [
         KeyGroup::Config,
         KeyGroup::Valuing,
         KeyGroup::Report,
+        KeyGroup::Opened,
         KeyGroup::Expanded,
         KeyGroup::Picking,
         KeyGroup::Always,
@@ -813,7 +847,7 @@ impl KeyGroup {
     fn reachable(self, stage: Stage) -> bool {
         match self {
             Self::Valuing | Self::Picking => !stage.read_only(),
-            Self::Report | Self::Expanded => stage != Stage::Fresh,
+            Self::Report | Self::Opened | Self::Expanded => stage != Stage::Fresh,
             Self::Config | Self::Always => true,
         }
     }
@@ -823,8 +857,9 @@ impl KeyGroup {
         match self {
             Self::Config => "左栏 · 三层配置",
             Self::Valuing => "取值栏 · 摊开的那一列",
-            Self::Report => "报告区 · 卷表",
-            Self::Expanded => "展开着 · 逐页表",
+            Self::Report => "报告区 · 目录表",
+            Self::Opened => "展开一个目录 · 卷表",
+            Self::Expanded => "展开一卷 · 逐页表",
             Self::Picking => "预设栏",
             Self::Always => "任何时候",
         }
@@ -1106,8 +1141,17 @@ impl Naming {
 /// **不叫 `Reading`。** 展开是屏上那件事本身（报告区摊开了一卷的逐页、左栏收着），
 /// 「在读」是用户的意图——后者会让人以为还有一个「不展开地读」的状态，而那个状态
 /// 不存在（见 [`Focus::Expanded`]）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expansion {
+    /// 展开进来的是**哪一枝**（目录路径，`volume-discovery/08`）。
+    ///
+    /// **[收起](Action::Collapse)靠它退回上一级**：两级展开各有一个键回得去，
+    /// 而「上一级是哪一枝」只有展开那一刻答得出——本模块读不到那一趟攒下来的报告，
+    /// 收起的时候再去数一遍就要多一个出处。
+    ///
+    /// **[换一卷](Action::Turn)也只在这一枝底下转**：层次与发现出来的那棵树一致，
+    /// 一个 `⇥` 不该把人从这一枝甩到另一枝上去。
+    pub directory: PathBuf,
     /// 展开的是**哪一卷**（[`Volume`]）。
     ///
     /// **不再是「报告上第几卷」**（`p3-session-legibility/10`）：决策点上那一卷也展得开，
@@ -1142,8 +1186,9 @@ impl Expansion {
     /// **「这一趟有几卷」不记在这里**（从前那一格是进来那一刻的快照）：
     /// 跑着的时候也展得开，而报告那时还在长——记下来的那个数下一卷收摊就不作数了。
     /// 要它的两处（换一卷转一圈、抬头上那个「第几/共几卷」）各自现问 [`Live`]。
-    pub(super) fn new(volume: Volume) -> Self {
+    pub(super) fn new(directory: PathBuf, volume: Volume) -> Self {
         Self {
+            directory,
             volume,
             at: 0,
             listing: Listing::default(),
@@ -1154,8 +1199,9 @@ impl Expansion {
     ///
     /// 光标不跟着走，是因为「第几页」在两卷之间指的不是同一件事；
     /// 列法跟着走，是因为它指的是**同一件事**（见 [`listing`](Self::listing)）。
-    pub(super) fn turned_to(self, volume: Volume) -> Self {
+    pub(super) fn turned_to(&self, directory: PathBuf, volume: Volume) -> Self {
         Self {
+            directory,
             volume,
             at: 0,
             listing: self.listing,
@@ -1305,6 +1351,7 @@ impl Session {
             Focus::Config
             | Focus::Editing(_)
             | Focus::Report
+            | Focus::Opened(_)
             | Focus::Expanded(_)
             | Focus::Picking(_)
             | Focus::Valuing(_) => None,
@@ -1391,23 +1438,50 @@ impl Session {
         };
     }
 
-    /// **卷表上那个光标此刻停在哪一卷上**（`CONTEXT.md` 的《会话》：跟随）。
+    /// **报告区那个光标此刻停在哪一卷上**（`CONTEXT.md` 的《会话》：跟随）。
     ///
     /// [跟随](Follow::Latest)着的时候是**最新的那一卷**——它是算出来的，不是记着的：
     /// 报告长一卷它就跟着走一卷。停了的时候是停着的那一卷，而那一卷若已经不在
     /// （决策点上那一份收摊了）就落到最后一卷上（[`Live::nearest`]）。
     ///
+    /// **[展开着一枝](Focus::Opened)时它收在这一枝底下**（`volume-discovery/08`）：
+    /// 跟随着的时候最新那一卷随时可能落到**另一枝**上，而屏上摆的是这一枝的卷表——
+    /// 不收的话，那一格一行都不反白，而 `⏎` 展开的会是屏上根本没有的那一卷。
+    /// 收法是落到**这一枝的末一卷**上：跟随说的是「跟着最新的走」，
+    /// 而这一枝里最新的就是它。那一枝一卷都收不住时是 `None`——光标停不上去。
+    ///
     /// **收 `&Live`**：这一问要数「此刻有哪几卷」，而那份东西在那一趟上，不在本模块。
     /// 一卷都没有时是 `None`——那时屏上没有一处画得出光标。
     pub fn standing(&self, live: &Live) -> Option<Volume> {
-        match self.follow {
+        let at = match self.follow {
             Follow::Latest => live.volumes().last().copied(),
             Follow::Stopped(at) => live.nearest(at),
+        }?;
+        let Some(directory) = self.opened() else {
+            return Some(at);
+        };
+        // 那一枝不在了（报告换了一趟）就原样给出去：这一格答的是「光标停在哪一卷」，
+        // 而「那一副此刻画的是哪一级」由画法那一层就近收（见 `super::draw::report`）。
+        match live
+            .branches()
+            .into_iter()
+            .find(|branch| branch.directory == directory)
+        {
+            Some(branch) if !branch.volumes.contains(&at) => branch.volumes.last().copied(),
+            _ => Some(at),
         }
     }
 
-    /// **卷表上的光标挪一卷**：往前或往后一格，**两头都绕回去**（与左栏那一列同一条，
+    /// **报告区那个光标挪一格**：往前或往后，**两头都绕回去**（与左栏那一列同一条，
     /// 见 [`around`]）。挪完[跟随就停了](Follow::Stopped)——票面第三条：光标一动就停。
+    ///
+    /// **挪一格是什么随站在哪一级而变**（`volume-discovery/08`），而光标**恒是一卷**：
+    ///
+    /// - [目录表](Focus::Report)上挪的是**一枝**：落到相邻那一枝的**头一卷**上。
+    ///   一卷都停不住的那一枝跳过——那几卷全没做成，连一份卷报告都没有
+    ///   （见 [`Branch::volumes`](super::live::Branch::volumes)）。
+    /// - [展开着一枝](Focus::Opened)时挪的是**这一枝底下那几卷**，转的圈也只有这一枝
+    ///   ——层次与发现出来的那棵树一致，一个 `↓` 不该把人甩到另一枝上去。
     ///
     /// 收 `&Live` 的理由与 [`standing`](Self::standing) 同一条：挪到哪一卷要数
     /// 此刻有哪几卷。**一卷都没有时一格不动**，屏上那时也不摆这两个键
@@ -1416,15 +1490,74 @@ impl Session {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条——
         // 这一支不经过它（挪到哪一卷要读那一趟攒下来的报告，见 [`Action::Select`]）。
         self.says(None);
-        let volumes = live.volumes();
-        let Some(last) = volumes.len().checked_sub(1) else {
+        let branches = live.branches();
+        let Some(next) = (match self.opened() {
+            Some(directory) => Self::next_volume(&branches, directory, self.standing(live), step),
+            None => Self::next_branch(&branches, self.standing(live), step),
+        }) else {
             return;
         };
-        let at = self
-            .standing(live)
-            .and_then(|at| volumes.iter().position(|listed| *listed == at))
+        self.follow = Follow::Stopped(next);
+    }
+
+    /// **一枝底下挪一卷**：在这一枝停得住的那几卷上挪一格，两头转一圈。
+    ///
+    /// 那一枝不在了（报告换了一趟）或者它一卷都停不住时一格不动。
+    fn next_volume(
+        branches: &[Branch],
+        directory: &Path,
+        standing: Option<Volume>,
+        step: Step,
+    ) -> Option<Volume> {
+        let inside = &branches
+            .iter()
+            .find(|branch| branch.directory == directory)?
+            .volumes;
+        let last = inside.len().checked_sub(1)?;
+        let at = standing
+            .and_then(|at| inside.iter().position(|listed| *listed == at))
             .unwrap_or(last);
-        self.follow = Follow::Stopped(volumes[around(at, volumes.len(), step)]);
+        inside.get(around(at, inside.len(), step)).copied()
+    }
+
+    /// **挪一枝**：落到相邻那一枝的头一卷上，两头转一圈。
+    ///
+    /// **只在停得住的那几枝上转**：一卷都收不住的那一枝在屏上照旧占一行，
+    /// 光标却停不上去——与卷表上没做成那几行同一条规矩。
+    ///
+    /// **只有一枝时一格不动，跟随也不停**（点名一个目录跑就是这一档）：转一圈回到
+    /// 原地，屏上分毫不变，而把跟随停掉是**看不见的后果**——从此新卷收摊光标不再跟着走。
+    /// 「按了没反应」比「按了偷偷改了个状态」好（`CONTEXT.md` 的《跟随》：
+    /// 光标一挪跟随就停了——这一下压根没挪）。
+    fn next_branch(branches: &[Branch], standing: Option<Volume>, step: Step) -> Option<Volume> {
+        let standable: Vec<&Branch> = branches
+            .iter()
+            .filter(|branch| !branch.volumes.is_empty())
+            .collect();
+        let last = standable.len().checked_sub(1)?;
+        if last == 0 {
+            return None;
+        }
+        let at = standing
+            .and_then(|at| {
+                standable
+                    .iter()
+                    .position(|branch| branch.volumes.contains(&at))
+            })
+            .unwrap_or(last);
+        standable
+            .get(around(at, standable.len(), step))
+            .and_then(|branch| branch.volumes.first().copied())
+    }
+
+    /// **展开一枝**：那一枝底下那几卷摊成卷表，左栏还在场
+    /// （`volume-discovery/08` 票面第二条）。
+    ///
+    /// 展开的是哪一枝由 [`super::press`] 数出来（要读那一趟攒下来的报告），
+    /// 与[展开一卷](Self::expand)同一条分法。
+    pub(super) fn open(&mut self, directory: PathBuf) {
+        self.says(None);
+        self.focus = Focus::Opened(directory);
     }
 
     /// **回到跟随**：光标交回给最新的那一卷（`g`，票面第三条）。
@@ -1491,6 +1624,22 @@ impl Session {
             Focus::Config
             | Focus::Editing(_)
             | Focus::Report
+            | Focus::Opened(_)
+            | Focus::Picking(_)
+            | Focus::Valuing(_)
+            | Focus::Overlaid(_) => None,
+        }
+    }
+
+    /// 报告区此刻**展开着哪一枝**（目录路径）。没展开就是 `None`——那是默认那一档：
+    /// 报告区摆的是**目录表**，一个目录一行（`volume-discovery/08` 票面第一条）。
+    pub fn opened(&self) -> Option<&Path> {
+        match &self.focus {
+            Focus::Opened(directory) => Some(directory),
+            Focus::Config
+            | Focus::Editing(_)
+            | Focus::Report
+            | Focus::Expanded(_)
             | Focus::Picking(_)
             | Focus::Valuing(_)
             | Focus::Overlaid(_) => None,
@@ -1504,6 +1653,7 @@ impl Session {
             Focus::Config
             | Focus::Editing(_)
             | Focus::Report
+            | Focus::Opened(_)
             | Focus::Expanded(_)
             | Focus::Valuing(_)
             | Focus::Overlaid(_) => None,
@@ -1522,6 +1672,7 @@ impl Session {
             Focus::Config
             | Focus::Editing(_)
             | Focus::Report
+            | Focus::Opened(_)
             | Focus::Expanded(_)
             | Focus::Picking(_)
             | Focus::Overlaid(_) => None,
@@ -1662,6 +1813,7 @@ impl Session {
             Focus::Config => self.config_action(key),
             Focus::Editing(edit) => editing_action(edit, key),
             Focus::Report => report_action(key, self.stage),
+            Focus::Opened(_) => opened_action(key, self.stage),
             Focus::Expanded(expansion) => expanded_action(expansion, key, self.stage),
             Focus::Picking(picker) => picking_action(picker, key),
             Focus::Valuing(values) => valuing_action(values, key),
@@ -1761,9 +1913,14 @@ impl Session {
                 _ => valuing_action(&a_column_of_values(), key),
             },
             KeyGroup::Report => report_action(key, self.stage),
+            KeyGroup::Opened => opened_action(key, self.stage),
             KeyGroup::Expanded => match self.beneath() {
                 Focus::Expanded(expansion) => expanded_action(expansion, key, self.stage),
-                _ => expanded_action(&Expansion::new(Volume::Settled(0)), key, self.stage),
+                _ => expanded_action(
+                    &Expansion::new(PathBuf::new(), Volume::Settled(0)),
+                    key,
+                    self.stage,
+                ),
             },
             KeyGroup::Picking => match self.beneath() {
                 Focus::Picking(picker) => listing_action(picker, key),
@@ -1906,7 +2063,7 @@ impl Session {
             // 它随后调 [`expand`](Self::expand) 与 [`select`](Self::select)。
             // 与[起一趟](Action::Start)同一条分法，因此这里到不了；
             // 真到了也只是这一下没挪、没展开，不是错。
-            Action::Expand | Action::Turn(_) | Action::Select(_) => {}
+            Action::Open | Action::Expand | Action::Turn(_) | Action::Select(_) => {}
             // 切焦点与回到跟随两支反过来：一格报告都不必读，因此就在本模块做掉。
             Action::Focus(pane) => self.look_at(pane),
             Action::Follow => self.follow_along(),
@@ -1919,9 +2076,15 @@ impl Session {
             // 走的是 [`super::press`]，它随后调 [`charted`](Self::charted)。
             // 与上面那三支同一条分法，因此这里到不了——真到了也只是这一下没出图，不是错。
             Action::Chart => {}
-            // 收起回的是**报告区**，不是左栏：展开是从那一块进去的（光标停着的那一卷），
-            // 而左栏一个 `⇥` 之外。
-            Action::Collapse => self.focus = Focus::Report,
+            // **收起退的恒是一级**（`volume-discovery/08` 票面第二条）：展开着一卷时
+            // 回到它那一枝的卷表，展开着一枝时回到目录表。回的都不是左栏——
+            // 展开是从报告区那一块进去的，而左栏一个 `⇥` 之外。
+            Action::Collapse => {
+                self.focus = match &self.focus {
+                    Focus::Expanded(expansion) => Focus::Opened(expansion.directory.clone()),
+                    _ => Focus::Report,
+                };
+            }
             // 掀开一张覆盖层就在本模块做掉：键位表那一张要的东西本模块全有
             // （[`key_table`](Self::key_table) 问的就是这张按键表自己）。
             // [这一趟的前提](Overlay::Premises)那一张先由 [`super::press`] 挡一道
@@ -2181,6 +2344,7 @@ impl Session {
             }
             Focus::Config
             | Focus::Report
+            | Focus::Opened(_)
             | Focus::Expanded(_)
             | Focus::Picking(_)
             | Focus::Valuing(_)
@@ -2310,7 +2474,11 @@ fn minds_its_own_letters(focus: &Focus) -> bool {
     match focus {
         Focus::Editing(_) | Focus::Overlaid(_) => true,
         Focus::Picking(picker) => picker.naming.is_some(),
-        Focus::Config | Focus::Report | Focus::Expanded(_) | Focus::Valuing(_) => false,
+        Focus::Config
+        | Focus::Report
+        | Focus::Opened(_)
+        | Focus::Expanded(_)
+        | Focus::Valuing(_) => false,
     }
 }
 
@@ -2538,27 +2706,60 @@ fn deciding_action(key: Key) -> Action {
     }
 }
 
-/// **焦点落在报告区时的按键表**：`↑↓` 选一卷，`⏎` 展开它，`g` 回到跟随，
-/// `⇥` 切回左栏（`p3-session-legibility/10`）。
+/// **焦点落在报告区时的按键表**：报告区默认那一副是**目录表**——一个目录一行
+/// （`volume-discovery/08`）。`↑↓` 选一枝，`⏎` 展开它（摊出那一枝底下那几卷），
+/// `e` 直接展开逐页，`g` 回到跟随，`⇥` 切回左栏。
 ///
-/// **`↑↓` 挪的是卷表上那个光标**，不是左栏那一行：焦点此刻在这一块上，
-/// 而屏上只有一处反白（见 `super::draw::config` 与 `super::draw::report`）。
-/// 一卷一格，不是一行一格——表上成句的那几行、摆在一卷底下的那几句都不是「一卷」，
-/// 光标停在它们上面没有第二步可走。`j`／`k` 跟着 `↑↓`，与别处一个待遇。
+/// **`↑↓` 挪的仍旧是那一个光标，而它停的恒是一卷**（`CONTEXT.md` 的《会话》：跟随）：
+/// 目录表反白的是**光标所在的那一枝**，这两个键把它挪到相邻那一枝的头一卷上。
+/// 一枝底下一卷都停不住时（那几卷全没做成）跳过它——与卷表上没做成那几行停不上去
+/// 是同一条规矩。`j`／`k` 跟着 `↑↓`，与别处一个待遇。
+///
+/// **`⏎`／空格是「就在这一行上动手」**，与左栏、预设栏那两块逐字同一个手势：
+/// 这一行是一枝，动手就是[展开它](Action::Open)。**`e` 不是它的同义词**——
+/// `e` 恒是「展开这一卷的逐页」（左栏跟着收起），在左栏、目录表、卷表三块上是同一件事，
+/// 而 `⏎` 是「往下走一级」。两个键因此各答各的：一个跳到底，一个走一级。
 ///
 /// **`g` 回到跟随**（`CONTEXT.md` 的《会话》：跟随）：光标一动跟随就停了，
 /// 而几十分钟的一趟里「跟着最新那一卷」是回得去的默认那一档。取 `g` 是因为
 /// 「回到头上／回到最新」在别处的翻页器上也是它，而会话里这个字母还没有主。
 ///
-/// **`←→` 在这里不派动作**：卷表横着摆不下时**砍列**（`crate::session::columns`），
-/// 不横着滚——横滚那一套是展开那一副的事（逐页那两行不折行）。
+/// **`←→` 在这里不派动作**：表横着摆不下时**砍列**（`crate::session::columns`），
+/// 不横着滚。
 ///
 /// **`t`／`x`／`p`／`c` 归左栏**：起一趟之前要看的是三层，而焦点此刻不在它上面
 /// （与[展开着](expanded_action)同一条）。它们一个 `⇥` 之外。
 ///
 /// 剩下的交给[阶段那一维](stage_action)：按停与答话那三个在这一块上照样按得动
-/// （票面第五条），而 `q`／`Esc` 照旧只在没跑过与收场了那两个阶段上退得出去。
+/// （票面第五条），而 `q`／`Esc` 照旧只在没跑过与收场了那两个阶段上退得出去
+/// ——**这一级已经是报告区的顶上，没有上一级可退**。
 fn report_action(key: Key, stage: Stage) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Select(Step::Back),
+        Key::Down | Key::Char('j') => Action::Select(Step::Next),
+        Key::Enter | Key::Space => Action::Open,
+        Key::Char('e') => Action::Expand,
+        Key::Char('g') => Action::Follow,
+        // `⇧⇥` 也切回去：这一维上只有两块，两个方向到的是同一处。
+        Key::Tab | Key::BackTab => Action::Focus(Pane::Config),
+        other => stage_action(other, stage),
+    }
+}
+
+/// **展开着一枝时的按键表**：`↑↓` 选一卷，`⏎`／`e` 展开它的逐页，`g` 回到跟随，
+/// `Esc` 收起回目录表，`⇥` 切回左栏（`volume-discovery/08`）。
+///
+/// **这一块就是从前的报告区**：`p3-session-legibility/10` 立的那几个键一个没动，
+/// 只是它此刻列的是**一枝底下**那几卷，而不是整趟那几卷——层次与发现出来的那棵树一致。
+///
+/// **`Esc` 在这里是收起一级**，不是退出会话：这一级是展开进来的，退一步该退到
+/// 刚才那一级去（与[展开着一卷](expanded_action)那一处同一个形状）。
+/// 退出会话在这一块上仍旧有 `Ctrl-C`，而 `q` 归[阶段那一维](stage_action)——
+/// 它在没跑过与收场了那两个阶段上照旧退得出去。
+///
+/// **`⏎` 与 `e` 在这一块上是同义的**：这一行是一卷，「往下走一级」与「展开这一卷的
+/// 逐页」到的是同一处。目录表那一块上两者才分岔（见 [`report_action`]）。
+fn opened_action(key: Key, stage: Stage) -> Action {
     match key {
         Key::Up | Key::Char('k') => Action::Select(Step::Back),
         Key::Down | Key::Char('j') => Action::Select(Step::Next),
@@ -2566,6 +2767,7 @@ fn report_action(key: Key, stage: Stage) -> Action {
         // `e` 也留着：展开那个键在左栏上就是它，切过焦点不该换一个键。
         Key::Enter | Key::Space | Key::Char('e') => Action::Expand,
         Key::Char('g') => Action::Follow,
+        Key::Esc => Action::Collapse,
         // `⇧⇥` 也切回去：这一维上只有两块，两个方向到的是同一处。
         Key::Tab | Key::BackTab => Action::Focus(Pane::Config),
         other => stage_action(other, stage),
@@ -3785,7 +3987,8 @@ mod tests {
         assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Report));
 
         // 六之三、**焦点落在报告区上**（`p3-session-legibility/10`，ADR 0017）：
-        // `↑↓` 选一卷、`⏎` 展开它、`g` 回到跟随、`⇥` 切回左栏，
+        // 报告区默认那一副是**目录表**（`volume-discovery/08`）——`↑↓` 选一枝、
+        // `⏎` 展开这一枝、`e` 直接展开逐页、`g` 回到跟随、`⇥` 切回左栏，
         // 而**阶段那一维那几个键一个不少**——答话那三个在这一块上照样按得动
         // （票面第五条），三层照旧一个改动键都不派（票面第四条）。
         session.press(Key::Tab);
@@ -3795,8 +3998,10 @@ mod tests {
         assert_eq!(session.action(Key::Char('j')), Action::Select(Step::Next));
         assert_eq!(session.action(Key::Up), Action::Select(Step::Back));
         assert_eq!(session.action(Key::Char('k')), Action::Select(Step::Back));
-        assert_eq!(session.action(Key::Enter), Action::Expand);
-        assert_eq!(session.action(Key::Space), Action::Expand);
+        // `⏎`／空格是「就在这一行上动手」——这一行是一枝，动手就是展开它；
+        // `e` 恒是「展开这一卷的逐页」，两个键各答各的（见 [`report_action`]）。
+        assert_eq!(session.action(Key::Enter), Action::Open);
+        assert_eq!(session.action(Key::Space), Action::Open);
         assert_eq!(session.action(Key::Char('e')), Action::Expand);
         assert_eq!(session.action(Key::Char('g')), Action::Follow);
         assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Config));
@@ -3844,7 +4049,7 @@ mod tests {
         assert_eq!(session.action(Key::Char('x')), Action::Ignored);
         assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
         assert_eq!(session.action(Key::Up), Action::Select(Step::Back));
-        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Enter), Action::Open);
         assert_eq!(session.action(Key::Char('g')), Action::Follow);
         assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Config));
         // 回左栏：按停那个键在那一块上照旧是升闩——两块上是同一件事。
@@ -3869,7 +4074,7 @@ mod tests {
         session.press(Key::Tab);
         assert_eq!(session.focus(), &Focus::Report);
         assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
-        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Enter), Action::Open);
         assert_eq!(session.action(Key::Char('g')), Action::Follow);
         assert_eq!(session.action(Key::Char('q')), Action::Quit);
         assert_eq!(session.action(Key::Esc), Action::Quit);
@@ -3897,9 +4102,52 @@ mod tests {
         session.press(Key::Tab);
         assert_eq!(Session::new().action(Key::Tab), Action::Ignored);
 
+        // 六之五、**展开着一枝**（`volume-discovery/08`）：这一块就是从前的报告区——
+        // `↑↓` 选一卷、`⏎`／`e` 展开它的逐页、`g` 回到跟随、`⇥` 切回左栏，
+        // 出路多一个 `Esc`（收起回目录表）。
+        session.press(Key::Tab);
+        session.open(PathBuf::from("库"));
+        assert_eq!(session.focus(), &Focus::Opened(PathBuf::from("库")));
+        assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Select(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Select(Step::Back));
+        // 这一行是一卷，「往下走一级」与「展开这一卷的逐页」到的是同一处。
+        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Space), Action::Expand);
+        assert_eq!(session.action(Key::Char('e')), Action::Expand);
+        assert_eq!(session.action(Key::Char('g')), Action::Follow);
+        assert_eq!(session.action(Key::Esc), Action::Collapse, "Esc 该收起一级");
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Config));
+        assert_eq!(session.action(Key::BackTab), Action::Focus(Pane::Config));
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        for key in [
+            Key::Left,
+            Key::Right,
+            Key::Backspace,
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('s'),
+            Key::Char('d'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('z'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 展开着一枝时不该生效"
+            );
+        }
+        // 收起一级回目录表，再切回左栏——两级各有一个键回得去。
+        session.press(Key::Esc);
+        assert_eq!(session.focus(), &Focus::Report);
+        session.press(Key::Tab);
+
         // 七、展开之后：`↑↓` 选一页，`a` 换一副列法，`⇥` 换一卷，`e`／`Esc` 收起。
         // 起一趟的那两个键在这里按不动——报告区正摊着上一趟的逐页。
-        session.expand(Expansion::new(Volume::Settled(0)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(0)));
         assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
         assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
@@ -4125,10 +4373,10 @@ mod tests {
     #[test]
     fn an_overlay_covers_one_block_and_gives_it_back() {
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(2)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(2)));
         session.press(Key::Down);
         session.press(Key::Char('a'));
-        let expanded = session.expansion().copied().expect("展开着");
+        let expanded = session.expansion().cloned().expect("展开着");
 
         session.press(Key::Char('?'));
         assert!(session.overlay().is_some(), "没掀开");
@@ -4151,7 +4399,7 @@ mod tests {
             Some(Overlay::Premises)
         );
         session.press(Key::Esc);
-        assert_eq!(session.expansion().copied(), Some(expanded), "没原样还回来");
+        assert_eq!(session.expansion().cloned(), Some(expanded), "没原样还回来");
     }
 
     /// **跑着与等答话时覆盖层照旧掀得开，而掀着的时候按停与答话那三个按不动**
@@ -4470,7 +4718,7 @@ mod tests {
         let before = session.clone();
 
         // 展开：报告区摊开第一卷，左栏这一刻不在屏上（画法那一侧，见 `super::draw`）。
-        session.expand(Expansion::new(Volume::Settled(0)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(0)));
         assert_eq!(
             session.expansion().map(|expansion| expansion.volume),
             Some(Volume::Settled(0))
@@ -4478,18 +4726,26 @@ mod tests {
         // 三层在展开着的时候一格都没动——收起来的东西还在原处。
         assert_eq!(session.taste.bit_depth, Some(BitDepth::Four));
 
-        // 收起：一个键（`Esc` 或 `e`）就回到报告区，`⇥` 再回左栏——
-        // 那一下之后会话与展开之前逐格相同。
+        // 收起：一个键（`Esc` 或 `e`）**退一级**回到那一枝的卷表，再一下回目录表，
+        // `⇥` 再回左栏——那一串之后会话与展开之前逐格相同
+        // （`volume-discovery/08` 票面第二条：两级展开各有一个键回得去）。
         assert_eq!(session.press(Key::Esc), Exit::Stay);
         assert!(session.expansion().is_none(), "收起之后还展开着");
-        assert_eq!(session.focus(), &Focus::Report, "收起没回报告区");
+        assert_eq!(
+            session.focus(),
+            &Focus::Opened(PathBuf::from("库")),
+            "收起没退回展开进来的那一枝"
+        );
+        assert_eq!(session.press(Key::Esc), Exit::Stay);
+        assert_eq!(session.focus(), &Focus::Report, "再一下没回目录表");
         assert_eq!(session.press(Key::Tab), Exit::Stay);
         assert_eq!(session, before, "收起之后会话与展开之前不一样了");
 
         // 另一个键也收得起来：`e` 是展开那个键按回去。
-        session.expand(Expansion::new(Volume::Settled(1)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(1)));
         assert_eq!(session.press(Key::Char('e')), Exit::Stay);
-        assert_eq!(session.focus(), &Focus::Report);
+        assert_eq!(session.focus(), &Focus::Opened(PathBuf::from("库")));
+        session.press(Key::Esc);
         session.press(Key::Tab);
         assert_eq!(session, before);
     }
@@ -4510,11 +4766,16 @@ mod tests {
     /// 四件事一条问齐：跟随着的时候光标是**算出来的**（一卷收摊它就跟着走一卷）；
     /// 挪一下跟随就停了，报告再长它也不动；两头都绕得回去（与左栏那一列同一条）；
     /// `g` 把它交回给跟随。
+    ///
+    /// **挪一卷是展开一枝之后那一级的事**（`volume-discovery/08`）：默认那一副是
+    /// 目录表，`↑↓` 在那一级上挪的是一枝。夹具里那几卷都躺在同一个目录底下，
+    /// 因此先展开那一枝再问。
     #[test]
     fn the_report_cursor_picks_a_volume_and_stops_following_the_moment_it_moves() {
         let mut live = two_volumes_in();
         let mut session = Session::new();
         session.run_started();
+        session.open(PathBuf::from("库"));
 
         // 跟随：光标恒是最新收摊的那一卷，没有一处记着「停在第几卷」。
         assert_eq!(session.follow(), Follow::Latest);
@@ -4547,6 +4808,116 @@ mod tests {
         assert_eq!(session.follow(), Follow::Latest, "一卷都没有却停了跟随");
     }
 
+    /// **目录表上挪的是一枝，展开一枝之后挪的才是一卷**（`volume-discovery/08`
+    /// 票面第二条）。
+    ///
+    /// 屏上那个光标**恒是一卷**（`CONTEXT.md` 的《会话》：跟随）：目录那一级只是把它
+    /// 归到一行上，挪一枝就是落到相邻那一枝的**头一卷**上。
+    ///
+    /// **一卷都停不住的那一枝跳过去**：那几卷全没做成，连一份卷报告都没有——
+    /// 与卷表上没做成那几行停不上去是同一条规矩。
+    #[test]
+    fn the_cursor_moves_by_branch_on_the_directory_table_and_by_volume_inside_one() {
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        live.run_started(4, 4000);
+        for name in ["甲/第1话", "甲/第2话", "乙/第1话"] {
+            live.volume_started(Path::new(name), 1000);
+            live.volume_finished(&fixture::skipped_volume(name, 10));
+        }
+        live.volume_failed(Path::new("库/丙/没做成"), "卷根不在了");
+        let mut session = Session::new();
+        session.run_started();
+
+        // 三枝：甲（两卷）、乙（一卷）、丙（一卷都停不住）。
+        assert_eq!(live.branches().len(), 3);
+        // 跟随着：光标停在最新收摊的那一卷上，也就是乙那一枝。
+        assert_eq!(session.standing(&live), Some(Volume::Settled(2)));
+
+        // 目录表上往前一枝：落到甲那一枝的**头一卷**上，不是它的末一卷。
+        session.select(&live, Step::Back);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(0)));
+        // 再往前一枝：两头绕回去，而丙那一枝**跳过去了**——它一卷都停不住。
+        session.select(&live, Step::Back);
+        assert_eq!(
+            session.follow(),
+            Follow::Stopped(Volume::Settled(2)),
+            "光标停到了一卷都停不住的那一枝上"
+        );
+
+        // 展开甲那一枝：这一级挪的是**它底下那几卷**，转的圈也只有这一枝。
+        session.open(PathBuf::from("库/甲"));
+        session.follow_along();
+        session.select(&live, Step::Next);
+        assert_eq!(
+            session.follow(),
+            Follow::Stopped(Volume::Settled(0)),
+            "跟随着的那一卷不在这一枝上时该落到这一枝的末一卷再往下转一格"
+        );
+        session.select(&live, Step::Next);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(1)));
+        session.select(&live, Step::Next);
+        assert_eq!(
+            session.follow(),
+            Follow::Stopped(Volume::Settled(0)),
+            "转出了这一枝"
+        );
+    }
+
+    /// **只有一枝时，目录表上按 `↑↓` 一格不动，跟随也不停**（`volume-discovery/08`）。
+    ///
+    /// 点名一个目录跑就是这一档，仓库里的夹具也全是它。转一圈回到原地，屏上分毫不变，
+    /// 而把跟随停掉是**看不见的后果**——从此新卷收摊光标不再跟着走
+    /// （`CONTEXT.md` 的《跟随》：光标一挪跟随就停了，而这一下压根没挪）。
+    #[test]
+    fn one_branch_alone_neither_moves_the_cursor_nor_stops_the_follow() {
+        let live = two_volumes_in();
+        let mut session = Session::new();
+        session.run_started();
+        assert_eq!(live.branches().len(), 1, "夹具不止一枝");
+
+        session.select(&live, Step::Next);
+        assert_eq!(session.follow(), Follow::Latest, "一枝独走却停了跟随");
+        session.select(&live, Step::Back);
+        assert_eq!(session.follow(), Follow::Latest);
+        // 跟随照旧跟着走：又收摊一卷，光标落到它上面。
+        let mut longer = live.clone();
+        longer.volume_started(Path::new("卷三"), 1000);
+        longer.volume_finished(&fixture::skipped_volume("卷三", 10));
+        assert_eq!(session.standing(&longer), Some(Volume::Settled(2)));
+    }
+
+    /// **展开着一枝时，光标收在这一枝底下**（`volume-discovery/08`）。
+    ///
+    /// 跟随着的时候最新那一卷随时可能落到**另一枝**上，而屏上摆的是这一枝的卷表：
+    /// 不收的话，那一格一行都不反白，而 `⏎` 展开的会是屏上根本没有的那一卷。
+    #[test]
+    fn the_cursor_stays_inside_the_branch_that_is_open() {
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        live.run_started(3, 3000);
+        for name in ["甲/第1话", "甲/第2话"] {
+            live.volume_started(Path::new(name), 1000);
+            live.volume_finished(&fixture::skipped_volume(name, 10));
+        }
+        let mut session = Session::new();
+        session.run_started();
+        session.open(PathBuf::from("库/甲"));
+        assert_eq!(session.standing(&live), Some(Volume::Settled(1)));
+
+        // 下一卷收摊在**另一枝**上：跟随着的那一卷跑到了乙，而屏上摆的是甲的卷表。
+        live.volume_started(Path::new("乙/第1话"), 1000);
+        live.volume_finished(&fixture::skipped_volume("乙/第1话", 10));
+        assert_eq!(live.volumes().last().copied(), Some(Volume::Settled(2)));
+        assert_eq!(
+            session.standing(&live),
+            Some(Volume::Settled(1)),
+            "光标漂到了另一枝上"
+        );
+
+        // 收起回目录表之后它照旧跟着最新那一卷走——收的只是「展开着那一枝」那一刻。
+        session.act(Action::Collapse);
+        assert_eq!(session.standing(&live), Some(Volume::Settled(2)));
+    }
+
     /// **决策点上那一卷停得住、也展得开**（spec 的《焦点与两维模式》第五条）。
     ///
     /// 它停在**攒着的那一份**上、不在收摊了的那几卷里，而 `p2-loose-ends/08` 记着
@@ -4572,6 +4943,7 @@ mod tests {
         let mut session = Session::new();
         session.run_started();
         session.at_the_decision_point(true);
+        session.open(PathBuf::from("库"));
         // 跟随停在**攒着的那一份**上，不是收摊了的最后一卷。
         assert_eq!(session.standing(&live), Some(waiting));
 
@@ -4655,7 +5027,7 @@ mod tests {
     #[test]
     fn the_cursor_on_the_per_page_table_moves_a_page_at_a_time_and_stops_at_both_ends() {
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(0)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(0)));
 
         // 展开那一下停在头一页上，往上翻不过它。
         assert_eq!(session.expansion().expect("展开着").at, 0);
@@ -4688,7 +5060,7 @@ mod tests {
         // **换一副列法，光标跟着回到头一页**：两副列的不是同一批页。
         session.press(Key::Down);
         session.press(Key::Char('a'));
-        let expansion = *session.expansion().expect("展开着");
+        let expansion = session.expansion().cloned().expect("展开着");
         assert_eq!(expansion.listing, Listing::All);
         assert_eq!(expansion.at, 0, "换了一副列法，光标却还停在原来那个数上");
 

@@ -26,7 +26,7 @@ use ratatui::crossterm::terminal::{
 use tonefit::{Mode as RunMode, Request};
 
 use super::draw;
-use super::live::Resuming;
+use super::live::{Branch, Resuming, Volume};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Overlay, Picker, Session};
 use crate::preset::{Presets, Saved};
@@ -173,6 +173,12 @@ fn press(
         // 收起（`Action::Collapse`）不在这里——它不必读报告。
         Action::Expand | Action::Turn(_) => {
             expand(session, running, action);
+            Exit::Stay
+        }
+        // 展开一枝：同样要读那一趟攒下来的报告（此刻有哪几枝），
+        // 与[展开一卷](Action::Expand)同一条分法。
+        Action::Open => {
+            open(session, running);
             Exit::Stay
         }
         // 卷表上挪一卷：同样要读那一趟攒下来的报告（此刻有哪几卷）。
@@ -420,13 +426,24 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         session.complain("报告里还没有卷：一卷跑完才有它的逐页那几行".to_owned());
         return;
     };
+    let branches = live.branches();
     let opened = match (action, session.expansion()) {
-        // 换一卷：在此刻展得开的那几卷上挪一格，两头都转一圈（`Expansion::next`）。
+        // 换一卷：在**这一枝**底下那几卷上挪一格，两头都转一圈（`Expansion::next`）。
+        // 只在这一枝里转：层次与发现出来的那棵树一致，一个 `⇥` 不该把人甩到另一枝上去
+        // （`volume-discovery/08`）。
         // **先把展开着的那一卷解析一道**（`Live::nearest`）：它可能已经收摊，
         // 而收摊之后「攒着的那一份」那个位置归的是下一卷，不是它。
         (Action::Turn(step), Some(expansion)) => {
             let at = live.nearest(expansion.volume).unwrap_or(first);
-            let turned = expansion.turned_to(Expansion::next(&volumes, at, step));
+            // 那一枝找不着这一步到不了（`at` 恒来自 `live.volumes()`，而每一卷都挂在
+            // 某一枝上）；真到了就原地不动，与展开那一支同一条。
+            let Some(branch) = branch_of(&branches, at) else {
+                return;
+            };
+            let turned = expansion.turned_to(
+                branch.directory.clone(),
+                Expansion::next(&branch.volumes, at, step),
+            );
             drop(live);
             session.expand(turned);
             return;
@@ -435,8 +452,53 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         // `Session::standing` 就近收一收，仍收不着就从头一卷起。
         _ => session.standing(&live).unwrap_or(first),
     };
+    // **哪一枝答不出来就不进展开态**：`opened` 恒来自 `live.volumes()`，而每一卷都挂在
+    // 某一枝上（[`crate::render::grouped`] 收的就是那一列），这一支到不了。
+    // 拿一个空路径兜底更坏：那是一枝**不存在**的目录，收起之后屏上摆的是目录表、
+    // 屏底说的却是卷表（Q170 那一类自相矛盾正是这么来的）。
+    let Some(branch) = branch_of(&branches, opened) else {
+        session.complain("这一卷不在这一趟的哪一枝上：报告换了一趟，Esc 回目录表".to_owned());
+        return;
+    };
+    let directory = branch.directory.clone();
     drop(live);
-    session.expand(Expansion::new(opened));
+    session.expand(Expansion::new(directory, opened));
+}
+
+/// **展开光标停着的那一枝**：它底下那几卷摊成卷表（`volume-discovery/08` 票面第二条）。
+///
+/// 与[展开一卷](expand)同一条分法落在这一层：哪一枝要数那一趟攒下来的报告，
+/// 而状态机读不到它。挡在前面的那两句也与那一头同一副形状——一卷都没有就说一句、
+/// 不进那一级：展开的是**报告上的一枝**，而这一趟还没跑过或者第一卷还没跑完时，
+/// 那样东西根本不在。
+///
+/// 光标停着的那一卷在哪一枝上就展哪一枝；它此刻指不着谁时从**头一枝**起。
+fn open(session: &mut Session, running: &Running) {
+    let Some(live) = running.live() else {
+        session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
+        return;
+    };
+    let branches = live.branches();
+    let standing = session.standing(&live);
+    let Some(branch) = standing
+        .and_then(|at| branch_of(&branches, at))
+        .or_else(|| branches.first())
+    else {
+        session.complain("报告里还没有卷：一卷跑完才有它那一枝".to_owned());
+        return;
+    };
+    let directory = branch.directory.clone();
+    drop(live);
+    session.open(directory);
+}
+
+/// 这一卷挂在**哪一枝**上。**分组只有一处出处**（`crate::render::grouped`），
+/// 这里只在算好的那几枝里找它。
+///
+/// 出的是整一枝而不是它的某一格：这一层要的两样（那一枝叫什么、它底下有哪几卷）
+/// 同出一次查找，各查一遍就是把 `branches` 扫两趟。
+fn branch_of(branches: &[Branch], at: Volume) -> Option<&Branch> {
+    branches.iter().find(|branch| branch.volumes.contains(&at))
 }
 
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。
@@ -893,7 +955,7 @@ mod tests {
         }
         session.run_finished();
         tap(&mut session, &mut running, &nowhere, Key::Char('e'));
-        let expansion = *session.expansion().expect("该展开了");
+        let expansion = session.expansion().cloned().expect("该展开了");
         // **展开的是光标停着的那一卷**（`p3-session-legibility/10`）：跟随着的时候
         // 那是**最新收摊的那一卷**，也就是第二卷。从前它恒是第一卷——那时报告区还没有光标。
         assert_eq!(expansion.volume, Volume::Settled(1));
@@ -907,7 +969,7 @@ mod tests {
 
         // `⇥` 往后一卷，两头都转一圈：第二卷之后回到第一卷。
         tap(&mut session, &mut running, &nowhere, Key::Tab);
-        let first = *session.expansion().expect("还展开着");
+        let first = session.expansion().cloned().expect("还展开着");
         assert_eq!(first.volume, Volume::Settled(0), "⇥ 没转到第一卷上");
         assert_eq!(first.at, 0, "换一卷之后光标没回到头一页");
         tap(&mut session, &mut running, &nowhere, Key::Tab);
@@ -920,7 +982,7 @@ mod tests {
         // `⇧⇥` 是另一头：往前一卷，同样转得回去。**两头都有**，
         // 因为几十卷的一趟里往回看一卷不该按二十九下（票面：选中一卷）。
         tap(&mut session, &mut running, &nowhere, Key::BackTab);
-        let back = *session.expansion().expect("还展开着");
+        let back = session.expansion().cloned().expect("还展开着");
         assert_eq!(back.volume, Volume::Settled(0), "⇧⇥ 没往前转");
         assert_eq!(back.at, first.at, "两头转到同一卷，落位却不一样");
         tap(&mut session, &mut running, &nowhere, Key::BackTab);

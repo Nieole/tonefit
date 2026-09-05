@@ -1,4 +1,5 @@
-//! 屏上那一块：**卷表**——报告区里一卷一行的那张表（`CONTEXT.md` 的《会话》：卷表）。
+//! 屏上那一块：**卷表**——**展开一枝**之后那一副，一卷一行
+//! （`CONTEXT.md` 的《会话》：卷表；`volume-discovery/08`）。
 //!
 //! ```text
 //!  记号  卷名        页数  基准档   定档页   耗时
@@ -31,10 +32,19 @@
 //! 列的次序、砍列的次序、卷名怎么省略都在 [`crate::session::columns`]——**它在终端库
 //! 外面**，`--no-default-features` 那一趟照跑它的用例。本模块只把那几个数摆成字。
 //!
+//! # 它列的是**一枝底下**那几卷
+//!
+//! 报告区默认那一副是[目录表](super::directories)——一个目录一行，一屏看得完；
+//! 这一副是**展开一枝**之后摊出来的那几卷（`volume-discovery/08`）。
+//! **哪几卷归哪一枝不在这里问**：分组只有 [`crate::render::grouped`] 一处出处，
+//! 会话这一侧拿到的是算好的那几枝（[`Branch`]）。
+//!
 //! # 不重排
 //!
 //! 卷**按跑完的先后**添上去，出事的靠行首记号跳出来、不靠位置：重排会让刚跑完的那一卷
 //! 在屏上跳位置，而「一卷跑完当场看得见」正是这一格存在的理由。
+//! **分组一格不动这一条**：一枝底下那几卷仍按报告上的先后摆
+//! （见 [`crate::render::grouped`]）。
 //! 一处例外记在停车场 Q151：没做成的那几卷排在收摊了的那几卷**后面**——
 //! `Report` 把两者分成两列存，先后无从复原。
 
@@ -46,7 +56,7 @@ use super::overview::{DECIDING, spell};
 use super::paint::{Painted, Tone};
 use crate::render::{self, Field, Row, RowKind};
 use crate::session::columns::{self, Column, VolumeColumn, Widths};
-use crate::session::live::{Live, Volume};
+use crate::session::live::{Branch, Live, Volume};
 
 /// 一格不在场时那一列上写什么。
 ///
@@ -75,7 +85,7 @@ const ABSENT: &str = "-";
 /// 常常有两个载体；但**靠得住的那一个是记号**：砍列砍到只剩两列时它与卷名仍在
 /// （[`crate::session::columns`]），而档位那一列是砍得掉的。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mark {
+pub(super) enum Mark {
     /// 正常跑完。
     Done,
     /// 有失败页，整卷进了隔离目录。
@@ -91,7 +101,7 @@ impl Mark {
     ///
     /// 四个字形逐个过得了 [`columns::width_is_stable`] 那一关：跳过那一个从短横
     /// `–`（U+2013）换成了 `-`（停车场 Q154），`✓`／`!`／`✗` 三个本来就过得了，一个字没换。
-    fn glyph(self) -> char {
+    pub(super) fn glyph(self) -> char {
         match self {
             Self::Done => '✓',
             Self::Isolated => '!',
@@ -107,7 +117,7 @@ impl Mark {
     ///
     /// **整行上色而不是只染那一个记号**：出事的卷要在几十行里跳出来，
     /// 而一个字符的红点在一屏灰字里找不着——「一眼看出重点」问的是行，不是格。
-    fn tone(self) -> Tone {
+    pub(super) fn tone(self) -> Tone {
         match self {
             Self::Done => Tone::Plain,
             Self::Isolated => Tone::Caution,
@@ -125,6 +135,34 @@ impl Mark {
         } else {
             Self::Done
         }
+    }
+
+    /// **一枝该挂哪一个**（[`super::directories`]）：它底下那几卷里**最重的那一种**。
+    ///
+    /// 次序就是四种的轻重（与 `CONTEXT.md` 的《语义色》逐条对得上）：
+    /// 有一卷没做成就是出事，有一卷进隔离就是要注意，全跳过了才是不要紧，
+    /// 其余平常。**一枝的记号因此不会比它底下最坏的那一卷轻**——
+    /// 收成一行的代价只许落在明细上，不许落在「这一枝出没出事」上。
+    pub(super) fn of_branch(live: &Live, branch: &Branch) -> Self {
+        // **最重的那一档先问**：它只看 `failures` 那一列，一卷都不必开。
+        if !branch.failures.is_empty() {
+            return Self::Failed;
+        }
+        let marks = || {
+            branch
+                .volumes
+                .iter()
+                .filter_map(|at| live.volume(*at))
+                .map(Self::of)
+        };
+        if marks().any(|mark| mark == Self::Isolated) {
+            return Self::Isolated;
+        }
+        // `all` 对空的一列答 `true`，而一卷都收不住的那一枝不是「跳过」——先问一句有没有。
+        if marks().next().is_some() && marks().all(|mark| mark == Self::Skipped) {
+            return Self::Skipped;
+        }
+        Self::Done
     }
 }
 
@@ -315,16 +353,28 @@ pub(super) fn driver(rows: &[Row]) -> Option<String> {
         .map(|path| render::volume_name(Path::new(path)))
 }
 
-/// 这一趟到此刻为止的那几卷，**按跑完的先后**（例外见模块文档《不重排》）。
-fn entries(live: &Live) -> Vec<Entry> {
+/// **这一枝底下**到此刻为止的那几卷，**按跑完的先后**（例外见模块文档《不重排》）。
+///
+/// `only` 是展开着的那一枝：收摊了的那几卷按 [`Volume`] 认，没做成的那几卷按它们
+/// 在 `Report::failed_volumes` 里第几条认——两处都由[分组](crate::render::grouped)
+/// 算好摆在 [`Branch`] 上，这里一个路径都不再切一遍。
+fn entries(live: &Live, only: &Branch) -> Vec<Entry> {
     let report = live.report();
     let mut entries: Vec<Entry> = report
         .volumes
         .iter()
         .enumerate()
+        .filter(|(at, _)| only.volumes.contains(&Volume::Settled(*at)))
         .map(|(at, volume)| Entry::of_volume(Volume::Settled(at), volume, false))
         .collect();
-    entries.extend(report.failed_volumes.iter().map(Entry::of_failure));
+    entries.extend(
+        report
+            .failed_volumes
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| only.failures.contains(at))
+            .map(|(_, failure)| Entry::of_failure(failure)),
+    );
     // 决策点上那一卷**到此刻为止**的那一份（停车场 Q52）：它还没收摊，不在报告那一列里，
     // 而它同样占一行——「不许摊开上一卷冒充它」（`p2-loose-ends/08` 的硬约束）。
     // 光标停得上去、也展得开，指的是 [`Volume::Summarized`]（`p3-session-legibility/10`）。
@@ -333,6 +383,7 @@ fn entries(live: &Live) -> Vec<Entry> {
     let after = report.volumes.len();
     entries.extend(
         live.summarized()
+            .filter(|_| only.volumes.contains(&Volume::Summarized { after }))
             .map(|volume| Entry::of_volume(Volume::Summarized { after }, volume, true)),
     );
     entries
@@ -343,7 +394,7 @@ fn entries(live: &Live) -> Vec<Entry> {
 /// 两样装在一个类型里而不是一对裸值：它们是同一次摆出来的，而调用处看不出
 /// 「第二个 `usize` 是什么」（与 [`super::pages::Opened`] 同一条理由）。
 pub(super) struct Table {
-    /// 表上那几行：列头一行，此后一卷一行（外加摆在一卷底下的那几句）。
+    /// 表上那几行：列头一行，此后一行一项（外加摆在一卷底下的那几句）。
     pub(super) rows: Vec<Painted>,
     /// 光标停在 [`rows`](Self::rows) 的第几行。**没有光标可画时是 `None`**——
     /// 一卷都没有、或者光标指着的那一卷此刻不在表上。
@@ -364,8 +415,8 @@ pub(super) struct Table {
 /// 一行的语义由行首那个[记号](Mark)说了算，本模块因此一个颜色名都不写
 /// （见 [`Mark`] 的《记号与语义色在这里绑成一对》）。**反白不在这里上**：
 /// 它不是语义色（见 [`super::paint`]），落哪一行由 [`Table::cursor`] 说了算。
-pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
-    let entries = entries(live);
+pub(super) fn table(live: &Live, room: u16, at: Option<Volume>, only: &Branch) -> Table {
+    let entries = entries(live, only);
     if entries.is_empty() {
         return Table {
             rows: Vec::new(),

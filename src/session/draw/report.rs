@@ -26,6 +26,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use std::path::Path;
+
+use super::directories::directories;
 use super::pages;
 use super::paint::{Painted, Tone};
 use super::table::{Table, table};
@@ -41,15 +44,18 @@ use crate::session::viewport::Viewport;
 ///
 /// **两副样子，由展开与否分**（`CONTEXT.md` 的《会话》：展开）：
 ///
-/// | | 卷表（默认） | 展开一卷（逐页表） |
-/// |---|---|---|
-/// | 一行是 | **一卷**（[`super::table`]） | **一页**（[`super::pages`]） |
-/// | 列的是 | 此刻说得出报告的那几卷 | 那一卷[要紧的页](crate::render::notable)，`a` 切全部页 |
-/// | 钉住的抬头 | 无（这一趟的前提在[覆盖层](crate::session::state::Overlay::Premises)里，`i` 调得出） | **有**：这一卷的基准档 · 定档页 · 列着几页 |
-/// | 长过一格 | **跟随时钉在末行，跟随停了就跟着[光标那一卷](crate::session::state::Follow)走** | 跟着[光标那一页](crate::session::state::Expansion::at)走 |
-/// | 一行放不下 | 按固定次序**砍列**（[`crate::session::columns`]） | 同左，另一个次序 |
-/// | 成句的那几段 | 折行（按显示宽度，见 [`crate::wrap`]） | 折行 |
-/// | 左栏 | 在场 | 收起（见 [`super::shell`]） |
+/// | | 目录表（默认） | 展开一枝（卷表） | 展开一卷（逐页表） |
+/// |---|---|---|---|
+/// | 一行是 | **一枝**（[`super::directories`]） | **一卷**（[`super::table`]） | **一页**（[`super::pages`]） |
+/// | 列的是 | 此刻摆得出的那几枝 | 那一枝底下那几卷 | 那一卷[要紧的页](crate::render::notable)，`a` 切全部页 |
+/// | 钉住的抬头 | 无（这一趟的前提在[覆盖层](crate::session::state::Overlay::Premises)里，`i` 调得出） | 无 | **有**：这一卷的基准档 · 定档页 · 列着几页 |
+/// | 长过一格 | **跟随时钉在末行，跟随停了就跟着[光标那一卷](crate::session::state::Follow)走** | 同左 | 跟着[光标那一页](crate::session::state::Expansion::at)走 |
+/// | 一行放不下 | 按固定次序**砍列**（[`crate::session::columns`]） | 同左，另一个次序 | 同左，第三个次序 |
+/// | 成句的那几段 | 折行（按显示宽度，见 [`crate::wrap`]） | 折行 | 折行 |
+/// | 左栏 | 在场 | **在场**（这一级摆得下） | 收起（见 [`super::shell`]） |
+///
+/// **表下面那两段（失败页、末尾那几小结）说的是整趟**，与表列的是哪一级无关：
+/// 前两副都摆着它们（见 [`collapsed`]）。
 ///
 /// 默认那一副跟着最新收摊的那一卷，是因为报告只增不减，而「一卷跑完当场看得见」说的正是
 /// 刚添上去的那一行；**光标一挪跟随就停了**，往回翻因此不必另有一个滚动量
@@ -86,12 +92,14 @@ pub(super) fn report_pane(
     };
     let Some(expansion) = session.expansion() else {
         // **焦点落在这一块上才反白**：屏上只有一处反白，而它说的恒是
-        // 「就在这一行上动手」（见 [`super::config::config`]）。
+        // 「就在这一行上动手」（见 [`super::config::config`]）。两级都算——
+        // 目录表与卷表都是这一块，焦点落在哪一级上都该看得出光标停在哪儿。
         let shown = collapsed(
             live,
             inside.width,
             session.standing(live),
-            matches!(session.focus(), Focus::Report),
+            matches!(session.focus(), Focus::Report | Focus::Opened(_)),
+            session.opened(),
         );
         // **视口跟着光标走**（[`Viewport`]），而[跟随](Follow)那一档跟的是**末行**：
         //
@@ -214,11 +222,17 @@ const NOT_RUN_YET: &str = "
 /// 挪到排版这一层来（ADR 0016）。
 ///
 /// 与命令行印出来的那一份**同源不同副**：同样的行、同样的格，摆法两副。
-fn collapsed(live: &Live, width: u16, at: Option<Volume>, focused: bool) -> Collapsed {
+fn collapsed(
+    live: &Live,
+    width: u16,
+    at: Option<Volume>,
+    focused: bool,
+    opened: Option<&Path>,
+) -> Collapsed {
     let report = live.report();
-    // **表从这一格的头一行起**：抬头那几行挪进覆盖层之后，卷表上方一行都不剩，
+    // **表从这一格的头一行起**：抬头那几行挪进覆盖层之后，表上方一行都不剩，
     // 光标那个行号因此不必再往下推一段。
-    let (mut rows, cursor) = folded(&table(live, width, at), width, focused);
+    let (mut rows, cursor) = folded(&level(live, width, at, opened), width, focused);
     // **失败页是「出事」那一档**（spec 的《语义色》），而这一段头一行就叫「失败页」——
     // 颜色不是唯一载体（见 [`super::paint`]）。
     rows.extend(
@@ -255,6 +269,25 @@ fn highlighted(rows: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// **这一格此刻摆的是哪一级的表**：展开着一枝就是那一枝的[卷表](super::table)，
+/// 否则是[目录表](super::directories)（`volume-discovery/08`）。
+///
+/// **展开着的那一枝此刻不在了时退回目录表**。这一支眼下**到不了**——展开进来的那一枝
+/// 恒是算出来的一枝（见 `super::super::expand`，答不出就说一句、不进那一级），
+/// 而报告换一趟要先按 `t`／`x`，那两个键在这一块上不派（得先 `⇥` 回左栏，
+/// 那一下焦点就不在这一级上了）。留着是因为退一级仍旧有东西可看：
+/// 与展开一卷那一处说一句 [`GONE`] 不同——那一处整格只有那一卷，
+/// 而这一处说一句反而把屏上仅有的那份报告也遮了。
+fn level(live: &Live, width: u16, at: Option<Volume>, opened: Option<&Path>) -> Table {
+    let branches = live.branches();
+    let branch =
+        opened.and_then(|directory| branches.iter().find(|branch| branch.directory == directory));
+    match branch {
+        Some(branch) => table(live, width, at, branch),
+        None => directories(live, &branches, width, at),
+    }
+}
+
 /// 默认那一副画出来的那几行，外加**光标停在第几行**。
 ///
 /// 两样装在一个类型里而不是一对裸值，与 [`Table`] 同一条理由：它们是同一次拼出来的，
@@ -281,10 +314,20 @@ pub(super) fn report_title(session: &Session, live: Option<&Live>) -> String {
         return "报告".to_owned();
     };
     let Some(expansion) = session.expansion() else {
-        return match stopped_following(session) {
-            true => format!("报告 · {FOLLOW_STOPPED}"),
-            false => "报告".to_owned(),
+        // **与正文同一道解析**（见 [`level`]）：展开着的那一枝此刻不在了
+        // （报告整个换了一趟）时正文退回目录表，抬头跟着退回裸「报告」——
+        // 两处各说各的话，屏上就会写着「展开 某某」而底下摆的是目录表。
+        let mut title = match session
+            .opened()
+            .and_then(|directory| nth_branch(live, directory))
+        {
+            Some(said) => format!("报告 · 展开 {said}"),
+            None => "报告".to_owned(),
         };
+        if stopped_following(session) {
+            title.push_str(&format!(" · {FOLLOW_STOPPED}"));
+        }
+        return title;
     };
     // 与正文同一道解析（见 [`report_pane`]）：抬头说的必须是这一格真画着的那一卷。
     let Some(opened) = live.nearest(expansion.volume) else {
@@ -293,7 +336,15 @@ pub(super) fn report_title(session: &Session, live: Option<&Live>) -> String {
     let Some(volume) = live.volume(opened) else {
         return "报告".to_owned();
     };
-    let volumes = live.volumes();
+    // **「第几卷」数的是这一枝底下那几卷**，不是整趟（`volume-discovery/08`）：
+    // `⇥` 换一卷只在这一枝里转（见 `super::super::expand`），拿整趟当分母的话，
+    // 屏上那个数指的是一个按不到的集合。那一枝找不着（报告换了一趟）就退回整趟——
+    // 说少了比说错了好。
+    let volumes = live
+        .branches()
+        .into_iter()
+        .find(|branch| branch.volumes.contains(&opened))
+        .map_or_else(|| live.volumes(), |branch| branch.volumes);
     let at = volumes
         .iter()
         .position(|listed| *listed == opened)
@@ -304,6 +355,27 @@ pub(super) fn report_title(session: &Session, live: Option<&Live>) -> String {
         at + 1,
         volumes.len()
     )
+}
+
+/// 展开着的那一枝在抬头上怎么写：`库/甲（第 2/7 个目录）`。
+///
+/// **那一枝此刻不在了就是 `None`**（报告换了一趟）：抬头那时退回裸「报告」，
+/// 与正文退回目录表是同一道解析（见 [`level`]）。
+///
+/// **印的是全路径**，与目录表那一列同一条（见 [`super::directories`]）：两枝的末一段
+/// 常常一模一样，而这一行要答的正是「摊开的是哪一枝」。摆不下时从中间省略
+/// （[`super::yielding::title`]），与别的抬头一个待遇。
+fn nth_branch(live: &Live, directory: &Path) -> Option<String> {
+    let branches = live.branches();
+    let at = branches
+        .iter()
+        .position(|branch| branch.directory == directory)?;
+    Some(format!(
+        "{}（第 {}/{} 个目录）",
+        directory.display(),
+        at + 1,
+        branches.len()
+    ))
 }
 
 /// 报告区那一格的抬头上说**跟随停了**的那句话（`CONTEXT.md` 的《会话》：跟随）。
@@ -334,19 +406,28 @@ pub(super) fn expandable(live: Option<&Live>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use super::super::overview::OVERVIEW_HEIGHT;
     use super::super::probe::{
-        a_run_in_flight, every_kind_of_volume, main_snapshot, reversed_row, same_screen, screen,
-        snapshot_of, tight,
+        a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch, opened_snapshot,
+        reversed_row, same_screen, screen, snapshot_of, tight,
     };
     use super::*;
     use crate::session::live::{Resuming, fixture};
     use crate::session::state::{Expansion, Key, Listing, Step};
     use crate::wrap;
     use tonefit::Mode as RunMode;
+
+    /// **展开着头一枝**时报告区那一副的正文（卷表 · 失败页 · 末尾那几小结）。
+    ///
+    /// 卷表那几条问的是那一副长什么样，而它此刻要先展开一枝才摊得出来
+    /// （`volume-discovery/08`）——夹具里那几卷都躺在同一个目录底下，因此恒是头一枝。
+    fn opened_rows(live: &Live, width: u16) -> Collapsed {
+        let branch = only_branch(live);
+        collapsed(live, width, None, false, Some(&branch.directory))
+    }
 
     /// 一趟**跑完了**的两卷：一卷幂等命中，一卷[每种页各一张](fixture::a_page_of_every_kind)。
     ///
@@ -374,7 +455,7 @@ mod tests {
     fn expanded(volume: usize) -> (Session, Live) {
         let live = a_run_worth_expanding();
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(volume)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(volume)));
         (session, live)
     }
 
@@ -409,7 +490,7 @@ mod tests {
         assert_eq!(session.standing(&live), Some(waiting));
 
         // 展开它：抬头说得出展的是哪一卷，逐页那几行是**它自己的**。
-        session.expand(Expansion::new(waiting));
+        session.expand(Expansion::new(PathBuf::from("库"), waiting));
         let shown = tight(&screen(&mut session, Some(&live), 120, 40));
         assert!(shown.contains(&tight("展开 卷二")), "{shown}");
         assert!(shown.contains(&tight("第 2/2 卷")), "{shown}");
@@ -448,15 +529,19 @@ mod tests {
         );
     }
 
-    /// **快照：焦点在左栏、焦点在报告区、跟随停了，三张**（票面第八条）。
+    /// **快照：焦点在左栏、在目录表、在卷表、跟随停了，四张**（票面第八条）。
     ///
-    /// 三张钉的是**屏上看得出焦点在哪**（票面第一条）与**跟随停了屏上说一句**
+    /// 四张钉的是**屏上看得出焦点在哪**（票面第一条）与**跟随停了屏上说一句**
     /// （票面第三条）。反白不进快照（[`snapshot`] 比的是字，而反白是样式），
     /// 因此另问一句「此刻反白的是哪一行」（[`reversed_row`]）——
     /// 那一处正是「焦点在哪一块」屏上唯一的载体。
     ///
+    /// **中间多出来的那一张是目录表**（`volume-discovery/08`）：报告区默认那一副
+    /// 一个目录一行，反白落在**光标那一卷所在的那一枝**上——屏上那个光标恒是一卷，
+    /// 这一副只是把它归到一行上。展开那一枝才是卷表，反白这才落到那一卷自己身上。
+    ///
     /// 跑着的一趟：**焦点切到报告区不解锁任何一个改动键**（票面第四条），
-    /// 左栏三层因此照旧压暗、抬头照旧写着只读——三张里一张都没变。
+    /// 左栏三层因此照旧压暗、抬头照旧写着只读——四张里一张都没变。
     #[test]
     fn the_focus_and_the_stopped_follow_are_both_visible_on_screen() {
         let live = a_run_in_flight(false);
@@ -477,17 +562,24 @@ mod tests {
         same_screen(&shot(&mut session), FOCUS_ON_THE_CONFIG);
         assert_eq!(cursor(&mut session), None, "跑着时左栏还反白着");
 
-        // 二、`⇥` 把焦点切到报告区：反白落到**最新收摊的那一卷**上（跟随着），
-        // 屏底换成这一块的键，而按停那一副跟在后面。
+        // 二、`⇥` 把焦点切到报告区：默认那一副是**目录表**，反白落到
+        // **最新收摊的那一卷所在的那一枝**上，屏底换成这一块的键，
+        // 而按停那一副跟在后面。
         session.press(Key::Tab);
         same_screen(&shot(&mut session), FOCUS_ON_THE_REPORT);
-        let standing = tight(&cursor(&mut session).expect("焦点在报告区，该有一行反白"));
+        let branch = tight(&cursor(&mut session).expect("焦点在报告区，该有一行反白"));
+        assert!(branch.contains("库"), "反白没落在那一枝上：{branch}");
+
+        // 三、展开那一枝：卷表摊出来，反白这才落到**最新收摊的那一卷**自己身上。
+        session.open(only_branch(&live).directory);
+        same_screen(&shot(&mut session), FOCUS_ON_THE_VOLUMES);
+        let standing = tight(&cursor(&mut session).expect("焦点在卷表，该有一行反白"));
         assert!(
             standing.contains("卷二"),
             "反白没落在最新那一卷上：{standing}"
         );
 
-        // 三、光标往回一卷：跟随停了，抬头说一句，屏底多出 `g 回到跟随`，
+        // 四、光标往回一卷：跟随停了，抬头说一句，屏底多出 `g 回到跟随`，
         // 反白跟着落到上一卷上。
         session.select(&live, Step::Back);
         same_screen(&shot(&mut session), THE_FOLLOW_STOPPED);
@@ -496,7 +588,7 @@ mod tests {
 
         // `g` 交回给跟随：屏上那一句没了，反白回到最新那一卷上。
         session.press(Key::Char('g'));
-        same_screen(&shot(&mut session), FOCUS_ON_THE_REPORT);
+        same_screen(&shot(&mut session), FOCUS_ON_THE_VOLUMES);
     }
 
     /// 见 [`the_focus_and_the_stopped_follow_are_both_visible_on_screen`]。
@@ -507,9 +599,9 @@ mod tests {
 "│  感知可分辨级数　默认（跟随面板）                █│ 完成 1 卷 · 跳过 1 卷                    │"
 "│  阈值　　　　　　跟着型号走（先挑一个）          █└──────────────────────────────────────────┘"
 "│                                                  █┌报告──────────────────────────────────────┐"
-"│口味层 · 这一趟的立场                             █│ 记号  卷名  页数  基准档  定档页   耗时  │"
-"│  适配方式　　　　默认（height）                  █│ -     卷一   180  跳过             3s    │"
-"│  裁边　　　　　　默认（裁）                      ║│ ✓     卷二     1  4bit    001.jpg  1m12s │"
+"│口味层 · 这一趟的立场                             █│ 记号  目录  卷数  基准档分布             │"
+"│  适配方式　　　　默认（height）                  █│ ✓     库       2  跳过 1 · 4bit 1        │"
+"│  裁边　　　　　　默认（裁）                      ║│                                          │"
 "│  跨页拆分　　　　默认（拆）                      ║│                                          │"
 "│  拆分阈值　　　　默认（1.5）                     ║│                                          │"
 "│  阅读方向　　　　默认（rtl）                     ║│                                          │"
@@ -531,6 +623,30 @@ mod tests {
 "│  感知可分辨级数　默认（跟随面板）                █│ 完成 1 卷 · 跳过 1 卷                    │"
 "│  阈值　　　　　　跟着型号走（先挑一个）          █└──────────────────────────────────────────┘"
 "│                                                  █┌报告──────────────────────────────────────┐"
+"│口味层 · 这一趟的立场                             █│ 记号  目录  卷数  基准档分布             │"
+"│  适配方式　　　　默认（height）                  █│ ✓     库       2  跳过 1 · 4bit 1        │"
+"│  裁边　　　　　　默认（裁）                      ║│                                          │"
+"│  跨页拆分　　　　默认（拆）                      ║│                                          │"
+"│  拆分阈值　　　　默认（1.5）                     ║│                                          │"
+"│  阅读方向　　　　默认（rtl）                     ║│                                          │"
+"│  滤波器　　　　　默认（lanczos3）                ║│                                          │"
+"│  位深　　　　　　自动（判据说了算）              ║│                                          │"
+"│  抖动　　　　　　自动（判据说了算）              ║│                                          │"
+"│  逐页　　　　　　默认（关）                      ▼│                                          │"
+"└──────────────────────────────────────────────────┘└──────────────────────────────────────────┘"
+" 报告区 · ↑↓ 选一枝 · ⏎ 展开这一枝 · e 展开逐页 · i 这一趟的前提 · ⇥ 回配置 · 跑着…… · s 停（按 "
+" 一次收尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? 全部键               "
+"                                                                                                "
+"#;
+
+    /// 见 [`the_focus_and_the_stopped_follow_are_both_visible_on_screen`]。
+    const FOCUS_ON_THE_VOLUMES: &str = r#"
+"┌配置 · 跑着，三层都只读───────────────────────────┐┌执行 · 第 3/3 卷 · 还剩约 3m20s───────────┐"
+"│设备层 · 判定的依据，绑面板，改一次管很久         ▲│ 总体 [==================>           ] 300│"
+"│  型号　　　　　　未挑（跑起来之前必填）          █│ 本卷 卷三 · 第二遍 [==========>          │"
+"│  感知可分辨级数　默认（跟随面板）                █│ 完成 1 卷 · 跳过 1 卷                    │"
+"│  阈值　　　　　　跟着型号走（先挑一个）          █└──────────────────────────────────────────┘"
+"│                                                  █┌报告 · 展开 库（第 1/1 个目录）───────────┐"
 "│口味层 · 这一趟的立场                             █│ 记号  卷名  页数  基准档  定档页   耗时  │"
 "│  适配方式　　　　默认（height）                  █│ -     卷一   180  跳过             3s    │"
 "│  裁边　　　　　　默认（裁）                      ║│ ✓     卷二     1  4bit    001.jpg  1m12s │"
@@ -542,8 +658,8 @@ mod tests {
 "│  抖动　　　　　　自动（判据说了算）              ║│                                          │"
 "│  逐页　　　　　　默认（关）                      ▼│                                          │"
 "└──────────────────────────────────────────────────┘└──────────────────────────────────────────┘"
-" 报告区 · ↑↓ 选一卷 · ⏎ 展开 · i 这一趟的前提 · ⇥ 回配置 · 跑着…… · s 停（按一次收尾，再按一次中"
-" 止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? 全部键                                   "
+" 卷表 · ↑↓ 选一卷 · ⏎ 展开逐页 · i 这一趟的前提 · Esc 回目录表 · ⇥ 回配置 · 跑着…… · s 停（按一 "
+" 次收尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? 全部键                 "
 "                                                                                                "
 "#;
 
@@ -554,7 +670,7 @@ mod tests {
 "│  型号　　　　　　未挑（跑起来之前必填）          █│ 本卷 卷三 · 第二遍 [==========>          │"
 "│  感知可分辨级数　默认（跟随面板）                █│ 完成 1 卷 · 跳过 1 卷                    │"
 "│  阈值　　　　　　跟着型号走（先挑一个）          █└──────────────────────────────────────────┘"
-"│                                                  █┌报告 · 跟随停了───────────────────────────┐"
+"│                                                  █┌报告 · 展开 库（第 1/1 个目录） · 跟随停了┐"
 "│口味层 · 这一趟的立场                             █│ 记号  卷名  页数  基准档  定档页   耗时  │"
 "│  适配方式　　　　默认（height）                  █│ -     卷一   180  跳过             3s    │"
 "│  裁边　　　　　　默认（裁）                      ║│ ✓     卷二     1  4bit    001.jpg  1m12s │"
@@ -566,8 +682,8 @@ mod tests {
 "│  抖动　　　　　　自动（判据说了算）              ║│                                          │"
 "│  逐页　　　　　　默认（关）                      ▼│                                          │"
 "└──────────────────────────────────────────────────┘└──────────────────────────────────────────┘"
-" 报告区 · ↑↓ 选一卷 · ⏎ 展开 · g 回到跟随 · i 这一趟的前提 · ⇥ 回配置 · 跑着…… · s 停（按一次收 "
-" 尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? 全部键                     "
+" 卷表 · ↑↓ 选一卷 · ⏎ 展开逐页 · g 回到跟随 · i 这一趟的前提 · Esc 回目录表 · ⇥ 回配置 · 跑着…… "
+" · s 停（按一次收尾，再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? 全部键     "
 "                                                                                                "
 "#;
 
@@ -580,10 +696,14 @@ mod tests {
     fn a_report_taller_than_the_pane_keeps_its_last_lines() {
         // 没有失败页的那一趟：表就是这一格里最后那几行，问的正是「最新的那一卷还在不在」。
         let live = a_run_in_flight(false);
-        let last = table(&live, 94, None).rows.pop().expect("表上有卷");
+        let last = table(&live, 94, None, &only_branch(&live))
+            .rows
+            .pop()
+            .expect("表上有卷");
 
         // 只给四行的格子：最新那一卷仍在，抬头已经让位。
-        let squeezed = main_snapshot(&live, 96, 4 + OVERVIEW_HEIGHT);
+        // **展开着那一枝**：卷表是那一级的事（`volume-discovery/08`）。
+        let squeezed = opened_snapshot(&live, 96, 4 + OVERVIEW_HEIGHT);
 
         assert!(
             squeezed.contains(last.text.trim_end()),
@@ -594,12 +714,16 @@ mod tests {
             "四行的格子装不下抬头，它却还在：{squeezed}"
         );
         // 一格都不剩的格子问不出滚动量，也不恐慌（[`Viewport`] 那一头的规矩）。
-        let rows = collapsed(&live, 94, None, false).rows.len();
+        let rows = opened_rows(&live, 94).rows.len();
         assert_eq!(Viewport::new(rows, 0, rows.saturating_sub(1)).from(), 0);
         // 窄到一格正文都不剩：折不出比一个字更窄的行（[`crate::wrap::fold`]），
         // 表也砍无可砍——两头都不恐慌就够了。
+        opened_snapshot(&live, 2, 4 + OVERVIEW_HEIGHT);
         main_snapshot(&live, 2, 4 + OVERVIEW_HEIGHT);
-        assert!(!table(&live, 0, None).rows.is_empty(), "砍无可砍时表也还在");
+        assert!(
+            !table(&live, 0, None, &only_branch(&live)).rows.is_empty(),
+            "砍无可砍时表也还在"
+        );
     }
 
     /// **六种卷各有各的行**（票面第二条）：跳过、隔离、卷级失败、逐页、覆盖、等答话。
@@ -610,7 +734,7 @@ mod tests {
     #[test]
     fn six_kinds_of_volume_each_get_their_own_row() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
-        let rows = table(&live, 120, None).rows;
+        let rows = table(&live, 120, None, &only_branch(&live)).rows;
         let body: Vec<&str> = rows.iter().skip(1).map(|row| row.text.as_str()).collect();
 
         assert_eq!(body.len(), 6, "六种卷六行：{body:?}");
@@ -687,7 +811,7 @@ mod tests {
     #[test]
     fn the_table_never_reorders_the_volumes_it_has_added() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
-        let body: Vec<String> = table(&live, 120, None)
+        let body: Vec<String> = table(&live, 120, None, &only_branch(&live))
             .rows
             .into_iter()
             .skip(1)
@@ -728,7 +852,7 @@ mod tests {
         live.volume_started(Path::new("库/棋魂 07"), 1000);
         live.volume_finished(&superseded);
 
-        let rows = table(&live, 120, None).rows;
+        let rows = table(&live, 120, None, &only_branch(&live)).rows;
 
         // 卷那一行照旧是一行，过期副本那一句在它**底下**、缩进摆着。
         assert_eq!(rows.len(), 3, "该是列头 + 一卷 + 那一句：{rows:?}");
@@ -753,7 +877,7 @@ mod tests {
         // 一卷都没被顶掉时它一行都不出——与末尾那几小结同一条规矩。
         let plain = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
         assert!(
-            table(&plain, 120, None)
+            table(&plain, 120, None, &only_branch(&plain))
                 .rows
                 .iter()
                 .all(|row| !row.text.contains("过期副本")),
@@ -768,7 +892,7 @@ mod tests {
     #[test]
     fn the_volume_names_come_from_the_same_place_as_the_progress_bar() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
-        let wide = table(&live, 120, None).rows;
+        let wide = table(&live, 120, None, &only_branch(&live)).rows;
 
         for volume in &live.report().volumes {
             let name = crate::render::volume_name(&volume.volume);
@@ -778,7 +902,7 @@ mod tests {
             );
         }
         // 窄到一列都砍无可砍：卷名从中间省略，书名与第几卷两头都还认得出。
-        let narrow = table(&live, 26, None).rows;
+        let narrow = table(&live, 26, None, &only_branch(&live)).rows;
         // 第五行是「消失的那卷」——十格的名字收进六格里。
         let elided = &narrow.iter().skip(1).nth(4).expect("那一行在表上").text;
         assert!(elided.contains('⋯'), "该省略却没省略：{elided}");
@@ -794,6 +918,9 @@ mod tests {
     fn the_narrowest_screen_still_shows_every_mark_and_every_name() {
         let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
         let mut session = Session::new();
+        // 卷表是**展开一枝**之后那一副（`volume-discovery/08`）：夹具里那几卷
+        // 都躺在同一个目录底下，因此恒是头一枝。
+        session.open(only_branch(&live).directory);
 
         let narrow = tight(&screen(&mut session, Some(&live), 80, 24));
 
@@ -825,7 +952,7 @@ mod tests {
         live.returned(Ok(report));
 
         let drawn = |width: u16| -> String {
-            collapsed(&live, width, None, false)
+            opened_rows(&live, width)
                 .rows
                 .iter()
                 .map(|line| line.to_string())
@@ -864,7 +991,7 @@ mod tests {
         );
         inside.run_started(1, 1000);
         inside.volume_finished(&fixture::processed_volume("卷一", None));
-        let said = collapsed(&inside, 120, None, false)
+        let said = opened_rows(&inside, 120)
             .rows
             .iter()
             .map(|line| line.to_string())
@@ -889,7 +1016,7 @@ mod tests {
     /// 改一句报告措辞就要回布局模块重录（停车场 Q130）。
     #[test]
     fn the_report_pane_without_a_failed_page() {
-        let snapshot = main_snapshot(&a_run_in_flight(false), 96, 30);
+        let snapshot = opened_snapshot(&a_run_in_flight(false), 96, 30);
 
         same_screen(&snapshot, WITHOUT_A_FAILED_PAGE);
     }
@@ -901,7 +1028,7 @@ mod tests {
 "│ 本卷 卷三 · 第二遍 [==========>                   ] 1000/3000 步                             │"
 "│ 完成 1 卷 · 跳过 1 卷                                                                        │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌报告──────────────────────────────────────────────────────────────────────────────────────────┐"
+"┌报告 · 展开 库（第 1/1 个目录）───────────────────────────────────────────────────────────────┐"
 "│ 记号  卷名  页数  基准档  定档页   耗时                                                      │"
 "│ -     卷一   180  跳过             3s                                                        │"
 "│ ✓     卷二     1  4bit    001.jpg  1m12s                                                     │"
@@ -934,7 +1061,7 @@ mod tests {
     /// 并排出现，两者说的是同一份原因（一份是增量，一份是结果）。
     #[test]
     fn the_report_pane_with_a_failed_page() {
-        let snapshot = main_snapshot(&a_run_in_flight(true), 96, 36);
+        let snapshot = opened_snapshot(&a_run_in_flight(true), 96, 36);
 
         same_screen(&snapshot, WITH_A_FAILED_PAGE);
     }
@@ -947,7 +1074,7 @@ mod tests {
 "│ 完成 1 卷 · 跳过 1 卷                                                                        │"
 "│ 出事 隔离 1 卷 · 失败 1 页                                                                   │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌报告──────────────────────────────────────────────────────────────────────────────────────────┐"
+"┌报告 · 展开 库（第 1/1 个目录）───────────────────────────────────────────────────────────────┐"
 "│ 记号  卷名  页数  基准档  定档页   耗时                                                      │"
 "│ -     卷一   180  跳过             3s                                                        │"
 "│ !     卷二     2  4bit    001.jpg  1m12s  隔离                                               │"
@@ -990,7 +1117,7 @@ mod tests {
     fn the_volume_table_on_a_wide_terminal() {
         let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
 
-        same_screen(&main_snapshot(&live, 120, 26), THE_TABLE_WIDE);
+        same_screen(&opened_snapshot(&live, 120, 26), THE_TABLE_WIDE);
     }
 
     /// 见 [`the_volume_table_on_a_wide_terminal`]。
@@ -1001,7 +1128,7 @@ mod tests {
 "│ 完成 3 卷 · 跳过 1 卷                                                                                                │"
 "│ 出事 隔离 1 卷 · 失败 1 页 · 卷级失败 1 卷                                                                           │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌报告──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"┌报告 · 展开 库（第 1/1 个目录）───────────────────────────────────────────────────────────────────────────────────────┐"
 "│ 记号  卷名        页数  基准档        定档页   耗时                                                                  │"
 "│ -     棋魂 07      184  跳过                   3s                                                                    │"
 "│ !     哆啦 03        2  4bit          001.jpg  1m12s  隔离                                                           │"
@@ -1033,6 +1160,7 @@ mod tests {
     fn the_volume_table_on_the_narrowest_terminal() {
         let mut session = Session::new();
         let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
+        session.open(only_branch(&live).directory);
 
         same_screen(&snapshot_of(&mut session, &live, 80, 24), THE_TABLE_NARROW);
     }
@@ -1045,7 +1173,7 @@ mod tests {
 "│  感知可分辨级数　默认（跟随面板）              █│ 完成 3 卷 · 跳过 1 卷      │"
 "│  阈值　　　　　　跟着型号走（先挑一个）        █│ 出事 隔离 1 卷 · 失败 1 页 │"
 "│                                                █└────────────────────────────┘"
-"│口味层 · 这一趟的立场                           █┌报告────────────────────────┐"
+"│口味层 · 这一趟的立场                           █┌报告 · 展开 库⋯ 1/1 个目录）┐"
 "│  适配方式　　　　默认（height）                █│ 记号  卷名     基准档      │"
 "│  裁边　　　　　　默认（裁）                    █│ -     棋魂 07  跳过        │"
 "│  跨页拆分　　　　默认（拆）                    █│ !     哆啦 03  4bit        │"
@@ -1060,9 +1188,9 @@ mod tests {
 "│                                                ║│                            │"
 "│范围层 · 每趟都不同，不进预设                   ▼│                            │"
 "└────────────────────────────────────────────────┘└────────────────────────────┘"
-" ⏎ 摊开取值 · t 试算 · x 执行 · q 退出 · ? 全部键                               "
-"                                                                                "
-"                                                                                "
+" 卷表 · ↑↓ 选一卷 · ⏎ 展开逐页 · i 这一趟的前提 · Esc 回目录表 · ⇥ 回配置 · q 退"
+" 出 · ? 全部键                                                                  "
+" 跟随着最新的那一卷：一卷收摊，光标就落到它上面                                 "
 "#;
 
     /// **快照：试算那一副。**（票面第七条：试算那一张）
@@ -1074,7 +1202,7 @@ mod tests {
     fn the_volume_table_of_a_dry_run() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
 
-        same_screen(&main_snapshot(&live, 120, 26), THE_TABLE_OF_A_DRY_RUN);
+        same_screen(&opened_snapshot(&live, 120, 26), THE_TABLE_OF_A_DRY_RUN);
     }
 
     /// 见 [`the_volume_table_of_a_dry_run`]。
@@ -1084,7 +1212,7 @@ mod tests {
 "│ 本卷 棋魂 08 · 第二遍 [>                             ] 0/1000 步                                                     │"
 "│ 判定 1 卷 4bit · 1 卷 覆盖 2bit+FS · 1 卷 跳过 · 1 卷 逐页                                                           │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌报告──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"┌报告 · 展开 库（第 1/1 个目录）───────────────────────────────────────────────────────────────────────────────────────┐"
 "│ 记号  卷名        页数  基准档        定档页   耗时                                                                  │"
 "│ -     棋魂 07      184  跳过                   3s                                                                    │"
 "│ !     哆啦 03        2  4bit          001.jpg  1m12s  隔离                                                           │"
@@ -1122,7 +1250,10 @@ mod tests {
         live.pass_started(tonefit::Pass::Second, Some(&summarized));
         live.rewind(Duration::from_secs(300));
 
-        same_screen(&main_snapshot(&live, 96, 18), WAITING_AT_THE_DECISION_POINT);
+        same_screen(
+            &opened_snapshot(&live, 96, 18),
+            WAITING_AT_THE_DECISION_POINT,
+        );
     }
 
     /// 见 [`the_volume_waiting_at_the_decision_point_gets_a_row_of_its_own`]。
@@ -1132,7 +1263,7 @@ mod tests {
 "│ 本卷 棋魂 08 · 第二遍 [>                             ] 0/1000 步                             │"
 "│ 判定 1 卷 跳过                                                                               │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
-"┌报告──────────────────────────────────────────────────────────────────────────────────────────┐"
+"┌报告 · 展开 库（第 1/1 个目录）───────────────────────────────────────────────────────────────┐"
 "│ 记号  卷名     页数  基准档  定档页   耗时                                                   │"
 "│ -     棋魂 07   184  跳过             3s                                                     │"
 "│ ✓     棋魂 08     1  4bit    001.jpg  1m12s  等你拿主意                                      │"
@@ -1246,7 +1377,7 @@ mod tests {
         let live = a_run_in_flight(true);
         let mut session = Session::new();
         session.run_started();
-        session.expand(Expansion::new(Volume::Settled(1)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(1)));
 
         same_screen(
             &snapshot_of(&mut session, &live, 120, 22),
@@ -1292,7 +1423,10 @@ mod tests {
         let mut session = Session::new();
         session.run_started();
         session.at_the_decision_point(true);
-        session.expand(Expansion::new(Volume::Summarized { after: 4 }));
+        session.expand(Expansion::new(
+            PathBuf::from("库"),
+            Volume::Summarized { after: 4 },
+        ));
 
         same_screen(
             &snapshot_of(&mut session, &live, 120, 22),
@@ -1367,7 +1501,7 @@ mod tests {
         assert!(said.contains("失败 解不出完整尺寸"), "{said}");
         assert!(said.contains("彩色分支：只缩放，不量化"), "{said}");
         // 卷级那一副一行逐页都没有：展开才给（票面第一条）。
-        let collapsed = collapsed(&live, 200, None, false)
+        let collapsed = opened_rows(&live, 200)
             .rows
             .iter()
             .map(std::string::ToString::to_string)
@@ -1400,11 +1534,11 @@ mod tests {
         assert!(narrow.contains("判定"), "判定那一列被砍了：\n{narrow}");
         assert!(!narrow.contains("判据"), "窄了还留着判据：\n{narrow}");
         // `←→` 一格都不动这一屏：它在这一块上根本不派动作。
-        let before = session.expansion().copied();
+        let before = session.expansion().cloned();
         session.press(Key::Right);
         session.press(Key::Left);
         assert_eq!(
-            session.expansion().copied(),
+            session.expansion().cloned(),
             before,
             "`←→` 动了展开着的那一格"
         );
@@ -1468,7 +1602,7 @@ mod tests {
         let report = live.report().clone();
         live.returned(Ok(report));
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(0)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(0)));
 
         let open = tight(&screen(&mut session, Some(&live), 120, 22));
 

@@ -102,6 +102,7 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
         Focus::Editing(edit) => Prompt::new(editing_keys(edit), ""),
         Focus::Config => config_prompt(session, live),
         Focus::Report => report_prompt(session, live),
+        Focus::Opened(_) => opened_prompt(session, live),
         Focus::Expanded(_) => expanded_prompt(session, live),
         Focus::Picking(picker) => picking_prompt(picker),
         Focus::Valuing(values) => valuing_prompt(values),
@@ -182,7 +183,7 @@ fn config_prompt(session: &Session, live: Option<&Live>) -> Prompt {
 fn report_prompt(session: &Session, live: Option<&Live>) -> Prompt {
     let mut keys = String::from(" 报告区");
     if expandable(live) {
-        keys.push_str(" · ↑↓ 选一卷 · ⏎ 展开");
+        keys.push_str(" · ↑↓ 选一枝 · ⏎ 展开这一枝 · e 展开逐页");
     }
     let stopped = matches!(session.follow(), Follow::Stopped(_));
     if stopped {
@@ -198,6 +199,36 @@ fn report_prompt(session: &Session, live: Option<&Live>) -> Prompt {
     keys.push_str(" · ⇥ 回配置");
     match stage_prompt(session, live) {
         Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
+        None => Prompt::new(format!("{keys} · q 退出"), following_line(stopped)),
+    }
+}
+
+/// **展开着一枝时**屏底那两行（`volume-discovery/08`）。
+///
+/// 与[目录表那一副](report_prompt)同一个形状，差的只有三处：这一块列的是**一卷一行**，
+/// 因此 `↑↓` 说的是「选一卷」、`⏎` 说的是「展开逐页」；出路多一个 `Esc`——
+/// 这一级是展开进来的，退一步该退到刚才那一级去（按键表那一头见
+/// [`Focus::Opened`]）。
+///
+/// [这一趟的前提](Overlay::Premises)那个键照旧摆在这一块上：读报告的人在这两块上
+/// 找的是同一件事。
+fn opened_prompt(session: &Session, live: Option<&Live>) -> Prompt {
+    let mut keys = String::from(" 卷表");
+    if expandable(live) {
+        keys.push_str(" · ↑↓ 选一卷 · ⏎ 展开逐页");
+    }
+    let stopped = matches!(session.follow(), Follow::Stopped(_));
+    if stopped {
+        keys.push_str(" · g 回到跟随");
+    }
+    if live.is_some() {
+        keys.push_str(&format!(" · {}", Overlay::Premises.prompt()));
+    }
+    keys.push_str(" · Esc 回目录表 · ⇥ 回配置");
+    match stage_prompt(session, live) {
+        Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
+        // 没跑过与收场了那两个阶段上 `q` 照旧退得出去（[`stage_action`] 派的），
+        // 而屏上不摆按不动的键的另一半是**按得动的键要摆出来**——与另外两块同一条。
         None => Prompt::new(format!("{keys} · q 退出"), following_line(stopped)),
     }
 }

@@ -1,9 +1,9 @@
 //! 画法那几块共用的**测试探针**：把一屏画出来，再把屏上的东西取回来比。
 //!
-//! **读法一律摆在这里**，即便眼下只有一块用得上：屏上取回来的文字怎么读有两条各不相同的
-//! 道理——逐格拼那一条每个汉字后面多一个空格（[`tight`] 说的是它），快照那一条走终端库
-//! 自己的 `Display`（[`snapshot`] 说的是它）。分开放就会有人再抄一份，而抄第二份就会
-//! 有一份抄漏。
+//! **读法一律摆在这里**，即便眼下只有一块用得上：屏上取回来的文字怎么读有两条路——
+//! 从缓冲里逐格读那一条走 [`read`]，快照那一条走终端库自己的 `Display`
+//! （[`snapshot`] 说的是它）。**两条按同一条规矩跳格**（[`read`] 的文档说的正是它），
+//! 分开放就会有人再抄一份，而抄第二份就会有一份抄漏。
 //!
 //! **夹具按用得上它的块数分**：跨块的摆这里（[`a_run_in_flight`]、[`every_kind_of_volume`]），
 //! 只有一块用得上的留在那一块自己的 `mod tests` 里。
@@ -18,24 +18,46 @@ use tonefit::Mode as RunMode;
 
 use super::yielding::CONFIG_WIDTH;
 use super::{main_pane, shell};
-use crate::session::live::{Live, Resuming, fixture};
+use crate::session::live::{Branch, Live, Resuming, fixture};
 use crate::session::state::Session;
+
+/// 屏上一行的字，**按显示宽度跳过宽字符占住的那一格**（停车场 Q60）。
+///
+/// 一个汉字在缓冲里占两格，而第二格被终端库 `reset` 成一个**空格**（不是空串）：
+/// 一格一格拼回来的文字因此是「设 备 层」，拿 `contains("设备层")` 去问屏上有没有
+/// 这几个字一律不成立。这一处照那个字形的**显示宽度**往前跳，取回来的是
+/// **屏上真正那一行**。
+///
+/// **跳几格只有一个出处**（[`crate::wrap::width`]）：折行按它折、砍列按它对齐、
+/// 这里按它跳格，三处不许各数各的。快照那一条走的是终端库自己的 `Display`，
+/// 而它按 `cell_width` 跳的正是同一格——两条路因此读出同一份屏。
+///
+/// 一格宽度算出来是零的字形（组合符号）仍占一格往前走：跳零格会原地转圈。
+fn read(row: &[ratatui::buffer::Cell]) -> String {
+    let mut text = String::new();
+    let mut at = 0;
+    while at < row.len() {
+        let symbol = row[at].symbol();
+        text.push_str(symbol);
+        at += usize::from(crate::wrap::width(symbol)).max(1);
+    }
+    text
+}
 
 /// 屏上的文字，**空白全去掉**再比。
 ///
-/// 宽字符在缓冲里占两格，第二格被 ratatui 重置成一个空格——逐格读回来的文字
-/// 因此在每个汉字之间多一个空格（停车场 Q60）。要问的是「这几个字在不在屏上」，
-/// 两边都去掉空白最省事，也不会把断言比松：这些标签没有一个靠空格分辨。
+/// 屏上一行的字从 [`read`] 取，宽字符那一格已经跳过了——这一处只管**空白**：
+/// 表上那几列靠空格对齐，而问的是「这几个字在不在屏上」，两边都去掉空白最省事，
+/// 也不会把断言比松（这些标签没有一个靠空格分辨）。
 ///
-/// **快照那几条不走这里**：它们比的是 [`snapshot`]，而那一条路上宽字符那一格
-/// 根本不在场。
+/// **快照那几条不走这里**：它们比的是 [`snapshot`]，一格空白都不许少。
 pub(super) fn tight(text: &str) -> String {
     text.chars()
         .filter(|glyph| !glyph.is_whitespace())
         .collect()
 }
 
-/// 把一屏画出来，取回屏上的文字（逐格拼，宽字符后面多一个空格）。
+/// 把一屏画出来，取回屏上的文字（逐行读，见 [`read`]）。
 pub(super) fn screen(
     session: &mut Session,
     live: Option<&Live>,
@@ -50,8 +72,8 @@ pub(super) fn screen(
         .backend()
         .buffer()
         .content()
-        .iter()
-        .map(ratatui::buffer::Cell::symbol)
+        .chunks(usize::from(width).max(1))
+        .map(read)
         .collect()
 }
 
@@ -115,13 +137,7 @@ pub(super) fn reversed_row(
             row.iter()
                 .any(|cell| cell.modifier.contains(Modifier::REVERSED))
         })
-        .map(|row| {
-            row.iter()
-                .map(ratatui::buffer::Cell::symbol)
-                .collect::<String>()
-                .trim()
-                .to_owned()
-        })
+        .map(|row| read(row).trim().to_owned())
 }
 
 /// 屏上的一行，连同**这一行上的颜色**。
@@ -130,7 +146,7 @@ pub(super) fn reversed_row(
 /// 「**出事那一行既是红的、也带着那个字**」——两半得在同一行上一起读得到
 /// （spec 的《Testing Decisions》：颜色）。
 pub(super) struct OnScreen {
-    /// 这一行的字，逐格拼（宽字符后面多一个空格——与 [`tight`] 同一条读法）。
+    /// 这一行的字（走 [`read`]，宽字符占住的那一格已经跳过了）。
     pub(super) text: String,
     /// 这一行上出现过的前景色，去重、按出现次序。**终端默认色不算一种**：
     /// 「这一行没上色」问的就是这一列空不空。
@@ -172,18 +188,18 @@ pub(super) fn painted(draw: impl FnOnce(&mut Frame), width: u16, height: u16) ->
         .map(|row| {
             let mut colours: Vec<Color> = Vec::new();
             let mut dimmed = Vec::with_capacity(row.len());
-            let mut text = String::new();
             for cell in row {
                 let symbol = cell.symbol();
                 let blank = symbol.chars().all(char::is_whitespace);
-                text.push_str(symbol);
+                // **压暗逐格记**：`dim_before` 问的是「头几**列**里有没有」，
+                // 而列就是缓冲上的格——这一列不跟着 [`read`] 跳。
                 dimmed.push(!blank && cell.modifier.contains(Modifier::DIM));
                 if !blank && cell.fg != Color::Reset && !colours.contains(&cell.fg) {
                     colours.push(cell.fg);
                 }
             }
             OnScreen {
-                text,
+                text: read(row),
                 colours,
                 dimmed,
             }
@@ -219,6 +235,34 @@ pub(super) fn snapshot(draw: impl FnOnce(&mut Frame), width: u16, height: u16) -
 /// 展开那几条走 [`snapshot_of`]：那时要钉的是**整屏**（左栏在不在场是一半）。
 pub(super) fn main_snapshot(live: &Live, width: u16, height: u16) -> String {
     let mut session = Session::new();
+    snapshot(
+        |frame| main_pane(frame, frame.area(), &mut session, Some(live)),
+        width,
+        height,
+    )
+}
+
+/// 这一趟的**头一枝**：跨块那几份夹具的卷都躺在同一个目录（`库`）底下，
+/// 因此恒只有一枝。
+///
+/// 卷表那几条要它：那一副此刻是**展开一枝**之后摊出来的（`volume-discovery/08`），
+/// 而夹具里那一枝是哪一个只有 [`Live::branches`] 答得出——测试里手写一个路径
+/// 就是第二个出处。
+pub(super) fn only_branch(live: &Live) -> Branch {
+    live.branches()
+        .into_iter()
+        .next()
+        .expect("这一趟至少有一枝")
+}
+
+/// 主区单独一格的快照，**展开着头一枝**（卷表那一副）。
+///
+/// 与 [`main_snapshot`] 差的只有一件事：这一副摊开的是那一枝底下那几卷，
+/// 而那一副是[目录表](super::directories)——报告区默认那一副。
+/// 问卷表长什么样的那几条走这一个。
+pub(super) fn opened_snapshot(live: &Live, width: u16, height: u16) -> String {
+    let mut session = Session::new();
+    session.open(only_branch(live).directory);
     snapshot(
         |frame| main_pane(frame, frame.area(), &mut session, Some(live)),
         width,
@@ -301,4 +345,32 @@ pub(super) fn same_screen(actual: &str, expected: &str) {
         expected.trim_matches('\n'),
         "\n实际画出来的是：\n{actual}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **从缓冲里读回来的就是屏上那一行**：宽字符占住的那一格跳过去了（停车场 Q60）。
+    ///
+    /// 判据是「拿屏上那几个字原样问得出来」——[`tight`] 不在这一条里：
+    /// 它去掉的是**空白**，而这一条问的正是「不必先去空白」。
+    ///
+    /// 左栏那几个标签是现成的样本：它们逐字来自 `crate::session::state::Layer::title`
+    /// 与 `Field::label`，一个字都不是这一层编的。
+    #[test]
+    fn the_screen_reads_back_the_wide_glyphs_as_the_words_they_are() {
+        use crate::session::state::{Field, Layer};
+
+        let mut session = Session::new();
+        let shown = screen(&mut session, None, 120, 40);
+
+        assert!(
+            shown.contains(Layer::Device.title()),
+            "宽字符那一格没跳过去：{shown}"
+        );
+        assert!(shown.contains(Field::Filter.label()), "{shown}");
+        // 两个汉字之间不该再夹一个空格——那正是 Q60 记着的那一格。
+        assert!(!shown.contains("设 备 层"), "{shown}");
+    }
 }

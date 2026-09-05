@@ -34,6 +34,8 @@ use tonefit::{
     VolumeReport,
 };
 
+use crate::render::{self, Listed, Row};
+
 /// 这一趟**在决策点上等不等人**（`CONTEXT.md` 的《会话》：续做、等答话）。
 ///
 /// 一个枚举而不是一个 `bool`：它从 [`super::resuming`] 一路传到 [`Live::new`] 与
@@ -98,6 +100,30 @@ pub enum Volume {
     /// **它不是「第几卷」**：那一卷没做成时它谁都不是（[`nearest`](Live::nearest)
     /// 那时就近收一收），而没做成的卷本来就不在这一列里。
     Summarized { after: usize },
+}
+
+/// **报告区目录那一级摆得出的一枝**（`volume-discovery/08`）：一个目录，
+/// 加上它底下此刻摆得出的那几卷。
+///
+/// 分组不在这里——它只有 [`crate::render::grouped`] 一处出处，命令行那一副读的是同一份
+/// （`CONTEXT.md` 的《发现》：层次与发现出来的那棵树一致）。本结构只把分出来的那几组
+/// 翻成会话认得的东西：[停得住的那几卷](Volume)，以及没做成的那几卷在报告上第几条。
+///
+/// **它不带那一行**：目录表上一枝写什么在 [`Live::branch_rows`]，而问「哪一枝底下有
+/// 哪几卷」的地方多得多（光标停在哪一枝、展开哪一枝、`⇥` 在哪几卷之间转），
+/// 那一半只是路径比较。把行摆进来，每问一次「哪一枝」就要把每一卷的基准档现算一遍。
+#[derive(Debug, Clone)]
+pub struct Branch {
+    /// 这一枝是哪个目录。
+    pub directory: PathBuf,
+    /// 它底下**停得住**的那几卷（[`Volume`]），按表上的先后。
+    ///
+    /// **可以是空的**：一枝底下的卷全没做成时它一卷都收不住——那几卷连一份卷报告都没有
+    /// （见 [`Volume`]）。光标因此停不到这一枝上，与卷表上没做成那几行停不上去
+    /// 是同一条规矩。
+    pub volumes: Vec<Volume>,
+    /// 它底下**没做成**的那几卷在 `Report::failed_volumes` 里的第几条，按报告上的先后。
+    pub failures: Vec<usize>,
 }
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
@@ -496,6 +522,66 @@ impl Live {
                     .iter()
                     .map(move |_| Volume::Summarized { after }),
             )
+            .collect()
+    }
+
+    /// **报告区目录那一级此刻摆得出的那几枝**（[`Branch`]），按表上的先后。
+    ///
+    /// 收的那一列与[卷表那几行](super::draw::table)**同一个次序**：收摊了的那几卷、
+    /// 没做成的那几卷、末尾是决策点上攒着的那一份——分组因此不会把两处排成两个样子。
+    ///
+    /// **分组只有一处出处**（[`crate::render::grouped`]）：命令行那一副的折叠读的是
+    /// 同一份，两边不许各算各的。这里只把下标翻回会话认得的东西。
+    pub fn branches(&self) -> Vec<Branch> {
+        let listed = self.listed();
+        let settled = self.report.volumes.len();
+        let failed = self.report.failed_volumes.len();
+        render::grouped(&listed)
+            .into_iter()
+            .map(|group| {
+                let mut volumes = Vec::new();
+                let mut failures = Vec::new();
+                for at in &group.at {
+                    if *at < settled {
+                        volumes.push(Volume::Settled(*at));
+                    } else if *at < settled + failed {
+                        failures.push(*at - settled);
+                    } else {
+                        volumes.push(Volume::Summarized { after: settled });
+                    }
+                }
+                Branch {
+                    directory: group.directory,
+                    volumes,
+                    failures,
+                }
+            })
+            .collect()
+    }
+
+    /// 这几枝各自在报告上的[那一行](Row)——几卷 · 基准档分布 · 几卷进了隔离，
+    /// **与 [`branches`](Self::branches) 同序**（两处都是 [`crate::render::grouped`]
+    /// 出的那几组，一个次序）。
+    ///
+    /// **只有目录表要它**：那一行的聚合要把每一卷的基准档问一遍，
+    /// 而别处只要「哪一枝底下有哪几卷」（见 [`Branch`]）。措辞与聚合都在
+    /// [`crate::render::directory`]，命令行那一副读的是同一份。
+    pub fn branch_rows(&self) -> Vec<Row> {
+        let listed = self.listed();
+        render::grouped(&listed)
+            .iter()
+            .map(|group| render::directory(group, &listed))
+            .collect()
+    }
+
+    /// 交给[分组](crate::render::grouped)的那一列，**按表上的先后**。
+    ///
+    /// 与命令行那一路的 [`crate::render::listed`] 差的只有末尾那一条：
+    /// 决策点上攒着的那一份也占一条（它还没收摊，命令行那一路根本走不到这个时刻）。
+    fn listed(&self) -> Vec<Listed<'_>> {
+        render::listed(&self.report)
+            .into_iter()
+            .chain(self.summarized.iter().map(Listed::Settled))
             .collect()
     }
 
@@ -1392,5 +1478,54 @@ mod tests {
         assert_eq!(eta(Duration::from_secs(10), 100, 100), Some(Duration::ZERO));
         // 走过的步数超过预告（预告是上界，理应不会，但它是个 `u64` 减法）：不绕回去。
         assert_eq!(eta(Duration::from_secs(10), 120, 100), None);
+    }
+
+    /// **一趟摆得出的那几枝，与卷表读的是同一列**（`volume-discovery/08`）。
+    ///
+    /// 三种条目各归各的枝：收摊了的那几卷按 [`Volume::Settled`] 认，
+    /// 没做成的那几卷按它们在 `Report::failed_volumes` 里第几条认，
+    /// 决策点上攒着的那一份按 [`Volume::Summarized`] 认——三种的**次序**与
+    /// `super::draw::table` 那一头逐格相同，分组因此不会把两处排成两个样子。
+    ///
+    /// **一卷都停不住的那一枝照旧摆得出来**：那几卷全没做成，连一份卷报告都没有，
+    /// 光标停不上去（与卷表上没做成那几行同一条），而它在屏上仍占一行。
+    #[test]
+    fn the_branches_are_the_directories_the_volumes_came_from() {
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(4, 4000);
+        live.volume_started(Path::new("库/甲/第1话"), 1000);
+        live.volume_finished(&fixture::skipped_volume("甲/第1话", 10));
+        live.volume_started(Path::new("库/乙/第1话"), 1000);
+        live.volume_finished(&fixture::skipped_volume("乙/第1话", 10));
+        live.volume_failed(Path::new("库/丙/没做成"), "卷根不在了");
+        live.volume_started(Path::new("库/甲/第2话"), 1000);
+        live.pass_started(
+            tonefit::Pass::Second,
+            Some(&fixture::processed_volume("甲/第2话", None)),
+        );
+
+        let branches = live.branches();
+
+        let names: Vec<String> = branches
+            .iter()
+            .map(|branch| branch.directory.display().to_string())
+            .collect();
+        assert_eq!(names, ["库/甲", "库/乙", "库/丙"], "分的不是那几枝");
+        // 甲那一枝：收摊了的第 0 卷，加上决策点上攒着的那一份。
+        assert_eq!(
+            branches[0].volumes,
+            [Volume::Settled(0), Volume::Summarized { after: 2 }]
+        );
+        assert!(branches[0].failures.is_empty());
+        assert_eq!(branches[1].volumes, [Volume::Settled(1)]);
+        // 丙那一枝一卷都停不住：它只有一条没做成的。
+        assert!(branches[2].volumes.is_empty(), "没做成的卷停得住了");
+        assert_eq!(branches[2].failures, [0]);
+        // 那几行与这几枝**同序**，说得出各枝几卷——措辞与聚合只有
+        // `crate::render::directory` 一处出处。
+        let rows = live.branch_rows();
+        assert_eq!(rows.len(), branches.len(), "行与枝对不上");
+        assert_eq!(rows[0].cell(crate::render::Field::VolumeCount), Some("2"));
+        assert_eq!(rows[2].cell(crate::render::Field::VolumeCount), Some("1"));
     }
 }

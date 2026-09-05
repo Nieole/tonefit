@@ -1,8 +1,9 @@
 //! 会话的画法：左窄配置常驻 + 右宽主区（spec 的《会话：布局与交互》）。
 //!
 //! 主区自上而下两块：**总览块**（这一趟是什么 · 走到哪儿 · 怎么样）与**报告区**
-//! （边跑边攒）。报告区有两副样子——默认只给卷级，**展开**一卷时逐页那几行
-//! 摊开、左栏收起、主区吃满宽度（见 [`report::report_pane`] 与 [`shell`]）。
+//! （边跑边攒）。报告区有**三副**样子——默认一个目录一行，**展开一枝**摊出它底下那几卷，
+//! **展开一卷**时逐页那几行摊开、左栏收起、主区吃满宽度
+//! （见 [`report::report_pane`] 与 [`shell`]）。
 //!
 //! # 屏上那几块各住在哪儿
 //!
@@ -16,8 +17,9 @@
 //! | 预设栏 | [`picker`] |
 //! | 主区上面那一块：总览块 | [`overview`] |
 //! | 主区下面那一块：报告区 | [`report`] |
-//! | 报告区里那张**卷表** | [`table`] |
-//! | 报告区**展开**着的那张**逐页表** | [`pages`] |
+//! | 报告区默认那张**目录表** | [`directories`] |
+//! | 报告区**展开一枝**摊出来的那张**卷表** | [`table`] |
+//! | 报告区**展开一卷**摊出来的那张**逐页表** | [`pages`] |
 //! | 屏底那几行 | [`footer`] |
 //!
 //! 分法按**屏上那几块**走，不按「工具函数 vs 业务」——后者一年后没人分得清一个函数
@@ -59,6 +61,7 @@
 //! （理由见 `crate::wrap` 的模块文档）。
 
 mod config;
+mod directories;
 mod footer;
 mod overlay;
 mod overview;
@@ -189,7 +192,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use super::probe::{screen, tight};
+    use super::probe::{only_branch, screen, tight};
     use super::*;
     use crate::session::live::{Resuming, fixture};
     use crate::session::state::Layer;
@@ -253,6 +256,9 @@ mod tests {
         );
 
         session.at_the_decision_point(true);
+        // 报告区默认那一副是**目录表**（`volume-discovery/08`）：那一卷自己那一行
+        // 要展开它那一枝才摊得出来。
+        session.open(only_branch(&live).directory);
         let waiting = tight(&screen(&mut session, Some(&live), 120, 40));
 
         // 一、抬头。「还剩多久」这时让位给它：横条一动不动，报一个数出来说的就成了
@@ -296,8 +302,10 @@ mod tests {
         running_only.volume_started(Path::new("库/卷一"), 1000);
         running_only.pass_started(tonefit::Pass::Second, None);
         let before = tight(&screen(&mut session, Some(&running_only), 120, 40));
-        // 一卷都还没有：表连列头都不出（`super::table::table`）。
+        // 一卷都还没有：表连列头都不出（`super::table::table` 与
+        // `super::directories::directories` 同一条）。
         assert!(!before.contains(&tight("记号  卷名")), "{before}");
+        assert!(!before.contains(&tight("记号  目录")), "{before}");
         assert!(!before.contains(&tight("001.jpg")), "{before}");
     }
 }

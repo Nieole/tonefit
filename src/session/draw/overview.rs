@@ -489,7 +489,7 @@ pub(super) fn spell(elapsed: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use super::super::footer::running_prompt;
@@ -784,7 +784,7 @@ mod tests {
         let height = u16::try_from(rows + 5).expect("这一块没有六万行");
         let mut session = Session::new();
         // 第二卷才有逐页那几行：头一卷是幂等命中的，一页都没重做。
-        session.expand(Expansion::new(Volume::Settled(1)));
+        session.expand(Expansion::new(PathBuf::from("库"), Volume::Settled(1)));
 
         let mut seen: Vec<String> = Vec::new();
         for _ in 0..4 {
