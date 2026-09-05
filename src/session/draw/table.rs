@@ -43,6 +43,7 @@ use std::path::Path;
 use tonefit::{VolumeFailure, VolumeReport};
 
 use super::overview::{DECIDING, spell};
+use super::paint::{Painted, Tone};
 use crate::render::{self, Field, Row, RowKind};
 use crate::session::columns::{self, Column, Widths};
 use crate::session::live::Live;
@@ -56,12 +57,21 @@ const ABSENT: &str = "—";
 
 /// 行首记号：**这一卷怎么样，一个字符说完。**
 ///
-/// **颜色不是唯一载体**（spec 的《语义色》；上色本身归 `p3/09`，本模块一个颜色都不加）：
-/// 这一格与档位那一列上的那几个字（「跳过」「没做成」）、行尾那一句（「隔离」）一起，
-/// 在不上色的终端上、以及色盲眼里把话说全。
-///
 /// 四种一一对应 `CONTEXT.md` 的《失败》分出来的那几种处境，**不多不少**：
 /// 隔离是卷交出来了、带着坏页；没做成是卷根本没交出来。
+///
+/// # 记号与语义色在这里绑成一对（停车场 Q153）
+///
+/// **「这一卷属于哪一种」只判一次**（[`Mark::of`]），判出来的那一个既定了行首那个字符
+/// （[`glyph`](Self::glyph)），也定了这一行的[语义](Tone)（[`tone`](Self::tone)）。
+/// 「颜色不是唯一载体」这条因此**不靠人记着**：一行有颜色就必有一个记号，
+/// 两者出自同一个取值，添一种记号不配语义（或反过来）根本编不过去。
+///
+/// **接住颜色的是这个记号，不是档位那一列上的那几个字。** 那几个字（「跳过」「没做成」）
+/// 出自 [`crate::render::base_column`]——它是**措辞**，命令行那一路读的也是它，
+/// 而命令行不上色（spec 的《Out of Scope》）。它们说的恰好是同一件事，因此屏上一行
+/// 常常有两个载体；但**靠得住的那一个是记号**：砍列砍到只剩两列时它与卷名仍在
+/// （[`crate::session::columns`]），而档位那一列是砍得掉的。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mark {
     /// 正常跑完。
@@ -85,6 +95,22 @@ impl Mark {
         }
     }
 
+    /// 这一种记号是哪一种[语义](Tone)——**这一行整行按它上色**。
+    ///
+    /// 四种一一对上（spec 的《语义色》那张表）：正常跑完的卷平常、隔离要注意、
+    /// 跳过的卷不要紧、一整卷没做成是出事。
+    ///
+    /// **整行上色而不是只染那一个记号**：出事的卷要在几十行里跳出来，
+    /// 而一个字符的红点在一屏灰字里找不着——「一眼看出重点」问的是行，不是格。
+    fn tone(self) -> Tone {
+        match self {
+            Self::Done => Tone::Plain,
+            Self::Isolated => Tone::Caution,
+            Self::Skipped => Tone::Muted,
+            Self::Failed => Tone::Trouble,
+        }
+    }
+
     /// 这一卷该挂哪一个。
     fn of(volume: &VolumeReport) -> Self {
         if volume.skipped() {
@@ -103,6 +129,12 @@ impl Mark {
 /// [`crate::render`]；这里只留那个**跳得出来的词**——表上一行摆不下一整句，
 /// 而不上色的终端上非有一个字不可（spec 的《语义色》）。
 const ISOLATED: &str = "隔离";
+
+/// 摆在一卷那一行**底下**的那几句缩进几格（见 [`under`]）。
+///
+/// 比行首那一格再深两格：那一格是全表共有的（表离开框线用的），而这两格说的是
+/// 「这一句是上面那一行的」——缩进是屏上唯一说得出这件事的东西。
+const UNDER_INDENT: &str = "   ";
 
 /// 表上的一行：一卷。
 ///
@@ -126,7 +158,10 @@ struct Entry {
     /// 它们本来就是句子，拆成格没有意义；摆不下时整行折下去，走 [`crate::wrap`]。
     notes: Vec<String>,
     /// 摆在这一行**底下**的那几句（见 [`under`]）：表上没有它们的列，别处也没有它们的位置。
-    under: Vec<String>,
+    ///
+    /// 它们各有各的语义，**不跟这一行走**：一卷可以正常跑完（平常）而其中几页是部分救回的
+    /// （要注意），两件事各说各的。
+    under: Vec<Painted>,
 }
 
 impl Entry {
@@ -230,11 +265,22 @@ impl Entry {
 /// 几何门那几句注解不在这里——表**有意**不带几何，追下去要展开那一卷
 /// （`p3-session-legibility/11` 的逐页表），而把它们摆回来就是把这一票要消灭的
 /// 那四五行长句原样搬回屏上。
-fn under(rows: &[Row]) -> Vec<String> {
+///
+/// **两种的语义不同**：部分救回在 spec 的《语义色》里列在「注意」那一档
+/// （源文件不全，这一卷交出来的页不全是完整解出来的）；过期副本**四档里一档都不占**
+/// ——盘上多躺着一份上一趟的输出既不是失败也不是要留神的判定，它只是一件要说出口的事。
+/// 不在表上编一档给它：编出来的那一档在 [`Tone`] 上没有对应的语义（停车场 Q156）。
+fn under(rows: &[Row]) -> Vec<Painted> {
     rows.iter()
-        .filter(|row| matches!(row.kind, RowKind::Superseded | RowKind::Salvaged))
-        .filter_map(|row| row.cell(Field::Sentence))
-        .map(str::to_owned)
+        .filter_map(|row| match row.kind {
+            RowKind::Superseded => Some((row, Tone::Plain)),
+            RowKind::Salvaged => Some((row, Tone::Caution)),
+            _ => None,
+        })
+        .filter_map(|(row, tone)| {
+            row.cell(Field::Sentence)
+                .map(|said| Painted::new(said.to_owned(), tone))
+        })
         .collect()
 }
 
@@ -271,7 +317,11 @@ fn entries(live: &Live) -> Vec<Entry> {
 ///
 /// `room` 是这一格里正文摆得下几列。行首恒留一格空白——那一格既让表离开框线，
 /// 也是行尾那句话折下来时的**悬挂缩进**（[`crate::wrap`]：缩进跟着折下来的每一行走）。
-pub(super) fn table(live: &Live, room: u16) -> Vec<String> {
+///
+/// 每一行带着它是哪一种[语义](Tone)（[`Painted`]），画它的那一头照那一种上色——
+/// 一行的语义由行首那个[记号](Mark)说了算，本模块因此一个颜色名都不写
+/// （见 [`Mark`] 的《记号与语义色在这里绑成一对》）。
+pub(super) fn table(live: &Live, room: u16) -> Vec<Painted> {
     let entries = entries(live);
     if entries.is_empty() {
         return Vec::new();
@@ -293,16 +343,19 @@ pub(super) fn table(live: &Live, room: u16) -> Vec<String> {
             widths.of(Column::Name).saturating_sub(over).max(1),
         );
     }
-    let mut lines = vec![lay(&kept, &widths, |column| column.head().to_owned(), &[])];
+    let mut lines = vec![Painted::plain(lay(
+        &kept,
+        &widths,
+        |column| column.head().to_owned(),
+        &[],
+    ))];
     for entry in &entries {
-        lines.push(lay(
-            &kept,
-            &widths,
-            |column| entry.text(column),
-            &entry.notes,
+        lines.push(Painted::new(
+            lay(&kept, &widths, |column| entry.text(column), &entry.notes),
+            entry.mark.tone(),
         ));
         // 摆在它底下、缩进一格的那几句（[`under`]）：整段文字，画它的那一头折行。
-        lines.extend(entry.under.iter().map(|said| format!("   {said}")));
+        lines.extend(entry.under.iter().map(|said| said.indented(UNDER_INDENT)));
     }
     lines
 }

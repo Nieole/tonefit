@@ -22,6 +22,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use super::paint::{Painted, Tone};
 use super::table::table;
 use crate::session::live::Live;
 use crate::session::state::Session;
@@ -69,7 +70,7 @@ pub(super) fn report_pane(
         area.height.saturating_sub(2),
     );
     let Some(live) = live else {
-        let rows = folded_lines(NOT_RUN_YET, inside.width);
+        let rows = Painted::plain(NOT_RUN_YET.to_owned()).folded(inside.width);
         frame.render_widget(Paragraph::new(rows).block(block), area);
         return;
     };
@@ -121,19 +122,24 @@ const NOT_RUN_YET: &str = "
 /// 与命令行印出来的那一份**同源不同副**：同样的行、同样的格，摆法两副。
 fn collapsed(live: &Live, width: u16) -> Vec<Line<'static>> {
     let report = live.report();
-    let mut rows = folded_lines(&crate::render::header(report, live.mode()), width);
+    let mut rows = Painted::plain(crate::render::header(report, live.mode())).folded(width);
+    rows.extend(table(live, width).iter().flat_map(|row| row.folded(width)));
+    // **失败页是「出事」那一档**（spec 的《语义色》），而这一段头一行就叫「失败页」——
+    // 颜色不是唯一载体（见 [`super::paint`]）。
     rows.extend(
-        table(live, width)
-            .into_iter()
-            .flat_map(|line| folded_lines(&line, width)),
+        Painted::new(
+            crate::render::failing_pages(live.failed_pages()),
+            Tone::Trouble,
+        )
+        .folded(width),
     );
-    rows.extend(folded_lines(
-        &crate::render::failing_pages(live.failed_pages()),
-        width,
-    ));
     // 末尾那几小结要看完整趟才给得出来（见 [`crate::render::tail`]），因此只在收场之后画。
     if live.ended() {
-        rows.extend(folded_lines(&crate::render::tail(report), width));
+        // **末尾那几小结不上色**：那是一串小结（非卷文件 · 宽溢出 · 兜底上界 · 部分救回 ·
+        // 隔离 · 卷级失败）拼出来的一段文字，六小结分属三档语义，而整段只上得了一种色。
+        // 按小结分色要先把那一段拆开，而拆它就是把措辞挪进画法这一层（ADR 0016）——
+        // 停车场 Q155 记着这一笔。表上那几行已经把同一批事按卷说了一遍。
+        rows.extend(Painted::plain(crate::render::tail(report)).folded(width));
     }
     rows
 }
@@ -180,17 +186,6 @@ fn rows(text: &str) -> u16 {
 /// [`crate::wrap::width`]——折行按它折，滚动按它算，两处不许各数各的。
 fn widest(text: &str) -> u16 {
     text.lines().map(wrap::width).max().unwrap_or(0)
-}
-
-/// 把一段文字折成这一格摆得下的那几行（[`crate::wrap`]）。
-///
-/// 折行的规矩因此在**终端库之外**：`--help` 与命令行印出来的报告折的是同一套，
-/// 而那两处根本没有终端库（见 `crate::wrap` 的《三处共用这一份》）。
-fn folded_lines(text: &str, width: u16) -> Vec<Line<'static>> {
-    wrap::fold(text, width)
-        .into_iter()
-        .map(Line::from)
-        .collect()
 }
 
 /// 展开第 `volume` 卷之后，那一卷的抬头落在第几行。
@@ -261,7 +256,8 @@ mod tests {
 
     use super::super::overview::OVERVIEW_HEIGHT;
     use super::super::probe::{
-        a_run_in_flight, main_snapshot, same_screen, screen, snapshot_of, tight,
+        a_run_in_flight, every_kind_of_volume, main_snapshot, same_screen, screen, snapshot_of,
+        tight,
     };
     use super::*;
     use crate::session::live::{Resuming, fixture};
@@ -312,7 +308,7 @@ mod tests {
         let squeezed = main_snapshot(&live, 96, 4 + OVERVIEW_HEIGHT);
 
         assert!(
-            squeezed.contains(last.trim_end()),
+            squeezed.contains(last.text.trim_end()),
             "最新收摊的那一卷掉出去了：{squeezed}"
         );
         assert!(
@@ -328,40 +324,6 @@ mod tests {
         assert!(!table(&live, 0).is_empty(), "砍无可砍时表也还在");
     }
 
-    /// 一趟**六种卷都齐**的：跳过、隔离、逐页、覆盖、卷级失败，
-    /// 外加停在决策点上等答话的那一卷（票面第二条那六种）。
-    ///
-    /// 卷名特意长短不一，宽终端上一列对得齐、窄终端上砍得看得见。
-    /// 末一种只有**续做那一趟**到得了：等答话是决策点上的事，而一趟走到底的执行
-    /// 在决策点上不停（`CONTEXT.md` 的《会话》：续做）。`resumes` 因此同时定了屏上那两个字
-    /// ——答出第一个继续之前它印的是「试算」（见 `Live::mode`）。
-    fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
-        let mut live = Live::new(&fixture::request(mode), resumes);
-        live.run_started(6, 6000);
-        live.volume_started(Path::new("库/棋魂 07"), 1000);
-        live.volume_finished(&fixture::skipped_volume("棋魂 07", 184));
-        live.volume_started(Path::new("库/哆啦 03"), 1000);
-        live.volume_finished(&fixture::processed_volume(
-            "哆啦 03",
-            Some("解不出完整尺寸：JPEG 数据截断"),
-        ));
-        live.volume_started(Path::new("库/名侦探 05"), 1000);
-        live.volume_finished(&fixture::per_page_volume("名侦探 05"));
-        live.volume_started(Path::new("库/浪客行 12"), 1000);
-        live.volume_finished(&fixture::overridden_volume("浪客行 12"));
-        live.volume_started(Path::new("库/消失的那卷"), 1000);
-        live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
-        if live.resumes() {
-            live.volume_started(Path::new("库/棋魂 08"), 1000);
-            live.pass_started(
-                tonefit::Pass::Second,
-                Some(&fixture::processed_volume("棋魂 08", None)),
-            );
-        }
-        live.rewind(Duration::from_secs(300));
-        live
-    }
-
     /// **六种卷各有各的行**（票面第二条）：跳过、隔离、卷级失败、逐页、覆盖、等答话。
     ///
     /// 逐条问的是那一行**长什么样**，不是屏上第几行：档位那一列写什么出自
@@ -371,7 +333,7 @@ mod tests {
     fn six_kinds_of_volume_each_get_their_own_row() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
         let rows = table(&live, 120);
-        let body: Vec<&str> = rows.iter().skip(1).map(String::as_str).collect();
+        let body: Vec<&str> = rows.iter().skip(1).map(|row| row.text.as_str()).collect();
 
         assert_eq!(body.len(), 6, "六种卷六行：{rows:?}");
         // 一、跳过：档位那一列写「跳过」，定档页留空，**耗时照给**。
@@ -419,8 +381,10 @@ mod tests {
             "{}",
             body[3]
         );
-        // 五、卷级失败：记号红（上色归 p3/09）、档位写「没做成」、理由成句跟在后面，
-        //     页数那一格不在场（它连一份卷报告都没有）。
+        // 五、卷级失败：记号 `✗`、档位写「没做成」、理由成句跟在后面，
+        //     页数那一格不在场（它连一份卷报告都没有）。整行是红的，
+        //     那一条在 `src/session/draw/paint.rs` 的
+        //     `the_row_that_went_wrong_is_red_and_says_so` 上。
         assert!(body[4].starts_with(" ✗"), "{}", body[4]);
         assert!(
             body[4].contains("消失的那卷") && body[4].contains("没做成"),
@@ -445,7 +409,11 @@ mod tests {
     #[test]
     fn the_table_never_reorders_the_volumes_it_has_added() {
         let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
-        let body: Vec<String> = table(&live, 120).into_iter().skip(1).collect();
+        let body: Vec<String> = table(&live, 120)
+            .into_iter()
+            .skip(1)
+            .map(|row| row.text)
+            .collect();
         let order = [
             "棋魂 07",
             "哆啦 03",
@@ -485,26 +453,30 @@ mod tests {
 
         // 卷那一行照旧是一行，过期副本那一句在它**底下**、缩进摆着。
         assert_eq!(rows.len(), 3, "该是列头 + 一卷 + 那一句：{rows:?}");
-        assert!(rows[1].contains("棋魂 07"), "{}", rows[1]);
+        assert!(rows[1].text.contains("棋魂 07"), "{}", rows[1].text);
         assert!(
-            rows[2].starts_with("   过期副本 出/隔离/棋魂 07："),
+            rows[2].text.starts_with("   过期副本 出/隔离/棋魂 07："),
             "{}",
-            rows[2]
+            rows[2].text
         );
-        assert!(rows[2].ends_with("删不删由你"), "整句没摆全：{}", rows[2]);
+        assert!(
+            rows[2].text.ends_with("删不删由你"),
+            "整句没摆全：{}",
+            rows[2].text
+        );
         // 那一句逐字来自 `render`——这一层一个字都没重写。
         let said = crate::render::volume(&superseded)
             .into_iter()
             .find(|row| row.kind == crate::render::RowKind::Superseded)
             .and_then(|row| row.cell(crate::render::Field::Sentence).map(str::to_owned))
             .expect("过期副本那一行");
-        assert!(rows[2].contains(&said), "{}", rows[2]);
+        assert!(rows[2].text.contains(&said), "{}", rows[2].text);
         // 一卷都没被顶掉时它一行都不出——与末尾那几小结同一条规矩。
         let plain = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
         assert!(
             table(&plain, 120)
                 .iter()
-                .all(|row| !row.contains("过期副本")),
+                .all(|row| !row.text.contains("过期副本")),
             "没有过期副本的那几卷也说了这句话"
         );
     }
@@ -521,14 +493,14 @@ mod tests {
         for volume in &live.report().volumes {
             let name = crate::render::volume_name(&volume.volume);
             assert!(
-                wide.iter().any(|row| row.contains(&name)),
+                wide.iter().any(|row| row.text.contains(&name)),
                 "{name} 没上表：{wide:?}"
             );
         }
         // 窄到一列都砍无可砍：卷名从中间省略，书名与第几卷两头都还认得出。
         let narrow = table(&live, 26);
         // 第五行是「消失的那卷」——十格的名字收进六格里。
-        let elided = narrow.iter().skip(1).nth(4).expect("那一行在表上");
+        let elided = &narrow.iter().skip(1).nth(4).expect("那一行在表上").text;
         assert!(elided.contains('…'), "该省略却没省略：{elided}");
         assert!(elided.contains('消'), "书名那一头没留下：{elided}");
         assert!(elided.contains('卷'), "末一头没留下：{elided}");

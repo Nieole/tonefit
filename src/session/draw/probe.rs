@@ -5,14 +5,14 @@
 //! 自己的 `Display`（[`snapshot`] 说的是它）。分开放就会有人再抄一份，而抄第二份就会
 //! 有一份抄漏。
 //!
-//! **夹具按用得上它的块数分**：跨块的摆这里（[`a_run_in_flight`]），
+//! **夹具按用得上它的块数分**：跨块的摆这里（[`a_run_in_flight`]、[`every_kind_of_volume`]），
 //! 只有一块用得上的留在那一块自己的 `mod tests` 里。
 
 use std::path::Path;
 use std::time::Duration;
 
 use ratatui::backend::TestBackend;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
 use tonefit::Mode as RunMode;
 
@@ -90,6 +90,73 @@ pub(super) fn reversed_cells(draw: impl FnOnce(&mut Frame), width: u16, height: 
         .count()
 }
 
+/// 屏上的一行，连同**这一行上的颜色**。
+///
+/// 快照那一路只比得了字（[`snapshot`] 走终端库自己的 `Display`），而语义色那一票要问的是
+/// 「**出事那一行既是红的、也带着那个字**」——两半得在同一行上一起读得到
+/// （spec 的《Testing Decisions》：颜色）。
+pub(super) struct OnScreen {
+    /// 这一行的字，逐格拼（宽字符后面多一个空格——与 [`tight`] 同一条读法）。
+    pub(super) text: String,
+    /// 这一行上出现过的前景色，去重、按出现次序。**终端默认色不算一种**：
+    /// 「这一行没上色」问的就是这一列空不空。
+    pub(super) colours: Vec<Color>,
+    /// 逐格：这一格压没压暗（[`Tone::Muted`](super::paint::Tone) 是压暗的）。
+    /// 整行问 [`dim`](Self::dim)，只问左栏那几列问 [`dim_before`](Self::dim_before)。
+    dimmed: Vec<bool>,
+}
+
+impl OnScreen {
+    /// 这一行上有没有压暗的格子。
+    pub(super) fn dim(&self) -> bool {
+        self.dim_before(u16::MAX)
+    }
+
+    /// 这一行**头 `columns` 列**里有没有压暗的格子。
+    ///
+    /// 左栏那几列单独问，与 [`reversed_rows`] 同一条道理：主区自己也上色，
+    /// 一起数就分不出是谁压的暗。
+    pub(super) fn dim_before(&self, columns: u16) -> bool {
+        self.dimmed
+            .iter()
+            .take(usize::from(columns))
+            .any(|dimmed| *dimmed)
+    }
+}
+
+/// 把一屏画出来，**逐行**取回它的字与颜色（见 [`OnScreen`]）。
+///
+/// 空白那几格一概不算：它们身上多半跟着整行的样式，而问的是「**这几个字**是什么色」。
+pub(super) fn painted(draw: impl FnOnce(&mut Frame), width: u16, height: u16) -> Vec<OnScreen> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
+    terminal.draw(draw).expect("画得出来");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(usize::from(width).max(1))
+        .map(|row| {
+            let mut colours: Vec<Color> = Vec::new();
+            let mut dimmed = Vec::with_capacity(row.len());
+            let mut text = String::new();
+            for cell in row {
+                let symbol = cell.symbol();
+                let blank = symbol.chars().all(char::is_whitespace);
+                text.push_str(symbol);
+                dimmed.push(!blank && cell.modifier.contains(Modifier::DIM));
+                if !blank && cell.fg != Color::Reset && !colours.contains(&cell.fg) {
+                    colours.push(cell.fg);
+                }
+            }
+            OnScreen {
+                text,
+                colours,
+                dimmed,
+            }
+        })
+        .collect()
+}
+
 /// 一屏的**快照**：一行一行，每行两侧加引号，一格都不多一格不少。
 ///
 /// 走的是 `TestBackend` 自己的 `Display`——它按 `cell_width` 跳过被宽字符盖住的那一格
@@ -149,6 +216,44 @@ pub(super) fn a_run_in_flight(failures: bool) -> Live {
     live.pass_started(tonefit::Pass::Second, None);
     for _ in 0..1000 {
         live.stepped();
+    }
+    live.rewind(Duration::from_secs(300));
+    live
+}
+
+/// 一趟**六种卷都齐**的：跳过、隔离、逐页、覆盖、卷级失败，
+/// 外加停在决策点上等答话的那一卷。
+///
+/// 卷名特意长短不一，宽终端上一列对得齐、窄终端上砍得看得见。
+/// 末一种只有**续做那一趟**到得了：等答话是决策点上的事，而一趟走到底的执行
+/// 在决策点上不停（`CONTEXT.md` 的《会话》：续做）。`resumes` 因此同时定了屏上那两个字
+/// ——答出第一个继续之前它印的是「试算」（见 `Live::mode`）。
+///
+/// **跨块**：卷表那几条问「六种卷各长什么样」（[`super::report`]），
+/// 语义色那几条问「哪几行上了色、上的是哪一种」（[`super::paint`]）——
+/// 同一趟里六种卷恰好把四种语义占全。
+pub(super) fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
+    let mut live = Live::new(&fixture::request(mode), resumes);
+    live.run_started(6, 6000);
+    live.volume_started(Path::new("库/棋魂 07"), 1000);
+    live.volume_finished(&fixture::skipped_volume("棋魂 07", 184));
+    live.volume_started(Path::new("库/哆啦 03"), 1000);
+    live.volume_finished(&fixture::processed_volume(
+        "哆啦 03",
+        Some("解不出完整尺寸：JPEG 数据截断"),
+    ));
+    live.volume_started(Path::new("库/名侦探 05"), 1000);
+    live.volume_finished(&fixture::per_page_volume("名侦探 05"));
+    live.volume_started(Path::new("库/浪客行 12"), 1000);
+    live.volume_finished(&fixture::overridden_volume("浪客行 12"));
+    live.volume_started(Path::new("库/消失的那卷"), 1000);
+    live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
+    if live.resumes() {
+        live.volume_started(Path::new("库/棋魂 08"), 1000);
+        live.pass_started(
+            tonefit::Pass::Second,
+            Some(&fixture::processed_volume("棋魂 08", None)),
+        );
     }
     live.rewind(Duration::from_secs(300));
     live

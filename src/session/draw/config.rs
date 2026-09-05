@@ -19,6 +19,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+use super::paint::Tone;
 use crate::session::state::{Field, Layer, Mode, Session, Values};
 use crate::session::viewport::Viewport;
 
@@ -54,7 +55,7 @@ const DRILLED_INDENT: &str = "      ";
 /// 左栏：三层，各占一块，按生命周期从上到下。
 ///
 /// **跑起来之后整栏只读**，而这一条要在屏上**看得出来**，不能是「按了没反应」：
-/// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗。
+/// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗（[`Tone::Muted`]）。
 /// 真正拦住按键的不是这里——是状态机在那个状态下一个改动键都不派
 /// （见 `super::super::state::running_action`）；这里只把那件事说出来。
 ///
@@ -95,7 +96,11 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             drawn = Some(layer);
         }
         let style = match (running, acting && field == focus) {
-            (true, _) => Style::default().add_modifier(Modifier::DIM),
+            // **跑着时这一栏是「不要紧」那一档**（spec 的《语义色》：只读时的左栏）——
+            // 压暗这件事因此与卷表上跳过的那几行同一个出处（[`Tone`]），
+            // 这一块自己一个颜色都不挑。**接住这个颜色的是抬头**（[`READ_ONLY_TITLE`]）：
+            // 不上色的终端上「按不动」照旧写在那里。
+            (true, _) => Tone::Muted.style(),
             (false, true) => Style::default().add_modifier(Modifier::REVERSED),
             (false, false) => Style::default(),
         };

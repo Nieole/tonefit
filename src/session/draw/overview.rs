@@ -35,11 +35,12 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use ratatui::text::Text;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use tonefit::{Instruction, Mode as RunMode, Pass, Report, VolumeReport, VolumeVerdict};
 
 use super::footer::{START_KEYS, stopping_name};
+use super::paint::{Painted, Tone};
 use crate::session::live::{Live, Walking};
 
 /// 总览块**最高**几行：四行正文加上下两条边（跑着、而且出了事的那一副）。
@@ -75,10 +76,10 @@ pub(super) const DECIDING: &str = "等你拿主意";
 /// | 结论行 | **这一趟到底怎么样**：试算给判定分布，执行给完成与跳过 |
 /// | 出事行 | 要注意的那几件，**一条都没有时整行不出现** |
 pub(super) struct Overview {
-    /// 边框上那一行。
-    title: String,
-    /// 框里那一到四行。
-    rows: Vec<String>,
+    /// 边框上那一行。**没做成那一趟它是红的**（见 [`ended_title`]）。
+    title: Painted,
+    /// 框里那一到四行。各行的[语义](Tone)各自算（出事行见 [`trouble_row`]）。
+    rows: Vec<Painted>,
 }
 
 impl Overview {
@@ -93,10 +94,13 @@ impl Overview {
             .saturating_add(2)
     }
 
-    /// 画出来。
+    /// 画出来。**上色按语义要**，一个颜色名都不在这一块里（见 [`super::paint`]）。
     pub(super) fn draw(self) -> Paragraph<'static> {
-        let block = Block::default().borders(Borders::ALL).title(self.title);
-        Paragraph::new(Text::from(self.rows.join("\n"))).block(block)
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(self.title.line());
+        let rows: Vec<Line<'static>> = self.rows.iter().map(Painted::line).collect();
+        Paragraph::new(Text::from(rows)).block(block)
     }
 }
 
@@ -112,13 +116,13 @@ impl Overview {
 pub(super) fn overview(live: Option<&Live>, pressed: Instruction, deciding: bool) -> Overview {
     let Some(live) = live else {
         return Overview {
-            title: "总览".to_owned(),
-            rows: vec![format!(" 还没跑过。{START_KEYS}")],
+            title: Painted::plain("总览".to_owned()),
+            rows: vec![Painted::plain(format!(" 还没跑过。{START_KEYS}"))],
         };
     };
-    let mut rows = vec![overall_row(live)];
-    rows.extend(volume_row(live));
-    rows.push(settled_row(live));
+    let mut rows = vec![Painted::plain(overall_row(live))];
+    rows.extend(volume_row(live).map(Painted::plain));
+    rows.push(Painted::plain(settled_row(live)));
     rows.extend(trouble_row(live));
     Overview {
         title: title(live, pressed, deciding),
@@ -139,7 +143,7 @@ pub(super) fn overview(live: Option<&Live>, pressed: Instruction, deciding: bool
 /// **等答话时不说「还剩多久」**：那一刻横条一动不动，剩下的时间由用户拿主意的快慢决定，
 /// 报一个数出来说的就成了「用户还要想多久」。它同样顶掉按停那一级——等答话是此刻更要紧的
 /// 那一件（按过的停要等答完话才继续作数），与从前那一格逐字相同。
-fn title(live: &Live, pressed: Instruction, deciding: bool) -> String {
+fn title(live: &Live, pressed: Instruction, deciding: bool) -> Painted {
     if live.ended() {
         return ended_title(live);
     }
@@ -149,12 +153,12 @@ fn title(live: &Live, pressed: Instruction, deciding: bool) -> String {
         (false, Some(name)) => format!("{} · {name}", left_clause(overall.left)),
         (false, None) => left_clause(overall.left),
     };
-    format!(
+    Painted::plain(format!(
         "{} · 第 {}/{} 卷 · {tail}",
         run_name(live.mode()),
         overall.volume,
         overall.volumes,
-    )
+    ))
 }
 
 /// 这一趟是什么。两个词与屏底那两个键同一批（[`START_KEYS`]，`CONTEXT.md` 的《会话》：试算）。
@@ -184,15 +188,18 @@ fn left_clause(left: Option<Duration>) -> String {
 ///
 /// 「用了」那个数收场之后就定住了（见 [`Live::overall`]）：它是库交出来的那一个，
 /// 扣掉了在决策点上等人的那几分钟。
-fn ended_title(live: &Live) -> String {
+fn ended_title(live: &Live) -> Painted {
     match live.undone() {
-        Some(said) => format!("这一趟没做成：{said}"),
-        None => format!(
+        // **拒绝执行是「出事」那一档**（spec 的《语义色》）：错在这一趟的参数上，
+        // 换一个卷不会变好，而这一句是屏上唯一说得出它的地方。
+        // 「没做成」三个字就在这一句里——颜色不是唯一载体（见 [`super::paint`]）。
+        Some(said) => Painted::new(format!("这一趟没做成：{said}"), Tone::Trouble),
+        None => Painted::plain(format!(
             "收场 {} · {} 卷 · 用了 {}",
             crate::render::outcome(live.report().outcome),
             live.report().volumes.len(),
             spell(live.overall().elapsed),
-        ),
+        )),
     }
 }
 
@@ -358,29 +365,50 @@ fn base_name(volume: &VolumeReport) -> String {
 ///
 /// **失败页数的是收摊了的卷**（`Report::failures`），因此比报告区晚一整卷——
 /// 出现的当场那几条在报告区（`crate::render::failing_pages`），停车场 Q148 记着这一笔。
-fn trouble_row(live: &Live) -> Option<String> {
+///
+/// **这一行只有一种[语义](Tone)**：它列着的那几件分属两档（隔离要注意、失败页与卷级失败
+/// 是出事），而取的是最重的那一个——理由见函数里那条注释。
+fn trouble_row(live: &Live) -> Option<Painted> {
     let report = live.report();
-    let said: Vec<String> = match live.mode() {
+    let said: Vec<Painted> = match live.mode() {
         RunMode::DryRun => vec![
-            count(outliers(report), "特例页", "张"),
-            count(report.wider_than_the_panel().count(), "宽溢出", "页"),
-            count(broken_gates(report), "几何门不成立", "卷"),
+            count(outliers(report), "特例页", "张", Tone::Caution),
+            count(
+                report.wider_than_the_panel().count(),
+                "宽溢出",
+                "页",
+                Tone::Caution,
+            ),
+            count(broken_gates(report), "几何门不成立", "卷", Tone::Caution),
         ],
         RunMode::Process => vec![
-            count(isolated(report), "隔离", "卷"),
-            count(report.failures().count(), "失败", "页"),
-            count(report.failed_volumes.len(), "卷级失败", "卷"),
+            count(isolated(report), "隔离", "卷", Tone::Caution),
+            count(report.failures().count(), "失败", "页", Tone::Trouble),
+            count(report.failed_volumes.len(), "卷级失败", "卷", Tone::Trouble),
         ],
     }
     .into_iter()
     .flatten()
     .collect();
-    (!said.is_empty()).then(|| format!(" 出事 {}", said.join(" · ")))
+    // **这一行只有一种颜色，取列着的那几件里最重的那一种**（[`Tone`] 的 `Ord` 就是为它派生的）：
+    // 隔离要注意、失败页与卷级失败是出事，三件同时在场时这一行是红的。
+    // 分成三段各上各的色也行得通，但「一眼看出这一趟出没出事」问的是**有没有红**，
+    // 而一行里掺着黄的红读不出重点。行首「出事」两个字接住这个颜色。
+    //
+    // 一件都没有时它答 `None`——那正是「整行不出现」，与从前那一格逐字同义。
+    let tone = said.iter().map(|one| one.tone).max()?;
+    let listed: Vec<&str> = said.iter().map(|one| one.text.as_str()).collect();
+    Some(Painted::new(format!(" 出事 {}", listed.join(" · ")), tone))
 }
 
-/// 「几件什么」那一小截。**零就一个字都不说**——出事行只列真出了的事。
-fn count(many: usize, what: &str, unit: &str) -> Option<String> {
-    (many > 0).then(|| format!("{what} {many} {unit}"))
+/// 「几件什么」那一小截，连同它是哪一档[语义](Tone)。**零就一个字都不说**——
+/// 出事行只列真出了的事。
+///
+/// 交出来的是 [`Painted`] 而不是一对裸值：那一对里哪一半是哪一半在调用处看不出来
+/// （理由与 [`Painted`] 自己的文档同一条）。这里的一「行」是行上的一小截，
+/// 而语义正是逐小截给的——整行取它们里面最重的那一个。
+fn count(many: usize, what: &str, unit: &str, tone: Tone) -> Option<Painted> {
+    (many > 0).then(|| Painted::new(format!("{what} {many} {unit}"), tone))
 }
 
 /// 这一趟摘出去单独定档的特例页共几张（`Envelope::outlier_pages` 逐卷相加）。
@@ -662,9 +690,34 @@ mod tests {
         let tail = crate::render::tail(live.report());
 
         for said in ["隔离 1 卷", "失败 1 页", "卷级失败 1 卷"] {
-            assert!(row.contains(said), "出事行少了「{said}」：{row}");
+            assert!(
+                row.text.contains(said),
+                "出事行少了「{said}」：{}",
+                row.text
+            );
             assert!(tail.contains(said), "报告末尾那几小结不这么说了：{tail}");
         }
+    }
+
+    /// **出事行只有一种颜色，取它列着的那几件里最重的那一种**（spec 的《语义色》）。
+    ///
+    /// 试算那一副列的三样（特例页 · 宽溢出 · 几何门不成立）都是「注意」；
+    /// 执行那一副里隔离是「注意」而失败页是「出事」，一行只上得了一种色，取重的那一个。
+    /// 行首「出事」两个字接住这个颜色——颜色不是唯一载体（见 [`super::paint`]）。
+    #[test]
+    fn the_trouble_row_takes_the_most_serious_tone_it_lists() {
+        assert_eq!(
+            trouble_row(&a_dry_run_that_finished())
+                .expect("这一趟有要注意的")
+                .tone,
+            Tone::Caution
+        );
+        assert_eq!(
+            trouble_row(&a_run_in_flight(true))
+                .expect("这一趟出了事")
+                .tone,
+            Tone::Trouble
+        );
     }
 
     /// **出事行一条都没有时整行不出现，那一行让给下面的报告**（票面第三条，
@@ -763,6 +816,8 @@ mod tests {
 
         assert!(snapshot.contains("收场"), "{snapshot}");
         assert!(snapshot.contains("点名的卷都走过了"), "{snapshot}");
+        // 走完了的那一趟抬头不上色：**四种里有一种是「不上色」**，而它是屏上多数。
+        assert_eq!(ended_title(&live).tone, Tone::Plain);
         // 库交出来的那一个，不是会话自己那块表上的五分钟。
         assert!(snapshot.contains("用了 6m40s"), "{snapshot}");
         // 收场之后不再说「还剩多久」：这一趟已经走完了。
@@ -779,6 +834,9 @@ mod tests {
 
         assert!(snapshot.contains("没做成"), "{snapshot}");
         assert!(snapshot.contains("处理范围为空"), "{snapshot}");
+        // **拒绝执行是「出事」那一档**（spec 的《语义色》），而「没做成」三个字
+        // 就在同一句里——颜色不是唯一载体。
+        assert_eq!(ended_title(&live).tone, Tone::Trouble);
         // 一步都没开工的那一趟不编一个「完成 0 卷」：结论行给的是那个破折号，
         // 与试算那一支同一条规矩（见 [`settled_row`]）。
         assert!(snapshot.contains("完成 —"), "{snapshot}");

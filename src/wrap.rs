@@ -31,8 +31,8 @@
 //! # 三个名字，一件事
 //!
 //! [`fold`] 给**那几行**（`Vec<String>`），[`folded_text`] 把它们拼回**一段文字**，
-//! `crate::session::draw::report::folded_lines` 拼成终端库的 `Line`。折法只有 [`fold`] 那一处，
-//! 另外两个各只管把它交出来的东西装成调用方要的形状。
+//! 会话那一头的 `Painted::folded` 拼成终端库的 `Line`（一行一种语义色）。
+//! 折法只有 [`fold`] 那一处，另外两个各只管把它交出来的东西装成调用方要的形状。
 
 use unicode_width::UnicodeWidthChar;
 
