@@ -76,7 +76,10 @@ pub(super) fn presets(frame: &mut Frame, area: Rect, picker: &Picker) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("预设 · 装设备层与口味层，范围层不进"),
+                .title(super::yielding::title(
+                    "预设 · 装设备层与口味层，范围层不进",
+                    area.width,
+                )),
         )
         .wrap(Wrap { trim: false });
     super::scrolling(frame, area, body, &view);

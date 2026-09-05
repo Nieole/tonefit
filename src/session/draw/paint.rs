@@ -24,7 +24,7 @@
 //! # 颜色不是唯一载体
 //!
 //! **每一处上色的地方旁边都另有一个字或一个行首记号**：卷表那几行行首恒有一个记号
-//! （`✓ ! – ✗`，砍列时它与卷名一起恒在，见 [`crate::session::columns`]），
+//! （`✓ ! - ✗`，砍列时它与卷名一起恒在，见 [`crate::session::columns`]），
 //! 出事行行首是「出事」两个字，没做成那一趟的抬头里有「没做成」，失败页那一段头一行
 //! 就叫「失败页」，只读的左栏抬头上写着「跑着，三层都只读」。
 //!
@@ -195,7 +195,8 @@ mod tests {
     use super::super::probe::{
         OnScreen, a_run_in_flight, every_kind_of_volume, main_snapshot, painted, tight,
     };
-    use super::super::{CONFIG_WIDTH, main_pane, shell};
+    use super::super::yielding::CONFIG_WIDTH;
+    use super::super::{main_pane, shell};
     use super::*;
     use crate::session::live::{Live, Resuming};
     use crate::session::state::Session;
@@ -289,7 +290,7 @@ mod tests {
     ///
     /// - **卷级失败**那一行是**红**的，行首记号是 `✗`，档位那一列写着「没做成」；
     /// - **隔离**那一行是**黄**的，行首记号是 `!`，行尾那个词是「隔离」；
-    /// - **跳过**那一行是**暗**的，行首记号是 `–`，档位那一列写着「跳过」。
+    /// - **跳过**那一行是**暗**的，行首记号是 `-`，档位那一列写着「跳过」。
     ///
     /// 正常跑完的那几卷一格都不上色：**四种里有一种是「不上色」**，
     /// 而屏上多数行属于它——人人都是红的等于没有红的。
@@ -312,7 +313,7 @@ mod tests {
 
         let skipped = row_saying(&rows, "棋魂 07");
         assert!(skipped.dim(), "跳过那一行没压暗");
-        assert!(tight(&skipped.text).contains('–'), "{}", skipped.text);
+        assert!(tight(&skipped.text).contains('-'), "{}", skipped.text);
         assert!(tight(&skipped.text).contains("跳过"), "{}", skipped.text);
 
         // 逐页判定与被覆盖的那两卷正常跑完，一格都不上色。
@@ -333,7 +334,7 @@ mod tests {
         const CARRIERS: [&str; 10] = [
             "✓",
             "!",
-            "–",
+            "-",
             "✗",
             "隔离",
             "跳过",

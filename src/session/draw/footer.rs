@@ -19,14 +19,14 @@
 //! `t 试算：只算不写，报告照出`）——短的那一句是提示，长的那一句是解释。
 //! **这一笔记在停车场 Q166**：改一个键位要动两处。
 //!
-//! 这一格有多高不由本模块定：折出来几行就几行，上下限在 [`super::footer_height`]。
+//! 这一格有多高不由本模块定：折出来几行就几行，上下限在 [`super::yielding::footer_height`]。
 //! **每一行都按显示宽度折**（[`crate::wrap`]），摆不下时让位的次序见 [`footer`]。
 
 use ratatui::text::Line;
 use tonefit::Instruction;
 
-use super::FOOTER_HEIGHT;
 use super::report::expandable;
+use super::yielding::FOOTER_HEIGHT;
 use crate::session::complete;
 use crate::session::live::Live;
 use crate::session::state::{
@@ -77,7 +77,7 @@ impl Prompt {
 /// 3. **按键那一行折出来的几行一行不让**——`q 退出` 在里面，而不知道怎么退出是最难受的
 ///    一种卡住（本票的目的）。
 ///
-/// 让完仍摆不下，这一格就往下长（见 [`super::footer_height`]）。
+/// 让完仍摆不下，这一格就往下长（见 [`super::yielding::footer_height`]）。
 ///
 /// **屏矮到这一格也长不动时，裁的是底下**——按键那几行留在上面，要说的那句话跟着屏一起没了。
 /// 那一刻这一层不再挑：屏上已经没有地方，而三样里最不能没有的是出路。

@@ -61,7 +61,11 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("{} · Esc 关", which.what()));
+        // 抬头摆不下时从中间省略，不由终端库硬截（[`super::yielding::title`]）。
+        .title(super::yielding::title(
+            &format!("{} · Esc 关", which.what()),
+            area.width,
+        ));
     // 边框各占一格，正文因此只剩这么大。
     let width = area.width.saturating_sub(2);
     let height = usize::from(area.height.saturating_sub(2));

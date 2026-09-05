@@ -3,7 +3,7 @@
 //! 一层一块、按生命周期从上到下，每一行是「标签 + 取值」。**跑起来之后整栏只读**，
 //! 而那件事要在屏上看得出来，不能是按了没反应（见 [`config`]）。
 //!
-//! 这一栏在这一屏上占多宽、什么时候整个收起，归 [`super::config_width`]——
+//! 这一栏在这一屏上占多宽、什么时候整个收起，归 [`super::yielding::config_width`]——
 //! 那是布局的事；本模块只画格子里的东西。折行走终端库自己的 [`Wrap`]
 //! （理由见 `crate::wrap` 的模块文档）。
 //!
@@ -143,11 +143,14 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
         cursor,
     );
     let body = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(if running {
-            READ_ONLY_TITLE
-        } else {
-            "配置"
-        }))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(super::yielding::title(
+                    if running { READ_ONLY_TITLE } else { "配置" },
+                    area.width,
+                )),
+        )
         // 折行而不是切掉：阈值那一行要把**标定来源**原样带上来（spec 的 Further Notes），
         // 而那句话比这一栏宽；路径也一样，切掉尾巴的路径看不出是哪一个。
         // `trim: false` 让折下来的那一截保留缩进，读得出它还是上一行的。
@@ -277,7 +280,7 @@ mod tests {
     /// 而「光标仍在屏上」问的正是它（数反白用 `super::super::probe::reversed_cells`：
     /// 这几条只画左栏一格，`reversed_rows` 那个按列切的办法在这里用不上）。
     ///
-    /// **只问 52 列这一档**（[`super::CONFIG_WIDTH`]，这一栏装得下的正常宽度）：
+    /// **只问 52 列这一档**（[`super::yielding::CONFIG_WIDTH`]，这一栏装得下的正常宽度）：
     /// 那里一行都不折，视口数的逻辑行与屏上的行一一对应。窄到左栏让出宽度那一档
     /// 上行行都折，两个数就对不上了——那一笔账记在停车场 **Q136**，本票没收它。
     #[test]

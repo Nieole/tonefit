@@ -46,7 +46,7 @@ use crate::session::live::{Live, Walking};
 /// 总览块**最高**几行：四行正文加上下两条边（跑着、而且出了事的那一副）。
 ///
 /// 矮下去的两条见 [`Overview::height`]：出事行不在场少一行，收场之后当前卷那一行也不在。这个数只用来给主区留位子
-/// （[`super::MAIN_MIN_HEIGHT`]）——**屏矮下来时先让报告区，总览块不砍**
+/// （[`super::yielding::MAIN_MIN_HEIGHT`]）——**屏矮下来时先让报告区，总览块不砍**
 /// （spec 的《窄终端》：宁可少画表，不少画总览）。
 pub(super) const OVERVIEW_HEIGHT: u16 = 6;
 
@@ -95,10 +95,16 @@ impl Overview {
     }
 
     /// 画出来。**上色按语义要**，一个颜色名都不在这一块里（见 [`super::paint`]）。
-    pub(super) fn draw(self) -> Paragraph<'static> {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(self.title.line());
+    ///
+    /// 收一个宽度只为抬头：这一格摆不下它时**从中间省略**，不由终端库硬截
+    /// （[`super::yielding::title`]，停车场 Q147）——`还剩约 3m20s` 硬截成 `还剩约 3m`
+    /// 读起来是一个完整而偏小的估计，而屏上没有一处痕迹说它被截过。
+    pub(super) fn draw(self, width: u16) -> Paragraph<'static> {
+        let title = Painted::new(
+            super::yielding::title(&self.title.text, width),
+            self.title.tone,
+        );
+        let block = Block::default().borders(Borders::ALL).title(title.line());
         let rows: Vec<Line<'static>> = self.rows.iter().map(Painted::line).collect();
         Paragraph::new(Text::from(rows)).block(block)
     }
@@ -247,7 +253,7 @@ fn volume_row(live: &Live) -> Option<String> {
 /// **卷名与在走哪一遍摆在横条前面**，与从前那一格逐字同序。
 ///
 /// 横条有 [`BAR_WIDTH`] 加两个方括号那么宽，摆在前面就会把这两样顶到 80 列的屏外——
-/// 那一档上主区只有 30 列（`super::MAIN_MIN_WIDTH`），而「在跑哪一卷的哪一遍」
+/// 那一档上主区只有 30 列（`super::yielding::MAIN_MIN_WIDTH`），而「在跑哪一卷的哪一遍」
 /// 屏上再没有第二处说得出（`p1-session/09` 的验收）。两行的横条因此对不齐，
 /// 那是认下的代价：对齐是好看，这两样是内容。
 fn walking_line(walking: &Walking) -> String {
@@ -511,7 +517,7 @@ mod tests {
         let top = overview(Some(live), pressed, deciding);
         let height = top.height();
         snapshot(
-            |frame| frame.render_widget(top.draw(), frame.area()),
+            |frame| frame.render_widget(top.draw(frame.area().width), frame.area()),
             WIDE,
             height,
         )
@@ -910,7 +916,7 @@ mod tests {
     }
 
     /// 屏矮下来时**先让报告区，总览块不砍**（spec 的《窄终端》）：
-    /// [`super::super::MAIN_MIN_HEIGHT`] 留的正是这一块最高那几行加报告区最少那三行。
+    /// [`super::super::yielding::MAIN_MIN_HEIGHT`] 留的正是这一块最高那几行加报告区最少那三行。
     #[test]
     fn the_overview_is_the_last_thing_the_main_pane_gives_up() {
         assert_eq!(

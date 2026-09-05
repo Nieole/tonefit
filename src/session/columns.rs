@@ -24,11 +24,13 @@
 //! 中文两格，出处只有 [`crate::wrap::width`]——折行按它折、滚动按它算、
 //! 这里按它对齐与省略，三处不许各数各的。
 //!
-//! **它按 `UnicodeWidthChar::width` 算，不按 `width_cjk`**：`✓`／`✗`／`–`／`—`／`…`
-//! 这几个记号在 Unicode 上是**东亚歧义宽度**，这里一律当一格。终端若按 CJK 配置
-//! （歧义宽度算两格），这几格会比算出来的宽一格，同一列因此对不齐——
-//! 这是仓库既有的约定（`crate::wrap` 那一头也是它），本模块跟着走，不另立第二套。
-//! 停车场 Q154 记着这笔账：从前报告是散文，错一格看不出来；表上头一次靠宽度吃饭。
+//! **它按 `UnicodeWidthChar::width` 算，不按 `width_cjk`**：东亚宽度表上标着
+//! **Ambiguous** 的字形在这里一律当一格。这是仓库既有的约定（`crate::wrap` 那一头也是
+//! 它），本模块跟着走，不另立第二套——跟着走的代价由**字形的选法**接住：
+//! **表这一层自己造的字形一个都不许是歧义宽度**，判据、边界与理由都在
+//! [`width_is_stable`]。
+//!
+//! 停车场 Q154 记着这笔账的由来：从前报告是散文，错一格看不出来；表上头一次靠宽度吃饭。
 
 use std::marker::PhantomData;
 
@@ -38,7 +40,10 @@ use crate::wrap;
 pub(super) const GAP: usize = 2;
 
 /// 摆不下时省略号那一格：一列的内容从**中间**掐掉一截，留下的两头之间摆它。
-const ELLIPSIS: char = '…';
+///
+/// 取 `⋯`（U+22EF）而不是 `…`（U+2026）：后者过不了 [`width_is_stable`] 那一关
+/// （停车场 Q154）。省略过的是名字那一列，它右边还有三列。
+const ELLIPSIS: char = '⋯';
 
 /// **一张表的那几列**：从左到右是哪几列、窄了按什么次序砍、砍无可砍时收窄谁。
 ///
@@ -335,7 +340,7 @@ pub(super) fn elide(text: &str, room: usize) -> String {
     let keep = room - 1;
     let head = take(text.chars(), keep.div_ceil(2));
     // **头上没用完的那几格还给尾巴**：一个汉字跨在预算边界上时头上会白剩一格，
-    // 而那一格摆到尾巴上多半正好再认出一个字（`消…卷` → `消…那卷`）。
+    // 而那一格摆到尾巴上多半正好再认出一个字（`消⋯卷` → `消⋯那卷`）。
     // 反过来不必再来一轮——头上先分到的就是多的那一半。
     let tail: String = take(
         text.chars().rev(),
@@ -345,6 +350,27 @@ pub(super) fn elide(text: &str, room: usize) -> String {
     .rev()
     .collect();
     format!("{head}{ELLIPSIS}{tail}")
+}
+
+/// 这个字形在**哪种终端上都占同一格**吗——**表上那几格能不能对齐，问的就是它**
+/// （停车场 Q154）。
+///
+/// 东亚宽度表上标着 **Ambiguous** 的字形（`–` `—` `…` `·` `×` 之类）在按 CJK 配置的
+/// 终端上画两格、在西文终端上画一格，而 [`crate::wrap::width`] 一律按一格算：
+/// 一行上多一个这样的字形，它右边每一列就整体错开一格，同一列因此逐行参差。
+///
+/// **判据是「两套算法答得一样」**：`width` 把歧义宽度算一格，`width_cjk` 算两格，
+/// 两者相等的字形与终端怎么配无关。**表这一层自己造的字形逐个过这一关**——
+/// [`ELLIPSIS`] 与两张表的[行首记号](super::draw::table)，各有一条用例钉着，
+/// 添一种不过这一关就红。
+///
+/// **出自 [`crate::render`] 的那几格不在此列**：尺寸那一格里的 `×` 与判据那一串里的 `·`
+/// 同样是歧义宽度，而命令行那一路印的是同一批字——换它们是命令行输出的一次变动，
+/// 不归画法这一层（停车场 Q168）。
+#[cfg(test)]
+pub(super) fn width_is_stable(glyph: char) -> bool {
+    use unicode_width::UnicodeWidthChar;
+    UnicodeWidthChar::width(glyph) == UnicodeWidthChar::width_cjk(glyph)
 }
 
 /// 从这一头取到 `room` 格为止。**宽字符跨在边界上就不要它**——半个汉字画出来是一格空白，
@@ -367,6 +393,15 @@ fn take(glyphs: impl Iterator<Item = char>, room: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **省略号那一格在哪种终端上都占一格**（判据见 [`width_is_stable`]）。
+    ///
+    /// 它是这一层自己造的唯一一个字形，两张表的行首记号各在自己那一头问。
+    #[test]
+    fn the_ellipsis_this_module_makes_is_the_same_width_on_any_terminal() {
+        assert!(width_is_stable(ELLIPSIS), "{ELLIPSIS} 是东亚歧义宽度");
+        assert_eq!(usize::from(wrap::width(&ELLIPSIS.to_string())), 1);
+    }
 
     /// 一份够宽的量：各列都比列头宽一点。
     fn measured() -> Widths<VolumeColumn> {
@@ -517,8 +552,8 @@ mod tests {
     /// 窄终端上卷名那一列本来就只有几格，白扔一格就少认出一个字。
     #[test]
     fn what_the_head_does_not_use_goes_back_to_the_tail() {
-        assert_eq!(elide("消失的那卷", 7), "消…那卷");
-        assert_eq!(usize::from(wrap::width("消…那卷")), 7);
+        assert_eq!(elide("消失的那卷", 7), "消⋯那卷");
+        assert_eq!(usize::from(wrap::width("消⋯那卷")), 7);
     }
 
     /// **卷名摆不下时从中间省略，两头留着。**
@@ -540,10 +575,10 @@ mod tests {
     #[test]
     fn eliding_into_a_sliver_of_a_column_neither_panics_nor_splits_a_wide_glyph() {
         assert_eq!(elide("棋魂 07", 0), "");
-        assert_eq!(elide("棋魂 07", 1), "…");
+        assert_eq!(elide("棋魂 07", 1), "⋯");
         // 两格里塞不下「棋」加省略号：头上那一格给不了半个汉字，那一格于是**还给尾巴**，
         // 正好摆得下卷号的末一位——半个字画不出来，一个窄字画得出来。
-        assert_eq!(elide("棋魂 07", 2), "…7");
+        assert_eq!(elide("棋魂 07", 2), "⋯7");
         for room in 0..=8 {
             let short = elide("光之棋：完全版", room);
             assert!(

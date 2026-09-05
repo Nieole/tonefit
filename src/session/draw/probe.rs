@@ -16,7 +16,8 @@ use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
 use tonefit::Mode as RunMode;
 
-use super::{CONFIG_WIDTH, main_pane, shell};
+use super::yielding::CONFIG_WIDTH;
+use super::{main_pane, shell};
 use crate::session::live::{Live, Resuming, fixture};
 use crate::session::state::Session;
 

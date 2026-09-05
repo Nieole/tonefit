@@ -6,11 +6,12 @@
 //!
 //! # 屏上那几块各住在哪儿
 //!
-//! **本模块只把屏分成格子**：哪一格多宽多高、放不下时让谁、什么时候整个收起。
-//! 每一格里画什么在各自的模块里，**一块一个**：
+//! **本模块只把屏分成格子**，而**摆不下时谁让位**在 [`room`]——那一份次序跨着屏上
+//! 那几块，一块自己答不出来。每一格里画什么在各自的模块里，**一块一个**：
 //!
 //! | 屏上那一块 | 住在 |
 //! |---|---|
+//! | 摆不下时谁让位 | [`room`] |
 //! | 左栏：三层配置 | [`config`] |
 //! | 预设栏 | [`picker`] |
 //! | 主区上面那一块：总览块 | [`overview`] |
@@ -26,7 +27,11 @@
 //! **这张表上只有屏上那几块，而颜色不是一块**：四种语义色与 `NO_COLOR` 在 [`paint`]，
 //! 上面那几块各按**语义**要色（「注意」「出事」「不要紧」），一处画法都不自己挑颜色。
 //!
-//! # 纵向摆不下的时候
+//! # 摆不下的时候
+//!
+//! **谁让位、按什么次序，只有 [`room`] 一处**（宽度先让左栏再砍列，高度总览不砍、
+//! 让的是表）：从前它散在布局常量与各块自己的判断里，各让各的。
+//! 摆不下的**抬头**同样在那里从中间省略，不交给终端库硬截（[`yielding::title`]）。
 //!
 //! **从第几行画起是算出来的**，由 [`Viewport`] 那个纯函数答——它摆在终端库外面
 //! （分界见 `super` 的《终端库在哪一半》）。**哪几块共用它、哪一块画滚动条，
@@ -62,12 +67,13 @@ mod paint;
 mod picker;
 mod report;
 mod table;
+mod yielding;
 
 #[cfg(test)]
 mod probe;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Margin, Rect};
 use ratatui::widgets::{Paragraph, ScrollbarOrientation, ScrollbarState};
 
 use super::live::Live;
@@ -75,46 +81,10 @@ use super::state::Session;
 use super::viewport::Viewport;
 use config::config;
 use footer::footer;
-use overview::{OVERVIEW_HEIGHT, overview};
+use overview::overview;
 use picker::presets;
 use report::report_pane;
-
-/// 左栏的宽度。配置一直在场，改一下就能在右边看到影响。
-///
-/// 固定列数而不是按比例：这一栏装的是**标签加取值**，两边都不随终端变宽而变长，
-/// 按比例分只会在宽终端上留下一栏空白。
-const CONFIG_WIDTH: u16 = 52;
-
-/// 主区无论如何要留下的列数。
-///
-/// **终端窄到放不下两栏时，让的是左栏。** 报告区挤到十几列就一个字都读不出来，
-/// 而左栏那几行本来就折着行（见 [`config::config`]），窄一点仍看得懂。
-///
-/// 这不是「左栏收起」——那是[展开](crate::session::state::Focus::Expanded)带着的一件事，用户按得动、
-/// 也按得回来（`e`／`Esc`）；这里是放不下时的退化，没有开关。
-const MAIN_MIN_WIDTH: u16 = 30;
-
-/// 屏底那几行：编辑条、补全候选、要说的那句话。**下限，不是定数**——
-/// 折出来的行摆不下时这一格往下长（见 [`footer_height`]）。
-const FOOTER_HEIGHT: u16 = 3;
-
-/// 主区无论如何要留下的行数：总览块最高 [`OVERVIEW_HEIGHT`] 行，报告区至少一行加上下两条边。
-///
-/// 与 [`MAIN_MIN_WIDTH`] 同一条，只是换了个方向：屏底那一格长起来时也不许把主区挤没。
-/// 让的次序也同一条：屏矮下来时**先让报告区，总览块不砍**——它是钉住的那一块，
-/// 也是唯一答得出「这一趟怎么样」的地方（spec 的《窄终端》）。
-const MAIN_MIN_HEIGHT: u16 = OVERVIEW_HEIGHT + 3;
-
-/// 左栏在这一屏上占多宽。装得下就是 [`CONFIG_WIDTH`]，装不下就让给主区。
-///
-/// **展开着的时候是零**：那一刻左栏整个收起，主区吃满宽度
-/// （spec 的《会话：布局与交互》，逐页那两行轻松过 100 列）。
-fn config_width(total: u16, expanded: bool) -> u16 {
-    if expanded {
-        return 0;
-    }
-    CONFIG_WIDTH.min(total.saturating_sub(MAIN_MIN_WIDTH))
-}
+use yielding::{Panes, main_split, panes};
 
 /// 把一屏画出来。
 ///
@@ -123,13 +93,15 @@ fn config_width(total: u16, expanded: bool) -> u16 {
 /// 那是这一层**唯一**改状态的地方——认键那一路仍旧一步不经过它。
 pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
     let screen = frame.area();
-    // 屏底那一格先摆出来：它有几行由折行说了算，而上面那一块吃剩下的（见 [`footer_height`]）。
+    // 屏底那一格先摆出来：它有几行由折行说了算，而这一屏怎么切在 [`panes`] 一处答完。
     let bottom_rows = footer(session, live, screen.width);
-    let [body, bottom] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(footer_height(bottom_rows.len(), screen.height)),
-    ])
-    .areas(screen);
+    let expanded = session.expansion().is_some();
+    let Panes {
+        bottom,
+        body,
+        left,
+        main,
+    } = panes(screen, expanded, bottom_rows.len());
     // **一张覆盖层掀着时，上面那几块整个让位**（`p3-session-legibility/12`）：
     // 它盖的是屏底之外的全部——`?` 那张键位表与这一趟的前提都要一眼扫得完，
     // 而屏上此刻没有第二件要读的事。屏底那几行照旧在场：那一行说的正是怎么关掉它。
@@ -138,16 +110,11 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
         frame.render_widget(Paragraph::new(bottom_rows), bottom);
         return;
     }
-    let expanded = session.expansion().is_some();
-    let [left, main] = Layout::horizontal([
-        Constraint::Length(config_width(body.width, expanded)),
-        Constraint::Min(0),
-    ])
-    .areas(body);
-
-    // 收起的左栏一格都不画。给它一个零宽的格子也画不出东西来，
-    // 但那样读代码的人得自己去推——「收起」这件事该在这一层看得见。
-    if !expanded {
+    // 左栏不在场时一格都不画。不在场有两种（展开着**收起**，或者屏太窄**让掉**，
+    // 见 [`yielding::config_width`]），而屏上的结果是同一个：这一栏没有宽度。
+    // 给它一个零宽的格子也画不出东西来，但那样读代码的人得自己去推——
+    // 「不在场」这件事该在这一层看得见。
+    if left.width > 0 {
         config(frame, left, session);
     }
     // 预设那一栏**占的是主区，左栏照旧在场**：存出去的就是左栏上那两层，
@@ -158,20 +125,6 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
         None => main_pane(frame, main, session, live),
     }
     frame.render_widget(Paragraph::new(bottom_rows), bottom);
-}
-
-/// 屏底那一格有多高：**折出来几行就几行**，下限 [`FOOTER_HEIGHT`]，
-/// 上限是主区留得下 [`MAIN_MIN_HEIGHT`]。
-///
-/// 宽终端上一格不动：那里折不出第四行来，这个数恒是 [`FOOTER_HEIGHT`]。
-/// **代价只落在窄终端上**，而那正是这一格摆不下的时候（停车场 Q75 权衡的
-/// 「折行还是加一行」，答的是两者都要——折在先，加行只在折完仍摆不下时才发生）。
-fn footer_height(rows: usize, total: u16) -> u16 {
-    let rows = u16::try_from(rows).unwrap_or(u16::MAX);
-    rows.clamp(
-        FOOTER_HEIGHT,
-        total.saturating_sub(MAIN_MIN_HEIGHT).max(FOOTER_HEIGHT),
-    )
 }
 
 /// 一格正文，连同它那条滚动条（哪几块用得上视口，见 [`Viewport`] 那张表）。
@@ -221,12 +174,13 @@ fn scrollbar(frame: &mut Frame, area: Rect, view: &Viewport) {
 ///
 /// 上面那一块占几行**由它自己说了算**（[`Overview::height`](overview::Overview::height)）：
 /// 出事行不在场时它是五行，让出来的那一行归报告区。算与画因此走同一份东西，不许各算各的。
+/// **屏矮下来时让的是报告区，总览一行不砍**——那一条与切格子的次序一起摆在
+/// [`main_split`] 上。
 pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Option<&Live>) {
     let top = overview(live, session.stopping(), session.deciding());
-    let [pinned, report] =
-        Layout::vertical([Constraint::Length(top.height()), Constraint::Min(0)]).areas(area);
+    let [pinned, report] = main_split(area, top.height());
 
-    frame.render_widget(top.draw(), pinned);
+    frame.render_widget(top.draw(pinned.width), pinned);
     report_pane(frame, report, session, live);
 }
 
@@ -235,7 +189,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use super::probe::{a_run_in_flight, same_screen, screen, snapshot, tight};
+    use super::probe::{screen, tight};
     use super::*;
     use crate::session::live::{Resuming, fixture};
     use crate::session::state::Layer;
@@ -346,98 +300,4 @@ mod tests {
         assert!(!before.contains(&tight("记号  卷名")), "{before}");
         assert!(!before.contains(&tight("001.jpg")), "{before}");
     }
-
-    /// **快照：终端窄到放不下两栏时的退化，以及屏底那一行折得开。**
-    ///
-    /// 让的是左栏（见 [`MAIN_MIN_WIDTH`]）：主区仍留得下 [`MAIN_MIN_WIDTH`] 列，
-    /// 两块一块不少。再窄到连主区都放不下时**不恐慌**——画得难看是一回事，崩掉是另一回事。
-    ///
-    /// **屏底那一行在这一档上一行摆得下了**（`p3-session-legibility/12` 的瘦身）：
-    /// 五个键 64 列上不折行。从前它是十个键、折成两行——折行那一套照旧在
-    /// （`p2-loose-ends/07` 的目的，见下面那个循环与 [`TOO_NARROW_FOR_ANYTHING`]），
-    /// 只是这一档上用不着了。`q 退出` 一行不让那一条因此仍旧成立
-    /// （从前它是从行尾切掉的，每多一个键尾巴上那个键就少露一截，停车场 Q75）。
-    ///
-    /// **左栏这一档上装不下，那条滚动条因此画在它右边那条框线上**（见 [`scrolling`]）：
-    /// 十八行的屏留给左栏十三行，而三层一共二十一行。`▲`／`▼` 两头加中间那一截滑块
-    /// 说的就是「上面还有、下面还有」——从前这一栏一点滚动都没有，掉出去的那几行
-    /// 屏上一个字都不提。
-    #[test]
-    fn a_terminal_too_narrow_for_two_columns_gives_the_width_to_the_main_pane() {
-        let mut session = Session::new();
-        let live = a_run_in_flight(false);
-
-        assert_eq!(config_width(120, false), CONFIG_WIDTH, "宽终端上左栏不缩");
-        assert_eq!(config_width(60, false), 30, "窄终端上左栏让出去");
-        assert_eq!(config_width(20, false), 0, "再窄就整个让掉");
-        // 展开着时不看屏有多宽：左栏整个收起，主区吃满（票面第三条）。
-        assert_eq!(config_width(120, true), 0, "展开着左栏该收起");
-
-        // 快照钉的是**整屏**：左栏让到 30 列、主区拿到 34 列，两块一块不少，
-        // 而报告区与屏底那几行都按显示宽度折了行。
-        let narrow = snapshot(|frame| shell(frame, &mut session, Some(&live)), 64, 18);
-        same_screen(&narrow, TOO_NARROW_FOR_TWO_COLUMNS);
-        // 快照自己已经钉住了，但这一条是整张票的目的，写出来才不会在下一次重录时被顺手改掉。
-        assert!(narrow.contains("q 退出"), "退出那个键掉出屏外了：{narrow}");
-
-        // **窄到 16 列它都还在**：屏底那一格跟着折出来的行数长（见 [`footer_height`]），
-        // 屏够高就一行都不掉。去掉空白再比——窄到一定程度那两个字会分在两行上，
-        // 而问的是「它在不在屏上」（停车场 Q60 记着逐格读回来的文字为什么要这么比）。
-        for width in [16, 20, 24, 32, 40, 48, 80] {
-            let screen = tight(&screen(&mut session, Some(&live), width, 24));
-            assert!(
-                screen.contains("q退出"),
-                "{width} 列上退出那个键掉出屏外了：{screen}"
-            );
-        }
-
-        // 比左栏还窄、且高度只够画个边框：一屏都摆不下，照样不恐慌。
-        same_screen(
-            &snapshot(|frame| shell(frame, &mut session, Some(&live)), 20, 6),
-            TOO_NARROW_FOR_ANYTHING,
-        );
-        snapshot(|frame| shell(frame, &mut session, None), 1, 1);
-    }
-
-    /// 见 [`a_terminal_too_narrow_for_two_columns_gives_the_width_to_the_main_pane`]。
-    const TOO_NARROW_FOR_TWO_COLUMNS: &str = r#"
-"┌配置────────────────────────────┐┌执行 · 第 3/3 卷 · 还剩约 3m┐"
-"│设备层 ·                        ▲│ 总体 [==================>  │"
-"│判定的依据，绑面板，改一次管很久█│ 本卷 卷三 · 第二遍 [=======│"
-"│  型号                          █│ 完成 1 卷 · 跳过 1 卷      │"
-"│未挑（跑起来之前必填）          █└────────────────────────────┘"
-"│  感知可分辨级数                █┌报告────────────────────────┐"
-"│默认（跟随面板）                ║│ 记号  卷名  页数  基准档   │"
-"│  阈值                          ║│ –     卷一   180  跳过     │"
-"│跟着型号走（先挑一个）          ║│ ✓     卷二     1  4bit     │"
-"│                                ║│                            │"
-"│口味层 · 这一趟的立场           ║│                            │"
-"│  适配方式　　　　默认（height）║│                            │"
-"│  裁边　　　　　　默认（裁）    ║│                            │"
-"│  跨页拆分　　　　默认（拆）    ▼│                            │"
-"└────────────────────────────────┘└────────────────────────────┘"
-" ⏎ 摊开取值 · t 试算 · x 执行 · q 退出 · ? 全部键               "
-"                                                                "
-"                                                                "
-"#;
-
-    /// **快照：窄到一屏都摆不下的那一档。**见
-    /// [`a_terminal_too_narrow_for_two_columns_gives_the_width_to_the_main_pane`]。
-    ///
-    /// **摆不下的是「高」，不是「宽」。** 同样 20 列、屏高 24 行时 `q 退出` 照旧在屏上
-    /// （上一条那个循环问的就是它）：屏底那一格跟着折出来的行数长。这里屏只有 6 行，
-    /// [`footer_height`] 的上限压着它——主区已经没得让（`total - MAIN_MIN_HEIGHT` 是零），
-    /// 这一格就停在 [`FOOTER_HEIGHT`] 上。20 列上那一行折出来正好三行，
-    /// 而三行正是这一格的下限——瘦身之前它折出六行，只露得出头三行。
-    ///
-    /// **这一档钉的是「不恐慌、不错位」，不是「读得下去」**：6 行的屏上没有一副画法读得下去。
-    /// 折下来的那两行带着行首那一格缩进（[`crate::wrap`]：缩进跟着折下来的每一行走）。
-    const TOO_NARROW_FOR_ANYTHING: &str = r#"
-"┌执行 · 第 3/3 卷 ·┐"
-"│ 总体 [===========│"
-"└──────────────────┘"
-" ⏎ 摊开取值 · t 试算"
-" · x 执行 · q 退出 ·"
-" ? 全部键           "
-"#;
 }

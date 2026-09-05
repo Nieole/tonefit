@@ -3,9 +3,9 @@
 //!
 //! ```text
 //!  记号  页名     尺寸       判定     理由              判据
-//!  ✓     001.jpg  1182×1680  4bit     阈值内最低的一档  1bit+FS 32.000 · …
-//!  *     087.jpg  1182×1680  2bit+FS  卷级上包络        …                 定档页
-//!  !     104.jpg  1182×1680  4bit     特例页单独定档    …                 特例页
+//!  ✓     001.jpg  1182×1680  4bit     阈值内最低的一档  1bit+FS 32.000 · ⋯
+//!  *     087.jpg  1182×1680  2bit+FS  卷级上包络        ⋯                 定档页
+//!  !     104.jpg  1182×1680  4bit     特例页单独定档    ⋯                 特例页
 //!  ✗     017.jpg  1182×1680                                              失败 解不出完整尺寸
 //! ```
 //!
@@ -396,6 +396,21 @@ fn laid_out(shown: &[&Entry], room: u16, at: usize) -> Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **逐页表自己造的那几个字形在哪种终端上都占一格**（判据见
+    /// [`columns::width_is_stable`]，停车场 Q154）。
+    ///
+    /// 与卷表那一条同一件事，两张表因此各问各的：添一种记号不过这一关就红。
+    #[test]
+    fn every_glyph_this_table_makes_is_the_same_width_on_any_terminal() {
+        for mark in [Mark::Fine, Mark::Driver, Mark::Caution, Mark::Failed] {
+            let glyph = mark.glyph();
+            assert!(
+                columns::width_is_stable(glyph),
+                "{mark:?} 那个记号 {glyph} 是东亚歧义宽度"
+            );
+        }
+    }
     use crate::session::live::fixture;
 
     /// 这一趟那块面板。宽溢出比的就是它的宽。

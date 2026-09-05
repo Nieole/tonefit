@@ -4,8 +4,8 @@
 //!  记号  卷名        页数  基准档   定档页   耗时
 //!  ✓     棋魂 07      184  2bit+FS  087.png  1m12s
 //!  !     哆啦 03      212  4bit+FS  011.png  2m03s  隔离
-//!  –     名侦探 05    190  跳过              3s
-//!  ✗     消失的那卷     —  没做成    卷根不在了
+//!  -     名侦探 05    190  跳过              3s
+//!  ✗     消失的那卷     -  没做成    卷根不在了
 //! ```
 //!
 //! # 它吃的是同一批行
@@ -52,7 +52,10 @@ use crate::session::live::{Live, Volume};
 ///
 /// **只有页数用它**：它夹在卷名与档位中间，空着读起来像掉了一个数；
 /// 而定档页与耗时排在末尾，空着就是「这一卷没有这件事」，不必再说一遍。
-const ABSENT: &str = "—";
+///
+/// 取 `-` 而不是破折号 `—`：后者过不了 [`columns::width_is_stable`] 那一关
+/// （停车场 Q154）。它夹在卷名与档位中间，右边还有三列。
+const ABSENT: &str = "-";
 
 /// 行首记号：**这一卷怎么样，一个字符说完。**
 ///
@@ -85,11 +88,14 @@ enum Mark {
 
 impl Mark {
     /// 屏上那一个字符。
+    ///
+    /// 四个字形逐个过得了 [`columns::width_is_stable`] 那一关：跳过那一个从短横
+    /// `–`（U+2013）换成了 `-`（停车场 Q154），`✓`／`!`／`✗` 三个本来就过得了，一个字没换。
     fn glyph(self) -> char {
         match self {
             Self::Done => '✓',
             Self::Isolated => '!',
-            Self::Skipped => '–',
+            Self::Skipped => '-',
             Self::Failed => '✗',
         }
     }
@@ -399,5 +405,29 @@ pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
     Table {
         rows: lines,
         cursor,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **卷表自己造的那几个字形在哪种终端上都占一格**（停车场 Q154）。
+    ///
+    /// 行首记号是这张表的头一列，右边还有五列：它宽一格，整行就跟着错一格。
+    /// 判据在 [`columns::width_is_stable`]。这张表画成什么样在 [`super::report`] 那一头问，
+    /// 本模块只钉这一条自己说了算的事。
+    #[test]
+    fn every_glyph_this_table_makes_is_the_same_width_on_any_terminal() {
+        for mark in [Mark::Done, Mark::Isolated, Mark::Skipped, Mark::Failed] {
+            let glyph = mark.glyph();
+            assert!(
+                columns::width_is_stable(glyph),
+                "{mark:?} 那个记号 {glyph} 是东亚歧义宽度"
+            );
+        }
+        for glyph in ABSENT.chars() {
+            assert!(columns::width_is_stable(glyph), "{glyph} 是东亚歧义宽度");
+        }
     }
 }
