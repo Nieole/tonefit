@@ -165,7 +165,7 @@ impl Running {
     /// 那条线程跑完了就收掉它，并把库交出来的那份报告（或者那条拒绝）记进 [`Live`]。
     ///
     /// 出的是「这一下收掉了吗」：`true` 的那一次调用方要把会话从
-    /// [`Running`](super::state::Mode::Running) 放回浏览。**不阻塞**——
+    /// [`跑着`](super::state::Stage::Running) 放回浏览。**不阻塞**——
     /// 没跑完就原样返回，画下一帧去。
     pub fn reap(&mut self) -> bool {
         if !self.thread.as_ref().is_some_and(JoinHandle::is_finished) {

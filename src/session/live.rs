@@ -74,6 +74,32 @@ pub enum Reach {
     ForTheRest,
 }
 
+/// **卷表上停得住的那几卷各是哪一卷**（`CONTEXT.md` 的《会话》：卷表）。
+///
+/// 「报告上第几卷」答不出决策点上那一卷：它停在[攒着的那一份](Live::summarized)上、
+/// 不在[收摊了的那几卷](Report::volumes)里，而 `p2-loose-ends/08` 记着
+/// **不许摊开上一卷冒充它**。这个取值认得出这两处，报告区的光标与展开因此指得动它
+/// （`p3-session-legibility/10`）。
+///
+/// **没做成的那几卷不在这里**：它们连一份卷报告都没有（[`VolumeFailure`] 只有一句原因），
+/// 逐页那几行无从谈起。表上它们照旧占一行，光标停不上去——那一行要说的话就在它自己的行尾。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Volume {
+    /// [收摊了的](Report::volumes)第几卷。
+    Settled(usize),
+    /// **决策点上攒着的那一份**：这一卷还没收摊，第二遍一步没走。
+    ///
+    /// 那一格装的是**它前面收摊了几卷**，而那个数就是**它的身份**：它收摊之后正是
+    /// [`Settled(after)`](Self::Settled)，而「攒着的那一份」这个位置从此归**下一卷**。
+    /// 少了这个数，一个记着「停在攒着的那一份上」的光标会在下一个决策点悄悄跳到
+    /// 另一卷身上——屏上还写着「跟随停了」，指的却已经不是同一卷
+    /// （`p2-loose-ends/08` 那条「不许摊开另一卷冒充它」朝前的那一半）。
+    ///
+    /// **它不是「第几卷」**：那一卷没做成时它谁都不是（[`nearest`](Live::nearest)
+    /// 那时就近收一收），而没做成的卷本来就不在这一列里。
+    Summarized { after: usize },
+}
+
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
 #[derive(Debug, Clone)]
 pub struct Walking {
@@ -450,6 +476,68 @@ impl Live {
     /// 决策点上那一卷到此刻为止的报告。没停在决策点上就是 `None`。
     pub fn summarized(&self) -> Option<&VolumeReport> {
         self.summarized.as_ref()
+    }
+
+    /// **表上停得住的那几卷**（[`Volume`]），按表上的先后：收摊了的那几卷，
+    /// 末尾是决策点上攒着的那一份。
+    ///
+    /// 报告区的光标走的就是这一列，展开也只到得了它们（`p3-session-legibility/10`）。
+    /// **没做成的那几卷不在里面**，理由见 [`Volume`]；表上它们照旧占一行
+    /// （见 `super::draw::table`）。
+    ///
+    /// **与 [`Overall::volumes`] 不是一个数**：那一个是这一趟**点名了**几个卷，
+    /// 这一列是**此刻说得出报告**的那几卷。
+    pub fn volumes(&self) -> Vec<Volume> {
+        let after = self.report.volumes.len();
+        (0..after)
+            .map(Volume::Settled)
+            .chain(
+                self.summarized
+                    .iter()
+                    .map(move |_| Volume::Summarized { after }),
+            )
+            .collect()
+    }
+
+    /// 这一卷此刻对着哪一份卷报告。**指不着就是 `None`**——决策点上那一卷收摊之后
+    /// [`Volume::Summarized`] 就指不着了（那时它是收摊了的最后一卷）。
+    pub fn volume(&self, at: Volume) -> Option<&VolumeReport> {
+        match at {
+            Volume::Settled(at) => self.report.volumes.get(at),
+            // **前面收摊了几卷要对得上**：对不上说明那一份已经不是它了
+            // （见 [`Volume::Summarized`]）——那一刻它指的是**下一卷**，
+            // 而调用方要的是刚才那一卷（先过一道 [`nearest`](Self::nearest)）。
+            Volume::Summarized { after } => self
+                .summarized
+                .as_ref()
+                .filter(|_| after == self.report.volumes.len()),
+        }
+    }
+
+    /// 把一卷**收进此刻真停得住的那几卷**里。**指着旧位置的那几种在这里一次收齐**，
+    /// 光标与展开因此都只问这一处。
+    ///
+    /// 三档：
+    ///
+    /// 1. **指得着**就是它自己；
+    /// 2. **决策点上那一卷收摊了**——它此刻是[第 `after` 卷](Volume::Summarized)，
+    ///    那个数就是它的身份，因此**跟着它自己走**，而不是跟着「攒着的那一份」
+    ///    那个位置跑到下一卷身上；
+    /// 3. 剩下的（那一卷没做成、报告换了一趟）**就近落到最后一卷上**——
+    ///    与 `super::viewport::Viewport::new` 那条「光标越界不算错」同一条规矩。
+    ///
+    /// 一卷都没有时是 `None`。
+    pub fn nearest(&self, at: Volume) -> Option<Volume> {
+        let volumes = self.volumes();
+        if volumes.contains(&at) {
+            return Some(at);
+        }
+        if let Volume::Summarized { after } = at
+            && after < self.report.volumes.len()
+        {
+            return Some(Volume::Settled(after));
+        }
+        volumes.last().copied()
     }
 
     /// 攒到此刻的报告。

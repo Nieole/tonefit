@@ -492,7 +492,7 @@ mod tests {
         a_run_in_flight, main_snapshot, same_screen, screen, snapshot, tight,
     };
     use super::*;
-    use crate::session::live::{Resuming, fixture};
+    use crate::session::live::{Resuming, Volume, fixture};
     use crate::session::state::{Expansion, Key, Session};
     use tonefit::{
         BitDepth, Candidate, Dither, Envelope, GeometryGate, PageBranch, PageOutcome, RunOutcome,
@@ -773,7 +773,7 @@ mod tests {
         let alone = block(&live, Instruction::Continue, false);
         let rows = alone.lines().count();
         let mut session = Session::new();
-        session.expand(Expansion::new(0, live.report().volumes.len(), 0));
+        session.expand(Expansion::new(Volume::Settled(0), 0));
 
         let mut seen: Vec<String> = Vec::new();
         for _ in 0..4 {

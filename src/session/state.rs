@@ -11,6 +11,16 @@
 //! [`Session::act`] 只是「把 `action` 说的那件事做掉」，用例那一侧的
 //! [`Session::press`] 把两步并成一步。
 //!
+//! # 此刻在做什么由两维说（ADR 0017）
+//!
+//! [`Stage`]（这一趟走到哪个阶段了：没跑过 / 跑着 / 等答话 / 收场了）与
+//! [`Focus`]（眼下在看什么：左栏 / 编辑一行 / 取值栏 / 报告区 / 展开着 / 预设栏）。
+//! **两维各答各的**：三层只读、按停与答话那几个键归第一维（[`stage_action`] 一处答完），
+//! `↑↓`／`⏎`／`⇥` 归第二维。那张按键表因此按两维查，而它仍旧是本仓库唯一一处
+//! 答得出「哪些键在哪个状态下有效」的地方。
+//!
+//! `p1-session/10`、`11`、`14` 先后三次判过「不拆」，推翻的理由与代价在 **ADR 0017**。
+//!
 //! # 三层照预设那一份分
 //!
 //! 设备层与口味层**就是** [`DeviceLayer`] 与 [`TasteLayer`]——预设装的那两层
@@ -36,7 +46,7 @@ use tonefit::{
 };
 
 use super::complete;
-use super::live::Reach;
+use super::live::{Live, Reach, Volume};
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -163,13 +173,13 @@ pub enum Action {
     /// 「中止是**再按一次**」）。分成 `Finish` 与 `Abort` 两个动作，
     /// 「再按一次退不回上一级」就得靠键盘上有没有第二个键来保证，而那不是一条性质。
     ///
-    /// 升到哪一级由状态机自己记（[`Mode::Running`] 那一格）；把它交给跑着的那一趟
+    /// 升到哪一级由状态机自己记（[`Stage::Running`] 那一格）；把它交给跑着的那一趟
     /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
     Stop,
     /// **在决策点上答一个字**，连同这个字[管几卷](Reach)（`CONTEXT.md` 的《会话》：
     /// 决策点、都这样）。
     ///
-    /// 只在 [`Mode::Deciding`] 那个状态下派得出来，而**每一卷的试算都到得了**那个状态。
+    /// 只在 [`Stage::Deciding`] 那个状态下派得出来，而**每一卷的试算都到得了**那个状态。
     /// 三个字各有一个键：`x` 答[继续](Instruction::Continue)——第一遍不重算，直接进第二遍；
     /// `s` 答[收尾](Instruction::Finish)——这一卷一个字节都不写，等价于一次 dry-run；
     /// `a` 答的是**同一个继续，外加剩下的卷都这样**（[`Reach::ForTheRest`]）——
@@ -190,8 +200,33 @@ pub enum Action {
     /// 把那个字送到计算线程上在 [`super::press`] 那一层（`Running::decide`），
     /// 与[按停](Self::Stop)同一条规矩：本模块不碰线程。
     Answer(Instruction, Reach),
-    /// **展开**：把报告上第一卷的逐页那几行摊开来，左栏跟着收起
-    /// （`CONTEXT.md` 的《会话》：展开）。
+    /// **切焦点**：左栏 ⇄ 报告区（`CONTEXT.md` 的《会话》：焦点，ADR 0017）。
+    ///
+    /// **`⇥` 按状态分派，三个意思不冲突**：焦点在左栏或报告区上时是这一支；
+    /// [编辑一行](Self::Complete)时是逐层补全（那一层没有第二栏可切）；
+    /// [展开着](Self::Turn)时是换下一卷。三处各是那个键在那个状态下最该做的事，
+    /// 而「哪个键在哪个状态下做什么」这张表本来就一处答完（[`Session::action`]）。
+    ///
+    /// 带着[去哪一边](Pane)：屏底那一行要说出这一下去哪儿，而一个 toggle 说不出。
+    Focus(Pane),
+    /// **在卷表上挪一卷**：光标往上／往下一卷，两头都绕回去
+    /// （`p3-session-legibility/10` 票面第二条）。
+    ///
+    /// 挪完[跟随就停了](Follow::Stopped)——票面第三条：光标一动就停，屏上说一句。
+    ///
+    /// 落在 [`super::press`] 那一层：挪到哪一卷要数**这一趟此刻有哪几卷**，
+    /// 而本模块读不到那一趟攒下来的东西。与[展开](Self::Expand)同一条分法。
+    Select(Step),
+    /// **回到跟随**：卷表上那个光标交回给最新的那一卷（`g`，票面第三条）。
+    ///
+    /// 真做这件事的就在本模块（[`Session::follow_along`]）：它一格报告都不必读——
+    /// 「跟着最新那一卷」是**算出来的**，而这一支只把那件事扳回去。
+    Follow,
+    /// **展开**：把[光标停着的那一卷](Session::standing)的逐页那几行摊开来，
+    /// 左栏跟着收起（`CONTEXT.md` 的《会话》：展开）。
+    ///
+    /// **展开的是光标停着的那一卷，不再恒是第一卷**（`p3-session-legibility/10`）：
+    /// 报告区从此有自己的光标，而「展开哪一卷」正是它答的那件事。
     ///
     /// 展开哪一卷、报告从第几行画起，都要读那一趟攒下来的报告，而本模块读不到它
     /// （攒着的那一份在 [`super::live::Live`] 上）。真做这件事的因此是
@@ -209,6 +244,8 @@ pub enum Action {
     /// **收起**：逐页那几行收起来，左栏回来。
     ///
     /// 与展开不对称——收起不必读报告，因此它就在本模块做掉。
+    /// **回的是[报告区](Focus::Report)**，不是左栏：展开是从那一块进去的
+    /// （光标停着的那一卷），退一步该退到刚才站的地方去。
     Collapse,
     /// 展开着的报告区往那个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
     Scroll(Toward),
@@ -217,7 +254,7 @@ pub enum Action {
     /// 列什么要读盘，而本模块读不到——真做这件事的是 [`super::press`]，它随后调
     /// [`pick`](Session::pick)。与[展开](Self::Expand)同一条分法：那一支要读那一趟攒的报告，
     /// 这一支要读用户配置目录下那份 TOML；名字也照那一对取
-    /// （`Expand` 进 [`Mode::Expanded`]，`Pick` 进 [`Mode::Picking`]）。
+    /// （`Expand` 进 [`Focus::Expanded`]，`Pick` 进 [`Focus::Picking`]）。
     Pick,
     /// **套用**光标停着的那一份预设：两层整个换成它，范围层一格不动。
     ///
@@ -470,19 +507,25 @@ pub struct Picked {
     pub on: bool,
 }
 
-/// 会话此刻在做什么。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Mode {
-    /// 光标在左栏上走。
-    Browsing,
-    /// 某一行正在被打字改。
-    Editing(Edit),
+/// **这一趟走到哪个阶段了**——会话两维中的**第一维**（ADR 0017）。
+///
+/// 四个取值答的是同一个问题：这一趟走到哪儿了。另一维（[`Focus`]）答的是
+/// 「眼下在看什么」。`p1-session/10`、`11`、`14` 先后三次判过「不拆成两维」，
+/// 推翻的理由与代价在 **ADR 0017**。
+///
+/// **三层只读由这一维说了算**（[`read_only`](Self::read_only)），**与焦点在哪无关**：
+/// 焦点落到报告区上不解锁任何一个改动键（见 [`Session::action`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// **一趟都还没跑过。** 报告区里连一卷都没有，`⇥` 因此切不过去——
+    /// 屏上不摆按不动的键，而切过去无事可做（见 [`Session::browsing_action`]）。
+    Fresh,
     /// 一趟正跑着，带着**按停按到哪一级了**。
     ///
     /// **三层全只读**，两层各错在什么地方见 `CONTEXT.md` 的《会话》（`p1-session/10`
     /// 把范围层也算了进来，停车场 Q69）。
     ///
-    /// 「只读」不是靠画法上灰，是靠 [`Session::action`] 在这个状态下一个改动键都不派
+    /// 「只读」不是靠画法上灰，是靠 [`Session::action`] 在这个阶段下一个改动键都不派
     /// （见 [`running_action`]）。画法那一侧另有一份**看得出来**的交代
     /// （左栏抬头写着「只读」、光标不反白），那是 [`super::draw::config::config`] 的事。
     ///
@@ -499,11 +542,10 @@ pub enum Mode {
     /// 答过[「剩下的卷都这样」](Action::Answer)之后也不再到这里：往下的决策点由观察者
     /// 那一侧的默认答案当场答掉（`super::run::Gate`），那条线程根本不停下来。
     ///
-    /// **它是一个状态，不是 [`Running`](Self::Running) 上的一个开关。**跑着与等答话
-    /// 按得动的键是两套：跑着时按得动的只有停（`s`），等答话时按得动的是答话那三个
-    /// （`x` 接着做、`a` 剩下的卷都这样、`s` 收尾）。两套摆进同一个状态，
-    /// 屏底那一行就要靠一个 flag 分岔，
-    /// 而「哪些键在哪个状态下有效」那张表正是本模块唯一的产出。
+    /// **它是这一维上的一个取值，不是 [`Running`](Self::Running) 上的一个开关**
+    /// （`CONTEXT.md` 的《会话》，`p1-session/14`）。跑着与等答话按得动的键是两套：
+    /// 跑着时是停（`s`），等答话时是答话那三个（`x` 接着做、`a` 剩下的卷都这样、
+    /// `s` 收尾）。摆进同一个取值，屏底那一行就要靠一个 flag 分岔。
     ///
     /// 三层在这一刻**仍然只读**，与跑着时一个待遇：`Request` 在起线程那一刻就是一份快照，
     /// 而这一趟还没收场（见 [`deciding_action`]）。
@@ -512,39 +554,114 @@ pub enum Mode {
     /// **此前**按过的停。答完话回 [`Running`](Self::Running) 时它原样带回去——
     /// 决策点上答的字不是闩，两者互不覆盖。
     Deciding(Instruction),
+    /// **收场了**：三层又改得动，而报告一行不少地摆在那儿。
+    ///
+    /// 与[没跑过](Self::Fresh)差的只有一件事——报告区里有东西了，`⇥` 因此切得过去。
+    /// 别的地方两者一个待遇：按得动的键、屏上的样子都一样，而「上一趟怎么样」
+    /// 摆在报告与总览块上，不摆在这一维上。
+    Ended,
+}
+
+impl Stage {
+    /// **三层此刻只读吗**（`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
+    ///
+    /// 跑着与等答话都是：`Request` 在起线程那一刻就是一份快照，而这一趟还没收场。
+    /// **这是「只读」在本仓库唯一的判据**——画法照它压暗（[`super::draw::config`]），
+    /// 按键表照它一个改动键都不派（[`Session::action`]）。
+    pub fn read_only(self) -> bool {
+        matches!(self, Self::Running(_) | Self::Deciding(_))
+    }
+}
+
+/// **眼下在看什么**——会话两维中的**第二维**，也就是**焦点落在屏上哪一块**
+/// （`CONTEXT.md` 的《会话》：焦点）。
+///
+/// 六个取值里两个是光秃秃的（左栏与报告区，`⇥` 在它们之间切，见 [`Pane`]），
+/// 另外四个各带着一份东西：打到一半的缓冲、摊开的那一列、展开的那一卷、预设那一栏。
+/// **那四个都从左栏进得去、也各有一个键退得回来**，而它们在这一维上是六选一：
+/// 「展开着而左栏还在」这种没人要的组合因此不必靠某处代码守着。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Focus {
+    /// **左栏**：光标在三层上走（[`Session::field`] 说得出停在哪一行）。
+    Config,
+    /// 某一行正在被打字改。
+    Editing(Edit),
+    /// **报告区**：卷表有[自己的光标](Session::follow)，`↑↓` 选一卷
+    /// （`p3-session-legibility/10`）。
+    ///
+    /// **跑着与等答话时一样进得来**：几十分钟的一趟里想回头看第一卷，不必等它跑完。
+    /// 那两个阶段按得动的键在这里照旧按得动（按停、答话那三个），
+    /// 而三层照旧一个改动键都不派——那一条归[阶段](Stage)那一维。
+    ///
+    /// 光标停在哪一卷**不装在这一格里**（在 [`Session::follow`] 上）：
+    /// `⇥` 切回左栏再切回来时它还在原处——切焦点不是「重新开始读」。
+    Report,
     /// 报告区**展开**着一卷的逐页，左栏收着（`CONTEXT.md` 的《会话》：展开）。
     ///
     /// 「展开」与「左栏收起」是**同一件事**，不是两个开关：spec 的《会话：布局与交互》
     /// 写的是「展开逐页时左栏收起、主区吃满宽度」——逐页那两行轻松过 100 列，
-    /// 而左栏那 52 列在这一刻是宽度里最贵的一截。分成两个开关的话，
-    /// 「展开着而左栏还在」这种没人要的组合就得靠某处代码守着。
+    /// 而左栏那 52 列在这一刻是宽度里最贵的一截。
     ///
-    /// **收起不是删掉**：收起来的那些行原样回得来（[`Action::Collapse`] 只把这个状态
-    /// 换回 [`Browsing`](Self::Browsing)，三层一格没动，光标也还停在原处）。
+    /// **收起不是删掉**：收起来的那些行原样回得来（[`Action::Collapse`] 只把焦点
+    /// 换回[报告区](Self::Report)，三层一格没动，光标也还停在原处）。
     ///
-    /// **跑着的时候展不开**，而这是本票拿的主意（停车场 Q72）：报告那时还在长，
-    /// 而那一刻按得动的只有停。`Mode` 因此仍是一维的，与 `p1-session/10` 拿的那一条
-    /// （范围层跟着冻住、不把 `Mode` 拆成两维）同一个形状。
+    /// **跑着的时候也展得开**（`p3-session-legibility/10` 推翻了停车场 Q72）：
+    /// 报告那时还在长，而长出来的那几卷正是这一格要给人看的东西。
     Expanded(Expansion),
     /// **预设那一栏**开着：盘上有的那几份摆成一列，末尾一行是「存成一份新的」。
     ///
-    /// 与[展开](Self::Expanded)同一个形状：一个从浏览进得去、一个键退得回来的状态，
+    /// 与[展开](Self::Expanded)同一个形状：一个从左栏进得去、一个键退得回来的状态，
     /// 三层一格没动（**套用**才动，而那是用户在这一栏上按下去的那一下）。
     ///
     /// **跑着的时候开不了**：套用一份预设就是把两层整个换掉，而跑起来之后三层只读
-    /// （`CONTEXT.md` 的《会话》）。这与 `e` 跑着时按不动（停车场 Q72）是同一条。
+    /// （`CONTEXT.md` 的《会话》）。这与 `e` 跑着时按不动是同一条。
     Picking(Picker),
     /// **取值栏**摊着：左栏上那一行的取值就地摊成一列（`CONTEXT.md` 的《会话》：取值栏）。
     ///
     /// 与[预设栏](Self::Picking)是**两个状态、两个词**：这一个就地摊在左栏那一行
     /// **下面**，左栏其余各行还在场（改一个值时看得见它在整份配置里的位置）；
-    /// 那一个占主区。两者摆在同一维上是因为它们是同一种东西——一个从浏览进得去、
+    /// 那一个占主区。两者摆在同一维上是因为它们是同一种东西——一个从左栏进得去、
     /// 一个键退得回来、退回来时三层一格没动的状态。
     ///
     /// **跑着的时候摊不开**：一趟跑起来之后三层都只读（`CONTEXT.md` 的《会话》），
     /// 而摊开这一列正是为了改它。这与 `p`／`e` 跑着时按不动是同一条——
-    /// 靠的也是同一件事：那个状态下的按键表一个改动键都不派（见 [`running_action`]）。
+    /// 靠的也是同一件事：那个阶段的按键表一个改动键都不派（见 [`running_action`]）。
     Valuing(Values),
+}
+
+/// 焦点**切得过去**的那两块：**左栏**与**报告区**（`CONTEXT.md` 的《会话》：焦点）。
+///
+/// [`Focus`] 那一维有六个取值，而 `⇥` 只在这两个之间切——另外四个各带着一份东西
+/// （缓冲、摊开的那一列、展开的那一卷、预设那一栏），进去要按各自的键，
+/// 一个 `⇥` 拼不出它们。**带着去哪一边而不是「切一下」**：
+/// 屏底那一行要说出这一下去哪儿（见 [`super::draw::footer`]），而一个 toggle 说不出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    /// 左栏。
+    Config,
+    /// 报告区。
+    Report,
+}
+
+/// **跟随**：卷表上那个光标停在哪儿（`CONTEXT.md` 的《会话》：跟随）。
+///
+/// **跟随是卷表独有的**：别处的视口仍是「算出来的」（`CONTEXT.md` 的《视口》——
+/// 光标在哪儿视口就跟到哪儿，屏上没有一处记着「滚到哪儿了」）。这里记着的**也不是
+/// 滚动量，是光标停在哪一卷上**：视口照旧由光标算出来（见 [`super::viewport::Viewport`]），
+/// 这一维只回答「光标归谁挪」——跑着时报告一直在长，而**一卷收摊就把光标带走**
+/// 与「我正看着第三卷」是两件不能同时成立的事。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Follow {
+    /// **跟着最新的那一卷**：一卷收摊，光标就落到它上面。这是默认那一档，
+    /// 跑起来时[重新扳回](Session::run_started)它。
+    #[default]
+    Latest,
+    /// **跟随停了**：光标停在这一卷上，报告再长它也不动。
+    ///
+    /// 屏上说得出这件事（报告区那一格的抬头，见 `super::draw::report::report_title`），
+    /// `g` 扳回[跟随](Self::Latest)——不说的话，「它怎么不跟着最新那一卷了」
+    /// 在屏上没有一处答得出。
+    Stopped(Volume),
 }
 
 /// **取值栏**：左栏上就地摊开的那一列取值（`CONTEXT.md` 的《会话》：取值栏）。
@@ -786,15 +903,15 @@ impl Naming {
 ///
 /// **不叫 `Reading`。** 展开是屏上那件事本身（报告区摊开了一卷的逐页、左栏收着），
 /// 「在读」是用户的意图——后者会让人以为还有一个「不展开地读」的状态，而那个状态
-/// 不存在（见 [`Mode::Expanded`]）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 不存在（见 [`Focus::Expanded`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Expansion {
-    /// 展开的是报告上的第几卷。
-    pub volume: usize,
-    /// 这一趟的报告里有几卷。**进来那一刻记下的**：`⇥` 转一圈靠它，而本模块读不到
-    /// 那一趟攒的报告。展开着的时候报告不会再长——展开只从浏览进得去，
-    /// 而浏览意味着没有一趟正跑着。
-    pub volumes: usize,
+    /// 展开的是**哪一卷**（[`Volume`]）。
+    ///
+    /// **不再是「报告上第几卷」**（`p3-session-legibility/10`）：决策点上那一卷也展得开，
+    /// 而它停在攒着的那一份上、不在收摊了的那几卷里（`p2-loose-ends/08`：
+    /// 不许摊开上一卷冒充它）。一个下标答不出那一卷，这个取值认得出。
+    pub volume: Volume,
     /// 报告从第几行开始画。**从顶数**，不是从底数：往回翻到零就是抬头那几行
     /// （profile、适配方式、裁边、拆分），而那正是跟着跑的时候滚出格子的那一截
     /// （停车场 Q64）。
@@ -805,26 +922,40 @@ pub struct Expansion {
 }
 
 impl Expansion {
-    /// 摊开第 `volume` 卷，报告从第 `from` 行画起。
+    /// 摊开 `volume` 那一卷，报告从第 `from` 行画起。
     ///
-    /// 三个数由 [`super::press`] 一起算好——**它们是一伙的**：换一卷就要跟着换落位，
-    /// 而「有几卷」是这两个数的定义域。横向那一格不在参数里：
+    /// 两个数由 [`super::press`] 一起算好——**它们是一伙的**：换一卷就要跟着换落位
+    /// （视口对到那一卷的抬头上，见 `super::draw::opens_at`）。横向那一格不在参数里：
     /// 它恒从零起，换一卷之后停在上一卷滚到的那几十列上，读的人会以为行是空的。
-    pub(super) fn new(volume: usize, volumes: usize, from: u16) -> Self {
+    ///
+    /// **「这一趟有几卷」不再记在这里**（从前那一格是进来那一刻的快照）：
+    /// 跑着的时候也展得开，而报告那时还在长——记下来的那个数下一卷收摊就不作数了。
+    /// 要它的两处（换一卷转一圈、抬头上那个「第几/共几卷」）各自现问 [`Live`]。
+    pub(super) fn new(volume: Volume, from: u16) -> Self {
         Self {
             volume,
-            volumes,
             from,
             right: 0,
         }
     }
 
-    /// 往一边挪一卷，两头都转一圈——与三层那几个取值环同一条（见 [`ring`]）。
-    pub(super) fn next(&self, step: Step) -> usize {
-        match step {
-            Step::Next => (self.volume + 1) % self.volumes,
-            Step::Back => (self.volume + self.volumes - 1) % self.volumes,
-        }
+    /// 从 `at` 那一卷往一边挪一格，**两头都转一圈**——与三层那几个取值环同一条
+    /// （见 [`around`]）。
+    ///
+    /// `volumes` 是**此刻**展得开的那几卷（[`Live::volumes`]），不是进来那一刻记下的
+    /// 一个数：跑着的时候也展得开，而报告那时还在长。
+    ///
+    /// **`at` 是解析过的那一卷**（[`Live::nearest`]）：展开着的那一卷可能已经收摊，
+    /// 而它那时换了个名字（「攒着的那一份」→「收摊了的第 n 卷」）——不先解析就找不着它。
+    /// 真找不着（调用方没解析）时从**头一卷**起，而不是从头一卷再挪一格：
+    /// 「不知道此刻在第几格」与「在第零格」是两件事。
+    ///
+    /// `volumes` 是空的这一步到不了：调用方先挡在前面（见 `super::expand`）。
+    pub(super) fn next(volumes: &[Volume], at: Volume, step: Step) -> Volume {
+        let Some(at) = volumes.iter().position(|listed| *listed == at) else {
+            return volumes[0];
+        };
+        volumes[around(at, volumes.len(), step)]
     }
 }
 
@@ -843,15 +974,22 @@ pub struct Edit {
 /// 一个会话。
 ///
 /// 三层可改、按 `t` 试算、按 `x` 执行、跑起来之后按 `s` 停（一次收尾、再一次中止）、
-/// 按 `e` 展开逐页（左栏跟着收起）、按 `p` 开预设那一栏（存下当前两层，或套用一份）、
+/// 按 `⇥` 把焦点切到报告区（`↑↓` 选一卷，`⏎` 展开它的逐页，左栏跟着收起）、
+/// 按 `p` 开预设那一栏（存下当前两层，或套用一份）、
 /// 停在设备层上按 `c` 出标定图、按键退出。
-/// **试算每走完一卷的第一遍都会停下来等人**（[`Mode::Deciding`]），那时按 `x` 接着做
+///
+/// # 此刻在做什么由**两维**说（ADR 0017）
+///
+/// [这一趟走到哪个阶段了](Stage)与[眼下在看什么](Focus)——**两维各答各的**：
+/// 三层只读、按停与答话那几个键归第一维，`↑↓`／`⏎` 归哪一块管归第二维。
+/// 「哪些键在哪个状态下有效」仍旧一处答完（[`Self::action`]），只是那张表按两维查。
+/// **试算每走完一卷的第一遍都会停下来等人**（[`Stage::Deciding`]），那时按 `x` 接着做
 /// 第二遍、按 `a` 剩下的卷都这样、按 `s` 收尾。
 ///
 /// **出标定图不往这里加状态**：它一按就完，屏底说一句就是全部结果——
 /// 会话此刻在做什么一格没变（见 [`Action::Chart`] 与 [`Self::charted`]）。
 ///
-/// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Mode::Running`]），
+/// **跑起来的那一趟不在这里**：这个结构只记得「此刻在做什么」（[`Stage::Running`]），
 /// 攒着的那份报告与两条进度在 [`super::live::Live`] 上。分开是因为它们的寿命不同——
 /// 会话一个，跑过的趟一趟一份。
 #[derive(Debug, Clone, PartialEq)]
@@ -862,9 +1000,17 @@ pub struct Session {
     pub taste: TasteLayer,
     /// 范围层：只在会话里有。
     pub scope: ScopeLayer,
-    /// 光标停在 [`Session::rows`] 的第几行。
+    /// 左栏的光标停在 [`Session::rows`] 的第几行。
     cursor: usize,
-    mode: Mode,
+    /// 这一趟走到哪个阶段了（[两维](Stage)之一）。
+    stage: Stage,
+    /// 眼下在看什么（[两维](Focus)之二）。
+    focus: Focus,
+    /// **卷表上那个光标**停在哪儿（`CONTEXT.md` 的《会话》：跟随）。
+    ///
+    /// **不装进 [`Focus::Report`] 里**：`⇥` 切回左栏再切回来时它还在原处——
+    /// 切焦点不是「重新开始读」；展开一卷再收起同理。
+    follow: Follow,
     /// 上一个动作要说的那句话（多半是「这个值不对」）。下一次按键就抹掉。
     notice: Option<String>,
 }
@@ -882,7 +1028,9 @@ impl Session {
             taste: TasteLayer::default(),
             scope: ScopeLayer::default(),
             cursor: 0,
-            mode: Mode::Browsing,
+            stage: Stage::Fresh,
+            focus: Focus::Config,
+            follow: Follow::Latest,
             notice: None,
         }
     }
@@ -896,21 +1044,36 @@ impl Session {
         rows
     }
 
-    /// 光标停在哪一行。
-    pub fn focus(&self) -> Field {
+    /// **左栏的光标停在哪一行。**
+    ///
+    /// **不叫 `focus`。** 那个词在两维之后已经有主：[`Focus`] 是「眼下在看什么」
+    /// 那一维（左栏／报告区／展开着……），而这一个答的是**左栏里面**光标停在哪一行。
+    /// 两者同名会让「焦点在哪」这一问在屏上有两个答案。
+    pub fn field(&self) -> Field {
         let rows = self.rows();
         rows[self.cursor.min(rows.len() - 1)]
     }
 
-    /// 会话此刻在做什么。
-    pub fn mode(&self) -> &Mode {
-        &self.mode
+    /// **这一趟走到哪个阶段了**（两维之一，ADR 0017）。
+    pub fn stage(&self) -> Stage {
+        self.stage
+    }
+
+    /// **眼下在看什么**（两维之二，ADR 0017）。
+    pub fn focus(&self) -> &Focus {
+        &self.focus
+    }
+
+    /// **卷表上那个光标停在哪儿**：跟随，还是停在某一卷上
+    /// （`CONTEXT.md` 的《会话》：跟随）。
+    pub fn follow(&self) -> Follow {
+        self.follow
     }
 
     /// 把光标挪到某一行上。**只给用例用**——真会话里光标是一步步走过去的，
     /// 而用例问的是「停在这种行上时按键做什么」，走过去那几步不是它要说的事。
     #[cfg(test)]
-    pub fn focus_on(&mut self, field: Field) {
+    pub fn go_to(&mut self, field: Field) {
         self.cursor = self
             .rows()
             .iter()
@@ -938,32 +1101,94 @@ impl Session {
     /// 它是先说、后闩。
     fn says(&mut self, said: Option<String>) {
         self.notice = said;
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.asked = None;
         }
     }
 
-    /// 一趟跑起来了：进 [`Mode::Running`]，配置从这一刻起只读。
+    /// 一趟跑起来了：进 [`Stage::Running`]，配置从这一刻起只读。
     ///
     /// 闩从[继续](Instruction::Continue)起——**一趟一份**。上一趟按下的停不该跟着漏到
     /// 下一趟去，理由与库那一侧把闩放在 `run` 的栈上是同一条（见 `tonefit` 的
     /// `progress::Events`）。跑着的那一趟那一份见 [`super::run::Running::start`]。
+    ///
+    /// **[跟随](Follow)跟着扳回去**：新的一趟从第一卷起长，而上一趟停在哪一卷上
+    /// 与这一趟没有关系。焦点那一维一格不动——起一趟只在左栏按得动，
+    /// 而按完接着看的正是报告长出来。
     pub fn run_started(&mut self) {
         self.says(None);
-        self.mode = Mode::Running(Instruction::Continue);
+        self.stage = Stage::Running(Instruction::Continue);
+        self.follow = Follow::Latest;
     }
 
-    /// 那一趟收场了：回到浏览，配置又改得动。
+    /// 那一趟收场了：配置又改得动。
+    ///
+    /// **改的是[阶段](Stage)那一维，焦点一格不动**（ADR 0017）：焦点落在报告区上的
+    /// 那个人正在读的东西，不该因为最后一卷跑完而被搬回左栏去。
     ///
     /// **不叫 `Live::run_finished`。** 那一个折的是 `RunFinished` 那条**事件**
     /// （库说「这一趟完了」），这一个改的是**会话**此刻在做什么——两件事，两个接收者。
     pub fn run_finished(&mut self) {
-        if matches!(self.mode, Mode::Running(_) | Mode::Deciding(_)) {
-            self.mode = Mode::Browsing;
+        if self.stage.read_only() {
+            self.stage = Stage::Ended;
         }
     }
 
-    /// **那一趟到决策点了没有**：在[跑着](Mode::Running)与[等答话](Mode::Deciding)
+    /// **切焦点**：左栏 ⇄ 报告区（`CONTEXT.md` 的《会话》：焦点）。
+    ///
+    /// 两块之外的那四个取值这一下到不了（见 [`Pane`]）：从它们出去要按各自那个键。
+    pub(super) fn look_at(&mut self, pane: Pane) {
+        self.focus = match pane {
+            Pane::Config => Focus::Config,
+            Pane::Report => Focus::Report,
+        };
+    }
+
+    /// **卷表上那个光标此刻停在哪一卷上**（`CONTEXT.md` 的《会话》：跟随）。
+    ///
+    /// [跟随](Follow::Latest)着的时候是**最新的那一卷**——它是算出来的，不是记着的：
+    /// 报告长一卷它就跟着走一卷。停了的时候是停着的那一卷，而那一卷若已经不在
+    /// （决策点上那一份收摊了）就落到最后一卷上（[`Live::nearest`]）。
+    ///
+    /// **收 `&Live`**：这一问要数「此刻有哪几卷」，而那份东西在那一趟上，不在本模块。
+    /// 一卷都没有时是 `None`——那时屏上没有一处画得出光标。
+    pub fn standing(&self, live: &Live) -> Option<Volume> {
+        match self.follow {
+            Follow::Latest => live.volumes().last().copied(),
+            Follow::Stopped(at) => live.nearest(at),
+        }
+    }
+
+    /// **卷表上的光标挪一卷**：往前或往后一格，**两头都绕回去**（与左栏那一列同一条，
+    /// 见 [`around`]）。挪完[跟随就停了](Follow::Stopped)——票面第三条：光标一动就停。
+    ///
+    /// 收 `&Live` 的理由与 [`standing`](Self::standing) 同一条：挪到哪一卷要数
+    /// 此刻有哪几卷。**一卷都没有时一格不动**，屏上那时也不摆这两个键
+    /// （见 `super::draw::footer`）。
+    pub(super) fn select(&mut self, live: &Live, step: Step) {
+        // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条——
+        // 这一支不经过它（挪到哪一卷要读那一趟攒下来的报告，见 [`Action::Select`]）。
+        self.says(None);
+        let volumes = live.volumes();
+        let Some(last) = volumes.len().checked_sub(1) else {
+            return;
+        };
+        let at = self
+            .standing(live)
+            .and_then(|at| volumes.iter().position(|listed| *listed == at))
+            .unwrap_or(last);
+        self.follow = Follow::Stopped(volumes[around(at, volumes.len(), step)]);
+    }
+
+    /// **回到跟随**：光标交回给最新的那一卷（`g`，票面第三条）。
+    ///
+    /// 已经在跟随时按它一格不变——它不是一个开关：跟随停了是**光标挪出去**的后果，
+    /// 而不是一个按得回去的状态（票面：`g` 回到跟随，不是 `g` 切换跟随）。
+    pub(super) fn follow_along(&mut self) {
+        self.follow = Follow::Latest;
+    }
+
+    /// **那一趟到决策点了没有**：在[跑着](Stage::Running)与[等答话](Stage::Deciding)
     /// 之间转（`p1-session/14`）。
     ///
     /// 会话每帧问一次，与 `reap` 同一条（见 `super::drive`）：停在决策点上的是
@@ -973,20 +1198,20 @@ impl Session {
     /// 别的状态一格不动：这一问只在这两者之间转场。答完话那一下不必等下一帧
     /// ——[`Action::Answer`] 当场就把状态放回去（见 [`Self::answered`]）。
     pub fn at_the_decision_point(&mut self, waiting: bool) {
-        self.mode = match (&self.mode, waiting) {
-            (Mode::Running(pressed), true) => Mode::Deciding(*pressed),
-            (Mode::Deciding(pressed), false) => Mode::Running(*pressed),
+        self.stage = match (self.stage, waiting) {
+            (Stage::Running(pressed), true) => Stage::Deciding(pressed),
+            (Stage::Deciding(pressed), false) => Stage::Running(pressed),
             _ => return,
         };
     }
 
-    /// 决策点上答完话了：回[跑着](Mode::Running)那一副，闩原样带回去。
+    /// 决策点上答完话了：回[跑着](Stage::Running)那一副，闩原样带回去。
     ///
     /// **当场就转，不等下一帧**：那条线程收到那个字就接着跑，而屏底那两行要跟着换——
     /// 慢一帧的话，答完之后那两个答话键还在屏上摆着，按下去却已经没有人收了。
     fn answered(&mut self) {
-        if let Mode::Deciding(pressed) = self.mode {
-            self.mode = Mode::Running(pressed);
+        if let Stage::Deciding(pressed) = self.stage {
+            self.stage = Stage::Running(pressed);
         }
     }
 
@@ -998,13 +1223,9 @@ impl Session {
     /// 屏底那两行照它写（[`super::draw`]），而跑着的那一趟收到的是同一个字——
     /// [`super::press`] 按下之后把它交给 [`super::run::Running::stop`]。
     pub fn stopping(&self) -> Instruction {
-        match self.mode {
-            Mode::Running(pressed) | Mode::Deciding(pressed) => pressed,
-            Mode::Browsing
-            | Mode::Editing(_)
-            | Mode::Expanded(_)
-            | Mode::Picking(_)
-            | Mode::Valuing(_) => Instruction::Continue,
+        match self.stage {
+            Stage::Running(pressed) | Stage::Deciding(pressed) => pressed,
+            Stage::Fresh | Stage::Ended => Instruction::Continue,
         }
     }
 
@@ -1012,33 +1233,31 @@ impl Session {
     ///
     /// 屏上那几处照它写：总览块那一格的抬头、屏底那两行（见 `super::draw`）。
     pub fn deciding(&self) -> bool {
-        matches!(self.mode, Mode::Deciding(_))
+        matches!(self.stage, Stage::Deciding(_))
     }
 
     /// 报告区此刻展开着哪一卷、滚到哪儿了。没展开就是 `None`——那是默认的那一档：
     /// **报告区只给卷级**，左栏在场（票面第一条）。
     pub fn expansion(&self) -> Option<&Expansion> {
-        match &self.mode {
-            Mode::Expanded(expansion) => Some(expansion),
-            Mode::Browsing
-            | Mode::Editing(_)
-            | Mode::Running(_)
-            | Mode::Deciding(_)
-            | Mode::Picking(_)
-            | Mode::Valuing(_) => None,
+        match &self.focus {
+            Focus::Expanded(expansion) => Some(expansion),
+            Focus::Config
+            | Focus::Editing(_)
+            | Focus::Report
+            | Focus::Picking(_)
+            | Focus::Valuing(_) => None,
         }
     }
 
     /// 预设那一栏此刻的样子。没开着就是 `None`。
     pub fn picking(&self) -> Option<&Picker> {
-        match &self.mode {
-            Mode::Picking(picker) => Some(picker),
-            Mode::Browsing
-            | Mode::Editing(_)
-            | Mode::Running(_)
-            | Mode::Deciding(_)
-            | Mode::Expanded(_)
-            | Mode::Valuing(_) => None,
+        match &self.focus {
+            Focus::Picking(picker) => Some(picker),
+            Focus::Config
+            | Focus::Editing(_)
+            | Focus::Report
+            | Focus::Expanded(_)
+            | Focus::Valuing(_) => None,
         }
     }
 
@@ -1049,14 +1268,13 @@ impl Session {
     /// **两个状态、两个词**（`CONTEXT.md` 的《会话》：取值栏与预设栏），
     /// 而画它们的是屏上两块各不相干的地方（左栏与主区）。
     pub fn valuing(&self) -> Option<&Values> {
-        match &self.mode {
-            Mode::Valuing(values) => Some(values),
-            Mode::Browsing
-            | Mode::Editing(_)
-            | Mode::Running(_)
-            | Mode::Deciding(_)
-            | Mode::Expanded(_)
-            | Mode::Picking(_) => None,
+        match &self.focus {
+            Focus::Valuing(values) => Some(values),
+            Focus::Config
+            | Focus::Editing(_)
+            | Focus::Report
+            | Focus::Expanded(_)
+            | Focus::Picking(_) => None,
         }
     }
 
@@ -1157,21 +1375,50 @@ impl Session {
     /// 这个键在当前状态下做什么。**「哪些键在哪个状态下有效」这张表就是它。**
     ///
     /// 纯函数：不改任何东西，用例问得动它，也因此不必去数「按下去之后屏幕变成什么样」。
+    ///
+    /// # 两维之后它仍是一处（ADR 0017）
+    ///
+    /// **先按[焦点](Focus)分岔，落到哪一支之后再按[阶段](Stage)分**——
+    /// 那一维决定「这个键归屏上哪一块管」，这一维决定「这一刻它派不派得出来」。
+    /// 六支里三支根本用不到阶段（[取值栏](Focus::Valuing)、[编辑一行](Focus::Editing)、
+    /// [预设栏](Focus::Picking)）：跑起来之后三层只读，那三个状态从浏览才进得去，
+    /// 而浏览时按不动的正是起一趟——**两维不是笛卡儿积**，理由与代价在 ADR 0017。
+    ///
+    /// 剩下三支各按阶段分：左栏（[`Self::config_action`]）、
+    /// [报告区](report_action)、[展开着](expanded_action)。
+    /// **三层只读由阶段那一维说了算**，焦点落到报告区上不解锁任何一个改动键。
     pub fn action(&self, key: Key) -> Action {
-        match &self.mode {
-            Mode::Browsing => self.browsing_action(key),
-            Mode::Editing(edit) => editing_action(edit, key),
-            Mode::Running(pressed) => running_action(key, *pressed),
-            Mode::Deciding(_) => deciding_action(key),
-            Mode::Expanded(_) => expanded_action(key),
-            Mode::Picking(picker) => picking_action(picker, key),
-            Mode::Valuing(values) => valuing_action(values, key),
+        match &self.focus {
+            Focus::Config => self.config_action(key),
+            Focus::Editing(edit) => editing_action(edit, key),
+            Focus::Report => report_action(key, self.stage),
+            Focus::Expanded(_) => expanded_action(key, self.stage),
+            Focus::Picking(picker) => picking_action(picker, key),
+            Focus::Valuing(values) => valuing_action(values, key),
+        }
+    }
+
+    /// **焦点落在左栏时的按键表**，按[阶段](Stage)分三副。
+    ///
+    /// 跑着与等答话时一个改动键都不派（三层只读，`CONTEXT.md` 的《会话》），
+    /// 那两副各自的理由在 [`running_action`] 与 [`deciding_action`] 上。
+    fn config_action(&self, key: Key) -> Action {
+        if !self.stage.read_only() {
+            return self.browsing_action(key);
+        }
+        match key {
+            // **`⇥` 跑着与等答话时照样切得过去**（票面：跑着的时候一样能用）——
+            // 它不改三层里的任何一格，而几十分钟的一趟里回头看第一卷正是这一下。
+            Key::Tab => Action::Focus(Pane::Report),
+            // 剩下的全交给阶段那一维：那一维一个改动键都没有，
+            // 「跑着与等答话时左栏一个改动键都不派」因此是结构上成立的。
+            other => stage_action(other, self.stage),
         }
     }
 
     /// 浏览时的按键表。左右键与回车做什么，随光标停的那一行的[形状](Shape)而变。
     fn browsing_action(&self, key: Key) -> Action {
-        let shape = self.focus().shape();
+        let shape = self.field().shape();
         match key {
             Key::Up | Key::Char('k') => Action::Move(Step::Back),
             Key::Down | Key::Char('j') => Action::Move(Step::Next),
@@ -1208,7 +1455,11 @@ impl Session {
             // 一格，停在口味层或范围层上按它没有意义（见 [`Action::Chart`]）。
             // 「按当前 profile 出图」在那两层上也说得通，但那时屏上摆的是别的事——
             // 一个键在它够不着的地方仍旧有效，等于把这三行与那张图的关系抹掉了。
-            Key::Char('c') if self.focus().layer() == Layer::Device => Action::Chart,
+            Key::Char('c') if self.field().layer() == Layer::Device => Action::Chart,
+            // **`⇥` 把焦点切到报告区**（ADR 0017）。**一趟都没跑过时它不派**：
+            // 那时报告区里连一卷都没有，切过去无事可做，而屏上不摆按不动的键。
+            // 上一趟收场之后它照旧按得动——报告一行不少地摆在那儿。
+            Key::Tab if self.stage == Stage::Ended => Action::Focus(Pane::Report),
             Key::Char('q') | Key::Esc | Key::Interrupt => Action::Quit,
             Key::Char(_) | Key::Tab | Key::BackTab | Key::Backspace => Action::Ignored,
         }
@@ -1263,11 +1514,15 @@ impl Session {
             // 状态转回「跑着」就在这里；把那个字交给停在决策点上的那条线程
             // 在 [`super::press`]（`Running::decide`）——与按停同一条分工。
             Action::Answer(..) => self.answered(),
-            // 展开与换卷要读那一趟攒下来的报告（有几卷、那一卷从第几行起），
-            // 而本模块读不到它——真做这两件事的是 [`super::press`]，它随后调
-            // [`expand`](Self::expand)。与[起一趟](Action::Start)同一条分法，
-            // 因此这里到不了；真到了也只是这一下没展开，不是错。
-            Action::Expand | Action::Turn(_) => {}
+            // 展开、换卷与在卷表上挪一卷都要读那一趟攒下来的报告（有哪几卷、
+            // 那一卷从第几行起），而本模块读不到它——真做这三件事的是 [`super::press`]，
+            // 它随后调 [`expand`](Self::expand) 与 [`select`](Self::select)。
+            // 与[起一趟](Action::Start)同一条分法，因此这里到不了；
+            // 真到了也只是这一下没挪、没展开，不是错。
+            Action::Expand | Action::Turn(_) | Action::Select(_) => {}
+            // 切焦点与回到跟随两支反过来：一格报告都不必读，因此就在本模块做掉。
+            Action::Focus(pane) => self.look_at(pane),
+            Action::Follow => self.follow_along(),
             // 预设那四支都要碰盘（列出来、读一份、写一份、删一份），而本模块碰不到盘：
             // 真做这四件事的是 [`super::press`]，它随后调 [`pick`](Self::pick)、
             // [`took`](Self::took)、[`saved`](Self::saved)、[`erased`](Self::erased) 那几个。
@@ -1277,7 +1532,9 @@ impl Session {
             // 走的是 [`super::press`]，它随后调 [`charted`](Self::charted)。
             // 与上面那三支同一条分法，因此这里到不了——真到了也只是这一下没出图，不是错。
             Action::Chart => {}
-            Action::Collapse => self.mode = Mode::Browsing,
+            // 收起回的是**报告区**，不是左栏：展开是从那一块进去的（光标停着的那一卷），
+            // 而左栏一个 `⇥` 之外。
+            Action::Collapse => self.focus = Focus::Report,
             Action::Scroll(toward) => self.scroll(toward),
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
@@ -1293,7 +1550,7 @@ impl Session {
     pub(super) fn expand(&mut self, expansion: Expansion) {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
         self.says(None);
-        self.mode = Mode::Expanded(expansion);
+        self.focus = Focus::Expanded(expansion);
     }
 
     /// 进预设那一栏，列的是 `names`。
@@ -1302,7 +1559,7 @@ impl Session {
     /// 与[展开](Self::expand)收下一份 [`Expansion`] 是同一条：那一层读得到，本模块读不到。
     pub(super) fn pick(&mut self, names: Vec<String>, file: PathBuf) {
         self.says(None);
-        self.mode = Mode::Picking(Picker::new(names, file));
+        self.focus = Focus::Picking(Picker::new(names, file));
     }
 
     /// 套用一份预设：**两层整个换成它，范围层一格不动**（票面第三条）。
@@ -1316,7 +1573,7 @@ impl Session {
     pub(super) fn took(&mut self, name: &str, preset: Preset) {
         self.device = preset.device;
         self.taste = preset.taste;
-        self.mode = Mode::Browsing;
+        self.focus = Focus::Config;
         self.says(Some(format!(
             "套上了「{name}」：设备层与口味层换成了它，范围层一格没动"
         )));
@@ -1330,7 +1587,7 @@ impl Session {
     /// 屏底那一格不折行，一条长路径会被切掉；那份文件的位置摆在这一栏自己身上
     /// （见 [`Picker::file`]），它折得下来。
     pub(super) fn saved(&mut self, name: &str) {
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.stored(name);
         }
         self.says(Some(format!(
@@ -1350,10 +1607,10 @@ impl Session {
     /// **注释不写进这一句**：它在退回重排那一条路上留不下来，而屏上这一句不该说一件
     /// 只在多数文件上成立的事——说出口的每一句都要无条件为真（停车场 Q108）。
     pub(super) fn name_is_taken(&mut self, name: &str) {
-        if let Mode::Picking(Picker {
+        if let Focus::Picking(Picker {
             naming: Some(naming),
             ..
-        }) = &mut self.mode
+        }) = &mut self.focus
         {
             naming.asked = true;
         }
@@ -1376,7 +1633,7 @@ impl Session {
             "真要删掉「{name}」吗：再按一次 d 删掉它。\
              那一份从预设文件里没了，撤不回来；文件里其余几份预设照旧留着"
         )));
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.asked = Some(name.to_owned());
         }
     }
@@ -1386,7 +1643,7 @@ impl Session {
     /// **不退出这一栏**，与[存好了](Self::saved)同一条：删完接着挑下一份的多得是，
     /// 而「删成了什么样」就摆在眼前这份清单上。
     pub(super) fn erased(&mut self, name: &str) {
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.gone(name);
         }
         self.says(Some(format!(
@@ -1400,7 +1657,7 @@ impl Session {
     /// 另外两头收在哪儿这里答不出——那要知道这一格装得下几行几列，
     /// 而本模块一个终端都不碰。画法那一层每帧收一次（[`Self::clamp_report`]）。
     fn scroll(&mut self, toward: Toward) {
-        let Mode::Expanded(expansion) = &mut self.mode else {
+        let Focus::Expanded(expansion) = &mut self.focus else {
             return;
         };
         match toward {
@@ -1419,7 +1676,7 @@ impl Session {
     ///
     /// 只往下收、不往上抬：`0` 恒是合法的落点。
     pub(super) fn clamp_report(&mut self, down: u16, right: u16) {
-        if let Mode::Expanded(expansion) = &mut self.mode {
+        if let Focus::Expanded(expansion) = &mut self.focus {
             expansion.from = expansion.from.min(down);
             expansion.right = expansion.right.min(right);
         }
@@ -1431,7 +1688,7 @@ impl Session {
     /// 而键盘上没有第二个键能往回按——两级停是同一个键按两次（见 [`Action::Stop`]）。
     /// 库那一侧的闩用 `fetch_max` 说同一件事（`tonefit::Instruction` 的序即力度）。
     fn raise_stop(&mut self) {
-        if let Mode::Running(pressed) = &mut self.mode {
+        if let Stage::Running(pressed) = &mut self.stage {
             *pressed = match *pressed {
                 Instruction::Continue => Instruction::Finish,
                 Instruction::Finish | Instruction::Abort => Instruction::Abort,
@@ -1448,14 +1705,14 @@ impl Session {
     /// 这一下不必自己去清：按键走的是 [`act`](Self::act)，而它从
     /// [`says`](Self::says) 出去——那里连同屏底那句话一起清掉。
     fn move_cursor(&mut self, step: Step) {
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.at = around(picker.at, picker.rows(), step);
             return;
         }
         // 取值栏摊着时挪的是**那一列**：左栏那一行此刻只是它的抬头，
         // 而屏上只有一处反白（见 `super::draw::config::config`）。
         // 那一列至少有一格（「没说」那一格恒在），`around` 因此除得动。
-        if let Mode::Valuing(values) = &mut self.mode {
+        if let Focus::Valuing(values) = &mut self.focus {
             values.at = around(values.at, values.cells.len(), step);
             return;
         }
@@ -1466,24 +1723,23 @@ impl Session {
     /// 编辑一行时那是列出来的候选，打预设名时那是「盖掉同名的那一份吗」这一问
     /// （见 [`Naming::asked`]）。
     fn edit_mut(&mut self, change: impl FnOnce(&mut String)) {
-        match &mut self.mode {
-            Mode::Editing(edit) => {
+        match &mut self.focus {
+            Focus::Editing(edit) => {
                 change(&mut edit.buffer);
                 edit.candidates.clear();
             }
-            Mode::Picking(Picker {
+            Focus::Picking(Picker {
                 naming: Some(naming),
                 ..
             }) => {
                 change(&mut naming.buffer);
                 naming.asked = false;
             }
-            Mode::Browsing
-            | Mode::Running(_)
-            | Mode::Deciding(_)
-            | Mode::Expanded(_)
-            | Mode::Picking(_)
-            | Mode::Valuing(_) => {}
+            Focus::Config
+            | Focus::Report
+            | Focus::Expanded(_)
+            | Focus::Picking(_)
+            | Focus::Valuing(_) => {}
         }
     }
 
@@ -1492,16 +1748,16 @@ impl Session {
     /// **预设那一栏上是打一个新名字**：那一行本来就是「存成一份新的」，缓冲从空的起
     /// （与「＋ 再打一个卷进来」同一条——那一行也没有「当前取值」可摆）。
     fn begin_edit(&mut self) {
-        if let Mode::Picking(picker) = &mut self.mode {
+        if let Focus::Picking(picker) = &mut self.focus {
             picker.naming = Some(Naming::default());
             return;
         }
-        let field = self.focus();
+        let field = self.field();
         let buffer = match field {
             Field::AddVolume => String::new(),
             other => self.typed(other),
         };
-        self.mode = Mode::Editing(Edit {
+        self.focus = Focus::Editing(Edit {
             field,
             buffer,
             candidates: Vec::new(),
@@ -1520,18 +1776,18 @@ impl Session {
     /// 再按一次才出这一栏——与打预设名那一条同一个形状。**光标落回进来的那一块面板上**，
     /// 不落回「当前型号的那一块」：退一步该退到刚才站的地方去。
     fn cancel(&mut self) {
-        if let Mode::Picking(picker) = &mut self.mode
+        if let Focus::Picking(picker) = &mut self.focus
             && picker.naming.take().is_some()
         {
             return;
         }
-        if let Mode::Valuing(values) = &self.mode
+        if let Focus::Valuing(values) = &self.focus
             && let Some(panel) = values.panel
         {
-            self.mode = Mode::Valuing(self.panels(Some(panel)));
+            self.focus = Focus::Valuing(self.panels(Some(panel)));
             return;
         }
-        self.mode = Mode::Browsing;
+        self.focus = Focus::Config;
     }
 
     /// **逐层补全**：只列打到的那一层，不递归、不建索引、不缓存（ADR 0009）。
@@ -1539,7 +1795,7 @@ impl Session {
     /// 列出来的若干项有共同的前缀就先补到那儿——补到分岔口为止是补全该做的事，
     /// 替用户从几项里挑一项不是。
     fn complete(&mut self) {
-        let Mode::Editing(edit) = &mut self.mode else {
+        let Focus::Editing(edit) = &mut self.focus else {
             return;
         };
         let listed = complete::level(&edit.buffer);
@@ -1576,29 +1832,71 @@ fn editing_action(edit: &Edit, key: Key) -> Action {
     }
 }
 
-/// 跑起来之后的按键表：**一个改动键都不派，只留按停与退出**。
+/// **阶段那一维派得出的那几个键**：按停、答话那三个、退出会话。**唯一出处。**
+///
+/// 焦点那一维上的三块——[左栏](Session::config_action)、[报告区](report_action)、
+/// [展开着](expanded_action)——都把自己不认的键交到这里。**「三层只读由阶段那一维
+/// 说了算」在结构上就是这一条**：那三块一个改动键都不派，而这一处一个改动键都没有，
+/// 焦点落在哪儿因此改不动任何一格（ADR 0017）。
+///
+/// 另外三块（[编辑一行](editing_action)、[取值栏](valuing_action)、
+/// [预设栏](picking_action)）不走这里，而这**不是漏了一条**：那三个状态只从左栏进得去，
+/// 而跑起来之后左栏一个改动键都不派——它们与跑着、等答话**结构上碰不到面**
+/// （ADR 0017 的《两维不是笛卡儿积》）。
+///
+/// **`Ctrl-C` 在每一个状态下都是退出**，跑到一半也是（见 [`Key::Interrupt`]）；
+/// `q`／`Esc` 只在没跑过与收场了这两个阶段上退得出去（停车场 Q63：退出会话走中止，
+/// 那一卷等于没做——最容易手滑的两个键不该挂这个后果）。
+fn stage_action(key: Key, stage: Stage) -> Action {
+    if key == Key::Interrupt {
+        return Action::Quit;
+    }
+    match stage {
+        Stage::Running(pressed) => running_action(key, pressed),
+        Stage::Deciding(_) => deciding_action(key),
+        // 这两个阶段上这一维一个键都不派：没有一趟可停，也没有一问要答。
+        // 这张表照旧列全（`Ignored` 是一个取值，不是遗漏），与上面那两副同一条。
+        Stage::Fresh | Stage::Ended => match key {
+            Key::Char('q') | Key::Esc => Action::Quit,
+            Key::Up
+            | Key::Down
+            | Key::Left
+            | Key::Right
+            | Key::Enter
+            | Key::Space
+            | Key::Tab
+            | Key::BackTab
+            | Key::Backspace
+            | Key::Interrupt
+            | Key::Char(_) => Action::Ignored,
+        },
+    }
+}
+
+/// 跑起来之后阶段那一维派得出的键：**一个改动键都不派，只留按停**。
 ///
 /// 「跑起来之后三层只读」（`CONTEXT.md` 的《会话》）因此是结构上成立的，
-/// 不是画法上把它们涂灰：改一行的那几个动作在这个状态下根本不存在。
+/// 不是画法上把它们涂灰：改一行的那几个动作在这个阶段根本不存在。
 ///
 /// **按停只有 `s` 一个键，按两次**（ADR 0013：中止是「再按一次」）：
 /// 第一次升到收尾，第二次升到中止。升到中止之后它**不再有意义**——闩到了顶，
 /// 再按一次没有更强的一级可去，因此派 [`Action::Ignored`] 而不是一个什么都不改的动作。
 /// 「按了中止之后退不回收尾」于是不必靠任何一处代码守着：键盘上没有那个键。
 ///
-/// 退出这一路照旧只有 [`Key::Interrupt`]：它在**每一个**状态下都是退出，跑到一半也是
-/// （见 `Key::Interrupt` 自己的文档）。**`q` 与 `Esc` 跑着时按不动**，
-/// 而这是本票拿的一个主意（停车场 Q63）：退出会话要连着把当前卷丢掉，
-/// 那是中止那一级的事——而中止现在有专门的键，按两次 `s` 就到。
-/// 让 `q`／`Esc` 也能一下子把当前卷丢掉，等于给最容易手滑的两个键挂上最重的后果。
-/// 退出时那条还在写盘的线程怎么收，见 [`super::run::Running::leave`]。
+/// **它在焦点落在哪一块上都按得动**（[`stage_action`]，票面第五条）：
+/// 报告区上、展开着的时候，两级语义一格不变——按停问的是「这一趟还走不走」，
+/// 与眼下在看什么无关。
 ///
-/// **展开那个键（`e`）跑着时同样按不动**（停车场 Q72）：报告那时还在长，
-/// 而这一刻按得动的只该有停。要展开就等这一趟收场——它跑完之后报告一行不少。
+/// 退出这一路照旧只有 [`Key::Interrupt`]（在 [`stage_action`] 那一头接的），
+/// **`q` 与 `Esc` 跑着时按不动**，而这是 `p1-session/10` 拿的一个主意（停车场 Q63）。
+///
+/// **展开那个键（`e`）跑着时按得动了**（`p3-session-legibility/10`）：从前它不派
+/// （停车场 Q72），理由是「`Mode` 得拆成两维」——本票正是把那一维拆出来的那一张。
 fn running_action(key: Key, pressed: Instruction) -> Action {
     match key {
-        Key::Interrupt => Action::Quit,
         Key::Char('s') if pressed < Instruction::Abort => Action::Stop,
+        // `Ctrl-C` 到不了这里（[`stage_action`] 先接走了它），而这张表仍旧列全：
+        // 少列一个键，往后添一个新键码时这里不会红。
         Key::Up
         | Key::Down
         | Key::Left
@@ -1609,12 +1907,13 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
         | Key::BackTab
         | Key::Backspace
         | Key::Esc
+        | Key::Interrupt
         | Key::Char(_) => Action::Ignored,
     }
 }
 
-/// **停在决策点上等人拿主意时的按键表**：`x` 接着做第二遍，`a` 剩下的卷都这样，
-/// `s` 收尾，`Ctrl-C` 退出会话（`p1-session/14`、`volume-discovery/07`，ADR 0012）。
+/// **停在决策点上等人拿主意时，阶段那一维派得出的键**：`x` 接着做第二遍，
+/// `a` 剩下的卷都这样，`s` 收尾（`p1-session/14`、`volume-discovery/07`，ADR 0012）。
 ///
 /// 那两个方向各拿一个**已经有主的键**，因为它们在这里做的正是那个键一直在做的事：
 /// `x` 是执行——「接着做第二遍」就是把这一趟做完；`s` 是停——「收尾」是它的第一级，
@@ -1622,7 +1921,7 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
 /// 另取两个新键的话，屏上就要多记两个只在这一刻有效的记号，而它们与已有的那两个
 /// 说的是同一件事。
 ///
-/// **`a` 是这个状态自己的键**（`all`：剩下的卷都这样）。它没有一个「一直在做这件事」
+/// **`a` 是这个阶段自己的键**（`all`：剩下的卷都这样）。它没有一个「一直在做这件事」
 /// 的旧主可借——它答的字与 `x` 逐字相同，差别只在[管几卷](Reach)，而那件事别处不存在。
 /// 借 `x` 按两下也说不出它：两级停那个形状说的是「再按一次更重一级」，
 /// 而这一下不比 `x` 更重，只是更远。
@@ -1632,16 +1931,17 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
 /// （`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。
 ///
 /// **`x` 在这里不是「起一趟」。**浏览时 `x` 起的是新的一趟，这里它答的是眼前这一趟的
-/// 那一问——两者都是「把它做出来」，而在这个状态下根本没有第二趟可起：三层此刻只读。
+/// 那一问——两者都是「把它做出来」，而在这个阶段根本没有第二趟可起：三层此刻只读。
 ///
-/// 退出照旧只有 [`Key::Interrupt`]，与跑着时同一条（停车场 Q63）：`q`／`Esc` 按不动。
-/// 退出会话走中止，那一卷等于没做、`partial` 也没留下——最容易手滑的两个键不该挂这个后果。
+/// **三个键在焦点落在哪一块上都按得动**（[`stage_action`]，票面第五条）：
+/// 报告区上翻着旧卷的时候，这一问照旧答得出——答话问的是这一卷的第二遍做不做，
+/// 与眼下在看哪一卷无关。
 ///
 /// **三层仍旧只读**：一个改动键都不派，与 [`running_action`] 同一条。
 /// 这一趟还没收场，`Request` 也早在起线程那一刻就是一份快照了。
 fn deciding_action(key: Key) -> Action {
     match key {
-        Key::Interrupt => Action::Quit,
+        // `Ctrl-C` 到不了这里，理由与 [`running_action`] 那一句同。
         Key::Char('x') => Action::Answer(Instruction::Continue, Reach::ThisVolume),
         Key::Char('a') => Action::Answer(Instruction::Continue, Reach::ForTheRest),
         Key::Char('s') => Action::Answer(Instruction::Finish, Reach::ThisVolume),
@@ -1655,34 +1955,70 @@ fn deciding_action(key: Key) -> Action {
         | Key::BackTab
         | Key::Backspace
         | Key::Esc
+        | Key::Interrupt
         | Key::Char(_) => Action::Ignored,
+    }
+}
+
+/// **焦点落在报告区时的按键表**：`↑↓` 选一卷，`⏎` 展开它，`g` 回到跟随，
+/// `⇥` 切回左栏（`p3-session-legibility/10`）。
+///
+/// **`↑↓` 挪的是卷表上那个光标**，不是左栏那一行：焦点此刻在这一块上，
+/// 而屏上只有一处反白（见 `super::draw::config` 与 `super::draw::report`）。
+/// 一卷一格，不是一行一格——表上成句的那几行、摆在一卷底下的那几句都不是「一卷」，
+/// 光标停在它们上面没有第二步可走。`j`／`k` 跟着 `↑↓`，与别处一个待遇。
+///
+/// **`g` 回到跟随**（`CONTEXT.md` 的《会话》：跟随）：光标一动跟随就停了，
+/// 而几十分钟的一趟里「跟着最新那一卷」是回得去的默认那一档。取 `g` 是因为
+/// 「回到头上／回到最新」在别处的翻页器上也是它，而会话里这个字母还没有主。
+///
+/// **`←→` 在这里不派动作**：卷表横着摆不下时**砍列**（`crate::session::columns`），
+/// 不横着滚——横滚那一套是展开那一副的事（逐页那两行不折行）。
+///
+/// **`t`／`x`／`p`／`c` 归左栏**：起一趟之前要看的是三层，而焦点此刻不在它上面
+/// （与[展开着](expanded_action)同一条）。它们一个 `⇥` 之外。
+///
+/// 剩下的交给[阶段那一维](stage_action)：按停与答话那三个在这一块上照样按得动
+/// （票面第五条），而 `q`／`Esc` 照旧只在没跑过与收场了那两个阶段上退得出去。
+fn report_action(key: Key, stage: Stage) -> Action {
+    match key {
+        Key::Up | Key::Char('k') => Action::Select(Step::Back),
+        Key::Down | Key::Char('j') => Action::Select(Step::Next),
+        // 「就在这一卷上动手」——与左栏上 `⏎`／空格 同义（见 [`Session::browsing_action`]）。
+        // `e` 也留着：展开那个键在左栏上就是它，切过焦点不该换一个键。
+        Key::Enter | Key::Space | Key::Char('e') => Action::Expand,
+        Key::Char('g') => Action::Follow,
+        // `⇧⇥` 也切回去：这一维上只有两块，两个方向到的是同一处。
+        Key::Tab | Key::BackTab => Action::Focus(Pane::Config),
+        other => stage_action(other, stage),
     }
 }
 
 /// 展开之后的按键表：**报告区在两根轴上滚，`⇥` 换一卷，`e`／`Esc` 收起。**
 ///
 /// 上下左右那几个键在这里改的是报告区，不是左栏——左栏此刻不在屏上
-/// （见 [`Mode::Expanded`]），把它们留给一栏看不见的东西才是「按了没反应」。
+/// （见 [`Focus::Expanded`]），把它们留给一栏看不见的东西才是「按了没反应」。
 /// `j`／`k` 跟着 `↑↓`，与浏览时一个待遇（见 [`Session::browsing_action`]）。
 /// 两根轴上一格的大小不同：上下一行，左右 [`SIDEWAYS`] 列（逐页那两行过 100 列）。
 ///
-/// **换卷用 `⇥` 与 `⇧⇥`**：`⇥` 在浏览时没有意义、在编辑路径时是「下一层」，
-/// 两处都是「往下一个去」，这里接着用同一个意思；`⇧⇥` 是它的另一头。
+/// **换卷用 `⇥` 与 `⇧⇥`**：`⇥` 在左栏与报告区之间是切焦点、在编辑路径时是「下一层」，
+/// 三处都是「往下一个去」，这里接着用同一个意思；`⇧⇥` 是它的另一头。
 /// 两头都有而不是只往后转一圈，是因为票面要的是**选中一卷**——
 /// 几十卷的一趟里往回看一卷不该按二十九下。
 ///
 /// **收起有两个键，而这不是重复**：`e` 是展开那个键的另一半（同一个键按回去），
-/// `Esc` 是「退一步」——编辑到一半按它是丢掉缓冲回浏览，这里按它是收起回配置，
+/// `Esc` 是「退一步」——编辑到一半按它是丢掉缓冲回浏览，这里按它是收起回报告区，
 /// 同一个意思。两级停那个 `s` 不给第二个键，因为**中止退不回收尾**；
 /// 收起退得回去，因此不必守着只有一个入口。
 ///
-/// **`q` 仍是退出会话**（与浏览时同一件事）：展开只是在读报告，
-/// 没有「按错一下就丢掉一卷」那种后果，不必像跑着时那样把它按不动
-/// （`p1-session/10` 的停车场 Q63）。
+/// **跑着与等答话时也展得开**（`p3-session-legibility/10`，推翻停车场 Q72）：
+/// 按停与答话那三个键交给[阶段那一维](stage_action)，它们与这里的滚动键
+/// 一个都不冲突——`p1-session/11` 记着的那第二重代价（「按停那个键在一屏滚动键里
+/// 会被挤没」）因此不成立：`s` 是个字母键，滚动走的是方向键。
 ///
 /// **`t` 与 `x` 在这里按不动**：起一趟要先收起——报告区正摊着上一趟的逐页，
 /// 而新的一趟会当场把它换掉。收起是一个键的事。
-fn expanded_action(key: Key) -> Action {
+fn expanded_action(key: Key, stage: Stage) -> Action {
     match key {
         Key::Up | Key::Char('k') => Action::Scroll(Toward::Up),
         Key::Down | Key::Char('j') => Action::Scroll(Toward::Down),
@@ -1691,8 +2027,7 @@ fn expanded_action(key: Key) -> Action {
         Key::Tab => Action::Turn(Step::Next),
         Key::BackTab => Action::Turn(Step::Back),
         Key::Char('e') | Key::Esc => Action::Collapse,
-        Key::Char('q') | Key::Interrupt => Action::Quit,
-        Key::Enter | Key::Space | Key::Backspace | Key::Char(_) => Action::Ignored,
+        other => stage_action(other, stage),
     }
 }
 
@@ -1777,8 +2112,9 @@ fn naming_action(naming: &Naming, key: Key) -> Action {
 /// 因此不必付出改掉它的代价。
 ///
 /// **打字与补全在这里没有意义**：这一列是一份现成的取值，不是一个缓冲。
-/// `⇥` 同理——没有「下一层」可补，也没有第二栏可切（切焦点归
-/// `p3-session-legibility/07`）。
+/// **`⇥` 同理**——没有「下一层」可补；[切焦点](Action::Focus)也不在这里派：
+/// 那一下在左栏与报告区之间走（ADR 0017），而这一列是**摊在左栏那一行下面**的一格，
+/// 退回左栏是一个 `Esc` 的事。
 ///
 /// `q` 仍是退出会话，与浏览、展开、预设那一栏同一件事：这一列只是在看有哪些值，
 /// 没有「按错一下就丢掉什么」那种后果。
@@ -1942,7 +2278,7 @@ fn next_device(device: Option<&str>) -> Option<String> {
 impl Session {
     /// 把光标那一行的取值往前（或往后）转一格。
     fn cycle(&mut self, step: Step) {
-        self.turn_field(self.focus(), step);
+        self.turn_field(self.field(), step);
     }
 
     /// 把**某一行**的取值往前（或往后）转一格。
@@ -2067,12 +2403,12 @@ impl Session {
     /// **摊不开的行在这里到不了**：按键表在那几行上根本不派这个动作
     /// （见 [`Self::browsing_action`]），这里的卫语句只是不让这个函数自己出岔子。
     fn unfold(&mut self) {
-        let field = self.focus();
+        let field = self.field();
         if field.shape() != Shape::Cycle {
             return;
         }
         if field.drills() {
-            self.mode = Mode::Valuing(self.panels(None));
+            self.focus = Focus::Valuing(self.panels(None));
             return;
         }
         let mut probe = self.clone();
@@ -2086,7 +2422,7 @@ impl Session {
             }
         }
         let chosen = (cells.len() - back) % cells.len();
-        self.mode = Mode::Valuing(Values {
+        self.focus = Focus::Valuing(Values {
             field,
             panel: None,
             cells,
@@ -2180,7 +2516,7 @@ impl Session {
     /// **别的格子在这里到不了**：按键表在那几格上派的是[定](Action::Choose)
     /// （见 [`Values::at_a_panel`]），这里的卫语句只是不让这个函数自己出岔子。
     fn drill(&mut self) {
-        let Mode::Valuing(values) = &self.mode else {
+        let Focus::Valuing(values) = &self.focus else {
             return;
         };
         if !values.at_a_panel() {
@@ -2193,7 +2529,7 @@ impl Session {
         else {
             return;
         };
-        self.mode = Mode::Valuing(self.devices_under(panel, &devices));
+        self.focus = Focus::Valuing(self.devices_under(panel, &devices));
     }
 
     /// **定下取值栏上停着的那一格**，回左栏。
@@ -2210,7 +2546,7 @@ impl Session {
     /// 型号，环上第几格答不出来。它写下去走的仍是[同一条写入路径](Self::set_device)
     /// ——`←→` 就地转一格落到的也是它，ADR 0002 那一下清空因此不会有一处忘了跟着做。
     fn choose(&mut self) {
-        let Mode::Valuing(values) = &self.mode else {
+        let Focus::Valuing(values) = &self.focus else {
             return;
         };
         let (field, at, chosen) = (values.field, values.at, values.chosen);
@@ -2223,14 +2559,14 @@ impl Session {
                 None if at == 0 => None,
                 None => return,
             };
-            self.mode = Mode::Browsing;
+            self.focus = Focus::Config;
             if chosen == Some(at) {
                 return;
             }
             self.set_device(device);
             return;
         }
-        self.mode = Mode::Browsing;
+        self.focus = Focus::Config;
         if chosen == Some(at) {
             return;
         }
@@ -2253,7 +2589,7 @@ impl Session {
     }
 
     fn toggle_volume(&mut self) {
-        if let Field::Volume(at) = self.focus()
+        if let Field::Volume(at) = self.field()
             && let Some(volume) = self.scope.volumes.get_mut(at)
         {
             volume.on = !volume.on;
@@ -2261,7 +2597,7 @@ impl Session {
     }
 
     fn remove_volume(&mut self) {
-        if let Field::Volume(at) = self.focus()
+        if let Field::Volume(at) = self.field()
             && at < self.scope.volumes.len()
         {
             self.scope.volumes.remove(at);
@@ -2301,12 +2637,12 @@ impl Session {
     /// 收下缓冲里的东西。**解析不过就留在编辑态**——把用户打的东西丢掉再让他重打一遍
     /// 是最差的那一种处置。
     fn commit(&mut self) {
-        let Mode::Editing(edit) = &self.mode else {
+        let Focus::Editing(edit) = &self.focus else {
             return;
         };
         let (field, typed) = (edit.field, edit.buffer.trim().to_owned());
         match self.take(field, &typed) {
-            Ok(()) => self.mode = Mode::Browsing,
+            Ok(()) => self.focus = Focus::Config,
             Err(error) => self.says(Some(format!("{error}"))),
         }
     }
@@ -2512,6 +2848,7 @@ fn spell_flag(value: Option<bool>, fallback: bool, yes: &str, no: &str) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::live::{Resuming, fixture};
     use clap::Parser;
 
     /// 预设那一栏是哪一份文件列出来的。真会话里由 `super::press` 从盘上读来，
@@ -2534,15 +2871,20 @@ mod tests {
 
     /// **哪些键在哪个状态下做什么。** 这一条就是那张表，不靠手点。
     ///
-    /// 分四段问：浏览时停在一个转得动的行上、停在一个打字改的行上、停在一个卷行上、
-    /// 以及编辑到一半时。每一段都问到「这个键在这里没有意义」那几个——
-    /// [`Action::Ignored`] 是一个取值，不是遗漏。
+    /// **两维之后逐段按两维问**（ADR 0017）：一到五段是没跑过那个阶段上焦点的几副样子
+    /// （左栏停在转得动的行／打字改的行／卷行上、取值栏摊着、型号那两层、编辑到一半）；
+    /// 六段起换阶段——跑着、等答话，各问一遍**焦点在左栏**与**焦点在报告区**；
+    /// 七段是展开着，连同它在跑着与等答话时的那一副；八到十段是预设那一栏。
+    ///
+    /// 每一段都问到「这个键在这里没有意义」那几个——[`Action::Ignored`] 是一个取值，
+    /// 不是遗漏；而**跨两维的那三条**（三层只读、按停与答话在报告区上照样按得动、
+    /// `⇥` 的三个意思）另在 [`the_two_dimensions_move_one_at_a_time`] 上再问一遍。
     #[test]
     fn which_keys_do_what_in_which_state() {
         let mut session = Session::new();
 
         // 一、浏览，光标停在「型号」——一个转得动的行。
-        assert_eq!(session.focus(), Field::Profile);
+        assert_eq!(session.field(), Field::Profile);
         assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
         assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
         assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
@@ -2571,10 +2913,10 @@ mod tests {
         assert_eq!(session.action(Key::Char('c')), Action::Chart);
         // 设备层另外两行上也一样：认的是层，不是某一行。
         for field in [Field::GrayLevels, Field::Threshold] {
-            session.focus_on(field);
+            session.go_to(field);
             assert_eq!(session.action(Key::Char('c')), Action::Chart, "{field:?}");
         }
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         // 打字与补全在浏览时没有意义；删卷的键在不是卷的行上也没有。
         assert_eq!(session.action(Key::Char('z')), Action::Ignored);
         assert_eq!(session.action(Key::Char('d')), Action::Ignored);
@@ -2582,7 +2924,7 @@ mod tests {
         assert_eq!(session.action(Key::Backspace), Action::Ignored);
 
         // 二、浏览，光标停在一个打字改的行上：回车进编辑，左右转不动。
-        session.focus_on(Field::CacheBudget);
+        session.go_to(Field::CacheBudget);
         assert_eq!(session.action(Key::Enter), Action::Edit);
         assert_eq!(session.action(Key::Left), Action::Ignored);
         assert_eq!(session.action(Key::Right), Action::Ignored);
@@ -2594,7 +2936,7 @@ mod tests {
             path: PathBuf::from("卷一"),
             on: true,
         });
-        session.focus_on(Field::Volume(0));
+        session.go_to(Field::Volume(0));
         assert_eq!(session.action(Key::Space), Action::Toggle);
         assert_eq!(session.action(Key::Enter), Action::Toggle);
         assert_eq!(session.action(Key::Char('d')), Action::Remove);
@@ -2605,7 +2947,7 @@ mod tests {
         // 三之二、**取值栏摊着**（`CONTEXT.md` 的《会话》：取值栏）：`↑↓` 在那一列上
         // 挪一格，`⏎`／`→` 定，`Esc`／`←` 一格不改地回去。`←→` 归这一层，
         // **不再就地转那一行**（票面第五条）。
-        session.focus_on(Field::Filter);
+        session.go_to(Field::Filter);
         // 摊开的是「就在这一行上动手」那个键——转得动的行上它从前是就地转一格。
         assert_eq!(session.action(Key::Enter), Action::Unfold);
         assert_eq!(session.action(Key::Space), Action::Unfold);
@@ -2648,13 +2990,13 @@ mod tests {
             );
         }
         session.press(Key::Esc);
-        assert_eq!(session.mode(), &Mode::Browsing, "Esc 没退回左栏");
+        assert_eq!(session.focus(), &Focus::Config, "Esc 没退回左栏");
 
         // 三之三、**型号那一行摊开的是两层**（`CONTEXT.md` 的《会话》：下钻）：
         // 第一层是面板，`⏎`／`→` 在一块面板上是**进去看**（面板不是一个取值），
         // 在第一格「没挑」上仍是定；下钻那一层上一律是定，而 `Esc`／`←` 退回的是
         // **面板那一层**，再按一次才出这一栏。
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         // 摊开的键与别的转得动的行一个样：分岔在摊开**之后**，不在这个键上。
         assert_eq!(session.action(Key::Enter), Action::Unfold);
         assert_eq!(session.action(Key::Space), Action::Unfold);
@@ -2729,12 +3071,12 @@ mod tests {
         assert_eq!(back_out.panel(), None, "没退回面板那一层");
         assert_eq!(back_out.at(), 1, "光标没落回进来的那一块面板上");
         session.press(Key::Esc);
-        assert_eq!(session.mode(), &Mode::Browsing, "第二下 Esc 没退回左栏");
+        assert_eq!(session.focus(), &Focus::Config, "第二下 Esc 没退回左栏");
 
         // 四、编辑一个路径：字进缓冲，Tab 补全，回车收下，Esc 丢掉。
-        session.focus_on(Field::Out);
+        session.go_to(Field::Out);
         session.press(Key::Enter);
-        assert!(matches!(session.mode(), Mode::Editing(_)));
+        assert!(matches!(session.focus(), Focus::Editing(_)));
         assert_eq!(session.action(Key::Char('D')), Action::Insert('D'));
         assert_eq!(session.action(Key::Space), Action::Insert(' '));
         assert_eq!(session.action(Key::Backspace), Action::Backspace);
@@ -2753,12 +3095,13 @@ mod tests {
 
         // 五、编辑一个**不是路径**的行：Tab 没有意义（那一层根本不是路径）。
         session.press(Key::Esc);
-        session.focus_on(Field::CacheBudget);
+        session.go_to(Field::CacheBudget);
         session.press(Key::Enter);
         assert_eq!(session.action(Key::Tab), Action::Ignored);
 
-        // 六、跑起来之后：三层只读，试算与执行也按不动（一趟里跑不了第二趟）。
-        // 按得动的只剩两个：`s`（按停）与 Ctrl-C（退出）。
+        // 六、跑起来之后，**焦点还在左栏**：三层只读，试算与执行也按不动
+        // （一趟里跑不了第二趟）。按得动的只剩三个：`s`（按停）、`⇥`（切焦点）
+        // 与 Ctrl-C（退出）。
         session.press(Key::Esc);
         session.run_started();
         for key in [
@@ -2770,14 +3113,14 @@ mod tests {
             // （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
             Key::Enter,
             Key::Space,
-            Key::Tab,
             Key::Backspace,
             Key::Esc,
             Key::Char('t'),
             Key::Char('x'),
             Key::Char('q'),
             Key::Char('d'),
-            // 展开那个键跑着时同样按不动（停车场 Q72）：报告还在长。
+            // 展开那个键在左栏上跑着时仍不派：展开的是**报告区**那一卷，
+            // 而焦点此刻不在那一块上（切过去它就按得动了，见六之三）。
             Key::Char('e'),
             // 预设那一栏也开不了：套用一份预设就是把两层整个换掉，而这时三层只读。
             Key::Char('p'),
@@ -2792,6 +3135,9 @@ mod tests {
             );
         }
         assert_eq!(session.action(Key::Char('s')), Action::Stop);
+        // **`⇥` 跑着时切得动焦点**（ADR 0017）：它不改三层里的任何一格，
+        // 而几十分钟的一趟里回头看第一卷正是这一下。
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Report));
         // Ctrl-C 仍旧退得出去：它在**每一个**状态下都是退出。
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
 
@@ -2807,7 +3153,6 @@ mod tests {
             Key::Right,
             Key::Enter,
             Key::Space,
-            Key::Tab,
             Key::BackTab,
             Key::Backspace,
             // `q`／`Esc` 与跑着时同一条（停车场 Q63）：退出会话走中止，
@@ -2845,9 +3190,75 @@ mod tests {
             Action::Answer(Instruction::Finish, Reach::ThisVolume)
         );
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
-        // 答完话回「跑着」那一副，按停那个键又是升闩了。
+        // `⇥` 在这一刻也切得动焦点，与跑着时同一条：它不改三层里的任何一格。
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Report));
+
+        // 六之三、**焦点落在报告区上**（`p3-session-legibility/10`，ADR 0017）：
+        // `↑↓` 选一卷、`⏎` 展开它、`g` 回到跟随、`⇥` 切回左栏，
+        // 而**阶段那一维那几个键一个不少**——答话那三个在这一块上照样按得动
+        // （票面第五条），三层照旧一个改动键都不派（票面第四条）。
+        session.press(Key::Tab);
+        assert_eq!(session.focus(), &Focus::Report, "⇥ 没把焦点切过去");
+        assert!(session.deciding(), "切个焦点把阶段那一维也带走了");
+        assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Select(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Select(Step::Back));
+        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Space), Action::Expand);
+        assert_eq!(session.action(Key::Char('e')), Action::Expand);
+        assert_eq!(session.action(Key::Char('g')), Action::Follow);
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Config));
+        assert_eq!(session.action(Key::BackTab), Action::Focus(Pane::Config));
+        // 答话那三个：一个字都没变（`x` 接着做、`a` 剩下的卷都这样、`s` 收尾）。
+        assert_eq!(
+            session.action(Key::Char('x')),
+            Action::Answer(Instruction::Continue, Reach::ThisVolume)
+        );
+        assert_eq!(
+            session.action(Key::Char('a')),
+            Action::Answer(Instruction::Continue, Reach::ForTheRest)
+        );
+        assert_eq!(
+            session.action(Key::Char('s')),
+            Action::Answer(Instruction::Finish, Reach::ThisVolume)
+        );
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 三层照旧改不动，`q`／`Esc` 照旧退不出去：**两条都归阶段那一维**，
+        // 焦点落在哪一块与它们无关。
+        for key in [
+            Key::Left,
+            Key::Right,
+            Key::Backspace,
+            Key::Esc,
+            Key::Char('q'),
+            Key::Char('t'),
+            Key::Char('d'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('z'),
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在报告区上（等答话）不该生效"
+            );
+        }
+        // 答完话回「跑着」那一副：这一块上按停又是升闩了，两级语义一格不变，
+        // 而这一块自己那四个键**跑着的时候一个不少**（票面第二条：三个阶段都用得动）。
         session.press(Key::Char('x'));
         assert!(!session.deciding(), "答完话还停在决策点上");
+        assert_eq!(session.focus(), &Focus::Report, "答完话把焦点也搬走了");
+        assert_eq!(session.action(Key::Char('s')), Action::Stop);
+        assert_eq!(session.action(Key::Char('x')), Action::Ignored);
+        assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Up), Action::Select(Step::Back));
+        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Char('g')), Action::Follow);
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Config));
+        // 回左栏：按停那个键在那一块上照旧是升闩——两块上是同一件事。
+        session.press(Key::Tab);
+        assert_eq!(session.focus(), &Focus::Config);
         assert_eq!(session.action(Key::Char('s')), Action::Stop);
         assert_eq!(session.action(Key::Char('x')), Action::Ignored);
 
@@ -2857,12 +3268,47 @@ mod tests {
         assert_eq!(session.action(Key::Char('s')), Action::Ignored);
         // 浏览时 `e` 展开，而它与光标停在哪一行无关。
         assert_eq!(session.action(Key::Char('e')), Action::Expand);
-        session.focus_on(Field::Out);
+        session.go_to(Field::Out);
         assert_eq!(session.action(Key::Char('e')), Action::Expand);
+        // **`⇥` 收场之后照旧切得过去**：报告一行不少地摆在那儿。
+        assert_eq!(session.action(Key::Tab), Action::Focus(Pane::Report));
+
+        // 六之四、**收场了、焦点落在报告区**：`↑↓`／`⏎`／`g`／`⇥` 与跑着时逐字相同，
+        // 而阶段那一维这时一个键都不派——`q`／`Esc` 于是退得出去（跑着时它们按不动）。
+        session.press(Key::Tab);
+        assert_eq!(session.focus(), &Focus::Report);
+        assert_eq!(session.action(Key::Down), Action::Select(Step::Next));
+        assert_eq!(session.action(Key::Enter), Action::Expand);
+        assert_eq!(session.action(Key::Char('g')), Action::Follow);
+        assert_eq!(session.action(Key::Char('q')), Action::Quit);
+        assert_eq!(session.action(Key::Esc), Action::Quit);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 起一趟那两个键归左栏：起一趟之前要看的是三层，而焦点此刻不在它上面。
+        for key in [
+            Key::Char('t'),
+            Key::Char('x'),
+            Key::Char('s'),
+            Key::Char('a'),
+            Key::Char('p'),
+            Key::Char('c'),
+            Key::Char('d'),
+            Key::Left,
+            Key::Right,
+            Key::Backspace,
+        ] {
+            assert_eq!(
+                session.action(key),
+                Action::Ignored,
+                "{key:?} 在报告区上（收场了）不该生效"
+            );
+        }
+        // 一趟都没跑过时切不过去：那时报告区里连一卷都没有（屏上也不摆这个键）。
+        session.press(Key::Tab);
+        assert_eq!(Session::new().action(Key::Tab), Action::Ignored);
 
         // 七、展开之后：上下左右改的是报告区，`⇥` 换一卷，`e`／`Esc` 收起。
         // 起一趟的那两个键在这里按不动——报告区正摊着上一趟的逐页。
-        session.expand(Expansion::new(0, 3, 0));
+        session.expand(Expansion::new(Volume::Settled(0), 0));
         assert_eq!(session.action(Key::Up), Action::Scroll(Toward::Up));
         assert_eq!(session.action(Key::Char('k')), Action::Scroll(Toward::Up));
         assert_eq!(session.action(Key::Down), Action::Scroll(Toward::Down));
@@ -2894,6 +3340,26 @@ mod tests {
                 "{key:?} 展开着时不该生效"
             );
         }
+
+        // 七之二、**展开着而一趟正跑着**（`p3-session-legibility/10`，推翻停车场 Q72）：
+        // 滚动那几个键一格不变，而阶段那一维那几个键跟着进来——按停按得动，
+        // `q` 反过来按不动（停车场 Q63）。**两者不冲突**：`s` 是字母键，滚动走方向键。
+        session.run_started();
+        assert_eq!(session.action(Key::Up), Action::Scroll(Toward::Up));
+        assert_eq!(session.action(Key::Tab), Action::Turn(Step::Next));
+        assert_eq!(session.action(Key::Char('e')), Action::Collapse);
+        assert_eq!(session.action(Key::Char('s')), Action::Stop);
+        assert_eq!(session.action(Key::Char('q')), Action::Ignored);
+        assert_eq!(session.action(Key::Interrupt), Action::Quit);
+        // 等答话时答话那三个也在：与焦点落在哪一块无关（票面第五条）。
+        session.at_the_decision_point(true);
+        assert_eq!(
+            session.action(Key::Char('a')),
+            Action::Answer(Instruction::Continue, Reach::ForTheRest)
+        );
+        assert_eq!(session.action(Key::Down), Action::Scroll(Toward::Down));
+        session.at_the_decision_point(false);
+        session.run_finished();
 
         // 八、预设那一栏，在列表上走：`↑↓` 挪一行，`⏎`／空格随停在哪一行分派
         // （停在一份预设上是套用它），`d` 删掉停着的那一份，`p`／`Esc` 回配置。
@@ -2968,7 +3434,7 @@ mod tests {
             "Esc 一下就把整栏关掉了"
         );
         session.press(Key::Esc);
-        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.focus(), &Focus::Config);
     }
 
     /// **标定图按设备层那块面板画，而阈值一格都不带**（13 号票的第六条：它仍是量具）。
@@ -3062,7 +3528,7 @@ mod tests {
 
         // 把适配方式转到**恰好等于默认值**的那一档上：屏上从「默认（…）」变成那个值本身。
         let mut session = Session::new();
-        session.focus_on(Field::Fit);
+        session.go_to(Field::Fit);
         assert!(session.shown(Field::Fit).starts_with("默认"));
         session.press(Key::Right);
         assert_eq!(session.taste.fit, Some(FitMode::default()));
@@ -3100,7 +3566,7 @@ mod tests {
 
         assert_eq!(session.preset(), crate::preset::every_field());
         assert_eq!(session.scope, scope, "套用预设动了范围层");
-        assert_eq!(session.mode(), &Mode::Browsing, "套完没回到配置上");
+        assert_eq!(session.focus(), &Focus::Config, "套完没回到配置上");
 
         // 套一份**什么都没说的**：上一次点过的那几项跟着回到「没说」，不是留在原处。
         session.pick(vec!["空的".to_owned()], presets_file());
@@ -3154,6 +3620,9 @@ mod tests {
     /// **展开把左栏收起，收起把它原样还回来**（票面第三条）。
     ///
     /// 收起不是删掉：三层一格没动，光标还停在原处——那正是「一键回到配置」的意思。
+    ///
+    /// **收起回的是报告区**（ADR 0017）：展开是从那一块进去的，退一步该退到刚才站的
+    /// 地方去。再一个 `⇥` 才回左栏——那一下之后，会话与展开之前**逐格相同**。
     #[test]
     fn collapsing_gives_back_everything_expanding_took_away() {
         let mut session = Session::new();
@@ -3161,28 +3630,184 @@ mod tests {
             path: PathBuf::from("卷一"),
             on: true,
         });
-        session.focus_on(Field::Volume(0));
+        session.go_to(Field::Volume(0));
         session.taste.bit_depth = Some(BitDepth::Four);
         let before = session.clone();
 
         // 展开：报告区摊开第一卷，左栏这一刻不在屏上（画法那一侧，见 `super::draw`）。
-        session.expand(Expansion::new(0, 2, 0));
+        session.expand(Expansion::new(Volume::Settled(0), 0));
         assert_eq!(
             session.expansion().map(|expansion| expansion.volume),
-            Some(0)
+            Some(Volume::Settled(0))
         );
         // 三层在展开着的时候一格都没动——收起来的东西还在原处。
         assert_eq!(session.taste.bit_depth, Some(BitDepth::Four));
 
-        // 收起：一个键（`Esc` 或 `e`）就回到配置，会话与展开之前逐格相同。
+        // 收起：一个键（`Esc` 或 `e`）就回到报告区，`⇥` 再回左栏——
+        // 那一下之后会话与展开之前逐格相同。
         assert_eq!(session.press(Key::Esc), Exit::Stay);
         assert!(session.expansion().is_none(), "收起之后还展开着");
+        assert_eq!(session.focus(), &Focus::Report, "收起没回报告区");
+        assert_eq!(session.press(Key::Tab), Exit::Stay);
         assert_eq!(session, before, "收起之后会话与展开之前不一样了");
 
         // 另一个键也收得起来：`e` 是展开那个键按回去。
-        session.expand(Expansion::new(1, 2, 40));
+        session.expand(Expansion::new(Volume::Settled(1), 40));
         assert_eq!(session.press(Key::Char('e')), Exit::Stay);
+        assert_eq!(session.focus(), &Focus::Report);
+        session.press(Key::Tab);
         assert_eq!(session, before);
+    }
+
+    /// 两卷收摊了的一趟。**光标走的就是这一列**（[`Live::volumes`]）。
+    fn two_volumes_in() -> Live {
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(3, 3000);
+        for name in ["卷一", "卷二"] {
+            live.volume_started(Path::new(name), 1000);
+            live.volume_finished(&fixture::skipped_volume(name, 10));
+        }
+        live
+    }
+
+    /// **报告区那个光标选得动一卷，而跟随一动就停**（票面第二、三条）。
+    ///
+    /// 四件事一条问齐：跟随着的时候光标是**算出来的**（一卷收摊它就跟着走一卷）；
+    /// 挪一下跟随就停了，报告再长它也不动；两头都绕得回去（与左栏那一列同一条）；
+    /// `g` 把它交回给跟随。
+    #[test]
+    fn the_report_cursor_picks_a_volume_and_stops_following_the_moment_it_moves() {
+        let mut live = two_volumes_in();
+        let mut session = Session::new();
+        session.run_started();
+
+        // 跟随：光标恒是最新收摊的那一卷，没有一处记着「停在第几卷」。
+        assert_eq!(session.follow(), Follow::Latest);
+        assert_eq!(session.standing(&live), Some(Volume::Settled(1)));
+
+        // 挪一下：跟随停了，停在挪到的那一卷上。
+        session.select(&live, Step::Back);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(0)));
+
+        // 报告再长它也不动——而跟随着的时候它会跟过去，两者的分别就在这里。
+        live.volume_started(Path::new("卷三"), 1000);
+        live.volume_finished(&fixture::skipped_volume("卷三", 10));
+        assert_eq!(session.standing(&live), Some(Volume::Settled(0)));
+
+        // 两头都绕回去：头一卷再往前一格是末一卷。
+        session.select(&live, Step::Back);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(2)));
+        session.select(&live, Step::Next);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(0)));
+
+        // `g` 回到跟随：光标交回给最新那一卷，而且从此又跟着走。
+        session.act(Action::Follow);
+        assert_eq!(session.follow(), Follow::Latest);
+        assert_eq!(session.standing(&live), Some(Volume::Settled(2)));
+
+        // 一卷都没有的那一趟：光标指不着谁，挪也挪不动，而这不是错。
+        let empty = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        assert_eq!(session.standing(&empty), None);
+        session.select(&empty, Step::Next);
+        assert_eq!(session.follow(), Follow::Latest, "一卷都没有却停了跟随");
+    }
+
+    /// **决策点上那一卷停得住、也展得开**（spec 的《焦点与两维模式》第五条）。
+    ///
+    /// 它停在**攒着的那一份**上、不在收摊了的那几卷里，而 `p2-loose-ends/08` 记着
+    /// 「不许摊开上一卷冒充它」。展开的索引因此从「报告上第几卷」改成 [`Volume`]——
+    /// 一个下标根本指不到这一卷上。
+    ///
+    /// 它收摊之后**光标跟着它走**：那一刻它正是收摊了的最后一卷（[`Live::nearest`]）。
+    #[test]
+    fn the_volume_waiting_at_the_decision_point_is_one_the_cursor_can_stand_on() {
+        let summarized = fixture::processed_volume("卷二", None);
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(2, 2000);
+        live.volume_started(Path::new("卷一"), 1000);
+        live.volume_finished(&fixture::skipped_volume("卷一", 10));
+        live.volume_started(Path::new("卷二"), 1000);
+        live.pass_started(tonefit::Pass::Second, Some(&summarized));
+
+        // 表上停得住的是两卷：收摊了的那一卷，加上攒着的那一份——
+        // 而那一份的身份带着**它前面收摊了几卷**（见 [`Volume::Summarized`]）。
+        let waiting = Volume::Summarized { after: 1 };
+        assert_eq!(live.volumes(), [Volume::Settled(0), waiting]);
+
+        let mut session = Session::new();
+        session.run_started();
+        session.at_the_decision_point(true);
+        // 跟随停在**攒着的那一份**上，不是收摊了的最后一卷。
+        assert_eq!(session.standing(&live), Some(waiting));
+
+        // 停在它上面，然后它收摊了：光标**跟着它自己走**——它此刻正是收摊了的第 1 卷，
+        // 而那个 `after` 就是认出这件事的凭据。
+        session.select(&live, Step::Next);
+        session.select(&live, Step::Next);
+        assert_eq!(session.follow(), Follow::Stopped(waiting));
+        live.volume_finished(&summarized);
+        assert!(live.summarized().is_none(), "收摊了那一份还摆着");
+        assert_eq!(session.standing(&live), Some(Volume::Settled(1)));
+
+        // **下一卷停到决策点上时它不许把光标带走**：那一份此刻是另一卷
+        // （`after` 是 2，不是 1），而光标还钉在刚才那一卷身上。
+        live.volume_started(Path::new("卷三"), 1000);
+        live.pass_started(
+            tonefit::Pass::Second,
+            Some(&fixture::processed_volume("卷三", None)),
+        );
+        assert_eq!(live.volumes().len(), 3, "新的决策点没进表");
+        assert_eq!(
+            session.standing(&live),
+            Some(Volume::Settled(1)),
+            "光标被「攒着的那一份」那个位置带到下一卷上去了"
+        );
+    }
+
+    /// **两维各改各的**（ADR 0017）：切焦点不动阶段，收场了不动焦点。
+    ///
+    /// 票面第四条与第五条一条问齐：**三层只读由阶段那一维说了算**——焦点落到报告区上
+    /// 一个改动键都不解锁；**按停在报告区上照样按得动，两级语义不变**——
+    /// 它问的是「这一趟还走不走」，与眼下在看什么无关。
+    #[test]
+    fn the_two_dimensions_move_one_at_a_time() {
+        let mut session = Session::new();
+        session.go_to(Field::Filter);
+        // 没跑过的时候左栏改得动，而 `⇥` 不派——报告区里连一卷都没有。
+        assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
+        assert_eq!(session.action(Key::Tab), Action::Ignored);
+
+        session.run_started();
+        assert!(session.stage().read_only(), "跑起来了却不是只读");
+        session.press(Key::Tab);
+        // 焦点换了，阶段一格没动。
+        assert_eq!(session.focus(), &Focus::Report);
+        assert!(matches!(session.stage(), Stage::Running(_)));
+        // 三层照旧改不动：改动键归左栏，而左栏此刻一个改动键都不派。
+        assert_eq!(session.action(Key::Left), Action::Ignored);
+
+        // 按停在这一块上照样按得动，而且照旧是两级（ADR 0013：中止是再按一次）。
+        assert_eq!(session.stopping(), Instruction::Continue);
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Finish);
+        session.press(Key::Char('s'));
+        assert_eq!(session.stopping(), Instruction::Abort);
+        assert_eq!(
+            session.action(Key::Char('s')),
+            Action::Ignored,
+            "闩到了顶还派得出按停"
+        );
+
+        // 收场了：阶段那一维换了，**焦点原样留在报告区**——正在读的东西不该被搬走。
+        session.run_finished();
+        assert_eq!(session.stage(), Stage::Ended);
+        assert_eq!(session.focus(), &Focus::Report);
+        assert!(!session.stage().read_only());
+        // 回左栏：三层又改得动了，而光标还停在原来那一行上。
+        session.press(Key::Tab);
+        assert_eq!(session.focus(), &Focus::Config);
+        assert_eq!(session.field(), Field::Filter);
+        assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
     }
 
     /// **报告区在两根轴上翻得动，两头都收得住**（票面第四条与停车场 Q64）。
@@ -3193,7 +3818,7 @@ mod tests {
     #[test]
     fn the_expanded_report_scrolls_on_both_axes_and_stops_at_both_ends() {
         let mut session = Session::new();
-        session.expand(Expansion::new(0, 1, 0));
+        session.expand(Expansion::new(Volume::Settled(0), 0));
 
         // 往上翻不过头一行：报告的第零行就是抬头。
         for _ in 0..5 {
@@ -3242,7 +3867,7 @@ mod tests {
         let mut session = Session::new();
         // 没跑着的时候这一问不作数：决策点是一趟跑起来之后才有的事。
         session.at_the_decision_point(true);
-        assert_eq!(session.mode(), &Mode::Browsing, "没跑着也进了等答话");
+        assert_eq!(session.focus(), &Focus::Config, "没跑着也进了等答话");
         assert!(!session.deciding());
 
         session.run_started();
@@ -3252,12 +3877,15 @@ mod tests {
 
         // 决策点到了：换一副样子，闩原样带过去。
         session.at_the_decision_point(true);
-        assert!(matches!(session.mode(), Mode::Deciding(_)));
+        assert!(matches!(session.stage(), Stage::Deciding(_)));
         assert_eq!(session.stopping(), Instruction::Finish, "转过去把闩弄丢了");
 
         // 答一个收尾：状态当场转回「跑着」，而闩仍旧是那一级——答话不是升闩。
         assert_eq!(session.press(Key::Char('s')), Exit::Stay);
-        assert!(matches!(session.mode(), Mode::Running(_)), "答完话没转回去");
+        assert!(
+            matches!(session.stage(), Stage::Running(_)),
+            "答完话没转回去"
+        );
         assert_eq!(session.stopping(), Instruction::Finish, "答话把闩推上去了");
 
         // **「剩下的卷都这样」同样不动那个闩**（`volume-discovery/07` 票面第四条）：
@@ -3266,7 +3894,10 @@ mod tests {
         session.at_the_decision_point(true);
         assert!(session.deciding());
         assert_eq!(session.press(Key::Char('a')), Exit::Stay);
-        assert!(matches!(session.mode(), Mode::Running(_)), "答完话没转回去");
+        assert!(
+            matches!(session.stage(), Stage::Running(_)),
+            "答完话没转回去"
+        );
         assert_eq!(
             session.stopping(),
             Instruction::Finish,
@@ -3277,7 +3908,7 @@ mod tests {
         session.at_the_decision_point(true);
         assert!(session.deciding());
         session.run_finished();
-        assert_eq!(session.mode(), &Mode::Browsing, "等答话时收场没回浏览");
+        assert_eq!(session.focus(), &Focus::Config, "等答话时收场没回浏览");
         assert_eq!(session.stopping(), Instruction::Continue);
     }
 
@@ -3309,11 +3940,11 @@ mod tests {
 
         // 按停之后会话仍开着——停下来不是退出（本票的验收）。
         assert_eq!(session.press(Key::Char('s')), Exit::Stay);
-        assert!(matches!(session.mode(), Mode::Running(_)));
+        assert!(matches!(session.stage(), Stage::Running(_)));
 
         // 那一趟收场：回到浏览，配置又改得动，闩跟着这一趟一起走。
         session.run_finished();
-        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.focus(), &Focus::Config);
         assert_eq!(session.stopping(), Instruction::Continue);
 
         // 下一趟从头起：上一趟按下的停没有漏过来。
@@ -3435,9 +4066,9 @@ mod tests {
     #[test]
     fn an_interrupt_leaves_even_in_the_middle_of_typing() {
         let mut session = Session::new();
-        session.focus_on(Field::GrayLevels);
+        session.go_to(Field::GrayLevels);
         session.press(Key::Enter);
-        assert!(matches!(session.mode(), Mode::Editing(_)));
+        assert!(matches!(session.focus(), Focus::Editing(_)));
 
         assert_eq!(session.press(Key::Interrupt), Exit::Leave);
     }
@@ -3511,7 +4142,7 @@ mod tests {
         assert!(!cyclable.is_empty());
 
         for field in cyclable {
-            session.focus_on(field);
+            session.go_to(field);
             let start = session.shown(field);
             assert!(
                 start.starts_with("默认")
@@ -3588,7 +4219,7 @@ mod tests {
     /// 摊开一行，把那一列取值取回来。
     fn unfolded(field: Field) -> Values {
         let mut session = Session::new();
-        session.focus_on(field);
+        session.go_to(field);
         session.press(Key::Enter);
         session.valuing().expect("没摊开").clone()
     }
@@ -3611,7 +4242,7 @@ mod tests {
 
             // 就地转一圈，一格一格与摊开那一列对。
             let mut session = Session::new();
-            session.focus_on(field);
+            session.go_to(field);
             for cell in &cells {
                 assert_eq!(
                     &session.shown(field),
@@ -3656,7 +4287,7 @@ mod tests {
 
             // 说了一个值之后：记号跟着挪到那一格上，而第一格还是「没说」。
             let mut session = Session::new();
-            session.focus_on(field);
+            session.go_to(field);
             session.press(Key::Right);
             session.press(Key::Enter);
             let said = session.valuing().expect("没摊开");
@@ -3685,7 +4316,7 @@ mod tests {
 
         for field in unfoldable() {
             let before = session.clone();
-            session.focus_on(field);
+            session.go_to(field);
             session.press(Key::Enter);
             // 在那一列上走两格：退出来之后光标停在哪儿不算数，取值才算数。
             session.press(Key::Down);
@@ -3698,7 +4329,7 @@ mod tests {
             );
             session.press(Key::Esc);
 
-            assert_eq!(session.mode(), &Mode::Browsing, "{field:?} Esc 没退回左栏");
+            assert_eq!(session.focus(), &Focus::Config, "{field:?} Esc 没退回左栏");
             assert_eq!(session.device, before.device, "{field:?} Esc 改了设备层");
             assert_eq!(session.taste, before.taste, "{field:?} Esc 改了口味层");
             assert_eq!(session.scope, before.scope, "{field:?} Esc 改了范围层");
@@ -3719,7 +4350,7 @@ mod tests {
             for (at, cell) in cells.iter().enumerate() {
                 // 一条路：摊开来，走到第 at 格，定。
                 let mut picked = Session::new();
-                picked.focus_on(field);
+                picked.go_to(field);
                 picked.press(Key::Enter);
                 for _ in 0..at {
                     picked.press(Key::Down);
@@ -3728,12 +4359,12 @@ mod tests {
 
                 // 另一条路：就地转 at 下。
                 let mut turned = Session::new();
-                turned.focus_on(field);
+                turned.go_to(field);
                 for _ in 0..at {
                     turned.press(Key::Right);
                 }
 
-                assert_eq!(picked.mode(), &Mode::Browsing, "{field:?} 定完没回左栏");
+                assert_eq!(picked.focus(), &Focus::Config, "{field:?} 定完没回左栏");
                 assert_eq!(&picked.shown(field), cell, "{field:?} 第 {at} 格定错了");
                 assert_eq!(picked.device, turned.device, "{field:?} 第 {at} 格：设备层");
                 assert_eq!(picked.taste, turned.taste, "{field:?} 第 {at} 格：口味层");
@@ -3755,7 +4386,7 @@ mod tests {
     fn the_model_row_unfolds_into_panels() {
         let groups = Profile::devices_by_panel();
         let mut session = Session::new();
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         session.press(Key::Enter);
         let values = session.valuing().expect("型号那一行没摊开");
 
@@ -3806,7 +4437,7 @@ mod tests {
         let groups = Profile::devices_by_panel();
         for (at, (panel, devices)) in groups.iter().enumerate() {
             let mut session = Session::new();
-            session.focus_on(Field::Profile);
+            session.go_to(Field::Profile);
             session.press(Key::Enter);
             for _ in 0..=at {
                 session.press(Key::Down);
@@ -3827,7 +4458,7 @@ mod tests {
                     picking.press(Key::Down);
                 }
                 picking.press(Key::Enter);
-                assert_eq!(picking.mode(), &Mode::Browsing, "定完没回型号那一行");
+                assert_eq!(picking.focus(), &Focus::Config, "定完没回型号那一行");
                 assert_eq!(picking.device.profile.as_deref(), Some(*device));
                 assert_eq!(
                     Profile::resolve(device).expect("内置型号").panel(),
@@ -3857,7 +4488,7 @@ mod tests {
 
         let mut session = Session::new();
         session.device.profile = Some(device.to_owned());
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         session.press(Key::Enter);
         let values = session.valuing().expect("没摊开");
         assert_eq!(values.at(), at + 1, "光标没停在当前型号的那块面板上");
@@ -3891,7 +4522,7 @@ mod tests {
                 let mut picked = Session::new();
                 picked.device.gray_levels = Some(12);
                 picked.device.threshold = Some(5.2);
-                picked.focus_on(Field::Profile);
+                picked.go_to(Field::Profile);
                 picked.press(Key::Enter);
                 for _ in 0..=at {
                     picked.press(Key::Down);
@@ -3906,7 +4537,7 @@ mod tests {
                 let mut turned = Session::new();
                 turned.device.gray_levels = Some(12);
                 turned.device.threshold = Some(5.2);
-                turned.focus_on(Field::Profile);
+                turned.go_to(Field::Profile);
                 while turned.device.profile.as_deref() != Some(*device) {
                     turned.press(Key::Right);
                 }
@@ -3933,11 +4564,11 @@ mod tests {
         let before = session.clone();
 
         // 面板那一层：走到别的面板上再退。
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         session.press(Key::Enter);
         session.press(Key::Down);
         session.press(Key::Esc);
-        assert_eq!(session.mode(), &Mode::Browsing, "Esc 没退回左栏");
+        assert_eq!(session.focus(), &Focus::Config, "Esc 没退回左栏");
         assert_eq!(session.device, before.device, "面板那一层的 Esc 改了设备层");
 
         // 下钻那一层：进去、走到别的型号上，再退两下。
@@ -3947,7 +4578,7 @@ mod tests {
         session.press(Key::Down);
         session.press(Key::Esc);
         session.press(Key::Esc);
-        assert_eq!(session.mode(), &Mode::Browsing, "两下 Esc 没退回左栏");
+        assert_eq!(session.focus(), &Focus::Config, "两下 Esc 没退回左栏");
         assert_eq!(session.device, before.device, "下钻那一层的 Esc 改了设备层");
         assert_eq!(session.taste, before.taste);
         assert_eq!(session.scope, before.scope);
@@ -3973,7 +4604,7 @@ mod tests {
         let outside = || {
             let mut session = Session::new();
             session.device.profile = Some("kobo-glo-hd".to_owned());
-            session.focus_on(Field::Profile);
+            session.go_to(Field::Profile);
             session
         };
         assert!(
@@ -3997,7 +4628,7 @@ mod tests {
 
         // 就在那一格上定下来：那个名字换成了「没挑」，而这一下走的是同一条写入路径。
         session.press(Key::Enter);
-        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.focus(), &Focus::Config);
         assert_eq!(session.device.profile, None);
     }
 
@@ -4064,7 +4695,7 @@ mod tests {
     #[test]
     fn a_calibrated_override_needs_a_panel_to_be_measured_on() {
         let mut session = Session::new();
-        session.focus_on(Field::GrayLevels);
+        session.go_to(Field::GrayLevels);
 
         session.press(Key::Enter);
         for character in "12".chars() {
@@ -4073,14 +4704,14 @@ mod tests {
         session.press(Key::Enter);
 
         // 没挑型号：留在编辑态，话说得出来。
-        assert!(matches!(session.mode(), Mode::Editing(_)));
+        assert!(matches!(session.focus(), Focus::Editing(_)));
         assert!(session.notice().expect("要说一句").contains("先挑型号"));
         assert_eq!(session.device.gray_levels, None);
 
         // 挑了型号之后同一个数收得下，越界的数仍被库那一侧的界挡下。
         session.press(Key::Esc);
         session.device.profile = Some("boox-poke6".to_owned());
-        session.focus_on(Field::GrayLevels);
+        session.go_to(Field::GrayLevels);
         session.press(Key::Enter);
         session.press(Key::Char('1'));
         session.press(Key::Char('2'));
@@ -4092,7 +4723,7 @@ mod tests {
         session.press(Key::Backspace);
         session.press(Key::Char('0'));
         session.press(Key::Enter);
-        assert!(matches!(session.mode(), Mode::Editing(_)), "0 级该被挡下");
+        assert!(matches!(session.focus(), Focus::Editing(_)), "0 级该被挡下");
         assert_eq!(session.device.gray_levels, Some(12), "挡下的值没有写进去");
     }
 
@@ -4100,7 +4731,7 @@ mod tests {
     #[test]
     fn a_value_that_does_not_parse_stays_in_the_editor() {
         let mut session = Session::new();
-        session.focus_on(Field::CacheBudget);
+        session.go_to(Field::CacheBudget);
 
         session.press(Key::Enter);
         for character in "512T".chars() {
@@ -4108,7 +4739,7 @@ mod tests {
         }
         session.press(Key::Enter);
 
-        let Mode::Editing(edit) = session.mode() else {
+        let Focus::Editing(edit) = session.focus() else {
             panic!("解析不过该留在编辑态");
         };
         assert_eq!(edit.buffer, "512T", "用户打的东西被丢掉了");
@@ -4119,7 +4750,7 @@ mod tests {
         session.press(Key::Backspace);
         session.press(Key::Char('M'));
         session.press(Key::Enter);
-        assert_eq!(session.mode(), &Mode::Browsing);
+        assert_eq!(session.focus(), &Focus::Config);
         assert_eq!(
             session.taste.cache_budget,
             Some(CacheBudget::parse("512M").expect("认得的写法"))
@@ -4131,10 +4762,10 @@ mod tests {
     fn clearing_a_field_puts_it_back_to_saying_nothing() {
         let mut session = Session::new();
         session.taste.cache_budget = Some(CacheBudget::parse("1G").expect("认得的写法"));
-        session.focus_on(Field::CacheBudget);
+        session.go_to(Field::CacheBudget);
 
         session.press(Key::Enter);
-        let Mode::Editing(edit) = session.mode() else {
+        let Focus::Editing(edit) = session.focus() else {
             panic!("该进编辑态");
         };
         assert_eq!(edit.buffer, "1G", "进编辑时缓冲里该摆着当前取值");
@@ -4151,7 +4782,7 @@ mod tests {
     #[test]
     fn a_volume_that_was_typed_in_can_be_ticked_off_and_removed() {
         let mut session = Session::new();
-        session.focus_on(Field::AddVolume);
+        session.go_to(Field::AddVolume);
 
         // 打两个卷进来。每打完一个，光标仍停在「再打一个」上。
         for name in ["卷一", "卷二"] {
@@ -4160,13 +4791,13 @@ mod tests {
                 session.press(Key::Char(character));
             }
             session.press(Key::Enter);
-            assert_eq!(session.focus(), Field::AddVolume);
+            assert_eq!(session.field(), Field::AddVolume);
         }
         assert_eq!(session.scope.volumes.len(), 2);
         assert!(session.scope.volumes.iter().all(|volume| volume.on));
 
         // 勾掉第二个：它还在清单上，只是这一趟不算数。
-        session.focus_on(Field::Volume(1));
+        session.go_to(Field::Volume(1));
         session.press(Key::Space);
         assert!(!session.scope.volumes[1].on);
         assert!(session.shown(Field::Volume(1)).starts_with("[ ]"));
@@ -4189,9 +4820,9 @@ mod tests {
         for _ in 0..rows {
             session.press(Key::Down);
         }
-        assert_eq!(session.focus(), Field::Profile, "转一圈没回到第一行");
+        assert_eq!(session.field(), Field::Profile, "转一圈没回到第一行");
 
         session.press(Key::Up);
-        assert_eq!(session.focus(), Field::AddVolume, "往上一格没绕到最后一行");
+        assert_eq!(session.field(), Field::AddVolume, "往上一格没绕到最后一行");
     }
 }

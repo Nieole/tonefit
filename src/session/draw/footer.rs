@@ -15,7 +15,7 @@ use super::FOOTER_HEIGHT;
 use super::report::expandable;
 use crate::session::complete;
 use crate::session::live::Live;
-use crate::session::state::{Edit, Layer, Mode, Picker, Session, Shape, Values};
+use crate::session::state::{Edit, Focus, Follow, Layer, Picker, Session, Shape, Stage, Values};
 use crate::session::viewport::Viewport;
 use crate::wrap;
 
@@ -69,24 +69,23 @@ impl Prompt {
 /// 收 `live` 只为一件事：**没有报告可展开的时候不摆展开那个键**
 /// （见 [`browsing_keys`]）——屏上不摆按不动的键，那正是「按了没反应」的来源。
 pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<Line<'static>> {
-    let Prompt { keys, what } = match session.mode() {
+    let Prompt { keys, what } = match session.focus() {
         // 编辑一行时说明那一半摆的是**补全候选**，而「列得下几条」要等这一格分给它
         // 几行才算得出来——它因此不在这张表里拼，在下面 `room` 出来之后才补上。
-        Mode::Editing(edit) => Prompt::new(editing_keys(edit), ""),
-        Mode::Browsing => Prompt::new(browsing_keys(session, live), ""),
-        Mode::Running(pressed) => running_prompt(*pressed, live),
-        Mode::Deciding(_) => deciding_prompt(),
-        Mode::Expanded(_) => expanded_prompt(),
-        Mode::Picking(picker) => picking_prompt(picker),
-        Mode::Valuing(values) => valuing_prompt(values),
+        Focus::Editing(edit) => Prompt::new(editing_keys(edit), ""),
+        Focus::Config => config_prompt(session, live),
+        Focus::Report => report_prompt(session, live),
+        Focus::Expanded(_) => expanded_prompt(session, live),
+        Focus::Picking(picker) => picking_prompt(picker),
+        Focus::Valuing(values) => valuing_prompt(values),
     };
     let said = wrap::fold(session.notice().unwrap_or(""), width);
     let mut rows = wrap::fold(&keys, width);
     // 说明那一半分得到几行：按键那几行与要说的那句话先占（让位的次序见上）。
     // **只算这一次**：补全候选列得下几条按的是同一个数（见 [`listed`]）。
     let room = usize::from(FOOTER_HEIGHT).saturating_sub(rows.len().saturating_add(said.len()));
-    let what = match session.mode() {
-        Mode::Editing(edit) => listed(session, edit, width, room),
+    let what = match session.focus() {
+        Focus::Editing(edit) => listed(session, edit, width, room),
         _ => what,
     };
     rows.extend(wrap::fold(&what, width).into_iter().take(room));
@@ -97,6 +96,77 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
     }
     rows.extend(said);
     rows.into_iter().map(Line::from).collect()
+}
+
+/// **阶段那一维此刻摆得出的那两行**（ADR 0017）：跑着是按停那一副，等答话是答话那一副。
+/// 没跑过与收场了这一维一个键都不派，因此是 `None`。
+///
+/// 焦点那一维上摆得下它的三块（左栏、报告区、展开着）都拼它——**按停与答话那三个键
+/// 在哪一块上都按得动**（票面第五条，见 `super::super::state::stage_action`），
+/// 而屏上不摆按不动的键的另一半是**按得动的键要摆出来**。
+fn stage_prompt(session: &Session, live: Option<&Live>) -> Option<Prompt> {
+    match session.stage() {
+        Stage::Running(pressed) => Some(running_prompt(pressed, live)),
+        Stage::Deciding(_) => Some(deciding_prompt()),
+        Stage::Fresh | Stage::Ended => None,
+    }
+}
+
+/// **焦点落在左栏时**屏底那两行：按阶段分三副。
+///
+/// 跑着与等答话时摆的是那一维那一副（三层此刻只读，一个改动键都不提）；
+/// 没跑过与收场了摆的是[随光标那一行而变的那一副](browsing_keys)。
+fn config_prompt(session: &Session, live: Option<&Live>) -> Prompt {
+    match stage_prompt(session, live) {
+        // **这一块自己的键在前，阶段那几个跟在后面**，与[报告区那一副](report_prompt)
+        // 同一个形状。跑着与等答话时这一块自己只剩一个键：`⇥`——它不改三层里的任何一格，
+        // 而几十分钟的一趟里回头看第一卷正是这一下（ADR 0017）。
+        Some(Prompt { keys, what }) => Prompt::new(format!(" ⇥ 报告区 ·{keys}"), what),
+        None => Prompt::new(browsing_keys(session, live), String::new()),
+    }
+}
+
+/// **焦点落在报告区时**屏底那两行（`p3-session-legibility/10`）。
+///
+/// 行首是**这一块的名字**：焦点在哪儿屏上要看得出来，而卷表上那一行反白说得出这件事的
+/// 前提是**表上真有一卷**——一趟跑到第一卷收摊之前它一行都没有（见 [`super::table`]），
+/// 那时说得出焦点在哪的只剩这一行。
+///
+/// **`↑↓` 与 `⏎` 只在有卷可选时才摆**（与展开那个键在左栏上的待遇同一条，
+/// 见 [`browsing_keys`]）：一卷都没有时按下去无处可去，而屏上不摆按不动的键。
+///
+/// **`g` 只在跟随停了时摆**：跟随着的时候按它一格不变（`CONTEXT.md` 的《会话》：跟随），
+/// 而「跟随此刻停没停」屏上另有一处说（报告区那一格的抬头，见
+/// [`super::report::report_title`]）——这里是按键提示的家，只摆那个键。
+///
+/// 阶段那几个键跟在后面（[`stage_prompt`]）：跑着时的按停、等答话时的答话那三个，
+/// 在这一块上照样按得动。没跑过与收场了那两个阶段上摆的是 `q 退出`。
+fn report_prompt(session: &Session, live: Option<&Live>) -> Prompt {
+    let mut keys = String::from(" 报告区");
+    if live.is_some_and(|live| !live.volumes().is_empty()) {
+        keys.push_str(" · ↑↓ 选一卷 · ⏎ 展开");
+    }
+    let stopped = matches!(session.follow(), Follow::Stopped(_));
+    if stopped {
+        keys.push_str(" · g 回到跟随");
+    }
+    keys.push_str(" · ⇥ 回配置");
+    match stage_prompt(session, live) {
+        Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
+        None => Prompt::new(format!("{keys} · q 退出"), following_line(stopped)),
+    }
+}
+
+/// 报告区那一行底下说的那件事：**跟随此刻是什么样**（`CONTEXT.md` 的《会话》：跟随）。
+///
+/// 跑着与等答话时它让位给阶段那一维那一句（见 [`report_prompt`]）：那一句说的是此刻在等
+/// 什么，比这一句急。**「跟随停了」屏上因此另有一处常驻**——报告区那一格的抬头，
+/// 那一处不随阶段让位。
+fn following_line(stopped: bool) -> &'static str {
+    match stopped {
+        true => " 跟随停了：报告再长，光标也不动——g 把它交回给最新那一卷",
+        false => " 跟随着最新的那一卷：一卷收摊，光标就落到它上面",
+    }
 }
 
 /// 跑起来之后屏底那两行：**上一行说这时按得动的键，下一行说按下去之后它在等什么**
@@ -214,7 +284,8 @@ pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
 /// 展开之后屏底那两行：**上一行说这时按得动的键，下一行说这一副样子与默认那一副的差**。
 ///
 /// 收起那个键要一直摆着：左栏此刻不在屏上，而「收起来的东西回得来」只有它说得出
-/// （票面的验收：收起后能一键回到配置）。
+/// （票面的验收：收起后能一键回到配置）。**它回的是报告区**——展开是从那一块进去的
+/// （光标停着的那一卷，ADR 0017），而左栏跟着回到屏上，再一个 `⇥` 就站得上去。
 ///
 /// **展开的是第几卷不在这里说**，那个数在报告区那一格的抬头上
 /// （见 [`super::report::report_title`]）——挨着它说的那一卷，而这里是按键提示的家。
@@ -222,11 +293,19 @@ pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
 ///
 /// 下一行说的是**不折行**这件事：屏窄的时候行尾会被切掉，
 /// 不说清「横着滚得动」，看上去就是报告缺了半截。
-fn expanded_prompt() -> Prompt {
-    Prompt::new(
-        " ↑↓ 翻一行 · ←→ 横着滚 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · q 退出",
-        " 逐页那两行不折行：屏窄时行尾被切掉，往右滚就看得到——页面不会跟着整体错位",
-    )
+fn expanded_prompt(session: &Session, live: Option<&Live>) -> Prompt {
+    // 「左栏回来」说的是**屏上**：那一栏此刻收着，而收起来的东西回得来。
+    // 焦点落在哪儿是另一件事（回报告区，见上），屏底这一行不摆两件事。
+    let keys = " ↑↓ 翻一行 · ←→ 横着滚 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来";
+    match stage_prompt(session, live) {
+        // 跑着与等答话时也展得开（`p3-session-legibility/10`）：那一维那几个键跟在后面，
+        // 而 `q` 那时按不动（停车场 Q63），因此不摆。
+        Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
+        None => Prompt::new(
+            format!("{keys} · q 退出"),
+            " 逐页那两行不折行：屏窄时行尾被切掉，往右滚就看得到——页面不会跟着整体错位",
+        ),
+    }
 }
 
 /// 预设那一栏屏底那两行：**上一行说这时按得动的键**，下一行说这一栏与三层的关系。
@@ -412,14 +491,20 @@ fn spelled(names: &[&str], left: usize) -> String {
 /// 型号还没挑时它照样摆着：按下去说的是「先挑型号」，与 `t`／`x` 那时的待遇一样。
 /// 那不是按不动，是**按了有话说**。
 fn browsing_keys(session: &Session, live: Option<&Live>) -> String {
-    let focus = session.focus();
+    let focus = session.field();
     let expand = if expandable(live) { " · e 展开" } else { "" };
     let chart = if focus.layer() == Layer::Device {
         " · c 出标定图"
     } else {
         ""
     };
-    let common = format!("↑↓ 选 · {START_KEYS}{expand} · p 预设 · q 退出");
+    // **`⇥` 只在上一趟收场之后才摆**：一趟都没跑过时报告区里连一卷都没有，
+    // 那个键此刻根本不派动作（`super::super::state::Session::browsing_action`）。
+    let report = match session.stage() {
+        Stage::Ended => " · ⇥ 报告区",
+        Stage::Fresh | Stage::Running(_) | Stage::Deciding(_) => "",
+    };
+    let common = format!("↑↓ 选{report} · {START_KEYS}{expand} · p 预设 · q 退出");
     match focus.shape() {
         // 只有这两副落得到设备层上（`Field::shape` 与 `Field::layer`：型号是环，
         // 灰阶数与阈值是打字改的），标定图那个键因此只插在这两支里。
@@ -460,7 +545,7 @@ mod tests {
     #[test]
     fn the_unfolded_values_put_their_own_keys_on_the_bottom_row() {
         let mut session = Session::new();
-        session.focus_on(Field::Filter);
+        session.go_to(Field::Filter);
         let browsing = tight(&screen(&mut session, None, 120, 40));
         assert!(browsing.contains(&tight("←→ 换一个")), "{browsing}");
         assert!(browsing.contains(&tight("⏎ 摊开")), "{browsing}");
@@ -485,7 +570,7 @@ mod tests {
         // （见 [`the_two_levels_of_the_model_row_each_put_their_own_keys_up`]）。
         // 设备层那个键在这一行上照旧摆着。
         session.press(Key::Esc);
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         let profile = tight(&screen(&mut session, None, 120, 40));
         assert!(profile.contains(&tight("←→ 换一个")), "{profile}");
         assert!(profile.contains(&tight("⏎ 摊开")), "{profile}");
@@ -504,7 +589,7 @@ mod tests {
     #[test]
     fn the_two_levels_of_the_model_row_each_put_their_own_keys_up() {
         let mut session = Session::new();
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         session.press(Key::Enter);
 
         // 面板那一层，光标停在第一格「没挑」上：`⏎` 是定。
@@ -632,13 +717,13 @@ mod tests {
 
         // 设备层那三行上都摆着它。
         for field in [Field::Profile, Field::GrayLevels, Field::Threshold] {
-            session.focus_on(field);
+            session.go_to(field);
             let screen = tight(&screen(&mut session, None, 120, 40));
             assert!(screen.contains(&tight("c 出标定图")), "{field:?}：{screen}");
         }
         // 别的两层上不摆：它在那儿根本不派动作。
         for field in [Field::Filter, Field::Out] {
-            session.focus_on(field);
+            session.go_to(field);
             let screen = tight(&screen(&mut session, None, 120, 40));
             assert!(
                 !screen.contains(&tight("c 出标定图")),
@@ -647,7 +732,7 @@ mod tests {
         }
 
         // 出完图说的那两行**都在屏上**：图在哪儿，以及此刻要做对的那一件事。
-        session.focus_on(Field::Profile);
+        session.go_to(Field::Profile);
         session.charted(Path::new("图/tonefit-calibration-boox-poke6-16-levels.png"));
         let screen = tight(&screen(&mut session, None, 120, 40));
         assert!(
@@ -717,7 +802,7 @@ mod tests {
     #[test]
     fn typing_a_path_shows_the_buffer_and_the_level_underneath() {
         let mut session = Session::new();
-        session.focus_on(Field::Out);
+        session.go_to(Field::Out);
         session.press(Key::Enter);
         for character in "库".chars() {
             session.press(Key::Char(character));

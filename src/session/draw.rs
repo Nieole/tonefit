@@ -89,7 +89,7 @@ const CONFIG_WIDTH: u16 = 52;
 /// **终端窄到放不下两栏时，让的是左栏。** 报告区挤到十几列就一个字都读不出来，
 /// 而左栏那几行本来就折着行（见 [`config::config`]），窄一点仍看得懂。
 ///
-/// 这不是「左栏收起」——那是[展开](crate::session::state::Mode::Expanded)带着的一件事，用户按得动、
+/// 这不是「左栏收起」——那是[展开](crate::session::state::Focus::Expanded)带着的一件事，用户按得动、
 /// 也按得回来（`e`／`Esc`）；这里是放不下时的退化，没有开关。
 const MAIN_MIN_WIDTH: u16 = 30;
 

@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::paint::Tone;
-use crate::session::state::{Field, Layer, Mode, Session, Values};
+use crate::session::state::{Field, Focus, Layer, Session, Stage, Values};
 use crate::session::viewport::Viewport;
 
 /// 跑起来之后左栏的抬头。**「只读」要看得出来**，不能是按了没反应
@@ -56,13 +56,15 @@ const DRILLED_INDENT: &str = "      ";
 ///
 /// **跑起来之后整栏只读**，而这一条要在屏上**看得出来**，不能是「按了没反应」：
 /// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗（[`Tone::Muted`]）。
-/// 真正拦住按键的不是这里——是状态机在那个状态下一个改动键都不派
-/// （见 `super::super::state::running_action`）；这里只把那件事说出来。
+/// 真正拦住按键的不是这里——是状态机在那个阶段一个改动键都不派
+/// （见 `super::super::state::stage_action`）；这里只把那件事说出来。
 ///
 /// **反白只在左栏就是眼下动手的地方时才给**：那一格反白说的是「就在这一行上动手」。
-/// 跑着时按不动（上面那一条），预设那一栏开着时按键**全归那一栏**——左栏此刻在屏上
-/// 只为让人对照着看存出去的是什么（见 [`super::shell`]），反白它就是在指一个按不动的地方。
-/// 压暗仍只给跑着那一种：那一种是「这一趟没跑完都改不动」，而预设那一栏一个 `Esc` 就回来了。
+/// 跑着与等答话时按不动（上面那一条），**焦点切到报告区时按键全归那一块**
+/// （`⇥`，ADR 0017），预设那一栏开着时同理——左栏此刻在屏上只为让人对照着看
+/// （见 [`super::shell`]），反白它就是在指一个按不动的地方。
+/// 压暗仍只给跑着那一种：那一种是「这一趟没跑完都改不动」，而焦点与预设那一栏
+/// 都是一个键就回来的事。
 ///
 /// **取值栏摊着时那一列摊在那一行下面**（`CONTEXT.md` 的《会话》：取值栏），
 /// 而**反白落在那一列上、不落在那一行上**：屏上只有一处反白，它说的恒是
@@ -74,9 +76,16 @@ const DRILLED_INDENT: &str = "      ";
 /// 光标就走到屏外，而屏上看不出它去哪儿了。滚动量**算出来、不记着**：
 /// 光标在哪一行，这一栏就跟到哪一行。
 pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
-    let running = matches!(session.mode(), Mode::Running(_));
-    let acting = matches!(session.mode(), Mode::Browsing | Mode::Editing(_));
-    let focus = session.focus();
+    // **压暗只给「跑着」那一种，而反白按「焦点 + 只读」给**——两个判断，两件事。
+    // 等答话时三层同样只读（`Stage::read_only`），而这一栏此刻不压暗、抬头也不改口：
+    // 那一句写死了「跑着」，改口先要定下等答话时它写什么。停车场 Q160 记着这一笔。
+    let running = matches!(session.stage(), Stage::Running(_));
+    // **反白只在焦点真落在这一栏上、而且三层此刻改得动时才给**：
+    // 焦点在报告区（或展开着、预设栏开着）时它归那一块，跑着与等答话时它一个键都不派
+    // ——两条各归两维中的一维（ADR 0017），而屏上只有一处反白。
+    let acting = matches!(session.focus(), Focus::Config | Focus::Editing(_))
+        && !session.stage().read_only();
+    let focus = session.field();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut drawn: Option<Layer> = None;
     // 光标那一行落在正文的第几行：层与层之间还垫着抬头与空行，行号数不出来
@@ -206,7 +215,7 @@ mod tests {
     fn with_volumes(count: usize) -> Session {
         let mut session = Session::new();
         for at in 1..=count {
-            session.focus_on(Field::AddVolume);
+            session.go_to(Field::AddVolume);
             session.press(Key::Enter);
             for glyph in format!("库/卷{at}").chars() {
                 session.press(Key::Char(glyph));
@@ -340,7 +349,7 @@ mod tests {
 
     /// 摊开一行的取值栏，把左栏画出来。
     fn unfolding(session: &mut Session, field: Field) {
-        session.focus_on(field);
+        session.go_to(field);
         session.press(Key::Enter);
         assert!(session.valuing().is_some(), "{field:?} 没摊开");
     }
@@ -359,7 +368,7 @@ mod tests {
         let mut session = Session::new();
         // 先说一个值，记号与第一格才分得开：不然两者落在同一格上，
         // 这张快照就说不出「记号指的是生效的那一格」。
-        session.focus_on(Field::Filter);
+        session.go_to(Field::Filter);
         session.press(Key::Right);
         unfolding(&mut session, Field::Filter);
         same_screen(&config_pane(&session, 52, 30), THE_UNFOLDED_VALUES);

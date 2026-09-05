@@ -46,7 +46,7 @@ use super::overview::{DECIDING, spell};
 use super::paint::{Painted, Tone};
 use crate::render::{self, Field, Row, RowKind};
 use crate::session::columns::{self, Column, Widths};
-use crate::session::live::Live;
+use crate::session::live::{Live, Volume};
 use crate::wrap;
 
 /// 一格不在场时那一列上写什么。
@@ -141,6 +141,11 @@ const UNDER_INDENT: &str = "   ";
 /// 不在场的格是 `None`——**一格在不在场本身就是一句话**（`CONTEXT.md` 的《格》）：
 /// 跳过的卷没有定档页，没做成的卷连页数都没有。
 struct Entry {
+    /// **表上的光标停得上去吗，停上去指的是哪一卷**（`p3-session-legibility/10`）。
+    ///
+    /// 没做成的那几卷是 `None`：它们连一份卷报告都没有，逐页那几行无从谈起
+    /// （见 [`Volume`]）。它们照旧占一行——那一行要说的话就在它自己的行尾。
+    at: Option<Volume>,
     /// 行首记号。
     mark: Mark,
     /// 卷名。走 [`crate::render::volume_name`]，与进度条印的是同一个。
@@ -197,7 +202,11 @@ impl Entry {
     }
 
     /// 一卷跑完（或跑到一半）的那一行。
-    fn of_volume(volume: &VolumeReport, waiting: bool) -> Self {
+    ///
+    /// `at` 是**光标停上去指的是哪一卷**：收摊了的那几卷各是自己的下标，
+    /// 决策点上那一份是 [`Volume::Summarized`]——它不在收摊了的那几卷里
+    /// （`p2-loose-ends/08`：不许摊开上一卷冒充它）。
+    fn of_volume(at: Volume, volume: &VolumeReport, waiting: bool) -> Self {
         let rows = render::volume(volume);
         let mark = Mark::of(volume);
         let mut notes = Vec::new();
@@ -208,6 +217,7 @@ impl Entry {
             notes.push(DECIDING.to_owned());
         }
         Self {
+            at: Some(at),
             mark,
             name: render::volume_name(&volume.volume),
             // 页数走**卷那一行上那一格**，不回头去问 `VolumeReport`：这一副与命令行那一副
@@ -234,6 +244,8 @@ impl Entry {
         let row = render::failed_volume(failure);
         let rows = std::slice::from_ref(&row);
         Self {
+            // 光标停不上去：没有报告，也就没有第二层可看。
+            at: None,
             mark: Mark::Failed,
             name: render::volume_name(&failure.volume),
             pages: None,
@@ -301,16 +313,33 @@ fn entries(live: &Live) -> Vec<Entry> {
     let mut entries: Vec<Entry> = report
         .volumes
         .iter()
-        .map(|volume| Entry::of_volume(volume, false))
+        .enumerate()
+        .map(|(at, volume)| Entry::of_volume(Volume::Settled(at), volume, false))
         .collect();
     entries.extend(report.failed_volumes.iter().map(Entry::of_failure));
     // 决策点上那一卷**到此刻为止**的那一份（停车场 Q52）：它还没收摊，不在报告那一列里，
     // 而它同样占一行——「不许摊开上一卷冒充它」（`p2-loose-ends/08` 的硬约束）。
+    // 光标停得上去、也展得开，指的是 [`Volume::Summarized`]（`p3-session-legibility/10`）。
+    // 那个 `after` 是**它的身份**（见 [`Volume::Summarized`]）：光标停在它上面之后
+    // 它收了摊，靠这个数才认得出「它此刻是收摊了的第几卷」。
+    let after = report.volumes.len();
     entries.extend(
         live.summarized()
-            .map(|volume| Entry::of_volume(volume, true)),
+            .map(|volume| Entry::of_volume(Volume::Summarized { after }, volume, true)),
     );
     entries
+}
+
+/// 卷表画出来的那几行，外加**光标停在第几行**。
+///
+/// 两样装在一个类型里而不是一对裸值：它们是同一次摆出来的，而调用处看不出
+/// 「第二个 `usize` 是什么」（与 [`super::report`] 那个 `Unrolled` 同一条理由）。
+pub(super) struct Table {
+    /// 表上那几行：列头一行，此后一卷一行（外加摆在一卷底下的那几句）。
+    pub(super) rows: Vec<Painted>,
+    /// 光标停在 [`rows`](Self::rows) 的第几行。**没有光标可画时是 `None`**——
+    /// 一卷都没有、或者光标指着的那一卷此刻不在表上。
+    pub(super) cursor: Option<usize>,
 }
 
 /// **卷表**：列头一行，此后一卷一行。一卷都还没有就一行都不出。
@@ -318,13 +347,22 @@ fn entries(live: &Live) -> Vec<Entry> {
 /// `room` 是这一格里正文摆得下几列。行首恒留一格空白——那一格既让表离开框线，
 /// 也是行尾那句话折下来时的**悬挂缩进**（[`crate::wrap`]：缩进跟着折下来的每一行走）。
 ///
+/// `at` 是**报告区那个光标停在哪一卷上**（`p3-session-legibility/10`）：出来的
+/// [`Table::cursor`] 是它落在第几行。**指着的那一卷不在表上时不报错**——
+/// 那时一行都不反白，与一卷都没有时一个待遇（光标越界不算错，与
+/// `crate::session::viewport::Viewport` 同一条）。
+///
 /// 每一行带着它是哪一种[语义](Tone)（[`Painted`]），画它的那一头照那一种上色——
 /// 一行的语义由行首那个[记号](Mark)说了算，本模块因此一个颜色名都不写
-/// （见 [`Mark`] 的《记号与语义色在这里绑成一对》）。
-pub(super) fn table(live: &Live, room: u16) -> Vec<Painted> {
+/// （见 [`Mark`] 的《记号与语义色在这里绑成一对》）。**反白不在这里上**：
+/// 它不是语义色（见 [`super::paint`]），落哪一行由 [`Table::cursor`] 说了算。
+pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
     let entries = entries(live);
     if entries.is_empty() {
-        return Vec::new();
+        return Table {
+            rows: Vec::new(),
+            cursor: None,
+        };
     }
     let room = usize::from(room).saturating_sub(1);
     let mut widths = Widths::new();
@@ -349,7 +387,13 @@ pub(super) fn table(live: &Live, room: u16) -> Vec<Painted> {
         |column| column.head().to_owned(),
         &[],
     ))];
+    let mut cursor = None;
     for entry in &entries {
+        // 光标停在这一卷上：记下它落在第几行。`at` 是 `None`（一卷都没选）时
+        // 恒不相等——`Option::==` 那一头的 `None` 不与任何一卷相等。
+        if entry.at.is_some() && entry.at == at {
+            cursor = Some(lines.len());
+        }
         lines.push(Painted::new(
             lay(&kept, &widths, |column| entry.text(column), &entry.notes),
             entry.mark.tone(),
@@ -357,7 +401,10 @@ pub(super) fn table(live: &Live, room: u16) -> Vec<Painted> {
         // 摆在它底下、缩进一格的那几句（[`under`]）：整段文字，画它的那一头折行。
         lines.extend(entry.under.iter().map(|said| said.indented(UNDER_INDENT)));
     }
-    lines
+    Table {
+        rows: lines,
+        cursor,
+    }
 }
 
 /// 一行摆出来：留哪几列由 `kept` 说了算，每一列占几格由 `widths` 说了算。

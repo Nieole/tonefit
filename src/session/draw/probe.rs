@@ -90,6 +90,39 @@ pub(super) fn reversed_cells(draw: impl FnOnce(&mut Frame), width: u16, height: 
         .count()
 }
 
+/// 屏上**反白的那一行**上写的是什么（首尾空白去掉）。一行都没反白就是 `None`。
+///
+/// **「焦点落在哪一块」屏上只有这一处看得出来**（`CONTEXT.md` 的《会话》：焦点）：
+/// 焦点在左栏时反白的是配置那一行，切到报告区之后是卷表上光标停着的那一卷。
+/// 快照那一路问不出它——[`snapshot`] 比的是字，而反白是样式。
+///
+/// 只回**头一行**：一行摆不下折下来的那几行跟着同一个样式
+/// （见 `super::report` 的 `highlighted`），而问的是「反白落在哪一行上」。
+pub(super) fn reversed_row(
+    draw: impl FnOnce(&mut Frame),
+    width: u16,
+    height: u16,
+) -> Option<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
+    terminal.draw(draw).expect("画得出来");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(usize::from(width).max(1))
+        .find(|row| {
+            row.iter()
+                .any(|cell| cell.modifier.contains(Modifier::REVERSED))
+        })
+        .map(|row| {
+            row.iter()
+                .map(ratatui::buffer::Cell::symbol)
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        })
+}
+
 /// 屏上的一行，连同**这一行上的颜色**。
 ///
 /// 快照那一路只比得了字（[`snapshot`] 走终端库自己的 `Display`），而语义色那一票要问的是
