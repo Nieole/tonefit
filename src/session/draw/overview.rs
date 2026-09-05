@@ -53,6 +53,12 @@ pub(super) const OVERVIEW_HEIGHT: u16 = 6;
 /// 两处的横条长得一样，读的人不必重新认一遍。
 const BAR_WIDTH: u64 = crate::BAR_WIDTH as u64;
 
+/// **停在决策点上等人拿主意**那一句。
+///
+/// 两处说的是同一件事，措辞因此只有这一处：这一块的[抬头](title)上顶掉「还剩多久」的
+/// 那一截，以及卷表上那一卷行尾标着的那一句（`super::table`）。
+pub(super) const DECIDING: &str = "等你拿主意";
+
 /// 总览块：**一个框，抬头一行加一到四行正文**。
 ///
 /// 先算出来再画，是因为**它有几行要在分格子之前答得出**：出事行不在场时那一行让给报告区
@@ -139,7 +145,7 @@ fn title(live: &Live, pressed: Instruction, deciding: bool) -> String {
     }
     let overall = live.overall();
     let tail = match (deciding, stopping_name(pressed)) {
-        (true, _) => "等你拿主意".to_owned(),
+        (true, _) => DECIDING.to_owned(),
         (false, Some(name)) => format!("{} · {name}", left_clause(overall.left)),
         (false, None) => left_clause(overall.left),
     };
@@ -435,7 +441,10 @@ fn bar(done: u64, total: u64) -> String {
 /// 一段时长：`42s`、`6m40s`、`1h06m`。
 ///
 /// 只留两级：秒以下在一趟几十分钟的任务里没有意义，而三级读起来要数位数。
-fn spell(elapsed: Duration) -> String {
+///
+/// **卷表耗时那一列走的也是它**（`super::table`）：同一屏上两个时长长得不一样，
+/// 读的人就得先分辨一遍这是哪一种写法。
+pub(super) fn spell(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     match (seconds / 3600, (seconds % 3600) / 60, seconds % 60) {
         (0, 0, second) => format!("{second}s"),

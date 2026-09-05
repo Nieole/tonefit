@@ -24,6 +24,10 @@
 //! [`line`] 那个 `match` 就是「拼装的规矩」的全部：一种[行](RowKind)一条。
 //! 缺一格当场恐慌（见 [`cell`]）——那是这一层拼错了，不是数据的事。
 //!
+//! **末尾那一小结也走它**：卷级失败那几卷不在报告正文里，[`super::failed_volume_tail`]
+//! 把它们逐条摆下来，摆法照的是 [`line`] 里 [`RowKind::FailedVolume`] 那一条——
+//! 那一句原因因此在会话的卷表与命令行的末尾小结之间只有一处出处（Q133）。
+//!
 //! 折行不在这里，与 [`super`] 同一条：折到多宽由印它的那一头定（见 [`crate::wrap`]）。
 
 use tonefit::{Mode, Report, VolumeReport};
@@ -67,7 +71,7 @@ fn text(rows: &[Row]) -> String {
 ///
 /// 成句的那几行摆法都一样——缩进两格、把那句话原样放下去。它们**在这里也不拆**：
 /// 拆开没有意义，而拆的那一刀会把措辞挪到这一层来。
-fn line(row: &Row) -> String {
+pub(super) fn line(row: &Row) -> String {
     match row.kind {
         RowKind::Volume => format!(
             "{} → {}（{} 页{}）\n",
@@ -123,6 +127,15 @@ fn line(row: &Row) -> String {
             cell(row, Field::Sentence)
         ),
         RowKind::PageFailure => format!("    {}\n", cell(row, Field::Sentence)),
+        // 卷级失败那一卷在报告**正文**里一行都没有：它连一份卷报告都没有
+        // （见 [`super::failed_volume`]）。这一副摆的是它在**末尾那一小结**里的两行——
+        // 路径一行、原因一行，形状照预扫那条拒绝办。[`super::failed_volume_tail`]
+        // 走的就是这一条，报告里印出去的那两行因此与卷表读的是同一行。
+        RowKind::FailedVolume => format!(
+            "  {}\n    {}\n",
+            cell(row, Field::Source),
+            cell(row, Field::Sentence)
+        ),
     }
 }
 

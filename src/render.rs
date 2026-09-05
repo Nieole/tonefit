@@ -36,7 +36,7 @@ use std::path::Path;
 
 use tonefit::{
     CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
-    Voice, VolumeReport, VolumeVerdict, aggregation, composition,
+    Voice, VolumeFailure, VolumeReport, VolumeVerdict, aggregation, composition,
 };
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
@@ -148,6 +148,12 @@ pub enum RowKind {
     PageColor,
     /// 一页失败那一行（成句）。
     PageFailure,
+    /// **一整卷没做成**那一行（成句）：它连 [`VolumeReport`] 都没有，
+    /// 报告正文里因此一行都没有（见 [`failed_volume_tail`]）。
+    ///
+    /// 它与[隔离](Self::Isolated)是两件事，`CONTEXT.md` 的《失败》分得很清楚：
+    /// 那一种是卷交出来了、带着坏页，这一种是卷根本没交出来。
+    FailedVolume,
 }
 
 /// 一格是**哪一格**。
@@ -323,6 +329,54 @@ pub fn pages(volume: &VolumeReport) -> Vec<Row> {
         rows.push(page_row(page));
     }
     rows
+}
+
+/// **一整卷没做成**的那一[行](Row)（05 号票的那几卷，Q133）。
+///
+/// 它不从 [`VolumeReport`] 来——没做成的卷连一份卷报告都没有，只在
+/// `Report::failed_volumes` 里躺着路径与一句原因。[`volume`] 因此够不着它，
+/// 而**卷表要给它一行**（spec 的《卷表》），于是单出这一个函数。
+///
+/// 出的是[行](Row)而不是一段文字，为的是那一句原因只有一处出处：
+/// 报告末尾那一小结（[`failed_volume_tail`]）摆的就是这一行，
+/// 会话的卷表摆的也是它——两副排版，一套措辞（ADR 0016）。
+pub fn failed_volume(failure: &VolumeFailure) -> Row {
+    Row::new(
+        RowKind::FailedVolume,
+        vec![
+            Cell::new(Field::Source, failure.volume.display().to_string()),
+            Cell::new(Field::Sentence, failure.reason.clone()),
+        ],
+    )
+}
+
+/// 卷表**档位那一列**上写什么：这一卷判成的那一档，或者它**为什么没有一档**。
+///
+/// 收的是 [`volume`]（或 [`failed_volume`]）出的那几行：这一卷是哪一种判定已经由
+/// [`RowKind`] 分好了，回头去认字符串就是第二个出处。一种都对不上时给 `None`——
+/// 一张灰度页都没有的卷（整卷彩页、整卷失败）根本没有候选可判，那一格因此不在场。
+///
+/// **五种说法只有这一处**：它们与卷级那几行成句的那几句说的是同一件事
+/// （「跳过 幂等命中……」「无（--per-page）……」「判定 X（覆盖项裁到只剩一个候选）」），
+/// 表那一副只是把它压成一列摆得下的宽度，不编第二套说法（spec 的《卷表》）。
+///
+/// 只有会话读它：命令行那一路把同一批格摆成一段散文，一个列都不分。
+#[cfg(any(feature = "tui", test))]
+pub fn base_column(rows: &[Row]) -> Option<String> {
+    rows.iter().find_map(|row| match row.kind {
+        // 判出了基准档的那一种：那一格就是它（[`Field::Base`] 的文档说的正是这一处）。
+        RowKind::Envelope => row.cell(Field::Base).map(str::to_owned),
+        RowKind::Override => row
+            .cell(Field::Candidate)
+            .map(|candidate| format!("覆盖 {candidate}")),
+        RowKind::PerPage => Some("逐页".to_owned()),
+        RowKind::Skipped => Some("跳过".to_owned()),
+        RowKind::FailedVolume => Some("没做成".to_owned()),
+        // 其余各行说的不是这一卷的档位。这里留 `_` 是对的：行的种类还会长
+        // （每多一种页的行都要在这里加一条 `None`），而**说得出档位的只有上面那几种**——
+        // 漏掉一种的后果是那一格不在场，屏上当场看得见，不是悄悄印错一个档。
+        _ => None,
+    })
 }
 
 /// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
@@ -519,11 +573,7 @@ fn failed_volume_tail(report: &Report) -> String {
         report.failed_volumes.len()
     );
     for failure in report.failed_volumes.iter().take(SHOWN) {
-        text.push_str(&format!(
-            "  {}\n    {}\n",
-            failure.volume.display(),
-            failure.reason
-        ));
+        text.push_str(&plain::line(&failed_volume(failure)));
     }
     let rest = report.failed_volumes.len().saturating_sub(SHOWN);
     if rest > 0 {
@@ -978,7 +1028,8 @@ pub fn outcome(outcome: RunOutcome) -> String {
 /// 一个卷在屏上叫什么：路径的最后一段，取不出就整条路径。
 ///
 /// 命令行的进度条（`crate::Bar::start`）与会话的当前卷条（会话批的 09 号票）
-/// 印的是同一个名字，因此只有这一处。
+/// 印的是同一个名字，因此只有这一处。会话的**卷表**（卷名那一列与定档页那一列）走的
+/// 也是它——「屏上叫什么」在这个仓库里只有这一条规矩，一页与一卷同样只印最后那一段。
 pub fn volume_name(volume: &Path) -> String {
     volume.file_name().map_or_else(
         || volume.display().to_string(),
@@ -2447,8 +2498,8 @@ mod tests {
     /// 不必回头去认那一句话里有没有「隔离」两个字。
     ///
     /// **卷级失败**（一个字节都没交出来的那种卷）不在这里：它连 `VolumeReport` 都没有，
-    /// 至今只活在末尾那一小结里（`failed_volume_tail`）。卷表要给它一行，
-    /// 那是画卷表那一张票的事，记在停车场 Q133。
+    /// [`volume`] 够不着它。它自成一种行（[`failed_volume`]），
+    /// 见 [`a_volume_that_never_got_done_is_its_own_kind_of_row`]（Q133 收在那里）。
     ///
     /// 失败原因是句子，拆开没有意义——会话把这样的一行当整段文字折行画。
     /// 失败页那一行因此只有一格，而那一格装的是[逐页与增量共用的那一句](failure_line)。
@@ -2496,6 +2547,85 @@ mod tests {
         for field in [Field::Crop, Field::Cut, Field::Backstop] {
             assert_eq!(rows[2].cell(field), None, "{field:?} 那一格不该在场");
         }
+    }
+
+    /// **没做成的那一卷自成一种行**，而那一句原因只有一处出处（Q133）。
+    ///
+    /// 它连 `VolumeReport` 都没有——[`volume`] 够不着它，[`failed_volume`] 单出这一行。
+    /// 卷表读的是它，末尾那一小结（[`failed_volume_tail`]）摆的也是它：
+    /// 一套措辞，两副排版。这一条钉的正是那个「一处」——报告里印出去的两行，
+    /// 逐字来自这一行的两格。
+    #[test]
+    fn a_volume_that_never_got_done_is_its_own_kind_of_row() {
+        let failure = VolumeFailure {
+            volume: PathBuf::from("library/volume-b"),
+            reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
+        };
+
+        let row = failed_volume(&failure);
+
+        assert_eq!(row.kind, RowKind::FailedVolume);
+        // 两格：路径一格，那句原因整句装在一格里（成句，不拆）。
+        assert_eq!(row.cells.len(), 2);
+        assert_eq!(row.cell(Field::Source), Some("library/volume-b"));
+        assert_eq!(row.cell(Field::Sentence), Some(failure.reason.as_str()));
+
+        // 末尾那一小结摆的就是这一行：报告里那两行逐字来自这两格。
+        let report = Report {
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::default(),
+            crop: true,
+            split: SplitRule::default(),
+            volumes: Vec::new(),
+            failed_volumes: vec![failure],
+            non_volume_files: Vec::new(),
+            outcome: RunOutcome::Completed,
+            elapsed: Duration::ZERO,
+        };
+        assert!(
+            tail(&report).contains(&plain::line(&row)),
+            "{}",
+            tail(&report)
+        );
+    }
+
+    /// **档位那一列写什么，五种说法只有一处**（[`base_column`]，P3 的卷表）。
+    ///
+    /// 判出了基准档的写那一档；剩下四种写的是**它为什么没有一档**，
+    /// 与卷级那几行成句的那几句说的是同一件事。一张灰度页都没有的卷一种都对不上，
+    /// 那时那一格不在场——表上留白，不编一个档出来。
+    #[test]
+    fn the_base_column_says_which_one_it_is_or_why_there_is_none() {
+        let isolated = a_volume_worth_a_row_of_each_kind();
+        assert_eq!(base_column(&volume(&isolated)), Some("4bit".to_owned()));
+
+        let mut each = extracted_by(0);
+        each.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+        assert_eq!(base_column(&volume(&each)), Some("跳过".to_owned()));
+
+        each = a_volume_worth_a_row_of_each_kind();
+        each.verdict = Some(VolumeVerdict::PerPage);
+        assert_eq!(base_column(&volume(&each)), Some("逐页".to_owned()));
+
+        each.verdict = Some(VolumeVerdict::Override(Candidate::new(
+            BitDepth::Two,
+            Dither::FloydSteinberg,
+        )));
+        assert_eq!(base_column(&volume(&each)), Some("覆盖 2bit+FS".to_owned()));
+
+        let failure = VolumeFailure {
+            volume: PathBuf::from("library/volume-b"),
+            reason: "卷根不在了".to_owned(),
+        };
+        let gone = failed_volume(&failure);
+        assert_eq!(
+            base_column(std::slice::from_ref(&gone)),
+            Some("没做成".to_owned())
+        );
+
+        // 一张灰度页都没有的卷（判定那一格不在场）：一种都对不上，那一格因此不在场。
+        each.verdict = None;
+        assert_eq!(base_column(&volume(&each)), None);
     }
 
     /// **格里装的是值，不是摆法**（ADR 0016）：缩进、换行与行尾那些分隔符一个都不在里面。

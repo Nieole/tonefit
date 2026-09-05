@@ -569,6 +569,7 @@ pub(crate) mod fixture {
     //! （`super::super::run`、`super::super::terminal`）共用它。
 
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
@@ -630,6 +631,17 @@ pub(crate) mod fixture {
         }
     }
 
+    /// 一卷做了这么多秒。
+    ///
+    /// 夹具里给一个**非零**的数：卷表耗时那一列问的正是它，而「跳过一卷为什么也要等这么久」
+    /// 只有这个数答得出来（`VolumeTiming::elapsed`）。三份夹具各给各的，快照上分得开。
+    fn took(seconds: u64) -> VolumeTiming {
+        VolumeTiming {
+            elapsed: Duration::from_secs(seconds),
+            ..VolumeTiming::default()
+        }
+    }
+
     /// 一份**幂等命中**的卷报告：一页都没重做，逐页结果因此一条都没有。
     ///
     /// 快照要的正是这一种——它不必搓判据、候选与几何门，而「跳过说清是哪四项依据没变」
@@ -646,7 +658,7 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 0,
-            timing: VolumeTiming::default(),
+            timing: took(3),
         }
     }
 
@@ -715,7 +727,31 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 1,
-            timing: VolumeTiming::default(),
+            timing: took(72),
+        }
+    }
+
+    /// 一份 **`--per-page`** 的卷报告：上包络与迟滞关着，卷内没有基准档。
+    ///
+    /// 只换判定那一格，逐页那几行照 [`processed_volume`]：这一份要问的是
+    /// 「卷表档位那一列照卷级判定说的写」（P3 卷表那一票），与页上画着什么无关。
+    pub fn per_page_volume(name: &str) -> VolumeReport {
+        VolumeReport {
+            verdict: Some(VolumeVerdict::PerPage),
+            ..processed_volume(name, None)
+        }
+    }
+
+    /// 一份**覆盖顶掉判定**的卷报告：覆盖项把候选裁到只剩一个，卷级基准档无从谈起。
+    ///
+    /// 与 [`per_page_volume`] 同一条：只换判定那一格。
+    pub fn overridden_volume(name: &str) -> VolumeReport {
+        VolumeReport {
+            verdict: Some(VolumeVerdict::Override(Candidate::new(
+                BitDepth::Two,
+                Dither::FloydSteinberg,
+            ))),
+            ..processed_volume(name, None)
         }
     }
 
@@ -789,7 +825,7 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 2,
-            timing: VolumeTiming::default(),
+            timing: took(123),
         }
     }
 
