@@ -7,8 +7,7 @@
 //!
 //! 除了那三件事，这一层还担着**状态机够不着的那几支**（见 [`press`]）：
 //! 起一趟、按停、展开、读写盘上那份预设、把标定图交给库里第三个 seam。
-//! 那几支要的是那一趟、那块盘、那个库与画法（[`super::draw::opens_at`]），
-//! 而状态机四样都不碰。
+//! 那几支要的是那一趟、那块盘与那个库，而状态机三样都不碰。
 
 use std::io::{IsTerminal, Stderr, stderr};
 use std::path::{Path, PathBuf};
@@ -123,7 +122,7 @@ fn drive(
 /// [套用](Action::Take)、[存下来](Action::Store)、[删掉](Action::Erase)）
 /// 与[出标定图](Action::Chart)。
 /// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
-/// 从攒着的那份报告上数出有几卷与那一卷落在第几行、读写用户配置目录下那份 TOML、
+/// 从攒着的那份报告上数出此刻有哪几卷、读写用户配置目录下那份 TOML、
 /// 把标定图交给库里那第三个 seam，
 /// 都在这一层——状态机一个终端都不碰、不起线程，也读不到那一趟攒下来的东西与盘上的东西。
 /// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
@@ -170,8 +169,8 @@ fn press(
             running.decide(said, reach);
             exit
         }
-        // 展开与换一卷：要读那一趟攒下来的报告（有哪几卷、那一卷落在第几行），
-        // 而状态机读不到它。收起（`Action::Collapse`）不在这里——它不必读报告。
+        // 展开与换一卷：要读那一趟攒下来的报告（此刻有哪几卷），而状态机读不到它。
+        // 收起（`Action::Collapse`）不在这里——它不必读报告。
         Action::Expand | Action::Turn(_) => {
             expand(session, running, action);
             Exit::Stay
@@ -390,10 +389,12 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
 /// 那一卷**（`p2-loose-ends/08`：不许摊开上一卷冒充它）。从前它恒是第一卷，
 /// 因为那时报告区还没有光标。
 ///
-/// **视口对到那一卷的抬头上**（[`super::draw::opens_at`]），展开与换卷同一条：
-/// 不对准的话，展的是第几卷、换没换成，屏上第一眼都看不出来。抬头那几行
-/// （profile、适配方式、裁边、拆分）在它上面，往回翻一屏就到（停车场 Q64；
-/// 把它们收进一个按键调得出的地方是 `p3-session-legibility/12` 的事）。
+/// **视口对到那一卷的抬头上**（票面第七条）：这一副只画**这一卷**，抬头就钉在它顶上
+/// （见 `super::draw::pages`），光标回到头一页——换一卷之后屏上第一眼看到的因此恒是
+/// 那一卷的抬头。从前它要在整份报告里数出那一卷落在第几行（停车场 Q64 那一头），
+/// 而那个数连同「报告区展开之后是一整份报告」一起没了。
+///
+/// **换一卷时列的是哪几页跟着走**（[`Expansion::turned_to`]）：`a` 按下去不该只管一卷。
 ///
 /// 一卷都没有就说一句、不进展开态：展开的是**报告上的一卷**，
 /// 而这一趟还没跑过或者第一卷还没跑完时，那样东西根本不在。
@@ -413,15 +414,17 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         // 而收摊之后「攒着的那一份」那个位置归的是下一卷，不是它。
         (Action::Turn(step), Some(expansion)) => {
             let at = live.nearest(expansion.volume).unwrap_or(first);
-            Expansion::next(&volumes, at, step)
+            let turned = expansion.turned_to(Expansion::next(&volumes, at, step));
+            drop(live);
+            session.expand(turned);
+            return;
         }
         // 展开：光标停着的那一卷。它此刻指不着谁（那一卷收摊了）时由
         // `Session::standing` 就近收一收，仍收不着就从头一卷起。
         _ => session.standing(&live).unwrap_or(first),
     };
-    let from = draw::opens_at(&live, opened);
     drop(live);
-    session.expand(Expansion::new(opened, from));
+    session.expand(Expansion::new(opened));
 }
 
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。
@@ -532,6 +535,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::session::state::Listing;
     // 两个兄弟模块的**名字**（`super::*` 带进来的是它们里面的东西，不是模块本身）：
     // 用例要按名字点它们里面的取值与夹具。
     use crate::session::live::Volume;
@@ -856,7 +860,7 @@ mod tests {
         let said = session.notice().expect("该说一句").to_owned();
         assert!(said.contains("还没跑过"), "{said}");
 
-        // 跑过一趟、报告里有两卷：展开落在**光标停着的那一卷**上，视口对到它的抬头上。
+        // 跑过一趟、报告里有两卷：展开落在**光标停着的那一卷**上，光标停在它的头一页。
         // 两个真跑得动的卷（见 [`live::fixture::a_real_volume`]）：这一条要问的
         // （哪一卷、落在第几行、转不转得回去）一件都不少。
         let inputs: Vec<PathBuf> = ["卷一", "卷二"]
@@ -881,14 +885,19 @@ mod tests {
         // **展开的是光标停着的那一卷**（`p3-session-legibility/10`）：跟随着的时候
         // 那是**最新收摊的那一卷**，也就是第二卷。从前它恒是第一卷——那时报告区还没有光标。
         assert_eq!(expansion.volume, Volume::Settled(1));
-        assert!(expansion.from > 0, "视口没对到那一卷的抬头上");
+        assert_eq!(expansion.at, 0, "没落在那一卷的头一页上");
+        assert_eq!(
+            expansion.listing,
+            Listing::Notable,
+            "展开那一下该只列要紧的页"
+        );
         assert!(session.notice().is_none(), "展开之后上一句话没抹掉");
 
         // `⇥` 往后一卷，两头都转一圈：第二卷之后回到第一卷。
         tap(&mut session, &mut running, &nowhere, Key::Tab);
         let first = *session.expansion().expect("还展开着");
         assert_eq!(first.volume, Volume::Settled(0), "⇥ 没转到第一卷上");
-        assert!(first.from < expansion.from, "第一卷的抬头该在第二卷上面");
+        assert_eq!(first.at, 0, "换一卷之后光标没回到头一页");
         tap(&mut session, &mut running, &nowhere, Key::Tab);
         assert_eq!(
             session.expansion().expect("还展开着").volume,
@@ -901,11 +910,21 @@ mod tests {
         tap(&mut session, &mut running, &nowhere, Key::BackTab);
         let back = *session.expansion().expect("还展开着");
         assert_eq!(back.volume, Volume::Settled(0), "⇧⇥ 没往前转");
-        assert_eq!(back.from, first.from, "两头转到同一卷，落位却不一样");
+        assert_eq!(back.at, first.at, "两头转到同一卷，落位却不一样");
         tap(&mut session, &mut running, &nowhere, Key::BackTab);
         assert_eq!(
             session.expansion().expect("还展开着").volume,
             Volume::Settled(1)
+        );
+
+        // **换一卷时列的是哪几页跟着走**：`a` 按下去不该只管一卷（票面第二条）。
+        tap(&mut session, &mut running, &nowhere, Key::Char('a'));
+        assert_eq!(session.expansion().expect("还展开着").listing, Listing::All);
+        tap(&mut session, &mut running, &nowhere, Key::Tab);
+        assert_eq!(
+            session.expansion().expect("还展开着").listing,
+            Listing::All,
+            "换一卷把「列全部页」扳回去了"
         );
 
         // 收起：一个键回到报告区，展开态没了。

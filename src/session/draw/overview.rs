@@ -765,22 +765,27 @@ mod tests {
     /// `p1-session/09` 那条「三段各占一格，免得报告长起来把进度条顶出屏外」由这一条接住：
     /// 两块各占主区的一格（[`main_pane`]），报告在它自己那一格里滚。
     ///
-    /// 翻的是**展开**那一副——默认那一副的滚动量是算出来的（恒停在底上），
+    /// 翻的是**展开**那一副——默认那一副的滚动量由光标算出来（跟随着的时候恒停在底上），
     /// 而按得动的只有展开着的那一份。
+    ///
+    /// 屏高按这一块自己的高度加五行取：逐页那张表因此**一定**摆不下
+    /// （见 `super::pages`），翻下去才真有东西在动。
     #[test]
     fn the_overview_block_stays_put_while_the_report_scrolls() {
         let live = a_run_in_flight(true);
         let alone = block(&live, Instruction::Continue, false);
         let rows = alone.lines().count();
+        let height = u16::try_from(rows + 5).expect("这一块没有六万行");
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(0), 0));
+        // 第二卷才有逐页那几行：头一卷是幂等命中的，一页都没重做。
+        session.expand(Expansion::new(Volume::Settled(1)));
 
         let mut seen: Vec<String> = Vec::new();
         for _ in 0..4 {
             let shot = snapshot(
                 |frame| main_pane(frame, frame.area(), &mut session, Some(&live)),
                 96,
-                20,
+                height,
             );
             let (top, report) = shot.split_at(
                 shot.match_indices('\n')

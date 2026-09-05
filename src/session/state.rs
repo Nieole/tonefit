@@ -76,21 +76,35 @@ pub enum Step {
     Back,
 }
 
-/// 报告区往哪边挪一下。**四个方向不是两个 [`Step`]**：上下挪的是行、左右挪的是列，
-/// 两根轴上一格的大小都不同（见 [`SIDEWAYS`]），合成一个取值只会让调用方再分一次岔。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Toward {
-    Up,
-    Down,
-    Left,
-    Right,
+/// **展开那一副列的是哪几页**（`CONTEXT.md` 的《会话》：要紧的页）。
+///
+/// 一个枚举而不是一个 `bool`：它从 [`Action::List`] 一路传到
+/// [`super::draw::pages`]，而调用处一个裸 `true` 说不出它列的是哪一批
+/// （与 [`super::live::Resuming`] 同一条理由——本仓库不爱看不出意思的裸值）。
+///
+/// **默认那一档是[只列要紧的](Self::Notable)**：展开一卷的目的通常只有一个——
+/// 哪一页把整卷拉下来——而两百页的卷里那几页不该由用户自己在四百行里找
+/// （`p3-session-legibility/11`）。哪几页算要紧的判据在 [`crate::render::notable`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Listing {
+    /// **只列要紧的页**：特例 · 失败 · 部分救回 · 几何门不成立 · 宽溢出 · 兜底上界，
+    /// 加上**定档页**（它是这一卷的答案，非在不可）。
+    #[default]
+    Notable,
+    /// **全部页**：`a` 切过来的那一档。
+    All,
 }
 
-/// 报告区横着滚一下走几列。
-///
-/// 一列一列太慢：逐页那两行轻松过 100 列，而窄终端上要挪的正是那几十列。
-/// 取八列——比一个汉字宽，按一下看得出屏在动，又不至于一下跳过半屏。
-const SIDEWAYS: u16 = 8;
+impl Listing {
+    /// 按一下 `a` 之后是哪一档。**两档来回**，与两级停那个只升不降的闩正相反：
+    /// 这一下是看法，不是决定，按错了再按一次就回来了。
+    fn flipped(self) -> Self {
+        match self {
+            Self::Notable => Self::All,
+            Self::All => Self::Notable,
+        }
+    }
+}
 
 /// 一个键在当前状态下会做的那件事。**这就是「哪些键在哪个状态下有效」那张表的值域。**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,8 +252,8 @@ pub enum Action {
     /// （票面：**选中一卷**可展开逐页）。方向用 [`Step`]，与三层那几个取值环
     /// 同一个取值——两处都是「在一圈上挪一格」。
     ///
-    /// 与[展开](Self::Expand)同样落在 [`super::press`] 那一层：换完要把视口对到
-    /// 那一卷的抬头上，而那是数报告有几行的事。
+    /// 与[展开](Self::Expand)同样落在 [`super::press`] 那一层：挪到哪一卷要数
+    /// **此刻有哪几卷**，而本模块读不到那一趟攒下来的东西。
     Turn(Step),
     /// **收起**：逐页那几行收起来，左栏回来。
     ///
@@ -247,8 +261,17 @@ pub enum Action {
     /// **回的是[报告区](Focus::Report)**，不是左栏：展开是从那一块进去的
     /// （光标停着的那一卷），退一步该退到刚才站的地方去。
     Collapse,
-    /// 展开着的报告区往那个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
-    Scroll(Toward),
+    /// **换一副列法**：只列[要紧的页](Listing::Notable) ⇄ 列[全部页](Listing::All)
+    /// （`a`，票面第二条）。
+    ///
+    /// **带着去哪一档**，与[切焦点](Self::Focus)同一个形状、同一条理由：
+    /// 屏底那一行要说出这一下按过去是什么样，而一个 toggle 说不出。
+    ///
+    /// **等答话时这个键不派它**（见 [`expanded_action`]）：那一刻 `a` 是
+    /// [「剩下的卷都这样」](Self::Answer)，而答话那三个键在哪一块上都按得动
+    /// （ADR 0017 决定第 4 条）。两个意思撞在同一个字母上，让的是这一个——
+    /// 换一副列法等得起，一条停在决策点上的线程等不起。停车场 Q161 记着这一笔。
+    List(Listing),
     /// **去预设那一栏**：把盘上那份文件里有的那几份列出来（`CONTEXT.md` 的《会话》：预设栏）。
     ///
     /// 列什么要读盘，而本模块读不到——真做这件事的是 [`super::press`]，它随后调
@@ -899,7 +922,7 @@ impl Naming {
     }
 }
 
-/// 展开着的那一卷，以及报告区滚到哪儿了。
+/// 展开着的那一卷：是哪一卷、逐页表上那个光标停在第几页上、这一副列的是哪几页。
 ///
 /// **不叫 `Reading`。** 展开是屏上那件事本身（报告区摊开了一卷的逐页、左栏收着），
 /// 「在读」是用户的意图——后者会让人以为还有一个「不展开地读」的状态，而那个状态
@@ -912,30 +935,51 @@ pub struct Expansion {
     /// 而它停在攒着的那一份上、不在收摊了的那几卷里（`p2-loose-ends/08`：
     /// 不许摊开上一卷冒充它）。一个下标答不出那一卷，这个取值认得出。
     pub volume: Volume,
-    /// 报告从第几行开始画。**从顶数**，不是从底数：往回翻到零就是抬头那几行
-    /// （profile、适配方式、裁边、拆分），而那正是跟着跑的时候滚出格子的那一截
-    /// （停车场 Q64）。
-    pub from: u16,
-    /// 往右滚了几列。逐页那两行**不折行**（票面：逐页行不被折断），
-    /// 窄终端上要看到行尾只能横着滚。
-    pub right: u16,
+    /// **逐页表上那个光标停在这一副列出来的第几页上**（`p3-session-legibility/11`）。
+    ///
+    /// **不是滚动量。** 逐页那一副从此与卷表同一套[视口](super::viewport::Viewport)：
+    /// 光标在哪儿视口就跟到哪儿，屏上没有一处记着「滚到哪儿了」
+    /// （`CONTEXT.md` 的《视口》）。这一格因此是**光标**，从前那个 `from` 是滚动量
+    /// ——两者差的正是那句话（停车场 Q64 记的缺口由光标这一头补上）。
+    ///
+    /// **越界不算错**：列的那一副刚换过、或者那一卷刚长出几页时它会越界，
+    /// 画法那一层每帧收一次（[`Session::clamp_report`]），视口那一头也就近收
+    /// （[`Viewport::new`](super::viewport::Viewport::new)）。
+    pub at: usize,
+    /// 这一副列的是[要紧的页](Listing::Notable)还是[全部页](Listing::All)。
+    ///
+    /// **换一卷时跟着走**（[`turned_to`](Self::turned_to)）：它是用户此刻的看法，
+    /// 不是这一卷的属性——翻到下一卷就被扳回默认那一档的话，`a` 按下去只管一卷。
+    pub listing: Listing,
 }
 
 impl Expansion {
-    /// 摊开 `volume` 那一卷，报告从第 `from` 行画起。
+    /// 摊开 `volume` 那一卷：**默认只列要紧的页**，光标停在头一页上。
     ///
-    /// 两个数由 [`super::press`] 一起算好——**它们是一伙的**：换一卷就要跟着换落位
-    /// （视口对到那一卷的抬头上，见 `super::draw::opens_at`）。横向那一格不在参数里：
-    /// 它恒从零起，换一卷之后停在上一卷滚到的那几十列上，读的人会以为行是空的。
+    /// **落位不在参数里**（从前那一格是「报告从第几行画起」）：这一副只画**这一卷**，
+    /// 抬头就钉在它顶上（见 `super::draw::pages`）——「视口对到那一卷的抬头上」
+    /// 因此不必再由调用方算一个行号出来。
     ///
-    /// **「这一趟有几卷」不再记在这里**（从前那一格是进来那一刻的快照）：
+    /// **「这一趟有几卷」不记在这里**（从前那一格是进来那一刻的快照）：
     /// 跑着的时候也展得开，而报告那时还在长——记下来的那个数下一卷收摊就不作数了。
     /// 要它的两处（换一卷转一圈、抬头上那个「第几/共几卷」）各自现问 [`Live`]。
-    pub(super) fn new(volume: Volume, from: u16) -> Self {
+    pub(super) fn new(volume: Volume) -> Self {
         Self {
             volume,
-            from,
-            right: 0,
+            at: 0,
+            listing: Listing::default(),
+        }
+    }
+
+    /// **换一卷**：列的是哪几页跟着走，光标回到头一页上。
+    ///
+    /// 光标不跟着走，是因为「第几页」在两卷之间指的不是同一件事；
+    /// 列法跟着走，是因为它指的是**同一件事**（见 [`listing`](Self::listing)）。
+    pub(super) fn turned_to(self, volume: Volume) -> Self {
+        Self {
+            volume,
+            at: 0,
+            listing: self.listing,
         }
     }
 
@@ -1392,7 +1436,7 @@ impl Session {
             Focus::Config => self.config_action(key),
             Focus::Editing(edit) => editing_action(edit, key),
             Focus::Report => report_action(key, self.stage),
-            Focus::Expanded(_) => expanded_action(key, self.stage),
+            Focus::Expanded(expansion) => expanded_action(expansion, key, self.stage),
             Focus::Picking(picker) => picking_action(picker, key),
             Focus::Valuing(values) => valuing_action(values, key),
         }
@@ -1535,7 +1579,7 @@ impl Session {
             // 收起回的是**报告区**，不是左栏：展开是从那一块进去的（光标停着的那一卷），
             // 而左栏一个 `⇥` 之外。
             Action::Collapse => self.focus = Focus::Report,
-            Action::Scroll(toward) => self.scroll(toward),
+            Action::List(listing) => self.list(listing),
             Action::Quit => return Exit::Leave,
             Action::Ignored => {}
         }
@@ -1544,9 +1588,9 @@ impl Session {
 
     /// 展开一卷的逐页，左栏跟着收起。
     ///
-    /// 那一份 [`Expansion`] 由 [`super::press`] 拼好送进来：它读得到那一趟攒的报告，
-    /// 本模块读不到。`from` 是报告从第几行画起——展开那一下是零（抬头那几行跟着回来，
-    /// 见 [`Expansion::from`]），换卷那一下是那一卷的抬头在第几行。
+    /// 那一份 [`Expansion`] 由 [`super::press`] 拼好送进来：**展开哪一卷**要数
+    /// 那一趟此刻有哪几卷，而本模块读不到它。列的是哪几页、光标停在第几页
+    /// 都是本模块自己的事（[`Expansion::new`] 与 [`Expansion::turned_to`]）。
     pub(super) fn expand(&mut self, expansion: Expansion) {
         // 上一个动作说的那句话到这里就作废了，与 [`act`](Self::act) 同一条。
         self.says(None);
@@ -1651,34 +1695,29 @@ impl Session {
         )));
     }
 
-    /// 报告区往一个方向挪一下。上下一行、左右 [`SIDEWAYS`] 列。
+    /// **换一副列法**：只列要紧的页 ⇄ 列全部页（票面第二条）。
     ///
-    /// **往上、往左都收在零上**（`saturating_sub`）：零就是报告的头一行、行首那一列。
-    /// 另外两头收在哪儿这里答不出——那要知道这一格装得下几行几列，
-    /// 而本模块一个终端都不碰。画法那一层每帧收一次（[`Self::clamp_report`]）。
-    fn scroll(&mut self, toward: Toward) {
-        let Focus::Expanded(expansion) = &mut self.focus else {
-            return;
-        };
-        match toward {
-            Toward::Up => expansion.from = expansion.from.saturating_sub(1),
-            Toward::Down => expansion.from = expansion.from.saturating_add(1),
-            Toward::Left => expansion.right = expansion.right.saturating_sub(SIDEWAYS),
-            Toward::Right => expansion.right = expansion.right.saturating_add(SIDEWAYS),
+    /// 光标跟着回到头一页上：两副列的不是同一批页，「第几页」换一副就不再指同一页
+    /// （与[换一卷](Expansion::turned_to)同一条）。
+    fn list(&mut self, listing: Listing) {
+        if let Focus::Expanded(expansion) = &mut self.focus {
+            expansion.listing = listing;
+            expansion.at = 0;
         }
     }
 
-    /// 把滚动量收进这一格真滚得动的范围：最多滚到 `down` 行、`right` 列。
+    /// 把逐页表那个光标收进这一副真列出来的那几页里：最多停在第 `rows` 页。
     ///
-    /// **画法那一层每帧调一次**（见 [`super::draw::report::report_pane`]），因为只有它知道
-    /// 这一格装得下几行几列。不收的话，往下翻过了头之后再往回翻，头几下会**按了没反应**
-    /// ——而那正是本仓库反复要躲的那件事（`p1-session/10` 的「屏上不摆按不动的键」）。
+    /// **画法那一层每帧调一次**（见 [`super::draw::report::report_pane`]），因为只有它
+    /// 知道这一副此刻列着几页（换一副列法、那一卷又长出几页，两处都会变）。不收的话，
+    /// 往下翻过了头之后再往回翻，头几下会**按了没反应**——而那正是本仓库反复要躲的那件事
+    /// （`p1-session/10` 的「屏上不摆按不动的键」）。
     ///
-    /// 只往下收、不往上抬：`0` 恒是合法的落点。
-    pub(super) fn clamp_report(&mut self, down: u16, right: u16) {
+    /// 只往下收、不往上抬：`0` 恒是合法的落点。**一页都没列出来时收到零**：
+    /// 那一格里摆的是一句话，没有一页停得上去（见 `super::draw::pages`）。
+    pub(super) fn clamp_report(&mut self, rows: usize) {
         if let Focus::Expanded(expansion) = &mut self.focus {
-            expansion.from = expansion.from.min(down);
-            expansion.right = expansion.right.min(right);
+            expansion.at = expansion.at.min(rows.saturating_sub(1));
         }
     }
 
@@ -1696,8 +1735,9 @@ impl Session {
         }
     }
 
-    /// 光标挪一行。**预设那一栏开着时挪的是那一栏**——左栏此刻不在屏上
-    /// （与展开那一副同一条：`↑↓` 改的恒是眼前这一列，见 [`expanded_action`]）。
+    /// 光标挪一行。**挪的恒是眼前那一列**：预设那一栏开着时挪的是那一栏，
+    /// 取值栏摊着时挪的是那一列，展开着时挪的是逐页表上那个光标——左栏在这三种
+    /// 状态下要么不在屏上、要么只是那一列的抬头（见 [`expanded_action`]）。
     ///
     /// 挪一行**把「真删掉它吗」那一问作废**（见 [`Picker::asked`]），
     /// 与改一个字把撞名那一问作废是同一条（见 [`edit_mut`](Self::edit_mut)）：
@@ -1714,6 +1754,20 @@ impl Session {
         // 那一列至少有一格（「没说」那一格恒在），`around` 因此除得动。
         if let Focus::Valuing(values) = &mut self.focus {
             values.at = around(values.at, values.cells.len(), step);
+            return;
+        }
+        // 展开着时挪的是**逐页表上那个光标**：左栏此刻不在屏上
+        // （与预设那一栏同一条，见 [`expanded_action`]）。
+        //
+        // **两头不转圈**，与上面那三处不同：那三处是取值环与短列表，一圈几行；
+        // 这一副是一张两百页的长表，从末一页一下转回头一页会让「翻到底了」
+        // 在屏上没有落点。往上收在零，往下由画法那一层每帧收一次
+        // （[`clamp_report`](Self::clamp_report)：只有它知道这一副此刻列着几页）。
+        if let Focus::Expanded(expansion) = &mut self.focus {
+            expansion.at = match step {
+                Step::Back => expansion.at.saturating_sub(1),
+                Step::Next => expansion.at.saturating_add(1),
+            };
             return;
         }
         self.cursor = around(self.cursor, self.rows().len(), step);
@@ -1994,12 +2048,23 @@ fn report_action(key: Key, stage: Stage) -> Action {
     }
 }
 
-/// 展开之后的按键表：**报告区在两根轴上滚，`⇥` 换一卷，`e`／`Esc` 收起。**
+/// 展开之后的按键表：**`↑↓` 选一页，`a` 换一副列法，`⇥` 换一卷，`e`／`Esc` 收起。**
 ///
-/// 上下左右那几个键在这里改的是报告区，不是左栏——左栏此刻不在屏上
+/// **`↑↓` 挪的是逐页表上那个光标**，不是左栏那一行——左栏此刻不在屏上
 /// （见 [`Focus::Expanded`]），把它们留给一栏看不见的东西才是「按了没反应」。
-/// `j`／`k` 跟着 `↑↓`，与浏览时一个待遇（见 [`Session::browsing_action`]）。
-/// 两根轴上一格的大小不同：上下一行，左右 [`SIDEWAYS`] 列（逐页那两行过 100 列）。
+/// `j`／`k` 跟着 `↑↓`，与别处一个待遇。挪到哪儿就是[视口跟到哪儿](Expansion::at)，
+/// 与卷表那一头同一套（`p3-session-legibility/11`：逐页也是一张表，
+/// 与卷表同一套视口、砍列与上色）。
+///
+/// **`←→` 在这里不派动作**：逐页那几行横着摆不下时**砍列**
+/// （[`crate::session::columns`]），不横着滚——这一副与卷表从此同一条。
+/// 从前它是往两边滚的那一副（那时逐页是一段不折行的散文），横滚那一套连同
+/// `Expansion` 上那个横向滚动量一起没了。
+///
+/// **`a` 切到全部页、再按一次切回来**（票面第二条）。**等答话时它不派**：
+/// 那一刻 `a` 是「剩下的卷都这样」，而答话那三个键在焦点落在哪一块上都按得动
+/// （ADR 0017 决定第 4 条）——这一支因此先看一眼阶段，把那个字母让出去
+/// （停车场 Q161）。屏底那一行跟着不摆它（见 `super::draw::footer`）。
 ///
 /// **换卷用 `⇥` 与 `⇧⇥`**：`⇥` 在左栏与报告区之间是切焦点、在编辑路径时是「下一层」，
 /// 三处都是「往下一个去」，这里接着用同一个意思；`⇧⇥` 是它的另一头。
@@ -2012,18 +2077,21 @@ fn report_action(key: Key, stage: Stage) -> Action {
 /// 收起退得回去，因此不必守着只有一个入口。
 ///
 /// **跑着与等答话时也展得开**（`p3-session-legibility/10`，推翻停车场 Q72）：
-/// 按停与答话那三个键交给[阶段那一维](stage_action)，它们与这里的滚动键
+/// 按停与答话那三个键交给[阶段那一维](stage_action)，它们与这里的选页键
 /// 一个都不冲突——`p1-session/11` 记着的那第二重代价（「按停那个键在一屏滚动键里
-/// 会被挤没」）因此不成立：`s` 是个字母键，滚动走的是方向键。
+/// 会被挤没」）因此不成立：`s` 是个字母键，选页走的是方向键。
 ///
 /// **`t` 与 `x` 在这里按不动**：起一趟要先收起——报告区正摊着上一趟的逐页，
 /// 而新的一趟会当场把它换掉。收起是一个键的事。
-fn expanded_action(key: Key, stage: Stage) -> Action {
+fn expanded_action(expansion: &Expansion, key: Key, stage: Stage) -> Action {
     match key {
-        Key::Up | Key::Char('k') => Action::Scroll(Toward::Up),
-        Key::Down | Key::Char('j') => Action::Scroll(Toward::Down),
-        Key::Left => Action::Scroll(Toward::Left),
-        Key::Right => Action::Scroll(Toward::Right),
+        Key::Up | Key::Char('k') => Action::Move(Step::Back),
+        Key::Down | Key::Char('j') => Action::Move(Step::Next),
+        // 等答话时这个字母归答话（见上）：交给阶段那一维，它在那儿答的是
+        // 「剩下的卷都这样」。
+        Key::Char('a') if !matches!(stage, Stage::Deciding(_)) => {
+            Action::List(expansion.listing.flipped())
+        }
         Key::Tab => Action::Turn(Step::Next),
         Key::BackTab => Action::Turn(Step::Back),
         Key::Char('e') | Key::Esc => Action::Collapse,
@@ -2031,7 +2099,6 @@ fn expanded_action(key: Key, stage: Stage) -> Action {
     }
 }
 
-/// 预设那一栏的按键表。两副样子：在列表上走，或者正在打一个新名字。
 fn picking_action(picker: &Picker, key: Key) -> Action {
     match &picker.naming {
         Some(naming) => naming_action(naming, key),
@@ -3306,15 +3373,26 @@ mod tests {
         session.press(Key::Tab);
         assert_eq!(Session::new().action(Key::Tab), Action::Ignored);
 
-        // 七、展开之后：上下左右改的是报告区，`⇥` 换一卷，`e`／`Esc` 收起。
+        // 七、展开之后：`↑↓` 选一页，`a` 换一副列法，`⇥` 换一卷，`e`／`Esc` 收起。
         // 起一趟的那两个键在这里按不动——报告区正摊着上一趟的逐页。
-        session.expand(Expansion::new(Volume::Settled(0), 0));
-        assert_eq!(session.action(Key::Up), Action::Scroll(Toward::Up));
-        assert_eq!(session.action(Key::Char('k')), Action::Scroll(Toward::Up));
-        assert_eq!(session.action(Key::Down), Action::Scroll(Toward::Down));
-        assert_eq!(session.action(Key::Char('j')), Action::Scroll(Toward::Down));
-        assert_eq!(session.action(Key::Left), Action::Scroll(Toward::Left));
-        assert_eq!(session.action(Key::Right), Action::Scroll(Toward::Right));
+        session.expand(Expansion::new(Volume::Settled(0)));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Char('k')), Action::Move(Step::Back));
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
+        assert_eq!(session.action(Key::Char('j')), Action::Move(Step::Next));
+        // `a` 带着**去哪一档**，不是「切一下」：屏底那一行要说得出按过去是哪一副。
+        assert_eq!(session.action(Key::Char('a')), Action::List(Listing::All));
+        assert_eq!(session.press(Key::Char('a')), Exit::Stay);
+        assert_eq!(
+            session.expansion().expect("展开着").listing,
+            Listing::All,
+            "`a` 没切到全部页"
+        );
+        assert_eq!(
+            session.action(Key::Char('a')),
+            Action::List(Listing::Notable)
+        );
+        session.press(Key::Char('a'));
         assert_eq!(session.action(Key::Tab), Action::Turn(Step::Next));
         assert_eq!(session.action(Key::BackTab), Action::Turn(Step::Back));
         assert_eq!(session.action(Key::Char('e')), Action::Collapse);
@@ -3325,6 +3403,10 @@ mod tests {
             Key::Enter,
             Key::Space,
             Key::Backspace,
+            // `←→` 在这里不派动作：逐页那一副横着摆不下时**砍列**，不横着滚
+            // （`p3-session-legibility/11`，与卷表从此同一条）。
+            Key::Left,
+            Key::Right,
             Key::Char('t'),
             Key::Char('x'),
             Key::Char('s'),
@@ -3342,22 +3424,37 @@ mod tests {
         }
 
         // 七之二、**展开着而一趟正跑着**（`p3-session-legibility/10`，推翻停车场 Q72）：
-        // 滚动那几个键一格不变，而阶段那一维那几个键跟着进来——按停按得动，
-        // `q` 反过来按不动（停车场 Q63）。**两者不冲突**：`s` 是字母键，滚动走方向键。
+        // 选页那几个键一格不变，而阶段那一维那几个键跟着进来——按停按得动，
+        // `q` 反过来按不动（停车场 Q63）。**两者不冲突**：`s` 是字母键，选页走方向键。
         session.run_started();
-        assert_eq!(session.action(Key::Up), Action::Scroll(Toward::Up));
+        assert_eq!(session.action(Key::Up), Action::Move(Step::Back));
         assert_eq!(session.action(Key::Tab), Action::Turn(Step::Next));
         assert_eq!(session.action(Key::Char('e')), Action::Collapse);
         assert_eq!(session.action(Key::Char('s')), Action::Stop);
         assert_eq!(session.action(Key::Char('q')), Action::Ignored);
         assert_eq!(session.action(Key::Interrupt), Action::Quit);
-        // 等答话时答话那三个也在：与焦点落在哪一块无关（票面第五条）。
+        assert_eq!(
+            session.action(Key::Char('a')),
+            Action::List(Listing::All),
+            "跑着时换一副列法该按得动"
+        );
+        // **等答话时答话那三个都在**：与焦点落在哪一块无关（票面第五条）。
+        // `a` 这一刻归答话——换一副列法等得起，一条停在决策点上的线程等不起
+        // （停车场 Q161，见 [`expanded_action`]）。
         session.at_the_decision_point(true);
         assert_eq!(
             session.action(Key::Char('a')),
             Action::Answer(Instruction::Continue, Reach::ForTheRest)
         );
-        assert_eq!(session.action(Key::Down), Action::Scroll(Toward::Down));
+        assert_eq!(
+            session.action(Key::Char('x')),
+            Action::Answer(Instruction::Continue, Reach::ThisVolume)
+        );
+        assert_eq!(
+            session.action(Key::Char('s')),
+            Action::Answer(Instruction::Finish, Reach::ThisVolume)
+        );
+        assert_eq!(session.action(Key::Down), Action::Move(Step::Next));
         session.at_the_decision_point(false);
         session.run_finished();
 
@@ -3635,7 +3732,7 @@ mod tests {
         let before = session.clone();
 
         // 展开：报告区摊开第一卷，左栏这一刻不在屏上（画法那一侧，见 `super::draw`）。
-        session.expand(Expansion::new(Volume::Settled(0), 0));
+        session.expand(Expansion::new(Volume::Settled(0)));
         assert_eq!(
             session.expansion().map(|expansion| expansion.volume),
             Some(Volume::Settled(0))
@@ -3652,7 +3749,7 @@ mod tests {
         assert_eq!(session, before, "收起之后会话与展开之前不一样了");
 
         // 另一个键也收得起来：`e` 是展开那个键按回去。
-        session.expand(Expansion::new(Volume::Settled(1), 40));
+        session.expand(Expansion::new(Volume::Settled(1)));
         assert_eq!(session.press(Key::Char('e')), Exit::Stay);
         assert_eq!(session.focus(), &Focus::Report);
         session.press(Key::Tab);
@@ -3810,48 +3907,56 @@ mod tests {
         assert_eq!(session.action(Key::Left), Action::Cycle(Step::Back));
     }
 
-    /// **报告区在两根轴上翻得动，两头都收得住**（票面第四条与停车场 Q64）。
+    /// **逐页表上那个光标翻得动，两头都收得住**（`p3-session-legibility/11`）。
     ///
-    /// 往上、往左收在零上——零就是报告的头一行、行首那一列，
-    /// 而抬头那几行（profile、适配方式、裁边、拆分）正躺在那儿。
-    /// 另外两头由画法那一层每帧收一次：只有它知道这一格装得下几行几列。
+    /// 往上收在零——零就是这一副列出来的头一页。往下那一头由画法那一层每帧收一次：
+    /// 只有它知道这一副此刻列着几页（换一副列法、那一卷又长出几页，两处都会变）。
+    ///
+    /// **两头不转圈**：这一副是一张两百页的长表，从末一页一下转回头一页会让
+    /// 「翻到底了」在屏上没有落点（与三层那几个取值环不同，见 [`Session::move_cursor`]）。
     #[test]
-    fn the_expanded_report_scrolls_on_both_axes_and_stops_at_both_ends() {
+    fn the_cursor_on_the_per_page_table_moves_a_page_at_a_time_and_stops_at_both_ends() {
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(0), 0));
+        session.expand(Expansion::new(Volume::Settled(0)));
 
-        // 往上翻不过头一行：报告的第零行就是抬头。
+        // 展开那一下停在头一页上，往上翻不过它。
+        assert_eq!(session.expansion().expect("展开着").at, 0);
         for _ in 0..5 {
             session.press(Key::Up);
         }
-        assert_eq!(session.expansion().expect("展开着").from, 0);
+        assert_eq!(
+            session.expansion().expect("展开着").at,
+            0,
+            "往上翻过了头一页"
+        );
 
-        // 往下翻一行是一行。
+        // 往下翻一页是一页。
         for _ in 0..3 {
             session.press(Key::Down);
         }
-        assert_eq!(session.expansion().expect("展开着").from, 3);
+        assert_eq!(session.expansion().expect("展开着").at, 3);
 
-        // 横着滚一下走 `SIDEWAYS` 列，往左同样收在行首。
-        session.press(Key::Right);
-        session.press(Key::Right);
-        assert_eq!(session.expansion().expect("展开着").right, 2 * SIDEWAYS);
-        for _ in 0..5 {
-            session.press(Key::Left);
-        }
-        assert_eq!(session.expansion().expect("展开着").right, 0);
+        // 画法那一层每帧把它收进这一副真列出来的那几页里。
+        session.clamp_report(2);
+        assert_eq!(
+            session.expansion().expect("展开着").at,
+            1,
+            "翻过了头没被收回来"
+        );
+        // 一页都没列出来时收到零：那一格里摆的是一句话，没有一页停得上去。
+        session.clamp_report(0);
+        assert_eq!(session.expansion().expect("展开着").at, 0);
 
-        // 画法那一层每帧把它收进真滚得动的范围。
+        // **换一副列法，光标跟着回到头一页**：两副列的不是同一批页。
         session.press(Key::Down);
-        session.press(Key::Right);
-        session.clamp_report(1, 0);
-        let expansion = session.expansion().expect("展开着");
-        assert_eq!(expansion.from, 1, "往下翻过了头没被收回来");
-        assert_eq!(expansion.right, 0, "往右滚过了头没被收回来");
+        session.press(Key::Char('a'));
+        let expansion = *session.expansion().expect("展开着");
+        assert_eq!(expansion.listing, Listing::All);
+        assert_eq!(expansion.at, 0, "换了一副列法，光标却还停在原来那个数上");
 
-        // 没展开的时候收不出事来：那时报告区滚到底，滚动量不是状态。
+        // 没展开的时候收不出事来。
         session.press(Key::Esc);
-        session.clamp_report(0, 0);
+        session.clamp_report(0);
         assert!(session.expansion().is_none());
     }
 

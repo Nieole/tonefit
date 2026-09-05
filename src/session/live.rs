@@ -38,7 +38,7 @@ use tonefit::{
 ///
 /// 一个枚举而不是一个 `bool`：它从 [`super::resuming`] 一路传到 [`Live::new`] 与
 /// [`super::run::Running::start`]，而调用处一个裸 `false` 说不出它否掉的是哪件事
-/// （与 `super::draw` 那个 `Unrolled` 同一条理由——本仓库不爱看不出意思的裸值）。
+/// （与 `super::state::Listing` 同一条理由——本仓库不爱看不出意思的裸值）。
 ///
 /// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 3 条：**试算逐卷等答话**
 /// （几卷都一样），而等不等人是调用方的策略、不是库的行为。
@@ -147,7 +147,7 @@ pub struct Live {
     /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
     ///
     /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
-    /// 第二遍一步没走。报告区把它接在那几卷后面画出来（见 `super::draw::report::report_text`），
+    /// 第二遍一步没走。报告区在卷表上给它一行（见 `super::draw::table`），
     /// 「主区把报告画出来等你拿主意」靠的就是它。一卷收摊时清掉——那时正式的一份在报告里了。
     summarized: Option<VolumeReport>,
     /// 这一趟在决策点上**等人等掉的那一截**，累计（停车场 Q41，`CONTEXT.md` 的《会话》：
@@ -662,8 +662,8 @@ pub(crate) mod fixture {
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
         Envelope, GeometryGate, GrayImage, IoPlan, Medium, Mode as RunMode, PageBranch, PageColor,
-        PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Scaling,
-        Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
+        PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Salvage,
+        Scaling, Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
     };
 
     /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
@@ -843,77 +843,152 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一份**三种页各一张**的卷报告：完好的灰度页、走彩色分支的页、失败页。
+    /// 一份**每一种页各一张**的卷报告：八页，其中[要紧的](crate::render::notable)六页。
     ///
-    /// 展开那几条要的正是这一种（`p1-session/11` 的验收后两条）：
+    /// 逐页表那几条要的正是这一种（`p3-session-legibility/11`）：默认那一副与全部页
+    /// 那一副要看得出差别，而「要紧」那六种要在同一卷里各出现一次。
+    ///
+    /// | 页 | 它要紧在哪儿 |
+    /// |---|---|
+    /// | `001` | 不要紧：判定跟着卷级基准档走 |
+    /// | `002` | 不要紧：走**彩色分支**，只缩放、不量化，也不进上包络 |
+    /// | `003` | **定档页**（上包络站在它身上） |
+    /// | `004` | **特例页**：判据偏离卷内分布，单独定档；它同时**宽溢出** |
+    /// | `005` | **几何门不成立**：源比目标小，抖动单独关掉 |
+    /// | `006` | **兜底上界**：目标尺寸退回过 fit-inside |
+    /// | `007` | **部分救回**：解到哪个像素算哪个像素，行尾说得出救回了多少 |
+    /// | `017` | **失败页**：这一页根本没解出来 |
+    ///
+    /// **「一页同时要紧在好几处」由 `004` 撑着**（特例加宽溢出），而不是拿兜底上界配宽溢出：
+    /// 那一对**凑不到一起**——退回之后的页恒不超过面板宽
+    /// （`Report::backstopped`：两张清单不重叠）。
+    ///
+    /// **页的三种状态在这一卷里都有**（完好、部分救回、失败），彩色分支那一条也在：
     /// 失败页说得出它的尺寸是**卷内统一尺寸**、彩页说得出它不量化也不进上包络，
-    /// 而这两句话只有逐页那几行说得出来——卷级那几行一句都没有。
+    /// 而这两句话只有逐页那几行说得出来——卷级那几行一句都没有（`p1-session/11` 的验收）。
     ///
-    /// 它与 [`processed_volume`] 分开而不是给后者加一个开关：那两张快照
-    /// （`p1-session/09` 录的）钉的是卷级那几行，添一张彩页会让它们一起重录，
-    /// 而彩页与那两张快照要说的事无关。
-    pub fn three_kinds_of_page(name: &str) -> VolumeReport {
-        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+    /// 与 [`processed_volume`] 分开而不是给它加几页：那一份钉着卷级那几张快照
+    /// （`p1-session/09` 录的），添一页就要跟着重录。
+    pub fn a_page_of_every_kind(name: &str) -> VolumeReport {
+        let base = Candidate::new(BitDepth::Four, Dither::Off);
         let source = Size::new(1441, 2048);
         let target = Size::new(1182, 1680);
-        let whole = |at: &str, color: PageColor, branch: PageBranch| PageReport {
+        // 面板宽 1264（`kobo-libra-2`，见 [`request`]）：这一张比它宽，因此宽溢出。
+        let wide = Size::new(1600, 1680);
+        let gray = |gate: GeometryGate, verdict: Verdict| PageBranch::Gray {
+            gate,
+            scores: every_candidate(),
+            verdict,
+        };
+        let judged = |candidate: Candidate, reason: Reason| Verdict { candidate, reason };
+        let page = |at: &str, size: Size, backstopped: bool, branch: PageBranch| PageReport {
             source: PathBuf::from(format!("库/{name}/{at}.jpg")),
             output: PathBuf::from(format!("出/隔离/{name}/{at}.png")),
-            size: target,
+            size,
             outcome: PageOutcome::Whole(Processed {
                 crop: Crop::keeping_all(source),
-                backstopped: false,
+                backstopped,
                 cut: None,
                 spread_candidate: false,
-                scaling: Scaling::plan(source, target),
-                color,
+                scaling: Scaling::plan(source, size),
+                color: PageColor::Gray,
                 branch,
             }),
         };
-        let pages = vec![
-            whole(
-                "001",
-                PageColor::Gray,
-                PageBranch::Gray {
-                    gate: GeometryGate::Holds,
-                    // 四个候选各一个数——**逐页那两行轻松过 100 列**（票面原话）就是
-                    // 这么来的。摆一个候选的话那一行短得放得进 60 列，
-                    // 而「宽度是稀缺资源」这件事就演不出来了。
-                    scores: every_candidate(),
-                    verdict: Verdict {
-                        candidate,
-                        reason: Reason::LowestWithinThreshold,
-                    },
-                },
+        let ordinary = |at: &str| {
+            page(
+                at,
+                target,
+                false,
+                gray(GeometryGate::Holds, judged(base, Reason::VolumeEnvelope)),
+            )
+        };
+        let mut pages = vec![
+            ordinary("001"),
+            // 彩色分支：只缩放，不量化，不进灰度缓存也不进上包络——它不要紧，
+            // 但全部页那一副上要看得见它那一句。
+            page("002", target, false, PageBranch::Color),
+            // 定档页：这一卷的基准档就是它判出来的（`Envelope::driver` 指着它）。
+            page(
+                "003",
+                target,
+                false,
+                gray(
+                    GeometryGate::Holds,
+                    judged(base, Reason::LowestWithinThreshold),
+                ),
             ),
-            whole("002", PageColor::Color, PageBranch::Color),
-            PageReport {
-                source: PathBuf::from(format!("库/{name}/017.jpg")),
-                output: PathBuf::from(format!("出/隔离/{name}/017.png")),
-                size: target,
-                outcome: PageOutcome::Failed {
-                    reason: "解不出完整尺寸：JPEG 数据截断".to_owned(),
-                },
-            },
+            // 特例页，而且它**同时宽溢出**：不参与上包络、按它自己那一档写出，
+            // 而它比面板宽——翻它要阅读器横向平移。一页因此要紧在两处。
+            page(
+                "004",
+                wide,
+                false,
+                gray(
+                    GeometryGate::Holds,
+                    judged(
+                        Candidate::new(BitDepth::Eight, Dither::Off),
+                        Reason::Outlier,
+                    ),
+                ),
+            ),
+            // 几何门不成立：抖动单独关掉，位深仍跟着基准档。
+            page(
+                "005",
+                target,
+                false,
+                gray(GeometryGate::Broken, judged(base, Reason::OutsideTheGate)),
+            ),
+            // 兜底上界退回过：它没按这一趟点名的适配方式出。**退回之后恒不超过面板宽**
+            // （`Report::backstopped`：与宽溢出那张清单不重叠），因此它拿的是普通尺寸。
+            page(
+                "006",
+                target,
+                true,
+                gray(GeometryGate::Holds, judged(base, Reason::VolumeEnvelope)),
+            ),
         ];
+        // 部分救回：它有自己的尺寸、判据与判定，却不替整卷说话。
+        let PageOutcome::Whole(salvaged) = ordinary("007").outcome else {
+            unreachable!("上面那一支造的就是完好页");
+        };
+        pages.push(PageReport {
+            source: PathBuf::from(format!("库/{name}/007.jpg")),
+            output: PathBuf::from(format!("出/隔离/{name}/007.png")),
+            size: target,
+            outcome: PageOutcome::Salvaged {
+                page: salvaged,
+                salvage: Salvage::from_share(0.62),
+            },
+        });
+        pages.push(PageReport {
+            source: PathBuf::from(format!("库/{name}/017.jpg")),
+            output: PathBuf::from(format!("出/隔离/{name}/017.png")),
+            size: target,
+            outcome: PageOutcome::Failed {
+                reason: "解不出完整尺寸：JPEG 数据截断".to_owned(),
+            },
+        });
         VolumeReport {
             volume: PathBuf::from(format!("库/{name}")),
             output: PathBuf::from(format!("出/隔离/{name}")),
             superseded: None,
             source_pages: pages.len(),
+            // 其余页那一组是 `001`、`003`、`006` 三张：彩页、特例、门不成立、
+            // 部分救回、失败五张都在进这一层之前被摘走了（见 `Envelope::body_pages`）。
             verdict: Some(VolumeVerdict::Envelope(Envelope {
-                base: candidate,
-                driver: 0,
-                body_pages: 1,
-                outlier_pages: 0,
+                base,
+                driver: 2,
+                body_pages: 3,
+                outlier_pages: 1,
                 raised_pages: 0,
             })),
             pages,
             cache: cache_usage(),
             extracted: 0,
             io: io_plan(),
-            decodes: 2,
-            timing: took(123),
+            decodes: 8,
+            timing: took(96),
         }
     }
 

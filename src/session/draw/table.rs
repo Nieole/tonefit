@@ -45,9 +45,8 @@ use tonefit::{VolumeFailure, VolumeReport};
 use super::overview::{DECIDING, spell};
 use super::paint::{Painted, Tone};
 use crate::render::{self, Field, Row, RowKind};
-use crate::session::columns::{self, Column, Widths};
+use crate::session::columns::{self, Column, VolumeColumn, Widths};
 use crate::session::live::{Live, Volume};
-use crate::wrap;
 
 /// 一格不在场时那一列上写什么。
 ///
@@ -171,27 +170,27 @@ struct Entry {
 
 impl Entry {
     /// 这一列上那一格。
-    fn cell(&self, column: Column) -> Option<&str> {
+    fn cell(&self, column: VolumeColumn) -> Option<&str> {
         match column {
-            Column::Mark => None,
-            Column::Name => Some(&self.name),
-            Column::Pages => self.pages.as_deref(),
-            Column::Base => self.base.as_deref(),
-            Column::Driver => self.driver.as_deref(),
-            Column::Elapsed => self.elapsed.as_deref(),
+            VolumeColumn::Mark => None,
+            VolumeColumn::Name => Some(&self.name),
+            VolumeColumn::Pages => self.pages.as_deref(),
+            VolumeColumn::Base => self.base.as_deref(),
+            VolumeColumn::Driver => self.driver.as_deref(),
+            VolumeColumn::Elapsed => self.elapsed.as_deref(),
         }
     }
 
     /// 这一列上写什么：不在场的那几格里，只有页数留一个 [`ABSENT`]。
     ///
     /// 记号那一列自己答：它恒在，而它不是一格字，是一个[记号](Mark)。
-    fn text(&self, column: Column) -> String {
-        if column == Column::Mark {
+    fn text(&self, column: VolumeColumn) -> String {
+        if column == VolumeColumn::Mark {
             return self.mark.glyph().to_string();
         }
         self.cell(column).map_or_else(
             || {
-                if column == Column::Pages {
+                if column == VolumeColumn::Pages {
                     ABSENT.to_owned()
                 } else {
                     String::new()
@@ -300,7 +299,10 @@ fn under(rows: &[Row]) -> Vec<Painted> {
 ///
 /// 只印最后一段，与卷名同一条规矩（[`crate::render::volume_name`]）：
 /// 一整条路径在这一列上摆不下，而定档页要答的是「是哪一页」。
-fn driver(rows: &[Row]) -> Option<String> {
+///
+/// **逐页那张表的抬头也读它**（[`super::pages`]）：展开一卷之后钉在顶上的那一行要说
+/// 「这一卷的档是哪一页定的」，而那与这一列说的是同一件事，不许各取各的。
+pub(super) fn driver(rows: &[Row]) -> Option<String> {
     rows.iter()
         .find(|row| row.kind == RowKind::Driver)
         .and_then(|row| row.cell(Field::Source))
@@ -333,7 +335,7 @@ fn entries(live: &Live) -> Vec<Entry> {
 /// 卷表画出来的那几行，外加**光标停在第几行**。
 ///
 /// 两样装在一个类型里而不是一对裸值：它们是同一次摆出来的，而调用处看不出
-/// 「第二个 `usize` 是什么」（与 [`super::report`] 那个 `Unrolled` 同一条理由）。
+/// 「第二个 `usize` 是什么」（与 [`super::pages::Opened`] 同一条理由）。
 pub(super) struct Table {
     /// 表上那几行：列头一行，此后一卷一行（外加摆在一卷底下的那几句）。
     pub(super) rows: Vec<Painted>,
@@ -365,23 +367,16 @@ pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
         };
     }
     let room = usize::from(room).saturating_sub(1);
-    let mut widths = Widths::new();
+    let mut widths: Widths<VolumeColumn> = Widths::new();
     for entry in &entries {
-        for column in Column::ALL {
-            widths.widen(column, &entry.text(column));
+        for column in VolumeColumn::ALL {
+            widths.widen(*column, &entry.text(*column));
         }
     }
-    let kept = columns::fit(room, &widths);
-    // 砍无可砍仍摆不下：卷名收窄，摆不下的那几个字从中间省略（[`columns::elide`]）。
-    // 记号与卷名恒在，因此没有「一列都不剩」那一档。
-    let over = columns::line_width(&kept, &widths).saturating_sub(room);
-    if over > 0 {
-        widths.narrow(
-            Column::Name,
-            widths.of(Column::Name).saturating_sub(over).max(1),
-        );
-    }
-    let mut lines = vec![Painted::plain(lay(
+    // 砍列，砍无可砍再把卷名收窄（摆不下的那几个字从中间省略）——两步一处出处
+    // （[`columns::plan`]），逐页那张表走的是同一处。
+    let kept = columns::plan(room, &mut widths);
+    let mut lines = vec![Painted::plain(columns::lay(
         &kept,
         &widths,
         |column| column.head().to_owned(),
@@ -395,7 +390,7 @@ pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
             cursor = Some(lines.len());
         }
         lines.push(Painted::new(
-            lay(&kept, &widths, |column| entry.text(column), &entry.notes),
+            columns::lay(&kept, &widths, |column| entry.text(column), &entry.notes),
             entry.mark.tone(),
         ));
         // 摆在它底下、缩进一格的那几句（[`under`]）：整段文字，画它的那一头折行。
@@ -405,38 +400,4 @@ pub(super) fn table(live: &Live, room: u16, at: Option<Volume>) -> Table {
         rows: lines,
         cursor,
     }
-}
-
-/// 一行摆出来：留哪几列由 `kept` 说了算，每一列占几格由 `widths` 说了算。
-///
-/// 靠左还是靠右问 [`Column::to_the_right`]。行尾那几句**不占格**，也不参与对齐——
-/// 它们是句子，摆不下时跟着整行折下去。
-fn lay(
-    kept: &[Column],
-    widths: &Widths,
-    mut cell: impl FnMut(Column) -> String,
-    notes: &[String],
-) -> String {
-    let mut line = String::from(" ");
-    for (at, column) in kept.iter().enumerate() {
-        if at > 0 {
-            line.push_str(&" ".repeat(columns::GAP));
-        }
-        let room = widths.of(*column);
-        let text = columns::elide(&cell(*column), room);
-        let pad = " ".repeat(room.saturating_sub(usize::from(wrap::width(&text))));
-        if column.to_the_right() {
-            line.push_str(&pad);
-            line.push_str(&text);
-        } else {
-            line.push_str(&text);
-            line.push_str(&pad);
-        }
-    }
-    for note in notes {
-        line.push_str(&" ".repeat(columns::GAP));
-        line.push_str(note);
-    }
-    // 行尾那几格空白留着没有意义：折行那一头本来也要去掉它们（[`crate::wrap::fold`]）。
-    line.trim_end().to_owned()
 }

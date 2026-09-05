@@ -5,10 +5,11 @@
 //! 一卷跑完那条事件带着那一卷的报告（ADR 0011），[`crate::render::volume`] 收下它
 //! 就画得出判定、定档页、隔离与这一趟怎么读的。
 //!
-//! **默认那一副是一张表**：一卷一行，列对齐，窄了砍列——表怎么摆在 [`super::table`]，
+//! **两副都是表**：默认那一副一卷一行（[`super::table`]），展开那一副一页一行
+//! （[`super::pages`]）——同一套视口、同一套砍列、同一组语义色，
 //! 哪几列、砍哪几列在 [`crate::session::columns`]（那一块在终端库外面）。
-//! 表**上面**跟着滚的是这一趟的抬头（profile、适配方式、裁边、跨页拆分、判据构成与聚合），
-//! 表**下面**是当场冒出来的失败页、以及收场之后末尾那几小结——
+//! 卷表**上面**跟着滚的是这一趟的抬头（profile、适配方式、裁边、跨页拆分、
+//! 判据构成与聚合），表**下面**是当场冒出来的失败页、以及收场之后末尾那几小结——
 //! 那几段本来就是句子，照旧当整段文字折行画（[`crate::wrap`]）。
 //!
 //! **两副样子由展开与否分**（`CONTEXT.md` 的《会话》：展开），差在哪几处见
@@ -18,17 +19,17 @@
 //! 这一段在主区占几行由 [`super::main_pane`] 分；上面那一块总览在 [`super::overview`]。
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use super::pages;
 use super::paint::{Painted, Tone};
-use super::table::table;
+use super::table::{Table, table};
 use crate::session::live::{Live, Volume};
 use crate::session::state::{Focus, Follow, Session};
 use crate::session::viewport::Viewport;
-use crate::wrap;
 
 /// 报告区：**边跑边攒**的那一份，措辞出自 [`crate::render`]。
 ///
@@ -38,23 +39,24 @@ use crate::wrap;
 ///
 /// **两副样子，由展开与否分**（`CONTEXT.md` 的《会话》：展开）：
 ///
-/// | | 卷表（默认） | 展开一卷 |
+/// | | 卷表（默认） | 展开一卷（逐页表） |
 /// |---|---|---|
-/// | 一卷 | **一行**，列对齐（[`super::table`]） | 那一卷的逐页那几行全给（[`crate::render::pages`]） |
-/// | 逐页那几行 | 一行不给 | 展开的那一卷全给 |
-/// | 长过一格 | **跟随时钉在末行，跟随停了就跟着[光标那一卷](crate::session::state::Follow)走**（[`Viewport`]） | 用户自己翻（[`Expansion::from`]） |
-/// | 一行放不下 | 按固定次序**砍列**（[`crate::session::columns`]） | **不折**，横着滚 |
+/// | 一行是 | **一卷**（[`super::table`]） | **一页**（[`super::pages`]） |
+/// | 列的是 | 此刻说得出报告的那几卷 | 那一卷[要紧的页](crate::render::notable)，`a` 切全部页 |
+/// | 钉住的抬头 | 无（这一趟的抬头跟着表滚） | **有**：这一卷的基准档 · 定档页 · 列着几页 |
+/// | 长过一格 | **跟随时钉在末行，跟随停了就跟着[光标那一卷](crate::session::state::Follow)走** | 跟着[光标那一页](crate::session::state::Expansion::at)走 |
+/// | 一行放不下 | 按固定次序**砍列**（[`crate::session::columns`]） | 同左，另一个次序 |
 /// | 成句的那几段 | 折行（按显示宽度，见 [`crate::wrap`]） | 折行 |
 /// | 左栏 | 在场 | 收起（见 [`super::shell`]） |
 ///
 /// 默认那一副跟着最新收摊的那一卷，是因为报告只增不减，而「一卷跑完当场看得见」说的正是
 /// 刚添上去的那一行；**光标一挪跟随就停了**，往回翻因此不必另有一个滚动量
 /// （`p3-session-legibility/10`，那正是停车场 Q64 记着的缺口）。
-/// 展开那一副不折行，是因为票面写着**逐页行不被折断**——折了就看不出哪几个数是一页的。
 ///
-/// **默认那一副的滚动量与滚动条都由 [`Viewport`] 出**：跟随着的时候光标停在末行，
-/// 算出来的起点因此恰好是「滚到底」——与从前那个自己算的一模一样，
-/// 多出来的是右边框线上那条滚动条（画它的地方只有 [`super::scrolling`] 一处）。
+/// **两副的滚动量与滚动条都由 [`Viewport`] 出**（`p3-session-legibility/11`）：
+/// 光标在哪儿视口就跟到哪儿，屏上没有一处记着「滚到哪儿了」（`CONTEXT.md` 的《视口》）。
+/// 展开那一副从前有横竖两个滚动量，横的那一个连同「逐页不折行、横着滚」一起没了——
+/// 它此刻是一张表，横向摆不下时**砍列**。
 pub(super) fn report_pane(
     frame: &mut Frame,
     area: Rect,
@@ -107,21 +109,78 @@ pub(super) fn report_pane(
     // 已经归下一卷了，而这一格要给的是**它自己**（[`Live::nearest`]）——
     // 不解析这一道，下一个决策点一到，屏上就会拿另一卷的逐页冒充它
     // （`p2-loose-ends/08` 那条硬约束朝前的那一半）。
-    let opened = live.nearest(expansion.volume);
-    let text = report_text(live, opened).text;
-    // 翻页量收进这一格真滚得动的范围。不收的话，翻过了头再翻回来，
-    // 头几下会按了没反应（见 [`Session::clamp_report`]）。
-    session.clamp_report(
-        rows(&text).saturating_sub(inside.height),
-        widest(&text).saturating_sub(inside.width),
+    let Some(volume) = live
+        .nearest(expansion.volume)
+        .and_then(|at| live.volume(at))
+    else {
+        let rows = Painted::plain(GONE.to_owned()).folded(inside.width);
+        frame.render_widget(Paragraph::new(rows).block(block), area);
+        return;
+    };
+    // **抬头钉在这一格顶上，表在它底下滚**：逐页翻到第三屏时「这一卷判成哪一档」
+    // 还得答得出来，而那正是翻这几页要比的东西（票面：抬头钉住这一卷的）。
+    let [pinned, body] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(block.inner(area));
+    let opened = pages::pages(
+        volume,
+        live.report().profile.panel(),
+        body.width,
+        expansion.listing,
+        expansion.at,
     );
-    let expansion = session.expansion().expect("刚才还展开着");
+    // 光标收进这一副**真列出来**的那几页里（列头那一行不算）。不收的话，翻过了头再
+    // 翻回来，头几下会按了没反应（见 [`Session::clamp_report`]）。
+    session.clamp_report(opened.table.rows.len().saturating_sub(1));
+    let (rows, cursor) = folded(&opened.table, body.width, true);
+    // 一页都没列出来时那一格里摆的是一句话，光标无处可停——视口退回头一行。
+    let view = Viewport::new(rows.len(), usize::from(body.height), cursor.unwrap_or(0));
+
+    frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(text)
-            .scroll((expansion.from, expansion.right))
-            .block(block),
-        area,
+        Paragraph::new(Painted::plain(opened.heading).line()),
+        pinned,
     );
+    frame.render_widget(Paragraph::new(rows).scroll((view.from(), 0)), body);
+    // 滚动条画在**正文那一段**的右边：抬头钉着不滚，跟着整格一起算就差一行。
+    super::scrollbar(
+        frame,
+        Rect {
+            y: area.y.saturating_add(1),
+            height: area.height.saturating_sub(1),
+            ..area
+        },
+        &view,
+    );
+}
+
+/// 展开着的那一卷此刻指不着谁时，这一格里说什么。
+///
+/// 到得了的只有一种：报告整个换了一趟（又按了一次试算或执行，而报告一趟一份）。
+/// 决策点上那一卷收摊之后照旧指得着它自己——那一道由 [`Live::nearest`] 收在前面。
+const GONE: &str = "这一卷不在这一趟的报告里了：⇥ 换一卷，Esc 收起回卷表。";
+
+/// 把一张表折成这一格摆得下的那几行，**光标那一行整行反白**。
+///
+/// 第二个数是光标落在**折出来的**第几行上：表上一行摆不下时会折成几行，
+/// 而视口要的是屏上那个行号（[`Viewport`] 收的就是它）——两张表因此都不许自己数一遍。
+///
+/// **反白只在焦点落在这一块上时给**：屏上同一刻只有一处反白
+/// （`CONTEXT.md` 的《会话》：焦点）。展开着的时候焦点就在这一块上，恒给。
+fn folded(table: &Table, width: u16, focused: bool) -> (Vec<Line<'static>>, Option<usize>) {
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut cursor = None;
+    for (row, said) in table.rows.iter().enumerate() {
+        let here = table.cursor == Some(row);
+        if here {
+            cursor = Some(rows.len());
+        }
+        let folded = said.folded(width);
+        rows.extend(match here && focused {
+            true => highlighted(folded),
+            false => folded,
+        });
+    }
+    (rows, cursor)
 }
 
 /// 一趟都还没跑过时这一格里说什么。
@@ -145,22 +204,11 @@ const NOT_RUN_YET: &str = "
 fn collapsed(live: &Live, width: u16, at: Option<Volume>, focused: bool) -> Collapsed {
     let report = live.report();
     let mut rows = Painted::plain(crate::render::header(report, live.mode())).folded(width);
-    let table = table(live, width, at);
     // 光标停在正文的第几行：表在抬头那几行**底下**，而抬头折出来几行要现数
     // （见 [`Viewport::new`]：行号推不出来）。
-    let mut cursor = None;
-    for (row, said) in table.rows.iter().enumerate() {
-        let here = table.cursor == Some(row);
-        if here {
-            cursor = Some(rows.len());
-        }
-        // 反白只给光标那一行，而且只在焦点落在这一块上时给（见 [`super::paint::Painted`]）。
-        let folded = said.folded(width);
-        rows.extend(match here && focused {
-            true => highlighted(folded),
-            false => folded,
-        });
-    }
+    let (body, cursor) = folded(&table(live, width, at), width, focused);
+    let cursor = cursor.map(|row| row + rows.len());
+    rows.extend(body);
     // **失败页是「出事」那一档**（spec 的《语义色》），而这一段头一行就叫「失败页」——
     // 颜色不是唯一载体（见 [`super::paint`]）。
     rows.extend(
@@ -199,7 +247,7 @@ fn highlighted(rows: Vec<Line<'static>>) -> Vec<Line<'static>> {
 
 /// 默认那一副画出来的那几行，外加**光标停在第几行**。
 ///
-/// 两样装在一个类型里而不是一对裸值，与 [`Unrolled`] 同一条理由：它们是同一次拼出来的，
+/// 两样装在一个类型里而不是一对裸值，与 [`Table`] 同一条理由：它们是同一次拼出来的，
 /// 而「第二个数是什么」在调用处看不出来。
 struct Collapsed {
     rows: Vec<Line<'static>>,
@@ -274,96 +322,6 @@ pub(super) fn expandable(live: Option<&Live>) -> bool {
     live.is_some_and(|live| !live.volumes().is_empty())
 }
 
-/// 这一份东西有几行。**不折行时的行数**，展开那一副用它。
-fn rows(text: &str) -> u16 {
-    u16::try_from(text.lines().count()).unwrap_or(u16::MAX)
-}
-
-/// 最长那一行有多宽（**显示宽度**：中文两列）。横着能滚多远由它定。
-///
-/// 量宽度而不是数字符：横向滚的是格子，而一个汉字占两格。宽度的出处只有
-/// [`crate::wrap::width`]——折行按它折，滚动按它算，两处不许各数各的。
-fn widest(text: &str) -> u16 {
-    text.lines().map(wrap::width).max().unwrap_or(0)
-}
-
-/// 展开第 `volume` 卷之后，那一卷的抬头落在第几行。
-///
-/// **给 [`super::super::press`] 用**：`⇥` 换过一卷之后视口要对到那一卷的抬头上，
-/// 而状态机算不出这个数——它读不到那一趟攒着的报告。算它只用得到
-/// [`crate::render`] 那几个函数与 [`Live`]，一个终端都不碰。
-pub(in crate::session) fn opens_at(live: &Live, volume: Volume) -> u16 {
-    report_text(live, Some(volume)).opens_at
-}
-
-/// 报告区的正文，以及**展开的那一卷从第几行起**。
-///
-/// **与命令行印出来的那一份同源**：同样的段、同样的函数。展开出来的逐页那几行走的
-/// 也是命令行那一份用的 [`crate::render::pages`]——失败页说得出它的尺寸是卷内统一的、
-/// 彩色分支的页说得出它不量化也不进上包络，两句都在那里，会话不另写一份。
-///
-/// 与命令行那一份的差只有三处，各有理由：逐页那几行**只给展开的那一卷**
-/// （默认一行不给，票面第一条）；失败页那一段是命令行没有的**增量**
-/// （命令行攒完才印，那时逐页那几行已经把话说全了）；末尾那几小结要看完整趟才给得出来
-/// （见 [`crate::render::tail`]），因此只在收场之后画。
-///
-/// 第二个出的数给 [`opens_at`]：换一卷之后视口对到那一卷的抬头上，靠的是它。
-/// 与正文一起算出来而不是另写一遍，理由与「渲染只有一处出处」同一条——
-/// 另数一遍就要把「哪一段在哪一段前面」抄第二份，而抄错了没人发现。
-fn report_text(live: &Live, expand: Option<Volume>) -> Unrolled {
-    let report = live.report();
-    let mut text = crate::render::header(report, live.mode());
-    let mut opens_at = 0;
-    for (at, volume) in report.volumes.iter().enumerate() {
-        if expand == Some(Volume::Settled(at)) {
-            opens_at = rows(&text);
-        }
-        text.push_str(&crate::render::plain::volume(volume));
-        if expand == Some(Volume::Settled(at)) {
-            text.push_str(&crate::render::plain::pages(volume));
-        }
-    }
-    // 决策点上那一卷**到此刻为止**的那一份，接在收摊了的那几卷后面（停车场 Q52）。
-    // 「主区把报告画出来等你拿主意」就是这一段：判定、逐页结果、缓存用量都是真的，
-    // 只有第二遍一步没走。
-    //
-    // **它也展得开**（`p3-session-legibility/10`，spec 的《焦点与两维模式》）：
-    // 展开的索引认得出「收摊了的第几卷」与「攒着的那一份」两处（[`Volume`]），
-    // 而不是「报告上第几卷」——后者根本指不到这一卷上，
-    // 而 `p2-loose-ends/08` 记着**不许摊开上一卷冒充它**。
-    if let Some(summarized) = live.summarized() {
-        // 它的身份带着「前面收摊了几卷」（见 [`Volume::Summarized`]）：
-        // 拿此刻这一份的那个数去比，指着上一卷的那个旧身份因此对不上。
-        let here = expand
-            == Some(Volume::Summarized {
-                after: report.volumes.len(),
-            });
-        if here {
-            opens_at = rows(&text);
-        }
-        text.push_str(&crate::render::plain::volume(summarized));
-        if here {
-            text.push_str(&crate::render::plain::pages(summarized));
-        }
-    }
-    text.push_str(&crate::render::failing_pages(live.failed_pages()));
-    if live.ended() {
-        text.push_str(&crate::render::tail(report));
-    }
-    Unrolled { text, opens_at }
-}
-
-/// 摊开成这个样子的报告：正文，加上**展开的那一卷落在第几行**。
-///
-/// 两个数装在一个类型里而不是一对裸值：它们是同一次拼装出来的，
-/// 而「第二个 `u16` 是什么」在调用处看不出来（那正是本仓库不爱的那种数）。
-/// 没展开时 `opens_at` 是零，与「报告从头画起」同一个值——它那时没有人读。
-struct Unrolled {
-    text: String,
-    /// 展开的那一卷的抬头在第几行。换一卷之后视口对到它上面（见 [`opens_at`]）。
-    opens_at: u16,
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -376,22 +334,22 @@ mod tests {
     };
     use super::*;
     use crate::session::live::{Resuming, fixture};
-    use crate::session::state::{Expansion, Key, Step};
+    use crate::session::state::{Expansion, Key, Listing, Step};
+    use crate::wrap;
     use tonefit::Mode as RunMode;
 
-    /// 一趟**跑完了**的两卷：一卷幂等命中，一卷三种页各一张（完好、彩色、失败）。
+    /// 一趟**跑完了**的两卷：一卷幂等命中，一卷[每种页各一张](fixture::a_page_of_every_kind)。
     ///
     /// 展开那几条要的是**跑完的**那一份：这几条问的是那一副画成什么样，
-    /// 而收场之后报告一行不少、也不再长——跑着的时候也展得开（`p3-session-legibility/10`
-    /// 推翻了停车场 Q72），那一档另有用例（`super::state` 的
-    /// `which_keys_do_what_in_which_state` 第七之二段）。
+    /// 而收场之后报告一行不少、也不再长——跑着与等答话时也展得开
+    /// （`p3-session-legibility/10` 推翻了停车场 Q72），那两档各有自己那一张快照。
     fn a_run_worth_expanding() -> Live {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
         live.volume_finished(&fixture::skipped_volume("卷一", 180));
         live.volume_started(Path::new("库/卷二"), 1000);
-        live.volume_finished(&fixture::three_kinds_of_page("卷二"));
+        live.volume_finished(&fixture::a_page_of_every_kind("卷二"));
         let report = live.report().clone();
         live.returned(Ok(report));
         live.rewind(Duration::from_secs(300));
@@ -400,11 +358,13 @@ mod tests {
 
     /// 展开着的一个会话，连同那一趟跑完的报告。
     ///
-    /// `from` 照 [`super::press`] 那一层给的：视口对到那一卷的抬头上（[`opens_at`]）。
-    fn expanded(volume: usize, from: u16) -> (Session, Live) {
+    /// 展开那一下**列的是要紧的页、光标停在头一页上**（[`Expansion::new`]）——
+    /// 与 [`super::super::press`] 那一层给的一模一样：这一副只画那一卷，
+    /// 「视口对到那一卷的抬头上」因此不必再算一个行号。
+    fn expanded(volume: usize) -> (Session, Live) {
         let live = a_run_worth_expanding();
         let mut session = Session::new();
-        session.expand(Expansion::new(Volume::Settled(volume), from));
+        session.expand(Expansion::new(Volume::Settled(volume)));
         (session, live)
     }
 
@@ -413,43 +373,67 @@ mod tests {
     ///
     /// 它停在**攒着的那一份**上、不在收摊了的那几卷里，而 08 那条硬约束记着
     /// 「不许摊开上一卷冒充它」。展开的索引因此从「报告上第几卷」改成
-    /// [`Volume`]——一个下标根本指不到这一卷上，而这一改就是那条约束的解法。
+    /// [`Volume`]（`p3-session-legibility/10`）——一个下标根本指不到这一卷上，
+    /// 而这一改就是那条约束的解法；本票的逐页表接着走它。
+    ///
+    /// 两卷特意造得**认得出来**：收摊了的那一卷八页、要紧的六页，攒着的那一卷一页。
+    /// 只比卷名的话，两卷的头一页都叫 `001.jpg`，冒充了也看不出来。
     #[test]
     fn the_volume_waiting_at_the_decision_point_expands_into_its_own_pages() {
-        let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(2, 2000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.volume_finished(&fixture::a_page_of_every_kind("卷一"));
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.pass_started(
+            tonefit::Pass::Second,
+            Some(&fixture::processed_volume("卷二", None)),
+        );
         let mut session = Session::new();
         session.run_started();
         session.at_the_decision_point(true);
 
         // 焦点切到报告区：跟随着的时候光标停的正是这一卷（它是表上最后一卷）。
         session.press(Key::Tab);
-        let waiting = Volume::Summarized { after: 4 };
+        let waiting = Volume::Summarized { after: 1 };
         assert_eq!(session.standing(&live), Some(waiting));
 
         // 展开它：抬头说得出展的是哪一卷，逐页那几行是**它自己的**。
-        session.expand(Expansion::new(waiting, opens_at(&live, waiting)));
+        session.expand(Expansion::new(waiting));
         let shown = tight(&screen(&mut session, Some(&live), 120, 40));
-        assert!(shown.contains(&tight("展开 棋魂 08")), "{shown}");
-        assert!(shown.contains(&tight("第 5/5 卷")), "{shown}");
-        assert!(shown.contains(&tight("出/棋魂 08/001.png")), "{shown}");
-        // 上一卷（收摊了的最后一卷）的逐页一行都不许冒充它。
-        assert!(!shown.contains(&tight("出/浪客行 12/001.png")), "{shown}");
+        assert!(shown.contains(&tight("展开 卷二")), "{shown}");
+        assert!(shown.contains(&tight("第 2/2 卷")), "{shown}");
+        assert!(shown.contains(&tight("要紧的页 1/1")), "{shown}");
+        // 上一卷（收摊了的那一卷）的逐页一行都不许冒充它：它那几页一页都不在。
+        // 比的是**页名**：那几个词（特例页、宽溢出）总览块的出事行上也有一份，
+        // 而这一格里说的是哪几页。
+        for hers in ["004.jpg", "005.jpg", "006.jpg", "007.jpg", "017.jpg"] {
+            assert!(
+                !shown.contains(&tight(hers)),
+                "上一卷的 {hers} 冒充了：{shown}"
+            );
+        }
 
         // **它收摊之后，这一格给的仍旧是它自己**（`Live::nearest`）：
         // 「攒着的那一份」那个位置这时归**下一卷**，而展开着的是刚才那一卷。
         let mut settled = live.clone();
-        let waited = fixture::processed_volume("棋魂 08", None);
-        settled.volume_finished(&waited);
-        settled.volume_started(Path::new("库/棋魂 09"), 1000);
+        settled.volume_finished(&fixture::processed_volume("卷二", None));
+        settled.volume_started(Path::new("库/卷三"), 1000);
         settled.pass_started(
             tonefit::Pass::Second,
-            Some(&fixture::processed_volume("棋魂 09", None)),
+            Some(&fixture::a_page_of_every_kind("卷三")),
         );
         let after = tight(&screen(&mut session, Some(&settled), 120, 40));
-        assert!(after.contains(&tight("展开 棋魂 08")), "{after}");
-        assert!(after.contains(&tight("出/棋魂 08/001.png")), "{after}");
+        assert!(after.contains(&tight("展开 卷二")), "{after}");
+        assert!(after.contains(&tight("要紧的页 1/1")), "{after}");
+        // **报告边跑边长，展开的那一副跟着更新**（票面第四条）：多出来的那一卷进了
+        // 「共几卷」那个数，而展开着的仍是刚才那一卷。
         assert!(
-            !after.contains(&tight("出/棋魂 09/001.png")),
+            after.contains(&tight("第 2/3 卷")),
+            "报告长了，抬头没跟上：{after}"
+        );
+        assert!(
+            !after.contains(&tight("004.jpg")),
             "下一卷冒充了展开着的那一卷：{after}"
         );
     }
@@ -1145,201 +1129,341 @@ mod tests {
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
 "#;
 
-    /// **快照：展开一卷的逐页，左栏收起、主区吃满宽度。**（票面第二、三条）
+    /// **快照：展开一卷，默认只列要紧的页**（票面第一、二、八条）。
     ///
-    /// 钉的是整屏：左栏一格都不在，右边那一大格从第 0 列画到第 119 列。
-    /// 逐页那两行走的是 [`crate::render::pages`]——命令行印出来的是同一批字。
+    /// 钉的是整屏：左栏一格都不在，右边那一大格从第 0 列画满
+    /// （**展开与左栏收起是同一件事**，`CONTEXT.md` 的《会话》）。
+    /// 抬头钉在这一格顶上，表在它底下滚——六页要紧的各带着自己那个词，
+    /// 而普通那两页（含彩色分支那一张）一行都没有。
+    ///
+    /// 屏取 136 列：逐页那几行**轻松过 100 列**（票面原话），这一张钉的是这张表
+    /// 本来的样子——一列不砍、一行不折。窄下来砍成什么样另有一条
+    /// （[`a_narrow_pane_cuts_columns_instead_of_scrolling_the_page_rows_sideways`]）。
     #[test]
-    fn expanding_a_volume_collapses_the_left_column_and_shows_the_pages() {
-        let (mut session, live) =
-            expanded(1, opens_at(&a_run_worth_expanding(), Volume::Settled(1)));
+    fn expanding_a_volume_collapses_the_left_column_and_lists_the_pages_that_matter() {
+        let (mut session, live) = expanded(1);
 
         same_screen(
-            &snapshot_of(&mut session, &live, 120, 25),
-            EXPANDED_TO_ONE_VOLUME,
+            &snapshot_of(&mut session, &live, 136, 20),
+            EXPANDED_TO_THE_PAGES_THAT_MATTER,
         );
     }
 
-    /// 见 [`expanding_a_volume_collapses_the_left_column_and_shows_the_pages`]。
-    const EXPANDED_TO_ONE_VOLUME: &str = r#"
-"┌收场 点名的卷都走过了 · 2 卷 · 用了 0s────────────────────────────────────────────────────────────────────────────────┐"
-"│ 总体 [==============================] 2000/2000 步                                                                   │"
-"│ 判定 1 卷 4bit · 1 卷 跳过                                                                                           │"
+    /// 见 [`expanding_a_volume_collapses_the_left_column_and_lists_the_pages_that_matter`]。
+    const EXPANDED_TO_THE_PAGES_THAT_MATTER: &str = r#"
+"┌收场 点名的卷都走过了 · 2 卷 · 用了 0s────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 总体 [==============================] 2000/2000 步                                                                                   │"
+"│ 判定 1 卷 4bit · 1 卷 跳过                                                                                                           │"
+"│ 出事 特例页 1 张 · 宽溢出 1 页 · 几何门不成立 1 卷                                                                                   │"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+"┌报告 · 展开 卷二（第 2/2 卷）─────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 基准档 4bit · 定档页 003.jpg · 要紧的页 6/8                                                                                          │"
+"│ 记号  页名     尺寸       判定  理由                      判据                                                                       │"
+"│ *     003.jpg  1182×1680  4bit  阈值内最低的一档          1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  定档页             │"
+"│ !     004.jpg  1600×1680  8bit  特例页单独定档            1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  特例页  宽溢出     │"
+"│ !     005.jpg  1182×1680  4bit  几何门不成立，本页不抖动  1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  几何门不成立       │"
+"│ !     006.jpg  1182×1680  4bit  卷级上包络                1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  兜底上界           │"
+"│ !     007.jpg  1182×1680  4bit  卷级上包络                1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  救回 62.0%         │"
+"│ ✗     017.jpg  1182×1680                                                                                          失败 解不出完整尺寸│"
+"│ ：JPEG 数据截断                                                                                                                      │"
+"│                                                                                                                                      │"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+" ↑↓ 选一页 · a 列全部页 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · q 退出                                                       "
+" 只列要紧的页：特例 · 失败 · 部分救回 · 几何门不成立 · 宽溢出 · 兜底上界，加上定档页                                                    "
+"                                                                                                                                        "
+"#;
+
+    /// **快照：`a` 切到全部页**（票面第二条）。
+    ///
+    /// 与上一张是一对：同一卷、同一屏，差的只有列出来的那几行与抬头末一格。
+    /// 普通那两页在这一副上回来了，彩色分支那一句也在——那一句只有逐页那几行说得出。
+    #[test]
+    fn pressing_a_lists_every_page_of_the_volume() {
+        let (mut session, live) = expanded(1);
+
+        session.press(Key::Char('a'));
+
+        assert_eq!(
+            session.expansion().expect("展开着").listing,
+            Listing::All,
+            "`a` 没切到全部页"
+        );
+        same_screen(
+            &snapshot_of(&mut session, &live, 136, 20),
+            EXPANDED_TO_EVERY_PAGE,
+        );
+    }
+
+    /// 见 [`pressing_a_lists_every_page_of_the_volume`]。
+    const EXPANDED_TO_EVERY_PAGE: &str = r#"
+"┌收场 点名的卷都走过了 · 2 卷 · 用了 0s────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 总体 [==============================] 2000/2000 步                                                                                   │"
+"│ 判定 1 卷 4bit · 1 卷 跳过                                                                                                           │"
+"│ 出事 特例页 1 张 · 宽溢出 1 页 · 几何门不成立 1 卷                                                                                   │"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+"┌报告 · 展开 卷二（第 2/2 卷）─────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 基准档 4bit · 定档页 003.jpg · 全部 8 页（要紧的 6 页）                                                                              │"
+"│ 记号  页名     尺寸       判定  理由                      判据                                                                       ▲"
+"│ ✓     001.jpg  1182×1680  4bit  卷级上包络                1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000                     █"
+"│ ✓     002.jpg  1182×1680                                                                                          彩页 · 彩色分支：只█"
+"│ 缩放，不量化，不进灰度缓存也不进卷级上包络                                                                                           █"
+"│ *     003.jpg  1182×1680  4bit  阈值内最低的一档          1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  定档页             ║"
+"│ !     004.jpg  1600×1680  8bit  特例页单独定档            1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  特例页  宽溢出     ║"
+"│ !     005.jpg  1182×1680  4bit  几何门不成立，本页不抖动  1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  几何门不成立       ║"
+"│ !     006.jpg  1182×1680  4bit  卷级上包络                1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  兜底上界           ║"
+"│ !     007.jpg  1182×1680  4bit  卷级上包络                1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000  救回 62.0%         ▼"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+" ↑↓ 选一页 · a 只列要紧的页 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · q 退出                                                   "
+" 列着全部页：要紧的那几页照旧靠行首记号跳出来                                                                                           "
+"                                                                                                                                        "
+"#;
+
+    /// **快照：跑着的时候展开**（票面第四条，`p3-session-legibility/10` 推翻停车场 Q72）。
+    ///
+    /// 报告边跑边长，展开的那一副跟着更新：这一张钉的是**跑着那一刻**的屏——
+    /// 屏底摆着按停那一副（按停在这一块上照旧按得动，票面第六条），
+    /// 而三层一个改动键都不派（左栏此刻连屏都不在）。
+    #[test]
+    fn a_volume_expands_while_the_run_is_still_going() {
+        let live = a_run_in_flight(true);
+        let mut session = Session::new();
+        session.run_started();
+        session.expand(Expansion::new(Volume::Settled(1)));
+
+        same_screen(
+            &snapshot_of(&mut session, &live, 120, 22),
+            EXPANDED_WHILE_RUNNING,
+        );
+    }
+
+    /// 见 [`a_volume_expands_while_the_run_is_still_going`]。
+    const EXPANDED_WHILE_RUNNING: &str = r#"
+"┌执行 · 第 3/3 卷 · 还剩约 3m20s───────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 总体 [==================>           ] 3000/5000 步 · 已用 5m00s                                                      │"
+"│ 本卷 卷三 · 第二遍 [==========>                   ] 1000/3000 步                                                     │"
+"│ 完成 1 卷 · 跳过 1 卷                                                                                                │"
+"│ 出事 隔离 1 卷 · 失败 1 页                                                                                           │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌报告 · 展开 卷二（第 2/2 卷）─────────────────────────────────────────────────────────────────────────────────────────┐"
-"│  跳过 幂等命中：工具版本、profile、参数、源均未变，上一趟的输出还在，这一卷一页都没有重做                            │"
-"│  介质 无寻道惩罚（固态盘） · 读取并发 8                                                                              │"
-"│库/卷二 → 出/隔离/卷二（3 页，其中彩页 1 页）                                                                         │"
-"│  隔离 1 页失败：本卷整卷写到隔离目录 出/隔离/卷二，失败页以卷内统一尺寸留白占位，页序不断                            │"
-"│  几何门 判定范围 灰度页 1 页 · 不成立 0 页 · 本卷 不抖动                                                             │"
-"│  卷级 基准档 4bit · 其余 1 页 · 特例 0 页（0.0%）· 迟滞升档 0 页（上包络 p95 · 迟滞 3 页 · 特例判据 p75 立脚点、3.0× │"
-"│    定档页 库/卷二/001.jpg                                                                                            │"
-"│  介质 无寻道惩罚（固态盘） · 读取并发 8                                                                              │"
-"│  缓存 1 页 1.0 MiB（压缩前 4.0 MiB），未溢写（预算 512.0 MiB）                                                       │"
-"│  1182×1680  缩放比 1.219 · 未预缩  出/隔离/卷二/001.png                                                              │"
-"│    判定 4bit（阈值内最低的一档）  判据 1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000                        │"
-"│  1182×1680  缩放比 1.219 · 未预缩  出/隔离/卷二/002.png                                                              │"
-"│    彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进卷级上包络                                                     │"
-"│  1182×1680  失败页 · 卷内统一尺寸留白  出/隔离/卷二/017.png                                                          │"
-"│    失败 解不出完整尺寸：JPEG 数据截断                                                                                │"
-"│隔离 1 卷 · 失败 1 页：失败页以卷内统一尺寸留白占位，原因逐条列在上面                                                 │"
+"│ 基准档 4bit · 定档页 001.jpg · 要紧的页 2/2                                                                          │"
+"│ 记号  页名     尺寸       判定  理由              判据                                                               │"
+"│ *     001.jpg  1182×1680  4bit  阈值内最低的一档  4bit 8.000  定档页                                                 │"
+"│ ✗     017.jpg  1182×1680                                      失败 解不出完整尺寸：JPEG 数据截断                     │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" ↑↓ 翻一行 · ←→ 横着滚 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · q 退出                                        "
-" 逐页那两行不折行：屏窄时行尾被切掉，往右滚就看得到——页面不会跟着整体错位                                               "
+" ↑↓ 选一页 · a 列全部页 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · 跑着…… · s 停（按一次收尾，再按一次中止）·   "
+" Ctrl-C 退出会话（当前卷中止，盘上不留半卷）                                                                            "
 "                                                                                                                        "
 "#;
 
-    /// **逐页那几行只在展开的那一卷上出，而且逐字来自 [`crate::render::pages`]。**
+    /// **快照：等答话的时候展开的正是那一卷**（票面第五条，`p2-loose-ends/08`）。
     ///
-    /// 票面第一条（默认只给卷级）与「渲染只有一处出处」两件事由同一条钉：
-    /// 展开出来的那几行**逐行**能在 `render::pages` 的输出里找到，
-    /// 而没展开的那一份一行都没有。失败页与彩页那两句因此也不必在这里另比一遍——
-    /// 它们本来就在那一份里（票面后两条）。
+    /// 那一卷停在**攒着的那一份**上、不在收摊了的那几卷里，而屏上给的是**它自己的**逐页
+    /// ——「不许摊开上一卷冒充它」那一条的现场（另一条用例逐格问它：
+    /// [`the_volume_waiting_at_the_decision_point_expands_into_its_own_pages`]）。
+    /// 屏底摆着答话那三个键，`a` 那一刻归答话、不摆「列全部页」（停车场 Q161）。
     #[test]
-    fn the_per_page_rows_come_from_render_and_only_for_the_volume_that_is_open() {
-        let live = a_run_worth_expanding();
-        let opened = &live.report().volumes[1];
-        let pages = crate::render::plain::pages(opened);
+    fn the_volume_waiting_at_the_decision_point_expands_while_it_waits() {
+        let live = every_kind_of_volume(RunMode::DryRun, Resuming::Waits);
+        let mut session = Session::new();
+        session.run_started();
+        session.at_the_decision_point(true);
+        session.expand(Expansion::new(Volume::Summarized { after: 4 }));
 
-        let folded = report_text(&live, None).text;
-        let unfolded = report_text(&live, Some(Volume::Settled(1))).text;
-
-        for line in pages.lines() {
-            assert!(unfolded.contains(line), "展开之后少了这一行：{line}");
-            assert!(!folded.contains(line), "没展开却给了逐页：{line}");
-        }
-        // 那一份里说得出失败页的尺寸是**卷内统一尺寸**、彩页不量化也不进上包络。
-        assert!(pages.contains("失败页 · 卷内统一尺寸留白"), "{pages}");
-        assert!(pages.contains("彩色分支：只缩放，不量化"), "{pages}");
-        // 卷级那几行两副样子里都在——展开是**添**，不是换一份。
-        assert!(folded.contains("库/卷二 → 出/隔离/卷二"), "{folded}");
-        assert!(unfolded.contains("库/卷二 → 出/隔离/卷二"), "{unfolded}");
-        // 幂等命中的卷展开了也一行逐页都没有（`render::pages` 那道守卫），不恐慌。
-        assert_eq!(crate::render::plain::pages(&live.report().volumes[0]), "");
-        assert!(
-            !report_text(&live, Some(Volume::Settled(0)))
-                .text
-                .contains("判定 4bit")
+        same_screen(
+            &snapshot_of(&mut session, &live, 120, 22),
+            EXPANDED_WHILE_DECIDING,
         );
     }
 
-    /// **屏窄时逐页那几行不折断，横着滚看得到行尾，而页面不整体错位**（票面第四条）。
+    /// 见 [`the_volume_waiting_at_the_decision_point_expands_while_it_waits`]。
+    const EXPANDED_WHILE_DECIDING: &str = r#"
+"┌试算 · 第 6/6 卷 · 等你拿主意─────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 总体 [=========================>    ] 5000/6000 步 · 已用 5m00s                                                      │"
+"│ 本卷 棋魂 08 · 第二遍 [>                             ] 0/1000 步                                                     │"
+"│ 判定 1 卷 4bit · 1 卷 覆盖 2bit+FS · 1 卷 跳过 · 1 卷 逐页                                                           │"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+"┌报告 · 展开 棋魂 08（第 5/5 卷）──────────────────────────────────────────────────────────────────────────────────────┐"
+"│ 基准档 4bit · 定档页 001.jpg · 要紧的页 1/1                                                                          │"
+"│ 记号  页名     尺寸       判定  理由              判据                                                               │"
+"│ *     001.jpg  1182×1680  4bit  阈值内最低的一档  4bit 8.000  定档页                                                 │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"│                                                                                                                      │"
+"└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
+" ↑↓ 选一页 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来 · 等你拿主意…… · x 接着做第二遍（第一遍不重算）· a 剩下的卷 "
+" 都这样（往下不再问）· s 收尾（这一卷不写，等价 dry-run；剩下的卷也不开工）· Ctrl-C 退出会话                            "
+" 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有第二遍一步没走——这一卷此刻一个字节都没写                   "
+"#;
+
+    /// **逐页那几行只在展开的那一卷上出，而且逐字来自 [`crate::render`]。**
     ///
-    /// 窄到 60 列：逐页那一行的判据一串被切在框外——那一行本来就轻松过 100 列，
-    /// 而这正是「宽度是稀缺资源」的现场。往右滚到底它就回来了，
-    /// 而边框、抬头与屏底那两行一格都没动：滚的是格子里的正文，不是这一屏。
+    /// 票面第一条（默认那一副只给卷级）与「渲染只有一处出处」两件事由同一条钉：
+    /// 表上那几格（尺寸、判定、理由、判据）逐字能在 [`crate::render::pages`] 出的
+    /// 那几行里找到，而没展开的那一份一行逐页都没有。
     #[test]
-    fn the_expanded_report_scrolls_sideways_instead_of_folding_a_page_row() {
-        let (mut session, live) =
-            expanded(1, opens_at(&a_run_worth_expanding(), Volume::Settled(1)));
-        // 判据那一串的最后一个候选——逐页那一行的行尾。
-        let pages = crate::render::plain::pages(&live.report().volumes[1]);
-        let tail = pages
-            .lines()
-            .find(|line| line.contains("判据"))
-            .and_then(|line| line.rsplit(" · ").next())
-            .expect("逐页那一行里有判据");
+    fn the_per_page_cells_come_from_render_and_only_for_the_volume_that_is_open() {
+        let live = a_run_worth_expanding();
+        let opened = &live.report().volumes[1];
+        let rows = crate::render::pages(opened);
+        let panel = live.report().profile.panel();
+
+        let table = pages::pages(opened, panel, 200, Listing::All, 0).table;
+        let said = table
+            .rows
+            .iter()
+            .map(|row| row.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // 每一格都逐字来自 `render` 那几行——这一层一个字都没重写。
+        for row in &rows {
+            for cell in &row.cells {
+                if matches!(
+                    cell.field,
+                    crate::render::Field::Size
+                        | crate::render::Field::Candidate
+                        | crate::render::Field::Reason
+                        | crate::render::Field::Sentence
+                ) {
+                    assert!(said.contains(&cell.text), "少了这一格：{}", cell.text);
+                }
+            }
+        }
+        // 失败页那一句原因、彩页那一句「不量化也不进上包络」，两句都在——
+        // 它们是成句的那一格，跟在行尾（`p1-session/11` 的后两条验收）。
+        // 「失败页 · 卷内统一尺寸留白」那一格不在表上（缩放那一列不进表，
+        // 见 `super::pages` 的《表有意不带的那几格》，停车场 Q162）。
+        assert!(said.contains("失败 解不出完整尺寸"), "{said}");
+        assert!(said.contains("彩色分支：只缩放，不量化"), "{said}");
+        // 卷级那一副一行逐页都没有：展开才给（票面第一条）。
+        let collapsed = collapsed(&live, 200, None, false)
+            .rows
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !collapsed.contains("彩色分支"),
+            "没展开却给了逐页：{collapsed}"
+        );
+        // 幂等命中的卷展开了也一行逐页都没有（`render::pages` 那道守卫），不恐慌：
+        // 那一格里摆的是一句话（见 `super::pages`）。
+        let skipped = pages::pages(&live.report().volumes[0], panel, 200, Listing::All, 0);
+        assert_eq!(skipped.table.rows.len(), 1);
+        assert!(skipped.table.rows[0].text.contains("一页都没有重做"));
+    }
+
+    /// **窄下来砍列，逐页那几行不横着滚、也不整体错位**（票面第一条：与卷表同一套砍列）。
+    ///
+    /// 从前这一副是一段不折行的散文，窄了要往右滚才看得到行尾；它此刻是一张表，
+    /// 窄了按 [`crate::session::columns`] 那个次序**砍列**——判据一串先让掉，
+    /// 而「哪一页判成哪一档」一直在。`←→` 因此在这一块上不派动作
+    /// （见 `super::super::state::expanded_action`）。
+    #[test]
+    fn a_narrow_pane_cuts_columns_instead_of_scrolling_the_page_rows_sideways() {
+        let (mut session, live) = expanded(1);
 
         let narrow = snapshot_of(&mut session, &live, 60, 20);
-        assert!(
-            narrow.contains("判据 1bit+FS"),
-            "判据那一行不在：\n{narrow}"
-        );
-        assert!(!narrow.contains(tail), "行尾折下来了：\n{narrow}");
-        let frame: Vec<&str> = narrow.lines().collect();
-        assert!(frame[0].starts_with("\"┌收场"), "{narrow}");
 
-        // 往右滚到底：行尾回来了，而滚动量停在真滚得动的那一格上（不是按了没反应）。
-        for _ in 0..20 {
-            session.press(Key::Right);
-        }
-        let rolled = snapshot_of(&mut session, &live, 60, 20);
-        assert!(rolled.contains(tail), "往右滚到底也没看到行尾：\n{rolled}");
-        let stopped = session.expansion().expect("展开着").right;
+        // 判定那一列在，判据那一串让掉了——次序只有 `columns` 那一处出处。
+        assert!(narrow.contains("判定"), "判定那一列被砍了：\n{narrow}");
+        assert!(!narrow.contains("判据"), "窄了还留着判据：\n{narrow}");
+        // `←→` 一格都不动这一屏：它在这一块上根本不派动作。
+        let before = session.expansion().copied();
         session.press(Key::Right);
-        snapshot_of(&mut session, &live, 60, 20);
+        session.press(Key::Left);
         assert_eq!(
-            session.expansion().expect("展开着").right,
-            stopped,
-            "滚到底了还往右挪"
+            session.expansion().copied(),
+            before,
+            "`←→` 动了展开着的那一格"
         );
-        // 边框在原处：横着滚不把这一屏带歪（票面：页面不整体错位）。
-        assert_eq!(
-            rolled.lines().next(),
-            frame.first().copied(),
-            "横着滚把整屏也带歪了：\n{rolled}"
-        );
+        assert_eq!(snapshot_of(&mut session, &live, 60, 20), narrow);
 
         // 收起：左栏回来，报告区又只给卷级。
         session.press(Key::Esc);
         let back = snapshot_of(&mut session, &live, 60, 20);
         assert!(back.contains("配置"), "收起之后左栏没回来：\n{back}");
-        assert!(!back.contains("判据 1bit+FS"), "收起了还给逐页：\n{back}");
+        assert!(!back.contains("页名"), "收起了还给逐页：\n{back}");
     }
 
-    /// **翻得回去**（停车场 Q64）：展开那一副不自动滚到底，`↑` 翻到零就是抬头那几行。
+    /// **抬头钉住，翻到底也还在**（票面：抬头钉住这一卷的；停车场 Q64 的另一半）。
     ///
-    /// 默认那一副**跟随着的时候**仍旧滚到底（见
-    /// [`a_report_taller_than_the_pane_keeps_its_last_lines`]），那是跟着跑的时候该有的落点；
-    /// 它那一头翻回去靠的是卷表上那个光标（跟随一停视口就跟着它走，
-    /// 见 [`the_focus_and_the_stopped_follow_are_both_visible_on_screen`]）。
+    /// 逐页翻到第三屏时「这一卷判成哪一档、是哪一页定的」还得答得出来，
+    /// 而那正是翻这几页要比的东西。默认那一副的抬头跟着表滚（那是这一趟的前提，
+    /// 收进覆盖层是 `p3-session-legibility/12` 的事），这一副的抬头**不滚**。
     #[test]
-    fn the_expanded_report_can_be_scrolled_back_to_the_header() {
-        // 展开那一下 `from` 是零：抬头那几行当场就在屏上。
-        let (mut session, live) = expanded(0, 0);
-        let top = screen(&mut session, Some(&live), 100, 20);
-        assert!(tight(&top).contains(&tight("适配方式")), "{top}");
+    fn the_pinned_heading_of_the_expanded_volume_never_scrolls_away() {
+        let (mut session, live) = expanded(1);
+        session.press(Key::Char('a'));
+        // 矮到八页摆不下：翻得动，才问得出「翻下去它还在不在」。
+        let head = |session: &mut Session| -> String {
+            snapshot_of(session, &live, 120, 12)
+                .lines()
+                .nth(6)
+                .expect("这一格的头一行")
+                .to_owned()
+        };
 
-        // 往下翻够远，抬头让位；再往回翻，它一行不少地回来。
+        let top = head(&mut session);
+        assert!(top.contains("基准档"), "抬头没钉在这一格顶上：{top}");
+        assert!(top.contains("定档页"), "{top}");
+
+        // 翻到底：抬头一格没动，而表底下那几行换过了。
+        let before = snapshot_of(&mut session, &live, 120, 12);
         for _ in 0..8 {
             session.press(Key::Down);
         }
-        let down = screen(&mut session, Some(&live), 100, 20);
-        assert!(!tight(&down).contains(&tight("适配方式")), "{down}");
+        let after = snapshot_of(&mut session, &live, 120, 12);
+        assert_eq!(head(&mut session), top, "翻下去抬头跟着滚了");
+        assert_ne!(after, before, "翻了八页却一行都没动");
+
+        // 翻回头一页：与翻下去之前逐格相同（往上收在零，不必按第九下）。
         for _ in 0..8 {
             session.press(Key::Up);
         }
-        assert_eq!(
-            screen(&mut session, Some(&live), 100, 20),
-            top,
-            "翻回去之后不是原来那一屏"
-        );
+        assert_eq!(snapshot_of(&mut session, &live, 120, 12), before);
     }
 
-    /// **展开一卷没有失败页的：逐页那几行照给，而失败那一句一个字都没有。**
+    /// **展开一卷没有要紧的页的：说一句话，不给一张空表**（票面第三条）。
     ///
-    /// spec 的《Testing Decisions》要「有失败页与没有两种」，
-    /// 而展开那一副的另一种在这里：`processed_volume(_, None)` 一页完好的灰度页，
-    /// 逐页那两行照出（尺寸、缩放、判定、判据），隔离与失败那两句一句不出。
+    /// 屏上那一句的措辞与「有几页」两处都在 [`super::pages`]，那一头逐条问过；
+    /// 这一条问的是**屏上**：那一句真画出来了，而表上一行页都没有。
     #[test]
-    fn a_volume_without_a_failed_page_expands_to_page_rows_and_nothing_about_failure() {
+    fn a_volume_with_no_pages_worth_listing_says_so_on_screen() {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         live.run_started(1, 1000);
-        live.volume_started(Path::new("库/卷三"), 1000);
-        live.volume_finished(&fixture::processed_volume("卷三", None));
+        live.volume_started(Path::new("库/名侦探 05"), 1000);
+        live.volume_finished(&fixture::per_page_volume("名侦探 05"));
         let report = live.report().clone();
         live.returned(Ok(report));
         let mut session = Session::new();
-        // 对到那一卷的抬头上（`⇥` 换过一卷之后的落位），逐页那几行才在这一格里。
-        session.expand(Expansion::new(
-            Volume::Settled(0),
-            opens_at(&live, Volume::Settled(0)),
-        ));
+        session.expand(Expansion::new(Volume::Settled(0)));
 
-        let open = snapshot_of(&mut session, &live, 120, 22);
+        let open = tight(&screen(&mut session, Some(&live), 120, 22));
 
+        assert!(open.contains(&tight("这一卷没有要紧的页")), "{open}");
         assert!(
-            open.contains("判定 4bit"),
-            "逐页那两行没出：
-{open}"
+            open.contains(&tight("要紧的页 0/1")),
+            "抬头没说这一副列着几页：{open}"
         );
-        assert!(open.contains("出/卷三/001.png"), "{open}");
-        for absent in ["失败", "隔离", "彩页"] {
-            assert!(
-                !open.contains(absent),
-                "没有失败页却说了「{absent}」：
-{open}"
-            );
-        }
+        assert!(!open.contains(&tight("记号  页名")), "给了一张空表：{open}");
+        // 切到全部页就有表了：那一页在，而它一个要紧的词都不带。
+        session.press(Key::Char('a'));
+        let all = tight(&screen(&mut session, Some(&live), 120, 22));
+        assert!(all.contains(&tight("记号  页名")), "{all}");
+        assert!(all.contains(&tight("001.jpg")), "{all}");
     }
 }

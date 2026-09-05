@@ -16,6 +16,7 @@
 //! | 主区上面那一块：总览块 | [`overview`] |
 //! | 主区下面那一块：报告区 | [`report`] |
 //! | 报告区里那张**卷表** | [`table`] |
+//! | 报告区**展开**着的那张**逐页表** | [`pages`] |
 //! | 屏底那几行 | [`footer`] |
 //!
 //! 分法按**屏上那几块**走，不按「工具函数 vs 业务」——后者一年后没人分得清一个函数
@@ -31,7 +32,7 @@
 //! （分界见 `super` 的《终端库在哪一半》）。**哪几块共用它、哪一块画滚动条，
 //! 那张表在 [`Viewport`] 上**，本模块不抄第二份。
 //!
-//! 横向摆不下时**卷表按固定次序砍列**，那个次序同样摆在终端库外面
+//! 横向摆不下时**那两张表按各自的固定次序砍列**，次序同样摆在终端库外面
 //! （[`crate::session::columns`]）：一列都不许在画法这一层再排第二次。
 //!
 //! 这一层要做的只有一件事：**正文与那一条滚动条一起画的地方只有 [`scrolling`] 一处**。
@@ -55,6 +56,7 @@
 mod config;
 mod footer;
 mod overview;
+mod pages;
 mod paint;
 mod picker;
 mod report;
@@ -62,8 +64,6 @@ mod table;
 
 #[cfg(test)]
 mod probe;
-
-pub(super) use report::opens_at;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -117,8 +117,8 @@ fn config_width(total: u16, expanded: bool) -> u16 {
 
 /// 把一屏画出来。
 ///
-/// 收的是 `&mut Session`：报告区展开之后要把滚动量收进这一格真滚得动的范围，
-/// 而只有画的时候才知道这一格有几行几列（见 [`Session::clamp_report`]）。
+/// 收的是 `&mut Session`：报告区展开之后要把逐页表那个光标收进这一副真列出来的那几页里，
+/// 而只有画的时候才知道这一副此刻列着几页（见 [`Session::clamp_report`]）。
 /// 那是这一层**唯一**改状态的地方——认键那一路仍旧一步不经过它。
 pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
     let screen = frame.area();
@@ -165,17 +165,24 @@ fn footer_height(rows: usize, total: u16) -> u16 {
     )
 }
 
-/// 一格正文，连同它那条滚动条。**画滚动条的地方只有这一处**（哪几块用得上它，
-/// 见 [`Viewport`] 那张表）。
+/// 一格正文，连同它那条滚动条（哪几块用得上视口，见 [`Viewport`] 那张表）。
 ///
 /// 滚动量与滚动条那三个数都从 [`Viewport`] 来，这里只把它们交给终端库：
-/// **滚动条走终端库自带的那个 widget，不自己画一条**；**没有可滚的东西时不画**
-/// （[`Viewport::scrollbar`] 那时给 `None`）。
-///
-/// 它落在这一格**右边那条框线上**（上下各让一格给两个角），因此一列正文都不吃：
-/// 有没有它，格子里的字一模一样。
+/// **滚动条走终端库自带的那个 widget，不自己画一条**（见 [`scrollbar`]）；
+/// **没有可滚的东西时不画**（[`Viewport::scrollbar`] 那时给 `None`）。
 fn scrolling(frame: &mut Frame, area: Rect, body: Paragraph<'static>, view: &Viewport) {
     frame.render_widget(body.scroll((view.from(), 0)), area);
+    scrollbar(frame, area, view);
+}
+
+/// 一格右边那条框线上的**滚动条**。**造那个 widget 的地方只有这一处。**
+///
+/// 分出来是为了[展开那一副](report::report_pane)：它顶上钉着一行抬头，正文因此不占满
+/// 这一格，两者不是同一个 `Rect`——而滚动条画在**正文那一段**的右边才对得上
+/// （对不上的话，滑块指着的行与屏上那一行差一行）。
+///
+/// 它落在框线上（上下各让一格给两个角），因此一列正文都不吃：有没有它，格子里的字一模一样。
+fn scrollbar(frame: &mut Frame, area: Rect, view: &Viewport) {
     let Some(bar) = view.scrollbar() else {
         return;
     };

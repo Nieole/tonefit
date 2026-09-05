@@ -15,7 +15,9 @@ use super::FOOTER_HEIGHT;
 use super::report::expandable;
 use crate::session::complete;
 use crate::session::live::Live;
-use crate::session::state::{Edit, Focus, Follow, Layer, Picker, Session, Shape, Stage, Values};
+use crate::session::state::{
+    Edit, Focus, Follow, Layer, Listing, Picker, Session, Shape, Stage, Values,
+};
 use crate::session::viewport::Viewport;
 use crate::wrap;
 
@@ -281,30 +283,54 @@ pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
     }
 }
 
-/// 展开之后屏底那两行：**上一行说这时按得动的键，下一行说这一副样子与默认那一副的差**。
+/// 展开之后屏底那两行：**上一行说这时按得动的键，下一行说这一副此刻列着哪几页**。
 ///
 /// 收起那个键要一直摆着：左栏此刻不在屏上，而「收起来的东西回得来」只有它说得出
 /// （票面的验收：收起后能一键回到配置）。**它回的是报告区**——展开是从那一块进去的
 /// （光标停着的那一卷，ADR 0017），而左栏跟着回到屏上，再一个 `⇥` 就站得上去。
 ///
 /// **展开的是第几卷不在这里说**，那个数在报告区那一格的抬头上
-/// （见 [`super::report::report_title`]）——挨着它说的那一卷，而这里是按键提示的家。
-/// 一个数摆两处就是两份措辞，与按停那一级同一条规矩（见 [`stopping_name`]）。
+/// （见 [`super::report::report_title`]）；这一副列着几页同理，那一句钉在这一格顶上
+/// （见 [`super::pages::pages`]）。这里是按键提示的家，一个数都不摆第二遍——
+/// 与按停那一级同一条规矩（见 [`stopping_name`]）。
 ///
-/// 下一行说的是**不折行**这件事：屏窄的时候行尾会被切掉，
-/// 不说清「横着滚得动」，看上去就是报告缺了半截。
+/// **`a` 那个键等答话时不摆**：那一刻它是「剩下的卷都这样」（见
+/// `super::super::state::expanded_action`），而屏上不摆按不动的键。
+/// 摆出来的那一句说的是**按过去是哪一副**，不是「切换」：一个 toggle 说不出去哪儿。
 fn expanded_prompt(session: &Session, live: Option<&Live>) -> Prompt {
+    let listing = session
+        .expansion()
+        .map(|expansion| expansion.listing)
+        .unwrap_or_default();
     // 「左栏回来」说的是**屏上**：那一栏此刻收着，而收起来的东西回得来。
     // 焦点落在哪儿是另一件事（回报告区，见上），屏底这一行不摆两件事。
-    let keys = " ↑↓ 翻一行 · ←→ 横着滚 · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来";
+    let mut keys = String::from(" ↑↓ 选一页");
+    if !session.deciding() {
+        keys.push_str(match listing {
+            Listing::Notable => " · a 列全部页",
+            Listing::All => " · a 只列要紧的页",
+        });
+    }
+    keys.push_str(" · ⇥／⇧⇥ 换下一卷／上一卷 · e／Esc 收起，左栏回来");
     match stage_prompt(session, live) {
         // 跑着与等答话时也展得开（`p3-session-legibility/10`）：那一维那几个键跟在后面，
         // 而 `q` 那时按不动（停车场 Q63），因此不摆。
         Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
-        None => Prompt::new(
-            format!("{keys} · q 退出"),
-            " 逐页那两行不折行：屏窄时行尾被切掉，往右滚就看得到——页面不会跟着整体错位",
-        ),
+        None => Prompt::new(format!("{keys} · q 退出"), listed_pages(listing)),
+    }
+}
+
+/// 展开那一副底下说的那件事：**这一副列的是哪几页**（`CONTEXT.md` 的《会话》：要紧的页）。
+///
+/// 只列要紧的那一档要把那六种数出来：屏上一页一个词说得出它要紧在哪儿，
+/// 但「一共有哪几种算要紧」在别处一个字都没有。判据的出处是
+/// [`crate::render::notable`]，这一句是它在屏上的说法。
+fn listed_pages(listing: Listing) -> &'static str {
+    match listing {
+        Listing::Notable => {
+            " 只列要紧的页：特例 · 失败 · 部分救回 · 几何门不成立 · 宽溢出 · 兜底上界，加上定档页"
+        }
+        Listing::All => " 列着全部页：要紧的那几页照旧靠行首记号跳出来",
     }
 }
 

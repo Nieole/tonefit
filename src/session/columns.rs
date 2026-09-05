@@ -1,8 +1,17 @@
-//! 卷表的**列**：有哪几列、各多宽、这个宽度上留得下哪几列
+//! 报告区那两张表的**列**：有哪几列、各多宽、这个宽度上留得下哪几列、一行怎么摆出来
 //! （`CONTEXT.md` 的《会话》：卷表、砍列）。
 //!
-//! 表真画出来是画法那一层的事（`super::draw::table`）；本模块只答三件事：
-//! **列的次序**、**砍列的次序**、以及**一格摆不下的字怎么省略**。
+//! 表真画出来是画法那一层的事（`super::draw::table` 与 `super::draw::pages`）；
+//! 本模块只答四件事：**列的次序**、**砍列的次序**、**一格摆不下的字怎么省略**、
+//! 以及**留下来的那几列摆成一行长什么样**。
+//!
+//! # 两张表，一套摆法
+//!
+//! 卷表一卷一行（[`VolumeColumn`]），展开那一副逐页一行（[`PageColumn`]）——
+//! 两张表的**列各不相同，摆法一模一样**：一样按显示宽度对齐、一样按各自那个固定次序砍列、
+//! 一样在砍无可砍时收窄名字那一列。摆法因此写在[一个 trait](Column) 上，
+//! 各表只交出自己那两个次序（`p3-session-legibility/11`：逐页也是一张表，
+//! 与卷表同一套视口、砍列与上色——那三样一样都不另造）。
 //!
 //! # 它一个终端都不碰
 //!
@@ -21,6 +30,8 @@
 //! 这是仓库既有的约定（`crate::wrap` 那一头也是它），本模块跟着走，不另立第二套。
 //! 停车场 Q154 记着这笔账：从前报告是散文，错一格看不出来；表上头一次靠宽度吃饭。
 
+use std::marker::PhantomData;
+
 use crate::wrap;
 
 /// 列与列之间空几格。**表画出来与列摆不摆得下按同一个数算**，因此在这里。
@@ -29,12 +40,50 @@ pub(super) const GAP: usize = 2;
 /// 摆不下时省略号那一格：一列的内容从**中间**掐掉一截，留下的两头之间摆它。
 const ELLIPSIS: char = '…';
 
-/// 卷表上的一列。屏上从左到右就是 [`Column::ALL`] 那个次序。
+/// **一张表的那几列**：从左到右是哪几列、窄了按什么次序砍、砍无可砍时收窄谁。
+///
+/// 两张表各实现一份（[`VolumeColumn`]、[`PageColumn`]），而摆法只有一份
+/// （[`fit`]、[`plan`]、[`lay`]）：屏上砍成什么样、对齐成什么样一律问这几个函数，
+/// 画法那一层不许再写第二份次序。
+pub(super) trait Column: Copy + PartialEq + 'static {
+    /// 全部列，**从左到右**。表就按这个次序摆。
+    const ALL: &'static [Self];
+
+    /// **砍列的次序**：横向摆不下时按它一列一列舍掉（`CONTEXT.md` 的《会话》：砍列）。
+    ///
+    /// **只有这一处出处。** 恒在的那几列不在这里边——一行上先要认得出这是哪一行、
+    /// 它出没出事，剩下的几列都是这两件之后的事。
+    const DROPPED_IN_TURN: &'static [Self];
+
+    /// 砍无可砍仍摆不下时**收窄**的那一列：名字那一列（卷名／页名）。
+    ///
+    /// 收窄之后摆不下的那几个字[从中间省略](elide)——它恒在，因此没有「一列都不剩」那一档。
+    const NARROWED: Self;
+
+    /// 列头。屏上那一行写的就是它。
+    ///
+    /// 这几个词**命令行上根本没有**：那一路把同一批格摆成一段散文，一个列头都不需要
+    /// （见 [`crate::render::plain`]）。列头因此长在会话这一侧，与左栏那几行标签同一条。
+    fn head(self) -> &'static str;
+
+    /// 这一列的格**靠右摆**吗。数靠右（一位数与三位数靠左摆就对不齐），词与名字靠左。
+    fn to_the_right(self) -> bool;
+
+    /// 这一列在 [`Widths`] 里的第几格。
+    fn at(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|column| *column == self)
+            .expect("每一列都在 ALL 里")
+    }
+}
+
+/// **卷表**上的一列。屏上从左到右就是 [`Column::ALL`] 那个次序。
 ///
 /// **行首记号也是一列**：它与别的列一样要对齐、要量宽度，把它排除在外只会让画法那一层
-/// 自己再算一遍它占几格。它与卷名一起是砍不掉的那两列（见 [`DROPPED_IN_TURN`]）。
+/// 自己再算一遍它占几格。它与卷名一起是砍不掉的那两列。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Column {
+pub(super) enum VolumeColumn {
     /// 行首记号：这一卷怎么样，一个字符说完。**恒在。**
     Mark,
     /// 卷名。**恒在**，摆不下时从中间省略（见 [`elide`]）。
@@ -49,9 +98,8 @@ pub(super) enum Column {
     Elapsed,
 }
 
-impl Column {
-    /// 全部列，**从左到右**。表就按这个次序摆。
-    pub(super) const ALL: [Self; 6] = [
+impl Column for VolumeColumn {
+    const ALL: &'static [Self] = &[
         Self::Mark,
         Self::Name,
         Self::Pages,
@@ -60,11 +108,18 @@ impl Column {
         Self::Elapsed,
     ];
 
-    /// 列头。屏上那一行写的就是它。
+    /// **砍列的次序：耗时 → 定档页 → 页数。**
     ///
-    /// 这几个词**命令行上根本没有**：那一路把同一批格摆成一段散文，一个列头都不需要
-    /// （见 [`crate::render::plain`]）。列头因此长在会话这一侧，与左栏那几行标签同一条。
-    pub(super) fn head(self) -> &'static str {
+    /// 记号与卷名不在这里边——它们**恒在**：一行上先要认得出这是哪一卷、它出没出事。
+    ///
+    /// 次序按「摆不下时先舍谁」排：耗时最先——它是这一卷做完之后的一个旁证；
+    /// 定档页次之——追下去要展开那一卷才看得清；页数压后——它是这一卷有多厚，
+    /// 与卷名一起就已经是一句话。
+    const DROPPED_IN_TURN: &'static [Self] = &[Self::Elapsed, Self::Driver, Self::Pages];
+
+    const NARROWED: Self = Self::Name;
+
+    fn head(self) -> &'static str {
         match self {
             Self::Mark => "记号",
             Self::Name => "卷名",
@@ -75,89 +130,191 @@ impl Column {
         }
     }
 
-    /// 这一列的格**靠右摆**吗。
-    ///
-    /// 只有页数：它是个数，一位数与三位数靠左摆就对不齐，而「这一卷比别的卷厚多少」
+    /// 只有页数靠右：它是个数，一位数与三位数靠左摆就对不齐，而「这一卷比别的卷厚多少」
     /// 正是扫一眼要看出来的。其余各列都是词或名字，靠左。
-    pub(super) fn to_the_right(self) -> bool {
+    fn to_the_right(self) -> bool {
         matches!(self, Self::Pages)
-    }
-
-    /// 这一列在 [`Widths`] 里的第几格。
-    fn at(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|column| *column == self)
-            .expect("每一列都在 ALL 里")
     }
 }
 
-/// **砍列的次序：耗时 → 定档页 → 页数。**
+/// **逐页表**上的一列（`p3-session-legibility/11`）：展开一卷之后那一副。
 ///
-/// **只有这一处出处**（spec 的《卷表》）：画法那一层不许再写第二份次序，
-/// 屏上砍成什么样一律问 [`fit`]。
-///
-/// 记号与卷名不在这里边——它们**恒在**：一行上先要认得出这是哪一卷、它出没出事，
-/// 剩下的几列都是这两件之后的事。
-///
-/// 次序按「摆不下时先舍谁」排：耗时最先——它是这一卷做完之后的一个旁证；
-/// 定档页次之——追下去要展开那一卷才看得清；页数压后——它是这一卷有多厚，
-/// 与卷名一起就已经是一句话。
-const DROPPED_IN_TURN: [Column; 3] = [Column::Elapsed, Column::Driver, Column::Pages];
+/// 与[卷表](VolumeColumn)同一个形状——行首记号与名字恒在，其余按一个固定次序砍。
+/// 列的选法答的是**展开一卷要问的那一件事**：哪一页把整卷的档位拉下来。
+/// 因此从左到右是「这一页怎么样 · 是哪一页 · 多大 · 判成哪一档 · 凭什么 · 数是多少」，
+/// 一路由结论走向证据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PageColumn {
+    /// 行首记号：这一页要不要紧，一个字符说完。**恒在。**
+    Mark,
+    /// 页名（成员名，只印最后那一段）。**恒在**，摆不下时从中间省略。
+    Name,
+    /// 这一页的输出尺寸。
+    Size,
+    /// 这一页判成的那一档。彩色分支与失败页没有这一格。
+    Verdict,
+    /// 判成这一档的理由。
+    Reason,
+    /// 各候选的判据值排成一串。
+    Scores,
+}
+
+impl Column for PageColumn {
+    const ALL: &'static [Self] = &[
+        Self::Mark,
+        Self::Name,
+        Self::Size,
+        Self::Verdict,
+        Self::Reason,
+        Self::Scores,
+    ];
+
+    /// **砍列的次序：判据 → 尺寸 → 理由。**
+    ///
+    /// 记号、页名与判定不在这里边——**判成哪一档就是这一副要答的那件事**，
+    /// 而先要认得出这是哪一页、它要不要紧。
+    ///
+    /// 次序按「摆不下时先舍谁」排：判据一串最先——它是证据，比结论深一层，
+    /// 而它也是这张表上最宽的一格；尺寸次之——宽溢出与兜底那两件事行尾那个词已经说了；
+    /// 理由压后——它一个词就说清「这一档是怎么来的」，与判定挨着才读得懂。
+    const DROPPED_IN_TURN: &'static [Self] = &[Self::Scores, Self::Size, Self::Reason];
+
+    const NARROWED: Self = Self::Name;
+
+    fn head(self) -> &'static str {
+        match self {
+            Self::Mark => "记号",
+            Self::Name => "页名",
+            Self::Size => "尺寸",
+            Self::Verdict => "判定",
+            Self::Reason => "理由",
+            Self::Scores => "判据",
+        }
+    }
+
+    /// 一列都不靠右：尺寸是一对数中间夹着 `×`，靠右摆反而让 `×` 对不齐；
+    /// 其余各列都是词或名字。
+    fn to_the_right(self) -> bool {
+        false
+    }
+}
 
 /// 各列有多宽：**那一列上最长的一格**，列头也算一格。
 ///
 /// 起手就是各列的列头（[`Widths::new`]），逐行往上撑（[`Widths::widen`]）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Widths([usize; Column::ALL.len()]);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Widths<C: Column> {
+    /// 一列一格，次序与 [`Column::ALL`] 相同。
+    of: Vec<usize>,
+    /// 量的是**哪一张表**的列。带上它，两张表的量不会串到一处去。
+    which: PhantomData<C>,
+}
 
-impl Widths {
+impl<C: Column> Widths<C> {
     /// 起手：每一列先按它的**列头**量。
     pub(super) fn new() -> Self {
-        let mut widths = Self([0; Column::ALL.len()]);
-        for column in Column::ALL {
-            widths.widen(column, column.head());
+        let mut widths = Self {
+            of: vec![0; C::ALL.len()],
+            which: PhantomData,
+        };
+        for column in C::ALL {
+            widths.widen(*column, column.head());
         }
         widths
     }
 
     /// 这一列上又来了一格：撑得宽就撑宽。
-    pub(super) fn widen(&mut self, column: Column, text: &str) {
+    pub(super) fn widen(&mut self, column: C, text: &str) {
         let width = usize::from(wrap::width(text));
-        let slot = &mut self.0[column.at()];
+        let slot = &mut self.of[column.at()];
         *slot = (*slot).max(width);
     }
 
     /// 这一列多宽。
-    pub(super) fn of(&self, column: Column) -> usize {
-        self.0[column.at()]
+    pub(super) fn of(&self, column: C) -> usize {
+        self.of[column.at()]
     }
 
-    /// 把这一列**收窄**到这么多格。砍无可砍时卷名走这一条（见 [`elide`]）。
-    pub(super) fn narrow(&mut self, column: Column, width: usize) {
-        self.0[column.at()] = width;
+    /// 把这一列**收窄**到这么多格。砍无可砍时名字那一列走这一条（见 [`elide`]）。
+    pub(super) fn narrow(&mut self, column: C, width: usize) {
+        self.of[column.at()] = width;
     }
 }
 
 /// 这几列并排摆下来占几格：各列的宽度，加上列与列之间那几个 [`GAP`]。
-pub(super) fn line_width(kept: &[Column], widths: &Widths) -> usize {
+pub(super) fn line_width<C: Column>(kept: &[C], widths: &Widths<C>) -> usize {
     let cells: usize = kept.iter().map(|column| widths.of(*column)).sum();
     cells + GAP * kept.len().saturating_sub(1)
 }
 
-/// **这么宽的一格上留得下哪几列**：按 [`DROPPED_IN_TURN`] 那个次序砍，砍到摆得下为止。
+/// **这么宽的一格上留得下哪几列**：按 [`Column::DROPPED_IN_TURN`] 那个次序砍，
+/// 砍到摆得下为止。
 ///
-/// 三列都砍完仍摆不下时就到此为止：**记号与卷名恒在**，卷名那一列由 [`elide`] 收窄。
-/// 屏再窄也要认得出这是哪一卷、它出没出事——那正是这张表存在的理由。
-pub(super) fn fit(room: usize, widths: &Widths) -> Vec<Column> {
-    let mut kept = Column::ALL.to_vec();
-    for victim in DROPPED_IN_TURN {
+/// 三列都砍完仍摆不下时就到此为止：恒在的那几列一列不让，
+/// [名字那一列](Column::NARROWED)由 [`plan`] 收窄。
+/// 屏再窄也要认得出这是哪一行、它出没出事——那正是这张表存在的理由。
+pub(super) fn fit<C: Column>(room: usize, widths: &Widths<C>) -> Vec<C> {
+    let mut kept = C::ALL.to_vec();
+    for victim in C::DROPPED_IN_TURN {
         if line_width(&kept, widths) <= room {
             break;
         }
-        kept.retain(|column| *column != victim);
+        kept.retain(|column| column != victim);
     }
     kept
+}
+
+/// **这么宽的一格上这张表怎么摆**：先[砍列](fit)，砍无可砍再把
+/// [名字那一列](Column::NARROWED)收窄到摆得下为止。出的是留下来的那几列。
+///
+/// 两张表共用这一处，砍与收窄因此不会一张表做全、另一张只做一半。
+pub(super) fn plan<C: Column>(room: usize, widths: &mut Widths<C>) -> Vec<C> {
+    let kept = fit(room, widths);
+    let over = line_width(&kept, widths).saturating_sub(room);
+    if over > 0 {
+        widths.narrow(
+            C::NARROWED,
+            widths.of(C::NARROWED).saturating_sub(over).max(1),
+        );
+    }
+    kept
+}
+
+/// **一行摆出来**：留哪几列由 `kept` 说了算，每一列占几格由 `widths` 说了算。
+///
+/// 靠左还是靠右问 [`Column::to_the_right`]。行尾那几句**不占格**，也不参与对齐——
+/// 它们是句子，摆不下时跟着整行折下去。
+///
+/// 行首恒留一格空白：那一格既让表离开框线，也是行尾那句话折下来时的**悬挂缩进**
+/// （[`crate::wrap`]：缩进跟着折下来的每一行走）。
+pub(super) fn lay<C: Column>(
+    kept: &[C],
+    widths: &Widths<C>,
+    mut cell: impl FnMut(C) -> String,
+    notes: &[String],
+) -> String {
+    let mut line = String::from(" ");
+    for (at, column) in kept.iter().enumerate() {
+        if at > 0 {
+            line.push_str(&" ".repeat(GAP));
+        }
+        let room = widths.of(*column);
+        let text = elide(&cell(*column), room);
+        let pad = " ".repeat(room.saturating_sub(usize::from(wrap::width(&text))));
+        if column.to_the_right() {
+            line.push_str(&pad);
+            line.push_str(&text);
+        } else {
+            line.push_str(&text);
+            line.push_str(&pad);
+        }
+    }
+    for note in notes {
+        line.push_str(&" ".repeat(GAP));
+        line.push_str(note);
+    }
+    // 行尾那几格空白留着没有意义：折行那一头本来也要去掉它们（[`crate::wrap::fold`]）。
+    line.trim_end().to_owned()
 }
 
 /// 一格摆不下时**从中间省略**，两头留着：书名与第几卷都要认得出。
@@ -212,14 +369,14 @@ mod tests {
     use super::*;
 
     /// 一份够宽的量：各列都比列头宽一点。
-    fn measured() -> Widths {
+    fn measured() -> Widths<VolumeColumn> {
         let mut widths = Widths::new();
-        widths.widen(Column::Mark, "✓");
-        widths.widen(Column::Name, "棋魂 07");
-        widths.widen(Column::Pages, "184");
-        widths.widen(Column::Base, "2bit+FS");
-        widths.widen(Column::Driver, "087.png");
-        widths.widen(Column::Elapsed, "1m12s");
+        widths.widen(VolumeColumn::Mark, "✓");
+        widths.widen(VolumeColumn::Name, "棋魂 07");
+        widths.widen(VolumeColumn::Pages, "184");
+        widths.widen(VolumeColumn::Base, "2bit+FS");
+        widths.widen(VolumeColumn::Driver, "087.png");
+        widths.widen(VolumeColumn::Elapsed, "1m12s");
         widths
     }
 
@@ -229,21 +386,21 @@ mod tests {
         let widths = measured();
 
         // 「记号」两个汉字四格，而记号本身一格：列头撑着这一列。
-        assert_eq!(widths.of(Column::Mark), 4);
+        assert_eq!(widths.of(VolumeColumn::Mark), 4);
         // 「基准档」六格，`2bit+FS` 七格：这一次是格撑着列头。
-        assert_eq!(widths.of(Column::Base), 7);
+        assert_eq!(widths.of(VolumeColumn::Base), 7);
         // 中文两格：「棋魂 07」是 2+2+1+2 = 7 格，不是七个字符。
-        assert_eq!(widths.of(Column::Name), 7);
+        assert_eq!(widths.of(VolumeColumn::Name), 7);
     }
 
     /// **给一个宽度，问该留哪几列**：按 `耗时 → 定档页 → 页数` 那个次序砍。
     ///
-    /// 这一条钉的是那个次序本身——它只有 [`DROPPED_IN_TURN`] 一处出处，
+    /// 这一条钉的是那个次序本身——它只有 [`Column::DROPPED_IN_TURN`] 一处出处，
     /// 而屏上砍成什么样全由 [`fit`] 说了算。
     #[test]
     fn a_narrower_box_drops_its_columns_in_one_fixed_order() {
         let widths = measured();
-        let all = Column::ALL.to_vec();
+        let all = VolumeColumn::ALL.to_vec();
         let full = line_width(&all, &widths);
 
         assert_eq!(fit(full, &widths), all, "摆得下就一列都不砍");
@@ -251,24 +408,77 @@ mod tests {
 
         // 窄一格：先砍耗时。
         let without_elapsed = vec![
-            Column::Mark,
-            Column::Name,
-            Column::Pages,
-            Column::Base,
-            Column::Driver,
+            VolumeColumn::Mark,
+            VolumeColumn::Name,
+            VolumeColumn::Pages,
+            VolumeColumn::Base,
+            VolumeColumn::Driver,
         ];
         assert_eq!(fit(full - 1, &widths), without_elapsed);
 
         // 再窄：定档页跟着走。
-        let without_driver = vec![Column::Mark, Column::Name, Column::Pages, Column::Base];
+        let without_driver = vec![
+            VolumeColumn::Mark,
+            VolumeColumn::Name,
+            VolumeColumn::Pages,
+            VolumeColumn::Base,
+        ];
         assert_eq!(
             fit(line_width(&without_elapsed, &widths) - 1, &widths),
             without_driver
         );
 
         // 再窄：页数也让掉，剩下记号、卷名、基准档三列。
-        let bare = vec![Column::Mark, Column::Name, Column::Base];
+        let bare = vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Base];
         assert_eq!(fit(line_width(&without_driver, &widths) - 1, &widths), bare);
+    }
+
+    /// **逐页那张表按它自己那个次序砍：判据 → 尺寸 → 理由**
+    /// （`p3-session-legibility/11`）。
+    ///
+    /// 与卷表并排问一遍，钉的是「两张表各有各的次序，而砍的是同一套代码」：
+    /// 记号、页名与**判定**在最窄那一档上仍在——展开一卷要答的正是「这一页判成哪一档」。
+    #[test]
+    fn the_per_page_table_drops_its_own_columns_in_its_own_order() {
+        let mut widths: Widths<PageColumn> = Widths::new();
+        widths.widen(PageColumn::Mark, "!");
+        widths.widen(PageColumn::Name, "087.png");
+        widths.widen(PageColumn::Size, "1182×1680");
+        widths.widen(PageColumn::Verdict, "2bit+FS");
+        widths.widen(PageColumn::Reason, "特例页单独定档");
+        widths.widen(
+            PageColumn::Scores,
+            "1bit+FS 32.000 · 2bit 20.000 · 4bit 8.000 · 8bit 2.000",
+        );
+        let all = PageColumn::ALL.to_vec();
+        let full = line_width(&all, &widths);
+
+        assert_eq!(fit(full, &widths), all, "摆得下就一列都不砍");
+        // 判据一串最先让掉：它是这张表上最宽的一格，也是比结论深一层的证据。
+        let without_scores = vec![
+            PageColumn::Mark,
+            PageColumn::Name,
+            PageColumn::Size,
+            PageColumn::Verdict,
+            PageColumn::Reason,
+        ];
+        assert_eq!(fit(full - 1, &widths), without_scores);
+        // 再窄：尺寸走，理由留着。
+        let without_size = vec![
+            PageColumn::Mark,
+            PageColumn::Name,
+            PageColumn::Verdict,
+            PageColumn::Reason,
+        ];
+        assert_eq!(
+            fit(line_width(&without_scores, &widths) - 1, &widths),
+            without_size
+        );
+        // 最窄那一档：记号、页名、判定三列。
+        let bare = vec![PageColumn::Mark, PageColumn::Name, PageColumn::Verdict];
+        for room in [0, 1, 5, 12, line_width(&without_size, &widths) - 1] {
+            assert_eq!(fit(room, &widths), bare, "{room} 格上砍成了别的样子");
+        }
     }
 
     /// **最窄那一档上卷名与行首记号仍在。**
@@ -280,11 +490,23 @@ mod tests {
 
         for room in [0, 1, 2, 5, 10, 20] {
             let kept = fit(room, &widths);
-            assert!(kept.contains(&Column::Mark), "{room} 格上砍掉了行首记号");
-            assert!(kept.contains(&Column::Name), "{room} 格上砍掉了卷名");
-            assert!(!kept.contains(&Column::Elapsed), "{room} 格上还留着耗时");
-            assert!(!kept.contains(&Column::Driver), "{room} 格上还留着定档页");
-            assert!(!kept.contains(&Column::Pages), "{room} 格上还留着页数");
+            assert!(
+                kept.contains(&VolumeColumn::Mark),
+                "{room} 格上砍掉了行首记号"
+            );
+            assert!(kept.contains(&VolumeColumn::Name), "{room} 格上砍掉了卷名");
+            assert!(
+                !kept.contains(&VolumeColumn::Elapsed),
+                "{room} 格上还留着耗时"
+            );
+            assert!(
+                !kept.contains(&VolumeColumn::Driver),
+                "{room} 格上还留着定档页"
+            );
+            assert!(
+                !kept.contains(&VolumeColumn::Pages),
+                "{room} 格上还留着页数"
+            );
         }
     }
 
@@ -337,24 +559,63 @@ mod tests {
     fn a_row_is_as_wide_as_its_columns_plus_the_gaps_between_them() {
         let widths = measured();
 
-        assert_eq!(line_width(&[], &widths), 0, "一列都没有就不占地方");
-        assert_eq!(line_width(&[Column::Mark], &widths), 4, "一列不加空");
         assert_eq!(
-            line_width(&[Column::Mark, Column::Name], &widths),
+            line_width::<VolumeColumn>(&[], &widths),
+            0,
+            "一列都没有就不占地方"
+        );
+        assert_eq!(line_width(&[VolumeColumn::Mark], &widths), 4, "一列不加空");
+        assert_eq!(
+            line_width(&[VolumeColumn::Mark, VolumeColumn::Name], &widths),
             4 + GAP + 7
         );
     }
 
-    /// **收窄之后那一列就是那么宽**：砍无可砍时卷名走的就是这一条。
+    /// **砍无可砍时名字那一列收窄，这一行因此正好摆得下**（[`plan`]）。
+    ///
+    /// 两张表共用这一步：收窄哪一列由 [`Column::NARROWED`] 一处说了算。
     #[test]
-    fn narrowing_a_column_makes_the_row_fit() {
+    fn narrowing_the_name_column_makes_the_row_fit() {
         let mut widths = measured();
-        let kept = vec![Column::Mark, Column::Name, Column::Base];
         let room = 16;
 
-        let over = line_width(&kept, &widths).saturating_sub(room);
-        widths.narrow(Column::Name, widths.of(Column::Name) - over);
+        let kept = plan(room, &mut widths);
 
-        assert_eq!(line_width(&kept, &widths), room);
+        assert_eq!(
+            kept,
+            vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Base]
+        );
+        assert_eq!(line_width(&kept, &widths), room, "收窄之后没有正好摆下");
+        // 名字那一列收得再窄也留一格：它恒在（见 [`plan`]）。
+        let mut sliver: Widths<PageColumn> = Widths::new();
+        sliver.widen(PageColumn::Name, "087.png");
+        let kept = plan(0, &mut sliver);
+        assert!(kept.contains(&PageColumn::Name));
+        assert_eq!(sliver.of(PageColumn::Name), 1);
+    }
+
+    /// **一行摆出来：靠左的靠左、靠右的靠右，行尾那几句不占格**（[`lay`]）。
+    #[test]
+    fn a_row_pads_each_cell_to_its_column_and_leaves_the_notes_outside() {
+        let widths = measured();
+        let kept = vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Pages];
+
+        let row = lay(
+            &kept,
+            &widths,
+            |column| match column {
+                VolumeColumn::Mark => "!".to_owned(),
+                VolumeColumn::Name => "棋魂 07".to_owned(),
+                VolumeColumn::Pages => "7".to_owned(),
+                _ => String::new(),
+            },
+            &["隔离".to_owned()],
+        );
+
+        // 行首那一格空白（悬挂缩进），页数靠右摆在四格里（列头「页数」四格）。
+        assert!(row.starts_with(" !"), "{row}");
+        assert!(row.contains("棋魂 07"), "{row}");
+        assert!(row.contains("   7"), "页数没靠右：{row}");
+        assert!(row.ends_with("隔离"), "行尾那一句不在：{row}");
     }
 }

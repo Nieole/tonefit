@@ -41,6 +41,10 @@ use tonefit::{
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
 use tonefit::{Instruction, RunOutcome};
+// 「哪几页要紧」同理（见 [`Notable`]），只是它连 `--no-default-features` 那一趟的用例
+// 一起要，因此挂的是 `any(feature = "tui", test)`。
+#[cfg(any(feature = "tui", test))]
+use tonefit::{GeometryGate, Panel, Reason};
 
 /// **命令行那一侧的拼装**：把[行](Row)与[格](Cell)摆成纯文本那一副（ADR 0016）。
 pub mod plain;
@@ -329,6 +333,110 @@ pub fn pages(volume: &VolumeReport) -> Vec<Row> {
         rows.push(page_row(page));
     }
     rows
+}
+
+/// 一页**要紧在哪儿**（`CONTEXT.md` 的《会话》：要紧的页）。
+///
+/// 展开一卷的目的通常只有一个——**哪一页把整卷拉下来**——而两百页的卷里那几页不该由
+/// 用户自己在四百行里找（`p3-session-legibility/11`）。这个枚举就是「哪几页」那一问的
+/// **判据**，[`notable`] 是问它的唯一入口：屏上默认列的就是要紧在某一处的那些页
+/// （`crate::session::draw::pages`）。
+///
+/// **七种，不多不少。** 前六种逐条对上 `CONTEXT.md` 的《语义色》在**页**这一级上列出的
+/// 那几样——[失败页](Self::Failed)归「出事」，另外五样归「注意」；末一种
+/// （[定档页](Self::Driver)）一档都不占，它不是出了什么事，而是**这一卷的答案**：
+/// 基准档就是它判出来的，非在不可。
+///
+/// 一页可以同时要紧在**好几处**（[`notable`] 因此逐页出的是一列）：以高为准的跨页卷里，
+/// 定档页多半也是一张[宽溢出的页](Self::Overflowed)。
+///
+/// **有几对凑不到一起**，而这里不去守着它们——那是库那一侧的事实，不是这一处的判据：
+/// 退回过[兜底上界](Self::Backstopped)的页恒不超过面板宽
+/// （[`Report::backstopped`](tonefit::Report::backstopped) 写着两张清单不重叠），
+/// [特例页](Self::Outlier)与[定档页](Self::Driver)也碰不到面（定档页站在其余页那一组上，
+/// 而特例页不在那一组里）。
+///
+/// 屏上那个词与那个行首记号在画法那一层配（`crate::session::draw::pages`）：
+/// 这里只答「要不要紧」，不答「屏上写哪两个字」。
+///
+/// **读它的只有会话**（默认那一副只列要紧的页；命令行那一路一页不落地全印），
+/// 它因此与 [`failing_pages`] 同一副写法挂在特性后面。挂的是 `any(feature = "tui", test)`
+/// 而不是光 `feature = "tui"`：判据摆在**终端库外面**，`--no-default-features`
+/// 那一趟照跑它自带的用例（闸门的第二条）——而 `tui` 关掉的非测试那一趟没人读它。
+/// 同一副写法见 `src/main.rs` 那一句 `mod session`。
+#[cfg(any(feature = "tui", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notable {
+    /// 失败页：这一页根本没解出来，输出里躺着的是一张留白占位页。
+    Failed,
+    /// 部分救回页：解到哪个像素算哪个像素，缺的那一段留成纸白。
+    Salvaged,
+    /// 特例页：判据显著偏离卷内分布，不参与上包络、单独定档（ADR 0006 决定第 5 条）。
+    Outlier,
+    /// 几何门不成立的页：源比目标小，抖动被单独关掉（ADR 0007 决定第 2、3 条）。
+    OutsideTheGate,
+    /// 宽溢出的页：输出宽超过面板宽，翻它要阅读器横向平移。
+    Overflowed,
+    /// 目标尺寸被**兜底上界**改过的页：它没按这一趟点名的适配方式出，退回了 fit-inside。
+    Backstopped,
+    /// 定档页：卷级上包络站在它身上，**基准档就是它的判定**。
+    Driver,
+}
+
+/// 这一卷逐页各**要紧在哪几处**：与 [`VolumeReport::pages`] **等长同序**，
+/// 一页一列，空的那一列就是「这一页不要紧」。
+///
+/// **判据只有这一处**（见 [`Notable`]）：屏上默认列哪几页、行首挂什么记号、抬头上
+/// 「要紧的页有几张」那个数，三处问的都是它。
+///
+/// 六种里五种问得到页自己身上（失败、部分救回、几何门、兜底、判定理由），另外两种要
+/// **卷与面板**才答得出：宽溢出比的是这一页的输出宽与 `panel` 的宽（与
+/// [`Report::wider_than_the_panel`](tonefit::Report::wider_than_the_panel) 同一条判据，
+/// 那一头数的是整趟、这一头数的是一卷）；定档页是这一卷上包络指出的那一页
+/// （[`Envelope::driver`](tonefit::Envelope::driver) 的序号指进 `volume.pages`）。
+///
+/// 跳过的卷出的是**空的一列**：它一页都没重做，逐页结果一条都没有
+/// （与 [`pages`] 那道守卫同一件事）。
+///
+/// 它与 [`Notable`] 一起挂在特性后面，理由写在那一头。
+#[cfg(any(feature = "tui", test))]
+pub fn notable(volume: &VolumeReport, panel: Panel) -> Vec<Vec<Notable>> {
+    // 定档页只有上包络定出来的卷才有：`--per-page` 与覆盖那两种卷级判定里没有一页
+    // 站在分位秩上（见 `tonefit::VolumeVerdict`）。
+    let driver = match volume.verdict {
+        Some(VolumeVerdict::Envelope(envelope)) => Some(envelope.driver),
+        _ => None,
+    };
+    volume
+        .pages
+        .iter()
+        .enumerate()
+        .map(|(at, page)| {
+            let mut why = Vec::new();
+            if page.failure().is_some() {
+                why.push(Notable::Failed);
+            }
+            if page.salvage().is_some() {
+                why.push(Notable::Salvaged);
+            }
+            if page.verdict().map(|verdict| verdict.reason) == Some(Reason::Outlier) {
+                why.push(Notable::Outlier);
+            }
+            if page.gate() == Some(GeometryGate::Broken) {
+                why.push(Notable::OutsideTheGate);
+            }
+            if page.size.width > panel.resolution.width {
+                why.push(Notable::Overflowed);
+            }
+            if page.backstopped() {
+                why.push(Notable::Backstopped);
+            }
+            if driver == Some(at) {
+                why.push(Notable::Driver);
+            }
+            why
+        })
+        .collect()
 }
 
 /// **一整卷没做成**的那一[行](Row)（05 号票的那几卷，Q133）。
@@ -2379,6 +2487,125 @@ mod tests {
                 },
             ],
         }
+    }
+
+    /// **哪几页要紧，判据只有这一处**（[`notable`]，`p3-session-legibility/11`）。
+    ///
+    /// 七种逐条问一遍，外加两条边界：一页可以同时要紧在**好几处**，
+    /// 而**跳过的卷一页都不要紧**（它连逐页结果都没有）。
+    ///
+    /// 屏上那个词与那个记号不在这里问（那是画法那一层的事，
+    /// 见 `crate::session::draw::pages`）：这一条问的是「要不要紧」本身。
+    #[test]
+    fn which_pages_matter_is_judged_in_exactly_one_place() {
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let panel = profile.panel();
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        // 定档页那一张加失败页那一张：夹具本来就是这两张。
+        let isolated = a_volume_worth_a_row_of_each_kind();
+        assert_eq!(
+            notable(&isolated, panel),
+            vec![vec![Notable::Driver], vec![Notable::Failed]]
+        );
+
+        // 换掉头一页，逐种问一遍。定档页那一格跟着它走（`Envelope::driver` 指着第 0 页）。
+        let processed = |gate: GeometryGate, reason: Reason, backstopped: bool| Processed {
+            crop: nothing_trimmed(),
+            backstopped,
+            cut: None,
+            spread_candidate: false,
+            scaling: typical_scaling(),
+            color: PageColor::Gray,
+            branch: PageBranch::Gray {
+                gate,
+                scores: Vec::new(),
+                verdict: Verdict { candidate, reason },
+            },
+        };
+        let judged = |size: Size, outcome: PageOutcome| {
+            let mut volume = a_volume_worth_a_row_of_each_kind();
+            volume.pages[0].size = size;
+            volume.pages[0].outcome = outcome;
+            notable(&volume, panel).swap_remove(0)
+        };
+        let ordinary = Size::new(1264, 1680);
+
+        // 特例页：判定的理由说得出它单独定了档。
+        assert_eq!(
+            judged(
+                ordinary,
+                PageOutcome::Whole(processed(GeometryGate::Holds, Reason::Outlier, false))
+            ),
+            vec![Notable::Outlier, Notable::Driver]
+        );
+        // 几何门不成立。
+        assert_eq!(
+            judged(
+                ordinary,
+                PageOutcome::Whole(processed(
+                    GeometryGate::Broken,
+                    Reason::OutsideTheGate,
+                    false
+                ))
+            ),
+            vec![Notable::OutsideTheGate, Notable::Driver]
+        );
+        // 部分救回。
+        assert_eq!(
+            judged(
+                ordinary,
+                PageOutcome::Salvaged {
+                    page: processed(GeometryGate::Holds, Reason::VolumeEnvelope, false),
+                    salvage: Salvage::from_share(0.62),
+                }
+            ),
+            vec![Notable::Salvaged, Notable::Driver]
+        );
+        // 兜底上界退回过。**退回之后恒不超过面板宽**（见 [`Report::backstopped`]），
+        // 因此这一张拿的是普通尺寸——那一对凑不到一起，不拿它当「好几处」的例子。
+        assert_eq!(
+            judged(
+                ordinary,
+                PageOutcome::Whole(processed(GeometryGate::Holds, Reason::VolumeEnvelope, true))
+            ),
+            vec![Notable::Backstopped, Notable::Driver]
+        );
+        // **一页要紧在好几处**：以高为准的跨页卷里，定档页多半也是一张宽溢出的页。
+        assert_eq!(
+            judged(
+                Size::new(panel.resolution.width + 1, 1680),
+                PageOutcome::Whole(processed(
+                    GeometryGate::Holds,
+                    Reason::VolumeEnvelope,
+                    false
+                ))
+            ),
+            vec![Notable::Overflowed, Notable::Driver]
+        );
+        // 贴着面板宽的那一页**不算**宽溢出：判据是「超过」，不是「够到」。
+        assert_eq!(
+            judged(
+                ordinary,
+                PageOutcome::Whole(processed(
+                    GeometryGate::Holds,
+                    Reason::VolumeEnvelope,
+                    false
+                ))
+            ),
+            vec![Notable::Driver]
+        );
+
+        // 定档页只有上包络定出来的卷才有：`--per-page` 那一种一页都不站在分位秩上。
+        let mut per_page = a_volume_worth_a_row_of_each_kind();
+        per_page.verdict = Some(VolumeVerdict::PerPage);
+        assert_eq!(notable(&per_page, panel)[0], Vec::new());
+
+        // 跳过的卷一页都没有：逐页结果一条都没有，这一列因此是空的
+        // （与 [`pages`] 那道守卫同一件事）。
+        let mut skipped = a_volume_worth_a_row_of_each_kind();
+        skipped.pages = Vec::new();
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 184 });
+        assert!(notable(&skipped, panel).is_empty());
     }
 
     /// **卷级与逐页出的是行，每一行说得出它是什么行**（ADR 0016）。
