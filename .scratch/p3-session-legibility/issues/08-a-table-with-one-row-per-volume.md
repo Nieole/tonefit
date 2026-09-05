@@ -302,3 +302,71 @@ lib 两趟都是 **210**（一格没动），`tests/` 那十几个二进制两�
 - **Q154**（新，**待处理**，评审揪出来的）：卷表的四种记号里三种是东亚歧义宽度，
   而 `wrap::width` 一律算一格；按 CJK 配置的终端上整张表会逐行参差。
   约定是既有的，本票只把这条限制写进 `columns` 的模块文档。
+
+### Q130 — 按「屏上那几块」切开之后，仍有两样东西跨着两块
+
+- **From:** 票 `p3-session-legibility/01`（评审揪出来的两条判断题）
+- **Kind:** 票面没想到的第三种情形（分块之后才看得见的耦合）
+- **Where:** 一、`src/session/draw.rs` 里的 `WITHOUT_A_FAILED_PAGE` 与
+  `WITH_A_FAILED_PAGE` 两张快照；二、`src/session/draw/bars.rs` 头上那句
+  `use super::footer::{START_KEYS, stopping_name};`
+- **Why it did not block:** 两样都不是搬错了地方，是**那几块本来就在这两处搭着**：
+  - 那两张快照钉的是 `main_pane` 画出来的**整个主区**（横条两条加报告区正文），
+    因此跟着 `main_pane` 留在布局那一块。代价是：`render` 改一句措辞，就要回到布局
+    模块重录这两张。
+  - `START_KEYS` 与 `stopping_name` 是**两块共用的措辞**（全局条的抬头与屏底那一行
+    说的是同一件事），措辞只有一处出处是对的，但「屏上那一块」的分法没给这种东西一个家，
+    它眼下寄在屏底名下。
+- **What this ticket actually did:** 两样都**照原样搬，没有动**。本票是纯搬家，
+  拆快照或另立一处「两块共用的措辞」都是重新设计，而后面十二张票要往主区加总览与卷表
+  （spec 的《Implementation Decisions》第一条），那时这两处的形状十有八九要重定。
+- **Whose call:** 下一张动主区的票（把两条横条与摘要合并成「总览」的那一张）——
+  它会重录这两张快照，届时顺手决定它们归谁
+- **两样各怎么收的（`p3-session-legibility/08`）:**
+  1. **两张快照归了报告区**（`src/session/draw/report.rs` 的 `mod tests`，改名成
+     `the_report_pane_without_a_failed_page` 与 `the_report_pane_with_a_failed_page`）。
+     判据是「它钉的是谁画出来的字」：那两张里逐行的字全部出自报告区那一格
+     （抬头几行 + 卷表 + 失败页），总览块那五行自己另有四张快照在 `overview` 里。
+     搬过去之后，改一句报告措辞只重录报告区那一块，布局模块一行不动——那正是这一条记的代价。
+     `main_snapshot` 那个探针留在 `probe`（它画的是**主区整块**，本来就是跨块的探针）。
+  2. **`START_KEYS` 与 `stopping_name` 照原样留在屏底名下，判定为不动。**
+     它们是**两块共用的一份措辞**，而「一处出处」本来就要求它只有一个家；
+     「屏上那一块」的分法分的是**画法**，不是措辞，给措辞另立一个模块只会让
+     「这句话住在哪儿」多一层要猜的东西。谁引用谁在文档里写着，读得出来就够了。
+- **处置：** 了结（`p3-session-legibility/08` 收的）。
+
+### Q133 — 卷级失败的卷没有自己的一种「行」，而卷表要给它一行
+
+- **From:** 票 `p3-session-legibility/02`（评审 Spec 轴揪出来的）
+- **Kind:** 票面没想到的第三种情形
+- **Where:** `src/render.rs` 的 `failed_volume_tail`（卷级失败那一小结）与 `RowKind`；
+  P3 spec 的《Implementation Decisions》第六条那张卷表：
+  「**卷级失败的卷**：记号红，档位那一列写「没做成」，理由跟在后面（成句，不拆格）」，
+  示意图上那一行是 `✗ 消失的那卷  —  没做成：卷根不在了`
+- **Why it did not block:** 本票降到字段级的是**卷级与逐页那两段**，而那两段吃的是
+  `VolumeReport`。卷级失败的卷**连 `VolumeReport` 都没有**——它在 `Report::failed_volumes`
+  里，只带着路径与一句原因，`render::volume` 够不着它。票面同时明写末尾那几小结
+  「一个都不要动」，`failed_volume_tail` 因此原样留着。
+- **What this ticket actually did:** `RowKind` 里**没有**卷级失败那一种。
+  「失败的卷是哪一种行」这条验收按**有页失败、因此被隔离的卷**答的：那种卷的卷级那一段
+  多出一行 `RowKind::Isolated`（用例
+  `a_failed_page_and_the_volume_it_isolates_are_each_their_own_kind_of_row`）。
+  两种「失败的卷」是两件事，`CONTEXT.md` 的《失败》分得很清楚。
+- **Whose call:** 画卷表那一张票。它得决定卷级失败的卷怎么进表——多一种 `RowKind`
+  并让某个函数吃 `Report::failed_volumes`，还是让卷表自己从 `Report` 那一列里取。
+  前者措辞仍只有一处（那一句原因今天在 `failed_volume_tail` 里），后者会长出第二个出处。
+- **走了哪条（`p3-session-legibility/08`）:** **第一条**。`RowKind` 多一种
+  `FailedVolume`，`render::failed_volume(&VolumeFailure) -> Row` 出那一行（两格：
+  路径与那句原因，成句不拆）。关键的一步是**让命令行那一路也读它**：
+  `failed_volume_tail` 里逐条那两行改成 `plain::line(&failed_volume(failure))`，
+  `plain::line` 因此提为 `pub(super)`，`RowKind::FailedVolume` 在那个 `match` 里多一条
+  （形状与从前逐字相同，报告印出去的字节一个没变）。这一步不只是为了漂亮：
+  不这么接，那一行在关掉 `tui` 的构建里就没有一个构造者，`dead_code` 当场红——
+  而真正的收益是**那一句原因确实只有一处出处**，卷表与末尾那一小结读的是同一行。
+- **档位那一列另立了一个函数，不是一格:** `render::base_column(rows) -> Option<String>`
+  答「这一卷判成哪一档，或者它为什么没有一档」（基准档 / 覆盖 X / 逐页 / 跳过 / 没做成）。
+  **没有走「给跳过的卷加一格 `Field::Base`」那条**：`CONTEXT.md` 的《格》明写着
+  「跳过的卷没有基准档那一格」，加上去就是改一条已有词条的含义，而那要先拍板
+  （`CLAUDE.md`《改 CONTEXT.md 的规矩》）。函数这条路把五种说法收在措辞那一层的一处，
+  一格的在场与否照旧作数。
+- **处置：** 了结（`p3-session-legibility/08` 收的）。

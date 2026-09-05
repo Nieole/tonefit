@@ -130,3 +130,22 @@ cargo 跳过它的文档，画法这一层的文档链接因此从来不进这�
 已就地改掉，其余两条判断题落成 Q130。`src/session.rs` 上原先多写的一句规矩
 （「不许把只有画法读得到的东西搬到另一半去」）收回了——那句 `docs/agents/gate.md` 已有，
 是重复立规。
+
+### 停车场结转
+
+### Q129 — 拆开之后有一条用例跨着两块，把 `Prompt` 与它两个字段的可见性顶开了
+
+- **From:** 票 `p3-session-legibility/01`
+- **Kind:** 票面没想到的第三种情形（分块之后才看得见的耦合）
+- **Where:** `src/session/draw/bars.rs` 的
+  `the_overall_bar_says_on_its_title_that_the_run_is_stopping`，末尾那一段读的是
+  `src/session/draw/footer.rs` 的 `running_prompt(..).keys`
+- **Why it did not block:** 那一段问的是「全局条的抬头与屏底那一行用的是同一个
+  `stopping_name`」——**它本来就该跨两块问**，措辞只有一处出处正是它要钉的东西。
+  而本票是纯搬家，一条用例都不许改写。
+- **What this ticket actually did:** 用例照它的题目（全局条的抬头）留在 `bars.rs`，
+  `Prompt` 与它的 `keys`／`what` 两个字段从私有升成 `pub(super)`——拆之前它们同在一个
+  文件里，私有就够。`running_prompt` 与 `stopping_name` 同样是 `pub(super)`：
+  前者这条用例要，后者全局条的抬头本来就要。
+- **Whose call:** 无（真要把 `Prompt` 收回私有，得把那条断言拆成两半，而那是改用例）
+- **处置：** 了结。可见性按上面那条放开，用例一个字没改；`Prompt` 出不了 `draw` 这一棵。

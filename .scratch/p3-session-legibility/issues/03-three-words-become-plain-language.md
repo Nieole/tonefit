@@ -180,3 +180,76 @@ diff /tmp/expected.txt tests/golden-snapshot.txt
   英文一个不动，`CONTEXT.md`《尚未确立》那处普通中文的「离群」留着。
 - **Q135**（了结，新）：票面说《判据》有「三个词条」要改名，实际只有两条；「主体」补成词条。
 - 停车场里唯一引着这三个词的一处（Q132 现状里那行快照）跟着换了词，**条目内容与处置没动**。
+
+### 停车场结转
+
+### Q132 — 票面把黄金快照当成本票唯一的验收，可 `tests/golden.rs` 根本不走 `src/render.rs`
+
+- **From:** 票 `p3-session-legibility/02`
+- **Kind:** 票面写错了（前提与现实对不上）
+- **Where:** `tests/golden.rs` 的 `fn render`（第 612 行）与 `page_line`／`gate`／
+  `fixtures::volume_verdict`；`tests/golden-snapshot.txt`
+- **票面原话:** 「`tests/golden.rs`（827 行）+ `tests/golden-snapshot.txt`（152 行）——
+  **本票唯一真正的验收**」、「黄金快照零变化就是这张票的验收」
+- **现状:** 黄金快照是**集成测试**算出来的，而集成测试链的是 lib crate；
+  `src/render.rs` 在 bin crate 里，`tests/` 里一个符号都够不着它。快照那几行
+  （`卷级   基准档 … · 定档页 … · 其余 … 页 · 特例 … 页`）出自 `tests/golden.rs`
+  自己那份 `render` 与 `tests/fixtures`，**与 `src/render.rs` 无关**。
+  本票就算把命令行印出来的报告改得面目全非，黄金快照也一个字节都不会动。
+- **Why it did not block:** 「命令行印出来的报告逐字不变」这条验收本身成立，
+  只是钉住它的不是黄金快照，而是另外两处：`src/render.rs` 的 `mod tests`
+  （二十多条 `plain::report(..).contains(..)`，外加
+  `drawing_the_four_parts_one_by_one_gives_the_same_bytes_as_one_shot`）与
+  `src/session/draw` 那六张 `TestBackend` 快照——报告区画的正是这段文字，
+  一个字符对不上当场红。本票就是照这两处验的，两处一行没改、全绿。
+- **What this ticket actually did:** 照上面两处验，黄金快照顺带确认没动
+  （`git diff --stat tests/golden-snapshot.txt tests/golden.rs` 是空的）。
+- **Whose call:** 换词那一票（`p3-session-legibility/03`）——它票面写着「黄金快照重录一次」，
+  而按上面这条，换词若只动 `src/render.rs`，黄金快照同样不会动；
+  真要让快照跟着换词，得连 `tests/golden.rs` 与 `tests/fixtures` 里那三个词一起改。
+- **处置：** 了结（`p3-session-legibility/03` 收的）。快照确实跟着换词重录了，而喂进它的
+  **不是** `src/render.rs`：卷行那三个词出自 `tests/fixtures/mod.rs` 的 `volume_verdict`，
+  页行那句「特例页单独定档」出自 **lib crate** 的 `src/decide.rs`（`Reason` 的 `Display`）——
+  集成测试够得着后者，这一条上面写的「出自 `tests/golden.rs` 自己那份 `render` 与 `tests/fixtures`」
+  说漏了 lib 那一半。重录之后按「旧快照照同一套替换规则改一遍再与新快照比」验过，
+  diff 为空：变的只有那三个词，判定的数一个都没动。
+
+### Q134 — 「离群」的复合词票面没说换不换：离群判据、离群侧、离群检验、离群那一组
+
+- **From:** 票 `p3-session-legibility/03`
+- **Kind:** 规格没说
+- **Where:** `src/envelope.rs`（`ANCHOR_QUANTILE` 与 `OUTLIER_FACTOR` 两处文档、`Envelope` 的
+  `Display`）、`src/decide.rs` 的 `Reason::Outlier`、`docs/adr/0006`、`CONTEXT.md`《判据》正文
+- **票面原话:** 表里只有一行「离群页 → **特例页**」，复合词一个字没提。
+- **Why it did not block:** 两条路都走得通，而**只换「离群页」这一条走不通**——
+  「特例页由离群判据判出来」正是这张票要消灭的那种句子：同一件事两个名字。
+- **What this ticket actually did:** 走「同一个概念的中文说法一起换」这一条：`离群` 一律 →
+  `特例`（`离群判据`→`特例判据`、`离群侧`→`特例侧`、`离群检验`→`特例检验`、
+  `离群那一组`→`特例那一组`，计数那一格 `离群 N 页`→`特例 N 页`）。
+  **英文一个都没动**：`outlier_pages`、`outlying`、`OUTLIER_FACTOR`、
+  以及测试函数名里的 `outlier`。**本票动过的那些文件里**（`src`、`tests`、`docs`、
+  `CONTEXT.md`、`README.md`）唯一留着「离群」两个字的是 `CONTEXT.md`《尚未确立》
+  那句「换一批双页片源之后它是常态还是离群」——那里说的是一个残差比读数算不算异常值，
+  不是页那个概念，直接换会把一句普通中文误当术语。
+  **收掉的票据与 spec 里那三个词原样留着**：票面第六条点名要跟着改的只有停车场，
+  而已经收掉的票是当时那一刻的记录，改它等于改变更史（`CLAUDE.md`《文档写作》第 1 条）。
+- **Whose call:** 已决（本票，依派活说明的授权）。
+- **处置：** 了结。
+
+### Q135 — 票面说《判据》有「三个词条」要改名，可那一节里只有两条带名字的；「主体」从来没有自己的词条
+
+- **From:** 票 `p3-session-legibility/03`
+- **Kind:** 票面写错了（前提与现实对不上）
+- **Where:** `CONTEXT.md`《判据》
+- **票面原话:** 「`CONTEXT.md` 的《判据》三个词条改名，英文标识符名跟着列出来」
+- **现状:** 那一节里叫得出名字的只有 **驱动页 (Driver)** 与 **离群页** 两条。
+  「主体」一个词条都没有——它只活在《上包络》与《基准档》两条的**释义**里。
+- **What this ticket actually did:** 两条就地改名并带上标识符（**定档页 (driver)**、
+  **特例页 (outlier_pages)**），第三条**补出来**：**其余页 (body_pages)**。
+  补而不是改的理由：`body_pages` 是报告里印出去的一格（`其余 N 页`），没有词条就无处可查，
+  而《基准档》那条改完之后正引着这个词。**授权出自票面**（验收第一条要的就是「三个词条」，
+  派活说明写明「这张票就是票面授权你改已有词条的那一次」）——`CLAUDE.md`
+  《改 CONTEXT.md 的规矩》那句「新词可以当场加」的前提是「实现引入了一个新概念」，
+  本票一行实现都没改，援引不到它。别的词条一个字没动。
+- **Whose call:** 已决（本票）。
+- **处置：** 了结。
