@@ -3,6 +3,10 @@
 //! 这一条只有在进程那一层才成立：`exit_code` 那个纯函数说得出该返回几，说不出 `main`
 //! 有没有把它交出去。spec 的 story 33 要的是「测试不必启动子进程」，不是「一律不许」——
 //! 退出码本身就是进程那一层的事实，别处观察不到。为退出码启动子进程的用例只在这一份里。
+//!
+//! **印出去的那几个字节同样只有真进程看得见**，两条也在这一份里：拒绝那句话落到 stderr
+//! 上时记号中间是不是一个普通空格，以及 `--help` 重定向出去之后折到多宽。
+//! 两者都是「`main` 交出去的到底是什么」，纯函数那一层问不出来。
 
 mod fixtures;
 
@@ -293,5 +297,73 @@ fn the_refusal_on_stderr_spells_its_commands_with_a_plain_space() {
     assert!(
         !said.contains('\u{a0}'),
         "标注原样落到 stderr 上了：{said:?}"
+    );
+}
+
+/// **重定向出去时折到一个定值，不随窗口大小变**（`p4-parking-lot/05` 票面第二条）。
+///
+/// 折到多宽此刻**问终端**（`src/wrap.rs` 的 `terminal_width`），而**输出不是终端就取那个
+/// 定值**：`tonefit --help > 说明.txt` 与 `tonefit … > 报告.txt` 的产出因此与跑它的那块屏无关。
+///
+/// **只有真进程看得见这一条**：二进制那一侧的用例是拿一个宽度去调 `folded_help`，
+/// 说不出「这一趟到底问出了几格」。这里 stdout 接的是管道，跑用例的终端有多宽都不算数。
+///
+/// **命令行那两处各问一遍**——帮助与报告折的是同一个数，而它们在两条路上各自取用。
+/// 帮助那一头两头都问：**一行都不过那个定值**（宽终端上没把 200 格当真），
+/// 而**总有一行宽过它减一档缩进**（窄终端上也没把 60 格当真）；那一档余量取的正是
+/// `LONG_HELP_INDENT`，`--help` 最宽的一行恰好是折满的正文加上它。
+/// 报告那一头只问得出前一半：夹具是一卷一页，长到顶着那个定值的句子摆不出来。
+///
+/// 100 这个数写在 `src/wrap.rs` 的 `OFF_TERMINAL_WIDTH` 上，这里只能抄一遍：
+/// 集成测试是另一个 crate，够不着二进制侧的常量（同一条道理见 `tests/golden.rs`
+/// 的 `fit_key`）。两处真要分家，红的是这一条。
+#[test]
+fn what_is_redirected_out_of_a_terminal_folds_to_one_fixed_width() {
+    /// 输出不是终端时折到多宽（`src/wrap.rs` 的 `OFF_TERMINAL_WIDTH`）。
+    const OFF_TERMINAL_WIDTH: usize = 100;
+    /// clap 给长帮助那一档缩进（`src/main.rs` 的 `LONG_HELP_INDENT`）。
+    const LONG_HELP_INDENT: usize = 10;
+
+    let widest = |said: &str| {
+        said.lines()
+            .map(unicode_width::UnicodeWidthStr::width)
+            .max()
+            .unwrap_or_default()
+    };
+
+    let helped = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+        .arg("--help")
+        .output()
+        .expect("启动 tonefit");
+    let help = String::from_utf8_lossy(&helped.stdout);
+    assert!(
+        widest(&help) <= OFF_TERMINAL_WIDTH,
+        "帮助最宽那一行 {} 格，宽过了那个定值：{help}",
+        widest(&help)
+    );
+    // 折窄了同样不对：那说明它把跑用例的那块屏当了真。
+    assert!(
+        widest(&help) > OFF_TERMINAL_WIDTH - LONG_HELP_INDENT,
+        "帮助最宽那一行只有 {} 格，定值没用满：{help}",
+        widest(&help)
+    );
+
+    // **报告那一路走的是另一个出口**（`main` 里那一句 `folded_text`），同样只有真进程看得见。
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let ran = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+        .arg("--out")
+        .arg(space.out())
+        .args(["--profile", fixtures::BASELINE_DEVICE])
+        .arg(volume.path())
+        .output()
+        .expect("启动 tonefit");
+    let report = String::from_utf8_lossy(&ran.stdout);
+    assert_eq!(ran.status.code(), Some(0), "这一趟该干净跑完：{report}");
+    assert!(
+        widest(&report) <= OFF_TERMINAL_WIDTH,
+        "报告最宽那一行 {} 格，宽过了那个定值：{report}",
+        widest(&report)
     );
 }

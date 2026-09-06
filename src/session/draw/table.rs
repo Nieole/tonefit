@@ -63,7 +63,7 @@ use crate::session::live::{Branch, Live, Volume};
 /// **只有页数用它**：它夹在卷名与档位中间，空着读起来像掉了一个数；
 /// 而定档页与耗时排在末尾，空着就是「这一卷没有这件事」，不必再说一遍。
 ///
-/// 取 `-` 而不是破折号 `—`：后者过不了 [`columns::width_is_stable`] 那一关
+/// 取 `-` 而不是破折号 `—`：后者过不了 [`crate::wrap::width_is_stable`] 那一关
 /// （停车场 Q154）。它夹在卷名与档位中间，右边还有三列。
 const ABSENT: &str = "-";
 
@@ -99,7 +99,7 @@ pub(super) enum Mark {
 impl Mark {
     /// 屏上那一个字符。
     ///
-    /// 四个字形逐个过得了 [`columns::width_is_stable`] 那一关：跳过那一个从短横
+    /// 四个字形逐个过得了 [`crate::wrap::width_is_stable`] 那一关：跳过那一个从短横
     /// `–`（U+2013）换成了 `-`（停车场 Q154），`✓`／`!`／`✗` 三个本来就过得了，一个字没换。
     pub(super) fn glyph(self) -> char {
         match self {
@@ -466,19 +466,22 @@ mod tests {
     /// **卷表自己造的那几个字形在哪种终端上都占一格**（停车场 Q154）。
     ///
     /// 行首记号是这张表的头一列，右边还有五列：它宽一格，整行就跟着错一格。
-    /// 判据在 [`columns::width_is_stable`]。这张表画成什么样在 [`super::report`] 那一头问，
+    /// 判据在 [`crate::wrap::width_is_stable`]。这张表画成什么样在 [`super::report`] 那一头问，
     /// 本模块只钉这一条自己说了算的事。
     #[test]
     fn every_glyph_this_table_makes_is_the_same_width_on_any_terminal() {
         for mark in [Mark::Done, Mark::Isolated, Mark::Skipped, Mark::Failed] {
             let glyph = mark.glyph();
             assert!(
-                columns::width_is_stable(glyph),
+                crate::wrap::width_is_stable(glyph),
                 "{mark:?} 那个记号 {glyph} 是东亚歧义宽度"
             );
         }
         for glyph in ABSENT.chars() {
-            assert!(columns::width_is_stable(glyph), "{glyph} 是东亚歧义宽度");
+            assert!(
+                crate::wrap::width_is_stable(glyph),
+                "{glyph} 是东亚歧义宽度"
+            );
         }
     }
 }

@@ -420,19 +420,29 @@ fn interlock_help() -> String {
     text
 }
 
-/// **长**帮助折到多宽：[`wrap::TERMINAL_WIDTH`] 减去 clap 给 `--help` 那一档缩进（10 格）。
+/// clap 给**长**帮助那一档缩进：10 格。
 ///
-/// 折的是原文，缩进由 clap 加在外面，因此要先扣掉。
-const LONG_HELP_WIDTH: u16 = wrap::TERMINAL_WIDTH - 10;
+/// 折的是原文，缩进由 clap 加在外面，因此要先扣掉（见 [`help_width`]）。
+const LONG_HELP_INDENT: u16 = 10;
 
-/// **短**帮助折到多宽。
+/// clap 给**短**帮助那一档缩进。
 ///
 /// `-h` 把每一项的短帮助摆在**开关那一列后面**，缩进因此比长帮助深得多——它随这份命令行上
 /// 最长的那个开关走，眼下是 31 格。clap 不交出这个数，只能照它排出来的帮助**数格子**
 /// （与 `docs/measurements.md` 那种实测数字无关，那里装的是图像处理量出来的东西）：
-/// [`tests::the_help_folds_every_line_into_the_terminal`] 钉着「`-h` 没有一行过
-/// [`wrap::TERMINAL_WIDTH`]」，添一个更长的开关时它当场变红。
-const SHORT_HELP_WIDTH: u16 = wrap::TERMINAL_WIDTH - 31;
+/// [`tests::the_help_folds_every_line_into_the_terminal`] 钉着「`-h` 没有一行过终端那么宽」，
+/// 添一个更长的开关时它当场变红。
+const SHORT_HELP_INDENT: u16 = 31;
+
+/// 一档帮助折到多宽：**终端有多宽**（[`wrap::terminal_width`]）减掉 clap 加在外面的那一档缩进。
+///
+/// **减不出正数时折到一格。** 窄过 clap 那一档缩进的终端真有（`-h` 那一档就占 31 格），
+/// 而折到零格是「一行都不折」（见 [`wrap::fold`]）——那会印出一行几百格。
+/// 折到一格印出来仍旧过宽（clap 的缩进已经把那一行填满了），但**过宽的是一个字，
+/// 不是一整句**，剩下的交给终端自己回绕。那一档上折行能做的只有这些，见停车场 Q186。
+fn help_width(terminal: u16, indent: u16) -> u16 {
+    terminal.saturating_sub(indent).max(1)
+}
 
 /// 交给 clap 之前，把每一条帮助按显示宽度折一遍（[`wrap`]）。
 ///
@@ -444,13 +454,18 @@ const SHORT_HELP_WIDTH: u16 = wrap::TERMINAL_WIDTH - 31;
 /// 只在真要跑的那一趟折得着：用例问的是 [`Cli::command`] 那一份**原文**
 /// （见 [`tests::the_help_lists_every_interlock_in_one_place`]），
 /// 折过的文字里 `contains` 一条长句会被折行折断。
-fn folded_help(command: clap::Command) -> clap::Command {
+///
+/// `terminal` 是这一趟终端有多宽（[`wrap::terminal_width`]）。它是个**参数**而不是
+/// 就地问一次：一趟只问一次，帮助与报告因此折到同一个数；用例也才摆得出窄终端与宽终端。
+fn folded_help(command: clap::Command, terminal: u16) -> clap::Command {
+    let short = help_width(terminal, SHORT_HELP_INDENT);
+    let long = help_width(terminal, LONG_HELP_INDENT);
     // `about` 是**短**的那一份：它还要摆进上一级那张子命令表里，与短帮助同一档。
     // 长的那三份只印在第 0 列上，长帮助那一档够宽。
-    let about = fold_help(command.get_about(), SHORT_HELP_WIDTH);
-    let long_about = fold_help(command.get_long_about(), LONG_HELP_WIDTH);
-    let after_help = fold_help(command.get_after_help(), LONG_HELP_WIDTH);
-    let after_long_help = fold_help(command.get_after_long_help(), LONG_HELP_WIDTH);
+    let about = fold_help(command.get_about(), short);
+    let long_about = fold_help(command.get_long_about(), long);
+    let after_help = fold_help(command.get_after_help(), long);
+    let after_long_help = fold_help(command.get_after_long_help(), long);
     let arguments: Vec<clap::Id> = command
         .get_arguments()
         .map(|argument| argument.get_id().clone())
@@ -467,13 +482,14 @@ fn folded_help(command: clap::Command) -> clap::Command {
         .after_long_help(after_long_help);
     for argument in arguments {
         command = command.mut_arg(argument, |argument| {
-            let help = fold_help(argument.get_help(), SHORT_HELP_WIDTH);
-            let long_help = fold_help(argument.get_long_help(), LONG_HELP_WIDTH);
+            let help = fold_help(argument.get_help(), short);
+            let long_help = fold_help(argument.get_long_help(), long);
             argument.help(help).long_help(long_help)
         });
     }
     for subcommand in subcommands {
-        command = command.mut_subcommand(subcommand, folded_help);
+        command =
+            command.mut_subcommand(subcommand, |subcommand| folded_help(subcommand, terminal));
     }
     command
 }
@@ -671,7 +687,9 @@ fn execute() -> Result<u8> {
     if let Some(session) = without_arguments() {
         return session;
     }
-    let cli = Cli::from_arg_matches(&folded_help(Cli::command()).get_matches())
+    // **一趟只问一次终端有多宽**：帮助与报告因此折到同一个数（见 [`wrap::terminal_width`]）。
+    let terminal = wrap::terminal_width();
+    let cli = Cli::from_arg_matches(&folded_help(Cli::command(), terminal).get_matches())
         .unwrap_or_else(|error| error.exit());
     if let Some(Command::Calibrate {
         profile,
@@ -693,7 +711,7 @@ fn execute() -> Result<u8> {
     // 不折就是一行几百格（见 [`wrap`]）。
     print!(
         "{}",
-        wrap::folded_text(&render::plain::report(&report, mode), wrap::TERMINAL_WIDTH)
+        wrap::folded_text(&render::plain::report(&report, mode), terminal)
     );
     Ok(exit_code(&report))
 }
@@ -1578,63 +1596,103 @@ io-mode = \"concurrent\"
         );
     }
 
-    /// **印出去的帮助没有一行过 [`wrap::TERMINAL_WIDTH`]**（票面第一条的帮助那一半）。
+    /// **印出去的帮助没有一行过终端那么宽**（票面第一条的帮助那一半）。
     ///
     /// 从前一行都不折：`--help` 里最长的那一行有 412 格，`-h` 有 300 格——
     /// clap 按空格折行，而中文长句里一个空格都没有（停车场 Q32）。
     ///
-    /// 四份都问：`-h` 与 `--help` 缩进不同一档（见 [`SHORT_HELP_WIDTH`] 与
-    /// [`LONG_HELP_WIDTH`]），子命令那一份还要再套一层。
-    /// [`SHORT_HELP_WIDTH`] 里那个 31 是量出来的——添一个更长的开关时这一条当场变红。
+    /// 四份都问：`-h` 与 `--help` 缩进不同一档（见 [`SHORT_HELP_INDENT`] 与
+    /// [`LONG_HELP_INDENT`]），子命令那一份还要再套一层。
+    /// [`SHORT_HELP_INDENT`] 里那个 31 是量出来的——添一个更长的开关时这一条当场变红。
+    ///
+    /// **三档宽度各问一遍**（`p4-parking-lot/05`：宽度改成问终端）：一块窄屏、
+    /// 输出不落在终端上时那个定值（[`wrap::OFF_TERMINAL_WIDTH`]）、以及一块宽屏。
+    /// 宽的那一档另问一句**用得满**——折到一个定死的 100 格时，宽屏右边会白留一大条。
+    ///
+    /// 窄的那一档取 **40**：clap 给 `-h` 那一档缩进自己就占 [`SHORT_HELP_INDENT`] 格，
+    /// 比 40 再窄下去，剩给正文的已经不到十格。**clap 自己排的那几行照旧过宽**
+    /// （[`clap_lays_it_out`]，停车场 Q186），而它们**仍不许宽过那个定值**——
+    /// 那一条从前就钉着，不该跟着松掉。
     #[test]
     fn the_help_folds_every_line_into_the_terminal() {
-        let folded = folded_help(Cli::command());
-        let printed = [
-            folded.clone().render_help().to_string(),
-            folded.clone().render_long_help().to_string(),
-            folded
-                .clone()
-                .find_subcommand_mut("calibrate")
-                .expect("calibrate 子命令在")
-                .render_help()
-                .to_string(),
-            folded
-                .clone()
-                .find_subcommand_mut("calibrate")
-                .expect("calibrate 子命令在")
-                .render_long_help()
-                .to_string(),
-        ];
+        for terminal in [40, wrap::OFF_TERMINAL_WIDTH, 200] {
+            let folded = folded_help(Cli::command(), terminal);
+            let printed = [
+                folded.clone().render_help().to_string(),
+                folded.clone().render_long_help().to_string(),
+                folded
+                    .clone()
+                    .find_subcommand_mut("calibrate")
+                    .expect("calibrate 子命令在")
+                    .render_help()
+                    .to_string(),
+                folded
+                    .clone()
+                    .find_subcommand_mut("calibrate")
+                    .expect("calibrate 子命令在")
+                    .render_long_help()
+                    .to_string(),
+            ];
 
-        for help in &printed {
-            for line in help.lines() {
+            for help in &printed {
+                for line in help.lines() {
+                    // clap 自己排的那几行折不着，只在**比那个定值还宽**时才算错。
+                    let room = match clap_lays_it_out(line) {
+                        true => terminal.max(wrap::OFF_TERMINAL_WIDTH),
+                        false => terminal,
+                    };
+                    assert!(
+                        wrap::width(line) <= room,
+                        "{terminal} 格的终端上这一行 {} 格：{line}",
+                        wrap::width(line)
+                    );
+                }
+            }
+
+            // 折行不吃字：互锁那一节逐条都还在（折过之后按行找，整句已经被折断了）。
+            // 两侧都把空白去掉——原文里[不许断的那个空格](wrap::HARD_SPACE)是给折行看的标注，
+            // 印出去的是一个普通空格。
+            let long = printed[1].replace(['\n', ' '], "");
+            for interlock in Interlock::ALL {
+                let said = interlock.to_string().replace([' ', wrap::HARD_SPACE], "");
+                assert!(long.contains(&said), "折没了：{said}");
+            }
+
+            // **带空格的记号不断在中间**（停车场 Q106）：那两条命令各自整个留在某一行上，
+            // 断开了照着抄就抄不出一条能用的命令。原文里它们中间那个空格带着标注
+            // （见 `Interlock` 的 `Display`）。
+            for token in ["--fit height", "--dither fs"] {
                 assert!(
-                    wrap::width(line) <= wrap::TERMINAL_WIDTH,
-                    "这一行 {} 格：{line}",
-                    wrap::width(line)
+                    printed[1].lines().any(|line| line.contains(token)),
+                    "{token} 被折断了：{}",
+                    printed[1]
+                );
+            }
+
+            // **宽终端用得满**：折到一个定死的 100 格时，这一句永远不成立。
+            if terminal > wrap::OFF_TERMINAL_WIDTH {
+                assert!(
+                    printed[1]
+                        .lines()
+                        .any(|line| wrap::width(line) > wrap::OFF_TERMINAL_WIDTH),
+                    "宽终端上还是折到了 {} 格：{}",
+                    wrap::OFF_TERMINAL_WIDTH,
+                    printed[1]
                 );
             }
         }
+    }
 
-        // 折行不吃字：互锁那一节逐条都还在（折过之后按行找，整句已经被折断了）。
-        // 两侧都把空白去掉——原文里[不许断的那个空格](wrap::HARD_SPACE)是给折行看的标注，
-        // 印出去的是一个普通空格。
-        let long = printed[1].replace(['\n', ' '], "");
-        for interlock in Interlock::ALL {
-            let said = interlock.to_string().replace([' ', wrap::HARD_SPACE], "");
-            assert!(long.contains(&said), "折没了：{said}");
-        }
-
-        // **带空格的记号不断在中间**（停车场 Q106）：那两条命令各自整个留在某一行上，
-        // 断开了照着抄就抄不出一条能用的命令。原文里它们中间那个空格带着标注
-        // （见 `Interlock` 的 `Display`）。
-        for token in ["--fit height", "--dither fs"] {
-            assert!(
-                printed[1].lines().any(|line| line.contains(token)),
-                "{token} 被折断了：{}",
-                printed[1]
-            );
-        }
+    /// **这一行是 clap 自己排的**——[`folded_help`] 折不着它，窄终端上它照旧过宽。
+    ///
+    /// 四种：用法那一行（`Usage: …`，clap 一个字都不折），以及它自带的 `help` 子命令、
+    /// `--help`、`--version` 那三条英文说明——那三条不是这份命令行写的，
+    /// [`fold_help`] 够不着。**折不着不等于不算数**，停车场 Q186 记着这一笔。
+    fn clap_lays_it_out(line: &str) -> bool {
+        line.starts_with("Usage:")
+            || line.contains("Print this message")
+            || line.contains("Print help")
+            || line.contains("Print version")
     }
 
     /// `--no-split` 关得掉拆分，阈值与阅读方向点得动，**不点名就是拆、1.5、右开**

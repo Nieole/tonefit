@@ -34,10 +34,12 @@
 //!
 //! 这里出的是**一段一段的话**，一行长到几百格也照旧是一行。**折到多宽由印它的那一头定**，
 //! 折法只有一套（[`crate::wrap`]，各处折到多宽见那个模块）。收在这里的话，
-//! 两个去处就得共用一个宽度，而它们一个不知道终端多宽、一个每帧都知道。
+//! 两个去处就得共用一个宽度，而它们量的不是同一块地方：命令行那一头问终端，
+//! 会话那一头每一帧问自己那一格。
 //!
-//! 这里做的只有一件与折行有关的事：**说出哪一个空格是记号里面的**
-//! （[`crate::wrap::HARD_SPACE`]，规矩在那一处）。
+//! 这里做的只有两件与宽度有关的事：**说出哪一个空格是记号里面的**
+//! （[`crate::wrap::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
+//! （[`SEPARATOR`]，判据是 `crate::wrap::width_is_stable`）。
 
 use std::path::{Path, PathBuf};
 
@@ -54,6 +56,18 @@ use tonefit::{Instruction, RunOutcome};
 use tonefit::{GeometryGate, Panel, Reason};
 
 use crate::wrap::HARD_SPACE;
+
+/// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
+///
+/// 眼下两处取它：[基准档分布](base_spread)与[判据那一串](score_line)。
+/// 串起来的整串是**一格**，而「一串东西怎么说」与「一个数怎么写」同属措辞
+/// （ADR 0016 决定第 2 条）——格与格**之间**拿什么隔开是排版的事，不在这里。
+///
+/// **取 `⋅`（U+22C5）而不是 `·`（U+00B7）**：后者在东亚宽度表上标着 **Ambiguous**，
+/// 按 CJK 配置的终端画两格，而这两格都是**表上的一列**（判据那一列、基准档分布那一列），
+/// 列宽一律按一格算。判据是 `crate::wrap::width_is_stable`，
+/// 与 `crate::session::columns` 的省略号取 `⋯`（U+22EF）同一处先例、同一个理由。
+const SEPARATOR: &str = " ⋅ ";
 
 /// **命令行那一侧的拼装**：把[行](Row)与[格](Cell)摆成纯文本那一副（ADR 0016）。
 pub mod plain;
@@ -673,7 +687,8 @@ pub fn isolated_note(count: &str) -> String {
 /// **基准档分布**：这一枝底下各档各有几卷，多的排在前面。
 ///
 /// 各档怎么写照 [`base_column`]——卷表那一列写的是同一批字，跳过与没做成也在里面。
-/// **串起来的那个 `·` 是措辞**，与[判据那一串](score_line)同一条（ADR 0016 决定第 2 条）。
+/// **串起来的那个[记号](SEPARATOR)是措辞**，与[判据那一串](score_line)同一条
+/// （ADR 0016 决定第 2 条）。
 ///
 /// 排法：**卷多的在前**，一样多的按头一次出现的先后（`sort_by` 是稳定的）。
 /// 按报告先后原样排的话，一枝里最常见的那一档常常落在末尾——而扫一眼要看出来的
@@ -694,7 +709,7 @@ fn base_spread(inside: &[Listed<'_>]) -> String {
         .iter()
         .map(|(said, count)| format!("{said} {count}"))
         .collect::<Vec<_>>()
-        .join(" · ")
+        .join(SEPARATOR)
 }
 
 /// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
@@ -1272,14 +1287,14 @@ fn failure_line(reason: &str) -> String {
 
 /// 一页各候选的判据值排成一串，候选由小到大——[判据那一格](Field::Scores)装的就是它。
 ///
-/// **串起来的那个 `·` 是措辞，不是排版**：一格装一个值，而这一格的值本身是一串东西，
-/// 「一串东西怎么说」与「一个数怎么写」同属措辞（ADR 0016 决定第 2 条）。
+/// **串起来的那个[记号](SEPARATOR)是措辞，不是排版**：一格装一个值，而这一格的值本身是
+/// 一串东西，「一串东西怎么说」与「一个数怎么写」同属措辞（ADR 0016 决定第 2 条）。
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
         .iter()
         .map(|scored| format!("{} {}", scored.candidate, scored.score))
         .collect::<Vec<_>>()
-        .join(" · ")
+        .join(SEPARATOR)
 }
 
 /// 这一趟**至今为止**失败的那些页，出现一条画一条（09 号票的会话主区）。
@@ -1623,7 +1638,7 @@ mod tests {
             "{text}"
         );
         // 这一页一个像素都没裁，逐页那一行因此一个字都不说裁边。
-        assert!(!text.contains("裁边 1441×2048"), "{text}");
+        assert!(!text.contains("裁边 1441x2048"), "{text}");
         // 一页都没有超出面板宽，末尾那一小结因此一个字都不说。
         assert!(!text.contains("输出宽超过面板"), "{text}");
         // 头一行说明这份输出是给哪台设备的，以及本次用的面板。
@@ -1632,7 +1647,7 @@ mod tests {
         assert!(text.contains("16 级灰阶"), "{text}");
         assert!(text.contains("library/volume-a"), "{text}");
         assert!(text.contains("1 页"), "{text}");
-        assert!(text.contains("1264×1680"), "{text}");
+        assert!(text.contains("1264x1680"), "{text}");
         // 每页的缩放三件套：总缩放比、有没有预缩、残差比。
         assert!(text.contains("缩放比 2.000"), "{text}");
         assert!(text.contains("预缩 2×"), "{text}");
@@ -1924,7 +1939,7 @@ mod tests {
         let text = plain::report(&report, Mode::Process);
 
         assert!(text.contains("输出宽超过面板 1 页"), "{text}");
-        assert!(text.contains("最宽 5056×1680"), "{text}");
+        assert!(text.contains("最宽 5056x1680"), "{text}");
         // 倍数要说出来：那是「要横向翻多少」的唯一线索。
         assert!(text.contains("面板宽 1264 的 4.00 倍"), "{text}");
         // 是哪一页要点名——报告里翻不回去就等于没说。点名用的是**源**那一侧的名字，
@@ -2084,9 +2099,9 @@ mod tests {
 
         // 裁前裁后两个尺寸都在，裁掉了多少一眼看得出。**四边各去了多少不进这行文字**——
         // 读的人要的是「裁没裁、裁了多少」，不是左右上下怎么分；要那个数走 `PageReport::crop()`。
-        assert!(text.contains("裁边 1441×2048 → 1200×1600"), "{text}");
+        assert!(text.contains("裁边 1441x2048 → 1200x1600"), "{text}");
         // 它排在缩放之前。
-        let crop_at = text.find("裁边 1441×2048").expect("裁边那一小截");
+        let crop_at = text.find("裁边 1441x2048").expect("裁边那一小截");
         let scaling_at = text.find("缩放比").expect("缩放那一小截");
         assert!(crop_at < scaling_at, "裁边排到了缩放后面：{text}");
 
@@ -2099,7 +2114,7 @@ mod tests {
             ),
             Mode::Process,
         );
-        assert!(!untouched.contains("裁边 1441×2048"), "{untouched}");
+        assert!(!untouched.contains("裁边 1441x2048"), "{untouched}");
         assert!(untouched.contains("裁边 按行列墨量占比"), "{untouched}");
     }
 
@@ -2356,7 +2371,7 @@ mod tests {
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         // 失败页那两行：尺寸从哪来，以及它为什么失败。
         assert!(
-            text.contains("1264×1680  失败页 · 卷内统一尺寸留白"),
+            text.contains("1264x1680  失败页 · 卷内统一尺寸留白"),
             "{text}"
         );
         assert!(
@@ -3421,7 +3436,7 @@ mod tests {
         // 没做成的那一卷也算一卷：它同样是这一枝底下点到过的卷。
         assert_eq!(row.cell(Field::VolumeCount), Some("4"));
         // 多的在前：4bit 两卷，跳过与没做成各一卷（后两者按头一次出现的先后）。
-        assert_eq!(row.cell(Field::Bases), Some("4bit 2 · 跳过 1 · 没做成 1"));
+        assert_eq!(row.cell(Field::Bases), Some("4bit 2 ⋅ 跳过 1 ⋅ 没做成 1"));
         // 带失败页那一卷进了隔离，没做成那一卷不算（它连一份卷报告都没有）。
         assert_eq!(row.cell(Field::Isolated), Some("1"));
 
@@ -3476,5 +3491,165 @@ mod tests {
             at("库/别的作品  1 卷") < at("库/别的作品/第1话 → "),
             "{text}"
         );
+    }
+
+    /// **摆进列里的那几格，字形在哪种终端上都占同一格**
+    /// （判据 `crate::wrap::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
+    ///
+    /// 东亚宽度表上标着 **Ambiguous** 的字形（`×` `·` `…` 之类）在按 CJK 配置的终端上画
+    /// 两格，而 `crate::wrap::width` 一律按一格算：一格里多一个这样的字形，
+    /// 它右边每一列就整体错开一格。**尺寸那一列夹在页名与判定中间**，
+    /// 从前有 `×` 的行（正常页）与那一格空着的行（失败页）因此整行错开一格。
+    ///
+    /// **添一个不稳的字形，这一条当场变红。** 问的是表摆成列的那几格；装**路径**的那几列
+    /// （目录名、卷名、页名、定档页）不在里面——那是用户的字节，不是这一层挑的字形。
+    /// 行首记号、省略号与耗时那一列是画法那一层自己造的，在
+    /// `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview` 那几头问。
+    #[test]
+    fn every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal() {
+        // 屏上那三张表把这几格摆成列（`crate::session::columns` 的 `DirectoryColumn`、
+        // `VolumeColumn`、`PageColumn`）。其余各格成句、跟在行尾或整段折行印出来，
+        // 错一格不牵连别人。
+        // **这份名单与那三个 `Column` 是同一件事的两处出处**：往哪张表添一列，
+        // 这里也要跟着添——没有东西逼它们同步（停车场 Q188 记着为什么收不拢）。
+        const LINED_UP: &[Field] = &[
+            Field::VolumeCount,
+            Field::Bases,
+            Field::PageCount,
+            Field::Base,
+            Field::Size,
+            Field::Candidate,
+            Field::Reason,
+            Field::Scores,
+        ];
+
+        let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
+        let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
+        // 判据那一串要**两个**候选才串得起来：一个候选串不出那个记号。
+        let scored: Vec<CandidateScore> = [
+            Candidate::new(BitDepth::One, Dither::FloydSteinberg),
+            Candidate::new(BitDepth::Two, Dither::Off),
+        ]
+        .into_iter()
+        .map(|candidate| CandidateScore {
+            candidate,
+            score: tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate)),
+        })
+        .collect();
+        let four = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        // **基准档那一列的五种说法各摆一卷**（见 [`base_column`]）：判出档位、跳过、
+        // 逐页、覆盖、没做成。分布那一格因此也串得起来——它逐条问的就是那一列。
+        // 「没做成」出自 `Listed::Failed`，那一卷连一份卷报告都没有。
+        let mut volumes = [
+            a_volume("库/第1话", four, false),
+            a_volume(
+                "库/第2话",
+                Some(VolumeVerdict::Skipped { page_count: 1 }),
+                false,
+            ),
+            a_volume("库/第3话", Some(VolumeVerdict::PerPage), true),
+            a_volume(
+                "库/第4话",
+                Some(VolumeVerdict::Override(Candidate::new(
+                    BitDepth::Two,
+                    Dither::FloydSteinberg,
+                ))),
+                false,
+            ),
+        ];
+        if let PageOutcome::Whole(processed) = &mut volumes[0].pages[0].outcome
+            && let PageBranch::Gray { scores, .. } = &mut processed.branch
+        {
+            *scores = scored;
+        }
+        let failures = [VolumeFailure {
+            volume: PathBuf::from("库/第5话"),
+            reason: "卷根不在了".to_owned(),
+        }];
+        let listed: Vec<Listed<'_>> = volumes
+            .iter()
+            .map(Listed::Settled)
+            .chain(failures.iter().map(Listed::Failed))
+            .collect();
+
+        let mut rows: Vec<Row> = grouped(&listed)
+            .iter()
+            .map(|group| directory(group, &listed))
+            .collect();
+        for one in &volumes {
+            rows.extend(volume(one));
+            rows.extend(pages(one));
+        }
+
+        let stable = |said: &str, whose: &str| {
+            for glyph in said.chars() {
+                assert!(
+                    crate::wrap::width_is_stable(glyph),
+                    "{glyph} 是东亚歧义宽度：{whose}写着「{said}」"
+                );
+            }
+        };
+
+        // 那两格真的串起来了——不然这一条问的是两个一个记号都没有的串。
+        for field in [Field::Bases, Field::Scores] {
+            assert!(
+                rows.iter()
+                    .filter_map(|row| row.cell(field))
+                    .any(|said| said.contains(SEPARATOR)),
+                "{field:?} 那一格没串起来，这一条问不到那个记号"
+            );
+        }
+        // 「没做成」真的在分布那一格里——它是这五种说法里唯一不出自卷报告的那一种。
+        assert!(
+            rows.iter()
+                .filter_map(|row| row.cell(Field::Bases))
+                .any(|said| said.contains("没做成")),
+            "没做成那一档没摆进分布那一格"
+        );
+
+        for row in &rows {
+            for cell in &row.cells {
+                if !LINED_UP.contains(&cell.field) {
+                    continue;
+                }
+                stable(
+                    &cell.text,
+                    &format!("{:?} 的 {:?} 那一格", row.kind, cell.field),
+                );
+            }
+        }
+
+        // **判定与理由那两列的取值是枚举**，夹具只摆得出其中几种：逐个再问一遍，
+        // 添一个带歧义宽度字形的候选或理由才当场变红。
+        for gate in [GeometryGate::Holds, GeometryGate::Broken] {
+            for candidate in Candidate::all(profile.panel().gray_levels, gate) {
+                stable(&candidate.to_string(), "判定那一列");
+            }
+        }
+        for reason in [
+            Reason::LowestWithinThreshold,
+            Reason::NoneWithinThreshold,
+            Reason::Override,
+            Reason::VolumeEnvelope,
+            Reason::Hysteresis,
+            Reason::Outlier,
+            Reason::OutsideTheGate,
+        ] {
+            // **这张表不留 `_`**：添一个理由先在这里编译不过，而不是悄悄漏问一种
+            // （同一条规矩见 `plain::line`）。
+            match reason {
+                Reason::LowestWithinThreshold
+                | Reason::NoneWithinThreshold
+                | Reason::Override
+                | Reason::VolumeEnvelope
+                | Reason::Hysteresis
+                | Reason::Outlier
+                | Reason::OutsideTheGate => {}
+            }
+            stable(&reason.to_string(), "理由那一列");
+        }
     }
 }

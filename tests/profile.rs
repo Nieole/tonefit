@@ -68,7 +68,7 @@ fn an_unknown_model_is_refused_with_the_built_in_list() {
     assert!(error.contains("kobo-libre-2"), "没说是哪个型号：{error}");
     // 清单要能让用户挑出一个面板相同的型号顶上：型号名与它的面板都得在。
     assert!(error.contains("kobo-libra-2"), "清单里没有型号：{error}");
-    assert!(error.contains("1264×1680"), "没给出面板：{error}");
+    assert!(error.contains("1264x1680"), "没给出面板：{error}");
     assert!(error.contains("--gray-levels"), "没给出兜底办法：{error}");
 }
 

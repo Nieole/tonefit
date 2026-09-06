@@ -2797,6 +2797,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "clap",
+ "console",
  "crc32fast",
  "encoding_rs",
  "fast_image_resize",

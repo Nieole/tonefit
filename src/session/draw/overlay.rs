@@ -368,7 +368,7 @@ mod tests {
     /// 见 [`the_premises_overlay_carries_the_header_the_volume_table_used_to_wear`]。
     const THE_PREMISES: &str = r#"
 "┌这一趟的前提 · Esc 关─────────────────────────────────────────────────────────┐"
-"│profile kobo-libra-2：1264×1680 · 300 PPI · 16 级灰阶 · 黑白 · 阈值 5.500（盲 │"
+"│profile kobo-libra-2：1264x1680 · 300 PPI · 16 级灰阶 · 黑白 · 阈值 5.500（盲 │"
 "│测标定于 boox-poke6，其余面板未复核）                                         │"
 "│适配方式 以高为准（宽随源比例，允许超出面板宽）                               │"
 "│裁边 按行列墨量占比 · 墨阈 200 · 行列占比 0.5%                                │"

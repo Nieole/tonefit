@@ -505,6 +505,24 @@ mod tests {
         Size,
     };
 
+    /// **耗时那一格在哪种终端上都占同一格**（判据见 [`crate::wrap::width_is_stable`]）。
+    ///
+    /// 它是卷表的一列（`crate::session::columns::VolumeColumn::Elapsed`），
+    /// 而写法由 [`spell`] 一处造出来——与省略号、行首记号同一条规矩：
+    /// **画法这一层自己造的字形一个都不许是歧义宽度**。三种写法各问一遍。
+    #[test]
+    fn the_elapsed_this_module_spells_is_the_same_width_on_any_terminal() {
+        for seconds in [0, 9, 59, 60, 400, 3599, 3600, 5 * 3600 + 120] {
+            let said = spell(Duration::from_secs(seconds));
+            for glyph in said.chars() {
+                assert!(
+                    crate::wrap::width_is_stable(glyph),
+                    "{glyph} 是东亚歧义宽度：{seconds}s 写成「{said}」"
+                );
+            }
+        }
+    }
+
     /// 总览块**单独**一张快照：主区最上面那一块，一个框。
     ///
     /// 只钉这一块，是因为本票做的就是它——把报告区一起钉进来，改一句报告措辞就要

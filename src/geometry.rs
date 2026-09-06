@@ -15,9 +15,17 @@ impl Size {
     }
 }
 
+/// **两个数中间那一格写 ASCII 的 `x`**，不写 `×`（U+00D7）。
+///
+/// 后者在东亚宽度表上标着 **Ambiguous**：按 CJK 配置的终端画两格、西文终端画一格。
+/// 而尺寸这一串是**表上的一列**（会话的逐页表、命令行印出来的同一批格），
+/// 列宽一律按一格算——有尺寸的行与那一格空着的行（失败页）于是整行错开一格。
+/// 判据与规矩在界面那一侧：`wrap::width_is_stable`。
+///
+/// `x` 在两套算法上都是一格，且 `1264x1680` 本来就是这一对数最常见的写法。
 impl std::fmt::Display for Size {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}×{}", self.width, self.height)
+        write!(f, "{}x{}", self.width, self.height)
     }
 }
 
