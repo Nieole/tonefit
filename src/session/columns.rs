@@ -203,8 +203,14 @@ impl Column for VolumeColumn {
 ///
 /// 与[卷表](VolumeColumn)同一个形状——行首记号与名字恒在，其余按一个固定次序砍。
 /// 列的选法答的是**展开一卷要问的那一件事**：哪一页把整卷的档位拉下来。
-/// 因此从左到右是「这一页怎么样 · 是哪一页 · 多大 · 判成哪一档 · 凭什么 · 数是多少」，
-/// 一路由结论走向证据。
+/// 因此从左到右是三段：**这一页是谁**（记号 · 页名）、**它这个样子是怎么来的**
+/// （尺寸 · 裁边 · 缩放 · 跨页 · 彩页转灰）、**它判成哪一档、凭什么**
+/// （判定 · 理由 · 判据），末一格是**去处**——一路由结论走向证据，最后落到盘上那个文件。
+///
+/// **十一列一格不少地对着 [`crate::render::pages`] 出的那几格**
+/// （`p4-parking-lot/10`，收停车场 Q162）：几何那五格从前留在表外，跟着丢掉的还有
+/// 失败页那一句「它的尺寸是卷内统一尺寸」（`p1-session/11` 的验收）。
+/// 窄屏上它们由[砍列](Self::DROPPED_IN_TURN)让位，而那是**摆不下**，不是不给。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PageColumn {
     /// 行首记号：这一页要不要紧，一个字符说完。**恒在。**
@@ -213,12 +219,22 @@ pub(super) enum PageColumn {
     Name,
     /// 这一页的输出尺寸。
     Size,
+    /// 裁边裁掉了多少。**一个像素都没裁就不在场。**
+    Crop,
+    /// 缩放怎么算的；**失败页说的是它的尺寸从哪来**（`p1-session/11` 的验收）。
+    Scaling,
+    /// 跨页切出来的哪一半。**不是切出来的就不在场。**
+    Cut,
+    /// 这一页是彩页转灰。**不是就不在场。**
+    ColorToGray,
     /// 这一页判成的那一档。彩色分支与失败页没有这一格。
     Verdict,
     /// 判成这一档的理由。
     Reason,
     /// 各候选的判据值排成一串。
     Scores,
+    /// 去处：这一页写到哪个文件。
+    Output,
 }
 
 impl Column for PageColumn {
@@ -226,20 +242,48 @@ impl Column for PageColumn {
         Self::Mark,
         Self::Name,
         Self::Size,
+        Self::Crop,
+        Self::Scaling,
+        Self::Cut,
+        Self::ColorToGray,
         Self::Verdict,
         Self::Reason,
         Self::Scores,
+        Self::Output,
     ];
 
-    /// **砍列的次序：判据 → 尺寸 → 理由。**
+    /// **砍列的次序：去处 → 裁边 → 跨页 → 彩页转灰 → 判据 → 尺寸 → 缩放 → 理由。**
     ///
     /// 记号、页名与判定不在这里边——**判成哪一档就是这一副要答的那件事**，
     /// 而先要认得出这是哪一页、它要不要紧。
     ///
-    /// 次序按「摆不下时先舍谁」排：判据一串最先——它是证据，比结论深一层，
-    /// 而它也是这张表上最宽的一格；尺寸次之——宽溢出与兜底那两件事行尾那个词已经说了；
-    /// 理由压后——它一个词就说清「这一档是怎么来的」，与判定挨着才读得懂。
-    const DROPPED_IN_TURN: &'static [Self] = &[Self::Scores, Self::Size, Self::Reason];
+    /// 次序按「摆不下时先舍谁」排，而这一副要答的那一问是**哪一页把整卷拉下来**：
+    ///
+    /// 1. **去处**最先——它是一整条路径，这张表上最宽的一格，而「这一页落到哪儿」
+    ///    与那一问离得最远：卷的去处在卷级那一行上，页名与它凑起来就是这一格。
+    /// 2. **裁边 → 跨页 → 彩页转灰**——几何那三格说的是「这一页的形状是怎么来的」，
+    ///    比判定隔着一层；三格之间按宽窄让（裁边是一对尺寸，另两格各一个词）。
+    ///    多数卷这三列一格都不在场，那时它们由 [`fit`] 的第零步先让掉、根本轮不到这里。
+    /// 3. **判据**——它是证据，比结论深一层，也是剩下几列里最宽的一格。
+    /// 4. **尺寸**——宽溢出与兜底那两件事行尾那个词已经说了。
+    /// 5. **缩放**——它是几何那一组里**唯一压到最后的**，只为一件事：失败页那一行靠它
+    ///    说出「它的尺寸是卷内统一尺寸」（`p1-session/11` 的验收，停车场 Q162
+    ///    记着它丢过一次）。那一句在别处一个字都没有。
+    /// 6. **理由**压后——它一个词就说清「这一档是怎么来的」，与判定挨着才读得懂。
+    ///
+    /// **80×24 那一档上砍到第 3 步为止**：记号、页名、尺寸、缩放、判定、理由六列还在
+    /// （`p3-session-legibility/13` 立的那三格一个不少，用例是本模块的
+    /// `the_narrowest_supported_pane_still_says_where_a_failed_page_got_its_size`）。
+    const DROPPED_IN_TURN: &'static [Self] = &[
+        Self::Output,
+        Self::Crop,
+        Self::Cut,
+        Self::ColorToGray,
+        Self::Scores,
+        Self::Size,
+        Self::Scaling,
+        Self::Reason,
+    ];
 
     const NARROWED: Self = Self::Name;
 
@@ -248,14 +292,19 @@ impl Column for PageColumn {
             Self::Mark => "记号",
             Self::Name => "页名",
             Self::Size => "尺寸",
+            Self::Crop => "裁边",
+            Self::Scaling => "缩放",
+            Self::Cut => "跨页",
+            Self::ColorToGray => "彩页",
             Self::Verdict => "判定",
             Self::Reason => "理由",
             Self::Scores => "判据",
+            Self::Output => "去处",
         }
     }
 
     /// 一列都不靠右：尺寸是一对数中间夹着 `x`，靠右摆反而让 `x` 对不齐；
-    /// 其余各列都是词或名字。
+    /// 其余各列都是词、名字或路径。
     fn to_the_right(self) -> bool {
         false
     }
@@ -264,37 +313,61 @@ impl Column for PageColumn {
 /// 各列有多宽：**那一列上最长的一格**，列头也算一格。
 ///
 /// 起手就是各列的列头（[`Widths::new`]），逐行往上撑（[`Widths::widen`]）。
+/// 顺带记下**这一列上有没有一格字**（[`Widths::filled`]）：一整列都不在场时它先让掉
+/// （见 [`fit`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Widths<C: Column> {
     /// 一列一格，次序与 [`Column::ALL`] 相同。
     of: Vec<usize>,
+    /// 一列一格，次序同上：**这一列上有没有一格真写着字**。列头不算——
+    /// 一列只剩列头，那一列就没有话说。
+    filled: Vec<bool>,
     /// 量的是**哪一张表**的列。带上它，三张表的量不会串到一处去。
     which: PhantomData<C>,
 }
 
 impl<C: Column> Widths<C> {
     /// 起手：每一列先按它的**列头**量。
+    ///
+    /// 列头**不算一格字**（[`filled`](Self::filled) 起手全是假）：它是这一列的名字，
+    /// 不是这一列上的内容。
     pub(super) fn new() -> Self {
-        let mut widths = Self {
-            of: vec![0; C::ALL.len()],
+        Self {
+            of: C::ALL
+                .iter()
+                .map(|column| usize::from(wrap::width(column.head())))
+                .collect(),
+            filled: vec![false; C::ALL.len()],
             which: PhantomData,
-        };
-        for column in C::ALL {
-            widths.widen(*column, column.head());
         }
-        widths
     }
 
-    /// 这一列上又来了一格：撑得宽就撑宽。
+    /// 这一列上又来了一格：撑得宽就撑宽，**有字就记一笔**（[`note`](Self::note)）。
     pub(super) fn widen(&mut self, column: C, text: &str) {
         let width = usize::from(wrap::width(text));
         let slot = &mut self.of[column.at()];
         *slot = (*slot).max(width);
+        self.note(column, text);
+    }
+
+    /// 这一列上有一格**在场**，但那一行**这一副不列出来**：只记一笔，不撑宽。
+    ///
+    /// 两件事分得开是因为它们问的不是同一批行：**这一列在不在场按整卷算**
+    /// （逐页那一副按 `a` 在「要紧的页」与「全部页」之间切，而切的是列哪几页——
+    /// 屏上不该跟着换一副列），**多宽按真列出来的那几行算**（列不出来的那几行
+    /// 一个像素都不占，拿它们撑宽只会白挤掉别的列）。
+    pub(super) fn note(&mut self, column: C, text: &str) {
+        self.filled[column.at()] |= !text.is_empty();
     }
 
     /// 这一列多宽。
     pub(super) fn of(&self, column: C) -> usize {
         self.of[column.at()]
+    }
+
+    /// 这一列上**有没有一格真写着字**。一行都没量过、或者量过的每一格都是空的就是 `false`。
+    pub(super) fn filled(&self, column: C) -> bool {
+        self.filled[column.at()]
     }
 
     /// 把这一列**收窄**到这么多格。砍无可砍时名字那一列走这一条（见 [`elide`]）。
@@ -309,14 +382,28 @@ pub(super) fn line_width<C: Column>(kept: &[C], widths: &Widths<C>) -> usize {
     cells + GAP * kept.len().saturating_sub(1)
 }
 
-/// **这么宽的一格上留得下哪几列**：按 [`Column::DROPPED_IN_TURN`] 那个次序砍，
-/// 砍到摆得下为止。
+/// **这么宽的一格上留得下哪几列**：先让掉[一整列都不在场](Widths::filled)的那几列，
+/// 再按 [`Column::DROPPED_IN_TURN`] 那个次序砍，砍到摆得下为止。
 ///
-/// 三列都砍完仍摆不下时就到此为止：恒在的那几列一列不让，
+/// # 一整列都不在场就不占地方
+///
+/// **那是砍列的第零步，与宽度无关**：那一列上一行字都没有，留着它只是让一个列头
+/// 挤掉别的列（逐页那张表上裁边、跨页、彩页转灰三列多数卷一格都不在场，
+/// `p4-parking-lot/10`）。一格在不在场本身就是一句话（`CONTEXT.md` 的《格》）——
+/// **一整列都不在场时那一列没有话说**。
+///
+/// **只让得掉[砍得掉的那几列](Column::DROPPED_IN_TURN)**：恒在的那几列是这张表的身份
+/// （认得出这是哪一行、它出没出事、判成哪一档），空着也留着——那时那一格的空白正是答案。
+///
+/// 砍完仍摆不下时就到此为止：恒在的那几列一列不让，
 /// [名字那一列](Column::NARROWED)由 [`plan`] 收窄。
 /// 屏再窄也要认得出这是哪一行、它出没出事——那正是这张表存在的理由。
 pub(super) fn fit<C: Column>(room: usize, widths: &Widths<C>) -> Vec<C> {
-    let mut kept = C::ALL.to_vec();
+    let mut kept: Vec<C> = C::ALL
+        .iter()
+        .copied()
+        .filter(|column| widths.filled(*column) || !C::DROPPED_IN_TURN.contains(column))
+        .collect();
     for victim in C::DROPPED_IN_TURN {
         if line_width(&kept, widths) <= room {
             break;
@@ -534,52 +621,84 @@ mod tests {
         }
     }
 
-    /// **逐页那张表按它自己那个次序砍：判据 → 尺寸 → 理由**
-    /// （`p3-session-legibility/11`）。
-    ///
-    /// 与卷表并排问一遍，钉的是「两张表各有各的次序，而砍的是同一套代码」：
-    /// 记号、页名与**判定**在最窄那一档上仍在——展开一卷要答的正是「这一页判成哪一档」。
-    #[test]
-    fn the_per_page_table_drops_its_own_columns_in_its_own_order() {
+    /// 逐页那张表的一份量：十一列各一格，宽窄与真实那一副同一个数量级。
+    fn per_page() -> Widths<PageColumn> {
         let mut widths: Widths<PageColumn> = Widths::new();
         widths.widen(PageColumn::Mark, "!");
         widths.widen(PageColumn::Name, "087.png");
         widths.widen(PageColumn::Size, "1182x1680");
+        widths.widen(PageColumn::Crop, "裁边 1441x2048 → 1400x2000");
+        widths.widen(PageColumn::Scaling, "失败页 · 卷内统一尺寸留白");
+        widths.widen(PageColumn::Cut, "跨页右半");
+        widths.widen(PageColumn::ColorToGray, "彩页转灰");
         widths.widen(PageColumn::Verdict, "2bit+FS");
         widths.widen(PageColumn::Reason, "特例页单独定档");
         widths.widen(
             PageColumn::Scores,
             "1bit+FS 32.000 ⋅ 2bit 20.000 ⋅ 4bit 8.000 ⋅ 8bit 2.000",
         );
+        widths.widen(PageColumn::Output, "出/隔离/棋魂 07/087.png");
+        widths
+    }
+
+    /// **逐页那张表按它自己那个次序砍**（`p3-session-legibility/11`，
+    /// 次序由 `p4-parking-lot/10` 添成八步，收停车场 Q162）。
+    ///
+    /// **那个次序不在这里重抄一遍**（`CLAUDE.md`《文档写作》：单一出处）——
+    /// 它连同理由只写在 [`PageColumn::DROPPED_IN_TURN`](Column::DROPPED_IN_TURN) 上，
+    /// 而这一条照着它一步一步走完，因此**添一步、挪一步都不必改这里**。
+    ///
+    /// 与卷表并排问一遍，钉的是「两张表各有各的次序，而砍的是同一套代码」：
+    /// 记号、页名与**判定**在最窄那一档上仍在——展开一卷要答的正是「这一页判成哪一档」。
+    #[test]
+    fn the_per_page_table_drops_its_own_columns_in_its_own_order() {
+        let widths = per_page();
         let all = PageColumn::ALL.to_vec();
         let full = line_width(&all, &widths);
 
         assert_eq!(fit(full, &widths), all, "摆得下就一列都不砍");
-        // 判据一串最先让掉：它是这张表上最宽的一格，也是比结论深一层的证据。
-        let without_scores = vec![
-            PageColumn::Mark,
-            PageColumn::Name,
-            PageColumn::Size,
-            PageColumn::Verdict,
-            PageColumn::Reason,
-        ];
-        assert_eq!(fit(full - 1, &widths), without_scores);
-        // 再窄：尺寸走，理由留着。
-        let without_size = vec![
-            PageColumn::Mark,
-            PageColumn::Name,
-            PageColumn::Verdict,
-            PageColumn::Reason,
-        ];
-        assert_eq!(
-            fit(line_width(&without_scores, &widths) - 1, &widths),
-            without_size
-        );
-        // 最窄那一档：记号、页名、判定三列。
+        // **一步一步照那个次序砍**：每砍掉一列就把宽度再收一格，问下一步舍的是谁。
+        // 剩下的那一列就是「此刻该舍谁」，而恒在的那三列一步都不该出现在这里。
+        let mut kept = all.clone();
+        for victim in PageColumn::DROPPED_IN_TURN {
+            let room = line_width(&kept, &widths) - 1;
+            kept.retain(|column| column != victim);
+            assert_eq!(
+                fit(room, &widths),
+                kept,
+                "{victim:?} 不是这一步该舍的那一列"
+            );
+        }
+        // 最窄那一档：记号、页名、判定三列（`p3-session-legibility/13` 立的那三格）。
         let bare = vec![PageColumn::Mark, PageColumn::Name, PageColumn::Verdict];
-        for room in [0, 1, 5, 12, line_width(&without_size, &widths) - 1] {
+        assert_eq!(kept, bare, "砍到底剩下的不是那三列");
+        for room in [0, 1, 5, 12, line_width(&bare, &widths) - 1] {
             assert_eq!(fit(room, &widths), bare, "{room} 格上砍成了别的样子");
         }
+    }
+
+    /// **80 列那一档上缩放那一列还在**——失败页那一行靠它说出「它的尺寸是卷内统一尺寸」
+    /// （`p1-session/11` 的验收，停车场 Q162 记着它丢过一次）。
+    ///
+    /// 这一条钉的是[砍列次序](Column::DROPPED_IN_TURN)排得对不对：缩放压在倒数第二步，
+    /// 最窄的那几档之外它一直在。屏上那一副另有一条（`super::draw::pages`）。
+    #[test]
+    fn the_narrowest_supported_pane_still_says_where_a_failed_page_got_its_size() {
+        // 屏 80 列：左右两道框线各一格，表自己再让出行首那一格（见 `lay`）。
+        const ROOM: usize = 80 - 2 - 1;
+        let widths = per_page();
+
+        let kept = fit(ROOM, &widths);
+
+        for column in [
+            PageColumn::Mark,
+            PageColumn::Name,
+            PageColumn::Verdict,
+            PageColumn::Scaling,
+        ] {
+            assert!(kept.contains(&column), "{column:?} 在 80 列上被砍掉了");
+        }
+        assert!(line_width(&kept, &widths) <= ROOM, "{kept:?} 摆不下");
     }
 
     /// **最窄那一档上卷名与行首记号仍在。**

@@ -84,12 +84,23 @@ pub enum Reach {
 /// **不许摊开上一卷冒充它**。这个取值认得出这两处，报告区的光标与展开因此指得动它
 /// （`p3-session-legibility/10`）。
 ///
-/// **没做成的那几卷不在这里**：它们连一份卷报告都没有（[`VolumeFailure`] 只有一句原因），
-/// 逐页那几行无从谈起。表上它们照旧占一行，光标停不上去——那一行要说的话就在它自己的行尾。
+/// **没做成的那几卷也在这里**（[`Failed`](Self::Failed)，`p4-parking-lot/10` 收
+/// 停车场 Q159）：它们在表上占着一行，而**一行看得见就该选得中**。
+/// 停得住不等于展得开——[展得开的那几卷](Self::expandable)不含它们。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Volume {
     /// [收摊了的](Report::volumes)第几卷。
     Settled(usize),
+    /// **一整卷没做成的**第几条（[`Report::failed_volumes`] 上的下标）。
+    ///
+    /// 它连一份卷报告都没有（[`VolumeFailure`] 只带一句原因），因此
+    /// [`Live::volume`] 对它恒答 `None`、[展开](Self::expandable)也到不了它。
+    /// **光标照旧停得上去**：它在卷表上占着一行，而屏上看得见、选不中比什么都不给更坏
+    /// （停车场 Q159）。停上去按展开时说的那一句在 `super::terminal` 那一头。
+    ///
+    /// **先后无从复原**：`Report` 把收摊了的与没做成的分成两列存，没做成的那几卷因此
+    /// 排在收摊卷后面（停车场 Q151）。本取值一格不动那件事——它只让光标停得上去。
+    Failed(usize),
     /// **决策点上攒着的那一份**：这一卷还没收摊，第二遍一步没走。
     ///
     /// 那一格装的是**它前面收摊了几卷**，而那个数就是**它的身份**：它收摊之后正是
@@ -99,8 +110,22 @@ pub enum Volume {
     /// （`p2-loose-ends/08` 那条「不许摊开另一卷冒充它」朝前的那一半）。
     ///
     /// **它不是「第几卷」**：那一卷没做成时它谁都不是（[`nearest`](Live::nearest)
-    /// 那时就近收一收），而没做成的卷本来就不在这一列里。
+    /// 那时就近收一收），而那一卷此刻是 [`Failed`](Self::Failed) 那一种。
     Summarized { after: usize },
+}
+
+impl Volume {
+    /// **它展得开吗**（`⏎` 按下去有没有第二层）。
+    ///
+    /// [没做成的那几卷](Self::Failed)展不开：它们连一份卷报告都没有，逐页那几行无从谈起。
+    /// **它与「停不停得住」是两件事**——那几卷停得住（光标落得上那一行），
+    /// 只是按展开时得到的是[一句话](super::terminal)而不是一副逐页表。
+    ///
+    /// 判据摆在这里而不是各处 `matches!` 一遍：`⏎`、`⇥`、抬头上那个「第几卷」
+    /// 三处问的是同一件事（见 [`Branch::expandable`]）。
+    pub fn expandable(self) -> bool {
+        !matches!(self, Self::Failed(_))
+    }
 }
 
 /// **报告区目录那一级摆得出的一枝**（`volume-discovery/08`）：一个目录，
@@ -108,7 +133,7 @@ pub enum Volume {
 ///
 /// 分组不在这里——它只有 [`crate::render::grouped`] 一处出处，命令行那一副读的是同一份
 /// （`CONTEXT.md` 的《发现》：层次与发现出来的那棵树一致）。本结构只把分出来的那几组
-/// 翻成会话认得的东西：[停得住的那几卷](Volume)，以及没做成的那几卷在报告上第几条。
+/// 翻成会话认得的东西：[停得住的那几卷](Volume)。
 ///
 /// **它不带那一行**：目录表上一枝写什么在 [`Live::branch_rows`]，而问「哪一枝底下有
 /// 哪几卷」的地方多得多（光标停在哪一枝、展开哪一枝、`⇥` 在哪几卷之间转），
@@ -119,12 +144,50 @@ pub struct Branch {
     pub directory: PathBuf,
     /// 它底下**停得住**的那几卷（[`Volume`]），按表上的先后。
     ///
-    /// **可以是空的**：一枝底下的卷全没做成时它一卷都收不住——那几卷连一份卷报告都没有
-    /// （见 [`Volume`]）。光标因此停不到这一枝上，与卷表上没做成那几行停不上去
-    /// 是同一条规矩。
+    /// **卷表上有几行，这里就有几卷**——没做成的那几卷也在里面
+    /// （[`Volume::Failed`]，`p4-parking-lot/10` 收停车场 Q159）。
+    /// 展得开的是其中哪几卷问 [`expandable`](Self::expandable)。
     pub volumes: Vec<Volume>,
-    /// 它底下**没做成**的那几卷在 `Report::failed_volumes` 里的第几条，按报告上的先后。
-    pub failures: Vec<usize>,
+}
+
+impl Branch {
+    /// 它底下**展得开**的那几卷，按表上的先后。
+    ///
+    /// `⏎` 展开哪一卷、`⇥` 在哪几卷之间转、抬头上那个「第 n/m 卷」的分母，
+    /// 三处问的都是它——[停得住的那几卷](Self::volumes)比它多出没做成的那几条，
+    /// 而那几条按展开时给的是一句话（见 `super::terminal`）。
+    pub fn expandable(&self) -> Vec<Volume> {
+        only_expandable(&self.volumes)
+    }
+
+    /// **这一枝里[跟随](super::state::Follow)该跟到哪一卷**：末一条展得开的，
+    /// 也就是这一枝里最新收摊的那一卷。
+    ///
+    /// 与 [`Live::latest`] 逐条同形，理由也是同一条：没做成的那几卷排在收摊卷**后面**
+    /// （停车场 Q151），跟随落到它们身上之后，这一枝再收摊几卷它都还钉在原地。
+    /// **一卷都展不开时退到末一行**——那一刻这一枝上只剩没做成的那几卷，
+    /// 而屏上有行就该有光标。
+    pub fn latest(&self) -> Option<Volume> {
+        self.volumes
+            .iter()
+            .rev()
+            .find(|at| at.expandable())
+            .or_else(|| self.volumes.last())
+            .copied()
+    }
+}
+
+/// 一列卷里**展得开**的那几卷（[`Volume::expandable`]），次序原样。
+///
+/// **滤只有这一处**：`⏎`、`⇥` 与报告区抬头上那个「第 n/m 卷」的分母三处滤的是同一道，
+/// 只是喂的列不同——一枝底下那几卷走 [`Branch::expandable`]，整趟那一列走
+/// [`Live::expandable`]。
+fn only_expandable(volumes: &[Volume]) -> Vec<Volume> {
+    volumes
+        .iter()
+        .copied()
+        .filter(|at| at.expandable())
+        .collect()
 }
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
@@ -548,25 +611,68 @@ impl Live {
         self.summarized.as_ref()
     }
 
-    /// **表上停得住的那几卷**（[`Volume`]），按表上的先后：收摊了的那几卷，
-    /// 末尾是决策点上攒着的那一份。
+    /// **表上停得住的那几卷**（[`Volume`]），**按卷表上的先后**：收摊了的那几卷、
+    /// 没做成的那几卷、末尾是决策点上攒着的那一份。
     ///
-    /// 报告区的光标走的就是这一列，展开也只到得了它们（`p3-session-legibility/10`）。
-    /// **没做成的那几卷不在里面**，理由见 [`Volume`]；表上它们照旧占一行
-    /// （见 `super::draw::table`）。
+    /// 报告区的光标走的就是这一列（`p3-session-legibility/10`）。**没做成的那几卷
+    /// 此刻也在里面**（`p4-parking-lot/10` 收停车场 Q159）：它们在表上占着一行，
+    /// 而一行看得见就该选得中。展开到得了的是其中[展得开的那几卷](Volume::expandable)。
+    ///
+    /// 那个次序与 [`super::draw::table`] 摆行的次序**逐格相同**——两处排成两个样子的话，
+    /// `↑↓` 走的就不是屏上那几行了。没做成的那几卷排在收摊卷后面这一笔记在停车场 Q151。
     ///
     /// **与 [`Overall::volumes`] 不是一个数**：那一个是这一趟**点名了**几个卷，
-    /// 这一列是**此刻说得出报告**的那几卷。
+    /// 这一列是**此刻表上摆得出**的那几卷。
     pub fn volumes(&self) -> Vec<Volume> {
         let after = self.report.volumes.len();
         (0..after)
             .map(Volume::Settled)
+            .chain((0..self.report.failed_volumes.len()).map(Volume::Failed))
             .chain(
                 self.summarized
                     .iter()
                     .map(move |_| Volume::Summarized { after }),
             )
             .collect()
+    }
+
+    /// **[跟随](super::state::Follow)跟的是哪一卷**：最新**收摊**的那一卷，
+    /// 决策点上攒着的那一份排在最后。
+    ///
+    /// **没做成的那几卷不算最新的**，虽然光标停得上它们（见 [`volumes`](Self::volumes)）：
+    /// 报告把它们分成另一列存，先后无从复原（停车场 Q151），而它们在
+    /// [`volumes`](Self::volumes) 里排在收摊卷**后面**——让跟随落到它们身上，
+    /// 后面每收摊一卷跟随都还钉在原地，「跟着最新的走」当场就成了假话。
+    ///
+    /// **一卷都没收摊时退到表上最后一行**：那一刻表上只剩没做成的那几卷，
+    /// 而屏上有行就该有光标。
+    ///
+    /// **一个 `Vec` 都不建**：这一处每帧都问（[`super::state::Session::standing`]），
+    /// 而它要的只是末一条。
+    pub fn latest(&self) -> Option<Volume> {
+        let after = self.report.volumes.len();
+        self.summarized
+            .as_ref()
+            .map(|_| Volume::Summarized { after })
+            .or_else(|| after.checked_sub(1).map(Volume::Settled))
+            .or_else(|| {
+                self.report
+                    .failed_volumes
+                    .len()
+                    .checked_sub(1)
+                    .map(Volume::Failed)
+            })
+    }
+
+    /// 这一趟**展得开**的那几卷，按表上的先后：[停得住的那几卷](Self::volumes)
+    /// 滤掉没做成的那几条。
+    ///
+    /// **只在「那一卷挂在哪一枝上答不出来」时才用得着**（报告换了一趟，见
+    /// `super::draw::report::report_title`）：平常问的是
+    /// [这一枝底下那几卷](Branch::expandable)——`⇥` 只在一枝里转，
+    /// 拿整趟当分母屏上那个数就指着一个按不到的集合。
+    pub fn expandable(&self) -> Vec<Volume> {
+        only_expandable(&self.volumes())
     }
 
     /// **报告区目录那一级此刻摆得出的那几枝**（[`Branch`]），按表上的先后。
@@ -582,23 +688,21 @@ impl Live {
         let failed = self.report.failed_volumes.len();
         render::grouped(&listed)
             .into_iter()
-            .map(|group| {
-                let mut volumes = Vec::new();
-                let mut failures = Vec::new();
-                for at in &group.at {
-                    if *at < settled {
-                        volumes.push(Volume::Settled(*at));
-                    } else if *at < settled + failed {
-                        failures.push(*at - settled);
-                    } else {
-                        volumes.push(Volume::Summarized { after: settled });
-                    }
-                }
-                Branch {
-                    directory: group.directory,
-                    volumes,
-                    failures,
-                }
+            .map(|group| Branch {
+                directory: group.directory,
+                volumes: group
+                    .at
+                    .iter()
+                    .map(|at| {
+                        if *at < settled {
+                            Volume::Settled(*at)
+                        } else if *at < settled + failed {
+                            Volume::Failed(*at - settled)
+                        } else {
+                            Volume::Summarized { after: settled }
+                        }
+                    })
+                    .collect(),
             })
             .collect()
     }
@@ -630,10 +734,14 @@ impl Live {
     }
 
     /// 这一卷此刻对着哪一份卷报告。**指不着就是 `None`**——决策点上那一卷收摊之后
-    /// [`Volume::Summarized`] 就指不着了（那时它是收摊了的最后一卷）。
+    /// [`Volume::Summarized`] 就指不着了（那时它是收摊了的最后一卷），而
+    /// [没做成的那几卷](Volume::Failed)**恒指不着**：它们连一份卷报告都没有。
     pub fn volume(&self, at: Volume) -> Option<&VolumeReport> {
         match at {
             Volume::Settled(at) => self.report.volumes.get(at),
+            // 没做成的那一卷没有报告可指——那正是「没做成」的意思。它照旧停得住
+            // （见 [`Volume::Failed`]），只是展不开。
+            Volume::Failed(_) => None,
             // **前面收摊了几卷要对得上**：对不上说明那一份已经不是它了
             // （见 [`Volume::Summarized`]）——那一刻它指的是**下一卷**，
             // 而调用方要的是刚才那一卷（先过一道 [`nearest`](Self::nearest)）。
@@ -653,13 +761,16 @@ impl Live {
     /// 2. **决策点上那一卷收摊了**——它此刻是[第 `after` 卷](Volume::Summarized)，
     ///    那个数就是它的身份，因此**跟着它自己走**，而不是跟着「攒着的那一份」
     ///    那个位置跑到下一卷身上；
-    /// 3. 剩下的（那一卷没做成、报告换了一趟）**就近落到最后一卷上**——
-    ///    与 `super::viewport::Viewport::new` 那条「光标越界不算错」同一条规矩。
+    /// 3. 剩下的（报告换了一趟、那一卷已经不在表上）**就近落到
+    ///    [最新那一卷](Self::latest)上**——与 `super::viewport::Viewport::new`
+    ///    那条「光标越界不算错」同一条规矩。落的是「最新收摊的那一卷」而不是
+    ///    [`volumes`](Self::volumes) 的末一条：末一条可能是**没做成的那一卷**，
+    ///    而这一道收的东西随后多半要展开（见 `super::draw::report`），
+    ///    收到一卷展不开的上面等于把人推进那句「这一卷不在这一趟的报告里了」。
     ///
     /// 一卷都没有时是 `None`。
     pub fn nearest(&self, at: Volume) -> Option<Volume> {
-        let volumes = self.volumes();
-        if volumes.contains(&at) {
+        if self.volumes().contains(&at) {
             return Some(at);
         }
         if let Volume::Summarized { after } = at
@@ -667,7 +778,7 @@ impl Live {
         {
             return Some(Volume::Settled(after));
         }
-        volumes.last().copied()
+        self.latest()
     }
 
     /// 攒到此刻的报告。
@@ -1136,6 +1247,73 @@ pub(crate) mod fixture {
             io: io_plan(),
             decodes: 8,
             timing: took(96),
+        }
+    }
+
+    /// 一卷两页：一张**裁过边、还是彩页转灰**的页，加上同一卷里那一张失败页。
+    ///
+    /// [每种页各一张](a_page_of_every_kind)那一卷答的是「哪几页要紧」，几何那几格
+    /// 在它身上**一格都不在场**——逐页表把那五格收进来之后（`p4-parking-lot/10`，
+    /// 收停车场 Q162），要问「它们摆进表了没有」就得有这一卷。
+    ///
+    /// **跨页那一刀不在这里**：`Cut` 在库外造不出来（`tonefit::Cut` 没有公开的构造，
+    /// 而造它的 `Split` 不在导出面上），而为一份夹具去开库的公开面不值当。
+    /// 那一格由 `super::draw::pages` 那一头喂一行手搓的[几何行](crate::render::Row)问
+    /// ——问的正是「哪一格落进哪一列」，与这一卷问的「整表摆出来什么样」是两件事。
+    pub fn a_page_with_every_geometry_cell(name: &str) -> VolumeReport {
+        let base = Candidate::new(BitDepth::Four, Dither::Off);
+        let target = Size::new(1182, 1680);
+        let pages = vec![
+            PageReport {
+                source: PathBuf::from(format!("库/{name}/001.jpg")),
+                output: PathBuf::from(format!("出/隔离/{name}/001.png")),
+                size: target,
+                outcome: PageOutcome::Whole(Processed {
+                    // 裁过边：`before` 与 `after` 不等，`Crop::trimmed` 才为真。
+                    crop: Crop::new(Size::new(1441, 2048), (20, 30), Size::new(1400, 2000)),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: Scaling::plan(Size::new(1441, 2048), target),
+                    // 彩页走灰度分支：逐页那一行因此标着「彩页转灰」。
+                    color: PageColor::Color,
+                    branch: PageBranch::Gray {
+                        gate: GeometryGate::Holds,
+                        scores: every_candidate(),
+                        verdict: Verdict {
+                            candidate: base,
+                            reason: Reason::LowestWithinThreshold,
+                        },
+                    },
+                }),
+            },
+            PageReport {
+                source: PathBuf::from(format!("库/{name}/017.jpg")),
+                output: PathBuf::from(format!("出/隔离/{name}/017.png")),
+                size: target,
+                outcome: PageOutcome::Failed {
+                    reason: "解不出完整尺寸：JPEG 数据截断".to_owned(),
+                },
+            },
+        ];
+        VolumeReport {
+            volume: PathBuf::from(format!("库/{name}")),
+            output: PathBuf::from(format!("出/隔离/{name}")),
+            superseded: None,
+            source_pages: pages.len(),
+            verdict: Some(VolumeVerdict::Envelope(Envelope {
+                base,
+                driver: 0,
+                body_pages: 1,
+                outlier_pages: 0,
+                raised_pages: 0,
+            })),
+            pages,
+            cache: cache_usage(),
+            extracted: 0,
+            io: io_plan(),
+            decodes: 2,
+            timing: took(12),
         }
     }
 
@@ -1621,12 +1799,13 @@ mod tests {
     /// **一趟摆得出的那几枝，与卷表读的是同一列**（`volume-discovery/08`）。
     ///
     /// 三种条目各归各的枝：收摊了的那几卷按 [`Volume::Settled`] 认，
-    /// 没做成的那几卷按它们在 `Report::failed_volumes` 里第几条认，
-    /// 决策点上攒着的那一份按 [`Volume::Summarized`] 认——三种的**次序**与
-    /// `super::draw::table` 那一头逐格相同，分组因此不会把两处排成两个样子。
+    /// 没做成的那几卷按 [`Volume::Failed`] 认，决策点上攒着的那一份按
+    /// [`Volume::Summarized`] 认——三种的**次序**与 `super::draw::table` 那一头
+    /// 逐格相同，分组因此不会把两处排成两个样子。
     ///
-    /// **一卷都停不住的那一枝照旧摆得出来**：那几卷全没做成，连一份卷报告都没有，
-    /// 光标停不上去（与卷表上没做成那几行同一条），而它在屏上仍占一行。
+    /// **全没做成的那一枝也停得住**（`p4-parking-lot/10` 收停车场 Q159）：
+    /// 它那一卷在屏上占着一行，光标因此落得上去——展不开是另一件事
+    /// （[`Branch::expandable`] 那一列里没有它）。
     #[test]
     fn the_branches_are_the_directories_the_volumes_came_from() {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
@@ -1654,11 +1833,17 @@ mod tests {
             branches[0].volumes,
             [Volume::Settled(0), Volume::Summarized { after: 2 }]
         );
-        assert!(branches[0].failures.is_empty());
+        assert_eq!(
+            branches[0].expandable(),
+            branches[0].volumes,
+            "甲那一枝都展得开"
+        );
         assert_eq!(branches[1].volumes, [Volume::Settled(1)]);
-        // 丙那一枝一卷都停不住：它只有一条没做成的。
-        assert!(branches[2].volumes.is_empty(), "没做成的卷停得住了");
-        assert_eq!(branches[2].failures, [0]);
+        // 丙那一枝只有一条没做成的：它**停得住**（光标落得上那一行），却展不开。
+        assert_eq!(branches[2].volumes, [Volume::Failed(0)]);
+        assert!(branches[2].expandable().is_empty(), "没做成的卷展得开了");
+        // 跟随不落到它身上：那一列排在收摊卷后面，落上去之后再收摊几卷也不动了。
+        assert_eq!(live.latest(), Some(Volume::Summarized { after: 2 }));
         // 那几行与这几枝**同序**，说得出各枝几卷——措辞与聚合只有
         // `crate::render::directory` 一处出处。
         let rows = live.branch_rows();

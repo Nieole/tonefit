@@ -1266,8 +1266,9 @@ impl Expansion {
     /// 从 `at` 那一卷往一边挪一格，**两头都转一圈**——与三层那几个取值环同一条
     /// （见 [`around`]）。
     ///
-    /// `volumes` 是**此刻**展得开的那几卷（[`Live::volumes`]），不是进来那一刻记下的
-    /// 一个数：跑着的时候也展得开，而报告那时还在长。
+    /// `volumes` 是**此刻**展得开的那几卷（[`Branch::expandable`](super::live::Branch::expandable)），
+    /// 不是进来那一刻记下的一个数：跑着的时候也展得开，而报告那时还在长。
+    /// **没做成的那几卷不在里面**——`⇥` 转到一卷展不开的上面，那一格里就只剩一句话了。
     ///
     /// **`at` 是解析过的那一卷**（[`Live::nearest`]）：展开着的那一卷可能已经收摊，
     /// 而它那时换了个名字（「攒着的那一份」→「收摊了的第 n 卷」）——不先解析就找不着它。
@@ -1576,14 +1577,19 @@ impl Session {
     /// **[展开着一枝](Focus::Opened)时它收在这一枝底下**（`volume-discovery/08`）：
     /// 跟随着的时候最新那一卷随时可能落到**另一枝**上，而屏上摆的是这一枝的卷表——
     /// 不收的话，那一格一行都不反白，而 `⏎` 展开的会是屏上根本没有的那一卷。
-    /// 收法是落到**这一枝的末一卷**上：跟随说的是「跟着最新的走」，
-    /// 而这一枝里最新的就是它。那一枝一卷都收不住时是 `None`——光标停不上去。
+    /// 收法是落到**这一枝里最新收摊的那一卷**上（[`Branch::latest`](super::live::Branch::latest)）：
+    /// 跟随说的是「跟着最新的走」，而这一枝里最新的就是它。**不是这一枝的末一行**——
+    /// 末一行可能是没做成的那一卷，而那几条排在收摊卷后面（停车场 Q151），
+    /// 落上去之后这一枝再收摊几卷跟随都还钉在原地，与 [`Live::latest`] 治的是同一件事。
     ///
     /// **收 `&Live`**：这一问要数「此刻有哪几卷」，而那份东西在那一趟上，不在本模块。
     /// 一卷都没有时是 `None`——那时屏上没有一处画得出光标。
     pub fn standing(&self, live: &Live) -> Option<Volume> {
         let at = match self.follow {
-            Follow::Latest => live.volumes().last().copied(),
+            // **跟随跟的是最新收摊的那一卷**（[`Live::latest`]），不是表上末一行：
+            // 末一行可能是没做成的那一卷，而它排在收摊卷后面——落上去之后跟随就再也
+            // 走不动了（停车场 Q159 收进来的那一条只让光标**停得上**，不改跟随跟谁）。
+            Follow::Latest => live.latest(),
             Follow::Stopped(at) => live.nearest(at),
         }?;
         let Some(directory) = self.opened() else {
@@ -1596,7 +1602,7 @@ impl Session {
             .into_iter()
             .find(|branch| branch.directory == directory)
         {
-            Some(branch) if !branch.volumes.contains(&at) => branch.volumes.last().copied(),
+            Some(branch) if !branch.volumes.contains(&at) => branch.latest(),
             _ => Some(at),
         }
     }
@@ -1607,8 +1613,9 @@ impl Session {
     /// **挪一格是什么随站在哪一级而变**（`volume-discovery/08`），而光标**恒是一卷**：
     ///
     /// - [目录表](Focus::Report)上挪的是**一枝**：落到相邻那一枝的**头一卷**上。
-    ///   一卷都停不住的那一枝跳过——那几卷全没做成，连一份卷报告都没有
-    ///   （见 [`Branch::volumes`](super::live::Branch::volumes)）。
+    ///   **一枝都不跳过**——每一枝底下至少有一行，而一行看得见就该选得中
+    ///   （`p4-parking-lot/10` 收停车场 Q159；见
+    ///   [`Branch::volumes`](super::live::Branch::volumes)）。
     /// - [展开着一枝](Focus::Opened)时挪的是**这一枝底下那几卷**，转的圈也只有这一枝
     ///   ——层次与发现出来的那棵树一致，一个 `↓` 不该把人甩到另一枝上去。
     ///
@@ -1651,31 +1658,35 @@ impl Session {
 
     /// **挪一枝**：落到相邻那一枝的头一卷上，两头转一圈。
     ///
-    /// **只在停得住的那几枝上转**：一卷都收不住的那一枝在屏上照旧占一行，
-    /// 光标却停不上去——与卷表上没做成那几行同一条规矩。
+    /// **每一枝都停得住**（`p4-parking-lot/10` 收停车场 Q159）：一枝底下的卷全没做成时
+    /// 光标落到那几卷头一条上——它在屏上占着一行，展不开是按下 `⏎` 之后的事。
+    /// 从前这一处要先把「一卷都收不住的那几枝」滤掉，那一道随
+    /// [`Branch::volumes`](super::live::Branch::volumes) 收下没做成的那几卷一起没了。
+    ///
+    /// **它靠一条前提：每一枝底下至少有一行。** 分组只为**至少有一条成员**的目录建组
+    /// （[`crate::render::grouped`]），而这一层收到的每一条成员都翻成了一卷
+    /// （[`Live::branches`](super::live::Live::branches)）。真空了这一下就是「按了没反应」，
+    /// 与只有一枝那一档同一个待遇——不另编一条「跳过空枝」的规矩，
+    /// 那会让屏上一行看得见的东西又变回选不中的。
     ///
     /// **只有一枝时一格不动，跟随也不停**（点名一个目录跑就是这一档）：转一圈回到
     /// 原地，屏上分毫不变，而把跟随停掉是**看不见的后果**——从此新卷收摊光标不再跟着走。
     /// 「按了没反应」比「按了偷偷改了个状态」好（`CONTEXT.md` 的《跟随》：
     /// 光标一挪跟随就停了——这一下压根没挪）。
     fn next_branch(branches: &[Branch], standing: Option<Volume>, step: Step) -> Option<Volume> {
-        let standable: Vec<&Branch> = branches
-            .iter()
-            .filter(|branch| !branch.volumes.is_empty())
-            .collect();
-        let last = standable.len().checked_sub(1)?;
+        let last = branches.len().checked_sub(1)?;
         if last == 0 {
             return None;
         }
         let at = standing
             .and_then(|at| {
-                standable
+                branches
                     .iter()
                     .position(|branch| branch.volumes.contains(&at))
             })
             .unwrap_or(last);
-        standable
-            .get(around(at, standable.len(), step))
+        branches
+            .get(around(at, branches.len(), step))
             .and_then(|branch| branch.volumes.first().copied())
     }
 
@@ -5319,8 +5330,9 @@ mod tests {
     /// 屏上那个光标**恒是一卷**（`CONTEXT.md` 的《会话》：跟随）：目录那一级只是把它
     /// 归到一行上，挪一枝就是落到相邻那一枝的**头一卷**上。
     ///
-    /// **一卷都停不住的那一枝跳过去**：那几卷全没做成，连一份卷报告都没有——
-    /// 与卷表上没做成那几行停不上去是同一条规矩。
+    /// **全没做成的那一枝也停得住**（`p4-parking-lot/10` 收停车场 Q159）：
+    /// 它那一卷在屏上占着一行，光标因此落得上去——与卷表上没做成那几行停得上去
+    /// 是同一条规矩。展不开是按下 `⏎` 之后的事，不归这一处。
     #[test]
     fn the_cursor_moves_by_branch_on_the_directory_table_and_by_volume_inside_one() {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
@@ -5333,21 +5345,26 @@ mod tests {
         let mut session = Session::new();
         session.run_started();
 
-        // 三枝：甲（两卷）、乙（一卷）、丙（一卷都停不住）。
+        // 三枝：甲（两卷）、乙（一卷）、丙（一卷没做成）。
         assert_eq!(live.branches().len(), 3);
-        // 跟随着：光标停在最新收摊的那一卷上，也就是乙那一枝。
+        // 跟随着：光标停在最新**收摊**的那一卷上，也就是乙那一枝——丙那一卷没做成，
+        // 跟随不落到它身上（[`Live::latest`]）。
         assert_eq!(session.standing(&live), Some(Volume::Settled(2)));
 
         // 目录表上往前一枝：落到甲那一枝的**头一卷**上，不是它的末一卷。
         session.select(&live, Step::Back);
         assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(0)));
-        // 再往前一枝：两头绕回去，而丙那一枝**跳过去了**——它一卷都停不住。
+        // 再往前一枝：两头绕回去，落到**丙**那一枝上——它那一卷没做成，而没做成的卷
+        // 此刻停得住（停车场 Q159）。屏上看得见的一行就该选得中。
         session.select(&live, Step::Back);
         assert_eq!(
             session.follow(),
-            Follow::Stopped(Volume::Settled(2)),
-            "光标停到了一卷都停不住的那一枝上"
+            Follow::Stopped(Volume::Failed(0)),
+            "没做成的那一枝跳过去了"
         );
+        // 再往前一枝：回到乙。三枝转一圈，一枝都不跳。
+        session.select(&live, Step::Back);
+        assert_eq!(session.follow(), Follow::Stopped(Volume::Settled(2)));
 
         // 展开甲那一枝：这一级挪的是**它底下那几卷**，转的圈也只有这一枝。
         session.open(PathBuf::from("库/甲"));
@@ -5365,6 +5382,45 @@ mod tests {
             session.follow(),
             Follow::Stopped(Volume::Settled(0)),
             "转出了这一枝"
+        );
+    }
+
+    /// **跟随收进一枝底下时落的是这一枝里最新收摊的那一卷，不是它的末一行**
+    /// （`p4-parking-lot/10`，收停车场 Q159 之后要守住的那一半）。
+    ///
+    /// 展开着一枝而跟随着的那一卷落在**另一枝**上时，光标要收到这一枝里来
+    /// （`volume-discovery/08`）。收到**末一行**的话它会落在没做成的那一卷上——
+    /// 那几条排在收摊卷后面（停车场 Q151），从此这一枝再收摊几卷光标都还钉在原地，
+    /// 而屏上写着「跟随着」。收法因此是 [`Branch::latest`](super::live::Branch::latest)，
+    /// 与 [`Live::latest`] 逐条同形。
+    #[test]
+    fn the_follow_lands_on_the_newest_settled_volume_of_the_branch_not_on_its_last_row() {
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        live.run_started(3, 3000);
+        live.volume_started(Path::new("库/甲/第1话"), 1000);
+        live.volume_finished(&fixture::skipped_volume("甲/第1话", 10));
+        live.volume_failed(Path::new("库/甲/没做成"), "卷根不在了");
+        live.volume_started(Path::new("库/乙/第1话"), 1000);
+        live.volume_finished(&fixture::skipped_volume("乙/第1话", 10));
+        let mut session = Session::new();
+        session.run_started();
+
+        // 甲那一枝两行：收摊了的第 0 卷，末一行是没做成的那一条。
+        let branches = live.branches();
+        assert_eq!(
+            branches[0].volumes,
+            [Volume::Settled(0), Volume::Failed(0)],
+            "{branches:?}"
+        );
+        // 跟随着：最新收摊的那一卷在**乙**那一枝上。
+        assert_eq!(session.standing(&live), Some(Volume::Settled(1)));
+
+        // 展开甲那一枝：光标收进来，落的是甲里最新**收摊**的那一卷，不是它的末一行。
+        session.open(PathBuf::from("库/甲"));
+        assert_eq!(
+            session.standing(&live),
+            Some(Volume::Settled(0)),
+            "跟随落到了没做成的那一卷上"
         );
     }
 

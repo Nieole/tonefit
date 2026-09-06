@@ -144,8 +144,12 @@ impl Mark {
     /// 其余平常。**一枝的记号因此不会比它底下最坏的那一卷轻**——
     /// 收成一行的代价只许落在明细上，不许落在「这一枝出没出事」上。
     pub(super) fn of_branch(live: &Live, branch: &Branch) -> Self {
-        // **最重的那一档先问**：它只看 `failures` 那一列，一卷都不必开。
-        if !branch.failures.is_empty() {
+        // **最重的那一档先问**：有没有一卷没做成看取值就够，一卷报告都不必开。
+        if branch
+            .volumes
+            .iter()
+            .any(|at| matches!(at, Volume::Failed(_)))
+        {
             return Self::Failed;
         }
         let marks = || {
@@ -184,11 +188,13 @@ const UNDER_INDENT: &str = "   ";
 /// 不在场的格是 `None`——**一格在不在场本身就是一句话**（`CONTEXT.md` 的《格》）：
 /// 跳过的卷没有定档页，没做成的卷连页数都没有。
 struct Entry {
-    /// **表上的光标停得上去吗，停上去指的是哪一卷**（`p3-session-legibility/10`）。
+    /// **光标停在这一行上指的是哪一卷**（`p3-session-legibility/10`）。
     ///
-    /// 没做成的那几卷是 `None`：它们连一份卷报告都没有，逐页那几行无从谈起
-    /// （见 [`Volume`]）。它们照旧占一行——那一行要说的话就在它自己的行尾。
-    at: Option<Volume>,
+    /// **每一行都有一卷**：没做成的那几卷此刻也认得出自己（[`Volume::Failed`]，
+    /// `p4-parking-lot/10` 收停车场 Q159）——屏上看得见的一行就该选得中。
+    /// 它们展不开是按下 `⏎` 之后的事（见 `crate::session::terminal`），
+    /// 与「光标停不停得上」不是同一件事。
+    at: Volume,
     /// 行首记号。
     mark: Mark,
     /// 卷名。走 [`crate::render::volume_name`]，与进度条印的是同一个。
@@ -260,7 +266,7 @@ impl Entry {
             notes.push(DECIDING.to_owned());
         }
         Self {
-            at: Some(at),
+            at,
             mark,
             name: render::volume_name(&volume.volume),
             // 页数走**卷那一行上那一格**，不回头去问 `VolumeReport`：这一副与命令行那一副
@@ -283,12 +289,15 @@ impl Entry {
     ///
     /// 它连一份卷报告都没有——页数、定档页、耗时一样都答不出来，
     /// 而那正是「没做成」的意思。原因跟在行尾，成句。
-    fn of_failure(failure: &VolumeFailure) -> Self {
+    ///
+    /// `at` 是[它在报告上第几条](Volume::Failed)：**光标停得上这一行**
+    /// （`p4-parking-lot/10` 收停车场 Q159），只是按展开时得到的是一句话
+    /// （见 `crate::session::terminal`）。
+    fn of_failure(at: Volume, failure: &VolumeFailure) -> Self {
         let row = render::failed_volume(failure);
         let rows = std::slice::from_ref(&row);
         Self {
-            // 光标停不上去：没有报告，也就没有第二层可看。
-            at: None,
+            at,
             mark: Mark::Failed,
             name: render::volume_name(&failure.volume),
             pages: None,
@@ -361,9 +370,9 @@ pub(super) fn driver(rows: &[Row]) -> Option<String> {
 
 /// **这一枝底下**到此刻为止的那几卷，**按跑完的先后**（例外见模块文档《不重排》）。
 ///
-/// `only` 是展开着的那一枝：收摊了的那几卷按 [`Volume`] 认，没做成的那几卷按它们
-/// 在 `Report::failed_volumes` 里第几条认——两处都由[分组](crate::render::grouped)
-/// 算好摆在 [`Branch`] 上，这里一个路径都不再切一遍。
+/// `only` 是展开着的那一枝：三种条目全按 [`Volume`] 认（收摊了的、没做成的、
+/// 决策点上攒着的那一份）——那一列由[分组](crate::render::grouped)算好摆在
+/// [`Branch`] 上，这里一个路径都不再切一遍。
 fn entries(live: &Live, only: &Branch) -> Vec<Entry> {
     let report = live.report();
     let mut entries: Vec<Entry> = report
@@ -378,8 +387,8 @@ fn entries(live: &Live, only: &Branch) -> Vec<Entry> {
             .failed_volumes
             .iter()
             .enumerate()
-            .filter(|(at, _)| only.failures.contains(at))
-            .map(|(_, failure)| Entry::of_failure(failure)),
+            .filter(|(at, _)| only.volumes.contains(&Volume::Failed(*at)))
+            .map(|(at, failure)| Entry::of_failure(Volume::Failed(at), failure)),
     );
     // 决策点上那一卷**到此刻为止**的那一份（停车场 Q52）：它还没收摊，不在报告那一列里，
     // 而它同样占一行——「不许摊开上一卷冒充它」（`p2-loose-ends/08` 的硬约束）。
@@ -449,7 +458,7 @@ pub(super) fn table(live: &Live, room: u16, at: Option<Volume>, only: &Branch) -
     for entry in &entries {
         // 光标停在这一卷上：记下它落在第几行。`at` 是 `None`（一卷都没选）时
         // 恒不相等——`Option::==` 那一头的 `None` 不与任何一卷相等。
-        if entry.at.is_some() && entry.at == at {
+        if Some(entry.at) == at {
             cursor = Some(lines.len());
         }
         lines.push(Painted::new(

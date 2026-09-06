@@ -26,7 +26,7 @@ use ratatui::crossterm::terminal::{
 use tonefit::{Mode as RunMode, Request};
 
 use super::draw;
-use super::live::{Branch, Resuming, Volume};
+use super::live::{Branch, Live, Resuming, Volume};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
 use crate::preset::{Presets, Saved};
@@ -404,6 +404,11 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
 ///
 /// 一卷都没有就说一句、不进展开态：展开的是**报告上的一卷**，
 /// 而这一趟还没跑过或者第一卷还没跑完时，那样东西根本不在。
+///
+/// **光标停在没做成的那一卷上时说 [`CANNOT_EXPAND`]、不进展开态**
+/// （`p4-parking-lot/10` 收停车场 Q159）：那一行在屏上占着一格，光标此刻停得上去，
+/// 而它连一份卷报告都没有——**明说这一卷展不开**，比让 `⏎` 悄悄什么都不做好。
+/// 与型号没挑时按 `t`／`x` 是同一条待遇：键照旧摆在屏上，按下去当场说清为什么没有第二步。
 fn expand(session: &mut Session, running: &Running, action: Action) {
     let Some(live) = running.live() else {
         // **这一支到不了**：一趟都没跑过时按键表根本不派展开
@@ -413,6 +418,21 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
         return;
     };
+    expanding(session, &live, action);
+}
+
+/// [展开](expand)那件事**除掉「找哪一趟要报告」那一步**剩下的全部。
+///
+/// 分出来是为了**测得动**：本层唯一起线程的地方在 [`Running::start`]，而用例造得出一份
+/// [`Live`]（`super::live::fixture` 那几个夹具），造不出一趟真跑着的。挡在前面那一句
+/// 「还没跑过」留在 [`expand`] 上——它问的正是「有没有那一趟」。
+///
+/// **那把锁握到这一支做完**：[`Running::live`] 给的是一把 `MutexGuard`，而拆成两个函数
+/// 之后 [`expand`] 还不回去（从前它在 `session.expand` 那两下之前先 `drop`）。
+/// 代价有界，而且没有变大多少——贵的那一步（[`Live::branches`]，那是一遍分组）
+/// 本来就在锁里，多握的只是一次路径克隆与一次结构体赋值。
+/// [`open`] 那一头照旧 `drop` 得掉：它不必把 `live` 借进第二个函数。
+fn expanding(session: &mut Session, live: &Live, action: Action) {
     let volumes = live.volumes();
     let Some(first) = volumes.first().copied() else {
         session.complain("报告里还没有卷：一卷跑完才有它的逐页那几行".to_owned());
@@ -432,18 +452,29 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
             let Some(branch) = branch_of(&branches, at) else {
                 return;
             };
+            // **只在展得开的那几卷之间转**（[`Branch::expandable`]）：`⇥` 转到没做成的
+            // 那一卷上，这一格里就只剩一句话——那不是「换一卷」要给的东西。
+            // 一卷都展不开时原地不动（展开态本来就进不来，这一支到不了）。
+            let turnable = branch.expandable();
+            if turnable.is_empty() {
+                return;
+            }
             let turned = expansion.turned_to(
                 branch.directory.clone(),
-                Expansion::next(&branch.volumes, at, step),
+                Expansion::next(&turnable, at, step),
             );
-            drop(live);
             session.expand(turned);
             return;
         }
         // 展开：光标停着的那一卷。它此刻指不着谁（那一卷收摊了）时由
         // `Session::standing` 就近收一收，仍收不着就从头一卷起。
-        _ => session.standing(&live).unwrap_or(first),
+        _ => session.standing(live).unwrap_or(first),
     };
+    // **没做成的那一卷展不开**：明说一句，不进展开态（见本函数的文档）。
+    if !opened.expandable() {
+        session.complain(CANNOT_EXPAND.to_owned());
+        return;
+    }
     // **哪一枝答不出来就不进展开态**：`opened` 恒来自 `live.volumes()`，而每一卷都挂在
     // 某一枝上（[`crate::render::grouped`] 收的就是那一列），这一支到不了。
     // 拿一个空路径兜底更坏：那是一枝**不存在**的目录，收起之后屏上摆的是目录表、
@@ -453,9 +484,15 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         return;
     };
     let directory = branch.directory.clone();
-    drop(live);
     session.expand(Expansion::new(directory, opened));
 }
+
+/// 光标停在**没做成的那一卷**上按展开时说的那一句（停车场 Q159）。
+///
+/// **它不重说那一卷为什么没做成**：那句原因跟在卷表上那一行的行尾，出自
+/// [`crate::render::failed_volume`]——措辞只有那一处（ADR 0016）。这一句只答
+/// 「按下去为什么没有第二层」，并指回屏上已经写着答案的那个地方。
+const CANNOT_EXPAND: &str = "这一卷展不开：它一整卷没做成，连一份卷报告都没有，逐页那几行无从谈起——行尾那一句说的就是为什么";
 
 /// **展开光标停着的那一枝**：它底下那几卷摊成卷表（`volume-discovery/08` 票面第二条）。
 ///
@@ -1015,6 +1052,67 @@ mod tests {
             Exit::Stay
         );
         assert!(session.expansion().is_none());
+    }
+
+    /// **光标停得上没做成的那一卷，而在它上面按展开时明说这一卷展不开**
+    /// （`p4-parking-lot/10`，收停车场 Q159）。
+    ///
+    /// 两半各钉一句：
+    ///
+    /// - **停得上**——`↑↓` 走的那一列（[`Live::volumes`]）此刻收着它
+    ///   （[`Volume::Failed`]），光标因此落得上那一行；
+    /// - **按下去有话说**——不进展开态、也不悄悄什么都不做，屏上当场多一句
+    ///   [`CANNOT_EXPAND`]。这与型号没挑时按 `t`／`x` 是同一条待遇。
+    ///
+    /// **`⇥` 不转到它身上**：换一卷只在[展得开的那几卷](Branch::expandable)之间转——
+    /// 转过去那一格里就只剩一句话，而那不是「换一卷」要给的东西。
+    ///
+    /// 走的是 [`expanding`] 而不是 [`press`]：造得出一份攒着的报告，造不出一趟
+    /// 真跑着的（起线程那一处在 `super::run`）。
+    #[test]
+    fn a_volume_that_never_got_made_can_be_selected_and_says_it_cannot_be_expanded() {
+        let mut live = live::Live::new(&live::fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        live.run_started(2, 2000);
+        live.volume_started(Path::new("库/棋魂 07"), 1000);
+        live.volume_finished(&live::fixture::skipped_volume("棋魂 07", 184));
+        live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
+        let mut session = Session::new();
+        session.run_started();
+
+        // 表上两行，两行都停得住——从前没做成的那一卷不在这一列里。
+        assert_eq!(
+            live.volumes(),
+            [Volume::Settled(0), Volume::Failed(0)],
+            "没做成的那一卷停不上去"
+        );
+        // 跟随着的时候光标停在最新**收摊**的那一卷上：没做成的那一卷不抢跟随。
+        assert_eq!(session.standing(&live), Some(Volume::Settled(0)));
+
+        // 光标挪到没做成的那一卷上（这一趟只有一枝，`↑↓` 在这一枝底下挪）。
+        session.open(PathBuf::from("库"));
+        session.select(&live, state::Step::Next);
+        assert_eq!(session.standing(&live), Some(Volume::Failed(0)));
+
+        // 在它上面按展开：不进展开态，屏上当场说清为什么没有第二步。
+        expanding(&mut session, &live, Action::Expand);
+        assert!(session.expansion().is_none(), "没做成的那一卷展开了");
+        let said = session.notice().expect("该说一句").said().to_owned();
+        assert_eq!(said, CANNOT_EXPAND, "说的不是那一句：{said}");
+
+        // 展开收摊了的那一卷照旧进得去，而 `⇥` 转一圈仍旧落回它自己：
+        // 这一枝底下展得开的只有它一卷，没做成的那一条不在那个圈里。
+        session.select(&live, state::Step::Next);
+        expanding(&mut session, &live, Action::Expand);
+        assert_eq!(
+            session.expansion().expect("该展开了").volume,
+            Volume::Settled(0)
+        );
+        expanding(&mut session, &live, Action::Turn(state::Step::Next));
+        assert_eq!(
+            session.expansion().expect("还展开着").volume,
+            Volume::Settled(0),
+            "`⇥` 转到了展不开的那一卷上"
+        );
     }
 
     /// **停在设备层上按一个键，标定图就落在盘上**（13 号票第一、二、三条）。
