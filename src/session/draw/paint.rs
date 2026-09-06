@@ -115,7 +115,8 @@ impl Painted {
         Self::new(text, Tone::Plain)
     }
 
-    /// 交给终端库画，**一行不折**。总览块那几行走它——那一格摆不下时由终端库自己截。
+    /// 交给终端库画，**一行不折**。总览块那几行走它——那一格摆不下时那一行已经
+    /// 从中间省略过了（见 `super::overview::Overview::draw`），不由终端库从行尾硬截。
     pub(super) fn line(&self) -> Line<'static> {
         Line::styled(self.text.clone(), self.tone.style())
     }

@@ -248,10 +248,12 @@ fn scrollbar(frame: &mut Frame, area: Rect, view: &Viewport) {
 /// **屏矮下来时让的是报告区，总览一行不砍**——那一条与切格子的次序一起摆在
 /// [`main_split`] 上。
 pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Option<&Live>) {
-    let top = overview(live, session.stopping(), session.deciding());
+    // **宽度在算的时候就要有**：横条摆不下时收窄到几格由它定（见 `overview::fitted_bar`），
+    // 而切格子只切高度——上下两格与这一格一样宽。
+    let top = overview(live, session.stopping(), session.deciding(), area.width);
     let [pinned, report] = main_split(area, top.height());
 
-    frame.render_widget(top.draw(pinned.width), pinned);
+    frame.render_widget(top.draw(), pinned);
     report_pane(frame, report, session, live);
 }
 

@@ -18,13 +18,28 @@
 //!
 //! 合成一块之前是**两个框六行**（全局条一个、当前卷条一个），而屏上没有一处答得出
 //! 「**这一趟到底怎么样**」——那两件由[结论行](settled_row)与[出事行](trouble_row)答，
-//! 两行的内容随这一趟是[什么](Live::mode)而变。票面写的是「三个框九行」，与屏上对不上，
+//! 两行的内容随这一趟是[什么](Live::started_as)而变。票面写的是「三个框九行」，与屏上对不上，
 //! 停车场 Q145 记着那一条。
 //!
 //! 只读那一趟边跑边攒的那一份（[`Live`]），一个字都不在这里重编：卷名走
 //! [`crate::render::volume_name`]、收场那一句走 [`crate::render::outcome`]、
 //! 按停按到的那一级走 [`super::footer::stopping_name`]。横条画多宽与命令行那两条
-//! 同一个出处（[`BAR_WIDTH`]）。
+//! 同一个出处（[`BAR_WIDTH`]），这一格摆不下时让到几格由让位那一处答
+//! （[`super::yielding::bar_width`]）。
+//!
+//! # 这一块答「此刻」，报告末尾那几小结答「已定案」
+//!
+//! 两处的数**在一卷跑到一半时故意不一样，而各自都对**——它们答的不是同一个问题：
+//!
+//! | 屏上那一处 | 答的是 | 数的是 |
+//! |---|---|---|
+//! | [出事行](trouble_row) | **此刻**出了多少事 | 收摊了的那几卷，加上当前这一卷已经报过的那几条（[`Live::failures_so_far`]） |
+//! | 报告末尾那几小结（`crate::render::tail`） | **已定案**的那几卷出了多少事 | `Report` 上那一列，一卷不收摊就一个字不算 |
+//!
+//! 一卷收摊之后两个数又相等。**这不是一个数摆两处**：出事行钉在屏上是为了答
+//! 「这一趟此刻怎么样」，而它从前跟着报告走，比同一屏的报告区晚一整卷——
+//! 屏上已经写着「失败页……JPEG 数据截断」，专门答这件事的那一行却一个字都不说
+//! （停车场 Q148）。
 //!
 //! 主区第二块是报告区，在 [`super::report`]。
 //!
@@ -50,8 +65,11 @@ use crate::session::live::{Live, Walking};
 /// （spec 的《窄终端》：宁可少画表，不少画总览）。
 pub(super) const OVERVIEW_HEIGHT: u16 = 6;
 
-/// 一条横条画多宽。**与命令行那两条同一个出处**（`crate::BAR_WIDTH`）：
+/// 一条横条**摆得开时**画多宽。**与命令行那两条同一个出处**（`crate::BAR_WIDTH`）：
 /// 两处的横条长得一样，读的人不必重新认一遍。
+///
+/// 这一格摆不下它时收窄到几格**不在这里判**（[`super::yielding::bar_width`]）：
+/// 收窄是让位，而让位的次序只有那一处。这一层因此仍旧只有这一个宽度。
 const BAR_WIDTH: u64 = crate::BAR_WIDTH as u64;
 
 /// **停在决策点上等人拿主意**那一句。
@@ -74,12 +92,16 @@ pub(super) const DECIDING: &str = "等你拿主意";
 /// | 全局那一行 | 整趟走了几步、已用多久 |
 /// | 当前卷那一行 | 在走哪一卷的哪一遍 |
 /// | 结论行 | **这一趟到底怎么样**：试算给判定分布，执行给完成与跳过 |
-/// | 出事行 | 要注意的那几件，**一条都没有时整行不出现** |
+/// | 出事行 | **此刻**出了多少事，**一条都没有时整行不出现** |
 pub(super) struct Overview {
     /// 边框上那一行。**没做成那一趟它是红的**（见 [`ended_title`]）。
     title: Painted,
     /// 框里那一到四行。各行的[语义](Tone)各自算（出事行见 [`trouble_row`]）。
     rows: Vec<Painted>,
+    /// 这一块占多宽。**算与画同一个数**：横条要照它收窄（[`with_a_bar`]），
+    /// 而摆不下的那几行要照它省略（[`Overview::draw`]）——两处各拿一个宽度的话，
+    /// 算出来的横条会摆进另一副宽度的格子里。
+    width: u16,
 }
 
 impl Overview {
@@ -96,16 +118,26 @@ impl Overview {
 
     /// 画出来。**上色按语义要**，一个颜色名都不在这一块里（见 [`super::paint`]）。
     ///
-    /// 收一个宽度只为抬头：这一格摆不下它时**从中间省略**，不由终端库硬截
-    /// （[`super::yielding::title`]，停车场 Q147）——`还剩约 3m20s` 硬截成 `还剩约 3m`
-    /// 读起来是一个完整而偏小的估计，而屏上没有一处痕迹说它被截过。
-    pub(super) fn draw(self, width: u16) -> Paragraph<'static> {
+    /// **摆不下的一律从中间省略，不由终端库硬截**（截法只有 [`super::yielding`] 一处，
+    /// 停车场 Q147、Q169）：抬头那一头 `还剩约 3m20s` 硬截成 `还剩约 3m` 读起来是一个
+    /// 完整而偏小的估计，正文那一头 `已用 5m00s` 硬截成 `已用 5m` 一模一样，
+    /// 而屏上都没有一处痕迹说它被截过。抬头走 [`title`](super::yielding::title)
+    /// （两个角各占一格），正文那几行走 [`pinned`](super::yielding::pinned)（一格边框都不占）。
+    ///
+    /// 正文里的横条**不会被省略号截着**：它在算的时候就照这一格收窄过了
+    /// （[`with_a_bar`]），摆不下的那一档整条不画。
+    pub(super) fn draw(self) -> Paragraph<'static> {
         let title = Painted::new(
-            super::yielding::title(&self.title.text, width),
+            super::yielding::title(&self.title.text, self.width),
             self.title.tone,
         );
         let block = Block::default().borders(Borders::ALL).title(title.line());
-        let rows: Vec<Line<'static>> = self.rows.iter().map(Painted::line).collect();
+        let inside = self.width.saturating_sub(2);
+        let rows: Vec<Line<'static>> = self
+            .rows
+            .iter()
+            .map(|row| Painted::new(super::yielding::pinned(&row.text, inside), row.tone).line())
+            .collect();
         Paragraph::new(Text::from(rows)).block(block)
     }
 }
@@ -126,21 +158,55 @@ const START_KEYS: &str = "t 试算 · x 执行";
 ///
 /// **等答话排在按停那一级之前**：横条这时一动不动，而「它为什么不动」是眼睛盯着这一块的人
 /// 第一眼要看到的（按过的停要等答完话才继续作数）。
-pub(super) fn overview(live: Option<&Live>, pressed: Instruction, deciding: bool) -> Overview {
+pub(super) fn overview(
+    live: Option<&Live>,
+    pressed: Instruction,
+    deciding: bool,
+    width: u16,
+) -> Overview {
     let Some(live) = live else {
         return Overview {
             title: Painted::plain("总览".to_owned()),
             rows: vec![Painted::plain(format!(" 还没跑过。{START_KEYS}"))],
+            width,
         };
     };
-    let mut rows = vec![Painted::plain(overall_row(live))];
-    rows.extend(volume_row(live).map(Painted::plain));
+    let room = width.saturating_sub(2);
+    let mut rows = vec![Painted::plain(overall_row(live, room))];
+    rows.extend(volume_row(live, room).map(Painted::plain));
     rows.push(Painted::plain(settled_row(live)));
     rows.extend(trouble_row(live));
     Overview {
         title: title(live, pressed, deciding),
         rows,
+        width,
     }
+}
+
+/// 一行正文：`head` + 横条 + `tail`，**横条摆不下就整条不画**，连它前面那个空格一起。
+///
+/// 先量不带横条那一副，剩下的格才轮到横条，收窄到几格由让位那一处答
+/// （[`super::yielding::bar_width`]）。整条让掉的那一档一个空格都不留——那一行照旧成句，
+/// 两个数之间不会多出一格没人解释的空白。
+///
+/// **量的与画的是同一份文字**：`head` 与 `tail` 拼一次、量一次、用一次，中途不再问第二遍
+/// 那一趟走到哪儿了。各问各的话，`59s` 涨成 `1m00s` 的那一瞬画出来的那一行会比量的时候
+/// 宽两格，而宽出去的那两格由省略号收——省略号正好落在横条身上，切出半条没有 `]` 的横条，
+/// 也就是本票要拦的那一副（同一条道理见 `Live::overall` 那段「一次读表算两个数」，
+/// 停车场 Q118）。
+///
+/// **两行各算各的**：这一块里两条横条一条量整趟、一条量这一卷，本来就是两把尺。
+/// 合成一个数要取两行里更紧的那一个，而当前卷那一行的长短随**卷名**变、卷与卷之间
+/// 整行还是空的——全局那一条的刻度会因此在换卷的那一刻跳一下，同一个「走了六成」
+/// 上一刻十八格、下一刻六格，看着像整趟往回退了（评审提的）。
+fn with_a_bar(head: &str, tail: &str, done: u64, total: u64, room: u16) -> String {
+    let bare = crate::wrap::width(head).saturating_add(crate::wrap::width(tail));
+    // 让给横条的那几格：这一行剩下的，再扣掉它后面那一个空格。
+    let left = room.saturating_sub(bare).saturating_sub(1);
+    super::yielding::bar_width(BAR_WIDTH, left).map_or_else(
+        || format!("{head}{tail}"),
+        |width| format!("{head}{} {tail}", bar(done, total, width)),
+    )
 }
 
 /// 抬头：**这一趟是什么 · 走到哪儿 · 还剩多久**，收场之后换成收场那句话。
@@ -177,8 +243,13 @@ fn title(live: &Live, pressed: Instruction, deciding: bool) -> Painted {
 /// 这一趟是什么。两个词与「还没跑过」那一句里那两个键同一批（[`START_KEYS`]，
 /// `CONTEXT.md` 的《会话》：试算）。
 ///
-/// **照 [`Live::mode`] 说的走，不另开一个开关**：试算答出第一个继续之后它就是执行了——
-/// 那一卷真写了出去，而结论行与出事行说的正是「写出来的是什么样」。
+/// **抬头照 [`Live::mode`] 说的走**：试算答出第一个继续之后它就是执行了——那一卷真写了
+/// 出去，而这一行答的正是「**此刻**在写没写」，报告抬头（`crate::render::header`）跟的
+/// 也是它。
+///
+/// **底下那两行不跟它走**（[`settled_row`] 与 [`trouble_row`] 问的是 [`Live::started_as`]）：
+/// 那两行答的是另一个问题——「这一趟交出来的是什么」，而那件事在决策点上答话前后是同一件。
+/// 跟着这一条走的话，答出继续的那一帧屏上会换掉整副内容、并可能矮一行（停车场 Q149）。
 fn run_name(mode: RunMode) -> &'static str {
     match mode {
         RunMode::DryRun => "试算",
@@ -226,18 +297,16 @@ fn ended_title(live: &Live) -> Painted {
 /// 步数出自开工那条事件（`RunStarted`），而它是**预扫**算出来的（03 号票）。
 /// 预告的步数是**上界**不是承诺（`CONTEXT.md` 的《进度》）：幂等命中的卷提前收摊，
 /// 那一截由 [`Live::finish_volume`] 结清。
-fn overall_row(live: &Live) -> String {
+fn overall_row(live: &Live, room: u16) -> String {
+    // **一次读表**：底下那几截共用同一份 `overall`（见 [`with_a_bar`]）。
     let overall = live.overall();
-    let walked = format!(
-        " 总体 {} {}/{} 步",
-        bar(overall.walked, overall.steps),
-        overall.walked,
-        overall.steps,
-    );
-    if live.ended() {
-        return walked;
-    }
-    format!("{walked} · 已用 {}", spell(overall.elapsed))
+    let steps = format!("{}/{} 步", overall.walked, overall.steps);
+    let tail = if live.ended() {
+        steps
+    } else {
+        format!("{steps} · 已用 {}", spell(overall.elapsed))
+    };
+    with_a_bar(" 总体 ", &tail, overall.walked, overall.steps, room)
 }
 
 /// 当前卷那一行：**在走哪一卷的哪一遍**，以及这一遍走到第几步。
@@ -251,11 +320,14 @@ fn overall_row(live: &Live) -> String {
 ///
 /// **收场之后整行不在**：那时再也没有「本卷」可说，那一行让给报告区
 /// （与出事行同一条规矩）。这一撤不会让屏跳——这一趟已经走完，这一块不会再变。
-fn volume_row(live: &Live) -> Option<String> {
+fn volume_row(live: &Live, room: u16) -> Option<String> {
     if live.ended() {
         return None;
     }
-    Some(live.walking().map_or_else(String::new, walking_line))
+    Some(
+        live.walking()
+            .map_or_else(String::new, |walking| walking_line(walking, room)),
+    )
 }
 
 /// **卷名与在走哪一遍摆在横条前面**，与从前那一格逐字同序。
@@ -264,16 +336,15 @@ fn volume_row(live: &Live) -> Option<String> {
 /// 那一档上主区只有 30 列（`super::yielding::MAIN_MIN_WIDTH`），而「在跑哪一卷的哪一遍」
 /// 屏上再没有第二处说得出（`p1-session/09` 的验收）。两行的横条因此对不齐，
 /// 那是认下的代价：对齐是好看，这两样是内容。
-fn walking_line(walking: &Walking) -> String {
+///
+/// **这一行的横条按它自己剩下的格算**（[`with_a_bar`]）：卷名与在走哪一遍长短不定，
+/// 而全局那一条的刻度不该跟着换卷跳一下。
+fn walking_line(walking: &Walking, room: u16) -> String {
     // 卷名怎么取只有一处：命令行那条横条印的是同一个（`crate::Bar::start`）。
     let name = crate::render::volume_name(&walking.volume);
-    format!(
-        " 本卷 {name} · {} {} {}/{} 步",
-        pass_name(walking.pass),
-        bar(walking.walked, walking.steps),
-        walking.walked,
-        walking.steps,
-    )
+    let head = format!(" 本卷 {name} · {} ", pass_name(walking.pass));
+    let tail = format!("{}/{} 步", walking.walked, walking.steps);
+    with_a_bar(&head, &tail, walking.walked, walking.steps, room)
 }
 
 /// 在走哪一遍。三段与 `VolumeTiming` 的三段是同一条分界线（`CONTEXT.md` 的《进度》）。
@@ -292,22 +363,31 @@ fn pass_name(pass: Option<Pass>) -> &'static str {
 
 /// 结论行：**这一趟到底怎么样**——屏上从前没有一处答得出它。
 ///
-/// **内容随这一趟是什么而变，而「是什么」手上已经有**（[`Live::mode`]），不必多一个开关：
+/// **内容随这一趟是什么而变，而「是什么」手上已经有**（[`Live::started_as`]），
+/// 不必多一个开关：
 ///
 /// - **试算**只算不写，交出来的是一份判定：这一行因此给**判定分布**
 ///   （`6 卷 2bit+FS · 2 卷 4bit+FS`）。
 /// - **执行**真写了出去：这一行因此给**完成与跳过各几卷**。
 ///
-/// 数的是**收摊了的卷**（[`Live::report`] 上那一列），与报告末尾那几小结同一份数据。
-/// 隔离的卷算进「完成」——它是**处理过**的卷，交出来了，只是带着坏页；
-/// 「它出了事」由[出事行](trouble_row)说，两处不许各说各的。
+/// **问的是「起手按的哪一个键」，不是「此刻落过盘没有」**（[`Live::mode`]，
+/// 抬头那一行走的是它）：后者在决策点上答出第一个继续的那一刻翻面，而这一行与
+/// [出事行](trouble_row)会跟着**同一帧里换掉整副内容**——用户刚看完判定、按下 `x`，
+/// 他据以拿主意的那份判定分布当场就没了，出事行还可能整行消失、这一块矮一行、
+/// 下面的报告整块上移（停车场 Q149）。**这一块因此一趟之内一格不变**。
+/// 两处答的不是同一个问题：抬头答「此刻在写没写」，这两行答「这一趟交出来的是什么」。
+///
+/// 数的是**收摊了的卷**（[`Live::report`] 上那一列），与报告末尾那几小结同一份数据——
+/// 出事行那一行不是（它答的是「此刻」，见本模块开头那张表）。隔离的卷算进「完成」：
+/// 它是**处理过**的卷，交出来了，只是带着坏页；「它出了事」由出事行说，
+/// 这一行一个字都不重复。
 ///
 /// **一卷收摊的都没有时两支都给一个破折号**：那时没有分布、也没有完成与跳过可说，
 /// 而编一个「0 卷」是在说一件没发生的事。拒绝执行的那一趟走的正是这一支——
 /// 它一步都没开工，而抬头已经说了它没做成。
 fn settled_row(live: &Live) -> String {
     let report = live.report();
-    let (label, said) = match live.mode() {
+    let (label, said) = match live.started_as() {
         RunMode::DryRun => ("判定", verdict_spread(report)),
         RunMode::Process => ("完成", finished_and_skipped(report)),
     };
@@ -364,27 +444,32 @@ fn base_name(volume: &VolumeReport) -> String {
     }
 }
 
-/// 出事行：**要注意的那几件**，一条都没有时整行不出现——那一行让给报告区。
+/// 出事行：**此刻出了多少事**，一条都没有时整行不出现——那一行让给报告区。
 ///
-/// 与结论行同一条：内容随这一趟是什么而变。
+/// 与结论行同一条：**要注意的那几件**随这一趟是什么而变，问的同样是
+/// [`Live::started_as`]（一趟之内一格不变，理由见 [`settled_row`]）。
 ///
 /// - **试算**给的是判定上要注意的：特例页几张 · 宽溢出几页 · 几何门不成立几卷。
-/// - **执行**给的是盘上出的事：隔离几卷 · 失败几页 · 卷级失败几卷。
+/// - **执行**给的是盘上出的事：隔离几卷。
 ///
-/// 数与措辞**与报告末尾那几小结对得上**（`crate::render::tail` 的隔离与卷级失败两小结）：
-/// 同一份报告，两处的数与那几个词一模一样，
-/// `the_trouble_row_counts_what_the_report_tail_counts` 两头对着问。
-/// 它们没有合成一个函数——那两小结是**成句的**（隔离那一句还要说清失败页在输出里是什么样），
-/// 而这一行是一串数；共用的话得先把那句话拆成词，而措辞只许有一处出处（ADR 0016）。
+/// **失败页与卷级失败两副都给**（停车场 Q146）：解不出尺寸的页在第一遍就失败，
+/// 而试算只是不走第二遍；卷根被删掉的卷同样记一笔卷级失败。照从前那样按副二选一的话，
+/// 一趟试算里坏了三页、废了一卷，这一行**一个字都不说**——而那正是这一块存在的理由。
 ///
-/// **失败页数的是收摊了的卷**（`Report::failures`），因此比报告区晚一整卷——
-/// 出现的当场那几条在报告区（`crate::render::failing_pages`），停车场 Q148 记着这一笔。
+/// **数的是此刻**：失败页走 [`Live::failures_so_far`]（收摊了的那几卷加上当前这一卷
+/// 已经报过的那几条），卷级失败与隔离那两样出现的当场就进报告。它与报告末尾那几小结
+/// 因此在一卷跑到一半时**故意不一样**，两处答的是两个不同的问题——见本模块开头那张表，
+/// `the_trouble_row_says_now_while_the_report_tail_says_what_is_settled` 两头对着问。
 ///
-/// **这一行只有一种[语义](Tone)**：它列着的那几件分属两档（隔离要注意、失败页与卷级失败
-/// 是出事），而取的是最重的那一个——理由见函数里那条注释。
+/// 措辞仍与那几小结逐字相同，而两处没有合成一个函数：那几小结是**成句的**
+/// （隔离那一句还要说清失败页在输出里是什么样），这一行是一串数；共用的话得先把那句话
+/// 拆成词，而措辞只许有一处出处（ADR 0016）。
+///
+/// **这一行只有一种[语义](Tone)**：它列着的那几件分属两档（要注意的那几样是「注意」、
+/// 失败页与卷级失败是「出事」），而取的是最重的那一个——理由见函数里那条注释。
 fn trouble_row(live: &Live) -> Option<Painted> {
     let report = live.report();
-    let said: Vec<Painted> = match live.mode() {
+    let mut listed = match live.started_as() {
         RunMode::DryRun => vec![
             count(outliers(report), "特例页", "张", Tone::Caution),
             count(
@@ -395,15 +480,15 @@ fn trouble_row(live: &Live) -> Option<Painted> {
             ),
             count(broken_gates(report), "几何门不成立", "卷", Tone::Caution),
         ],
-        RunMode::Process => vec![
-            count(isolated(report), "隔离", "卷", Tone::Caution),
-            count(report.failures().count(), "失败", "页", Tone::Trouble),
-            count(report.failed_volumes.len(), "卷级失败", "卷", Tone::Trouble),
-        ],
-    }
-    .into_iter()
-    .flatten()
-    .collect();
+        RunMode::Process => vec![count(isolated(report), "隔离", "卷", Tone::Caution)],
+    };
+    // **盘上出的那两样两副都有**（Q146），因此摆在分岔外面：试算同样解不出尺寸、
+    // 同样撞得上卷根不在了。压在末尾是照重轻排——前面那几样是「注意」，这两样是「出事」。
+    listed.extend([
+        count(live.failures_so_far(), "失败", "页", Tone::Trouble),
+        count(report.failed_volumes.len(), "卷级失败", "卷", Tone::Trouble),
+    ]);
+    let said: Vec<Painted> = listed.into_iter().flatten().collect();
     // **这一行只有一种颜色，取列着的那几件里最重的那一种**（[`Tone`] 的 `Ord` 就是为它派生的）：
     // 隔离要注意、失败页与卷级失败是出事，三件同时在场时这一行是红的。
     // 分成三段各上各的色也行得通，但「一眼看出这一趟出没出事」问的是**有没有红**，
@@ -458,21 +543,25 @@ fn isolated(report: &Report) -> usize {
         .count()
 }
 
-/// 一条横条。样子与命令行那两条一致：`=` 是走过的，`>` 是当前这一格，空白是还没走的。
+/// 一条横条，`width` 格宽。样子与命令行那两条一致：`=` 是走过的，`>` 是当前这一格，
+/// 空白是还没走的。
+///
+/// 宽度由调用方给：摆得开时是 [`BAR_WIDTH`]，这一格摆不开时是让位那一处收窄过的那个数
+/// （[`fitted_bar`]）。**样子一格不随宽度变**——收窄的是格数，不是画法。
 ///
 /// 预告的步数是零（还没开工、或者这一卷一步都不走）时整条是空的：那时没有比例可画，
 /// 而画一个「刚起步」的箭头是编的。
-fn bar(done: u64, total: u64) -> String {
+fn bar(done: u64, total: u64, width: u64) -> String {
     let filled = (total > 0).then(|| {
         // 先乘后除：先除的话，步数比条格数少的小卷会被整个抹成 0。
-        done.min(total) * BAR_WIDTH / total
+        done.min(total) * width / total
     });
-    let mut text = String::with_capacity(BAR_WIDTH as usize + 2);
+    let mut text = String::with_capacity(width as usize + 2);
     text.push('[');
-    for at in 0..BAR_WIDTH {
+    for at in 0..width {
         text.push(match filled.map(|filled| (at.cmp(&filled), filled)) {
             Some((Ordering::Less, _)) => '=',
-            Some((Ordering::Equal, filled)) if filled < BAR_WIDTH => '>',
+            Some((Ordering::Equal, filled)) if filled < width => '>',
             _ => ' ',
         });
     }
@@ -505,8 +594,9 @@ mod tests {
     use super::super::probe::{
         a_run_in_flight, main_snapshot, same_screen, screen, snapshot, tight,
     };
+    use super::super::yielding::MAIN_MIN_WIDTH;
     use super::*;
-    use crate::session::live::{Resuming, Volume, fixture};
+    use crate::session::live::{Reach, Resuming, Volume, fixture};
     use crate::session::state::{Expansion, Key, Session};
     use tonefit::{
         BitDepth, Candidate, Dither, Envelope, GeometryGate, PageBranch, PageOutcome, RunOutcome,
@@ -538,13 +628,20 @@ mod tests {
     ///
     /// 高度照它自己说的取（[`Overview::height`]）：出事行在不在场，快照上一眼看得出。
     fn block(live: &Live, pressed: Instruction, deciding: bool) -> String {
-        const WIDE: u16 = 96;
+        block_at(live, pressed, deciding, WIDE)
+    }
 
-        let top = overview(Some(live), pressed, deciding);
+    /// 宽终端那一档：横条摆得开，一行都不省略。
+    const WIDE: u16 = 96;
+
+    /// 同上，**摆在指定宽度的一格里**：窄档那几条要它（见
+    /// [`the_bars_give_way_before_the_numbers_do`]）。
+    fn block_at(live: &Live, pressed: Instruction, deciding: bool, width: u16) -> String {
+        let top = overview(Some(live), pressed, deciding, width);
         let height = top.height();
         snapshot(
-            |frame| frame.render_widget(top.draw(frame.area().width), frame.area()),
-            WIDE,
+            |frame| frame.render_widget(top.draw(), frame.area()),
+            width,
             height,
         )
     }
@@ -682,11 +779,13 @@ mod tests {
 "#;
 
     /// **结论行与出事行的内容随这一趟是什么而变**（票面第二条），而「是什么」手上已经有
-    /// （[`Live::mode`]），不必多一个开关。
+    /// （[`Live::started_as`]），不必多一个开关。
     ///
-    /// 两副各问一遍：试算那一副给判定分布与要注意的三样，执行那一副给完成／跳过
-    /// 与盘上出的三样。两副的字**互不出现在对方身上**——同一行两种内容，
-    /// 混了就等于没分。
+    /// 两副各问一遍：试算那一副给判定分布与要注意的三样，执行那一副给完成／跳过与隔离。
+    /// 这几个字**互不出现在对方身上**——同一行两种内容，混了就等于没分。
+    ///
+    /// **盘上出的那两样（失败页 · 卷级失败）不在这张单子上**：Q146 之后两副都给，
+    /// 各是哪一副由 [`a_dry_run_says_what_broke_too`] 问。
     #[test]
     fn the_settled_and_trouble_rows_say_different_things_in_each_mode() {
         let dry = block(&a_dry_run_that_finished(), Instruction::Continue, false);
@@ -702,33 +801,156 @@ mod tests {
             assert!(dry.contains(said), "试算那一副少了「{said}」：{dry}");
             assert!(!real.contains(said), "执行那一副不该有「{said}」：{real}");
         }
-        for said in ["完成 1 卷", "隔离 1 卷", "失败 1 页"] {
+        for said in ["完成 1 卷", "隔离 1 卷"] {
             assert!(real.contains(said), "执行那一副少了「{said}」：{real}");
             assert!(!dry.contains(said), "试算那一副不该有「{said}」：{dry}");
         }
     }
 
-    /// 出事行那几个数与措辞，**与报告末尾那几小结说的是同一件事**：同一份报告，
-    /// 两处的数与那几个词一模一样。
+    /// **试算那一副的出事行也带失败页与卷级失败**（停车场 Q146）：试算同样解不出尺寸、
+    /// 同样撞得上卷根不在了，而从前那一行按副二选一——一趟试算里坏了页、废了卷，
+    /// 屏上一个字都不说。
     ///
-    /// 两头对着问而不是合成一个函数：那两小结是**成句的**（隔离那一句还要说清失败页在
-    /// 输出里是什么样），而这一行是一串数——共用得先把句子拆成词，而措辞只许有一处出处
-    /// （ADR 0016）。这一条是那一处出处的**闸门**：改了一头，它当场红。
+    /// **「一条都没有时整行不出现」一格没松**：末一问走的是一趟干干净净的试算。
     #[test]
-    fn the_trouble_row_counts_what_the_report_tail_counts() {
-        let mut live = a_run_in_flight(true);
-        live.volume_failed(Path::new("库/卷四"), "卷根不在了");
+    fn a_dry_run_says_what_broke_too() {
+        let mut live = a_dry_run_with_a_broken_page_and_a_lost_volume();
         let row = trouble_row(&live).expect("这一趟出了事");
-        let tail = crate::render::tail(live.report());
 
-        for said in ["隔离 1 卷", "失败 1 页", "卷级失败 1 卷"] {
+        for said in ["失败 1 页", "卷级失败 1 卷"] {
             assert!(
                 row.text.contains(said),
-                "出事行少了「{said}」：{}",
+                "试算那一副少了「{said}」：{}",
                 row.text
+            );
+        }
+        // **隔离仍旧只在执行那一副。**理由不是「试算一个字节都没写」——按 `t` 起的那一趟
+        // 在决策点上答过继续之后真写盘、真隔离；那是收 Q149 认下的折扣，记在 Q196。
+        // 屏上不至于一个字都不说：隔离的判据就是有没有失败页，而失败页这一行数得出来。
+        assert!(
+            !row.text.contains("隔离"),
+            "试算那一副说了隔离：{}",
+            row.text
+        );
+        // 出了事的那一档压过要注意的那一档。
+        assert_eq!(row.tone, Tone::Trouble);
+
+        // 一条都没有的那一趟：整行不出现，那一行让给报告区。
+        live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(1, 1000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.volume_finished(&fixture::processed_volume("卷一", None));
+        assert!(trouble_row(&live).is_none(), "干净的一趟还画着出事行");
+    }
+
+    /// 一趟**试算**，坏了一页、废了一卷：Q146 那两样各一份。
+    fn a_dry_run_with_a_broken_page_and_a_lost_volume() -> Live {
+        const BROKEN: &str = "解不出完整尺寸：JPEG 数据截断";
+
+        let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
+        live.run_started(2, 2000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.page_failed(Path::new("库/卷一/017.jpg"), BROKEN);
+        live.volume_finished(&fixture::processed_volume("卷一", Some(BROKEN)));
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.volume_failed(Path::new("库/卷二"), "卷根不在了");
+        live
+    }
+
+    /// **出事行答「此刻」，报告末尾那几小结答「已定案」**（停车场 Q148）：
+    /// 一卷跑到一半时两个数**故意**不一样，而各自都对。
+    ///
+    /// 从前这一行数的是报告那一份（只含收摊了的卷），因此比同一屏的报告区**晚一整卷**——
+    /// 报告区已经写着「失败页（出现的当场……）」，钉在它上面、专门答「这一趟到底怎么样」
+    /// 的那一行却一个字都不说。
+    ///
+    /// **措辞两头仍旧逐字相同**（ADR 0016：措辞只有一处出处）：一卷收摊之后两个数又相等，
+    /// 那一刻两头对着问得出同一句话。改了一头，这一条当场红。
+    #[test]
+    fn the_trouble_row_says_now_while_the_report_tail_says_what_is_settled() {
+        const BROKEN: &str = "解不出完整尺寸：JPEG 数据截断";
+
+        let mut live = a_run_in_flight(true);
+        live.volume_failed(Path::new("库/卷四"), "卷根不在了");
+        // 当前这一卷又坏了一页：事件当场就到，而那一卷还没收摊。
+        live.page_failed(Path::new("库/卷三/004.jpg"), BROKEN);
+
+        let now = trouble_row(&live).expect("这一趟出了事");
+        let tail = crate::render::tail(live.report());
+        assert!(
+            now.text.contains("失败 2 页"),
+            "此刻坏的没数上：{}",
+            now.text
+        );
+        assert!(
+            tail.contains("失败 1 页"),
+            "末尾那几小结数的不再是已定案的那几卷：{tail}"
+        );
+
+        // 那一卷收摊之后两个数又相等，措辞也逐字相同。
+        live.volume_finished(&fixture::processed_volume("卷三", Some(BROKEN)));
+        let settled = trouble_row(&live).expect("这一趟出了事");
+        let tail = crate::render::tail(live.report());
+        for said in ["隔离 2 卷", "失败 2 页", "卷级失败 1 卷"] {
+            assert!(
+                settled.text.contains(said),
+                "出事行少了「{said}」：{}",
+                settled.text
             );
             assert!(tail.contains(said), "报告末尾那几小结不这么说了：{tail}");
         }
+    }
+
+    /// **决策点上答出继续的那一帧，这一块不换内容、也不矮一行**（停车场 Q149）。
+    ///
+    /// 那一刻 [`Live::mode`] 从试算翻成执行（那一卷真写了出去），而结论行与出事行
+    /// 跟着它走的话：判定分布当场换成完成／跳过——用户刚据以拿主意的那一份没了；
+    /// 出事行从「特例页 · 宽溢出 · 几何门不成立」换成「隔离」，此刻多半全是零，
+    /// 于是整行消失、这一块矮一行、下面的报告整块上移。
+    ///
+    /// 两行因此问 [`Live::started_as`]。**抬头照旧改口**：它答的是另一个问题
+    /// （此刻在写没写），而它摆在边框上，一行正文都不占。
+    #[test]
+    fn answering_go_on_does_not_move_the_overview() {
+        let mut live = a_dry_run_stopped_at_a_decision_point();
+        let before = overview(Some(&live), Instruction::Continue, true, WIDE);
+        let (settled, trouble, height) = (settled_row(&live), trouble_row(&live), before.height());
+        assert!(
+            settled.contains("判定 "),
+            "拿主意那一刻没给判定分布：{settled}"
+        );
+
+        live.decide(Instruction::Continue, Reach::ThisVolume);
+
+        assert_eq!(settled_row(&live), settled, "答了继续，判定分布就没了");
+        assert_eq!(
+            trouble_row(&live).map(|row| row.text),
+            trouble.map(|row| row.text),
+            "答了继续，出事行换了一副内容"
+        );
+        assert_eq!(
+            overview(Some(&live), Instruction::Continue, false, WIDE).height(),
+            height,
+            "答了继续，这一块矮了一行"
+        );
+        // 抬头是另一件事：那一卷真写了出去，它当场改口。
+        assert_eq!(live.mode(), RunMode::Process);
+        assert!(
+            block(&live, Instruction::Continue, false).contains("执行"),
+            "抬头没跟着落盘那件事改口"
+        );
+    }
+
+    /// 一趟**续做**的试算，停在第二卷的决策点上：头一卷已经收了摊，
+    /// 而它带着两张特例页——出事行因此在场。
+    fn a_dry_run_stopped_at_a_decision_point() -> Live {
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(2, 2000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.volume_finished(&a_volume_worth_a_second_look("卷一"));
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
+        live
     }
 
     /// **出事行只有一种颜色，取它列着的那几件里最重的那一种**（spec 的《语义色》）。
@@ -760,12 +982,12 @@ mod tests {
         let noisy = a_run_in_flight(true);
 
         assert_eq!(
-            overview(Some(&quiet), Instruction::Continue, false).height(),
+            overview(Some(&quiet), Instruction::Continue, false, WIDE).height(),
             OVERVIEW_HEIGHT - 1,
             "没出事还画着出事行"
         );
         assert_eq!(
-            overview(Some(&noisy), Instruction::Continue, false).height(),
+            overview(Some(&noisy), Instruction::Continue, false, WIDE).height(),
             OVERVIEW_HEIGHT
         );
         assert!(!block(&quiet, Instruction::Continue, false).contains("出事"));
@@ -775,7 +997,8 @@ mod tests {
             overview(
                 Some(&a_run_that_finished_clean()),
                 Instruction::Continue,
-                false
+                false,
+                WIDE
             )
             .height(),
             OVERVIEW_HEIGHT - 2,
@@ -922,14 +1145,91 @@ mod tests {
     /// 横条的两头：一步没走是空的，走完是满的，总步数为零时不画比例。
     ///
     /// **宽度与命令行那两条同一个出处**（票面第六条）：这一层不许再长一个字面量出来。
+    /// 收窄那一档画法一格不变，只是格数少了（末两句）。
     #[test]
     fn the_bar_fills_from_empty_to_full() {
         assert_eq!(BAR_WIDTH, crate::BAR_WIDTH as u64, "横条宽度长出了第二份");
-        assert_eq!(bar(0, 100), format!("[>{}]", " ".repeat(29)));
-        assert_eq!(bar(100, 100), format!("[{}]", "=".repeat(30)));
-        assert_eq!(bar(0, 0), format!("[{}]", " ".repeat(30)));
+        assert_eq!(bar(0, 100, BAR_WIDTH), format!("[>{}]", " ".repeat(29)));
+        assert_eq!(bar(100, 100, BAR_WIDTH), format!("[{}]", "=".repeat(30)));
+        assert_eq!(bar(0, 0, BAR_WIDTH), format!("[{}]", " ".repeat(30)));
         // 步数比条格数少的小卷不该被抹成 0。
-        assert!(bar(1, 3).starts_with("[========="));
+        assert!(bar(1, 3, BAR_WIDTH).starts_with("[========="));
+        // 收窄到八格：两头照旧，箭头照旧在走过的那一格上。
+        assert_eq!(bar(0, 100, 8), format!("[>{}]", " ".repeat(7)));
+        assert_eq!(bar(100, 100, 8), format!("[{}]", "=".repeat(8)));
+        assert_eq!(bar(50, 100, 8), "[====>   ]");
+    }
+
+    /// **窄档上横条先收窄，收不下去就整条让掉**（停车场 Q169）。
+    ///
+    /// 从前它一格不让：80×24 上主区只有 30 列（[`MAIN_MIN_WIDTH`]），而这两行各要
+    /// 六十几格，屏上因此是 `│ 总体 [==================>  │`——右边那个方括号、步数与
+    /// 已用一起在框外。切在半路的横条比截断的抬头更坏：没有收尾的 `]`，
+    /// 走过的比例看着比实际大。
+    ///
+    /// **两行各按自己剩下的格算**（见 [`with_a_bar`]），末一段问的正是这一条的理由：
+    /// 合成一个数的话，全局那一条的刻度会在换卷那一刻跳一下。
+    #[test]
+    fn the_bars_give_way_before_the_numbers_do() {
+        let live = a_run_in_flight(true);
+        // 卷与卷之间那一副：当前卷那一行是空的（见 [`volume_row`]）。
+        let mut between = a_run_in_flight(true);
+        between.volume_finished(&fixture::processed_volume("卷三", None));
+
+        // 这一副屏上那几条横条各有几格；没画横条的行不进这张单子。
+        let bars = |live: &Live, width: u16| -> Vec<usize> {
+            block_at(live, Instruction::Continue, false, width)
+                .lines()
+                .filter_map(|row| {
+                    let opened = row.find('[')?;
+                    let closed = row[opened..].find(']').expect("画出来的横条都有收尾那一格");
+                    Some(closed - 1)
+                })
+                .collect()
+        };
+
+        // 摆得开：两条都是满宽，与命令行那两条一样长。
+        assert_eq!(
+            bars(&live, WIDE),
+            vec![BAR_WIDTH as usize; 2],
+            "宽终端上横条缩了"
+        );
+        // 收窄了：当前卷那一行的字更多（卷名与在走哪一遍），它那一条因此先短一格。
+        assert_eq!(bars(&live, 45), vec![9, 8], "没按各自剩下的格收窄");
+        // 再窄一格，当前卷那一条整条让掉——而它那两个数还在。
+        assert_eq!(bars(&live, 44), vec![8], "该让的是横条，不是数");
+        assert!(
+            block_at(&live, Instruction::Continue, false, 44).contains("1000/3000 步"),
+            "让掉横条之后连数也没了"
+        );
+        // 再窄一格，全局那一条也让掉，两行的数与「已用」照旧整条在屏上。
+        assert!(bars(&live, 43).is_empty(), "窄到摆不下还画着横条");
+        let bare = block_at(&live, Instruction::Continue, false, 43);
+        for said in ["3000/5000 步", "已用 5m00s", "1000/3000 步"] {
+            assert!(bare.contains(said), "让掉横条之后「{said}」也没了：{bare}");
+        }
+
+        // **全局那一条不跟着换卷跳**：卷与卷之间当前卷那一行是空的，而它一格不动。
+        // 两行合用一个数的话，它的刻度会在换卷那一刻涨一截——同一个「走了六成」
+        // 上一刻十八格、下一刻六格，看着像整趟往回退了。
+        for width in [WIDE, 50, 46, 45, 44] {
+            assert_eq!(
+                bars(&between, width).first(),
+                bars(&live, width).first(),
+                "{width} 列上换卷那一刻全局那一条的刻度跳了"
+            );
+        }
+
+        // 80×24 那一档：主区只有这么宽，而正文本身就比它长——横条让完仍摆不下。
+        // 摆不下的那一截**从中间省略**，不由终端库从行尾硬截（Q147 立的那一条）：
+        // 屏上因此有一处痕迹说它被截过，而末一截仍旧整条在屏上。
+        let narrow = block_at(&live, Instruction::Continue, false, MAIN_MIN_WIDTH);
+        assert!(
+            bars(&live, MAIN_MIN_WIDTH).is_empty(),
+            "最窄那一档还画着横条"
+        );
+        assert!(narrow.contains('⋯'), "从行尾硬截了：{narrow}");
+        assert!(narrow.contains("已用 5m00s"), "末一截被截掉了：{narrow}");
     }
 
     /// 时长两级就够：秒、分秒、时分。
@@ -947,7 +1247,13 @@ mod tests {
     fn the_overview_is_the_last_thing_the_main_pane_gives_up() {
         assert_eq!(
             OVERVIEW_HEIGHT,
-            overview(Some(&a_run_in_flight(true)), Instruction::Continue, false).height(),
+            overview(
+                Some(&a_run_in_flight(true)),
+                Instruction::Continue,
+                false,
+                WIDE
+            )
+            .height(),
             "最高那一副与留位子的那个数对不上"
         );
     }

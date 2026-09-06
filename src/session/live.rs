@@ -18,7 +18,8 @@
 //! |---|---|
 //! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的预扫），加 [`Live::walked`] |
 //! | 总览块的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
-//! | 总览块的结论行与出事行 | 攒到此刻的 [`Live::report`]，按[这一趟是什么](Live::mode)分岔 |
+//! | 总览块的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔 |
+//! | 总览块的出事行 | 同上，而失败页那一样连当前这一卷已经报过的那几条一起数（[`Live::failures_so_far`]） |
 //! | 报告区 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句、`PageFailed` 那几条 |
 //!
 //! 预告的步数是**上界**不是承诺（`CONTEXT.md` 的《进度》）。拿它画全局进度的实现方
@@ -209,6 +210,16 @@ pub struct Live {
     /// 而卷级那几行只说得出「几页失败」，说不出**为什么**。同一份原因随后也会在
     /// 那一卷报告的 `PageOutcome::Failed` 里出现一次——那一份是结果，这几条是增量。
     failed_pages: Vec<(PathBuf, String)>,
+    /// **当前这一卷已经报过的失败页**，几条。一卷收摊时清零（见
+    /// [`finish_volume`](Self::finish_volume)）——那一刻它们的去处已经定了。
+    in_flight_failures: usize,
+    /// **跟着没做成的那几卷一起没了去处的失败页**，几条。
+    ///
+    /// 一卷没做成时它连一份卷报告都没有（[`VolumeFailure`] 只带一句原因），
+    /// 它那几页因此**永远进不了** [`report`](Self::report)——而它们确实坏了。
+    /// 不单记一格的话，那一卷废掉的那一刻屏上那个数会自己往回走
+    /// （一个自称答「此刻」的数缩回去，正是 Q148 要治的病换了一种卷）。
+    lost_failures: usize,
     /// 那条线程回来了没有。
     ///
     /// **这一趟收成了什么样不在这里**——那是[收场](RunOutcome)，在报告上
@@ -258,6 +269,8 @@ impl Live {
             started: Instant::now(),
             volume: None,
             failed_pages: Vec::new(),
+            in_flight_failures: 0,
+            lost_failures: 0,
             ended: false,
             undone: None,
         }
@@ -336,9 +349,14 @@ impl Live {
     pub fn page_failed(&mut self, page: &Path, reason: &str) {
         self.failed_pages
             .push((page.to_path_buf(), reason.to_owned()));
+        self.in_flight_failures = self.in_flight_failures.saturating_add(1);
     }
 
     /// 一卷跑完了，把那一卷的报告接到攒着的这一份上。
+    ///
+    /// **它那几页失败页从此在报告里**：在途那一格由 [`finish_volume`](Self::finish_volume)
+    /// 清零，它们从此由 `Report::failures` 数——两截换手，
+    /// [`failures_so_far`](Self::failures_so_far) 的和一格不变。
     pub fn volume_finished(&mut self, report: &VolumeReport) {
         self.report.volumes.push(report.clone());
         self.finish_volume();
@@ -353,7 +371,12 @@ impl Live {
     }
 
     /// 一整卷没做成：记一笔原因，其余卷照做。
+    ///
+    /// **它那几页失败页跟着换一格记**（[`lost_failures`](Self::lost_failures)）：
+    /// 这一卷没有报告，那几页因此永远进不了 [`report`](Self::report)——不记的话，
+    /// 屏上那个「此刻坏了几页」会在这一刻自己往回走。
     pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
+        self.lost_failures = self.lost_failures.saturating_add(self.in_flight_failures);
         self.report.failed_volumes.push(VolumeFailure {
             volume: volume.to_path_buf(),
             reason: reason.to_owned(),
@@ -376,8 +399,13 @@ impl Live {
     ///
     /// 为什么非结清不可，见 [`tonefit::Event::RunStarted`] 的 `steps`：预告的是上界，
     /// 幂等命中的卷提前收摊——不结清，那条横条就永远走不到头。
+    ///
+    /// **在途那几页失败页的账在这里清**（[`in_flight_failures`](Self::in_flight_failures)）：
+    /// 到这一刻它们的去处已经定了——跑完那一支进了报告，没做成那一支由
+    /// [`volume_failed`](Self::volume_failed) 先挪进 [`lost_failures`](Self::lost_failures)。
     fn finish_volume(&mut self) {
         self.summary_is_stale();
+        self.in_flight_failures = 0;
         self.finished += 1;
         if let Some(walking) = self.volume.take() {
             self.walked = self
@@ -432,6 +460,22 @@ impl Live {
                 RunMode::DryRun
             }
             _ => self.ran_as,
+        }
+    }
+
+    /// **起手按的是哪一个键**：`t` 起的那一趟是试算，`x` 起的那一趟是执行。
+    ///
+    /// 与 [`mode`](Self::mode) 差的是**问的时刻**：那一条答「此刻落过盘没有」，
+    /// 决策点上答出第一个继续它就翻成执行；这一条答「这一趟是怎么起的」，
+    /// 起手那一刻就定死，答什么都不动它。
+    ///
+    /// **总览块那两行按它画**（`super::draw::overview`）：那两行说的是「这一趟交出来的是
+    /// 什么」，而那件事在决策点上答话前后是同一件——跟着 [`mode`](Self::mode) 走的话，
+    /// 答出继续的那一帧屏上会换一副内容、并可能矮一行（停车场 Q149）。
+    pub fn started_as(&self) -> RunMode {
+        match self.resumes {
+            Resuming::Waits => RunMode::DryRun,
+            Resuming::GoesOn => self.ran_as,
         }
     }
 
@@ -683,6 +727,23 @@ impl Live {
         self.failed_pages
             .iter()
             .map(|(page, reason)| (page.as_path(), reason.as_str()))
+    }
+
+    /// **到此刻为止坏了几页**：报告里那几页，加上报告收不了的那两截——
+    /// [没做成的卷带走的](Self::lost_failures)与[当前这一卷在途的](Self::in_flight_failures)。
+    ///
+    /// 三截拼出来的不是三个出处：本模块开头那句「事件流就是报告的增量」说的正是这一件——
+    /// 一卷跑完，它那几页从在途挪进报告，三截的和一格不变。
+    ///
+    /// **与 `Report::failures().count()` 故意不是一个数**：那一个答「已定案的那几卷坏了几页」
+    /// （报告末尾那几小结数的正是它），这一条答「**此刻**坏了几页」——总览块的出事行要的
+    /// 是后一个（停车场 Q148）。**这个数只涨不落**：一卷收摊时那几截只是换手。
+    pub fn failures_so_far(&self) -> usize {
+        self.report
+            .failures()
+            .count()
+            .saturating_add(self.lost_failures)
+            .saturating_add(self.in_flight_failures)
     }
 
     /// 这一趟的退出码，**与命令行那一路同一套**：拒绝执行是 `1`，
@@ -1192,6 +1253,83 @@ mod tests {
         assert!(seen[0].1.contains("文件被删了"));
         // 那一卷还没跑完，报告里因此还没有它——「当场」说的正是这一段时间差。
         assert!(live.report().volumes.is_empty());
+    }
+
+    /// **「此刻坏了几页」把当前这一卷也算上**（停车场 Q148）：报告只数收摊了的卷，
+    /// 而总览块的出事行答的是此刻。
+    ///
+    /// 三段各问一遍：那一卷还在跑时两个数**故意**不一样、它收摊之后又相等、
+    /// 下一卷再坏一页时又分开。**不许把同一页数两遍**，也**不许往回走一格**——
+    /// 末一段问的正是后者：一卷没做成时它那几页没有任何一份报告收着，减掉就等于
+    /// 让屏上那个数自己缩回去（评审提的）。
+    #[test]
+    fn the_failed_pages_of_the_volume_in_flight_count_towards_now() {
+        const BROKEN: &str = "解不出完整尺寸：JPEG 数据截断";
+
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        live.run_started(2, 8);
+        live.volume_started(Path::new("库/卷一"), 4);
+        live.page_failed(Path::new("库/卷一/003.jpg"), BROKEN);
+
+        assert_eq!(live.failures_so_far(), 1, "当前这一卷坏的那一页没数上");
+        assert_eq!(
+            live.report().failures().count(),
+            0,
+            "报告不该数还没收摊的卷"
+        );
+
+        // 那一卷收摊：同一页此刻在报告里，两个数因此相等——而不是变成两页。
+        live.volume_finished(&fixture::processed_volume("卷一", Some(BROKEN)));
+        assert_eq!(live.report().failures().count(), 1);
+        assert_eq!(live.failures_so_far(), 1, "同一页数了两遍");
+
+        // 下一卷又坏一页，而这一卷**整卷没做成**：它连一份卷报告都没有，那一页因此
+        // 一辈子进不了报告——而它确实坏了。这个数不许因为那一卷废掉就往回走一格。
+        live.volume_started(Path::new("库/卷二"), 4);
+        live.page_failed(Path::new("库/卷二/007.jpg"), BROKEN);
+        assert_eq!(live.failures_so_far(), 2);
+        assert_eq!(live.report().failures().count(), 1);
+
+        live.volume_failed(Path::new("库/卷二"), "写不出去");
+        assert_eq!(
+            live.failures_so_far(),
+            2,
+            "那一卷废了，坏过的页跟着从屏上消失"
+        );
+        assert_eq!(
+            live.report().failures().count(),
+            1,
+            "没做成的卷不进报告正文"
+        );
+
+        // 再下一卷收摊：它自己那一页照数，前面那两页一格不动。
+        live.volume_started(Path::new("库/卷三"), 4);
+        live.volume_finished(&fixture::processed_volume("卷三", Some(BROKEN)));
+        assert_eq!(live.failures_so_far(), 3);
+    }
+
+    /// **决策点上答出继续，`mode` 翻面而「起手按的哪一个键」一格不动**（停车场 Q149）。
+    ///
+    /// 两条答的不是同一个问题：`mode` 答「此刻落过盘没有」（报告抬头与总览块的抬头走它），
+    /// `started_as` 答「这一趟是怎么起的」（总览块那两行走它，一趟之内一格不变）。
+    #[test]
+    fn answering_at_a_decision_point_moves_the_mode_but_not_what_the_run_started_as() {
+        let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        assert_eq!(trial.mode(), RunMode::DryRun);
+        assert_eq!(trial.started_as(), RunMode::DryRun);
+
+        trial.decide(Instruction::Continue, Reach::ThisVolume);
+        assert_eq!(trial.mode(), RunMode::Process, "那一卷真写了出去");
+        assert_eq!(
+            trial.started_as(),
+            RunMode::DryRun,
+            "起手那一副不该跟着翻面"
+        );
+
+        // 执行那一趟两条恒是同一个答案：它在决策点上不停，一起手就在写。
+        let processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        assert_eq!(processing.mode(), RunMode::Process);
+        assert_eq!(processing.started_as(), RunMode::Process);
     }
 
     /// 退出码与命令行那一路一致：拒绝执行 `1`，有卷被隔离 `2`，全部成功 `0`。
