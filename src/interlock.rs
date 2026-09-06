@@ -131,12 +131,16 @@ impl Interlock {
     }
 }
 
+/// 三条互锁那几句话——`--help` 的《开关互锁》那一节印的就是它们，会话的前提那一张也是。
+///
+/// **记号里面那个空格写成 `\u{a0}`**：那是**不许断的那个空格**，
+/// 规矩只有一处出处，见界面层折行的 `HARD_SPACE`（`src/wrap.rs`，停车场 Q106）。
 impl std::fmt::Display for Interlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Interlock::SpreadsStayFlattened => {
                 "拆分开着，适配方式却是 fit-inside：切得开的跨页切开了，\
-                 没有装订沟的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit height，\
+                 没有装订沟的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit\u{a0}height，\
                  代价是它们的宽溢出面板、要横向平移着看。组合本身成立——拿到的是部分收益，\
                  不是白开"
             }
@@ -147,7 +151,7 @@ impl std::fmt::Display for Interlock {
                  阅读器那一层 tonefit 看不到，因此只在这里说一次，不进每趟报告"
             }
             Interlock::DitherOutsideTheGate => {
-                "--dither fs 撞上一页贴不住面板：那一页源比目标尺寸还小，按不放大原样输出，\
+                "--dither\u{a0}fs 撞上一页贴不住面板：那一页源比目标尺寸还小，按不放大原样输出，\
                  阅读器显示时还要再缩一次，抖动推到高频的误差会被折回低频。\
                  几何门在它身上不成立，抖动因此关闭，--dither 覆盖不了它——\
                  门是页的几何事实，不是一个可以放宽的档位（ADR 0007）。\

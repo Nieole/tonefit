@@ -2072,10 +2072,13 @@ fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> 
 /// 是拍板的事，不是这一处的实现细节（停车场 Q102）。
 ///
 /// 出来的是那句话本身，不是一个错误，理由见 [`why_nothing_is_left`]（05 号票）。
+///
+/// **记号里面那个空格写成 `\u{a0}`**：这句话劝人换一条命令，规矩只有一处出处，
+/// 见界面层折行的 `HARD_SPACE`（`src/wrap.rs`，停车场 Q106）。
 fn dither_outside_the_gate_error(fit: FitMode) -> String {
     let way_out = match fit {
         FitMode::Inside => format!(
-            "改得动的是几何：--fit height 把这一页放大到面板高，门跟着成立。\
+            "改得动的是几何：--fit\u{a0}height 把这一页放大到面板高，门跟着成立。\
              够不着这条出路的只有一种页——宽高比极端到以高为准算出的目标尺寸越过 {} 像素、\
              会被兜底上界退回 fit-inside 的那种（07 号票）；那种页换过去仍是这条拒绝，\
              走下面那两条",
@@ -2089,7 +2092,7 @@ fn dither_outside_the_gate_error(fit: FitMode) -> String {
         ),
     };
     format!(
-        "{}。{way_out}。剩下两条路——不点 --dither fs（判据自己会替这一页把抖动关掉），\
+        "{}。{way_out}。剩下两条路——不点 --dither\u{a0}fs（判据自己会替这一页把抖动关掉），\
          或换一张宽高比没这么极端的源页",
         Interlock::DitherOutsideTheGate
     )

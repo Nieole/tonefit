@@ -251,3 +251,47 @@ fn tonefit_with_temp(space: &Workspace, inputs: &[&Path], temp: Option<&Path>) -
     }
     command.status().expect("启动 tonefit").code()
 }
+
+/// **拒绝那句话印到 stderr 上时，记号里那个空格是一个普通空格**（停车场 Q106／Q183）。
+///
+/// 那句话劝人换一条命令，而它的原文里记号中间那个空格带着「不许断」的标注
+/// （`src/wrap.rs` 的 `HARD_SPACE`）。折行那几处顺手把它换回一个普通空格，
+/// **而拒绝这一路一格都不折**——`main` 里那一行 `eprintln!` 直接落到 stderr 上，
+/// 换回来的是 `wrap::printed`。漏了那一步，用户照着抄出来的命令里带着一个
+/// clap 认不出的字符，Q106 要买的东西正好反了。
+///
+/// **只有真进程看得见这一条**：库那一侧的用例断言的是**带标注的原文**
+/// （`tests/pipeline.rs` 的 `FIT_HEIGHT`／`DITHER_FS`），印出去的字节别处观察不到。
+#[test]
+fn the_refusal_on_stderr_spells_its_commands_with_a_plain_space() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 一条又扁又小的纯墨页：两边都贴不住面板，几何门因此不成立，而这一趟点了抖动。
+    volume.page(
+        "001.png",
+        &fixtures::solid(fixtures::DEGENERATE_STRIP_SMALLER_THAN_PANEL, 0),
+    );
+
+    let refused = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+        .arg("--out")
+        .arg(space.out())
+        .args(["--profile", fixtures::BASELINE_DEVICE])
+        // fit-inside 那一支才劝人换 `--fit height`；两条命令因此一次都问得到。
+        .args(["--fit", "inside", "--dither", "fs"])
+        .arg(volume.path())
+        .output()
+        .expect("启动 tonefit");
+    let said = String::from_utf8_lossy(&refused.stderr);
+
+    assert_eq!(refused.status.code(), Some(1), "这一趟该被拒：{said}");
+    assert!(
+        said.contains("--fit height"),
+        "劝人换的那条命令断了：{said}"
+    );
+    assert!(said.contains("不点 --dither fs"), "另一条也断了：{said}");
+    // 标注一个都没漏出去：漏了的话上面两条照旧成立不了，这一条说的是为什么。
+    assert!(
+        !said.contains('\u{a0}'),
+        "标注原样落到 stderr 上了：{said:?}"
+    );
+}

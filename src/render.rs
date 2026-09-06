@@ -35,6 +35,9 @@
 //! 这里出的是**一段一段的话**，一行长到几百格也照旧是一行。**折到多宽由印它的那一头定**，
 //! 折法只有一套（[`crate::wrap`]，各处折到多宽见那个模块）。收在这里的话，
 //! 两个去处就得共用一个宽度，而它们一个不知道终端多宽、一个每帧都知道。
+//!
+//! 这里做的只有一件与折行有关的事：**说出哪一个空格是记号里面的**
+//! （[`crate::wrap::HARD_SPACE`]，规矩在那一处）。
 
 use std::path::{Path, PathBuf};
 
@@ -49,6 +52,8 @@ use tonefit::{Instruction, RunOutcome};
 // 一起要，因此挂的是 `any(feature = "tui", test)`。
 #[cfg(any(feature = "tui", test))]
 use tonefit::{GeometryGate, Panel, Reason};
+
+use crate::wrap::HARD_SPACE;
 
 /// **命令行那一侧的拼装**：把[行](Row)与[格](Cell)摆成纯文本那一副（ADR 0016）。
 pub mod plain;
@@ -804,7 +809,7 @@ fn overflow_tail(report: &Report) -> String {
     format!(
         "输出宽超过面板 {} 页：最宽 {widest}，是面板宽 {panel} 的 {:.2} 倍。\
          这些页要阅读器平移着看才读得全——留边那一侧只要它别重采样，这一侧的要求更强。\
-         换 --fit inside 能把它们压回面板以内，代价是跨页重新被压扁\n  {}\n",
+         换 --fit{HARD_SPACE}inside 能把它们压回面板以内，代价是跨页重新被压扁\n  {}\n",
         pages.len(),
         f64::from(widest.width) / f64::from(panel),
         first_few_names(&pages)
@@ -1926,7 +1931,9 @@ mod tests {
         // 与几何门那一行同一个出处（见 `first_few_names`）。
         assert!(text.contains("library/volume-a/001.jpg"), "{text}");
         // 出路也要给：换回 fit-inside 就压得回面板以内，代价一并说清。
-        assert!(text.contains("--fit inside"), "{text}");
+        // 中间那个空格带着[标注](crate::wrap::HARD_SPACE)——折行不许在它上面断，
+        // 断开了这条命令就抄不出来。印出去时它换回一个普通空格（`crate::wrap::fold`）。
+        assert!(text.contains(&format!("--fit{HARD_SPACE}inside")), "{text}");
         // 门在这一页上照旧成立，两件事不许混为一谈。
         assert!(text.contains("不成立 0 页"), "{text}");
     }

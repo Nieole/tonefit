@@ -37,6 +37,8 @@
 //! 会话那一头的 `Painted::folded` 拼成终端库的 `Line`（一行一种语义色）。
 //! 折法只有 [`fold`] 那一处，另外两个各只管把它交出来的东西装成调用方要的形状。
 
+use std::borrow::Cow;
+
 use unicode_width::UnicodeWidthChar;
 
 /// 印在终端上的东西折到多宽为止。
@@ -44,6 +46,54 @@ use unicode_width::UnicodeWidthChar;
 /// 80 列是终端的老规矩，帮助与报告都宽过它读着更顺，100 格是常见的下一档。
 /// **命令行那两处折到它**；会话那一头不用它——那一头量得到自己那一格真有多宽。
 pub const TERMINAL_WIDTH: u16 = 100;
+
+/// **不许断的那个空格。** 印出来仍是一个普通空格，折行不在它上面断。
+///
+/// `--fit height` 这样带空格的记号断开之后抄不出一条能用的命令（停车场 Q106），
+/// 而**折行这一头看不出来**：`换 --fit height 试试` 里的三个空格长得一模一样。
+/// 分得开的只有写那句话的人——因此这是一层**标注**：措辞那一层（[`crate::render`]）
+/// 与各条帮助原文把记号**里面**那个空格写成它，别的空格照旧断得开。
+///
+/// **标注的规矩只有这一处。** 怎么写：`format!("换 --fit{HARD_SPACE}inside 能……")`——
+/// 帮助原文里那几条同样只在这一处取这个字符（文档注释收不下运行期算出来的串时，
+/// 照 `crate::inputs_help` 那一条的办法把它写成一个函数）。
+///
+/// **印出去之前一律过 [`printed`]**，字节因此一个都没变。折行那几处由 [`fold`] 顺手做了，
+/// **不折行的那一处得自己过**——拒绝执行那句话直接落在 stderr 上（`crate::main` 那一行
+/// `eprintln!`），一格都没折。漏了它，用户照着抄那条命令 clap 认不出那个开关。
+///
+/// **记号宽过一整行时仍旧硬断**：那时一行一格都不剩，与一个长过这一格的西文词同一个待遇
+/// （见 [`ends`]）——切掉尾巴更坏。断在它上面时**行尾那个空格照旧去掉**：
+/// 走到那一步说明这一行连整个记号都摆不下，标注已经不成立，留一个吊在行尾的空格只是噪声。
+pub const HARD_SPACE: char = '\u{a0}';
+
+/// **禁则**：这几个收尾记号不落在行首。
+///
+/// 中文排版的老规矩，与 [`NEVER_ENDS_A_ROW`] 合成一张表——**表只有这一处**。
+/// 断处的判据（[`breakable`]）只看「挨着空格还是挨着宽字符」，而
+/// `……默认（跟随面板）` 断得开的地方里恰好有一处把 `）` 顶到下一行的行首
+/// （停车场 Q103）。
+///
+/// **退一格仍不成立就接着退。** 禁则挡住的那一格**根本不算断处**，而 [`ends`] 记的是
+/// **最后一处**断得开的地方——挡住一处它自然落到更早的那一处上，`）））` 连着三个也一样。
+/// **退到一处都不剩时认下**：那时断在摆不下的那一格前面（[`ends`] 里那个 `unwrap_or`），
+/// 记号落在行首。每一行至少留一格，因此退不动时既不打转、也不悄悄丢字。
+/// 换句话说，**禁则是一条偏好，不是一条硬约束**：让得出去就让，让不出去宁可破例。
+///
+/// **半角那几个也在表上**：断处只落在挨着空格或宽字符的地方，因此 `中文)` 这种
+/// 半角收尾记号照样落得到行首——同一条禁则，两种字形。
+///
+/// **间隔点 `·` 不在表上**：屏底那一行拿它当分隔，两侧各有一个空格，
+/// 断在哪一侧读起来都成句。
+const NEVER_STARTS_A_ROW: &[char] = &[
+    '。', '，', '、', '；', '：', '？', '！', '）', '】', '》', '」', '』', '〉', '〕', '”', '’',
+    '…', ')', ']', '}', ',', '.', ';', ':', '?', '!',
+];
+
+/// **禁则**：这几个起首记号不落在行尾。见 [`NEVER_STARTS_A_ROW`]（同一张表的另一半）。
+const NEVER_ENDS_A_ROW: &[char] = &[
+    '（', '【', '《', '「', '『', '〈', '〔', '“', '‘', '(', '[', '{',
+];
 
 /// 这一行占几格。宽字符（中日韩、全角记号）两格，控制字符不占格，其余一格。
 pub fn width(text: &str) -> u16 {
@@ -58,6 +108,9 @@ pub fn width(text: &str) -> u16 {
 /// `width` 是零就一行不折——折不出比一个字更窄的行，硬折只会折出一堆空行。
 /// 那种格子本来也画不出东西（会话在报告区那一格上真会遇到，见
 /// `crate::session::draw::report::report_pane`）。
+///
+/// **交出来的那几行是[印出去的样子](printed)**：原文里那几个[不许断的空格](HARD_SPACE)
+/// 在这里已经换回普通空格，折到多宽、折不折得动都不影响这一条。
 pub fn fold(text: &str, width: u16) -> Vec<String> {
     text.lines()
         .flat_map(|line| fold_line(line, width))
@@ -82,14 +135,16 @@ pub fn folded_text(text: &str, width: u16) -> String {
 /// **行首那一截缩进跟着折下来的每一行走。** 报告里的次级行、`--help` 里挂圆点的那几条，
 /// 靠的都是行首缩进说「这一截还是上一条」（停车场 Q32 立的就是这个缩进）——
 /// 折下来的那一截缩不回去，条目的边界就没了。缩进宽过这一格时不留：那时留下的只有缩进。
+///
+/// **缩进之后不先折出一个空行**（停车场 Q114）：见函数末尾那一段。
 fn fold_line(line: &str, width: u16) -> Vec<String> {
     if width == 0 {
-        return vec![line.to_owned()];
+        return vec![printed(line).into_owned()];
     }
     // 摆得下就一行不折。绝大多数行本来就摆得下（报告里逐页那几行、屏底那一行在宽终端上），
     // 不必为它们逐格走一遍。行尾那几格空白照旧去掉，与折下来的那几行同一个待遇。
     if self::width(line) <= width {
-        return vec![line.trim_end_matches(' ').to_owned()];
+        return vec![printed(line).trim_end_matches(' ').to_owned()];
     }
     let glyphs: Vec<(char, u16)> = line.chars().map(|glyph| (glyph, cells(glyph))).collect();
     let hanging = leading_spaces(line);
@@ -119,13 +174,40 @@ fn fold_line(line: &str, width: u16) -> Vec<String> {
         let mut row = " ".repeat(indent);
         row.extend(glyphs[start..ends].iter().map(|(glyph, _)| *glyph));
         // 断在空格前面时那几格空白落在这一行的行尾——屏上看不出来，写进文件里是噪声。
-        folded.push(row.trim_end_matches(' ').to_owned());
+        folded.push(printed(&row).trim_end_matches(' ').to_owned());
         start = ends;
+    }
+    // **缩进之后不先折出一个空行**（停车场 Q114）。行首那一截缩进里面每一格都挨着空格、
+    // 因此每一格都断得开，而缩进后面跟着一长串断不开的字（报告里那几张清单的形状：
+    // 两格缩进加一条没有空格的长路径）时，**最后一处断得开的地方就落在缩进里面**——
+    // 第一行于是只剩那几格空白，`trim_end` 之后成了一个空行，清单前面凭空多一行。
+    //
+    // 只有第一行长得出这个样子：后面每一行开头那几格空白在上面就跳过了。缩进本身宽过
+    // 这一格时（那时它一格内容都摆不下）折出来的同样是它，一并在这里丢掉。
+    // 原文里本来就空着的那一行不走这一支——它在上面「摆得下就一行不折」那里就回去了。
+    if folded.len() > 1 && folded[0].is_empty() {
+        folded.remove(0);
     }
     if folded.is_empty() {
         folded.push(String::new());
     }
     folded
+}
+
+/// 这段文字**印出去的样子**：[不许断的那个空格](HARD_SPACE)换回一个普通空格。
+///
+/// 标注是给折行看的，不是印出去的东西。[`fold`] 交出来的每一行都已经过了这一层；
+/// **不走折行的那一处自己过**——拒绝执行那句话直接落在 stderr 上
+/// （`crate::main` 那一行 `eprintln!`），漏了它用户照着抄的命令里就带着一个
+/// clap 认不出的字符。
+///
+/// 一个标注都没有时借着原文回去，不白抄一遍——绝大多数行本来就一个都没有。
+pub fn printed(text: &str) -> Cow<'_, str> {
+    if text.contains(HARD_SPACE) {
+        Cow::Owned(text.replace(HARD_SPACE, " "))
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 /// 行首那一截缩进有几格。全是空格，格数就是字节数。
@@ -136,8 +218,12 @@ fn leading_spaces(line: &str) -> usize {
 /// 从第 `start` 格起的这一行断在哪一格**之前**。
 ///
 /// 摆得下就是整行的末尾；摆不下就退到最后一处[断得开的地方](breakable)，
-/// 一处都没有（一个长过这一格的西文词）就断在摆不下的那一格前面——
-/// **每一行至少留一格**，因此这个数恒大于 `start`，折行不会原地打转。
+/// 一处都没有就断在摆不下的那一格前面——**每一行至少留一格**，因此这个数恒大于 `start`，
+/// 折行不会原地打转。
+///
+/// 一处都没有有三种来路，走的是同一条退路（`unwrap_or`）：一个长过这一格的西文词、
+/// 一个长过这一格的[带空格的记号](HARD_SPACE)、以及[禁则](NEVER_STARTS_A_ROW)
+/// 把这一行上仅有的那几处全挡住了。
 fn ends(glyphs: &[(char, u16)], start: usize, width: u16) -> usize {
     let mut used: u32 = 0;
     let mut last: Option<usize> = None;
@@ -159,17 +245,26 @@ fn ends(glyphs: &[(char, u16)], start: usize, width: u16) -> usize {
 /// 两种断得开：**挨着一个空格**，以及**挨着一个宽字符**。
 ///
 /// 前一种把**西文的词**照旧留住：`--fit`、`Ctrl-C`、`tonefit-calibration-….png` 各自
-/// 整个留在一行上，词中间一格都不断。**`--fit height` 这种带空格的词组仍会断在那个空格上**——
-/// 要它整个不断，得给折行一条「这个空格不许断」的记号，那是另一件事（停车场 Q106）。
-/// 后一种是中文长句唯一的断处——它一个空格都没有，只能字与字之间断。
+/// 整个留在一行上，词中间一格都不断。带空格的**词组**（`--fit height`）要整个不断，
+/// 得由写那句话的人把中间那个空格写成[不许断的那个空格](HARD_SPACE)——它在这里一律不算断处
+/// （停车场 Q106）。后一种是中文长句唯一的断处——它一个空格都没有，只能字与字之间断。
 ///
 /// 反过来说，**两个窄字符之间断不开**：`←→`、`⇧⇥` 那几个箭头因此不会被劈成两半
 /// （停车场 Q75 点名的正是它们）。一个宽字符自己也不会被劈开——断的是格与格之间，
 /// 而一个字符是一格，它那两列跟着它走。
 ///
+/// **两头那几个记号让开**：收尾记号不落行首、起首记号不落行尾，表与「退不动怎么办」
+/// 见[禁则](NEVER_STARTS_A_ROW)（停车场 Q103）。
+///
 /// **断在最后一处断得开的地方**，不挑更早的那个空格：中文本来就是逐字断的，
 /// 而挑更早的那个空格会在窄终端上白白让出好几格——那一格恰恰是窄的时候才要折。
 fn breakable(before: char, after: char) -> bool {
+    if before == HARD_SPACE || after == HARD_SPACE {
+        return false;
+    }
+    if NEVER_STARTS_A_ROW.contains(&after) || NEVER_ENDS_A_ROW.contains(&before) {
+        return false;
+    }
     before == ' ' || after == ' ' || cells(before) == 2 || cells(after) == 2
 }
 
@@ -225,8 +320,9 @@ mod tests {
         }
     }
 
-    /// **西文的词不被劈开**：断处只在空格上。带空格的词组（`--fit height`）仍断得开，
-    /// 那一条见 [`breakable`] 的文档与停车场 Q106。
+    /// **西文的词不被劈开**：断处只在空格上。带空格的词组（`--fit height`）没标注过时
+    /// 仍断得开，标注过的那一条见
+    /// [`a_marked_space_inside_a_token_is_never_a_break`]。
     #[test]
     fn a_latin_word_is_not_broken_at_a_space_that_is_not_there() {
         // `--fit height` 断得开的只有中间那个空格。
@@ -265,7 +361,97 @@ mod tests {
     fn an_indented_line_keeps_its_indent_on_every_row_it_folds_into() {
         assert_eq!(fold("  缓存 1 页", 6), ["  缓存", "  1 页"]);
         // 缩进宽过这一格时不跟下来——跟下来的话，折出的每一行都只剩缩进。
-        assert_eq!(fold("    一二", 4), ["", "一二"]);
+        // 那一格上第一行只剩缩进，因此它本身也不留（见
+        // [`an_indent_before_an_unbreakable_run_does_not_fold_out_a_blank_row`]）。
+        assert_eq!(fold("    一二", 4), ["一二"]);
+    }
+
+    /// **缩进之后不先折出一个空行**（停车场 Q114）。
+    ///
+    /// 报告里那几张清单的形状是「两格缩进 + 一条一个空格都没有的长路径」：缩进里面每一格
+    /// 都挨着空格、因此每一格都断得开，而路径里一处都断不开——最后一处断得开的地方于是
+    /// 落在缩进里面，第一行只剩那两格空白，清单前面凭空多一行。
+    #[test]
+    fn an_indent_before_an_unbreakable_run_does_not_fold_out_a_blank_row() {
+        let folded = fold("  /home/alex/library/volume-a/001.jpg", 12);
+
+        assert_eq!(
+            folded,
+            ["  /home/alex", "  /library/v", "  olume-a/00", "  1.jpg"]
+        );
+        // 缩进本身把这一格填满时同样不折出那一行——那一行一个字都没有。
+        assert_eq!(fold("    一二", 4), ["一二"]);
+        // 原文里本来就空着的那一行照旧是一行空行，不在这一条的管辖之内。
+        assert_eq!(fold("一\n\n二", 4), ["一", "", "二"]);
+    }
+
+    /// **收尾记号不落行首、起首记号不落行尾**（停车场 Q103）。
+    ///
+    /// 第一条是左栏 34 列那一档上真长出来过的样子：`（跟随面板）` 折下来时 `）` 独占
+    /// 下一行的行首（`p4-parking-lot/02` 记的那一句）。禁则挡住那一处之后，
+    /// 折行退到更早的那一处上——**代价是行尾白让出两格**，那正是禁则要买的东西。
+    #[test]
+    fn a_closing_mark_never_starts_a_row() {
+        assert_eq!(
+            fold("  感知可分辨级数　默认（跟随面板）", 32),
+            ["  感知可分辨级数　默认（跟随面", "  板）"]
+        );
+        // 两半各一处：断在 `（` 后面同样不许——那一行的行尾会剩一个张着口的括号。
+        assert_eq!(fold("面板（跟随）", 6), ["面板", "（跟", "随）"]);
+    }
+
+    /// **退一格仍不成立就接着退，退到一处都不剩时认下**（停车场 Q103 那一问）。
+    ///
+    /// `）））` 连着三个时每一处都被禁则挡着，这一行上一处断得开的地方都不剩：
+    /// 那时断在摆不下的那一格前面，记号落在行首。**每一行至少留一格**，
+    /// 因此既不打转、也不悄悄丢字。
+    #[test]
+    fn a_row_that_cannot_retreat_any_further_gives_the_rule_up() {
+        let folded = fold("一）））", 2);
+
+        assert_eq!(folded, ["一", "）", "）", "）"]);
+        // 一个字都没吃掉。
+        assert_eq!(folded.concat(), "一）））");
+    }
+
+    /// **标注过的那个空格不断**：`--fit height` 抄得出一条能用的命令（停车场 Q106）。
+    ///
+    /// 折出来的每一行是**印出去的样子**——标注在这里已经换回一个普通空格，
+    /// 无论那一行折没折过。
+    #[test]
+    fn a_marked_space_inside_a_token_is_never_a_break() {
+        let marked = format!("换 --fit{HARD_SPACE}height 试试");
+
+        // 没标注时断在中间那个空格上，标注过之后整个记号让到下一行去。
+        assert_eq!(
+            fold("换 --fit height 试试", 14),
+            ["换 --fit", "height 试试"]
+        );
+        assert_eq!(fold(&marked, 14), ["换", "--fit height", "试试"]);
+        // 一行摆得下时同样换回普通空格——那一行根本没走折行那一路。
+        assert_eq!(fold(&marked, 20), ["换 --fit height 试试"]);
+        // 标注不占地方：它与一个普通空格一样宽。
+        assert_eq!(width(&marked), width("换 --fit height 试试"));
+        // **记号宽过一整行时仍旧硬断**，而断在标注上时行尾那个空格照旧去掉：
+        // 那一行连整个记号都摆不下，标注已经不成立（见 [`HARD_SPACE`]）。
+        assert_eq!(
+            fold(&format!("--fit{HARD_SPACE}height"), 6),
+            ["--fit", "height"]
+        );
+    }
+
+    /// **印出去的样子只有一处答得出**：不折行的那一处（拒绝那句话落到 stderr 上）
+    /// 走的就是它，见 [`printed`] 与 `crate::main`。
+    #[test]
+    fn a_line_that_never_gets_folded_still_prints_a_plain_space() {
+        let marked = format!("改得动的是几何：--fit{HARD_SPACE}height 把这一页放大到面板高");
+
+        assert_eq!(
+            printed(&marked),
+            "改得动的是几何：--fit height 把这一页放大到面板高"
+        );
+        // 一个标注都没有时借着原文回去，不白抄一遍。
+        assert!(matches!(printed("一句没有标注的话"), Cow::Borrowed(_)));
     }
 
     /// 原文里的换行照旧是换行，空行留着；整段空文字折出**零行**。
