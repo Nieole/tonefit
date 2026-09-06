@@ -29,8 +29,9 @@
 //! **整趟拒绝**、逐条列出（见 [`refuse`]）。理由与「处理范围为空是错误」同一条
 //! （ADR 0009 的《不要做的「简化」》）——范围层错了可能写到别人的目录里，
 //! 而那一趟已经写出去的卷收不回来。
-//! **发现出来的**那一种点不开不走这条路：记进非卷文件、其余照做（ADR 0014 决定第 5 条）——
-//! 对推测出来的东西不用最重的处置，一个坏 zip 不该把几百卷挡在门外。
+//! **发现出来的**那一种点不开不走这条路：归档记进非卷文件、目录记进走不进去的地方，
+//! 其余照做（ADR 0014 决定第 5 条）——对推测出来的东西不用最重的处置，
+//! 一个坏 zip 不该把几百卷挡在门外。
 //! 预扫**之后**才出的卷级失败也不走这条路：那时其余卷照做，报告照出
 //! （`CONTEXT.md` 的《失败》：卷级失败）。
 //!
@@ -38,14 +39,24 @@
 //! 就被丢掉，此后的每一层都不知道它存在过——输出里因此一个字节都没有。
 //! 字体包、源码包、空目录、只装着别的卷的目录都落在这一支上。
 //!
-//! # 另一半产出：非卷文件
+//! # 另两份产出：非卷文件，与走不进去的地方
 //!
-//! 同一遍开卷答的是两件事：**这是一个卷**，与**这个不是、而且是为什么**。后者攒成
-//! [`Survey`] 的第二半，一路走到 [`crate::Report::non_volume_files`]——三类都在这一处出
-//! （见 [`nothing_took_it`] 与上面点不开的那一支）。**它不是失败，退出码一格不动。**
+//! 同一遍开卷答的是三件事：**这是一个卷**、**这个不是、而且是为什么**、
+//! 以及**这一块根本没看过**。
 //!
-//! 非说不可，是因为「输出里一个字节都没有」自己会变成另一个毛病：东西没被转，而报告里
-//! 没有一处列得出它们（ADR 0014 的《背景》第 2 条）。两件事是同一条决定的两半。
+//! 第二件攒成 [`Survey`] 的第二份，一路走到 [`crate::Report::non_volume_files`]——
+//! 三类都在这一处出（见 [`nothing_took_it`] 与上面点不开的那一支）。
+//! **它不是失败，退出码一格不动。**
+//!
+//! 第三件攒成第三份，走到 [`crate::Report::unreachable_places`]：一个**目录**列不出这一层，
+//! 它底下有没有卷谁都不知道，整棵子树跳过（`p4-parking-lot/11`，收停车场 Q117）。
+//! **这一份动退出码**——一棵没看过的子树不是「全都做成了」。
+//! 它进不了上面那张表：那张列的是文件，而这是一个地方
+//! （见 [`crate::report::UnreachablePlace`]）。
+//!
+//! 两份都非说不可，是因为「输出里一个字节都没有」自己会变成另一个毛病：东西没被转、
+//! 地方没被走到，而报告里没有一处列得出它们（ADR 0014 的《背景》第 2 条）——
+//! **不做**与**说得出**是同一条决定的两半。
 //!
 //! **不落盘。** 预扫的作用域是这一趟点名的卷，活在一次运行之内。把成员表存下来下趟再用
 //! 就是一份全库索引，而那正是 ADR 0009 关掉的东西。
@@ -61,12 +72,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
-use crate::report::{NonVolumeFile, NonVolumeReason};
+use crate::report::{NonVolumeFile, NonVolumeReason, UnreachablePlace};
 use crate::source::{self, Container};
 use crate::{MemberCounts, Request, volume_steps};
 
 /// 这一趟预扫出来的东西：**发现出来的**每一个卷一份，外加它们步数之和，
-/// 再外加没被任何卷收下的那些[非卷文件](NonVolumeFile)。
+/// 再外加没被任何卷收下的那些[非卷文件](NonVolumeFile)，
+/// 与[走不进去的那些地方](UnreachablePlace)。
 pub(crate) struct Survey {
     volumes: Vec<Surveyed>,
     /// 各卷步数之和。这个数由 [`Surveyed::steps`] **加**出来，不是另算一遍——
@@ -74,10 +86,15 @@ pub(crate) struct Survey {
     steps: u64,
     /// 发现走完之后没被任何卷收下的那些文件，按发现顺序（`volume-discovery/04`）。
     ///
-    /// 它与 [`volumes`](Self::volumes) 是预扫的**两半**：同一遍开卷，一半答出「这是一个卷」，
-    /// 另一半答出「这个不是，而且是为什么」。三类各自的来处见 [`nothing_took_it`] 与
+    /// 它与 [`volumes`](Self::volumes) 是同一遍开卷的两份产出：一份答出「这是一个卷」，
+    /// 这一份答出「这个不是，而且是为什么」。三类各自的来处见 [`nothing_took_it`] 与
     /// [`Survey::of`] 里点不开的那一支。
     non_volume_files: Vec<NonVolumeFile>,
+    /// 发现的时候**走不进去**的那些地方，按发现顺序（`p4-parking-lot/11`）。
+    ///
+    /// 与上面那两份同一遍产出，而它答的是第三件事：「这一块**没看过**」。
+    /// 来处只有一处——[`Survey::of`] 里点不开那一支的目录那一格。
+    unreachable_places: Vec<UnreachablePlace>,
 }
 
 /// 预扫过的一个卷：**只有数与路径**，没有卷本身。
@@ -128,11 +145,13 @@ impl Survey {
     /// 发现这一趟有哪些卷，再把它们逐个枚举一遍。
     ///
     /// **点名的**路径里有一个点不开就整趟当场拒绝，一条事件都不发；发现出来的点不开的
-    /// 归档进非卷文件那张表，其余照做。开出来一页都没有的候选一并跳过——它不是卷，
+    /// 归档进非卷文件那张表、点不开的目录进走不进去的地方那一张，其余照做。
+    /// 开出来一页都没有的候选一并跳过——它不是卷，
     /// 它那一层里没被收下的东西同样进那张表（见 [`nothing_took_it`]）。
     pub(crate) fn of(request: &Request) -> Result<Self> {
         let mut volumes = Vec::new();
         let mut non_volume_files = Vec::new();
+        let mut unreachable_places = Vec::new();
         // 坏路径**收齐了再报**，不是撞上第一个就返回：点名十个路径、其中三个写错了，
         // 一次说清三个才改得完一遍，逐个报要来回三趟。
         let mut refused = Vec::new();
@@ -186,10 +205,26 @@ impl Survey {
                         }
                         // 发现出来的点不开的**目录**不进那张表：那张表列的是**文件**
                         // （`CONTEXT.md` 的《处理对象》把三类都写成文件，spec 与 ADR 0014
-                        // 决定第 5 条同样只说归档）。一个目录读不动就整棵子树跳过——
-                        // 与 `discover::push_children` 里「列不动这一层」同一条处置，
-                        // 也与它一样至今说不出口（停车场 Q117）。
-                        (Provenance::Discovered, Container::Directory) => {}
+                        // 决定第 5 条同样只说归档）。它整棵子树跳过，进的是**走不进去的
+                        // 地方**那一张（`p4-parking-lot/11` 收的停车场 Q117）：
+                        // 其余卷照常跑完，而退出码不再是「全都做成了」。
+                        //
+                        // `discover::push_children` 里「列不动这一层」那一句因此不再是
+                        // 静默的——被它跳过的每一个目录，自己都是这里的一个候选
+                        // （见那个函数的文档）。
+                        //
+                        // 这一格收的是 `enumerate` 在一个**目录**上失败的每一种，
+                        // 而抬头那句话（见二进制侧的 `render::unreachable_tail`）按
+                        // **压倒性的那一种**写：列不出这一层。另外几种都是两次系统调用
+                        // 之间的竞态（目录没了、某一项问不出形态），那时子树其实走过了，
+                        // 而抬头那句会说得重一点——记在停车场 Q201，那一条原因照旧
+                        // 原样带出来，用户读得到真相。
+                        (Provenance::Discovered, Container::Directory) => {
+                            unreachable_places.push(UnreachablePlace {
+                                path: candidate.root,
+                                reason: format!("{error:#}"),
+                            });
+                        }
                     },
                 }
             }
@@ -201,6 +236,7 @@ impl Survey {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
             non_volume_files,
+            unreachable_places,
         })
     }
 
@@ -216,12 +252,14 @@ impl Survey {
         &self.volumes
     }
 
-    /// 按发现顺序交出预扫的**两半**：那些卷，与那些非卷文件。
+    /// 按发现顺序交出预扫的**三份产出**：那些卷、那些非卷文件、那些走不进去的地方。
     ///
-    /// 一次交出而不是分两个取数：非卷文件要跟着卷一路走到 [`crate::Report`] 上，
-    /// 而卷这一半是被吃掉的（处理一卷就消费一份摘要）——分两次取就得给这一半留一份克隆。
-    pub(crate) fn into_volumes_and_non_volume_files(self) -> (Vec<Surveyed>, Vec<NonVolumeFile>) {
-        (self.volumes, self.non_volume_files)
+    /// 一次交出而不是分三个取数：后两份要跟着卷一路走到 [`crate::Report`] 上，
+    /// 而卷这一份是被吃掉的（处理一卷就消费一份摘要）——分几次取就得给这一份留一份克隆。
+    pub(crate) fn into_volumes_and_the_rest(
+        self,
+    ) -> (Vec<Surveyed>, Vec<NonVolumeFile>, Vec<UnreachablePlace>) {
+        (self.volumes, self.non_volume_files, self.unreachable_places)
     }
 }
 
@@ -400,7 +438,172 @@ mod tests {
 
         // 断言排在放句柄那两句**之后**：`survey` 因此活到这里，
         // 上面问的是「攥着这一份摘要的同时」还开不开着文件。
-        let (volumes, _) = survey.into_volumes_and_non_volume_files();
+        let (volumes, _, _) = survey.into_volumes_and_the_rest();
         assert_eq!(volumes.len(), MANY, "点名的卷没全数进来");
+    }
+
+    /// 把一个目录弄成**列不出来**的样子，成了才回 `true`。
+    ///
+    /// 弄不成的机器上（Windows 没有这一手，root 底下权限位不作数）走它的那几条用例当场
+    /// 收工——它们在那种机器上恒不成立、问不出来，因此误报不了；而在问得出来的机器上，
+    /// 「一声不吭」那一版当场红。这与发现那一条符号链接用例同一个办法
+    /// （见 `tests/discovery.rs` 的 `discovery_does_not_follow_a_symlink`）。
+    ///
+    /// **真去列一遍**才算数：`set_permissions` 在 root 底下也回 `Ok`，而权限位拦不住 root。
+    #[cfg(unix)]
+    fn shut_the_door(dir: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).is_err() {
+            return false;
+        }
+        if std::fs::read_dir(dir).is_ok() {
+            // 这一手没作数（root 绕过权限位）。**门要打回去**：不然临时目录里留下一个
+            // `0o000` 的目录，而收场那一手删不掉它。
+            open_the_door(dir);
+            return false;
+        }
+        true
+    }
+
+    #[cfg(not(unix))]
+    fn shut_the_door(_dir: &Path) -> bool {
+        false
+    }
+
+    /// 把门再打开，好让临时目录收得掉。
+    #[cfg(unix)]
+    fn open_the_door(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
+    }
+
+    #[cfg(not(unix))]
+    fn open_the_door(_dir: &Path) {}
+
+    /// 一个库，装着一个真卷、一个**列不出来**的目录。门开不上就回 `None`。
+    fn a_library_with_a_closed_door(space: &Path) -> Option<(PathBuf, PathBuf)> {
+        let library = space.join("库");
+        std::fs::create_dir(&library).expect("建库目录");
+        std::fs::write(library.join("好的.cbz"), one_page_archive()).expect("写归档");
+        let closed = library.join("读不动的");
+        std::fs::create_dir(&closed).expect("建读不动的那一层");
+        shut_the_door(&closed).then_some((library, closed))
+    }
+
+    /// **发现出来的一个读不动的目录说得出来**，而其余卷照常收下（`p4-parking-lot/11`，
+    /// 收停车场 Q117）。
+    ///
+    /// 从前这一格是空的：那棵子树整个消失，报告一行不说，退出码还是 `0`——
+    /// 用户拿到的是一份看起来成功、实际少了几十卷的输出。
+    ///
+    /// 三句话：那一处**上了表**、说得出**是哪个路径与为什么**、而**别的卷一个没少**。
+    #[test]
+    fn a_directory_that_cannot_be_read_says_so() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let Some((library, closed)) = a_library_with_a_closed_door(space.path()) else {
+            return;
+        };
+
+        let surveyed = Survey::of(&Request {
+            inputs: vec![library],
+            output_root: space.path().join("out"),
+            ..crate::tests::request()
+        });
+        // 断言之前先把门打开：断言红了也不至于留下一个删不掉的临时目录。
+        open_the_door(&closed);
+
+        let (volumes, _, unreachable) = surveyed
+            .expect("点名的那个目录读得动，这一趟不该被拒")
+            .into_volumes_and_the_rest();
+        assert_eq!(volumes.len(), 1, "其余卷没照常收下");
+        assert_eq!(
+            unreachable.len(),
+            1,
+            "读不动的那一层没上表：{unreachable:?}"
+        );
+        assert_eq!(unreachable[0].path, closed, "上表的不是那个路径");
+        assert!(
+            unreachable[0].reason.contains("读不动的"),
+            "那一句没说是哪个地方：{}",
+            unreachable[0].reason
+        );
+    }
+
+    /// **点名一个读不动的目录仍是当场拒**（ADR 0014 决定第 5 条）。
+    ///
+    /// 「点名的 / 发现的」那条分别一格没动：上一条那个目录换成点名的，这一趟就整个不做，
+    /// `Survey::of` 回的是 `Err`、一份报告都没有。少了这一条，新那一栏会悄悄把
+    /// 「点名的当场拒」降级成「记一笔、接着跑」。
+    #[test]
+    fn a_named_directory_that_cannot_be_read_is_still_refused() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let closed = space.path().join("读不动的");
+        std::fs::create_dir(&closed).expect("建读不动的那一层");
+        if !shut_the_door(&closed) {
+            return;
+        }
+
+        let surveyed = Survey::of(&Request {
+            inputs: vec![closed.clone()],
+            output_root: space.path().join("out"),
+            ..crate::tests::request()
+        });
+        open_the_door(&closed);
+
+        let error = surveyed.err().expect("点名一个读不动的目录该整趟拒");
+        let said = format!("{error:#}");
+        assert!(said.contains("整趟不做"), "拒的那句话不对：{said}");
+    }
+
+    /// **两张表分得开**：读不动的**归档**进非卷文件，读不动的**目录**进走不进去的地方
+    /// （`p4-parking-lot/11`）。
+    ///
+    /// 这一条钉的是本票那条边界：非卷文件那三类列的是**文件**，而一个目录不是文件——
+    /// 塞进去要改 `CONTEXT.md` 的词条，那是另一回事。两样东西摆在同一层里一次问清楚，
+    /// 混成一张表当场红。
+    #[test]
+    fn a_broken_archive_and_a_closed_door_land_on_different_lists() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let Some((library, closed)) = a_library_with_a_closed_door(space.path()) else {
+            return;
+        };
+        // 中央目录与尾记录都没有：这个归档结构根本读不出来。
+        std::fs::write(library.join("坏的.cbz"), b"not a zip at all").expect("写坏归档");
+
+        let surveyed = Survey::of(&Request {
+            inputs: vec![library.clone()],
+            output_root: space.path().join("out"),
+            ..crate::tests::request()
+        });
+        open_the_door(&closed);
+
+        let (_, non_volume_files, unreachable) = surveyed
+            .expect("点名的那个目录读得动")
+            .into_volumes_and_the_rest();
+        assert_eq!(
+            non_volume_files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            [library.join("坏的.cbz")],
+            "点不开的归档没进非卷文件那张表，或者读不动的目录混了进去"
+        );
+        assert!(
+            matches!(
+                non_volume_files[0].reason,
+                NonVolumeReason::Unopenable(ref _said)
+            ),
+            "点不开的归档记成了别的一类"
+        );
+        assert_eq!(
+            unreachable
+                .iter()
+                .map(|place| place.path.clone())
+                .collect::<Vec<_>>(),
+            [closed],
+            "走不进去那张表上的不是那一处"
+        );
     }
 }

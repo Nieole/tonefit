@@ -40,7 +40,7 @@
 //!
 //! # 末尾那几小结拼回一段的规矩住在这里（停车场 Q155）
 //!
-//! [`super::tail`] 交出来的是**一小结一行**——六小结分属三档语义，拼成一段就只上得了
+//! [`super::tail`] 交出来的是**一小结一行**——七小结分属三档语义，拼成一段就只上得了
 //! 一种色。**拼回一段文字是排版**，因此在这一副（[`tail`]）：措辞那一层只有一种输出，
 //! 而命令行印出去的那一段与拆之前**逐字节相同**。
 //!
@@ -71,7 +71,7 @@ pub fn report(report: &Report, mode: Mode) -> String {
 
 /// **末尾那几小结拼回一段文字**（[`super::tail`] 出的那几行）。
 ///
-/// 措辞那一层此刻交出来的是**一小结一行**（停车场 Q155：六小结分属三档语义，
+/// 措辞那一层此刻交出来的是**一小结一行**（停车场 Q155：七小结分属三档语义，
 /// 拼成一段就只上得了一种色）。**拼回去的规矩住在这一副**，不在措辞那一层——
 /// 那一层因此只有一种输出，而命令行印出去的这一段与拆之前**逐字节相同**：
 /// 每一小结那一段本来就以换行收尾，一行一行接下去，中间不加任何东西
@@ -195,16 +195,17 @@ pub(super) fn line(row: &Row) -> String {
             cell(row, Field::Source),
             cell(row, Field::Sentence)
         ),
-        // **末尾那六小结原样摆下去**：一小结那一段本来就是排好版的一整段
+        // **末尾那七小结原样摆下去**：一小结那一段本来就是排好版的一整段
         // （抬头一行、逐条那几行各自带着自己的缩进，末尾一个换行），这一副一格都不再动它。
-        // 六种摆法相同而**分成六种**，理由与卷级那三种判定同一条：会话那一副要照它们
+        // 七种摆法相同而**分成七种**，理由与卷级那三种判定同一条：会话那一副要照它们
         // 各自的语义上色（停车场 Q155），认字符串是认不出来的。
         RowKind::NonVolumeTail
         | RowKind::OverflowTail
         | RowKind::BackstopTail
         | RowKind::SalvageTail
         | RowKind::IsolationTail
-        | RowKind::FailedVolumeTail => cell(row, Field::Sentence).to_owned(),
+        | RowKind::FailedVolumeTail
+        | RowKind::UnreachableTail => cell(row, Field::Sentence).to_owned(),
     }
 }
 

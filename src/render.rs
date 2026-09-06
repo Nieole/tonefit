@@ -22,7 +22,7 @@
 //! 抬头那一段**本来就是成句的**，出的仍是文字。卷级、逐页与末尾那几小结出的是一组
 //! [行](Row)——每一行带着[它是什么行](RowKind)，以及若干[格](Cell)。
 //!
-//! **末尾那几小结是一小结一行**（`p4-parking-lot/09`，停车场 Q155）：六小结分属三档语义，
+//! **末尾那几小结是一小结一行**（`p4-parking-lot/09`，停车场 Q155）：七小结分属三档语义，
 //! 拼成一段交出去，会话那一头就只上得了一种色。整段仍是**一句话**，装在成句那一格里——
 //! 拆的是粒度，不是措辞；**拼回一段文字是排版**，住在 [`plain::tail`]。
 //!
@@ -210,6 +210,11 @@ pub enum RowKind {
     /// 与[没做成那一卷那一行](Self::FailedVolume)不是一种：那一种是**一卷**，
     /// 这一小结里逐条列的正是它；这一种是**整趟**那一句抬头连同它列出来的那几条。
     FailedVolumeTail,
+    /// **末尾那一小结：发现走不进去的地方**（成句，见 [`unreachable_tail`]）。
+    ///
+    /// 压在最后一小结，因为它是这一趟里**说不清少了多少**的那一种：卷级失败点得出
+    /// 是哪几卷，而这一种连「那底下有没有卷」都答不出来（`p4-parking-lot/11`）。
+    UnreachableTail,
 }
 
 /// 一格是**哪一格**。
@@ -735,8 +740,8 @@ fn base_spread(inside: &[Listed<'_>]) -> String {
         .join(SEPARATOR)
 }
 
-/// 末尾那六小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败。
-/// 各自一个（一页、一卷）都没有就一个字都不说。
+/// 末尾那七小结：非卷文件、输出宽超过面板、兜底上界退回、部分救回、隔离、卷级失败、
+/// 发现走不进去的地方。各自一个（一页、一卷、一处）都没有就一个字都不说。
 ///
 /// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
@@ -744,18 +749,20 @@ fn base_spread(inside: &[Listed<'_>]) -> String {
 /// 次序按**这一趟出的事有多重**往下排，最重的压在末尾——终端上它离提示符最近，
 /// 也是几十卷跑下来最不该被往回翻的那一条。非卷文件因此打头：它是这一列里唯一
 /// **连失败都不是**的一种（`CONTEXT.md` 的《失败》：非卷文件不是失败），
-/// 退出码一格都不动它。
+/// 退出码一格都不动它。**走不进去的地方压尾**：它与卷级失败同一个退出码，
+/// 而它比那一种更说不清——那一种点得出是哪几卷，这一种连少了几卷都答不出来
+/// （`p4-parking-lot/11`）。
 ///
 /// # 一小结一行，不是拼好的一段（`p4-parking-lot/09`，停车场 Q155）
 ///
-/// 六小结**分属三档语义**（`CONTEXT.md` 的《语义色》），而拼成一段交出去，
+/// 七小结**分属三档语义**（`CONTEXT.md` 的《语义色》），而拼成一段交出去，
 /// 会话那一头只上得了一种色——从前给的是「平常」，末尾那几小结因此一个颜色都没有。
 ///
 /// **哪一小结挂哪一档不在这一层**：这一层一个颜色概念都没有（spec 的《Out of Scope》：
 /// 命令行那一份不加颜色），那张表只有 `crate::session::draw` 的 `report::tail_row` 一处。
 /// 这里出的只是「它是哪一小结」。
 ///
-/// 拆的是**粒度**，不是出处：措辞照旧只在这一层出，六小结各自那一段一个字都没动，
+/// 拆的是**粒度**，不是出处：措辞照旧只在这一层出，各小结那一段一个字都没动，
 /// 这里只是把它们各装进一[行](Row)、挂上[它是哪一小结](RowKind)——与[卷那几行](volume)
 /// 走的是同一条路（ADR 0016：措辞一处、排版两副）。
 ///
@@ -772,6 +779,7 @@ pub fn tail(report: &Report) -> Vec<Row> {
         (RowKind::SalvageTail, salvage_tail(report)),
         (RowKind::IsolationTail, isolation_tail(report)),
         (RowKind::FailedVolumeTail, failed_volume_tail(report)),
+        (RowKind::UnreachableTail, unreachable_tail(report)),
     ]
     .into_iter()
     .filter(|(_, said)| !said.is_empty())
@@ -958,6 +966,50 @@ fn failed_volume_tail(report: &Report) -> String {
     let rest = report.failed_volumes.len().saturating_sub(SHOWN);
     if rest > 0 {
         text.push_str(&format!("  ……另有 {rest} 卷\n"));
+    }
+    text
+}
+
+/// 发现**走不进去**的那几处，压在末尾那几小结的最后（`p4-parking-lot/11`，收停车场 Q117）。
+///
+/// 这几个地方在报告正文里**一行都没有**，与非卷文件、卷级失败那两小结同一个处境：
+/// 正文逐卷那几段来自 `Report::volumes`，而它们连「是不是卷」都答不出来。
+/// 这一小结因此是它们在报告里唯一的位置——少了它，一个权限没配好的作品目录会让整棵子树
+/// 无声消失，而用户拿到的是一份看起来成功、实际少了几十卷的输出。
+///
+/// **压尾而不是打头**：末尾那几小结按出的事有多重往下排，而这一种是里面唯一
+/// **说不清少了多少**的——卷级失败点得出是哪几卷，这一种连那底下有没有卷都不知道。
+/// 它与卷级失败共用一个退出码（见 `crate::FAILED_VOLUME_EXIT`）。
+///
+/// **逐条带上路径与一句为什么**，形状照另外两小结办：路径一行、原因一行，
+/// 多了只列前几条并说还有多少——一屏放不下的清单等于没有清单。截断只发生在**这一层**，
+/// `Report::unreachable_places` 一条不少。
+///
+/// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]，
+/// 而数据只有 `Report` 上那一列。
+fn unreachable_tail(report: &Report) -> String {
+    /// 最多列几处。
+    const SHOWN: usize = 5;
+
+    if report.unreachable_places.is_empty() {
+        return String::new();
+    }
+    let mut text = format!(
+        "发现走不进去 {} 处：那一层列不出来，底下有没有卷谁都不知道——整棵子树跳过。\
+         这一趟因此**不是「全都做成了」**，退出码跟着变；别的卷该做的照做，上面那些就是\
+         做出来的。要那底下的东西，先把下面这几处修好再重跑\n",
+        report.unreachable_places.len()
+    );
+    for place in report.unreachable_places.iter().take(SHOWN) {
+        text.push_str(&format!(
+            "  {}\n    {}\n",
+            place.path.display(),
+            place.reason
+        ));
+    }
+    let rest = report.unreachable_places.len().saturating_sub(SHOWN);
+    if rest > 0 {
+        text.push_str(&format!("  ……另有 {rest} 处\n"));
     }
     text
 }
@@ -1493,8 +1545,8 @@ mod tests {
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
         GeometryGate, GrayImage, Interlock, IoPlan, Medium, NonVolumeFile, PageOutcome, Processed,
-        Readers, Reason, Reference, RunOutcome, Salvage, Scaling, Size, Verdict, VolumeFailure,
-        VolumeTiming,
+        Readers, Reason, Reference, RunOutcome, Salvage, Scaling, Size, UnreachablePlace, Verdict,
+        VolumeFailure, VolumeTiming,
     };
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作定档页。
@@ -1562,6 +1614,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -2207,6 +2260,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -2262,6 +2316,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -2308,6 +2363,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
@@ -2385,6 +2441,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -2466,6 +2523,7 @@ mod tests {
                 reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
             }],
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             elapsed: Duration::ZERO,
         };
@@ -2563,6 +2621,7 @@ mod tests {
             volumes: Vec::new(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             elapsed: Duration::ZERO,
         };
@@ -2573,6 +2632,75 @@ mod tests {
         assert!(
             super::tail(&report).is_empty(),
             "什么都没出事的一趟还多出一行"
+        );
+    }
+
+    /// **发现走不进去的地方说得出来，并且进退出码**（`p4-parking-lot/11`，收停车场 Q117）。
+    ///
+    /// 从前这一趟与全部成功一模一样：那棵子树整个消失，报告一行不说，退出码还是 `0`。
+    /// 两句话在同一条用例里，与非卷文件那一条同一个理由——「报告说得出」与
+    /// 「脚本察觉得到」是同一条验收的两半，而这一栏与那一张的分别正在退出码上。
+    ///
+    /// 这一趟**真做成了一卷**、一卷都没失败、一卷都没进隔离：那个 `3` 因此只可能是
+    /// 这一栏点起来的。拿一份本来就红的报告去问是问不出东西的。
+    #[test]
+    fn a_place_that_cannot_be_entered_is_named_and_shows_up_in_the_exit_code() {
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::PerPage,
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Color,
+                    branch: PageBranch::Color,
+                }),
+            },
+        );
+        assert_eq!(exit_code(&report), SUCCESS_EXIT, "这一趟本来该是全部成功");
+        report.unreachable_places = vec![
+            UnreachablePlace {
+                path: PathBuf::from("library/权限没配好的作品"),
+                reason: "列出 library/权限没配好的作品 这一层: Permission denied (os error 13)"
+                    .to_owned(),
+            },
+            UnreachablePlace {
+                path: PathBuf::from("library/盘掉了的那一枝"),
+                reason: "列出 library/盘掉了的那一枝 这一层: Host is down (os error 112)"
+                    .to_owned(),
+            },
+        ];
+
+        let text = plain::report(&report, Mode::Process);
+
+        assert!(text.contains("发现走不进去 2 处"), "{text}");
+        // 逐条带路径**与那句为什么**：说不出该去修什么的一句等于没说。
+        for said in [
+            "library/权限没配好的作品",
+            "Permission denied",
+            "library/盘掉了的那一枝",
+            "Host is down",
+        ] {
+            assert!(text.contains(said), "清单里没有 {said}：{text}");
+        }
+        // 卷级失败与隔离都空着，而这一趟已经不是 `0`：这一栏自己进得了退出码。
+        assert!(report.failed_volumes.is_empty() && !report.any_isolated());
+        assert_eq!(
+            exit_code(&report),
+            FAILED_VOLUME_EXIT,
+            "走不进去的地方没进退出码"
+        );
+        // **压在末尾那几小结的最后**：它是里面唯一说不清少了多少的一种。
+        assert_eq!(
+            super::tail(&report).last().map(|row| row.kind),
+            Some(RowKind::UnreachableTail),
+            "走不进去那一小结没压在最后"
         );
     }
 
@@ -2626,6 +2754,7 @@ mod tests {
             split: SplitRule::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
@@ -3085,6 +3214,7 @@ mod tests {
             volumes: Vec::new(),
             failed_volumes: vec![failure],
             non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
             elapsed: Duration::ZERO,
         };
@@ -3098,8 +3228,8 @@ mod tests {
     /// **末尾那几小结出的是一小结一行，而命令行印出去的那一段逐字节不变**
     /// （`p4-parking-lot/09`，收停车场 Q155）。
     ///
-    /// 六小结分属三档语义，拼成一段交出去就只上得了一种色——会话那一头因此从前一个颜色
-    /// 都没有。拆的是**粒度**：措辞照旧只在这一层出，六小结那几段一个字都没动。
+    /// 各小结分属三档语义，拼成一段交出去就只上得了一种色——会话那一头因此从前一个颜色
+    /// 都没有。拆的是**粒度**：措辞照旧只在这一层出，各小结那几段一个字都没动。
     ///
     /// 三件事：
     ///
@@ -3109,8 +3239,9 @@ mod tests {
     ///   接下去逐字节相同，中间不多一个字符；
     /// - **报告里印出去的那一段就是它**：整份报告照旧以它收尾，一格没挪。
     ///
-    /// 头一条与末一条特意各点一小结、中间四小结空着：拆之前空着是接上一个空串，
-    /// 拆之后是一行都不加，两者摆出来必须一样。
+    /// 特意点起**头一小结与卷级失败那一小结**、其余五小结空着（走不进去那一小结排在
+    /// 卷级失败后面，因此末一小结也是空的）：拆之前空着是接上一个空串，拆之后是一行都不加，
+    /// 而**空在头上**与**空在尾上**两者摆出来都必须与从前一样。
     #[test]
     fn the_tail_comes_out_one_row_per_subsection_and_prints_the_same_bytes() {
         let mut report = one_page_report(

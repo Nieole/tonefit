@@ -67,7 +67,7 @@ pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
     NonVolumeFile, NonVolumeReason, PageBranch, PageOutcome, PageReport, Processed, Report,
-    RunOutcome, VolumeFailure, VolumeReport, VolumeTiming, VolumeVerdict,
+    RunOutcome, UnreachablePlace, VolumeFailure, VolumeReport, VolumeTiming, VolumeVerdict,
 };
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
@@ -124,6 +124,13 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// **两样都不是**：发现出来的归档点不开、一页都没有的东西——它们连卷都不是，
 /// 进的是 [`Report::non_volume_files`] 那张并列的第三张表，逐条带着路径与一句为什么，
 /// 退出码一格不动（ADR 0014 决定第 3、5 条）。
+///
+/// # 走不进去的地方（`p4-parking-lot/11`）
+///
+/// 发现的时候**列不出某一层**（权限没配好、盘掉了）时那棵子树整个跳过，其余卷照做——
+/// 而这一趟记得住是哪一个地方、为什么（[`Report::unreachable_places`]）。
+/// 它不进上面那张表：那张列的是文件，而这是一个地方（见 [`UnreachablePlace`]）。
+/// **它动退出码**：一棵没看过的子树不是「全都做成了」。
 pub fn run(request: &Request) -> Result<Report> {
     // 整趟的表从这里开始掐：开工前那几道检查也要摸文件系统，摊在计时之外
     // 只会让报出来的总耗时比调用方自己在外面掐的那个小一截（加固批 11 号票）。
@@ -167,10 +174,11 @@ pub fn run(request: &Request) -> Result<Report> {
     let mut volumes = Vec::with_capacity(survey.volumes().len());
     let mut failed_volumes = Vec::new();
     let mut outcome = RunOutcome::Completed;
-    // 预扫的**两半**一起交出来（见 `survey::Survey` 的那个同名方法）：卷这一半在下面
-    // 被逐个吃掉，非卷文件那一半原样挂到报告上。它整份在开工之前就齐了——发现走完
-    // 就不再变，因此按停停在半路的那一趟，这张表照样是全的。
-    let (surveyed_volumes, non_volume_files) = survey.into_volumes_and_non_volume_files();
+    // 预扫的**三份产出**一起交出来（见 `survey::Survey` 的那个同名方法）：卷这一份在下面
+    // 被逐个吃掉，另两份原样挂到报告上。它们整份在开工之前就齐了——发现走完
+    // 就不再变，因此按停停在半路的那一趟，这两张表照样是全的。
+    let (surveyed_volumes, non_volume_files, unreachable_places) =
+        survey.into_volumes_and_the_rest();
     for surveyed in surveyed_volumes {
         // **卷边界上的检查点**（ADR 0013 决定第 1 条）：收尾让当前卷跑完就停，
         // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
@@ -226,6 +234,7 @@ pub fn run(request: &Request) -> Result<Report> {
         volumes,
         failed_volumes,
         non_volume_files,
+        unreachable_places,
         outcome,
         // 在决策点上等人的那几分钟不算这一趟的账（停车场 Q41）：库那时一步都没走。
         // 各卷的 `VolumeTiming::elapsed` 各自减掉自己那一截，这里减的是全部卷的和。

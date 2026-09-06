@@ -72,6 +72,27 @@ pub struct Report {
     /// **卷内的透传文件不在这里**：那是产物的一部分，照旧搬进输出容器
     /// （见 `crate::source::Volume::extras`）。这一列装的是没有任何卷要它的那些。
     pub non_volume_files: Vec<NonVolumeFile>,
+    /// 这一趟**发现走不进去**的那些地方，按发现顺序（`p4-parking-lot/11`）。
+    ///
+    /// 它是与上面三列**并列的第四张表**，而不是 [`non_volume_files`](Self::non_volume_files)
+    /// 里的第四类：那张表列的是**文件**（`CONTEXT.md` 的《处理对象》：非卷文件），
+    /// 而走不进去的是一个**地方**——塞进去就得改那条词条的含义
+    /// （同一句话早写在 [`NonVolumeReason::Unopenable`] 上）。
+    ///
+    /// 它也不是 [`failed_volumes`](Self::failed_volumes)：那一列里的每一条都**是一个卷**
+    /// ——预扫时打得开、轮到它才没做成。这一列里连「那底下有没有卷」都答不出来：
+    /// 列不出那一层，就不知道跳过的是一个空目录还是几十卷。
+    ///
+    /// **它进退出码**：有这一栏就不是「全都做成了」（见二进制侧的 `FAILED_VOLUME_EXIT`）。
+    /// 判据是 [`any_place_unreachable`](Self::any_place_unreachable)。这是它与非卷文件
+    /// 最实在的分别——那一张退出码一格不动，这一张动。
+    ///
+    /// 它挂在报告上而不是只印在 stderr，理由与非卷文件那一条同一句：`CONTEXT.md` 的《进度》
+    /// 明写「CLI 与 TUI 拿的是同一份数据，不是两套」。
+    ///
+    /// **点名的那一个走不进去不在这里**：那是整趟拒绝，`run` 返回的是 `Err`、没有报告
+    /// （ADR 0014 决定第 5 条）。这一列里恒是发现出来的。
+    pub unreachable_places: Vec<UnreachablePlace>,
     /// 这一趟是怎么收的场（停车场 Q39、Q46）。
     ///
     /// 它答的是「点名的卷都走过了吗」——[`volumes`](Self::volumes) 与
@@ -79,7 +100,8 @@ pub struct Report {
     /// 拿走的，而不是调用方少点了几个卷。中止掉的那一卷两列里都没有（它等于没做，
     /// ADR 0013 决定第 2 条），这一项是它在返回值上唯一的痕迹。
     ///
-    /// [`non_volume_files`](Self::non_volume_files) 不进这笔账：它数的不是卷。
+    /// [`non_volume_files`](Self::non_volume_files) 与
+    /// [`unreachable_places`](Self::unreachable_places) 都不进这笔账：它们数的不是卷。
     ///
     /// [`RunOutcome::Refused`] 在这里出不来，而那不是漏：拒绝执行的那一趟 `run` 返回的是
     /// `Err`，这份结构存在本身就是它没被拒的证据（同一条理由见 [`Report::interlocks`]）。
@@ -180,6 +202,15 @@ impl Report {
     pub fn any_volume_failed(&self) -> bool {
         !self.failed_volumes.is_empty()
     }
+
+    /// 本次有没有地方**走不进去**（`p4-parking-lot/11`）。退出码要分得开「全都做成了」
+    /// 与「有一棵子树根本没看过」，问的就是它。
+    ///
+    /// 判据只有一条——[`unreachable_places`](Self::unreachable_places) 空不空，
+    /// 与那一列不许分家（与 [`any_volume_failed`](Self::any_volume_failed) 同一条规矩）。
+    pub fn any_place_unreachable(&self) -> bool {
+        !self.unreachable_places.is_empty()
+    }
 }
 
 /// 一个卷**没做成**（`CONTEXT.md` 的《失败》：卷级失败）。
@@ -240,11 +271,39 @@ pub enum NonVolumeReason {
     /// 没被处理，就得说得出该去修什么。
     ///
     /// 只装**归档**：这张表列的是文件（见 [`NonVolumeFile`]），而一个读不动的**目录**
-    /// 不是文件——它整棵子树跳过，与发现走不进去的那一层同一条处置（停车场 Q117）。
+    /// 不是文件——它整棵子树跳过，进的是并列的第四张表（见 [`UnreachablePlace`]，
+    /// `p4-parking-lot/11` 收的停车场 Q117）。
     ///
     /// **点名的**那一种点不开不在这里：那是整趟拒绝，`run` 返回的是 `Err`、没有报告
     /// （ADR 0014 决定第 5 条）。
     Unopenable(String),
+}
+
+/// 一个**走不进去的地方**（`CONTEXT.md` 的《处理对象》）：发现的时候列不出它这一层的目录。
+///
+/// 权限没配好、盘掉了、路径太长——那一层列不出来，它底下有没有卷谁都不知道。
+/// 整棵子树跳过，其余卷照常跑完（`CONTEXT.md` 的《失败》：发现的记下来、其余照做）。
+///
+/// 它与另外三列各差一处，而三处差的都不是同一件事：
+///
+/// - [`NonVolumeFile`] 列的是**文件**，这是一个**地方**——那张表收不下它
+///   （见 [`NonVolumeReason::Unopenable`]）。
+/// - [`VolumeFailure`] 里每一条都**是一个卷**，这里连「是不是卷」都答不出来。
+/// - 非卷文件**不动退出码**，这一列动（见 [`Report::any_place_unreachable`]）：
+///   那一张说的是「这些东西本来就不属于产物」，这一列说的是「这一块根本没看过」。
+///
+/// **点名的那一个走不进去**不在这里：那是整趟拒绝，`run` 返回 `Err`
+/// （ADR 0014 决定第 5 条）。
+#[derive(Debug, Clone)]
+pub struct UnreachablePlace {
+    /// 走不进去的那个目录在盘上的路径。
+    pub path: PathBuf,
+    /// 为什么走不进去，给人当场读的那一句：由内到外的错误链。
+    ///
+    /// 与 [`VolumeFailure::reason`]、[`NonVolumeReason::Unopenable`] 同一个待遇——
+    /// 报告里说一样东西没被处理，就得说得出该去修什么。少了这一句，用户只知道
+    /// 「有个目录没进去」，不知道是权限、是盘、还是路径。
+    pub reason: String,
 }
 
 /// 这一趟是怎么收的场（停车场 Q39、Q46）。

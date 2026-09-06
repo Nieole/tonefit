@@ -452,14 +452,20 @@ fn base_name(volume: &VolumeReport) -> String {
 /// - **试算**给的是判定上要注意的：特例页几张 · 宽溢出几页 · 几何门不成立几卷。
 /// - **执行**给的是盘上出的事：隔离几卷。
 ///
-/// **失败页与卷级失败两副都给**（停车场 Q146）：解不出尺寸的页在第一遍就失败，
-/// 而试算只是不走第二遍；卷根被删掉的卷同样记一笔卷级失败。照从前那样按副二选一的话，
+/// **失败页、卷级失败与走不进去的地方三副都给**（停车场 Q146、`p4-parking-lot/11`）：
+/// 解不出尺寸的页在第一遍就失败，而试算只是不走第二遍；卷根被删掉的卷同样记一笔卷级失败；
+/// 走不进去的那个目录在**开工之前**就撞上了，两副都撞得上。照从前那样按副二选一的话，
 /// 一趟试算里坏了三页、废了一卷，这一行**一个字都不说**——而那正是这一块存在的理由。
+/// 走不进去那一样进来的也是这条理由：它自己就够把退出码从 `0` 顶到 `3`
+/// （见 `crate::exit_code`），而这一行从前对它一个字都不说。
 ///
 /// **数的是此刻**：失败页走 [`Live::failures_so_far`]（收摊了的那几卷加上当前这一卷
 /// 已经报过的那几条），卷级失败与隔离那两样出现的当场就进报告。它与报告末尾那几小结
 /// 因此在一卷跑到一半时**故意不一样**，两处答的是两个不同的问题——见本模块开头那张表，
 /// `the_trouble_row_says_now_while_the_report_tail_says_what_is_settled` 两头对着问。
+/// **走不进去那一格是个例外**：它跟着库交出来的那份报告一起到（与非卷文件同一条路，
+/// 见 [`Live::returned`]），因此这一趟收场之前它恒是零——发现在开工之前就走完了，
+/// 而那一份要等 `run` 返回才交得出来。
 ///
 /// 措辞仍与那几小结逐字相同，而两处没有合成一个函数：那几小结是**成句的**
 /// （隔离那一句还要说清失败页在输出里是什么样），这一行是一串数；共用的话得先把那句话
@@ -482,11 +488,18 @@ fn trouble_row(live: &Live) -> Option<Painted> {
         ],
         RunMode::Process => vec![count(isolated(report), "隔离", "卷", Tone::Caution)],
     };
-    // **盘上出的那两样两副都有**（Q146），因此摆在分岔外面：试算同样解不出尺寸、
-    // 同样撞得上卷根不在了。压在末尾是照重轻排——前面那几样是「注意」，这两样是「出事」。
+    // **盘上出的那三样两副都有**（Q146、`p4-parking-lot/11`），因此摆在分岔外面：
+    // 试算同样解不出尺寸、同样撞得上卷根不在了、同样走不进那个目录。
+    // 压在末尾是照重轻排——前面那几样是「注意」，这三样是「出事」。
     listed.extend([
         count(live.failures_so_far(), "失败", "页", Tone::Trouble),
         count(report.failed_volumes.len(), "卷级失败", "卷", Tone::Trouble),
+        count(
+            report.unreachable_places.len(),
+            "发现走不进去",
+            "处",
+            Tone::Trouble,
+        ),
     ]);
     let said: Vec<Painted> = listed.into_iter().flatten().collect();
     // **这一行只有一种颜色，取列着的那几件里最重的那一种**（[`Tone`] 的 `Ord` 就是为它派生的）：
@@ -841,6 +854,39 @@ mod tests {
         live.volume_started(Path::new("库/卷一"), 1000);
         live.volume_finished(&fixture::processed_volume("卷一", None));
         assert!(trouble_row(&live).is_none(), "干净的一趟还画着出事行");
+    }
+
+    /// **走不进去的那一处也上出事行**（`p4-parking-lot/11`）。
+    ///
+    /// 从前这一趟屏上一个字都不说：一卷没失败、一卷没隔离、一页没坏——而退出码是 `3`。
+    /// 「屏上没事、脚本说出事了」是这一块最不该出的岔子，而它正是这一行存在的理由。
+    ///
+    /// 两头一起问：出事行说得出那一处，而这一趟的退出码真是 `3`。
+    #[test]
+    fn a_place_that_cannot_be_entered_shows_up_on_the_trouble_row() {
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(1, 1000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.volume_finished(&fixture::processed_volume("卷一", None));
+        // 走不进去的那一处跟着库交出来的那份报告一起到（与非卷文件同一条路）。
+        assert!(trouble_row(&live).is_none(), "收场之前就画上了出事行");
+        let mut report = live.report().clone();
+        report.unreachable_places = vec![tonefit::UnreachablePlace {
+            path: PathBuf::from("库/权限没配好的作品"),
+            reason: "列出 库/权限没配好的作品 这一层: Permission denied (os error 13)".to_owned(),
+        }];
+        live.returned(Ok(report));
+
+        let row = trouble_row(&live).expect("走不进去的那一处该让这一行出现");
+
+        assert!(
+            row.text.contains("发现走不进去 1 处"),
+            "出事行没说走不进去那一处：{}",
+            row.text
+        );
+        assert_eq!(row.tone, Tone::Trouble, "走不进去那一样不是「出事」那一档");
+        // 屏上说的与脚本拿到的是同一件事。
+        assert_eq!(live.exit_code(), crate::FAILED_VOLUME_EXIT);
     }
 
     /// 一趟**试算**，坏了一页、废了一卷：Q146 那两样各一份。

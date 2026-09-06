@@ -14,7 +14,7 @@
 //! 表**下面**是当场冒出来的失败页、以及收场之后末尾那几小结——
 //! 那几段本来就是句子，照旧当整段文字折行画（[`crate::wrap`]）。
 //! 末尾那几小结**一小结一段、各上各的色**（[`tail_row`]，收停车场 Q155）：
-//! 六小结分属三档语义，拼成一段就只上得了一种。
+//! 七小结分属三档语义，拼成一段就只上得了一种。
 //!
 //! **两副样子由展开与否分**（`CONTEXT.md` 的《会话》：展开），差在哪几处见
 //! [`report_pane`] 那张表。折行走 [`crate::wrap`]，本模块只交代**折到多宽**——
@@ -262,16 +262,16 @@ fn collapsed(
 
 /// [末尾那一小结](crate::render::tail)画成一段，**语义按它是哪一小结挑**。
 ///
-/// 六小结分属三档（`CONTEXT.md` 的《语义色》，收停车场 Q155）：
+/// 七小结分属三档（`CONTEXT.md` 的《语义色》，收停车场 Q155）：
 ///
 /// | 小结 | 语义 | 凭什么 |
 /// |---|---|---|
 /// | 非卷文件 | [平常](Tone::Plain) | 它**连失败都不是**，退出码一格不动（`CONTEXT.md` 的《失败》） |
 /// | 输出宽超过面板 · 兜底上界 · 部分救回 · 隔离 | [注意](Tone::Caution) | 四样在《语义色》那张表的「注意」一档里逐条列着 |
-/// | 卷级失败 | [出事](Tone::Trouble) | 卷根本没交出来，与《语义色》的「出事」对上 |
+/// | 卷级失败 · 发现走不进去 | [出事](Tone::Trouble) | 卷根本没交出来；走不进去那一处连「那底下有没有卷」都没答上来，而两者共用一个退出码（`p4-parking-lot/11`） |
 ///
-/// **颜色不是唯一载体**（见 [`super::paint`]）：六小结各自以自己那个词开头
-/// （「非卷文件 3 个」「兜底上界 2 页」「隔离 4 卷」「卷级失败 1 卷」……），
+/// **颜色不是唯一载体**（见 [`super::paint`]）：七小结各自以自己那个词开头
+/// （「非卷文件 3 个」「兜底上界 2 页」「隔离 4 卷」「卷级失败 1 卷」「发现走不进去 1 处」……），
 /// 不上色的终端上一个字都不丢——**这一层一个空格都没添**，那几个词本来就在措辞里。
 ///
 /// **隔离那一小结给的是「注意」不是「出事」**，虽然它那一句里也数着失败页：
@@ -282,7 +282,7 @@ fn collapsed(
 ///
 /// **一种行一条，不留 `_`**：末尾多一小结该挂哪一档是个要当场拿的主意，而一个 `_`
 /// 会悄悄给它一个默认档——屏上少一种色，没人报错。**别的行逐个列在下面那一支里**：
-/// 它们走不到这里（[`crate::render::tail`] 只出这六种），列出来是为了让第七小结
+/// 它们走不到这里（[`crate::render::tail`] 只出这七种），列出来是为了让第八小结
 /// 变成**编译错误**而不是收场那一帧的恐慌——那一刻终端在备用屏、raw 模式里，
 /// 整份报告跟着没（同一条规矩见 [`crate::render::plain`] 的 `line`）。
 fn tail_row(said: &Row) -> Painted {
@@ -292,7 +292,9 @@ fn tail_row(said: &Row) -> Painted {
         | RowKind::BackstopTail
         | RowKind::SalvageTail
         | RowKind::IsolationTail => Tone::Caution,
-        RowKind::FailedVolumeTail => Tone::Trouble,
+        // 走不进去的地方与卷级失败同一档：两者共用一个退出码，而它比那一种更说不清
+        // ——那一种点得出是哪几卷，这一种连少了几卷都答不出来（`p4-parking-lot/11`）。
+        RowKind::FailedVolumeTail | RowKind::UnreachableTail => Tone::Trouble,
         // 逐卷、逐页那几种：它们由卷表与逐页表画，走不到末尾这一段。
         RowKind::Directory
         | RowKind::Volume
@@ -525,14 +527,15 @@ mod tests {
         live
     }
 
-    /// 一趟**末尾六小结全齐**的：末尾那几小结按小结上色要的正是它。
+    /// 一趟**末尾七小结全齐**的：末尾那几小结按小结上色要的正是它。
     ///
     /// [每种页各一张](fixture::a_page_of_every_kind)那一卷一次点起中间四小结
     /// （宽溢出 · 兜底上界 · 部分救回 · 隔离——那一卷里 `004` 宽溢出、`006` 兜底上界、
-    /// `007` 部分救回、`017` 是失败页因此整卷进隔离），另外两小结各补一笔：
-    /// 一个非卷文件（连失败都不是）与一卷没做成（出事）。
+    /// `007` 部分救回、`017` 是失败页因此整卷进隔离），另外三小结各补一笔：
+    /// 一个非卷文件（连失败都不是）、一卷没做成（出事）、一处走不进去（同样出事，
+    /// `p4-parking-lot/11`）。
     ///
-    /// 六小结凑齐才问得出「分属三档」：少一小结，那一档就是拿另一小结冒充的。
+    /// 七小结凑齐才问得出「分属三档」：少一小结，那一档就是拿另一小结冒充的。
     fn a_run_with_every_tail_section() -> Live {
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.run_started(2, 2000);
@@ -544,6 +547,10 @@ mod tests {
             path: PathBuf::from("库/答案.txt"),
             reason: tonefit::NonVolumeReason::NeitherPageNorArchive,
         }];
+        report.unreachable_places = vec![tonefit::UnreachablePlace {
+            path: PathBuf::from("库/权限没配好的作品"),
+            reason: "列出 库/权限没配好的作品 这一层: Permission denied (os error 13)".to_owned(),
+        }];
         live.returned(Ok(report));
         live.rewind(Duration::from_secs(300));
         live
@@ -551,12 +558,12 @@ mod tests {
 
     /// **末尾那几小结按小结分档上色，而屏上的字一格没动**（`p4-parking-lot/09`，收 Q155）。
     ///
-    /// 从前它们是拼好的一段文字、整段给「平常」——六小结分属三档语义，而一段只上得了
+    /// 从前它们是拼好的一段文字、整段给「平常」——各小结分属三档语义，而一段只上得了
     /// 一种色，末尾那几小结因此一个颜色都没有。
     ///
     /// 三件事：
     ///
-    /// - **六小结一个不少，次序就是措辞那一层排的那个次序**（轻的在前、重的压尾）；
+    /// - **七小结一个不少，次序就是措辞那一层排的那个次序**（轻的在前、重的压尾）；
     /// - **三档各就各位**，而每一小结**头一句就是它自己那个词**——
     ///   「颜色不是唯一载体」靠的正是这几个词，这一层一个空格都没添；
     /// - **屏上折出来的那几行与「拼成一段再折」逐行相同**：拆开没有多折出一行来，
@@ -574,8 +581,9 @@ mod tests {
             ("部分救回", Tone::Caution),
             ("隔离", Tone::Caution),
             ("卷级失败", Tone::Trouble),
+            ("发现走不进去", Tone::Trouble),
         ];
-        assert_eq!(rows.len(), expected.len(), "六小结没到齐");
+        assert_eq!(rows.len(), expected.len(), "七小结没到齐");
         for (row, (word, tone)) in rows.iter().zip(expected) {
             let said = tail_row(row);
             assert_eq!(said.tone, tone, "「{word}」那一小结挂错了档");
@@ -585,7 +593,7 @@ mod tests {
                 said.text
             );
         }
-        // 三档都真出现过：少了这一句，六小结全给同一档也照样绿。
+        // 三档都真出现过：少了这一句，七小结全给同一档也照样绿。
         let tones: Vec<Tone> = rows.iter().map(|row| tail_row(row).tone).collect();
         for tone in [Tone::Plain, Tone::Caution, Tone::Trouble] {
             assert!(tones.contains(&tone), "{tone:?} 那一档一小结都没有");

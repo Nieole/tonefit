@@ -228,6 +228,97 @@ fn an_encrypted_rar_is_refused_when_named_and_skipped_when_discovered() {
     );
 }
 
+/// **发现走不进去的一个目录让这一趟收在 `3` 上，其余卷照常跑完**
+/// （`p4-parking-lot/11`，收停车场 Q117）。
+///
+/// 从前这一趟收在 `0` 上：那棵子树整个消失，报告一行不说——用户拿到的是一份看起来成功、
+/// 实际少了几十卷的输出。NAS 上一个权限没配好的作品目录正是这个样子。
+///
+/// **它与卷级失败共用那个数**，不新开第五个：两者交出的东西一样（那一块一个字节都没有）、
+/// 用户下一步该查的也一样（文件还在不在、盘还挂着没有、权限变没变），
+/// 见二进制侧的 `FAILED_VOLUME_EXIT`。
+///
+/// 非在真进程上问不可，理由与本文件其余几条同一个：退出码只在进程那一层观察得到。
+/// 弄不出一个读不动的目录的机器上（Windows 没有这一手，root 底下权限位不作数）当场收工
+/// ——它在那里恒不成立，误报不了；而「一声不吭」那一版在弄得出的机器上当场红。
+#[test]
+fn a_place_that_cannot_be_entered_ends_the_run_with_three() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+    let closed = library.join("权限没配好的作品");
+    std::fs::create_dir(&closed).expect("建读不动的那一层");
+    if !shut_the_door(&closed) {
+        return;
+    }
+
+    let code = tonefit(&space, &[library.as_path()]);
+    let members = fixtures::directory_members(&space.out());
+    // 断言之前先把门打开：断言红了也不至于留下一个删不掉的临时目录。
+    open_the_door(&closed);
+
+    assert_eq!(code, Some(3), "走不进去的那一处没让这一趟离开 `0`");
+    // 「其余卷照常跑完」不只是退出码：好的那一卷真在盘上。
+    assert_eq!(members, ["库/好的.cbz"], "其余卷没照常跑完");
+}
+
+/// **点名一个读不动的目录仍是 `1`**（ADR 0014 决定第 5 条）。
+///
+/// 「点名的 / 发现的」那条既有分别一格没动：上一条那个目录换成点名的，这一趟整个不做。
+/// 与本文件那条坏 zip、那条加密 rar 是同一副骨架——换的只是「点不开」的来处。
+#[test]
+fn a_named_place_that_cannot_be_entered_is_still_refused() {
+    let space = Workspace::new();
+    let closed = space.dir("权限没配好的作品");
+    std::fs::create_dir_all(&closed).expect("建读不动的那一层");
+    if !shut_the_door(&closed) {
+        return;
+    }
+
+    let code = tonefit(&space, &[closed.as_path()]);
+    open_the_door(&closed);
+
+    assert_eq!(code, Some(1), "点名一个读不动的目录没被整趟拒");
+}
+
+/// 把一个目录弄成**列不出来**的样子，成了才回 `true`。
+///
+/// **真去列一遍**才算数：`set_permissions` 在 root 底下也回 `Ok`，而权限位拦不住 root。
+#[cfg(unix)]
+fn shut_the_door(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    if std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).is_err() {
+        return false;
+    }
+    if std::fs::read_dir(dir).is_ok() {
+        // 这一手没作数（root 绕过权限位）。**门要打回去**：不然临时目录里留下一个
+        // `0o000` 的目录，而收场那一手删不掉它。
+        open_the_door(dir);
+        return false;
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn shut_the_door(_dir: &Path) -> bool {
+    false
+}
+
+/// 把门再打开，好让工作区收得掉。
+#[cfg(unix)]
+fn open_the_door(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
+}
+
+#[cfg(not(unix))]
+fn open_the_door(_dir: &Path) {}
+
 /// 跑一趟 tonefit，返回它的退出码。进程被信号打断时是 `None`。
 fn tonefit(space: &Workspace, inputs: &[&Path]) -> Option<i32> {
     tonefit_with_temp(space, inputs, None)
