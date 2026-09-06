@@ -3,10 +3,14 @@
 //!
 //! | 语义 | 屏上 | 用在哪 |
 //! |---|---|---|
-//! | [平常](Tone::Plain) | 终端默认色 | 正常跑完的卷、普通的页 |
-//! | [注意](Tone::Caution) | 黄 | 隔离、部分救回、宽溢出、兜底上界、几何门不成立、特例页 |
-//! | [出事](Tone::Trouble) | 红 | 失败页、卷级失败、拒绝执行 |
+//! | [平常](Tone::Plain) | 终端默认色 | 正常跑完的卷、普通的页、非卷文件那一小结、屏底那一句报的「做成了」 |
+//! | [注意](Tone::Caution) | 黄 | 隔离、部分救回、宽溢出、兜底上界、几何门不成立、特例页、过期副本、屏底那一句问的「再按一次」 |
+//! | [出事](Tone::Trouble) | 红 | 失败页、卷级失败、拒绝执行、屏底那一句报的「没做成」 |
 //! | [不要紧](Tone::Muted) | 暗 | 跳过的卷、只读时的左栏 |
+//!
+//! 末三格是 `p4-parking-lot/09` 添的（收停车场 Q155／Q156／Q157）。
+//! `CONTEXT.md` 的《语义色》那一列还只认添之前那一份——改它归 28 号票，
+//! 停车场 Q163 记着这一笔。
 //!
 //! # 画法各处按语义要色，不自己挑颜色
 //!
@@ -17,16 +21,21 @@
 //! （**读回来**的那一头是另一回事：测试探针 [`super::probe`] 认得出 `Color::Reset`
 //! 才说得出「这一行没上色」。它不挑颜色，它问屏上有没有。）
 //!
-//! 屏上按语义要色的地方，眼下四处：卷表那几行（[`super::table`]，一行的语义由行首那个
-//! [记号](super::table)说了算）、总览块的抬头与出事行（[`super::overview`]）、
-//! 报告区当场冒出来的失败页那一段（[`super::report`]）、只读时的左栏（[`super::config`]）。
+//! 屏上按语义要色的地方，眼下八处：卷表那几行（[`super::table`]，一行的语义由行首那个
+//! [记号](super::table)说了算）、摆在一卷那一行底下的那两句（同上，过期副本与部分救回）、
+//! 逐页表那几行（[`super::pages`]）、总览块的抬头与出事行（[`super::overview`]）、
+//! 报告区当场冒出来的失败页那一段（[`super::report`]）、报告末尾那几小结（同上，
+//! 一小结一档）、只读时的左栏（[`super::config`]）、**屏底那一句**（[`super::footer`]）。
 //!
 //! # 颜色不是唯一载体
 //!
 //! **每一处上色的地方旁边都另有一个字或一个行首记号**：卷表那几行行首恒有一个记号
 //! （`✓ ! - ✗`，砍列时它与卷名一起恒在，见 [`crate::session::columns`]），
 //! 出事行行首是「出事」两个字，没做成那一趟的抬头里有「没做成」，失败页那一段头一行
-//! 就叫「失败页」，只读的左栏抬头上写着「跑着，三层都只读」。
+//! 就叫「失败页」，只读的左栏抬头上写着「跑着，三层都只读」，报告末尾那几小结各自
+//! 以自己那个词开头（「非卷文件」「兜底上界」「隔离」「卷级失败」……），
+//! 摆在一卷底下那两句同样如此（「过期副本」「部分救回」），
+//! 屏底那一句行首恒有一个记号（`✓ ! ✗`，见 [`super::footer`]）。
 //!
 //! 色盲、以及不上色的终端上因此一个字都不丢——[`NO_COLOR`](colourful) 那一张快照与
 //! 上色那一张**文字逐格相同**（`the_same_screen_reads_the_same_with_or_without_colour`）。
@@ -55,11 +64,13 @@ use ratatui::text::Line;
 pub(super) enum Tone {
     /// **不要紧**：跳过的卷、只读时的左栏。屏上压暗。
     Muted,
-    /// **平常**：正常跑完的卷、普通的页。屏上是终端默认色。
+    /// **平常**：正常跑完的卷、普通的页、非卷文件那一小结、屏底那一句报的「做成了」。
+    /// 屏上是终端默认色。
     Plain,
-    /// **注意**：隔离、部分救回、宽溢出、兜底上界、几何门不成立、特例页。屏上黄。
+    /// **注意**：隔离、部分救回、宽溢出、兜底上界、几何门不成立、特例页、过期副本，
+    /// 以及屏底那一句问的「再按一次」。屏上黄。
     Caution,
-    /// **出事**：失败页、卷级失败、拒绝执行。屏上红。
+    /// **出事**：失败页、卷级失败、拒绝执行，以及屏底那一句报的「没做成」。屏上红。
     Trouble,
 }
 
@@ -194,7 +205,8 @@ use forcing::{forced, forcing};
 #[cfg(test)]
 mod tests {
     use super::super::probe::{
-        OnScreen, a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch, painted, tight,
+        OnScreen, a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch, painted,
+        snapshot, tight,
     };
     use super::super::yielding::CONFIG_WIDTH;
     use super::super::{main_pane, shell};
@@ -206,6 +218,10 @@ mod tests {
     /// 一屏够宽够高，六种卷一行不砍。
     const WIDE: u16 = 96;
     const TALL: u16 = 30;
+
+    /// 一屏高到**连末尾那几小结一起摆得下**：卷表那几行下面还有失败页那一段
+    /// 与六小结，报告区一格都不必滚。
+    const TALL_ENOUGH_FOR_THE_TAIL: u16 = 60;
 
     /// **四种语义，四个样子，一处出处**（票面第一条）。
     ///
@@ -407,6 +423,68 @@ mod tests {
         );
     }
 
+    /// **报告末尾那几小结按小结上色，屏上逐行看得见**（`p4-parking-lot/09`，收停车场 Q155）。
+    ///
+    /// 从前那一段整段给「平常」——六小结分属三档语义，而一段只上得了一种色，
+    /// 末尾那几小结因此一个颜色都没有。
+    ///
+    /// 这一条走 `TestBackend`（spec 的《Testing Decisions》：屏上那几处走快照那一路），
+    /// 问的是**屏上那几行真是什么色**：非卷文件那一小结一格都没上色（它连失败都不是）、
+    /// 隔离那一小结黄、卷级失败那一小结红。三行各自带着自己那个词——
+    /// 颜色抹掉了话还在（模块文档《颜色不是唯一载体》）。
+    #[test]
+    fn the_tail_is_painted_one_subsection_at_a_time() {
+        let mut live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
+        let mut report = live.report().clone();
+        // 非卷文件那一小结这份夹具里没有，补一笔：三档要在同一屏上都出现过。
+        report.non_volume_files = vec![tonefit::NonVolumeFile {
+            path: std::path::PathBuf::from("库/答案.txt"),
+            reason: tonefit::NonVolumeReason::NeitherPageNorArchive,
+        }];
+        // 末尾那几小结**收场之后才画**（见 `super::super::report`）。
+        live.returned(Ok(report));
+        let mut session = Session::new();
+
+        let rows = forcing(true, || {
+            painted(
+                |frame| main_pane(frame, frame.area(), &mut session, Some(&live)),
+                WIDE,
+                TALL_ENOUGH_FOR_THE_TAIL,
+            )
+        });
+
+        // **从下往上找**：总览块的出事行说的是同一批数（「隔离 1 卷 · 失败 1 页 ·
+        // 卷级失败 1 卷」）——这一趟收场了，两处此刻相等（`p4/08` 立的分工是
+        // 「一卷跑到一半时才故意不一样」）。而它钉在屏顶、末尾那几小结在报告区底下，
+        // 取末一处那一行才是这一条要问的。
+        let last_row_saying = |said: &str| -> &OnScreen {
+            rows.iter()
+                .rev()
+                .find(|row| tight(&row.text).contains(&tight(said)))
+                .unwrap_or_else(|| panic!("屏上没有说「{said}」的那一行"))
+        };
+
+        for (said, colour) in [
+            ("非卷文件 1 个", None),
+            ("隔离 1 卷 · 失败 1 页", Some(Color::Yellow)),
+            ("卷级失败 1 卷", Some(Color::Red)),
+        ] {
+            let row = last_row_saying(said);
+            match colour {
+                Some(colour) => assert!(
+                    row.colours.contains(&colour),
+                    "「{said}」那一小结不是 {colour:?}：{}",
+                    row.text
+                ),
+                None => assert!(
+                    row.colours.is_empty(),
+                    "「{said}」那一小结上了色：{}",
+                    row.text
+                ),
+            }
+        }
+    }
+
     /// **上色的那一张与 `NO_COLOR` 那一张，文字逐格相同**（票面第五条）。
     ///
     /// 快照比的是**屏上的字**（[`super::super::probe::snapshot`] 走终端库自己的
@@ -434,6 +512,29 @@ mod tests {
                 .iter()
                 .all(|row| row.colours.is_empty() && !row.dim()),
             "NO_COLOR 那一张还有上了色的行"
+        );
+
+        // **屏底那一句也在这一条的地界里**（`p4-parking-lot/09`，收停车场 Q157）：
+        // 它此刻挂着一档语义，而上面那一张只钉主区——少了这一段，屏底那一句上色之后
+        // 屏上没有一处问得出「文字有没有跟着变」。整屏比，因为它就在主区外面。
+        let mut refused = Session::new();
+        refused.complain("先挑型号：跑不起来".to_owned());
+        let bottom = |colourful: bool| {
+            forcing(colourful, || {
+                snapshot(|frame| shell(frame, &mut refused.clone(), None), WIDE, TALL)
+            })
+        };
+        assert_eq!(bottom(true), bottom(false), "屏底那一句上色改动了屏上的字");
+        // 问的是**屏底那一行**，不是「这一屏上有没有红的」：后者在别处有一格红时
+        // 照样绿，而两张一起丢色上面那一句也抓不到——这一条就成了摆设。
+        let painted_rows = forcing(true, || {
+            painted(|frame| shell(frame, &mut refused.clone(), None), WIDE, TALL)
+        });
+        let bottom_line = row_saying(&painted_rows, "先挑型号：跑不起来");
+        assert!(
+            bottom_line.colours.contains(&Color::Red),
+            "屏底那一句不是红的：{}",
+            bottom_line.text
         );
     }
 

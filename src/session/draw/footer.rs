@@ -5,6 +5,15 @@
 //! 「这一刻该按哪个键」。哪一副摆出来随会话眼下是什么状态而定，各状态摆哪几件事
 //! 在各自那个函数里，[`footer`] 那句 `match` 说的就是哪一副归哪一个。
 //!
+//! # 要说的那句话挂着一档语义（`p4-parking-lot/09`，收停车场 Q157）
+//!
+//! 末几行那一句**分得出轻重**：行首一个记号、整句一种[语义色](Tone)，两者由 [`marked`]
+//! 那一个 `match` 一起定。从前它是一个裸串、一格不上色——按 `x` 跑不起来的那一句与
+//! 「存好了一份预设」同色同位，一条拒绝读起来像一次成功。
+//!
+//! **「这一句是哪一种」由说出它的那一头定**（[`NoticeKind`]，`crate::session::state`）：
+//! 那一层在 `tui` 特性前面、认不得语义色，交出来的是「成没成」；这一层把它折成语义与记号。
+//!
 //! # 这一行与 `?` 那张表分的是哪一刀
 //!
 //! 屏上有两处摆键，而**它们答的不是同一个问题**：
@@ -31,13 +40,14 @@ use ratatui::text::Line;
 use tonefit::Instruction;
 
 use super::keys;
+use super::paint::{Painted, Tone};
 use super::report::expandable;
 use super::yielding::FOOTER_HEIGHT;
 use crate::session::complete;
 use crate::session::live::{Live, Reach};
 use crate::session::state::{
-    Action, Covered, Edit, Focus, Follow, Key, KeyGroup, Listing, Overlay, Picker, Session, Stage,
-    Step, Values,
+    Action, Covered, Edit, Focus, Follow, Key, KeyGroup, Listing, Notice, NoticeKind, Overlay,
+    Picker, Session, Stage, Step, Values,
 };
 use crate::session::viewport::Viewport;
 use crate::wrap;
@@ -178,7 +188,11 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
         Some(all) => format!("{keys} · {all}"),
         None => keys,
     };
-    let said = wrap::fold(session.notice().unwrap_or(""), width);
+    // 要说的那句话：行首一个记号、整句一种语义色（见 [`marked`]）。
+    let said: Vec<Line<'static>> = session
+        .notice()
+        .map(|notice| marked(notice).folded(width))
+        .unwrap_or_default();
     let mut rows = wrap::fold(&keys, width);
     // 说明那一半分得到几行：按键那几行与要说的那句话先占（让位的次序见上）。
     // **只算这一次**：补全候选列得下几条按的是同一个数（见 [`listed`]）。
@@ -193,8 +207,47 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
     while rows.len() + said.len() < usize::from(FOOTER_HEIGHT) {
         rows.push(String::new());
     }
-    rows.extend(said);
-    rows.into_iter().map(Line::from).collect()
+    let mut lines: Vec<Line<'static>> = rows.into_iter().map(Line::from).collect();
+    lines.extend(said);
+    lines
+}
+
+/// **屏底那一句摆成什么样**：行首一个记号，整句一种[语义色](Tone)
+/// （`p4-parking-lot/09`，收停车场 Q157）。
+///
+/// 从前这一句是一个裸串、一格不上色：按 `x` 跑不起来的那一句与「存好了一份预设」
+/// **同色同位**，一条拒绝读起来像一次成功。
+///
+/// 三种各对上四档里的一档（四档见 [`super::paint`]；`CONTEXT.md` 的《语义色》那一列
+/// 还没收屏底这一处，改它归 28 号票，停车场 Q163 记着）：
+///
+/// | [这一句是哪一种](NoticeKind) | 记号 | 语义 | 凭什么 |
+/// |---|---|---|---|
+/// | [没做成](NoticeKind::Refused) | `✗` | [出事](Tone::Trouble) | 按下去那一件根本没发生 |
+/// | [先问一句](NoticeKind::Asked) | `!` | [注意](Tone::Caution) | 下一下按了就撤不回来 |
+/// | [做成了](NoticeKind::Done) | `✓` | [平常](Tone::Plain) | 事办成了，不必特别看它 |
+///
+/// # 记号与语义在这里绑成一对
+///
+/// 与卷表那几行同一条（见 [`super::table::Mark`]）：**一个 `match` 同时定记号与语义**，
+/// 添一种不配语义（或反过来）根本编不过去。「颜色不是唯一载体」因此不靠人记着——
+/// 那三个字符逐个过得了 [`crate::wrap::width_is_stable`] 那一关，
+/// 不上色的终端上、以及色盲眼里，一条拒绝与一次成功照旧分得开。
+///
+/// **屏底那一句的措辞一个字都没动**：记号是这一层添的排版，与措辞出自哪里无关
+/// （说那几句话的是 `crate::session::state`）。
+///
+/// 记号连同它后面那个空格**吃掉两格**，而它跟着措辞一起进折行（这一处出的是一段文字，
+/// [`footer`] 拿它按同一套 [`crate::wrap`] 折）——那两格因此**算在折行预算里**，
+/// 一句长话在窄屏上至多多折出一行，一个字都不会从行尾丢掉。
+/// 屏底这一格摆不下就往下长（见 [`super::yielding::footer_height`]）。
+fn marked(notice: &Notice) -> Painted {
+    let (glyph, tone) = match notice.kind() {
+        NoticeKind::Refused => ('✗', Tone::Trouble),
+        NoticeKind::Asked => ('!', Tone::Caution),
+        NoticeKind::Done => ('✓', Tone::Plain),
+    };
+    Painted::new(format!("{glyph} {}", notice.said()), tone)
 }
 
 /// **阶段那一维此刻摆得出的那几条**（ADR 0017），连同下一行说的那句话：
@@ -1099,5 +1152,78 @@ mod tests {
         assert!(text.contains("缓存预算"), "{text}");
         assert!(!text.contains("补这一层"), "{text}");
         assert!(!text.contains(&tight("按 ⇥ 列出这一层")), "{text}");
+    }
+
+    /// **屏底那一句分得出轻重**（`p4-parking-lot/09`，收停车场 Q157）。
+    ///
+    /// 从前它是一个裸串、一格不上色：按 `x` 跑不起来的那一句与「存好了一份预设」
+    /// **同色同位**，一条拒绝读起来像一次成功。
+    ///
+    /// 四件事：
+    ///
+    /// - 三种各挂各的语义（没做成出事、先问一句注意、做成了平常），而**三种互不相同**
+    ///   ——同一档就等于没分出轻重；
+    /// - **记号与语义绑成一对**（见 [`marked`]）：每一种行首都另有一个记号，
+    ///   三个字形逐个在哪种终端上都占一格（[`crate::wrap::width_is_stable`]）；
+    /// - **措辞一个字都没动**：记号是这一层添的，那一句原样跟在它后面；
+    /// - 屏底那一格上**真摆得出来**：那一句连同它的记号画得到屏上。
+    #[test]
+    fn the_bottom_line_tells_a_refusal_apart_from_a_success() {
+        let mut session = Session::new();
+
+        // 没做成：跑不起来的那一句走 `complain`。
+        session.complain("先挑型号：跑不起来".to_owned());
+        let refused = marked(session.notice().expect("拒绝要说一句"));
+        assert_eq!(refused.tone, Tone::Trouble);
+        assert!(
+            refused.text.ends_with("先挑型号：跑不起来"),
+            "{}",
+            refused.text
+        );
+        // 屏底那一格上真摆得出来，记号连着那句话。
+        let screen = tight(&screen(&mut session, None, 120, 40));
+        assert!(screen.contains(&tight(&refused.text)), "{screen}");
+
+        // 先问一句：下一下按了就撤不回来。
+        session.ask_before_erasing("画集");
+        let asked = marked(session.notice().expect("问一句"));
+        assert_eq!(asked.tone, Tone::Caution);
+        assert!(asked.text.contains("再按一次"), "{}", asked.text);
+
+        // 做成了：事办成了，不必特别看它。
+        session.saved("漫画");
+        let done = marked(session.notice().expect("存完要说一句"));
+        assert_eq!(done.tone, Tone::Plain);
+        assert!(done.text.contains("存好了"), "{}", done.text);
+
+        // **窄屏上那一句一个字都不少**：记号吃掉的那两格算在折行预算里，
+        // 40 格上折出来的那几行拼回去，那一句连同记号原样都在——屏底这一格
+        // 摆不下就往下长，不从行尾切（见 [`footer`] 让位那一段）。
+        let rows = asked.folded(40);
+        assert!(rows.len() > 1, "40 格上那一句没折：{rows:?}");
+        let folded: String = rows.iter().map(ToString::to_string).collect();
+        assert!(
+            tight(&folded).contains(&tight(&asked.text)),
+            "窄屏上那一句被切了：{folded}"
+        );
+
+        // 三种互不相同，而每一种旁边都另有一个占得住一格的记号。
+        let three = [&refused, &asked, &done];
+        for (at, one) in three.iter().enumerate() {
+            let glyph = one.text.chars().next().expect("行首那个记号");
+            assert!(
+                crate::wrap::width_is_stable(glyph),
+                "{glyph} 是东亚歧义宽度"
+            );
+            assert!(one.text.starts_with(&format!("{glyph} ")), "{}", one.text);
+            for two in &three[at + 1..] {
+                assert_ne!(one.tone, two.tone, "两种挂了同一档");
+                assert_ne!(
+                    glyph,
+                    two.text.chars().next().expect("行首那个记号"),
+                    "两种挂了同一个记号"
+                );
+            }
+        }
     }
 }

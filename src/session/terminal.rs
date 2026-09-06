@@ -1041,7 +1041,7 @@ mod tests {
             press(&mut session, &mut running, &nowhere, &here, Key::Char('c')),
             Exit::Stay
         );
-        let said = session.notice().expect("该说一句").to_owned();
+        let said = session.notice().expect("该说一句").said().to_owned();
         assert!(said.contains("先挑型号"), "{said}");
         assert_eq!(
             std::fs::read_dir(&here).expect("读得出那个目录").count(),
@@ -1077,7 +1077,7 @@ mod tests {
             "会话写出来的图与库直接写的不一样"
         );
         // 屏上说清图在哪儿，以及此刻要做对的那一件事。
-        let said = session.notice().expect("出完图要说一句").to_owned();
+        let said = session.notice().expect("出完图要说一句").said().to_owned();
         assert!(said.contains(&*name), "{said}");
         assert!(said.contains("原尺寸"), "{said}");
         // 会话还在浏览：出图不改变它此刻在做什么。
@@ -1108,7 +1108,11 @@ mod tests {
         );
 
         // 说得清是哪一步、在哪条路径上出的事——库那一侧的原话，这一层不另编一份。
-        let said = session.notice().expect("写不出去要说一句").to_owned();
+        let said = session
+            .notice()
+            .expect("写不出去要说一句")
+            .said()
+            .to_owned();
         assert!(said.contains("标定图"), "{said}");
         assert!(said.contains("这是个文件"), "{said}");
         // 三层一格没动，会话还在浏览：下一个键照按。
@@ -1153,7 +1157,7 @@ mod tests {
             tap(&mut session, &mut running, &presets, Key::Char(character));
         }
         tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("存完要说一句").to_owned();
+        let said = session.notice().expect("存完要说一句").said().to_owned();
         assert!(said.contains("漫画") && said.contains("--preset"), "{said}");
         // 存好的那一份就摆在眼前的列表上，光标停在它上面。
         let picker = session.picking().expect("存完仍在那一栏上");
@@ -1176,7 +1180,7 @@ mod tests {
             "「说了一个恰好等于默认值的值」套回来变成了「没说」"
         );
         // 套完回到浏览，说的那句话里带着「范围层没动」。
-        let said = session.notice().expect("套完要说一句").to_owned();
+        let said = session.notice().expect("套完要说一句").said().to_owned();
         assert!(said.contains("范围层"), "{said}");
     }
 
@@ -1207,7 +1211,9 @@ mod tests {
         }
         tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
-            session.notice().is_some_and(|said| said.contains("存好了")),
+            session
+                .notice()
+                .is_some_and(|said| said.said().contains("存好了")),
             "{:?}",
             session.notice()
         );
@@ -1267,7 +1273,7 @@ mod tests {
 
         // 打的是已经有的那个名字：说一句，盘上一个字节都没动。
         tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("要说一句").to_owned();
+        let said = session.notice().expect("要说一句").said().to_owned();
         assert!(said.contains("再按一次"), "{said}");
         assert!(said.contains("撤不回来"), "覆盖的代价没说出口：{said}");
         assert_eq!(
@@ -1285,9 +1291,9 @@ mod tests {
         }
         tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.contains("画集") && said.contains("再按一次")),
+            session.notice().is_some_and(
+                |said| said.said().contains("画集") && said.said().contains("再按一次")
+            ),
             "改过名字之后那一问该重新来一遍：{:?}",
             session.notice()
         );
@@ -1300,7 +1306,9 @@ mod tests {
         // 再按一次：这一下才覆盖，而另一份一个字都没丢。
         tap(&mut session, &mut running, &presets, Key::Enter);
         assert!(
-            session.notice().is_some_and(|said| said.contains("存好了")),
+            session
+                .notice()
+                .is_some_and(|said| said.said().contains("存好了")),
             "{:?}",
             session.notice()
         );
@@ -1346,7 +1354,7 @@ mod tests {
             Some("漫画")
         );
         tap(&mut session, &mut running, &presets, Key::Char('d'));
-        let said = session.notice().expect("要说一句").to_owned();
+        let said = session.notice().expect("要说一句").said().to_owned();
         assert!(said.contains("漫画") && said.contains("再按一次"), "{said}");
         assert_eq!(
             std::fs::read_to_string(&file).expect("读得出来"),
@@ -1358,9 +1366,9 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Down);
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.contains("画集") && said.contains("再按一次")),
+            session.notice().is_some_and(
+                |said| said.said().contains("画集") && said.said().contains("再按一次")
+            ),
             "挪过一行之后那一问该重新来一遍：{:?}",
             session.notice()
         );
@@ -1375,7 +1383,9 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         assert!(
-            session.notice().is_some_and(|said| said.contains("删掉了")),
+            session
+                .notice()
+                .is_some_and(|said| said.said().contains("删掉了")),
             "{:?}",
             session.notice()
         );
@@ -1412,7 +1422,7 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         // 套用失败：屏底改说那条错误，「再按一次 d」没了。
         tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("要说一句").to_owned();
+        let said = session.notice().expect("要说一句").said().to_owned();
         assert!(!said.contains("再按一次"), "那一问还摆在屏上：{said}");
 
         // 这一下 `d` 是**重新问一句**，不是删。
@@ -1420,7 +1430,7 @@ mod tests {
         assert!(
             session
                 .notice()
-                .is_some_and(|said| said.contains("再按一次")),
+                .is_some_and(|said| said.said().contains("再按一次")),
             "{:?}",
             session.notice()
         );
@@ -1451,7 +1461,7 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         tap(&mut session, &mut running, &presets, Key::Char('d'));
 
-        let said = session.notice().expect("要说一句").to_owned();
+        let said = session.notice().expect("要说一句").said().to_owned();
         assert!(said.contains("漫画"), "没说清点的是哪一份：{said}");
         assert!(said.contains("画集"), "没说有的是哪几份：{said}");
         assert!(session.picking().is_some(), "说完把那一栏关掉了");
@@ -1481,7 +1491,7 @@ mod tests {
         );
         tap(&mut session, &mut running, &presets, Key::Enter);
 
-        let said = session.notice().expect("要说一句").to_owned();
+        let said = session.notice().expect("要说一句").said().to_owned();
         assert!(said.contains("旧的"), "{said}");
         assert_eq!(session.preset(), before, "套不成却把两层改了");
         assert!(session.picking().is_some(), "读不懂就把那一栏也关掉了");

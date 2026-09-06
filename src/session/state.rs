@@ -1335,8 +1335,80 @@ pub struct Session {
     /// **不装进 [`Focus::Report`] 里**：`⇥` 切回左栏再切回来时它还在原处——
     /// 切焦点不是「重新开始读」；展开一卷再收起同理。
     follow: Follow,
-    /// 上一个动作要说的那句话（多半是「这个值不对」）。下一次按键就抹掉。
-    notice: Option<String>,
+    /// 上一个动作要说的[那句话](Notice)（多半是「这个值不对」）。下一次按键就抹掉。
+    notice: Option<Notice>,
+}
+
+/// **屏底那一句**：一句话，连同**它有多重**。
+///
+/// 打成一个类型而不是一对裸值，与卷表那一行「一行字加一种语义」同一条理由：
+/// 两样是一起定出来的——说出这一句的那个动作既定了措辞、也定了它成没成——
+/// 而 `(String, NoticeKind)` 在调用处看不出哪一半是哪一半。
+///
+/// 从前这一格是一个裸 `String`：按 `x` 跑不起来的那一句与「存好了一份预设」因此
+/// **同色同位**，一条拒绝读起来像一次成功（`p4-parking-lot/09`，收停车场 Q157）。
+///
+/// **两个出口都认它**：说进来的那一头是 [`Session::says`]（本模块每一句话的唯一出口），
+/// 读出去的那一头是 [`Session::notice`]。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// 这一句怎么说。
+    said: String,
+    /// 这一句是[哪一种](NoticeKind)。
+    kind: NoticeKind,
+}
+
+/// 屏底那一句**是哪一种**：三种，按轻重分。
+///
+/// **这里不认颜色，也不认语义色那个类型**：四种语义色住在画法那一层，
+/// 而那一层在 `tui` 特性后面、这一层不在（见 `crate::session` 模块文档）。
+/// 状态机答的是「刚才那一下成没成」，折成哪一档语义由画法那一头定
+/// （`crate::session::draw::footer`）——与[一行](crate::render::RowKind)折成语义
+/// 同一条路（ADR 0016：措辞一处、排版两副）。
+///
+/// **三种不多不少**：多一种是个要当场拿的主意，而画法那一头对着它逐条挑语义、不留 `_`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    /// **没做成**：跑不起来（型号没挑、输出根没填）、标定图写不出去、
+    /// 打进去的值解析不过、这一步此刻按不动（还没跑过就想展开）。
+    Refused,
+    /// **撤不回来，先问一句**：覆盖一份同名预设、删掉一份预设。
+    /// 那一句里摆着「再按一次」，而按下去没有撤销。
+    Asked,
+    /// **做成了**：存好了、删掉了、套上了、标定图出完了。
+    Done,
+}
+
+impl Notice {
+    /// 一句话加一种。
+    fn new(said: String, kind: NoticeKind) -> Self {
+        Self { said, kind }
+    }
+
+    /// [没做成](NoticeKind::Refused)那一种。
+    fn refused(said: String) -> Self {
+        Self::new(said, NoticeKind::Refused)
+    }
+
+    /// [先问一句](NoticeKind::Asked)那一种。
+    fn asked(said: String) -> Self {
+        Self::new(said, NoticeKind::Asked)
+    }
+
+    /// [做成了](NoticeKind::Done)那一种。
+    fn done(said: String) -> Self {
+        Self::new(said, NoticeKind::Done)
+    }
+
+    /// 这一句怎么说。
+    pub fn said(&self) -> &str {
+        &self.said
+    }
+
+    /// 这一句是[哪一种](NoticeKind)。
+    pub fn kind(&self) -> NoticeKind {
+        self.kind
+    }
 }
 
 impl Default for Session {
@@ -1421,14 +1493,22 @@ impl Session {
             .unwrap_or_else(|| panic!("{field:?} 不在左栏上"));
     }
 
-    /// 上一个动作要说的那句话。
-    pub fn notice(&self) -> Option<&str> {
-        self.notice.as_deref()
+    /// 上一个动作要说的[那句话](Notice)，**连同它有多重**。
+    ///
+    /// **读出去的那一头就是这里**：屏底那一格照它挑语义色
+    /// （`crate::session::draw::footer`，收停车场 Q157）。
+    pub fn notice(&self) -> Option<&Notice> {
+        self.notice.as_ref()
     }
 
-    /// 说一句。跑不起来的那几种（型号没挑、输出根没填）就是靠它说出口的。
+    /// **说一句没做成的**（[`NoticeKind::Refused`]）：跑不起来的那几种（型号没挑、
+    /// 输出根没填）、这一步此刻按不动的那几种，就是靠它说出口的。
+    ///
+    /// 名字照旧叫 `complain`：它说的本来就只有这一种，而**做成了的那几句各有各的出口**
+    /// （[`saved`](Self::saved)、[`erased`](Self::erased)、[`took`](Self::took)、
+    /// [`charted`](Self::charted)）——那几处自己知道该挂哪一种。
     pub fn complain(&mut self, said: String) {
-        self.says(Some(said));
+        self.says(Some(Notice::refused(said)));
     }
 
     /// 屏底那一句换成 `said`（`None` 是把上一句抹掉）。**本模块每一句话都从这里出去。**
@@ -1439,7 +1519,10 @@ impl Session {
     /// 一处出口而不是各处各清一次：漏掉一处，那一下按 `d` 就成了不问自删。
     /// [`ask_before_erasing`](Self::ask_before_erasing) 自己那一句也走这里——
     /// 它是先说、后闩。
-    fn says(&mut self, said: Option<String>) {
+    ///
+    /// **说进来的那一头就是这里**：收下的是[一句话连同它有多重](Notice)，
+    /// 而不是一个裸串——屏底那一格因此分得出轻重（收停车场 Q157）。
+    fn says(&mut self, said: Option<Notice>) {
         self.notice = said;
         if let Focus::Picking(picker) = &mut self.focus {
             picker.asked = None;
@@ -1816,7 +1899,7 @@ impl Session {
     /// **怎么数不在这里重抄**：图内中英两份都印着，`calibrate --help` 里也写着。
     /// 屏上只说在别处来不及的那一条——图一旦被缩着显示过，它答的两件事一件都不作数了。
     pub(super) fn charted(&mut self, out: &Path) {
-        self.says(Some(crate::render::calibration_notice(out)));
+        self.says(Some(Notice::done(crate::render::calibration_notice(out))));
     }
 
     /// 这个键在当前状态下做什么。**「哪些键在哪个状态下有效」这张表就是它。**
@@ -2259,9 +2342,9 @@ impl Session {
         self.device = preset.device;
         self.taste = preset.taste;
         self.focus = Focus::Config;
-        self.says(Some(format!(
+        self.says(Some(Notice::done(format!(
             "套上了「{name}」：设备层与口味层换成了它，范围层一格没动"
-        )));
+        ))));
     }
 
     /// 存好了：那个名字进这一栏的列表，光标停到它上面。
@@ -2275,9 +2358,9 @@ impl Session {
         if let Focus::Picking(picker) = &mut self.focus {
             picker.stored(name);
         }
-        self.says(Some(format!(
+        self.says(Some(Notice::done(format!(
             "存好了：「{name}」——命令行上 --preset {name} 就是它"
-        )));
+        ))));
     }
 
     /// 那个名字已经有人占着：**说一句，闩上「再按一次就覆盖」**。
@@ -2299,10 +2382,10 @@ impl Session {
         {
             naming.asked = true;
         }
-        self.says(Some(format!(
+        self.says(Some(Notice::asked(format!(
             "已经有一份「{name}」了：再按一次 ⏎ 覆盖它。\
              它原来的内容换成眼下这两层，撤不回来；那份文件里其余几份预设照旧留着"
-        )));
+        ))));
     }
 
     /// 要删的是这一份：**说一句，闩上「再按一次就删」**。
@@ -2314,10 +2397,10 @@ impl Session {
     /// **先说、后闩**：那一问与说出它的那句话同生共死（见 [`says`](Self::says)），
     /// 而 `says` 恰恰要把上一问清掉——顺序反过来，刚闩上的这一个就被自己清掉了。
     pub(super) fn ask_before_erasing(&mut self, name: &str) {
-        self.says(Some(format!(
+        self.says(Some(Notice::asked(format!(
             "真要删掉「{name}」吗：再按一次 d 删掉它。\
              那一份从预设文件里没了，撤不回来；文件里其余几份预设照旧留着"
-        )));
+        ))));
         if let Focus::Picking(picker) = &mut self.focus {
             picker.asked = Some(name.to_owned());
         }
@@ -2331,9 +2414,9 @@ impl Session {
         if let Focus::Picking(picker) = &mut self.focus {
             picker.gone(name);
         }
-        self.says(Some(format!(
+        self.says(Some(Notice::done(format!(
             "删掉了：「{name}」——那份文件里其余几份原样留着"
-        )));
+        ))));
     }
 
     /// **换一副列法**：只列要紧的页 ⇄ 列全部页（票面第二条）。
@@ -2522,7 +2605,9 @@ impl Session {
         let nothing_there = listed.is_empty();
         edit.candidates = listed;
         if nothing_there {
-            self.says(Some("这一层下面没有对得上的东西".to_owned()));
+            self.says(Some(Notice::refused(
+                "这一层下面没有对得上的东西".to_owned(),
+            )));
         }
     }
 }
@@ -3587,7 +3672,7 @@ impl Session {
         let (field, typed) = (edit.field, edit.buffer.trim().to_owned());
         match self.take(field, &typed) {
             Ok(()) => self.focus = Focus::Config,
-            Err(error) => self.says(Some(format!("{error}"))),
+            Err(error) => self.says(Some(Notice::refused(format!("{error}")))),
         }
     }
 
@@ -4984,7 +5069,7 @@ mod tests {
         let mut session = Session::new();
         session.charted(Path::new("图/标定.png"));
 
-        let said = session.notice().expect("出完图要说一句");
+        let said = session.notice().expect("出完图要说一句").said();
         assert!(said.contains("标定.png"), "{said}");
         assert!(said.contains("原尺寸"), "{said}");
         for switch in ["缩放", "适配屏幕", "白边裁切"] {
@@ -5102,7 +5187,9 @@ mod tests {
         // 光标停在原来那一格上：接着往下看的是清单上它下面那一份。
         assert_eq!(picker.picked(), Some("画集"));
         assert!(
-            session.notice().is_some_and(|said| said.contains("漫画")),
+            session
+                .notice()
+                .is_some_and(|said| said.said().contains("漫画")),
             "{:?}",
             session.notice()
         );
@@ -6338,7 +6425,13 @@ mod tests {
 
         // 没挑型号：留在编辑态，话说得出来。
         assert!(matches!(session.focus(), Focus::Editing(_)));
-        assert!(session.notice().expect("要说一句").contains("先挑型号"));
+        assert!(
+            session
+                .notice()
+                .expect("要说一句")
+                .said()
+                .contains("先挑型号")
+        );
         assert_eq!(session.device.gray_levels, None);
 
         // 挑了型号之后同一个数收得下，越界的数仍被库那一侧的界挡下。

@@ -876,7 +876,7 @@ mod tests {
         live.page_failed(Path::new("库/卷三/004.jpg"), BROKEN);
 
         let now = trouble_row(&live).expect("这一趟出了事");
-        let tail = crate::render::tail(live.report());
+        let tail = crate::render::plain::tail(live.report());
         assert!(
             now.text.contains("失败 2 页"),
             "此刻坏的没数上：{}",
@@ -890,7 +890,7 @@ mod tests {
         // 那一卷收摊之后两个数又相等，措辞也逐字相同。
         live.volume_finished(&fixture::processed_volume("卷三", Some(BROKEN)));
         let settled = trouble_row(&live).expect("这一趟出了事");
-        let tail = crate::render::tail(live.report());
+        let tail = crate::render::plain::tail(live.report());
         for said in ["隔离 2 卷", "失败 2 页", "卷级失败 1 卷"] {
             assert!(
                 settled.text.contains(said),

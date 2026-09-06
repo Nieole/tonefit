@@ -19,8 +19,12 @@
 //!
 //! # 措辞一处，排版两处（ADR 0016）
 //!
-//! 抬头与末尾那两段**本来就是成句的**，出的仍是文字。卷级与逐页那两段出的是一组
+//! 抬头那一段**本来就是成句的**，出的仍是文字。卷级、逐页与末尾那几小结出的是一组
 //! [行](Row)——每一行带着[它是什么行](RowKind)，以及若干[格](Cell)。
+//!
+//! **末尾那几小结是一小结一行**（`p4-parking-lot/09`，停车场 Q155）：六小结分属三档语义，
+//! 拼成一段交出去，会话那一头就只上得了一种色。整段仍是**一句话**，装在成句那一格里——
+//! 拆的是粒度，不是措辞；**拼回一段文字是排版**，住在 [`plain::tail`]。
 //!
 //! **在这里的是「一件事怎么说」**：一个值怎么写、成句的那几段怎么措辞。
 //! **不在这里的是「摆在哪儿」**：缩进、前缀、分隔与单位跟着排版走，一副一份。
@@ -187,6 +191,25 @@ pub enum RowKind {
     /// 它与[隔离](Self::Isolated)是两件事，`CONTEXT.md` 的《失败》分得很清楚：
     /// 那一种是卷交出来了、带着坏页，这一种是卷根本没交出来。
     FailedVolume,
+    /// **末尾那一小结：非卷文件**（成句，见 [`non_volume_tail`]）。
+    ///
+    /// 它连同下面五种是[末尾那几小结](tail)，一小结一行，次序即 [`tail`] 排的那个次序。
+    /// 它们与上面那些行的分别只有一处：**上面那些数的是一卷一页，这六行数的是整趟**。
+    /// 各自成句，一整段（含逐条那几行）装在[成句那一格](Field::Sentence)里。
+    NonVolumeTail,
+    /// **末尾那一小结：输出宽超过面板**（成句，见 [`overflow_tail`]）。
+    OverflowTail,
+    /// **末尾那一小结：兜底上界退回**（成句，见 [`backstop_tail`]）。
+    BackstopTail,
+    /// **末尾那一小结：部分救回**（成句，见 [`salvage_tail`]）。
+    SalvageTail,
+    /// **末尾那一小结：隔离**（成句，见 [`isolation_tail`]）。
+    IsolationTail,
+    /// **末尾那一小结：卷级失败**（成句，见 [`failed_volume_tail`]）。
+    ///
+    /// 与[没做成那一卷那一行](Self::FailedVolume)不是一种：那一种是**一卷**，
+    /// 这一小结里逐条列的正是它；这一种是**整趟**那一句抬头连同它列出来的那几条。
+    FailedVolumeTail,
 }
 
 /// 一格是**哪一格**。
@@ -722,14 +745,38 @@ fn base_spread(inside: &[Listed<'_>]) -> String {
 /// 也是几十卷跑下来最不该被往回翻的那一条。非卷文件因此打头：它是这一列里唯一
 /// **连失败都不是**的一种（`CONTEXT.md` 的《失败》：非卷文件不是失败），
 /// 退出码一格都不动它。
-pub fn tail(report: &Report) -> String {
-    let mut text = non_volume_tail(report);
-    text.push_str(&overflow_tail(report));
-    text.push_str(&backstop_tail(report));
-    text.push_str(&salvage_tail(report));
-    text.push_str(&isolation_tail(report));
-    text.push_str(&failed_volume_tail(report));
-    text
+///
+/// # 一小结一行，不是拼好的一段（`p4-parking-lot/09`，停车场 Q155）
+///
+/// 六小结**分属三档语义**（`CONTEXT.md` 的《语义色》），而拼成一段交出去，
+/// 会话那一头只上得了一种色——从前给的是「平常」，末尾那几小结因此一个颜色都没有。
+///
+/// **哪一小结挂哪一档不在这一层**：这一层一个颜色概念都没有（spec 的《Out of Scope》：
+/// 命令行那一份不加颜色），那张表只有 `crate::session::draw` 的 `report::tail_row` 一处。
+/// 这里出的只是「它是哪一小结」。
+///
+/// 拆的是**粒度**，不是出处：措辞照旧只在这一层出，六小结各自那一段一个字都没动，
+/// 这里只是把它们各装进一[行](Row)、挂上[它是哪一小结](RowKind)——与[卷那几行](volume)
+/// 走的是同一条路（ADR 0016：措辞一处、排版两副）。
+///
+/// **拼回一段文字的规矩住在纯文本那一副**（[`plain::tail`]）：命令行印出去的那一段
+/// 因此与拆之前逐字节相同，而这一层只有一种输出。
+///
+/// 一小结空着就**不出行**：从前空着是一个空串接上去，此刻是一行都不加——两者摆出来一样，
+/// 而后者让「这一趟有没有这一小结」在会话那一头也是一个行数（画法不必再认空串）。
+pub fn tail(report: &Report) -> Vec<Row> {
+    [
+        (RowKind::NonVolumeTail, non_volume_tail(report)),
+        (RowKind::OverflowTail, overflow_tail(report)),
+        (RowKind::BackstopTail, backstop_tail(report)),
+        (RowKind::SalvageTail, salvage_tail(report)),
+        (RowKind::IsolationTail, isolation_tail(report)),
+        (RowKind::FailedVolumeTail, failed_volume_tail(report)),
+    ]
+    .into_iter()
+    .filter(|(_, said)| !said.is_empty())
+    .map(|(kind, said)| sentence_row(kind, said))
+    .collect()
 }
 
 /// 非卷文件那一小结，打头摆在末尾那几小结的最前面（`volume-discovery/04`）。
@@ -2520,9 +2567,13 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = super::tail(&report);
+        let text = plain::tail(&report);
 
         assert!(text.is_empty(), "什么都没出事的一趟还说了话：{text}");
+        assert!(
+            super::tail(&report).is_empty(),
+            "什么都没出事的一趟还多出一行"
+        );
     }
 
     /// 部分救回页在报告里认得出来，而且**只有报告认得出来**（04 号票）。
@@ -3038,9 +3089,76 @@ mod tests {
             elapsed: Duration::ZERO,
         };
         assert!(
-            tail(&report).contains(&plain::line(&row)),
+            plain::tail(&report).contains(&plain::line(&row)),
             "{}",
-            tail(&report)
+            plain::tail(&report)
+        );
+    }
+
+    /// **末尾那几小结出的是一小结一行，而命令行印出去的那一段逐字节不变**
+    /// （`p4-parking-lot/09`，收停车场 Q155）。
+    ///
+    /// 六小结分属三档语义，拼成一段交出去就只上得了一种色——会话那一头因此从前一个颜色
+    /// 都没有。拆的是**粒度**：措辞照旧只在这一层出，六小结那几段一个字都没动。
+    ///
+    /// 三件事：
+    ///
+    /// - **一小结一行**，次序就是 [`tail`] 排的那个次序（轻的在前、重的压尾），
+    ///   而**空着的小结一行都不出**；
+    /// - **拼回一段的规矩住在纯文本那一副**（[`plain::tail`]）：拼出来的与那几行原样
+    ///   接下去逐字节相同，中间不多一个字符；
+    /// - **报告里印出去的那一段就是它**：整份报告照旧以它收尾，一格没挪。
+    ///
+    /// 头一条与末一条特意各点一小结、中间四小结空着：拆之前空着是接上一个空串，
+    /// 拆之后是一行都不加，两者摆出来必须一样。
+    #[test]
+    fn the_tail_comes_out_one_row_per_subsection_and_prints_the_same_bytes() {
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::PerPage,
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Color,
+                    branch: PageBranch::Color,
+                }),
+            },
+        );
+        report.non_volume_files = vec![NonVolumeFile {
+            path: PathBuf::from("library/答案.txt"),
+            reason: NonVolumeReason::NeitherPageNorArchive,
+        }];
+        report.failed_volumes = vec![VolumeFailure {
+            volume: PathBuf::from("library/volume-b"),
+            reason: "卷根不在了".to_owned(),
+        }];
+
+        let rows = tail(&report);
+
+        assert_eq!(
+            rows.iter().map(|row| row.kind).collect::<Vec<_>>(),
+            vec![RowKind::NonVolumeTail, RowKind::FailedVolumeTail],
+            "末尾那几小结不是一小结一行"
+        );
+        let joined: String = rows
+            .iter()
+            .map(|row| row.cell(Field::Sentence).expect("成句那一格"))
+            .collect();
+        assert_eq!(
+            plain::tail(&report),
+            joined,
+            "拼回一段的规矩不在纯文本那一副了"
+        );
+        assert!(
+            plain::report(&report, Mode::Process).ends_with(&joined),
+            "末尾那几小结不在报告末尾了"
         );
     }
 
@@ -3191,7 +3309,7 @@ mod tests {
                 drawn.push_str(&plain::pages(each));
             }
         }
-        drawn.push_str(&tail(&report));
+        drawn.push_str(&plain::tail(&report));
 
         assert_eq!(drawn, plain::report(&report, Mode::Process));
     }
