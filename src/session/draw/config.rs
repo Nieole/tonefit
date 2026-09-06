@@ -4,11 +4,11 @@
 //! 而那件事要在屏上看得出来，不能是按了没反应（见 [`config`]）。
 //!
 //! 这一栏在这一屏上占多宽、什么时候整个收起，归 [`super::yielding::config_width`]——
-//! 那是布局的事；本模块只画格子里的东西。折行走终端库自己的 [`Wrap`]
-//! （理由见 `crate::wrap` 的模块文档）。
+//! 那是布局的事；本模块只画格子里的东西。**折行走 [`crate::wrap`]**，与屏上其余各格同一套
+//! （见 [`super::folded`]）：折出来有几行当场数得出，而[视口](Viewport)要的正是那个数。
 //!
-//! **卷打得多了这一栏就装不下**（行数是 21 加卷数，再加摊开那一列）：从第几行画起由
-//! [`Viewport`] 算，滚动条与正文一起画（见 [`super::scrolling`]）。
+//! **卷打得多了这一栏就装不下**（行数是 21 加卷数，再加摊开那一列，**再加折出来的那几行**）：
+//! 从第几行画起由 [`Viewport`] 算，滚动条与正文一起画（见 [`super::scrolling`]）。
 //!
 //! **取值栏就地摊在这一栏里**（`CONTEXT.md` 的《会话》：取值栏）——摊在那一行下面，
 //! 左栏其余各行还在场。预设栏占的是主区，那是另一个状态、另一块（[`super::picker`]）。
@@ -16,9 +16,9 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
+use super::Styled;
 use super::paint::Tone;
 use crate::session::state::{Field, Focus, Layer, Session, Stage, Values};
 use crate::session::viewport::Viewport;
@@ -86,22 +86,28 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
     let acting = matches!(session.focus(), Focus::Config | Focus::Editing(_))
         && !session.stage().read_only();
     let focus = session.field();
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    // 一行字加这一行的样式（[`Styled`]）：折行只认字，样式折完由 [`super::folded`] 逐行重挂。
+    let mut rows: Vec<Styled> = Vec::new();
     let mut drawn: Option<Layer> = None;
-    // 光标那一行落在正文的第几行：层与层之间还垫着抬头与空行，行号数不出来
-    // （见 [`Viewport::new`]）。**跑着与预设那一栏开着时它照旧跟着 `focus` 走**：
-    // 那两种只是不反白，光标本身没有挪窝，视口跟丢了才是屏上说不通的事。
+    // 光标落在**折行之前**的第几行：层与层之间还垫着抬头与空行，行号数不出来
+    // （见 [`Viewport::new`]）。折完落在第几行由 [`super::folded`] 换算——
+    // 交给 [`Viewport`] 的那个数说的恒是**屏上的行**。
+    // **跑着与预设那一栏开着时它照旧跟着 `focus` 走**：那两种只是不反白，
+    // 光标本身没有挪窝，视口跟丢了才是屏上说不通的事。
     let mut cursor = 0;
     for field in session.rows() {
         let layer = field.layer();
         if drawn != Some(layer) {
+            // 层与层之间空一行。**摆的是一个空格而不是空串**：空文字折出零行
+            // （[`crate::wrap::fold`]），而这里要的正是一行——屏上早有这个写法
+            // （`super::overlay` 里那几组之间空的那一行）。
             if drawn.is_some() {
-                lines.push(Line::from(""));
+                rows.push(Styled::plain(" ".to_owned()));
             }
-            lines.push(Line::from(Span::styled(
+            rows.push(Styled::new(
                 layer.title().to_owned(),
                 Style::default().add_modifier(Modifier::BOLD),
-            )));
+            ));
             drawn = Some(layer);
         }
         let style = match (running, acting && field == focus) {
@@ -114,9 +120,9 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             (false, false) => Style::default(),
         };
         if field == focus {
-            cursor = lines.len();
+            cursor = rows.len();
         }
-        lines.push(row(session, field, style));
+        rows.push(Styled::new(row(session, field), style));
         // 取值栏就摊在这一行下面。视口要跟的因此是**那一列上的光标**，不是这一行——
         // 摊开之后左栏长出十来行，跟着这一行走的话，摊开那一列的末几格照旧掉在屏外。
         if let Some(values) = session.valuing()
@@ -127,34 +133,29 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             // 屏底那一行也不在场（见 [`super::footer::valuing_prompt`]）。
             // 字面走 `tonefit::Panel` 自己的写法，会话这一侧不另编一份。
             if let Some(panel) = values.panel() {
-                lines.push(Line::from(format!("{UNFOLDED_INDENT}{INSIDE} {panel}")));
+                rows.push(Styled::plain(format!("{UNFOLDED_INDENT}{INSIDE} {panel}")));
             }
             for at in 0..values.cells().len() {
                 if at == values.at() {
-                    cursor = lines.len();
+                    cursor = rows.len();
                 }
-                lines.push(choice(values, at));
+                rows.push(choice(values, at));
             }
         }
     }
+    // **折行而不是切掉**：阈值那一行要把**标定来源**原样带上来（spec 的 Further Notes），
+    // 而那句话比这一栏宽；路径也一样，切掉尾巴的路径看不出是哪一个。
+    // **折到多宽从骨架来**：这一格的宽度由 [`super::yielding::config_width`] 定，
+    // 两条框线各吃一格——这一栏自己不猜第二个数。
+    let (lines, cursor) = super::folded(rows, cursor, area.width.saturating_sub(2));
     let view = Viewport::new(
         lines.len(),
         usize::from(area.height.saturating_sub(2)),
         cursor,
     );
-    let body = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(super::yielding::title(
-                    if running { READ_ONLY_TITLE } else { "配置" },
-                    area.width,
-                )),
-        )
-        // 折行而不是切掉：阈值那一行要把**标定来源**原样带上来（spec 的 Further Notes），
-        // 而那句话比这一栏宽；路径也一样，切掉尾巴的路径看不出是哪一个。
-        // `trim: false` 让折下来的那一截保留缩进，读得出它还是上一行的。
-        .wrap(Wrap { trim: false });
+    let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(
+        super::yielding::title(if running { READ_ONLY_TITLE } else { "配置" }, area.width),
+    ));
     super::scrolling(frame, area, body, &view);
 }
 
@@ -171,7 +172,7 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
 /// **一格都不实心是有的**：型号停在内置表外的一个名字上时那一列里没有一格生效着
 /// （见 `super::super::state::Values::chosen`），这一列因此全是空心的——
 /// 那正是屏上该说的话，随便挑一格点实了就是在指一个用户没挑过的型号。
-fn choice(values: &Values, at: usize) -> Line<'static> {
+fn choice(values: &Values, at: usize) -> Styled {
     let mark = if values.chosen() == Some(at) {
         CHOSEN
     } else {
@@ -187,21 +188,17 @@ fn choice(values: &Values, at: usize) -> Line<'static> {
     } else {
         UNFOLDED_INDENT
     };
-    Line::from(Span::styled(
-        format!("{indent}{mark} {}", values.cells()[at]),
-        style,
-    ))
+    Styled::new(format!("{indent}{mark} {}", values.cells()[at]), style)
 }
 
 /// 左栏上的一行：名字 + 取值。怎么标（反白、压暗、还是原样）由 [`config`] 定。
-fn row(session: &Session, field: Field, style: Style) -> Line<'static> {
-    let text = match field {
+fn row(session: &Session, field: Field) -> String {
+    match field {
         // 卷那一行的取值里已经带着勾与路径，再挂一个「卷」字是废话。
         Field::Volume(_) => format!("  {}", session.shown(field)),
         Field::AddVolume => format!("  {}", field.label()),
         _ => format!("  {:　<8}{}", field.label(), session.shown(field)),
-    };
-    Line::from(Span::styled(text, style))
+    }
 }
 
 #[cfg(test)]
@@ -280,9 +277,10 @@ mod tests {
     /// 而「光标仍在屏上」问的正是它（数反白用 `super::super::probe::reversed_cells`：
     /// 这几条只画左栏一格，`reversed_rows` 那个按列切的办法在这里用不上）。
     ///
-    /// **只问 52 列这一档**（[`super::yielding::CONFIG_WIDTH`]，这一栏装得下的正常宽度）：
-    /// 那里一行都不折，视口数的逻辑行与屏上的行一一对应。窄到左栏让出宽度那一档
-    /// 上行行都折，两个数就对不上了——那一笔账记在停车场 **Q136**，本票没收它。
+    /// **这一条问的是 52 列那一档**（[`super::yielding::CONFIG_WIDTH`]，这一栏装得下的
+    /// 正常宽度）：那里一行都不折。窄档上行行都折，那一档由
+    /// [`the_narrow_config_column_counts_the_rows_it_folds_into`] 问
+    /// （`p4-parking-lot/02` 收的 Q104／Q136）。
     #[test]
     fn a_config_column_taller_than_its_box_scrolls_with_the_cursor() {
         let mut session = with_volumes(3);
@@ -334,7 +332,8 @@ mod tests {
     /// （见 [`super::scrolling`]）。
     ///
     /// **装得下时一条都不画**：那一格因此与没有这一段时逐格相同。
-    /// 「装不装得下」按的也是逻辑行（同上一条：Q136）。
+    /// 「装不装得下」按的是**折出来的行**，与屏上的行一一对应（见
+    /// [`the_narrow_config_column_counts_the_rows_it_folds_into`]）。
     #[test]
     fn the_config_column_that_does_not_fit() {
         same_screen(
@@ -347,6 +346,62 @@ mod tests {
         assert!(
             !fits.contains('▲') && !fits.contains('▼'),
             "装得下还画了滚动条：{fits}"
+        );
+    }
+
+    /// **窄档上视口数的是屏上的行，不是逻辑行**（票面第四条，收的是停车场 Q104／Q136）。
+    ///
+    /// 屏 62–81 列那一段上这一栏 32–51 列（见 [`super::yielding::config_width`]），
+    /// 行行折得起来：**一个卷都没打进来的二十一个逻辑行，34 列上折成三十行**。
+    /// 折行从前走终端库自己的 `Wrap`，折出来几行这一头数不出来，视口因此数的是逻辑行——
+    /// 那一段上于是有两个毛病：**内容已经被折掉、滚动条却不画**，而光标走到格子外面去。
+    /// 折行搬进 [`crate::wrap`] 之后折出来有几行当场数得出，两个数从此是同一个。
+    ///
+    /// **26 行的一格恰好夹在两个数中间**（正文 24 行）：21 装得下、30 装不下，
+    /// 两档因此各答各的——只问一档的话，「滚动条画不画」那一半就没有对照。
+    #[test]
+    fn the_narrow_config_column_counts_the_rows_it_folds_into() {
+        let mut session = Session::new();
+
+        // 52 列：一行不折，二十一行摆得进正文那 24 行——没有可滚的东西，一条都不画。
+        let wide = config_pane(&session, 52, 26);
+        assert!(
+            !wide.contains('▲') && !wide.contains('▼'),
+            "装得下还画了滚动条：{wide}"
+        );
+
+        // 34 列：同一份内容折成三十行，摆不进去——**滚动条画得出来**。
+        let narrow = config_pane(&session, 34, 26);
+        for edge in ['▲', '▼'] {
+            assert!(
+                narrow.contains(edge),
+                "内容已经被折掉，滚动条却不画：{narrow}"
+            );
+        }
+
+        // **光标不掉出格子**：走到末尾那一行上，那一行连同它的反白都还在屏上。
+        // 反白那一格非验不可——逐格拼回来的文字看不出光标停在哪一行。
+        session.go_to(Field::AddVolume);
+        let bottom = tight(&config_pane(&session, 34, 26));
+        assert!(
+            bottom.contains(&tight(Field::AddVolume.label())),
+            "光标那一行掉出格子了：{bottom}"
+        );
+        assert!(
+            reversed_cells(|frame| config(frame, frame.area(), &session), 34, 26) > 0,
+            "光标那一行不在屏上：{bottom}"
+        );
+
+        // **折下来的那一截跟着上同一份样式**（票面第二条）：把光标停在一行真折得起来的行上
+        // （型号那一行 40 格，这一格只有 32 格），再与**同一行不折时**比反白的格数。
+        // 折下来那一截要是没跟着反白，这个数只会更小；它反而多两格——多的正是
+        // `crate::wrap` 给折下来的那一行补上的行首缩进。
+        session.go_to(Field::Profile);
+        let folded = reversed_cells(|frame| config(frame, frame.area(), &session), 34, 26);
+        let unfolded = reversed_cells(|frame| config(frame, frame.area(), &session), 52, 26);
+        assert!(
+            folded > unfolded,
+            "光标那一行折成了两行，反白只有 {folded} 格（不折时 {unfolded} 格）——没跟下来"
         );
     }
 
@@ -618,7 +673,7 @@ mod tests {
 "│      ○ kindle-paperwhite-12                      │"
 "│  感知可分辨级数　默认（跟随面板）                │"
 "│  阈值　　　　　　阈值 5.500（盲测标定于          │"
-"│boox-poke6，其余面板未复核）                      │"
+"│  boox-poke6，其余面板未复核）                    │"
 "│                                                  │"
 "│口味层 · 这一趟的立场                             │"
 "│  适配方式　　　　默认（height）                  │"

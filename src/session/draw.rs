@@ -55,10 +55,12 @@
 //!
 //! # 折行不在这里
 //!
-//! 报告区与屏底那一格的折行走 [`crate::wrap`]——`--help` 与命令行印出来的报告折的是
+//! **屏上每一格的折行都走 [`crate::wrap`]**——`--help` 与命令行印出来的报告折的是
 //! 同一套，而那两处根本没有终端库。这一层只交代**折到多宽**：那一格当场量得到自己有多宽。
-//! 左栏与预设那一栏例外，仍走终端库自己的 [`Wrap`](ratatui::widgets::Wrap)
-//! （理由见 `crate::wrap` 的模块文档）。
+//! 一格里那几行各带一份样式时（左栏与预设那一栏）走 [`folded`]：折完逐行把样式重挂一遍。
+//!
+//! **终端库自己的 `Wrap` 一处都不用了**（`p4-parking-lot/02` 推翻 `p2-loose-ends/07`
+//! 那条「左栏那两栏原样留着」）：它折出来的行数这一层数不出来，而[视口](Viewport)要的正是那个数。
 
 mod config;
 mod directories;
@@ -77,6 +79,8 @@ mod probe;
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, ScrollbarOrientation, ScrollbarState};
 
 use super::live::Live;
@@ -138,6 +142,66 @@ pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
 fn scrolling(frame: &mut Frame, area: Rect, body: Paragraph<'static>, view: &Viewport) {
     frame.render_widget(body.scroll((view.from(), 0)), area);
     scrollbar(frame, area, view);
+}
+
+/// 一行字，连同**它挂哪一份样式**。
+///
+/// 打成一个类型而不是一对裸值，理由与 [`Painted`](paint::Painted) 那一条逐字相同
+/// （写在它的文档里）：`(String, Style)` 在调用处看不出哪一半是哪一半。
+///
+/// **与 [`Painted`](paint::Painted) 差的是「一行带的是什么」**：那一份带的是**语义**
+/// （`Tone`——这一行讲的这件事怎么样，上不上色由 `paint` 一处定），这一份带的是终端库的
+/// `Style`——这一行此刻**是什么状态**：光标停在它上面（反白）、整栏只读（压暗）、
+/// 它是一层的抬头（加粗）。**状态不是语义**，两者因此不合成一个。
+struct Styled {
+    /// 这一行的字。**排版已经摆好了**——折行只按显示宽度断，一个空格都不添。
+    text: String,
+    /// 这一行挂哪一份样式。折出来的每一行都挂它。
+    style: Style,
+}
+
+impl Styled {
+    /// 一行字加一份样式。
+    fn new(text: String, style: Style) -> Self {
+        Self { text, style }
+    }
+
+    /// 不挂样式的那一种。层与层之间那个空行、下钻进去那一行都是它。
+    fn plain(text: String) -> Self {
+        Self::new(text, Style::default())
+    }
+}
+
+/// 一格里那几行**折成这一格摆得下的样子**，并算出光标落在折完的第几行。
+///
+/// **折完逐行把样式重挂一遍**——折出来的那几行本来就是同一行，样式一格不差地跟着走
+/// （折行只认字，见 [`crate::wrap`]）。
+///
+/// **光标那个数跟着折出来的行走**：交给 [`Viewport`] 的必须与屏上的行一一对应，
+/// 否则「装得下就不画滚动条」与「光标还在不在格子里」两条都按错的行数判
+/// （停车场 Q136 咬的正是这个）。光标那一行自己折成几行时指的是**头一行**，
+/// 与报告区那一处同一条（`report::folded`）——屏上没有第二种「光标在第几行」。
+/// `cursor` 越界时给的是第一行；两个调用点都保证它在范围内，而 [`Viewport::new`]
+/// 那一头本来也会就近收。
+///
+/// **要一个空行就摆一个空格**，不是空串：[`crate::wrap::fold`] 给空文字**零行**
+/// （屏底那一格靠那一条分得开「没有话要说」与「说了一句空话」），一个空格折出来正是一行。
+/// 那是屏上早有的写法，`overlay` 里那几组之间空的那一行就是这么摆的——本函数因此
+/// 一个特例都不开，与 [`Painted::folded`](paint::Painted::folded) 一个待遇。
+fn folded(rows: Vec<Styled>, cursor: usize, width: u16) -> (Vec<Line<'static>>, usize) {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut at = 0;
+    for (row, Styled { text, style }) in rows.into_iter().enumerate() {
+        if row == cursor {
+            at = lines.len();
+        }
+        lines.extend(
+            crate::wrap::fold(&text, width)
+                .into_iter()
+                .map(|text| Line::styled(text, style)),
+        );
+    }
+    (lines, at)
 }
 
 /// 一格右边那条框线上的**滚动条**。**造那个 widget 的地方只有这一处。**

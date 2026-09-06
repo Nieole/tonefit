@@ -6,14 +6,15 @@
 //! 归 [`super::footer`]。
 //!
 //! 名字多过这一格装得下的行数时视口跟着光标走（[`Viewport`]）——
-//! 这一栏自己没有滚动状态。
+//! 这一栏自己没有滚动状态。**折行走 [`crate::wrap`]**，与屏上其余各格同一套
+//! （见 [`super::folded`]）。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
+use super::Styled;
 use crate::session::state::Picker;
 use crate::session::viewport::Viewport;
 
@@ -39,49 +40,54 @@ const ADD_PRESET: &str = "＋ 把当前的设备层与口味层存成一份预�
 /// 末尾那一行是唯一存得出去的入口，它掉出屏外就等于这一栏没有出路了。
 /// 滚动条与正文一起画（[`super::scrolling`]），一份都不多时不画。
 pub(super) fn presets(frame: &mut Frame, area: Rect, picker: &Picker) {
-    let mut lines: Vec<Line<'static>> = vec![
-        Line::from(Span::styled(
+    // 一行字加这一行的样式（[`Styled`]）：折行只认字，样式折完由 [`super::folded`] 逐行重挂。
+    // **空行摆的是一个空格而不是空串**：空文字折出零行（[`crate::wrap::fold`]），
+    // 而这里要的正是一行——屏上早有这个写法（`super::overlay` 里那几组之间空的那一行）。
+    let mut rows: Vec<Styled> = vec![
+        Styled::new(
             format!(" {}", picker.file().display()),
             Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(""),
+        ),
+        Styled::plain(" ".to_owned()),
     ];
     if picker.names().is_empty() {
-        lines.push(Line::from(" 这份文件里还没有预设——末尾那一行存下第一份。"));
-        lines.push(Line::from(""));
+        rows.push(Styled::plain(
+            " 这份文件里还没有预设——末尾那一行存下第一份。".to_owned(),
+        ));
+        rows.push(Styled::plain(" ".to_owned()));
     }
-    let rows = picker
+    let listed = picker
         .names()
         .iter()
         .map(|name| format!("  {name}"))
         .chain([format!("  {ADD_PRESET}")]);
-    // 清单在正文里从第几行开始：前面那几行是文件位置与空行。
-    // 一行一行地数够用：这一栏每一行都是一个名字，不像报告那样会折行
-    // （名字长过这一格的话折下来的那一截会挤掉一行，代价是滚少了一行，不是滚丢了光标）。
-    let listed_from = lines.len();
-    for (at, text) in rows.enumerate() {
+    // 清单在**折行之前**的正文里从第几行开始：前面那几行是文件位置与空行。
+    // 折完落在第几行由 [`super::folded`] 换算——头一行那条路径与末尾那一行都折得起来，
+    // 一行一行地数会把视口数少（内容已截、滚动条却不画），停车场 Q136 咬的正是这个。
+    let listed_from = rows.len();
+    for (at, text) in listed.enumerate() {
         let style = if at == picker.at() {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
             Style::default()
         };
-        lines.push(Line::from(Span::styled(text, style)));
+        rows.push(Styled::new(text, style));
     }
+    // **折到多宽从骨架来**：这一格是主区那一格（[`super::yielding::panes`]），
+    // 两条框线各吃一格——这一栏自己不猜第二个数。
+    let (lines, cursor) = super::folded(
+        rows,
+        listed_from + picker.at(),
+        area.width.saturating_sub(2),
+    );
     let view = Viewport::new(
         lines.len(),
         usize::from(area.height.saturating_sub(2)),
-        listed_from + picker.at(),
+        cursor,
     );
-    let body = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(super::yielding::title(
-                    "预设 · 装设备层与口味层，范围层不进",
-                    area.width,
-                )),
-        )
-        .wrap(Wrap { trim: false });
+    let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(
+        super::yielding::title("预设 · 装设备层与口味层，范围层不进", area.width),
+    ));
     super::scrolling(frame, area, body, &view);
 }
 
@@ -139,6 +145,17 @@ mod tests {
         for edge in ['▲', '▼'] {
             assert!(top.contains(edge), "上下两头的记号没画出来：{top}");
             assert!(bottom.contains(edge), "上下两头的记号没画出来：{bottom}");
+        }
+
+        // **窄下来时这一栏数的也是折出来的行**（`p4-parking-lot/02` 收的 Q104／Q136）：
+        // 24 列上抬头那条路径与末尾那一行各折成两行，五个逻辑行因此占七行。
+        // 按逻辑行数的话六行的正文「装得下」，滚动条一条都不画——而内容其实已经被折掉。
+        let folding = preset_snapshot(&picking(&["漫画", "画集"]), 24, 8);
+        for edge in ['▲', '▼'] {
+            assert!(
+                folding.contains(edge),
+                "内容已经被折掉，滚动条却不画：{folding}"
+            );
         }
     }
 
