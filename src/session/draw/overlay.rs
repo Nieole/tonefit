@@ -15,8 +15,8 @@
 //! # 键位表从按键表取，不另抄一份
 //!
 //! [`Session::key_table`] 把每一个键交给那一块的按键表问一遍，问出来什么就列什么
-//! ——本模块**一个键都不列**，只把问出来的动作翻成屏上那句话（[`says`]）。
-//! 改一处按键表，这一张当场跟着变。
+//! ——本模块**一个键都不列**，只把问出来的动作翻成屏上那句话
+//! （[`super::keys::says`]，与屏底那一行同一处出处）。改一处按键表，这一张当场跟着变。
 //!
 //! **分组就是按键表自己的头一层分岔**（[`KeyGroup`]，ADR 0017 决定第 2 条）：
 //! 先按焦点分，落到哪一块再按阶段分——票面说的「按焦点分组」正是它。
@@ -34,11 +34,11 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use tonefit::{Instruction, Mode as RunMode};
 
+use super::keys::{Wording, merged};
 use super::paint::Painted;
-use crate::session::live::{Live, Reach};
-use crate::session::state::{Action, Key, KeyGroup, Listing, Overlay, Pane, Session, Step};
+use crate::session::live::Live;
+use crate::session::state::{KeyGroup, Overlay, Session};
 use crate::session::viewport::Viewport;
 
 /// **一张覆盖层**：抬头一行、正文若干行、右边一条滚动条。
@@ -92,9 +92,10 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
 /// 那几行从前摆在卷表**上方、跟着表滚**（`p3-session-legibility/08`）——它们是
 /// 「这一趟的前提」，一趟只说一次，而它们占的正是卷表要的行。
 ///
-/// **一趟都没跑过时到不了这里**：那个键在屏底不摆，按下去也先由
-/// `super::super::press` 挡一道（它说的那句话与展开那一支同一个形状）。
-/// 真到了就说同一句——画不出来的东西不该画成一格空白。
+/// **一趟都没跑过时到不了这里**：那一刻[掀开它那个键根本不派动作](crate::session::state::Overlay::Premises)
+/// （`super::super::state` 的 `revealing` 在 `Stage::Fresh` 上不派它，停车场 Q167），
+/// 屏底那一行因此也不摆它。从前挡它的是 `super::super::press` 里的一道闸，
+/// 那一道连同它那句话一起没了。真到了就说同一句——画不出来的东西不该画成一格空白。
 fn premises(live: Option<&Live>) -> Vec<Painted> {
     let Some(live) = live else {
         return vec![Painted::plain(NOT_RUN_YET.to_owned())];
@@ -111,16 +112,18 @@ const NOT_RUN_YET: &str = "还没跑过：这一趟的前提要等按下 t 试�
 /// **全部键**那一张的正文：一组一段，一行一件事。
 ///
 /// **一个键都不在这里列**：[`Session::key_table`] 问的是按键表自己，本函数只把
-/// 问出来的每一个动作翻成屏上那句话（[`says`]），再把**派得出同一件事的那几个键
-/// 并成一行**（`↑ ↓ j k` 是一件事，不是四件）。
+/// 问出来的每一个动作翻成屏上那句话——**措辞与屏底那一行同一处出处**
+/// （[`super::keys::says`]），这一张取长的那一句。派得出同一件事的那几个键
+/// [并成一行](merged)（`↑ ↓ j k` 是一件事，不是四件）。
 ///
 /// **键那一列对齐**：一列对得齐才扫得动，而这一张就是拿来扫的。
 /// 对齐按**显示宽度**算（[`crate::wrap::width`]）——`⇧⇥` 与 `Ctrl-C` 不一样宽。
 fn keys(session: &Session) -> Vec<Painted> {
+    let stage = session.stage();
     let table: Vec<(KeyGroup, Vec<(String, &'static str)>)> = session
         .key_table()
         .into_iter()
-        .map(|(group, keys)| (group, merged(group, &keys)))
+        .map(|(group, keys)| (group, merged(group, stage, &keys, Wording::Long)))
         .collect();
     let column = table
         .iter()
@@ -147,126 +150,16 @@ fn keys(session: &Session) -> Vec<Painted> {
     rows
 }
 
-/// 一组里**派得出同一件事的那几个键并成一行**，次序照它们在按键表上被问到的次序。
-///
-/// 并的依据是**屏上那句话**，不是动作本身：`↑` 派的是「往上挪一格」、`↓` 派的是
-/// 「往下挪一格」，两个动作，而屏上它们是同一件事（`↑ ↓ 在三层上挪一行`）。
-/// 照动作并的话，这一张上一半的行是同一句话的两半。
-fn merged(group: KeyGroup, keys: &[(Key, Action)]) -> Vec<(String, &'static str)> {
-    let mut rows: Vec<(String, &'static str)> = Vec::new();
-    for (key, action) in keys {
-        let what = says(group, *action);
-        match rows.iter_mut().find(|(_, said)| *said == what) {
-            Some((spelt, _)) => {
-                spelt.push(' ');
-                spelt.push_str(&spelled(*key));
-            }
-            None => rows.push((spelled(*key), what)),
-        }
-    }
-    rows
-}
-
-/// 一个键在屏上怎么写。**与屏底那一行写的是同一批记号**（`⏎`、`⇥`、`⇧⇥`、`Esc`、
-/// `Ctrl-C`）：同一个键在两处长得不一样的话，读的人要先认出它们是一个。
-fn spelled(key: Key) -> String {
-    match key {
-        Key::Up => "↑".to_owned(),
-        Key::Down => "↓".to_owned(),
-        Key::Left => "←".to_owned(),
-        Key::Right => "→".to_owned(),
-        Key::Enter => "⏎".to_owned(),
-        Key::Space => "空格".to_owned(),
-        Key::Tab => "⇥".to_owned(),
-        Key::BackTab => "⇧⇥".to_owned(),
-        Key::Backspace => "⌫".to_owned(),
-        Key::Esc => "Esc".to_owned(),
-        Key::Interrupt => "Ctrl-C".to_owned(),
-        Key::Char(letter) => letter.to_string(),
-    }
-}
-
-/// 一个动作在这一张表上怎么说。**这一层只管措辞**——**哪些键派得出它**由
-/// [`Session::key_table`] 答（那一处问的是按键表自己）。
-///
-/// **几支随[组](KeyGroup)而变**：同一个 [`Action::Move`] 在左栏上挪的是一行配置、
-/// 在取值栏上挪的是一格取值、在逐页表上挪的是一页——动作相同，说的不是同一件事。
-/// 别的几支与组无关，落在同一句话上。
-///
-/// **打字那几支到不了这一张表**（[`Action::Insert`]、[`Action::Backspace`]、
-/// [`Action::Complete`]、[`Action::Commit`]、[`Action::Store`]）：编辑一行与打预设名
-/// 两块不在这张表上（见 [`KeyGroup`]）。这张表照旧列全——少列一支，
-/// 往后添一个新动作时这里不会红。
-fn says(group: KeyGroup, action: Action) -> &'static str {
-    match action {
-        Action::Move(_) => match group {
-            KeyGroup::Valuing => "在这一列取值上挪一格",
-            KeyGroup::Expanded => "在逐页表上挪一页",
-            KeyGroup::Picking => "在这一栏上挪一份",
-            _ => "在三层上挪一行",
-        },
-        Action::Select(_) => match group {
-            KeyGroup::Report => "在目录表上挪一枝",
-            _ => "在卷表上挪一卷",
-        },
-        Action::Cycle(_) => "就地换一个取值（不摊开）",
-        Action::Unfold => "摊开这一行的取值",
-        Action::Drill => "进去看这块面板底下的型号",
-        Action::Choose => "把停着的这一格定下来",
-        Action::Toggle => "把这一卷勾上／勾掉",
-        Action::Edit => match group {
-            KeyGroup::Picking => "打一个名字，存成一份预设",
-            _ => "打字改这一行",
-        },
-        Action::Remove => "把这一条卷删掉",
-        Action::Insert(_) => "把这个字添进缓冲",
-        Action::Backspace => "退掉一个字",
-        Action::Complete => "把这一层补出来",
-        Action::Commit => "收下打的东西",
-        Action::Cancel => match group {
-            KeyGroup::Valuing => "一格不改地回左栏",
-            _ => "退一步，回配置",
-        },
-        Action::Start(RunMode::DryRun) => "试算：只算不写，报告照出",
-        Action::Start(RunMode::Process) => "执行：写到输出根",
-        Action::Stop => "停：按一次收尾，再按一次中止",
-        Action::Answer(Instruction::Continue, Reach::ThisVolume) => "接着做第二遍（第一遍不重算）",
-        Action::Answer(Instruction::Continue, Reach::ForTheRest) => "剩下的卷都这样（往下不再问）",
-        Action::Answer(..) => "收尾（这一卷不写，等价 dry-run）",
-        Action::Focus(Pane::Report) => "把焦点切到报告区",
-        Action::Focus(Pane::Config) => "把焦点切回左栏",
-        Action::Follow => "回到跟随：光标交回给最新那一卷",
-        Action::Open => "展开这一枝：摊出它底下那几卷",
-        Action::Expand => "把这一卷的逐页摊开",
-        Action::Turn(Step::Next) => "换下一卷",
-        Action::Turn(_) => "换上一卷",
-        Action::Collapse => match group {
-            KeyGroup::Expanded => "收起，回这一枝的卷表（左栏回来）",
-            _ => "收起，回目录表",
-        },
-        Action::List(Listing::All) => "列全部页",
-        Action::List(_) => "只列要紧的页",
-        Action::Pick => "开预设那一栏",
-        Action::Take => "套用停着的那一份",
-        Action::Store => "存下来",
-        Action::Erase => "删掉停着的那一份（按两下）",
-        Action::Chart => "按这块面板出一张标定图",
-        Action::Reveal(overlay) => overlay.what(),
-        Action::Quit => "退出会话",
-        // 派不出动作的键根本不进这张表（[`Session::keys_of`] 先滤了一道）。
-        Action::Ignored => "在这里没有意义",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use super::super::keys::{says, spelled};
     use super::super::probe::{a_run_in_flight, same_screen, screen, snapshot, tight};
     use super::super::shell;
     use super::*;
     use crate::session::live::Volume;
-    use crate::session::state::{Expansion, Key, Stage};
+    use crate::session::state::{Action, Expansion, Field, Key, Stage};
 
     /// 覆盖层那一格**框里**的字，屏底那几行不算。
     ///
@@ -305,8 +198,17 @@ mod tests {
     ///   而一张进不去的块的键位表是同一件事；
     /// - **`Esc` 归各块自己列，不进「任何时候」**：它在左栏上是退出会话、在取值栏上是
     ///   一格不改地回去——摆进「任何时候」的话，这张表就在几块上说了假话。
-    ///   屏底那一行此刻摆的是**这一块自己的两个键加 `Ctrl-C`**，末尾不再是 `? 全部键`
-    ///   （掀着的时候那个键是「关掉」），而前提那一张也不摆——这一趟还没跑过。
+    ///   屏底那一行此刻摆的是**这一块自己那几个键加 `Ctrl-C`**，末尾不再是「全部键」
+    ///   （掀着的时候那几个键是「关掉」，`?` 与 `F1` 因此并进了 `Esc` 那一行），
+    ///   而前提那一张也不摆——这一趟还没跑过。
+    ///
+    /// 末了两条是本票收的两笔（`p4-parking-lot/07` 票面第二条）：
+    ///
+    /// - **`q 退出会话` 不在这张表上**（停车场 Q189）：覆盖层掀着时那一下一个动作都不派
+    ///   ——而「任何时候」那一组说的正是「此刻在哪一块上都按得动」；
+    /// - **`i 这一趟的前提` 不在这张表上**（停车场 Q167）：一趟都没跑过时它一个字都
+    ///   印不出来，按键表在那个阶段上根本不派它。
+    ///   `? 全部键` 同理不在——按回去是关掉这一张。
     #[test]
     fn the_key_table_overlay_groups_the_keys_by_focus() {
         let mut session = key_table();
@@ -321,11 +223,15 @@ mod tests {
             session.press(Key::Down);
         }
         let bottom = tight(&screen(&mut session, None, 80, 24));
-        for said in ["预设栏", "任何时候", "退出会话", "全部键", "这一趟的前提"]
-        {
+        for said in ["预设栏", "任何时候", "Ctrl-C 退出会话"] {
             assert!(bottom.contains(&tight(said)), "{said}：{bottom}");
         }
         assert!(!bottom.contains(&tight("按一次收尾")), "{bottom}");
+        // **此刻按下去没有第二步的那几个一个都不在**（票面第二条）：
+        // `q` 交不到底下那一块手上（Q189），`i` 与 `?` 一个印不出、一个是关掉（Q167）。
+        for pressed in ["q 退出会话", "i 这一趟的前提", "? 全部键"] {
+            assert!(!bottom.contains(&tight(pressed)), "{pressed}：{bottom}");
+        }
     }
 
     /// 见 [`the_key_table_overlay_groups_the_keys_by_focus`]。
@@ -337,21 +243,21 @@ mod tests {
 "│   ⏎ 空格     摊开这一行的取值                                                █"
 "│   Esc        退出会话                                                        █"
 "│   c          按这块面板出一张标定图                                          █"
-"│   e          把这一卷的逐页摊开                                              █"
 "│   p          开预设那一栏                                                    █"
-"│   t          试算：只算不写，报告照出                                        ║"
-"│   x          执行：写到输出根                                                ║"
+"│   t          试算：只算不写，报告照出                                        █"
+"│   x          执行：写到输出根                                                █"
 "│                                                                              ║"
 "│ 取值栏 · 摊开的那一列                                                        ║"
 "│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
-"│   ← Esc      一格不改地回左栏                                                ║"
+"│   ← Esc      一格不改地退一步（下钻进去之后回的是面板那一层）                ║"
 "│   → ⏎ 空格   把停着的这一格定下来                                            ║"
 "│                                                                              ║"
 "│ 预设栏                                                                       ║"
 "│   ↑ ↓ j k    在这一栏上挪一份                                                ║"
-"│   ⏎ 空格     套用停着的那一份                                                ▼"
+"│   ⏎ 空格     套用停着的那一份                                                ║"
+"│   Esc p      退一步，回配置                                                  ▼"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-" ↑↓ 读 · Esc 关（回到刚才那一块） · Ctrl-C 退出会话                             "
+" ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · Ctrl-C 退出                       "
 " 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
 " 部                                                                             "
 "#;
@@ -402,7 +308,12 @@ mod tests {
         }
 
         // **等答话那一刻换成答话那三个**：同一条路，另一个阶段——屏底与表两处一起换。
+        // 再滚一次：换了阶段这一张就长了几行（答话那三个），而「从第几行画起」
+        // 是上一副那一张收出来的（[`Session::clamp_overlay`] 每帧只往回收）。
         session.at_the_decision_point(true);
+        for _ in 0..40 {
+            session.press(Key::Down);
+        }
         let deciding = inside_the_box(&mut session, &live);
         for said in ["接着做第二遍", "剩下的卷都这样", "等价 dry-run"] {
             assert!(deciding.contains(&tight(said)), "{said}：{deciding}");
@@ -436,8 +347,8 @@ mod tests {
 "│ 展开一卷 · 逐页表                                                            ║"
 "│   ↑ ↓ j k    在逐页表上挪一页                                                ▼"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-" ↑↓ 读 · Esc 关（回到刚才那一块） · i 这一趟的前提 · 跑着…… · s 停（按一次收尾，"
-" 再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷）                    "
+" ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · i 这一趟的前提 · 跑着…… · s 停（按"
+" 一次收尾，再按一次中止） · Ctrl-C 退出会话（当前卷中止，盘上不留半卷）         "
 "                                                                                "
 "#;
 
@@ -447,10 +358,15 @@ mod tests {
     /// 与上一张差的只有正文那几行是谁出的（[`overlay`] 那一句 `match`）。
     ///
     /// 措辞逐字出自 [`crate::render::header`]：命令行印出来的报告顶上摆的是同一段字。
+    ///
+    /// **会话跟着那一趟一起跑起来**：这一张**一趟都没跑过时根本掀不开**
+    /// （按键表在 `Stage::Fresh` 上不派它，停车场 Q167）——那时它一个字都印不出来，
+    /// 而屏上不摆按不动的键。
     #[test]
     fn the_premises_overlay_carries_the_header_the_volume_table_used_to_wear() {
         let live = a_run_in_flight(true);
         let mut session = Session::new();
+        session.run_started();
         session.press(Key::Char('i'));
         same_screen(
             &snapshot(|frame| shell(frame, &mut session, Some(&live)), 80, 16),
@@ -479,9 +395,118 @@ mod tests {
 "│                                                                              │"
 "│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-" ↑↓ 读 · Esc 关（回到刚才那一块） · ? 全部键 · Ctrl-C 退出会话                  "
-" 这一趟的前提：一趟只说一次，因此不占卷表那几行——它们说的是这一份报告是照哪几条 "
-" 算出来的                                                                       "
+" ↑ ↓ j k 读 · Esc i 关（回到刚才那一块） · 跑着…… · s 停（按一次收尾，再按一次中"
+" 止） · Ctrl-C 退出会话（当前卷中止，盘上不留半卷） · ? F1 全部键               "
+"                                                                                "
+"#;
+
+    /// **快照：打字那两块上掀开的那张表**（`p4-parking-lot/07` 票面第三条）。
+    ///
+    /// 那两块上每一个字符都进缓冲，`?` 与 `i` 也是字——[不进缓冲那个键](Key::F1)
+    /// 因此是它们唯一掀得开的（停车场 Q165）。两块各走一遍同一条路：
+    ///
+    /// - **掀开之前**屏底那一行摆着缓冲，末尾摆着调它的那个键（`F1 全部键`，见
+    ///   `super::footer::Asked::all_keys`）——「看不见的东西等于不存在」
+    ///   在这两块上因此不再成立；
+    /// - **掀开之后**是同一副形状的那一张：同一格边框、同一句 `Esc 关`。
+    ///   缓冲这时不在屏上——覆盖层盖的是屏底之外的全部，而它**原样在底下**
+    ///   （`Esc` 关掉就回来，见 `super::super::state` 的
+    ///   `the_typing_blocks_can_call_up_every_key_too`）。
+    ///
+    /// 表上列的仍是**底下那一块**（[`Session::beneath`] 那一条）：打字那两块自己
+    /// 不进这张表——一张按键表说不出「a 到 z 各进缓冲」。
+    #[test]
+    fn the_typing_blocks_open_the_key_table_with_a_key_of_their_own() {
+        let mut session = Session::new();
+        session.go_to(Field::Out);
+        session.press(Key::Enter);
+        session.press(Key::Char('库'));
+        let editing = tight(&screen(&mut session, None, 80, 24));
+        assert!(editing.contains(&tight("输出根 库")), "{editing}");
+        assert!(editing.contains(&tight("F1 全部键")), "{editing}");
+        // `?` 那个字母不在屏底那一行上：这一块里它是一个字。
+        assert!(!editing.contains(&tight("? F1 全部键")), "{editing}");
+
+        session.press(Key::F1);
+        same_screen(
+            &snapshot(|frame| shell(frame, &mut session, None), 80, 24),
+            THE_KEY_TABLE_WHILE_EDITING,
+        );
+
+        let mut session = Session::new();
+        session.pick(
+            vec!["漫画".to_owned()],
+            PathBuf::from("配置/tonefit/presets.toml"),
+        );
+        session.press(Key::Down);
+        session.press(Key::Enter);
+        session.press(Key::Char('新'));
+        let naming = tight(&screen(&mut session, None, 80, 24));
+        assert!(naming.contains(&tight("预设名 新")), "{naming}");
+        assert!(naming.contains(&tight("F1 全部键")), "{naming}");
+        assert!(!naming.contains(&tight("? F1 全部键")), "{naming}");
+
+        session.press(Key::F1);
+        same_screen(
+            &snapshot(|frame| shell(frame, &mut session, None), 80, 24),
+            THE_KEY_TABLE_WHILE_NAMING,
+        );
+    }
+
+    /// 见 [`the_typing_blocks_open_the_key_table_with_a_key_of_their_own`]。
+    const THE_KEY_TABLE_WHILE_EDITING: &str = r#"
+"┌全部键 · Esc 关───────────────────────────────────────────────────────────────┐"
+"│ 左栏 · 三层配置                                                              ▲"
+"│   ↑ ↓ j k    在三层上挪一行                                                  █"
+"│   ⏎ 空格     打字改这一行                                                    █"
+"│   Esc        退出会话                                                        █"
+"│   p          开预设那一栏                                                    █"
+"│   t          试算：只算不写，报告照出                                        █"
+"│   x          执行：写到输出根                                                █"
+"│                                                                              █"
+"│ 取值栏 · 摊开的那一列                                                        █"
+"│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
+"│   ← Esc      一格不改地退一步（下钻进去之后回的是面板那一层）                ║"
+"│   → ⏎ 空格   把停着的这一格定下来                                            ║"
+"│                                                                              ║"
+"│ 预设栏                                                                       ║"
+"│   ↑ ↓ j k    在这一栏上挪一份                                                ║"
+"│   ⏎ 空格     套用停着的那一份                                                ║"
+"│   Esc p      退一步，回配置                                                  ║"
+"│   d          删掉停着的那一份（按两下）                                      ║"
+"│                                                                              ▼"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+" ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · Ctrl-C 退出                       "
+" 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
+" 部                                                                             "
+"#;
+
+    /// 见 [`the_typing_blocks_open_the_key_table_with_a_key_of_their_own`]。
+    const THE_KEY_TABLE_WHILE_NAMING: &str = r#"
+"┌全部键 · Esc 关───────────────────────────────────────────────────────────────┐"
+"│ 左栏 · 三层配置                                                              ▲"
+"│   ↑ ↓ j k    在三层上挪一行                                                  █"
+"│   ← →        就地换一个取值（不摊开）                                        █"
+"│   ⏎ 空格     摊开这一行的取值                                                █"
+"│   Esc        退出会话                                                        █"
+"│   c          按这块面板出一张标定图                                          █"
+"│   p          开预设那一栏                                                    █"
+"│   t          试算：只算不写，报告照出                                        █"
+"│   x          执行：写到输出根                                                █"
+"│                                                                              ║"
+"│ 取值栏 · 摊开的那一列                                                        ║"
+"│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
+"│   ← Esc      一格不改地退一步（下钻进去之后回的是面板那一层）                ║"
+"│   → ⏎ 空格   把停着的这一格定下来                                            ║"
+"│                                                                              ║"
+"│ 预设栏                                                                       ║"
+"│   ↑ ↓ j k    在这一栏上挪一份                                                ║"
+"│   ⏎ 空格     打一个名字，存成一份预设                                        ║"
+"│   Esc p      退一步，回配置                                                  ▼"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+" ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · Ctrl-C 退出                       "
+" 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
+" 部                                                                             "
 "#;
 
     /// **覆盖层盖住一块，不替掉它**：`Esc` 关掉之后回的是刚才那一块，一格没动。
@@ -565,10 +590,10 @@ mod tests {
             );
             for (key, action) in keys {
                 assert_ne!(action, Action::Ignored);
+                let long = says(group, session.stage(), action).long;
                 assert!(
-                    screen.contains(&tight(says(group, action))),
-                    "{key:?} 派的那件事不在屏上：{}",
-                    says(group, action)
+                    screen.contains(&tight(long)),
+                    "{key:?} 派的那件事不在屏上：{long}"
                 );
                 assert!(screen.contains(&tight(&spelled(key))), "{key:?} 不在屏上");
             }

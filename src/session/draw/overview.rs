@@ -39,7 +39,7 @@ use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use tonefit::{Instruction, Mode as RunMode, Pass, Report, VolumeReport, VolumeVerdict};
 
-use super::footer::{START_KEYS, stopping_name};
+use super::footer::stopping_name;
 use super::paint::{Painted, Tone};
 use crate::session::live::{Live, Walking};
 
@@ -110,6 +110,13 @@ impl Overview {
     }
 }
 
+/// 一趟都还没跑过时这一块里那一句提到的两个键。
+///
+/// **屏底那一行不用它**：那一行的键出自按键表（`Session::keys_here`），措辞出自
+/// [`super::keys::says`]。这一处是「还没跑过」那一句里的一截提示，仍旧手抄——
+/// 这一笔连同报告区那一段同样的一句记在停车场 Q190。
+const START_KEYS: &str = "t 试算 · x 执行";
+
 /// 算出这一块：抬头一行、正文一到四行。
 ///
 /// **按停按到哪一级、以及等答话那一句都挂在抬头上**（停车场 Q71、`p1-session/14`）：
@@ -167,7 +174,8 @@ fn title(live: &Live, pressed: Instruction, deciding: bool) -> Painted {
     ))
 }
 
-/// 这一趟是什么。两个词与屏底那两个键同一批（[`START_KEYS`]，`CONTEXT.md` 的《会话》：试算）。
+/// 这一趟是什么。两个词与「还没跑过」那一句里那两个键同一批（[`START_KEYS`]，
+/// `CONTEXT.md` 的《会话》：试算）。
 ///
 /// **照 [`Live::mode`] 说的走，不另开一个开关**：试算答出第一个继续之后它就是执行了——
 /// 那一卷真写了出去，而结论行与出事行说的正是「写出来的是什么样」。

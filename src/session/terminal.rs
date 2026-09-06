@@ -28,7 +28,7 @@ use tonefit::{Mode as RunMode, Request};
 use super::draw;
 use super::live::{Branch, Resuming, Volume};
 use super::run::Running;
-use super::state::{Action, Exit, Expansion, Key, Overlay, Picker, Session};
+use super::state::{Action, Exit, Expansion, Key, Picker, Session};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -213,18 +213,6 @@ fn press(
         // 与预设那三支同一条分法。
         Action::Chart => {
             write_chart(session, here);
-            Exit::Stay
-        }
-        // **这一趟的前提**那一张覆盖层：它印的是这一趟的报告抬头
-        // （`crate::render::header`），而状态机读不到那一趟攒下来的东西——
-        // 与[展开](Action::Expand)同一条分法。一趟都没跑过时说一句、不掀开：
-        // 掀开一格空白比说清为什么更坏（与 [`expand`] 那一句同一个形状）。
-        // **键位表那一张不走这里**：它要的东西状态机全有（`Session::key_table`
-        // 问的就是那张按键表自己）。
-        Action::Reveal(Overlay::Premises) if running.live().is_none() => {
-            session.complain(
-                "还没跑过：先按 t 试算或 x 执行，这一趟的前提要有一份报告才说得出".to_owned(),
-            );
             Exit::Stay
         }
         other => session.act(other),
@@ -418,6 +406,10 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
 /// 而这一趟还没跑过或者第一卷还没跑完时，那样东西根本不在。
 fn expand(session: &mut Session, running: &Running, action: Action) {
     let Some(live) = running.live() else {
+        // **这一支到不了**：一趟都没跑过时按键表根本不派展开
+        // （`super::state::Session::browsing_action` 那一道，停车场 Q167），
+        // 而攒着的那一份没有恰恰只有那一种情形。留着是因为 `Running::live` 的取值域上
+        // 它在，而悄悄什么都不做比说一句更坏。
         session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
         return;
     };
@@ -475,6 +467,8 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
 /// 光标停着的那一卷在哪一枝上就展哪一枝；它此刻指不着谁时从**头一枝**起。
 fn open(session: &mut Session, running: &Running) {
     let Some(live) = running.live() else {
+        // 与[展开一卷](expand)那一支同一条：一趟都没跑过时这个键不派动作，
+        // 焦点也进不到报告区上去——这一支到不了。
         session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
         return;
     };
@@ -523,6 +517,10 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
         KeyCode::Esc => Key::Esc,
         KeyCode::Char(' ') => Key::Space,
         KeyCode::Char(character) => Key::Char(character),
+        // **不进缓冲的那一个**（[`Key::F1`]）：打字那两块上掀得开全部键那一张的只有它
+        // （`p4-parking-lot/07` 票面第三条）。别的功能键照旧不认——认不出的键由调用方
+        // 原地忽略，状态机不必为它们各留一个「没有意义」的取值。
+        KeyCode::F(1) => Key::F1,
         _ => return None,
     })
 }
@@ -912,9 +910,14 @@ mod tests {
         assert_eq!(live.report().volumes.len(), 2);
     }
 
-    /// **展开那个键找那一趟要报告，而报告不在时它说一句、不进展开态。**
+    /// **一趟都没跑过时展开那个键根本不派动作，跑过之后它找那一趟要报告。**
     ///
-    /// 接头处与按停那一条同一个位置：状态机读不到那一趟攒下来的东西，
+    /// 前一半是停车场 Q167 收的那一笔：从前它派得出动作，而这一层挡在前面说一句
+    /// 「还没跑过」——`?` 那张表因此列着它，按下去只换来一句话，
+    /// 与「按得动」在屏上长得一模一样。眼下按键表在那个阶段上就不派它
+    /// （`super::state::Session::browsing_action`），屏上因此一处都不摆。
+    ///
+    /// 后一半的接头处与按停那一条同一个位置：状态机读不到那一趟攒下来的东西，
     /// 「有几卷」「那一卷落在第几行」两个数都由本层从 [`Running::live`] 上数出来。
     /// 不开终端——[`press`] 收的是 `&mut Session` 与 `&mut Running`。
     #[test]
@@ -925,14 +928,15 @@ mod tests {
         // 这一条一个预设键都不按（见 [`presets`]）。
         let nowhere = presets(&workspace);
 
-        // 一趟都没跑过：说一句，会话原地不动。
+        // 一趟都没跑过：那个键一个动作都不派，会话原地不动、一句话都不说
+        //（停车场 Q167：屏上不摆按不动的键，而「按了有话说」与「按得动」长得一样）。
+        assert_eq!(session.action(Key::Char('e')), Action::Ignored);
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('e')),
             Exit::Stay
         );
         assert!(session.expansion().is_none(), "没有报告却展开了");
-        let said = session.notice().expect("该说一句").to_owned();
-        assert!(said.contains("还没跑过"), "{said}");
+        assert_eq!(session.notice(), None, "按不动的键还说了一句");
 
         // 跑过一趟、报告里有两卷：展开落在**光标停着的那一卷**上，光标停在它的头一页。
         // 两个真跑得动的卷（见 [`live::fixture::a_real_volume`]）：这一条要问的
@@ -950,6 +954,10 @@ mod tests {
             // 两卷，因此不续做：这一条问的是展开，与决策点无关（见 [`resuming`]）。
             Resuming::GoesOn,
         );
+        // 状态机那一头也跟着走一步——真会话里 [`press`] 起完线程就调它
+        // （两处记的是同一趟）。展开那个键**要等这一趟收场**才派得出动作，
+        // 而「收场了」是从「跑着」回来的（见 [`Session::run_finished`]）。
+        session.run_started();
         while !running.reap() {
             std::thread::yield_now();
         }

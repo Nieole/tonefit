@@ -255,7 +255,7 @@ mod tests {
     fn a_run_in_progress_says_on_screen_that_the_three_layers_are_read_only() {
         let mut session = Session::new();
         let before = tight(&screen(&mut session, None, 120, 40));
-        assert!(before.contains(&tight("⏎ 摊开取值")), "{before}");
+        assert!(before.contains(&tight("⏎ 空格 摊开取值")), "{before}");
         assert!(reversed_rows(&mut session) > 0, "浏览时光标那一行该反白");
 
         session.run_started();
@@ -278,7 +278,10 @@ mod tests {
         // **取值栏那个键也不提**：跑起来之后摊不开，而三层只读那一条不因它松动
         // （`CONTEXT.md` 的《会话》；按键表那一头见 `super::super::state` 的
         // `which_keys_do_what_in_which_state` 第六段）。
-        for keys in ["⏎ 摊开取值", "⏎ 改", "空格 勾上"] {
+        // 问的是**那几句措辞**、不是键：屏底那一行的键此刻出自按键表
+        // （`p4-parking-lot/07`），而同一个 `⏎` 在别的块上照旧摆得出来——
+        // 「改不动了」在屏上的说法是那几句话一句都不在。
+        for keys in ["摊开取值", "打字改这一行", "勾上／勾掉"] {
             assert!(
                 !running.contains(&tight(keys)),
                 "{keys} 还在屏上：{running}"

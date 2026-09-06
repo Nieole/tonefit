@@ -187,9 +187,12 @@ mod tests {
             listing.contains("漫画") && listing.contains("画集"),
             "{listing}"
         );
-        assert!(listing.contains(&tight("⏎ 套用「漫画」")), "{listing}");
+        assert!(listing.contains(&tight("⏎ 空格 套用这一份")), "{listing}");
         assert!(listing.contains(&tight("d 删掉")), "{listing}");
-        // 套用把两层整个换掉，而那一下不可撤销——按下去之前就说在屏上。
+        // 套用把两层整个换掉，而那一下不可撤销——**套的是哪一份连同这一下的后果
+        // 一起写在下一行上**：按键那一行的措辞出自按键表那一处
+        // （`p4-parking-lot/07`），一个名字塞不进去，而名字正是这一句要说的头一样。
+        assert!(listing.contains(&tight("套用「漫画」")), "{listing}");
         assert!(
             listing.contains(&tight("眼下配好的两层随之丢掉")),
             "{listing}"
@@ -211,7 +214,7 @@ mod tests {
         // 那一行不是一份预设，它在那儿按不动（屏上不摆按不动的键）。
         session.press(Key::Up);
         let last = tight(&screen(&mut session, None, 120, 40));
-        assert!(last.contains(&tight("⏎ 打个名字存下来")), "{last}");
+        assert!(last.contains(&tight("⏎ 空格 打个名字存下来")), "{last}");
         assert!(!last.contains(&tight("d 删掉")), "{last}");
 
         // 打起字来：缓冲在屏底，而**范围层不进预设**这句话就摆在它下面一行。
