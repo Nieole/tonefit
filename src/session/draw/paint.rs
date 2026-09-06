@@ -439,8 +439,12 @@ mod tests {
     /// **只读时的左栏压暗，而那件事另有一句话说得出来**（票面第二条的另一半）。
     ///
     /// 左栏那几行本身没有一个字说得出「只读」——接住颜色的是**那一格的抬头**
-    /// （`配置 · 跑着，三层都只读`，见 [`super::super::config`]）。
-    /// `NO_COLOR` 那一趟因此照样说得清楚。
+    /// （见 `super::super::config` 的 `heading`）。`NO_COLOR` 那一趟因此照样说得清楚。
+    ///
+    /// **只读是两个阶段，两个都问**（`Stage::read_only`，ADR 0017 决定第 3 条）：
+    /// 跑着与**等答话**——后者从前不压暗、抬头还写着「跑着」，而那一刻三层同样改不动
+    /// （`p4-parking-lot/06` 收的停车场 Q160）。两副各自的抬头逐字不同：
+    /// 压暗说的是「按不动」，抬头说的是「哪一刻按不动」。
     #[test]
     fn the_read_only_left_column_is_muted_and_the_title_says_why() {
         let mut session = Session::new();
@@ -450,31 +454,35 @@ mod tests {
             Resuming::GoesOn,
         );
 
-        let running = forcing(true, || {
-            painted(|frame| shell(frame, &mut session, Some(&live)), WIDE, TALL)
-        });
-
-        // 左栏那几行压暗了：只数左栏那几列，主区自己也有上了色的行。
-        let muted = running
-            .iter()
-            .filter(|row| row.dim_before(CONFIG_WIDTH))
-            .count();
-        assert!(muted > 3, "跑起来之后左栏没压暗：{muted} 行");
-        // 而「为什么压暗」写在抬头上，去掉颜色它还在。
-        let colourless = forcing(false, || {
-            painted(|frame| shell(frame, &mut session, Some(&live)), WIDE, TALL)
-        });
-        assert!(
-            colourless
+        // 只读那两个阶段各问一遍：压暗的是同一件事，抬头说的是各自那一刻。
+        for said in ["跑着，三层都只读", "等答话，三层都只读"] {
+            let coloured = forcing(true, || {
+                painted(|frame| shell(frame, &mut session, Some(&live)), WIDE, TALL)
+            });
+            // 左栏那几行压暗了：只数左栏那几列，主区自己也有上了色的行。
+            let muted = coloured
                 .iter()
-                .all(|row| !row.dim_before(CONFIG_WIDTH) && row.colours.is_empty()),
-            "NO_COLOR 那一趟左栏还压着暗"
-        );
-        assert!(
-            colourless
-                .iter()
-                .any(|row| tight(&row.text).contains(&tight("跑着，三层都只读"))),
-            "抬头没说这一栏为什么按不动"
-        );
+                .filter(|row| row.dim_before(CONFIG_WIDTH))
+                .count();
+            assert!(muted > 3, "{said}：左栏没压暗，只有 {muted} 行");
+            // 而「为什么压暗」写在抬头上，去掉颜色它还在。
+            let colourless = forcing(false, || {
+                painted(|frame| shell(frame, &mut session, Some(&live)), WIDE, TALL)
+            });
+            assert!(
+                colourless
+                    .iter()
+                    .all(|row| !row.dim_before(CONFIG_WIDTH) && row.colours.is_empty()),
+                "{said}：NO_COLOR 那一趟左栏还压着暗"
+            );
+            assert!(
+                colourless
+                    .iter()
+                    .any(|row| tight(&row.text).contains(&tight(said))),
+                "抬头没说这一栏为什么按不动：{said}"
+            );
+            // 第二趟问的是等答话：同一趟跑到决策点上，焦点一格没动。
+            session.at_the_decision_point(true);
+        }
     }
 }

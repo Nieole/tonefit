@@ -268,6 +268,20 @@ mod tests {
     use crate::session::live::Volume;
     use crate::session::state::{Expansion, Key, Stage};
 
+    /// 覆盖层那一格**框里**的字，屏底那几行不算。
+    ///
+    /// **非分开不可**：[`screen`] 取的是整屏，而屏底那一行此刻正摆着阶段那几个键
+    /// （措辞与表上那一句只差括号，[`tight`] 一去空白就更像）——拿整屏问
+    /// 「表上有没有按停」，屏底那一行独力就答得出，把那一组整组去掉这条断言照样绿。
+    /// 框里那几行行首恒是 `│`（[`overlay`] 那一格四边都有框线），屏底那几行不是。
+    fn inside_the_box(session: &mut Session, live: &Live) -> String {
+        snapshot(|frame| shell(frame, session, Some(live)), 80, 24)
+            .lines()
+            .filter(|row| row.starts_with("\"│"))
+            .map(tight)
+            .collect()
+    }
+
     /// 掀开一张覆盖层的会话（`?` 那一张）。
     fn key_table() -> Session {
         let mut session = Session::new();
@@ -340,6 +354,91 @@ mod tests {
 " ↑↓ 读 · Esc 关（回到刚才那一块） · Ctrl-C 退出会话                             "
 " 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
 " 部                                                                             "
+"#;
+
+    /// **快照：跑着的时候掀开 `?` 那一张**（`p4-parking-lot/06` 的验收
+    /// 「快照：跑着时掀开 `?`」，收的是停车场 Q164）。
+    ///
+    /// 屏上读得出的两件事：
+    ///
+    /// - **屏底那一行摆着按停**——覆盖层掀着时它照样按得动
+    ///   （`super::super::state::overlay_action` 把不认的键交给 `stage_action`）。
+    ///   **这一半从前不在**：那一行只有这一块自己那几个键，
+    ///   跑着的时候掀开一张表就停不下来。
+    /// - **表上「任何时候」那一组里那句按停从此不是假话**。它**从前就在**——
+    ///   [`KeyGroup`] 上没有覆盖层这一组，那一组照阶段那一维列（跑着时
+    ///   `Action::Stop` 在此刻进得去的每一块上都是同一件事），而按下去没反应。
+    ///   Q164 记的正是这一笔：**本票改的是行为，不是表**。
+    ///
+    /// 取值栏与预设栏两组照旧整组不出（跑起来之后那两块进不去），左栏那一组只剩 `⇥`
+    /// ——三层此刻只读，一个改动键都不派。
+    #[test]
+    fn the_key_table_keeps_the_stop_key_while_a_run_is_on() {
+        let live = a_run_in_flight(false);
+        let mut session = Session::new();
+        session.run_started();
+        session.press(Key::Char('?'));
+        same_screen(
+            &snapshot(|frame| shell(frame, &mut session, Some(&live)), 80, 24),
+            THE_KEY_TABLE_WHILE_RUNNING,
+        );
+
+        // 滚到底：**「任何时候」那一组里摆着按停**，而屏底那一行也摆着它——
+        // 两处说的是同一件事，两处都是从同一张按键表问出来的。
+        // **问的是框里那几行**（见 [`inside_the_box`]）：拿整屏问的话，
+        // 屏底那一行独力就答完了。
+        for _ in 0..40 {
+            session.press(Key::Down);
+        }
+        let table = inside_the_box(&mut session, &live);
+        assert!(table.contains(&tight("任何时候")), "{table}");
+        assert!(
+            table.contains(&tight("按一次收尾")),
+            "表上没有按停：{table}"
+        );
+        // 取值栏与预设栏跑起来之后进不去，两组照旧整组不出。
+        for gone in ["取值栏", "预设栏"] {
+            assert!(!table.contains(&tight(gone)), "{gone} 还在表上：{table}");
+        }
+
+        // **等答话那一刻换成答话那三个**：同一条路，另一个阶段——屏底与表两处一起换。
+        session.at_the_decision_point(true);
+        let deciding = inside_the_box(&mut session, &live);
+        for said in ["接着做第二遍", "剩下的卷都这样", "等价 dry-run"] {
+            assert!(deciding.contains(&tight(said)), "{said}：{deciding}");
+        }
+        assert!(
+            !deciding.contains(&tight("按一次收尾")),
+            "等答话了表上还摆着两级停：{deciding}"
+        );
+    }
+
+    /// 见 [`the_key_table_keeps_the_stop_key_while_a_run_is_on`]。
+    const THE_KEY_TABLE_WHILE_RUNNING: &str = r#"
+"┌全部键 · Esc 关───────────────────────────────────────────────────────────────┐"
+"│ 左栏 · 三层配置                                                              ▲"
+"│   ⇥          把焦点切到报告区                                                █"
+"│                                                                              █"
+"│ 报告区 · 目录表                                                              █"
+"│   ↑ ↓ j k    在目录表上挪一枝                                                █"
+"│   ⏎ 空格     展开这一枝：摊出它底下那几卷                                    █"
+"│   ⇥ ⇧⇥       把焦点切回左栏                                                  █"
+"│   e          把这一卷的逐页摊开                                              █"
+"│   g          回到跟随：光标交回给最新那一卷                                  ║"
+"│                                                                              ║"
+"│ 展开一个目录 · 卷表                                                          ║"
+"│   ↑ ↓ j k    在卷表上挪一卷                                                  ║"
+"│   ⏎ 空格 e   把这一卷的逐页摊开                                              ║"
+"│   ⇥ ⇧⇥       把焦点切回左栏                                                  ║"
+"│   Esc        收起，回目录表                                                  ║"
+"│   g          回到跟随：光标交回给最新那一卷                                  ║"
+"│                                                                              ║"
+"│ 展开一卷 · 逐页表                                                            ║"
+"│   ↑ ↓ j k    在逐页表上挪一页                                                ▼"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+" ↑↓ 读 · Esc 关（回到刚才那一块） · i 这一趟的前提 · 跑着…… · s 停（按一次收尾，"
+" 再按一次中止）· Ctrl-C 退出会话（当前卷中止，盘上不留半卷）                    "
+"                                                                                "
 "#;
 
     /// **快照：这一趟的前提**（票面第三条与「快照各一张」那一条）。

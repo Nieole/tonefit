@@ -106,7 +106,7 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
         Focus::Expanded(_) => expanded_prompt(session, live),
         Focus::Picking(picker) => picking_prompt(picker),
         Focus::Valuing(values) => valuing_prompt(values),
-        Focus::Overlaid(covered) => overlaid_prompt(covered, live),
+        Focus::Overlaid(covered) => overlaid_prompt(session, covered, live),
     };
     let keys = match session.reveals() {
         true => format!("{keys} · {}", Overlay::Keys.prompt()),
@@ -611,9 +611,11 @@ fn browsing_keys(session: &Session) -> String {
 
 /// **一张覆盖层掀着时**屏底那两行（`p3-session-legibility/12`）。
 ///
-/// 上一行是这一块上派得出的**全部**键——这一块只有四个（见
-/// `super::super::state::overlay_action`），因此这一行就是全部，末尾那句
-/// `? 全部键` 也不接（[`footer`] 照 [`Session::reveals`] 分岔）。
+/// 上一行是这一块上派得出的**全部**键：这一块自己那几个（`↑↓` 读、`Esc` 关、
+/// 另一张那个键换过去），加上**阶段那一维那几个**——按停与答话在覆盖层掀着时
+/// 照样按得动（`p4-parking-lot/06`，见 `super::super::state::overlay_action`）。
+/// 末尾那句 `? 全部键` 不接（[`footer`] 照 [`Session::reveals`] 分岔）：
+/// 掀着的时候那个键是「关掉」。
 ///
 /// **`Esc 关` 说清它回哪儿去**：覆盖层**盖住**一块焦点、不替掉它，而「刚才那一块」
 /// 此刻不在屏上——不说一句，屏上没有一处答得出关掉之后会到哪儿。
@@ -629,7 +631,9 @@ fn browsing_keys(session: &Session) -> String {
 ///
 /// 下一行说的是**这一张是什么**：`?` 那一张要说清它只列此刻这个阶段派得出的键
 /// （屏上不摆按不动的键在这一张上也成立），前提那一张要说清它为什么不在卷表上方。
-fn overlaid_prompt(covered: &Covered, live: Option<&Live>) -> Prompt {
+/// **跑着与等答话时让给阶段那一维那一句**：按停买的是什么、答话那三个各答什么，
+/// 是那一刻屏上最要紧的一句——与[展开着那一副](expanded_prompt)同一条让法。
+fn overlaid_prompt(session: &Session, covered: &Covered, live: Option<&Live>) -> Prompt {
     let mut keys = String::from(" ↑↓ 读 · Esc 关（回到刚才那一块）");
     for other in Overlay::ALL {
         if other == covered.overlay || (other == Overlay::Premises && live.is_none()) {
@@ -637,8 +641,18 @@ fn overlaid_prompt(covered: &Covered, live: Option<&Live>) -> Prompt {
         }
         keys.push_str(&format!(" · {}", other.prompt()));
     }
-    keys.push_str(" · Ctrl-C 退出会话");
-    Prompt::new(keys, what_is_on(covered.overlay))
+    match stage_prompt(session, live) {
+        // 阶段那几个跟在这一块自己的键后面，与别的几块那一副同一个形状
+        // （[左栏](config_prompt)、[目录表](report_prompt)、[卷表](opened_prompt)、
+        // [逐页表](expanded_prompt)）。
+        // **`Ctrl-C` 那一句不再自己接**：那一维那一副里就带着它，接两遍是同一个键
+        // 在同一行上说两遍。
+        Some(Prompt { keys: stage, what }) => Prompt::new(format!("{keys} ·{stage}"), what),
+        None => {
+            keys.push_str(" · Ctrl-C 退出会话");
+            Prompt::new(keys, what_is_on(covered.overlay))
+        }
+    }
 }
 
 /// 覆盖层那一格底下说的那件事：**这一张是什么**。

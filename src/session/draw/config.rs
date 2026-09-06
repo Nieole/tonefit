@@ -23,9 +23,23 @@ use super::paint::Tone;
 use crate::session::state::{Field, Focus, Layer, Session, Stage, Values};
 use crate::session::viewport::Viewport;
 
-/// 跑起来之后左栏的抬头。**「只读」要看得出来**，不能是按了没反应
-/// （`CONTEXT.md` 的《会话》：一趟跑起来之后三层都只读）。
-const READ_ONLY_TITLE: &str = "配置 · 跑着，三层都只读";
+/// 左栏那一格的抬头：**三层此刻改不改得动**，改不动的话说清是哪一刻改不动。
+///
+/// **「只读」要看得出来**，不能是按了没反应（`CONTEXT.md` 的《会话》：
+/// 一趟跑起来之后三层都只读）。而**只读是两个阶段**（[`Stage::read_only`]）——
+/// 跑着与等答话；一句写死「跑着」的话，停在决策点上等人拿主意的那一刻屏上说的是假话
+/// （`p4-parking-lot/06` 收的停车场 Q160）。
+///
+/// **措辞只有这一处**：屏上说得出「三层此刻只读」的只有这一格抬头——
+/// 压暗那一半（[`Tone::Muted`]）不上色的终端上一个字都不剩，
+/// 而这一句在那样的终端上照旧在。
+fn heading(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Running(_) => "配置 · 跑着，三层都只读",
+        Stage::Deciding(_) => "配置 · 等答话，三层都只读",
+        Stage::Fresh | Stage::Ended => "配置",
+    }
+}
 
 /// 取值栏上**此刻生效的那一格**行首那个记号，以及别的那几格行首那个。
 ///
@@ -55,7 +69,7 @@ const DRILLED_INDENT: &str = "      ";
 /// 左栏：三层，各占一块，按生命周期从上到下。
 ///
 /// **跑起来之后整栏只读**，而这一条要在屏上**看得出来**，不能是「按了没反应」：
-/// 抬头改口（[`READ_ONLY_TITLE`]），光标不再反白，各行压暗（[`Tone::Muted`]）。
+/// 抬头改口（[`heading`]），光标不再反白，各行压暗（[`Tone::Muted`]）。
 /// 真正拦住按键的不是这里——是状态机在那个阶段一个改动键都不派
 /// （见 `super::super::state::stage_action`）；这里只把那件事说出来。
 ///
@@ -63,8 +77,10 @@ const DRILLED_INDENT: &str = "      ";
 /// 跑着与等答话时按不动（上面那一条），**焦点切到报告区时按键全归那一块**
 /// （`⇥`，ADR 0017），预设那一栏开着时同理——左栏此刻在屏上只为让人对照着看
 /// （见 [`super::shell`]），反白它就是在指一个按不动的地方。
-/// 压暗仍只给跑着那一种：那一种是「这一趟没跑完都改不动」，而焦点与预设那一栏
-/// 都是一个键就回来的事。
+/// 压暗给的是**只读那两个阶段**（跑着与等答话，[`Stage::read_only`]）：那两种是
+/// 「这一趟没跑完都改不动」，而焦点与预设那一栏都是一个键就回来的事。
+/// **两件事一起做**：抬头改口与压暗说的是同一句话，只做一件屏上就自相矛盾
+/// ——一栏压着暗、抬头却写着「配置」。
 ///
 /// **取值栏摊着时那一列摊在那一行下面**（`CONTEXT.md` 的《会话》：取值栏），
 /// 而**反白落在那一列上、不落在那一行上**：屏上只有一处反白，它说的恒是
@@ -76,15 +92,14 @@ const DRILLED_INDENT: &str = "      ";
 /// 光标就走到屏外，而屏上看不出它去哪儿了。滚动量**算出来、不记着**：
 /// 光标在哪一行，这一栏就跟到哪一行。
 pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
-    // **压暗只给「跑着」那一种，而反白按「焦点 + 只读」给**——两个判断，两件事。
-    // 等答话时三层同样只读（`Stage::read_only`），而这一栏此刻不压暗、抬头也不改口：
-    // 那一句写死了「跑着」，改口先要定下等答话时它写什么。停车场 Q160 记着这一笔。
-    let running = matches!(session.stage(), Stage::Running(_));
+    // **压暗按「只读」给，而反白按「焦点 + 只读」给**——两个判断，两件事：
+    // 只读是阶段那一维的事（跑着与等答话两种，ADR 0017 决定第 3 条），
+    // 反白还要问焦点此刻落在不落在这一栏上。
+    let read_only = session.stage().read_only();
     // **反白只在焦点真落在这一栏上、而且三层此刻改得动时才给**：
     // 焦点在报告区（或展开着、预设栏开着）时它归那一块，跑着与等答话时它一个键都不派
     // ——两条各归两维中的一维（ADR 0017），而屏上只有一处反白。
-    let acting = matches!(session.focus(), Focus::Config | Focus::Editing(_))
-        && !session.stage().read_only();
+    let acting = matches!(session.focus(), Focus::Config | Focus::Editing(_)) && !read_only;
     let focus = session.field();
     // 一行字加这一行的样式（[`Styled`]）：折行只认字，样式折完由 [`super::folded`] 逐行重挂。
     let mut rows: Vec<Styled> = Vec::new();
@@ -110,10 +125,10 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             ));
             drawn = Some(layer);
         }
-        let style = match (running, acting && field == focus) {
-            // **跑着时这一栏是「不要紧」那一档**（spec 的《语义色》：只读时的左栏）——
+        let style = match (read_only, acting && field == focus) {
+            // **只读时这一栏是「不要紧」那一档**（spec 的《语义色》：只读时的左栏）——
             // 压暗这件事因此与卷表上跳过的那几行同一个出处（[`Tone`]），
-            // 这一块自己一个颜色都不挑。**接住这个颜色的是抬头**（[`READ_ONLY_TITLE`]）：
+            // 这一块自己一个颜色都不挑。**接住这个颜色的是抬头**（[`heading`]）：
             // 不上色的终端上「按不动」照旧写在那里。
             (true, _) => Tone::Muted.style(),
             (false, true) => Style::default().add_modifier(Modifier::REVERSED),
@@ -153,9 +168,11 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
         usize::from(area.height.saturating_sub(2)),
         cursor,
     );
-    let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(
-        super::yielding::title(if running { READ_ONLY_TITLE } else { "配置" }, area.width),
-    ));
+    let body = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(super::yielding::title(heading(session.stage()), area.width)),
+    );
     super::scrolling(frame, area, body, &view);
 }
 
@@ -245,7 +262,10 @@ mod tests {
         assert_eq!(reversed_rows(&mut session), 0, "跑着时光标还反白着");
         let running = tight(&screen(&mut session, None, 120, 40));
 
-        assert!(running.contains(&tight(READ_ONLY_TITLE)), "{running}");
+        assert!(
+            running.contains(&tight(heading(session.stage()))),
+            "{running}"
+        );
         // 三层还在屏上（看得见配的是什么），只是改不动了。
         for layer in [Layer::Device, Layer::Taste, Layer::Scope] {
             assert!(running.contains(&tight(layer.title())), "{running}");
@@ -323,6 +343,72 @@ mod tests {
             "光标那一行不在屏上：{top}"
         );
     }
+
+    /// **快照：等答话时的左栏**（`p4-parking-lot/06` 的验收「快照：等答话时的左栏」，
+    /// 收的是停车场 Q160）。
+    ///
+    /// 钉的是**抬头那一句**：那一刻三层同样只读（[`Stage::read_only`]），而从前这一格
+    /// 写着「配置」——按不动、却不说，正是 `CONTEXT.md` 的《会话》要防的那件事。
+    /// 压暗那一半屏上是样式，快照看不见它：那一半由
+    /// `super::paint` 的 `the_read_only_left_column_is_muted_and_the_title_says_why`
+    /// 两个阶段各问一遍。
+    ///
+    /// **正文与跑着那一副逐格相同**：只读由阶段那一维说了算，两个阶段上这一栏
+    /// 一个改动键都不派，因此该差的只有抬头那一句。
+    #[test]
+    fn the_left_column_at_the_decision_point_says_which_moment_it_is() {
+        let mut session = Session::new();
+        session.run_started();
+        session.at_the_decision_point(true);
+        same_screen(
+            &config_pane(&session, 52, 24),
+            THE_LEFT_COLUMN_AT_THE_DECISION_POINT,
+        );
+
+        // 与跑着那一副只差抬头那一行：正文一格不动。
+        let mut running = Session::new();
+        running.run_started();
+        let deciding = config_pane(&session, 52, 24);
+        let running = config_pane(&running, 52, 24);
+        assert_eq!(
+            deciding.lines().skip(1).collect::<Vec<_>>(),
+            running.lines().skip(1).collect::<Vec<_>>(),
+            "两副只读的正文不一样"
+        );
+        assert_ne!(
+            deciding.lines().next(),
+            running.lines().next(),
+            "抬头那一句两副一样，等答话时它说的是「跑着」"
+        );
+    }
+
+    /// 见 [`the_left_column_at_the_decision_point_says_which_moment_it_is`]。
+    const THE_LEFT_COLUMN_AT_THE_DECISION_POINT: &str = r#"
+"┌配置 · 等答话，三层都只读─────────────────────────┐"
+"│设备层 · 判定的依据，绑面板，改一次管很久         │"
+"│  型号　　　　　　未挑（跑起来之前必填）          │"
+"│  感知可分辨级数　默认（跟随面板）                │"
+"│  阈值　　　　　　跟着型号走（先挑一个）          │"
+"│                                                  │"
+"│口味层 · 这一趟的立场                             │"
+"│  适配方式　　　　默认（height）                  │"
+"│  裁边　　　　　　默认（裁）                      │"
+"│  跨页拆分　　　　默认（拆）                      │"
+"│  拆分阈值　　　　默认（1.5）                     │"
+"│  阅读方向　　　　默认（rtl）                     │"
+"│  滤波器　　　　　默认（lanczos3）                │"
+"│  位深　　　　　　自动（判据说了算）              │"
+"│  抖动　　　　　　自动（判据说了算）              │"
+"│  逐页　　　　　　默认（关）                      │"
+"│  缓存预算　　　　默认（512.0 MiB）               │"
+"│  读取策略　　　　默认（auto）                    │"
+"│                                                  │"
+"│范围层 · 每趟都不同，不进预设                     │"
+"│  输出根　　　　　未填（跑起来之前必填）          │"
+"│  ＋ 再打一个卷进来                               │"
+"│                                                  │"
+"└──────────────────────────────────────────────────┘"
+"#;
 
     /// **快照：左栏装不下的那一张**（本票的验收「快照：左栏装不下时的一张」）。
     ///
