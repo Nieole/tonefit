@@ -250,6 +250,8 @@ pub enum Reader {
     Archive {
         /// 归档文件的路径。再开一份独立句柄只要它。
         path: PathBuf,
+        /// **开卷那一刻**这个文件的印记。再开一份时拿它核对（见 [`ArchiveStamp`]）。
+        stamp: ArchiveStamp,
         archive: zip::ZipArchive<BufReader<File>>,
     },
     /// **还没摊开的固实归档**：[`enumerate`] 交出来的就是它，一个字节都取不出。
@@ -266,6 +268,65 @@ pub enum Reader {
     },
 }
 
+/// 一个归档卷的**印记**：两个数，用来认「路径上这一份还是开卷那一份吗」。
+///
+/// **它不是 `CONTEXT.md` 那个《指纹》**——那一个是幂等的依据，作用域是一卷的内容，
+/// 而且要把源字节整个读一遍。这一个只认这个**文件**，且一个字节都不读。
+///
+/// # 为什么是这两个数
+///
+/// 两格都是 `zip::ZipArchive::new` 解中央目录时**顺手就在内存里**的东西
+/// （`central_directory_start` 与 `len`）。[`ArchiveStamp::of`] 因此拿的是 `&ZipArchive`——
+/// 取字节要 `&mut`（游标要动），签名自己钉住了「这道核对不碰盘」：
+/// 没有一次 `seek`、没有一次 `read`。
+///
+/// 这一条是硬要求。[`Reader::independent`] 本来就已经是「一次开文件加一次中央目录解析」，
+/// 再把源读一遍核内容，等于把并发省下的当场还回去（12 号票）。
+///
+/// # 它拦得住什么、拦不住什么
+///
+/// **必要条件，不是充分条件**：偏移与条目数都撞上的两份不同归档造得出来，那种换法它认不出。
+/// 它拦的是真实的那一种——下载工具补完、用户手动替换、另一份同名的包盖上来：
+/// 成员多一个少一个，或者随便哪个成员的压缩后大小变一个字节，中央目录的偏移就跟着变。
+/// 真要充分得把整卷读一遍，而那正是上一节说不能做的事（记在停车场 Q220）。
+///
+/// **它盖的是开卷之后**：`open` 与 `enumerate` 是两次独立的开卷，中间没有印记被带过去
+/// （停车场 Q93 那半个窗口，见那一条）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveStamp {
+    /// 中央目录在文件里的偏移。任一成员的压缩后大小变了，它就变。
+    central_directory: u64,
+    /// 中央目录里的条目数。**不是这一卷的成员数**——垃圾成员与目录项这时还没摘
+    /// （见 [`open_archive`]）。它认的是这个文件，不是那张成员表。
+    entries: usize,
+}
+
+impl ArchiveStamp {
+    /// 从一个已经开着的句柄上取印记。**不碰盘**：`&` 而不是 `&mut`，游标动不了。
+    fn of(archive: &zip::ZipArchive<BufReader<File>>) -> Self {
+        Self {
+            central_directory: archive.central_directory_start(),
+            entries: archive.len(),
+        }
+    }
+}
+
+/// 再要一份读取端的**结果**：拿到了，或者核不上。
+///
+/// 分两支而不是都塞进 `Err`，是因为读取层要为这两件事走不同的路（见 `crate::read` 的 `reads`）：
+/// **句柄开不出来**是「少几条读取，接着做」，**核不上**是「这一卷整个退回串行」。
+/// 真正的错——还没摊开就来要读取端——仍走 `Err`，那是库内的一处 bug。
+pub enum Independent {
+    /// 核上了：这一份读的是同一个源。目录卷恒走这一支（它只抄一份卷根，没有可核的东西）。
+    Same(Reader),
+    /// **核不上**：归档在开卷之后被换掉了，这一份不敢用。
+    ///
+    /// 带着那句说得出为什么的话（[`archive_was_replaced`] 拼的）。
+    /// **眼下只有用例读得到它**：报告里没有「退回串行」这一栏——12 号票判的不加，
+    /// 理由与去处记在停车场 Q222。
+    Replaced(String),
+}
+
 impl Reader {
     /// 再要一份读取端：读的是同一个源，与自己**互不影响**。
     ///
@@ -275,13 +336,40 @@ impl Reader {
     /// 归档卷这一份因此**不便宜**：一次开文件加一次中央目录解析。按**读取线程**要一份、
     /// 一道读取要一次，不是按成员要一次。一趟同时因此开着几个，见本类型的
     /// 《一趟同时开着几个句柄》。
-    pub fn independent(&self) -> Result<Reader> {
+    ///
+    /// # 重开的那一份要核一次印记
+    ///
+    /// 成员表出自**开卷那个句柄**（[`Member::entry`] 是那一次解出的中央目录下标），
+    /// 字节出自**重开的这个**。两次之间源被换掉——下载工具补完、用户手动替换——
+    /// 同一个下标就指到另一个成员上：越界那一支报得出错，**不越界那一支静默读到别的字节**，
+    /// 产物里于是混着两个版本（12 号票，从前记在停车场 Q99）。
+    ///
+    /// 因此重开之后先核[印记](ArchiveStamp)，核不上交出 [`Independent::Replaced`]，
+    /// **不是一个错**：其余卷、其余页照常，这一卷退回串行读——串行读的是**开卷那个句柄**，
+    /// 成员表与字节因此出自同一份。换掉的是路径上那个名字，那个句柄攥着的还是原来那些字节，
+    /// 退回串行于是不是将就，是这一趟唯一还说得清的读法。
+    ///
+    /// 核得上时这一份与从前逐字节相同，**并发照走**：核对本身不多花一次系统调用
+    /// （见 [`ArchiveStamp`] 的《为什么是这两个数》）。
+    pub fn independent(&self) -> Result<Independent> {
         match self {
-            Reader::Directory { root } => Ok(Reader::Directory { root: root.clone() }),
-            Reader::Archive { path, .. } => Ok(Reader::Archive {
-                path: path.clone(),
-                archive: open_archive_handle(path)?,
-            }),
+            Reader::Directory { root } => {
+                Ok(Independent::Same(Reader::Directory { root: root.clone() }))
+            }
+            Reader::Archive { path, stamp, .. } => {
+                let archive = open_archive_handle(path)?;
+                let reopened = ArchiveStamp::of(&archive);
+                if reopened != *stamp {
+                    return Ok(Independent::Replaced(archive_was_replaced(
+                        path, *stamp, reopened,
+                    )));
+                }
+                Ok(Independent::Same(Reader::Archive {
+                    path: path.clone(),
+                    stamp: *stamp,
+                    archive,
+                }))
+            }
             Reader::Unextracted { path } => bail!(not_extracted_yet(path)),
         }
     }
@@ -311,6 +399,23 @@ impl Reader {
 /// [摊开](spread_rar)时解不开。同一件事各写一遍，改的那天只会改掉一句。
 fn member_is_unreadable(relative: &Path) -> String {
     format!("解出归档成员 {}", relative.display())
+}
+
+/// 「路径上这一份已经不是开卷那一份了」，那一句话。
+///
+/// 它是 [`Independent::Replaced`] 唯一的出处：两个印记都摆出来（差在哪一格看得见），
+/// 说得出是哪一个卷，也说得出接下来怎么走。
+fn archive_was_replaced(path: &Path, opened: ArchiveStamp, reopened: ArchiveStamp) -> String {
+    format!(
+        "{} 已经不是开卷时那一份了：开卷时中央目录在 {} 处、{} 条，此刻在 {} 处、{} 条。\
+         成员表出自开卷那个句柄，再开一份按同一个下标取，读到的会是别的字节——\
+         这一卷因此退回串行读（读的就是开卷那个句柄），其余卷、其余页照常",
+        path.display(),
+        opened.central_directory,
+        opened.entries,
+        reopened.central_directory,
+        reopened.entries,
+    )
 }
 
 /// [`Reader::Unextracted`] 上取字节时的那句话。
@@ -529,6 +634,8 @@ fn open_archive_handle(path: &Path) -> Result<zip::ZipArchive<BufReader<File>>> 
 /// 它与 [`open_directory`] 的不对称由本模块抬头那一段交代。
 fn open_archive(path: &Path) -> Result<Volume> {
     let mut archive = open_archive_handle(path)?;
+    // 开卷这一刻的印记。重开一份时核的就是它（见 [`Reader::independent`]）。
+    let stamp = ArchiveStamp::of(&archive);
 
     let mut members = Vec::with_capacity(archive.len());
     for entry in 0..archive.len() {
@@ -561,6 +668,7 @@ fn open_archive(path: &Path) -> Result<Volume> {
         extras,
         reader: Reader::Archive {
             path: path.to_path_buf(),
+            stamp,
             archive,
         },
         extraction: None,
@@ -1177,6 +1285,83 @@ mod tests {
             .expect("压进同一个块");
         writer.finish().expect("收尾");
         path.to_path_buf()
+    }
+
+    /// 造一个 `.cbz`：成员**不压缩**（`Stored`），字节一眼认得出是哪一个。
+    fn zip_archive(path: &Path, members: &[(&str, &[u8])]) -> PathBuf {
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(path).expect("建归档"));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in members {
+            writer.start_file(*name, options).expect("起一个成员");
+            std::io::Write::write_all(&mut writer, bytes).expect("写成员");
+        }
+        writer.finish().expect("收尾归档");
+        path.to_path_buf()
+    }
+
+    /// 开卷之后源被换掉，再要一份读取端就**核不上**——而它说得出为什么，不是一个错
+    /// （12 号票，从前记在停车场 Q99）。
+    ///
+    /// 两半在同一条用例里：只有后一半，「核不上」可能是它压根不给；
+    /// 只有前一半，「照给」可能是它压根不核。
+    #[test]
+    fn a_reopened_handle_says_when_the_archive_is_no_longer_the_one_it_opened() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let path = space.path().join("第01话.cbz");
+        zip_archive(&path, &[("001.png", b"first"), ("002.png", b"second")]);
+        let volume = open(&path).expect("点得开");
+
+        assert!(
+            matches!(
+                volume.reader.independent().expect("再开得出一份"),
+                Independent::Same(_)
+            ),
+            "源一个字节没动，再要一份却核不上"
+        );
+
+        // 另写一份、改名盖上去：下载工具补完与用户手动替换都是这么落地的。
+        //
+        // **两步，不是一步。**这个卷的读取端此刻正开着这个文件，而 Windows 上
+        // 一步盖过去（`MoveFileEx` 带 `MOVEFILE_REPLACE_EXISTING`）会回
+        // `ERROR_ACCESS_DENIED`：已有句柄让了 `FILE_SHARE_DELETE`，那个文件因此
+        // 搬得走、删得动，可删只是打上 delete-pending，**目录项要等最后一个句柄关掉
+        // 才消失**，名字没让出来，搬进来的那一份就落不下去。
+        // 先把开着的那一份**挪开**（只要 DELETE 权，两个平台都合法），再把新那一份
+        // 搬到空出来的名字上（目标已经不存在）。Linux 上与一步盖过去逐字节等价。
+        let other = space.path().join("另一份.cbz");
+        zip_archive(&other, &[("001.png", b"a different first")]);
+        let evicted = space.path().join("原来那一份");
+        std::fs::rename(&path, &evicted).expect("把开着的那一份挪开");
+        std::fs::rename(&other, &path).expect("换上另一份");
+
+        let said = match volume.reader.independent().expect("换掉了不是一个错") {
+            Independent::Replaced(said) => said,
+            Independent::Same(_) => panic!("路径上换了一份，它还当成同一份"),
+        };
+        assert!(said.contains("第01话.cbz"), "没说是哪一个卷：{said}");
+        assert!(said.contains("退回串行"), "没说接下来怎么走：{said}");
+    }
+
+    /// 目录卷再要一份读取端时**不核**：那一份只把卷根抄一遍、不碰盘，
+    /// 没有「另解一遍中央目录」那一步，也就没有两份解析可以对不上。
+    #[test]
+    fn a_directory_reader_is_handed_out_without_a_check() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        std::fs::write(space.path().join("001.png"), b"first").expect("写一页");
+        let volume = open(space.path()).expect("点得开");
+
+        // 卷根底下换过了：目录卷照给——它每次读都按名字现取，手上没有开卷那一遍的下标。
+        std::fs::write(space.path().join("001.png"), b"another first").expect("换一页");
+        std::fs::write(space.path().join("002.png"), b"second").expect("再添一页");
+
+        assert!(
+            matches!(
+                volume.reader.independent().expect("再开得出一份"),
+                Independent::Same(_)
+            ),
+            "目录卷也去核了什么"
+        );
     }
 
     /// 四个格式全收下之后，**拒绝那句话自己跟着走**——它由格式集拼出来
