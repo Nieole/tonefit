@@ -6,6 +6,10 @@
 //! **无参数即会话，带参数即直接跑**（`CONTEXT.md` 的《会话》）。分岔在
 //! [`without_arguments`]，排在 clap **之前**：带参数那一路因此一字不变，
 //! 连必填项的判定都没有被松动过。
+//!
+//! **带参数那一路上 `Ctrl-C` 是两级停**：按一次收尾、按两次中止（ADR 0013 决定第 3 条）。
+//! 键装在 [`install_the_stop_key`]，按到的那一级记在[闩](PRESSED)上，
+//! 由 `Bar::observe` 交给库——停在哪一道边界上仍是库那一对检查点的事。
 
 mod preset;
 mod render;
@@ -19,6 +23,7 @@ mod session;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -28,7 +33,8 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
-    Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule, SplitThreshold,
+    Pass, Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule,
+    SplitThreshold,
 };
 
 use preset::Preset;
@@ -656,7 +662,9 @@ fn main() -> ExitCode {
 /// （05 号票的验收）。为什么那两件是两个不同的决定，见 [`FAILED_VOLUME_EXIT`]。
 ///
 /// 按停停下来的那一趟**不在这里露面**：它是用户自己的决定，不是失败，退出码照旧
-/// （`Report::outcome` 说得出它，见 `tonefit::RunOutcome`）。命令行这一路眼下也按不出来。
+/// （`Report::outcome` 说得出它，见 `tonefit::RunOutcome`）。命令行这一路**按得出来**了
+/// （`Ctrl-C` 一次收尾、两次中止，见 [`install_the_stop_key`]），而这个 `match` 一格没变——
+/// 本决定「不新开第五个数」，按停停下来的那一趟交出的仍是它做到的那一步该交的数。
 ///
 /// 出的是 `u8` 而不是 `ExitCode`：后者不可比较，这条规则也就测不了，
 /// 而「退出码分得开这几种」正是本票要钉住的那一条。
@@ -717,6 +725,11 @@ fn execute() -> Result<u8> {
     let bar = Bar::new(cli.inputs.len());
     let mut request = cli.request(&preset)?;
     let mode = request.mode;
+    // **两级停的那个键**（ADR 0013 决定第 3 条）。装在这里，两头各有一条理由：
+    // 会话那一岔早在函数头上就让开了，而**预扫在 `run` 里面**——装晚一步，
+    // 几十个归档卷列归档头那一段就按不动。它拿着进度显示那一头去说话，因此那个把手要在
+    // [`Bar`] 交给 `Request` **之前**取下来。装不上照旧硬杀（见 [`install_the_stop_key`]）。
+    install_the_stop_key(bar.frame.clone());
     request.progress = Some(ProgressSink::new(bar));
     let report = tonefit::run(&request)?;
     // 印出去之前折一遍行。措辞归 [`render`]，**印在多宽的地方上归这里**：
@@ -743,6 +756,200 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
     Ok(SUCCESS_EXIT)
 }
 
+/// 命令行这一趟按停按到过的那一级（ADR 0013）。
+///
+/// 摆成 `static` 而不是挂在 [`Bar`] 上：按下 `Ctrl-C` 的是操作系统，它交货的地方不在任何一个
+/// 函数的栈上（见 [`install_the_stop_key`]）。一个进程只跑一趟，`static` 因此不多记什么——
+/// 会话那一头一个进程里跑得了好几趟，它那一份就得一趟一份（`session::run::Running::latch`）。
+static PRESSED: Latch = Latch::new();
+
+/// 命令行这一侧的**闩**：用户按停按到过的最强那一级（ADR 0013）。
+///
+/// 「闩」这个说法出自 `CONTEXT.md` 的《进度》（「按停是个闩」）。**这是第三份**，
+/// 三份各记各的：库那一侧记「观察者答过什么」（`tonefit` 的 `progress::Standing`，
+/// 它是 `pub(crate)` 的，二进制 crate 够不着），会话那一侧记「用户按过什么」
+/// （`session::run::Latch`，挂在 `tui` 特性后面，这一路够不着），这一份记的是
+/// **命令行这一头用户按过什么**。三份的**序**出自同一处，[`Instruction`] 派生的 `Ord`；
+/// 各自只是把那个序编成一个字节。**收成一处是 `p4-parking-lot/19` 的事**——
+/// 本票只把命令行这一头接上，接上之后它正好是第三份，那正是 19 号票要收的东西
+/// （停车场 Q262）。
+///
+/// 用原子量而不是锁，与另外两份同一条理由：它从**信号那一头**写、从计算线程读，
+/// 而计算线程读它的那一刻正是报到那一刻——拿锁来记，`tonefit` 那条
+/// 「不在持锁处调观察者」的硬规矩当场就多了一处要守。
+#[derive(Debug, Default)]
+struct Latch(AtomicU8);
+
+impl Latch {
+    /// 起手是[继续](Instruction::Continue)：没按过就等于没人拦。
+    const fn new() -> Self {
+        Self(AtomicU8::new(code(Instruction::Continue)))
+    }
+
+    /// **按了一下**：往上升一级（[`next`]），交回**升到的那一级**；
+    /// 已经在中止上就交回 `None`——第三下什么都不改。
+    ///
+    /// 交回那一级是给屏上那一句用的（[`install_the_stop_key`]）：一级只说一次，
+    /// 而「这一下升上去了吗」除了这里没有第二处答得出，这个 `Option` 因此就是那句话的开关，
+    /// 不必另记一格「说过了没有」。**调这个方法的只有一处**，就是
+    /// [`install_the_stop_key`] 装上去的那个回调：`ctrlc` 只起一条线程、在循环里串行调它，
+    /// 而 `set_handler` 一个进程只装得上一次。将来多一处按的地方，这一句要跟着重看。
+    ///
+    /// `fetch_update` 而不是 `fetch_add`：加下去按满 256 下就绕回「继续」，而闩不许退回去。
+    /// 交回的那一级从它给出的**上一格**算，不另读一次闩——另读一次的话，
+    /// 两次读之间闩要是动了，交回去的那一级就在说谎。
+    fn press(&self) -> Option<Instruction> {
+        self.0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |pressed| {
+                let raised = next(from_code(pressed));
+                (code(raised) != pressed).then_some(code(raised))
+            })
+            .ok()
+            .map(|previous| next(from_code(previous)))
+    }
+
+    /// 按到哪一级了。没按过是[继续](Instruction::Continue)。
+    fn pressed(&self) -> Instruction {
+        from_code(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// 按一下之后是哪一级：继续 → 收尾 → 中止 → 中止（ADR 0013）。
+///
+/// **只升不降**是这张表的形状本身：升到中止之后它就是个不动点——第三下与第二下一个待遇，
+/// 两级停就是两级，命令行这一头不新造第三种停法。会话那一侧的
+/// `session::state::Session::raise_stop` 是逐条相同的一张表，库那一侧的 `fetch_max`
+/// 说的是同一件事。
+const fn next(pressed: Instruction) -> Instruction {
+    match pressed {
+        Instruction::Continue => Instruction::Finish,
+        Instruction::Finish | Instruction::Abort => Instruction::Abort,
+    }
+}
+
+/// 记进原子量的那个数。手写而不是 `#[repr(u8)]` 加 `as u8`：那样写，「派生出来的序」与
+/// 「记下去的数」的一致靠的是变体的书写顺序，改一次顺序两者就悄悄分家
+/// （另外两份闩同一条理由）。手写的这一份与派生的 `Ord` 由
+/// [用例](tests::the_latch_only_ever_goes_up)拴在一起。
+const fn code(level: Instruction) -> u8 {
+    match level {
+        Instruction::Continue => 0,
+        Instruction::Finish => 1,
+        Instruction::Abort => 2,
+    }
+}
+
+/// 从原子量里读回来。越界的数按最强的算——那一侧宁可多停一趟，不可漏停一趟。
+const fn from_code(code: u8) -> Instruction {
+    match code {
+        0 => Instruction::Continue,
+        1 => Instruction::Finish,
+        _ => Instruction::Abort,
+    }
+}
+
+/// 装上 `Ctrl-C` 那个键：**按一次收尾、按两次中止**（ADR 0013 决定第 3 条）。
+///
+/// **两级的语义与会话那两级一格不差**：这个函数只把按下的那一下记进[闩](PRESSED)
+/// （[`Latch::press`] 升一级），交给库的那个字随后落进 `run` 自己那条闩里——
+/// 会话按下的字落进的是同一条。停在哪一道边界上因此仍旧由库那**同一对检查点**定——
+/// 卷边界那个管收尾、页边界那个管中止（`tonefit` 的 `progress::Events`，
+/// `CONTEXT.md` 的《进度》：检查点）。命令行这一头因此没有另立一套停法，
+/// 添的只是一个按的地方。
+///
+/// **`Ctrl-C` 在命令行上与在会话里含义不同**，而那不是漏：会话进 raw mode 之后
+/// `Ctrl-C` 是一个按键、意思是**退出会话**（`session::state` 的 `Key::Interrupt`；
+/// 退出走中止，见 `session::run::Running::leave`），而命令行这一路根本没有「退出」这件事
+/// ——按停就是这一头唯一要按的东西。会话那一岔在 [`execute`] 函数头上就让开了，
+/// 这个函数在那之后才被叫到，那一路一个字都动不到。
+///
+/// **按下之后屏上那一句由这里说**（本票的验收第 4 条），不由 [`Bar::observe`] 说：
+/// 那一头要等**下一条事件**才被调到，而预扫那一段一条事件都没有
+/// （见 [`Bar::survey`]：那时进度这一层收不到任何事件，转轮是自己转的）。
+/// 几十个归档卷列归档头正是最长的那一段，在那里按下去而屏上一声不吭，
+/// 用户必然当它没收到、再按一下——而再按一下就是中止。
+/// `ctrlc` 的回调跑在它自己那条**普通线程**上，因此这一句当场就说得出口。
+///
+/// 说话走 `MultiProgress` 而不是 `eprintln!`：横条归它画，绕过它插一行就把光标弄乱了。
+/// 收的是一个克隆——那是个把手，克隆的与 [`Bar`] 手上的是同一份。
+///
+/// **一级只说一次**：[`Latch::press`] 只在真升上去的那一下交回一级，第三下交回 `None`。
+///
+/// **装不上就照旧硬杀**，这一趟不因此拒绝执行：那时的行为与本票落地之前逐字相同，
+/// 而「一个键没装上」不在 `CONTEXT.md` 的《失败》那张单子上——为它新开一种拒绝，
+/// 换来的是一趟本来跑得完的活儿跑不成。那个错误因此就地丢掉，
+/// 不往上交一个没有人读的 `Result`；装没装上，`tests/stop.rs` 在真进程上按一下就知道。
+fn install_the_stop_key(frame: MultiProgress) {
+    let _ = ctrlc::set_handler(move || {
+        if let Some(pressed) = PRESSED.press() {
+            // 印不出去是 indicatif 那一头的事（管道断了之类），而这一趟照跑：
+            // 一句话印不出来不该把正在写盘的那一卷带下水。
+            let _ = frame.println(pressed_note(pressed));
+        }
+    });
+}
+
+/// 命令行在一条事件上回哪个字：**闩记着的那一级，只有决策点上的收尾要让**。
+///
+/// **与会话那一份逐条相同**（`session::run::answer`）：两级的语义不该因为按的地方不同而不同。
+/// 让的理由是两处问的不是同一件事（`CONTEXT.md` 的《会话》：决策点不是第三个检查点）——
+/// 闩答的是「这一趟还走不走」，决策点问的是「**这一卷的第二遍还做不做**」。
+/// 拿闩去答决策点，第一遍里按下的**收尾**会顺手把当前卷的第二遍也吃掉：那一卷等于走了
+/// 一次试算、盘上一个字节都没写，而收尾的定义正是「当前卷跑完才停」（ADR 0013 决定第 1 条）。
+/// 盘上会因此少一整卷——而那正是按下第一级的人要留下的那一卷。
+///
+/// **中止在决策点上不让**：那一级要的就是当前卷等于没做（ADR 0013 决定第 2 条），
+/// 与页边界上按下它一个待遇。
+///
+/// 让掉的那一下**不会丢**：答复照样进库那一侧的闩，而那是个 `fetch_max`——记一个更弱的字
+/// 进去不作数，闩仍是收尾，当前卷跑完之后卷边界那个检查点照样停。
+///
+/// **命令行在这里不等人**：停下来问用户是会话那道闸的事（`session::run::Gate`）。
+/// 等不等人是调用方的策略（ADR 0012 决定第 3 条），而命令行这一路的策略从来是「不等」。
+fn answer(at_the_decision_point: bool, pressed: Instruction) -> Instruction {
+    match pressed {
+        Instruction::Finish if at_the_decision_point => Instruction::Continue,
+        pressed => pressed,
+    }
+}
+
+/// 这一条事件是不是**决策点**——每一卷「汇总之后、第二遍之前」那一次问话
+/// （ADR 0012 决定第 2 条，`CONTEXT.md` 的《会话》：决策点）。
+///
+/// 库那一侧只有这一条事件的答复**当场作数**，其余的都只进闩；[`answer`] 因此只在这一条上
+/// 分岔。判据是事件本身，不是数到第几条——数下去的话，多一条事件就错位。
+/// 与 `session::run::at_the_decision_point` 是同一句话。
+fn at_the_decision_point(event: &Event<'_>) -> bool {
+    matches!(
+        event,
+        Event::PassStarted {
+            pass: Pass::Second,
+            ..
+        }
+    )
+}
+
+/// 按到这一级时**屏上说的那一句**（本票的验收：按下之后屏上说得出按到了哪一级）。
+///
+/// 措辞留在这一层而不是 [`render`]：那一份是**报告**的措辞，而这一句是**进度显示**的，
+/// 与进度条上那几句（「点名 N 个路径……」「整趟 N 卷」）一个待遇——它们也都在这一层。
+///
+/// 收尾那一句把**下一下是什么**也说了：收尾要等当前卷跑完，那可能是几分钟，
+/// 而不说的话用户会当它没收到、再按一下，而再按一下当前卷就丢了。
+fn pressed_note(pressed: Instruction) -> &'static str {
+    match pressed {
+        // 没按过就没有话说。它到不了屏上：唯一的调用处只在闩**真升上去**的那一下说话
+        // （[`Latch::press`] 交回 `Some`），而起手那一级就是它。
+        Instruction::Continue => "",
+        Instruction::Finish => {
+            "按停（收尾）：当前卷跑完就停，剩下的卷不开工。再按一次是中止——当前卷丢掉，立刻停。"
+        }
+        Instruction::Abort => {
+            "按停（中止）：当前卷丢掉，立刻停。那一卷等于没做，最终位置上一个字节都没动过。"
+        }
+    }
+}
+
 /// 进度条：把管线报到的那些步画出来（spec 的 story 30）。
 ///
 /// 画在 **stderr** 上——报告走 stdout，`tonefit … > 报告.txt` 那种用法下进度条不该混进文件里。
@@ -751,8 +958,10 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
 ///
 /// 屏上最多三行，按这一趟走到哪儿依次登场：**预扫**那一条转轮、**整趟**那一条、
 /// **当前卷**那一条。一卷走完抹掉那一卷的，整趟走完全抹掉——几十卷跑下来，
-/// 屏幕上留下的只有报告。留着一排走完的进度条是另一种噪声，
-/// 而「这一趟做了什么」报告说得更清楚。
+/// 屏幕上留下的只有报告，**加上按停按到过的那一两行**（[`install_the_stop_key`] 印的，
+/// 走的是本类型手上这个 [`MultiProgress`]）。留着一排走完的进度条是另一种噪声，
+/// 而「这一趟做了什么」报告说得更清楚；按停那一两行反过来非留不可——
+/// 报告那一份此刻说不出这一趟是被按停的（停车场 Q260）。
 struct Bar {
     /// 几条一起画。两条 `ProgressBar` 各画各的会互相抹掉，`MultiProgress` 是 indicatif
     /// 那一侧把它们排成上下几行的办法。
@@ -906,10 +1115,14 @@ impl Progress for Bar {
     /// 报告里说得更全。`_` 那一支不是遗漏：[`Event`] 非穷尽，多一个变体不该逼着这里跟着改
     /// （ADR 0011 的《后果》）。
     ///
-    /// 回的恒是[继续](Instruction::Continue)：两级停要有人按，而命令行这一路
-    /// 还没有那个键——它是会话那一头的事（ADR 0013 决定第 3 条说命令行同样用得上，
-    /// 接线留给按停那几张票）。
+    /// **回的是 `Ctrl-C` 按到的那一级**（ADR 0013 决定第 3 条，本票）：一次收尾、两次中止，
+    /// 按的地方在 [`install_the_stop_key`]、记在[闩](PRESSED)上。这一层只做一件事——
+    /// 把那一级交给库（过一遍 [`answer`]：决策点上的收尾要让，别处照闩答）。
+    /// **屏上那一句不在这里说**：那一句要在按下的当场说得出口，而这里要等下一条事件
+    /// （见 [`install_the_stop_key`]）。**停在哪一道边界上也不归这里**，归库那一对检查点。
     fn observe(&self, event: Event<'_>) -> Instruction {
+        // 问在下面那个 `match` 之前：它把事件吃掉了。
+        let at_the_decision_point = at_the_decision_point(&event);
         match event {
             Event::RunStarted { volumes, steps, .. } => self.start_run(volumes, steps),
             Event::VolumeStarted { volume, steps, .. } => self.start(volume, steps),
@@ -918,7 +1131,7 @@ impl Progress for Bar {
             Event::RunFinished { .. } => self.clear(),
             _ => {}
         }
-        Instruction::Continue
+        answer(at_the_decision_point, PRESSED.pressed())
     }
 }
 
@@ -1906,5 +2119,112 @@ io-mode = \"concurrent\"
                 .dither_override(&no_preset())
                 .is_err()
         );
+    }
+
+    /// **按一次是收尾、按两次是中止**，再按不动（ADR 0013）。
+    ///
+    /// 这是两级停在命令行这一头的全部形状：`Ctrl-C` 每按一下走的就是 [`Latch::press`]
+    /// （见 [`install_the_stop_key`]），而它答的那一级既是屏上那一句说的，
+    /// 也是观察者交给库的那个字。
+    /// **第三下与第二下一个待遇**——两级停就是两级，中止之上没有更强的一级，
+    /// 命令行这一头也没有第三种停法。
+    ///
+    /// 按下去之后**真停在哪儿**不由这一条说：那是库那一对检查点的事
+    /// （`tests/events.rs`、`tests/resume.rs`），而「按下去到底变成哪个字」是这一条的事。
+    /// 整条链子接得上没有，`tests/stop.rs` 在真进程上按一下。
+    #[test]
+    fn one_ctrl_c_is_the_finish_press_and_two_is_the_abort_press() {
+        let latch = Latch::default();
+        assert_eq!(latch.pressed(), Instruction::Continue, "起手没按过");
+        assert_eq!(latch.press(), Some(Instruction::Finish), "按一次不是收尾");
+        assert_eq!(latch.pressed(), Instruction::Finish);
+        assert_eq!(latch.press(), Some(Instruction::Abort), "按两次不是中止");
+        assert_eq!(latch.pressed(), Instruction::Abort);
+        // 第三下什么都不改，屏上也就没有第三句话可说。
+        assert_eq!(latch.press(), None, "第三下把闩推过头了");
+        assert_eq!(latch.pressed(), Instruction::Abort);
+    }
+
+    /// [`Latch`] 靠手写的[编码](code)记进原子量，而「哪一级更强」出自 [`Instruction`]
+    /// 派生的 `Ord`——这两件事一旦对不上，「只升不降」就成了一句空话。
+    ///
+    /// 与会话那一份（`session::run::tests::the_latch_only_ever_goes_up`）、
+    /// 库那一份（`tonefit` 的 `progress`）是同一条：三份闩的序出自同一处，
+    /// 各自只是把那个序编成一个字节（见 [`Latch`]）。
+    #[test]
+    fn the_latch_only_ever_goes_up() {
+        assert!(Instruction::Continue < Instruction::Finish);
+        assert!(Instruction::Finish < Instruction::Abort);
+        assert!(code(Instruction::Continue) < code(Instruction::Finish));
+        assert!(code(Instruction::Finish) < code(Instruction::Abort));
+        for level in [
+            Instruction::Continue,
+            Instruction::Finish,
+            Instruction::Abort,
+        ] {
+            assert_eq!(from_code(code(level)), level, "编进去再读回来变了样");
+        }
+        // 越界的数按最强的算：宁可多停一趟，不可漏停一趟。
+        assert_eq!(from_code(9), Instruction::Abort);
+        // 升级那张表也只升不降，而且升到中止就是个不动点。
+        for level in [
+            Instruction::Continue,
+            Instruction::Finish,
+            Instruction::Abort,
+        ] {
+            assert!(next(level) >= level, "升一级反而弱了");
+        }
+        assert_eq!(next(Instruction::Abort), Instruction::Abort);
+    }
+
+    /// **决策点上的收尾要让，中止不让**（`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。
+    ///
+    /// 会话那一侧逐字相同的一条在 `session::run::tests`：两级的语义不该因为按的地方不同
+    /// 而不同。让的那一下**不会丢**——它照样进库那一侧的闩，当前卷跑完之后卷边界那个
+    /// 检查点照样停（这一句由 `tests/stop.rs` 在真进程上钉住：按一次之后盘上是两个卷，
+    /// 不是一个，也不是三个）。
+    #[test]
+    fn the_finish_press_gives_way_at_the_decision_point_and_the_abort_press_does_not() {
+        // 决策点上：收尾让成继续，另外两个原样。
+        assert_eq!(
+            answer(true, Instruction::Continue),
+            Instruction::Continue,
+            "没按过的那一趟被拦下了"
+        );
+        assert_eq!(
+            answer(true, Instruction::Finish),
+            Instruction::Continue,
+            "收尾在决策点上没让，当前卷的第二遍被吃掉了"
+        );
+        assert_eq!(
+            answer(true, Instruction::Abort),
+            Instruction::Abort,
+            "中止在决策点上让了"
+        );
+        // 别处：一律照闩答。
+        for pressed in [
+            Instruction::Continue,
+            Instruction::Finish,
+            Instruction::Abort,
+        ] {
+            assert_eq!(answer(false, pressed), pressed, "别处没照闩答");
+        }
+    }
+
+    /// **按到哪一级，屏上那一句就说哪一级**（本票的验收第 4 条）。
+    ///
+    /// 两级各说各的，一个字都不重样；收尾那一句还得说出**下一下是什么**——不说的话，
+    /// 用户会当它没收到、再按一下，而再按一下当前卷就丢了（见 [`pressed_note`]）。
+    #[test]
+    fn each_level_says_which_one_it_is_on_screen() {
+        let finish = pressed_note(Instruction::Finish);
+        let abort = pressed_note(Instruction::Abort);
+        assert!(finish.contains("收尾"), "{finish}");
+        assert!(
+            finish.contains("中止"),
+            "收尾那一句没说下一下是什么：{finish}"
+        );
+        assert!(abort.contains("中止"), "{abort}");
+        assert_ne!(finish, abort, "两级说的是同一句话");
     }
 }
