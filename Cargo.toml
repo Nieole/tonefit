@@ -1,3 +1,11 @@
+# 跑闸门的那件工具（`xtask`）与 tonefit 并排成一个 workspace。
+# **它不许进产物的依赖**：`default-members` 把它挡在外面，`cargo build`、`cargo test`
+# 在仓库根敲下去仍然只是 tonefit 这一个包；点得到它的只有 `.cargo/config.toml` 里
+# 那条 `xtask` 别名。它做什么、为什么三条闸门要各用各的 target 目录，见 `docs/agents/gate.md`。
+[workspace]
+members = [".", "xtask"]
+default-members = ["."]
+
 [package]
 name = "tonefit"
 version = "0.1.0"

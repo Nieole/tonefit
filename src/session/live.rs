@@ -194,6 +194,10 @@ fn only_expandable(volumes: &[Volume]) -> Vec<Volume> {
 #[derive(Debug, Clone)]
 pub struct Walking {
     /// 卷标识：源目录路径，或源归档的文件路径。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub volume: PathBuf,
     /// 这一卷这一趟最多走多少步。**上界**，不是承诺。
     pub steps: u64,
@@ -544,6 +548,10 @@ impl Live {
     }
 
     /// 这一趟在决策点上等人吗（`CONTEXT.md` 的《会话》：续做）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn resumes(&self) -> bool {
         self.resumes.waits()
     }
@@ -672,6 +680,10 @@ impl Live {
     /// `super::draw::report::report_title`）：平常问的是
     /// [这一枝底下那几卷](Branch::expandable)——`⇥` 只在一枝里转，
     /// 拿整趟当分母屏上那个数就指着一个按不到的集合。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn expandable(&self) -> Vec<Volume> {
         only_expandable(&self.volumes())
     }
@@ -737,6 +749,10 @@ impl Live {
     /// 这一卷此刻对着哪一份卷报告。**指不着就是 `None`**——决策点上那一卷收摊之后
     /// [`Volume::Summarized`] 就指不着了（那时它是收摊了的最后一卷），而
     /// [没做成的那几卷](Volume::Failed)**恒指不着**：它们连一份卷报告都没有。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn volume(&self, at: Volume) -> Option<&VolumeReport> {
         match at {
             Volume::Settled(at) => self.report.volumes.get(at),
@@ -1083,6 +1099,13 @@ pub(crate) mod fixture {
     ///
     /// 只换判定那一格，逐页那几行照 [`processed_volume`]：这一份要问的是
     /// 「卷表档位那一列照卷级判定说的写」（P3 卷表那一票），与页上画着什么无关。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
     pub fn per_page_volume(name: &str) -> VolumeReport {
         VolumeReport {
             verdict: Some(VolumeVerdict::PerPage),
@@ -1093,6 +1116,13 @@ pub(crate) mod fixture {
     /// 一份**覆盖顶掉判定**的卷报告：覆盖项把候选裁到只剩一个，卷级基准档无从谈起。
     ///
     /// 与 [`per_page_volume`] 同一条：只换判定那一格。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
     pub fn overridden_volume(name: &str) -> VolumeReport {
         VolumeReport {
             verdict: Some(VolumeVerdict::Override(Candidate::new(
@@ -1129,6 +1159,13 @@ pub(crate) mod fixture {
     ///
     /// 与 [`processed_volume`] 分开而不是给它加几页：那一份钉着卷级那几张快照
     /// （`p1-session/09` 录的），添一页就要跟着重录。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
     pub fn a_page_of_every_kind(name: &str) -> VolumeReport {
         let base = Candidate::new(BitDepth::Four, Dither::Off);
         let source = Size::new(1441, 2048);
@@ -1262,6 +1299,13 @@ pub(crate) mod fixture {
     /// 而造它的 `Split` 不在导出面上），而为一份夹具去开库的公开面不值当。
     /// 那一格由 `super::draw::pages` 那一头喂一行手搓的[几何行](crate::render::Row)问
     /// ——问的正是「哪一格落进哪一列」，与这一卷问的「整表摆出来什么样」是两件事。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
     pub fn a_page_with_every_geometry_cell(name: &str) -> VolumeReport {
         let base = Candidate::new(BitDepth::Four, Dither::Off);
         let target = Size::new(1182, 1680);
@@ -1334,6 +1378,13 @@ pub(crate) mod fixture {
 
     /// 一页上各候选各一个数，档位由低到高——**逐页那一行印的就是这一串**
     /// （`render::score_line`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
     fn every_candidate() -> Vec<CandidateScore> {
         [
             (BitDepth::One, Dither::FloydSteinberg, 160),

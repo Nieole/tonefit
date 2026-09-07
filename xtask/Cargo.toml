@@ -1,0 +1,16 @@
+# 跑闸门的那件工具。**不是 tonefit 的一部分**：它不出现在任何产物的依赖里，
+# `default-members` 把它排除在 `cargo test`／`cargo build` 之外，
+# 只有 `cargo xtask ...` 那条别名点得到它。
+#
+# **一个外部依赖都不收。** 它做的事只有「按次序起几个 cargo 子进程、把输出转出来、
+# 把 `test result:` 那几行数出来」——std 全都答得出，而收一个包就等于让闸门这件事
+# 自己长出一棵要维护的树。
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[dependencies]

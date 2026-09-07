@@ -19,15 +19,14 @@ See `docs/agents/domain.md`.
 
 ## 闸门
 
-**三条命令，三条都要绿**——三种构建各一条：
+**三条命令，三条都要绿**——三种构建各一条。一条命令跑满三条，**各用各的 target 目录**：
 
 ```
-cargo test
-cargo test --no-default-features
-cargo check --features profiling
+cargo xtask gate
 ```
 
-三条各盖住什么、哪种改动必须跑满三条、结果怎么读，见 `docs/agents/gate.md`。
+三条各是哪一条、各自的目录在哪、哪种改动必须跑满三条、结果怎么读，
+以及闸门之外收尾照例过一遍的那四条（`cargo xtask polish`），见 `docs/agents/gate.md`。
 
 ## 写代码前
 

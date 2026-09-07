@@ -10,11 +10,11 @@
 mod preset;
 mod render;
 mod wrap;
-// 会话的状态机那四个模块一个终端库都不 `use`，因此 `tui` 关掉的那一趟仍编译、仍跑它们
-// 自带的用例（闸门的第二条，`docs/agents/gate.md`）。这两句 `cfg` 各自为什么必要——
-// `test` 那一格与那笔 `dead_code` 放松——见 `session` 模块文档的《终端库在哪一半》。
+// 会话的状态机那几个模块一个终端库都不 `use`，因此 `tui` 关掉的那一趟仍编译、仍跑它们
+// 自带的用例（闸门的第二条，`docs/agents/gate.md`）。这一句 `cfg` 为什么必要，
+// 以及那一趟里「只有画法读得到」的那几处各挂各的放松，见 `session` 模块文档的
+// 《终端库在哪一半》。
 #[cfg(any(feature = "tui", test))]
-#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 mod session;
 
 use std::path::{Path, PathBuf};
