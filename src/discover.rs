@@ -28,7 +28,14 @@
 //!
 //! ADR 0009 关掉的三件事一件都没回来：不扫库根、不建索引、不监听。发现的起点恒是用户
 //! 点名的那个路径，走的也只是它底下那棵子树。
+//!
+//! # 重叠的点名收编到最外层
+//!
+//! [`of`] 一次只看一个点名路径，而点名的路径可以**互相嵌套**（`库` 与 `库/作品`），
+//! 也可以干脆点两遍。那时同一个卷会被发现两遍。[`Found`] 因此在发现之后按**卷根**
+//! 折一遍：同一个卷根只留一份，镜像路径以**最外层**那个点名根为准（停车场 Q111）。
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -87,6 +94,85 @@ pub(crate) fn of(named: &Path) -> Result<Vec<Candidate>> {
         expand(named, &mut found);
     }
     Ok(found)
+}
+
+/// 点名的**那几个**路径展开出来的候选，按**卷根**收编成一批：同一个卷根只留一份。
+///
+/// [`of`] 一次只看一个点名路径。点名的路径互相嵌套（`库` 与 `库/作品`）、或者同一个
+/// 路径点了两遍时，同一个卷被发现两遍，而两遍的镜像去处还**不同**
+/// （`out/库/作品/第1话.cbz` 与 `out/作品/第1话.cbz`）——撞名那一道
+/// （`crate::ensure_no_two_volumes_share_an_output`）比的是去处，因此拦不住：
+/// 同一卷做两遍、数两遍，盘上落下两份同内容不同位置的产物（停车场 Q111）。
+///
+/// 收编的读法与「点名一个目录就把底下的卷全找出来」是同一条：点名 `库` 已经包含了
+/// `库/作品` 底下的一切，**再点一次不该改变结果**。因此镜像路径以**最外层**那个点名根
+/// 为准——点名 `库 库/作品` 与只点名 `库` 得到同一棵输出树、同样多的卷、同一份
+/// 非卷文件清单。
+///
+/// **次序按「头一回被发现」**：一个卷根头一回出现时占下它那一格，后来的只往那一格上收编。
+/// 跨几个点名路径的卷序因此仍是「用户点名的次序，各自内部按[阅读顺序](source::reading_order)」
+/// ——`tonefit 库/作品 库` 与 `tonefit 库 库/作品` 得到同一棵输出树、同样多的卷、
+/// 同一份非卷文件清单，而报告里的**卷序**不同（停车场 Q243）。
+///
+/// **折的是卷根，不是点名路径之间的前缀关系。** 点名 `库` 与 `库/#recycle` 是嵌套的两条
+/// 路径，而发现根本走不进后者（[`push_children`] 把打包环境留下的目录挡在外面），
+/// 两边一个卷根都不重叠，于是两个点名各展各的——用户明说要那个回收站，就得到它。
+/// 按前缀折的话它会连同它底下的卷一起消失。
+#[derive(Default)]
+pub(crate) struct Found {
+    /// 收编之后的那些候选，按**发现顺序**：一个卷根头一回出现时占下它那一格，
+    /// 后来的只往那一格上收编，不再排队。
+    candidates: Vec<Candidate>,
+    /// 卷根 → 它占着上面哪一格，加上收编下它的那个点名根**有几级**。
+    ///
+    /// 级数用来认「哪个点名根更外层」。这么认得住，是因为两个点名根展开出同一个卷根
+    /// **当且仅当**它们互相嵌套——发现只在点名的路径底下走，也不跟符号链接
+    /// （见本模块的《只在点名的路径底下走》与 [`push_children`]），子树因此严格按路径
+    /// 前缀嵌套；而嵌套的两条路径里，级数少的那条在外层。
+    ///
+    /// 查的是**路径本身**，而 [`Path`] 的相等在哪个平台上都逐字节比：同一个卷根写成
+    /// `D:\库` 与 `d:\库`（不区分大小写的文件系统上是同一个）、`库` 与 `./库`、
+    /// 或者一条软链与它指向的那棵树，收编都认不出来（停车场 Q241）。
+    ///
+    /// 这张表随**卷数**长，活到 [`into_candidates`](Self::into_candidates) 为止。
+    /// 它攥的是路径，不是句柄：与预扫那笔「不攥着几千个句柄」的账不是同一本
+    /// （见 `crate::survey` 的模块文档）。
+    at: HashMap<PathBuf, (usize, usize)>,
+}
+
+impl Found {
+    /// 点名 `named` 展开出来的那一批（[`of`] 的产出）收进来。
+    ///
+    /// 卷根头一回见就原样进队；见过就**收编**到它那一格上，两样东西各按各的规矩：
+    ///
+    /// - **镜像路径**换成最外层那个点名根算出来的那一条（见本类型的文档）；
+    /// - **[点名的那顶帽子](Provenance)** 两边有一顶就留着。用户明说了要处理它，
+    ///   点不开就该整趟拒绝——收编改的是**去处**，不是 ADR 0014 决定第 5 条那条分别。
+    ///
+    /// [`Candidate::container`] 不必挑：同一个卷根在盘上是同一样东西。
+    pub(crate) fn absorb(&mut self, named: &Path, candidates: Vec<Candidate>) {
+        let depth = named.components().count();
+        for candidate in candidates {
+            let Some((at, outermost)) = self.at.get(&candidate.root).copied() else {
+                self.at
+                    .insert(candidate.root.clone(), (self.candidates.len(), depth));
+                self.candidates.push(candidate);
+                continue;
+            };
+            if candidate.provenance == Provenance::Named {
+                self.candidates[at].provenance = Provenance::Named;
+            }
+            if depth < outermost {
+                self.candidates[at].output_relative = candidate.output_relative;
+                self.at.insert(candidate.root, (at, depth));
+            }
+        }
+    }
+
+    /// 收编完的那一批，按发现顺序。
+    pub(crate) fn into_candidates(self) -> Vec<Candidate> {
+        self.candidates
+    }
 }
 
 /// 点名的那个目录底下的那些候选。

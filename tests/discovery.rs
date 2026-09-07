@@ -10,6 +10,7 @@
 mod fixtures;
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use fixtures::Workspace;
 use tonefit::VolumeVerdict;
@@ -275,6 +276,180 @@ fn a_pass_through_member_of_a_real_volume_is_never_listed() {
     );
 }
 
+/// 点名两个互相嵌套的路径：同一个卷只做一遍，输出树与只点名最外层那个一模一样
+/// （`p4-parking-lot/15`，收停车场 Q111）。
+///
+/// 从前 `库/作品/第1话.cbz` 被发现两遍，各写一份：一份在 `out/库/作品/` 下、一份在
+/// `out/作品/` 下。去处不同，撞名那一道因此拦不住——盘上两份同内容不同位置的产物。
+#[test]
+fn naming_a_library_and_a_directory_inside_it_does_the_work_once() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let works = directory(&space, "库/作品");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+    write_archive(&space, "库/作品/第2话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [library.as_path(), works.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2, "同一个卷做了不止一遍");
+    // 镜像路径以**最外层**那个点名根为准：点名 `库 库/作品` 与只点名 `库` 同一棵输出树。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/作品/第1话.cbz", "库/作品/第2话.cbz"]
+    );
+}
+
+/// 同一个路径点两遍与点名嵌套路径走**同一条**收编：卷一份都不多。
+#[test]
+fn naming_the_same_path_twice_does_the_work_once() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [library.as_path(), library.as_path()]);
+
+    assert_eq!(report.volumes.len(), 1, "同一个卷做了不止一遍");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/作品/第1话.cbz"]
+    );
+}
+
+/// **预扫报出来的那两个数不因收编而多数一遍。**
+///
+/// 两头一起问：开工那条事件报出来的卷数与**这一趟实际做的卷数**对得上；
+/// 而点名 `库 库/作品`、点名 `库 库`、只点名 `库` 三趟报出来的卷数与全局总步数逐个相同。
+///
+/// 看开工那条事件而不是只看报告：多数出来的那一份正是屏上那条横条的**分母**——
+/// 它多数了一遍，进度条就永远走不到头（ADR 0011 决定第 3 条）。
+#[test]
+fn the_run_announces_each_volume_once_however_the_named_paths_overlap() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let works = directory(&space, "库/作品");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+    write_archive(&space, "库/作品/第2话.cbz", 2);
+
+    let (alone, _) = announced(&space, &[library.as_path()]);
+    let (nested, report) = announced(&space, &[library.as_path(), works.as_path()]);
+    let (twice, _) = announced(&space, &[library.as_path(), library.as_path()]);
+
+    // 两话各自成卷，这棵树上就这么多——数取自夹具，不是照实现算一遍。
+    assert_eq!(alone.0, 2, "点名一个库该发现两个卷，夹具搭错了");
+    assert!(alone.1 > 0, "总步数是 0，那这条用例什么都没问出来");
+    assert_eq!(
+        nested.0,
+        report.volumes.len(),
+        "预告的卷数与这一趟实际做的卷数对不上"
+    );
+    assert_eq!(nested, alone, "嵌套的点名把卷数或总步数多数了一遍");
+    assert_eq!(twice, alone, "同一个路径点两遍把卷数或总步数多数了一遍");
+}
+
+/// 里外哪个先点名都一样：收编到的恒是**最外层**那个根，输出树因此确定且可预测。
+#[test]
+fn the_outermost_named_root_wins_whichever_path_comes_first() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let works = directory(&space, "库/作品");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [works.as_path(), library.as_path()]);
+
+    assert_eq!(report.volumes.len(), 1, "同一个卷做了不止一遍");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/作品/第1话.cbz"],
+        "先点里层就按里层镜像了"
+    );
+}
+
+/// 点名的两个路径**不重叠**时收编一个卷都不动：两边各展各的。
+#[test]
+fn two_named_paths_that_do_not_overlap_both_come_out() {
+    let space = Workspace::new();
+    let first = directory(&space, "甲部");
+    let second = directory(&space, "乙部");
+    write_archive(&space, "甲部/第1话.cbz", 2);
+    write_archive(&space, "乙部/第1话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [first.as_path(), second.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2, "不重叠的两个点名被折掉了一个");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["乙部/第1话.cbz", "甲部/第1话.cbz"]
+    );
+}
+
+/// 单独点名一个**发现走不进去**的目录（回收站），上面那个库点名了也折不掉它。
+///
+/// 折的是**卷根**，不是点名路径之间的前缀关系：`库` 与 `库/#recycle` 是嵌套的两条路径，
+/// 而点名 `库` 那一趟一个回收站里的卷根都没走到（见
+/// [`discovery_does_not_walk_into_the_directories_packing_tools_leave_behind`]），
+/// 两边因此不重叠。按前缀折的话，用户明说要的那个回收站会连同它底下的卷一起消失。
+#[test]
+fn a_junk_directory_named_on_its_own_is_not_folded_away() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let recycle = directory(&space, "库/#recycle");
+    write_archive(&space, "库/留着的作品/第1话.cbz", 2);
+    write_archive(&space, "库/#recycle/删掉的作品/第1话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [library.as_path(), recycle.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2, "点名的那个回收站被折掉了");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["#recycle/删掉的作品/第1话.cbz", "库/留着的作品/第1话.cbz"]
+    );
+}
+
+/// 收编换的是去处，不是**「点名的 / 发现的」**那条分别：被外层收编掉的那个点名路径
+/// 点不开时仍是整趟拒绝（ADR 0014 决定第 5 条）。
+///
+/// `库/坏的.cbz` 同时是点名的（用户自己点了它）与发现出来的（点名 `库` 走到了它）。
+/// 收编要是顺手把那顶帽子摘了，它就变成「发现出来的点不开的归档」——进非卷文件、
+/// 其余照做，而用户明说了要处理它。
+#[test]
+fn a_named_path_swallowed_by_an_outer_one_is_still_refused_when_it_cannot_be_opened() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    write_archive(&space, "库/第1话.cbz", 2);
+    let mut broken = space.archive("库/坏的.cbz");
+    broken.page("001.png", &fixtures::cheap_page());
+    broken.write_truncated();
+
+    let error = fixtures::run_paths_expecting_failure(
+        &space,
+        [library.as_path(), space.dir("库/坏的.cbz").as_path()],
+    );
+
+    let said = format!("{error:#}");
+    assert!(said.contains("坏的.cbz"), "没说是哪个路径点不开：{said}");
+    assert!(said.contains("整趟不做"), "没整趟拒绝：{said}");
+}
+
+/// 非卷文件那张表也不因收编而重复列出：那一层被点名两遍，`说明.txt` 仍只有一条。
+///
+/// 它与卷数是同一遍开卷的两份产出（见 `src/survey.rs` 的《另两份产出》）——
+/// 收编排在开卷之前，两份因此一起只数一遍。
+#[test]
+fn a_file_no_volume_took_is_listed_once_however_often_its_directory_is_named() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let works = directory(&space, "库/作品");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+    std::fs::write(space.dir("库/作品/说明.txt"), "读我").expect("摆一个非卷文件");
+
+    let report = fixtures::run_paths(&space, [library.as_path(), works.as_path()]);
+
+    assert_eq!(
+        listed(&space, &report),
+        ["库/作品/说明.txt · 既不是页也不是归档"]
+    );
+}
+
 /// 输出根落在点名路径底下仍然当场拒绝——发现因此不会把上一趟的产物当成源。
 #[test]
 fn an_output_root_inside_a_named_directory_is_still_refused() {
@@ -329,6 +504,36 @@ fn discovery_does_not_follow_a_symlink() {
 
     assert_eq!(report.volumes.len(), 1, "跟进了符号链接");
     assert_eq!(fixtures::directory_members(&space.out()), ["库/第1话.cbz"]);
+}
+
+/// 跑一趟，交出**开工那条事件报出来的两个数**（这一趟有几个卷、最多走多少步）
+/// 与这一趟的报告。
+///
+/// 走**试算**（`Mode::DryRun`）：这两个数由预扫算出、一个文件都不落盘，同一个工作区
+/// 因此跑得了好几趟而互不干扰——落盘那一路第二趟会撞上第一趟的产物，比的就不只是
+/// 点名方式的差别了。
+fn announced(space: &Workspace, inputs: &[&Path]) -> ((usize, u64), tonefit::Report) {
+    let seen = Arc::new(Mutex::new(None));
+    let report = tonefit::run(&tonefit::Request {
+        mode: tonefit::Mode::DryRun,
+        progress: Some(tonefit::ProgressSink::new(Announced(Arc::clone(&seen)))),
+        ..fixtures::request(space, inputs.iter().copied())
+    })
+    .expect("处理应当成功");
+    let announced = *seen.lock().expect("读开工那条事件带的两个数");
+    (announced.expect("这一趟没发出开工那条事件"), report)
+}
+
+/// 只留开工那条事件带的两个数，别的一律不看。
+struct Announced(Arc<Mutex<Option<(usize, u64)>>>);
+
+impl tonefit::Progress for Announced {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if let tonefit::Event::RunStarted { volumes, steps, .. } = event {
+            *self.0.lock().expect("记下开工那条事件") = Some((volumes, steps));
+        }
+        tonefit::Instruction::Continue
+    }
 }
 
 /// 非卷文件那张表，摊成一行一条的 `工作区相对路径 · 哪一类`，按名字排序。

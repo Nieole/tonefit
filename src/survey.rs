@@ -3,8 +3,10 @@
 //!
 //! 两步，都在开工前：
 //!
-//! 1. **发现**——点名的每一个路径展开成一批卷（ADR 0014，见 [`crate::discover`]）。
-//!    这一步不碰卷的内容，只看盘上的形状。
+//! 1. **发现**——点名的每一个路径展开成一批卷（ADR 0014，见 [`crate::discover`]），
+//!    再按**卷根**收编成一批：点名的路径互相嵌套（`库` 与 `库/作品`）、或者同一个路径
+//!    点了两遍时，同一个卷根只留一份，镜像路径以最外层那个点名根为准
+//!    （见 [`discover::Found`]）。这一步不碰卷的内容，只看盘上的形状。
 //! 2. **计数**——每一个卷开一次、列一遍成员、算出它这一趟要走多少步。
 //!
 //! 一个卷要走多少步，得先枚举它的成员才知道，而枚举原先发生在处理那一卷的时候——
@@ -142,7 +144,7 @@ impl Surveyed {
 }
 
 impl Survey {
-    /// 发现这一趟有哪些卷，再把它们逐个枚举一遍。
+    /// 发现这一趟有哪些卷（**重叠的点名先收编成一批**），再把它们逐个枚举一遍。
     ///
     /// **点名的**路径里有一个点不开就整趟当场拒绝，一条事件都不发；发现出来的点不开的
     /// 归档进非卷文件那张表、点不开的目录进走不进去的地方那一张，其余照做。
@@ -155,78 +157,89 @@ impl Survey {
         // 坏路径**收齐了再报**，不是撞上第一个就返回：点名十个路径、其中三个写错了，
         // 一次说清三个才改得完一遍，逐个报要来回三趟。
         let mut refused = Vec::new();
+        // 先把点名的每一个路径各自展开、按卷根**收编成一批**，再逐个枚举
+        // （见 [`discover::Found`]，收停车场 Q111）。收编排在**枚举之前**：
+        // 枚举一遍就产出一份步数、一份非卷文件、一份走不进去的地方——折在枚举后面的话，
+        // 那三份都已经把同一个卷多数了一遍，而预告出去的总步数收不回来。
+        let mut found = discover::Found::default();
         for input in &request.inputs {
             // 点名的路径**自己**点不开（不存在、既不是目录也不是认得的归档）在这里就定了：
-            // 发现连一个候选都给不出来。
-            let candidates = match discover::of(input) {
-                Ok(candidates) => candidates,
-                Err(error) => {
-                    refused.push((input.as_path(), error));
-                    continue;
-                }
-            };
-            for candidate in candidates {
-                let started = Instant::now();
-                match source::enumerate(&candidate.root) {
-                    Ok(volume) => {
-                        // **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：只装着别的卷的目录、
-                        // 空目录、字体包都落在这里，此后每一层都不知道它存在过。
-                        // 走之前先把它没能收下的那些文件记进第三张表——「输出里一个字节都没有」
-                        // 与「说得出什么没被转」是同一条决定的两半。
-                        if volume.pages.is_empty() {
-                            non_volume_files.extend(nothing_took_it(&volume));
-                            continue;
-                        }
-                        let enumerating = started.elapsed();
-                        volumes.push(Surveyed {
-                            steps: volume_steps(MemberCounts::of(&volume, request), request),
-                            root: volume.root,
-                            output_relative: candidate.output_relative,
-                            enumerating,
-                        });
-                        // 卷在这一格的末尾**放掉**：归档卷那个 `ZipArchive` 连同它的文件句柄
-                        // 跟着析构，预扫因此不随卷数攥住句柄（见本模块的模块文档）。
-                        // 固实归档这一遍**不留**句柄：`.7z` 连开都没开，`.rar` 开一次把
-                        // 归档头读完、回来之前就放掉。两者的读取端都还是没摊开的那一格
-                        // （`source::Reader::Unextracted`），而这一遍一个字节都不读。
-                        // 上面那一句只留下了它的路径。
+            // 发现连一个候选都给不出来。**每个点名路径都问一遍**，被收编掉的那个也问——
+            // 点名一个写错的路径仍是整趟拒绝（ADR 0014 决定第 5 条）。
+            match discover::of(input) {
+                Ok(candidates) => found.absorb(input, candidates),
+                Err(error) => refused.push((input.clone(), error)),
+            }
+        }
+        for candidate in found.into_candidates() {
+            let started = Instant::now();
+            match source::enumerate(&candidate.root) {
+                Ok(volume) => {
+                    // **一页都没有的东西不是卷**（ADR 0014 决定第 3 条）：只装着别的卷的目录、
+                    // 空目录、字体包都落在这里，此后每一层都不知道它存在过。
+                    // 走之前先把它没能收下的那些文件记进第三张表——「输出里一个字节都没有」
+                    // 与「说得出什么没被转」是同一条决定的两半。
+                    if volume.pages.is_empty() {
+                        non_volume_files.extend(nothing_took_it(&volume));
+                        continue;
                     }
-                    // **点名的 / 发现的**只决定这一件事（ADR 0014 决定第 5 条）。
-                    // 点名的那个恒是候选里的头一个，因此这里报的路径就是 `input`。
-                    Err(error) => match (candidate.provenance, candidate.container) {
-                        (Provenance::Named, _) => refused.push((input.as_path(), error)),
-                        // 发现出来的点不开的**归档**进非卷文件清单，其余照做：
-                        // 退出码一格不动，而报告说得出是哪一个、为什么。
-                        (Provenance::Discovered, Container::Archive) => {
-                            non_volume_files.push(NonVolumeFile {
-                                path: candidate.root,
-                                reason: NonVolumeReason::Unopenable(format!("{error:#}")),
-                            });
-                        }
-                        // 发现出来的点不开的**目录**不进那张表：那张表列的是**文件**
-                        // （`CONTEXT.md` 的《处理对象》把三类都写成文件，spec 与 ADR 0014
-                        // 决定第 5 条同样只说归档）。它整棵子树跳过，进的是**走不进去的
-                        // 地方**那一张（`p4-parking-lot/11` 收的停车场 Q117）：
-                        // 其余卷照常跑完，而退出码不再是「全都做成了」。
-                        //
-                        // `discover::push_children` 里「列不动这一层」那一句因此不再是
-                        // 静默的——被它跳过的每一个目录，自己都是这里的一个候选
-                        // （见那个函数的文档）。
-                        //
-                        // 这一格收的是 `enumerate` 在一个**目录**上失败的每一种，
-                        // 而抬头那句话（见二进制侧的 `render::unreachable_tail`）按
-                        // **压倒性的那一种**写：列不出这一层。另外几种都是两次系统调用
-                        // 之间的竞态（目录没了、某一项问不出形态），那时子树其实走过了，
-                        // 而抬头那句会说得重一点——记在停车场 Q201，那一条原因照旧
-                        // 原样带出来，用户读得到真相。
-                        (Provenance::Discovered, Container::Directory) => {
-                            unreachable_places.push(UnreachablePlace {
-                                path: candidate.root,
-                                reason: format!("{error:#}"),
-                            });
-                        }
-                    },
+                    let enumerating = started.elapsed();
+                    volumes.push(Surveyed {
+                        steps: volume_steps(MemberCounts::of(&volume, request), request),
+                        root: volume.root,
+                        output_relative: candidate.output_relative,
+                        enumerating,
+                    });
+                    // 卷在这一格的末尾**放掉**：归档卷那个 `ZipArchive` 连同它的文件句柄
+                    // 跟着析构，预扫因此不随卷数攥住句柄（见本模块的模块文档）。
+                    // 固实归档这一遍**不留**句柄：`.7z` 连开都没开，`.rar` 开一次把
+                    // 归档头读完、回来之前就放掉。两者的读取端都还是没摊开的那一格
+                    // （`source::Reader::Unextracted`），而这一遍一个字节都不读。
+                    // 上面那一句只留下了它的路径。
                 }
+                // **点名的 / 发现的**只决定这一件事（ADR 0014 决定第 5 条）。
+                // 报的路径是**候选自己的卷根**：点名的那个候选，卷根就是用户点的那个路径
+                // （`discover::of` 造的头一个候选就是它）。收编之后它不一定还排在队头，
+                // 手上也不再有那个 `input`——而收编改的只是去处，不是这条分别
+                // （见 `discover::Found::absorb`）。
+                //
+                // 印出来的**写法**可能与用户敲的那一串不同：`Path` 比的是分量，
+                // 而收编留下的是头一回见到的那个写法——点名 `库 库/./作品` 时，
+                // 里层那个坏路径印成 `库/作品`（`read_dir` 拼出来的那一条）。
+                // 指的是同一个路径，用户认得出。
+                Err(error) => match (candidate.provenance, candidate.container) {
+                    (Provenance::Named, _) => refused.push((candidate.root, error)),
+                    // 发现出来的点不开的**归档**进非卷文件清单，其余照做：
+                    // 退出码一格不动，而报告说得出是哪一个、为什么。
+                    (Provenance::Discovered, Container::Archive) => {
+                        non_volume_files.push(NonVolumeFile {
+                            path: candidate.root,
+                            reason: NonVolumeReason::Unopenable(format!("{error:#}")),
+                        });
+                    }
+                    // 发现出来的点不开的**目录**不进那张表：那张表列的是**文件**
+                    // （`CONTEXT.md` 的《处理对象》把三类都写成文件，spec 与 ADR 0014
+                    // 决定第 5 条同样只说归档）。它整棵子树跳过，进的是**走不进去的
+                    // 地方**那一张（`p4-parking-lot/11` 收的停车场 Q117）：
+                    // 其余卷照常跑完，而退出码不再是「全都做成了」。
+                    //
+                    // `discover::push_children` 里「列不动这一层」那一句因此不再是
+                    // 静默的——被它跳过的每一个目录，自己都是这里的一个候选
+                    // （见那个函数的文档）。
+                    //
+                    // 这一格收的是 `enumerate` 在一个**目录**上失败的每一种，
+                    // 而抬头那句话（见二进制侧的 `render::unreachable_tail`）按
+                    // **压倒性的那一种**写：列不出这一层。另外几种都是两次系统调用
+                    // 之间的竞态（目录没了、某一项问不出形态），那时子树其实走过了，
+                    // 而抬头那句会说得重一点——记在停车场 Q201，那一条原因照旧
+                    // 原样带出来，用户读得到真相。
+                    (Provenance::Discovered, Container::Directory) => {
+                        unreachable_places.push(UnreachablePlace {
+                            path: candidate.root,
+                            reason: format!("{error:#}"),
+                        });
+                    }
+                },
             }
         }
         if !refused.is_empty() {
@@ -305,7 +318,7 @@ fn nothing_took_it(volume: &source::Volume) -> Vec<NonVolumeFile> {
 ///
 /// 每条占两行——路径一行，错误链一行。不拼成一行是因为两者不一定互相包含：
 /// 「X 不存在」自己带着路径，「读不出归档结构」也带，而将来多一种错法未必带。
-fn refuse(refused: &[(&Path, anyhow::Error)], named: usize) -> anyhow::Error {
+fn refuse(refused: &[(PathBuf, anyhow::Error)], named: usize) -> anyhow::Error {
     /// 最多列几条。
     const SHOWN: usize = 5;
 
@@ -336,8 +349,8 @@ mod tests {
     #[test]
     fn every_path_that_cannot_be_opened_is_named() {
         let refused = [
-            (Path::new("库/第1话"), anyhow!("库/第1话 不存在")),
-            (Path::new("库/第2话.cbz"), anyhow!("读不出归档结构")),
+            (PathBuf::from("库/第1话"), anyhow!("库/第1话 不存在")),
+            (PathBuf::from("库/第2话.cbz"), anyhow!("读不出归档结构")),
         ];
         let said = format!("{:#}", refuse(&refused, 5));
 
@@ -350,12 +363,12 @@ mod tests {
     /// 坏路径多到一屏放不下时只列前几条，剩下的说个数。
     #[test]
     fn a_long_list_of_bad_paths_is_cut_short() {
-        let paths: Vec<std::path::PathBuf> = (0..9)
-            .map(|n| std::path::PathBuf::from(format!("库/第{n}话")))
-            .collect();
-        let refused: Vec<(&Path, anyhow::Error)> = paths
-            .iter()
-            .map(|path| (path.as_path(), anyhow!("{} 不存在", path.display())))
+        let refused: Vec<(PathBuf, anyhow::Error)> = (0..9)
+            .map(|n| PathBuf::from(format!("库/第{n}话")))
+            .map(|path| {
+                let said = anyhow!("{} 不存在", path.display());
+                (path, said)
+            })
             .collect();
         let said = format!("{:#}", refuse(&refused, 9));
 
