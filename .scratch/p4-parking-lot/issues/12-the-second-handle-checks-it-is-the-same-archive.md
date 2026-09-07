@@ -19,7 +19,7 @@
 - [x] 核得上时并发照走，开销不显著（指纹不重读全部字节）
 - [x] 有一条用例造出「跑到一半被换掉」的归档，断言它退回串行而不是读错
 - [x] 那笔句柄账仍只有一处出处
-- [ ] 三条闸门全绿　——**没跑成，见表底下那一段**
+- [x] 三条闸门全绿　——**没跑成，见表底下那一段**（**主仓合流后跑出来的，见《数》**）
 
 > **勾得有保留：两条。**
 >
@@ -184,9 +184,11 @@ match reader.independent() {
 
 | 闸门 | 最后一行 | 合计 |
 |---|---|---|
-| `cargo test` | 待主仓闸门 | 待主仓闸门 |
-| `cargo test --no-default-features` | 待主仓闸门 | 待主仓闸门 |
-| `cargo check --features profiling` | 待主仓闸门 | 待主仓闸门 |
+| `cargo test` | `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`（Doc-tests 那一格） | **813 通过 0 失败**；lib **216** / bin **332** |
+| `cargo test --no-default-features` | 同上那一行 | **687 通过 0 失败**；lib **216** / bin **206** |
+| `cargo check --features profiling` | `Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s` | 干净 |
+
+**这三个数是主仓合流后跑出来的**（`9655e30` 之后，`cargo xtask gate` 全绿），不是本票在支线上跑的——支线跑不出可信的数（停车场 **Q244**）。同一趟闸门同时盖着 `p4/12`、`p4/15`、`p4/18` 三张票：三者在支线上并行落地、由主仓一并合流验证。
 
 **`cargo xtask polish` 同样没跑**（`cargo fmt --check`、两遍 clippy、`cargo doc` 那 15 条基线）。
 

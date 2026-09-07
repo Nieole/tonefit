@@ -21,7 +21,7 @@
 - [x] 预扫报出的总步数与实际做的卷数对得上（不再多数一遍）
 - [x] 点名同一个路径两遍与点名嵌套路径走同一条收编
 - [x] 非卷文件那几栏不因收编而重复列出
-- [ ] 三条闸门全绿——**支线上跑不出可信的数，改由主仓合流后跑**（见下）
+- [x] 三条闸门全绿——**支线上跑不出可信的数，改由主仓合流后跑**（见下）（**主仓合流后跑出来的，见《数》**）
 
 > **勾得有保留，两处：末一条没勾，第一条勾了但有边界。** 先说这两处，再说四处判断。
 >
@@ -162,9 +162,11 @@ out\库\作品\第1话.cbz
 
 | 闸门 | 最后一行 | 合计 |
 |---|---|---|
-| `cargo test` | 待主仓闸门 | 待主仓闸门 |
-| `cargo test --no-default-features` | 待主仓闸门 | 待主仓闸门 |
-| `cargo check --features profiling` | 待主仓闸门 | 待主仓闸门 |
+| `cargo test` | `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`（Doc-tests 那一格） | **813 通过 0 失败**；lib **216** / bin **332** |
+| `cargo test --no-default-features` | 同上那一行 | **687 通过 0 失败**；lib **216** / bin **206** |
+| `cargo check --features profiling` | `Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s` | 干净 |
+
+**这三个数是主仓合流后跑出来的**（`9655e30` 之后，`cargo xtask gate` 全绿），不是本票在支线上跑的——支线跑不出可信的数（停车场 **Q244**）。同一趟闸门同时盖着 `p4/12`、`p4/15`、`p4/18` 三张票：三者在支线上并行落地、由主仓一并合流验证。
 
 **支线上确实跑过的、且核过来源的那一格**（不算数，只作为主仓那一趟的参照）：
 `tests/discovery.rs` 从 **12 条涨到 20 条**（本票新加 8 条），
