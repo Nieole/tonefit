@@ -32,15 +32,26 @@
 //! **摆进列里的字形一个都不许是歧义宽度**，判据、边界与理由都在
 //! [`tonefit::width_is_stable`]。
 //!
-//! 那条规矩管两层：**这一层自己造的字形**（[`ELLIPSIS`] 与两张表的行首记号），
-//! 与**措辞那一层摆进列里的那几格**（`crate::render` 的尺寸、判据那一串与基准档分布）。
+//! 那条规矩管两层：**这一层自己造的字形**（[`ELLIPSIS`] 与三张表的行首记号），
+//! 与**措辞那一层摆进列里的那几格**（哪几格由下一节那一维答，不在这里点名）。
 //! 后者从前划在规矩外面——换它们是命令行印出去的字节的一次变动，不归画法这一层；
 //! `p4-parking-lot/05` 换掉了那两个字形，管辖面跟着扩到那一层（停车场 Q168）。
 //!
 //! 停车场 Q154 记着这笔账的由来：从前报告是散文，错一格看不出来；表上头一次靠宽度吃饭。
+//!
+//! # 每一列说得出自己的字面出处
+//!
+//! 一列的字**是谁写的**——[措辞 · 原样 · 记号](Provenance)三档，逐列写在 [`Column::provenance`] 上
+//! （`CONTEXT.md`《格》立的那一维）。三处 `match` 一个 `_` 都不留：
+//! **添一列不写这一格，编译就过不去**。
+//!
+//! 「哪几格要过宽度那一关」因此**只有这一处出处**（`wording_cells` 从它导出）。
+//! 从前措辞那一层还手抄着第二份，往表里添一列那一份不跟着添**也不会红**——
+//! 逐页表添了五格几何列之后，裁边与缩放两格就是那么漏出去的（停车场 Q188）。
 
 use std::marker::PhantomData;
 
+use crate::render::Field;
 use crate::wrap;
 
 /// 列与列之间空几格。**表画出来与列摆不摆得下按同一个数算**，因此在这里。
@@ -52,6 +63,37 @@ pub(super) const GAP: usize = 2;
 /// [`width_is_stable`](tonefit::width_is_stable) 那一关（停车场 Q154）。
 /// 省略过的是名字那一列，它右边还有三列。
 const ELLIPSIS: char = '⋯';
+
+/// 一列的字**是谁写的**：`CONTEXT.md`《格》立的那一维——**字面出处 (Provenance)**，
+/// 三档，一档不多（措辞 · 原样 · 记号，名字逐个取自词汇表）。
+///
+/// **挂在列上，不挂在格上。** 列与格不是一对一：[记号](Self::Mark)那一列压根不是一格字、
+/// 页名那一列的字从另一行补上、[判定](PageColumn::Verdict)那一列对的是**另一个名字**的格
+/// （[`Field::Candidate`]）。
+///
+/// **三档各归一条规矩，而规矩不在这里**——这一维只答「这一格该归谁管」：
+/// 措辞归造字面的那一层查字形，原样归[从中间省略](elide)，记号归画它的那一层。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Provenance {
+    /// **措辞 (Wording)**：界面层自己造的字面（尺寸、裁边、缩放、判定、理由、页数、分布……）。
+    ///
+    /// 字形宽度**必须稳**（[`tonefit::width_is_stable`]），而查它的是**造字面的那一层**——
+    /// 带着的正是「查哪一格」：`Some(field)` 是 [`crate::render`] 出的那一格，
+    /// 那一层那条用例从 `wording_cells` 拿走全部要查的格；`None` 是画法这一层
+    /// 自己造的字，眼下只有[耗时](VolumeColumn::Elapsed)一列，它在自己那一头查。
+    Wording(Option<Field>),
+    /// **原样 (Verbatim)**：用户的字节原封带过来（目录名、卷名、页名、去处路径、定档页名）。
+    ///
+    /// 宽度**永远稳不住**——一个带 emoji 的文件名不该把整张表判红——摆不下时归
+    /// [从中间省略](elide)管，**不进那一关**。它因此不必报出自己出自哪一格。
+    Verbatim,
+    /// **记号 (Mark)**：一个字符说完一件事，**不是一格字**
+    /// （`CONTEXT.md`《语义色》：颜色不是唯一载体）。
+    ///
+    /// 三张表的行首记号都在这一档，那几个字形由画它的那一层各自问
+    /// （`super::draw::table`、`super::draw::pages`、`super::draw::directories`）。
+    Mark,
+}
 
 /// **一张表的那几列**：从左到右是哪几列、窄了按什么次序砍、砍无可砍时收窄谁。
 ///
@@ -81,6 +123,13 @@ pub(super) trait Column: Copy + PartialEq + 'static {
 
     /// 这一列的格**靠右摆**吗。数靠右（一位数与三位数靠左摆就对不齐），词与名字靠左。
     fn to_the_right(self) -> bool;
+
+    /// 这一列的字**是谁写的**（[字面出处](Provenance)）。
+    ///
+    /// **每一个变体都得自己答**：三处 `match` 一个 `_` 都不留，添一列不写这一格
+    /// **编译就过不去**。从前「哪几格要过宽度那一关」在仓库里另有一份手抄的名单，
+    /// 添一列不跟着添也不会红——逐页表的裁边与缩放两列就是那么漏出去的（停车场 Q188）。
+    fn provenance(self) -> Provenance;
 
     /// 这一列在 [`Widths`] 里的第几格。
     fn at(self) -> usize {
@@ -137,6 +186,17 @@ impl Column for DirectoryColumn {
     /// 正是扫一眼要看出来的（与卷表的页数同一条）。
     fn to_the_right(self) -> bool {
         matches!(self, Self::Volumes)
+    }
+
+    fn provenance(self) -> Provenance {
+        match self {
+            Self::Mark => Provenance::Mark,
+            // 印的是**全路径**（见 `super::draw::directories`），与命令行那一副的
+            // [`Field::Source`] 说的是同一个身份。
+            Self::Name => Provenance::Verbatim,
+            Self::Volumes => Provenance::Wording(Some(Field::VolumeCount)),
+            Self::Bases => Provenance::Wording(Some(Field::Bases)),
+        }
     }
 }
 
@@ -196,6 +256,23 @@ impl Column for VolumeColumn {
     /// 正是扫一眼要看出来的。其余各列都是词或名字，靠左。
     fn to_the_right(self) -> bool {
         matches!(self, Self::Pages)
+    }
+
+    fn provenance(self) -> Provenance {
+        match self {
+            Self::Mark => Provenance::Mark,
+            Self::Name => Provenance::Verbatim,
+            Self::Pages => Provenance::Wording(Some(Field::PageCount)),
+            // **判出了档位的那一种就是这一格**；另外四种说法（跳过 · 逐页 · 覆盖 · 没做成）
+            // 由 [`crate::render::base_column`] 就地写出、不占一格，而它们逐条进了目录那一行的
+            // [分布](Field::Bases)——那一关因此照旧问得到（停车场 Q377）。
+            Self::Base => Provenance::Wording(Some(Field::Base)),
+            // 定档页那一格是**一条路径的最后一段**（见 `super::draw::table::driver`）。
+            Self::Driver => Provenance::Verbatim,
+            // **这一列的字是画法那一层自己造的**（`super::draw::overview::spell`）：
+            // 措辞那一层没有它那一格，字形因此在那一头问。
+            Self::Elapsed => Provenance::Wording(None),
+        }
     }
 }
 
@@ -308,6 +385,62 @@ impl Column for PageColumn {
     fn to_the_right(self) -> bool {
         false
     }
+
+    fn provenance(self) -> Provenance {
+        match self {
+            Self::Mark => Provenance::Mark,
+            // 页名从**另一行**补上（见 `super::draw::pages` 的 `named`）：逐页那两行上
+            // 没有它那一格，措辞那一层也没有。
+            Self::Name => Provenance::Verbatim,
+            Self::Size => Provenance::Wording(Some(Field::Size)),
+            Self::Crop => Provenance::Wording(Some(Field::Crop)),
+            Self::Scaling => Provenance::Wording(Some(Field::Scaling)),
+            Self::Cut => Provenance::Wording(Some(Field::Cut)),
+            Self::ColorToGray => Provenance::Wording(Some(Field::ColorToGray)),
+            // **对的是另一个名字的格**：屏上这一列叫「判定」，措辞那一层那一格叫候选。
+            Self::Verdict => Provenance::Wording(Some(Field::Candidate)),
+            Self::Reason => Provenance::Wording(Some(Field::Reason)),
+            Self::Scores => Provenance::Wording(Some(Field::Scores)),
+            Self::Output => Provenance::Verbatim,
+        }
+    }
+}
+
+/// **三张表摆进列里、由[措辞](Provenance::Wording)那一层写下的那几格。**
+///
+/// 「摆进列里的字形一个都不许是歧义宽度」那一关问的就是这几格，
+/// 而**那一关跑在造字面的那一层**（`crate::render` 那条
+/// `every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal`）——
+/// 它从这里导出，不再手抄第二份（停车场 Q188）。
+///
+/// **只有这一处出处。** 添一列时 [`Column::provenance`] 那个 `match` 不写就编译不过，
+/// 新添的列进不进这一关**因此不由人的记性决定**。
+///
+/// 画法这一层自己造的那几格不在里面（[耗时](VolumeColumn::Elapsed)、[省略号](ELLIPSIS)、
+/// 三张表的行首记号）：措辞那一层没有它们那一格，它们各在自己那一头问。
+///
+/// **读它的只有那一关**（`crate::render` 那条用例），非测试的那一趟因此没有一个调用方——
+/// 与会话里那几处「只有画法读得到」的同一副写法，放开的是这一处，不是整个模块
+/// （见 `super` 的模块文档）。[`Column::provenance`] 与 [`Provenance`] 跟着它一起立在那里：
+/// **那不是死代码，是那一关的前提**。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn wording_cells() -> Vec<Field> {
+    fn of<C: Column>(into: &mut Vec<Field>) {
+        into.extend(
+            C::ALL
+                .iter()
+                .filter_map(|column| match column.provenance() {
+                    Provenance::Wording(field) => field,
+                    Provenance::Verbatim | Provenance::Mark => None,
+                }),
+        );
+    }
+
+    let mut cells = Vec::new();
+    of::<DirectoryColumn>(&mut cells);
+    of::<VolumeColumn>(&mut cells);
+    of::<PageColumn>(&mut cells);
+    cells
 }
 
 /// 各列有多宽：**那一列上最长的一格**，列头也算一格。
@@ -530,6 +663,69 @@ mod tests {
         assert_eq!(usize::from(wrap::width(&ELLIPSIS.to_string())), 1);
     }
 
+    /// **三张表的每一列都说得出自己的[字面出处](Provenance)**（`CONTEXT.md`《格》那一维）。
+    ///
+    /// **编译先红，这一条是第二道**：[`Column::provenance`] 那三处 `match` 一个 `_` 都不留，
+    /// 添一列不写那一格就编译不过。这里问的是**答出来的那一档站不站得住**——
+    /// 三档各归一条规矩，认错档就是把这一列交给了错的那条规矩。
+    #[test]
+    fn every_column_says_where_its_text_comes_from() {
+        /// 一张表逐列走一遍，收出措辞那一档的那几列（连同它各自报出的那一格）。
+        ///
+        /// 每张表自己那两条就地问掉，跨表的那两条由调用方合起来问。
+        fn walk<C: Column + std::fmt::Debug>(table: &str) -> Vec<(String, Option<Field>)> {
+            let mut marks = Vec::new();
+            let mut wording = Vec::new();
+            for column in C::ALL {
+                match column.provenance() {
+                    Provenance::Mark => marks.push(*column),
+                    Provenance::Wording(field) => {
+                        wording.push((format!("{table}的{column:?}"), field))
+                    }
+                    Provenance::Verbatim => {}
+                }
+            }
+            // **记号那一档恰好一列，而且是行首那一列**：它一个字符说完一件事，
+            // 别的列装的都是字（`CONTEXT.md`《语义色》）。
+            assert_eq!(marks.len(), 1, "{table}：记号那一档不止一列 {marks:?}");
+            assert_eq!(marks[0], C::ALL[0], "{table}：记号不是行首那一列 {marks:?}");
+            // **砍无可砍时收窄的那一列是原样那一档**：从中间省略正是那一档的规矩，
+            // 而措辞那一档摆不下时不靠省略活着（`CONTEXT.md`《格》）。
+            assert!(
+                matches!(C::NARROWED.provenance(), Provenance::Verbatim),
+                "{table}：收窄的那一列不是原样那一档"
+            );
+            wording
+        }
+
+        let mut wording = walk::<DirectoryColumn>("目录表");
+        wording.extend(walk::<VolumeColumn>("卷表"));
+        wording.extend(walk::<PageColumn>("逐页表"));
+
+        // **一格只进一列**：两列报出同一格，那一关就把其中一列真正装的东西漏问了。
+        let cells: Vec<Field> = wording.iter().filter_map(|(_, field)| *field).collect();
+        for (at, field) in cells.iter().enumerate() {
+            assert!(!cells[..at].contains(field), "{field:?} 被两列报出来了");
+        }
+
+        // **措辞那一档里「这一层自己造的」只放开一列。** 名单只放开眼下真要放开的那一个，
+        // 再来一列就得存心加一行（同一副做法见 `tonefit::glyph` 那条用例的 `SENTENCES`）：
+        // 报 `None` 等于说「措辞那一层没有我这一格」，而那句话是逃得出那一关的。
+        let made_here: Vec<&str> = wording
+            .iter()
+            .filter(|(_, field)| field.is_none())
+            .map(|(who, _)| who.as_str())
+            .collect();
+        assert_eq!(
+            made_here,
+            ["卷表的Elapsed"],
+            "措辞那一档多了一列说自己不出自措辞那一层"
+        );
+
+        // 导出去给那一关的就是这几格，一格不多一格不少。
+        assert_eq!(wording_cells(), cells);
+    }
+
     /// 一份够宽的量：各列都比列头宽一点。
     fn measured() -> Widths<VolumeColumn> {
         let mut widths = Widths::new();
@@ -631,7 +827,7 @@ mod tests {
         widths.widen(PageColumn::Name, "087.png");
         widths.widen(PageColumn::Size, "1182x1680");
         widths.widen(PageColumn::Crop, "裁边 1441x2048 ⟶ 1400x2000");
-        widths.widen(PageColumn::Scaling, "失败页 · 卷内统一尺寸留白");
+        widths.widen(PageColumn::Scaling, "失败页 ⋅ 卷内统一尺寸留白");
         widths.widen(PageColumn::Cut, "跨页右半");
         widths.widen(PageColumn::ColorToGray, "彩页转灰");
         widths.widen(PageColumn::Verdict, "2bit+FS");

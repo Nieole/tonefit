@@ -63,7 +63,8 @@ use tonefit::HARD_SPACE;
 
 /// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
 ///
-/// 眼下两处取它：[基准档分布](base_spread)与[判据那一串](score_line)。
+/// 眼下三处取它：[基准档分布](base_spread)、[判据那一串](score_line)，
+/// 与失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」）。
 /// 串起来的整串是**一格**，而「一串东西怎么说」与「一个数怎么写」同属措辞
 /// （ADR 0016 决定第 2 条）——格与格**之间**拿什么隔开是排版的事，不在这里。
 ///
@@ -1135,7 +1136,10 @@ fn geometry_cells(page: &PageReport) -> Vec<Cell> {
         Field::Scaling,
         match page.scaling() {
             Some(scaling) => scaling.to_string(),
-            None => "失败页 · 卷内统一尺寸留白".to_owned(),
+            // **一格里装着两样，拿[那个记号](SEPARATOR)隔开**：这一格摆在逐页表的
+            // 缩放那一列上，而 `·`（U+00B7）是歧义宽度——CJK 终端上它右边每一列
+            // 整体错开一格（停车场 Q188 那一条的当场收获）。
+            None => format!("失败页{SEPARATOR}卷内统一尺寸留白"),
         },
     ));
     if let Some(cut) = page.cut() {
@@ -2509,7 +2513,7 @@ mod tests {
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         // 失败页那两行：尺寸从哪来，以及它为什么失败。
         assert!(
-            text.contains("1264x1680  失败页 · 卷内统一尺寸留白"),
+            text.contains("1264x1680  失败页 ⋅ 卷内统一尺寸留白"),
             "{text}"
         );
         assert!(
@@ -3220,7 +3224,7 @@ mod tests {
         // 失败页的几何那一行说得出它的尺寸是**卷内统一**的，不是它自己缩出来的。
         assert_eq!(
             rows[2].cell(Field::Scaling),
-            Some("失败页 · 卷内统一尺寸留白")
+            Some("失败页 ⋅ 卷内统一尺寸留白")
         );
         // 没裁过、不是跨页、没退回过——那三格一个都不在场。
         for field in [Field::Crop, Field::Cut, Field::Backstop] {
@@ -3800,27 +3804,27 @@ mod tests {
     /// 它右边每一列就整体错开一格。**尺寸那一列夹在页名与判定中间**，
     /// 从前有 `×` 的行（正常页）与那一格空着的行（失败页）因此整行错开一格。
     ///
-    /// **添一个不稳的字形，这一条当场变红。** 问的是表摆成列的那几格；装**路径**的那几列
-    /// （目录名、卷名、页名、定档页）不在里面——那是用户的字节，不是这一层挑的字形。
-    /// 行首记号、省略号与耗时那一列是画法那一层自己造的，在
-    /// `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview` 那几头问。
+    /// **问哪几格不再手抄。** 那份名单从三张表的[字面出处](crate::session::columns::Provenance)
+    /// 导出（`crate::session::columns::wording_cells`）——从前它在这里另写一份，
+    /// 往表里添一列不跟着添**也不会红**：逐页表添了五格几何列之后，
+    /// 裁边与缩放两格就是那么漏出去的（停车场 Q188）。
+    ///
+    /// **添一个不稳的字形，这一条当场变红。** 装**路径**的那几列（目录名、卷名、页名、
+    /// 定档页、去处）不在里面——那是用户的字节，不是这一层挑的字形，它们归**原样**那一档，
+    /// 摆不下时从中间省略（`CONTEXT.md`《格》）。行首记号、省略号与耗时那一列是画法那一层
+    /// 自己造的，在 `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview`
+    /// 那几头问。
     #[test]
     fn every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal() {
-        // 屏上那三张表把这几格摆成列（`crate::session::columns` 的 `DirectoryColumn`、
-        // `VolumeColumn`、`PageColumn`）。其余各格成句、跟在行尾或整段折行印出来，
-        // 错一格不牵连别人。
-        // **这份名单与那三个 `Column` 是同一件事的两处出处**：往哪张表添一列，
-        // 这里也要跟着添——没有东西逼它们同步（停车场 Q188 记着为什么收不拢）。
-        const LINED_UP: &[Field] = &[
-            Field::VolumeCount,
-            Field::Bases,
-            Field::PageCount,
-            Field::Base,
-            Field::Size,
-            Field::Candidate,
-            Field::Reason,
-            Field::Scores,
-        ];
+        // 屏上那三张表把哪几格摆成列，**由那三张表自己说**（`crate::session::columns` 的
+        // `DirectoryColumn`、`VolumeColumn`、`PageColumn` 各列逐个报出自己的字面出处）。
+        // 其余各格成句、跟在行尾或整段折行印出来，错一格不牵连别人。
+        let lined_up = crate::session::columns::wording_cells();
+        // **逐页表的裁边与缩放两列此刻真在这一关里**：这两格的字面出自库的 `Crop` 与
+        // `Scaling`，从前漏在名单外面，而 CJK 终端上整张表因此逐行错位（停车场 Q188）。
+        for field in [Field::Crop, Field::Scaling] {
+            assert!(lined_up.contains(&field), "{field:?} 不在那一关里");
+        }
 
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
@@ -3846,8 +3850,11 @@ mod tests {
         // **基准档那一列的五种说法各摆一卷**（见 [`base_column`]）：判出档位、跳过、
         // 逐页、覆盖、没做成。分布那一格因此也串得起来——它逐条问的就是那一列。
         // 「没做成」出自 `Listed::Failed`，那一卷连一份卷报告都没有。
+        // **头一卷的名字里带一个 `·`（U+00B7）**：卷名、页名与去处路径都是**原样**那一档
+        // ——用户的字节，宽度永远稳不住，摆不下时从中间省略（`CONTEXT.md`《格》）。
+        // 喂进这一个过不了那一关的字形，这一条**照旧绿**，那才叫「不进那一关」。
         let mut volumes = [
-            a_volume("库/第1话", four, false),
+            a_volume("库/第1话·上", four, false),
             a_volume(
                 "库/第2话",
                 Some(VolumeVerdict::Skipped { page_count: 1 }),
@@ -3863,10 +3870,21 @@ mod tests {
                 false,
             ),
         ];
+        // 这一页的**页名**（成员名最后那一段）与**去处路径**各带一个 `·`；
+        // 头一卷判出了档位，[定档页那一行](RowKind::Driver)读的就是这一页的源路径，
+        // **定档页名**因此跟着带上了它。三列一并喂到。
+        volumes[0].pages[0].source = PathBuf::from("库/第1话·上/序·卷首.jpg");
+        volumes[0].pages[0].output = PathBuf::from("out/第1话·上/序·卷首.png");
         if let PageOutcome::Whole(processed) = &mut volumes[0].pages[0].outcome
             && let PageBranch::Gray { scores, .. } = &mut processed.branch
         {
             *scores = scored;
+        }
+        // **裁边与彩页转灰那两格得真在场**，不然那两列进了名单也没人问：
+        // 一个像素都没裁的页不占裁边那一格，不是彩页的页不占彩页那一格。
+        if let PageOutcome::Whole(processed) = &mut volumes[3].pages[0].outcome {
+            processed.crop = Crop::new(Size::new(1441, 2048), (20, 24), Size::new(1400, 2000));
+            processed.color = PageColor::Color;
         }
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第5话"),
@@ -3913,9 +3931,41 @@ mod tests {
             "没做成那一档没摆进分布那一格"
         );
 
+        // **导出来的那几格，夹具真摆得出来**——名单进得来、格不在场，那一列等于没问。
+        //
+        // **只放开一格**：跨页那一格要一个 `tonefit::Cut`，而它在库外造不出来
+        // （字段私有、没有构造函数），它那个 `Display` 由库自己那条穷举的用例钉着
+        // （`tonefit::glyph`）。名单只放开眼下真放不下的那一个，再来一格就得存心加一行。
+        const NOT_MADE_OUTSIDE_THE_LIBRARY: &[Field] = &[Field::Cut];
+        for field in &lined_up {
+            if NOT_MADE_OUTSIDE_THE_LIBRARY.contains(field) {
+                continue;
+            }
+            assert!(
+                rows.iter().any(|row| row.cell(*field).is_some()),
+                "{field:?} 在那一关的名单里，而这一份夹具一行都没摆出它"
+            );
+        }
+
+        // **原样那一档不进那一关**——页名、卷名、目录名、去处路径、定档页名都是用户的字节，
+        // 宽度**永远稳不住**，摆不下时归从中间省略管，不归这一关管（`CONTEXT.md`《格》）。
+        //
+        // 措辞那一层把那几列的字装在这两格里：[`Field::Source`] 装卷根、目录与定档页那一页，
+        // [`Field::Output`] 装卷的去处与一页的去处。夹具已经往两格都喂进了 `·`（U+00B7），
+        // **两格都过不了那一关，而这一条照旧绿**——那才叫「不进那一关」。
+        for field in [Field::Source, Field::Output] {
+            assert!(!lined_up.contains(&field), "{field:?} 被拉进了那一关");
+            assert!(
+                rows.iter()
+                    .filter_map(|row| row.cell(field))
+                    .any(|said| said.chars().any(|glyph| !tonefit::width_is_stable(glyph))),
+                "{field:?} 没喂进一个歧义宽度的字形，这一条的反面问不着"
+            );
+        }
+
         for row in &rows {
             for cell in &row.cells {
-                if !LINED_UP.contains(&cell.field) {
+                if !lined_up.contains(&cell.field) {
                     continue;
                 }
                 stable(
