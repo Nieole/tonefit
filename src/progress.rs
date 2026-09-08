@@ -97,6 +97,12 @@ pub enum Event<'a> {
     /// 步的单位见 `CONTEXT.md` 的《进度》。这一条**从计算线程上报出来**，
     /// 因此同一卷内可能并发到达、页序不作数——要页序的东西在
     /// [`VolumeFinished`](Self::VolumeFinished) 带的那份报告里。
+    ///
+    /// **固实归档开工前摊开那一段也报它**，一个成员一步（`p4-parking-lot/13`，
+    /// 见 `crate::source::extract`）。那一段排在开卷之后、第一条
+    /// [`PassStarted`](Self::PassStarted) 之前，从前一条事件都没有——几百兆的卷在那里
+    /// 一动不动，看着像挂死了。预告的步数跟着把它算进去（见 `crate::volume_steps`），
+    /// **「预告是上界」因此一格没动**。
     #[non_exhaustive]
     Stepped {},
     /// 一页失败了，附上给人读的那句原因。
@@ -193,10 +199,14 @@ impl Event<'_> {
     }
 }
 
-/// 一个卷这一趟要走的那几遍中的一遍（`CONTEXT.md` 的《进度》：步的三段）。
+/// 一个卷这一趟要走的那几遍中的一遍（`CONTEXT.md` 的《进度》）。
 ///
-/// 三段与 `VolumeTiming` 的三段是同一条分界线，而且**各段自己可能不在**：
+/// 三遍与 `VolumeTiming` 的三段是同一条分界线，而且**各遍自己可能不在**：
 /// `--no-metadata` 关掉幂等那一道，dry-run 没有第二遍。报的是这一趟真要走的那几遍。
+///
+/// **步比遍多一段**：固实归档开工前摊开一整卷也报步（见 [`Event::Stepped`]），
+/// 而摊开**不是一遍**——它排在第一条 `PassStarted` 之前，这个枚举因此仍是三个值
+/// （`p4-parking-lot/13`；要不要让它成为第四遍，停车场 Q283 记着）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Pass {
@@ -454,8 +464,8 @@ impl<'a> Events<'a> {
     ///
     /// 停下来的检查点眼下有两个，各在一道边界上（ADR 0013 的《后果》）：
     /// 卷边界那个在 `crate::run` 的逐卷循环里，问的是 [`standing`](Self::standing)；
-    /// 页边界那个是 [`aborting`](Self::aborting)，由 `crate::process_volume` 摆在它每一个
-    /// 逐成员的循环头上——**摆在哪几处只在那里数得清**，本条不复述。
+    /// 页边界那个是 [`aborting`](Self::aborting)——**摆在哪几处只在
+    /// `crate::process_volume` 的《中止：回 `None`》那张清单上数得清**，本条不复述。
     ///
     /// 没有观察者时答的是[继续](Instruction::Continue)：没人可问就等于没人拦。
     #[cfg_attr(debug_assertions, track_caller)]
@@ -540,7 +550,10 @@ impl<'a> Events<'a> {
 
     /// **页边界那个检查点**：这一趟按下中止了吗（ADR 0013 决定第 2 条）。
     ///
-    /// 逐个成员往下走的每一个循环在自己的循环头上问它一次（清单见 `crate::process_volume`），
+    /// 逐个成员往下走的每一个循环在自己的循环头上问它一次，**清单只有一处**，见
+    /// `crate::process_volume` 的《中止：回 `None`》——那张表里有几处落在读取那一层
+    /// （开工前摊开一整卷那两遍顺序扫，`p4-parking-lot/13`）：那一遍的「一个成员」与页边界
+    /// 是同一道边界，因此**没有第三种停法**。
     /// 答是就当场停下，剩下的成员不做了。停下来之后调用方还要再问一次它，
     /// 决定这一卷算不算做完；**再问一次恒得同一个答案**，因为闩[只升不降](Standing)——
     /// 中止之上没有更强的指令了。各段因此不必把「我是被中止的」当成返回值往上传。
@@ -598,6 +611,27 @@ impl<'a> Events<'a> {
     #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn run_finished(self, outcome: RunOutcome) {
         self.report(Event::RunFinished { outcome });
+    }
+}
+
+/// 没人可问的那一趟，**只给用例**：一格[闩](Standing)、一格[等人的账](Deliberation)，
+/// 配一份指着它们的 [`Events`]。
+///
+/// 库内收 `Events` 的那几处（`crate::source::open` 是其中一个）在用例里也调得起来，
+/// 而那两格的寿命是「一次运行」——`run` 把它们摆在自己的栈上（见 [`Events`] 的 `standing`）。
+/// 这一份把同一对东西摆在用例自己的栈上，形状一模一样，只是[没人可问](Events::sink)。
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct NobodyWatching {
+    standing: Standing,
+    deliberation: Deliberation,
+}
+
+#[cfg(test)]
+impl NobodyWatching {
+    /// 指着这一份的事件端。
+    pub(crate) fn events(&self) -> Events<'_> {
+        Events::new(None, &self.standing, &self.deliberation)
     }
 }
 

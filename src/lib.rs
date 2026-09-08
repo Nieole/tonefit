@@ -282,14 +282,21 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 /// **预扫**算它，一卷一次（见 `survey`）：开卷那条事件报的是它，这一趟的全局总步数是
 /// 它们的和。两个数因此不会分家——不是各算一遍，是加出来的。
 ///
-/// 三段：幂等这一道读全部**源**成员，第一遍走每一张**源页**，第二遍写全部**输出**成员。
+/// 四段：**摊开**这一道落全部成员，幂等这一道读全部**源**成员，第一遍走每一张**源页**，
+/// 第二遍写全部**输出**成员。
 /// 源那一侧与输出那一侧不是同一个数——一个源页产出一到多张输出页（页几何批 03 号票），
-/// 而几张由内容决定（有没有装订沟，页几何批 04 号票）。三段里只有第二段按输出那一侧算：
+/// 而几张由内容决定（有没有装订沟，页几何批 04 号票）。四段里只有末一段按输出那一侧算：
 /// 读源与解源页都发生在切开之前。
 ///
-/// 各段自己可能不在——`--no-metadata` 关掉第一段（那时既没有记录可写也没有依据可比），
-/// dry-run 没有第三段（一个文件都不落盘）。因此按**这一趟真要做的事**算，
-/// 而不是按一个固定的倍数：不然进度条会停在某个百分比上再也不动。
+/// 各段自己可能不在——**摊开那一段只有固实归档有**（`.7z` / `.rar`，ADR 0015 决定第 3 条；
+/// 判据见 `source::Volume::extracts_before_work`），`--no-metadata` 关掉幂等那一段
+/// （那时既没有记录可写也没有依据可比），dry-run 没有末一段（一个文件都不落盘）。
+/// 因此按**这一趟真要做的事**算，而不是按一个固定的倍数：
+/// 不然进度条会停在某个百分比上再也不动。
+///
+/// 摊开那一段是 `p4-parking-lot/13` 添的：那一段从前一步都不报，几百兆的卷在那里
+/// 进度条一动不动。添进来的同时预告也跟着长，**「预告是上界」因此一格没动**——
+/// 只报步不改预告的话，固实归档上进度条会冲过头。
 ///
 /// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
 /// 剩下的由 [`Event::VolumeFinished`] 一次性了结。
@@ -303,6 +310,7 @@ fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
         source_pages,
         output_pages,
         extras,
+        extracted_members,
     } = members;
     let fingerprint = if request.metadata {
         source_pages + extras
@@ -314,16 +322,16 @@ fn volume_steps(members: MemberCounts, request: &Request) -> u64 {
     } else {
         0
     };
-    (fingerprint + source_pages + write) as u64
+    (extracted_members + fingerprint + source_pages + write) as u64
 }
 
-/// 一个卷这一趟要碰的成员数，源那一侧与输出那一侧分开数（页几何批 03 号票）。
+/// 一个卷这一趟要碰的成员数，摊开那一侧、源那一侧与输出那一侧分开数（页几何批 03 号票）。
 ///
 /// 数**两遍**（见 [`MemberCounts::of`]）：预扫数一遍算出步数，处理那一卷时按重开的那一份
 /// 再数一遍。报告里的数出自后一遍——它才是真做了的那一卷。
 ///
-/// 三个数绑成一个类型而不是三个相邻的 `usize` 参数：它们总是一同算出、一同传下去，
-/// 而三个同型的裸数换了位置编译器一句话都不会说，[`volume_steps`] 却会当场少报或多报一整段。
+/// 几个数绑成一个类型而不是几个相邻的 `usize` 参数：它们总是一同算出、一同传下去，
+/// 而几个同型的裸数换了位置编译器一句话都不会说，[`volume_steps`] 却会当场少报或多报一整段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MemberCounts {
     /// 源页数。幂等这一道读它们，第一遍走它们。
@@ -333,6 +341,15 @@ struct MemberCounts {
     output_pages: usize,
     /// 透传文件数。它不经切开，两侧数的是同一批。
     extras: usize,
+    /// **开工前摊开**要落的成员数：固实归档是整卷（源页加透传），不摊开的卷是 0
+    /// （`p4-parking-lot/13`）。
+    ///
+    /// 它与源那一侧数的是同一批成员，却单占一格：**那一段自己会不会走由容器与格式定**
+    /// （见 `source::Volume::extracts_before_work`），而另外那几段在不在由这一趟的模式定
+    /// （第一遍恒走，幂等那一道看 `--no-metadata`，第二遍看 dry-run）。
+    /// 拿 `source_pages + extras` 在 [`volume_steps`] 里现算的话，
+    /// 「这一卷摊不摊开」就得再传一个真假进去，而那正是这个类型存在的理由。
+    extracted_members: usize,
 }
 
 impl MemberCounts {
@@ -343,12 +360,20 @@ impl MemberCounts {
     /// 两边各写一份的话，「预告了多少步」与「报告说做了多少页」会各自漂。
     fn of(volume: &Volume, request: &Request) -> Self {
         let source_pages = volume.pages.len();
+        let extras = volume.extras.len();
         Self {
             source_pages,
             // 上界，不是承诺：一卷里真被切开的页越少，第二遍走过的步越少
             // （见 [`volume_steps`]）。
             output_pages: source_pages * max_outputs_per_source_page(request),
-            extras: volume.extras.len(),
+            extras,
+            // **只问容器与格式，不看这一卷此刻摊开了没有**：预扫数的那一遍卷还没摊开
+            // （`source::enumerate` 交出来的读取端取不出字节），而两遍要数出同一个数。
+            extracted_members: if volume.extracts_before_work() {
+                source_pages + extras
+            } else {
+                0
+            },
         }
     }
 }
@@ -443,10 +468,15 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 ///
 /// # 中止：回 `None`
 ///
-/// **[页边界那个检查点](progress::Events::aborting)在这里**（ADR 0013 决定第 2 条）：
-/// 凡是**逐个成员**往下走的循环，循环头上都问一次——幂等这一道、第一遍、第二遍写页、
-/// 第二遍搬透传文件。答中止就当场停下，这一卷回的是 `None`。
+/// **[页边界那个检查点](progress::Events::aborting)问在这几处**（ADR 0013 决定第 2 条）。
+/// 凡是**逐个成员**往下走的循环，循环头上都问一次——开工前[摊开一整卷](source::open)
+/// 那两遍顺序扫（`source::spread_seven_zip` 与 `spread_rar`，`p4-parking-lot/13`）、
+/// 幂等这一道、第一遍、第二遍写页、第二遍搬透传文件；**外加一处不是循环头的**：
+/// 本函数里 `source::open` 紧接着那一句——摊开途中按下的那一下要在那里收口，
+/// 它交出来的是一份半摊开的卷（见那一句上的注释）。
+/// 答中止就当场停下，这一卷回的是 `None`。
 /// 不逐个数它们，也不在别处复述这个清单：数目会随管线长，而这里是它唯一的出处。
+/// 前两处**落在读取那一层**，不在本函数里——「唯一的出处」说的是这张清单，不是这个文件。
 ///
 /// `None` 说的是**那一卷等于没做**：它那格 `partial` 没有收尾、由析构丢掉
 /// （见 `crate::sink` 的两个 `Drop`），最终位置上一个字节都没动过，报告里因此
@@ -531,7 +561,17 @@ fn process_volume(
     // **固实归档就在这一句里摊到临时目录**（ADR 0015 决定第 3 条）——「开工前」指的正是
     // 这个位置：卷根还在的那一道已经过了，而下面每一件要源字节的事都还没开始。
     // 摊不下（磁盘不够）从这里回 `Err`，那是卷级失败，其余卷照做。
-    let mut volume = source::open(&root)?;
+    //
+    // **观察者那条回路一并递进去**（`p4-parking-lot/13`）：摊开一整卷要跑很久，
+    // 那一段里报得出步、也停得住（见 `source::open`）。
+    let mut volume = source::open(&root, events)?;
+    // **页边界那个检查点**，摊开途中按下的那一下在这里收口：`source::open` 交出来的
+    // 是一份**半摊开**的卷（成员表齐、临时目录里只有停之前落下的那几个），
+    // 底下每一件事都要源字节，一件都不能做。丢掉它连临时目录一起收走（见 `source::Extraction`），
+    // 第二遍还没开始、一格 `partial` 都还没建，最终位置纹丝不动。
+    if events.aborting() {
+        return Ok(None);
+    }
     // 摊了多少字节先留一份：报告两处都要它，而其中一处（跳过那一支）会把卷根搬走。
     let extracted = volume.extracted();
     // 成员按**重开的这一份**数，不是预扫那一份：报告说的得是真做了的这一卷
@@ -2687,10 +2727,13 @@ mod tests {
         );
     }
 
-    /// 第二段按**输出**成员数，前两段按源那一侧（页几何批 03 号票的进度步数）。
+    /// 写出那一段按**输出**成员数，读那两段按源那一侧（页几何批 03 号票的进度步数）。
     ///
     /// 分得开才要紧：读源与解源页都发生在切开之前，只有写出那一段跟着切完的张数走。
     /// 混成一个数的话，切开的卷进度条会在第二遍里走过头或者停下不动。
+    ///
+    /// **摊开那一段**（`p4-parking-lot/13`）在末尾单问一次：它与源那一侧数的是同一批成员，
+    /// 却由格式定在不在，因此拿一个不摊开的卷与一个摊开的卷对着看。
     #[test]
     fn the_write_segment_counts_output_pages_and_the_read_segments_count_source_pages() {
         // 三张源页切成五张输出页，外加一个透传文件：幂等读 3+1、第一遍走 3、第二遍写 5+1。
@@ -2698,6 +2741,7 @@ mod tests {
             source_pages: 3,
             output_pages: 5,
             extras: 1,
+            extracted_members: 0,
         };
         assert_eq!(volume_steps(split, &request()), 4 + 3 + 6);
         // 一对一时与从前逐字相同。
@@ -2718,6 +2762,14 @@ mod tests {
             ..request()
         };
         assert_eq!(volume_steps(split, &bare), 3 + 6);
+        // 固实归档多走一段：整卷四个成员先摊到临时目录，其余三段一格不动。
+        let extracted = MemberCounts {
+            extracted_members: 4,
+            ..split
+        };
+        assert_eq!(volume_steps(extracted, &request()), 4 + 4 + 3 + 6);
+        // dry-run 也照样摊开——摊开在开工前，与写不写输出无关。
+        assert_eq!(volume_steps(extracted, &dry), 4 + 4 + 3);
     }
 
     /// 一个输出成员只对一个源成员：同一源成员出现几次是合法的，两个源成员撞在一起不行。
@@ -2774,7 +2826,7 @@ mod tests {
             encode::png(&page, BitDepth::One, None).expect("编一张源页"),
         )
         .expect("写源页");
-        let volume = source::open(&root).expect("打开源卷");
+        let volume = source::open_unwatched(&root).expect("打开源卷");
 
         // 这一张源页切成了两半：两张输出页各记着自己是那一族的第几张。
         let names = output_names(Path::new("001.png"), 2);
@@ -2830,7 +2882,7 @@ mod tests {
             encode::png(&page, BitDepth::One, None).expect("编一张源页"),
         )
         .expect("写源页");
-        let volume = source::open(&root).expect("打开源卷");
+        let volume = source::open_unwatched(&root).expect("打开源卷");
         let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
         let written = |count: usize| {
             let origin = Origin::new(Path::new("001.png"), 0, count);

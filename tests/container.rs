@@ -1075,8 +1075,11 @@ fn a_seven_zip_comes_out_byte_for_byte_the_same_as_the_cbz_holding_the_same_page
 /// 那一份也筛进来。
 ///
 /// **它证的不是「摊开途中按得停」。**观察者要先**看见**那个目录才改口答中止，
-/// 也就是说中止落在摊开**之后**。摊开那一整段里没有检查点——按下中止要等它解完——
-/// 那是停车场 Q121 记着的一个空档，这条用例够不着它，别把它当成有人守着。
+/// 也就是说这一条按下去的那一刻早晚随摊开报不报到而变，它自己说不出停在了哪儿。
+/// 那半句由 [`aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out`]
+/// 与 [`a_rar_can_be_stopped_while_it_is_being_extracted_too`] 钉着
+/// （`p4-parking-lot/13` 收了停车场 Q121）：那两条数的是**临时目录装过几个成员**，
+/// 这一条数的是**跑完之后它还在不在**。
 #[test]
 fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted() {
     /// 这个成员只在本用例的包里出现，认摊开的那个目录靠它。
@@ -1110,6 +1113,280 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
         for dir in seen {
             assert!(!dir.exists(), "跑完之后 {} 还在（{name}）", dir.display());
         }
+    }
+}
+
+/// **摊开途中按中止，整卷解完之前就停住了**（`p4-parking-lot/13`，ADR 0013 决定第 2 条）。
+///
+/// 这一条问的正是上面那一条够不着的那半句。上面那一条按在摊开**之后**——观察者要先看见
+/// 那个目录才改口；这一条按在摊开**途中**：摊开那一段自己报到，第一条报到上就答中止。
+///
+/// **「整卷解完之前」怎么钉住**：那个临时目录**最多装过几个成员**。卷里有
+/// [`EXTRACTED_MEMBERS`] 个，而摊开途中就停住的话，它装过的比这个数少。
+/// 断言两头都收——**至少装过一个**（不然「少于全部」在一个压根没建出来的目录上也成立），
+/// **少于全部**（那就是「不必等整卷解完」）。数的是盘上的事实，不是库里的调用次数。
+///
+/// **「一遍都没走进去」另问一句**：这一卷一条 `PassStarted` 都不该有。摊开排在幂等那一道
+/// 之前，中止落在摊开途中，那一道因此连开工都不该报——报了就说明它接着往下走了一段
+/// （起了几条读取线程去读一个只摊了一半的临时目录）。这一句钉的是 `process_volume` 里
+/// `source::open` 紧接着那个检查点；少了它，那一句拿掉也不会有人红。
+///
+/// 剩下三件与两级停的既有承诺是同一批：那一卷不进报告、最终位置上一个字节都没动、
+/// 临时目录收干净。
+#[test]
+fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
+    let space = Workspace::new();
+    let solid = many_member_seven_zip(&space, "volume-a");
+    let watcher = WhileExtracting::watching(EXTRACTION_MARKER, tonefit::Instruction::Abort);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(watcher.clone())),
+        ..fixtures::request(&space, [solid.as_path()])
+    })
+    .expect("按停不是失败");
+
+    let most = watcher.most_members_extracted();
+    assert!(
+        most >= 1,
+        "摊开的那个临时目录一次都没被看见，这一条什么都没问出来"
+    );
+    assert!(
+        most < EXTRACTED_MEMBERS,
+        "摊开途中按中止，它还是把整卷解完了：临时目录装过 {most} 个成员，卷里一共 {EXTRACTED_MEMBERS} 个"
+    );
+    assert!(
+        !watcher.any_pass_started(),
+        "摊开途中被中止的那一卷还报出了一遍的开工"
+    );
+
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert!(
+        fixtures::names_in(&space.out()).is_empty(),
+        "中止之后输出根里还剩着东西：{:?}",
+        fixtures::names_in(&space.out())
+    );
+    for dir in watcher.dirs_seen() {
+        assert!(!dir.exists(), "中止之后 {} 还在", dir.display());
+    }
+}
+
+/// **摊开那一段报得出步**，而预告的步数照旧是上界（`p4-parking-lot/13`）。
+///
+/// 摊开排在开卷那条事件之后、第一条 `PassStarted` 之前（`src/lib.rs` 的 `process_volume`：
+/// 重开这一卷那一句在幂等那一道之前），因此「摊开途中报得出事件」在事件流上的样子就是
+/// **那两条之间有步**。从前那一截是空的——进度条一动不动，看着像挂死了。
+///
+/// 第二问同样非问不可：多报一段步而预告没跟着长，进度条就会冲过头，
+/// 而「预告的步数是**上界**」是 `CONTEXT.md` 的《进度》立的规矩。
+/// 比的是这一卷真走过的步与开卷那条事件预告的那个数，两个数都从事件流上取。
+#[test]
+fn extracting_a_volume_reports_steps_before_the_first_pass_starts() {
+    let space = Workspace::new();
+    let mut sevenz = space.sevenz("volume-a");
+    sevenz
+        .page("001.png", &fixtures::gradient(fixtures::TINY))
+        .page("002.png", &fixtures::gradient(fixtures::TINY))
+        .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    let solid = sevenz.write();
+    let watcher = WhileExtracting::answering(tonefit::Instruction::Continue);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(watcher.clone())),
+        ..fixtures::request(&space, [solid.as_path()])
+    })
+    .expect("点名一个 .7z 该跑得起来");
+
+    assert_eq!(report.volumes.len(), 1, "这一卷没跑完");
+    assert!(
+        watcher.steps_while_extracting() > 0,
+        "开卷与第一条 PassStarted 之间一步都没报——摊开那一段仍旧是空的"
+    );
+    let (walked, announced) = watcher.steps_against_what_was_announced();
+    assert!(
+        walked <= announced,
+        "走过 {walked} 步，而开卷那条事件预告的上界是 {announced}"
+    );
+}
+
+/// **`.rar` 那一条摊开的路上同样停得住**（`p4-parking-lot/13`）。
+///
+/// 两个格式各有一遍自己的顺序扫（`source::spread_seven_zip` 与 `source::spread_rar`），
+/// 检查点因此要在两处各摆一个。只测 `.7z` 的话，`.rar` 那一遍漏掉了没有人会红。
+///
+/// **这一条数的是步，不是盘上的文件**，与上面那一条不同。理由是这份夹具**认不出自己那个
+/// 临时目录**：系统临时目录是公共的，认哪个 `tonefit-…` 是自己的靠的是一个别处不会出现的
+/// 成员名，而 `.rar` 那三份夹具是签进仓的字节（`fixtures::rar`）、名字改不了，
+/// 同一批名字本文件另有三条用例也在往临时目录里摊（四个格式那一条就是）。
+/// 摊开一个成员报一步（那条对应关系由上面那一条按盘上的文件钉住），
+/// 因此**报出来的步比成员少**说的就是「没解完就停了」。
+///
+/// 签进仓的那份固实包装着三个成员，比上面那一卷小得多——「少于全部」在它身上仍然问得出口，
+/// 而「够大」那一问由 `.7z` 那一条负责。
+#[test]
+fn a_rar_can_be_stopped_while_it_is_being_extracted_too() {
+    let space = Workspace::new();
+    let solid = space.rar("volume-a", fixtures::rar::SOLID);
+    let watcher = WhileExtracting::answering(tonefit::Instruction::Abort);
+
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(watcher.clone())),
+        ..fixtures::request(&space, [solid.as_path()])
+    })
+    .expect("按停不是失败");
+
+    let extracted = watcher.steps_while_extracting();
+    assert!(extracted > 0, "`.rar` 摊开那一段一步都没报");
+    assert!(
+        extracted < fixtures::rar::members().len(),
+        "`.rar` 摊开途中按中止，它还是把整卷解完了：{extracted} 步，而卷里一共 {} 个成员",
+        fixtures::rar::members().len()
+    );
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert!(
+        fixtures::names_in(&space.out()).is_empty(),
+        "中止之后输出根里还剩着东西"
+    );
+}
+
+/// [`aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out`] 那一卷有几个成员。
+///
+/// 取 24 而不是两三个：「摊开途中就停住了」要靠「装过的比全部少」说出来，
+/// 而卷越小这句话越弱——三个成员的卷上停在第一个与解完只差两个。
+/// 页取最小的那一张（`fixtures::TINY`）：这一卷一页都走不到管线里，
+/// 用例问的只有摊开那一段。
+const EXTRACTED_MEMBERS: usize = 24;
+
+/// 上面那一卷里**头一个**成员的名字，认那个临时目录靠它。
+///
+/// 非得是头一个不可：摊开按归档里的次序走，认得出它的那一刻正是第一个成员刚落盘的那一刻。
+/// 名字要在整个测试二进制里独一份——系统临时目录是公共的，同一刻别的用例也在摊开自己的卷。
+const EXTRACTION_MARKER: &str = "摊开途中-00.png";
+
+/// 一个装着 [`EXTRACTED_MEMBERS`] 个成员的固实 `.7z`。头一个叫 [`EXTRACTION_MARKER`]。
+fn many_member_seven_zip(space: &Workspace, name: &str) -> PathBuf {
+    let mut sevenz = space.sevenz(name);
+    let page = fixtures::gradient(fixtures::TINY);
+    for member in 0..EXTRACTED_MEMBERS {
+        sevenz.page(&format!("摊开途中-{member:02}.png"), &page);
+    }
+    sevenz.write()
+}
+
+/// **摊开那一段**里插得上话的观察者：它数摊开报出来的步、看那个临时目录装到过多大，
+/// 并在摊开途中答一个事先摆好的字。
+///
+/// 「此刻还在摊开」在事件流上就是**第一条 `PassStarted` 还没到**：摊开发生在重开这一卷
+/// 那一句里，而那一句排在幂等那一道之前（`src/lib.rs` 的 `process_volume`）。
+/// 这一格因此不必知道库里摊到第几个成员——它问的是流的形状。
+#[derive(Clone)]
+struct WhileExtracting {
+    /// 认那个临时目录靠的成员名。[`None`] 即不认——只数步、不看盘的那些用例。
+    marker: Option<&'static str>,
+    /// 摊开途中答的那个字。
+    answer: tonefit::Instruction,
+    state: Arc<Mutex<Extracting>>,
+}
+
+#[derive(Default)]
+struct Extracting {
+    /// 收到过 `PassStarted` 没有。收到就说明摊开那一段过去了。
+    a_pass_started: bool,
+    /// 摊开那一段里报到了几步。
+    while_extracting: usize,
+    /// 这一卷一共报到了几步。
+    walked: u64,
+    /// 开卷那条事件预告的那个上界。
+    announced: u64,
+    /// 摊开的那个临时目录**最多**装过几个成员。
+    most: usize,
+    /// 见过的摊开目录，跑完之后拿它问「收干净了没」。
+    dirs: Vec<PathBuf>,
+}
+
+impl WhileExtracting {
+    /// 只数步，不看盘。
+    fn answering(answer: tonefit::Instruction) -> Self {
+        Self {
+            marker: None,
+            answer,
+            state: Arc::new(Mutex::new(Extracting::default())),
+        }
+    }
+
+    /// 连那个临时目录一起看：`marker` 是[认它的那个成员名](extraction_directories_holding)。
+    fn watching(marker: &'static str, answer: tonefit::Instruction) -> Self {
+        Self {
+            marker: Some(marker),
+            ..Self::answering(answer)
+        }
+    }
+
+    fn most_members_extracted(&self) -> usize {
+        self.state.lock().expect("读回见过的最大值").most
+    }
+
+    fn steps_while_extracting(&self) -> usize {
+        self.state
+            .lock()
+            .expect("读回摊开那一段的步数")
+            .while_extracting
+    }
+
+    /// 这一卷报过 `PassStarted` 没有。一遍都没报，说明它没走出摊开那一段。
+    fn any_pass_started(&self) -> bool {
+        self.state.lock().expect("读回报过一遍没有").a_pass_started
+    }
+
+    /// 这一卷真走过的步，配开卷那条事件预告的那个上界。
+    fn steps_against_what_was_announced(&self) -> (u64, u64) {
+        let state = self.state.lock().expect("读回两个数");
+        (state.walked, state.announced)
+    }
+
+    fn dirs_seen(&self) -> Vec<PathBuf> {
+        let mut dirs = self.state.lock().expect("读回见过的目录").dirs.clone();
+        dirs.sort();
+        dirs.dedup();
+        dirs
+    }
+
+    /// 看一眼那个临时目录此刻装着几个成员，记下见过的最大值。
+    fn look(&self) {
+        let Some(marker) = self.marker else { return };
+        for dir in extraction_directories_holding(marker) {
+            let held = fixtures::directory_members(&dir).len();
+            let mut state = self.state.lock().expect("记一眼");
+            state.most = state.most.max(held);
+            state.dirs.push(dir);
+        }
+    }
+}
+
+impl tonefit::Progress for WhileExtracting {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        let mut extracting = false;
+        match event {
+            tonefit::Event::VolumeStarted { steps, .. } => {
+                self.state.lock().expect("记预告").announced = steps;
+            }
+            tonefit::Event::PassStarted { .. } => {
+                self.state.lock().expect("记一遍").a_pass_started = true;
+            }
+            tonefit::Event::Stepped { .. } => {
+                let mut state = self.state.lock().expect("记一步");
+                state.walked += 1;
+                extracting = !state.a_pass_started;
+                if extracting {
+                    state.while_extracting += 1;
+                }
+            }
+            _ => {}
+        }
+        if !extracting {
+            return tonefit::Instruction::Continue;
+        }
+        self.look();
+        self.answer
     }
 }
 
@@ -1341,10 +1618,31 @@ fn an_encrypted_rar_is_refused_when_named_and_listed_as_a_non_volume_file_when_d
     );
 }
 
+/// 系统临时目录里**摊开着**、并且装着 `marker` 这个成员的那几个目录。
+///
+/// 本文件两个看摊开的观察者共用它（[`WatchTheExtraction`] 与 [`WhileExtracting`]）：
+/// 认哪个 `tonefit-…` 是这一趟摊开的那一份，靠的是包里一个**别处不会出现的成员名**——
+/// 系统临时目录是公共的，光按名字前缀筛会把别的用例正在摊的那一份也筛进来。
+/// 前缀那一道仍在，为的是不去 stat 一整个临时目录。
+fn extraction_directories_holding(marker: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            // `source::EXTRACTION_PREFIX`。前缀不对就不必再去 stat 里面那个成员。
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("tonefit-"))
+                && path.join(marker).is_file()
+        })
+        .collect()
+}
+
 /// 跑到一半时**摊开的那些临时目录**是哪几个——每报到一步问一次，见过的都留下。
 ///
-/// 认它靠的是包里那个别处不会出现的成员名：系统临时目录是公共的，光按名字前缀筛
-/// 会把别的用例正在用的那一份也筛进来。前缀那一道仍在，为的是不去 stat 一整个临时目录。
+/// 认它靠的是[那个成员名](extraction_directories_holding)。
 #[derive(Clone)]
 struct WatchTheExtraction {
     marker: &'static str,
@@ -1370,21 +1668,9 @@ impl WatchTheExtraction {
     }
 
     fn look(&self) {
-        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // `source::EXTRACTION_PREFIX`。前缀不对就不必再去 stat 里面那个成员。
-            if !path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("tonefit-"))
-            {
-                continue;
-            }
-            if path.join(self.marker).is_file() {
-                self.seen.lock().expect("记一个目录").push(path);
-            }
+        let found = extraction_directories_holding(self.marker);
+        if !found.is_empty() {
+            self.seen.lock().expect("记一个目录").extend(found);
         }
     }
 }

@@ -403,7 +403,7 @@ mod tests {
             // 内容是序号那个字节铺满，取回来一眼认得出是哪一页。
             std::fs::write(root.path().join(name), vec![index as u8; size]).expect("写页");
         }
-        let volume = source::open(root.path()).expect("打开卷");
+        let volume = source::open_unwatched(root.path()).expect("打开卷");
         (root, volume)
     }
 
@@ -414,7 +414,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("建目录");
         let path = dir.path().join("卷一.cbz");
         write_archive(&path, sizes);
-        let volume = source::open(&path).expect("打开归档卷");
+        let volume = source::open_unwatched(&path).expect("打开归档卷");
         (dir, volume)
     }
 
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn a_volume_with_no_members_hands_over_nothing() {
         let dir = tempfile::tempdir().expect("建目录");
-        let mut volume = source::open(dir.path()).expect("打开空卷");
+        let mut volume = source::open_unwatched(dir.path()).expect("打开空卷");
         let members: Vec<&Member> = volume.pages.iter().collect();
         assert!(members.is_empty());
 
