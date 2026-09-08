@@ -91,3 +91,208 @@ pub fn write_with_a_broken_member(path: impl AsRef<Path>, at: usize) -> PathBuf 
     bytes[at] = !bytes[at];
     write(path, &bytes)
 }
+
+/// 造一组**分卷序列**：`name.part1.rar` … `name.partN.rar`，落在 `dir` 下，按顺序返回。
+///
+/// 上面三份非签进仓不可，因为票面要的是「真压过」与「真加密」——那两样只有 RARLAB 的
+/// 写入端给得出。分卷这一份不同：它要的是**归档头里那一位**（`p4-parking-lot/17`），
+/// 而成员一律**存储不压**——存储那一档的成员字节原样躺在包里，一个压缩算法都不碰，
+/// 因此这一份用不着 UnRAR 许可挡着的那一半（见本模块抬头）。
+///
+/// 装的是 [`members`] 那三个成员，与另外三种格式同一批内容——「同内容的单份 `.rar`
+/// 与这一组出同一份产物」那一条因此断得起逐字节的等号。
+///
+/// **每一道卷边界都落在一个成员当中**（那一条成员被劈成两半，前一半带「后面还有」、
+/// 后一半带「前面未完」）。这不是为了逼真：UnRAR 认「这一份是不是头一份」时，
+/// 归档头里那个卷号会被**头一条成员头上那一位**改写（`archive.cpp` 的 `IsArchive`），
+/// 边界正好落在两个成员之间的包，续的那几份会被认成头一份。因此 `parts` 不能超过成员数。
+pub fn write_split(dir: &Path, name: &str, parts: usize) -> Vec<PathBuf> {
+    split_volumes(parts)
+        .into_iter()
+        .enumerate()
+        .map(|(index, bytes)| write(dir.join(format!("{name}.part{}.rar", index + 1)), &bytes))
+        .collect()
+}
+
+/// RAR5 的签名。
+const SIGNATURE: &[u8] = b"Rar!\x1a\x07\x01\x00";
+
+/// 块头上那三位：这个块后面跟着数据 / 这一条成员前面未完 / 这一条成员后面还有。
+const HAS_DATA: u64 = 0x0002;
+const SPLIT_BEFORE: u64 = 0x0008;
+const SPLIT_AFTER: u64 = 0x0010;
+
+/// [`write_split`] 那几份的字节。分块见该函数的文档。
+fn split_volumes(parts: usize) -> Vec<Vec<u8>> {
+    let members = members();
+    assert!(
+        (1..=members.len()).contains(&parts),
+        "分卷数要落在 1..={}：每一道边界都得劈开一条成员",
+        members.len()
+    );
+    (0..parts)
+        .map(|index| {
+            let mut bytes = SIGNATURE.to_vec();
+            // 卷号只有续的那几份带着，头一份不带——UnRAR 按「带没带」认头一份。
+            bytes.extend_from_slice(&archive_block(
+                parts > 1,
+                (index > 0).then_some(index as u64),
+            ));
+            for fragment in fragments(&members, index, parts) {
+                bytes.extend_from_slice(&file_block(&fragment));
+            }
+            bytes.extend_from_slice(&end_block(index + 1 < parts));
+            bytes
+        })
+        .collect()
+}
+
+/// 第 `index` 份里躺着哪几段：上一条成员的后一半、加这一条成员的前一半；
+/// 末一份把剩下的成员整条装完。
+fn fragments<'a>(
+    members: &'a [(&'a str, Vec<u8>)],
+    index: usize,
+    parts: usize,
+) -> Vec<Fragment<'a>> {
+    let mut fragments = Vec::new();
+    if index > 0 {
+        let (name, whole) = &members[index - 1];
+        fragments.push(Fragment::half(name, whole, Half::Tail));
+    }
+    if index + 1 < parts {
+        let (name, whole) = &members[index];
+        fragments.push(Fragment::half(name, whole, Half::Head));
+    } else {
+        fragments.extend(
+            members[index..]
+                .iter()
+                .map(|(name, whole)| Fragment::whole(name, whole)),
+        );
+    }
+    fragments
+}
+
+/// 一条成员在**这一份**里的那一段。
+struct Fragment<'a> {
+    name: &'a str,
+    /// 整条解开有多少字节。劈成两半的那一条上，两半写的都是整条的数。
+    unpacked: u64,
+    /// 整条的 CRC32。同上：两半写的都是整条的。
+    crc: u32,
+    /// 这一段的字节。
+    data: &'a [u8],
+    /// 前面未完 / 后面还有。
+    before: bool,
+    after: bool,
+}
+
+enum Half {
+    Head,
+    Tail,
+}
+
+impl<'a> Fragment<'a> {
+    fn whole(name: &'a str, bytes: &'a [u8]) -> Self {
+        Self {
+            name,
+            unpacked: bytes.len() as u64,
+            crc: crc32(bytes),
+            data: bytes,
+            before: false,
+            after: false,
+        }
+    }
+
+    fn half(name: &'a str, bytes: &'a [u8], half: Half) -> Self {
+        let at = bytes.len() / 2;
+        let (data, before, after) = match half {
+            Half::Head => (&bytes[..at], false, true),
+            Half::Tail => (&bytes[at..], true, false),
+        };
+        Self {
+            name,
+            unpacked: bytes.len() as u64,
+            crc: crc32(bytes),
+            data,
+            before,
+            after,
+        }
+    }
+}
+
+/// 归档头（类型 1）：这一份是不是分卷序列里的一员，是第几份。
+fn archive_block(volume: bool, number: Option<u64>) -> Vec<u8> {
+    let mut body = Vec::new();
+    vint(
+        u64::from(volume) | if number.is_some() { 0x0002 } else { 0 },
+        &mut body,
+    );
+    if let Some(number) = number {
+        vint(number, &mut body);
+    }
+    block(1, 0, &body, &[])
+}
+
+/// 成员头（类型 2）加它那一段字节。压缩方式一律**存储不压**。
+fn file_block(fragment: &Fragment<'_>) -> Vec<u8> {
+    let mut body = Vec::new();
+    vint(0x0004, &mut body); // 只带 CRC32，不带时间戳——字节因此稳定
+    vint(fragment.unpacked, &mut body);
+    vint(0, &mut body); // 属性
+    body.extend_from_slice(&fragment.crc.to_le_bytes());
+    vint(0, &mut body); // 压缩信息：版本 0、不固实、存储不压、最小字典
+    vint(0, &mut body); // 打包的那台机器
+    vint(fragment.name.len() as u64, &mut body);
+    body.extend_from_slice(fragment.name.as_bytes());
+    let flags = HAS_DATA
+        | if fragment.before { SPLIT_BEFORE } else { 0 }
+        | if fragment.after { SPLIT_AFTER } else { 0 };
+    block(2, flags, &body, fragment.data)
+}
+
+/// 收尾头（类型 5）：后面还有没有下一份。
+fn end_block(more: bool) -> Vec<u8> {
+    let mut body = Vec::new();
+    vint(u64::from(more), &mut body);
+    block(5, 0, &body, &[])
+}
+
+/// 一个块：`[头 CRC32][头长][类型][标志][数据长][块自己那几项][数据]`。
+/// 头 CRC32 盖的是「头长」那一格起、到头末为止的那一串，数据不在里面。
+fn block(kind: u64, flags: u64, body: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut header = Vec::new();
+    vint(kind, &mut header);
+    vint(flags, &mut header);
+    if flags & HAS_DATA != 0 {
+        vint(data.len() as u64, &mut header);
+    }
+    header.extend_from_slice(body);
+
+    let mut sized = Vec::new();
+    vint(header.len() as u64, &mut sized);
+    sized.extend_from_slice(&header);
+
+    let mut out = crc32(&sized).to_le_bytes().to_vec();
+    out.extend_from_slice(&sized);
+    out.extend_from_slice(data);
+    out
+}
+
+/// RAR5 的变长整数：一字节七位，低位在前，最高位置 1 表示后面还有。
+fn vint(mut value: u64, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize()
+}

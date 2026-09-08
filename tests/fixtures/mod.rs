@@ -608,6 +608,14 @@ impl Workspace {
         rar::write(self.tmp.path().join(format!("{name}.rar")), bytes)
     }
 
+    /// 造一组**分卷 `.rar`** 落到工作区，按顺序返回（`name.part1.rar` … `name.partN.rar`）。
+    ///
+    /// 与 [`rar`](Self::rar) 那一个不同：那一个只是把签进仓的字节落盘，这一组是现造的
+    /// ——分卷要的是归档头里那一位，而成员存储不压就够（见 `rar::write_split`）。
+    pub fn split_rar(&self, name: &str, parts: usize) -> Vec<PathBuf> {
+        rar::write_split(self.tmp.path(), name, parts)
+    }
+
     /// 在工作区根下写一个不属于任何卷的文件。用来造「扩展名像卷、内容不是」的输入。
     pub fn stray_file(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.tmp.path().join(name);

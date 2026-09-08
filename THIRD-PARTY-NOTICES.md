@@ -19,8 +19,13 @@ tonefit 本体按 MIT 发布（见 `LICENSE`）。**随程序分发**而许可�
 
 ## UnRAR
 
-- **在哪**：不在仓库里，随 `unrar-ng` / `unrar-ng-sys` 这两个依赖进来（见 `Cargo.toml`），
-  由它们把 UnRAR 的 C++ 源码**编进 tonefit 的二进制**。
+- **在哪**：那份 C++ 源码**不在仓库里**，随 `unrar-ng-sys` 这个依赖进来（见 `Cargo.toml`），
+  由它把 UnRAR 的 C++ 源码**编进 tonefit 的二进制**。
+  它上面那层 Rust 包装 `unrar-ng` 则**在仓库里**：`vendor/unrar-ng/`，与上游的
+  0.7.7 只差一行（跨卷回调里一句越界读，为什么改、什么条件下撤掉见
+  `vendor/unrar-ng/PATCH.md`）。那一层自身是 MIT OR Apache-2.0，两份全文跟着躺在
+  那个目录里（`LICENSE-MIT`、`LICENSE-APACHE`）；**被它包进去的那份 C++ 源码不是**，
+  约束是下面这一条。
 - **是什么**：`.rar` 的解压端，随附的是 UnRAR 7.21.1（`unrar-ng-sys` 的
   `vendor/unrar/version.hpp`；**版本号这一处说了算**）。tonefit 只读 `.rar`、从不写——
   输出一律 `.cbz`（ADR 0015 决定第 2 条）。

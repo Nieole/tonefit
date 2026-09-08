@@ -5,6 +5,10 @@
 [workspace]
 members = [".", "xtask"]
 default-members = ["."]
+# `vendor/` 里躺着的是**别人的**源码（见底下 `[patch.crates-io]`）。挡在成员之外，
+# `cargo fmt` 与 clippy 才不会去管它按不按本仓的规矩写——那一份的规矩是上游的，
+# 而它与上游只差一行，差多了就跟不上了。
+exclude = ["vendor"]
 
 [package]
 name = "tonefit"
@@ -109,6 +113,16 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_IO",
     "Win32_System_WindowsProgramming",
 ] }
+
+# **`unrar-ng` 走仓库里那一份，不走 crates.io 那一份。**
+#
+# 0.7.7 的跨卷回调里有一句越界读，而分卷 `.rar` 落地之后（`p4-parking-lot/17`）
+# `.rar` 那两条路都要从卷边界上走过去，两条都踩得到它。仓库里那一份与上游**只差那一行**。
+#
+# 病在哪、怎么改、什么条件下撤掉，**唯一出处是 `vendor/unrar-ng/PATCH.md`**
+# ——上游发出带这个修的版本，这一节与那个目录一起删掉。
+[patch.crates-io]
+unrar-ng = { path = "vendor/unrar-ng" }
 
 [features]
 default = ["tui"]

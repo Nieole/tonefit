@@ -1696,6 +1696,117 @@ fn a_solid_rar_and_a_stored_one_come_out_the_same() {
     }
 }
 
+/// **分卷 `.rar` 跨卷读完，产物与同内容的单份包逐字节相同**
+/// （`p4-parking-lot/17`，ADR 0015 决定第 1 条的修订）。
+///
+/// 从前两份 `.part*.rar` 各自成卷，而 UnRAR 打开头一份就跨卷读完了——盘上因此出两份
+/// 重名不同的产物，其中一份是重复的。折成一个卷之后**卷边界在源那一层就被吃掉**：
+/// 被劈成两半的那条成员合成一条交上来，判定、几何、量化、编码一处都不知道这一卷
+/// 原来是分开打的。
+///
+/// 两边装的是同一批成员（`fixtures::rar::members()`：分卷那一份现造、单份那一份是签进仓
+/// 的字节，见 `fixtures::rar` 抬头），因此断得起逐字节的等号。**卷名故意不同**：
+/// 同名会撞进 ADR 0015 认下的那种归一撞车，而产物比的是成员，与卷名无关。
+///
+/// 点名的是**头一份**：续的那一份连列都没被列出来（那一半由 `tests/discovery.rs` 的
+/// `a_split_rar_comes_out_as_one_volume_named_after_the_sequence` 钉着）。
+#[test]
+fn a_split_rar_reads_across_its_volumes_and_comes_out_like_a_single_one() {
+    let space = Workspace::new();
+    let parts = space.split_rar("分卷", 2);
+    let single = space.rar("单份", fixtures::rar::SOLID);
+
+    let report = run_paths(&space, [parts[0].as_path(), single.as_path()]);
+
+    assert_eq!(report.volumes.len(), 2, "两卷没都跑起来");
+    assert_eq!(
+        fixtures::read_cbz(&report.volumes[0].output),
+        fixtures::read_cbz(&report.volumes[1].output),
+        "分卷读出来的与同内容的单份包不是同一串字节"
+    );
+    // 卷名取分卷序列的名字：`.part1` 那一截不进产物。
+    assert_eq!(
+        report.volumes[0].output,
+        space.out().join("分卷.cbz"),
+        "分卷那一卷的去处没取分卷序列的名字"
+    );
+    assert!(
+        report.volumes[0].extracted > 0,
+        "分卷那一卷没走摊开那一条：分卷与否不该改读法"
+    );
+}
+
+/// **点名一份续的分卷是整趟拒绝**（`p4-parking-lot/17`）。
+///
+/// 开它得到的是**半个卷**——UnRAR 只往前走，前面那几份里的成员它回不去取，
+/// 而票面要的正是「不静默出半个卷」。那句话因此还得指得出该点哪一个。
+///
+/// 走的是既有的「**点名的**那一个点不开 → 整趟拒绝」（ADR 0014 决定第 5 条），
+/// **不新开一种结局**——与加密那一条同一条出路。发现出来的那一头不走这里：
+/// 那一头它连候选都不是（`tests/discovery.rs` 的
+/// `a_split_rar_comes_out_as_one_volume_named_after_the_sequence`）。
+#[test]
+fn naming_a_continuation_of_a_split_rar_refuses_the_whole_run() {
+    let space = Workspace::new();
+    let parts = space.split_rar("第01卷", 2);
+
+    let message = format!(
+        "{:#}",
+        run_paths_expecting_failure(&space, [parts[1].as_path()])
+    );
+
+    assert!(
+        message.contains("续的那一份"),
+        "拒绝那句话没说它是分卷序列里续的那一份：{message}"
+    );
+    assert!(
+        message.contains(".part1"),
+        "拒绝那句话没指出该点名哪一个：{message}"
+    );
+}
+
+/// **缺了一份的分卷序列当场说得出，不静默出半个卷**（`p4-parking-lot/17`）。
+///
+/// 三份里拿掉中间那一份：UnRAR 从头一份读到卷边界就接不下去，而那句话要说得出
+/// **缺了一份**——合进「可能已损坏」的话，用户手上那几份包好好的，报告却把他支去修包
+/// （与加密那一条同一条规矩，见 `source` 的 `rar_is_unreadable`）。
+///
+/// 末一份**不另报一条**：它是续的那一份，发现根本没把它列成候选。报出两条的话，
+/// 用户要在两条里自己拼出「这是同一个序列」。
+#[test]
+fn a_split_rar_missing_one_of_its_parts_says_so_instead_of_making_half_a_volume() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let parts = fixtures::rar::write_split(&library, "第01卷", 3);
+    std::fs::remove_file(&parts[1]).expect("拿掉中间那一份");
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+
+    let report = run_paths(&space, [library.as_path()]);
+
+    let listed: Vec<&Path> = report
+        .non_volume_files
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect();
+    assert_eq!(
+        listed,
+        [parts[0].as_path()],
+        "缺了一份的分卷序列没被点出来，或者续的那一份也被报了一遍"
+    );
+    let tonefit::NonVolumeReason::Unopenable(why) = &report.non_volume_files[0].reason else {
+        panic!("缺了一份的分卷序列进清单的理由不是「点不开」");
+    };
+    assert!(why.contains("下一份不在"), "那句话没说是缺了一份：{why}");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/好的.cbz"],
+        "其余卷没照做，或者缺了一份的分卷序列还是写出了半个卷"
+    );
+}
+
 /// **摊不开的 `.rar` 是卷级失败，其余卷照做**（ADR 0015 决定第 3 条，
 /// 与 `.7z` 那一条 `a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume` 并列）。
 ///
