@@ -68,6 +68,7 @@
 //! 两遍之间源变了的话，做的与报的都是**重开的那一份**：预扫这一遍只留下步数
 //! （见 [`Surveyed::steps`]），成员数在处理那一卷时按重开的卷重新数一遍。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -75,6 +76,7 @@ use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
 use crate::report::{NonVolumeFile, NonVolumeReason, UnreachablePlace};
+use crate::sink::Lodgers;
 use crate::source::{self, Container};
 use crate::{MemberCounts, Request, volume_steps};
 
@@ -113,6 +115,12 @@ pub(crate) struct Surveyed {
     /// 私有：外面要的是接好的那条路径，走 [`output_path`](Self::output_path)——
     /// 「输出根接上镜像出来的那几级」只有那一处会拼。
     output_relative: PathBuf,
+    /// 住在这一卷去处**里面**的那些别的卷，各按相对这一卷去处的那一段
+    /// （见 [`Lodgers`]）。这一卷收尾时换掉的范围按它收窄。
+    ///
+    /// 它由 [`find_the_lodgers`] 在这一批卷全部发现出来之后填上——一个卷住不住在另一个卷的去处里，
+    /// 得等两条镜像路径都在手上才答得出，逐个发现的时候答不了。
+    pub(crate) lodgers: Lodgers,
     /// 这一卷这一趟最多走多少步。开卷那条事件报的就是它。
     ///
     /// 它算在**预扫这一遍**数出来的成员上。重开之后成员数可能与它对不上（两遍之间源变了），
@@ -188,6 +196,8 @@ impl Survey {
                         steps: volume_steps(MemberCounts::of(&volume, request), request),
                         root: volume.root,
                         output_relative: candidate.output_relative,
+                        // 这一格要等这一批卷全在手上才填得了，见循环之后那一句 [`find_the_lodgers`]。
+                        lodgers: Lodgers::default(),
                         enumerating,
                     });
                     // 卷在这一格的末尾**放掉**：归档卷那个 `ZipArchive` 连同它的文件句柄
@@ -245,6 +255,8 @@ impl Survey {
         if !refused.is_empty() {
             return Err(refuse(&refused, request.inputs.len()));
         }
+        // 这一批卷齐了，「谁住在谁的去处里」这才答得出来。
+        find_the_lodgers(&mut volumes);
         Ok(Self {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
@@ -273,6 +285,47 @@ impl Survey {
         self,
     ) -> (Vec<Surveyed>, Vec<NonVolumeFile>, Vec<UnreachablePlace>) {
         (self.volumes, self.non_volume_files, self.unreachable_places)
+    }
+}
+
+/// 认出**谁住在谁的去处里**：镜像出来的去处互相嵌套的那几对，各记进外面那一卷的
+/// [`Surveyed::lodgers`]。写出那一层认得出[借住的卷](Lodgers)，收尾才换得掉
+/// 「这一卷那几个成员」而不是整个去处（见 `crate::sink::DirectorySink`，收停车场 Q113）。
+///
+/// 算法是**逐个卷往上找祖先**，不是两两比：卷数是几千的量级（点名一个库就是几千个卷），
+/// 两两比是它的平方，而一条镜像路径的级数是个位数。
+///
+/// 比的是**镜像出来的相对路径**，不是卷根：借住这件事发生在输出那一侧，
+/// 而两个卷的源可以躺在完全不同的地方却镜像到同一棵输出树上。
+/// 它按分量逐字节比，与撞名那一道那把「文件系统认不认成同一个」的尺子不是一把
+/// （见 `crate::ensure_no_two_volumes_share_an_output`）：认漏一对的后果是那一卷
+/// 退回「整个换掉」，认多一对的后果是少清一件陈旧产物——都不写坏东西。
+fn find_the_lodgers(volumes: &mut [Surveyed]) {
+    let at: HashMap<PathBuf, usize> = volumes
+        .iter()
+        .enumerate()
+        .map(|(index, volume)| (volume.output_relative.clone(), index))
+        .collect();
+    // 先收齐再写回：查表要借着 `volumes`，而填那一格要改它。
+    let mut inside: Vec<(usize, PathBuf)> = Vec::new();
+    for volume in volumes.iter() {
+        // `ancestors` 头一个是它自己，跳掉——一个卷不借住在自己的去处里。
+        for host in volume.output_relative.ancestors().skip(1) {
+            let Some(&index) = at.get(host) else {
+                continue;
+            };
+            let Ok(rest) = volume.output_relative.strip_prefix(host) else {
+                continue;
+            };
+            inside.push((index, rest.to_path_buf()));
+        }
+    }
+    let mut lodgers: Vec<Vec<PathBuf>> = vec![Vec::new(); volumes.len()];
+    for (index, rest) in inside {
+        lodgers[index].push(rest);
+    }
+    for (volume, inside) in volumes.iter_mut().zip(lodgers) {
+        volume.lodgers = Lodgers::new(inside);
     }
 }
 

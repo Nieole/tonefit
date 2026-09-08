@@ -5,6 +5,7 @@
 mod fixtures;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fixtures::{Workspace, run_paths, run_paths_expecting_failure, run_volume};
@@ -833,6 +834,139 @@ fn a_run_that_fails_leaves_the_previous_output_directory_intact() {
     );
 }
 
+/// **一个目录卷收尾时只换掉自己那几个成员，借住在它去处里的卷一个字节不动**
+/// （`p4-parking-lot/16`，收停车场 Q113）。
+///
+/// 混装目录里这两句话不是同一句：`N和S/` 一张封面加两话，封面自成一个卷
+/// （ADR 0014 决定第 1 条：一个目录可以既是卷又装着卷），而它的去处 `out/N和S`
+/// **同时是**两话输出的父目录。从前收尾把最终位置整个换掉，两话上一趟的产物跟着被删
+/// ——同一趟里它们随后照写，末了的盘是对的；而**这一趟没走完**，它们就再也回不来了。
+///
+/// 按停按在**头一卷跑完那一条上**：发现是先序的，封面那一卷恒是头一个，
+/// 收尾因此停在它与两话之间——正是「没走完」那个形状（ADR 0013 决定第 1 条）。
+///
+/// 一条用例同时钉住两半，因为收窄的正是它们之间那条界线：借住的卷**一个字节没动**，
+/// 而这一卷自己的陈旧产物照旧清得掉。
+#[test]
+fn a_directory_volume_leaves_the_volumes_lodging_in_its_output_alone() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let mixed = space.volume("N和S");
+    mixed.page("cover.png", &page);
+    for chapter in ["第1话.cbz", "第2话.cbz"] {
+        let mut archive = fixtures::Cbz::new(mixed.path().join(chapter));
+        archive.page("001.png", &page);
+        archive.write();
+    }
+
+    // 头一趟整个跑完：盘上是封面那一卷，加上住在它去处里的两话。
+    let first = run_paths(&space, [mixed.path()]);
+    assert_eq!(first.volumes.len(), 3, "夹具不对：封面与两话没各自成卷");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["N和S/cover.png", "N和S/第1话.cbz", "N和S/第2话.cbz"],
+        "夹具不对：头一趟就没写全"
+    );
+    let lodged = lodged_chapters(&space);
+    let cover_before = std::fs::read(space.out().join("N和S/cover.png")).expect("读回封面");
+    // 一件上一趟留下的陈旧产物：封面那一卷重做时它该被清掉。
+    std::fs::write(space.out().join("N和S/陈旧产物.png"), "上一趟的".as_bytes())
+        .expect("摆一件陈旧产物");
+    // 源里的封面变了，封面那一卷因此要重做；两话一个字节没动，它们本可以照旧躺着。
+    mixed.page("cover.png", &fixtures::solid(fixtures::TINY, 40));
+
+    let second = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(
+            StopOnceTheFirstVolumeIsDone::default(),
+        )),
+        ..fixtures::request(&space, [mixed.path()])
+    })
+    .expect("按停不是失败");
+
+    // 收尾停在卷边界上：封面那一卷做完了，两话一页都没开工。
+    assert_eq!(
+        second.outcome,
+        tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish)
+    );
+    assert_eq!(second.volumes.len(), 1, "收尾没停在封面那一卷之后");
+    // 封面那一卷**真的重做了**：没重做的话它连收尾都走不到，这条用例就什么都没问。
+    assert_ne!(
+        std::fs::read(space.out().join("N和S/cover.png")).expect("读回重做出来的封面"),
+        cover_before,
+        "夹具不对：封面那一卷被幂等跳过了"
+    );
+    // 借住的那两卷**一个字节没动**。
+    assert_eq!(
+        lodged_chapters(&space),
+        lodged,
+        "借住在这个去处里的卷被动了"
+    );
+    // 而这一卷自己的陈旧产物照旧清得掉。
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["N和S/cover.png", "N和S/第1话.cbz", "N和S/第2话.cbz"],
+        "陈旧产物没被清掉，或者输出里多/少了东西"
+    );
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        ["N和S"],
+        "输出根里留下了那格临时目录"
+    );
+}
+
+/// **混装目录里那一卷中途失败，盘上一个字节都没动**——它自己上一趟的产物与借住的卷都在。
+///
+/// 这是上一条的另一半（票 `p4-parking-lot/16` 的第三条验收）：收窄的是「换掉什么」，
+/// 不是「什么时候才碰最终位置」——最终位置仍旧只在收尾那一步被碰到，
+/// 而中途失败根本走不到那一步。
+///
+/// **它是一条守卫，不是一条会红的用例**：改动之前它同样绿（那时收尾也没走到）。
+/// 它防的是把清陈旧产物那一步挪到写出之前——那样这一趟一失败，
+/// 上一趟的封面与两话就一起没了。
+#[test]
+fn a_mixed_directory_that_fails_partway_leaves_the_whole_place_as_it_was() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let mixed = space.volume("N和S");
+    mixed.page("cover.png", &page);
+    mixed.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+    for chapter in ["第1话.cbz", "第2话.cbz"] {
+        let mut archive = fixtures::Cbz::new(mixed.path().join(chapter));
+        archive.page("001.png", &page);
+        archive.write();
+    }
+
+    let first = run_paths(&space, [mixed.path()]);
+    assert_eq!(first.volumes.len(), 3, "夹具不对：封面与两话没各自成卷");
+    let before = fixtures::fingerprint(&space.out());
+
+    // 封面那一卷刚重开就被抽走透传文件：页已经进了临时目录，那一刻失败才真是「写到一半」
+    // （理由与本文件上面那两条同一条）。
+    let failed = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(
+            fixtures::RemoveOnceTheVolumeIsOpen::member(mixed.path(), "ComicInfo.xml"),
+        )),
+        ..fixtures::request(&space, [mixed.path()])
+    })
+    .expect("卷级失败不该毁掉整趟");
+
+    assert_eq!(
+        failed.failed_volumes.len(),
+        1,
+        "抽走透传文件之后封面那一卷没被记成卷级失败"
+    );
+    assert_eq!(
+        fixtures::fingerprint(&space.out()),
+        before,
+        "中途失败动了最终位置：上一趟的产物或者借住的卷被毁了"
+    );
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        ["N和S"],
+        "输出根里留下了半成品"
+    );
+}
+
 /// 上一趟**异常死亡**留下的那格临时容器，这一趟认得出来，也清得掉。
 ///
 /// 正常收场时它由析构收走：跑完改名到位（本文件上面那几条），或者中途失败、被中止
@@ -936,6 +1070,38 @@ fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit
         "抽走透传文件之后这一卷没被记成卷级失败"
     );
     report
+}
+
+/// 借住在 `out/N和S` 里的那两话，各一串字节。断言「一个字节没动」比的就是它。
+fn lodged_chapters(space: &Workspace) -> Vec<Vec<u8>> {
+    ["第1话.cbz", "第2话.cbz"]
+        .into_iter()
+        .map(|chapter| {
+            std::fs::read(space.out().join("N和S").join(chapter))
+                .unwrap_or_else(|error| panic!("读回借住的 {chapter}：{error}"))
+        })
+        .collect()
+}
+
+/// 头一卷跑完那一条上改口答**收尾**：这一趟因此停在卷边界上，后面的卷一页都不开工
+/// （ADR 0013 决定第 1 条）。
+///
+/// 决策点上照旧答继续——在那里答收尾的话头一卷连第二遍都不走，输出一个字节都不写
+/// （见 `tonefit` 的 `process_volume`），而要问的正是「它写完了、收尾了，下一卷没开工」。
+#[derive(Default)]
+struct StopOnceTheFirstVolumeIsDone(AtomicBool);
+
+impl tonefit::Progress for StopOnceTheFirstVolumeIsDone {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if matches!(event, tonefit::Event::VolumeFinished { .. }) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+        if self.0.load(Ordering::SeqCst) {
+            tonefit::Instruction::Finish
+        } else {
+            tonefit::Instruction::Continue
+        }
+    }
 }
 
 /// 跑到一半时最终位置上有多少个成员——每报到一步问一次，留下见过的最大值。
