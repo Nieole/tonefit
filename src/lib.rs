@@ -2013,7 +2013,11 @@ fn candidate_scores(reference: &Reference, allowed: &[Candidate]) -> Vec<Candida
         .iter()
         .map(|&candidate| CandidateScore {
             candidate,
-            score: metric::score(reference, &quantize::quantize(reference.image(), candidate)),
+            score: metric::score(
+                reference,
+                &quantize::quantize(reference.image(), candidate),
+                candidate.bit_depth,
+            ),
         })
         .collect()
 }

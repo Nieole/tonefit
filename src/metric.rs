@@ -14,6 +14,7 @@
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 use crate::profile::Panel;
+use crate::quantize::BitDepth;
 
 /// 一个候选离参照有多远。单位是 8 位灰度级，越小越好。
 ///
@@ -94,20 +95,27 @@ impl Reference {
 
 /// 判据：候选离参照有多远。纯函数，不碰文件系统与全局状态。
 ///
-/// 候选传的是它量化之后摊回 8 位工作精度的像素（见 [`crate::quantize`]）。
+/// 候选传的是它量化之后摊回 8 位工作精度的像素（见 [`crate::quantize`]），
+/// `depth` 是把它量化出来的那一档位深。
 /// 尺寸必须与参照一致——判据比的是同一页的两种量化，尺寸对不上是调用方的 bug。
+///
+/// **位深要单独传进来**，因为颗粒项那道可见度地板是**格点间距的一个比例**
+/// （见 [`Composition`]），而格点间距只有位深说得出来。从候选的像素上反推格点数
+/// 不成立：一张纯色页在任何一档上都只用得着一个格点，反推出来的是 1bit。
+/// 每一个调用点手里本来就有 `Candidate`，位深因此是现成的。
 ///
 /// 一块的读数是**两项相加**，再乘上这一块的掩蔽加权。
 ///
 /// 相加而不是取更大的那个：抖动做的正是「拿低频换高频」，取更大的那个会让这笔交换在判据上
 /// 免费。也不是平方和开方——颗粒项减过可见度地板之后已经不是一个 RMS 分量，
 /// 两项各自是一种**看得见的损伤**，同一块上两种都摊上就该两笔都算。
-pub fn score(reference: &Reference, candidate: &GrayImage) -> Score {
+pub fn score(reference: &Reference, candidate: &GrayImage, depth: BitDepth) -> Score {
     assert_eq!(
         candidate.size(),
         reference.size(),
         "候选与参照尺寸不一致：判据比的是同一页的两种量化"
     );
+    let floor = composition().floor(depth);
     let candidate_low_pass = low_pass(candidate.pixels(), candidate.size(), reference.kernel);
     let width = reference.size().width as usize;
     let mut errors: Vec<f32> = reference
@@ -122,6 +130,7 @@ pub fn score(reference: &Reference, candidate: &GrayImage) -> Score {
                     .tile
                     .grain(candidate.pixels(), &candidate_low_pass, width),
                 weighted.grain,
+                floor,
             );
             weighted.weight * (low + grain)
         })
@@ -134,8 +143,11 @@ pub fn score(reference: &Reference, candidate: &GrayImage) -> Score {
 /// 减参照那一份，是因为线稿与网点自带高频——候选把它照搬过来不是新长出来的颗粒。
 /// 减地板，是因为高频起伏低到一定程度就真的看不见：抖动把误差摊到眼睛分不开的尺度上，
 /// **那一段是它该得的便宜**，判据不收。收的是超出去的那一截。
-fn visible_grain(candidate: f32, reference: f32) -> f32 {
-    (candidate - reference - GRAIN_FLOOR).max(0.0)
+///
+/// 地板由调用方按位深算出（[`Composition::floor`]）：它是格点间距的一个比例，
+/// 而这里一块一块地算，位深在整页上只有一个。
+fn visible_grain(candidate: f32, reference: f32, floor: f32) -> f32 {
+    (candidate - reference - floor).max(0.0)
 }
 
 /// 观看距离，毫米。ADR 0002 的论证前提：300 PPI、30 cm。
@@ -290,27 +302,49 @@ fn sliding_sum(
 /// **一块的读数本身由什么组成**。两者都是判据的形状，但不是同一层。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Composition {
-    /// 颗粒项那道可见度地板，8 位灰度级。低于它的高频起伏当作看不见。
-    pub grain_floor: f32,
+    /// 颗粒项那道可见度地板**占格点间距的比例**。地板本身由它乘间距算出，
+    /// 见 [`Composition::floor`]。
+    pub grain_ratio: f32,
+}
+
+impl Composition {
+    /// 这一档位深上的可见度地板，8 位灰度级。低于它的高频起伏当作看不见。
+    ///
+    /// 一个比例乘各档自己的格点间距，**不是三档存一份表**——为什么，
+    /// 见 ADR 0002 决定第 5 条。
+    pub fn floor(self, depth: BitDepth) -> f32 {
+        self.grain_ratio * quantisation_step(depth)
+    }
 }
 
 /// 本次判据的构成。眼下对所有 profile 都一样。
 pub const fn composition() -> Composition {
     Composition {
-        grain_floor: GRAIN_FLOOR,
+        grain_ratio: GRAIN_RATIO,
     }
 }
 
 impl std::fmt::Display for Composition {
-    /// 地板的数值连同它的来源一并说出——它与阈值同一批盲测标定，读的人要判断得了
+    /// 地板按**比例**说，连同它的来源一并说出——它与阈值同一批盲测标定，读的人要判断得了
     /// 这个数对手上那块面板成不成立（与 [`Threshold`](crate::Threshold) 同一个做法）。
+    ///
+    /// 说比例而不说某一档的那个绝对值：判据一页要排开好几档位深，
+    /// 说死其中一档的数，另几档那几个数就没有出处了。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "低通后的局部均值误差 ＋ 颗粒超出 {:.1} 灰度级的那一部分（地板盲测标定于 boox-poke6，其余面板未复核）",
-            self.grain_floor,
+            "低通后的局部均值误差 ＋ 颗粒超出格点间距 {:.1}% 的那一部分（地板盲测标定于 boox-poke6，其余面板未复核）",
+            self.grain_ratio * 100.0,
         )
     }
+}
+
+/// 这一档位深的**格点间距**，8 位灰度级：`255 / (2^n − 1)`。
+///
+/// 格点是套嵌的（255 = 3×85 = 15×17，见 [`crate::quantize`]），三档因此都是整数：
+/// 1bit 255、2bit 85、4bit 17。
+fn quantisation_step(depth: BitDepth) -> f32 {
+    255.0 / (depth.levels() - 1) as f32
 }
 
 /// 分块边长。ADR 0002 定死 32×32：banding 是局部现象，全页均值会被留白稀释。
@@ -369,15 +403,24 @@ impl std::fmt::Display for Aggregation {
     }
 }
 
-/// 颗粒可见度地板，8 位灰度级。高频起伏低于它就当作看不见。
+/// 颗粒可见度地板占**格点间距**的比例。高频起伏低于地板就当作看不见。
 ///
-/// 取值落在窗口 [52.8, 60] 里：下界算得出来，上界由真机盲测夹出。
-/// 两者的来历见 ADR 0002 的《第 5 条从哪来》，窗口那两个数在 measurements 的《位深盲测》。
-/// 下界那一条在本模块的用例里另有一份算术形态——它不是文档，是会红的断言。
+/// **地板是间距的一个份额，不是一个绝对值**（ADR 0002 决定第 5 条）。一个绝对的 55
+/// 卡在 1bit 与 2bit 之间，颗粒项在 2bit 及以上恒读零、判据在那些档上退回只剩低通项
+/// ——三重证据见 measurements 的《颗粒项只在 1bit 上生效》。
+///
+/// **下界算得出来，不必标定。**`sqrt(u(s−u)) − u` 的最大值在 `u/s = (2−√2)/4` 处取到
+/// `0.2071·s`：比例低于 0.2071，某个灰调上抖动就会输给同档不抖动。
+/// 本模块的用例里另有一份算术形态，三档各钉一次——它不是文档，是会红的断言。
+///
+/// 取值 **0.2157 = 0.2071 × 1.0414**：下界乘现行的安全系数。这个数保证 1bit 上算出的地板
+/// **逐位**仍是 55.0——那是《位深盲测》整批数据的可比性底线，三档各是多少见
+/// measurements 的《颗粒项只在 1bit 上生效》。安全系数那一头是上界，仍由真机盲测夹出，
+/// 眼下只有 1bit 上有数据（现行上界 60）。
 ///
 /// 它跟着面板走，与判据、阈值同一条（ADR 0002）：换面板即换低通核，
-/// 「哪一段算高频」跟着变，这个地板也就不是同一件事。
-const GRAIN_FLOOR: f32 = 55.0;
+/// 「哪一段算高频」跟着变，这道地板也就不是同一件事。
+const GRAIN_RATIO: f32 = 0.215_686_27;
 
 /// 掩蔽加权的地板：结构再密也不至于完全不看。
 ///
@@ -551,14 +594,15 @@ mod tests {
     /// 判据会安静地把「候选新长出来的颗粒」读成「候选抹掉的颗粒」，方向恰好反过来。
     #[test]
     fn the_grain_term_subtracts_the_reference_side() {
-        let over = GRAIN_FLOOR + 10.0;
+        let floor = composition().floor(BitDepth::One);
+        let over = floor + 10.0;
 
-        // 候选比参照多出 GRAIN_FLOOR + 10：超出地板的那 10 级要收下。
-        assert!((visible_grain(over + 8.0, 8.0) - 10.0).abs() < 0.001);
+        // 候选比参照多出 地板 + 10：超出地板的那 10 级要收下。
+        assert!((visible_grain(over + 8.0, 8.0, floor) - 10.0).abs() < 0.001);
         // 反过来，候选比参照少：一分不收，不是负数也不是那 10 级。
-        assert_eq!(visible_grain(8.0, over + 8.0), 0.0);
+        assert_eq!(visible_grain(8.0, over + 8.0, floor), 0.0);
         // 刚好压在地板上：不收。
-        assert_eq!(visible_grain(GRAIN_FLOOR + 8.0, 8.0), 0.0);
+        assert_eq!(visible_grain(floor + 8.0, 8.0, floor), 0.0);
     }
 
     /// 滑动窗口与逐格重算给出同一份局部均值。
@@ -729,29 +773,80 @@ mod tests {
         out
     }
 
-    /// 颗粒地板的下界是**算出来的**，不是调出来的：低于它，「1bit 上抖动优于不抖动」
+    /// 地板是**格点间距的一个比例**，不是三档的表：一个数乘各档自己的间距。
+    ///
+    /// 1bit 那一格**逐位**仍是 55.0——《位深盲测》整批数据全是在那个地板下量的，
+    /// 它一动，那批数据的可比性就没了（measurements 的《颗粒项只在 1bit 上生效》）。
+    /// 另两档由同一个比例推出、不另存一份表：三个数之间的算术关系存进表里就丢了，
+    /// 而换一个位深不该要一次新标定。
+    #[test]
+    fn the_grain_floor_is_a_share_of_the_quantisation_step() {
+        let floor = |depth| composition().floor(depth);
+
+        assert_eq!(
+            floor(BitDepth::One).to_bits(),
+            55.0f32.to_bits(),
+            "1bit 的地板不再逐位是 55.0，是 {}",
+            floor(BitDepth::One)
+        );
+        // 另两档：同一个比例乘 85 与 17（measurements 的《颗粒项只在 1bit 上生效》）。
+        assert!(
+            (floor(BitDepth::Two) - 18.33).abs() < 0.01,
+            "2bit 的地板是 {}",
+            floor(BitDepth::Two)
+        );
+        assert!(
+            (floor(BitDepth::Four) - 3.67).abs() < 0.01,
+            "4bit 的地板是 {}",
+            floor(BitDepth::Four)
+        );
+        // 地板与格点间距同比例：三档两两之比就是间距之比，一格不差。
+        assert!((floor(BitDepth::One) / floor(BitDepth::Two) - 3.0).abs() < 0.001);
+        assert!((floor(BitDepth::Two) / floor(BitDepth::Four) - 5.0).abs() < 0.001);
+    }
+
+    /// 颗粒地板的下界是**算出来的**，不是调出来的：低于它，「同一档上抖动优于不抖动」
     /// 这条性质会在某个灰调上翻掉——而那正是 ADR 0002 立判据时守的那一条。
     ///
-    /// 推导写在 [`GRAIN_FLOOR`] 的文档里。这里把它当成一条算术不变量钉住：
-    /// 谁把地板调低到 52.8 以下，这里当场红，不必等到某张真实页上才发现。
+    /// 推导写在 [`GRAIN_RATIO`] 的文档里。这里把它当成一条算术不变量钉住，
+    /// **三档各钉一次**：谁把比例调到 0.2071 以下，三档里任何一档当场红。
+    /// 地板还是绝对值时这一条只管得着 1bit——另两档上颗粒项恒读零，钉什么都是白钉。
     ///
     /// 断言只管颗粒项这一项。整个判据上抖动那一侧还要背自己的低通项——
     /// 平坦的中浅灰上两者因此仍会交叉，代价写在 ADR 0002 的《后果》里。
     #[test]
     fn the_grain_floor_stays_above_what_an_undithered_flat_tone_pays() {
-        // 与最近格点差 u 的一块平坦灰调：不抖动的低通项读 u，FS 的颗粒读 sqrt(u(255-u))。
-        let excess = |u: f32| (u * (255.0 - u)).sqrt() - u;
-        let worst = (0..=1275)
-            .map(|tenth| excess(tenth as f32 / 10.0))
-            .fold(f32::MIN, f32::max);
+        // 与最近格点差 u 的一块平坦灰调（`u ≤ s/2`）：不抖动的低通项读 u，
+        // FS 的颗粒读 sqrt(u(s-u))。s 是那一档的格点间距。
+        let worst_excess = |step: f32| {
+            (0..=12_750)
+                .map(|tick| {
+                    let u = step * 0.5 * tick as f32 / 12_750.0;
+                    (u * (step - u)).sqrt() - u
+                })
+                .fold(f32::MIN, f32::max)
+        };
 
+        for depth in [BitDepth::One, BitDepth::Two, BitDepth::Four] {
+            let step = quantisation_step(depth);
+            let worst = worst_excess(step);
+            // 闭式解：最大值在 u/s = (2−√2)/4 处取到 0.2071·s（ADR 0002 的《第 5 条从哪来》）。
+            assert!(
+                (worst / step - 0.2071).abs() < 0.001,
+                "{depth} 上推导的下界不再是 0.2071·s 了，是 {}·s",
+                worst / step
+            );
+            assert!(
+                composition().floor(depth) > worst,
+                "{depth} 的地板 {} 低于下界 {worst}：这一档上抖动会在某个灰调上输给不抖动",
+                composition().floor(depth)
+            );
+        }
+
+        // 1bit 那一档的那个数：measurements 的《位深盲测》记的 52.8 就是它。
         assert!(
-            (52.5..53.0).contains(&worst),
-            "推导的下界不再是 52.8 了，是 {worst}"
-        );
-        assert!(
-            GRAIN_FLOOR > worst,
-            "地板 {GRAIN_FLOOR} 低于下界 {worst}：1bit 上抖动会在某个灰调上输给不抖动"
+            (52.5..53.0).contains(&worst_excess(quantisation_step(BitDepth::One))),
+            "1bit 的下界不再是 52.8 了"
         );
     }
 

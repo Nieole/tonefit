@@ -30,13 +30,13 @@ fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
 
     let written = fixtures::read_png(&pages[0].output);
     assert_eq!(written.size, Size::new(1264, 1680));
-    // 这一页贴住面板，几何门放行抖动：判据于是在 2bit+FS 上就够了，
-    // 而同一档不抖动差得远——差多远看报告里这一页的判据曲线。
+    // 这一页贴住面板，几何门放行抖动：判据落在 4bit+FS 上——连续灰调在低位深上
+    // 塌得厉害（1bit 121.5、2bit 38.8、2bit+FS 27.7），第一个进得了界的是它。
     assert_eq!(
         fixtures::verdict(&pages[0]).candidate,
-        Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
+        Candidate::new(BitDepth::Four, Dither::FloydSteinberg)
     );
-    // 抖过的渐变页把 2bit 的四个格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
+    // 抖过的渐变页把 4bit 的十六个格点铺满了，调色板买不到更窄的位宽，灰度于是胜出。
     assert_eq!(written.color_type, png::ColorType::Grayscale);
     assert_eq!(
         fixtures::written_bits(written.bit_depth),
@@ -54,27 +54,33 @@ fn a_gradient_written_at_a_low_bit_depth_comes_out_without_measurable_banding() 
 
     let report = run_volume(&dithered, &volume);
 
+    // 判据自己挑的那一档是抖过的——这一条问的是抖动消不消得掉色带，前提是判据确实要它。
     let page = &report.volumes[0].pages[0];
-    let depth = fixtures::verdict(page).candidate.bit_depth;
     assert_eq!(
         fixtures::verdict(page).candidate.dither,
         Dither::FloydSteinberg
     );
-    assert!(depth <= BitDepth::Two, "判定落在 {depth}，色带那一档没测到");
 
-    // 同一档位深、同一页，点名不抖动再跑一遍：差别只剩抖动这一项。
-    let plain_space = Workspace::new();
-    let plain_volume = plain_space.volume("volume-a");
-    plain_volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
-    let plain = tonefit::run(&Request {
-        bit_depth: Some(depth),
-        dither: Some(Dither::Off),
-        ..fixtures::request(&plain_space, [plain_volume.path()])
-    })
-    .expect("处理应当成功");
+    // **色带那一档点名 2bit**，不跟着判定走：可见度地板跟着格点间距走之后（ADR 0002
+    // 决定第 5 条），连续灰调页判到 4bit+FS，而 4bit 的格距只有 17——色带小到分不出
+    // 「看得见」与「消掉了」，量不出这一条要量的东西。判定那一维由上一条用例钉着。
+    let depth = BANDING_DEPTH;
+    let at = |dither| {
+        let space = Workspace::new();
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &fixtures::gradient(fixtures::DOUBLE_PANEL));
+        let report = tonefit::run(&Request {
+            bit_depth: Some(depth),
+            dither: Some(dither),
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("处理应当成功");
+        // 同一档位深、同一页，两趟的差别只剩抖动这一项。
+        worst_banding_step(&fixtures::read_png(&report.volumes[0].pages[0].output))
+    };
 
-    let with_dither = worst_banding_step(&fixtures::read_png(&page.output));
-    let without = worst_banding_step(&fixtures::read_png(&plain.volumes[0].pages[0].output));
+    let with_dither = at(Dither::FloydSteinberg);
+    let without = at(Dither::Off);
 
     // 不抖动时相邻两块的均值一步跨掉几十级——那一步就是看得见的色带（2bit 的格距是 85）。
     assert!(
@@ -107,6 +113,10 @@ fn worst_banding_step(written: &fixtures::DecodedPng) -> f64 {
 
 /// 量色带的块高，行。
 const BANDING_BLOCK: usize = 8;
+
+/// 量色带点名的那一档位深。取 2bit：格距 85，不抖动时的色带一步跨掉几十级，
+/// 「消没消掉」因此量得出来。4bit 的格距只有 17，两侧的差别缩在噪声里。
+const BANDING_DEPTH: BitDepth = BitDepth::Two;
 
 #[test]
 fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
@@ -1944,13 +1954,27 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
     );
     // 四页正片，都贴得住面板。五页一律四边顶着墨：这一条说的是几何门逐页判，
     // 而裁边会改掉每一页的几何（页几何批 02 号票）。
+    //
+    // 正片取**网点页**而不是渐变页：这一条要基准档落在抖过的那一档、且**低于**封面
+    // 自己判出来的那一档，两件事缺一条就分不出「取更严的」与「只拿基准档」。
+    // 网点自带高频、抖动在低位深上还赢得过不抖动（见 `fixtures::full_bleed_screentone`），
+    // 基准档因此是 2bit+FS；连续灰调在新判据下判到 4bit+FS，与封面那一档齐平。
     volume.page(
         "002.png",
-        &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
+        &fixtures::full_bleed_screentone(fixtures::DOUBLE_PANEL),
     );
-    volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
-    volume.page("004.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
-    volume.page("005.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
+    volume.page(
+        "003.png",
+        &fixtures::full_bleed_screentone(fixtures::TYPICAL),
+    );
+    volume.page(
+        "004.png",
+        &fixtures::full_bleed_screentone(fixtures::TYPICAL),
+    );
+    volume.page(
+        "005.png",
+        &fixtures::full_bleed_screentone(fixtures::SPREAD),
+    );
 
     // 混排卷只在 fit-inside 上是混排卷（页几何批 01 号票）：以高为准会把那张封面放大到
     // 面板高，门跟着成立，一卷五页都拿满候选，「一张封面否决整卷」这件事就无从谈起。
@@ -2113,13 +2137,13 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
     );
     let pages = &report.volumes[0].pages;
     // 头一页贴住面板，门在它这里放行（ADR 0007 决定第 1 条：门逐页判）：抖动那一维在场，
-    // 2bit+FS 就够得着界。第二页源比目标小，门在它那里不成立——但那一页的事与这一页无关，
-    // 从前那套口径下它会把这一页的抖动一并带走，判定跟着退到 4bit 兜底。
+    // 4bit+FS 因此够得着界，而同一档不抖动够不着。第二页源比目标小，门在它那里不成立——
+    // 但那一页的事与这一页无关，从前那套口径下它会把这一页的抖动一并带走，判定退到 4bit 兜底。
     assert_eq!(pages[0].gate(), Some(GeometryGate::Holds));
     assert_eq!(pages[1].gate(), Some(GeometryGate::Broken));
     assert_eq!(
         fixtures::verdict(&pages[0]).candidate,
-        Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+        Candidate::new(BitDepth::Four, Dither::FloydSteinberg),
         "另一页的几何把这一页的抖动带走了"
     );
     // 第二页会被下游再缩一次，抖动因此不在它的候选里——`--per-page` 也放不开这一维。
@@ -2409,28 +2433,24 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     );
 }
 
-/// 抖动买到的是**低位深上的保真**：同一页同一块面板，不抖动时一档都不达标，
-/// 抖过之后 2bit 就落回界内（ADR 0007 的收益，见 measurements 的《抖动》）。
+/// 抖动买到的是**保真**：同一页同一块面板，不抖动那三档一个都不达标——连候选上界
+/// 那一档也不达标——抖过之后 4bit 就落回界内（ADR 0007 的收益，见 measurements 的《抖动》）。
+///
+/// 这一条不点名灰阶数：可见度地板跟着格点间距走之后（ADR 0002 决定第 5 条），
+/// 连续灰调页在 2bit 上抖不抖都够不着界（27.695 对 38.796），
+/// 抖动买回来的那一档是 4bit（5.113 对 6.713）。
 #[test]
 fn dithering_can_bring_a_page_back_within_the_threshold() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
-    // 灰阶数压到 4 级：候选位深只剩 {1,2}，4bit 那条退路不在。
-    let profile = fixtures::baseline_profile()
-        .with_gray_levels(4)
-        .expect("4 级可用");
 
-    let report = tonefit::run(&Request {
-        profile,
-        ..fixtures::request(&space, [volume.path()])
-    })
-    .expect("处理应当成功");
+    let report = run_volume(&space, &volume);
 
     let page = &report.volumes[0].pages[0];
     assert_eq!(
         fixtures::verdict(page).candidate,
-        Candidate::new(BitDepth::Two, Dither::FloydSteinberg)
+        Candidate::new(BitDepth::Four, Dither::FloydSteinberg)
     );
     assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     // 不抖动的那两档全部越界，抖过的这一档在界内：判据自己说出了这笔交换。
@@ -2996,8 +3016,8 @@ fn run_with_a_run_of_fitted_inside(length: usize) -> tonefit::VolumeReport {
 ///
 /// **两条路升的不是同一档，所以两条都要留着。** 这一趟的页两种适配方式下都恒等通过，
 /// 几何门于是**每一页都成立**（ADR 0007 决定第 1 条），候选集多出抖动那一维：
-/// 基准档是 `2bit`，而基准档过不了界的那一段升到 `2bit+FS`——**升的是抖动，不是位深**。
-/// fit-inside 那条路上同一批取值升的是 `4bit`，而且走的是另一套机制（兜底取候选上界）：
+/// 基准档是 `2bit`，而基准档过不了界的那一段升到 `4bit+FS`——**走的是「界以内最低的一档」**。
+/// fit-inside 那条路上同一批取值升的是 `4bit` 不抖，而且走的是另一套机制（兜底取候选上界）：
 /// 两条路各自的判据读数与机制，出处是 `fixtures` 的 `ONE_STEP_ABOVE_TWO_BITS`。
 #[test]
 fn a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_does_not() {
@@ -3014,7 +3034,7 @@ fn a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_doe
     );
 
     let base = Candidate::new(BitDepth::Two, Dither::Off);
-    let stretch = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+    let stretch = Candidate::new(BitDepth::Four, Dither::FloydSteinberg);
     assert_eq!(envelope_of(&raised).base, base);
     assert_eq!(envelope_of(&raised).raised_pages, 3);
     for page in &raised.pages[30..33] {
