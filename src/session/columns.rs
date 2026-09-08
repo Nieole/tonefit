@@ -30,7 +30,7 @@
 //! **Ambiguous** 的字形在这里一律当一格。这是仓库既有的约定（`crate::wrap` 那一头也是
 //! 它），本模块跟着走，不另立第二套——跟着走的代价由**字形的选法**接住：
 //! **摆进列里的字形一个都不许是歧义宽度**，判据、边界与理由都在
-//! [`crate::wrap::width_is_stable`]。
+//! [`tonefit::width_is_stable`]。
 //!
 //! 那条规矩管两层：**这一层自己造的字形**（[`ELLIPSIS`] 与两张表的行首记号），
 //! 与**措辞那一层摆进列里的那几格**（`crate::render` 的尺寸、判据那一串与基准档分布）。
@@ -49,7 +49,7 @@ pub(super) const GAP: usize = 2;
 /// 摆不下时省略号那一格：一列的内容从**中间**掐掉一截，留下的两头之间摆它。
 ///
 /// 取 `⋯`（U+22EF）而不是 `…`（U+2026）：后者过不了
-/// [`width_is_stable`](crate::wrap::width_is_stable) 那一关（停车场 Q154）。
+/// [`width_is_stable`](tonefit::width_is_stable) 那一关（停车场 Q154）。
 /// 省略过的是名字那一列，它右边还有三列。
 const ELLIPSIS: char = '⋯';
 
@@ -517,13 +517,16 @@ fn take(glyphs: impl Iterator<Item = char>, room: usize) -> String {
 mod tests {
     use super::*;
 
-    /// **省略号那一格在哪种终端上都占一格**（判据见 [`crate::wrap::width_is_stable`]）。
+    /// **省略号那一格在哪种终端上都占一格**（判据见 [`tonefit::width_is_stable`]）。
     ///
     /// 它是这一层自己造的唯一一个字形，两张表的行首记号各在自己那一头问；
     /// 措辞那一层摆进列里的那几格在 `crate::render` 那一头问。
     #[test]
     fn the_ellipsis_this_module_makes_is_the_same_width_on_any_terminal() {
-        assert!(wrap::width_is_stable(ELLIPSIS), "{ELLIPSIS} 是东亚歧义宽度");
+        assert!(
+            tonefit::width_is_stable(ELLIPSIS),
+            "{ELLIPSIS} 是东亚歧义宽度"
+        );
         assert_eq!(usize::from(wrap::width(&ELLIPSIS.to_string())), 1);
     }
 
@@ -627,7 +630,7 @@ mod tests {
         widths.widen(PageColumn::Mark, "!");
         widths.widen(PageColumn::Name, "087.png");
         widths.widen(PageColumn::Size, "1182x1680");
-        widths.widen(PageColumn::Crop, "裁边 1441x2048 → 1400x2000");
+        widths.widen(PageColumn::Crop, "裁边 1441x2048 ⟶ 1400x2000");
         widths.widen(PageColumn::Scaling, "失败页 · 卷内统一尺寸留白");
         widths.widen(PageColumn::Cut, "跨页右半");
         widths.widen(PageColumn::ColorToGray, "彩页转灰");

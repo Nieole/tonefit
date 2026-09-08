@@ -620,7 +620,7 @@ mod tests {
         Size,
     };
 
-    /// **耗时那一格在哪种终端上都占同一格**（判据见 [`crate::wrap::width_is_stable`]）。
+    /// **耗时那一格在哪种终端上都占同一格**（判据见 [`tonefit::width_is_stable`]）。
     ///
     /// 它是卷表的一列（`crate::session::columns::VolumeColumn::Elapsed`），
     /// 而写法由 [`spell`] 一处造出来——与省略号、行首记号同一条规矩：
@@ -631,7 +631,7 @@ mod tests {
             let said = spell(Duration::from_secs(seconds));
             for glyph in said.chars() {
                 assert!(
-                    crate::wrap::width_is_stable(glyph),
+                    tonefit::width_is_stable(glyph),
                     "{glyph} 是东亚歧义宽度：{seconds}s 写成「{said}」"
                 );
             }

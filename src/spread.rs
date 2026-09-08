@@ -245,7 +245,7 @@ impl std::fmt::Display for SplitRule {
         }
         write!(
             f,
-            "跨页候选阈值 {} × 面板宽高比 · 装订沟定切点 · {}",
+            "跨页候选阈值 {} x 面板宽高比 ⋅ 装订沟定切点 ⋅ {}",
             self.threshold, self.order
         )
     }

@@ -350,13 +350,13 @@ fn tonefit_with_temp(space: &Workspace, inputs: &[&Path], temp: Option<&Path>) -
 /// **拒绝那句话印到 stderr 上时，记号里那个空格是一个普通空格**（停车场 Q106／Q183）。
 ///
 /// 那句话劝人换一条命令，而它的原文里记号中间那个空格带着「不许断」的标注
-/// （`src/wrap.rs` 的 `HARD_SPACE`）。折行那几处顺手把它换回一个普通空格，
+/// （库那条公共 API，`tonefit::HARD_SPACE`）。折行那几处顺手把它换回一个普通空格，
 /// **而拒绝这一路一格都不折**——`main` 里那一行 `eprintln!` 直接落到 stderr 上，
 /// 换回来的是 `wrap::printed`。漏了那一步，用户照着抄出来的命令里带着一个
 /// clap 认不出的字符，Q106 要买的东西正好反了。
 ///
 /// **只有真进程看得见这一条**：库那一侧的用例断言的是**带标注的原文**
-/// （`tests/pipeline.rs` 的 `FIT_HEIGHT`／`DITHER_FS`），印出去的字节别处观察不到。
+/// （`tests/pipeline.rs` 的 `fit_height`／`dither_fs`），印出去的字节别处观察不到。
 #[test]
 fn the_refusal_on_stderr_spells_its_commands_with_a_plain_space() {
     let space = Workspace::new();

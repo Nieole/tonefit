@@ -154,11 +154,11 @@ impl std::fmt::Display for Scaling {
         if self.prescaled() {
             write!(
                 f,
-                " · 预缩 {}× · 残差比 {:.3}",
+                " ⋅ 预缩 {}x ⋅ 残差比 {:.3}",
                 self.prescale, self.residual
             )?;
         } else {
-            f.write_str(" · 未预缩")?;
+            f.write_str(" ⋅ 未预缩")?;
         }
         Ok(())
     }

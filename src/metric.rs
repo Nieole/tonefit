@@ -394,7 +394,7 @@ impl std::fmt::Display for Aggregation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "分块 {}×{} · 尾巴取 p{}，但不宽于 {} 块（K 未标定占位值）",
+            "分块 {}x{} ⋅ 尾巴取 p{}，但不宽于 {} 块（K 未标定占位值）",
             self.tile,
             self.tile,
             (self.quantile * 100.0).round(),

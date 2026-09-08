@@ -12,6 +12,11 @@
 //! [`write_calibration_chart`] 是第三个：标定图。它不并进主入口——不读源、不走管线、
 //! 不判定，只按一个 [`Profile`] 画出一张图并**无损写到点名的那个文件上**。
 //! 量具与被处理的页走的不是同一条路。
+//!
+//! 三个 seam 之外另有一样对外的东西，而它不是缝，是**一条规矩**：[`glyph`]——
+//! **字形约定**那两条（[`HARD_SPACE`] 与 [`width_is_stable`]，`CONTEXT.md`《字形约定》）。
+//! 同一句话从三张嘴里出来、最后一张在库内（ADR 0016 认下的那处例外），库因此会把自己造的字
+//! 直接送进一条对齐的**列**里——规矩得跟着字一起递到调用方手上，理由写在那个模块上。
 
 mod cache;
 mod calibrate;
@@ -24,6 +29,7 @@ mod discover;
 mod encode;
 mod envelope;
 mod geometry;
+pub mod glyph;
 mod gray;
 mod interlock;
 mod medium;
@@ -58,6 +64,7 @@ pub use decide::{CandidateScore, Reason, Verdict};
 pub use decode::Salvage;
 pub use envelope::Envelope;
 pub use geometry::{FitMode, GeometryGate, Size, max_target_pixels};
+pub use glyph::{HARD_SPACE, width_is_stable};
 pub use gray::GrayImage;
 pub use interlock::{Interlock, Voice};
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium, Readers};
@@ -2130,12 +2137,12 @@ fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> 
 ///
 /// 出来的是那句话本身，不是一个错误，理由见 [`why_nothing_is_left`]（05 号票）。
 ///
-/// **记号里面那个空格写成 `\u{a0}`**：这句话劝人换一条命令，规矩只有一处出处，
-/// 见界面层折行的 `HARD_SPACE`（`src/wrap.rs`，停车场 Q106）。
+/// **记号里面那个空格是[不许断的那个空格](HARD_SPACE)**：这句话劝人换一条命令，
+/// 断成两行之后抄不出一条能用的命令（停车场 Q106）。规矩只有一处出处，就是那条公共 API。
 fn dither_outside_the_gate_error(fit: FitMode) -> String {
     let way_out = match fit {
         FitMode::Inside => format!(
-            "改得动的是几何：--fit\u{a0}height 把这一页放大到面板高，门跟着成立。\
+            "改得动的是几何：--fit{HARD_SPACE}height 把这一页放大到面板高，门跟着成立。\
              够不着这条出路的只有一种页——宽高比极端到以高为准算出的目标尺寸越过 {} 像素、\
              会被兜底上界退回 fit-inside 的那种（07 号票）；那种页换过去仍是这条拒绝，\
              走下面那两条",
@@ -2149,7 +2156,7 @@ fn dither_outside_the_gate_error(fit: FitMode) -> String {
         ),
     };
     format!(
-        "{}。{way_out}。剩下两条路——不点 --dither\u{a0}fs（判据自己会替这一页把抖动关掉），\
+        "{}。{way_out}。剩下两条路——不点 --dither{HARD_SPACE}fs（判据自己会替这一页把抖动关掉），\
          或换一张宽高比没这么极端的源页",
         Interlock::DitherOutsideTheGate
     )
