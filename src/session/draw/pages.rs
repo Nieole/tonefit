@@ -3,9 +3,9 @@
 //!
 //! ```text
 //!  记号  页名     尺寸       缩放                       判定     理由              判据
-//!  ✓     001.jpg  1182x1680  缩放比 1.219 · 未预缩      4bit     阈值内最低的一档  1bit+FS 32.000 ⋅ ⋯
-//!  *     087.jpg  1182x1680  缩放比 1.219 · 未预缩      2bit+FS  卷级上包络        ⋯                   定档页
-//!  !     104.jpg  1182x1680  缩放比 1.219 · 未预缩      4bit     特例页单独定档    ⋯                   特例页
+//!  ✓     001.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      4bit     阈值内最低的一档  1bit+FS 32.000 ⋅ ⋯
+//!  *     087.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      2bit+FS  卷级上包络        ⋯                   定档页
+//!  !     104.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      4bit     特例页单独定档    ⋯                   特例页
 //!  ✗     017.jpg  1182x1680  失败页 · 卷内统一尺寸留白                                                 失败 解不出完整尺寸
 //! ```
 //!
@@ -446,7 +446,7 @@ mod tests {
     use super::*;
 
     /// **逐页表自己造的那几个字形在哪种终端上都占一格**（判据见
-    /// [`crate::wrap::width_is_stable`]，停车场 Q154）。
+    /// [`tonefit::width_is_stable`]，停车场 Q154）。
     ///
     /// 与卷表那一条同一件事，两张表因此各问各的：添一种记号不过这一关就红。
     #[test]
@@ -454,7 +454,7 @@ mod tests {
         for mark in [Mark::Fine, Mark::Driver, Mark::Caution, Mark::Failed] {
             let glyph = mark.glyph();
             assert!(
-                crate::wrap::width_is_stable(glyph),
+                tonefit::width_is_stable(glyph),
                 "{mark:?} 那个记号 {glyph} 是东亚歧义宽度"
             );
         }
@@ -633,8 +633,8 @@ mod tests {
     #[test]
     fn each_of_the_five_cells_lands_in_its_own_column() {
         let on_the_geometry_row = [
-            (Field::Crop, PageColumn::Crop, "裁边 1441x2048 → 1400x2000"),
-            (Field::Scaling, PageColumn::Scaling, "缩放比 1.219 · 未预缩"),
+            (Field::Crop, PageColumn::Crop, "裁边 1441x2048 ⟶ 1400x2000"),
+            (Field::Scaling, PageColumn::Scaling, "缩放比 1.219 ⋅ 未预缩"),
             (Field::Cut, PageColumn::Cut, "跨页右半"),
             (Field::Output, PageColumn::Output, "出/隔离/卷三/001.png"),
         ];

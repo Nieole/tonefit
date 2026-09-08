@@ -370,8 +370,8 @@ impl std::fmt::Display for Envelope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "基准档 {} · 其余 {} 页 · 特例 {} 页（{:.1}%）· 迟滞升档 {} 页\
-             （上包络 p{} · 迟滞 {} 页 · 特例判据 p{} 立脚点、{:.1}× 阈值，四者均未标定）",
+            "基准档 {} ⋅ 其余 {} 页 ⋅ 特例 {} 页（{:.1}%）⋅ 迟滞升档 {} 页\
+             （上包络 p{} ⋅ 迟滞 {} 页 ⋅ 特例判据 p{} 立脚点、{:.1}x 阈值，四者均未标定）",
             self.base,
             self.body_pages,
             self.outlier_pages,

@@ -202,11 +202,11 @@ impl IoPlan {
 
 impl std::fmt::Display for IoPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "介质 {} · 读取{}", self.medium, self.readers)?;
+        write!(f, "介质 {} ⋅ 读取{}", self.medium, self.readers)?;
         // 两路一样的卷（目录卷全部，归档卷一个也没有）只印一次：多印一句一模一样的话，
         // 读的人要先比一遍两句才知道它们没有分岔。
         if self.fingerprint != self.readers {
-            write!(f, " · 幂等那一道{}", self.fingerprint)?;
+            write!(f, " ⋅ 幂等那一道{}", self.fingerprint)?;
         }
         Ok(())
     }

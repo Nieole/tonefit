@@ -2268,14 +2268,20 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
     );
 }
 
-/// 那两条出路里的记号，**照原文的样子写**：中间那个空格是**不许断的那个空格**，
-/// 断成两行之后用户抄不出一条能用的命令（停车场 Q106）。
+/// 那两条出路里的记号，**照原文的样子拼**：中间那个空格是**不许断的那个空格**
+/// （`tonefit::HARD_SPACE`），断成两行之后用户抄不出一条能用的命令（停车场 Q106）。
 ///
-/// 规矩只有一处出处（界面层折行那一份，`src/wrap.rs` 的 `HARD_SPACE`）：库这一头出的是
-/// 带标注的原文，印出去时那个空格换回一个普通的（`wrap::fold`），因此断言**原文**要照标注写。
-const FIT_HEIGHT: &str = "--fit\u{a0}height";
-/// 见 [`FIT_HEIGHT`]。
-const DITHER_FS: &str = "--dither\u{a0}fs";
+/// 规矩只有一处出处，就是库那条公共 API——这里**拼它**而不是照抄那个转义：
+/// 库这一头出的是带标注的原文，印出去时那个空格才换回一个普通的（`wrap::printed`），
+/// 因此断言问的是**原文**。
+fn fit_height() -> String {
+    format!("--fit{}height", tonefit::HARD_SPACE)
+}
+
+/// 见 [`fit_height`]。
+fn dither_fs() -> String {
+    format!("--dither{}fs", tonefit::HARD_SPACE)
+}
 
 /// 几何门是**页的**几何事实，不是自动选择：`--dither` 覆盖不了它
 /// （ADR 0007：不成立时整体关闭，不降级）。那是互锁 ③，处置是**维持拒绝**
@@ -2313,7 +2319,7 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     assert!(format!("{error:#}").contains("001.png"), "{error:#}");
     // 门放宽不了，几何却动得了：换个适配方式这一页就贴住面板了（页几何批 01 号票）。
     // 不说这一句，用户手上只剩「换一批源页」。
-    assert!(format!("{error:#}").contains(FIT_HEIGHT), "{error:#}");
+    assert!(format!("{error:#}").contains(&fit_height()), "{error:#}");
 }
 
 /// **以高为准上 `--dither fs` 仍撞得上几何门，而那时那条出路是假话**
@@ -2353,18 +2359,18 @@ fn on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing
     // 是哪一页关的门照旧说得出来。
     assert!(on_height.contains("001.png"), "{on_height}");
     // **不再劝人换适配方式**：这一趟用的就是以高为准。
-    assert!(!on_height.contains(FIT_HEIGHT), "{on_height}");
+    assert!(!on_height.contains(&fit_height()), "{on_height}");
     // 换成说清这一页是怎么走到这儿的，以及剩下的那两条路。
     assert!(on_height.contains("兜底上界"), "{on_height}");
     assert!(
-        on_height.contains(&format!("不点 {DITHER_FS}")),
+        on_height.contains(&format!("不点 {}", dither_fs())),
         "{on_height}"
     );
 
     // 同一张页在 fit-inside 上也被拒，那一侧仍指 `--fit height`——但**这一张页是它的例外**，
     // 例外因此得跟着说出来，否则用户照着敲一遍只会撞第二次。
     let on_inside = refused(FitMode::Inside);
-    assert!(on_inside.contains(FIT_HEIGHT), "{on_inside}");
+    assert!(on_inside.contains(&fit_height()), "{on_inside}");
     assert!(on_inside.contains("兜底上界"), "{on_inside}");
     assert!(on_inside.contains("仍是这条拒绝"), "{on_inside}");
 }

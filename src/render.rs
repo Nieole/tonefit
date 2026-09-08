@@ -42,8 +42,8 @@
 //! 会话那一头每一帧问自己那一格。
 //!
 //! 这里做的只有两件与宽度有关的事：**说出哪一个空格是记号里面的**
-//! （[`crate::wrap::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
-//! （[`SEPARATOR`]，判据是 `crate::wrap::width_is_stable`）。
+//! （[`tonefit::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
+//! （[`SEPARATOR`]，判据是 `tonefit::width_is_stable`）。
 
 use std::path::{Path, PathBuf};
 
@@ -59,7 +59,7 @@ use tonefit::{Instruction, RunOutcome};
 #[cfg(any(feature = "tui", test))]
 use tonefit::{GeometryGate, Panel, Reason};
 
-use crate::wrap::HARD_SPACE;
+use tonefit::HARD_SPACE;
 
 /// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
 ///
@@ -69,7 +69,7 @@ use crate::wrap::HARD_SPACE;
 ///
 /// **取 `⋅`（U+22C5）而不是 `·`（U+00B7）**：后者在东亚宽度表上标着 **Ambiguous**，
 /// 按 CJK 配置的终端画两格，而这两格都是**表上的一列**（判据那一列、基准档分布那一列），
-/// 列宽一律按一格算。判据是 `crate::wrap::width_is_stable`，
+/// 列宽一律按一格算。判据是 `tonefit::width_is_stable`，
 /// 与 `crate::session::columns` 的省略号取 `⋯`（U+22EF）同一处先例、同一个理由。
 const SEPARATOR: &str = " ⋅ ";
 
@@ -1678,7 +1678,7 @@ mod tests {
         assert!(text.contains("dry-run"), "{text}");
         assert!(text.contains("还没落盘"), "{text}");
         // 比值 < 2 的一页：报告要说出它没预缩，残差段就是全部。
-        assert!(text.contains("缩放比 1.219 · 未预缩"), "{text}");
+        assert!(text.contains("缩放比 1.219 ⋅ 未预缩"), "{text}");
         assert!(text.contains(&format!("判据 1bit+FS {score}")), "{text}");
         // dry-run 也给判定：预告的就是照做时会写出的那一个候选。
         assert!(text.contains("判定 1bit+FS"), "{text}");
@@ -1754,7 +1754,7 @@ mod tests {
         assert!(text.contains("1264x1680"), "{text}");
         // 每页的缩放三件套：总缩放比、有没有预缩、残差比。
         assert!(text.contains("缩放比 2.000"), "{text}");
-        assert!(text.contains("预缩 2×"), "{text}");
+        assert!(text.contains("预缩 2x"), "{text}");
         assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
         // 判定、它的理由，以及判定所依据的那个量：判定要可解释（spec 的 story 7）。
@@ -1773,7 +1773,7 @@ mod tests {
         // 不说出来，读的人无从判断这一栏该信到什么程度（02 号票，ADR 0002 决定第 3 条）。
         // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——
         // 标定把它换掉时这一条不该跟着改。
-        assert!(text.contains("判据聚合 分块 32×32"), "{text}");
+        assert!(text.contains("判据聚合 分块 32x32"), "{text}");
         // 判据由两项合成，其中颗粒项那道地板与阈值同一批盲测标定：数与来源一并摆出来，
         // 否则逐页那一行的数是从哪来的没人答得出（ADR 0002 决定第 5 条）。
         // 地板按**比例**说：逐页那一行一次排开好几档位深，各档的地板是这个比例乘各自的
@@ -2063,7 +2063,7 @@ mod tests {
         // 与几何门那一行同一个出处（见 `first_few_names`）。
         assert!(text.contains("library/volume-a/001.jpg"), "{text}");
         // 出路也要给：换回 fit-inside 就压得回面板以内，代价一并说清。
-        // 中间那个空格带着[标注](crate::wrap::HARD_SPACE)——折行不许在它上面断，
+        // 中间那个空格带着[标注](tonefit::HARD_SPACE)——折行不许在它上面断，
         // 断开了这条命令就抄不出来。印出去时它换回一个普通空格（`crate::wrap::fold`）。
         assert!(text.contains(&format!("--fit{HARD_SPACE}inside")), "{text}");
         // 门在这一页上照旧成立，两件事不许混为一谈。
@@ -2227,7 +2227,7 @@ mod tests {
 
         // 裁前裁后两个尺寸都在，裁掉了多少一眼看得出。**四边各去了多少不进这行文字**——
         // 读的人要的是「裁没裁、裁了多少」，不是左右上下怎么分；要那个数走 `PageReport::crop()`。
-        assert!(text.contains("裁边 1441x2048 → 1200x1600"), "{text}");
+        assert!(text.contains("裁边 1441x2048 ⟶ 1200x1600"), "{text}");
         // 它排在缩放之前。
         let crop_at = text.find("裁边 1441x2048").expect("裁边那一小截");
         let scaling_at = text.find("缩放比").expect("缩放那一小截");
@@ -3793,7 +3793,7 @@ mod tests {
     }
 
     /// **摆进列里的那几格，字形在哪种终端上都占同一格**
-    /// （判据 `crate::wrap::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
+    /// （判据 `tonefit::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
     ///
     /// 东亚宽度表上标着 **Ambiguous** 的字形（`×` `·` `…` 之类）在按 CJK 配置的终端上画
     /// 两格，而 `crate::wrap::width` 一律按一格算：一格里多一个这样的字形，
@@ -3890,7 +3890,7 @@ mod tests {
         let stable = |said: &str, whose: &str| {
             for glyph in said.chars() {
                 assert!(
-                    crate::wrap::width_is_stable(glyph),
+                    tonefit::width_is_stable(glyph),
                     "{glyph} 是东亚歧义宽度：{whose}写着「{said}」"
                 );
             }

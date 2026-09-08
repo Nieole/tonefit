@@ -641,7 +641,7 @@ fn main() -> ExitCode {
         // `Result<()>` 那个 main 印的就是这一行，退出码 1。自己拿 `ExitCode` 之后照印。
         //
         // **这一处不折行，因此得自己把标注换回来**（[`wrap::printed`]）：拒绝那句话里
-        // 劝人换的那条命令带着[不许断的空格](wrap::HARD_SPACE)，原样落到 stderr 上，
+        // 劝人换的那条命令带着[不许断的空格](tonefit::HARD_SPACE)，原样落到 stderr 上，
         // 用户照着抄一遍 clap 就认不出那个开关。折行那几处由 `wrap::fold` 顺手做了，
         // 这一路一格都没折——报告与帮助折到多宽有出处，一条错误没有。
         Err(error) => {
@@ -1876,11 +1876,13 @@ io-mode = \"concurrent\"
             }
 
             // 折行不吃字：互锁那一节逐条都还在（折过之后按行找，整句已经被折断了）。
-            // 两侧都把空白去掉——原文里[不许断的那个空格](wrap::HARD_SPACE)是给折行看的标注，
+            // 两侧都把空白去掉——原文里[不许断的那个空格](tonefit::HARD_SPACE)是给折行看的标注，
             // 印出去的是一个普通空格。
             let long = printed[1].replace(['\n', ' '], "");
             for interlock in Interlock::ALL {
-                let said = interlock.to_string().replace([' ', wrap::HARD_SPACE], "");
+                let said = interlock
+                    .to_string()
+                    .replace([' ', tonefit::HARD_SPACE], "");
                 assert!(long.contains(&said), "折没了：{said}");
             }
 
