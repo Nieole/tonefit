@@ -1,7 +1,7 @@
 """02 号票的验收：把判据读数换成新判据的，重算三个 ρ。
 
     python recompute.py 第四轮判读.json                # 用文件里的旧读数，应复现 +0.539 / -0.442 / -0.240
-    python recompute.py 第四轮判读.json 新读数.json     # 新读数：{"争议01": {"2bit+FS": x, "4bit": y}, ...}
+    python recompute.py 第四轮判读.json 新判据读数.json  # 新读数：{"争议01": {"2bit+FS": x, "4bit": y}, ...}
 
 判读的那一半（评级）不重做——它问的是图好不好看，与判据无关。
 """
