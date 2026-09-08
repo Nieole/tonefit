@@ -1219,7 +1219,8 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
         )],
         VolumeVerdict::PerPage => vec![sentence_row(
             RowKind::PerPage,
-            "无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档",
+            "无（--per-page）：上包络关着，候选逐页最优，孤立地高出邻居的页压回邻居那一档，\
+             够长的一段之间仍会换档",
         )],
         // 上面那一支已经把跳过的卷送走了。
         VolumeVerdict::Skipped { .. } => Vec::new(),
@@ -3938,6 +3939,7 @@ mod tests {
             Reason::Override,
             Reason::VolumeEnvelope,
             Reason::Hysteresis,
+            Reason::RunHysteresis,
             Reason::Outlier,
             Reason::OutsideTheGate,
         ] {
@@ -3949,6 +3951,7 @@ mod tests {
                 | Reason::Override
                 | Reason::VolumeEnvelope
                 | Reason::Hysteresis
+                | Reason::RunHysteresis
                 | Reason::Outlier
                 | Reason::OutsideTheGate => {}
             }
