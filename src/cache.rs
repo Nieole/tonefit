@@ -156,6 +156,8 @@ pub struct PageCache {
     /// 溢写文件。头一页装不下时才建，全程留在内存里的卷根本不碰文件系统。
     spill: Option<Spill>,
     usage: CacheUsage,
+    /// 存进来的**参照**张数（窄计数器，见 [`references`](Self::references)）。
+    references: usize,
 }
 
 /// 一页压好的块，等着进缓存。
@@ -221,12 +223,23 @@ impl PageCache {
             entries: Vec::new(),
             spill: None,
             usage: CacheUsage::new(budget),
+            references: 0,
         }
     }
 
     /// 至此存下了多少。
     pub fn usage(&self) -> CacheUsage {
         self.usage
+    }
+
+    /// 至此有多少张**参照**进了缓存。窄计数器（`CONTEXT.md` 的《窄计数器》），
+    /// 它与 [`CacheUsage::pages`] 的分工写在 `crate::VolumeReport::cached_references` 上。
+    ///
+    /// 落到这一层只剩一条**给改这个模块的人**的规矩：这个数**只数参照**。
+    /// 缓存哪天改存别的东西（spec 的 P-C：第二遍退化成纯写出，缓存改存编好的字节），
+    /// 那条路要另开一个入口，不许并进 [`insert`](Self::insert)。
+    pub fn references(&self) -> usize {
+        self.references
     }
 
     /// 把一个压好的块存进来，返回它的序号。
@@ -250,6 +263,7 @@ impl PageCache {
             (Retention::Keep, true) => Stored::Memory(block),
             (Retention::Keep, false) => Stored::Spilled(self.spill()?.append(&block)?),
         };
+        self.references += 1;
         self.usage.pages += 1;
         self.usage.raw += raw;
         self.usage.stored += length;

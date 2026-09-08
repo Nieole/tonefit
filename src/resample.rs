@@ -6,6 +6,7 @@
 //! [`Filter`] 改的是残差段，改不到预缩。
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use fast_image_resize::images::Image;
@@ -164,38 +165,76 @@ impl std::fmt::Display for Scaling {
     }
 }
 
-/// 把灰度图缩到 `target`：先整数倍 box 预缩，剩下的残差段交给 `filter`。
+/// 缩放器：缩一张图记一次。
 ///
-/// 尺寸相同时原样返回，保证不放大的页逐字节不变。
-pub fn resize(source: &GrayImage, target: Size, filter: Filter) -> Result<(GrayImage, Scaling)> {
+/// 计数记在**缩放这个动作本身**上，而不是记在调用方那两条分支里，理由与
+/// [`crate::decode::Decoder`] 那一个逐字相同：缩放只此一条路，哪条分支要是回头缩一张，
+/// 这个数瞒不住。它一处都不显示，只给用例钉「某个开关关掉之后，这一趟确实没有缩」。
+///
+/// **数的是「这一张图被缩了几回」，不是「重采样器被叫了几回」**：彩色那一张三个通道各走一遍
+/// （见 [`resize_color`](Self::resize_color)），按后者数一张彩页会记成三次，而它只是一张。
+///
+/// 计数是原子的，缩放本身因此**不需要独占**：第一遍在 rayon 上满核跑（13 号票），
+/// 而一个要 `&mut` 的计数器会把整条计算层串回一条线。
+#[derive(Debug, Default)]
+pub struct Resampler {
+    resizes: AtomicUsize,
+}
+
+impl Resampler {
+    /// 至此缩了多少张。
+    pub fn resizes(&self) -> usize {
+        self.resizes.load(Ordering::Relaxed)
+    }
+
+    /// 把灰度图缩到 `target`：先整数倍 box 预缩，剩下的残差段交给 `filter`。
+    ///
+    /// 尺寸相同时原样返回，保证不放大的页逐字节不变——**那一趟照样记一次**：
+    /// 这个数问的是「这一张走没走这一趟」，不是「这一趟花了多少力气」。
+    pub fn resize(
+        &self,
+        source: &GrayImage,
+        target: Size,
+        filter: Filter,
+    ) -> Result<(GrayImage, Scaling)> {
+        self.resizes.fetch_add(1, Ordering::Relaxed);
+        scale(source, target, filter)
+    }
+
+    /// 把彩色图缩到 `target`：三个通道各走一遍 [`scale`]。
+    ///
+    /// **分通道跑与交织跑逐字节相同。**两级缩放都逐通道独立——预缩是等权块平均，
+    /// 残差段是卷积重采样，卷积核只在同一通道内取样。分通道于是不是近似，
+    /// 而是把灰度那条路径原样用过来：彩色分支不必另写一份缩放，两条路径也不会各自漂移。
+    ///
+    /// 彩色分支只做缩放（ADR 0005 决定第 4 条），因此这里之后就直接编码写出，没有判据也没有量化。
+    pub fn resize_color(
+        &self,
+        source: &ColorImage,
+        target: Size,
+        filter: Filter,
+    ) -> Result<(ColorImage, Scaling)> {
+        self.resizes.fetch_add(1, Ordering::Relaxed);
+        let scaling = Scaling::plan(source.size(), target);
+        let [red, green, blue] = source.planes();
+        let planes = [
+            scale(red, target, filter)?.0,
+            scale(green, target, filter)?.0,
+            scale(blue, target, filter)?.0,
+        ];
+        Ok((ColorImage::new(target, planes), scaling))
+    }
+}
+
+/// 把一个灰度平面缩到 `target`。两条分支共用的那一段，**不记数**——
+/// 记数在 [`Resampler`] 的两个入口上，一张彩页因此只记一次而不是三次。
+fn scale(source: &GrayImage, target: Size, filter: Filter) -> Result<(GrayImage, Scaling)> {
     let scaling = Scaling::plan(source.size(), target);
     let prescaled = match scaling.prescale {
         1 => Cow::Borrowed(source),
         factor => Cow::Owned(box_prescale(source, factor)),
     };
     Ok((resample(&prescaled, target, filter)?, scaling))
-}
-
-/// 把彩色图缩到 `target`：三个通道各走一遍 [`resize`]。
-///
-/// **分通道跑与交织跑逐字节相同。**两级缩放都逐通道独立——预缩是等权块平均，
-/// 残差段是卷积重采样，卷积核只在同一通道内取样。分通道于是不是近似，
-/// 而是把灰度那条路径原样用过来：彩色分支不必另写一份缩放，两条路径也不会各自漂移。
-///
-/// 彩色分支只做缩放（ADR 0005 决定第 4 条），因此这里之后就直接编码写出，没有判据也没有量化。
-pub fn resize_color(
-    source: &ColorImage,
-    target: Size,
-    filter: Filter,
-) -> Result<(ColorImage, Scaling)> {
-    let scaling = Scaling::plan(source.size(), target);
-    let [red, green, blue] = source.planes();
-    let planes = [
-        resize(red, target, filter)?.0,
-        resize(green, target, filter)?.0,
-        resize(blue, target, filter)?.0,
-    ];
-    Ok((ColorImage::new(target, planes), scaling))
 }
 
 /// 整数倍 box 预缩：每个输出像素是源上一个 `factor`×`factor` 块的等权平均。
