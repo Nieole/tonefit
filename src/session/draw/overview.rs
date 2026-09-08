@@ -347,12 +347,16 @@ fn walking_line(walking: &Walking, room: u16) -> String {
     with_a_bar(&head, &tail, walking.walked, walking.steps, room)
 }
 
-/// 在走哪一遍。三段与 `VolumeTiming` 的三段是同一条分界线（`CONTEXT.md` 的《进度》）。
+/// 在走哪一遍。三遍与 `VolumeTiming` 的三段是同一条分界线（`CONTEXT.md` 的《进度》）。
 ///
 /// `_` 那一支不是遗漏：[`Pass`] 非穷尽，多一遍不该逼着这里跟着改。
 fn pass_name(pass: Option<Pass>) -> &'static str {
     match pass {
         // 开卷之后、第一条 `PassStarted` 到达之前：打开容器、列成员，还没走进任何一遍。
+        //
+        // **固实归档在这一段里摊开一整卷**，而那是分钟级的一段、如今一个成员报一步
+        // （`p4-parking-lot/13`）：横条因此在这一格上真的会走，而这一格只说得出「开卷」
+        // ——摊开不是一遍，`Pass` 上没有它（停车场 Q283）。
         None => "开卷",
         Some(Pass::Fingerprint) => "幂等这一道",
         Some(Pass::First) => "第一遍",

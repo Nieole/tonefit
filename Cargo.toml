@@ -1,3 +1,11 @@
+# 跑闸门的那件工具（`xtask`）与 tonefit 并排成一个 workspace。
+# **它不许进产物的依赖**：`default-members` 把它挡在外面，`cargo build`、`cargo test`
+# 在仓库根敲下去仍然只是 tonefit 这一个包；点得到它的只有 `.cargo/config.toml` 里
+# 那条 `xtask` 别名。它做什么、为什么三条闸门要各用各的 target 目录，见 `docs/agents/gate.md`。
+[workspace]
+members = [".", "xtask"]
+default-members = ["."]
+
 [package]
 name = "tonefit"
 version = "0.1.0"
@@ -16,6 +24,25 @@ clap = { version = "4.6.6", features = ["derive"] }
 # 探宽度的活不能交给 ratatui：那一份挂在 `tui` 特性后面，而闸门的第二条把 `tui` 关掉，
 # 命令行那两处照旧要问。
 console = { version = "0.16.4", default-features = false, features = ["std"] }
+# 命令行那一头的两级停要按得动 `Ctrl-C`（ADR 0013 决定第 3 条）。
+#
+# **这一条与上面 `console`、底下 `unicode-width` 那两条不同**：它们是把树里现成的传递依赖
+# 直接列出来，而信号处理这件事树里现成的那一份（crossterm 的 `signal-hook`）挂在 `tui`
+# 特性后面，而闸门第二条把 `tui` 关掉——命令行那一头照旧要按得动。
+#
+# **收下它，Linux 与 Windows 上多编两个包**：它自己，加上 unix 那一侧的 `nix`
+# （树里已有一份 0.29，crossterm 的；这里是 0.31，两份并存）。`Cargo.lock` 上多出来的是
+# **六格**——另外四格（`dispatch2`、`block2`、`objc2`、`objc2-encode`）是
+# `cfg(target_vendor = "apple")` 那一侧的，本机与 Windows 上一格都不编。
+#
+# **为什么不自己写**：这件事有一半在 Windows 上（`SetConsoleCtrlHandler`），而本仓验不到
+# 那一半（`src/medium.rs` 那几处 FFI 是同一种处境）——引它换来的正是那一半有人替我们
+# 编过、测过。另外它的信号处理函数只 `sem_post` 一下，回调跑在一条**普通线程**上，
+# 那个回调因此不必守异步信号安全那套规矩。
+#
+# **默认特性全关**：`termination` 是连 SIGTERM / SIGHUP 一起收的那一半，而这里要接的只有
+# `Ctrl-C`——两级停的语义是「按一次、按两次」，一个来自别处的终止信号按不出「第二次」。
+ctrlc = { version = "3.5.2", default-features = false }
 encoding_rs = "0.8.35"
 fast_image_resize = "6"
 image = { version = "0.25.9", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp", "rayon", "avif-native"] }
@@ -103,6 +130,11 @@ crc32fast = "1.5.1"
 # 就够——非可选项对 `tests/` 那些独立 crate 同样可见（`tests/concurrency.rs` 就直接用着
 # 只列在那边的 `num_cpus`）。`image` 不同：dev 侧要的 `avif` 编码特性运行时那一份没有。
 image = { version = "0.25.9", default-features = false, features = ["avif"] }
+# 用例要**自己按一下** `Ctrl-C`（往子进程送一个 `SIGINT`）才验得到装上去的那个键真收得到
+# 信号，而 `Ctrl-C` 只有在真进程上按得下去（`tests/stop.rs`）。
+# 这一条不是新的一棵树：`libc` 早被 `console`、`num_cpus`、`unrar-ng-sys` 传递依赖着，
+# 只是运行时那一份一处都用不上它——按停那一头走的是 `ctrlc`（见 `[dependencies]`）。
+libc = "0.2"
 # 夹具要**写得出** 7z 才造得出 `.7z` 的用例，而运行时那一份只解不压（见 `[dependencies]`）。
 # 与上面 `image` 那一行同一条道理、同一条依据：resolver v2 不把 dev-dependencies 的特性
 # 并进非 dev 构建，`cargo build` 因此不会带上 7z 的编码器。

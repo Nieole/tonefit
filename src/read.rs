@@ -28,7 +28,7 @@ use std::thread::JoinHandle;
 use anyhow::Result;
 
 use crate::cost;
-use crate::source::{Member, Reader};
+use crate::source::{Independent, Member, Reader};
 
 /// 在途字节的预算：读取层最多让这么多源字节同时待在通道里。
 ///
@@ -69,6 +69,20 @@ pub struct Read {
 /// 开不出句柄同理。**开出的不到两条就退回串行**：一条时并发与串行本来就是同一件事，
 /// 而一条都没开出来时并发那一支根本走不动（没有线程去领号，取的一端会一直等）。
 ///
+/// **源在开卷之后被换成另一份仍然解得开的归档，就整卷退回串行**，这是另一件事，
+/// 不是上面那一条的一种（12 号票）。重开的那一份核不上开卷那一刻的印记时
+/// （[`Independent::Replaced`]，判据与代价见 `source::ArchiveStamp`），
+/// 手里已经核上的那几份**一并丢掉**：它们「核上了」只说明那两个数撞上了，
+/// 而此刻已经知道这个文件动过，那点证据不够。串行读的是**卷自己那个句柄**——
+/// 成员表就是它解出来的，字节与成员表因此出自同一份。
+/// **那一趟仍旧跑完**，只是不吃并发；这一卷、其余卷、其余页一页不少。
+///
+/// **换上去那一份解不开时**（下载到一半的 `.part`、根本不是 zip），走的是上面
+/// 「句柄开不出来」那一支，**未必退回串行**：`source::open_archive_handle` 对
+/// 「开不出文件」与「解不出归档结构」回的是同一种错，这一层分不开这两件事。
+/// 字节仍是对的——手里那几份攥的是换掉之前那一份，`Member::entry` 在它上面仍指得准。
+/// 记在停车场 Q224。
+///
 /// 降下来的这个条数**不进报告**：报告印的是[读取计划](crate::medium::IoPlan)——
 /// 定下来要派几条，以及那个数是谁定的。真派出去几条是这一层的实况，两者可以不等，
 /// 而这条分岔**只在异常路径上**：一趟同时要的句柄够不着任何平台的上限
@@ -89,13 +103,22 @@ pub fn reads<'a>(
     let readers = readers.min(members.len());
     if readers > 1 {
         let mut own: Vec<Reader> = Vec::with_capacity(readers);
+        let mut same_archive = true;
         while own.len() < readers {
             match reader.independent() {
-                Ok(opened) => own.push(opened),
+                Ok(Independent::Same(opened)) => own.push(opened),
+                // 核不上：整卷退回串行，手里这几份一并丢掉（见本函数的文档）。
+                // 那句为什么眼下没有去处——报告里没有这一栏（12 号票判的，见停车场 Q222）。
+                Ok(Independent::Replaced(_why)) => {
+                    same_archive = false;
+                    break;
+                }
+                // 句柄开不出来，或者换上去那一份根本解不开：用开出来的那几条接着做
+                // （这两件事在这一层分不开，见本函数的文档与停车场 Q224）。
                 Err(_) => break,
             }
         }
-        if own.len() > 1 {
+        if same_archive && own.len() > 1 {
             // 成员表要整个搬进线程里：线程活得比这次借用长，借不过去（见 `Member` 的《可克隆》）。
             let owned: Arc<Vec<Member>> =
                 Arc::new(members.iter().map(|member| (*member).clone()).collect());
@@ -380,7 +403,7 @@ mod tests {
             // 内容是序号那个字节铺满，取回来一眼认得出是哪一页。
             std::fs::write(root.path().join(name), vec![index as u8; size]).expect("写页");
         }
-        let volume = source::open(root.path()).expect("打开卷");
+        let volume = source::open_unwatched(root.path()).expect("打开卷");
         (root, volume)
     }
 
@@ -390,7 +413,14 @@ mod tests {
     fn archive(sizes: &[usize]) -> (tempfile::TempDir, source::Volume) {
         let dir = tempfile::tempdir().expect("建目录");
         let path = dir.path().join("卷一.cbz");
-        let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).expect("建归档"));
+        write_archive(&path, sizes);
+        let volume = source::open_unwatched(&path).expect("打开归档卷");
+        (dir, volume)
+    }
+
+    /// 把一个归档写到 `path` 上。[`archive`] 开工前走它，换掉源的那条用例也走它。
+    fn write_archive(path: &std::path::Path, sizes: &[usize]) {
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(path).expect("建归档"));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         for (index, &size) in sizes.iter().enumerate() {
@@ -400,8 +430,6 @@ mod tests {
             std::io::Write::write_all(&mut writer, &vec![index as u8; size]).expect("写成员");
         }
         writer.finish().expect("收尾归档");
-        let volume = source::open(&path).expect("打开归档卷");
-        (dir, volume)
     }
 
     /// 逐页取一遍，顺便把在途字节的峰值记下来。
@@ -566,6 +594,58 @@ mod tests {
         assert_eq!(drain(&mut taking).len(), 8);
     }
 
+    /// **跑到一半源被换掉**：并发那一支不派，这一趟退回串行，而字节仍是开卷那一份的
+    /// （12 号票，从前记在停车场 Q99）。
+    ///
+    /// 换的形式是「另写一份、改名盖上去」——下载工具补完与用户手动替换都是这么落地的。
+    /// 路径上换了一份之后：重开的那几个句柄解到的是**新**那一份的中央目录，成员表的下标
+    /// 在它上面指到别处；而**开卷那个句柄**攥着的还是原来那些字节。退回串行读的就是它，
+    /// 因此这一趟仍旧跑完，读到的仍是这一卷的字节。
+    #[test]
+    fn an_archive_swapped_under_us_falls_back_to_serial() {
+        let (dir, mut volume) = archive(&[64; 4]);
+        let path = dir.path().join("卷一.cbz");
+        let members: Vec<&Member> = volume.pages.iter().collect();
+
+        // 对照：源没动时同一批参数派得出并发——没有这一半，下面那一半说明不了任何事。
+        assert!(
+            matches!(
+                reads(&mut volume.reader, &members, 4, BUDGET),
+                Reads::Concurrent(_)
+            ),
+            "源一个字节没动却没派并发"
+        );
+
+        // 换成另一份：成员少两个、每个也大一倍，中央目录的偏移与条目数跟着都变。
+        //
+        // **两步，不是一步。**卷的读取端此刻正开着这个文件，而 Windows 上一步盖过去
+        // 会回 `ERROR_ACCESS_DENIED`——删一个还开着的文件只是打上 delete-pending，
+        // 目录项要等最后一个句柄关掉才消失，名字没让出来。先把开着的那一份挪开，
+        // 再把新那一份搬到空出来的名字上。Linux 上两种写法逐字节等价。
+        let other = dir.path().join("另一份.cbz");
+        write_archive(&other, &[128; 2]);
+        let evicted = dir.path().join("原来那一份");
+        std::fs::rename(&path, &evicted).expect("把开着的那一份挪开");
+        std::fs::rename(&other, &path).expect("换上另一份");
+
+        let mut taking = reads(&mut volume.reader, &members, 4, BUDGET);
+
+        assert!(
+            matches!(taking, Reads::Serial { .. }),
+            "源被换掉了却照样派了并发"
+        );
+        let taken = drain(&mut taking);
+        assert_eq!(taken.len(), 4, "退回串行之后那一趟没跑完");
+        for (index, (order, bytes)) in taken.iter().enumerate() {
+            assert_eq!(*order, index, "第 {index} 份的序号不对");
+            assert_eq!(
+                bytes,
+                &vec![index as u8; 64],
+                "第 {index} 份读到的不是开卷那一份的字节"
+            );
+        }
+    }
+
     /// 并发那一支同时攥着几个读取端：**一条线程一个**，条数是 `min(点名的条数, 成员数)`。
     ///
     /// 归档卷上一个读取端就是一个打开的文件句柄，这一条因此钉的是那笔句柄账里带乘数的
@@ -607,7 +687,7 @@ mod tests {
     #[test]
     fn a_volume_with_no_members_hands_over_nothing() {
         let dir = tempfile::tempdir().expect("建目录");
-        let mut volume = source::open(dir.path()).expect("打开空卷");
+        let mut volume = source::open_unwatched(dir.path()).expect("打开空卷");
         let members: Vec<&Member> = volume.pages.iter().collect();
         assert!(members.is_empty());
 

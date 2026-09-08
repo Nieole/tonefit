@@ -1,0 +1,30 @@
+# 这一份**入库**：它装的是仓库自己的别名，不是本机的路径。
+# 本机那一半（下面《本机的 dav1d》）不写在这里——写进来就要被提交。
+#
+# **从老克隆上来的人：本机原先那一份同名文件要先移走。**这个路径从前整份被 gitignore，
+# 盘上那一份装的是你自己的 `[env] PKG_CONFIG_PATH`；它未跟踪，`git pull` 会因此中止
+# （`untracked working tree files would be overwritten`）。把那段 `[env]` 按下面《本机的
+# dav1d》搬走，再删掉本机那一份——**别拿它盖掉这一份**，盖掉之后 `cargo xtask` 就没了。
+
+# 一条命令跑满三条闸门，三条各用各的 target 目录。
+# 三条各是什么、目录各在哪、哪几条是闸门之外顺带过的，见 `docs/agents/gate.md`。
+[alias]
+xtask = "run --quiet --package xtask --"
+
+# ── 本机的 dav1d ────────────────────────────────────────────────
+#
+# AVIF 解码经 dav1d，dav1d-sys 通过 pkg-config 定位它。Linux/macOS 上系统包管理器
+# 装下的那一份 pkg-config 自己找得到，**不必配任何东西**；要指路的只有 Windows：
+# dav1d 可由 vcpkg 提供（`vcpkg install dav1d:x64-windows-static-md`），
+# `PKG_CONFIG_PATH` 要指向该安装目录下的 `lib/pkgconfig`。
+#
+# 两种给法，二选一，**都在这份文件之外**：
+#
+#   1. 在 shell 里导出环境变量 PKG_CONFIG_PATH；
+#   2. 写进用户级的 cargo 配置（`%USERPROFILE%\.cargo\config.toml`
+#      或 `~/.cargo/config.toml`），那一份不在仓库里：
+#
+#          [env]
+#          PKG_CONFIG_PATH = "<vcpkg 安装目录>/installed/x64-windows-static-md/lib/pkgconfig"
+#
+# 可用性矩阵见 `docs/measurements.md` 的《AVIF 解码的可用路径》。

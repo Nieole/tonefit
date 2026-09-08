@@ -391,6 +391,10 @@ pub enum Layer {
 impl Layer {
     /// 左栏上这一块的抬头。括号里那半句说的正是这一层错了会怎样——
     /// 三层为什么分成三层，屏上就得看得见。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn title(self) -> &'static str {
         match self {
             Layer::Device => "设备层 · 判定的依据，绑面板，改一次管很久",
@@ -764,6 +768,10 @@ impl Overlay {
 
     /// 这一张叫什么。**屏底那一行、`?` 那张表与这一格的抬头共用它**
     /// （前两处经 `super::draw::keys::says`），三处不会各叫一个名字。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn what(self) -> &'static str {
         match self {
             Self::Keys => "全部键",
@@ -796,6 +804,10 @@ pub struct Covered {
 
 impl Covered {
     /// 从第几行画起。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn from(&self) -> usize {
         self.from
     }
@@ -834,10 +846,22 @@ pub enum KeyGroup {
     /// 预设栏。
     Picking,
     /// **编辑一行**：左栏上打字改那一行。不在 [`Self::ALL`] 上（见本枚举的文档）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     Editing,
     /// **打预设名**：预设那一栏里打一个新名字。不在 [`Self::ALL`] 上。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     Naming,
     /// **覆盖层自己**：掀着的那一张读物。不在 [`Self::ALL`] 上。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     Overlaid,
     /// 任何时候：阶段那一维派得出的那几个，加上覆盖层那两个。
     Always,
@@ -886,6 +910,10 @@ impl KeyGroup {
     ///
     /// 打预设名与预设那一栏分得开：那一栏里打名字是它里面的一步，
     /// 而 `Esc` 在两处退到的不是同一个地方（见 [`naming_action`]）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn of(focus: &Focus) -> Self {
         match focus {
             Focus::Config => Self::Config,
@@ -903,6 +931,10 @@ impl KeyGroup {
     }
 
     /// 这一组在 `?` 那张表上的抬头。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn title(self) -> &'static str {
         match self {
             Self::Config => "左栏 · 三层配置",
@@ -1092,6 +1124,10 @@ impl Picker {
     }
 
     /// 这一栏是哪一份文件列出来的。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn file(&self) -> &Path {
         &self.file
     }
@@ -1123,6 +1159,10 @@ impl Picker {
 
     /// 「真删掉它吗」这一问已经问过的是哪一份。press 那一层照它分岔：
     /// 问的与眼下停着的是同一份才真删，否则先问一句（见 `super::erase_preset`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn asked(&self) -> Option<&str> {
         self.asked.as_deref()
     }
@@ -1131,6 +1171,10 @@ impl Picker {
     ///
     /// 清单按字典序（`preset::names` 给的就是这个次序），因此插在二分找到的那一格上——
     /// 重新排一遍会让光标那个下标失效，而下一屏正要按它反白。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     fn stored(&mut self, name: &str) {
         self.naming = None;
         self.at = match self
@@ -1186,6 +1230,10 @@ impl Naming {
 
     /// 撞名那一句问过了没有。press 那一层照它分岔：问过了才走覆盖那一条
     /// （`preset::Presets::replace`），没问过走盖不掉同名的那一条（`save`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn asked(&self) -> bool {
         self.asked
     }
@@ -1254,6 +1302,10 @@ impl Expansion {
     ///
     /// 光标不跟着走，是因为「第几页」在两卷之间指的不是同一件事；
     /// 列法跟着走，是因为它指的是**同一件事**（见 [`listing`](Self::listing)）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn turned_to(&self, directory: PathBuf, volume: Volume) -> Self {
         Self {
             directory,
@@ -1276,6 +1328,10 @@ impl Expansion {
     /// 「不知道此刻在第几格」与「在第零格」是两件事。
     ///
     /// `volumes` 是空的这一步到不了：调用方先挡在前面（见 `super::expand`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn next(volumes: &[Volume], at: Volume, step: Step) -> Volume {
         let Some(at) = volumes.iter().position(|listed| *listed == at) else {
             return volumes[0];
@@ -1375,6 +1431,10 @@ pub enum NoticeKind {
     Refused,
     /// **撤不回来，先问一句**：覆盖一份同名预设、删掉一份预设。
     /// 那一句里摆着「再按一次」，而按下去没有撤销。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     Asked,
     /// **做成了**：存好了、删掉了、套上了、标定图出完了。
     Done,
@@ -1392,6 +1452,10 @@ impl Notice {
     }
 
     /// [先问一句](NoticeKind::Asked)那一种。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     fn asked(said: String) -> Self {
         Self::new(said, NoticeKind::Asked)
     }
@@ -1407,6 +1471,10 @@ impl Notice {
     }
 
     /// 这一句是[哪一种](NoticeKind)。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn kind(&self) -> NoticeKind {
         self.kind
     }
@@ -1508,6 +1576,10 @@ impl Session {
     /// 名字照旧叫 `complain`：它说的本来就只有这一种，而**做成了的那几句各有各的出口**
     /// （[`saved`](Self::saved)、[`erased`](Self::erased)、[`took`](Self::took)、
     /// [`charted`](Self::charted)）——那几处自己知道该挂哪一种。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn complain(&mut self, said: String) {
         self.says(Some(Notice::refused(said)));
     }
@@ -2046,6 +2118,10 @@ impl Session {
     ///
     /// **摆哪几个仍由屏底那一层挑**（见 `super::draw::footer`）：那一行只摆此刻最常用的
     /// 几个，挑的是**动作**（「就在这一行上动手」「试算」「退出」），键与措辞一律出自这里。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub fn keys_here(&self) -> Vec<(Key, Action)> {
         every_key()
             .into_iter()
@@ -2326,6 +2402,10 @@ impl Session {
     /// **画法那一层每帧调一次**（见 `super::draw::overlay`），与逐页表那一处同一条
     /// （[`clamp_report`](Self::clamp_report)）：只有它知道这一张此刻折出来几行、
     /// 这一格有多高。不收的话，往下按过了头再往回按，头几下会**按了没反应**。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn clamp_overlay(&mut self, last: usize) {
         if let Focus::Overlaid(covered) = &mut self.focus {
             covered.from = covered.from.min(last);
@@ -2365,6 +2445,10 @@ impl Session {
     /// 而下一次多半在命令行上（spec 的 story 12）。**写到哪儿了不在这句话里**：
     /// 屏底那一格不折行，一条长路径会被切掉；那份文件的位置摆在这一栏自己身上
     /// （见 [`Picker::file`]），它折得下来。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn saved(&mut self, name: &str) {
         if let Focus::Picking(picker) = &mut self.focus {
             picker.stored(name);
@@ -2385,6 +2469,10 @@ impl Session {
     ///
     /// **注释不写进这一句**：它在退回重排那一条路上留不下来，而屏上这一句不该说一件
     /// 只在多数文件上成立的事——说出口的每一句都要无条件为真（停车场 Q108）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn name_is_taken(&mut self, name: &str) {
         if let Focus::Picking(Picker {
             naming: Some(naming),
@@ -2407,6 +2495,10 @@ impl Session {
     ///
     /// **先说、后闩**：那一问与说出它的那句话同生共死（见 [`says`](Self::says)），
     /// 而 `says` 恰恰要把上一问清掉——顺序反过来，刚闩上的这一个就被自己清掉了。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
     pub(super) fn ask_before_erasing(&mut self, name: &str) {
         self.says(Some(Notice::asked(format!(
             "真要删掉「{name}」吗：再按一次 d 删掉它。\
