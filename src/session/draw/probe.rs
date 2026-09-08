@@ -17,7 +17,7 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
-use tonefit::{Mode as RunMode, PageOutcome, VolumeReport};
+use tonefit::{Mode as RunMode, PageOutcome};
 
 use super::yielding::CONFIG_WIDTH;
 use super::{main_pane, shell};
