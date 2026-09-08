@@ -10,6 +10,7 @@
 //! （ADR 0006），[`Envelope`] 的 `Display` 把这句话写在数值旁边。
 
 use crate::decide::{CandidateScore, Reason, Verdict};
+use crate::hysteresis;
 use crate::metric::{Score, nearest_rank};
 use crate::profile::Threshold;
 use crate::quantize::Candidate;
@@ -18,11 +19,6 @@ use crate::quantize::Candidate;
 ///
 /// 取上分位而非最大值：极端内容不该独自定全卷的档（ADR 0006 决定第 3 条）。
 const ENVELOPE_QUANTILE: f64 = 0.95;
-
-/// 迟滞页数：要连续多少页要求高于基准档才升档。**未标定占位值**。
-///
-/// 一页说了不算（ADR 0006 决定第 4 条）。
-const HYSTERESIS_PAGES: usize = 3;
 
 /// 特例页判据的倍数：判据要超过阈值的这么多倍，才算「显著偏离卷内分布」。**未标定占位值**。
 const OUTLIER_FACTOR: f32 = 3.0;
@@ -127,7 +123,7 @@ impl Page<'_> {
 ///
 /// 两步，次序不能反：
 /// 1. 摘出特例页（[`outlying`]），剩下的是其余页；
-/// 2. 在其余页上取上包络定出基准档，再叠加迟滞（[`hysteresis`]）。
+/// 2. 在其余页上取上包络定出基准档，再叠加迟滞（[`raise`]）。
 ///
 /// **这里不先取一次全卷的上包络。**特例检验要的立脚点整个在 [`outlying`] 以内逐页取，
 /// 卷级聚合当不了它——那一档由全卷算出，被判的页自己也在里面
@@ -164,7 +160,7 @@ pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary>
             reason: Reason::Outlier,
         };
     }
-    let raised_pages = hysteresis(&body, pages, base, threshold, &mut verdicts);
+    let raised_pages = raise(&body, pages, base, threshold, &mut verdicts);
 
     Some(Summary {
         envelope: Envelope {
@@ -225,7 +221,7 @@ fn by_demand(indices: &[usize], pages: &[Page]) -> Vec<usize> {
 ///
 /// 判据是**幅度**，判据形态里没有「连着几页」这一维：卷首连着几页的彩页转灰后仍是特例页，
 /// 那正是 ADR 0006 决定第 5 条举的例子。成段与否只在迟滞那一层说话
-/// （见 [`hysteresis`]），那一层管的是升不升档，不是摘不摘页。
+/// （见 [`raise`]），那一层管的是升不升档，不是摘不摘页。
 fn outlying(pages: &[Page], threshold: Threshold) -> Vec<bool> {
     let mut taken = vec![false; pages.len()];
     // 抽掉被判的那一页之后一页不剩：一页的卷没有别人可比。
@@ -251,7 +247,10 @@ fn outlying(pages: &[Page], threshold: Threshold) -> Vec<bool> {
     taken
 }
 
-/// 迟滞：其余页里连续够了 [`HYSTERESIS_PAGES`] 页**基准档不够用**的，整段一起升档。
+/// 迟滞升档：其余页里连续够了 [`hysteresis::PAGES`] 页**基准档不够用**的，整段一起升。
+///
+/// 名字里不含 `hysteresis`，好与 `crate::hysteresis` 那个模块分得开——那一层问的是
+/// 「这一段孤不孤立」，这一层问的是「够不够得着基准档」，两句话不是同一句。
 /// 返回升上去的页数。
 ///
 /// 一页说了不算——升档要有持续的证据，否则翻页跳变的密度就退回逐页可变
@@ -270,7 +269,10 @@ fn outlying(pages: &[Page], threshold: Threshold) -> Vec<bool> {
 ///
 /// 「连续」数的是**其余页**的序列，特例页整个不在其中。否则一页特例就能把一段持续的要求
 /// 切成两截，而特例页恰恰爱出现在段的边上（彩页常在章节交界）。
-fn hysteresis(
+///
+/// 上包络关着时这一层整个不在场，「一页说了不算」改由 [`hysteresis::pull_back`] 问——
+/// 那一种没有基准档可比，问的是这一页孤不孤立。两处共用 [`hysteresis::PAGES`]。
+fn raise(
     body: &[usize],
     pages: &[Page],
     base: Candidate,
@@ -281,7 +283,7 @@ fn hysteresis(
     for run in runs(body.len(), |position| {
         !threshold.admits(pages[body[position]].score_at(base))
     }) {
-        if run.len() < HYSTERESIS_PAGES {
+        if run.len() < hysteresis::PAGES {
             continue;
         }
         let stretch = &body[run];
@@ -378,7 +380,7 @@ impl std::fmt::Display for Envelope {
             self.outlier_share() * 100.0,
             self.raised_pages,
             (ENVELOPE_QUANTILE * 100.0).round(),
-            HYSTERESIS_PAGES,
+            hysteresis::PAGES,
             (ANCHOR_QUANTILE * 100.0).round(),
             OUTLIER_FACTOR,
         )
@@ -693,7 +695,7 @@ mod tests {
     /// 差一页就不算持续：同样的内容少一页，全卷留在基准档上。
     #[test]
     fn a_run_one_page_short_of_the_hysteresis_stays_at_the_base() {
-        let short: Vec<_> = (30..30 + HYSTERESIS_PAGES - 1)
+        let short: Vec<_> = (30..30 + hysteresis::PAGES - 1)
             .map(|index| (index, Candidate::plain(BitDepth::Four), just_over()))
             .collect();
         let volume = volume_of(60, &short);
@@ -967,7 +969,10 @@ mod tests {
         assert!(said.contains("未标定"), "{said}");
         // 四个数各自都要露面，读的人才知道「未标定」说的是哪几个。
         assert!(said.contains("p95"), "{said}");
-        assert!(said.contains(&format!("{HYSTERESIS_PAGES} 页")), "{said}");
+        assert!(
+            said.contains(&format!("{} 页", hysteresis::PAGES)),
+            "{said}"
+        );
         assert!(said.contains(&format!("{OUTLIER_FACTOR:.1}")), "{said}");
         assert!(
             said.contains(&format!("p{}", (ANCHOR_QUANTILE * 100.0).round())),

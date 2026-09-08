@@ -2108,7 +2108,8 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
 
 #[test]
 fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_reason() {
-    // `--per-page` 关闭上包络与迟滞，给「只要最小体积」留的出口（ADR 0006 决定第 6 条）。
+    // `--per-page` 关闭上包络，给「只要最小体积」留的出口（ADR 0006 决定第 6 条）。
+    // 迟滞不跟着关，改走段式——这两页各在序列的一头，一侧邻居都够不上长度，一页不动。
     // 换回来的正是翻页跳变：这两页的判据差得远，档位于是也差着。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -3070,6 +3071,140 @@ fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport 
     let report = run_volume(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")
+}
+
+/// 段式迟滞：`--per-page` 那条路上，孤立偏离的一页被压回邻居那一档
+/// （`CONTEXT.md` 的《段式迟滞》，10 号票）。
+///
+/// 逐页判定「一页说了不算」的另一半：卷级上包络那一层关着时，档位不再由基准档兜着，
+/// 一页孤立地要求更高的档就是一次翻页跳变对——上去一次、下来一次。段式迟滞压掉的正是它。
+///
+/// 这一条跑在 **fit-inside** 上：门在每一页上都不成立，候选集里没有抖动那一维，
+/// 压回的于是在位深这一维上分胜负。
+#[test]
+fn an_isolated_page_is_pulled_back_to_its_neighbours_depth_when_the_envelope_is_off() {
+    let space = Workspace::new();
+    // 中间那一页远在界外，前后各两页只要 2bit：孤岛长一页，够不上迟滞要的页数。
+    let volume = volume_of_solids(
+        &space,
+        &[
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::FAR_OUTSIDE,
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::NEEDS_TWO_BITS,
+        ],
+    );
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
+        fit: FitMode::Inside,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let volume_report = &report.volumes[0];
+    assert_eq!(
+        volume_report.verdict,
+        Some(VolumeVerdict::PerPage),
+        "上包络没被关掉"
+    );
+    let pages = &volume_report.pages;
+    // 夹具先自证：那一页逐页判定要的确实是更高的一档，压回才有东西可压。
+    assert_eq!(
+        lowest_within_threshold(&pages[2], &report),
+        BitDepth::Four,
+        "夹具不对：中间那一页逐页判定并不偏离邻居"
+    );
+
+    // 压回邻居那一档，理由说得出这一档是怎么来的。
+    assert_eq!(
+        fixtures::verdict(&pages[2]).candidate,
+        fixtures::plain(BitDepth::Two)
+    );
+    assert_eq!(
+        fixtures::verdict(&pages[2]).reason,
+        Reason::RunHysteresis,
+        "孤立偏离的那一页没被压回"
+    );
+    // 邻居一页不动：压的是孤岛，不是全卷——它们各自那一档本来就是判出来的。
+    for (position, page) in pages.iter().enumerate() {
+        if position == 2 {
+            continue;
+        }
+        assert_eq!(
+            fixtures::verdict(page).candidate,
+            fixtures::plain(BitDepth::Two),
+            "{} 被孤岛带走了",
+            page.source.display()
+        );
+        assert_eq!(
+            fixtures::verdict(page).reason,
+            Reason::LowestWithinThreshold,
+            "{} 的理由不该是迟滞",
+            page.source.display()
+        );
+    }
+}
+
+/// 段式迟滞压的是孤岛，不是「偏离」本身：连续够长的一段留住它自己那一档
+/// （`CONTEXT.md` 的《段式迟滞》，10 号票）。
+///
+/// 与上一条同一卷，只把偏离那一段从一页加到三页——迟滞页数就是三，够了。
+/// 「一页说了不算」的另一面是「够了就算」：不留住这一段，段式迟滞就成了「全卷取最低档」，
+/// 那笔降配也不再有边。
+#[test]
+fn a_run_long_enough_keeps_its_own_depth_when_the_envelope_is_off() {
+    let space = Workspace::new();
+    let volume = volume_of_solids(
+        &space,
+        &[
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::FAR_OUTSIDE,
+            fixtures::FAR_OUTSIDE,
+            fixtures::FAR_OUTSIDE,
+            fixtures::NEEDS_TWO_BITS,
+            fixtures::NEEDS_TWO_BITS,
+        ],
+    );
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
+        fit: FitMode::Inside,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let pages = &report.volumes[0].pages;
+    // 那一段留住自己那一档，理由仍是逐页那一层给的——它们没被压回，也没被谁抬上去。
+    // 这一档是兜底取到的候选上界：`FAR_OUTSIDE` 在 fit-inside 的候选集上一档都不达标
+    // （见 `a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own`）。
+    for page in &pages[2..5] {
+        assert_eq!(
+            fixtures::verdict(page).candidate,
+            fixtures::plain(BitDepth::Four),
+            "{} 被压回去了",
+            page.source.display()
+        );
+        assert_eq!(
+            fixtures::verdict(page).reason,
+            Reason::NoneWithinThreshold,
+            "{} 的档不是它自己判出来的",
+            page.source.display()
+        );
+    }
+    // 段外一页不动：段式迟滞只压，不抬（抬是上包络那一层的事）。
+    for page in pages[..2].iter().chain(&pages[5..]) {
+        assert_eq!(
+            fixtures::verdict(page).candidate,
+            fixtures::plain(BitDepth::Two),
+            "{} 被那一段抬上去了",
+            page.source.display()
+        );
+    }
 }
 
 #[test]

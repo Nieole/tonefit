@@ -25,6 +25,7 @@ mod encode;
 mod envelope;
 mod geometry;
 mod gray;
+mod hysteresis;
 mod interlock;
 mod medium;
 mod metadata;
@@ -937,6 +938,30 @@ fn summarize_volume(
         return (verdicts, Some(VolumeVerdict::Override(candidate)));
     }
     if request.per_page {
+        // 逐页判定「一页说了不算」的另一半：卷级那一层关着时档位不再由基准档兜着，
+        // 孤立偏离的一页压回邻居那一档（规则见 `hysteresis`，10 号票）。这里只定
+        // **哪些页编进同一条序列**——两件事，两条理由：
+        //
+        // 门那两组各数各的：两组的候选集不是同一套（见上面那一刀），
+        // 而压回给出的那一档取自序列里某一页的判定。
+        //
+        // 部分救回页一条都不进：它的判据是在残缺像素上算的，不该去定邻居的档
+        // （与上包络摘它同一个理由，ADR 0006 决定第 5 条）。它自己那一档留在原处
+        // ——`verdicts` 里已经是逐页判定，不必再写一遍。
+        for group in [&inside, &outside] {
+            let sequence: Vec<hysteresis::Page> = group
+                .iter()
+                .copied()
+                .filter(|&index| !pages[index].salvaged())
+                .map(|index| hysteresis::Page {
+                    index,
+                    decided: verdicts[index].expect("灰度页都判过了").candidate,
+                })
+                .collect();
+            for (index, verdict) in hysteresis::pull_back(&sequence) {
+                verdicts[index] = Some(verdict);
+            }
+        }
         return (verdicts, Some(VolumeVerdict::PerPage));
     }
 

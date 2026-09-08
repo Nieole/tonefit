@@ -8,7 +8,8 @@
 //! 也够不着它们——那两道界只有 `--gray-levels` 与几何本身动得了。
 //!
 //! 这里只有逐页判定。卷级的上包络、迟滞与特例页在 `envelope`，那一层建在这一层之上，
-//! 并会把这里给出的档重定一遍（ADR 0006）。
+//! 并会把这里给出的档重定一遍（ADR 0006）。上包络关着时重定它的是 `hysteresis`——
+//! 段式迟滞，那一层同样建在这一层之上。
 
 use crate::metric::Score;
 use crate::profile::Threshold;
@@ -35,7 +36,8 @@ pub struct Verdict {
 ///
 /// 逐页与卷级两层共用本枚举，不是各起一个：两套并存的话，一份报告里
 /// 「这一档为什么是它」就有两种读法，而判定可解释正是 story 7 要的东西。
-/// 前三种由逐页判定给出，后四种由卷级汇总给出（`envelope` 与 `crate::summarize_volume`）。
+/// 前三种由逐页判定给出，后五种由卷级汇总给出（`envelope`、`hysteresis` 与
+/// `crate::summarize_volume`）。
 ///
 /// spec 把 `Skipped` 也列在判定理由里，它落在 [`crate::VolumeVerdict`] 而不是这里：
 /// 幂等命中是**整卷**的结果，那一趟一页都没有重做，也就没有逐页的理由可给
@@ -47,6 +49,10 @@ pub struct Verdict {
 /// `Hysteresis` 在 spec 点名的那几种之外，理由在 ADR 0006 的后果里：
 /// 上包络**不承诺**卷内绝对一致。升上去的那一段与其余页之间就是一次翻页跳变，
 /// 并进 `VolumeEnvelope` 就等于把这句话藏起来。
+///
+/// `RunHysteresis` 与 `Hysteresis` **不并成一格**：一个降档、一个升档，
+/// 而报告要说得出这一档是怎么来的（spec 的 story 16）。并成一格之后
+/// 「这一页为什么不是它自己判出来的那一档」就有两种读法，而两种的方向正好相反。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     /// 判据落在阈值以内的最低一档，比它更低的都越界了。
@@ -59,6 +65,12 @@ pub enum Reason {
     VolumeEnvelope,
     /// 连续够了迟滞页数的一段，整段升到满足整段的最低一档（ADR 0006 决定第 4 条）。
     Hysteresis,
+    /// 段式迟滞：卷级上包络关着时，够不上迟滞页数的孤立偏离压回邻居那一档
+    /// （`crate::hysteresis`）。
+    ///
+    /// 它与 [`Hysteresis`](Self::Hysteresis) 是同一句「一页说了不算」的两种问法：
+    /// 那一种有基准档可比，问的是升不升；这一种没有，问的是这一页孤不孤立。
+    RunHysteresis,
     /// 特例页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
     Outlier,
     /// 这一页的几何门不成立：它会被下游再缩一次，抖动因此关掉（ADR 0007 决定第 2、3 条）。
@@ -80,6 +92,7 @@ impl std::fmt::Display for Reason {
             Reason::Override => "覆盖项顶掉判定",
             Reason::VolumeEnvelope => "卷级上包络",
             Reason::Hysteresis => "迟滞升档",
+            Reason::RunHysteresis => "段式迟滞压回邻居那一档",
             Reason::Outlier => "特例页单独定档",
             Reason::OutsideTheGate => "几何门不成立，本页不抖动",
         })
