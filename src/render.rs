@@ -1642,6 +1642,7 @@ mod tests {
         let score = tonefit::score(
             &reference,
             &tonefit::quantize(reference.image(), one_bit_dithered),
+            one_bit_dithered.bit_depth,
         );
         let report = one_page_report(
             profile,
@@ -1690,6 +1691,9 @@ mod tests {
         let four_bit = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
         let report = one_page_report(
@@ -1772,9 +1776,14 @@ mod tests {
         assert!(text.contains("判据聚合 分块 32×32"), "{text}");
         // 判据由两项合成，其中颗粒项那道地板与阈值同一批盲测标定：数与来源一并摆出来，
         // 否则逐页那一行的数是从哪来的没人答得出（ADR 0002 决定第 5 条）。
+        // 地板按**比例**说：逐页那一行一次排开好几档位深，各档的地板是这个比例乘各自的
+        // 格点间距，说死其中一档的绝对值，另几档那几个数就没有出处了。
         assert!(text.contains("判据构成 低通后的局部均值误差"), "{text}");
         assert!(
-            text.contains(&format!("颗粒超出 {:.1} 灰度级", composition().grain_floor)),
+            text.contains(&format!(
+                "颗粒超出格点间距 {:.1}% 的那一部分",
+                composition().grain_ratio * 100.0
+            )),
             "{text}"
         );
         assert!(text.contains("地板盲测标定于 boox-poke6"), "{text}");
@@ -1951,7 +1960,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Two, Dither::Off);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
-        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let score = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), candidate),
+            candidate.bit_depth,
+        );
         let report = one_page_report(
             profile,
             VolumeVerdict::Envelope(envelope(candidate)),
@@ -2007,7 +2020,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
-        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let score = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), candidate),
+            candidate.bit_depth,
+        );
         // 跨页：以高为准之后高贴住面板、宽是面板宽的 4 倍（5056 ÷ 1264）。
         let report = one_page_report(
             profile,
@@ -2063,7 +2080,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![170]));
-        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let score = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), candidate),
+            candidate.bit_depth,
+        );
         // 一根 3000×100 的长条：以高为准算出 50400×1680，退回 fit-inside 之后是 1264×42。
         let report = one_page_report(
             profile,
@@ -2118,7 +2139,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
-        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let score = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), candidate),
+            candidate.bit_depth,
+        );
         let report = one_page_report(
             profile,
             VolumeVerdict::Envelope(envelope(candidate)),
@@ -2164,6 +2189,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let page = |crop: Crop| PageReport {
             source: PathBuf::from("library/volume-a/001.jpg"),
@@ -2230,6 +2258,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let page = |name: &str, color, branch| PageReport {
             source: PathBuf::from(format!("library/volume-a/{name}.png")),
@@ -2403,6 +2434,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let good = PageReport {
             source: PathBuf::from("library/volume-a/001.jpg"),
@@ -2716,6 +2750,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let processed = |reason| Processed {
             crop: nothing_trimmed(),
@@ -2804,7 +2841,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
-        let score = tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate));
+        let score = tonefit::score(
+            &reference,
+            &tonefit::quantize(reference.image(), candidate),
+            candidate.bit_depth,
+        );
         let report = one_page_report(
             profile,
             VolumeVerdict::Envelope(envelope(candidate)),
@@ -2850,6 +2891,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         VolumeReport {
             volume: PathBuf::from("library/volume-a"),
@@ -3383,6 +3427,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let salvaged = PageReport {
             source: PathBuf::from("library/volume-a/001.jpg"),
@@ -3459,6 +3506,9 @@ mod tests {
         let score = tonefit::score(
             &Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128])),
             &GrayImage::new(Size::new(1, 1), vec![136]),
+            // 这一张 1×1 是编出来的，没有经过目标位深量化：位深取工作精度那一档
+            // （见 `metric::score` 的文档）。它落在哪一档都读同一个数——一格像素上没有高频。
+            BitDepth::Eight,
         );
         let quick = one_page_report(
             profile,
@@ -3782,7 +3832,11 @@ mod tests {
         .into_iter()
         .map(|candidate| CandidateScore {
             candidate,
-            score: tonefit::score(&reference, &tonefit::quantize(reference.image(), candidate)),
+            score: tonefit::score(
+                &reference,
+                &tonefit::quantize(reference.image(), candidate),
+                candidate.bit_depth,
+            ),
         })
         .collect();
         let four = Some(VolumeVerdict::Envelope(envelope(Candidate::new(

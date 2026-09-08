@@ -16,6 +16,18 @@ const fn dithered(bit_depth: BitDepth) -> Candidate {
     Candidate::new(bit_depth, Dither::FloydSteinberg)
 }
 
+/// 把 `candidate` 量化出来，量它离参照有多远。
+///
+/// 位深从候选身上取——判据要它算颗粒项那道地板（`metric::Composition::floor`），
+/// 而候选正是量化这张图的那一档。摆成一处，免得每条用例各写一遍。
+fn reading(reference: &Reference, candidate: Candidate) -> tonefit::Score {
+    score(
+        reference,
+        &quantize(reference.image(), candidate),
+        candidate.bit_depth,
+    )
+}
+
 /// 性质测试用的页尺寸。判据只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
 /// 取得比目标尺寸小是为了让这一组用例跑得快，分块数（20×26）仍足够 p99 有意义。
 const PAGE: Size = Size::new(640, 832);
@@ -26,8 +38,8 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
     let dithered = quantize(reference.image(), dithered(BitDepth::One));
 
-    let plain_score = score(&reference, &plain);
-    let dithered_score = score(&reference, &dithered);
+    let plain_score = score(&reference, &plain, BitDepth::One);
+    let dithered_score = score(&reference, &dithered, BitDepth::One);
     assert!(
         dithered_score < plain_score,
         "抖动候选 {dithered_score} 没有赢过不抖动的 {plain_score}"
@@ -58,8 +70,8 @@ fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() 
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
     let dithered = quantize(reference.image(), dithered(BitDepth::One));
 
-    let plain_score = score(&reference, &plain);
-    let dithered_score = score(&reference, &dithered);
+    let plain_score = score(&reference, &plain, BitDepth::One);
+    let dithered_score = score(&reference, &dithered, BitDepth::One);
     assert!(
         dithered_score < plain_score,
         "网点页上抖动 {dithered_score} 没有赢过不抖动 {plain_score}"
@@ -109,7 +121,7 @@ fn resolved_screentone(size: Size) -> image::DynamicImage {
 #[test]
 fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
-    let of = |candidate| score(&reference, &quantize(reference.image(), candidate));
+    let of = |candidate| reading(&reference, candidate);
 
     let one_bit_dithered = of(dithered(BitDepth::One));
     let two_bit_plain = of(fixtures::plain(BitDepth::Two));
@@ -120,28 +132,68 @@ fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
     );
 }
 
-/// 颗粒项有一道**可见度地板**：低于它的高频起伏不收费。
+/// 颗粒项有一道**可见度地板**，而地板**跟着格点间距走**：每一档上各是各的数，
+/// 每一档上颗粒都穿得过去。
 ///
-/// 没有这道地板，颗粒项就是逐像素度量的一半，而抖动在每一档上都会被罚——
-/// 那正是 ADR 0002 关掉的那个洞。有了它，抖动把误差摊到眼睛分不开的尺度上这件事
-/// 才拿得到它该得的便宜：同一张页上 4bit+FS 的颗粒远在地板之下，读数因此贴着零，
-/// 而 1bit+FS 的颗粒穿得过去。
+/// 地板还是绝对值 55 时这条只在 1bit 上成立：那个数卡在 1bit 与 2bit 的格点间距之间，
+/// 2bit 与 4bit 的颗粒项因此恒读零、判据在那两档退回只剩低通项
+/// （measurements 的《颗粒项只在 1bit 上生效》）。
+///
+/// 两半各守一件事，缺一半地板就退化成别的东西：
+///
+/// - **收得到**：抖动撒下的颗粒穿得过那一档的地板。地板整条吞掉颗粒项，判据在那一档
+///   就退回只剩低通项。
+/// - **不多收**：抖动仍赢得过同档不抖动。地板一格不减，颗粒项就是逐像素度量的一半，
+///   抖动在每一档上都要挨罚——那正是 ADR 0002 关掉的那个洞。
+///
+/// 页取**纯中灰 128**：三档上它都落在两个格点正中（1bit 差 127、2bit 差 42、4bit 差 8），
+/// 抖动买到的便宜最大，两半在同一张页上因此都量得出来。换成别的灰调，「不多收」那一半
+/// 会在 1bit 上翻掉——不是地板错了，是整个判据上抖动那一侧还要背自己的低通项，
+/// 平坦的中浅灰上两者本来就会交叉（ADR 0002 的《后果》）。只管颗粒项这一项、
+/// 不掺低通的那条算术不变量在 `src/metric.rs`，三档各钉一次。
 #[test]
 fn grain_below_the_visibility_floor_is_not_charged_for() {
+    let reference = baseline_reference(fixtures::solid(PAGE, 128));
+    let of = |candidate| reading(&reference, candidate);
+
+    for depth in [BitDepth::One, BitDepth::Two, BitDepth::Four] {
+        let floor = tonefit::composition().floor(depth);
+        let dithered_score = of(dithered(depth));
+        let plain_score = of(fixtures::plain(depth));
+
+        assert!(
+            dithered_score.value() > floor / 2.0,
+            "{depth}+FS 读成了 {dithered_score}：这一档的地板 {floor:.2} 高到把颗粒整条放过去了"
+        );
+        assert!(
+            dithered_score < plain_score,
+            "{depth} 上抖动的 {dithered_score} 没有赢过不抖动的 {plain_score}：\
+             这一档的地板 {floor:.2} 低到把该免的那一段也收了"
+        );
+    }
+}
+
+/// 颗粒项在 **2bit 上也说得出话**——地板改成比例之前，它在这一档恒读零。
+///
+/// FS 保住局部均值，纯色页上 2bit+FS 的低通项因此近零：这一档的读数几乎全部出自颗粒项。
+/// 地板还是绝对值 55 时那一项被整条吞掉（候选起伏 40.6 < 55），2bit 的读数于是塌到
+/// 只剩低通那一点点——**判据在那一档退化成只剩一项**，而 ADR 0002 决定第 5 条
+/// 立颗粒项时明写过一项不够。这一条钉的就是「那一项回来了」。
+///
+/// 拿同页同档不抖动的读数当尺子：它读的是整块偏移 30，全是低通项。
+/// 抖动那一侧若也只剩低通，读回来会是零点几；实际读到的是同一个量级的另一个数。
+#[test]
+fn the_grain_term_reads_back_on_two_bits_too() {
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
-    let of = |candidate| score(&reference, &quantize(reference.image(), candidate));
+    let of = |candidate| reading(&reference, candidate);
 
-    // 4bit 的格点间距 17，抖动撒下的起伏最多半格——远在地板之下。
-    let four_bit = of(dithered(BitDepth::Four));
-    let one_bit = of(dithered(BitDepth::One));
+    let dithered_score = of(dithered(BitDepth::Two));
+    let plain_score = of(fixtures::plain(BitDepth::Two));
 
     assert!(
-        four_bit.value() < 1.0,
-        "4bit+FS 读成了 {four_bit}：地板没在，细颗粒被当成看得见的"
-    );
-    assert!(
-        one_bit.value() > tonefit::composition().grain_floor / 2.0,
-        "1bit+FS 读成了 {one_bit}：地板高到把粗颗粒也放过去了"
+        dithered_score.value() > plain_score.value() / 2.0,
+        "2bit+FS 读成了 {dithered_score}，同档不抖动是 {plain_score}：\
+         抖动那一侧的低通项近零，读数这么低说明颗粒项没收到费"
     );
 }
 
@@ -172,8 +224,16 @@ fn a_slow_ramp_does_not_buy_itself_any_masking() {
         )
     };
 
-    let flat_score = score(&Reference::new(panel, flat.clone()), &lifted(&flat));
-    let ramp_score = score(&Reference::new(panel, ramp.clone()), &lifted(&ramp));
+    let flat_score = score(
+        &Reference::new(panel, flat.clone()),
+        &lifted(&flat),
+        BitDepth::Eight,
+    );
+    let ramp_score = score(
+        &Reference::new(panel, ramp.clone()),
+        &lifted(&ramp),
+        BitDepth::Eight,
+    );
 
     assert!(
         ramp_score.value() > flat_score.value() * 0.97,
@@ -190,10 +250,12 @@ fn a_known_offset_reads_back_as_that_many_gray_levels() {
     let one_bit = score(
         &reference,
         &quantize(reference.image(), fixtures::plain(BitDepth::One)),
+        BitDepth::One,
     );
     let two_bit = score(
         &reference,
         &quantize(reference.image(), fixtures::plain(BitDepth::Two)),
+        BitDepth::Two,
     );
 
     assert!(
@@ -246,6 +308,7 @@ fn the_error_never_grows_when_the_bit_depth_does() {
                     score(
                         &reference,
                         &quantize(reference.image(), fixtures::plain(depth)),
+                        depth,
                     ),
                 )
             })
@@ -281,10 +344,12 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     let cramped_score = score(
         &cramped,
         &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
+        BitDepth::One,
     );
     let roomy_score = score(
         &roomy,
         &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
+        BitDepth::One,
     );
     // 读数几乎不变，且大页那一侧不高过小页——留白只会往下拉，不会凭空添出误差来。
     //
@@ -348,8 +413,8 @@ fn the_same_error_counts_for_more_in_a_flat_area_than_in_a_textured_one() {
         )
     };
 
-    let flat_score = score(&flat, &lifted(&flat));
-    let textured_score = score(&textured, &lifted(&textured));
+    let flat_score = score(&flat, &lifted(&flat), BitDepth::Eight);
+    let textured_score = score(&textured, &lifted(&textured), BitDepth::Eight);
 
     // 平坦低对比区不打折：8 级偏移就算 8 级误差。
     assert!(
@@ -374,7 +439,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
     let dithered = quantize(&page, dithered(BitDepth::One));
     let on = |panel| {
         let reference = Reference::new(panel, page.clone());
-        score(&reference, &dithered)
+        score(&reference, &dithered, BitDepth::One)
     };
 
     // 核由 PPI 推出：面板越密，同一个视角盖住的像素越多，抖动的高频被抹得越干净。
@@ -408,6 +473,7 @@ fn damage_covering_the_tail_width_reads_back_at_every_page_size() {
         let score = score(
             &reference,
             &quantize(reference.image(), fixtures::plain(BitDepth::One)),
+            BitDepth::One,
         );
         assert!(
             score.value() > 0.0,

@@ -1373,7 +1373,12 @@ pub(crate) mod fixture {
     fn a_score_of(shade: u8) -> tonefit::Score {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
-        tonefit::score(&reference, &GrayImage::new(Size::new(1, 1), vec![shade]))
+        tonefit::score(
+            &reference,
+            &GrayImage::new(Size::new(1, 1), vec![shade]),
+            // 编出来的 1×1，没经过目标位深量化：取工作精度那一档（`metric::score` 的文档）。
+            BitDepth::Eight,
+        )
     }
 
     /// 一页上各候选各一个数，档位由低到高——**逐页那一行印的就是这一串**
