@@ -644,6 +644,9 @@ fn process_volume(
             // 而读之前得先摊开（见 `VolumeReport::extracted`）。
             extracted,
             decodes: 0,
+            // 跳过的卷一张都没缩、一张参照都没进缓存——两个数与解码那一个同形（窄计数器）。
+            resizes: 0,
+            cached_references: 0,
             io,
             // 两遍一遍都不走，三段里只有幂等那一段有数。
             timing: VolumeTiming {
@@ -662,10 +665,11 @@ fn process_volume(
         Mode::Process => cache::Retention::Keep,
         Mode::DryRun => cache::Retention::Account,
     };
-    // 缓存与解码计数是计算层唯一共用的两样东西：一个要串起来（账本只有一本），
-    // 一个是原子加。贵的那几步——解码、缩放、判据、压缩——全在锁外。
+    // 缓存与那几个计数是计算层唯一共用的东西：缓存要串起来（账本只有一本，参照那个数
+    // 就记在它上面），解码与缩放两个数各是一次原子加。贵的那几步——解码、缩放、判据、压缩
+    // ——全在锁外。
     let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
-    let decoder = decode::Decoder::new();
+    let counters = ComputeCounters::default();
     // 第一遍产出的是**输出页**：一个源页产出的那几张挨着排，卷内页序就是写出顺序。
     events.pass_started(Pass::First);
     let scored = timed(&mut timing.first_pass, || {
@@ -673,7 +677,7 @@ fn process_volume(
             &mut volume,
             request,
             &cache,
-            &decoder,
+            &counters,
             fingerprint.as_ref(),
             &io,
             events,
@@ -720,27 +724,37 @@ fn process_volume(
     // （见 [`OutputPage::to_report`]），差的只有交进来的那份计时。
     // 各拼各的话，屏上那一份与最终报告迟早会分家。
     //
-    // 读缓存用量要的那把锁**掐在这个闭包里**：拼完就要把这份报告交给观察者，
-    // 而观察者可能很久不返回（见 `progress` 的模块文档）。guard 是 `usage()` 这一句的临时量，
-    // 闭包一返回它就没了，因此走到下面那个决策点时手上已经空了。
+    // 读缓存那两个数要的那把锁**掐在这个闭包里，而且掐在自己那个块里**：拼完就要把这份报告
+    // 交给观察者，而观察者可能很久不返回（见 `progress` 的模块文档）。两个数一并读回来，
+    // guard 出了那个块就没了，因此走到下面那个决策点时手上已经空了。
+    // **两个数不许各锁各的**：`MutexGuard` 的临时量活到整条语句末尾，摆进结构体字面量里
+    // 就是同一条线程连着锁两次——当场死锁。
     // 全卷最容易踩的就是这一处，现在不再只靠人核——[哨兵](progress::LockSentinel)守着它。
     let assemble = |timing: VolumeTiming| {
-        cost::stage(cost::Stage::Assemble, || VolumeReport {
-            volume: volume.root.clone(),
-            output: output.clone(),
-            superseded: superseded.clone(),
-            pages: scored
-                .iter()
-                .zip(&verdicts)
-                .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
-                .collect(),
-            source_pages,
-            verdict,
-            cache: lock(&cache).usage(),
-            extracted,
-            decodes: decoder.decodes(),
-            io: io.clone(),
-            timing,
+        cost::stage(cost::Stage::Assemble, || {
+            let (usage, cached_references) = {
+                let cache = lock(&cache);
+                (cache.usage(), cache.references())
+            };
+            VolumeReport {
+                volume: volume.root.clone(),
+                output: output.clone(),
+                superseded: superseded.clone(),
+                pages: scored
+                    .iter()
+                    .zip(&verdicts)
+                    .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
+                    .collect(),
+                source_pages,
+                verdict,
+                cache: usage,
+                extracted,
+                decodes: counters.decoder.decodes(),
+                resizes: counters.resampler.resizes(),
+                cached_references,
+                io: io.clone(),
+                timing,
+            }
         })
     };
 
@@ -1333,7 +1347,7 @@ fn first_pass(
     volume: &mut Volume,
     request: &Request,
     cache: &Mutex<cache::PageCache>,
-    decoder: &decode::Decoder,
+    counters: &ComputeCounters,
     fingerprint: Option<&Fingerprint>,
     io: &IoPlan,
     events: progress::Events,
@@ -1351,7 +1365,7 @@ fn first_pass(
 
     let compute = Compute {
         request,
-        decoder,
+        counters,
         cache,
         fingerprint,
         candidates: &candidates,
@@ -1388,13 +1402,29 @@ fn first_pass(
         .map(|pages| pages.into_iter().flatten().collect())
 }
 
+/// **计算层**这一卷自己那两样带计数的家伙：解码器与缩放器（`CONTEXT.md` 的《读取层 / 计算层》）。
+///
+/// 装成一个而不是两个参数：它们从 [`process_volume`] 一路传到 [`Compute`]，
+/// 走的是同一截路、活的是同一段命——一卷一份，卷跑完连同各自的数一起交进报告。
+/// 两个都是锁外的原子加，因此满核并行照旧不必独占。
+///
+/// **不叫「窄计数器」**：那个词指的是三个数（`CONTEXT.md` 的《窄计数器》），
+/// 而第三个不在计算层——参照进缓存那一个记在缓存上，缓存是**两遍之间**的东西，
+/// 账本要串起来，另走一把锁。
+#[derive(Debug, Default)]
+struct ComputeCounters {
+    decoder: decode::Decoder,
+    resampler: resample::Resampler,
+}
+
 /// 第一遍上每条计算线程共用的那一摊。
 ///
 /// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成六个参数，
 /// 闭包的捕获清单就得逐个写一遍，而漏掉一个的报错在 rayon 那一层读起来毫无线索。
 struct Compute<'a> {
     request: &'a Request,
-    decoder: &'a decode::Decoder,
+    /// 解码与缩放两个动作，连同各自记着的那个数（见 [`ComputeCounters`]）。
+    counters: &'a ComputeCounters,
     /// 缓存的账本只有一本，因此非串起来不可。压缩在锁外做（见 `cache::compress`）。
     cache: &'a Mutex<cache::PageCache>,
     fingerprint: Option<&'a Fingerprint>,
@@ -1444,7 +1474,7 @@ impl Compute<'_> {
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
         let read = bytes.and_then(|bytes| {
-            cost::stage(cost::Stage::Decode, || self.decoder.decode(&bytes))
+            cost::stage(cost::Stage::Decode, || self.counters.decoder.decode(&bytes))
                 .with_context(|| format!("解 {} 这一页", source.display()))
         });
         let (decoded, salvage) = match read {
@@ -1608,7 +1638,9 @@ impl Compute<'_> {
             .target(image.size(), request.profile.panel().resolution);
         let size = fit.size();
         let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
-            resample::resize_color(image, size, request.filter)
+            self.counters
+                .resampler
+                .resize_color(image, size, request.filter)
         })?;
         // dry-run 一个文件都不落盘，编出来的字节没人要。
         let record = self
@@ -1662,7 +1694,7 @@ impl Compute<'_> {
             .for_gate(gate)
             .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
         let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
-            resample::resize(&image, size, request.filter)
+            self.counters.resampler.resize(&image, size, request.filter)
         })?;
         // 建参照与六个候选合在同一格里：参照那一侧的低通、掩蔽加权与高频起伏
         // 也是判据的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，

@@ -1626,6 +1626,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 1,
+                resizes: 1,
+                cached_references: 1,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
                 source_pages: 1,
@@ -2310,6 +2312,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 3,
+                resizes: 3,
+                cached_references: 2,
                 timing: VolumeTiming::default(),
                 source_pages: 3,
                 pages: vec![
@@ -2361,6 +2365,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 0,
+                resizes: 0,
+                cached_references: 0,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -2408,6 +2414,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 0,
+                resizes: 0,
+                cached_references: 0,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -2489,6 +2497,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 2,
+                resizes: 1,
+                cached_references: 1,
                 timing: VolumeTiming::default(),
                 source_pages: 2,
                 pages: vec![good, failed],
@@ -2803,6 +2813,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 2,
+                resizes: 2,
+                cached_references: 2,
                 timing: VolumeTiming::default(),
                 source_pages: 2,
                 pages: vec![whole, salvaged],
@@ -2905,6 +2917,8 @@ mod tests {
             extracted: 3 * 1024 * 1024,
             io: io_plan(),
             decodes: 2,
+            resizes: 1,
+            cached_references: 1,
             timing: VolumeTiming::default(),
             source_pages: 2,
             pages: vec![
@@ -3473,6 +3487,8 @@ mod tests {
             extracted: 0,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: VolumeTiming::default(),
         });
 
@@ -3562,6 +3578,40 @@ mod tests {
             plain::report(&quick, Mode::Process)
         );
     }
+    /// **窄计数器不进渲染出的文字**（`CONTEXT.md` 的《窄计数器》）：那三个数在报告里，
+    /// 屏上一处不露面。
+    ///
+    /// 断言照[计时那一条](the_rendered_text_says_nothing_about_how_long_it_took)办——
+    /// 同一份报告只改那三个数，画出来逐字节相同——而不是「文字里找不到 222」：
+    /// 后者只挡得住恰好那一个写法。
+    ///
+    /// 这一层是措辞的**唯一出处**（纯文本与表两副共用），因此挡住这里就挡住了两副排版。
+    #[test]
+    fn the_rendered_text_says_nothing_about_the_narrow_counters() {
+        let mut quiet = switches_report(FitMode::default(), true, SplitRule::default());
+        // 添一卷说得上话的：过期副本、摊开、隔离、上包络、失败页那几行都在它身上。
+        quiet.volumes.push(a_volume_worth_a_row_of_each_kind());
+
+        // 同一份报告，三个数全换成扎眼的：别的一个字节都不动。
+        let mut busy = quiet.clone();
+        for each in &mut busy.volumes {
+            each.decodes = 111;
+            each.resizes = 222;
+            each.cached_references = 333;
+        }
+
+        // 四段逐段比，理由同计时那一条：会话画的是这四段。
+        assert_eq!(header(&busy, Mode::Process), header(&quiet, Mode::Process));
+        for (loud, silent) in busy.volumes.iter().zip(&quiet.volumes) {
+            assert_eq!(volume(loud), volume(silent));
+            assert_eq!(pages(loud), pages(silent));
+        }
+        assert_eq!(tail(&busy), tail(&quiet));
+        assert_eq!(
+            plain::report(&busy, Mode::Process),
+            plain::report(&quiet, Mode::Process)
+        );
+    }
 
     /// **摊了多少字节印进那一卷的报告**，而没摊开的卷一个字都不说
     /// （`volume-discovery/05`，ADR 0015 决定第 3 条）。
@@ -3609,6 +3659,8 @@ mod tests {
             extracted,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: VolumeTiming::default(),
             pages: Vec::new(),
             source_pages: 0,
@@ -3655,6 +3707,8 @@ mod tests {
             extracted: 0,
             io: io_plan(),
             decodes: 1,
+            resizes: usize::from(!broken),
+            cached_references: usize::from(!broken),
             timing: VolumeTiming::default(),
             pages: vec![page],
             source_pages: 1,

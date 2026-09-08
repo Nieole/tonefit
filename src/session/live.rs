@@ -1058,6 +1058,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: took(3),
         }
     }
@@ -1127,6 +1129,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 1,
+            resizes: 1,
+            cached_references: 1,
             timing: took(72),
         }
     }
@@ -1321,6 +1325,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 8,
+            resizes: 7,
+            cached_references: 6,
             timing: took(96),
         }
     }
@@ -1395,6 +1401,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 2,
+            resizes: 1,
+            cached_references: 1,
             timing: took(12),
         }
     }

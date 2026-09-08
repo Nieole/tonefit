@@ -217,7 +217,7 @@ const MAX_TARGET_PIXELS: u64 = crate::decode::MAX_DECODED_BYTES / PEAK_BYTES_PER
 
 /// 一个目标像素在整条管线上的峰值字节数，[`MAX_TARGET_PIXELS`] 拿它折算。
 ///
-/// 数出来的是**彩色分支**那条更贵的路（`crate::resample::resize_color` 往后）：
+/// 数出来的是**彩色分支**那条更贵的路（`crate::resample::Resampler::resize_color` 往后）：
 /// 三个平面各一份缩放缓冲（3），交织给编码器一份（3），编码输出再留一份（≤ 3）——
 /// **数到 9**。灰度路径只占 2：缩放缓冲一份、进缓存前那一份。
 ///
