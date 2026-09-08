@@ -900,8 +900,10 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
-        live.page_failed(Path::new("库/卷一/017.jpg"), BROKEN);
-        live.volume_finished(&fixture::processed_volume("卷一", Some(BROKEN)));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::processed_volume("卷一", Some(BROKEN)),
+        );
         live.volume_started(Path::new("库/卷二"), 1000);
         live.volume_failed(Path::new("库/卷二"), "卷根不在了");
         live

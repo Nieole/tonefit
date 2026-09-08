@@ -7,6 +7,9 @@
 //!
 //! **夹具按用得上它的块数分**：跨块的摆这里（[`a_run_in_flight`]、[`every_kind_of_volume`]），
 //! 只有一块用得上的留在那一块自己的 `mod tests` 里。
+//!
+//! **这两份夹具一卷收摊走 [`fixture::volume_finished_with_its_failures`]**：一页失败要喂的
+//! 是两半，为什么、以及哪几种夹具非走它不可，写在它自己的文档里。
 
 use std::path::Path;
 use std::time::Duration;
@@ -14,7 +17,7 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
-use tonefit::Mode as RunMode;
+use tonefit::{Mode as RunMode, PageOutcome, VolumeReport};
 
 use super::yielding::CONFIG_WIDTH;
 use super::{main_pane, shell};
@@ -283,13 +286,13 @@ pub(super) fn a_run_in_flight(failures: bool) -> Live {
     let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
     live.run_started(3, 5000);
     live.volume_started(Path::new("库/卷一"), 1000);
-    live.volume_finished(&fixture::skipped_volume("卷一", 180));
+    fixture::volume_finished_with_its_failures(&mut live, &fixture::skipped_volume("卷一", 180));
     live.volume_started(Path::new("库/卷二"), 1000);
     let broken = failures.then_some("解不出完整尺寸：JPEG 数据截断");
-    if let Some(reason) = broken {
-        live.page_failed(Path::new("库/卷二/017.jpg"), reason);
-    }
-    live.volume_finished(&fixture::processed_volume("卷二", broken));
+    fixture::volume_finished_with_its_failures(
+        &mut live,
+        &fixture::processed_volume("卷二", broken),
+    );
     live.volume_started(Path::new("库/卷三"), 3000);
     live.pass_started(tonefit::Pass::Second, None);
     for _ in 0..1000 {
@@ -307,6 +310,9 @@ pub(super) fn a_run_in_flight(failures: bool) -> Live {
 /// 在决策点上不停（`CONTEXT.md` 的《会话》：续做）。`resumes` 因此同时定了屏上那两个字
 /// ——答出第一个继续之前它印的是「试算」（见 `Live::mode`）。
 ///
+/// **隔离那一卷的失败页两半都喂**（走 [`fixture::volume_finished_with_its_failures`]）：报告区因此在表底下
+/// 摆着「失败页（出现的当场……）」那一段——真会话里出得来的那一副，快照里也出得来。
+///
 /// **跨块**：卷表那几条问「六种卷各长什么样」（[`super::report`]），
 /// 语义色那几条问「哪几行上了色、上的是哪一种」（[`super::paint`]）——
 /// 同一趟里六种卷恰好把四种语义占全。
@@ -314,16 +320,16 @@ pub(super) fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
     let mut live = Live::new(&fixture::request(mode), resumes);
     live.run_started(6, 6000);
     live.volume_started(Path::new("库/棋魂 07"), 1000);
-    live.volume_finished(&fixture::skipped_volume("棋魂 07", 184));
+    fixture::volume_finished_with_its_failures(&mut live, &fixture::skipped_volume("棋魂 07", 184));
     live.volume_started(Path::new("库/哆啦 03"), 1000);
-    live.volume_finished(&fixture::processed_volume(
-        "哆啦 03",
-        Some("解不出完整尺寸：JPEG 数据截断"),
-    ));
+    fixture::volume_finished_with_its_failures(
+        &mut live,
+        &fixture::processed_volume("哆啦 03", Some("解不出完整尺寸：JPEG 数据截断")),
+    );
     live.volume_started(Path::new("库/名侦探 05"), 1000);
-    live.volume_finished(&fixture::per_page_volume("名侦探 05"));
+    fixture::volume_finished_with_its_failures(&mut live, &fixture::per_page_volume("名侦探 05"));
     live.volume_started(Path::new("库/浪客行 12"), 1000);
-    live.volume_finished(&fixture::overridden_volume("浪客行 12"));
+    fixture::volume_finished_with_its_failures(&mut live, &fixture::overridden_volume("浪客行 12"));
     live.volume_started(Path::new("库/消失的那卷"), 1000);
     live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
     if live.resumes() {
@@ -350,6 +356,60 @@ pub(super) fn same_screen(actual: &str, expected: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **报告里的每一页失败，事件流里都报过一条**——这几份夹具喂的是两半，不是后一半。
+    ///
+    /// 一页失败发两回话，为什么见 [`fixture::volume_finished_with_its_failures`]。
+    /// 逐条比的是**页名与那句原因**：两半各说各的原因，那也是走散。
+    ///
+    /// **它只走得到本模块这两份跨块夹具**——`draw` 底下各块自己 `mod tests` 里搭的那几份
+    /// 够不着（停车场 Q354）。往这两份里添一卷带失败页却忘了走那个口子，这一条当场红。
+    #[test]
+    fn every_failed_page_in_the_report_was_reported_the_moment_it_happened() {
+        for (which, live) in [
+            ("跑到一半", a_run_in_flight(true)),
+            (
+                "六种卷 · 执行",
+                every_kind_of_volume(RunMode::Process, Resuming::GoesOn),
+            ),
+            (
+                "六种卷 · 试算",
+                every_kind_of_volume(RunMode::DryRun, Resuming::Waits),
+            ),
+        ] {
+            let reported: Vec<(&Path, &str)> = live.failed_pages().collect();
+            let in_report: Vec<(&Path, &str)> = live
+                .report()
+                .failures()
+                .map(|page| {
+                    let PageOutcome::Failed { reason } = &page.outcome else {
+                        unreachable!("`failures` 只给失败页")
+                    };
+                    (page.source.as_path(), reason.as_str())
+                })
+                .collect();
+
+            assert!(
+                !in_report.is_empty(),
+                "{which}：这一趟一页失败都没有，问了个空"
+            );
+            assert_eq!(reported, in_report, "{which}：两半说的不是同一批页");
+        }
+    }
+
+    /// **两半都喂，出事那个数一格不变**（票面第三条）。
+    ///
+    /// 它此刻数的是「报告里那几卷 + 当前这一卷已经报过的那几条」
+    /// （[`Live::failures_so_far`]）：那一卷收摊时在途那一格换手进报告，
+    /// 两条路本来就该数出同一个数——这一条问的正是它们真的一样。
+    #[test]
+    fn feeding_both_halves_does_not_count_the_same_page_twice() {
+        let live = every_kind_of_volume(RunMode::Process, Resuming::GoesOn);
+
+        assert_eq!(live.failed_pages().count(), 1, "前一半没喂");
+        assert_eq!(live.report().failures().count(), 1, "后一半丢了");
+        assert_eq!(live.failures_so_far(), 1, "同一页数了两遍");
+    }
 
     /// **从缓冲里读回来的就是屏上那一行**：宽字符占住的那一格跳过去了（停车场 Q60）。
     ///

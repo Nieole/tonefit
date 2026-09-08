@@ -518,9 +518,15 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
-        live.volume_finished(&fixture::skipped_volume("卷一", 180));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::skipped_volume("卷一", 180),
+        );
         live.volume_started(Path::new("库/卷二"), 1000);
-        live.volume_finished(&fixture::a_page_of_every_kind("卷二"));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::a_page_of_every_kind("卷二"),
+        );
         let report = live.report().clone();
         live.returned(Ok(report));
         live.rewind(Duration::from_secs(300));
@@ -540,7 +546,10 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷二"), 1000);
-        live.volume_finished(&fixture::a_page_of_every_kind("卷二"));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::a_page_of_every_kind("卷二"),
+        );
         live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
         let mut report = live.report().clone();
         report.non_volume_files = vec![tonefit::NonVolumeFile {
@@ -639,7 +648,10 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
-        live.volume_finished(&fixture::a_page_of_every_kind("卷一"));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::a_page_of_every_kind("卷一"),
+        );
         live.volume_started(Path::new("库/卷二"), 1000);
         live.pass_started(
             tonefit::Pass::Second,
@@ -1338,9 +1350,9 @@ mod tests {
 "│ ✓     名侦探 05      1  逐页                   1m12s                                                                 │"
 "│ ✓     浪客行 12      1  覆盖 2bit+FS           1m12s                                                                 │"
 "│ ✗     消失的那卷     -  没做成                        卷根不在了                                                     │"
-"│                                                                                                                      │"
-"│                                                                                                                      │"
-"│                                                                                                                      │"
+"│失败页（出现的当场，逐页那几行在整卷跑完后才有）                                                                      │"
+"│  库/哆啦 03/017.jpg                                                                                                  │"
+"│    失败 解不出完整尺寸：JPEG 数据截断                                                                                │"
 "│                                                                                                                      │"
 "│                                                                                                                      │"
 "│                                                                                                                      │"
@@ -1390,11 +1402,11 @@ mod tests {
 "│  滤波器　　　　　默认（lanczos3）              ║│ ✓     浪⋯ 12   覆盖 2bit+FS│"
 "│  位深　　　　　　自动（判据说了算）            ║│ ✗     消⋯那卷  没做成      │"
 "│  抖动　　　　　　自动（判据说了算）            ║│ 卷根不在了                 │"
-"│  逐页　　　　　　默认（关）                    ║│                            │"
-"│  缓存预算　　　　默认（512.0 MiB）             ║│                            │"
-"│  读取策略　　　　默认（auto）                  ║│                            │"
-"│                                                ║│                            │"
-"│范围层 · 每趟都不同，不进预设                   ▼│                            │"
+"│  逐页　　　　　　默认（关）                    ║│失败页（出现的当场，逐页那几│"
+"│  缓存预算　　　　默认（512.0 MiB）             ║│行在整卷跑完后才有）        │"
+"│  读取策略　　　　默认（auto）                  ║│  库/哆啦 03/017.jpg        │"
+"│                                                ║│    失败 解不出完整尺寸：   │"
+"│范围层 · 每趟都不同，不进预设                   ▼│    JPEG 数据截断           │"
 "└────────────────────────────────────────────────┘└────────────────────────────┘"
 " 卷表 · ↑ ↓ j k 选一卷 · ⏎ 空格 e 展开逐页 · i 这一趟的前提 · Esc 回目录表 · ⇥  "
 " ⇧⇥ 回配置 · Ctrl-C q 退出 · ? F1 全部键                                        "
@@ -1429,9 +1441,9 @@ mod tests {
 "│ ✓     浪客行 12      1  覆盖 2bit+FS           1m12s                                                                 │"
 "│ ✗     消失的那卷     -  没做成                        卷根不在了                                                     │"
 "│ ✓     棋魂 08        1  4bit          001.jpg  1m12s  等你拿主意                                                     │"
-"│                                                                                                                      │"
-"│                                                                                                                      │"
-"│                                                                                                                      │"
+"│失败页（出现的当场，逐页那几行在整卷跑完后才有）                                                                      │"
+"│  库/哆啦 03/017.jpg                                                                                                  │"
+"│    失败 解不出完整尺寸：JPEG 数据截断                                                                                │"
 "│                                                                                                                      │"
 "│                                                                                                                      │"
 "│                                                                                                                      │"

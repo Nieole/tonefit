@@ -308,11 +308,17 @@ mod tests {
     /// **出事那一行既是红的、也带着那个字**（票面第六条）。
     ///
     /// 快照那一路读的是缓冲，**样式读得出来**（spec 的《Testing Decisions》：颜色）。
-    /// 三处一次问齐，各是一种语义配一个载体：
+    /// 四处一次问齐，各是一种语义配一个载体：
     ///
     /// - **卷级失败**那一行是**红**的，行首记号是 `✗`，档位那一列写着「没做成」；
     /// - **隔离**那一行是**黄**的，行首记号是 `!`，行尾那个词是「隔离」；
-    /// - **跳过**那一行是**暗**的，行首记号是 `-`，档位那一列写着「跳过」。
+    /// - **跳过**那一行是**暗**的，行首记号是 `-`，档位那一列写着「跳过」；
+    /// - **失败页那一段**整段**红**，而它头一行就叫「失败页」、原因那一行上还有「失败」。
+    ///
+    /// 末一处**这一份夹具上只有这里问得到**：它紧挨在没做成那一卷那一行下面、
+    /// 又同是红的，[逐段那一条](every_painted_block_carries_a_word_or_a_mark_of_its_own)
+    /// 因此把两段并作一段看，检的是上面那一行的载体
+    /// （停车场 Q353 记着这道缝）。
     ///
     /// 正常跑完的那几卷一格都不上色：**四种里有一种是「不上色」**，
     /// 而屏上多数行属于它——人人都是红的等于没有红的。
@@ -338,6 +344,19 @@ mod tests {
         assert!(tight(&skipped.text).contains('-'), "{}", skipped.text);
         assert!(tight(&skipped.text).contains("跳过"), "{}", skipped.text);
 
+        // 失败页那一段：抬头与原因两行各带一个载体，两行都是红的。
+        // 这一份夹具画得出这一段，靠的是那一卷的失败页**两半都喂**
+        // （`super::super::probe::volume_finished`）——只喂后一半时这一段不在屏上，
+        // 底下这四句一句都问不到。
+        for said in ["失败页（出现的当场", "失败 解不出完整尺寸"] {
+            let row = row_saying(&rows, said);
+            assert!(
+                row.colours.contains(&Color::Red),
+                "「{said}」那一行不是红的：{}",
+                row.text
+            );
+        }
+
         // 逐页判定与被覆盖的那两卷正常跑完，一格都不上色。
         for name in ["名侦探 05", "浪客行 12"] {
             let plain = row_saying(&rows, name);
@@ -347,11 +366,22 @@ mod tests {
 
     /// **屏上每一处上过色的地方，都另有一个字或一个行首记号**（票面第二条）。
     ///
-    /// 逐行走一遍主区：凡是上了色的行，必带着底下那几个载体之一。
+    /// 走一遍主区，**逐段问**：凡是上了色的地方，那一段的头一行必带着底下那几个载体之一。
     /// 这一条挡的是「往后添一处上色却忘了配一个字」——那种改动去掉颜色就丢信息，
     /// 而 `NO_COLOR` 那一趟与色盲的眼睛看到的正是去掉颜色的那一份。
+    ///
+    /// **问头一行而不是每一行**：接住颜色的是那一段话，不是那一段里的每一行——
+    /// 一段话是一起读的（[`the_failing_pages_block_goes_red_under_a_heading_that_says_so`]
+    /// 说的正是它：失败页那一段整段红，中间那几行是页的路径，而头一行就叫「失败页」）。
+    ///
+    /// **屏上读回来的只有色与字**，因此这里认的「一段」是「挨着、且屏上是同一个样子
+    /// （同一批前景色、压不压暗也一样）」的那几行——中间夹一行没上色的、或者样子变了，
+    /// 都算新的一段。**两段同色又紧挨着时它并作一段看**（此刻正是这样：没做成那一卷那一行
+    /// 与失败页那一段都是红的）：那一道缝由
+    /// [`the_row_that_went_wrong_is_red_and_says_so`] 在同一份夹具上补一句，
+    /// 停车场 Q353 记着这件事。
     #[test]
-    fn every_painted_row_carries_a_word_or_a_mark_of_its_own() {
+    fn every_painted_block_carries_a_word_or_a_mark_of_its_own() {
         /// 四种记号，加上屏上说得出「怎么了」的那几个词。
         const CARRIERS: [&str; 10] = [
             "✓",
@@ -367,24 +397,31 @@ mod tests {
         ];
 
         let rows = rows_of_a_run_with_every_kind(true);
-        let painted: Vec<&OnScreen> = rows
-            .iter()
-            .filter(|row| !row.colours.is_empty() || row.dim())
-            .collect();
+        // **这一行在屏上是什么样子**：它出现过的那几种前景色（去重、按出现次序，见
+        // [`OnScreen::colours`]）加上压没压暗。没上色就是 `None`——它把前后两段隔开，
+        // 与样子变了是同一件事。这不是[语义色](Tone)：屏上读回来的是色，不是档。
+        let looks = |row: &OnScreen| -> Option<(Vec<Color>, bool)> {
+            let dim = row.dim();
+            (!row.colours.is_empty() || dim).then(|| (row.colours.clone(), dim))
+        };
 
-        assert!(
-            painted.len() >= 3,
-            "这一趟该有几行上色的：{}",
-            painted.len()
-        );
-        for row in painted {
-            let text = tight(&row.text);
-            assert!(
-                CARRIERS.iter().any(|carrier| text.contains(carrier)),
-                "这一行上了色却没有一个字接得住：{}",
-                row.text
-            );
+        let mut heads = 0usize;
+        let mut above: Option<(Vec<Color>, bool)> = None;
+        for row in &rows {
+            let here = looks(row);
+            if here.is_some() && here != above {
+                heads += 1;
+                let text = tight(&row.text);
+                assert!(
+                    CARRIERS.iter().any(|carrier| text.contains(carrier)),
+                    "这一段头一行上了色却没有一个字接得住：{}",
+                    row.text
+                );
+            }
+            above = here;
         }
+
+        assert!(heads >= 3, "这一趟该有几段上色的：{heads}");
     }
 
     /// **一段整段上色时，接住颜色的是那一段的头一行**（票面第二条）。
