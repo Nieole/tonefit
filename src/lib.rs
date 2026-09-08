@@ -495,10 +495,14 @@ fn process_volume(
     // 隔离目录只是在中间插一级 `_isolated`，镜像出来的结构一模一样。
     let clean = surveyed.output_path(&request.output_root);
     let isolated = surveyed.output_path(&request.output_root.join(ISOLATED_DIRECTORY));
+    // 借住在这一卷去处里的那些卷：收尾换掉的范围按它收窄（`sink::DirectorySink`）。
+    // 它相对的是**这一卷的去处**，干净去处与隔离目录里那个去处因此共用同一份
+    // （见 `sink::Lodgers`）。
     let survey::Surveyed {
         root,
         steps,
         enumerating,
+        lodgers,
         ..
     } = surveyed;
     // 这一卷的表：三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
@@ -720,7 +724,7 @@ fn process_volume(
     // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
     if walks_the_second_pass {
         timed(&mut timing.second_pass, || -> Result<()> {
-            let mut sink = Sink::create(&output, volume.container)?;
+            let mut sink = Sink::create(&output, volume.container, lodgers)?;
             let recorder = fingerprint
                 .as_ref()
                 .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
@@ -2992,7 +2996,8 @@ mod tests {
         let standing = progress::Standing::default();
         let deliberation = progress::Deliberation::default();
 
-        let mut sink = Sink::create(&out, Container::Directory).expect("建输出容器");
+        let mut sink =
+            Sink::create(&out, Container::Directory, sink::Lodgers::default()).expect("建输出容器");
         second_pass(
             &pages,
             &[verdict, verdict],
