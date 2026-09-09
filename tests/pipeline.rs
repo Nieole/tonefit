@@ -2604,6 +2604,68 @@ fn a_cache_past_its_budget_spills_to_a_temp_file_and_writes_the_very_same_pages(
     assert_eq!(roomy_bytes, cramped_bytes, "溢写之后写出的页变了");
 }
 
+/// 逐页那条路上第二遍退化成纯写出：一页的档在滚动窗口里定下来的当场量化编码，
+/// 缓存那一格从参照换成编好的字节（12 号票）。
+///
+/// 断言的是**溢写换的仍旧只是它待在哪里**：同一卷在两种预算下写出的字节逐字节相同。
+/// 这一条同时把换字节那一步的两条路都走到——预算够用时新旧两段都在内存里，
+/// 预算为零时旧的那一段在临时文件里、新的那一段也接在它后面。
+#[test]
+fn the_rolling_window_writes_the_very_same_pages_whether_it_spills_or_not() {
+    let roomy = one_per_page_volume_with_budget(CacheBudget::default());
+    let cramped = one_per_page_volume_with_budget(CacheBudget::new(0));
+
+    assert_eq!(
+        roomy.0.verdict,
+        Some(VolumeVerdict::PerPage),
+        "上包络没被关掉，测的就不是滚动窗口那条路"
+    );
+    assert_eq!(roomy.0.cache.spilled, 0, "预算够用时不该溢写");
+    assert!(cramped.0.cache.spilled > 0, "预算为零时没有发生溢写");
+    assert_eq!(cramped.0.cache.resident, 0, "预算为零时不该有常驻");
+    assert_eq!(
+        cramped.0.cache.stored,
+        cramped.0.cache.resident + cramped.0.cache.spilled
+    );
+    // 缓存里此后装的是编好的字节，而不是参照：它比参照压过之后还小一截。
+    assert!(
+        roomy.0.cache.stored < roomy.0.cache.raw,
+        "缓存装的还是那些像素"
+    );
+
+    let verdicts = |volume: &tonefit::VolumeReport| -> Vec<_> {
+        volume.pages.iter().map(|page| page.verdict()).collect()
+    };
+    assert_eq!(verdicts(&roomy.0), verdicts(&cramped.0), "溢写之后判定变了");
+    assert_eq!(roomy.1, cramped.1, "溢写之后写出的页变了");
+}
+
+/// 逐页判定 + 点名预算处理同一个卷，把卷报告与写出的字节一起带回来。
+///
+/// 五页一色是有意的：段够长，迟滞一页都不压，滚动窗口于是从头到尾一页一页地放行——
+/// 「出了窗口当场编码」在这条序列上走得最满。
+fn one_per_page_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Vec<u8>>) {
+    let space = Workspace::new();
+    let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 5]);
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        cache_budget: budget,
+        // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
+        fit: FitMode::Inside,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let volume_report = report.volumes.into_iter().next().expect("一个卷");
+    let written = volume_report
+        .pages
+        .iter()
+        .map(|page| std::fs::read(&page.output).expect("读回写出的页"))
+        .collect();
+    (volume_report, written)
+}
+
 /// 用点名的缓存预算处理同一个卷，把卷报告与写出的字节一起带回来。
 fn one_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Vec<u8>>) {
     let space = Workspace::new();
