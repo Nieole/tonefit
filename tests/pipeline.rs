@@ -404,6 +404,39 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     assert!(!space.out().exists(), "dry-run 落了盘");
 }
 
+/// 试算跳过彩页那一整套缩放之后，报告里那一页**一个字不变**（两遍管线批 05 号票）。
+///
+/// 缩放比、目标尺寸、彩页标记三样都只靠源尺寸与目标尺寸做算术，不需要像素——
+/// 这条用例把「省掉的确实只是像素那一趟」框住。计数那一侧在 `tests/counters.rs`。
+#[test]
+fn a_dry_run_reports_the_same_color_geometry_as_the_real_thing() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // 窄而高，照 `NARROW_PASSES_THROUGH` 的路子办：这一条只问几何，页上画着什么不影响，
+    // 而高正好是面板的两倍——预缩因此真触发，省掉的那一趟不是空操作。
+    // 不取 `DOUBLE_PANEL`：那是一张 850 万像素的彩页，一趟试算加一趟照做要一分多钟。
+    volume.page("001.png", &fixtures::color_page(Size::new(64, 3360)));
+
+    // 试算排在前头：照做那一趟写下了输出，跟在它后面的试算会被幂等整卷跳过。
+    let profile = fixtures::profile(COLOR_DEVICE);
+    let trial = tonefit::run(&Request {
+        profile: profile.clone(),
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("试算应当成功");
+    let done = fixtures::run_volume_with(&space, &volume, profile);
+
+    let (trial, done) = (&trial.volumes[0].pages[0], &done.volumes[0].pages[0]);
+    assert_eq!(trial.color(), Some(PageColor::Color));
+    assert_eq!(trial.size, done.size, "试算报的目标尺寸变了");
+    assert_eq!(trial.scaling(), done.scaling(), "试算报的缩放变了");
+    assert!(
+        trial.scaling().expect("彩页缩放过").prescaled(),
+        "这一页连预缩都没触发，省掉的那一趟不够贵，问不出这条性质"
+    );
+}
+
 /// 彩色分支上的页不在几何门的**判定范围**内（ADR 0010 决定第 4 条）。
 ///
 /// 门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），两者只作用在灰度路径上：
