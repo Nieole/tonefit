@@ -422,14 +422,59 @@ impl std::fmt::Display for Aggregation {
 /// 「哪一段算高频」跟着变，这道地板也就不是同一件事。
 const GRAIN_RATIO: f32 = 0.215_686_27;
 
-/// 掩蔽加权的地板：结构再密也不至于完全不看。
+/// 掩蔽加权的地板：结构再密也不至于完全不看。**未标定占位值**。
 ///
 /// 活动度量法换到块尺度之后活动度整体变大，这个数跟着一起重定
 /// （窗口见 measurements 的《位深盲测》）。
 const MASKING_FLOOR: f32 = 0.5;
 
 /// 掩蔽加权的拐点，8 位灰度级。块内活动度到这里，加权正好落在不打折与地板的中点。
+/// **未标定占位值**。
 const MASKING_KNEE: f32 = 8.0;
+
+/// 判据掩蔽（ADR 0002 决定第 4 条）：一块的读数**怎么加权**。
+///
+/// 与 [`Composition`]、[`Aggregation`] **平级**，三者是判据形状的三件事，不是同一层：
+/// 那个说**一块的读数由什么组成**，这个说**同一个读数落在有结构的块上该打几折**，
+/// [`Aggregation`] 说**块的读数怎么收成一个数**。
+///
+/// 两个数摆在一处，与 [`Aggregation`] 同一个理由：读它们的两端要的是同一件事——
+/// 报告要把它们标成未标定占位值，本模块算一块的掩蔽加权要按它们算。
+/// 两端都不必抄下当前这两个数字，标定把它们换掉时一行都不用改
+/// （与 [`Threshold::value`](crate::Threshold::value) 同一个理由）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Masking {
+    /// 打折打到头的那一档：结构再密也不至于完全不看。**未标定占位值**。
+    pub floor: f32,
+    /// 拐点，8 位灰度级：块内活动度到这里，加权正好落在不打折与地板的中点。**未标定占位值**。
+    pub knee: f32,
+}
+
+/// 本次判据用的掩蔽。两个数眼下对所有 profile 都一样。
+pub const fn masking() -> Masking {
+    Masking {
+        floor: MASKING_FLOOR,
+        knee: MASKING_KNEE,
+    }
+}
+
+impl std::fmt::Display for Masking {
+    /// 形状连同「这两个数都还没标定」一并说出——判据那一栏的每一个数都经过这道加权，
+    /// 不说，读的人无从判断该信到什么程度（与 [`Aggregation`] 同一个做法）。
+    ///
+    /// 说的是加权曲线上**说得出名字的那几处**（平坦处不打折、地板压不下去、拐点在两者中点），
+    /// 而不是那个式子：读报告的人要判断的是「这道折扣有多狠」，式子答不了这一问。
+    ///
+    /// **地板说成「压不到它以下」而不是「打到它」**：那是一条渐近线，本模块算加权那一步
+    /// 永远到不了它，钉住这一条的用例就在下面。说成到达就是屏上一句假话。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "平坦块不打折 ⋅ 结构越密折得越狠，压不到 {:.2} 以下 ⋅ 活动度 {:.1} 时落在两者中点（地板与拐点均未标定占位值）",
+            self.floor, self.knee,
+        )
+    }
+}
 
 /// 掩蔽活动度量在多大的尺度上——**与分块边长同一个数**。
 ///
@@ -453,11 +498,20 @@ const STRUCTURE_KERNEL: u32 = TILE;
 /// 加权是**相对**的：平坦区取 1.0 作基准、不打折，有结构的区域才打折。整体乘一个常数会被
 /// 阈值标定原样吸收，能改变判定的只有两类区域之间的比。
 ///
-/// 地板与拐点是**占位值**：拐点仍未标定；地板与量法一起重定（见 [`MASKING_FLOOR`]）——
-/// 打折太狠时线稿密的块会被压到看不见，而灰调真崩在那种块上时判据就读不出来了
-/// （1bit 不抖动在网点页上正是这种块）。
+/// 地板与拐点**两个都是未标定占位值**（`CONTEXT.md` 的《尚未确立》，measurements 的
+/// 《位深盲测》）：拐点从来没标定过；地板的现值是量法换到块尺度那次跟着重定的，
+/// 那一次夹的是窗口、不是一次标定（见 [`MASKING_FLOOR`]）。打折太狠时线稿密的块会被压到
+/// 看不见，而灰调真崩在那种块上时判据就读不出来了（1bit 不抖动在网点页上正是这种块）。
+///
+/// **地板是下确界，不是到得了的那一档**：`knee / (knee + activity)` 恒大于零，
+/// 加权因此永远压不到地板以下、也永远到不了它。报告那一行照这个说法印
+/// （见 [`Masking`] 的 `Display`）。
+///
+/// 那两个数**从 [`masking`] 取**，不从常数直接取：报告印出来的与这里算的因此是同一份，
+/// 而 [`Masking`] 不是一个只给报告看的摆设。
 fn masking_weight(activity: f32) -> f32 {
-    MASKING_FLOOR + (1.0 - MASKING_FLOOR) * MASKING_KNEE / (MASKING_KNEE + activity)
+    let Masking { floor, knee } = masking();
+    floor + (1.0 - floor) * knee / (knee + activity)
 }
 
 /// 一块，连同它从参照上取到的掩蔽加权与参照自己的高频起伏。
@@ -848,6 +902,51 @@ mod tests {
             (52.5..53.0).contains(&worst_excess(quantisation_step(BitDepth::One))),
             "1bit 的下界不再是 52.8 了"
         );
+    }
+
+    /// 掩蔽那两个数由 [`masking`] 一处出：报告读的那一份，就是加权真正用的那一份。
+    ///
+    /// 钉的是**类型不是装饰**——把 `masking()` 换掉，加权跟着换。
+    ///
+    /// 每条断言各钉加权曲线上一个**说得出名字的点**，外加一条单调不增；
+    /// **当前那两个数字一个都不写死**，取的全是 `masking()` 交出来的 `floor` 与 `knee`。
+    /// 它们是未标定占位值，标定把它们换掉时这一条不该跟着改——报告那几条断言同一条规矩。
+    #[test]
+    fn the_masking_weights_come_from_the_one_place_the_report_reads() {
+        let Masking { floor, knee } = masking();
+        // 单精度上比不得逐位相等：加权那一步是 `(1−地板)·拐点/(拐点+活动度)`，
+        // `(a·k)/k` 只在 k 是 2 的幂时恰好还原 a，而拐点标定之后未必还是。
+        let about = |left: f32, right: f32| (left - right).abs() < 1e-6;
+
+        // 平坦块不打折：加权是**相对**的，平坦区取 1.0 作基准。
+        assert!(
+            about(masking_weight(0.0), 1.0),
+            "平坦块上的加权是 {}，不是 1.0",
+            masking_weight(0.0)
+        );
+        // 拐点上正落在「不打折」与地板的中点——那就是拐点这个词的定义。
+        assert!(
+            about(masking_weight(knee), (1.0 + floor) / 2.0),
+            "拐点 {knee} 上的加权是 {}，不在 1.0 与地板 {floor} 的中点",
+            masking_weight(knee)
+        );
+        // 地板是**下确界，到不了**：`拐点/(拐点+活动度)` 恒大于零，加权因此永远压不到
+        // 地板以下、也永远不等于它。报告那一行照这个说法印（「压不到 0.50 以下」，
+        // 不是「打到 0.50」）——说成到达就是屏上一句假话。
+        assert!(masking_weight(255.0) > floor);
+        // 只有活动度大到那一点余量在单精度上并进地板本身，才到得了 `>=`。
+        assert!(masking_weight(f32::MAX) >= floor);
+        // 单调不增：活动度越高折得越狠，中间不许翻头。
+        let mut previous = f32::MAX;
+        for tick in 0..=1_000 {
+            let weight = masking_weight(tick as f32 * 0.1);
+            assert!(
+                weight <= previous,
+                "活动度 {} 上加权翻了头",
+                tick as f32 * 0.1
+            );
+            previous = weight;
+        }
     }
 
     /// 核尺寸由 PPI 推出，且落在 ADR 0002 要的量级里。

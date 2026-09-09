@@ -69,7 +69,9 @@ pub use glyph::{HARD_SPACE, width_is_stable};
 pub use gray::GrayImage;
 pub use interlock::{Interlock, Voice};
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium, Readers};
-pub use metric::{Aggregation, Composition, Reference, Score, aggregation, composition, score};
+pub use metric::{
+    Aggregation, Composition, Masking, Reference, Score, aggregation, composition, masking, score,
+};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
