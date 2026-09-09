@@ -1678,6 +1678,9 @@ impl Compute<'_> {
 
     /// 彩色分支上的一张：几何 → 缩放 → 编码，不进缓存、不求判据（ADR 0005 决定第 4 条）。
     ///
+    /// **试算只走几何**：编码是缩放结果唯一的消费者（见 `resample::Resampler::resize_color`），
+    /// 编出来的字节没人要时，缩放跟着不做（05 号票）。
+    ///
     /// 进来的 `image` 已经裁过、可能切过（见 [`color_pages`](Self::color_pages)），
     /// `crop` 是那几段窗口叠起来的**源页上的一块**，报告印的就是它。
     fn color_page(
@@ -1696,23 +1699,28 @@ impl Compute<'_> {
             .fit
             .target(image.size(), request.profile.panel().resolution);
         let size = fit.size();
-        let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
-            self.counters
-                .resampler
-                .resize_color(image, size, request.filter)
-        })?;
-        // dry-run 一个文件都不落盘，编出来的字节没人要。
-        let record = self
-            .fingerprint
-            .map(|fingerprint| Record::color(fingerprint, &placement.origin, salvage));
-        let encoded = match request.mode {
-            Mode::Process => Some(
-                cost::stage(cost::Stage::Encode, || {
+        // 省下的是那一整趟三平面的预缩加卷积，而报告里那一格一个字不少：`Scaling::plan`
+        // 只拿源尺寸与目标尺寸做算术，`resize_color` 自己报的也正是它。
+        //
+        // 灰度路径上没有这一条：那边缩放结果还有判据这个消费者，而试算存在的理由
+        // 正是预告那个判定。
+        let (scaling, encoded) = match request.mode {
+            Mode::Process => {
+                let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
+                    self.counters
+                        .resampler
+                        .resize_color(image, size, request.filter)
+                })?;
+                let record = self
+                    .fingerprint
+                    .map(|fingerprint| Record::color(fingerprint, &placement.origin, salvage));
+                let encoded = cost::stage(cost::Stage::Encode, || {
                     encode::color_png(&scaled, record.as_ref())
                 })
-                .with_context(|| format!("编 {} 这一页", source.display()))?,
-            ),
-            Mode::DryRun => None,
+                .with_context(|| format!("编 {} 这一页", source.display()))?;
+                (scaling, Some(encoded))
+            }
+            Mode::DryRun => (Scaling::plan(image.size(), size), None),
         };
         Ok(placement.into_page(
             source,
