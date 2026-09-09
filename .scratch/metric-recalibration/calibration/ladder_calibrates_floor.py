@@ -122,9 +122,14 @@ def main(out: Path) -> int:
         )
 
     print("\n\n反过来读——真机答什么，地板就落在哪一段：\n")
+    print("  **末一列是要紧的**：那一段里未必有可用的取值。两条盲测结论把可用区间夹成")
+    print(f"  不相交的两段（垫底要 ≤{BOTTOM_MAX:.3f}、闸① 要 ≥{GATE_ONE_MIN:.3f}），")
+    print("  所以**照左边那一段直接取中间值，多半取到一个两条都不满足的数**。\n")
     for u, ratios in sorted(seen.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
         where = f"u = {u} 那一格上判「FS 不比不抖差」" if u else "整条阶梯上都判「不抖更干净」"
-        print(f"  真机在 {where:<34} → 地板 {min(ratios):.3f} ~ {max(ratios):.3f}")
+        lo, hi = min(ratios), max(ratios)
+        print(f"  真机在 {where:<34} → 地板 {lo:.3f} ~ {hi:.3f}")
+        print(f"  {'':<40}   其中 {verdict(lo, hi)}")
 
     print()
     print("  **u ≤ 2 那两格判据永远翻不过来**：FS 在那里的低通残留是 2.86 / 3.47，")
