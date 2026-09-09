@@ -10,10 +10,24 @@
 
 mod fixtures;
 
-use fixtures::Workspace;
+use fixtures::{Volume, Workspace};
+use tonefit::Profile;
 
 /// 一台彩色面板设备：彩页只有在彩色 profile 下才走彩色分支（ADR 0010）。
 const COLOR_DEVICE: &str = "kobo-libra-colour";
+
+/// 对一个目录卷跑一趟**试算**，点名 profile。
+///
+/// 这三个数与试算的交集有好几条（05 与 06 两票都落在这里），而 `fixtures` 那一侧
+/// 只有照做那一趟的入口（`run_volume_with`）。
+fn dry_run_with(space: &Workspace, volume: &Volume, profile: Profile) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        profile,
+        mode: tonefit::Mode::DryRun,
+        ..fixtures::request(space, [volume.path()])
+    })
+    .expect("试算应当成功")
+}
 
 /// 灰度卷上三个数说的是同一批页：解码按**源页**数，缩放与参照进缓存按**输出页**数，
 /// 而这一卷没有跨页，三者相等。
@@ -57,9 +71,10 @@ fn a_skipped_volume_resizes_nothing_and_caches_nothing() {
 
 /// 彩色面板上彩页走彩色分支：**照样缩一次**，但一张参照都不存。
 ///
-/// 两个数在这一卷上第一次分家，而分家处正是 05 号票要动的地方：那一趟的缩放结果只有编码
-/// 一个消费者，试算不编码，那一整套预缩加卷积因此是白付。今天它是 1，05 之后是 0——
-/// 没有这个数，那张票只能靠「报告里那几格没变」兜着。
+/// 两个数在这一卷上第一次分家，而分家处正是 05 号票动过的地方：那一趟的缩放结果只有编码
+/// 一个消费者。**照做这一趟要编码，缩放因此照旧跑**——同一张页在试算里已经一次都不缩
+/// （见 `a_dry_run_of_an_all_color_volume_resizes_nothing`）。没有这个数，那张票就只能
+/// 靠「报告里那几格没变」兜着。
 ///
 /// **一张彩页记一次，不是三次**：三个通道各走一遍是一张图的内部构造。这一条同时钉住它——
 /// 按调用次数记的话，这里会是 4。
@@ -89,12 +104,44 @@ fn a_color_page_is_resized_once_and_never_cached() {
     );
 }
 
-/// 试算与照做两趟的三个数**逐个相同**：dry-run 省掉的只有写出那一头。
+/// **全彩卷上试算的缩放次数降到零**（05 号票的正题）。
 ///
-/// 05 与 06 两票动的都是「某个开关关掉之后第一遍该少做点什么」，而它们的对照组就是这一条——
-/// 今天两趟一样多，改完之后差的正好是那一票删掉的那一份。
+/// 彩色分支的缩放结果只有编码一个消费者，而试算不编码——那一整趟三平面的预缩加卷积
+/// 跑完就当场丢掉。报告要的缩放比只靠源尺寸与目标尺寸做算术，不需要像素。
+///
+/// **卷得全彩才问得出「零」**：`resizes` 是卷级合计、不分彩灰，混合卷上灰度页那一次
+/// 照旧记着（见 `a_dry_run_skips_only_the_color_resize_of_a_mixed_volume`）。
 #[test]
-fn a_dry_run_does_exactly_as_much_first_pass_work_as_the_real_thing() {
+fn a_dry_run_of_an_all_color_volume_resizes_nothing() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let size = fixtures::PASSES_THROUGH;
+    volume.page("001.png", &fixtures::color_page(size));
+    volume.page("002.png", &fixtures::color_page(size));
+
+    let trial = dry_run_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
+
+    let volume_report = &trial.volumes[0];
+    assert_eq!(volume_report.pages.len(), 2);
+    for page in &volume_report.pages {
+        assert_eq!(page.color(), Some(tonefit::PageColor::Color));
+    }
+    // 解码那一个不跟着降：彩页识别排在解码之后，不解就认不出这是一张彩页。
+    assert_eq!(volume_report.decodes, 2, "试算连解码都省了，那就认不出彩页");
+    assert_eq!(volume_report.resizes, 0, "试算为它根本不会编码的彩页缩了图");
+    assert_eq!(
+        volume_report.cached_references, 0,
+        "彩色分支不进灰度缓存（ADR 0005 决定第 4 条）"
+    );
+}
+
+/// 混合卷上试算与照做只差**彩页那一次缩放**，另两个数逐个相同。
+///
+/// 05 与 06 两票动的都是「某个开关关掉之后第一遍该少做点什么」，这一条是它们的对照组：
+/// 05 之后差的正好是彩页那一张，而灰度页照旧要缩——判据要缩放结果，
+/// 试算存在的理由正是预告那个判定。06 号票动的是第三个数。
+#[test]
+fn a_dry_run_skips_only_the_color_resize_of_a_mixed_volume() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     let size = fixtures::PASSES_THROUGH;
@@ -103,24 +150,42 @@ fn a_dry_run_does_exactly_as_much_first_pass_work_as_the_real_thing() {
 
     // 试算排在前头：照做那一趟写下了输出，跟在它后面的试算会被幂等整卷跳过。
     let profile = fixtures::profile(COLOR_DEVICE);
-    let trial = tonefit::run(&tonefit::Request {
-        profile: profile.clone(),
-        mode: tonefit::Mode::DryRun,
-        ..fixtures::request(&space, [volume.path()])
-    })
-    .expect("试算应当成功");
+    let trial = dry_run_with(&space, &volume, profile.clone());
     let done = fixtures::run_volume_with(&space, &volume, profile);
 
     let (done, trial) = (&done.volumes[0], &trial.volumes[0]);
     assert_eq!(trial.decodes, done.decodes);
-    assert_eq!(
-        trial.resizes, done.resizes,
-        "试算的缩放次数与照做那一趟不同"
-    );
+    assert_eq!(done.resizes, 2, "照做那一趟两张页各缩一次");
+    assert_eq!(trial.resizes, 1, "试算该只剩灰度那一张要缩");
     assert_eq!(
         trial.cached_references, done.cached_references,
         "试算存的参照份数与照做那一趟不同"
     );
+}
+
+/// **黑白面板上试算照旧缩每一张彩页。**那上面彩页转灰、走灰度路径，
+/// 而灰度路径的缩放结果有判据这个消费者，试算正是为了预告它。
+///
+/// 省掉的是彩色分支那一条路，不是「试算」这个开关——分流由面板定（ADR 0010 决定第 3 条）。
+/// 同一卷、同一个模式，只换一台设备，两个数就都回来了。
+#[test]
+fn a_dry_run_on_a_monochrome_panel_still_resizes_every_color_page() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let size = fixtures::PASSES_THROUGH;
+    volume.page("001.png", &fixtures::color_page(size));
+    volume.page("002.png", &fixtures::color_page(size));
+
+    let trial = dry_run_with(&space, &volume, fixtures::baseline_profile());
+
+    let volume_report = &trial.volumes[0];
+    // 识别与分流分开：这两张在黑白面板上仍旧是彩页，只是走了灰度路径。
+    for page in &volume_report.pages {
+        assert_eq!(page.color(), Some(tonefit::PageColor::Color));
+        assert!(page.verdict().is_some(), "转灰之后该有判定");
+    }
+    assert_eq!(volume_report.resizes, 2, "转灰那一路上的缩放被一起省掉了");
+    assert_eq!(volume_report.cached_references, 2, "转灰之后照旧存参照");
 }
 
 /// 一张源页切成两张：解码按**源页**数，缩放与参照进缓存按**输出页**数。
