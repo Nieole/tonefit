@@ -28,6 +28,30 @@ import numpy as np
 
 STEP = 85.0  # 2bit 的《格点间距》
 
+# 两条真机盲测结论把颗粒地板比例夹成**不相交**的两段。**数本身不在这里**——
+# 出处是 measurements 的《四条真机结论在现有判据形状下互不相容》，改要去那一节改；
+# 这里只拿它们给对照表就地标注「这一段满不满足约束」。
+#
+# 不标的话，看表的人会照着「真机答 u=8 → 0.250~0.500」直接取个中间值，
+# 而那一段里只有 0.450 以上才满足闸①、0.320 以下才守得住垫底，
+# **中间 0.320~0.450 两条都不满足**。
+BOTTOM_MAX = 0.320  # 「1bit+FS 每页垫底」还守得住的上界（掩蔽两个数任取）
+GATE_ONE_MIN = 0.450  # 闸① 上判据要与真机同向的下界
+
+
+def verdict(lo: float, hi: float) -> str:
+    """这一段里，哪一截满足哪一条约束。"""
+    parts = []
+    if lo <= BOTTOM_MAX:
+        parts.append(f"{lo:.3f}~{min(hi, BOTTOM_MAX):.3f} 守得住垫底、闸① 不成立")
+    if hi >= GATE_ONE_MIN:
+        parts.append(f"{max(lo, GATE_ONE_MIN):.3f}~{hi:.3f} 闸① 成立、垫底守不住")
+    if lo < GATE_ONE_MIN and hi > BOTTOM_MAX:
+        gap_lo, gap_hi = max(lo, BOTTOM_MAX), min(hi, GATE_ONE_MIN)
+        if gap_hi > gap_lo:
+            parts.append(f"**{gap_lo:.3f}~{gap_hi:.3f} 两条都不满足**")
+    return "；".join(parts) if parts else "——"
+
 
 def flip_point(readings: dict, ladder: list, ratio: float) -> int | None:
     """给定地板比例，判据在哪一个《离格量》上开始判「FS 更好」。
