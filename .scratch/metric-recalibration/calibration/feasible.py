@@ -4,25 +4,29 @@
 ——满足不了就说明少了一项，当场记下而不是挑一个牺牲掉」。**这一步就是去看它满不满足得了**，
 在真机判读之前——判读很贵，先算掉能算的，剩下的才值得上机。
 
-四个数张开搜索空间（**阈值不搜**，它由约束直接夹出来，见 `threshold_window`）：
+四个数张开搜索空间（**阈值不搜**，它由约束直接夹出来，见 `threshold_window_for`）：
 
     颗粒地板比例 grain_ratio · 低通地板比例 low_pass_ratio
     MASKING_FLOOR · MASKING_KNEE
 
-约束：
+约束的形态是**逐页的判定档**（见 `WANTED`），不是「某一档的读数在阈值内外」：
 
-  B 组四页  2bit+FS 必须落在阈值**之外**（真机零接受）
-  C 组八页  2bit+FS 必须仍在阈值**之内**（真机 6 平 2 偏、零个「不收」）
-  闸① 四页  判据要与真机逐页同向（3 页偏 2bit+FS、1 页偏 4bit 不抖）
+  B 组四页  判定不得低于 4bit（真机 4/4 判 4bit 不抖更干净、2bit+FS 零接受）
+  C 组八页  判定就该是 2bit+FS（真机 6 平 2 偏、零个「不收」）
+  闸① 四页  判定落在真机说更干净的那一档上（3 页 2bit+FS、1 页 ≥4bit）
   棋魂两页  **1bit+FS 每页垫底**——同页上它要高过 2bit 不抖（见 `BOTTOM_OF_PAGE`）
 
 **前三条来自票面**《已经有的约束，不要重测》（那一节的第四条是 A 组，票面明写
 「归 `06`，不占本票的数」，因此不在这里）。**末一条是票面之外的**，由 `tonefit-c2`
-提出，出处是 measurements《位深盲测》——它撑起缺口的一端，但**严版那处不可满足
-不依赖它**，去掉它「满足不了」这个结论仍然成立。
+提出，出处是 measurements《位深盲测》。
 
-头两条一起把阈值夹进 `[max(C 组读数), min(B 组读数))`；这个区间空掉，那组参数就不可行。
-闸① 与阈值无关，只比同一页两档的大小（宽版）；严版另要求它**选得到**。
+**为什么必须按判定档写**：判定取的是候选升序里**第一个进阈值的那一档**
+（`decide.rs::decide`）。早先只盯着 `2bit+FS` 的读数在阈值内外，漏掉了「排在它前面的
+更低档先进了阈值」——实测漏出过一组「解」，在它上面 B 组四页全判 `1bit`，
+而真机在那四页要的是 4bit 不抖。**那种解满足旧写法的每一条，却是坏的。**
+
+每一页因此各给出一个阈值区间（要判成的那一档进得来、前面的都进不来），
+全部求交；交集空掉，那组参数就不可行。
 
 **怎么搜得动**：四个数只从三处进判据——`weight` 只吃掉掩蔽那两个，
 低通项与颗粒项各只吃掉自己那道地板。于是固定一对掩蔽参数，
@@ -85,7 +89,42 @@ BOTTOM_OF_PAGE = [
     ("Q_棋魂垫底", "QH-01_0148.png"),
 ]
 
+# 真机结论逐页翻译成「这一页该判成哪一档」。**这才是约束的正确形态**——
+# 判定是「候选升序里第一个进阈值的那一档」，只盯着 2bit+FS 的读数在阈值内外，
+# 会漏掉「1bit 先进了阈值」这种情形（实测漏过：某组参数下 B 组四页全判 1bit，
+# 而真机在那四页上要的是 4bit 不抖）。
+WANTED = (
+    # B 组：真机 4/4 判 4bit 不抖更干净、2bit+FS 零接受 → 判定不得低于 4bit
+    [(p, "≥4bit") for p in B_WHITE]
+    # C 组：真机说 2bit+FS 就够（6 平 2 偏、零个「不收」）→ 判定就该是 2bit+FS
+    + [(p, "2bit+FS") for p in C_ENOUGH]
+    # 闸①：真机说更干净的那一档，就是判定该落的那一档
+    + [((g, n), "2bit+FS" if won == "2bit+FS" else "≥4bit") for g, n, won in GATE_ONE]
+)
+
 PARAM_NAMES = ["grain_ratio", "low_pass_ratio", "masking_floor", "masking_knee"]
+
+# 候选升序，`Candidate::all` 就是这个次序——选档取的是**第一个进阈值的那一档**
+# （`decide.rs::decide`），所以「哪一档被选中」不只看某一档的读数，
+# 还看**排在它前面的档有没有先进阈值**。
+ASCENDING = ["1bit", "1bit+FS", "2bit", "2bit+FS", "4bit", "4bit+FS"]
+
+
+def threshold_window_for(reads: dict, wanted: str):
+    """要让这一页判成 `wanted`，阈值得落在哪个区间。
+
+    判定 = 候选升序里第一个 `读数 ≤ 阈值` 的档。于是要判成 `wanted`：
+
+        阈值 ≥ 读数[wanted]                    （它自己进得来）
+        阈值 <  min(排在它前面那几档的读数)      （前面的都进不来）
+
+    `wanted` 传 `"≥4bit"` 表示「不低于 4bit 即可」——那时只要前四档都进不来，
+    选中的是 4bit 还是 4bit+FS 都算合格（都不进就取候选上界，仍是 4bit+FS）。
+    """
+    if wanted == "≥4bit":
+        return -np.inf, min(reads[d] for d in ASCENDING[:4])
+    below = ASCENDING[: ASCENDING.index(wanted)]
+    return reads[wanted], min((reads[d] for d in below), default=np.inf)
 
 
 class Tiles:
@@ -135,35 +174,27 @@ def _aggregate(values: np.ndarray) -> np.ndarray:
 
 
 def sweep(tiles: Tiles, grain_ratios, low_pass_ratios, masking_floors, masking_knees) -> dict:
-    """在四维网格上算出三条约束各自的判定，返回逐维取值与逐组结果。
+    """在四维网格上把每一组参数判一遍，返回逐维取值与逐组结果。
+
+    每一页按 `WANTED` 要它判成的那一档，各解出一个阈值区间，全部求交——
+    `阈值下界` / `阈值上界` 就是交集，空掉即不可行；`夹住下界的页` / `夹住上界的页`
+    记的是 `WANTED` 里的下标，指出是哪一页把窗口卡死的。
 
     结果数组的轴序是 `(F, K, G, L)`。
     """
     shape = (len(masking_floors), len(masking_knees), len(grain_ratios), len(low_pass_ratios))
-    lo = np.empty(shape)  # C 组读得最高的那一页 → 阈值下界
-    hi = np.empty(shape)  # B 组读得最低的那一页 → 阈值上界
+    lo = np.empty(shape)  # 逐页阈值区间求交之后的下界
+    hi = np.empty(shape)  # 同上，上界
     agree = np.zeros(shape, dtype=np.int8)  # 闸① 与真机同向的页数
     lo_page = np.empty(shape, dtype=np.int16)
     hi_page = np.empty(shape, dtype=np.int16)
-    # 严版：闸① 不只要「排序同向」，还要**选得到**——选档取的是候选升序里第一个进阈值的
-    # （`decide.rs::decide`），排序对而两档都在阈值外时，判定会往更高的档上走，
-    # 真机说更干净的那一档仍然选不到。
-    lo_strong = np.empty(shape)
-    hi_strong = np.empty(shape)
     bottom = np.zeros(shape, dtype=bool)  # 1bit+FS 在两页上都垫底
 
+    # 判定要看**全部六档**，不能只取两档
+    every = {p for p, _ in WANTED} | set(BOTTOM_OF_PAGE)
     cache = {
-        page + (label,): tiles.parts(page, label)
-        for page in {p for p in B_WHITE + C_ENOUGH} | {(g, n) for g, n, _ in GATE_ONE}
-        for label in ("2bit+FS", "4bit")
+        page + (label,): tiles.parts(page, label) for page in every for label in ASCENDING
     }
-    cache.update(
-        {
-            page + (label,): tiles.parts(page, label)
-            for page in BOTTOM_OF_PAGE
-            for label in ("1bit+FS", "2bit")
-        }
-    )
 
     for fi, f in enumerate(masking_floors):
         for ki, k in enumerate(masking_knees):
@@ -171,60 +202,48 @@ def sweep(tiles: Tiles, grain_ratios, low_pass_ratios, masking_floors, masking_k
                 key: masking_weight(parts["activity"], f, k) for key, parts in cache.items()
             }
 
-            c = np.stack(
-                [
-                    scores_over_floors(
-                        cache[p + ("2bit+FS",)],
-                        weights[p + ("2bit+FS",)],
-                        grain_ratios,
-                        low_pass_ratios,
-                    )
-                    for p in C_ENOUGH
-                ]
-            )
-            b = np.stack(
-                [
-                    scores_over_floors(
-                        cache[p + ("2bit+FS",)],
-                        weights[p + ("2bit+FS",)],
-                        grain_ratios,
-                        low_pass_ratios,
-                    )
-                    for p in B_WHITE
-                ]
-            )
-            lo[fi, ki] = c.max(axis=0)
-            hi[fi, ki] = b.min(axis=0)
-            lo_page[fi, ki] = c.argmax(axis=0)
-            hi_page[fi, ki] = b.argmin(axis=0)
+            reads = {
+                (p, d): scores_over_floors(
+                    cache[p + (d,)], weights[p + (d,)], grain_ratios, low_pass_ratios
+                )
+                for p in every
+                for d in ASCENDING
+            }
+
+            # 逐页把「该判成哪一档」翻成阈值区间，再求交
+            page_lo = np.full(shape[2:], -np.inf)
+            page_hi = np.full(shape[2:], np.inf)
+            which_lo = np.zeros(shape[2:], dtype=np.int16)
+            which_hi = np.zeros(shape[2:], dtype=np.int16)
+            for index, (p, wanted) in enumerate(WANTED):
+                r = {d: reads[(p, d)] for d in ASCENDING}
+                if wanted == "≥4bit":
+                    one_lo = np.full(shape[2:], -np.inf)
+                    one_hi = np.minimum.reduce([r[d] for d in ASCENDING[:4]])
+                else:
+                    below = ASCENDING[: ASCENDING.index(wanted)]
+                    one_lo = r[wanted]
+                    one_hi = np.minimum.reduce([r[d] for d in below])
+                which_lo = np.where(one_lo > page_lo, index, which_lo)
+                which_hi = np.where(one_hi < page_hi, index, which_hi)
+                page_lo = np.maximum(page_lo, one_lo)
+                page_hi = np.minimum(page_hi, one_hi)
+            lo[fi, ki] = page_lo
+            hi[fi, ki] = page_hi
+            lo_page[fi, ki] = which_lo
+            hi_page[fi, ki] = which_hi
 
             hits = np.zeros(shape[2:], dtype=np.int8)
-            want_in = []  # 真机说 2bit+FS 更干净的页：判据要**选得到**它 → 读数 ≤ 阈值
-            want_out = []  # 真机说 4bit 更干净的那一页：2bit+FS 要落在阈值之外
             for group, name, won in GATE_ONE:
                 p = (group, name)
-                fs = scores_over_floors(
-                    cache[p + ("2bit+FS",)], weights[p + ("2bit+FS",)], grain_ratios, low_pass_ratios
-                )
-                plain = scores_over_floors(
-                    cache[p + ("4bit",)], weights[p + ("4bit",)], grain_ratios, low_pass_ratios
-                )
+                fs, plain = reads[(p, "2bit+FS")], reads[(p, "4bit")]
                 picked_fs = fs < plain
                 hits += (picked_fs if won == "2bit+FS" else ~picked_fs).astype(np.int8)
-                (want_in if won == "2bit+FS" else want_out).append(fs)
             agree[fi, ki] = hits
-            lo_strong[fi, ki] = np.maximum(lo[fi, ki], np.stack(want_in).max(axis=0))
-            hi_strong[fi, ki] = np.minimum(hi[fi, ki], np.stack(want_out).min(axis=0))
 
             still_bottom = np.ones(shape[2:], dtype=bool)
             for p in BOTTOM_OF_PAGE:
-                fs1 = scores_over_floors(
-                    cache[p + ("1bit+FS",)], weights[p + ("1bit+FS",)], grain_ratios, low_pass_ratios
-                )
-                plain2 = scores_over_floors(
-                    cache[p + ("2bit",)], weights[p + ("2bit",)], grain_ratios, low_pass_ratios
-                )
-                still_bottom &= fs1 > plain2
+                still_bottom &= reads[(p, "1bit+FS")] > reads[(p, "2bit")]
             bottom[fi, ki] = still_bottom
 
     return {
@@ -234,24 +253,23 @@ def sweep(tiles: Tiles, grain_ratios, low_pass_ratios, masking_floors, masking_k
         "夹住下界的页": lo_page,
         "夹住上界的页": hi_page,
         "闸①同向": agree,
-        "严下界": lo_strong,
-        "严上界": hi_strong,
         "垫底仍成立": bottom,
     }
 
 
-def describe(res: dict, index, strict: bool = False) -> str:
+def describe(res: dict, index) -> str:
     floors, knees, grains, low_passes = res["轴"]
     fi, ki, gi, li = index
-    lo = res["严下界" if strict else "阈值下界"][index]
-    hi = res["严上界" if strict else "阈值上界"][index]
+    lo, hi = res["阈值下界"][index], res["阈值上界"][index]
     mark = "非空" if lo < hi else "**空**"
+    lo_page, lo_want = WANTED[res["夹住下界的页"][index]]
+    hi_page, hi_want = WANTED[res["夹住上界的页"][index]]
     lines = [
         f"  颗粒地板比例 {grains[gi]:.4f} · 低通地板比例 {low_passes[li]:.4f} · "
         f"MASKING_FLOOR {floors[fi]:g} · MASKING_KNEE {knees[ki]:g}",
-        f"  阈值窗口 [{lo:.3f}, {hi:.3f})  {mark}"
-        f"   下界←{C_ENOUGH[res['夹住下界的页'][index]][1]}"
-        f"  上界←{B_WHITE[res['夹住上界的页'][index]][1]}",
+        f"  阈值窗口 [{lo:.3f}, {hi:.3f})  {mark}",
+        f"    下界 ← {lo_page[1]} 要判成 {lo_want}",
+        f"    上界 ← {hi_page[1]} 要判成 {hi_want}",
         f"  闸① 与真机同向 {res['闸①同向'][index]}/4",
     ]
     return "\n".join(lines)
@@ -284,58 +302,41 @@ def main(npz: Path) -> int:
 
     res = sweep(tiles, grain_ratios, low_pass_ratios, masking_floors, masking_knees)
     window = res["阈值下界"] < res["阈值上界"]
-
-    print("\n── 宽版：闸① 只要求判据与真机**排序同向** ──")
-    ok = window & (res["闸①同向"] == 4)
-    print(f"窗口非空 且 闸① 4/4 同向：{int(ok.sum())} / {total} 组")
-    if ok.any():
-        summarise(res, ok)
-        show(tiles, res, _widest(res, ok))
-
     bottom = res["垫底仍成立"]
-    print("\n── 加上第四条：1bit+FS 每页垫底（盲测夹的上界 60，即比例 0.2353）──")
-    print(f"单看这一条成立的组合：{int(bottom.sum())} / {total}")
-    ok_b = ok & bottom
-    print(f"宽版三条 ＋ 垫底：{int(ok_b.sum())} / {total} 组")
-    if ok_b.any():
-        summarise(res, ok_b)
-        show(tiles, res, _widest(res, ok_b))
-    else:
-        axis = res["轴"][2]
-        keep = axis[np.unique(np.nonzero(bottom)[2])] if bottom.any() else []
-        need = axis[np.unique(np.nonzero(ok)[2])] if ok.any() else []
-        print("\n  **归零。**两条对颗粒地板比例要的是不相交的两段：")
-        if len(keep):
-            print(f"    垫底还守得住的：{keep.min():.3f} ~ {keep.max():.3f}")
-        if len(need):
-            print(f"    闸① 要的：      {need.min():.3f} ~ {need.max():.3f}")
-        if len(keep) and len(need):
-            print(f"    中间空着 {need.min() - keep.max():.3f}")
 
-    print("\n── 严版：真机说 2bit+FS 的三页，判据要**选得到** 2bit+FS ──")
-    print("（选档取的是候选升序里第一个进阈值的。排序对而两档都在阈值外，判定仍会往上走。）")
-    strong = res["严下界"] < res["严上界"]
-    ok2 = strong & (res["闸①同向"] == 4)
-    print(f"严版窗口非空 且 闸① 4/4 同向：{int(ok2.sum())} / {total} 组")
-    print(f"严版 ＋ 垫底：{int((ok2 & bottom).sum())} / {total} 组")
-    if (ok2 & bottom).any():
-        summarise(res, ok2 & bottom)
-        show(tiles, res, _widest(res, ok2 & bottom, strict=True), strict=True)
+    print("\n── 三条真机约束：逐页的**判定档**要与真机结论相容 ──")
+    print("（不是「某一档的读数在阈值内外」——判定取的是候选升序里第一个进阈值的那一档，")
+    print(" 只盯一档会漏掉「更低的档先进了阈值」。）")
+    print(f"\n阈值窗口非空：{int(window.sum())} / {total} 组")
+    if window.any():
+        summarise(res, window)
+        show(tiles, res, _widest(res, window))
+
+    print("\n── 加上第四条：1bit+FS 每页垫底 ──")
+    print(f"单看这一条成立的：{int(bottom.sum())} / {total} 组")
+    both = window & bottom
+    print(f"四条同时满足：{int(both.sum())} / {total} 组")
+    if both.any():
+        summarise(res, both)
+        show(tiles, res, _widest(res, both))
         return 0
 
     print("\n**满足不了**——票面末一条说的正是这种情形：当场记下，不挑一个牺牲掉。")
-    if ok.any():
-        w = _widest(res, ok)
-        gap = res["严下界"][w] - res["严上界"][w]
-        print(f"\n宽版最宽的那一组上，严版的窗口倒挂 {gap:.3f}：")
-        print(f"  要选得到 2bit+FS，阈值至少 {res['严下界'][w]:.3f}")
-        print(f"  要让 B 组落在阈值之外，阈值至多 {res['严上界'][w]:.3f}")
+    if window.any() and bottom.any():
+        axis = res["轴"][2]
+        keep = axis[np.unique(np.nonzero(bottom)[2])]
+        need = axis[np.unique(np.nonzero(window)[2])]
+        print("\n  两条对颗粒地板比例要的是不相交的两段：")
+        print(f"    垫底还守得住的：  {keep.min():.3f} ~ {keep.max():.3f}")
+        print(f"    三条约束要的：    {need.min():.3f} ~ {need.max():.3f}")
+        if need.min() > keep.max():
+            print(f"    中间空着 {need.min() - keep.max():.3f}")
     return 1
 
 
-def show(tiles: Tiles, res: dict, index, strict: bool = False) -> None:
+def show(tiles: Tiles, res: dict, index) -> None:
     print("\n阈值窗口最宽的那一组：")
-    print(describe(res, index, strict))
+    print(describe(res, index))
     gate_detail(
         tiles,
         res["轴"][2][index[2]],
@@ -345,10 +346,9 @@ def show(tiles: Tiles, res: dict, index, strict: bool = False) -> None:
     )
 
 
-def _widest(res: dict, mask: np.ndarray, strict: bool = False):
+def _widest(res: dict, mask: np.ndarray):
     """`mask` 圈出的组合里，阈值窗口最宽的那一组。"""
-    hi, lo = ("严上界", "严下界") if strict else ("阈值上界", "阈值下界")
-    width = np.where(mask, res[hi] - res[lo], -np.inf)
+    width = np.where(mask, res["阈值上界"] - res["阈值下界"], -np.inf)
     return np.unravel_index(np.argmax(width), width.shape)
 
 
