@@ -24,6 +24,7 @@ use std::path::Path;
 
 use crate::decide::{Reason, Verdict};
 use crate::decode::Salvage;
+use crate::metric::{Aggregation, Composition, Masking, aggregation, composition, masking};
 use crate::quantize::Dither;
 use crate::request::Request;
 
@@ -438,7 +439,10 @@ fn reason_text(reason: Reason, driver: Option<usize>) -> String {
 
 /// 参数哈希：这一次调用里**会改变输出**的每一项。
 ///
-/// 收进来的是面板四项、阈值、适配方式、残差段滤波器与三个覆盖项。
+/// 收进来的是面板四项、阈值、适配方式、裁边、拆分那三项、残差段滤波器与三个覆盖项，
+/// 连同**判据那三个结构体的全部字段**（[`Composition`]、[`Aggregation`]、[`Masking`]）。
+/// 判据出的是量、阈值划的是界，收一半漏一半，改了判据参数的那一趟会被幂等静默跳过
+/// （ADR 0002 的《后果》）。
 ///
 /// 型号名不收：设备只是面板的别名，多对一（`CONTEXT.md`），同一块面板的两个别名输出
 /// 逐字节相同。它另有去处——[`Fingerprint`] 单独记着它，也单独比它，理由见那里。
@@ -449,7 +453,24 @@ fn reason_text(reason: Reason, driver: Option<usize>) -> String {
 ///
 /// 喂进哈希的是一段按名写死的文本，不是 `Debug`。这串字节要落进文件、几个月后还要比对，
 /// 而 `Debug` 的写法没有任何稳定承诺：它一变，全库的输出会静默地一起过期。
+/// 判据那三件同样按名写死——`Debug` 能自动跟上新字段，代价是把全库的过期时机交给一个
+/// 没有承诺的写法。**穷尽解构**顶上那一格：加了字段这里当场编译不过，而写法仍由本函数说了算。
 fn params_hash(request: &Request) -> String {
+    hash(params_text(request, composition(), aggregation(), masking()).as_bytes())
+}
+
+/// 喂进哈希的那段文本。
+///
+/// 判据那三件东西**由调用方传进来**，本函数不去取：生产路径上只有 [`params_hash`]
+/// 一个调用点，取的一律是本次判据在用的那一套；而用例换得动它们，
+/// 「判据参数一改哈希就变」这条性质因此断言得出来——判据参数是编译期常数，
+/// 不这样它就只能靠人眼看。
+fn params_text(
+    request: &Request,
+    composition: Composition,
+    aggregation: Aggregation,
+    masking: Masking,
+) -> String {
     let panel = request.profile.panel();
     let mut text = String::new();
     let mut line = |name: &str, value: &dyn std::fmt::Display| {
@@ -470,6 +491,24 @@ fn params_hash(request: &Request) -> String {
         "threshold",
         &format!("{:.3}", request.profile.threshold().value()),
     );
+    // 判据那三个结构体的全部字段：为什么收它们、为什么按名写死而不用 `Debug`，
+    // 见 `params_hash` 的文档。三处的解构一律穷尽，那是「不必记得回来改这里」的落点。
+    //
+    // 取值按 `Display` 原样写，**不截精度**：浮点的 `Display` 给的是能还原原值的最短写法，
+    // 而上一行 `threshold` 用的 `{:.3}` 在这里是陷阱——小数点后第四位的一次改动会被它整个藏起来。
+    let Composition { grain_ratio } = composition;
+    line("metric-composition", &format!("grain-ratio {grain_ratio}"));
+    let Aggregation {
+        tile,
+        quantile,
+        tail_tiles,
+    } = aggregation;
+    line(
+        "metric-aggregation",
+        &format!("tile {tile} quantile {quantile} tail-tiles {tail_tiles}"),
+    );
+    let Masking { floor, knee } = masking;
+    line("metric-masking", &format!("floor {floor} knee {knee}"));
     // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
     // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
     line("fit", &request.fit.name());
@@ -494,7 +533,7 @@ fn params_hash(request: &Request) -> String {
     );
     line("dither", &request.dither.map_or("auto", Dither::name));
     line("per-page", &request.per_page);
-    hash(text.as_bytes())
+    text
 }
 
 /// 一段字节的哈希，截到 [`HASH_HEX`] 个十六进制字符。
@@ -577,6 +616,54 @@ mod tests {
             let mut changed = request();
             change(&mut changed);
             assert_ne!(params_hash(&changed), baseline, "改了{what}，哈希没变");
+        }
+    }
+
+    /// 判据那三个结构体的**每一个字段**都得改变参数哈希：漏掉一个，改了它的那一趟
+    /// 会被幂等静默跳过，用户拿到的是上一套判据算出来的判定（ADR 0002 的《后果》）。
+    ///
+    /// 改动一律**相对当前取值**（翻倍、加一），一个当前的数都不写死：标定把哪一个换掉，
+    /// 这一条都不必跟着改（与 `Aggregation` 的 K 同一条规矩）。
+    #[test]
+    fn every_metric_parameter_changes_the_hash() {
+        type MetricChange = (
+            &'static str,
+            fn(&mut Composition, &mut Aggregation, &mut Masking),
+        );
+        let hash_of = |composition, aggregation, masking| {
+            hash(params_text(&request(), composition, aggregation, masking).as_bytes())
+        };
+        let baseline = hash_of(composition(), aggregation(), masking());
+        // 这一串**就是**生产路径写进记录的那一串：`params_hash` 喂给哈希的是本次判据在用的
+        // 那三件，不是另抄的一份。穷尽解构管得住「将来加了一个字段」，管不住
+        // 「有人在调用点传了别的一份进来」——那道缝由这一句钉着（同 Q306 那一类）。
+        assert_eq!(
+            params_hash(&request()),
+            baseline,
+            "生产路径喂给哈希的不是本次判据在用的那三件"
+        );
+        let changes: [MetricChange; 6] = [
+            ("颗粒可见度地板", |composition, _, _| {
+                composition.grain_ratio *= 2.0
+            }),
+            ("分块边长", |_, aggregation, _| aggregation.tile += 1),
+            ("上分位", |_, aggregation, _| aggregation.quantile *= 0.9),
+            ("尾巴块数 K", |_, aggregation, _| {
+                aggregation.tail_tiles += 1
+            }),
+            ("掩蔽地板", |_, _, masking| masking.floor *= 0.5),
+            ("掩蔽拐点", |_, _, masking| masking.knee += 1.0),
+        ];
+
+        for (what, change) in changes {
+            let (mut composition, mut aggregation, mut masking) =
+                (composition(), aggregation(), masking());
+            change(&mut composition, &mut aggregation, &mut masking);
+            assert_ne!(
+                hash_of(composition, aggregation, masking),
+                baseline,
+                "改了{what}，哈希没变"
+            );
         }
     }
 
