@@ -50,7 +50,9 @@
 
 - **05**（试算不为彩页做缩放）：`resizes` 直接钉得住。`tests/counters.rs` 的
   `a_color_page_is_resized_once_and_never_cached` 与
-  `a_dry_run_does_exactly_as_much_first_pass_work_as_the_real_thing` 是它的对照组——
+  `a_dry_run_does_exactly_as_much_first_pass_work_as_the_real_thing`
+  （05 落地时改名为 `a_dry_run_skips_only_the_color_resize_of_a_mixed_volume`——
+  原名在 05 之后就是假话了）是它的对照组——
   今天彩页那一份是 1、试算与照做一样多，05 之后彩页那一份归零而灰度那一份不动。
   **05 要另立一个全彩卷**：`resizes` 是卷级合计、不分彩灰，混合卷上它只从 2 降到 1，
   票面「降到零」的字面要一张灰度页都没有的卷才落得下（审查提出）。
