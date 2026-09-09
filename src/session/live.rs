@@ -1006,6 +1006,42 @@ pub(crate) mod fixture {
         }
     }
 
+    /// 一卷收摊，**两半一起喂**：那一卷报告里的失败页先各报一条
+    /// [`Live::page_failed`](super::Live::page_failed)，再报那一卷跑完。
+    ///
+    /// 真跑一趟时一页失败**发两回话**：出现的当场一条事件，那一页随后又在卷报告的
+    /// [`PageOutcome::Failed`] 里出现一次（本模块开头那句「事件流就是报告的增量」——
+    /// 一份是增量，一份是结果）。直接调
+    /// [`Live::volume_finished`](super::Live::volume_finished) 只喂得到后一半，
+    /// 画出来的就是一副**真会话里到不了的屏**：报告区那一段「失败页（出现的当场……）」
+    /// 永远空着，而它改坏了不会有任何一张快照红。
+    ///
+    /// **屏上画得出那一段的夹具非走这一个不可**；只问卷级那几行的（总览块、目录表那几条）
+    /// 直接报卷跑完也成——它们画的那一格里根本没有那一段。**两种都不许手抄页名与那句原因**：
+    /// 这一处逐字取自那一份卷报告，两半因此不会走散，屏上那两处说的确实是同一页。
+    ///
+    /// **本模块自己那几条用例是例外**，它们照旧两半分开报：
+    /// [`super::tests::the_failed_pages_of_the_volume_in_flight_count_towards_now`] 问的正是
+    /// 「在途那一格与报告那一格换手时和变不变」，喂成一体就问不出来了。
+    ///
+    /// **「此刻坏了几页」不会因此变大**：那一卷收摊时在途那几页只是换手进报告
+    /// （见 [`Live::failures_so_far`](super::Live::failures_so_far)），和一格不动。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
+        )
+    )]
+    pub fn volume_finished_with_its_failures(live: &mut super::Live, report: &VolumeReport) {
+        for page in report.failures() {
+            if let PageOutcome::Failed { reason } = &page.outcome {
+                live.page_failed(&page.source, reason);
+            }
+        }
+        live.volume_finished(report);
+    }
+
     /// 一份**幂等命中**的卷报告：一页都没重做，逐页结果因此一条都没有。
     ///
     /// 快照要的正是这一种——它不必搓判据、候选与几何门，而「跳过说清是哪四项依据没变」
@@ -1022,6 +1058,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: took(3),
         }
     }
@@ -1091,11 +1129,13 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 1,
+            resizes: 1,
+            cached_references: 1,
             timing: took(72),
         }
     }
 
-    /// 一份 **`--per-page`** 的卷报告：上包络与迟滞关着，卷内没有基准档。
+    /// 一份 **`--per-page`** 的卷报告：上包络关着，卷内没有基准档（迟滞改走段式）。
     ///
     /// 只换判定那一格，逐页那几行照 [`processed_volume`]：这一份要问的是
     /// 「卷表档位那一列照卷级判定说的写」（P3 卷表那一票），与页上画着什么无关。
@@ -1285,6 +1325,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 8,
+            resizes: 7,
+            cached_references: 6,
             timing: took(96),
         }
     }
@@ -1359,6 +1401,8 @@ pub(crate) mod fixture {
             extracted: 0,
             io: io_plan(),
             decodes: 2,
+            resizes: 1,
+            cached_references: 1,
             timing: took(12),
         }
     }

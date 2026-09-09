@@ -42,8 +42,8 @@
 //! 会话那一头每一帧问自己那一格。
 //!
 //! 这里做的只有两件与宽度有关的事：**说出哪一个空格是记号里面的**
-//! （[`crate::wrap::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
-//! （[`SEPARATOR`]，判据是 `crate::wrap::width_is_stable`）。
+//! （[`tonefit::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
+//! （[`SEPARATOR`]，判据是 `tonefit::width_is_stable`）。
 
 use std::path::{Path, PathBuf};
 
@@ -59,17 +59,18 @@ use tonefit::{Instruction, RunOutcome};
 #[cfg(any(feature = "tui", test))]
 use tonefit::{GeometryGate, Panel, Reason};
 
-use crate::wrap::HARD_SPACE;
+use tonefit::HARD_SPACE;
 
 /// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
 ///
-/// 眼下两处取它：[基准档分布](base_spread)与[判据那一串](score_line)。
+/// 眼下三处取它：[基准档分布](base_spread)、[判据那一串](score_line)，
+/// 与失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」）。
 /// 串起来的整串是**一格**，而「一串东西怎么说」与「一个数怎么写」同属措辞
 /// （ADR 0016 决定第 2 条）——格与格**之间**拿什么隔开是排版的事，不在这里。
 ///
 /// **取 `⋅`（U+22C5）而不是 `·`（U+00B7）**：后者在东亚宽度表上标着 **Ambiguous**，
 /// 按 CJK 配置的终端画两格，而这两格都是**表上的一列**（判据那一列、基准档分布那一列），
-/// 列宽一律按一格算。判据是 `crate::wrap::width_is_stable`，
+/// 列宽一律按一格算。判据是 `tonefit::width_is_stable`，
 /// 与 `crate::session::columns` 的省略号取 `⋯`（U+22EF）同一处先例、同一个理由。
 const SEPARATOR: &str = " ⋅ ";
 
@@ -1135,7 +1136,10 @@ fn geometry_cells(page: &PageReport) -> Vec<Cell> {
         Field::Scaling,
         match page.scaling() {
             Some(scaling) => scaling.to_string(),
-            None => "失败页 · 卷内统一尺寸留白".to_owned(),
+            // **一格里装着两样，拿[那个记号](SEPARATOR)隔开**：这一格摆在逐页表的
+            // 缩放那一列上，而 `·`（U+00B7）是歧义宽度——CJK 终端上它右边每一列
+            // 整体错开一格（停车场 Q188 那一条的当场收获）。
+            None => format!("失败页{SEPARATOR}卷内统一尺寸留白"),
         },
     ));
     if let Some(cut) = page.cut() {
@@ -1219,7 +1223,8 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
         )],
         VolumeVerdict::PerPage => vec![sentence_row(
             RowKind::PerPage,
-            "无（--per-page）：上包络与迟滞关着，候选逐页最优，翻页处会换档",
+            "无（--per-page）：上包络关着，候选逐页最优，孤立地高出邻居的页压回邻居那一档，\
+             够长的一段之间仍会换档",
         )],
         // 上面那一支已经把跳过的卷送走了。
         VolumeVerdict::Skipped { .. } => Vec::new(),
@@ -1625,6 +1630,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 1,
+                resizes: 1,
+                cached_references: 1,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
                 source_pages: 1,
@@ -1678,7 +1685,7 @@ mod tests {
         assert!(text.contains("dry-run"), "{text}");
         assert!(text.contains("还没落盘"), "{text}");
         // 比值 < 2 的一页：报告要说出它没预缩，残差段就是全部。
-        assert!(text.contains("缩放比 1.219 · 未预缩"), "{text}");
+        assert!(text.contains("缩放比 1.219 ⋅ 未预缩"), "{text}");
         assert!(text.contains(&format!("判据 1bit+FS {score}")), "{text}");
         // dry-run 也给判定：预告的就是照做时会写出的那一个候选。
         assert!(text.contains("判定 1bit+FS"), "{text}");
@@ -1754,7 +1761,7 @@ mod tests {
         assert!(text.contains("1264x1680"), "{text}");
         // 每页的缩放三件套：总缩放比、有没有预缩、残差比。
         assert!(text.contains("缩放比 2.000"), "{text}");
-        assert!(text.contains("预缩 2×"), "{text}");
+        assert!(text.contains("预缩 2x"), "{text}");
         assert!(text.contains("残差比 1.000"), "{text}");
         assert!(text.contains("out/volume-a/001.png"), "{text}");
         // 判定、它的理由，以及判定所依据的那个量：判定要可解释（spec 的 story 7）。
@@ -1773,7 +1780,7 @@ mod tests {
         // 不说出来，读的人无从判断这一栏该信到什么程度（02 号票，ADR 0002 决定第 3 条）。
         // 块边长是 ADR 定死的数，直接写；K 是占位值，从 `aggregation()` 取——
         // 标定把它换掉时这一条不该跟着改。
-        assert!(text.contains("判据聚合 分块 32×32"), "{text}");
+        assert!(text.contains("判据聚合 分块 32x32"), "{text}");
         // 判据由两项合成，其中颗粒项那道地板与阈值同一批盲测标定：数与来源一并摆出来，
         // 否则逐页那一行的数是从哪来的没人答得出（ADR 0002 决定第 5 条）。
         // 地板按**比例**说：逐页那一行一次排开好几档位深，各档的地板是这个比例乘各自的
@@ -2063,7 +2070,7 @@ mod tests {
         // 与几何门那一行同一个出处（见 `first_few_names`）。
         assert!(text.contains("library/volume-a/001.jpg"), "{text}");
         // 出路也要给：换回 fit-inside 就压得回面板以内，代价一并说清。
-        // 中间那个空格带着[标注](crate::wrap::HARD_SPACE)——折行不许在它上面断，
+        // 中间那个空格带着[标注](tonefit::HARD_SPACE)——折行不许在它上面断，
         // 断开了这条命令就抄不出来。印出去时它换回一个普通空格（`crate::wrap::fold`）。
         assert!(text.contains(&format!("--fit{HARD_SPACE}inside")), "{text}");
         // 门在这一页上照旧成立，两件事不许混为一谈。
@@ -2227,7 +2234,7 @@ mod tests {
 
         // 裁前裁后两个尺寸都在，裁掉了多少一眼看得出。**四边各去了多少不进这行文字**——
         // 读的人要的是「裁没裁、裁了多少」，不是左右上下怎么分；要那个数走 `PageReport::crop()`。
-        assert!(text.contains("裁边 1441x2048 → 1200x1600"), "{text}");
+        assert!(text.contains("裁边 1441x2048 ⟶ 1200x1600"), "{text}");
         // 它排在缩放之前。
         let crop_at = text.find("裁边 1441x2048").expect("裁边那一小截");
         let scaling_at = text.find("缩放比").expect("缩放那一小截");
@@ -2309,6 +2316,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 3,
+                resizes: 3,
+                cached_references: 2,
                 timing: VolumeTiming::default(),
                 source_pages: 3,
                 pages: vec![
@@ -2360,6 +2369,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 0,
+                resizes: 0,
+                cached_references: 0,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -2407,6 +2418,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 0,
+                resizes: 0,
+                cached_references: 0,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -2488,6 +2501,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 2,
+                resizes: 1,
+                cached_references: 1,
                 timing: VolumeTiming::default(),
                 source_pages: 2,
                 pages: vec![good, failed],
@@ -2509,7 +2524,7 @@ mod tests {
         assert!(text.contains("卷级 基准档 4bit"), "{text}");
         // 失败页那两行：尺寸从哪来，以及它为什么失败。
         assert!(
-            text.contains("1264x1680  失败页 · 卷内统一尺寸留白"),
+            text.contains("1264x1680  失败页 ⋅ 卷内统一尺寸留白"),
             "{text}"
         );
         assert!(
@@ -2802,6 +2817,8 @@ mod tests {
                 extracted: 0,
                 io: io_plan(),
                 decodes: 2,
+                resizes: 2,
+                cached_references: 2,
                 timing: VolumeTiming::default(),
                 source_pages: 2,
                 pages: vec![whole, salvaged],
@@ -2904,6 +2921,8 @@ mod tests {
             extracted: 3 * 1024 * 1024,
             io: io_plan(),
             decodes: 2,
+            resizes: 1,
+            cached_references: 1,
             timing: VolumeTiming::default(),
             source_pages: 2,
             pages: vec![
@@ -3220,7 +3239,7 @@ mod tests {
         // 失败页的几何那一行说得出它的尺寸是**卷内统一**的，不是它自己缩出来的。
         assert_eq!(
             rows[2].cell(Field::Scaling),
-            Some("失败页 · 卷内统一尺寸留白")
+            Some("失败页 ⋅ 卷内统一尺寸留白")
         );
         // 没裁过、不是跨页、没退回过——那三格一个都不在场。
         for field in [Field::Crop, Field::Cut, Field::Backstop] {
@@ -3472,6 +3491,8 @@ mod tests {
             extracted: 0,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: VolumeTiming::default(),
         });
 
@@ -3561,6 +3582,40 @@ mod tests {
             plain::report(&quick, Mode::Process)
         );
     }
+    /// **窄计数器不进渲染出的文字**（`CONTEXT.md` 的《窄计数器》）：那三个数在报告里，
+    /// 屏上一处不露面。
+    ///
+    /// 断言照[计时那一条](the_rendered_text_says_nothing_about_how_long_it_took)办——
+    /// 同一份报告只改那三个数，画出来逐字节相同——而不是「文字里找不到 222」：
+    /// 后者只挡得住恰好那一个写法。
+    ///
+    /// 这一层是措辞的**唯一出处**（纯文本与表两副共用），因此挡住这里就挡住了两副排版。
+    #[test]
+    fn the_rendered_text_says_nothing_about_the_narrow_counters() {
+        let mut quiet = switches_report(FitMode::default(), true, SplitRule::default());
+        // 添一卷说得上话的：过期副本、摊开、隔离、上包络、失败页那几行都在它身上。
+        quiet.volumes.push(a_volume_worth_a_row_of_each_kind());
+
+        // 同一份报告，三个数全换成扎眼的：别的一个字节都不动。
+        let mut busy = quiet.clone();
+        for each in &mut busy.volumes {
+            each.decodes = 111;
+            each.resizes = 222;
+            each.cached_references = 333;
+        }
+
+        // 四段逐段比，理由同计时那一条：会话画的是这四段。
+        assert_eq!(header(&busy, Mode::Process), header(&quiet, Mode::Process));
+        for (loud, silent) in busy.volumes.iter().zip(&quiet.volumes) {
+            assert_eq!(volume(loud), volume(silent));
+            assert_eq!(pages(loud), pages(silent));
+        }
+        assert_eq!(tail(&busy), tail(&quiet));
+        assert_eq!(
+            plain::report(&busy, Mode::Process),
+            plain::report(&quiet, Mode::Process)
+        );
+    }
 
     /// **摊了多少字节印进那一卷的报告**，而没摊开的卷一个字都不说
     /// （`volume-discovery/05`，ADR 0015 决定第 3 条）。
@@ -3608,6 +3663,8 @@ mod tests {
             extracted,
             io: io_plan(),
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: VolumeTiming::default(),
             pages: Vec::new(),
             source_pages: 0,
@@ -3654,6 +3711,8 @@ mod tests {
             extracted: 0,
             io: io_plan(),
             decodes: 1,
+            resizes: usize::from(!broken),
+            cached_references: usize::from(!broken),
             timing: VolumeTiming::default(),
             pages: vec![page],
             source_pages: 1,
@@ -3793,34 +3852,34 @@ mod tests {
     }
 
     /// **摆进列里的那几格，字形在哪种终端上都占同一格**
-    /// （判据 `crate::wrap::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
+    /// （判据 `tonefit::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
     ///
     /// 东亚宽度表上标着 **Ambiguous** 的字形（`×` `·` `…` 之类）在按 CJK 配置的终端上画
     /// 两格，而 `crate::wrap::width` 一律按一格算：一格里多一个这样的字形，
     /// 它右边每一列就整体错开一格。**尺寸那一列夹在页名与判定中间**，
     /// 从前有 `×` 的行（正常页）与那一格空着的行（失败页）因此整行错开一格。
     ///
-    /// **添一个不稳的字形，这一条当场变红。** 问的是表摆成列的那几格；装**路径**的那几列
-    /// （目录名、卷名、页名、定档页）不在里面——那是用户的字节，不是这一层挑的字形。
-    /// 行首记号、省略号与耗时那一列是画法那一层自己造的，在
-    /// `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview` 那几头问。
+    /// **问哪几格不再手抄。** 那份名单从三张表的[字面出处](crate::session::columns::Provenance)
+    /// 导出（`crate::session::columns::wording_cells`）——从前它在这里另写一份，
+    /// 往表里添一列不跟着添**也不会红**：逐页表添了五格几何列之后，
+    /// 裁边与缩放两格就是那么漏出去的（停车场 Q188）。
+    ///
+    /// **添一个不稳的字形，这一条当场变红。** 装**路径**的那几列（目录名、卷名、页名、
+    /// 定档页、去处）不在里面——那是用户的字节，不是这一层挑的字形，它们归**原样**那一档，
+    /// 摆不下时从中间省略（`CONTEXT.md`《格》）。行首记号、省略号与耗时那一列是画法那一层
+    /// 自己造的，在 `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview`
+    /// 那几头问。
     #[test]
     fn every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal() {
-        // 屏上那三张表把这几格摆成列（`crate::session::columns` 的 `DirectoryColumn`、
-        // `VolumeColumn`、`PageColumn`）。其余各格成句、跟在行尾或整段折行印出来，
-        // 错一格不牵连别人。
-        // **这份名单与那三个 `Column` 是同一件事的两处出处**：往哪张表添一列，
-        // 这里也要跟着添——没有东西逼它们同步（停车场 Q188 记着为什么收不拢）。
-        const LINED_UP: &[Field] = &[
-            Field::VolumeCount,
-            Field::Bases,
-            Field::PageCount,
-            Field::Base,
-            Field::Size,
-            Field::Candidate,
-            Field::Reason,
-            Field::Scores,
-        ];
+        // 屏上那三张表把哪几格摆成列，**由那三张表自己说**（`crate::session::columns` 的
+        // `DirectoryColumn`、`VolumeColumn`、`PageColumn` 各列逐个报出自己的字面出处）。
+        // 其余各格成句、跟在行尾或整段折行印出来，错一格不牵连别人。
+        let lined_up = crate::session::columns::wording_cells();
+        // **逐页表的裁边与缩放两列此刻真在这一关里**：这两格的字面出自库的 `Crop` 与
+        // `Scaling`，从前漏在名单外面，而 CJK 终端上整张表因此逐行错位（停车场 Q188）。
+        for field in [Field::Crop, Field::Scaling] {
+            assert!(lined_up.contains(&field), "{field:?} 不在那一关里");
+        }
 
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
@@ -3846,8 +3905,11 @@ mod tests {
         // **基准档那一列的五种说法各摆一卷**（见 [`base_column`]）：判出档位、跳过、
         // 逐页、覆盖、没做成。分布那一格因此也串得起来——它逐条问的就是那一列。
         // 「没做成」出自 `Listed::Failed`，那一卷连一份卷报告都没有。
+        // **头一卷的名字里带一个 `·`（U+00B7）**：卷名、页名与去处路径都是**原样**那一档
+        // ——用户的字节，宽度永远稳不住，摆不下时从中间省略（`CONTEXT.md`《格》）。
+        // 喂进这一个过不了那一关的字形，这一条**照旧绿**，那才叫「不进那一关」。
         let mut volumes = [
-            a_volume("库/第1话", four, false),
+            a_volume("库/第1话·上", four, false),
             a_volume(
                 "库/第2话",
                 Some(VolumeVerdict::Skipped { page_count: 1 }),
@@ -3863,10 +3925,21 @@ mod tests {
                 false,
             ),
         ];
+        // 这一页的**页名**（成员名最后那一段）与**去处路径**各带一个 `·`；
+        // 头一卷判出了档位，[定档页那一行](RowKind::Driver)读的就是这一页的源路径，
+        // **定档页名**因此跟着带上了它。三列一并喂到。
+        volumes[0].pages[0].source = PathBuf::from("库/第1话·上/序·卷首.jpg");
+        volumes[0].pages[0].output = PathBuf::from("out/第1话·上/序·卷首.png");
         if let PageOutcome::Whole(processed) = &mut volumes[0].pages[0].outcome
             && let PageBranch::Gray { scores, .. } = &mut processed.branch
         {
             *scores = scored;
+        }
+        // **裁边与彩页转灰那两格得真在场**，不然那两列进了名单也没人问：
+        // 一个像素都没裁的页不占裁边那一格，不是彩页的页不占彩页那一格。
+        if let PageOutcome::Whole(processed) = &mut volumes[3].pages[0].outcome {
+            processed.crop = Crop::new(Size::new(1441, 2048), (20, 24), Size::new(1400, 2000));
+            processed.color = PageColor::Color;
         }
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第5话"),
@@ -3890,7 +3963,7 @@ mod tests {
         let stable = |said: &str, whose: &str| {
             for glyph in said.chars() {
                 assert!(
-                    crate::wrap::width_is_stable(glyph),
+                    tonefit::width_is_stable(glyph),
                     "{glyph} 是东亚歧义宽度：{whose}写着「{said}」"
                 );
             }
@@ -3913,9 +3986,41 @@ mod tests {
             "没做成那一档没摆进分布那一格"
         );
 
+        // **导出来的那几格，夹具真摆得出来**——名单进得来、格不在场，那一列等于没问。
+        //
+        // **只放开一格**：跨页那一格要一个 `tonefit::Cut`，而它在库外造不出来
+        // （字段私有、没有构造函数），它那个 `Display` 由库自己那条穷举的用例钉着
+        // （`tonefit::glyph`）。名单只放开眼下真放不下的那一个，再来一格就得存心加一行。
+        const NOT_MADE_OUTSIDE_THE_LIBRARY: &[Field] = &[Field::Cut];
+        for field in &lined_up {
+            if NOT_MADE_OUTSIDE_THE_LIBRARY.contains(field) {
+                continue;
+            }
+            assert!(
+                rows.iter().any(|row| row.cell(*field).is_some()),
+                "{field:?} 在那一关的名单里，而这一份夹具一行都没摆出它"
+            );
+        }
+
+        // **原样那一档不进那一关**——页名、卷名、目录名、去处路径、定档页名都是用户的字节，
+        // 宽度**永远稳不住**，摆不下时归从中间省略管，不归这一关管（`CONTEXT.md`《格》）。
+        //
+        // 措辞那一层把那几列的字装在这两格里：[`Field::Source`] 装卷根、目录与定档页那一页，
+        // [`Field::Output`] 装卷的去处与一页的去处。夹具已经往两格都喂进了 `·`（U+00B7），
+        // **两格都过不了那一关，而这一条照旧绿**——那才叫「不进那一关」。
+        for field in [Field::Source, Field::Output] {
+            assert!(!lined_up.contains(&field), "{field:?} 被拉进了那一关");
+            assert!(
+                rows.iter()
+                    .filter_map(|row| row.cell(field))
+                    .any(|said| said.chars().any(|glyph| !tonefit::width_is_stable(glyph))),
+                "{field:?} 没喂进一个歧义宽度的字形，这一条的反面问不着"
+            );
+        }
+
         for row in &rows {
             for cell in &row.cells {
-                if !LINED_UP.contains(&cell.field) {
+                if !lined_up.contains(&cell.field) {
                     continue;
                 }
                 stable(
@@ -3938,6 +4043,7 @@ mod tests {
             Reason::Override,
             Reason::VolumeEnvelope,
             Reason::Hysteresis,
+            Reason::RunHysteresis,
             Reason::Outlier,
             Reason::OutsideTheGate,
         ] {
@@ -3949,6 +4055,7 @@ mod tests {
                 | Reason::Override
                 | Reason::VolumeEnvelope
                 | Reason::Hysteresis
+                | Reason::RunHysteresis
                 | Reason::Outlier
                 | Reason::OutsideTheGate => {}
             }

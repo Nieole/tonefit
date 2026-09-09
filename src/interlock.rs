@@ -133,8 +133,9 @@ impl Interlock {
 
 /// 三条互锁那几句话——`--help` 的《开关互锁》那一节印的就是它们，会话的前提那一张也是。
 ///
-/// **记号里面那个空格写成 `\u{a0}`**：那是**不许断的那个空格**，
-/// 规矩只有一处出处，见界面层折行的 `HARD_SPACE`（`src/wrap.rs`，停车场 Q106）。
+/// **记号里面那个空格写成 `\u{a0}`**：那是[不许断的那个空格](crate::HARD_SPACE)，
+/// 规矩只有一处出处，就是库自己那条公共 API（停车场 Q106）。这几句由 `match` 出静态串，
+/// 收不下 `{HARD_SPACE}` 那种写法，因此照原样写那个转义——说的是同一个字符。
 impl std::fmt::Display for Interlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

@@ -20,7 +20,7 @@ impl Size {
 /// 后者在东亚宽度表上标着 **Ambiguous**：按 CJK 配置的终端画两格、西文终端画一格。
 /// 而尺寸这一串是**表上的一列**（会话的逐页表、命令行印出来的同一批格），
 /// 列宽一律按一格算——有尺寸的行与那一格空着的行（失败页）于是整行错开一格。
-/// 判据与规矩在界面那一侧：`wrap::width_is_stable`。
+/// 判据与规矩是库自己的一条公共 API：[`width_is_stable`](crate::width_is_stable)。
 ///
 /// `x` 在两套算法上都是一格，且 `1264x1680` 本来就是这一对数最常见的写法。
 impl std::fmt::Display for Size {
@@ -217,7 +217,7 @@ const MAX_TARGET_PIXELS: u64 = crate::decode::MAX_DECODED_BYTES / PEAK_BYTES_PER
 
 /// 一个目标像素在整条管线上的峰值字节数，[`MAX_TARGET_PIXELS`] 拿它折算。
 ///
-/// 数出来的是**彩色分支**那条更贵的路（`crate::resample::resize_color` 往后）：
+/// 数出来的是**彩色分支**那条更贵的路（`crate::resample::Resampler::resize_color` 往后）：
 /// 三个平面各一份缩放缓冲（3），交织给编码器一份（3），编码输出再留一份（≤ 3）——
 /// **数到 9**。灰度路径只占 2：缩放缓冲一份、进缓存前那一份。
 ///

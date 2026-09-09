@@ -5,6 +5,10 @@
 [workspace]
 members = [".", "xtask"]
 default-members = ["."]
+# `vendor/` 里躺着的是**别人的**源码（见底下 `[patch.crates-io]`）。挡在成员之外，
+# `cargo fmt` 与 clippy 才不会去管它按不按本仓的规矩写——那一份的规矩是上游的，
+# 而它与上游只差一行，差多了就跟不上了。
+exclude = ["vendor"]
 
 [package]
 name = "tonefit"
@@ -90,9 +94,11 @@ toml = "1.1.4"
 # 成员字节从 `read()` 出来就是一个 `Vec<u8>`，libunrar 一处路径都不碰。
 # （它省不掉 `libc`：那是 `unrar-ng-sys` 的非可选依赖，而树里本来就有一份。）
 unrar-ng = { version = "0.7.7", default-features = false }
-# 折行要按**显示宽度**算（`src/wrap.rs`），而中文一个字占两格。这一条**不是新的一棵树**：
-# indicatif 与 ratatui 都传递依赖着同一个版本，直接列出来只是把它变成本仓库自己说得出口的
-# 一条依赖——折行工具在 `tui` 之外，不能靠终端库那一份。
+# 折行要按**显示宽度**算（`src/wrap.rs`），而中文一个字占两格；库那一侧的
+# [字形约定](src/glyph.rs) 问的是同一张表的另一半（`width` 与 `width_cjk` 答不答得一样）。
+# 这一条**不是新的一棵树**：indicatif 与 ratatui 都传递依赖着同一个版本，直接列出来只是把它
+# 变成本仓库自己说得出口的一条依赖——折行工具在 `tui` 之外，字形约定连库都在，
+# 两处都不能靠终端库那一份。
 unicode-width = "0.2.2"
 zip = "8"
 
@@ -107,6 +113,16 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_IO",
     "Win32_System_WindowsProgramming",
 ] }
+
+# **`unrar-ng` 走仓库里那一份，不走 crates.io 那一份。**
+#
+# 0.7.7 的跨卷回调里有一句越界读，而分卷 `.rar` 落地之后（`p4-parking-lot/17`）
+# `.rar` 那两条路都要从卷边界上走过去，两条都踩得到它。仓库里那一份与上游**只差那一行**。
+#
+# 病在哪、怎么改、什么条件下撤掉，**唯一出处是 `vendor/unrar-ng/PATCH.md`**
+# ——上游发出带这个修的版本，这一节与那个目录一起删掉。
+[patch.crates-io]
+unrar-ng = { path = "vendor/unrar-ng" }
 
 [features]
 default = ["tui"]

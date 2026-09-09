@@ -117,7 +117,7 @@ pub struct TasteLayer {
     pub bit_depth: Option<BitDepth>,
     /// 覆盖自动选择的抖动模式（`--dither`）。
     pub dither: Option<Dither>,
-    /// 关掉卷级上包络与迟滞（`--per-page`）。
+    /// 关掉卷级上包络（`--per-page`）。迟滞不跟着关，改走段式（`crate::hysteresis`）。
     pub per_page: Option<bool>,
     /// 缓存预算（`--cache-budget`）。
     pub cache_budget: Option<CacheBudget>,

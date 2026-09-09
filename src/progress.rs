@@ -669,6 +669,8 @@ mod tests {
                 fingerprint: serial,
             },
             decodes: 0,
+            resizes: 0,
+            cached_references: 0,
             timing: crate::VolumeTiming::default(),
         }
     }

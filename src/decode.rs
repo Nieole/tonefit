@@ -124,16 +124,16 @@ pub fn is_page(path: &Path) -> bool {
 ///
 /// 计数是原子的，解码本身因此**不需要独占**：第一遍在 rayon 上满核跑（13 号票），
 /// 而一个要 `&mut` 的计数器会把整条计算层串回一条线。
+///
+/// 它是三个**窄计数器**里的头一个（`CONTEXT.md` 的《窄计数器》），另两个是
+/// [缩放次数](crate::resample::Resampler)与参照进缓存次数（`cache::PageCache::references`）。
+/// 三个同形：记在动作本身上、进报告、屏上一处不露面。
 #[derive(Debug, Default)]
 pub struct Decoder {
     decodes: AtomicUsize,
 }
 
 impl Decoder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// 至此解了多少页。
     pub fn decodes(&self) -> usize {
         self.decodes.load(Ordering::Relaxed)

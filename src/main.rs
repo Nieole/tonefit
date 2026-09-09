@@ -193,8 +193,9 @@ struct Cli {
     #[arg(long, value_name = "模式")]
     dither: Option<String>,
 
-    /// 关闭卷级上包络与迟滞，位深回到逐页最优。体积最小，代价是**重新引入翻页跳变**：
-    /// 相邻两页会落到不同档上，翻过去的一瞬间灰调的颗粒感换一种粗细。
+    /// 关闭卷级上包络，位深回到逐页最优，档位由段式迟滞收一道：孤立地**高出邻居**的页
+    /// 压回邻居那一档。体积最小，代价是**翻页跳变仍在**——够长的一段整段留住自己那一档，
+    /// 与它前后就差着，翻过去的一瞬间灰调的颗粒感换一种粗细。
     #[arg(long)]
     per_page: bool,
 
@@ -270,6 +271,7 @@ impl Cli {
     }
 
     /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它。
+    /// 关掉的只是上包络那一层，迟滞改走段式（`CONTEXT.md` 的《段式迟滞》）。
     fn per_page(&self, preset: &Preset) -> bool {
         self.per_page || preset.taste.per_page()
     }
@@ -641,7 +643,7 @@ fn main() -> ExitCode {
         // `Result<()>` 那个 main 印的就是这一行，退出码 1。自己拿 `ExitCode` 之后照印。
         //
         // **这一处不折行，因此得自己把标注换回来**（[`wrap::printed`]）：拒绝那句话里
-        // 劝人换的那条命令带着[不许断的空格](wrap::HARD_SPACE)，原样落到 stderr 上，
+        // 劝人换的那条命令带着[不许断的空格](tonefit::HARD_SPACE)，原样落到 stderr 上，
         // 用户照着抄一遍 clap 就认不出那个开关。折行那几处由 `wrap::fold` 顺手做了，
         // 这一路一格都没折——报告与帮助折到多宽有出处，一条错误没有。
         Err(error) => {
@@ -1876,11 +1878,13 @@ io-mode = \"concurrent\"
             }
 
             // 折行不吃字：互锁那一节逐条都还在（折过之后按行找，整句已经被折断了）。
-            // 两侧都把空白去掉——原文里[不许断的那个空格](wrap::HARD_SPACE)是给折行看的标注，
+            // 两侧都把空白去掉——原文里[不许断的那个空格](tonefit::HARD_SPACE)是给折行看的标注，
             // 印出去的是一个普通空格。
             let long = printed[1].replace(['\n', ' '], "");
             for interlock in Interlock::ALL {
-                let said = interlock.to_string().replace([' ', wrap::HARD_SPACE], "");
+                let said = interlock
+                    .to_string()
+                    .replace([' ', tonefit::HARD_SPACE], "");
                 assert!(long.contains(&said), "折没了：{said}");
             }
 

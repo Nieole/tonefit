@@ -120,7 +120,7 @@ impl std::fmt::Display for InkRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "按行列墨量占比 · 墨阈 {} · 行列占比 {:.1}%",
+            "按行列墨量占比 ⋅ 墨阈 {} ⋅ 行列占比 {:.1}%",
             self.ink,
             self.fraction * 100.0
         )
@@ -375,7 +375,7 @@ impl Crop {
 
 impl std::fmt::Display for Crop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "裁边 {} → {}", self.before, self.after)
+        write!(f, "裁边 {} ⟶ {}", self.before, self.after)
     }
 }
 

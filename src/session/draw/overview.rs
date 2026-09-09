@@ -620,7 +620,7 @@ mod tests {
         Size,
     };
 
-    /// **耗时那一格在哪种终端上都占同一格**（判据见 [`crate::wrap::width_is_stable`]）。
+    /// **耗时那一格在哪种终端上都占同一格**（判据见 [`tonefit::width_is_stable`]）。
     ///
     /// 它是卷表的一列（`crate::session::columns::VolumeColumn::Elapsed`），
     /// 而写法由 [`spell`] 一处造出来——与省略号、行首记号同一条规矩：
@@ -631,7 +631,7 @@ mod tests {
             let said = spell(Duration::from_secs(seconds));
             for glyph in said.chars() {
                 assert!(
-                    crate::wrap::width_is_stable(glyph),
+                    tonefit::width_is_stable(glyph),
                     "{glyph} 是东亚歧义宽度：{seconds}s 写成「{said}」"
                 );
             }
@@ -900,8 +900,10 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::DryRun), Resuming::Waits);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/卷一"), 1000);
-        live.page_failed(Path::new("库/卷一/017.jpg"), BROKEN);
-        live.volume_finished(&fixture::processed_volume("卷一", Some(BROKEN)));
+        fixture::volume_finished_with_its_failures(
+            &mut live,
+            &fixture::processed_volume("卷一", Some(BROKEN)),
+        );
         live.volume_started(Path::new("库/卷二"), 1000);
         live.volume_failed(Path::new("库/卷二"), "卷根不在了");
         live

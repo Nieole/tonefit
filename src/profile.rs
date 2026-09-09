@@ -37,7 +37,7 @@ impl std::fmt::Display for Panel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} · {} PPI · {} 级灰阶 · {}",
+            "{} ⋅ {} PPI ⋅ {} 级灰阶 ⋅ {}",
             self.resolution,
             self.ppi,
             self.gray_levels,
@@ -254,7 +254,7 @@ impl Profile {
 
 impl std::fmt::Display for Profile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}：{} · {}", self.device, self.panel, self.threshold)
+        write!(f, "{}：{} ⋅ {}", self.device, self.panel, self.threshold)
     }
 }
 

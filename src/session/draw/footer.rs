@@ -231,7 +231,7 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
 ///
 /// 与卷表那几行同一条（见 [`super::table::Mark`]）：**一个 `match` 同时定记号与语义**，
 /// 添一种不配语义（或反过来）根本编不过去。「颜色不是唯一载体」因此不靠人记着——
-/// 那三个字符逐个过得了 [`crate::wrap::width_is_stable`] 那一关，
+/// 那三个字符逐个过得了 [`tonefit::width_is_stable`] 那一关，
 /// 不上色的终端上、以及色盲眼里，一条拒绝与一次成功照旧分得开。
 ///
 /// **屏底那一句的措辞一个字都没动**：记号是这一层添的排版，与措辞出自哪里无关
@@ -1164,7 +1164,7 @@ mod tests {
     /// - 三种各挂各的语义（没做成出事、先问一句注意、做成了平常），而**三种互不相同**
     ///   ——同一档就等于没分出轻重；
     /// - **记号与语义绑成一对**（见 [`marked`]）：每一种行首都另有一个记号，
-    ///   三个字形逐个在哪种终端上都占一格（[`crate::wrap::width_is_stable`]）；
+    ///   三个字形逐个在哪种终端上都占一格（[`tonefit::width_is_stable`]）；
     /// - **措辞一个字都没动**：记号是这一层添的，那一句原样跟在它后面；
     /// - 屏底那一格上**真摆得出来**：那一句连同它的记号画得到屏上。
     #[test]
@@ -1211,10 +1211,7 @@ mod tests {
         let three = [&refused, &asked, &done];
         for (at, one) in three.iter().enumerate() {
             let glyph = one.text.chars().next().expect("行首那个记号");
-            assert!(
-                crate::wrap::width_is_stable(glyph),
-                "{glyph} 是东亚歧义宽度"
-            );
+            assert!(tonefit::width_is_stable(glyph), "{glyph} 是东亚歧义宽度");
             assert!(one.text.starts_with(&format!("{glyph} ")), "{}", one.text);
             for two in &three[at + 1..] {
                 assert_ne!(one.tone, two.tone, "两种挂了同一档");

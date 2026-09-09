@@ -20,31 +20,83 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use tempfile::TempDir;
 
 use crate::progress::Events;
 use crate::{cost, decode};
 
-/// 点名一个归档卷时认得的扩展名，各带自己的[读取形态](ArchiveReading)。
+/// 点名一个归档卷时认得的那几种格式。
 ///
-/// 判定只看扩展名、大小写不敏感，不去嗅内容（ADR 0015 决定第 1 条）。
+/// **是哪种格式**只看扩展名、大小写不敏感，不去嗅内容（ADR 0015 决定第 1 条）。
 /// **加一项就只改这一处**：拒绝那句话由它拼出（见 [`listed_archive_extensions`]），
 /// 该怎么读也由它定（见 [`archive_reading`]）——摊开那一档连去哪个解码器要字节
 /// 都写在这张表上（见 [`SolidFormat`]），因此没有第二处 `match` 要跟着加一支。
 ///
 /// 四个格式全在里面了（ADR 0015 决定第 1 条），次序照那条决定写的来。
-const ARCHIVE_FORMATS: [(&str, ArchiveReading); 4] = [
-    ("cbz", ArchiveReading::Random),
-    ("zip", ArchiveReading::Random),
-    ("rar", ArchiveReading::Extracted(RAR)),
-    ("7z", ArchiveReading::Extracted(SEVEN_ZIP)),
+const ARCHIVE_FORMATS: [ArchiveFormat; 4] = [
+    ArchiveFormat {
+        extension: "cbz",
+        reading: ArchiveReading::Random,
+        split: None,
+    },
+    ArchiveFormat {
+        extension: "zip",
+        reading: ArchiveReading::Random,
+        split: None,
+    },
+    ArchiveFormat {
+        extension: "rar",
+        reading: ArchiveReading::Extracted(RAR),
+        split: Some(rar_split_part),
+    },
+    ArchiveFormat {
+        extension: "7z",
+        reading: ArchiveReading::Extracted(SEVEN_ZIP),
+        split: None,
+    },
 ];
+
+/// [格式集](ARCHIVE_FORMATS)里的一项：一个扩展名，加它那两条规矩。
+struct ArchiveFormat {
+    /// 扩展名，一律小写。比的时候大小写不敏感。
+    extension: &'static str,
+    /// 这个格式[怎么读](ArchiveReading)。
+    reading: ArchiveReading,
+    /// 这个格式的**分卷序列**怎么认（`p4-parking-lot/17`，见 [`SplitPart`]）。
+    ///
+    /// **四个格式里只有 `.rar` 有一格**，而分界不是「哪个格式分得了卷」——四个都分得了。
+    /// 分界是**续的那几份叫不叫认得的扩展名**：`.7z.001`、`.z01`、老式的 `.r00` 都不在这张
+    /// 表上，发现根本列不出它们，头一份因此本来就自己成一个卷、跨卷读完。
+    /// 只有 `x.partN.rar` 那一种打法的每一份都叫 `.rar`——不认就各自成卷。
+    split: Option<SplitPartOf>,
+}
+
+/// 「拿一份归档，说出它在分卷序列里是哪一份」——[认得分卷的格式](ArchiveFormat::split)各一个。
+type SplitPartOf = fn(&Path) -> Option<SplitPart>;
+
+/// 一份归档在**分卷序列**里是哪一份（`p4-parking-lot/17`，ADR 0015 决定第 1 条的修订）。
+///
+/// 不在任何分卷序列里的那一份没有这个东西——[`split_part_of`] 回 `None`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitPart {
+    /// **头一份**：一个卷从它开始，UnRAR 打开它就跨卷把整套读完。
+    /// 卷名取[分卷序列的名字](split_sequence_name)——`.partN` 那一截不进产物。
+    First,
+    /// **续的那一份**：它不是一个卷，发现不把它列成候选。
+    ///
+    /// 它也不是[非卷文件](crate::report::NonVolumeFile)：那张表列的是**输出里一个字节都
+    /// 没有**的那些，而它的字节由头一份那一卷读走了，一个不少地进了产物。
+    Continuation,
+}
 
 /// 一种归档格式**怎么读**（ADR 0015 决定第 3 条）。
 ///
-/// 按格式分，**不逐卷探固实与否**：逐卷探要先读一遍归档头，而那正是这条决定想省掉的
-/// 那一次。代价是关掉了固实的包也照样摊开，白付一次全量写盘。
+/// 按格式分，**不逐卷探固实与否**。代价是关掉了固实的包也照样摊开，白付一次全量写盘；
+/// 留下的理由是**两条读取路径都要留着、都要测**，而收益只落在「关掉了固实的包」这一小撮上。
+///
+/// 「省掉那一次读归档头」**不再是 `.rar` 这一头的理由**：分卷那一问已经把头开了
+/// （见 [`split_part_of`]），固实那一位就在同一个头里（ADR 0015 的《后果》，停车场 Q332）。
 #[derive(Clone, Copy)]
 enum ArchiveReading {
     /// **随机取**：每个成员各自压缩，按下标直接定位，一次 O(1)。`.cbz` / `.zip` 走它。
@@ -63,8 +115,7 @@ enum ArchiveReading {
 /// [格式集](ARCHIVE_FORMATS)里，而不是另立一个标签再到别处 `match` 一遍。
 ///
 /// **「固实」在这里是格式的名字，不是这一卷的性质**：一个打包时关掉了固实的 `.rar`
-/// 走的仍是这一条，白付一次全量写盘。逐卷探要先读一遍归档头，而那正是
-/// ADR 0015 决定第 3 条省掉的那一次。
+/// 走的仍是这一条，白付一次全量写盘。为什么不逐卷探，见 [`ArchiveReading`]。
 #[derive(Clone, Copy)]
 struct SolidFormat {
     /// 摊开并备好读取端。[`open`] 那一条从这里进去。
@@ -156,7 +207,7 @@ impl Volume {
     ///
     /// **两问缺一不可。**扩展名那一问认的是[读取形态](ArchiveReading)（见 [`archive_reading`]），
     /// 而形态只在**归档卷**上作数：一个名叫 `第01话.7z` 的**目录**照样是目录卷
-    /// （[`identity_of`] 先问 `is_dir`），它一个字节都不摊开。少问一句容器形态，
+    /// （[`container_of`] 先问 `is_dir`），它一个字节都不摊开。少问一句容器形态，
     /// 那种目录的步数会凭空多出一整段，而进度条会停在某个百分比上再也不动
     /// ——正是 `crate::volume_steps` 自己警告的那件事。
     pub(crate) fn extracts_before_work(&self) -> bool {
@@ -533,29 +584,29 @@ fn open_taking_solid_archives(
     path: &Path,
     solid: impl FnOnce(&SolidFormat) -> Result<Volume>,
 ) -> Result<Volume> {
-    match identity_of(path)?.1 {
+    match container_of(path)? {
         Container::Directory => open_directory(path),
         Container::Archive => match archive_reading(path) {
             Some(ArchiveReading::Extracted(format)) => solid(&format),
-            // 随机取那一条也兜住「取不出读取形态」：`identity_of` 上一句已经确认过
+            // 随机取那一条也兜住「取不出读取形态」：`container_of` 上一句已经确认过
             // 这是认得的归档，`None` 那一支够不着。
             Some(ArchiveReading::Random) | None => open_archive(path),
         },
     }
 }
 
-/// 卷名与容器形态。两者都只看路径，不看内容。
+/// 这个路径是**哪一种容器**，还是**根本不是一个卷**。只看路径，不看内容。
 ///
-/// **它认「这是不是一个卷」**：路径既不是目录也不是认得的归档时当场拒绝，
-/// 那句话说得出格式集（见 [`listed_archive_extensions`]）。因此[点名的那个路径](open)
-/// 与[发现的起点](crate::discover::of)都经它。
+/// 不是卷的两种在这里当场拒绝：路径不在，以及它既不是目录也不是认得的归档
+/// ——后一句说得出格式集（见 [`listed_archive_extensions`]）。
 ///
-/// 发现**往下走**的时候不经它：候选的形态在列目录时就知道了，只差一个卷名，走 [`name_of`]。
-pub(crate) fn identity_of(path: &Path) -> Result<(String, Container)> {
+/// [`identity_of`] 与[两条开卷的路](open_taking_solid_archives)共用它。
+/// **[分卷那一问](split_part_of)只有 [`identity_of`] 问**，因此不在这里：开卷那两条拿到的
+/// 卷根是发现定下来的，[续的那几份](SplitPart::Continuation)根本走不到那里
+/// （发现没把它们列成候选），再问一遍就是每一卷白开一次归档头。
+fn container_of(path: &Path) -> Result<Container> {
     if path.is_dir() {
-        let name = name_of(path, Container::Directory)
-            .with_context(|| format!("{} 没有目录名，说不出这是哪一个卷", path.display()))?;
-        return Ok((name, Container::Directory));
+        return Ok(Container::Directory);
     }
     if !path.exists() {
         bail!("{} 不存在", path.display());
@@ -567,9 +618,106 @@ pub(crate) fn identity_of(path: &Path) -> Result<(String, Container)> {
             listed_archive_extensions()
         );
     }
-    let name = name_of(path, Container::Archive)
+    Ok(Container::Archive)
+}
+
+/// **点名的**那个路径的卷名与容器形态。
+///
+/// **它认「这是不是一个卷」**，三种不是：路径不在、既不是目录也不是认得的归档
+/// （两种走 [`container_of`]）、以及它是[分卷序列里续的那一份](SplitPart::Continuation)
+/// ——三种都当场拒绝，而**点名的那一种点不开是整趟拒绝**（ADR 0014 决定第 5 条）。
+/// 因此[点名的那个路径](open)与[发现的起点](crate::discover::of)都经它。
+///
+/// 归档那一头**要读一次归档头**（ADR 0015 决定第 1 条的修订）：末一种只有内容答得出，
+/// 而分卷序列的头一份还要在这里换名（见 [`name_in_sequence`]）。目录那一头照旧只看路径。
+///
+/// 发现**往下走**的时候不经它：候选的形态在列目录时就知道了，只差一个卷名，
+/// 走 [`volume_name_of`]——那一头不必说出每一种「不是卷」是为什么。
+pub(crate) fn identity_of(path: &Path) -> Result<(String, Container)> {
+    let container = container_of(path)?;
+    if container == Container::Directory {
+        let name = name_of(path, container)
+            .with_context(|| format!("{} 没有目录名，说不出这是哪一个卷", path.display()))?;
+        return Ok((name, container));
+    }
+    let name = name_of(path, container)
         .with_context(|| format!("{} 没有文件名，说不出这是哪一个卷", path.display()))?;
-    Ok((name, Container::Archive))
+    // 剩下的那一种「不是卷」就是**续的那一份**（[`name_in_sequence`] 只在它身上回 `None`）：
+    // 开它得到的是半个卷——UnRAR 只往前走，前面那几份里的成员它回不去取。
+    let name = name_in_sequence(name, split_part_of(path)).ok_or_else(|| {
+        anyhow!(
+            "{} 是一个分卷序列里续的那一份，不是一个卷：点名头一份（.part1 那一个），整套会跨卷一起读完",
+            path.display()
+        )
+    })?;
+    Ok((name, container))
+}
+
+/// 一个**发现出来**的候选的卷名，或者「它不是一个卷」（`None`）。
+///
+/// 与 [`identity_of`] 的分工：那一个认的是**点名的**那个路径，因此每一种「不是卷」都要
+/// 说出一句为什么（那句话是整趟拒绝的内容）；这一个认的是发现出来的候选，
+/// 而发现出来的东西不是卷就不列成候选、报告里一个字都没有，两种 `None` 因此不必分开：
+///
+/// - 路径连一个普通的末级分量都没有（`/`、`.`、`..`）——给不出卷名，也就定不了输出位置；
+/// - 它是[分卷序列里续的那一份](SplitPart::Continuation)——它的字节由头一份那一卷读走。
+pub(crate) fn volume_name_of(path: &Path, container: Container) -> Option<String> {
+    let name = name_of(path, container)?;
+    match container {
+        Container::Directory => Some(name),
+        Container::Archive => name_in_sequence(name, split_part_of(path)),
+    }
+}
+
+/// 卷名在[分卷序列](SplitPart)上的那一半：**头一份**换成[序列的名字](split_sequence_name)，
+/// **续的那一份没有卷名**（`None`——它不是一个卷），不分卷的原样留着。
+///
+/// 两个问卷名的入口（[`identity_of`] 与 [`volume_name_of`]）共用它：那三支怎么分只有一个
+/// 出处，而两处的差别只剩「没有卷名时说什么」——一句拒绝，还是不列成候选。
+fn name_in_sequence(name: String, part: Option<SplitPart>) -> Option<String> {
+    match part {
+        Some(SplitPart::Continuation) => None,
+        Some(SplitPart::First) => Some(split_sequence_name(&name).to_owned()),
+        None => Some(name),
+    }
+}
+
+/// 这一份归档在**分卷序列**里是哪一份。不分卷、或者这个格式的分卷[不必认](ArchiveFormat::split)，
+/// 都回 `None`。
+///
+/// **这一问看内容**（ADR 0015 决定第 1 条的修订）：读一次归档头里的分卷标志。
+/// 名字上答不了——`第01卷.part2.rar` 与一份恰好起了这个名字的单份包逐字相同，
+/// 而前者不是一个卷、后者是。
+///
+/// 「是哪一种格式」那一问照旧只看扩展名：那一问要在读任何字节之前就答得出
+/// （撞车查在开工前），而这一问只在**已经认得是哪种格式**之后才问得起。
+pub(crate) fn split_part_of(path: &Path) -> Option<SplitPart> {
+    (archive_format(path)?.split?)(path)
+}
+
+/// **分卷序列的名字**：卷名去掉末尾那一截 `.partN`（`第01卷.part1` → `第01卷`）。
+///
+/// 这一半看**名字**，与[看内容那一半](split_part_of)分开：只有已经认出「这一份是分卷序列
+/// 的头一份」之后才轮得到它。一份恰好叫 `x.part1.rar` 的**单份**包因此照旧叫 `x.part1`
+/// ——去不去那一截由内容说了算，不由名字说了算。
+///
+/// 认不出那一截就原样留着：老式打法的头一份就叫 `x.rar`（续的几份是 `x.r00`、`x.r01`），
+/// 它的序列名本来就是 `x`。
+fn split_sequence_name(name: &str) -> &str {
+    let Some((head, last)) = name.rsplit_once('.') else {
+        return name;
+    };
+    let (word, number) = last.split_at_checked(4).unwrap_or((last, ""));
+    // `head` 空掉的那一支（名字就叫 `.part1`）照旧原样交出去：去掉之后什么都不剩，
+    // 而一个没有名字的卷给不出去处。
+    if !head.is_empty()
+        && word.eq_ignore_ascii_case("part")
+        && !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return head;
+    }
+    name
 }
 
 /// 卷名：目录取目录名，归档取去掉扩展名的文件名。形态已经知道时取它。
@@ -608,11 +756,17 @@ pub(crate) fn is_archive(path: &Path) -> bool {
 /// 读法在打开卷**之前**就定得下来，正是因为它只看扩展名——不必先解一遍才知道该怎么解
 /// （ADR 0015 的《后果》）。
 fn archive_reading(path: &Path) -> Option<ArchiveReading> {
+    Some(archive_format(path)?.reading)
+}
+
+/// 这个路径的扩展名认得的话，是[格式集](ARCHIVE_FORMATS)里的哪一项。大小写不敏感。
+///
+/// 扩展名查表只有这一处：读法与分卷两问查的是同一张表、同一把尺子。
+fn archive_format(path: &Path) -> Option<&'static ArchiveFormat> {
     let extension = path.extension()?.to_str()?;
     ARCHIVE_FORMATS
         .iter()
-        .find(|(known, _)| known.eq_ignore_ascii_case(extension))
-        .map(|(_, reading)| *reading)
+        .find(|format| format.extension.eq_ignore_ascii_case(extension))
 }
 
 /// 认得的归档扩展名，拼成给人看的一串（`.cbz / .zip / .rar / .7z`）。
@@ -625,7 +779,7 @@ fn archive_reading(path: &Path) -> Option<ArchiveReading> {
 pub fn listed_archive_extensions() -> String {
     ARCHIVE_FORMATS
         .iter()
-        .map(|(extension, _)| format!(".{extension}"))
+        .map(|format| format!(".{}", format.extension))
         .collect::<Vec<_>>()
         .join(" / ")
 }
@@ -909,7 +1063,32 @@ fn list_rar(path: &Path) -> Result<Volume> {
     Ok(unextracted_volume(path, rar_members(path, &headers)?))
 }
 
+/// `.rar` 那一种[分卷序列](SplitPart)怎么认：读一次归档头里那一位。
+///
+/// **一份就开一次、读完就放**，一个内容字节都不解——[发现](crate::discover)那一遍
+/// 靠它把续的那几份摘掉，而摘掉之后预扫连开都不开它们（从前每一份都要被整套列一遍）。
+///
+/// **开不开得了不在这一问的射程里**：开不了就当它不分卷，这一份照旧成一个候选，
+/// 而那个错在[列成员](list_rar)那一遍原样报出去——点名的整趟拒绝、发现出来的进非卷文件
+/// （ADR 0014 决定第 5 条）。这一问不多添一种结局。加密的包同理：头是密的，
+/// 分卷标志读不出来，它照旧走既有那条路。
+fn rar_split_part(path: &Path) -> Option<SplitPart> {
+    let volume = unrar_ng::Archive::new(path)
+        .open_for_listing()
+        .ok()?
+        .volume_info();
+    match volume {
+        unrar_ng::VolumeInfo::None => None,
+        unrar_ng::VolumeInfo::First => Some(SplitPart::First),
+        unrar_ng::VolumeInfo::Subsequent => Some(SplitPart::Continuation),
+    }
+}
+
 /// 解一遍 `.rar` 的归档头，把条目全收下来。**句柄在这一句里就放掉**。
+///
+/// **分卷序列在这里跨过卷边界**（`p4-parking-lot/17`）：交下来的是[头一份](SplitPart::First)，
+/// 而 UnRAR 从它一路读到末一份，被劈成两半的成员合成一条交出来——这一层看见的因此
+/// 与同内容的单份包逐条相同，卷边界一处都不露出来。
 ///
 /// 预扫因此在这种卷上照旧不攥句柄（见 `crate::survey`）：`.7z` 那边连开都不开，
 /// 这边开一次、读完就关，两者交出来的都只是一张表。
@@ -951,10 +1130,22 @@ fn rar_members(path: &Path, headers: &[unrar_ng::FileHeader]) -> Result<Vec<Memb
 /// 问得出口令，输出也一律 `.cbz`（ADR 0015 决定第 2 条）。合成一句的话，一个加密卷在
 /// 报告里会被说成「可能已损坏」，而用户手上那份包好好的。
 fn rar_is_unreadable(path: &Path, error: unrar_ng::error::UnrarError) -> anyhow::Error {
-    use unrar_ng::error::Code;
+    use unrar_ng::error::{Code, When};
 
-    let why = match error.code {
-        Code::MissingPassword | Code::BadPassword => "它带着口令，而 tonefit 没有问口令的地方",
+    let why = match (error.code, error.when) {
+        (Code::MissingPassword | Code::BadPassword, _) => "它带着口令，而 tonefit 没有问口令的地方",
+        // **缺了一份的分卷序列**（`p4-parking-lot/17`）。这一对不是推出来的：
+        // `unrar_ng::error` 自己的那张表就把 `(EOpen, Process)` 写成
+        // "Could not open next volume"，别的 `EOpen` 才是 "Could not open archive"
+        // ——认哪一对与上游认的是同一对。**`When` 是 `Process` 而不是 `Read`**：
+        // 卷边界上那一下切换发生在读完头之后那一次 `RARProcessFile`（列成员那一遍也走它，
+        // UnRAR 用它把当前成员跳过去），实测如此。
+        //
+        // 合进底下那一句的话，用户手上那几份包好好的，报告却说它们可能已损坏，
+        // 而该做的事（把缺的那一份找回来）一个字都没说——与加密那一条同一条规矩。
+        (Code::EOpen, When::Process) => {
+            "它是一个分卷序列的一份，而下一份不在——缺了哪一份，UnRAR 读到卷边界就接不下去了"
+        }
         _ => "这个文件可能已损坏，或者根本不是 rar",
     };
     anyhow::Error::new(error).context(format!("读不出 {} 的归档结构：{why}", path.display()))
@@ -1518,6 +1709,81 @@ mod tests {
         );
     }
 
+    /// **分卷序列只有 `.rar` 那一格要认**（`p4-parking-lot/17`，见
+    /// [`ArchiveFormat::split`]）。
+    ///
+    /// 与上一条同一张表、同一把尺子：三个格式一格都没有，问下去恒是 `None`，
+    /// 因此**一个字节都不读**——`.7z.001`、`.z01` 的续那几份扩展名不在格式集里，
+    /// 发现根本列不出它们。`.rar` 那一格有值，而它读的是真包，答案在
+    /// `tests/container.rs` 与 `tests/discovery.rs` 那三条上。
+    ///
+    /// 盘上有没有这个文件不影响这一条：三个格式那一支在开文件之前就返回了。
+    #[test]
+    fn only_rar_is_asked_where_it_sits_in_a_split_sequence() {
+        for name in ["卷.cbz", "卷.ZIP", "卷.7z", "卷.7Z", "卷.txt"] {
+            assert!(
+                archive_format(Path::new(name)).is_none_or(|format| format.split.is_none()),
+                "{name} 被问了分卷那一问"
+            );
+            assert!(
+                split_part_of(Path::new(name)).is_none(),
+                "{name} 答出了一个分卷序列里的位置"
+            );
+        }
+        for name in ["卷.rar", "卷.RAR"] {
+            assert!(
+                archive_format(Path::new(name)).is_some_and(|format| format.split.is_some()),
+                "{name} 没被问分卷那一问"
+            );
+        }
+    }
+
+    /// **分卷序列的名字是卷名去掉末尾那一截 `.partN`**（`p4-parking-lot/17`）。
+    ///
+    /// 这一半只看名字，而它只在[看内容那一半](split_part_of)已经答出「头一份」之后才轮得到
+    /// ——因此这里问的是**给定要去那一截时去得对不对**，不是「这一份该不该去」。
+    /// 认不出那一截就原样留着：老式打法的头一份本来就叫 `x`。
+    #[test]
+    fn a_split_sequence_is_named_without_its_part_number() {
+        assert_eq!(split_sequence_name("第01卷.part1"), "第01卷");
+        assert_eq!(
+            split_sequence_name("第01卷.part10"),
+            "第01卷",
+            "位数不止一位也要去掉"
+        );
+        assert_eq!(
+            split_sequence_name("第01卷.PART1"),
+            "第01卷",
+            "大小写不该改变答案"
+        );
+        assert_eq!(split_sequence_name("v1.2.part3"), "v1.2", "只去末尾那一截");
+        assert_eq!(
+            split_sequence_name("第01卷"),
+            "第01卷",
+            "老式打法的头一份原样留着"
+        );
+        assert_eq!(
+            split_sequence_name("第01卷.part"),
+            "第01卷.part",
+            "没有数就不是那一截"
+        );
+        assert_eq!(
+            split_sequence_name("第01卷.parts1"),
+            "第01卷.parts1",
+            "不是 part 就不动"
+        );
+        assert_eq!(
+            split_sequence_name("第01卷.part1x"),
+            "第01卷.part1x",
+            "数后面还有字就不动"
+        );
+        assert_eq!(
+            split_sequence_name(".part1"),
+            ".part1",
+            "去掉之后什么都不剩就不去：没有名字的卷给不出去处"
+        );
+    }
+
     /// **摊开的那一份活在卷上**：卷活着时它在盘上、装着这一卷的成员；卷一放掉就没了。
     ///
     /// 「跑到一半临时目录里有东西、跑完之后它不在了」这一条在这里最直接——
@@ -1649,7 +1915,7 @@ mod tests {
 
     /// **名字带 `.7z` 的目录仍是目录卷，它不摊开**（`p4-parking-lot/13`）。
     ///
-    /// [`identity_of`] 先问 `is_dir`，扩展名那一问因此够不着它——这一条钉的是
+    /// [`container_of`] 先问 `is_dir`，扩展名那一问因此够不着它——这一条钉的是
     /// [`Volume::extracts_before_work`] 也得先问容器形态。只问扩展名的话，
     /// 这样一个目录会被算上整整一段摊开的步数（`crate::volume_steps`），
     /// 而它一步都不会走：进度条从此停在某个百分比上不动。

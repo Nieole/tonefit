@@ -37,6 +37,52 @@ fn every_chapter_in_a_two_level_library_becomes_its_own_volume() {
     assert!(library.is_dir(), "源库被动了");
 }
 
+/// **分卷 `.rar` 是一个卷，不是两个**（`p4-parking-lot/17`，ADR 0015 决定第 1 条的修订）。
+///
+/// 两份 `.part*.rar` 从前各自成卷，而 UnRAR 打开头一份就跨卷读完了——盘上因此出两份
+/// 重名不同的产物，其中一份是重复的。折成一个卷之后只剩一个输出容器，
+/// 而它的名字是**分卷序列**的名字：`.part1` 那一截不进产物。
+#[test]
+fn a_split_rar_comes_out_as_one_volume_named_after_the_sequence() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    let parts = fixtures::rar::write_split(&library, "第01卷", 2);
+
+    let started = StartedVolumes::default();
+    let seen = Arc::clone(&started.0);
+    let report = tonefit::run(&tonefit::Request {
+        progress: Some(tonefit::ProgressSink::new(started)),
+        ..fixtures::request(&space, [library.as_path()])
+    })
+    .expect("处理应当成功");
+
+    assert_eq!(report.volumes.len(), 1, "两份分卷没折成一个卷");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/第01卷.cbz"],
+        "卷名没取分卷序列的名字，或者出了两份产物"
+    );
+    // **报告与进度条印的是同一个**，而两边印的都是分卷序列的**头一份**。
+    //
+    // 屏上那个名字**不是**序列名：命令行与会话共用 `render::volume_name`，而它印的一直是
+    // **源文件自己的名字**——一个 `第10话.zip` 也印成 `第10话.zip`，与它的去处
+    // `第10话.cbz` 从来就不同。分卷这一卷照这条既有惯例印 `第01卷.part1.rar`，
+    // 而序列名出现在**去处**上（上面那一条断言）。票面第 2 条后半句还有另一种读法
+    // （两处印的都该是序列名），那要连四种格式一起改，记在停车场 Q331。
+    //
+    // 这一条钉的因此是**两处不许分道**：`Event::VolumeStarted` 的卷标识与
+    // `VolumeReport::volume` 眼下同源，而「让进度条改印序列名」正是最容易只改一处的改法。
+    assert_eq!(
+        seen.lock().expect("读回开卷那几条事件").as_slice(),
+        [parts[0].clone()],
+        "进度条印的不是分卷序列的头一份"
+    );
+    assert_eq!(
+        report.volumes[0].volume, parts[0],
+        "报告印的卷与进度条印的不是同一个"
+    );
+}
+
 /// 点名一个目录卷（直接躺着页）：产物落在它一直落的那个地方。
 ///
 /// 「与改动前逐字节相同」由黄金回归钉着（`tests/golden.rs` 比的是产物的哈希，
@@ -531,6 +577,27 @@ impl tonefit::Progress for Announced {
     fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
         if let tonefit::Event::RunStarted { volumes, steps, .. } = event {
             *self.0.lock().expect("记下开工那条事件") = Some((volumes, steps));
+        }
+        tonefit::Instruction::Continue
+    }
+}
+
+/// 只留每条**开卷**事件带的那个卷标识，别的一律不看。
+///
+/// 进度条印的卷从这里来（命令行那一路的 `Bar::start`、会话那一路的
+/// `Live::volume_started` 都取 `Event::VolumeStarted` 的 `volume`），
+/// 而报告里那一格是 `VolumeReport::volume`——「报告与进度条印的是同一个」
+/// 只有把两边比一次才钉得住。
+#[derive(Default)]
+struct StartedVolumes(Arc<Mutex<Vec<PathBuf>>>);
+
+impl tonefit::Progress for StartedVolumes {
+    fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+        if let tonefit::Event::VolumeStarted { volume, .. } = event {
+            self.0
+                .lock()
+                .expect("记下开卷那条事件")
+                .push(volume.to_path_buf());
         }
         tonefit::Instruction::Continue
     }
