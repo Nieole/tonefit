@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::source::Container;
+use crate::source::ReadingEnd;
 
 /// 一条读取通道的标识：路径解析到的那个卷/挂载点。
 ///
@@ -107,14 +107,19 @@ pub enum ChosenBy {
     Probe,
     /// `--io-mode` 点名的。
     Named,
-    /// 归档卷的两遍：全卷成员按顺序码在一个文件里，顺序扫一遍是它最快的读法。
+    /// **读取端是一个归档句柄**那种卷的两遍：全卷成员按顺序码在一个文件里，
+    /// 顺序扫一遍是它最快的读法。
+    ///
+    /// **摊开了的卷不在此列**——它的字节躺在一个临时目录里，手上根本没有那个游标
+    /// （见 `crate::source::ReadingEnd`）。印出去那句话仍说「归档卷」：
+    /// 那种卷正是唯一还落在这一格上的归档卷。
     ArchiveScan,
 }
 
 /// 一路读取派几条，以及这个数是谁定的。
 ///
-/// 单独成一个词，是因为一个卷有**两路**读取，而归档卷上这两路的数与出处都不同
-/// （见 [`IoPlan`]）。
+/// 单独成一个词，是因为一个卷有**两路**读取，而**读取端是一个归档句柄**时
+/// 这两路的数与出处都不同（见 [`IoPlan`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Readers {
     /// 派几条。1 即串行。
@@ -143,9 +148,9 @@ impl std::fmt::Display for Readers {
 ///
 /// 一个卷这一趟读两遍源字节，而两遍要的读法不是同一种（`CONTEXT.md` 的《I/O 与并发》）：
 ///
-/// - **两遍那一路**（第一遍解码、第二遍写出）在归档卷上是一条顺序扫。成员按顺序码在一个
-///   文件里，顺着扫最快，而读取与计算的重叠由有界通道负责（见 `crate::read`），
-///   不靠多开几条读取去买。
+/// - **两遍那一路**（第一遍解码、第二遍写出）在**读取端是一个归档句柄**的卷上是一条顺序扫。
+///   成员按顺序码在一个文件里，顺着扫最快，而读取与计算的重叠由有界通道负责
+///   （见 `crate::read`），不靠多开几条读取去买。
 /// - **幂等那一道**（`crate` 的 `volume_fingerprint`）没有可与之重叠的计算——它只解压、
 ///   喂哈希，整段暴露在墙钟上（measurements 的《三段各占多少》）。它因此各开各的句柄，
 ///   读法与目录卷同形。
@@ -158,7 +163,8 @@ pub struct IoPlan {
     pub medium: Medium,
     /// 两遍那一路。
     pub readers: Readers,
-    /// 幂等那一道。归档卷上它与 [`readers`](Self::readers) 不同，目录卷上两者恒相同。
+    /// 幂等那一道。**读取端是一个归档句柄**时它与 [`readers`](Self::readers) 不同；
+    /// 读取端是一个目录时两者恒相同——目录卷，以及**摊开了的**归档卷。
     pub fingerprint: Readers,
 }
 
@@ -168,14 +174,22 @@ impl IoPlan {
     /// 先按 `--io-mode` 与介质定出一个数——**幂等那一道拿的就是它**，容器形态不参与：
     /// 那一道给每条读取线程一个自己的句柄，读法与目录卷同形（见 `crate::read`）。
     ///
-    /// **归档卷的两遍另算，恒为一条。**那不是一个策略选择，点名也改不了：读取与计算的重叠
-    /// 已经由有界通道买下了，多开几条读取在那两遍上买不到第二份。
+    /// **[读取端是一个归档句柄](ReadingEnd::Archive)时，两遍另算，恒为一条。**
+    /// 那不是一个策略选择，点名也改不了：读取与计算的重叠已经由有界通道买下了，
+    /// 多开几条读取在那两遍上买不到第二份。
+    ///
+    /// **分岔按读取端，不按容器形态。**摊开了的 `.7z` / `.rar` 卷的
+    /// [`Volume::container`](crate::source::Volume::container) 仍是归档（输出仍一律 `.cbz`），
+    /// 而它的字节此刻一个成员一个文件地躺在一个临时目录里——那一卷「之后完全按目录卷走」
+    /// （ADR 0015 决定第 3 条，`p4-parking-lot/14`），两路因此拿同一个数。
+    /// 按容器形态分岔会把它按在串行上，而那正是 ADR 0015 的《后果》说
+    /// 「读取层没有一处需要认识『固实』」要避开的事。
     ///
     /// **未知按有惩罚办**（ADR 0009 决定第 3 条的「保守并发度」）：并发在机械盘上是真损失，
     /// 在别的介质上只是没赚到。归档卷的幂等那一道同吃这一条——几个句柄各解各的成员是
     /// **随机读**，机械盘上那正是要避开的东西。NAS 的最优策略尚未测量
     /// （`CONTEXT.md` 的《尚未确立》），想要并发的用户走 `--io-mode concurrent`。
-    pub(crate) fn decide(medium: Medium, mode: IoMode, container: Container, cores: usize) -> Self {
+    pub(crate) fn decide(medium: Medium, mode: IoMode, reading: ReadingEnd, cores: usize) -> Self {
         let concurrent = cores.max(1);
         let (count, chosen_by) = match (mode, &medium) {
             (IoMode::Serial, _) => (1, ChosenBy::Named),
@@ -184,7 +198,7 @@ impl IoPlan {
             (IoMode::Auto, Medium::Seeking | Medium::Unknown { .. }) => (1, ChosenBy::Probe),
         };
         let by_medium = Readers { count, chosen_by };
-        let readers = if container == Container::Archive {
+        let readers = if reading == ReadingEnd::Archive {
             Readers {
                 count: 1,
                 chosen_by: ChosenBy::ArchiveScan,
@@ -203,7 +217,8 @@ impl IoPlan {
 impl std::fmt::Display for IoPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "介质 {} ⋅ 读取{}", self.medium, self.readers)?;
-        // 两路一样的卷（目录卷全部，归档卷一个也没有）只印一次：多印一句一模一样的话，
+        // 两路一样的卷（读取端是一个目录的全部——目录卷与摊开了的卷）只印一次：
+        // 多印一句一模一样的话，
         // 读的人要先比一遍两句才知道它们没有分岔。
         if self.fingerprint != self.readers {
             write!(f, " ⋅ 幂等那一道{}", self.fingerprint)?;
@@ -560,7 +575,7 @@ mod tests {
             panic!("网络路径不该被判成本地盘的某一种：{medium}");
         };
         assert!(reason.contains("网络路径"), "{reason}");
-        let plan = IoPlan::decide(medium, IoMode::Auto, Container::Directory, 8);
+        let plan = IoPlan::decide(medium, IoMode::Auto, ReadingEnd::Directory, 8);
         assert_eq!(plan.readers.count, 1, "未知的介质该退到串行");
         assert!(plan.to_string().contains("网络路径"), "{plan}");
     }
@@ -578,28 +593,35 @@ mod tests {
     /// `--io-mode` 两个方向都覆盖得了自动探测（13 号票）。
     #[test]
     fn io_mode_overrides_the_probe_in_both_directions() {
-        let serial = IoPlan::decide(Medium::Solid, IoMode::Serial, Container::Directory, 8);
+        let serial = IoPlan::decide(Medium::Solid, IoMode::Serial, ReadingEnd::Directory, 8);
         assert_eq!(serial.readers.count, 1);
         assert_eq!(serial.readers.chosen_by, ChosenBy::Named);
         // 覆盖的是策略，不是事实：探到的介质照实说。
         assert_eq!(serial.medium, Medium::Solid);
 
-        let concurrent =
-            IoPlan::decide(Medium::Seeking, IoMode::Concurrent, Container::Directory, 8);
+        let concurrent = IoPlan::decide(
+            Medium::Seeking,
+            IoMode::Concurrent,
+            ReadingEnd::Directory,
+            8,
+        );
         assert_eq!(concurrent.readers.count, 8);
         assert_eq!(concurrent.readers.chosen_by, ChosenBy::Named);
         assert_eq!(concurrent.medium, Medium::Seeking);
     }
 
     /// 自动那一档：有寻道惩罚的串行，无寻道惩罚的并发（13 号票头两条）。
+    ///
+    /// 读取端是一个**目录**的卷全走这一档——目录卷，以及**摊开了的**归档卷
+    /// （ADR 0015 决定第 3 条：摊开之后完全按目录卷走）。
     #[test]
     fn a_seek_penalty_reads_serially_and_a_solid_disk_reads_concurrently() {
-        let seeking = IoPlan::decide(Medium::Seeking, IoMode::Auto, Container::Directory, 8);
+        let seeking = IoPlan::decide(Medium::Seeking, IoMode::Auto, ReadingEnd::Directory, 8);
         assert_eq!(seeking.readers.count, 1);
         assert_eq!(seeking.readers.chosen_by, ChosenBy::Probe);
         assert!(seeking.to_string().contains("读取串行"), "{seeking}");
 
-        let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, Container::Directory, 8);
+        let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, ReadingEnd::Directory, 8);
         assert_eq!(solid.readers.count, 8);
         assert_eq!(solid.readers.chosen_by, ChosenBy::Probe);
         assert!(solid.to_string().contains("读取并发 8"), "{solid}");
@@ -611,11 +633,14 @@ mod tests {
         }
     }
 
-    /// 归档卷的**两遍**恒串行：点名并发也改不了这件事。
+    /// **读取端是一个归档句柄**那种卷的两遍恒串行：点名并发也改不了这件事。
+    ///
+    /// 摊开了的卷不落在这一格上——它的读取端是一个目录，走的是上一条用例
+    /// （`a_seek_penalty_reads_serially_and_a_solid_disk_reads_concurrently`）那一档。
     #[test]
     fn the_two_passes_of_an_archive_read_on_one_channel_however_it_is_asked_to() {
         for mode in [IoMode::Auto, IoMode::Concurrent] {
-            let plan = IoPlan::decide(Medium::Solid, mode, Container::Archive, 8);
+            let plan = IoPlan::decide(Medium::Solid, mode, ReadingEnd::Archive, 8);
             assert_eq!(plan.readers.count, 1, "{mode:?}");
             assert_eq!(plan.readers.chosen_by, ChosenBy::ArchiveScan, "{mode:?}");
             assert!(plan.to_string().contains("顺序扫"), "{plan}");
@@ -625,8 +650,8 @@ mod tests {
     /// 归档卷的**幂等那一道**不吃「恒串行」那一条：它按介质与点名走，与目录卷同一个数
     /// （11 号票）。报告因此一行里印出两路，两路各说各的。
     #[test]
-    fn the_fingerprint_pass_of_an_archive_follows_the_medium_not_the_container() {
-        let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, Container::Archive, 8);
+    fn the_fingerprint_pass_of_an_archive_follows_the_medium_not_the_reading_end() {
+        let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, ReadingEnd::Archive, 8);
         assert_eq!(solid.readers.count, 1, "两遍那一路该还是一条");
         assert_eq!(solid.fingerprint.count, 8, "幂等那一道该跟着介质走");
         assert_eq!(solid.fingerprint.chosen_by, ChosenBy::Probe);
@@ -642,12 +667,12 @@ mod tests {
                 reason: "用例".to_owned(),
             },
         ] {
-            let plan = IoPlan::decide(medium, IoMode::Auto, Container::Archive, 8);
+            let plan = IoPlan::decide(medium, IoMode::Auto, ReadingEnd::Archive, 8);
             assert_eq!(plan.fingerprint.count, 1, "{plan}");
         }
 
         // `--io-mode serial` 按得住它——而报告说得出这一条是点名的，不是归档卷天生如此。
-        let named = IoPlan::decide(Medium::Solid, IoMode::Serial, Container::Archive, 8);
+        let named = IoPlan::decide(Medium::Solid, IoMode::Serial, ReadingEnd::Archive, 8);
         assert_eq!(named.fingerprint.count, 1);
         assert_eq!(named.fingerprint.chosen_by, ChosenBy::Named);
         assert!(
@@ -668,7 +693,7 @@ mod tests {
 
         let medium = probes.medium(Path::new("."));
 
-        let plan = IoPlan::decide(medium, IoMode::Auto, Container::Directory, 8);
+        let plan = IoPlan::decide(medium, IoMode::Auto, ReadingEnd::Directory, 8);
         assert!(plan.readers.count >= 1);
         assert!(plan.to_string().starts_with("介质 "), "{plan}");
         // 探得出来的那两种才谈得上并发；未知一律串行。

@@ -195,13 +195,10 @@ pub fn run(request: &Request) -> Result<Report> {
             outcome = RunOutcome::of(events.standing());
             break;
         }
-        // 探的是卷根，而卷根就是点名的那个路径（见 `source::open`）：目录卷是那个目录，
-        // 归档卷是那个文件。
-        let medium = probes.medium(&surveyed.root);
         // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
         // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
         let root = surveyed.root.clone();
-        match process_volume(surveyed, request, medium, events) {
+        match process_volume(surveyed, request, &mut probes, events) {
             Ok(Some(report)) => volumes.push(report),
             Ok(None) => {
                 // **中止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial` 已经丢掉，
@@ -466,8 +463,10 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// 那不是一份做完了的输出，而失败清单每一趟都要重新给得出来（spec 的 story 26）。
 /// 代价是有坏页的卷每趟都重做一遍，直到坏页被修好。
 ///
-/// `medium` 是这个源路径落在什么盘上（ADR 0009 决定第 2 条）。它在这里变成一份
-/// [读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
+/// `probes` 是这一趟共用的那份介质探测（ADR 0009 决定第 2 条，见 `medium`）。这一卷问它
+/// 一次，答案变成一份[读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
+/// **问在重开这一卷之后**——探的是这一卷此刻真正住的那个路径，而摊开的卷要摊开了
+/// 才住得进临时目录里去（见本函数里那一句上的注释）。
 ///
 /// 收的是一份**预扫摘要**（见 `survey`）——这一卷的路径与几个数，不是卷本身：
 /// 预扫数完就把卷放掉了，这里**按那个路径再开一次**。为什么宁可读两遍中央目录也不攥着它，
@@ -523,7 +522,7 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 fn process_volume(
     surveyed: survey::Surveyed,
     request: &Request,
-    medium: Medium,
+    probes: &mut medium::Probes,
     events: progress::Events,
 ) -> Result<Option<VolumeReport>> {
     // 这一卷的两个可能去处。哪一个作数要等第一遍走完才知道，另一个则可能留着上一趟的过期副本。
@@ -596,7 +595,20 @@ fn process_volume(
     ensure_one_member_per_output(&volume, &one_to_one_targets(&volume))?;
     let source_pages = members.source_pages;
 
-    let io = IoPlan::decide(medium, request.io_mode, volume.container, cores());
+    // **介质按这一卷此刻真正住的那个路径探**（ADR 0009 决定第 2 条）：按路径探测那条边界
+    // 一格没动，换的只是探哪一个路径。摊开的卷的字节此刻一个成员一个文件地躺在一个临时目录
+    // 里，那条读取通道与这个归档来自哪块盘不再是同一条（见 `source::Reader::reads_from`）。
+    // **因此非探在这里不可**：那个临时目录要 `source::open` 摊开了才存在。
+    //
+    // 派几条读取同样按[读取端](source::ReadingEnd)分，不按容器形态——摊开的卷
+    // 「之后完全按目录卷走」（ADR 0015 决定第 3 条），它的 `container` 却仍是归档。
+    let medium = probes.medium(volume.reader.reads_from());
+    let io = IoPlan::decide(
+        medium,
+        request.io_mode,
+        volume.reader.reading_end(),
+        cores(),
+    );
     let writes = request.mode == Mode::Process;
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
@@ -2314,7 +2326,8 @@ fn gray_bytes(
 /// 喂哈希那一端仍**严格按成员次序**——源哈希是有序的，乱一位整卷的指纹就变了，
 /// 而读取层交付本来就有序（见 `read` 的模块头）。
 ///
-/// **归档卷上它也并发**，与第一遍不同：并发度取的是 [`IoPlan::fingerprint`] 那一格，
+/// **[读取端是一个归档句柄](source::ReadingEnd::Archive)的卷上它也并发**，与第一遍不同：
+/// 并发度取的是 [`IoPlan::fingerprint`] 那一格，
 /// 不是 [`IoPlan::readers`]（为什么两路各有一个数，见 [`IoPlan`] 的《为什么是两路》）。
 /// 并行的是**解**，不是**喂**：几条读取线程各拿一个自己的归档句柄各解各的成员，
 /// 交付仍按成员序号，因此同一卷串行与并行两趟的指纹**逐字节相同**。
