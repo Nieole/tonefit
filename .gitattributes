@@ -1,0 +1,19 @@
+# 行尾一律 LF——库里存 LF，检出也是 LF。
+# 这一条**不看本机的 `core.autocrlf`**：Git for Windows 默认把它设成 true，
+# 没有这份文件，同一个仓库在 Windows 上检出来就是 CRLF。
+* text=auto eol=lf
+
+# 二进制按字节入库，一个字节都不换。
+#
+# 归档夹具的**字节本身就是被测对象**（`tests/fixtures/rar/*.rar`；`stored.rar` 里
+# 就有恰好长得像 CRLF 的两处，一旦被当文本换掉，夹具就不是那一份归档了）。
+# 页面像素同理。列的是工程经手的那几种容器与图片格式（ADR 0015、CONTEXT.md
+# 《输出容器》），不是只列眼下树里有的——夹具添进来时不该还要先想一遍行尾。
+*.rar   binary
+*.zip   binary
+*.cbz   binary
+*.7z    binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.avif  binary
