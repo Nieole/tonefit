@@ -1052,7 +1052,7 @@ fn seven_zip_members(path: &Path, files: &[sevenz_rust2::ArchiveEntry]) -> Resul
 /// 摘的那一句就是两个格式唯一不同的地方。
 ///
 /// 规矩与 [`open_archive`] 那一段同形，而且**只写在这一处**：目录项不算成员、
-/// 名字要能[当作卷内相对路径](relative_path)、[打包环境留下的东西](is_junk)摘掉、
+/// 名字要能[当作卷内相对路径](relative_path)、[不看的东西](is_junk)摘掉、
 /// [包装层](strip_wrapper_directory)剥掉。
 ///
 /// `entry` 是**归档头里的下标**（见 [`Member::entry`]），因此数的是交进来的全部条目、
@@ -1427,18 +1427,30 @@ fn is_drive_letter(part: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
-/// 打包环境留下的目录：整个子树都不是卷的内容。
+/// 本来就不看的地方：整个子树都不是卷的内容。
 ///
-/// `__MACOSX` 是 macOS 的「压缩」菜单写出来的兄弟目录，里面按原结构镜像着每个成员的
-/// AppleDouble 边车；其余几个是各家文件管理器、版本控制与 NAS 自己的索引与回收站目录。
+/// 这一类是什么、它与**走不进去的地方**分在哪里、为什么报告上一个字都没有——
+/// 权威位置是 `CONTEXT.md` 的《不看的地方 (IgnoredPlace)》，这里不复述。
+/// 名单本身住在这里，因为两种来处的**行为逐字相同**，分成两份只是历史：
 ///
-/// 后四个是**发现**才撞得到的（ADR 0014）：从前只在归档成员名里比它，一份包里不会有
-/// `.git`；如今发现要走进真实的库目录，而回收站里躺着的正是用户删掉的那些卷——
-/// 走进去就是把删掉的东西又转一遍。
+/// - **打包环境留下的**（前十个）——`__MACOSX` 是 macOS 的「压缩」菜单写出来的兄弟目录，
+///   里面按原结构镜像着每个成员的 AppleDouble 边车；其余几个是各家文件管理器、
+///   版本控制与 NAS 自己的索引与回收站目录。
+/// - **操作系统留下的**（末四个）——`System Volume Information`（Windows 上管理员都进不去）、
+///   `$RECYCLE.BIN`、`lost+found`、`.Trash-1000`。它们**永远**读不动，
+///   因此**不是** [走不进去的地方](crate::UnreachablePlace)：分得开这两类的是词条里
+///   那一句——换一趟会不会好。
+///
+/// 判据是**名字**，不是读不读得动：这几个名字在各自平台上固定、不随语言变，
+/// 而按「读不动」认会把真正走不进去的那一半一起吞掉（`no-false-line/07` 收的停车场 Q203）。
+///
+/// `.git` 起往后的都是**发现**才撞得到的（ADR 0014）：从前只在归档成员名里比它们，
+/// 一份包里不会有 `.git`，也不会有 `System Volume Information`；如今发现要走进真实的
+/// 库目录，而回收站里躺着的正是用户删掉的那些卷——走进去就是把删掉的东西又转一遍。
 ///
 /// 这一组在**两处**同时作数：卷内不当成员（见 [`is_junk`]），发现时整棵子树不进去
-/// （见 [`is_junk_directory`]）。
-const JUNK_DIRECTORIES: [&str; 10] = [
+/// （见 [`is_ignored_directory`]）。
+const IGNORED_DIRECTORIES: [&str; 14] = [
     "__MACOSX",
     ".Spotlight-V100",
     ".Trashes",
@@ -1449,6 +1461,10 @@ const JUNK_DIRECTORIES: [&str; 10] = [
     "#recycle",
     "@Recycle",
     ".@__thumb",
+    "System Volume Information",
+    "$RECYCLE.BIN",
+    "lost+found",
+    ".Trash-1000",
 ];
 
 /// 打包环境留下的单个文件。
@@ -1457,7 +1473,8 @@ const JUNK_FILES: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
 /// AppleDouble 边车文件的名字前缀：本体叫什么它就叫 `._` 加什么，**扩展名照抄**。
 const APPLE_DOUBLE_PREFIX: &str = "._";
 
-/// 这个成员是不是打包环境留下的垃圾。
+/// 这个成员是不是不看的东西：躺在[不看的地方](IGNORED_DIRECTORIES)里，
+/// 或者本身就是打包环境留下的那几个文件。
 ///
 /// 它们既不当页也不当透传文件：边车的扩展名照抄本体，当页解必然解不出图，
 /// 整卷因此进隔离目录还被插上白页；当透传文件搬过去，则是把打包环境的产物带进成品。
@@ -1467,7 +1484,7 @@ fn is_junk(relative: &Path) -> bool {
     let mut parts = relative
         .components()
         .filter_map(|component| component.as_os_str().to_str());
-    if parts.any(|part| is_one_of(&JUNK_DIRECTORIES, part)) {
+    if parts.any(|part| is_one_of(&IGNORED_DIRECTORIES, part)) {
         return true;
     }
     let Some(name) = relative.file_name().and_then(|name| name.to_str()) else {
@@ -1476,12 +1493,13 @@ fn is_junk(relative: &Path) -> bool {
     name.starts_with(APPLE_DOUBLE_PREFIX) || is_one_of(&JUNK_FILES, name)
 }
 
-/// 这个目录名是不是打包环境留下的目录。发现走到它就整棵子树不进去（见 [`crate::discover`]）。
+/// 这个目录名是不是[本来就不看的地方](IGNORED_DIRECTORIES)。发现走到它就整棵子树不进去
+/// （见 [`crate::discover`]），它因此**根本不成为候选**。
 ///
 /// 与 [`is_junk`] 同一份名单：同一个 `__MACOSX`，在归档成员名里不算成员，
 /// 在盘上也不该被走进去找卷。
-pub(crate) fn is_junk_directory(name: &str) -> bool {
-    is_one_of(&JUNK_DIRECTORIES, name)
+pub(crate) fn is_ignored_directory(name: &str) -> bool {
+    is_one_of(&IGNORED_DIRECTORIES, name)
 }
 
 /// 名字命中这一组里的哪一个吗。
