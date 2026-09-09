@@ -55,6 +55,7 @@ def main(ref_root: Path, cand_root: Path, dry_path: Path, out: Path) -> int:
             ref = reference_side(ref_image, PPI)
             store[f"{key[0]}|{key[1]}|ref_grain"] = ref["grain"]
             store[f"{key[0]}|{key[1]}|activity"] = ref["activity"]
+            store[f"{key[0]}|{key[1]}|tone"] = ref["tone"]
             for label, (depth, folder) in DEPTHS.items():
                 cand_path = cand_root / folder / "ref8" / group_dir.name / page.name
                 cand = candidate_side(load(cand_path), ref)

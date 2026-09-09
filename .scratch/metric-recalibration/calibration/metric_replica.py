@@ -126,7 +126,16 @@ def reference_side(image: np.ndarray, ppi: int) -> dict:
     f = image.astype(np.float32)
     grain = np.sqrt(_tile_means((f - lp) ** 2, height, width))
     activity = _tile_means(np.abs(f - structure), height, width)
-    return {"kernel": kernel, "low_pass": lp, "grain": grain, "activity": activity}
+    # 块的参照亮度。今天的判据用不着它——它是**试形状**用的：`04` 的真机判读
+    # 证明判据缺一维背景亮度，而任何候选形状都要按块取一个亮度。
+    tone = _tile_means(f, height, width)
+    return {
+        "kernel": kernel,
+        "low_pass": lp,
+        "grain": grain,
+        "activity": activity,
+        "tone": tone,
+    }
 
 
 def candidate_side(candidate: np.ndarray, ref: dict) -> dict:

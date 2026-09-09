@@ -142,6 +142,7 @@ class Tiles:
             "low_pass_error": self.z[f"{key}|{depth_label}|low_pass_error"],
             "grain": self.z[f"{key}|{depth_label}|grain"],
             "ref_grain": self.z[f"{key}|ref_grain"],
+            "tone": self.z[f"{key}|tone"],
         }
 
 
