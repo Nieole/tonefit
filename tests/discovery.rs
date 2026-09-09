@@ -428,14 +428,16 @@ fn two_named_paths_that_do_not_overlap_both_come_out() {
     );
 }
 
-/// 单独点名一个**发现走不进去**的目录（回收站），上面那个库点名了也折不掉它。
+/// 单独点名一个**不看的地方**（回收站），上面那个库点名了也折不掉它。
 ///
 /// 折的是**卷根**，不是点名路径之间的前缀关系：`库` 与 `库/#recycle` 是嵌套的两条路径，
 /// 而点名 `库` 那一趟一个回收站里的卷根都没走到（见
-/// [`discovery_does_not_walk_into_the_directories_packing_tools_leave_behind`]），
+/// [`discovery_does_not_walk_into_the_places_we_never_look_at`]），
 /// 两边因此不重叠。按前缀折的话，用户明说要的那个回收站会连同它底下的卷一起消失。
+///
+/// 「不看」只管**发现**：用户自己点名它就是明说了要，那一条一格没动。
 #[test]
-fn a_junk_directory_named_on_its_own_is_not_folded_away() {
+fn an_ignored_place_named_on_its_own_is_not_folded_away() {
     let space = Workspace::new();
     let library = directory(&space, "库");
     let recycle = directory(&space, "库/#recycle");
@@ -512,23 +514,92 @@ fn an_output_root_inside_a_named_directory_is_still_refused() {
     assert!(error.to_string().contains("相互嵌套"), "{error}");
 }
 
-/// 打包环境留下的目录整棵子树都不进去。名单与「后四个为什么是发现才撞得到的」
-/// 都写在 `src/source.rs` 的 `JUNK_DIRECTORIES` 上。
+/// 不看的地方整棵子树都不进去，而且**报告上一个字都没有**。
+///
+/// 打包环境留下的那几个与操作系统留下的那几个（`System Volume Information` 一类，
+/// **永远**读不动）共一份名单、共一条判据——名单与「哪几个是发现才撞得到的」
+/// 都写在 `src/source.rs` 的 `IGNORED_DIRECTORIES` 上。
+///
+/// 三句话：**卷数只有那一个**、**报告的两栏都空着**、**输出树上只有留着的那一卷**。
+/// 中间那句是这一条的要害：绕过发生在发现那一层，它们根本不成为候选，
+/// 因此走不进去的地方那一栏收不到它们——收到了就是把「不看」说成了「看不了」。
 #[test]
-fn discovery_does_not_walk_into_the_directories_packing_tools_leave_behind() {
+fn discovery_does_not_walk_into_the_places_we_never_look_at() {
     let space = Workspace::new();
     let library = directory(&space, "库");
-    for junk in [".git", "#recycle", "@Recycle", ".@__thumb", "__MACOSX"] {
-        write_archive(&space, &format!("库/{junk}/删掉的第1话.cbz"), 2);
+    for ignored in [
+        ".git",
+        "#recycle",
+        "@Recycle",
+        ".@__thumb",
+        "__MACOSX",
+        "System Volume Information",
+        "$RECYCLE.BIN",
+        "lost+found",
+        ".Trash-1000",
+    ] {
+        write_archive(&space, &format!("库/{ignored}/删掉的第1话.cbz"), 2);
     }
     write_archive(&space, "库/留着的第1话.cbz", 2);
 
     let report = fixtures::run_paths(&space, [library.as_path()]);
 
     assert_eq!(report.volumes.len(), 1, "走进了不该走的目录");
+    assert!(
+        report.unreachable_places.is_empty(),
+        "不看的地方上了走不进去的地方那一栏：{:?}",
+        report.unreachable_places
+    );
+    assert_eq!(
+        listed(&space, &report),
+        Vec::<String>::new(),
+        "不看的地方上了非卷文件那一栏"
+    );
     assert_eq!(
         fixtures::directory_members(&space.out()),
         ["库/留着的第1话.cbz"]
+    );
+}
+
+/// **反过来那一半：名字只是挨得近的目录照旧走进去。**
+///
+/// 判据是**整个名字**（大小写不敏感），不是前缀、不是包含，更不是「读不读得动」。
+/// 三种放宽各有一个用户会真撞上的样子：`System Volume Information 备份` 是有人手动
+/// 拷出来的一份，`.Trash-10000` 是另一个 uid 的回收站以外的普通目录，
+/// `$RECYCLE.BIN.old` 是换盘时留下的。按前缀或包含认，这三处连同它们底下的卷一起静默消失
+/// ——那正是这张票要治的病换了个方向再犯一遍。
+///
+/// 大小写那一格反着钉一下：`$Recycle.Bin` 与 `$RECYCLE.BIN` 是同一个名字
+/// （Windows 上两种写法都见得到），它**照旧**不看。
+///
+/// 权限那一半的反向在 `tests/exit_code.rs` 的
+/// `a_place_that_cannot_be_entered_ends_the_run_with_three` 与 `src/survey.rs` 的
+/// `a_directory_that_cannot_be_read_says_so`：名字不在名单上而真读不动的目录，
+/// 照旧进走不进去的地方那一栏、照旧进退出码。那两条要关得上门的机器才问得出来，
+/// 这一条平台无关。
+#[test]
+fn a_name_that_merely_looks_like_one_we_never_look_at_is_still_walked_into() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    for near in [
+        "System Volume Information 备份",
+        ".Trash-10000",
+        "$RECYCLE.BIN.old",
+    ] {
+        write_archive(&space, &format!("库/{near}/第1话.cbz"), 2);
+    }
+    write_archive(&space, "库/$Recycle.Bin/删掉的第1话.cbz", 2);
+
+    let report = fixtures::run_paths(&space, [library.as_path()]);
+
+    assert_eq!(report.volumes.len(), 3, "挨得近的名字被当成了不看的地方");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        [
+            "库/$RECYCLE.BIN.old/第1话.cbz",
+            "库/.Trash-10000/第1话.cbz",
+            "库/System Volume Information 备份/第1话.cbz",
+        ]
     );
 }
 

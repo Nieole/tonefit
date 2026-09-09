@@ -122,7 +122,7 @@ pub(crate) fn of(named: &Path) -> Result<Vec<Candidate>> {
 /// 同一份非卷文件清单，而报告里的**卷序**不同（停车场 Q243）。
 ///
 /// **折的是卷根，不是点名路径之间的前缀关系。** 点名 `库` 与 `库/#recycle` 是嵌套的两条
-/// 路径，而发现根本走不进后者（[`push_children`] 把打包环境留下的目录挡在外面），
+/// 路径，而发现根本走不进后者（[`push_children`] 把不看的地方挡在外面），
 /// 两边一个卷根都不重叠，于是两个点名各展各的——用户明说要那个回收站，就得到它。
 /// 按前缀折的话它会连同它底下的卷一起消失。
 #[derive(Default)]
@@ -231,11 +231,14 @@ struct Child {
 /// （见 `crate::survey`，`p4-parking-lot/11` 收的停车场 Q117）。这里因此不必再报一遍——
 /// 报了就是同一个目录两条。
 ///
-/// 三样东西被挡在外面：[打包环境留下的目录](source::is_junk_directory)、
+/// 三样东西被挡在外面：[本来就不看的地方](source::is_ignored_directory)、
 /// 符号链接与 junction（`file_type` 问的是链接自己，因此它既不是目录也不是文件，
 /// **环进不来**，深度不必设上界）、以及既不是目录也不是认得的归档的文件——
 /// 后者要么是某个卷的透传成员，要么是**非卷文件**——分界是它躺的那一层有没有页，
 /// 而那要开卷才答得出，因此不在这里定（见 `crate::survey` 的《另一半产出》）。
+///
+/// 头一样是在**这里**挡的，不是攒完候选再滤：不看的地方连同它底下的一切**根本不成为候选**，
+/// 预扫因此看不见它、走不进去的地方那一栏收不到它、退出码一格不动、报告上一个字都没有。
 fn push_children(dir: &Path, stack: &mut Vec<Child>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -248,7 +251,7 @@ fn push_children(dir: &Path, stack: &mut Vec<Child>) {
         let path = entry.path();
         if file_type.is_dir() {
             let name = entry.file_name();
-            if source::is_junk_directory(&name.to_string_lossy()) {
+            if source::is_ignored_directory(&name.to_string_lossy()) {
                 continue;
             }
             children.push(Child {
@@ -371,13 +374,20 @@ mod tests {
         );
     }
 
-    /// 打包环境留下的目录整棵子树不进去——回收站里躺着的正是用户删掉的那些卷。
+    /// 不看的地方整棵子树不进去——回收站里躺着的正是用户删掉的那些卷。
+    ///
+    /// 打包环境留下的与操作系统留下的**同一份名单**：一个 `#recycle` 与一个
+    /// `System Volume Information` 在这一层受同一条判据，谁都不成为候选。
     #[test]
-    fn a_junk_directory_is_never_walked_into() {
+    fn an_ignored_place_is_never_walked_into() {
         let space = tempfile::tempdir().expect("建临时目录");
         let library = space.path().join("库");
-        std::fs::create_dir_all(library.join("#recycle/删掉的作品")).expect("建回收站");
-        std::fs::write(library.join("#recycle/删掉的作品/第1话.cbz"), b"").expect("摆一个归档");
+        for ignored in ["#recycle", "System Volume Information"] {
+            std::fs::create_dir_all(library.join(ignored).join("删掉的作品"))
+                .expect("建不看的那一层");
+            std::fs::write(library.join(ignored).join("删掉的作品/第1话.cbz"), b"")
+                .expect("摆一个归档");
+        }
         std::fs::create_dir(library.join("留着的作品")).expect("建作品目录");
 
         let found = of(&library).expect("点名的库点得开");

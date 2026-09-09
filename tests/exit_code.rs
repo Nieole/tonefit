@@ -284,6 +284,62 @@ fn a_named_place_that_cannot_be_entered_is_still_refused() {
     assert_eq!(code, Some(1), "点名一个读不动的目录没被整趟拒");
 }
 
+/// **一棵含操作系统目录、卷卷都成的树收在 `0` 上**（本票，收停车场 Q203）。
+///
+/// 从前这一趟恒收在 `3` 上：`System Volume Information` 这一类**永远**读不动，
+/// 于是每一趟都进走不进去的地方那一栏、每一趟都把退出码从 `0` 拖走，重跑一百遍都一样。
+/// 点名一个盘根或共享根的人因此永远拿不到 `0`，而那一栏劝他做的事对这一类一件都做不了
+/// （为什么做不了，见 `CONTEXT.md` 的《不看的地方 (IgnoredPlace)》）。
+///
+/// 这一条在两种机器上问的不是同一件事，两边都不恒真：
+///
+/// - **关得上门的机器**上，那个 `System Volume Information` 真读不动——这正是 Q203
+///   那个场景的复现：不看的地方不进那一栏，退出码因此回到 `0`。
+/// - **关不上门的机器**上（Windows 没有这一手，root 底下权限位不作数），它读得动，
+///   而它底下那一卷**没有**出现在输出树上——按名字绕过在发现那一层就作数，
+///   与读不读得动无关。
+///
+/// 反过来那一半在 `a_place_that_cannot_be_entered_ends_the_run_with_three`：
+/// 名字**不在**那份名单上的目录真读不动时，照旧上那一栏、照旧收在 `3` 上。
+#[test]
+fn a_tree_with_places_we_never_look_at_still_ends_the_run_with_zero() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    let mut good = fixtures::Cbz::new(library.join("好的.cbz"));
+    good.page("001.png", &fixtures::cheap_page());
+    good.write();
+    // 四个都摆上：名字是各平台上固定的那几个，一个都不该成为候选。
+    for ignored in [
+        "System Volume Information",
+        "$RECYCLE.BIN",
+        "lost+found",
+        ".Trash-1000",
+    ] {
+        let place = library.join(ignored);
+        std::fs::create_dir(&place).expect("建不看的那一层");
+        // 里面躺着一个真卷：门关不上的机器上，走进去了就会在输出树上露馅。
+        let mut inside = fixtures::Cbz::new(place.join("删掉的第1话.cbz"));
+        inside.page("001.png", &fixtures::cheap_page());
+        inside.write();
+    }
+    // 头一个再关上门：关得上的机器上，它就是 Q203 里那个永远读不动的地方。
+    let never_readable = library.join("System Volume Information");
+    shut_the_door(&never_readable);
+
+    let code = tonefit(&space, &[library.as_path()]);
+    let members = fixtures::directory_members(&space.out());
+    // 断言之前先把门打开：断言红了也不至于留下一个删不掉的工作区。
+    open_the_door(&never_readable);
+
+    assert_eq!(code, Some(0), "不看的地方把这一趟从 `0` 上拖走了");
+    assert_eq!(
+        members,
+        ["库/好的.cbz"],
+        "走进了不看的地方，它底下的卷进了输出"
+    );
+}
+
 /// 把一个目录弄成**列不出来**的样子，成了才回 `true`。
 ///
 /// **真去列一遍**才算数：`set_permissions` 在 root 底下也回 `Ok`，而权限位拦不住 root。
