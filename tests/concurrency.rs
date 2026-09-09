@@ -232,6 +232,70 @@ fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
     assert!(archive.to_string().contains("幂等那一道"), "{archive}");
 }
 
+/// **摊开的卷吃得到并发**：`.7z` 的字节开工前就整卷摊进了一个临时目录，
+/// 那一卷这一趟因此完全按目录卷读（ADR 0015 决定第 3 条，`p4-parking-lot/14`）。
+///
+/// 同一趟里放一个 `.cbz` 当对照：它**随机取**，读的是一个游标，两遍那一路照旧恒串行。
+/// 两个卷的容器形态都是归档、输出都是 `.cbz`，读法却分了岔——分岔按**读取端**走，
+/// 不按容器形态，而这正是从前那个数被写死的地方。
+///
+/// 断言点名了 `--io-mode concurrent`，因此**与跑用例这台机器上装的是什么盘无关**：
+/// 摊开那一卷的临时目录探出来是哪一种介质都不改变这一条。要钉的是
+/// 「那个数不再被『归档卷是一条顺序扫』按住」，不是某一块盘的探测结果。
+#[test]
+fn an_extracted_volume_reads_concurrently_while_a_random_access_archive_still_scans() {
+    let space = Workspace::new();
+    let mut solid = space.sevenz("volume-a");
+    let mut random = space.cbz("volume-b");
+    for index in 0..8 {
+        let page = fixtures::full_bleed_gradient(TOUCHING);
+        solid.page(&format!("{index:03}.png"), &page);
+        random.page(&format!("{index:03}.png"), &page);
+    }
+    let solid = solid.write();
+    let random = random.write();
+
+    let report = tonefit::run(&Request {
+        io_mode: IoMode::Concurrent,
+        ..fixtures::request(&space, [solid.as_path(), random.as_path()])
+    })
+    .expect("处理应当成功");
+
+    assert_eq!(report.volumes.len(), 2);
+    let plan = |path: &Path| {
+        &report
+            .volumes
+            .iter()
+            .find(|volume| volume.volume == path)
+            .unwrap_or_else(|| panic!("报告里没有 {}", path.display()))
+            .io
+    };
+
+    // 摊开的那一卷：点名并发真派得动，而且两路拿的是同一个数——与目录卷同形。
+    let extracted = plan(&solid);
+    assert_eq!(extracted.readers.chosen_by, ChosenBy::Named, "{extracted}");
+    assert_eq!(
+        extracted.readers.count,
+        num_cpus::get().max(1),
+        "{extracted}"
+    );
+    assert_eq!(extracted.fingerprint, extracted.readers, "{extracted}");
+    // 那一行因此只说一次读取策略：不提「顺序扫」，也不必分出「幂等那一道」。
+    let line = extracted.to_string();
+    assert!(!line.contains("顺序扫"), "{line}");
+    assert!(!line.contains("幂等那一道"), "{line}");
+
+    // 对照：随机取的归档卷点名并发也改不了两遍那一路，口径与从前一字不差。
+    let archive = plan(&random);
+    assert_eq!(
+        archive.readers.chosen_by,
+        ChosenBy::ArchiveScan,
+        "{archive}"
+    );
+    assert_eq!(archive.readers.count, 1, "{archive}");
+    assert!(archive.to_string().contains("顺序扫"), "{archive}");
+}
+
 /// 归档卷换一种读法重跑，这一卷**照旧被跳过**（11 号票）。
 ///
 /// 指纹不进报告，在 seam 上量「两趟的指纹逐字节相同」因此只有这一种形式：

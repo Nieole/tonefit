@@ -157,6 +157,23 @@ pub enum Container {
     Archive,
 }
 
+/// 一个卷这一趟的**读取端形态**：字节从哪种东西上取。
+///
+/// 与[容器形态](Container)不是一件事，两者的分岔正落在**摊开**那一档上：一个 `.7z` 卷
+/// 摊开之后 [`Volume::container`] 仍是归档（输出因此仍一律 `.cbz`），它的读取端却是一个
+/// 目录——字节一个成员一个文件地躺在临时目录里（见 [`Extraction`]）。
+///
+/// **派读取策略问的是这一个**（见 `crate::medium::IoPlan`）：「两遍那一路恒串行」的理由
+/// 是一个 `ZipArchive` 就是一个游标，而摊开的卷手上根本没有那个游标——
+/// 它摊开之后「完全按目录卷走」（ADR 0015 决定第 3 条）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadingEnd {
+    /// 一个目录，一个成员一个文件，各读各的。目录卷与**摊开了的**归档卷都在这里。
+    Directory,
+    /// 一个归档句柄：一个游标，两遍那一路因此是一条顺序扫。
+    Archive,
+}
+
 /// 一个卷：一次处理调用的作用域。
 pub struct Volume {
     /// 卷标识：源目录路径，或归档文件路径。
@@ -220,8 +237,10 @@ impl Volume {
 
     /// 摊开的那个临时目录，没摊开就是 `None`。
     ///
-    /// **只给本模块的用例**：外面看得见它，就有人能把它抄走、让它活得比这个卷长，
-    /// 而「跑完不留孤儿」正是靠这条寿命守住的。
+    /// **只给本模块的用例**：它答得出「摊开了没有」，而那正是几条用例要问的。
+    /// **取字节的那个路径另有出处**——[`Reader::reads_from`]，摊开的卷上它答的就是这个目录。
+    /// 两处借出去的都只是一段 `&Path`：那个 `TempDir` 谁都抄不走，临时目录的寿命由
+    /// [`Extraction`] 的析构说了算，而「跑完不留孤儿」正是靠这条寿命守住的。
     #[cfg(test)]
     fn extraction_dir(&self) -> Option<&Path> {
         self.extraction
@@ -287,7 +306,7 @@ pub struct Member {
 /// 读取层的并发那一支给每条读取线程发一份（见 `crate::read`）。
 ///
 /// **摊开的卷走 [`Directory`](Self::Directory)**：字节在临时目录里，一个成员一个文件。
-/// 这一格上「归档」与「目录」的分界因此不是容器形态，而是[读取形态](ArchiveReading)——
+/// 这一格上「归档」与「目录」的分界因此不是容器形态，而是[读取端](ReadingEnd)——
 /// 一个 `.7z` 卷的 [`Volume::container`] 仍是归档（输出也是），它的读取端却是一个目录。
 ///
 /// # 一趟同时开着几个句柄
@@ -305,17 +324,20 @@ pub struct Member {
 ///   与 `crate::read` 的 `reads`）。真读源字节的只有两处，各按[读取计划](crate::medium::IoPlan)
 ///   里自己那一格派：幂等那一道 `min(fingerprint.count, 成员数)` 条、
 ///   第一遍 `min(readers.count, 成员数)` 条（第二遍不读源，它写的是第一遍的结果）。
-///   **归档卷**上第一遍恒为一条顺序扫、用的就是卷自己那个读取端，因此只有幂等那一道
-///   多开句柄，`Reads` 一析构就全收。**目录卷**上两处都并发，但发下去的是几份卷根，
-///   只有**正在读**的那个成员占一个句柄（本模块的 `read_file` 开完就关）。
+///   **读取端是一个归档句柄**时第一遍恒为一条顺序扫、用的就是卷自己那个读取端，
+///   因此只有幂等那一道多开句柄，`Reads` 一析构就全收。**读取端是一个目录**时
+///   （目录卷，以及摊开了的卷）两处都并发，但发下去的是几份卷根，只有**正在读**的
+///   那个成员占一个句柄（本模块的 `read_file` 开完就关）。
 /// - **写出那一侧**：缓存的溢写文件至多 1 个（`crate::cache`；第一遍起、整卷持有，
 ///   因此**与第一遍那几条读取重叠**），输出容器至多 1 个（`crate::sink`；归档卷是一个
 ///   打开的文件，目录卷逐个成员开完就关，第二遍才有）。
 ///
 /// 三格相加，峰值封顶在 **`min(并发度, 这一卷的成员数) + 3`**，而并发度至多是核数
-/// （[读取计划](crate::medium::IoPlan)按 `--io-mode` 与介质定它）。主项在两种容器上同形：
-/// 归档卷的幂等那一段是「卷自己那一个 + 几条读取线程」，即 `1 + min(fingerprint.count, 成员数)`。
-/// 自变量只有三个：**并发度**、**这一卷的成员数**、**容器形态**。
+/// （[读取计划](crate::medium::IoPlan)按 `--io-mode` 与介质定它）。主项在两种读取端上同形：
+/// 读取端是一个**归档句柄**时，幂等那一段是「卷自己那一个 + 几条读取线程」，
+/// 即 `1 + min(fingerprint.count, 成员数)`；是一个**目录**时卷自己那一个是 0，
+/// 两路各按 `min(那一路的条数, 成员数)` 派——**摊开了的卷落在这一档**。
+/// 自变量只有三个：**并发度**、**这一卷的成员数**、**读取端**。
 /// **这一趟有几个卷不在里面**——它是**核数量级，不是卷数量级**。
 /// 发现落地之后这一句更要紧了：点名一个库，卷数由用户的目录树说了算（ADR 0014）。
 ///
@@ -413,6 +435,34 @@ pub enum Independent {
 }
 
 impl Reader {
+    /// 这个读取端**此刻从哪儿取字节**：目录卷是卷根，随机取的归档卷是那个归档文件，
+    /// 而**摊开的卷是那个临时目录**。
+    ///
+    /// 与 [`Volume::root`] 分开：那一个是**卷标识**——报告、幂等的去处、成员身份一律按它算，
+    /// 摊开之后它仍指着那个归档文件；这一个是**字节此刻住在哪儿**。介质按路径探测
+    /// （ADR 0009 决定第 2 条）探的正是这一个：摊开的卷落在系统临时目录所在的那条
+    /// [读取通道](crate::medium)上，与那个归档来自哪块盘不再有关系。
+    ///
+    /// **借出去的是一段 `&Path`，不是那个 `TempDir`**：借用期不长于这个卷，
+    /// 收摊照旧只由 [`Extraction`] 的析构管，多这一个答案不多一处能让它活得更久的地方。
+    pub fn reads_from(&self) -> &Path {
+        match self {
+            Reader::Directory { root } => root,
+            Reader::Archive { path, .. } | Reader::Unextracted { path } => path,
+        }
+    }
+
+    /// 这个读取端是[哪一种](ReadingEnd)。
+    ///
+    /// **还没摊开的那一份算归档**：[`open`] 恒不返回它（见 [`Reader::Unextracted`]），
+    /// 而万一有一条路绕过了 `open`，「一条顺序扫」是保守的那一头。
+    pub fn reading_end(&self) -> ReadingEnd {
+        match self {
+            Reader::Directory { .. } => ReadingEnd::Directory,
+            Reader::Archive { .. } | Reader::Unextracted { .. } => ReadingEnd::Archive,
+        }
+    }
+
     /// 再要一份读取端：读的是同一个源，与自己**互不影响**。
     ///
     /// 目录卷只是把卷根抄一份，不碰盘。归档卷是**另开一个文件句柄、另解一遍中央目录**——
@@ -1820,6 +1870,80 @@ mod tests {
 
         drop(volume);
         assert!(!dir.exists(), "卷放掉了，{} 还在", dir.display());
+    }
+
+    /// **读取端说得出这一卷此刻从哪儿取字节**——摊开的卷答的是那个临时目录，
+    /// 不是它原本来自的那个 `.7z`。
+    ///
+    /// 介质按路径探测（ADR 0009 决定第 2 条），而**这个路径就是那道探测的输入**：
+    /// 那条边界一格没动，换的只是探哪一个路径（`p4-parking-lot/14`）。
+    ///
+    /// 三种卷在同一条用例里：只有摊开那一半，「答的是临时目录」可能是它对谁都这么答；
+    /// 只有另两半，「答的是卷根」看不出摊开那一档在这一格上与它们分了岔。
+    #[test]
+    fn a_volume_reads_from_wherever_its_bytes_live_right_now() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let solid = solid_archive(&space.path().join("第01话.7z"), &[("001.png", b"first")]);
+        let random = zip_archive(&space.path().join("第02话.cbz"), &[("001.png", b"first")]);
+        let directory = space.path().join("第03话");
+        std::fs::create_dir(&directory).expect("建卷目录");
+        std::fs::write(directory.join("001.png"), b"first").expect("写一页");
+
+        let extracted = open_unwatched(&solid).expect("点得开");
+        let archive = open_unwatched(&random).expect("点得开");
+        let plain = open_unwatched(&directory).expect("点得开");
+
+        // 摊开的卷：字节一个成员一个文件地躺在临时目录里，读取端因此是一个**目录**。
+        assert_eq!(extracted.reader.reading_end(), ReadingEnd::Directory);
+        let lives_in = extracted.reader.reads_from();
+        assert_ne!(lives_in, solid.as_path(), "摊开之后还指着那个归档");
+        assert!(
+            lives_in.join("001.png").is_file(),
+            "{} 里没有摊开的页",
+            lives_in.display()
+        );
+        // 卷标识一格没动：换的只有取字节的那个路径。
+        assert_eq!(extracted.root, solid);
+        assert_eq!(extracted.container, Container::Archive);
+
+        // 随机取的归档卷读的是那个归档文件本身：一个游标。
+        assert_eq!(archive.reader.reading_end(), ReadingEnd::Archive);
+        assert_eq!(archive.reader.reads_from(), random.as_path());
+
+        // 目录卷本来就住在自己的卷根上。
+        assert_eq!(plain.reader.reading_end(), ReadingEnd::Directory);
+        assert_eq!(plain.reader.reads_from(), directory.as_path());
+    }
+
+    /// **摊开的卷交到读取层手里，点名并发就真开出并发那一支**。
+    ///
+    /// 上一条钉的是「它的读取端是一个目录」，这一条钉的是那句话在读取层上**兑现**了：
+    /// 只看[读取计划](crate::medium::IoPlan)里那个数，量到的是**打算**派几条，不是真派了几条
+    /// （`p4-parking-lot/14` 要的是后者）。
+    ///
+    /// 派几条那个算式（`min(点名的条数, 成员数)`，以及开不出句柄时怎么退）不在这里复述——
+    /// 它钉在 `crate::read` 自己的用例里，这一条只问走的是哪一支。
+    #[test]
+    fn an_extracted_volume_really_takes_the_concurrent_path() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let path = solid_archive(
+            &space.path().join("第01话.7z"),
+            &[
+                ("001.png", b"first"),
+                ("002.png", b"second"),
+                ("003.png", b"third"),
+                ("004.png", b"fourth"),
+            ],
+        );
+
+        let mut volume = open_unwatched(&path).expect("点得开");
+        let pages: Vec<&Member> = volume.pages.iter().collect();
+        let taking = crate::read::reads(&mut volume.reader, &pages, 4, crate::read::BUDGET);
+
+        assert!(
+            matches!(taking, crate::read::Reads::Concurrent(_)),
+            "摊开的卷点名 4 条却没走并发那一支"
+        );
     }
 
     /// **预扫那一遍不摊开**：成员表照样是全的，盘上却什么都没多出来。
