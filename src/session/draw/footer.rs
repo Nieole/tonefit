@@ -36,13 +36,14 @@
 //! 这一格有多高不由本模块定：折出来几行就几行，上下限在 [`super::yielding::footer_height`]。
 //! **每一行都按显示宽度折**（[`crate::wrap`]），摆不下时让位的次序见 [`footer`]。
 
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 use tonefit::Instruction;
 
 use super::keys;
 use super::paint::{Painted, Tone};
 use super::report::expandable;
-use super::yielding::FOOTER_HEIGHT;
+use super::yielding::{FOOTER_HEIGHT, footer_max_rows};
 use crate::session::complete;
 use crate::session::live::{Live, Reach};
 use crate::session::state::{
@@ -150,15 +151,19 @@ impl Prompt {
 /// **每一行都按显示宽度折**（[`crate::wrap`]）。从前这一格不折行，窄终端上从行尾切掉，
 /// 而尾巴上摆的是退出——每多一个键，退出那一条就少露一截（停车场 Q75）。
 ///
-/// 摆不下时**让位的次序**，从让得最早的数起：
+/// 摆不下时**先长高，长到顶了才让**（`CONTEXT.md` 的《让位》：高度不够时屏底照折行那一套
+/// 按需长高，长到主区只剩总览那几行加表那一行为止）。顶在哪儿由
+/// [`footer_max_rows`] 答——**一帧只折一趟**：这一层拿着那个数折一次，
+/// 折出来的行数就是这一格的高度（[`super::yielding::footer_height`]）。
+///
+/// 长到顶了仍摆不下，**让位的次序**从让得最早的数起：
 ///
 /// 1. **说明那一行**（下面那一行）——它解释按下去会怎样，摆不下就等于没说，与 [`listed`]
-///    让位给要说的那句话同一条规矩；
+///    让位给要说的那句话同一条规矩。**整句丢，不截前缀**：截出来的半句不是更少的信息，
+///    是另一句话——`……与「说了一个恰好等` 读起来完整，说的却是反的（`no-false-line/03`）；
 /// 2. **要说的那句话**贴着底，一行不让；
 /// 3. **按键那一行折出来的几行一行不让**——退出会话在里面，而不知道怎么退出是最难受的
 ///    一种卡住（`p1-session/10` 的目的）。
-///
-/// 让完仍摆不下，这一格就往下长（见 [`super::yielding::footer_height`]）。
 ///
 /// **屏矮到这一格也长不动时，裁的是底下**——按键那几行留在上面，要说的那句话跟着屏一起没了。
 /// 那一刻这一层不再挑：屏上已经没有地方，而三样里最不能没有的是出路。
@@ -170,7 +175,8 @@ impl Prompt {
 ///
 /// **末尾恒是全部键那一条**（见 [`Asked::all_keys`]）：**那一条在这里接**，
 /// 不在下面各状态那几个函数里各接一遍——一处接完，「恒在末尾」才是结构上成立的。
-pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<Line<'static>> {
+pub(super) fn footer(session: &Session, live: Option<&Live>, screen: Rect) -> Vec<Line<'static>> {
+    let width = screen.width;
     let asked = Asked::new(session, live);
     let Prompt { keys, what } = match session.focus() {
         // 编辑一行时说明那一半摆的是**补全候选**，而「列得下几条」要等这一格分给它
@@ -194,14 +200,21 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, width: u16) -> Vec<
         .map(|notice| marked(notice).folded(width))
         .unwrap_or_default();
     let mut rows = wrap::fold(&keys, width);
-    // 说明那一半分得到几行：按键那几行与要说的那句话先占（让位的次序见上）。
-    // **只算这一次**：补全候选列得下几条按的是同一个数（见 [`listed`]）。
-    let room = usize::from(FOOTER_HEIGHT).saturating_sub(rows.len().saturating_add(said.len()));
+    // 说明那一半分得到几行：**这一格长到顶有几行**（[`footer_max_rows`]，不是那个下限）
+    // 减去按键那几行与要说的那句话（让位的次序见上）。
+    // **只算这一次**：补全候选列得下几条按的是同一个数（见 [`listed`]），
+    // 而那个数与这一格的高度出自同一个上限——窄屏上因此跟着多列几条。
+    let room = usize::from(footer_max_rows(screen.height))
+        .saturating_sub(rows.len().saturating_add(said.len()));
     let what = match session.focus() {
         Focus::Editing(edit) => listed(&asked, session, edit, width, room),
         _ => what,
     };
-    rows.extend(wrap::fold(&what, width).into_iter().take(room));
+    // **整句在，或者整句不在**：摆不下就一行都不摆，不留前缀（见上）。
+    let folded = wrap::fold(&what, width);
+    if folded.len() <= room {
+        rows.extend(folded);
+    }
     // 要说的那句话贴着底：中间垫空行。没有话要说时垫到 [`FOOTER_HEIGHT`] 为止，
     // 与从前那一格逐格相同。
     while rows.len() + said.len() < usize::from(FOOTER_HEIGHT) {
@@ -747,7 +760,9 @@ fn listed(asked: &Asked, session: &Session, edit: &Edit, width: u16, room: usize
 ///
 /// **先砍一刀再逐条试**：一条候选最少占三格（一个字加两个空格的间隔），
 /// 这一格顶天摆得下 `宽 × 行 / 3` 条。一层里有上千个名字是常事，
-/// 而逐条试一遍是平方的——砍掉之后每一帧最多试几十次。
+/// 而逐条试一遍是平方的——砍掉之后每一帧试的次数**跟着这一格分得到几行走**：
+/// 屏底停在 [`FOOTER_HEIGHT`] 那三行上是几十次，而屏高到四十行、这一格长得开时可以上千
+/// （`no-false-line/03` 把 `room` 从下限换成上限之后如此，停车场 Q403 记着这一笔）。
 fn fitting(names: &[&str], width: u16, room: usize) -> usize {
     let ceiling = usize::from(width).saturating_mul(room) / 3 + 1;
     let mut fits = 0;
@@ -873,6 +888,72 @@ mod tests {
         // 全部键在一个键之外。**`F1` 与它并成一行**——两个键派的是同一件事
         // （`p4-parking-lot/07` 票面第三条）。
         assert!(profile.contains(&tight("? F1 全部键")), "{profile}");
+    }
+
+    /// **说明那一行整句在，或者整句不在——屏上没有一句断在半路的话**
+    /// （`no-false-line/03` 的验收：「整句在」）。
+    ///
+    /// 80 列上这一句从前印成半句：`……与「说了一个恰好等`。截出来的半句**不是更少的信息，
+    /// 是另一句话**——它读起来完整，说的却是反的。
+    ///
+    /// 成因是一处自相矛盾：算「这一行分得到几行」时拿的是 [`FOOTER_HEIGHT`]，
+    /// 而那个常量自己的第一句写着**下限，不是定数**。截断因此发生在长高之前，
+    /// 长高永远轮不到。眼下问的是[这一格最多分得到几行](super::super::yielding::footer_max_rows)。
+    #[test]
+    fn the_explanation_is_whole_or_gone_never_cut_mid_sentence() {
+        let mut session = Session::new();
+        session.go_to(Field::Filter);
+        session.press(Key::Enter);
+
+        // 80 列上这一句折成两行，而屏上还空着行：这一格先长高，两行都在。
+        let narrow = tight(&screen(&mut session, None, 80, 24));
+        assert!(
+            narrow.contains(&tight("与「说了一个恰好等于默认的值」是两件事")),
+            "{narrow}"
+        );
+
+        // 宽终端上**一格不动**（`no-false-line/03` 的验收：「宽终端上一格不动」）：
+        // 那里折不出第四行来，整句照旧在，而这一格仍旧停在下限上——
+        // 长高那一路在宽终端上一次都不该走到。
+        let wide = screen(&mut session, None, 120, 40);
+        assert!(
+            tight(&wide).contains(&tight("与「说了一个恰好等于默认的值」是两件事")),
+            "{wide}"
+        );
+        assert_eq!(
+            footer(&session, None, Rect::new(0, 0, 120, 40)).len(),
+            usize::from(FOOTER_HEIGHT),
+            "宽终端上这一格长高了"
+        );
+    }
+
+    /// **长到顶了才丢，而且整句丢**（`no-false-line/03` 的验收：「整句丢、不截前缀」）。
+    ///
+    /// 顶在**主区只剩总览那几行加表那一行**那一档
+    /// （[`MAIN_MIN_HEIGHT`](super::super::yielding::MAIN_MIN_HEIGHT)）：13 行的屏上
+    /// 这一格还长得到四行，那一句折出来的两行都摆得下；再矮一行就长不动了，
+    /// 那一句**整句不在**——屏上宁可没有这一句，也不留半句。
+    ///
+    /// **按键那几行一行不让**：长不动的那一档上让掉的是这一句，不是出路。
+    #[test]
+    fn the_explanation_goes_whole_once_the_footer_cannot_grow_any_further() {
+        let mut session = Session::new();
+        session.go_to(Field::Filter);
+        session.press(Key::Enter);
+
+        // 还长得动：这一格长到四行，整句在。
+        let grown = tight(&screen(&mut session, None, 80, 13));
+        assert!(
+            grown.contains(&tight("与「说了一个恰好等于默认的值」是两件事")),
+            "{grown}"
+        );
+
+        // 再矮一行就长不动了：那一句**整句**让位，半个字都不留。
+        let capped = tight(&screen(&mut session, None, 80, 12));
+        assert!(!capped.contains(&tight("第一格是「没说」")), "{capped}");
+        assert!(!capped.contains(&tight("恰好等")), "留下了半句：{capped}");
+        // 退出会话在按键那几行里，而那几行一行不让。
+        assert!(capped.contains(&tight("? F1 全部键")), "{capped}");
     }
 
     /// **型号那两层各把自己的键摆出来**（`CONTEXT.md` 的《会话》：下钻）。
@@ -1122,6 +1203,21 @@ mod tests {
         // 屏底那一格一行都匀不出来时：一条都不列，而这一句仍旧算得出来、不恐慌。
         let none = listed(&asked, &session, &edit, 120, 0);
         assert!(none.contains("还有 40 条"), "{none}");
+
+        // **分得到几行与说明那一行同一个出处**（`no-false-line/03` 的验收：
+        // 「补全候选那一格用的是同一个数……被同一个 clamp 拦着」）：那个数由
+        // [`footer_max_rows`] 倒推，屏高一格这一格就多分得到一格——窄屏上因此跟着多列几条，
+        // 而拦着它的是同一个 clamp（见 [`super::super::yielding::footer_max_rows`]）。
+        // 不减按键那几行：这里要证的只是「屏高上去，这一格分得到的行跟着多」，
+        // 减几行是 [`footer`] 那一处的事，手抄一个数过来只会在那边改了之后仍旧绿。
+        let room = |height: u16| usize::from(footer_max_rows(height));
+        assert!(room(24) > room(12), "屏高上去了这一格却没多分得到行");
+        let shallow = listed(&asked, &session, &edit, 40, room(12));
+        let deep = listed(&asked, &session, &edit, 40, room(24));
+        assert!(
+            names(&deep) > names(&shallow),
+            "同一档宽度上屏高了却没多列几条：{deep}"
+        );
     }
 
     /// 打字时屏底摆着缓冲与这一层列出来的候选。

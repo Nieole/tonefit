@@ -22,7 +22,7 @@
 //!
 //! | 第几步 | 让的是 | 谁说了算 |
 //! |---|---|---|
-//! | 一 | **屏底**按折出来的行数往下长，长到主区只剩 [`MAIN_MIN_HEIGHT`] 为止 | [`footer_height`] |
+//! | 一 | **屏底**按折出来的行数往下长，长到主区只剩 [`MAIN_MIN_HEIGHT`] 为止 | [`footer_height`]、[`footer_max_rows`] |
 //! | 二 | **总览块一行不砍**——它有几行由它自己说了算 | [`main_split`] |
 //! | 三 | **报告区吃剩下的**：三者都让完仍摆不下时宁可少画表，不少画总览 | [`main_split`] |
 //!
@@ -75,6 +75,10 @@ pub(super) const MAIN_MIN_WIDTH: u16 = 30;
 
 /// 屏底那几行：编辑条、补全候选、要说的那句话。**下限，不是定数**——
 /// 折出来的行摆不下时这一格往下长（见 [`footer_height`]）。
+///
+/// **「这一格分得到几行」问的不是它，是 [`footer_max_rows`]**：拿这个下限当定数去减，
+/// 截断就发生在长高之前，而长高永远轮不到（`no-false-line/03`）。
+/// 它只答两件事——这一格的**地板**，以及没话说时垫到第几行为止。
 pub(super) const FOOTER_HEIGHT: u16 = 3;
 
 /// 主区无论如何要留下的行数：总览块最高 [`OVERVIEW_HEIGHT`] 行，报告区至少一行加上下两条边。
@@ -152,10 +156,21 @@ pub(super) fn config_width(total: u16, expanded: bool) -> u16 {
 /// 「折行还是加一行」，答的是两者都要——折在先，加行只在折完仍摆不下时才发生）。
 fn footer_height(rows: usize, total: u16) -> u16 {
     let rows = u16::try_from(rows).unwrap_or(u16::MAX);
-    rows.clamp(
-        FOOTER_HEIGHT,
-        total.saturating_sub(MAIN_MIN_HEIGHT).max(FOOTER_HEIGHT),
-    )
+    rows.clamp(FOOTER_HEIGHT, footer_max_rows(total))
+}
+
+/// 屏底那一格**最多**分得到几行：一屏的高度减去[主区无论如何要留下的那几行](MAIN_MIN_HEIGHT)，
+/// 下限仍是 [`FOOTER_HEIGHT`]。
+///
+/// **这一个数把那个环断开。** 折得出几行要先知道分得到几行，而这一格有多高又要等折完
+/// （[`footer_height`] 收的正是折出来的行数）——这一条**不问内容**：一屏的高度进去、
+/// 一个数出来，纯算术。屏底那一格因此**一帧只折一趟**（[`super::footer::footer`] 拿着它折，
+/// [`footer_height`] 再按折出来的行数把这一格摆出来），不是先折一次再重折。
+///
+/// **上限只有这一个数**：[`footer_height`] 那个 clamp 用的就是它，
+/// 一处说摆得下、另一处画不出来的那种事因此不成立。
+pub(super) fn footer_max_rows(total: u16) -> u16 {
+    total.saturating_sub(MAIN_MIN_HEIGHT).max(FOOTER_HEIGHT)
 }
 
 /// 横条**收窄到头**那一档：再窄就整条让掉。
@@ -254,6 +269,33 @@ mod tests {
         // 主区已经没得让了，这一格就停在下限上——那时裁的是屏底自己的底下几行。
         assert_eq!(footer_height(6, MAIN_MIN_HEIGHT), FOOTER_HEIGHT);
         assert_eq!(footer_height(6, 0), FOOTER_HEIGHT);
+    }
+
+    /// **上限只有一个数**（`no-false-line/03`）：[`footer_max_rows`] 答的那个数，
+    /// 就是 [`footer_height`] 那个 clamp 的上限。
+    ///
+    /// 两处各算各的，就会有一处说摆得下、另一处画不出来——而屏底那一格正是这么
+    /// 拿着[下限](FOOTER_HEIGHT)当定数去减，把那一句截在半路上的。
+    #[test]
+    fn the_ceiling_the_footer_asks_for_is_the_one_that_clamps_it() {
+        for total in [0, 1, MAIN_MIN_HEIGHT, MAIN_MIN_HEIGHT + 1, 12, 13, 24, 40] {
+            // 要多少行都给不出比上限更多的行：两处是同一个数。
+            assert_eq!(
+                footer_height(usize::MAX, total),
+                footer_max_rows(total),
+                "{total} 行的屏上两处对不上"
+            );
+            // 长到顶也不许把主区挤到地板以下——屏高够的时候两份加起来正好是一屏。
+            if total >= MAIN_MIN_HEIGHT + FOOTER_HEIGHT {
+                assert_eq!(
+                    footer_max_rows(total) + MAIN_MIN_HEIGHT,
+                    total,
+                    "{total} 行的屏上长到顶那一档不对"
+                );
+            }
+        }
+        // 宽终端那一档：折不出第四行来时这一格恒是下限，长高那一路一格不动。
+        assert_eq!(footer_height(1, 40), FOOTER_HEIGHT);
     }
 
     /// **横条先收窄，窄过 [`BAR_MIN_WIDTH`] 就整条让掉**（本模块《宽度不够》第三步，
@@ -606,7 +648,7 @@ mod tests {
 "│口味层 · 这一趟的立场                           █│ 出。                       │"
 "│  适配方式　　　　默认（height）                █│              按 x 执行：写 │"
 "│    ● 默认（height）                            █│              到输出根。    │"
-"│    ○ height                                    █│              跑起来之前必填│"
+"│    ○ height                                    ║│              跑起来之前必填│"
 "│    ○ inside                                    ║│              的两项是型号与│"
 "│  裁边　　　　　　默认（裁）                    ║│              输出根。      │"
 "│  跨页拆分　　　　默认（拆）                    ║│                            │"
@@ -615,12 +657,12 @@ mod tests {
 "│  滤波器　　　　　默认（lanczos3）              ║│                            │"
 "│  位深　　　　　　自动（判据说了算）            ║│                            │"
 "│  抖动　　　　　　自动（判据说了算）            ║│                            │"
-"│  逐页　　　　　　默认（关）                    ║│                            │"
-"│  缓存预算　　　　默认（512.0 MiB）             ▼│                            │"
+"│  逐页　　　　　　默认（关）                    ▼│                            │"
 "└────────────────────────────────────────────────┘└────────────────────────────┘"
 " 适配方式 · ↑ ↓ j k 选 · → ⏎ 空格 定 · ← Esc 一格不改地退一步 · Ctrl-C q 退出 · "
 " ? F1 全部键                                                                    "
 " 第一格是「没说」：它跟着默认值走，存成预设时那一项不写进去——与「说了一个恰好等 "
+" 于默认的值」是两件事，后者往后默认改了也仍是那个值                             "
 "#;
 
     /// 见 [`the_expanded_volume_reads_at_eighty_by_twenty_four`]。
@@ -644,11 +686,11 @@ mod tests {
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
-"│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
 " ↑ ↓ j k 选一页 · a 列全部页 · ⇥ 换下一卷 · Esc e 收起，左栏回来 · Ctrl-C q 退出"
 " · ? F1 全部键                                                                  "
 " 只列要紧的页：特例 · 失败 · 部分救回 · 几何门不成立 · 宽溢出 · 兜底上界，加上定"
+" 档页                                                                           "
 "#;
 
     /// **快照：极窄那一档。**见

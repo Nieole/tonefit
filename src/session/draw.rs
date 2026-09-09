@@ -105,7 +105,7 @@ use yielding::{Panes, main_split, panes};
 pub fn shell(frame: &mut Frame, session: &mut Session, live: Option<&Live>) {
     let screen = frame.area();
     // 屏底那一格先摆出来：它有几行由折行说了算，而这一屏怎么切在 [`panes`] 一处答完。
-    let bottom_rows = footer(session, live, screen.width);
+    let bottom_rows = footer(session, live, screen);
     let expanded = session.expansion().is_some();
     let Panes {
         bottom,

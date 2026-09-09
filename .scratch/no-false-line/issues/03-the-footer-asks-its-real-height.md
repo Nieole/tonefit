@@ -22,13 +22,159 @@
 
 **Blocked by:** 01 — 夹具喂全事件流那一半（同一批快照）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 80 列上说明那一行**整句在**——屏上没有一句断在半路的话
-- [ ] 屏上还空着行时屏底**先长高**，不先丢内容
-- [ ] 长到顶（主区只剩总览那几行加表那一行）之后才丢，而且**整句丢**、不截前缀
-- [ ] 屏底那个模块的文档**改口**，与《让位》一致；`CONTEXT.md` 一个字不动
-- [ ] 那个环真的断了：**一帧只折一趟**，不是先折一次再重折
-- [ ] 补全候选那一格用的是同一个数，窄屏上跟着多列几条，且被同一个 clamp 拦着
-- [ ] 宽终端上**一格不动**（那里折不出第四行来）
-- [ ] 三条闸门全绿
+- [x] 80 列上说明那一行**整句在**——屏上没有一句断在半路的话
+- [x] 屏上还空着行时屏底**先长高**，不先丢内容
+- [x] 长到顶（主区只剩总览那几行加表那一行）之后才丢，而且**整句丢**、不截前缀
+- [x] 屏底那个模块的文档**改口**，与《让位》一致；`CONTEXT.md` 一个字不动
+- [x] 那个环真的断了：**一帧只折一趟**，不是先折一次再重折
+- [x] 补全候选那一格用的是同一个数，窄屏上跟着多列几条，且被同一个 clamp 拦着
+- [x] 宽终端上**一格不动**（那里折不出第四行来）
+- [x] 三条闸门全绿
+
+## 落地记录
+
+### 屏底那一格问的是「长到顶有几行」，不是那个下限
+
+`src/session/draw/yielding.rs` 多了一个**纯算术**的函数：
+
+```rust
+pub(super) fn footer_max_rows(total: u16) -> u16 {
+    total.saturating_sub(MAIN_MIN_HEIGHT).max(FOOTER_HEIGHT)
+}
+```
+
+那个表达式**从 `footer_height` 的 clamp 里搬出来**，`footer_height` 现在回头调它——
+票面要的「与那个高度函数的 clamp 用同一个数」因此是**结构上的**，不是抄的。
+`the_ceiling_the_footer_asks_for_is_the_one_that_clamps_it` 钉着这一条：
+`footer_height(usize::MAX, total)` 恒等于 `footer_max_rows(total)`，
+要多少行都给不出比上限更多的行；屏高够时 `footer_max_rows(total) + MAIN_MIN_HEIGHT == total`，
+长到顶那一档正好是主区的地板。
+
+`footer` 那一算换的就是这一个数：
+
+```rust
+-let room = usize::from(FOOTER_HEIGHT).saturating_sub(rows.len().saturating_add(said.len()));
++let room = usize::from(footer_max_rows(screen.height))
++    .saturating_sub(rows.len().saturating_add(said.len()));
+```
+
+签名跟着从 `width: u16` 换成 `screen: Rect`——这一层现在要问屏有多高，
+而两个 `u16` 挨着传是可以传反的。调用点只有一处（`src/session/draw.rs`）。
+
+### 那个环本来就是断的，断错的是手里拿的那个数
+
+票面说的环是「要知道分得到几行才折得出行、要拿到行才算得出高度」。
+`draw.rs` 那两句的次序其实早就把它断开了——先折，再拿折出来的行数切屏：
+
+```rust
+let bottom_rows = footer(session, live, screen);
+let Panes { .. } = panes(screen, expanded, bottom_rows.len());
+```
+
+**一帧只折一趟，本票之前就是**，本票也没有添第二趟。坏的是折的时候手里拿的是**下限**：
+`room` 顶天等于 `3` 减掉按键那几行，说明那一行因此在 `.take(room)` 那里就被截掉，
+`footer_height` 收到的永远是三行——**长高那一路一次都没走到**。
+换成上限之后，这一格该多高在折之前就答得出来，不必折两趟、也不必重折。
+
+### 整句丢，不截前缀
+
+`.take(room)` 换成全有或全无：
+
+```rust
+let folded = wrap::fold(&what, width);
+if folded.len() <= room {
+    rows.extend(folded);
+}
+```
+
+截出来的半句**不是更少的信息，是另一句话**：`……与「说了一个恰好等` 读起来完整，
+说的却是反的。`the_explanation_goes_whole_once_the_footer_cannot_grow_any_further`
+钉的是那个边界——80×13 上这一格还长得到四行，整句在；80×12 上长不动了，
+`第一格是「没说」` 与 `恰好等` 屏上一个字都找不到，而 `? F1 全部键` 仍在
+（按键那几行一行不让，退出会话在里面）。
+
+### 改口的是屏底那个模块，`CONTEXT.md` 一个字没动
+
+`footer` 那段《让位的次序》从前写着「1. 说明那一行……**让完仍摆不下，这一格就往下长**」，
+与《让位》正相反。改成**先长高，长到顶了才让**；那三条次序留着——
+它们答的是「长到顶之后谁先让」，而那一问《让位》没答，本来就归这一格自己。
+
+**反的只有 `footer` 那一段。** `yielding.rs` 模块文档《高度不够》那张表本来就是对的
+（「屏底按折出来的行数往下长，长到主区只剩 `MAIN_MIN_HEIGHT` 为止」），
+本票只往它那一行补了 `footer_max_rows` 的指路。`FOOTER_HEIGHT` 的文档补了一句：
+「这一格分得到几行」问的不是它——它只答这一格的**地板**，以及没话说时垫到第几行为止。
+
+### 屏上让出去的是滚动条上那一行与两行空的，一行**读不到**的字都没多
+
+80×24 上真长高的只有两副，两张快照照实重录：
+
+| 快照 | 屏底 | 让出去的那一行 | 补回来的 |
+|---|---|---|---|
+| `AT_EIGHTY_BY_TWENTY_FOUR_VALUING` | 3 → 4 行 | 左栏末行 `缓存预算`，**加**报告区一行空行 | `与「说了一个恰好等于默认的值」是两件事，后者往后默认改了也仍是那个值` |
+| `AT_EIGHTY_BY_TWENTY_FOUR_EXPANDED` | 3 → 4 行 | 逐页表底下一行**空行** | `……兜底上界，加上定`**`档页`** |
+
+让出去的三行里**有一行是字**：左栏那个 `缓存预算`。它与报告区那两行空行不同档——
+左栏本来就在滚动条上（那一栏右边一直印着 `▲ █ ║ ▼`），少露一行**够得着**，
+按 `↑↓` 就回来；报告区让掉的两行本来就空着。屏上因此没有多出一处**读不到**的东西，
+而屏底少了一句读起来完整、说的却是反的话。
+
+**`nfl/01` 预警的那一行没有掉出去。** 那句话说的是「03 把屏底长高、报告区少一行时，
+`JPEG 数据截断` 会无声掉出去」——而 `THE_TABLE_NARROW` 是**卷表**那一副，
+它的说明那一行（`跟随着最新的那一卷……`）折出来正好一行，加上按键那两行正好三行，
+`room` 够用，**长高那一路在那一档上一次都没走到**。那张快照本票一个字节没动，
+`JPEG 数据截断` 仍在屏上。记停车场 **Q404**，好让 `nfl/04`／`05` 不照着一句
+不成立的预判去设计滚动。
+
+### 补全候选跟着放开了，那是票面要的，也记了一条
+
+`room` 换数之后，`listed`／`fitting` 那一路的上限**跟着放开**——票面第六条要的正是
+「用的是同一个数……且被同一个 clamp 拦着」。代价是 40 行的终端上这一格最多分得到 31 行，
+一层里有几百个目录时屏底会长到主区的地板。**照票面走**，同时记停车场 **Q403**：
+另一条路（给候选单独一个上限）也站得住，但那等于在屏底再添一个各算各的数，
+而本票修的正是那种数。
+
+### 数
+
+三条闸门跑满（`cargo xtask gate`），三条都绿，一条失败都没有。
+
+| 闸门 | 最后一行 | 合计 |
+|---|---|---|
+| `cargo test` | `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`（Doc-tests 那一格） | **856 通过 0 失败**；lib **232** / bin **347** |
+| `cargo test --no-default-features` | `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`（Doc-tests 那一格） | **725 通过 0 失败**；lib **232** / bin **216** |
+| `cargo check --features profiling` | ``Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.99s`` | 干净，一条告警都没有 |
+
+**只有闸门 1 涨，涨 3**（bin 344 → 347）：新添的三条用例全在 `src/session/draw/` 底下，
+那一带整个在 `tui` 特性**后面**——闸门 2 够不着它们，bin **216** 一格没动，
+lib 两条都是 **232**（本票不碰库）。第四条改的是既有用例
+`the_completion_candidates_fill_the_room_and_say_how_many_are_left`，不添新的一条。
+
+**闸门之外那一遍**（`cargo xtask polish`）：`cargo fmt --check` 干净；
+`cargo clippy --all-targets` 与 `--all-targets --no-default-features` 两遍都零告警；
+`cargo doc --no-deps` 仍是 **15 条告警**（`warning: \`tonefit\` (lib doc) generated 15 warnings`），
+**一条没多**。
+
+### 停车场
+
+收 **Q191**（屏底那一行变长之后，说明那一行在 80 列上只剩得下前一半）——
+它那一条《处置》早写着「先判成分岔，判错了：屏底那个模块的文档早写着让位次序，
+代码与它对着干」，本票走的正是它指的那条路。
+
+新记 **Q403**（补全候选跟着屏底一起长高，一层里有几百条时会长到主区的地板，
+连带 `fitting` 每一帧试的次数也跟着放开）· **Q404**（`nfl/01` 交给 03 的那句预警
+没有成立，`THE_TABLE_NARROW` 一行都没掉出去）· **Q405**（`FOOTER_HEIGHT` 现在纯粹是
+地板，名字却叫 HEIGHT——审查提的，18 处机械改名不塞进本票）。
+
+### 审查提的，本票当场改掉的
+
+- **稳定引用**（`CLAUDE.md`《文档写作》第 5 条）：四处新文档原本写「本票的验收第一/三/六/七条」，
+  验收清单一重排就失效，改成「票号 + 那一条自己的话」。
+- **一句说过头的话**：《屏上让出去的……》那个小节标题原本写「两行都是空的」，
+  而左栏让掉的 `缓存预算` 是一行字——标题与正文一起改准。
+- **一颗自己的钉子**：「宽终端上一格不动」原本只断言那句话在场，靠别处的旧快照兜着；
+  补上 `footer(…, Rect::new(0, 0, 120, 40)).len() == FOOTER_HEIGHT`。
+- **一个手抄的数**：候选那条断言里的 `saturating_sub(2)` 去掉——要证的只是
+  「屏高上去，这一格分得到的行跟着多」，减几行是 `footer` 那一处的事。
+- **一句不再成立的文档**：`fitting` 从前写着「每一帧最多试几十次」，`room` 放开之后
+  可以上千，照实改口并指向 Q403。
