@@ -662,6 +662,14 @@ pub const fn plain(bit_depth: BitDepth) -> tonefit::Candidate {
     tonefit::Candidate::new(bit_depth, Dither::Off)
 }
 
+/// 同一档位深上抖过的那个候选，[`plain`] 的孪生。
+///
+/// 判据的性质用例一律拿这一对并排比。两个摆在一处：只有 `plain` 在共享夹具里、
+/// 另一个各测试二进制各写一遍，是走散的开始。
+pub const fn dithered(bit_depth: BitDepth) -> tonefit::Candidate {
+    tonefit::Candidate::new(bit_depth, Dither::FloydSteinberg)
+}
+
 /// 基准设备：`CONTEXT.md` 里阈值标定的那台。不点名 profile 的用例都用它。
 pub const BASELINE_DEVICE: &str = "kobo-libra-2";
 
