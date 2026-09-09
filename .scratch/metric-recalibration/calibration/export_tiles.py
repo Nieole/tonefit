@@ -57,6 +57,7 @@ def main(ref_root: Path, cand_root: Path, dry_path: Path, out: Path) -> int:
             store[f"{key[0]}|{key[1]}|ref_grain"] = ref["grain"]
             store[f"{key[0]}|{key[1]}|activity"] = ref["activity"]
             store[f"{key[0]}|{key[1]}|tone"] = ref["tone"]
+            store[f"{key[0]}|{key[1]}|flat_activity"] = ref["flat_activity"]
             for label, (depth, folder) in DEPTHS.items():
                 # tonefit 把输出镜像到 `<out>/<源目录名>/…`，所以候选那一层的目录名
                 # 就是参照根目录自己的名字——不写死 "ref8"，换一批素材才不用改代码。

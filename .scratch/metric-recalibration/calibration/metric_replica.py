@@ -106,6 +106,14 @@ def tile_slices(height: int, width: int):
             yield y, x, h, w
 
 
+def _tile_broadcast(per_tile: np.ndarray, shape) -> np.ndarray:
+    """把逐块的一个数摊回逐像素，供「离块内均值多远」那一种活动度用。"""
+    out = np.empty(shape, dtype=np.float64)
+    for i, (y, x, h, w) in enumerate(tile_slices(*shape)):
+        out[y : y + h, x : x + w] = per_tile[i]
+    return out
+
+
 def _tile_means(values: np.ndarray, height: int, width: int) -> np.ndarray:
     """把逐像素的量按块求平均，返回行优先的一维数组。"""
     out = []
@@ -129,12 +137,21 @@ def reference_side(image: np.ndarray, ppi: int) -> dict:
     # 块的参照亮度。今天的判据用不着它——它是**试形状**用的：`04` 的真机判读
     # 证明判据缺一维背景亮度，而任何候选形状都要按块取一个亮度。
     tone = _tile_means(f, height, width)
+    # **块内均值**式的活动度：像素离**这一块自己的均值**有多远。
+    #
+    # 与上面那个 `activity`（离**局部**均值多远）是两件事：ADR 0002 特意取局部均值，
+    # 为的是让平缓斜坡**透明**——斜坡不该给自己买到掩蔽，因为 banding 在斜坡上最显眼。
+    # 那条理由对**低通项**成立；对**颗粒项**正好相反：真机说连续灰调（斜坡）上
+    # FS 的颗粒看不见，即斜坡**确实**掩蔽颗粒。同一个量做不了这两件相反的事，
+    # 所以这里另备一个会被斜坡触发的。
+    flat_activity = _tile_means(np.abs(f - _tile_broadcast(tone, f.shape)), height, width)
     return {
         "kernel": kernel,
         "low_pass": lp,
         "grain": grain,
         "activity": activity,
         "tone": tone,
+        "flat_activity": flat_activity,
     }
 
 

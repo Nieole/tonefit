@@ -143,6 +143,7 @@ class Tiles:
             "grain": self.z[f"{key}|{depth_label}|grain"],
             "ref_grain": self.z[f"{key}|ref_grain"],
             "tone": self.z[f"{key}|tone"],
+            "flat_activity": self.z[f"{key}|flat_activity"],
         }
 
 
