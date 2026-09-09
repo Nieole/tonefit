@@ -8,7 +8,8 @@
 
     python export_tiles.py <ref8 目录> <cand 目录> <dry.json> <出口 npz>
 
-`ref8` 下一个子目录是一组，组里是参照 8bit 的页；`cand/<档名>/ref8/<组>/<页>`
+参照根目录下一个子目录是一组，组里是参照 8bit 的页；候选在
+`<cand>/<档名>/<参照根目录名>/<组>/<页>`
 是 tonefit 渲出的候选。候选**不由本脚本量化**——直接用 tonefit 的产物，
 少一层「Python 量化与 quantize.rs 等不等价」的风险。
 """
@@ -57,7 +58,9 @@ def main(ref_root: Path, cand_root: Path, dry_path: Path, out: Path) -> int:
             store[f"{key[0]}|{key[1]}|activity"] = ref["activity"]
             store[f"{key[0]}|{key[1]}|tone"] = ref["tone"]
             for label, (depth, folder) in DEPTHS.items():
-                cand_path = cand_root / folder / "ref8" / group_dir.name / page.name
+                # tonefit 把输出镜像到 `<out>/<源目录名>/…`，所以候选那一层的目录名
+                # 就是参照根目录自己的名字——不写死 "ref8"，换一批素材才不用改代码。
+                cand_path = cand_root / folder / ref_root.name / group_dir.name / page.name
                 cand = candidate_side(load(cand_path), ref)
                 store[f"{key[0]}|{key[1]}|{label}|low_pass_error"] = cand["low_pass_error"]
                 store[f"{key[0]}|{key[1]}|{label}|grain"] = cand["grain"]
