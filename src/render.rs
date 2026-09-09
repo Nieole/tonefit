@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 
 use tonefit::{
     CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
-    Voice, VolumeFailure, VolumeReport, VolumeVerdict, aggregation, composition,
+    Voice, VolumeFailure, VolumeReport, VolumeVerdict, aggregation, composition, masking,
 };
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
@@ -277,8 +277,8 @@ pub enum Field {
     ColorToGray,
 }
 
-/// 抬头：这批输出给哪台设备、页尺寸照哪种适配方式算出、判据是怎么聚合出来的，
-/// 以及这一趟写不写盘。
+/// 抬头：这批输出给哪台设备、页尺寸照哪种适配方式算出、判据是什么形状
+/// （构成 · 掩蔽 · 聚合三行），以及这一趟写不写盘。
 ///
 /// 一趟只出一次。它吃的是整份报告而不是单独一个 profile——报告是**逐卷攒出来的**
 /// （ADR 0011），攒到一半的那一份同样答得出这几件事。
@@ -303,6 +303,13 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // （ADR 0002 决定第 5 条）。判据不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
     text.push_str(&format!("判据构成 {}\n", composition()));
+    // 那个读数落在有结构的块上还要打一道折，而打折的两个数**一个都没标定**
+    // （ADR 0002 决定第 4 条）。它与下面那一行的 K 同一个待遇：数摆出来，
+    // 没标定这件事跟着摆出来——逐页那一行的每个数都经过这道折扣，不说，
+    // 读的人以为判据只欠 K 那一笔账。
+    // 它夹在构成与聚合之间，照的是**一块读数走过的次序**：由什么组成 → 怎么加权 →
+    // 怎么收成一个数。三行说的是一条流水线，次序一散读的人就得自己拼。
+    text.push_str(&format!("判据掩蔽 {}\n", masking()));
     // 逐页那些「判据 …」的数都是这套取法收出来的，而取法里的 K 还没标定。
     // 它与阈值同一个待遇：数摆出来，没标定这件事跟着摆出来（ADR 0002 决定第 3 条）。
     // 它自成一行、不接在 profile 后面——判据聚合眼下对所有 profile 都一样，不是这台设备的事。
@@ -1735,10 +1742,11 @@ mod tests {
 
         let text = plain::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行（构成与聚合）、
+        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**
+        // （构成、掩蔽、聚合——一块的读数由什么组成、怎么加权、怎么收成一个数）、
         // **目录一行**（`volume-discovery/08`：命令行那一副把这一枝摆在它那几卷前面）、
         // 卷六行（去处、几何门、卷级、定档页、读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 15);
+        assert_eq!(text.lines().count(), 16);
         // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
         assert!(text.contains("裁边 按行列墨量占比"), "{text}");
@@ -1794,11 +1802,31 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("地板盲测标定于 boox-poke6"), "{text}");
+        // 一块的读数还要按块内活动度打一道折，而打折的那两个数**一个都没标定**
+        // （ADR 0002 决定第 4 条）。它们与 K 同一个待遇：数摆出来，没标定这件事跟着摆出来
+        // ——不说，读的人无从判断这一栏还欠着几笔账。
+        //
+        // 断言问的是**整段逐字出自 `Masking` 的 `Display`**，不是抄几个片段过来比：
+        // 抄片段等于把那一份措辞的格式（`{:.2}` 与 `{:.1}`）在这里再写一遍，
+        // 而 ADR 0016 要的正是「措辞只有一处出处」。标定把那两个数换掉时这一条不跟着改。
+        assert!(text.contains(&masking().to_string()), "{text}");
+        // 而那一份必须把「没标定」说出来——这一条问的是**说了什么**，不是出自哪里。
+        assert!(text.contains("地板与拐点均未标定占位值"), "{text}");
         assert!(
             text.contains(&format!("不宽于 {} 块", aggregation().tail_tiles)),
             "{text}"
         );
         assert!(text.contains("K 未标定占位值"), "{text}");
+        // 三行的次序照的是**一块读数走过的次序**：由什么组成 → 怎么加权 → 怎么收成一个数
+        // （ADR 0002 决定第 5、4、3 条）。摆乱了报告仍读得通，但那三行说的是一条流水线，
+        // 次序一散，读的人就得自己拼。
+        let line_of = |head: &str| {
+            text.lines()
+                .position(|line| line.starts_with(head))
+                .unwrap_or_else(|| panic!("抬头里没有「{head}」那一行：{text}"))
+        };
+        assert!(line_of("判据构成") < line_of("判据掩蔽"), "{text}");
+        assert!(line_of("判据掩蔽") < line_of("判据聚合"), "{text}");
         // 卷成为不可分割的处理单元是 ADR 0005 认下的代价：用量与有没有溢写都要说出来。
         assert!(text.contains("缓存 1 页 1.0 MiB"), "{text}");
         assert!(text.contains("未溢写"), "{text}");
@@ -2378,9 +2406,9 @@ mod tests {
 
         let text = plain::report(&report, Mode::Process);
 
-        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状两行、**目录一行**、
+        // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**、**目录一行**、
         // 卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 10);
+        assert_eq!(text.lines().count(), 11);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
