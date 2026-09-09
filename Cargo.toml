@@ -136,6 +136,12 @@ tui = ["dep:ratatui"]
 name = "smoke"
 harness = false
 
+# 真机护栏那四条同一个理由：第四条要一手素材，没素材时跳过要印得出跳过。
+# 见 `tests/perceptual.rs` 的模块文档。
+[[test]]
+name = "perceptual"
+harness = false
+
 [dev-dependencies]
 # 夹具要按字节手搓 ZIP——`zip` 的写入端只收 Rust 字符串，编不出 GBK 成员名，
 # 也置不出「没有 UTF-8 标志」这个恰恰要测的状态。

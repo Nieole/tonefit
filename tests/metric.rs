@@ -9,12 +9,7 @@
 
 mod fixtures;
 
-use tonefit::{BitDepth, Candidate, Dither, GrayImage, Reference, Size, quantize, score};
-
-/// 同一档位深上抖过的那个候选。不抖动的那个在 `fixtures::plain`。
-const fn dithered(bit_depth: BitDepth) -> Candidate {
-    Candidate::new(bit_depth, Dither::FloydSteinberg)
-}
+use tonefit::{BitDepth, Candidate, GrayImage, Reference, Size, quantize, score};
 
 /// 把 `candidate` 量化出来，量它离参照有多远。
 ///
@@ -36,7 +31,7 @@ const PAGE: Size = Size::new(640, 832);
 fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
     let reference = baseline_reference(fixtures::gradient(PAGE));
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
-    let dithered = quantize(reference.image(), dithered(BitDepth::One));
+    let dithered = quantize(reference.image(), fixtures::dithered(BitDepth::One));
 
     let plain_score = score(&reference, &plain, BitDepth::One);
     let dithered_score = score(&reference, &dithered, BitDepth::One);
@@ -68,7 +63,7 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
 fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() {
     let reference = baseline_reference(resolved_screentone(PAGE));
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
-    let dithered = quantize(reference.image(), dithered(BitDepth::One));
+    let dithered = quantize(reference.image(), fixtures::dithered(BitDepth::One));
 
     let plain_score = score(&reference, &plain, BitDepth::One);
     let dithered_score = score(&reference, &dithered, BitDepth::One);
@@ -123,7 +118,7 @@ fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
     let of = |candidate| reading(&reference, candidate);
 
-    let one_bit_dithered = of(dithered(BitDepth::One));
+    let one_bit_dithered = of(fixtures::dithered(BitDepth::One));
     let two_bit_plain = of(fixtures::plain(BitDepth::Two));
 
     assert!(
@@ -158,7 +153,7 @@ fn grain_below_the_visibility_floor_is_not_charged_for() {
 
     for depth in [BitDepth::One, BitDepth::Two, BitDepth::Four] {
         let floor = tonefit::composition().floor(depth);
-        let dithered_score = of(dithered(depth));
+        let dithered_score = of(fixtures::dithered(depth));
         let plain_score = of(fixtures::plain(depth));
 
         assert!(
@@ -187,7 +182,7 @@ fn the_grain_term_reads_back_on_two_bits_too() {
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
     let of = |candidate| reading(&reference, candidate);
 
-    let dithered_score = of(dithered(BitDepth::Two));
+    let dithered_score = of(fixtures::dithered(BitDepth::Two));
     let plain_score = of(fixtures::plain(BitDepth::Two));
 
     assert!(
@@ -436,7 +431,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
     assert!(denser.ppi > coarser.ppi);
 
     let page = fixtures::gray_image(&fixtures::gradient(PAGE));
-    let dithered = quantize(&page, dithered(BitDepth::One));
+    let dithered = quantize(&page, fixtures::dithered(BitDepth::One));
     let on = |panel| {
         let reference = Reference::new(panel, page.clone());
         score(&reference, &dithered, BitDepth::One)
