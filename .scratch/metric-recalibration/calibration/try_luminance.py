@@ -32,7 +32,9 @@ L 组十五格连同真机答案也在，于是任何候选形状都能立刻问
 
 用法：
 
-    python try_luminance.py <tiles.npz> <ladder 目录> <真机包目录> "L: ..."
+    python try_luminance.py <tiles.npz> <ladder 目录> <真机包目录> "L: ..."         [<复判包目录> "R: ..."]
+
+给了复判包就用它修正那几格：两次一致取那个答案，两次相反记成「平」。
 """
 
 import json
@@ -72,9 +74,34 @@ def page_score(parts, tone, grain_ratio, low_pass_ratio, m_floor, m_knee, shape,
     return float(_aggregate(weight * (low + grain * luminance_weight(tone, shape, a))))
 
 
-def ladder_questions(ladder_dir: Path, bundle: Path, line: str):
-    """L 组十五格：每格给出（背景灰度、离格量、真机答案）。"""
+def recheck_truth(recheck_bundle: Path, line: str) -> dict:
+    """复判包的答案 → `{格: 修正后的真值}`。
+
+    同一格放了两次、左右顺序相反：**两次一致**就是那一格的真值（上一轮若与它不同，
+    上一轮那个是噪声）；**两次相反**说明它在判读边界上，记成 `平`——
+    边界上的答案是随机的，不该拿去定形状。
+    """
+    rows = decode(recheck_bundle, [line])["R_复判"]
+    picks = {}
+    for r in rows:
+        if r["这一格是"] == "复判":
+            picks.setdefault(r["格"], []).append(r["判读者选的"])
+    fixed = {}
+    for cell, both in picks.items():
+        fixed[cell] = both[0] if len(both) == 2 and both[0] == both[1] else "平"
+    return fixed
+
+
+def ladder_questions(ladder_dir: Path, bundle: Path, line: str, fixed: dict | None = None):
+    """L 组十五格：每格给出（背景灰度、离格量、真机答案）。
+
+    `fixed` 是复判修正过的那几格，覆盖头一轮的答案。
+    """
     rows = decode(bundle, [line])["L_平坦调阶梯"]
+    if fixed:
+        for r in rows:
+            if r["格"] in fixed:
+                r["判读者选的"] = fixed[r["格"]]
     return [
         {
             "格": r["格"],
@@ -127,9 +154,12 @@ def score_shape(tiles, ladder, ladder_reads, params, shape, a, q=0.0):
 
 
 def main() -> int:
-    npz, ladder_dir, bundle, line = sys.argv[1:5]
+    npz, ladder_dir, bundle, line, *rest = sys.argv[1:]
     tiles = Tiles(Path(npz))
-    ladder = ladder_questions(Path(ladder_dir), Path(bundle), line)
+    fixed = recheck_truth(Path(rest[0]), rest[1]) if len(rest) >= 2 else None
+    if fixed:
+        print("复判修正：", "，".join(f"{k} → {v}" for k, v in fixed.items()), "\n")
+    ladder = ladder_questions(Path(ladder_dir), Path(bundle), line, fixed)
     ladder_reads = json.load(open(Path(ladder_dir) / "读数.json", encoding="utf-8"))
 
     print("L 组十五格：每种形状答对几格（`平` 算两边都对，满分 15）\n")
