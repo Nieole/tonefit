@@ -523,6 +523,45 @@ fn aborting_in_the_first_pass_never_lets_the_second_one_start() {
     );
 }
 
+/// **逐页那条路上第一遍答中止，输出目录同样纹丝不动**（12 号票第 6 条前半）。
+///
+/// 那条路上第一遍多了一道工序：一页的档在滚动窗口里定下来的当场就量化、编码了。
+/// **编好不等于写出**——字节进的是缓存，落盘仍旧只在第二遍。上面那一条测的是默认那条路，
+/// 而窗口是这条路上新加的东西，正是该另钉一遍的地方。
+///
+/// 断言与上面那条同形：第二遍不在走过的那张单子上，输出根下一个名字都没有。
+#[test]
+fn aborting_in_the_first_pass_writes_nothing_on_the_per_page_path_either() {
+    let space = Workspace::new();
+    let volume = three_page_volume(&space, "volume-a");
+    let stop = StopsAtAPageBoundary::new(
+        &space,
+        "volume-a",
+        Pass::First,
+        AFTER_THE_FIRST_PAGE,
+        Instruction::Abort,
+    );
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        progress: Some(ProgressSink::new(stop.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("按停不是失败");
+
+    assert_eq!(
+        stop.passes(),
+        vec![Pass::Fingerprint, Pass::First],
+        "中止在第一遍上按下，第二遍却照样开了工"
+    );
+    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert_eq!(
+        fixtures::names_in(&space.out()),
+        Vec::<String>::new(),
+        "第二遍都没开工，输出根下却有东西"
+    );
+}
+
 /// 页边界那个检查点在**幂等这一道**上也在：那一遍答中止，它后面两遍一遍都不开工。
 ///
 /// 两个数一起断言，各钉一头：

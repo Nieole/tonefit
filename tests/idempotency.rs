@@ -412,6 +412,72 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
     );
 }
 
+/// **逐页那条路上那份记录是第一遍盖的，字段一格不差**（12 号票）。
+///
+/// 那条路上量化与编码提到了第一遍——一页的档在滚动窗口里定下来的当场就编好了，
+/// 盖记录的于是不再是第二遍的 `Encode`，而是窗口自己。这一条问的就是**换了盖章的人之后
+/// 那七项还对不对**：判定与理由取自报告，而报告由汇总那一处独立算出来
+/// ——两处对不上，写出去的字节就与报告说的那一档分了家。
+///
+/// 定档页那一项在这条路上恒不在场（`--per-page` 关掉了上包络），理由因此是逐页那三种之一，
+/// 不带 `driven by page`。
+#[test]
+fn the_record_on_the_per_page_path_still_names_the_verdict_and_its_reason() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    assert_eq!(
+        report.volumes[0].verdict,
+        Some(VolumeVerdict::PerPage),
+        "上包络没被关掉，测的就不是滚动窗口那条路"
+    );
+    for page in &report.volumes[0].pages {
+        let verdict = fixtures::verdict(page);
+        let text = fixtures::read_png_text(&page.output);
+        let field = |keyword: &str| fixtures::png_field(&text, keyword);
+
+        assert_eq!(
+            field("Software"),
+            Some(format!("tonefit {}", env!("CARGO_PKG_VERSION")))
+        );
+        assert_eq!(field("tonefit:profile"), Some("kobo-libra-2".to_owned()));
+        for keyword in ["tonefit:params", "tonefit:source"] {
+            let value = field(keyword).unwrap_or_else(|| panic!("{keyword} 没写进去"));
+            assert!(
+                value.len() == 32 && value.chars().all(|c| c.is_ascii_hexdigit()),
+                "{keyword} 不是十六进制哈希：{value}"
+            );
+        }
+        assert_eq!(
+            field("tonefit:verdict"),
+            Some(verdict.candidate.to_string()),
+            "写进 tEXt 的那一档与报告说的不是同一档"
+        );
+        // 逐页那三种的字面，一律不带定档页。
+        let reason = field("tonefit:reason").expect("理由没写进去");
+        assert!(
+            !reason.contains("driven by page"),
+            "逐页那条路上竟指了一张定档页：{reason}"
+        );
+        assert_eq!(
+            reason,
+            match verdict.reason {
+                Reason::LowestWithinThreshold => "lowest candidate within threshold",
+                Reason::NoneWithinThreshold => "none within threshold, top candidate",
+                Reason::RunHysteresis => "hysteresis pull-back",
+                other => panic!("逐页那条路上不该出现的理由：{other:?}"),
+            },
+            "写进 tEXt 的理由与报告说的不是同一句"
+        );
+    }
+}
+
 /// 彩色分支不量化，没有判定位深可写（ADR 0005 决定第 4 条）；幂等那四项一项不少。
 #[test]
 fn a_color_page_carries_the_same_record_without_a_bit_depth() {

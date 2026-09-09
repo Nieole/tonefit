@@ -22,6 +22,7 @@ use crate::quantize::Candidate;
 pub(crate) const PAGES: usize = 3;
 
 /// 序列里的一页：它在整卷页序里的下标，加上逐页判定给它的那一档。
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Page {
     /// 指进调用方那份逐页判定——[`pull_back`] 返回的下标原样是它。
     pub index: usize,
@@ -33,6 +34,16 @@ pub(crate) struct Page {
 struct Run {
     range: std::ops::Range<usize>,
     depth: Candidate,
+}
+
+/// 定下档的一页：它的下标，加上迟滞给它换的那一档——没换是 `None`。
+///
+/// 「没换」也要交出来：调用方等的是**这一页定了没有**，而不是**这一页动了没有**
+/// （12 号票：定下来的那一刻就量化编码，参照当场放掉）。[`pull_back`] 要的是动过的那一批，
+/// 它自己滤一道。
+pub(crate) struct Settled {
+    pub index: usize,
+    pub pulled: Option<Verdict>,
 }
 
 /// 把 `sequence` 上孤立地高出邻居的那些页压回邻居那一档。
@@ -86,6 +97,12 @@ struct Run {
 /// 双向是规则本身要的：只往前看的话，一段够长的偏离里排在段首的那几页会被段前的邻居压回，
 /// 「整段留住」当场落空。
 ///
+/// **贴着序列头尾的那一页够得更远。**「只有一侧」那一条要问那一侧自己够不够 [`PAGES`] 页，
+/// 而那一段从这一页数起最远落在 `2·PAGES-2` 页之外——`[4bit, 4bit, 2bit, 2bit, 2bit]`
+/// 里的头一页要看到第五页才定得下。上面那个区间说的是序列**内部**的一页；
+/// 界仍是常数，只是序列两头那几页的常数是 `2·PAGES-2`（见 [`Rolling`] 的《窗口有多长》，
+/// 与停车场）。
+///
 /// **这个界数的是 `sequence` 上的位置，不是卷内的页序。** 序列滤掉了彩页、失败页、
 /// 部分救回页与另一门组的页（见 `crate::summarize_volume`），序列上紧挨着的两页
 /// 在卷里可能隔着几页。P-D 的滑窗要照序列算，不是照页序算。
@@ -96,53 +113,149 @@ struct Run {
 /// 新冒出来的那个短段留在原地。一趟够不够，等标定迟滞页数那一趟（16 号票）
 /// 拿真实素材看。
 pub(crate) fn pull_back(sequence: &[Page]) -> Vec<(usize, Verdict)> {
-    let runs = runs(sequence);
+    let mut rolling = Rolling::new();
     let mut pulled = Vec::new();
-    for (position, run) in runs.iter().enumerate() {
-        if run.range.len() >= PAGES {
-            continue;
-        }
-        let before = position.checked_sub(1).and_then(|index| runs.get(index));
-        let after = runs.get(position + 1);
-        let candidate = match (before, after) {
-            // 两侧都在：都要得更低才算孤岛，落点取较高的那个邻居。
-            (Some(before), Some(after)) if before.depth < run.depth && after.depth < run.depth => {
-                before.depth.max(after.depth)
-            }
-            // 只有一侧：一侧说了不算，除非那一侧本身够分量。
-            (Some(only), None) | (None, Some(only))
-                if only.depth < run.depth && only.range.len() >= PAGES =>
-            {
-                only.depth
-            }
-            _ => continue,
-        };
-        pulled.extend(sequence[run.range.clone()].iter().map(|page| {
-            (
-                page.index,
-                Verdict {
-                    candidate,
-                    reason: Reason::RunHysteresis,
-                },
-            )
-        }));
+    let keep = |settled: Vec<Settled>, pulled: &mut Vec<(usize, Verdict)>| {
+        pulled.extend(
+            settled
+                .into_iter()
+                .filter_map(|page| page.pulled.map(|verdict| (page.index, verdict))),
+        );
+    };
+    for &page in sequence {
+        keep(rolling.admit(page), &mut pulled);
     }
+    keep(rolling.finish(), &mut pulled);
     pulled
 }
 
-/// 把序列切成极大同档段，按序列次序排开。
-fn runs(sequence: &[Page]) -> Vec<Run> {
-    let mut runs: Vec<Run> = Vec::new();
-    for (position, page) in sequence.iter().enumerate() {
-        match runs.last_mut() {
+/// [`pull_back`] 的**滚动形态**：按序列次序一页一页交进来，定得下档的当场交出去。
+///
+/// 规则一个字都不另写——[`pull_back`] 就是把整条序列交给它再收一次尾
+/// （`CLAUDE.md`《文档写作》的《单一出处》：滚动那一份与整卷那一份各写一遍，迟早分家）。
+/// 交出来的次序就是序列次序，且只交一次。
+///
+/// # 窗口有多长
+///
+/// 一页要么当场定得下，要么等**后面几页**。等的那几页至多 `2·PAGES-2` 页
+/// （[`PAGES`] = 3 时是 4 页），因为压不压只有两处问得着后文：
+///
+/// - 这一段还在长，而它还够不上 [`PAGES`] 页——短于 [`PAGES`] 页的段至多攒 `PAGES-1` 页；
+/// - 这一段贴着序列头、唯一那侧的邻段还在长——那一段自己够不够 [`PAGES`] 页
+///   要等它长到 [`PAGES`] 页或者收口，于是再攒至多 `PAGES-1` 页。
+///
+/// 两处叠起来就是上界，[`the_window_never_holds_more_than_the_lookback`] 钉着它。
+///
+/// **别拿它跟 [`pull_back`]《回看多长》那个 `2·PAGES-1` 直接比大小——两个口径不同。**
+/// 那里给的是一页的依赖**区间**有多宽（`[i-PAGES+1, i+PAGES-1]`，往后单向 `PAGES-1` 页）；
+/// 这里给的是**单向要等多远**。序列头尾那几页往后要等 `2·PAGES-2` 页，
+/// 比那个区间往后那半边远一倍——够得更远的正是这一批（见停车场）。
+///
+/// 12 号票拿的正是这个上界：参照只在窗口里活着，出了窗口当场量化编码。
+///
+/// **窗口说的是「还没定档的那几页」，不是这个结构占多少。** 交进来的页与切好的段
+/// 一直留着（定档要问前一段那一档，而段号只往前走），两者随序列长；一页两个机器字，
+/// 一卷几千页也就几十 KB。真正贵的是参照，而参照从来不在这里——它在缓存里，
+/// 按 `Page::index` 取。
+pub(crate) struct Rolling {
+    /// 交进来的页，按序列次序。
+    sequence: Vec<Page>,
+    /// 切好的极大同档段。最后一段可能还在长。
+    runs: Vec<Run>,
+    /// 已经交出去到序列的第几页。
+    settled: usize,
+    /// 第 [`settled`](Self::settled) 页落在哪一段——只往前走，不必回头找。
+    cursor: usize,
+}
+
+impl Rolling {
+    pub(crate) fn new() -> Self {
+        Self {
+            sequence: Vec::new(),
+            runs: Vec::new(),
+            settled: 0,
+            cursor: 0,
+        }
+    }
+
+    /// 交进序列上的下一页，收回此刻定得下档的那几页。
+    pub(crate) fn admit(&mut self, page: Page) -> Vec<Settled> {
+        let position = self.sequence.len();
+        match self.runs.last_mut() {
             Some(run) if run.depth == page.decided => run.range.end = position + 1,
-            _ => runs.push(Run {
+            _ => self.runs.push(Run {
                 range: position..position + 1,
                 depth: page.decided,
             }),
         }
+        self.sequence.push(page);
+        self.drain(false)
     }
-    runs
+
+    /// 序列到头了：剩下的这几页没有后文可等，就地定下。
+    pub(crate) fn finish(&mut self) -> Vec<Settled> {
+        self.drain(true)
+    }
+
+    /// 从还没交出去的那一页往后走，一直走到某一页要等后文为止。
+    ///
+    /// `ended` 是「序列已经到头」：它把「这一段还在长」变成「这一段就这么长」，
+    /// 也把最后一段的右邻从「还没来」变成「没有」。
+    fn drain(&mut self, ended: bool) -> Vec<Settled> {
+        let mut settled = Vec::new();
+        while self.settled < self.sequence.len() {
+            while self.runs[self.cursor].range.end <= self.settled {
+                self.cursor += 1;
+            }
+            let run = &self.runs[self.cursor];
+            let closed = self.cursor + 1 < self.runs.len();
+            let candidate = if run.range.len() >= PAGES {
+                // 段够 [`PAGES`] 页就不问了，往后长多长都不改这一页的档。
+                None
+            } else if !closed && !ended {
+                // 段还在长：它会不会长够 [`PAGES`] 页，此刻答不出。
+                break;
+            } else {
+                let before = self.cursor.checked_sub(1).and_then(|at| self.runs.get(at));
+                let after = self.runs.get(self.cursor + 1);
+                match (before, after) {
+                    // 两侧都在：都要得更低才算孤岛，落点取较高的那个邻居。
+                    (Some(before), Some(after))
+                        if before.depth < run.depth && after.depth < run.depth =>
+                    {
+                        Some(before.depth.max(after.depth))
+                    }
+                    // 只有一侧：一侧说了不算，除非那一侧本身够分量。
+                    (Some(only), None) | (None, Some(only)) if only.depth < run.depth => {
+                        if only.range.len() >= PAGES {
+                            Some(only.depth)
+                        } else if !ended && self.cursor + 2 == self.runs.len() {
+                            // 那一侧还在长：它够不够分量，同样要等。
+                            break;
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            settled.push(Settled {
+                index: self.sequence[self.settled].index,
+                pulled: candidate.map(|candidate| Verdict {
+                    candidate,
+                    reason: Reason::RunHysteresis,
+                }),
+            });
+            self.settled += 1;
+        }
+        settled
+    }
+
+    /// 手上还押着几页——窗口此刻有多长。
+    #[cfg(test)]
+    fn held(&self) -> usize {
+        self.sequence.len() - self.settled
+    }
 }
 
 #[cfg(test)]
@@ -271,6 +384,80 @@ mod tests {
         assert_eq!(
             settled(&[ONE, TWO, EIGHT, FOUR, ONE]),
             [ONE, TWO, FOUR, FOUR, ONE]
+        );
+    }
+
+    /// 一条序列上所有摆得出来的候选组合，长度到七页为止。
+    fn every_sequence_up_to(length: usize) -> impl Iterator<Item = Vec<Candidate>> {
+        const ALL: [Candidate; 4] = [ONE, TWO, FOUR, EIGHT];
+        (0..=length).flat_map(|len| {
+            (0..ALL.len().pow(len as u32)).map(move |mut code| {
+                (0..len)
+                    .map(|_| {
+                        let pick = ALL[code % ALL.len()];
+                        code /= ALL.len();
+                        pick
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    /// 走完一趟之后每一页那一档，但走的是滚动那条路。
+    fn rolled(decided: &[Candidate]) -> Vec<Candidate> {
+        let mut rolling = Rolling::new();
+        let mut order = Vec::new();
+        let mut settled = decided.to_vec();
+        let take = |handed: Vec<Settled>, order: &mut Vec<usize>, settled: &mut Vec<Candidate>| {
+            for page in handed {
+                order.push(page.index);
+                if let Some(verdict) = page.pulled {
+                    settled[page.index] = verdict.candidate;
+                }
+            }
+        };
+        for page in sequence(decided) {
+            take(rolling.admit(page), &mut order, &mut settled);
+        }
+        take(rolling.finish(), &mut order, &mut settled);
+        // 每一页交出来一次，且按序列次序——12 号票的窗口靠这一条把参照按序放掉。
+        assert_eq!(order, (0..decided.len()).collect::<Vec<_>>());
+        settled
+    }
+
+    /// **滚动那条路与整卷那条路逐格相同。** [`pull_back`] 本来就是它走一趟，
+    /// 这一条钉的是「一页一页交进去」与「整条交进去」不会分家。
+    #[test]
+    fn rolling_settles_every_sequence_exactly_as_the_whole_one_does() {
+        for decided in every_sequence_up_to(6) {
+            assert_eq!(rolled(&decided), settled(&decided), "{decided:?}");
+        }
+    }
+
+    /// **窗口不超过 `2·PAGES-2` 页**（12 号票第 1 条：参照只在一个有界窗口内存活）。
+    /// 界不是另定的数——它由 [`PAGES`] 推出来（见 [`Rolling`] 的《窗口有多长》），
+    /// 而 `[4bit, 4bit, 2bit, 2bit, 2bit]` 那条序列恰好把它顶满。
+    #[test]
+    fn the_window_never_holds_more_than_the_lookback() {
+        let mut widest = 0;
+        for decided in every_sequence_up_to(7) {
+            let mut rolling = Rolling::new();
+            for page in sequence(&decided) {
+                rolling.admit(page);
+                widest = widest.max(rolling.held());
+                assert!(
+                    rolling.held() <= 2 * PAGES - 2,
+                    "{decided:?} 押着 {} 页",
+                    rolling.held()
+                );
+            }
+            rolling.finish();
+            assert_eq!(rolling.held(), 0, "{decided:?} 收尾之后还押着页");
+        }
+        assert_eq!(
+            widest,
+            2 * PAGES - 2,
+            "上界要够得着，否则它不是这条规则的界"
         );
     }
 }

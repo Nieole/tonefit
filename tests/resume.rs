@@ -258,6 +258,50 @@ fn finishing_at_the_decision_point_writes_nothing_and_still_reports_the_volume()
     );
 }
 
+/// **逐页那条路上答收尾同样一个字节都不写**（12 号票第 6 条）。
+///
+/// 那条路上第一遍就把每一页量化编码完了——参照出了滚动窗口当场编码，缓存那一格从此装
+/// 编好的字节。**编好不等于写出**：字节进的是缓存，落盘仍旧只在第二遍，
+/// 「第二遍开始之前一个字节都没写」因此一格没动
+/// （ADR 0005 的《第二遍在逐页那条路上退化成纯写出》）。
+///
+/// 与上面那条只差 `per_page` 一个字段，而它管的正是那条不变式在另一条路上还站不站得住。
+/// 输出根看两眼：决策点到来的那一刻一眼，跑完一眼——只看后一眼的话，
+/// 「从没建过」与「建了又丢掉」分不开。
+#[test]
+fn finishing_at_the_decision_point_writes_nothing_on_the_per_page_path_either() {
+    let space = Workspace::new();
+    let volume = small_volume(&space, "volume-a");
+    let watcher = AtTheDecisionPoint::new(&space, None, Instruction::Finish);
+
+    let report = tonefit::run(&Request {
+        per_page: true,
+        progress: Some(ProgressSink::new(watcher.clone())),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("在决策点上停下来不是失败");
+
+    assert_eq!(
+        watcher.at_each_decision_point(),
+        [Vec::<String>::new()],
+        "到决策点时输出根下已经有东西了"
+    );
+    assert!(!space.out().exists(), "答收尾之后输出根被建了出来");
+
+    let stopped = &report.volumes[0];
+    assert_eq!(
+        stopped.verdict,
+        Some(tonefit::VolumeVerdict::PerPage),
+        "上包络没被关掉，测的就不是滚动窗口那条路"
+    );
+    assert_eq!(stopped.page_count(), 2, "报告里没有逐页结果");
+    assert_eq!(
+        stopped.timing.second_pass,
+        std::time::Duration::ZERO,
+        "答收尾之后第二遍还是走了"
+    );
+}
+
 /// 决策点上答**中止**：那一卷等于没做，报告里没有它（ADR 0013 决定第 2 条）。
 ///
 /// 它与答收尾在同一处按下，停出来的现场却相反——**分得开才有意义**：
