@@ -51,6 +51,42 @@ const REFUSAL_SIGNPOSTED: [(&str, usize); 4] = [
     ("src/main.rs", 3),
 ];
 
+/// **闩的编码**那几格的字样，**读回来那一侧**（`p4-parking-lot/19`，收停车场 Q70）。
+///
+/// 记号挑在 `from_code` 那一侧，不挑 `code` 那一侧，理由是**编进去那一侧当不了记号**：
+/// `Continue => 0` 这种写法在本仓库还有第二个用处——
+/// `src/session/draw/footer.rs` 的 `running_prompt` 用同样一张表说「推到这一级要按几次
+/// `s`」（按几次与那一级的**名次**同值，而名次恰好就是编码那个数）。那是**另一件事**，
+/// 不是闩的编码抄了一份；拿编进去那一侧当记号，会把它也判成抄件。
+/// **读回来那一侧没有第二个用处**：把一个字节还原成一级，只有编码本身要做。
+///
+/// 两种写法各列一条：家里那一份写 `Self::`（它就在 `Instruction` 的 `impl` 里），
+/// 别的 crate 手抄一份只能写 `Instruction::`——两条都在，抄件写哪一种都躲不过去。
+/// 挑的那两格一格是**头一格**、一格是**兜底那一格**（不认得的数按最强的算），
+/// 抄件少抄哪一格都还剩另一格。
+const LATCH_DECODE_MARKS: [&str; 4] = [
+    "0=>Self::Continue",
+    "0=>Instruction::Continue",
+    "_=>Self::Abort",
+    "_=>Instruction::Abort",
+];
+
+/// 编进去那一侧的三格：**只问家里在不在**，不问别处有没有（理由见 [`LATCH_DECODE_MARKS`]）。
+const LATCH_CODE_MARKS: [&str; 3] = ["Continue=>0", "Finish=>1", "Abort=>2"];
+
+/// 那份编码的家，相对仓库根。
+const LATCH_CODE_HOME: &str = "src/progress.rs";
+
+/// 另外两份闩留的那句路标——引用的是**那个公共方法的名字**而不是行号，
+/// `progress` 怎么改都不使引用失效（`CLAUDE.md`《文档写作》第 5 条：稳定引用）。
+const LATCH_CODE_SIGNPOST: &str = "Instruction::code";
+
+/// 另外两份闩各在哪个文件里，跟着的是**那句路标在这个文件里至少出现几次**。
+///
+/// 问的是**下界**：多一句指路不该变红，少一句必须变红。两处各两句——闩自己的文档一句、
+/// 钉着它的那条用例一句，两句说的是两件事（这一份不自己编 / 这一份存的就是它给的字节）。
+const LATCH_CODE_SIGNPOSTED: [(&str, usize); 2] = [("src/session/run.rs", 2), ("src/main.rs", 2)];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -146,6 +182,57 @@ fn the_refusal_list_lives_in_one_place() {
         assert!(
             found >= least,
             "{file} 里指回《失败》的路标从 {least} 句掉到了 {found} 句"
+        );
+    }
+}
+
+/// 闩的编码只有一处，抄出第二份就当场变红（P4 19 号票，收停车场 Q70）。
+///
+/// 从前这三格在**两个 crate 里各有一份**（库、会话），18 号票给命令行接上两级停之后
+/// 成了三份，靠三条用例分别拴着——而那三条各拴各的，谁也发现不了另外两份跟自己
+/// 分了家。现在编码只在 [`LATCH_CODE_HOME`] 的 `Instruction::code`／`from_code`，
+/// 另外两份闩只剩「存在哪儿、由谁往上推」。
+///
+/// **三件事一起问**，与[拒绝执行那一条](the_refusal_list_lives_in_one_place)同一个形状：
+/// 别处没有第二份（问的是[读回来那一侧](LATCH_DECODE_MARKS)）、家里[编进去那三格](LATCH_CODE_MARKS)
+/// 真住着、另外两份闩指回来的路标还在。只问头一件的话，把 `code` 整个删掉这一条也是绿的。
+#[test]
+fn the_latch_encoding_lives_in_one_place() {
+    let home = root().join(LATCH_CODE_HOME);
+    let marks: Vec<String> = LATCH_DECODE_MARKS
+        .iter()
+        .map(|mark| squashed(mark))
+        .collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(carrying, vec![home.clone()], "闩的编码长出了第二份");
+
+    let entry = squashed(&read(&home));
+    for mark in LATCH_CODE_MARKS {
+        assert!(
+            entry.contains(&squashed(mark)),
+            "`Instruction::code` 里少了「{mark}」那一格"
+        );
+    }
+
+    let signpost = squashed(LATCH_CODE_SIGNPOST);
+    for (file, least) in LATCH_CODE_SIGNPOSTED {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：另外两份闩按文件路径记在 LATCH_CODE_SIGNPOSTED 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let found = squashed(&read(&path)).matches(&signpost).count();
+        assert!(
+            found >= least,
+            "{file} 里指回那一份公共编码的路标从 {least} 句掉到了 {found} 句"
         );
     }
 }

@@ -258,11 +258,33 @@ pub enum Instruction {
 }
 
 impl Instruction {
-    /// 记进原子量的那个数。手写而不是 `#[repr(u8)]` 加 `as u8`：那样写，「派生出来的序」
-    /// 与「记下去的数」的一致靠的是变体的书写顺序，改一次顺序两者就悄悄分家。
-    /// 手写的这一份与派生的 `Ord` 由
-    /// [用例](tests::the_three_instructions_are_ordered_by_how_hard_they_stop)拴在一起。
-    const fn code(self) -> u8 {
+    /// **闩的编码**：把[三级的序](Self)编成一个字节，`0`／`1`／`2` 依力度递增
+    /// （`CONTEXT.md` 的《进度》：按停是个闩）。
+    ///
+    /// # 这是公共 API，而它公开只为一件事：闩不止一份，编码只该有一份
+    ///
+    /// 闩今天有**三份**，各记各的一件事，**没有一份多余**：
+    ///
+    /// | 哪一份 | 在哪儿 | 记的是 |
+    /// |---|---|---|
+    /// | 库这一侧 | `progress::Standing`（`pub(crate)`） | **观察者答过**的最强那一个 |
+    /// | 会话那一侧 | 二进制侧的 `session::run::Latch` | **会话里用户按过**什么 |
+    /// | 命令行那一侧 | 二进制侧的 `main::Latch` | **命令行这一头用户按过**什么 |
+    ///
+    /// 三份都要把这个字塞进一个 `AtomicU8`（理由见 `Standing`：观察者可能很久不返回，
+    /// 记账本不许是一把锁），而后两份在**另一个 crate** 里——库不公开这一份的话，
+    /// 它们只能各手抄一份，而手抄的那几份一旦与派生的 `Ord` 分了家，
+    /// 「按了中止却退回收尾」在哪一份上悄悄发生都看不出来。三份闩因此各存各的，
+    /// 编码走同一份：`fetch_max` 取的「更强的那一个」在三处是同一个序。
+    ///
+    /// **代价**：这几个数字从此是对外契约的一部分，改一个就是破坏性变更；
+    /// 而三级本身是 ADR 0013 拍死的形状，[`Instruction`](Self) 也因此不非穷尽。
+    ///
+    /// 手写而不是 `#[repr(u8)]` 加 `as u8`：那样写，「派生出来的序」与「记下去的数」的一致
+    /// 靠的是变体的书写顺序，改一次顺序两者就悄悄分家。手写的这一份与派生的 `Ord` 由
+    /// 本模块用例 `the_three_instructions_are_ordered_by_how_hard_they_stop` 拴在一起，
+    /// 那一条是这个编码**唯一**的出处所在。
+    pub const fn code(self) -> u8 {
         match self {
             Self::Continue => 0,
             Self::Finish => 1,
@@ -270,8 +292,12 @@ impl Instruction {
         }
     }
 
-    /// 从原子量里读回来。越界的数按最强的算——那一侧宁可多停一趟，不可漏停一趟。
-    const fn from_code(code: u8) -> Self {
+    /// 从原子量里读回来，[`code`](Self::code) 的反面。
+    ///
+    /// 越界的数按**最强的**算——那一侧宁可多停一趟，不可漏停一趟。它因此是个**全函数**，
+    /// 不交一个 `Option`：读闩的那几处都在报到那一刻上，没有一处答得出
+    /// 「读到个不认得的数该怎么办」。
+    pub const fn from_code(code: u8) -> Self {
         match code {
             0 => Self::Continue,
             1 => Self::Finish,
@@ -341,6 +367,9 @@ impl std::fmt::Debug for ProgressSink {
 ///
 /// `fetch_max` 直接把「只升不降」写进了操作本身（见 [`Instruction`] 的序）：
 /// 两条线程同时报到、一条答收尾一条答继续，结果恒是收尾。
+///
+/// 记进那个原子量的字节走的是[公共的那一份编码](Instruction::code)——**三份闩共用一份**，
+/// 这一份不自己编（`p4-parking-lot/19`）。哪三份、为什么公开，那一处一并说了，本条不复述。
 #[derive(Debug, Default)]
 pub(crate) struct Standing(AtomicU8);
 
@@ -943,6 +972,10 @@ mod tests {
     ///
     /// [`Standing`] 靠 `fetch_max` 实现「只升不降」，这两件事一旦对不上，
     /// 「按了中止却退回收尾」会静默发生。
+    ///
+    /// **这一条是[那个编码](Instruction::code)唯一的出处所在**（`p4-parking-lot/19`）：
+    /// 三份闩用的都是那一份（哪三份见它自己的文档），因此编码的性质只在这里验一遍，
+    /// 三份闩各自只钉「我这一份存进去、读回来一格不变」。
     #[test]
     fn the_three_instructions_are_ordered_by_how_hard_they_stop() {
         assert!(
@@ -972,10 +1005,41 @@ mod tests {
                 "记进去再读回来变了样"
             );
         }
+        // 越界的数按最强的算：宁可多停一趟，不可漏停一趟。
+        assert_eq!(
+            Instruction::from_code(9),
+            Instruction::Abort,
+            "不认得的那个数没按最强的算"
+        );
         assert_eq!(
             Instruction::default(),
             Instruction::Continue,
             "默认的那个字不是继续"
         );
+    }
+
+    /// **库这一份闩存进去的就是[那一份公共编码](Instruction::code)给的字节**，读回来一格不变。
+    ///
+    /// 三份闩各有这么一条，另外两条在二进制那一侧（`session::run` 与 `main` 各自的
+    /// `tests`）。**三处读回来相等**靠的是编码只有一份，而「这一份真的用的是它」由这一条
+    /// 断言在**存进去的那个字节**上——比读回来的那个字更严：本地重新手抄一份编号不同的编码，
+    /// 读回来那一问照旧成立，字节这一问当场红。形状取自 spec《Testing》点名的先例
+    /// （`assert_eq!(BAR_WIDTH, crate::BAR_WIDTH as u64, "横条宽度长出了第二份")`）。
+    #[test]
+    fn the_latch_reads_back_what_was_recorded() {
+        for instruction in [
+            Instruction::Continue,
+            Instruction::Finish,
+            Instruction::Abort,
+        ] {
+            let standing = Standing::default();
+            standing.record(instruction);
+            assert_eq!(
+                standing.0.load(Ordering::Relaxed),
+                instruction.code(),
+                "存进去的不是那一份公共编码给的字节"
+            );
+            assert_eq!(standing.get(), instruction, "记进去的那个字读回来变了");
+        }
     }
 }
