@@ -980,7 +980,7 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::Waits);
-        // 真会话里这两下由 `s` 那个键派下来（见 `super::press`）：收尾 → 中止。
+        // 真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）：收尾 → 中止。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);
@@ -1083,7 +1083,7 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::GoesOn);
-        // 按两次：收尾 → 中止。真会话里这两下由 `s` 那个键派下来（见 `super::press`）。
+        // 按两次：收尾 → 中止。真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);

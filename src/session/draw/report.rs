@@ -347,7 +347,7 @@ fn highlighted(rows: Vec<Line<'static>>) -> Vec<Line<'static>> {
 /// 否则是[目录表](super::directories)（`volume-discovery/08`）。
 ///
 /// **展开着的那一枝此刻不在了时退回目录表**。这一支眼下**到不了**——展开进来的那一枝
-/// 恒是算出来的一枝（见 `super::super::expand`，答不出就说一句、不进那一级），
+/// 恒是算出来的一枝（见 `crate::session::terminal::expand`，答不出就说一句、不进那一级），
 /// 而报告换一趟要先按 `t`／`x`，那两个键在这一块上不派（得先 `⇥` 回左栏，
 /// 那一下焦点就不在这一级上了）。留着是因为退一级仍旧有东西可看：
 /// 与展开一卷那一处说一句 [`GONE`] 不同——那一处整格只有那一卷，
@@ -411,7 +411,7 @@ pub(super) fn report_title(session: &Session, live: Option<&Live>) -> String {
         return "报告".to_owned();
     };
     // **「第几卷」数的是这一枝底下**展得开的**那几卷**，不是整趟（`volume-discovery/08`）：
-    // `⇥` 换一卷只在这一枝里、只在展得开的那几卷之间转（见 `super::super::expand`），
+    // `⇥` 换一卷只在这一枝里、只在展得开的那几卷之间转（见 `crate::session::terminal::expand`），
     // 拿整趟或者连没做成的那几卷一起当分母的话，屏上那个数指的是一个按不到的集合。
     // 那一枝找不着（报告换了一趟）就退回整趟——说少了比说错了好。
     let volumes = live
@@ -470,7 +470,7 @@ fn stopped_following(session: &Session) -> bool {
 
 /// 报告区那几个键（选一卷、展开一枝、展开一卷）**此刻摆不摆得出来**。
 ///
-/// **与 [`super::super::expand`] 挡在前面的那两条同一个判据**：没跑过、或者表上一行都
+/// **与 `crate::session::terminal::expand` 挡在前面的那两条同一个判据**：没跑过、或者表上一行都
 /// 还没有，这几个键就无从谈起。
 ///
 /// 问的是 [`Live::volumes`]（表上停得住的那几行），不是 `report().volumes`：
@@ -624,7 +624,7 @@ mod tests {
     /// 展开着的一个会话，连同那一趟跑完的报告。
     ///
     /// 展开那一下**列的是要紧的页、光标停在头一页上**（[`Expansion::new`]）——
-    /// 与 [`super::super::press`] 那一层给的一模一样：这一副只画那一卷，
+    /// 与 `crate::session::terminal::press` 那一层给的一模一样：这一副只画那一卷，
     /// 「视口对到那一卷的抬头上」因此不必再算一个行号。
     fn expanded(volume: usize) -> (Session, Live) {
         let live = a_run_worth_expanding();

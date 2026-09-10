@@ -136,7 +136,7 @@ pub enum Action {
     /// （[`Field::drills`]），第二层由[下钻](Self::Drill)进去。
     ///
     /// 它要的东西本模块全有（那一行的取值环、内置表的分组都在手边），因此不必像
-    /// [展开](Self::Expand)那样落到 [`super::press`] 去：真做这件事的就是
+    /// [展开](Self::Expand)那样落到 `crate::session::terminal::press` 去：真做这件事的就是
     /// [`Session::unfold`]。
     Unfold,
     /// **下钻**：进到取值栏上停着的那一格**底下那一层**
@@ -203,7 +203,7 @@ pub enum Action {
     /// 「再按一次退不回上一级」就得靠键盘上有没有第二个键来保证，而那不是一条性质。
     ///
     /// 升到哪一级由状态机自己记（[`Stage::Running`] 那一格）；把它交给跑着的那一趟
-    /// 在 [`super::press`] 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
+    /// 在 `crate::session::terminal::press` 那一层——本模块不碰线程，与[起一趟](Self::Start)同一条规矩。
     Stop,
     /// **在决策点上答一个字**，连同这个字[管几卷](Reach)（`CONTEXT.md` 的《会话》：
     /// 决策点、都这样）。
@@ -226,7 +226,7 @@ pub enum Action {
     /// 而退出会话本来就走中止（`super::run::Running::leave`，停车场 Q63）——
     /// 那一卷等于没做，`partial` 也没留下。
     ///
-    /// 把那个字送到计算线程上在 [`super::press`] 那一层（`Running::decide`），
+    /// 把那个字送到计算线程上在 `crate::session::terminal::press` 那一层（`Running::decide`），
     /// 与[按停](Self::Stop)同一条规矩：本模块不碰线程。
     Answer(Instruction, Reach),
     /// **切焦点**：左栏 ⇄ 报告区（`CONTEXT.md` 的《会话》：焦点，ADR 0017）。
@@ -243,7 +243,7 @@ pub enum Action {
     ///
     /// 挪完[跟随就停了](Follow::Stopped)——票面第三条：光标一动就停，屏上说一句。
     ///
-    /// 落在 [`super::press`] 那一层：挪到哪一卷要数**这一趟此刻有哪几卷**，
+    /// 落在 `crate::session::terminal::press` 那一层：挪到哪一卷要数**这一趟此刻有哪几卷**，
     /// 而本模块读不到那一趟攒下来的东西。与[展开](Self::Expand)同一条分法。
     Select(Step),
     /// **回到跟随**：卷表上那个光标交回给最新的那一卷（`g`，票面第三条）。
@@ -263,7 +263,7 @@ pub enum Action {
     /// （逐页那几行轻松过 100 列），而卷表那几列摆得下，左栏留着才对得上三层。
     ///
     /// 挪到哪一枝要数**此刻有哪几枝**，而本模块读不到那一趟攒下来的东西——
-    /// 真做这件事的因此是 [`super::press`]，与[展开](Self::Expand)同一条分法。
+    /// 真做这件事的因此是 `crate::session::terminal::press`，与[展开](Self::Expand)同一条分法。
     Open,
     /// **展开一卷**：把[光标停着的那一卷](Session::standing)的逐页那几行摊开来，
     /// 左栏跟着收起（`CONTEXT.md` 的《会话》：展开的第二级）。
@@ -273,7 +273,7 @@ pub enum Action {
     ///
     /// 展开哪一卷、报告从第几行画起，都要读那一趟攒下来的报告，而本模块读不到它
     /// （攒着的那一份在 [`super::live::Live`] 上）。真做这件事的因此是
-    /// [`super::press`]——与[起一趟](Self::Start)同一条分法。
+    /// `crate::session::terminal::press`——与[起一趟](Self::Start)同一条分法。
     Expand,
     /// 换展开的那一卷：往后一卷或往前一卷，两头都转一圈。
     ///
@@ -281,7 +281,7 @@ pub enum Action {
     /// （票面：**选中一卷**可展开逐页）。方向用 [`Step`]，与三层那几个取值环
     /// 同一个取值——两处都是「在一圈上挪一格」。
     ///
-    /// 与[展开](Self::Expand)同样落在 [`super::press`] 那一层：挪到哪一卷要数
+    /// 与[展开](Self::Expand)同样落在 `crate::session::terminal::press` 那一层：挪到哪一卷要数
     /// **此刻有哪几卷**，而本模块读不到那一趟攒下来的东西。
     Turn(Step),
     /// **收起一级**：退回展开进来的那一级（`volume-discovery/08` 票面第二条：
@@ -306,26 +306,26 @@ pub enum Action {
     List(Listing),
     /// **去预设那一栏**：把盘上那份文件里有的那几份列出来（`CONTEXT.md` 的《会话》：预设栏）。
     ///
-    /// 列什么要读盘，而本模块读不到——真做这件事的是 [`super::press`]，它随后调
+    /// 列什么要读盘，而本模块读不到——真做这件事的是 `crate::session::terminal::press`，它随后调
     /// [`pick`](Session::pick)。与[展开](Self::Expand)同一条分法：那一支要读那一趟攒的报告，
     /// 这一支要读用户配置目录下那份 TOML；名字也照那一对取
     /// （`Expand` 进 [`Focus::Expanded`]，`Pick` 进 [`Focus::Picking`]）。
     Pick,
     /// **套用**光标停着的那一份预设：两层整个换成它，范围层一格不动。
     ///
-    /// 同样落在 [`super::press`]：那一份的内容要现读（[`Presets::read`](crate::preset::Presets::read)），
+    /// 同样落在 `crate::session::terminal::press`：那一份的内容要现读（[`Presets::read`](crate::preset::Presets::read)），
     /// 而**读不懂的预设当场报错、不静默套默认值**（spec 的 story 39）——报出来的那句话
     /// 是库那一侧的原话，会话不另编一份。
     Take,
     /// **存**：把当前两层存成缓冲里打的那个名字。
     ///
-    /// 落在 [`super::press`]，理由与上面两支同一条：它要往盘上写东西。
+    /// 落在 `crate::session::terminal::press`，理由与上面两支同一条：它要往盘上写东西。
     /// 撞上同名的那一份时**不覆盖**——那一层先说一句，再按一次这个键才覆盖
     /// （见 [`Session::name_is_taken`]）。
     Store,
     /// **删**：把光标停着的那一份预设从盘上删掉。
     ///
-    /// 落在 [`super::press`]，与上面那三支同一条：它要动用户配置目录下那份 TOML。
+    /// 落在 `crate::session::terminal::press`，与上面那三支同一条：它要动用户配置目录下那份 TOML。
     ///
     /// **要按两下**（与两级停、与覆盖同一个形状，ADR 0013）：第一下只说一句
     /// （见 [`Session::ask_before_erasing`]），第二下才真删。
@@ -342,7 +342,7 @@ pub enum Action {
     /// 它出的那个数——感知可分辨级数——正是设备层唯一填不出来的一格，
     /// 而这个键与那一格挨着才说得出它是干什么用的。停在别的层上按它是 [`Ignored`](Self::Ignored)。
     ///
-    /// 落在 [`super::press`]，与预设那三支同一条：它要往盘上写东西，而本模块碰不到盘。
+    /// 落在 `crate::session::terminal::press`，与预设那三支同一条：它要往盘上写东西，而本模块碰不到盘。
     /// 真正画图与落盘的是库里那第三个 seam（[`tonefit::write_calibration_chart`]）——
     /// 会话一格像素都不拼、一个目录都不建。
     Chart,
@@ -356,7 +356,7 @@ pub enum Action {
     /// **掀着一张时按另一张那个键是换过去**，不叠第二层（见 [`Session::reveal`]）：
     /// 覆盖层盖住的恒是**焦点那一维上的一块**，而不是另一张覆盖层。
     ///
-    /// [这一趟的前提](Overlay::Premises)那一张落在 [`super::press`]：它印的是这一趟的
+    /// [这一趟的前提](Overlay::Premises)那一张落在 `crate::session::terminal::press`：它印的是这一趟的
     /// 报告抬头，而本模块读不到那一趟攒下来的东西（与[展开](Self::Expand)同一条分法）。
     /// [键位表](Overlay::Keys)那一张就在本模块做掉——它要的东西本模块全有
     /// （[`Session::key_table`] 问的就是这张按键表自己）。
@@ -1081,7 +1081,7 @@ impl Values {
 
 /// 预设那一栏：**盘上有的那几份**，加上末尾「存成一份新的」那一行。
 ///
-/// 列的是**进这一栏那一刻**盘上有的（[`super::press`] 读的，见 [`Action::Pick`]）：
+/// 列的是**进这一栏那一刻**盘上有的（`crate::session::terminal::press` 读的，见 [`Action::Pick`]）：
 /// 本模块碰不到盘。这与 [`Expansion::volumes`] 是同一种「进来那一刻记下的数」。
 ///
 /// 末尾那一行照范围层「＋ 再打一个卷进来」的样子（[`Field::AddVolume`]）：
@@ -1327,7 +1327,7 @@ impl Expansion {
     /// 真找不着（调用方没解析）时从**头一卷**起，而不是从头一卷再挪一格：
     /// 「不知道此刻在第几格」与「在第零格」是两件事。
     ///
-    /// `volumes` 是空的这一步到不了：调用方先挡在前面（见 `super::expand`）。
+    /// `volumes` 是空的这一步到不了：调用方先挡在前面（见 `crate::session::terminal::expand`）。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
@@ -1765,7 +1765,7 @@ impl Session {
     /// **展开一枝**：那一枝底下那几卷摊成卷表，左栏还在场
     /// （`volume-discovery/08` 票面第二条）。
     ///
-    /// 展开的是哪一枝由 [`super::press`] 数出来（要读那一趟攒下来的报告），
+    /// 展开的是哪一枝由 `crate::session::terminal::press` 数出来（要读那一趟攒下来的报告），
     /// 与[展开一卷](Self::expand)同一条分法。
     pub(super) fn open(&mut self, directory: PathBuf) {
         self.says(None);
@@ -1813,7 +1813,7 @@ impl Session {
     /// 没跑着的时候恒是继续：按停是跑起来之后才有的事，浏览时那个键根本不派动作。
     ///
     /// 屏底那两行照它写（[`super::draw`]），而跑着的那一趟收到的是同一个字——
-    /// [`super::press`] 按下之后把它交给 [`super::run::Running::stop`]。
+    /// `crate::session::terminal::press` 按下之后把它交给 [`super::run::Running::stop`]。
     pub fn stopping(&self) -> Instruction {
         match self.stage {
             Stage::Running(pressed) | Stage::Deciding(pressed) => pressed,
@@ -2281,7 +2281,7 @@ impl Session {
     /// 按一个键，把它对应的那件事做掉。
     ///
     /// **只给用例用。** 真会话里那一层先把[起一趟](Action::Start)接走
-    /// （见 [`super::press`]），剩下的原样交给 [`act`](Self::act)，不必再问一遍
+    /// （见 `crate::session::terminal::press`），剩下的原样交给 [`act`](Self::act)，不必再问一遍
     /// [`action`](Self::action)；而用例问的是「按下这个键之后会话变成什么样」，
     /// 那两步在它眼里本来就是一步。
     #[cfg(test)]
@@ -2290,7 +2290,7 @@ impl Session {
     }
 
     /// 把一个动作做掉。**问过 [`action`](Self::action) 的调用方走这一条**——
-    /// [`super::press`] 先把[起一趟](Action::Start)那一支接走，剩下的原样交回来，
+    /// `crate::session::terminal::press` 先把[起一趟](Action::Start)那一支接走，剩下的原样交回来，
     /// 不必再问一次。
     pub(super) fn act(&mut self, action: Action) -> Exit {
         // 上一个动作说的那句话到这里就作废了：下一次按键就抹掉（连同它里面那一问，
@@ -2304,7 +2304,7 @@ impl Session {
             Action::Move(step) => self.move_cursor(step),
             Action::Cycle(step) => self.cycle(step),
             // 摊开与定都只碰本模块自己的东西（那一行的取值环就在这里），
-            // 因此不必像展开与预设那几支那样落到 [`super::press`] 去。
+            // 因此不必像展开与预设那几支那样落到 `crate::session::terminal::press` 去。
             Action::Unfold => self.unfold(),
             Action::Drill => self.drill(),
             Action::Choose => self.choose(),
@@ -2318,17 +2318,17 @@ impl Session {
             Action::Complete => self.complete(),
             Action::Commit => self.commit(),
             Action::Cancel => self.cancel(),
-            // 起线程、拼 `Request`、把观察者接上去，都在 [`super::press`] 那一层：
+            // 起线程、拼 `Request`、把观察者接上去，都在 `crate::session::terminal::press` 那一层：
             // 本模块一个终端都不碰，也不该起线程。那一层把 `Start` 接走之后才调
             // [`act`](Self::act)，因此这里到不了——真到了也只是这一下没起来，不是错。
             Action::Start(_) => {}
-            // 升一级就在这里；把升到的那一级交给跑着的那一趟在 [`super::press`]。
+            // 升一级就在这里；把升到的那一级交给跑着的那一趟在 `crate::session::terminal::press`。
             Action::Stop => self.raise_stop(),
             // 状态转回「跑着」就在这里；把那个字交给停在决策点上的那条线程
-            // 在 [`super::press`]（`Running::decide`）——与按停同一条分工。
+            // 在 `crate::session::terminal::press`（`Running::decide`）——与按停同一条分工。
             Action::Answer(..) => self.answered(),
             // 展开、换卷与在卷表上挪一卷都要读那一趟攒下来的报告（有哪几卷、
-            // 那一卷从第几行起），而本模块读不到它——真做这三件事的是 [`super::press`]，
+            // 那一卷从第几行起），而本模块读不到它——真做这三件事的是 `crate::session::terminal::press`，
             // 它随后调 [`expand`](Self::expand) 与 [`select`](Self::select)。
             // 与[起一趟](Action::Start)同一条分法，因此这里到不了；
             // 真到了也只是这一下没挪、没展开，不是错。
@@ -2337,12 +2337,12 @@ impl Session {
             Action::Focus(pane) => self.look_at(pane),
             Action::Follow => self.follow_along(),
             // 预设那四支都要碰盘（列出来、读一份、写一份、删一份），而本模块碰不到盘：
-            // 真做这四件事的是 [`super::press`]，它随后调 [`pick`](Self::pick)、
+            // 真做这四件事的是 `crate::session::terminal::press`，它随后调 [`pick`](Self::pick)、
             // [`took`](Self::took)、[`saved`](Self::saved)、[`erased`](Self::erased) 那几个。
             // 与上面两支同一条分法，因此这里到不了——真到了也只是这一下没动，不是错。
             Action::Pick | Action::Take | Action::Store | Action::Erase => {}
             // 出标定图同样要碰盘（真画图与落盘的是 `tonefit::write_calibration_chart`），
-            // 走的是 [`super::press`]，它随后调 [`charted`](Self::charted)。
+            // 走的是 `crate::session::terminal::press`，它随后调 [`charted`](Self::charted)。
             // 与上面那三支同一条分法，因此这里到不了——真到了也只是这一下没出图，不是错。
             Action::Chart => {}
             // **收起退的恒是一级**（`volume-discovery/08` 票面第二条）：展开着一卷时
@@ -2356,7 +2356,7 @@ impl Session {
             }
             // 掀开一张覆盖层就在本模块做掉：键位表那一张要的东西本模块全有
             // （[`key_table`](Self::key_table) 问的就是这张按键表自己）。
-            // [这一趟的前提](Overlay::Premises)那一张先由 [`super::press`] 挡一道
+            // [这一趟的前提](Overlay::Premises)那一张先由 `crate::session::terminal::press` 挡一道
             // （还没跑过时它一个字都印不出来），挡过之后仍旧走这里。
             Action::Reveal(overlay) => self.reveal(overlay),
             Action::List(listing) => self.list(listing),
@@ -2368,7 +2368,7 @@ impl Session {
 
     /// 展开一卷的逐页，左栏跟着收起。
     ///
-    /// 那一份 [`Expansion`] 由 [`super::press`] 拼好送进来：**展开哪一卷**要数
+    /// 那一份 [`Expansion`] 由 `crate::session::terminal::press` 拼好送进来：**展开哪一卷**要数
     /// 那一趟此刻有哪几卷，而本模块读不到它。列的是哪几页、光标停在第几页
     /// 都是本模块自己的事（[`Expansion::new`] 与 [`Expansion::turned_to`]）。
     pub(super) fn expand(&mut self, expansion: Expansion) {
@@ -2414,7 +2414,7 @@ impl Session {
 
     /// 进预设那一栏，列的是 `names`。
     ///
-    /// 列什么、从哪一份文件列的，都由 [`super::press`] 从盘上读来（[`Action::Pick`]），
+    /// 列什么、从哪一份文件列的，都由 `crate::session::terminal::press` 从盘上读来（[`Action::Pick`]），
     /// 与[展开](Self::expand)收下一份 [`Expansion`] 是同一条：那一层读得到，本模块读不到。
     pub(super) fn pick(&mut self, names: Vec<String>, file: PathBuf) {
         self.says(None);
@@ -2748,7 +2748,7 @@ fn revealing(key: Key, stage: Stage) -> Option<Action> {
     match opens(key)? {
         // **一趟都没跑过时前提那一张根本不派**（停车场 Q167）：那时它一个字都印不出来，
         // 而屏上不摆按不动的键——判据是「此刻按下去有没有第二步」，不是「这个键存不存在」。
-        // 挡它的从前在 `super::press` 那一层（那一句「还没跑过」），而 `?` 那张表问不到
+        // 挡它的从前在 `crate::session::terminal::press` 那一层（那一句「还没跑过」），而 `?` 那张表问不到
         // 那一层：一趟都没跑过时表上照旧列着 `i`，按下去只换来一句话。
         Overlay::Premises if stage == Stage::Fresh => None,
         overlay => Some(Action::Reveal(overlay)),
@@ -3985,7 +3985,7 @@ mod tests {
     use crate::session::live::{Resuming, fixture};
     use clap::Parser;
 
-    /// 预设那一栏是哪一份文件列出来的。真会话里由 `super::press` 从盘上读来，
+    /// 预设那一栏是哪一份文件列出来的。真会话里由 `crate::session::terminal::press` 从盘上读来，
     /// 而本模块碰不到盘——这几条用例问的也不是它。
     fn presets_file() -> PathBuf {
         PathBuf::from("配置/tonefit/presets.toml")
@@ -5069,7 +5069,7 @@ mod tests {
     /// 判据不是「这个键存不存在」，是「**此刻按下去有没有第二步**」。两处来源：
     ///
     /// - **按键表自己那一头**（Q167）：一趟都没跑过时[展开](Action::Expand)与
-    ///   [前提那一张](Overlay::Premises)根本不派——它们从前派得出动作，而 `super::press`
+    ///   [前提那一张](Overlay::Premises)根本不派——它们从前派得出动作，而 `crate::session::terminal::press`
     ///   那一层挡在前面说一句话，表上因此白纸黑字列着，按下去只换来一句话；
     /// - **「任何时候」那一组多过的那一道**（Q189）：覆盖层掀着时 `q` 一个动作都不派
     ///   （那一块的「退一步」是 `Esc`），而底下那几块上它是退出会话——照实列的话
