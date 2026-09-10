@@ -808,9 +808,10 @@ static PRESSED: Latch = Latch::new();
 /// 它是 `pub(crate)` 的，二进制 crate 够不着），会话那一侧记「用户按过什么」
 /// （`session::run::Latch`，挂在 `tui` 特性后面，这一路够不着），这一份记的是
 /// **命令行这一头用户按过什么**。三份的**序**出自同一处，[`Instruction`] 派生的 `Ord`；
-/// 各自只是把那个序编成一个字节。**收成一处是 `p4-parking-lot/19` 的事**——
-/// 本票只把命令行这一头接上，接上之后它正好是第三份，那正是 19 号票要收的东西
-/// （停车场 Q262）。
+/// **把那个序编成一个字节的那一份也出自同一处**——[`Instruction::code`]／
+/// [`Instruction::from_code`]，库为这件事把它公开出来（`p4-parking-lot/19` 收的
+/// 停车场 Q70）。谁在用、为什么公开，见那一处，本条不复述。三份闩因此只剩
+/// 「存在哪儿、由谁往上推」各不相同，编码一格都不自己写。
 ///
 /// 用原子量而不是锁，与另外两份同一条理由：它从**信号那一头**写、从计算线程读，
 /// 而计算线程读它的那一刻正是报到那一刻——拿锁来记，`tonefit` 那条
@@ -821,7 +822,7 @@ struct Latch(AtomicU8);
 impl Latch {
     /// 起手是[继续](Instruction::Continue)：没按过就等于没人拦。
     const fn new() -> Self {
-        Self(AtomicU8::new(code(Instruction::Continue)))
+        Self(AtomicU8::new(Instruction::Continue.code()))
     }
 
     /// **按了一下**：往上升一级（[`next`]），交回**升到的那一级**；
@@ -839,16 +840,16 @@ impl Latch {
     fn press(&self) -> Option<Instruction> {
         self.0
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |pressed| {
-                let raised = next(from_code(pressed));
-                (code(raised) != pressed).then_some(code(raised))
+                let raised = next(Instruction::from_code(pressed));
+                (raised.code() != pressed).then_some(raised.code())
             })
             .ok()
-            .map(|previous| next(from_code(previous)))
+            .map(|previous| next(Instruction::from_code(previous)))
     }
 
     /// 按到哪一级了。没按过是[继续](Instruction::Continue)。
     fn pressed(&self) -> Instruction {
-        from_code(self.0.load(Ordering::Relaxed))
+        Instruction::from_code(self.0.load(Ordering::Relaxed))
     }
 }
 
@@ -862,27 +863,6 @@ const fn next(pressed: Instruction) -> Instruction {
     match pressed {
         Instruction::Continue => Instruction::Finish,
         Instruction::Finish | Instruction::Abort => Instruction::Abort,
-    }
-}
-
-/// 记进原子量的那个数。手写而不是 `#[repr(u8)]` 加 `as u8`：那样写，「派生出来的序」与
-/// 「记下去的数」的一致靠的是变体的书写顺序，改一次顺序两者就悄悄分家
-/// （另外两份闩同一条理由）。手写的这一份与派生的 `Ord` 由
-/// [用例](tests::the_latch_only_ever_goes_up)拴在一起。
-const fn code(level: Instruction) -> u8 {
-    match level {
-        Instruction::Continue => 0,
-        Instruction::Finish => 1,
-        Instruction::Abort => 2,
-    }
-}
-
-/// 从原子量里读回来。越界的数按最强的算——那一侧宁可多停一趟，不可漏停一趟。
-const fn from_code(code: u8) -> Instruction {
-    match code {
-        0 => Instruction::Continue,
-        1 => Instruction::Finish,
-        _ => Instruction::Abort,
     }
 }
 
@@ -2271,28 +2251,16 @@ io-mode = \"concurrent\"
         assert_eq!(latch.pressed(), Instruction::Abort);
     }
 
-    /// [`Latch`] 靠手写的[编码](code)记进原子量，而「哪一级更强」出自 [`Instruction`]
-    /// 派生的 `Ord`——这两件事一旦对不上，「只升不降」就成了一句空话。
+    /// **升级那张表只升不降**，而且**推进去的那个字读回来一格不变**。
     ///
-    /// 与会话那一份（`session::run::tests::the_latch_only_ever_goes_up`）、
-    /// 库那一份（`tonefit` 的 `progress`）是同一条：三份闩的序出自同一处，
-    /// 各自只是把那个序编成一个字节（见 [`Latch`]）。
+    /// **编码本身这里不验**：那个数与 [`Instruction`] 派生的 `Ord` 对不对得上、越界的数
+    /// 算哪一级，出处只有一处（[`Instruction::code`]），钉着它的那条用例由它自己的文档点名。
+    /// 这一条问的是**这一份闩存进去的是不是那一份公共编码给的字节**——三份闩各有这么一条，
+    /// 另外两条在 `session::run` 与库的 `progress` 各自的 `tests` 里。
+    /// 「抄出第四份」另有一条闸门：`tests/single_source.rs`。
     #[test]
     fn the_latch_only_ever_goes_up() {
-        assert!(Instruction::Continue < Instruction::Finish);
-        assert!(Instruction::Finish < Instruction::Abort);
-        assert!(code(Instruction::Continue) < code(Instruction::Finish));
-        assert!(code(Instruction::Finish) < code(Instruction::Abort));
-        for level in [
-            Instruction::Continue,
-            Instruction::Finish,
-            Instruction::Abort,
-        ] {
-            assert_eq!(from_code(code(level)), level, "编进去再读回来变了样");
-        }
-        // 越界的数按最强的算：宁可多停一趟，不可漏停一趟。
-        assert_eq!(from_code(9), Instruction::Abort);
-        // 升级那张表也只升不降，而且升到中止就是个不动点。
+        // 升级那张表只升不降，而且升到中止就是个不动点。
         for level in [
             Instruction::Continue,
             Instruction::Finish,
@@ -2301,6 +2269,30 @@ io-mode = \"concurrent\"
             assert!(next(level) >= level, "升一级反而弱了");
         }
         assert_eq!(next(Instruction::Abort), Instruction::Abort);
+
+        // 存进去的就是那一份公共编码给的字节，读回来一格不变。**问字节比问读回来的那个字
+        // 更严**：本地重新手抄一份编号不同的编码，读回来那一问照旧成立，字节这一问当场红。
+        // 这一份没有「直接推一级进去」的口子——升一级只走 `Latch::press`——因此按着次序
+        // 升上去，一级一级问它。
+        let latch = Latch::default();
+        for level in [Instruction::Finish, Instruction::Abort] {
+            latch.press();
+            assert_eq!(
+                latch.0.load(Ordering::Relaxed),
+                level.code(),
+                "存进去的不是那一份公共编码给的字节"
+            );
+            assert_eq!(latch.pressed(), level, "推进去的那个字读回来变了");
+        }
+
+        // **起手那一格走的是 `Latch::new`，而生产里那一份（[`PRESSED`]）就是它造的**：
+        // 它编的是[继续](Instruction::Continue)那一级，而 `Default` 给的是 `AtomicU8` 的零。
+        // 两条路今天落在同一个字节上，靠的正是那一份公共编码——问一句，别让它成为巧合。
+        assert_eq!(
+            Latch::new().pressed(),
+            Instruction::Continue,
+            "起手那一格不是继续"
+        );
     }
 
     /// **决策点上的收尾要让，中止不让**（`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。

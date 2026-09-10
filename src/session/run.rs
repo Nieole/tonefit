@@ -440,7 +440,9 @@ impl Gate {
 /// 「闩」这个说法出自 `CONTEXT.md` 的《进度》（「按停是个闩」）。库那一侧有一个同性质的
 /// （`tonefit` 的 `progress::Standing`，记的是**观察者答过**什么），但它是 `pub(crate)` 的，
 /// 二进制 crate 够不着——这一份记的也是另一件事：**用户按过**什么。
-/// 两者的**序**出自同一处，[`Instruction`] 派生的 `Ord`；这里只是把那个序编成一个字节。
+/// 两者的**序**出自同一处，[`Instruction`] 派生的 `Ord`；**把那个序编成一个字节的那一份
+/// 也出自同一处**——[`Instruction::code`]／[`Instruction::from_code`]，谁在用、为什么公开，
+/// 见那一处，本条不复述。这一份闩因此只剩「存在哪儿、由谁往上推」，编码一格都不自己写。
 ///
 /// 用原子量而不是锁，与库那一侧同一条理由：它从 UI 线程写、从计算线程读，
 /// 而计算线程读它的那一刻正是报到那一刻——拿锁来记，`progress` 那条
@@ -452,31 +454,11 @@ impl Latch {
     /// 往上推一级。**`fetch_max` 把「只升不降」写进了操作本身**：
     /// 推一个更弱的字进来不作数，按停因此是个闩，不是一个可以反悔的开关。
     fn raise(&self, level: Instruction) {
-        self.0.fetch_max(code(level), Ordering::Relaxed);
+        self.0.fetch_max(level.code(), Ordering::Relaxed);
     }
 
     fn get(&self) -> Instruction {
-        from_code(self.0.load(Ordering::Relaxed))
-    }
-}
-
-/// 记进原子量的那个数。手写而不是 `as u8`：那样写，「派生出来的序」与「记下去的数」
-/// 的一致靠的是变体的书写顺序，改一次顺序两者就悄悄分家（库那一侧同一条理由）。
-/// 两者由 [`tests::the_latch_only_ever_goes_up`] 拴在一起。
-fn code(level: Instruction) -> u8 {
-    match level {
-        Instruction::Continue => 0,
-        Instruction::Finish => 1,
-        Instruction::Abort => 2,
-    }
-}
-
-/// 从原子量里读回来。越界的数按最强的算——那一侧宁可多停一趟，不可漏停一趟。
-fn from_code(code: u8) -> Instruction {
-    match code {
-        0 => Instruction::Continue,
-        1 => Instruction::Finish,
-        _ => Instruction::Abort,
+        Instruction::from_code(self.0.load(Ordering::Relaxed))
     }
 }
 
@@ -601,31 +583,35 @@ mod tests {
         assert!(running.report().is_none(), "没做成的那一趟没有报告可印");
     }
 
-    /// **闩只升不降**，编进原子量的那个数与 [`Instruction`] 的序对得上。
+    /// **闩只升不降**，而**推进去的那个字读回来一格不变**。
     ///
     /// 「按了中止之后再按收尾仍然是中止」这条性质在会话里有两道保险：键盘上没有那个键
     /// （`super::state::running_action` 在中止那一级派的是「没有意义」），
     /// 而就算有，`fetch_max` 也不让它降回去。这一条问的是第二道。
+    ///
+    /// **编码本身这里不验**：那个数与 [`Instruction`] 派生的 `Ord` 对不对得上、越界的数
+    /// 算哪一级，出处只有一处（[`Instruction::code`]），钉着它的那条用例由它自己的文档点名。
+    /// 这一条问的是**这一份闩存进去的是不是那一份公共编码给的字节**——三份闩各有这么一条，
+    /// 另外两条在库的 `progress` 与 `crate` 根各自的 `tests` 里。
+    /// 「抄出第四份」另有一条闸门：`tests/single_source.rs`。
     #[test]
     fn the_latch_only_ever_goes_up() {
-        // 编进去的那个数与派生出来的序一致——两者分家的话，`fetch_max` 就不是「取更强的」了。
-        for (weaker, stronger) in [
-            (Instruction::Continue, Instruction::Finish),
-            (Instruction::Finish, Instruction::Abort),
-            (Instruction::Continue, Instruction::Abort),
-        ] {
-            assert!(weaker < stronger, "{weaker:?} 该弱于 {stronger:?}");
-            assert!(code(weaker) < code(stronger), "编进去的数反了");
-        }
+        // 存进去的就是那一份公共编码给的字节，读回来一格不变。**问字节比问读回来的那个字
+        // 更严**：本地重新手抄一份编号不同的编码，读回来那一问照旧成立，字节这一问当场红。
         for level in [
             Instruction::Continue,
             Instruction::Finish,
             Instruction::Abort,
         ] {
-            assert_eq!(from_code(code(level)), level, "记进去再读回来变了");
+            let latch = Latch::default();
+            latch.raise(level);
+            assert_eq!(
+                latch.0.load(Ordering::Relaxed),
+                level.code(),
+                "存进去的不是那一份公共编码给的字节"
+            );
+            assert_eq!(latch.get(), level, "推进去的那个字读回来变了");
         }
-        // 越界的数按最强的算：宁可多停一趟，不可漏停一趟。
-        assert_eq!(from_code(9), Instruction::Abort);
 
         let running = Running::default();
         assert_eq!(running.pressed(), Instruction::Continue, "起手没按过");
