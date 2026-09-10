@@ -120,6 +120,9 @@ fn a_full_bleed_page_without_paper_keeps_every_pixel() {
 ///
 /// 三张页各走一遍——离格的、在格点上的、量不出纸白的。只测第三张的话，
 /// 「关闭」与「这一页本来就治不了」分不开。
+///
+/// **点名 0，不拿默认值**（05 号票把默认值抬到了 4）：这一条问的是「取 0 是什么语义」，
+/// 与默认值取多少无关；拿默认值来测，默认值一动这一条就改问了另一件事。
 #[test]
 fn a_limit_of_zero_leaves_every_input_untouched() {
     let pages = [
@@ -129,7 +132,7 @@ fn a_limit_of_zero_leaves_every_input_untouched() {
     ];
 
     for (what, before) in pages {
-        let (after, outcome) = align_white(before.clone(), WhiteAlignLimit::default());
+        let (after, outcome) = align_white(before.clone(), WhiteAlignLimit::OFF);
         assert_eq!(
             outcome,
             WhiteAlignment::Off,

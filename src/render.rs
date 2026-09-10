@@ -1846,13 +1846,20 @@ mod tests {
     ///
     /// 几何门不在参数里：它跟着那一页走（`PageBranch::Gray` 的 `gate`），
     /// 卷级那一段是从页数出来的（06 号票）。
+    ///
+    /// **纸白对齐那一格点名取 0，不拿默认值**：靠这一份报告的用例里有一条**逐字**比着
+    /// 「上限 0 级（没开）」那一行，而它摆的页是 [`WhiteAlignment::Off`]，两样要对得上。
+    ///
+    /// 本文件另有十来处报告夹具是「页摆 `Off`、上限拿 `default()`」，05 号票把默认值
+    /// 抬到 4 之后**它们描述的成了一个屏上不可能出现的状态**（上限 4 级，却一页都没量过）。
+    /// 没有一条断言读那一格，本票因此没动它们——记停车场 Q547。
     fn one_page_report(profile: Profile, verdict: VolumeVerdict, page: PageReport) -> Report {
         Report {
             profile,
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
-            white_align_limit: WhiteAlignLimit::default(),
+            white_align_limit: WhiteAlignLimit::OFF,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3371,7 +3378,7 @@ mod tests {
         let isolated = a_volume_worth_a_row_of_each_kind();
 
         assert_eq!(
-            volume(&isolated, WhiteAlignLimit::default())
+            volume(&isolated, WhiteAlignLimit::OFF)
                 .iter()
                 .map(|row| row.kind)
                 .collect::<Vec<_>>(),
@@ -3809,7 +3816,10 @@ mod tests {
                 let Listed::Settled(each) = listed[*at] else {
                     continue;
                 };
-                drawn.push_str(&plain::volume(each, WhiteAlignLimit::default()));
+                // **上限从这一份报告里拿**，不自己去问默认值：整份那一副拿的就是
+                // `report.white_align_limit`（见 [`plain::report`]）。两侧各拿各的的话，
+                // 它们只在「这一份的上限恰好等于默认值」时相等——05 号票抬默认值那一趟当场红。
+                drawn.push_str(&plain::volume(each, report.white_align_limit));
                 drawn.push_str(&plain::pages(each, Mode::Process));
             }
         }
@@ -4062,6 +4072,35 @@ mod tests {
         assert_eq!(said, "  纸白对齐 上限 0 级（没开）\n", "{said}");
     }
 
+    /// **默认那一趟说的是「对齐了几页」，不再是「没开」**（纸白对齐批 05 号票第 6 条）。
+    ///
+    /// 与上一条正好两头：那一条钉的是「点名 0 时那一行照样在」，这一条钉的是
+    /// **不点名的人在屏上读到什么**。默认值抬到 4 之后他拿到的是开着的那一趟，
+    /// 那一行因此说得出这一卷对齐了几页。
+    ///
+    /// **上限拿的是 [`WhiteAlignLimit::default`]**：这一条问的正是默认那一趟屏上的话，
+    /// 默认值退回 0 它当场红——那是它存在的全部理由。
+    #[test]
+    fn the_default_limit_says_how_many_pages_it_aligned() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::Aligned { paper_white: 253 },
+            WhiteAlignment::OnTheGrid {
+                paper_white: u8::MAX,
+            },
+        ]);
+
+        let said = white_align_said(&volume, WhiteAlignLimit::default());
+
+        assert!(
+            !said.contains("没开"),
+            "默认那一趟屏上还说着「没开」：{said}"
+        );
+        assert!(
+            said.contains("对齐 1 页"),
+            "默认那一趟说不出对齐了几页：{said}"
+        );
+    }
+
     /// **试算那一趟上限取 0 时，底下那一句说得出那几个数到底是什么**
     /// （票面第 3 条那一半的卷级形态）。
     ///
@@ -4073,7 +4112,7 @@ mod tests {
     /// **也不许把它说成「开了会怎样」**：上限抬到 4 级之后，超限那几页多半就被对齐了，
     /// 这个数并不预告那一趟。它只说得出**离格的页有几张**——这一条把两头都钉着。
     #[test]
-    fn a_trial_at_the_default_limit_says_what_its_numbers_actually_are() {
+    fn a_trial_at_a_zero_limit_says_what_its_numbers_actually_are() {
         let volume = a_volume_whose_pages_were(&[
             WhiteAlignment::OverTheLimit { paper_white: 253 },
             WhiteAlignment::OnTheGrid {
