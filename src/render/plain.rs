@@ -30,6 +30,8 @@
 //! - **命令行**：跑完一次性把四段拼起来印出去（[`report`]，`crate::execute`）。
 //! - **会话退出时**：`stdout` 上留下的那份报告照的是命令行那一路的原格式
 //!   （`crate::session::run` 的 `Running::report`），走的也是 [`report`]。
+//!   最后那一趟没做成时它后面还跟着一段 [`undone`]——那一句为什么没做成，
+//!   与报告正文分得开（21 号票）。
 //! - **会话的报告区**：眼下画的就是这一副（`crate::session::draw::report`）。
 //!   它会换成表——换的是排版，措辞一个字都不会跟着动，那正是 ADR 0016 买到的东西。
 //!
@@ -89,6 +91,38 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
         }
     }
     text.push_str(&self::tail(report));
+    text
+}
+
+/// **这一趟没做成**时，退出会话在 stdout 上留下的那一份（21 号票，收停车场 Q66）。
+///
+/// 三段按次序接起来：`earlier`（先前那一份做成了的报告，一趟都没做成过就没有）、
+/// `attempt`（这一趟攒下来的那一份，说得出已经做完的哪几卷）、以及这一趟为什么没做成。
+///
+/// **两条缝两种待遇，各有各的理由。**报告与报告之间**不加任何东西**——两份各自都以换行
+/// 收尾，接下去仍是一段报告（与 [`report`] 那四段同一条）。那句话前面**空一行**：
+/// 它不是报告的一部分，而是它为什么没算完，读的人要分得开。**两条缝都只有这一处说了算**
+/// ——`stdout` 上那一份是纯文本这一副（ADR 0016 决定第 3 条），摆法不该散到会话那一层去。
+///
+/// 措辞在 [`super::undone`]。**那一句在这里过一遍 [`crate::wrap::printed`]**：
+/// 它劝人换一条命令（`--dither fs`、`--fit height`），而记号里那个空格带着
+/// [不许断的标注](tonefit::HARD_SPACE)——标注是给折行看的，不是印出去的东西，
+/// 而这一路不走折行（`CONTEXT.md` 的**字形约定**：印出去之前换回普通空格）。
+/// **只过这一段**：报告正文那两份仍与本票落地之前逐字节相同，那一半的账记在停车场 Q584。
+///
+/// **唯一的读者是会话**（`crate::session::run::Running::report`），而会话整个挂在 `tui`
+/// 后面：关掉那个特性的**非测试**构建里它一个读者都没有——**那不是死代码，是那一趟的前提**
+/// （规矩见 `crate::session` 的模块文档：逐处挂，不整块放开）。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
+)]
+pub fn undone(earlier: Option<&str>, attempt: &str, said: &str) -> String {
+    let mut text = earlier.unwrap_or_default().to_owned();
+    text.push_str(attempt);
+    text.push('\n');
+    text.push_str(&crate::wrap::printed(&super::undone(said)));
+    text.push('\n');
     text
 }
 

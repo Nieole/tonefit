@@ -417,17 +417,22 @@ fn tonefit_with_temp(space: &Workspace, inputs: &[&Path], temp: Option<&Path>) -
 fn the_refusal_on_stderr_spells_its_commands_with_a_plain_space() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 一条又扁又小的纯墨页：两边都贴不住面板，几何门因此不成立，而这一趟点了抖动。
+    // 两边都比面板小的页：fit-inside 上按不放大原样输出，一条边都贴不住，
+    // 几何门因此不成立，而这一趟点了抖动。
+    //
+    // **换成以高为准它就贴住面板高了**，那条出路对它当真——拒绝按页分岔之后
+    // （21 号票），只有这样的页才听得见 `--fit height`，两条命令因此一次都问得到。
     volume.page(
         "001.png",
-        &fixtures::solid(fixtures::DEGENERATE_STRIP_SMALLER_THAN_PANEL, 0),
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
     );
 
     let refused = Command::new(env!("CARGO_BIN_EXE_tonefit"))
         .arg("--out")
         .arg(space.out())
         .args(["--profile", fixtures::BASELINE_DEVICE])
-        // fit-inside 那一支才劝人换 `--fit height`；两条命令因此一次都问得到。
+        // fit-inside 上这一页贴不住面板，而以高为准够得着——那一支才劝人换
+        // `--fit height`；两条命令因此一次都问得到。
         .args(["--fit", "inside", "--dither", "fs"])
         .arg(volume.path())
         .output()

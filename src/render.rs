@@ -1699,6 +1699,26 @@ pub fn outcome(outcome: RunOutcome) -> String {
     }
 }
 
+/// **这一趟没做成**时说的那一句（`CONTEXT.md` 的《失败》：退出码 `1` 那一种）。
+///
+/// `said` 是库那一侧的原话——拒绝执行是一种，那条线程恐慌了是另一种；分得开它们的
+/// 就是这一句里带着的那一段（见 `crate::session::live::Live::undone`）。
+///
+/// 措辞只有这一处：会话主区收场之后的抬头印它（`crate::session::draw::overview`），
+/// 退出会话时 stdout 上跟在报告后面的那一段也印它（`plain::undone`，21 号票）。
+/// 摆法各按各的——抬头是一行，stdout 那一份前后各空一行。
+///
+/// **两个读者都在会话里**，而会话整个挂在 `tui` 后面：关掉那个特性的**非测试**构建里
+/// 它因此一个读者都没有——**那不是死代码，是那一趟的前提**（同一副写法见
+/// `crate::session` 的模块文档，那里的规矩是逐处挂、不整块放开）。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
+)]
+pub fn undone(said: &str) -> String {
+    format!("这一趟没做成：{said}")
+}
+
 /// 一个卷在屏上叫什么：路径的最后一段，取不出就整条路径。
 ///
 /// 命令行的进度条（`crate::Bar::start`）与会话的当前卷条（会话批的 09 号票）
@@ -1799,6 +1819,52 @@ mod tests {
     /// [`the_folded_report_stops_at_the_directory_level`] 一处问。
     fn unfolded(report: &Report, mode: Mode) -> String {
         plain::report(report, mode, plain::ReportFold::Off)
+    }
+
+    /// **退出会话时留在 stdout 上的那一份**（`p4-parking-lot/21`，收停车场 Q66）：
+    /// 三段按次序接起来，而那句没做成的话**印出去之前把标注换回了普通空格**。
+    ///
+    /// 换回来这一步非有一条不可：那句话劝人换一条命令（互锁 ③ 那条拒绝里的
+    /// `--dither fs`、`--fit height`），记号中间那个空格带着[不许断的标注](HARD_SPACE)，
+    /// 而**这一路不走折行**——折行那几处顺手做了这件事，`crate::session::terminal::enter`
+    /// 那一句 `print!` 没有。漏了它，用户从 `tonefit > 报告.txt` 里抄出来的命令
+    /// 带着一个 clap 认不出的字符，Q106／Q183 要买的东西正好反了。
+    /// 命令行那一路的同一条在 `tests/exit_code.rs`（那一头落在 stderr 上）。
+    #[test]
+    fn what_is_left_on_stdout_spells_its_commands_with_a_plain_space() {
+        let said = format!("点名的那一档撞上几何门，换 --dither{HARD_SPACE}fs 之外的路");
+        let left = plain::undone(
+            Some(
+                "先前那一趟
+",
+            ),
+            "这一趟攒下来的
+",
+            &said,
+        );
+
+        // 三段都在，次序就是这个。
+        assert!(
+            left.starts_with(
+                "先前那一趟
+这一趟攒下来的
+"
+            ),
+            "{left:?}"
+        );
+        assert!(left.contains("这一趟没做成："), "{left:?}");
+        // **标注一个都没漏出去**，而那句话本身一个字都没少。
+        assert!(!left.contains(HARD_SPACE), "标注落到 stdout 上了：{left:?}");
+        assert!(left.contains("--dither fs"), "{left:?}");
+        // 那句话前面空一行：它不是报告的一部分，读的人要分得开。
+        assert!(
+            left.contains(
+                "这一趟攒下来的
+
+这一趟没做成："
+            ),
+            "{left:?}"
+        );
     }
 
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作定档页。

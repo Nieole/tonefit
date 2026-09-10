@@ -56,6 +56,25 @@ pub struct Running {
     live: Option<Arc<Mutex<Live>>>,
     /// 那条线程。收掉之后（或者还没起过）是 `None`。
     thread: Option<JoinHandle<Result<Report>>>,
+    /// **先前那一趟做成了的报告**，照命令行那一路的原格式。一趟都没做成过是 `None`。
+    ///
+    /// 它是 [`Running`]「一趟一份」那条规矩上唯一跨得过趟的东西，而那是有理由的：
+    /// [`start`](Self::start) 每次换掉 [`Live`]，最后那一趟一被拒，先前刚跑成的那一趟
+    /// 试算连同它算出来的东西就一起没了（21 号票，收停车场 Q66）。
+    ///
+    /// **只在做成的那一趟收场时更新**（见 [`collect`](Self::collect)）：没做成的那一趟
+    /// 更新不了它，[`report`](Self::report) 因此拿得到的恒是**先前**那一份，
+    /// 与这一趟攒下来的那一份不会是同一段字。「先前那**几**趟里只留最近一份」这个取舍
+    /// 连同备选记在停车场 **Q581**。
+    ///
+    /// **装的是渲染好的那一段字，不是一份 [`tonefit::Report`]。**它只有一个读者
+    /// （[`report`](Self::report)，把它原样接出去），而留结构要把整份报告连同每一卷
+    /// 每一页克隆下来——会话的报告区画的是**当前**那一趟（[`Live`]），
+    /// 先前那一趟没有第二个人问它要格。
+    ///
+    /// **不叫 `settled`**：那个词在 `crate::render::Listed::Settled` 上占着，
+    /// 指的是**收摊了的那一卷**，与这一格的「先前那一趟」不是一回事。
+    earlier: Option<String>,
     /// 这一趟的[闩](Latch)：观察者下一条事件回的就是它记着的那个字。
     ///
     /// **一趟一份**——[`start`](Self::start) 每次换一个新的。上一趟按下的停不该跟着漏到
@@ -198,7 +217,17 @@ impl Running {
             .join()
             .unwrap_or_else(|_| Err(anyhow!("处理那一趟恐慌了：这一趟没有报告")));
         if let Some(live) = &self.live {
-            Self::held(live).returned(done);
+            let mut live = Self::held(live);
+            live.returned(done);
+            // 做成了才记：没做成的那一趟更新不了它，[`report`](Self::report) 因此
+            // 取得到的恒是**先前**那一份（见 [`earlier`](Self::earlier)）。
+            if live.undone().is_none() {
+                self.earlier = Some(crate::render::plain::report(
+                    live.report(),
+                    live.mode(),
+                    ReportFold::Off,
+                ));
+            }
         }
     }
 
@@ -233,23 +262,33 @@ impl Running {
     }
 
     /// 退出会话时印到 stdout 的那份报告，**照命令行那一路的原格式**
-    /// （[`crate::render::plain::report`]，四段一次性拼起来）。
+    /// （[`crate::render::plain::report`]，四段一次性拼起来）。一趟都没跑过是 `None`。
     ///
     /// **摊开那一副**（[`ReportFold::Off`]）：折起是命令行上 `--brief` 点出来的，
     /// 而会话是空着手进来的那一路——它一个 flag 都没收，也就没有人点过它。
     /// 屏上折得起来的那一副是会话自己的《展开》，与这里印出去的这一份是两件事。
     ///
-    /// **没做成**的那一趟没有报告可印，与命令行同一条：那一趟 `run` 返回的是错误本身，
-    /// stdout 上一个字节都没有。一趟都没跑过同理。
+    /// **没做成的那一趟照印**（21 号票，收停车场 Q66）。从前它交回 `None`，
+    /// stdout 上一个字节都没有——而用户连**已经算出来的东西**一起丢掉：
+    /// 攒到一半的那一份说得出已经做完的哪几卷（见 `Live::returned`），
+    /// [先前刚跑成的那一趟](Self::earlier)试算更是整份都在。
+    ///
+    /// **这一层只答「取哪三段」，怎么接不在这里**：那是纯文本那一副的摆法
+    /// （[`crate::render::plain::undone`]，ADR 0016 决定第 3 条——会话退出时留在
+    /// stdout 上的那一份走的就是那一副）。
+    ///
+    /// **退出码一格没动**（[`exit_code`](Self::exit_code)）：它仍取最后那一趟。
     pub fn report(&self) -> Option<String> {
         let live = self.live()?;
-        if live.undone().is_some() {
-            return None;
-        }
-        Some(crate::render::plain::report(
-            live.report(),
-            live.mode(),
-            ReportFold::Off,
+        let attempt = crate::render::plain::report(live.report(), live.mode(), ReportFold::Off);
+        let Some(said) = live.undone() else {
+            // 做成了：这一趟那一份，与本票落地之前逐字相同。
+            return Some(attempt);
+        };
+        Some(crate::render::plain::undone(
+            self.earlier.as_deref(),
+            &attempt,
+            said,
         ))
     }
 }
@@ -567,11 +606,13 @@ mod tests {
         assert!(printed.starts_with("profile "), "{printed}");
     }
 
-    /// **拒绝执行**：会话不退出，那句话留在 [`Live`] 上；stdout 一个字节都没有，
-    /// 退出码是命令行那一路的 `1`。那条线程恐慌了走的是同一条路——两者都是
-    /// 「这一趟没做成」，分得开它们的是那句话本身。
+    /// **拒绝执行**：会话不退出，那句话留在 [`Live`] 上，退出码是命令行那一路的 `1`。
+    /// 那条线程恐慌了走的是同一条路——两者都是「这一趟没做成」，分得开它们的是那句话本身。
+    ///
+    /// **stdout 上仍旧有东西**（21 号票，收停车场 Q66）：攒下来的那一份照印，
+    /// 那句为什么没做成跟在它**后面**，两者分得开——报告正文里一个字都没有它。
     #[test]
-    fn a_refused_run_leaves_the_session_open_and_prints_nothing() {
+    fn a_refused_run_leaves_the_session_open_and_still_prints_what_was_worked_out() {
         let mut running = Running::default();
         // 范围为空是 `run` 当场拒掉的四种之一，一条事件都不发。
         running.start(
@@ -584,12 +625,63 @@ mod tests {
         until_done(&mut running);
 
         let live = running.live().expect("跑过一趟");
-        let said = live.undone().expect("这一趟没做成");
+        let said = live.undone().expect("这一趟没做成").to_owned();
         assert!(said.contains("处理范围为空"), "{said}");
+        // 攒下来的那一份：抬头那几件事从 `Request` 上就答得出，因此它一定有内容。
+        // **非空这一句非问不可**：空串上 `starts_with` 与下面那个切片恒成立，
+        // 少了它，下面两条就成了「印了那句话就行」，第一段丢掉也红不了。
+        let worked_out = crate::render::plain::report(live.report(), live.mode(), ReportFold::Off);
+        assert!(worked_out.starts_with("profile "), "{worked_out}");
         drop(live);
 
         assert_eq!(running.exit_code(), crate::REFUSED_EXIT);
-        assert!(running.report().is_none(), "没做成的那一趟没有报告可印");
+        let printed = running.report().expect("攒下来的那一份照印");
+        assert!(printed.starts_with(&worked_out), "{printed}");
+        // **两者分得开**：那句话整个落在报告之后，正文里一个字都没有它。
+        let after = &printed[worked_out.len()..];
+        assert!(after.contains("这一趟没做成"), "{printed}");
+        assert!(after.contains(&said), "{printed}");
+    }
+
+    /// **先前那一趟的报告不跟着没做成的这一趟一起丢掉**（21 号票，收停车场 Q66）。
+    ///
+    /// 一个会话里跑得了好几趟，而 [`Running`] 一趟一份——`start` 每次换掉 [`Live`]。
+    /// 从前最后那一趟一被拒，stdout 上就一个字节都没有，先前刚跑成的那一趟试算
+    /// 连同它算出来的东西一起没了。**stdout 上留的是最近一份做成了的报告**
+    /// （见 [`Running::earlier`]），没做成的这一趟接在它后面。
+    #[test]
+    fn a_refused_run_does_not_take_the_earlier_pass_off_stdout() {
+        let workspace = tempfile::tempdir().expect("建得出临时目录");
+
+        let mut running = Running::default();
+        running.start(a_one_volume_run(&workspace), Resuming::GoesOn);
+        until_done(&mut running);
+        let earlier = running.report().expect("头一趟做成了");
+
+        // 第二趟当场被拒：一条事件都不发，攒下来的那一份因此一卷都没有。
+        running.start(
+            Request {
+                inputs: Vec::new(),
+                ..fixture::request(RunMode::DryRun)
+            },
+            Resuming::GoesOn,
+        );
+        until_done(&mut running);
+
+        assert_eq!(
+            running.exit_code(),
+            crate::REFUSED_EXIT,
+            "退出码仍取最后那一趟"
+        );
+        let printed = running.report().expect("先前那一趟的报告还在");
+        assert!(
+            printed.starts_with(&earlier),
+            "先前那一趟的报告没了：{printed}"
+        );
+        assert!(printed.contains("处理范围为空"), "{printed}");
+        // **两份报告，两个抬头**：先前那一趟一份，这一趟攒下来的一份。只问前一半的话，
+        // 中间那一段整个删掉这一条照旧绿——而它正是「已经算出来的东西」那一半。
+        assert_eq!(printed.matches("profile ").count(), 2, "{printed}");
     }
 
     /// **闩只升不降**，而**推进去的那个字读回来一格不变**。

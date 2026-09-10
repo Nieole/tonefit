@@ -2538,7 +2538,7 @@ fn dither_fs() -> String {
 /// （ADR 0007 的《后果》）。撞上的是哪一页因此要说出来——那是唯一能让用户看懂这条拒绝的信息。
 ///
 /// 这一条走 fit-inside；默认那条路上的那一缝在
-/// [`on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing`]。
+/// [`on_neither_fit_does_the_refusal_offer_a_fit_mode_that_changes_nothing`]。
 #[test]
 fn a_dither_the_geometry_gate_forbids_is_refused() {
     let space = Workspace::new();
@@ -2567,6 +2567,16 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     // 门放宽不了，几何却动得了：换个适配方式这一页就贴住面板了（页几何批 01 号票）。
     // 不说这一句，用户手上只剩「换一批源页」。
     assert!(format!("{error:#}").contains(&fit_height()), "{error:#}");
+    // **这一页够得着那条出路，因此只听见前半句**（21 号票）：兜底上界退回去的那种页
+    // 是另一种，它那道例外与这一张无关。从前两条路的例外一次全说，够得着的人也要
+    // 读一遍「换过去仍是这条拒绝」——而对他那句话是假的。
+    //
+    // 一正一反两条。反的那条问例外在不在（够不着出路的那一支必然提兜底上界）；
+    // **正的那条问它接着说的是什么**——出路那一句说完直接接「剩下两条路」，
+    // 中间插不进第三段。只写反的那一条挡不住例外换个说法写回来。
+    let said = format!("{error:#}");
+    assert!(!said.contains("兜底上界"), "{said}");
+    assert!(said.contains("门跟着成立。剩下两条路"), "{said}");
 }
 
 /// **以高为准上 `--dither fs` 仍撞得上几何门，而那时那条出路是假话**
@@ -2578,10 +2588,14 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
 ///
 /// 处置仍是**维持拒绝**：覆盖项是显式指令，不按页悄悄放弃。要钉住的是**措辞**——
 /// 同一张页在两种适配方式上都被拒，而 fit-inside 那一侧原本无条件劝人「换 --fit height，
-/// 门跟着成立」。这一张页正是那句话的反例：换过去照样被拒。两条路因此一起断言，
-/// 一条说「以高为准上不再提那个开关」，一条说「fit-inside 上提了，但把例外也说了」。
+/// 门跟着成立」。这一张页正是那句话的反例：换过去照样被拒。
+///
+/// **拒绝按页分岔之后，两条路上说的是同一句**（21 号票，停车场 Q102）：判据是
+/// 「换成以高为准之后，这一页的门成不成立」，而这一张页两种适配方式下都贴不住面板，
+/// 两侧因此都听不见那个开关。从前 fit-inside 那一侧提了它、再把例外补在后面——
+/// 那正是「一次把两条出路都说了」的形态，够不着出路的人得先读一条对他不成立的建议。
 #[test]
-fn on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing() {
+fn on_neither_fit_does_the_refusal_offer_a_fit_mode_that_changes_nothing() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 整页纯墨：裁边一个像素都拿不走，走得到的只有兜底那一条。
@@ -2614,12 +2628,19 @@ fn on_the_default_fit_the_refusal_stops_offering_a_fit_mode_that_changes_nothing
         "{on_height}"
     );
 
-    // 同一张页在 fit-inside 上也被拒，那一侧仍指 `--fit height`——但**这一张页是它的例外**，
-    // 例外因此得跟着说出来，否则用户照着敲一遍只会撞第二次。
+    // 同一张页在 fit-inside 上也被拒，而**那一侧同样不再提那个开关**：换过去照样贴不住
+    // 面板，劝他敲一遍只会撞第二次。说的因此是同一句——这一页是怎么走到这儿的，
+    // 以及剩下的那两条路。
     let on_inside = refused(FitMode::Inside);
-    assert!(on_inside.contains(&fit_height()), "{on_inside}");
+    assert!(!on_inside.contains(&fit_height()), "{on_inside}");
     assert!(on_inside.contains("兜底上界"), "{on_inside}");
-    assert!(on_inside.contains("仍是这条拒绝"), "{on_inside}");
+    assert!(
+        on_inside.contains(&format!("不点 {}", dither_fs())),
+        "{on_inside}"
+    );
+    // 两条路上逐字是同一句：够不着出路这件事是**页**的几何事实，与这一趟点的是哪个
+    // 适配方式无关（判据见 `tonefit` 的 `dither_outside_the_gate_error`）。
+    assert_eq!(on_height, on_inside);
 }
 
 #[test]
