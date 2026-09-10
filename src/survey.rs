@@ -75,6 +75,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
+use crate::listing::FirstFew;
 use crate::report::{NonVolumeFile, NonVolumeReason, UnreachablePlace};
 use crate::sink::Lodgers;
 use crate::source::{self, Container};
@@ -366,25 +367,20 @@ fn nothing_took_it(volume: &source::Volume) -> Vec<NonVolumeFile> {
 /// （ADR 0014 决定第 5 条），退出码一格不动。
 ///
 /// 形状照开工前那道撞名校验办（见 `crate::ensure_no_two_volumes_share_an_output`）：
-/// 先说有几个、总共点名了几个，再逐条缩进列出，多了只列前几条并说还有多少。
-/// 一屏放不下的清单等于没有清单。
+/// 先说有几个、总共点名了几个，再逐条缩进列出；**列几条、剩下的怎么说**走的是
+/// [那一处出处](FirstFew)。
 ///
 /// 每条占两行——路径一行，错误链一行。不拼成一行是因为两者不一定互相包含：
 /// 「X 不存在」自己带着路径，「读不出归档结构」也带，而将来多一种错法未必带。
 fn refuse(refused: &[(PathBuf, anyhow::Error)], named: usize) -> anyhow::Error {
-    /// 最多列几条。
-    const SHOWN: usize = 5;
-
     let mut said = format!(
         "点名的 {named} 个路径里有 {} 个点不开，整趟不做。点不开的是：\n",
         refused.len()
     );
-    for (input, error) in refused.iter().take(SHOWN) {
-        said.push_str(&format!("  {}\n    {error:#}\n", input.display()));
-    }
-    if refused.len() > SHOWN {
-        said.push_str(&format!("  ……另有 {} 个\n", refused.len() - SHOWN));
-    }
+    said.push_str(&FirstFew::of(refused).stacked(
+        |(input, error)| format!("  {}\n    {error:#}\n", input.display()),
+        "个",
+    ));
     said.push_str(
         "整趟拒绝的理由与「处理范围为空是错误」同一条：范围层错了可能写到别人的目录里\
          （ADR 0009）。因此一页都没做，输出根下一个文件都没有——把点名的路径改对再重跑。",

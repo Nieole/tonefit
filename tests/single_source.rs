@@ -81,6 +81,47 @@ const LATCH_CODE_HOME: &str = "src/progress.rs";
 /// `progress` 怎么改都不使引用失效（`CLAUDE.md`《文档写作》第 5 条：稳定引用）。
 const LATCH_CODE_SIGNPOST: &str = "Instruction::code";
 
+/// **「列前几条，剩下的说个数」收口那一句**的字样（`p4-parking-lot/27`，
+/// 收停车场 Q45／Q49／Q115／Q204）。
+///
+/// 记号挑的是**「另有」后面紧跟着一个占位符**，不是「另有」那两个字：那两个字在本仓库的
+/// 散文里到处都是（「另有一处」「另有人」「另有去处」），拿它当记号会把真话全判成抄。
+/// 而**把这一句现拼出来**只有一处要做——收口那一句报的是一个当场算出来的数，
+/// 因此必然写成 `format!("另有 {..} ..")`。
+///
+/// 六处从前各写各的：报告末尾那三小结、预扫那条拒绝、撞名那条拒绝，加上点名头几页那一句。
+/// 现在形状只在 [`TRUNCATION_HOME`]，六处各自出的仍是自己那句抬头与自己那个量词。
+const TRUNCATION_MARKS: [&str; 1] = ["另有 {"];
+
+/// 那个形状的家，相对仓库根。
+const TRUNCATION_HOME: &str = "src/listing.rs";
+
+/// 家里真住着的那两格：**列几条**那个上限，与**剩下的怎么说**那一句。
+///
+/// 少问哪一格，把那一格删掉这一条都还是绿的——上限没了六处各挑各的数，
+/// 收口那一句没了六处各说各的话，而两样都躲得过只问「别处有没有」的那一问。
+///
+/// **上限那一格只问名字，不问值**：把 `= 5` 一并抄进来，这个文件就成了仓库里第二处
+/// 写着那个数的地方，而改值该改的是那一个常量，不是这一条用例。
+const TRUNCATION_HOME_MARKS: [&str; 2] = ["pub const LIST_LIMIT: usize", "另有 {"];
+
+/// 用着那个形状的三个文件，跟着的是**它在这个文件里至少出现几次**。
+///
+/// 问的是**下界**，而下界取的是**实数**：多一处用它不该变红，少一处必须变红。
+/// `src/render.rs` 那九次是四处调用点（三小结加点名头几页那一句）连同 `use`、四句指路；
+/// `src/survey.rs` 三次（`use`、一句指路、一处调用点）；
+/// `src/lib.rs` **四**次（模块文档那句 `[FirstFew]`、`pub use`、一句指路、一处调用点）
+/// ——少数了模块文档那一次的话，把撞名那一处拆回去自己数仍剩三次，这一问就漏得过去。
+///
+/// **这一条与[头一问](TRUNCATION_MARKS)问的不是同一件事**：那一问拦的是「又抄了一份」，
+/// 这一问拦的是「某一处把它拆回去自己数」——拆回去的那一处若连收口那一句都一并省了
+/// （只列前几条、剩下的一个字不说），头一问一声不吭。
+const TRUNCATION_USED: [(&str, usize); 3] = [
+    ("src/render.rs", 9),
+    ("src/survey.rs", 3),
+    ("src/lib.rs", 4),
+];
+
 /// 另外两份闩各在哪个文件里，跟着的是**那句路标在这个文件里至少出现几次**。
 ///
 /// 问的是**下界**：多一句指路不该变红，少一句必须变红。两处各两句——闩自己的文档一句、
@@ -233,6 +274,59 @@ fn the_latch_encoding_lives_in_one_place() {
         assert!(
             found >= least,
             "{file} 里指回那一份公共编码的路标从 {least} 句掉到了 {found} 句"
+        );
+    }
+}
+
+/// 「列前几条，剩下的说个数」只有一处出处，抄出第二份就当场变红
+/// （P4 27 号票，收停车场 Q45／Q49／Q115／Q204）。
+///
+/// 这个形状从前在仓库里有**六处**，各写各的——停车场为它记了三次（三处 → 四处 → 五处），
+/// 每一次都只是在数。六处各有一个自己的上限、各拼一遍收口那一句，
+/// 而它们谁也发现不了另外五处跟自己分了家。
+///
+/// **三件事一起问**，与[拒绝执行那一条](the_refusal_list_lives_in_one_place)、
+/// [闩的编码那一条](the_latch_encoding_lives_in_one_place)同一个形状：
+/// 别处没有第二份、[家里那两格](TRUNCATION_HOME_MARKS)真住着、
+/// [用着它的那三个文件](TRUNCATION_USED)还在用。
+#[test]
+fn the_way_to_truncate_a_list_lives_in_one_place() {
+    let home = root().join(TRUNCATION_HOME);
+    let marks: Vec<String> = TRUNCATION_MARKS.iter().map(|mark| squashed(mark)).collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(
+        carrying,
+        vec![home.clone()],
+        "「列前几条，剩下的说个数」长出了第二份"
+    );
+
+    let entry = squashed(&read(&home));
+    for mark in TRUNCATION_HOME_MARKS {
+        assert!(
+            entry.contains(&squashed(mark)),
+            "{TRUNCATION_HOME} 里少了「{mark}」那一格"
+        );
+    }
+
+    let signpost = squashed("FirstFew");
+    for (file, least) in TRUNCATION_USED {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：用着那个形状的几处按文件路径记在 TRUNCATION_USED 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let found = squashed(&read(&path)).matches(&signpost).count();
+        assert!(
+            found >= least,
+            "{file} 里用那一处公共件的地方从 {least} 处掉到了 {found} 处"
         );
     }
 }

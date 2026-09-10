@@ -13,10 +13,18 @@
 //! 不判定，只按一个 [`Profile`] 画出一张图并**无损写到点名的那个文件上**。
 //! 量具与被处理的页走的不是同一条路。
 //!
-//! 三个 seam 之外另有一样对外的东西，而它不是缝，是**一条规矩**：[`glyph`]——
-//! **字形约定**那两条（[`HARD_SPACE`] 与 [`width_is_stable`]，`CONTEXT.md`《字形约定》）。
-//! 同一句话从三张嘴里出来、最后一张在库内（ADR 0016 认下的那处例外），库因此会把自己造的字
-//! 直接送进一条对齐的**列**里——规矩得跟着字一起递到调用方手上，理由写在那个模块上。
+//! 三个 seam 之外另有两样对外的东西，而它们不是缝，是**两条规矩**。
+//! 两条都让库担了一点界面层的事，而**理由各是各的**——不要并成一条说，
+//! 各自的理由写在各自那个模块上：
+//!
+//! - [`glyph`]——**字形约定**那两条（[`HARD_SPACE`] 与 [`width_is_stable`]，
+//!   `CONTEXT.md`《字形约定》）。同一句话从三张嘴里出来、最后一张在库内
+//!   （ADR 0016 认下的那处例外），库因此会把自己造的字**直接送进一条对齐的列**里
+//!   ——规矩得跟着字一起递到调用方手上；
+//! - [`listing`]——**只列前几条**那个形状（[`FirstFew`]，`CONTEXT.md`《只列前几条》）。
+//!   一张长清单只列前几条、剩下的报个数，而说这一句的几张嘴里**有两张在库内**：
+//!   预扫那条拒绝与撞名那条拒绝，两段字都是库自己写下、直接落到 stderr 上的。
+//!   收口那一句留在界面层，等于把它劈成两份。
 
 mod cache;
 mod calibrate;
@@ -33,6 +41,7 @@ pub mod glyph;
 mod gray;
 mod hysteresis;
 mod interlock;
+pub mod listing;
 mod medium;
 mod metadata;
 mod metric;
@@ -69,6 +78,7 @@ pub use geometry::{FitMode, GeometryGate, Size, max_target_pixels};
 pub use glyph::{HARD_SPACE, width_is_stable};
 pub use gray::GrayImage;
 pub use interlock::{Interlock, Voice};
+pub use listing::FirstFew;
 pub use medium::{ChosenBy, IoMode, IoPlan, Medium, Readers};
 pub use metric::{
     Aggregation, Composition, Masking, Reference, Score, aggregation, composition, masking, score,
@@ -3095,16 +3105,19 @@ fn ensure_no_two_volumes_share_an_output(
     let total: usize = collisions.iter().map(|(_, by)| by.len()).sum();
     let mut said =
         format!("{total} 个卷要写到同一批去处，后到的会把先到的整卷盖掉。撞在一起的是：\n");
-    const SHOWN: usize = 5;
-    for (target, group) in collisions.iter().take(SHOWN) {
-        said.push_str(&format!("  {}\n", target.display()));
-        for root in group {
-            said.push_str(&format!("    ← {}\n", root.display()));
-        }
-    }
-    if collisions.len() > SHOWN {
-        said.push_str(&format!("  ……另有 {} 处\n", collisions.len() - SHOWN));
-    }
+    // **抬头数的是卷、收口数的是「处」**：一处撞车至少两个卷，两个数因此对不上，
+    // 而两者说的正是两件事——盖掉的是卷，要分开处理的是撞在一起的那几处。
+    // 列几条、剩下的怎么说走的是[那一处出处](FirstFew)。
+    said.push_str(&FirstFew::of(&collisions).stacked(
+        |(target, group)| {
+            let mut entry = format!("  {}\n", target.display());
+            for root in group {
+                entry.push_str(&format!("    ← {}\n", root.display()));
+            }
+            entry
+        },
+        "处",
+    ));
     // 两条出路各按自己那一种撞车出场：混着念，对其中一种必然是错的指引。
     let by_volume_name = collisions
         .iter()
