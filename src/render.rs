@@ -50,8 +50,8 @@
 use std::path::{Path, PathBuf};
 
 use tonefit::{
-    CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
-    Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit, WhiteAlignment,
+    CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile,
+    Report, Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit, WhiteAlignment,
     aggregation, composition, masking,
 };
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
@@ -851,17 +851,14 @@ pub fn tail(report: &Report) -> Vec<Row> {
 /// 退出码一格不动（`CONTEXT.md` 的《失败》）。
 ///
 /// **逐条带上路径与一句为什么**，三类各说各的（见 [`non_volume_reason`]）：只说个数的话，
-/// 用户还得自己去源库里对一遍才知道是哪几个。形状照卷级失败那一小结办
-/// （见 [`failed_volume_tail`]）：路径一行、原因一行，多了只列前几条并说还有多少——
-/// 一屏放不下的清单等于没有清单。截断只发生在**这一层**，`Report::non_volume_files`
-/// 一条不少。
+/// 用户还得自己去源库里对一遍才知道是哪几个。条目是**路径一行、原因一行**，
+/// 与卷级失败那一小结（见 [`failed_volume_tail`]）逐字同形；**列几条、剩下的怎么说**
+/// 走的是[那一处出处](tonefit::FirstFew)。截断只发生在**这一层**，
+/// `Report::non_volume_files` 一条不少。
 ///
 /// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]
 /// （见 `crate::session::draw` 的报告区），而数据只有 `Report` 上那一列。
 fn non_volume_tail(report: &Report) -> String {
-    /// 最多列几条。
-    const SHOWN: usize = 5;
-
     if report.non_volume_files.is_empty() {
         return String::new();
     }
@@ -870,17 +867,16 @@ fn non_volume_tail(report: &Report) -> String {
          这**不是失败**，退出码一格没变；源库一个字节没动，要它们的话去源里自己拿\n",
         report.non_volume_files.len()
     );
-    for file in report.non_volume_files.iter().take(SHOWN) {
-        text.push_str(&format!(
-            "  {}\n    {}\n",
-            file.path.display(),
-            non_volume_reason(&file.reason)
-        ));
-    }
-    let rest = report.non_volume_files.len().saturating_sub(SHOWN);
-    if rest > 0 {
-        text.push_str(&format!("  ……另有 {rest} 个\n"));
-    }
+    text.push_str(&FirstFew::of(&report.non_volume_files).stacked(
+        |file| {
+            format!(
+                "  {}\n    {}\n",
+                file.path.display(),
+                non_volume_reason(&file.reason)
+            )
+        },
+        "个",
+    ));
     text
 }
 
@@ -971,6 +967,13 @@ fn backstop_tail(report: &Report) -> String {
 /// 失败页早滚出屏幕了，而「这一趟到底有没有出事」得有一个不用往回翻的答案。
 /// 退出码说的是同一件事（见 `crate::exit_code`），只是那一个给脚本读、这一行给人读。
 /// 一卷都没被隔离就一个字都不说。
+///
+/// **那句指路点的是「哪几行」，不是「在上面」**（`p4-parking-lot/27`，收停车场 Q574）。
+/// 「上面」是一句关于**这一副印出来长什么样**的话，而措辞这一层不知道正文折没折
+/// ——ADR 0016 划的正是这条线。折起那一副（[`plain::ReportFold::ByDirectory`]）把正文
+/// 整个折掉，会话里没展开的那一卷同样一行不印：从前那句「原因逐条列在上面」在这两处
+/// 都指着一段不在场的正文。点名那几行是哪几行之后，三副里句句成立——**丢的信息一格没变**
+/// （折起那一副本来就看不到逐页），变的只有这一句还骗不骗人。
 fn isolation_tail(report: &Report) -> String {
     let volumes = report
         .volumes
@@ -981,7 +984,8 @@ fn isolation_tail(report: &Report) -> String {
         return String::new();
     }
     format!(
-        "隔离 {volumes} 卷 · 失败 {} 页：失败页以卷内统一尺寸留白占位，原因逐条列在上面\n",
+        "隔离 {volumes} 卷 · 失败 {} 页：失败页以卷内统一尺寸留白占位，\
+         原因逐条写在各卷的逐页那几行上\n",
         report.failures().count()
     )
 }
@@ -994,16 +998,13 @@ fn isolation_tail(report: &Report) -> String {
 /// 少了它，用户看到的是一份少了几卷而不说为什么的报告，比报错更糟。
 ///
 /// **逐条带上原因**，形状照预扫那条拒绝办（见 `tonefit` 的 `survey`）：路径一行、
-/// 原因一行，多了只列前几条并说还有多少。一屏放不下的清单等于没有清单。
+/// 原因一行；**列几条、剩下的怎么说**走的是[那一处出处](tonefit::FirstFew)。
 /// 截断只发生在**这一层**：`Report::failed_volumes` 一卷不少、每一卷都带着自己那句原因，
 /// 要全部的调用方读那一列。
 ///
 /// 排在隔离那一小结之后：两者是同一件事的两个轻重——那一头是卷交出来了、带着坏页，
 /// 这一头是卷根本没交出来。退出码上同样是后者压过前者（见 `crate::exit_code`）。
 fn failed_volume_tail(report: &Report) -> String {
-    /// 最多列几条。
-    const SHOWN: usize = 5;
-
     if report.failed_volumes.is_empty() {
         return String::new();
     }
@@ -1012,13 +1013,10 @@ fn failed_volume_tail(report: &Report) -> String {
          这一趟没有因此停下——别的卷该做的照做，上面那些就是做出来的\n",
         report.failed_volumes.len()
     );
-    for failure in report.failed_volumes.iter().take(SHOWN) {
-        text.push_str(&plain::line(&failed_volume(failure)));
-    }
-    let rest = report.failed_volumes.len().saturating_sub(SHOWN);
-    if rest > 0 {
-        text.push_str(&format!("  ……另有 {rest} 卷\n"));
-    }
+    text.push_str(
+        &FirstFew::of(&report.failed_volumes)
+            .stacked(|failure| plain::line(&failed_volume(failure)), "卷"),
+    );
     text
 }
 
@@ -1033,16 +1031,13 @@ fn failed_volume_tail(report: &Report) -> String {
 /// **说不清少了多少**的——卷级失败点得出是哪几卷，这一种连那底下有没有卷都不知道。
 /// 它与卷级失败共用一个退出码（见 `crate::FAILED_VOLUME_EXIT`）。
 ///
-/// **逐条带上路径与一句为什么**，形状照另外两小结办：路径一行、原因一行，
-/// 多了只列前几条并说还有多少——一屏放不下的清单等于没有清单。截断只发生在**这一层**，
-/// `Report::unreachable_places` 一条不少。
+/// **逐条带上路径与一句为什么**，形状照另外两小结办：路径一行、原因一行；
+/// **列几条、剩下的怎么说**走的是[那一处出处](tonefit::FirstFew)。
+/// 截断只发生在**这一层**，`Report::unreachable_places` 一条不少。
 ///
 /// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]，
 /// 而数据只有 `Report` 上那一列。
 fn unreachable_tail(report: &Report) -> String {
-    /// 最多列几处。
-    const SHOWN: usize = 5;
-
     if report.unreachable_places.is_empty() {
         return String::new();
     }
@@ -1052,17 +1047,10 @@ fn unreachable_tail(report: &Report) -> String {
          做出来的。要那底下的东西，先把下面这几处修好再重跑\n",
         report.unreachable_places.len()
     );
-    for place in report.unreachable_places.iter().take(SHOWN) {
-        text.push_str(&format!(
-            "  {}\n    {}\n",
-            place.path.display(),
-            place.reason
-        ));
-    }
-    let rest = report.unreachable_places.len().saturating_sub(SHOWN);
-    if rest > 0 {
-        text.push_str(&format!("  ……另有 {rest} 处\n"));
-    }
+    text.push_str(&FirstFew::of(&report.unreachable_places).stacked(
+        |place| format!("  {}\n    {}\n", place.path.display(), place.reason),
+        "处",
+    ));
     text
 }
 
@@ -1546,18 +1534,16 @@ fn sentence_row(kind: RowKind, sentence: impl Into<String>) -> Row {
 
 /// 头几页的名字排成一句，剩下的报个数收口。
 ///
-/// 上界取三：这一句是给人抓手用的，不是清单——真要逐页看，逐页那几行一页不落地列着。
+/// **形状与那五处清单是同一个**，只是摆法不同：那几处摞成一块，这一句串在一行里
+/// （见 [`FirstFew::strung`]）。
+///
+/// **上界取三，不取[清单那个数](tonefit::listing::LIST_LIMIT)**：这一句是给人抓手用的，
+/// 不是清单——真要逐页看，逐页那几行一页不落地列着。
 fn first_few_names(pages: &[&PageReport]) -> String {
-    const SHOWN: usize = 3;
-    let listed: Vec<String> = pages
-        .iter()
-        .take(SHOWN)
-        .map(|page| page.source.display().to_string())
-        .collect();
-    match pages.len().checked_sub(SHOWN) {
-        Some(rest) if rest > 0 => format!("{}，另有 {rest} 页", listed.join("、")),
-        _ => listed.join("、"),
-    }
+    /// 点名几页。
+    const NAMED: usize = 3;
+
+    FirstFew::at_most(pages, NAMED).strung(|page| page.source.display().to_string(), "页")
 }
 
 /// 一页那一行：它走的分支，以及那条分支得出的结果。
@@ -3113,6 +3099,78 @@ mod tests {
             Some(RowKind::UnreachableTail),
             "走不进去那一小结没压在最后"
         );
+    }
+
+    /// **一张长清单只列前几条，剩下的报个数**——末尾那三小结上一处一处地问
+    /// （`p4-parking-lot/27`，收停车场 Q45／Q49／Q115／Q204）。
+    ///
+    /// 三小结在一份报告里一起问：它们从前是同一副骨架各抄一遍，一处一条用例的话，
+    /// 三条各自绿着、谁也发现不了另外两处跟自己分了家。
+    ///
+    /// **三件事一起钉**，少一件这一条就问不出话来：抬头那个数报的是**全部**
+    /// （不是列出来的那几条）、列出来的恰好是**头几条**（第六条起一个字都不印）、
+    /// 剩下的那一句报得出**还有几条**并带着自己那个量词（个／卷／处）。
+    /// 只问头一件的话，把上限改成 1 这一条也是绿的。
+    #[test]
+    fn a_long_list_shows_the_first_few_and_counts_the_rest() {
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::PerPage,
+            PageReport {
+                source: PathBuf::from("library/volume-a/001.jpg"),
+                output: PathBuf::from("out/volume-a/001.png"),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Color,
+                    branch: PageBranch::Color,
+                }),
+            },
+        );
+        // 七条：上限是五，剩下的恰好是两条——「另有 2 X」与「另有 0 X」分得开。
+        report.non_volume_files = (1..=7)
+            .map(|nth| NonVolumeFile {
+                path: PathBuf::from(format!("library/杂物-{nth:02}.txt")),
+                reason: NonVolumeReason::NeitherPageNorArchive,
+            })
+            .collect();
+        report.failed_volumes = (1..=7)
+            .map(|nth| VolumeFailure {
+                volume: PathBuf::from(format!("library/没做成-{nth:02}")),
+                reason: format!("读 library/没做成-{nth:02}/ComicInfo.xml: 找不到"),
+            })
+            .collect();
+        report.unreachable_places = (1..=7)
+            .map(|nth| UnreachablePlace {
+                path: PathBuf::from(format!("library/进不去-{nth:02}")),
+                reason: format!("列出 library/进不去-{nth:02} 这一层: Permission denied"),
+            })
+            .collect();
+
+        let text = unfolded(&report, Mode::Process);
+
+        for (whole, stem, rest) in [
+            ("非卷文件 7 个", "library/杂物-", "……另有 2 个"),
+            ("卷级失败 7 卷", "library/没做成-", "……另有 2 卷"),
+            ("发现走不进去 7 处", "library/进不去-", "……另有 2 处"),
+        ] {
+            // 抬头报的是**全部**：清单截断了，这个数不许跟着截。
+            assert!(text.contains(whole), "抬头没报全部：{text}");
+            for nth in 1..=5 {
+                let listed = format!("{stem}{nth:02}");
+                assert!(text.contains(&listed), "头五条里少了 {listed}：{text}");
+            }
+            for nth in 6..=7 {
+                let dropped = format!("{stem}{nth:02}");
+                assert!(!text.contains(&dropped), "第六条起还在印 {dropped}：{text}");
+            }
+            // 剩下的那一句带着自己那个量词：三小结数的不是同一种东西。
+            assert!(text.contains(rest), "没说还剩多少条（{rest}）：{text}");
+        }
     }
 
     /// 部分救回页在报告里认得出来，而且**只有报告认得出来**（04 号票）。
@@ -4693,6 +4751,35 @@ mod tests {
             folded.lines().count() < whole.lines().count(),
             "折起那一副没比不折那一副短：{folded}"
         );
+    }
+
+    /// **隔离那一小结那句指路在三副里都指得准**（`p4-parking-lot/27`，收停车场 Q574）。
+    ///
+    /// 那一句点的是**逐页那几行**，而那几行**不是每一副都印**：折起那一副（`--brief`）
+    /// 把正文整个折掉，会话里没展开的那一卷同样一行不印。从前它说的是「原因逐条列在上面」
+    /// ——一句关于这一副长什么样的话，而措辞这一层不知道正文折没折。
+    ///
+    /// **三件事一起问**，少一件这一条就问不出话来：那一句点得出是哪几行、
+    /// 它点着的那几行在摊开那一副里**真带着原因**、折起那一副里它们**真不在**。
+    /// 只问头一件的话，这一条就成了「这句话是这句话」——那几行是不是真存在、
+    /// 是不是真会缺席，一个字都没问。
+    #[test]
+    fn the_isolation_tail_points_at_rows_that_are_not_always_printed() {
+        let report = two_branch_report(true);
+
+        let said = super::isolation_tail(&report);
+        let whole = self::unfolded(&report, Mode::Process);
+        let folded = plain::report(&report, Mode::Process, plain::ReportFold::ByDirectory);
+
+        assert!(said.contains("隔离 1 卷 · 失败 1 页"), "{said}");
+        // 点得出是哪几行：不是「上面」——「上面」在折起那一副里指着一段不在场的正文。
+        assert!(said.contains("逐页那几行"), "那一句没点出是哪几行：{said}");
+        // 两副都印这一小结：折起那一副里只有它点得出这一趟出了事。
+        assert!(whole.contains(&said) && folded.contains(&said), "{folded}");
+        // 它点着的那几行在摊开那一副里真带着原因。
+        assert!(whole.contains("JPEG 数据截断"), "{whole}");
+        // 折起那一副里那几行一行都不印——那正是从前那句话指空的地方。
+        assert!(!folded.contains("JPEG 数据截断"), "{folded}");
     }
 
     /// **摆进列里的那几格，字形在哪种终端上都占同一格**
