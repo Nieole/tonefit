@@ -589,9 +589,19 @@ mod tests {
     #[test]
     fn every_parameter_that_changes_the_output_changes_the_hash() {
         let baseline = params_hash(&request());
-        let changes: [Change; 8] = [
+        let changes: [Change; 9] = [
             ("面板", |request| {
                 request.profile = Profile::resolve("kobo-clara-hd").expect("内置型号")
+            }),
+            // 界挪一格，逐页判定就可能落到另一档上。它与面板不是同一项：
+            // 内置表里每一块面板共用同一个界，换面板那一行因此一次都没动过它。
+            ("阈值", |request| {
+                let doubled = request.profile.threshold().value() * 2.0;
+                request.profile = request
+                    .profile
+                    .clone()
+                    .with_threshold(doubled)
+                    .expect("两倍仍在 0 与 255 之间")
             }),
             ("面板灰阶数", |request| {
                 request.profile = request
