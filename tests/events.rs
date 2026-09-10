@@ -172,6 +172,49 @@ impl Recorder {
     }
 }
 
+/// 每一条「某一遍开工了」**带没带**那份卷报告，只记这一件事；读不读由造它的时候说了算
+/// （07 号票）。
+///
+/// **不复用 [`Recorder`]**：那一个的 `observe` 把 `so_far` 整个丢掉（它只留一个变体名），
+/// 而这里要问的正是那一格。两个观察者各问各的一件事，比给 `Recorder` 加一格干净——
+/// 它那一格今天有十一处用例读着。
+#[derive(Clone)]
+struct WhatEachPassEventCarried {
+    /// 决策点那一条带的那份报告，这一位读不读。
+    reads: bool,
+    /// 收到的每一条 `PassStarted`：在走哪一遍，以及那一格**在不在**。
+    seen: Arc<Mutex<Vec<(Pass, bool)>>>,
+}
+
+impl Progress for WhatEachPassEventCarried {
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        if let Event::PassStarted { pass, so_far, .. } = event {
+            self.seen
+                .lock()
+                .expect("记账没有中毒")
+                .push((pass, so_far.is_some()));
+        }
+        Instruction::Continue
+    }
+
+    fn reads_the_report_at_the_decision_point(&self) -> bool {
+        self.reads
+    }
+}
+
+impl WhatEachPassEventCarried {
+    fn new(reads: bool) -> Self {
+        Self {
+            reads,
+            seen: Arc::default(),
+        }
+    }
+
+    fn seen(&self) -> Vec<(Pass, bool)> {
+        self.seen.lock().expect("记账没有中毒").clone()
+    }
+}
+
 /// 一个两页的小卷。本文件问的是事件流的形状，页越小跑得越快。
 fn small_volume(space: &Workspace, name: &str) -> fixtures::Volume {
     let volume = space.volume(name);
@@ -293,6 +336,69 @@ fn a_pass_that_will_not_happen_is_not_announced() {
         recorder.passes(),
         vec![Pass::First, Pass::Second],
         "关掉元数据就没有幂等那一道"
+    );
+}
+
+/// 决策点那一条**带不带**这一卷到此刻为止的报告，由观察者自己答的那个字定（07 号票）。
+///
+/// 判空的谓词从前问的是「有没有观察者」，而命令行那一路装着进度条、一个字节都不读它
+/// ——那一问因此一卷都没省下。谓词换成「**有没有人会读它**」之后，说自己不读的那一位
+/// 收到的决策点**照发**，只是那一格是空的。
+///
+/// 两半各钉一次，用的全是**公开 API**（`Progress` 与 `so_far` 都是公开的）：
+/// 一位说读、一位说不读，各跑一趟。遍序两趟一格不差——**不拼报告不等于不问话**，
+/// 而少问一句话会让会话那一路整卷停在决策点之前。
+///
+/// **这条用例钉不住的那一半，在这里说清**：它问的是「交出去的那一格是不是空的」，
+/// 不是「库有没有白拼一份」。后者在外面一个信号都没有（票面第 5 条），
+/// 只由那一趟红过的记录与代码审查担保，缺口记在停车场 `Q495`。
+#[test]
+fn the_decision_point_carries_the_volume_report_only_for_an_observer_that_reads_it() {
+    // 两棵各自的工作区：同一个输出根跑第二趟会命中幂等而整卷跳过，
+    // 那一趟连决策点都到不了。
+    let reading = Workspace::new();
+    let reader = WhatEachPassEventCarried::new(true);
+    let volume = small_volume(&reading, "volume-a");
+    tonefit::run(&Request {
+        progress: Some(ProgressSink::new(reader.clone())),
+        ..fixtures::request(&reading, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let skimming = Workspace::new();
+    let skimmer = WhatEachPassEventCarried::new(false);
+    let volume = small_volume(&skimming, "volume-a");
+    tonefit::run(&Request {
+        progress: Some(ProgressSink::new(skimmer.clone())),
+        ..fixtures::request(&skimming, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let passes =
+        |seen: Vec<(Pass, bool)>| seen.into_iter().map(|(pass, _)| pass).collect::<Vec<_>>();
+    assert_eq!(
+        passes(skimmer.seen()),
+        passes(reader.seen()),
+        "说自己不读的那一位少收到了一条 `PassStarted`：不拼报告不等于不问话"
+    );
+
+    assert_eq!(
+        reader.seen(),
+        vec![
+            (Pass::Fingerprint, false),
+            (Pass::First, false),
+            (Pass::Second, true),
+        ],
+        "读它的那一位在决策点上没拿到这一卷的报告，会话就画不出「拿什么主意」"
+    );
+    assert_eq!(
+        skimmer.seen(),
+        vec![
+            (Pass::Fingerprint, false),
+            (Pass::First, false),
+            (Pass::Second, false),
+        ],
+        "说自己不读的那一位照旧收到了一份白拼的报告"
     );
 }
 

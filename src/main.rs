@@ -1115,7 +1115,9 @@ impl Progress for Bar {
     ///
     /// 其余的事件命令行这一路当下没有去处——「在走哪一遍」与「哪一页失败了」
     /// 报告里说得更全。`_` 那一支不是遗漏：[`Event`] 非穷尽，多一个变体不该逼着这里跟着改
-    /// （ADR 0011 的《后果》）。
+    /// （ADR 0011 的《后果》）。决策点那一条落在这一支上，而它带的那份卷报告因此一个字节都没人读
+    /// ——那件事由下面那个 `reads_the_report_at_the_decision_point` 告诉库，
+    /// 库于是连拼都不拼（07 号票）。
     ///
     /// **回的是 `Ctrl-C` 按到的那一级**（ADR 0013 决定第 3 条，本票）：一次收尾、两次中止，
     /// 按的地方在 [`install_the_stop_key`]、记在[闩](PRESSED)上。这一层只做一件事——
@@ -1134,6 +1136,19 @@ impl Progress for Bar {
             _ => {}
         }
         answer(at_the_decision_point, PRESSED.pressed())
+    }
+
+    /// **决策点那一份卷报告，这一路一个字节都不读**（07 号票）。
+    ///
+    /// 上面那个 `match` 认的六条里没有 `tonefit::Event::PassStarted`，而这一层唯一从它身上
+    /// 取的东西是「这一条是不是决策点」（见 [`at_the_decision_point`]）——读的是**遍名**，
+    /// 不是那份报告。答不读，库那一侧于是一卷少拼一份
+    /// （见 `tonefit::Progress::reads_the_report_at_the_decision_point`）。
+    ///
+    /// **答复一格不变**：决策点那一条照发，[`answer`] 照旧在它上面分岔——
+    /// 「决策点上的收尾要让」那条规矩靠的是遍名，不是报告。
+    fn reads_the_report_at_the_decision_point(&self) -> bool {
+        false
     }
 }
 

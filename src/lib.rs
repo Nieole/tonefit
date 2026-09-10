@@ -1089,7 +1089,11 @@ struct OutputPage {
     /// 报告与错误信息指人用它），这一项是**写进 tEXt 的索引**（卷内相对路径，转义成 ASCII，
     /// 带着那一族的位次）。幂等靠它把输出页反查回源页——一个源页产出几张由内容决定，
     /// 输出成员名因此在碰像素之前预告不出来（见 [`Origin`] 与 [`can_skip`]）。
-    origin: Origin,
+    ///
+    /// **关掉记录的那一趟它整个不在**（07 号票）：它唯一的消费者是 [`Recorder`]，
+    /// 而 `--no-metadata` 那一趟一个 [`Recorder`] 都不在场——既没有记录可写，
+    /// 也没有依据可比。在场与否与指纹同一格，见 [`Placement::new`]。
+    origin: Option<Origin>,
     outcome: Outcome,
 }
 
@@ -1545,7 +1549,8 @@ impl Compute<'_> {
             //
             // 失败页**恒产出一张**占位页：没有像素可切，切不出第二张来。
             Err(error) => {
-                let placement = Placement::new(relative, 0, OUTPUTS_PER_FAILED_PAGE);
+                let placement =
+                    Placement::new(relative, 0, OUTPUTS_PER_FAILED_PAGE, self.fingerprint);
                 return Ok(vec![placement.into_page(
                     source,
                     Outcome::Failed {
@@ -1612,7 +1617,7 @@ impl Compute<'_> {
             .map(|(ordinal, (image, piece))| {
                 self.gray_page(
                     source,
-                    Placement::new(relative, ordinal, count),
+                    Placement::new(relative, ordinal, count, self.fingerprint),
                     image,
                     piece,
                     color,
@@ -1668,7 +1673,7 @@ impl Compute<'_> {
             .map(|(ordinal, (image, piece))| {
                 self.color_page(
                     source,
-                    Placement::new(relative, ordinal, count),
+                    Placement::new(relative, ordinal, count, self.fingerprint),
                     &image,
                     piece,
                     color,
@@ -1713,9 +1718,12 @@ impl Compute<'_> {
                         .resampler
                         .resize_color(image, size, request.filter)
                 })?;
+                // 指纹与来路两样一起在、一起不在（见 [`Placement::new`]）：
+                // `zip` 把那件事写成一句，而不是在这里再判一次。
                 let record = self
                     .fingerprint
-                    .map(|fingerprint| Record::color(fingerprint, &placement.origin, salvage));
+                    .zip(placement.origin.as_ref())
+                    .map(|(fingerprint, origin)| Record::color(fingerprint, origin, salvage));
                 let encoded = cost::stage(cost::Stage::Encode, || {
                     encode::color_png(&scaled, record.as_ref())
                 })
@@ -1858,7 +1866,8 @@ struct Seat {
     gate: GeometryGate,
     /// 逐页先各判各的（[`decide::decide`]）；被迟滞压回时这一格换掉。
     verdict: Verdict,
-    origin: Origin,
+    /// 这一张的来路。**关掉记录的那一趟是空的**，见 [`OutputPage::origin`]。
+    origin: Option<Origin>,
     salvage: Option<Salvage>,
 }
 
@@ -1982,7 +1991,7 @@ impl<'a> Window<'a> {
             let bytes = gray_bytes(
                 &reference,
                 page.verdict,
-                &page.origin,
+                page.origin.as_ref(),
                 page.salvage,
                 recorder.as_ref(),
             )
@@ -2146,15 +2155,27 @@ impl Piece {
 struct Placement {
     /// 它在输出容器里的相对位置（见 [`output_name`]）。
     target: PathBuf,
-    /// 它的来路，写进 tEXt（见 [`Origin`]）。
-    origin: Origin,
+    /// 它的来路，写进 tEXt（见 [`Origin`]）。**只有记着的那一趟才有**，
+    /// 见 [`OutputPage::origin`]。
+    origin: Option<Origin>,
 }
 
 impl Placement {
-    fn new(relative: &Path, ordinal: usize, count: usize) -> Self {
+    /// 位置总要算，来路**只在有人会读它的那一趟才造**（07 号票）。
+    ///
+    /// 谓词就是[指纹](Fingerprint)本身：来路唯一的消费者是 [`Recorder`]，而 [`Recorder`]
+    /// 要一份指纹才在（见 `crate::process_volume` 与 [`Window::encode`]）。
+    /// 来路与指纹在场与否因此**恒相同**，出自这一句、没有第二处判据可以与它对不上。
+    ///
+    /// **这一句只说到指纹为止，反向不成立**：指纹在不等于 [`Recorder`] 在。试算那一趟
+    /// 指纹照算（幂等那一道要问它），而第二遍与滚动窗口都不走——来路于是照造，没有读者。
+    /// 那一处白造本票没收，记在停车场 `Q490`。
+    fn new(relative: &Path, ordinal: usize, count: usize, records: Option<&Fingerprint>) -> Self {
         Self {
             target: output_name(relative, ordinal, count),
-            origin: Origin::new(relative, ordinal, count),
+            origin: records
+                .is_some()
+                .then(|| Origin::new(relative, ordinal, count)),
         }
     }
 
@@ -2265,7 +2286,9 @@ impl Encode<'_> {
                 // 没求过判据，卷级那一档说的是「这一卷的内容要几档灰」，而这一页没有内容。
                 // 位深是编码属性（`CONTEXT.md`），而整页只有一个取值时 1bit 恰好装得下它；
                 // 换个更宽的档也写不出别的字节，编码器那一层照旧会挑最窄的（ADR 0004）。
-                let record = recorder.map(|recorder| recorder.failed(&page.origin));
+                let record = recorder
+                    .zip(page.origin.as_ref())
+                    .map(|(recorder, origin)| recorder.failed(origin));
                 cost::stage(cost::Stage::Encode, || {
                     encode::png(&placeholder(uniform), BitDepth::One, record.as_ref())
                 })
@@ -2292,9 +2315,15 @@ impl Encode<'_> {
                     cache::Held::Reference(reference) => reference,
                 };
                 let verdict = verdict.expect("灰度路径上必有判定");
-                gray_bytes(&reference, verdict, &page.origin, *salvage, recorder)
-                    .map(Cow::Owned)
-                    .with_context(|| format!("编 {source} 这一页"))
+                gray_bytes(
+                    &reference,
+                    verdict,
+                    page.origin.as_ref(),
+                    *salvage,
+                    recorder,
+                )
+                .map(Cow::Owned)
+                .with_context(|| format!("编 {source} 这一页"))
             }
         }
     }
@@ -2310,14 +2339,20 @@ impl Encode<'_> {
 fn gray_bytes(
     reference: &GrayImage,
     verdict: Verdict,
-    origin: &Origin,
+    origin: Option<&Origin>,
     salvage: Option<Salvage>,
     recorder: Option<&Recorder>,
 ) -> Result<Vec<u8>> {
     let quantized = cost::stage(cost::Stage::Quantize, || {
         quantize::quantize(reference, verdict.candidate)
     });
-    let record = recorder.map(|recorder| recorder.gray(origin, verdict, salvage));
+    // 两个调用处传进来的这两样**恒是一起在、一起不在**：两处的记录器都由同一份指纹派生
+    // （[`Encode`] 那一份在 `crate::process_volume`，滚动窗口那一份在 [`Window::encode`]），
+    // 而来路的在场与否问的正是那份指纹（见 [`Placement::new`]）。`zip` 因此不是在防一个
+    // 真会发生的组合，是把那句话写成编译器认得的形状。
+    let record = recorder
+        .zip(origin)
+        .map(|(recorder, origin)| recorder.gray(origin, verdict, salvage));
     cost::stage(cost::Stage::Encode, || {
         encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
     })
@@ -3136,7 +3171,7 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
-            origin: Origin::new(Path::new(source), 0, 1),
+            origin: Some(Origin::new(Path::new(source), 0, 1)),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
@@ -3160,7 +3195,7 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
-            origin: Origin::new(Path::new(source), 0, 1),
+            origin: Some(Origin::new(Path::new(source), 0, 1)),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
@@ -3598,8 +3633,8 @@ mod tests {
 
     /// **决策点也在哨兵里**，哪怕这一趟根本没有观察者可问。
     ///
-    /// 它有自己一道判空（没人可问就连报告都不拼），绕得过 `Events::ask` 里那一问——
-    /// 命令行不带进度条的那条路走的正是这一支。而这一处**按设计要等人**
+    /// 它有自己一道判空（没人会读那份报告就连拼都不拼），绕得过 `Events::ask` 里那一问——
+    /// 走这一支的是库外只调 `run`、不装观察者的那一趟。而这一处**按设计要等人**
     /// （ADR 0012 决定第 3 条），持着锁停在这儿是最坏的一种。
     #[test]
     #[cfg(debug_assertions)]
