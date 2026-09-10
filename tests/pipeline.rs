@@ -7,7 +7,7 @@ mod fixtures;
 use fixtures::{Workspace, run_volume};
 use tonefit::{
     BitDepth, CacheBudget, Candidate, Dither, Filter, FitMode, GeometryGate, Mode, PageColor,
-    Reason, Request, Size, VolumeVerdict,
+    Reason, Request, Size, VolumeVerdict, WhiteAlignment,
 };
 
 #[test]
@@ -3624,4 +3624,117 @@ fn a_zip_and_a_cbz_of_the_same_name_collide_and_the_message_says_why() {
     assert!(!error.contains("分批处理"), "{error}");
     // 拒绝要发生在写出第一个字节之前。
     assert!(!space.out().exists(), "拒之前已经动过输出根");
+}
+
+/// **报告说得出这一趟的纸白对齐对每一页做了什么**（纸白对齐批 02 号票第 1 条）。
+///
+/// 三页各落在一种情形上，卷级那一行的三个数正是数它们数出来的：离格且钳得动的一页、
+/// 本来就在格点上的一页、量不出纸白的一页。**断言的是 `Report` 里的内容**，
+/// 不是印出来的字符串长什么样——措辞那一层的用例在 `src/render.rs` 自己的 `mod tests` 里。
+///
+/// 页尺寸取[恒等通过](fixtures::PASSES_THROUGH)：缩放动过的像素会让「纸白量出来是几」
+/// 变成缩放那一步的性质，而这一条问的是对齐。
+#[test]
+fn the_report_says_what_the_white_alignment_did_to_each_page() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, fixtures::OFF_GRID_PAPER_WHITE),
+    );
+    volume.page(
+        "002.png",
+        &fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, u8::MAX),
+    );
+    volume.page(
+        "003.png",
+        &fixtures::full_bleed_page_without_paper(fixtures::PASSES_THROUGH),
+    );
+
+    let report = tonefit::run(&Request {
+        white_align_limit: fixtures::ALIGNING_LIMIT,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    // 本次上限是**这一趟**的事实，卷级那一行要照它说话（票面第 1、6 条）。
+    assert_eq!(report.white_align_limit, fixtures::ALIGNING_LIMIT);
+    let pages = &report.volumes[0].pages;
+    assert_eq!(
+        pages[0].white_alignment(),
+        Some(WhiteAlignment::Aligned {
+            paper_white: fixtures::OFF_GRID_PAPER_WHITE
+        }),
+        "离格 2 级、上限 4 级的那一页，报告里没说它被对齐了"
+    );
+    assert_eq!(
+        pages[1].white_alignment(),
+        Some(WhiteAlignment::OnTheGrid {
+            paper_white: u8::MAX
+        }),
+        "本来就在格点上的那一页，报告里没说它本来就在格点上"
+    );
+    assert_eq!(
+        pages[2].white_alignment(),
+        Some(WhiteAlignment::NoPaperWhite),
+        "满版无纸边的那一页，报告里没说它量不出纸白"
+    );
+}
+
+/// **默认上限（0）下，试算照样说得出每一页差多少**（票面第 3 条）。
+///
+/// 逐页那一层是给**还没决定上限取多少**的用户看的，而那个用户按定义上限就是 0。
+/// 对齐那条路上有一道短路——上限取 0 时连纸白都不量（`tonefit::align_white`）——
+/// 于是照做那一趟每一页都是「没开」。试算把守卫另判一遍，答的因此是
+/// 「离格量超过上限」这样的真话：**上限抬到 2 级这一页就钳得动**，
+/// 而那正是他要的那个数。
+///
+/// **两种模式一起断言**，因为这一条的实义就在两者之差：只测试算的话，
+/// 「照做那一趟不白花这份工夫」就没有一处钉着。
+#[test]
+fn a_dry_run_still_measures_every_page_when_the_limit_is_the_default_zero() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, fixtures::OFF_GRID_PAPER_WHITE),
+    );
+    let at = |mode| {
+        let report = tonefit::run(&Request {
+            mode,
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("处理应当成功");
+        report.volumes[0].pages[0]
+            .white_alignment()
+            .expect("灰度页有纸白对齐那一格")
+    };
+
+    // 上限没点名：默认那一个。这一条问的正是默认那一趟，夹具先把它咬住。
+    assert_eq!(
+        tonefit::WhiteAlignLimit::default(),
+        tonefit::WhiteAlignLimit::OFF,
+        "夹具没咬住：默认上限不是 0，这一条问的就不是默认那一趟了"
+    );
+
+    let dry_run = at(Mode::DryRun);
+    assert_eq!(
+        dry_run,
+        WhiteAlignment::OverTheLimit {
+            paper_white: fixtures::OFF_GRID_PAPER_WHITE
+        },
+        "试算没说得出这一页的纸白：还没决定上限的用户因此一个数都拿不到"
+    );
+    // 钳制宽度是那个用户真正要的数——上限抬到它，这一页就钳得动。
+    // **期望值写成字面量，不拿 `255 − 纸白` 再算一遍**：那样算出来的数与被测那一句同源，
+    // 两边一起错也不会红。2 出自夹具那一条（253 到最近格点 255 差 2 级），也正是
+    // measurements 的《真机三组》里武器種族傳說原档那四页量出来的那一个。
+    assert_eq!(dry_run.clamp_width(), Some(2));
+
+    // 照做那一趟不白花这份工夫：它的报告说的是「做过什么」，而上限取 0 时它什么都没做。
+    assert_eq!(
+        at(Mode::Process),
+        WhiteAlignment::Off,
+        "照做那一趟也去量了纸白：上限取 0 时那是白花的工夫"
+    );
 }

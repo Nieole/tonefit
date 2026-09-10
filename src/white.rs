@@ -114,6 +114,44 @@ pub enum WhiteAlignment {
     },
 }
 
+impl WhiteAlignment {
+    /// 这一页量出来的纸白。**两种情形答不出**：[没开](Self::Off)那一趟根本没量，
+    /// [量不出纸白](Self::NoPaperWhite)的那一页量了而这条定义说不出话。
+    ///
+    /// **不公开**：那个数已经明摆在三个变体自己的 `paper_white` 字段上，读的那一端
+    /// `match` 一下就有，再开一个公开读数是替没人提过的需要加接口。
+    /// 它只为 [`clamp_width`](Self::clamp_width) 而在——那一个要的是**同一张表**，
+    /// 两处各 `match` 一遍早晚会走散。
+    const fn paper_white(self) -> Option<u8> {
+        match self {
+            Self::Off | Self::NoPaperWhite => None,
+            Self::OnTheGrid { paper_white }
+            | Self::OverTheLimit { paper_white }
+            | Self::Aligned { paper_white } => Some(paper_white),
+        }
+    }
+
+    /// 这一页的**钳制宽度**，也就是它的《离格量》：对齐要压平多宽的色调，
+    /// 也就是这一页付出的代价。
+    ///
+    /// **两种情形答不出**，与那个纸白同一条：没开那一趟根本没量，量不出纸白的那一页
+    /// 量了而这条定义说不出话。
+    ///
+    /// **它不由读的那一端算**：`255 − 纸白` 这一句在本模块里只有一处出处
+    /// （`clamp_width_at`），守卫那一侧比的也是它——两处各减一遍，早晚有一处减错。
+    pub const fn clamp_width(self) -> Option<u8> {
+        match self.paper_white() {
+            Some(paper_white) => Some(clamp_width_at(paper_white)),
+            None => None,
+        }
+    }
+}
+
+/// 纸白落在 `paper_white` 上时的**钳制宽度**（《离格量》）。这一句只有这一处。
+const fn clamp_width_at(paper_white: u8) -> u8 {
+    u8::MAX - paper_white
+}
+
 /// 把这一页的纸白对齐到 255。
 ///
 /// # 三条守卫
@@ -136,7 +174,10 @@ pub enum WhiteAlignment {
 ///
 /// 这条短路**不是**「0 不改像素」赖以成立的东西：拆掉它，离格那条守卫照样把每一页拦下
 /// （`离格量 > 0` 恒成立），一个像素还是不会动。两道各挡各的，
-/// 短路挡的是**白花的工夫**，守卫挡的是**像素**。
+/// 短路挡的是**白花的工夫**，守卫挡的是**像素**。**试算那一趟正是拆掉它跑的**——
+/// 它绕开这里、直接问本模块内那个只判不改的 `judge`，为的是让还没决定上限的用户
+/// 看得见每一页差多少（理由写在那一头）。三条守卫因此只有 `judge` 一处，
+/// 这里判完只管钳。
 ///
 /// # 纸白的定义是可执行的
 ///
@@ -164,25 +205,47 @@ pub fn align_white(image: GrayImage, limit: WhiteAlignLimit) -> (GrayImage, Whit
     if limit.levels() == 0 {
         return (image, WhiteAlignment::Off);
     }
-    let Some(paper_white) = paper_white(&image) else {
-        return (image, WhiteAlignment::NoPaperWhite);
+    let what = judge(&image, limit);
+    let WhiteAlignment::Aligned { paper_white } = what else {
+        // 三条守卫各放过一类页，**整页原样返回**。
+        return (image, what);
     };
-    let clamp_width = u8::MAX - paper_white;
-    if clamp_width == 0 {
-        return (image, WhiteAlignment::OnTheGrid { paper_white });
-    }
-    if clamp_width > limit.levels() {
-        return (image, WhiteAlignment::OverTheLimit { paper_white });
-    }
     let clamped = image
         .pixels()
         .iter()
         .map(|&value| if value >= paper_white { u8::MAX } else { value })
         .collect();
-    (
-        GrayImage::new(image.size(), clamped),
-        WhiteAlignment::Aligned { paper_white },
-    )
+    (GrayImage::new(image.size(), clamped), what)
+}
+
+/// **只判不改**：这一页在这个上限下会落到[哪一种情形](WhiteAlignment)，一个像素都不碰。
+///
+/// 三条守卫**只有这一处**——[`align_white`] 判完再钳，两处各判一遍早晚会走散。
+/// 它**不带那道短路**：上限取 0 时照样量、照样判，于是答的是
+/// [`OverTheLimit`](WhiteAlignment::OverTheLimit) 一类的真话，而不是
+/// [`Off`](WhiteAlignment::Off)。谁需要那句真话见下。
+///
+/// # 试算那一趟为什么要它（纸白对齐批 02 号票第 3 条）
+///
+/// 逐页那一层是给**还没决定上限取多少**的用户看的，而那个用户按定义上限就是 0——
+/// 走 [`align_white`] 的话，那道短路让他每一页都读到「没开」，一个数都拿不到。
+/// 试算因此绕开短路另判一遍：`--dry-run` 一个字节都不写，
+/// 判一遍的代价是每页一遍平坦掩码，摆在同一页那六档判据旁边不算什么。
+///
+/// **照做那一趟不走这里**：那一趟的报告说的是「做过什么」，而上限取 0 时它什么都没做，
+/// 连量都不该量（[`align_white`] 那道短路挡的正是这份白花的工夫）。
+pub(crate) fn judge(image: &GrayImage, limit: WhiteAlignLimit) -> WhiteAlignment {
+    let Some(paper_white) = paper_white(image) else {
+        return WhiteAlignment::NoPaperWhite;
+    };
+    let clamp_width = clamp_width_at(paper_white);
+    if clamp_width == 0 {
+        return WhiteAlignment::OnTheGrid { paper_white };
+    }
+    if clamp_width > limit.levels() {
+        return WhiteAlignment::OverTheLimit { paper_white };
+    }
+    WhiteAlignment::Aligned { paper_white }
 }
 
 /// 这一页的纸白，量不出来就是 `None`。定义见 [`align_white`] 的《纸白的定义是可执行的》。

@@ -141,6 +141,8 @@ pub(super) fn report_pane(
     let opened = pages::pages(
         volume,
         live.report().profile.panel(),
+        live.mode(),
+        live.report().white_align_limit,
         body.width,
         expansion.listing,
         expansion.at,
@@ -304,6 +306,8 @@ fn tail_row(said: &Row) -> Painted {
         | RowKind::Salvaged
         | RowKind::Gate
         | RowKind::GateNote
+        | RowKind::WhiteAlign
+        | RowKind::WhiteAlignNote
         | RowKind::Envelope
         | RowKind::Driver
         | RowKind::Override
@@ -1083,7 +1087,7 @@ mod tests {
         // 它进了「注意」那一档，而那个词就在句首——颜色抹掉了话还在。
         assert_eq!(rows[2].tone, Tone::Caution, "过期副本还在四档外面");
         // 那一句逐字来自 `render`——这一层一个字都没重写。
-        let said = crate::render::volume(&superseded)
+        let said = crate::render::volume(&superseded, tonefit::WhiteAlignLimit::default())
             .into_iter()
             .find(|row| row.kind == crate::render::RowKind::Superseded)
             .and_then(|row| row.cell(crate::render::Field::Sentence).map(str::to_owned))
@@ -1701,10 +1705,19 @@ mod tests {
     fn the_per_page_cells_come_from_render_and_only_for_the_volume_that_is_open() {
         let live = a_run_worth_expanding();
         let opened = &live.report().volumes[1];
-        let rows = crate::render::pages(opened);
+        let rows = crate::render::pages(opened, live.mode());
         let panel = live.report().profile.panel();
 
-        let table = pages::pages(opened, panel, 200, Listing::All, 0).table;
+        let table = pages::pages(
+            opened,
+            panel,
+            live.mode(),
+            live.report().white_align_limit,
+            200,
+            Listing::All,
+            0,
+        )
+        .table;
         let said = table
             .rows
             .iter()
@@ -1746,7 +1759,15 @@ mod tests {
         );
         // 幂等命中的卷展开了也一行逐页都没有（`render::pages` 那道守卫），不恐慌：
         // 那一格里摆的是一句话（见 `super::pages`）。
-        let skipped = pages::pages(&live.report().volumes[0], panel, 200, Listing::All, 0);
+        let skipped = pages::pages(
+            &live.report().volumes[0],
+            panel,
+            live.mode(),
+            live.report().white_align_limit,
+            200,
+            Listing::All,
+            0,
+        );
         assert_eq!(skipped.table.rows.len(), 1);
         assert!(skipped.table.rows[0].text.contains("一页都没有重做"));
     }

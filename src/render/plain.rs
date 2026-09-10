@@ -46,7 +46,7 @@
 //!
 //! 折行不在这里，与 [`super`] 同一条：折到多宽由印它的那一头定（见 [`crate::wrap`]）。
 
-use tonefit::{Mode, Report, VolumeReport};
+use tonefit::{Mode, Report, VolumeReport, WhiteAlignLimit};
 
 use super::{Field, Listed, Row, RowKind};
 
@@ -60,8 +60,8 @@ pub fn report(report: &Report, mode: Mode) -> String {
         text.push_str(&directory(&group, &listed));
         for at in &group.at {
             if let Some(Listed::Settled(volume)) = listed.get(*at) {
-                text.push_str(&self::volume(volume));
-                text.push_str(&self::pages(volume));
+                text.push_str(&self::volume(volume, report.white_align_limit));
+                text.push_str(&self::pages(volume, mode));
             }
         }
     }
@@ -94,15 +94,19 @@ pub fn directory(group: &super::Group, listed: &[Listed<'_>]) -> String {
 }
 
 /// 一个卷的卷级那几行，摆成纯文本（[`super::volume`] 出的行）。
-pub fn volume(volume: &VolumeReport) -> String {
-    text(&super::volume(volume))
+///
+/// `limit` 是这一趟的《纸白对齐上限》：卷级那一行要照它说话，
+/// 而它是**这一趟**的事实，不在 [`VolumeReport`] 上（见 [`super::volume`]）。
+pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> String {
+    text(&super::volume(volume, limit))
 }
 
 /// 一个卷的逐页那几行，摆成纯文本（[`super::pages`] 出的行）。
 ///
 /// 跳过的卷一行都没有，出来的就是空串。
-pub fn pages(volume: &VolumeReport) -> String {
-    text(&super::pages(volume))
+/// `mode` 定的是逐页那几行说不说纸白——只在 `--dry-run` 说（见 [`super::pages`]）。
+pub fn pages(volume: &VolumeReport, mode: Mode) -> String {
+    text(&super::pages(volume, mode))
 }
 
 /// 一摞行摆成一段：一行一行接下去，中间不加任何东西。
@@ -153,6 +157,24 @@ pub(super) fn line(row: &Row) -> String {
         ),
         // 几何门底下那几句缩到第四格：它们说的是上一行那两个数，不是并列的另一件事。
         RowKind::GateNote => format!("    {}\n", cell(row, Field::Sentence)),
+        // **上限那一格恒在，三个数不恒在**（见 [`super::white_align_rows`]）：
+        // 照做那一趟上限取 0 时一页都没量过，三个 0 摆出去是编的。
+        // 「上限」是列头、「页」是单位，两样都在这一层；「级」与那句「没开」在格里，
+        // 因为这一格摆到哪一副排版上都得自带它们。
+        RowKind::WhiteAlign => format!(
+            "  纸白对齐 上限 {}{}\n",
+            cell(row, Field::WhiteAlignLimit),
+            row.cell(Field::WhiteAligned).map_or_else(String::new, |_| {
+                format!(
+                    " · 对齐 {} 页 · 超限 {} 页 · 量不出纸白 {} 页",
+                    cell(row, Field::WhiteAligned),
+                    cell(row, Field::WhiteOverTheLimit),
+                    cell(row, Field::WhiteNoPaperWhite),
+                )
+            }),
+        ),
+        // 纸白对齐底下那一句与几何门底下那几句同一个摆法：它说的是上一行那几个数。
+        RowKind::WhiteAlignNote => format!("    {}\n", cell(row, Field::Sentence)),
         RowKind::Envelope => format!("  卷级 {}\n", cell(row, Field::Envelope)),
         // 覆盖与逐页那两种同样挂在「卷级」后面：三种判定在纸上是同一行的三种说法。
         RowKind::Override | RowKind::PerPage => format!("  卷级 {}\n", cell(row, Field::Sentence)),
@@ -172,13 +194,17 @@ pub(super) fn line(row: &Row) -> String {
                 .map_or_else(String::new, |note| format!(" · {note}")),
             cell(row, Field::Output),
         ),
+        // 纸白那一格跟在行尾，**在场才说**：它只在 `--dry-run` 出（见 [`super::pages`]），
+        // 摆法与部分救回那一格同一条——不占一列，跟着这一行走。
         RowKind::PageVerdict => format!(
-            "    {}{}判定 {}（{}）  判据 {}\n",
+            "    {}{}判定 {}（{}）  判据 {}{}\n",
             marked(row, Field::Salvage),
             marked(row, Field::ColorToGray),
             cell(row, Field::Candidate),
             cell(row, Field::Reason),
             cell(row, Field::Scores),
+            row.cell(Field::PaperWhite)
+                .map_or_else(String::new, |said| format!("  {said}")),
         ),
         RowKind::PageColor => format!(
             "    {}{}\n",
