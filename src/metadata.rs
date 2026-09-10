@@ -622,10 +622,11 @@ mod tests {
             // 裁边换掉，适配之前的页尺寸就变了（页几何批 02 号票）。
             ("裁边", |request| request.crop = false),
             ("滤波器", |request| request.filter = Filter::Bicubic),
-            // 从**默认的 0**（关）改到开：那正是这一项最要紧的一次改动，
-            // 而它恰好是「取值 0 也照样进哈希」不成立时唯一漏得掉的那一次。
+            // 从**默认的 4**（开）改到 0（关）：默认值抬上去之后（05 号票），
+            // 那才是这一项最要紧的一次改动——不放心的人关掉它，上一趟的输出必须整卷过期，
+            // 而 0 恰好是「取值 0 也照样进哈希」不成立时唯一漏得掉的那一个。
             ("纸白对齐上限", |request| {
-                request.white_align_limit = WhiteAlignLimit::new(4)
+                request.white_align_limit = WhiteAlignLimit::OFF
             }),
             ("位深覆盖", |request| {
                 request.bit_depth = Some(BitDepth::Four)

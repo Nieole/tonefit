@@ -65,7 +65,8 @@ pub struct Request {
     pub split: SplitRule,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
-    /// 纸白对齐的上限（`--white-align-limit`，纸白对齐批 01 号票）。**默认 0，即关闭。**
+    /// 纸白对齐的上限（`--white-align-limit`，纸白对齐批 01、05 号票）。
+    /// **默认 4 级，即默认开着**（取值出处只有 [`WhiteAlignLimit::default`]）；取 0 是关闭。
     ///
     /// 它是**口味层**的一项：这一趟愿意为对齐付多少色调，不是面板的物理事实。
     /// 上限即开关，不另做布尔开关（理由见 [`WhiteAlignLimit`]）。

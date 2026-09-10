@@ -721,8 +721,11 @@ fn written_pixels(
 
 /// **整条路的 tracer bullet**：命令行上的那个数一路走到写出的像素上。
 ///
-/// 默认 0 那一趟与源**逐字节相同**（一页都不改），点名 4 那一趟把 `[纸白, 255]`
+/// 点名 0 那一趟与源**逐字节相同**（一页都不改），点名 4 那一趟把 `[纸白, 255]`
 /// 那一段搬到 255、低于纸白的一个都不动。
+///
+/// **两趟都点名**：这一条问的是「命令行上那个数管不管用」，不问默认值取多少
+/// ——不点名那一趟由 [`the_default_run_aligns_an_off_grid_page`] 单独钉着。
 #[test]
 fn the_limit_reaches_the_written_pixels_and_a_limit_of_zero_changes_nothing() {
     // 恒等通过的尺寸配四边顶着墨的一张页：缩放与裁边都不插一脚，
@@ -731,16 +734,47 @@ fn the_limit_reaches_the_written_pixels_and_a_limit_of_zero_changes_nothing() {
     let page = fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, paper);
     let source = fixtures::luma_pixels(&page);
 
-    let closed = written_pixels(
-        &page,
-        FitMode::default(),
-        tonefit::WhiteAlignLimit::default(),
-    );
+    let closed = written_pixels(&page, FitMode::default(), tonefit::WhiteAlignLimit::OFF);
     let opened = written_pixels(&page, FitMode::default(), fixtures::ALIGNING_LIMIT);
 
     fixtures::assert_pixels(&source, &closed);
     assert_ne!(opened, source, "点名 4 那一趟一个像素都没动");
     fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &opened);
+}
+
+/// **不加任何参数的那一趟也对齐**（纸白对齐批 05 号票：默认值抬到 4）。
+///
+/// 这是抬默认值那一件事的全部后果所在：离格的页从此**在默认跑法上**被搬到格点上，
+/// 白底不再撒点。上面那条 tracer bullet 点名给上限，测不到这件事
+/// ——默认值退回 0，那一条照旧全绿。
+///
+/// 两头各钉一句：**像素**真的钳过了，**报告**说得出这一页是被对齐的那一种
+/// （报告那一行因此在默认跑法上说「对齐 1 页」，不再是「没开」）。
+#[test]
+fn the_default_run_aligns_an_off_grid_page() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let paper = fixtures::OFF_GRID_PAPER_WHITE;
+    let page = fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, paper);
+    volume.page("001.png", &page);
+
+    // 上限照默认值走，别的照 `run_aligning` 那一套（钉在 8bit，量化于是成了恒等）。
+    let report = run_aligning(
+        &space,
+        &volume,
+        FitMode::default(),
+        tonefit::WhiteAlignLimit::default(),
+    );
+
+    let reported = &report.volumes[0].pages[0];
+    assert_eq!(
+        reported.white_alignment(),
+        Some(WhiteAlignment::Aligned { paper_white: paper }),
+        "默认那一趟没把这一页对齐：报告那一行还在说「没开」"
+    );
+    let written = fixtures::read_png(&reported.output).pixels;
+    let source = fixtures::luma_pixels(&page);
+    fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &written);
 }
 
 /// **几何门不成立的页照样对齐**：它只是没有抖动那一维，纸白该在格点上还是要在。
@@ -3681,9 +3715,9 @@ fn the_report_says_what_the_white_alignment_did_to_each_page() {
     );
 }
 
-/// **默认上限（0）下，试算照样说得出每一页差多少**（票面第 3 条）。
+/// **上限取 0 时，试算照样说得出每一页差多少**（02 号票第 3 条）。
 ///
-/// 逐页那一层是给**还没决定上限取多少**的用户看的，而那个用户按定义上限就是 0。
+/// 逐页那一层是给**点名关掉、又想知道抬上去会钳掉多少**的用户看的。
 /// 对齐那条路上有一道短路——上限取 0 时连纸白都不量（`tonefit::align_white`）——
 /// 于是照做那一趟每一页都是「没开」。试算把守卫另判一遍，答的因此是
 /// 「离格量超过上限」这样的真话：**上限抬到 2 级这一页就钳得动**，
@@ -3691,8 +3725,12 @@ fn the_report_says_what_the_white_alignment_did_to_each_page() {
 ///
 /// **两种模式一起断言**，因为这一条的实义就在两者之差：只测试算的话，
 /// 「照做那一趟不白花这份工夫」就没有一处钉着。
+///
+/// **上限点名给 0，不借默认值**（05 号票把默认值抬到了 4）：这一条问的自始至终是
+/// 「上限取 0 时那两种模式各说什么」。它原先写作「默认上限（0）」并拿
+/// `WhiteAlignLimit::default()` 咬住夹具——**默认值一动，它问的就是另一件事了**。
 #[test]
-fn a_dry_run_still_measures_every_page_when_the_limit_is_the_default_zero() {
+fn a_dry_run_still_measures_every_page_when_the_limit_is_zero() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page(
@@ -3702,6 +3740,7 @@ fn a_dry_run_still_measures_every_page_when_the_limit_is_the_default_zero() {
     let at = |mode| {
         let report = tonefit::run(&Request {
             mode,
+            white_align_limit: tonefit::WhiteAlignLimit::OFF,
             ..fixtures::request(&space, [volume.path()])
         })
         .expect("处理应当成功");
@@ -3709,13 +3748,6 @@ fn a_dry_run_still_measures_every_page_when_the_limit_is_the_default_zero() {
             .white_alignment()
             .expect("灰度页有纸白对齐那一格")
     };
-
-    // 上限没点名：默认那一个。这一条问的正是默认那一趟，夹具先把它咬住。
-    assert_eq!(
-        tonefit::WhiteAlignLimit::default(),
-        tonefit::WhiteAlignLimit::OFF,
-        "夹具没咬住：默认上限不是 0，这一条问的就不是默认那一趟了"
-    );
 
     let dry_run = at(Mode::DryRun);
     assert_eq!(

@@ -182,12 +182,14 @@ struct Cli {
     #[arg(long, value_name = "滤波器")]
     filter: Option<String>,
 
-    /// 纸白对齐的上限：最多把多宽的一段近白色调压平到纯白，默认 0。
+    /// 纸白对齐的上限：最多把多宽的一段近白色调压平到纯白，**默认 4 级，即默认开着**。
     ///
-    /// **默认 0 就是关闭**：那时只有纸白本来就落在 255 上的页满足条件，即一页都不改，
+    /// **取 0 就是关闭**：那时只有纸白本来就落在 255 上的页满足条件，即一页都不改，
     /// 产物与不带这个功能时逐字节相同。不另设一个开关——上限即开关。
     ///
-    /// 开了之后每一页各量各的纸白（全页 3×3 邻域方差为零的像素里出现次数最多的那个灰度），
+    /// **这个数改了，上一趟的输出整卷过期重做**：它进参数哈希，改了不会被幂等静默跳过。
+    ///
+    /// 开着的时候每一页各量各的纸白（全页 3×3 邻域方差为零的像素里出现次数最多的那个灰度），
     /// 把 `[纸白, 255]` 这一段钳到 255，低于纸白的取值一个都不动。
     /// 钳制宽度就是这一页的《离格量》，也就是代价：被压平的色调有多宽。
     ///
@@ -320,7 +322,8 @@ impl Cli {
         }
     }
 
-    /// 本次纸白对齐的上限（纸白对齐批 01 号票）。不点名就是默认的 0，即关闭。
+    /// 本次纸白对齐的上限（纸白对齐批 01 号票）。不点名就是默认的 4 级，即默认开着
+    /// （05 号票抬的那一趟）；关掉要自己点名 0。
     ///
     /// **它眼下不收预设**：预设那一层是 03 号票，落地之前这里只认命令行。
     /// 默认值不在这里——它在 `WhiteAlignLimit::default`，抬默认值那一趟只改那一处。
@@ -2054,12 +2057,13 @@ io-mode = \"concurrent\"
         assert!(help.contains("缩放系数完全相同"), "{help}");
     }
 
-    /// `--white-align-limit` 在命令行上认得，不点名就是默认的 0（纸白对齐批 01 号票）。
+    /// `--white-align-limit` 在命令行上认得，不点名就是默认的 4（纸白对齐批 05 号票）。
     ///
-    /// **默认值不在这里比死**：拿的是 `WhiteAlignLimit::default`，那是它唯一的出处。
-    /// 抬默认值那一趟只改那一处，这一条不必跟着改。
+    /// **合出来的那个值不在这里比死**：拿的是 `WhiteAlignLimit::default`，那是它唯一的出处。
+    /// 底下那一句**比的是那个数本身**，也只有这一句比它——默认值一动它就红，
+    /// 而那正是这件事该有的分量：抬默认值改的是**不加参数的人拿到的产物**。
     #[test]
-    fn the_white_align_limit_takes_a_number_of_levels_and_defaults_to_off() {
+    fn the_white_align_limit_takes_a_number_of_levels_and_defaults_to_four() {
         let limit = |arguments: &[&str]| {
             let mut line = vec!["--profile", "kobo-libra-2"];
             line.extend_from_slice(arguments);
@@ -2067,7 +2071,11 @@ io-mode = \"concurrent\"
         };
 
         assert_eq!(limit(&[]), WhiteAlignLimit::default(), "不点名就该是默认值");
-        assert_eq!(limit(&[]).levels(), 0, "默认值不是 0，即默认不再是「关」");
+        assert_eq!(
+            limit(&[]).levels(),
+            4,
+            "默认值不是 4：不加参数的那一趟对齐得动的页不再是这一批"
+        );
         assert_eq!(
             limit(&["--white-align-limit", "4"]),
             WhiteAlignLimit::new(4)
@@ -2094,17 +2102,24 @@ io-mode = \"concurrent\"
         );
     }
 
-    /// 帮助里要说得出**它是什么**、以及**取 0 是什么意思**（票面明写的那一条）。
+    /// 帮助里要说得出**它是什么**、**默认取多少**、以及**取 0 是什么意思**（票面明写的那一条）。
     ///
-    /// 少了「取 0 是关」，看见默认值是 0 的人不知道那是「关着」还是「一级都不许钳」；
+    /// 少了「取 0 是关」，看见这个数的人不知道 0 是「关着」还是「一级都不许钳」；
     /// 少了钳制那一段的说法，他不知道自己在拿什么换什么。
+    /// **默认那一句从 05 号票起说的是 4**：默认开着，不点名的人也在对齐，
+    /// 而关掉这件事得由他自己点名 0——帮助里说不出这两句，他就找不到那个开关。
     #[test]
-    fn the_white_align_help_says_what_it_is_and_what_zero_means() {
+    fn the_white_align_help_says_what_it_is_what_it_defaults_to_and_what_zero_means() {
         let help = Cli::command().render_long_help().to_string();
         assert!(help.contains("--white-align-limit"), "{help}");
         assert!(help.contains("纸白对齐"), "{help}");
+        // 默认开着，取多少级说得出来。**那个数从 `WhiteAlignLimit::default` 拼出来**，
+        // 这里不写第二份：写死的话，默认值再动一次而帮助忘了跟着改，这一条照样绿
+        // ——停车场 Q547 记的正是这一族。
+        let says_the_default = format!("默认 {}", WhiteAlignLimit::default());
+        assert!(help.contains(&says_the_default), "{help}");
         // 取 0 是关，且关掉之后逐字节相同。
-        assert!(help.contains("默认 0 就是关闭"), "{help}");
+        assert!(help.contains("取 0 就是关闭"), "{help}");
         assert!(help.contains("逐字节相同"), "{help}");
         // 手段与代价：钳的是哪一段、代价是被压平的色调有多宽。
         assert!(help.contains("[纸白, 255]"), "{help}");
