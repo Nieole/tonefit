@@ -38,6 +38,7 @@ use tonefit::{
 };
 
 use preset::Preset;
+use render::plain::ReportFold;
 
 #[derive(Parser)]
 // 不点子命令就是「处理点名的若干卷」这一件事，那是绝大多数时候要做的：
@@ -236,6 +237,19 @@ struct Cli {
     /// 重跑时也无从判断这一卷变没变，每一趟都整卷重做。
     #[arg(long)]
     no_metadata: bool,
+
+    /// 报告只印到**目录那一级**，一枝一行；卷级与逐页那两段一行都不印。**默认是全印的。**
+    ///
+    /// 一枝那一行说的是几卷 · 基准档分布 · 隔离几卷。
+    /// 几百卷的一趟重定向到文件之后要滚几百行才找得到那一枝，这一项把它折成一屏看得完。
+    /// 折的只有正文：抬头与**末尾那几小结**照旧一个字不少——没做成的那几卷、
+    /// 进了隔离的那几卷、发现走不进去的那几处，只有末尾那几小结点得出是哪几个。
+    ///
+    /// 它**一个像素都不改**，改的只是印出来什么样：**参数哈希不收它**，
+    /// 加不加都不会让上一趟的输出过期。逐页那几行判据也跟着不印，
+    /// `--dry-run` 要读的正是它们——两项一起点名，读得到的只剩每一枝的分布。
+    #[arg(long)]
+    brief: bool,
 }
 
 /// 命令行与预设合起来定出这一趟的每一项（p1-session 的 07 号票）。
@@ -287,6 +301,20 @@ impl Cli {
         // 默认值不在这里：它在 `TasteLayer::crop`，会话拼 `Request` 时读的是同一个
         // （`Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它）。
         !self.no_crop && preset.taste.crop()
+    }
+
+    /// 本次的报告**摊到哪一级**（`p4-parking-lot/22`）。**默认摊开**，`--brief` 折起它。
+    ///
+    /// **不收预设、也不进 [`Request`]**，两条同一个理由：它说的是这一趟印出来什么样，
+    /// 不是这一趟怎么处理页。存得住的立场归预设（见 `preset::TasteLayer`），
+    /// 而会改变产物的每一项归 `Request`——参数哈希收的正是后者，
+    /// 折不折报告进去了就等于加个 flag 让上一趟的输出整批静默过期。
+    /// `--dry-run` 不收预设走的是同一条。
+    fn report_fold(&self) -> ReportFold {
+        match self.brief {
+            true => ReportFold::ByDirectory,
+            false => ReportFold::Off,
+        }
     }
 
     /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它。
@@ -761,6 +789,9 @@ fn execute() -> Result<u8> {
     // 预设先读：它供得出型号，而下面每一项都可能落到它身上。**不点名就一个字节都不读盘。**
     let preset = cli.preset()?;
     let bar = Bar::new(cli.inputs.len());
+    // 报告摊到哪一级。**在 `Request` 之外取下来**：它一个像素都不改，参数哈希因此不收它
+    // （见 `Cli::report_fold`）；`request` 吃掉 `cli`，因此也得赶在它前面取。
+    let report_fold = cli.report_fold();
     let mut request = cli.request(&preset)?;
     let mode = request.mode;
     // **两级停的那个键**（ADR 0013 决定第 3 条）。装在这里，两头各有一条理由：
@@ -775,7 +806,7 @@ fn execute() -> Result<u8> {
     // 不折就是一行几百格（见 [`wrap`]）。
     print!(
         "{}",
-        wrap::folded_text(&render::plain::report(&report, mode), terminal)
+        wrap::folded_text(&render::plain::report(&report, mode, report_fold), terminal)
     );
     Ok(exit_code(&report))
 }
@@ -1426,6 +1457,58 @@ io-mode = \"concurrent\"
             "--no-split 没压过预设"
         );
         assert!(cli.per_page(&on), "--per-page 没压过预设");
+    }
+
+    /// **摊开与折起由 `--brief` 一个开关定**（`p4-parking-lot/22` 票面第二条）。
+    ///
+    /// 不点名是**摊开**——今天那一副，逐字不变。点名折到目录那一级。
+    ///
+    /// **它不进 `Request`**：报告印成什么样一个像素都不改，而 `Request` 是参数哈希收的
+    /// 那份东西（`tonefit` 的 `metadata`）。进去了就等于加个 `--brief` 让上一趟的输出
+    /// 整批过期，那是个静默的、说不出理由的重做。这里拿整份 `Request` 的 `Debug` 比——
+    /// 与 [`request_line`] 那一族同一条：挑着比就等于自己重列一遍那张单子。
+    #[test]
+    fn the_report_folds_by_directory_only_when_the_command_line_says_so() {
+        let line = ["--profile", "kobo-libra-2"];
+        assert_eq!(
+            parse(&line).report_fold(),
+            ReportFold::Off,
+            "不点名该是摊开那一副"
+        );
+
+        let mut brief = line.to_vec();
+        brief.push("--brief");
+        assert_eq!(
+            parse(&brief).report_fold(),
+            ReportFold::ByDirectory,
+            "--brief 没折起来"
+        );
+
+        assert_eq!(
+            request_line(&brief, &no_preset()),
+            request_line(&line, &no_preset()),
+            "--brief 进了 Request：它一个像素都不改，参数哈希不该跟着动"
+        );
+    }
+
+    /// `--brief` 的长帮助**说得出它藏了什么、默认是哪一副**（票面第二条：
+    /// 「`--help` 上说得明白」）。
+    ///
+    /// 三件事缺一不可：藏起来的是哪两段、抬头与末尾那几小结**没藏**（不然读的人
+    /// 会以为没做成的那几卷也跟着没了）、以及默认不折。
+    #[test]
+    fn the_brief_help_says_what_it_folds_away_and_what_it_keeps() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--brief"), "{help}");
+        // 折到哪一级、默认哪一副。
+        assert!(help.contains("目录那一级"), "{help}");
+        assert!(help.contains("默认是全印的"), "{help}");
+        // 藏起来的是哪两段。
+        assert!(help.contains("卷级与逐页"), "{help}");
+        // 没藏的是哪两段——报告仍答得出这一趟出了什么事。
+        assert!(help.contains("末尾那几小结"), "{help}");
+        // 它不改产物，因此不让上一趟过期。
+        assert!(help.contains("参数哈希"), "{help}");
     }
 
     /// 不点名 `--preset` 时命令行行为一字不变（07 号票的验收）。

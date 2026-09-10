@@ -44,6 +44,7 @@ use anyhow::{Result, anyhow};
 use tonefit::{Event, Instruction, Pass, Progress, ProgressSink, Report, Request};
 
 use super::live::{Live, Reach, Resuming};
+use crate::render::plain::ReportFold;
 
 /// 会话跑过的那一趟：后台那条线程，加上它边跑边攒的东西。
 ///
@@ -234,6 +235,10 @@ impl Running {
     /// 退出会话时印到 stdout 的那份报告，**照命令行那一路的原格式**
     /// （[`crate::render::plain::report`]，四段一次性拼起来）。
     ///
+    /// **摊开那一副**（[`ReportFold::Off`]）：折起是命令行上 `--brief` 点出来的，
+    /// 而会话是空着手进来的那一路——它一个 flag 都没收，也就没有人点过它。
+    /// 屏上折得起来的那一副是会话自己的《展开》，与这里印出去的这一份是两件事。
+    ///
     /// **没做成**的那一趟没有报告可印，与命令行同一条：那一趟 `run` 返回的是错误本身，
     /// stdout 上一个字节都没有。一趟都没跑过同理。
     pub fn report(&self) -> Option<String> {
@@ -241,7 +246,11 @@ impl Running {
         if live.undone().is_some() {
             return None;
         }
-        Some(crate::render::plain::report(live.report(), live.mode()))
+        Some(crate::render::plain::report(
+            live.report(),
+            live.mode(),
+            ReportFold::Off,
+        ))
     }
 }
 
