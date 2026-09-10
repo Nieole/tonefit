@@ -690,7 +690,7 @@ fn process_volume(
     events.pass_started(Pass::First);
     let FirstPass {
         pages: scored,
-        rolled,
+        settled,
     } = timed(&mut timing.first_pass, || {
         first_pass(
             &mut volume,
@@ -728,11 +728,12 @@ fn process_volume(
     let (verdicts, verdict) = cost::stage(cost::Stage::Summarize, || {
         summarize_volume(&scored, request)
     });
-    // 滚动窗口路过时也定了一份档，而字节已经照它编好了（见 [`Window`]）。
+    // 第一遍提前编好字节的那两条路各自也定了一份档，而字节已经照它编好了
+    // （滚动窗口见 [`Window`]，顶死那一条见 [`pinned_verdicts`]）。
     // 两份必须逐格相同：报告说的那一档与写出去的那一页，一处出处。
     debug_assert!(
-        rolled.as_ref().is_none_or(|rolled| *rolled == verdicts),
-        "滚动窗口定的档与汇总定的档分了家：{rolled:?} 对 {verdicts:?}"
+        settled.as_ref().is_none_or(|settled| *settled == verdicts),
+        "第一遍编字节用的档与汇总定的档分了家：{settled:?} 对 {verdicts:?}"
     );
     let uniform = uniform_size(&scored, request.profile.panel().resolution);
     // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
@@ -1333,11 +1334,14 @@ impl Candidates {
 
 /// 第一遍：读 → 解码 → **切开** → 逐张彩页识别 → 分流。
 ///
-/// 灰度路径：转灰 → 几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
+/// 灰度路径：转灰 → 几何与几何门 → 缩放 → 判据曲线 → 进缓存。
 /// 彩色分支：几何 → 缩放 → 编码，不进缓存、不求判据（ADR 0005 决定第 4 条）。
 ///
-/// **逐页那条路上灰度页也在这一遍编完**：一页的档只要再看几页就定得下，
-/// 定下来的当场量化、编码，缓存那一格从参照换成编好的字节（12 号票，见 [`Window`]）。
+/// **灰度页在这一遍就编完的有两条路**（那一格装的因此是字节，不是参照，见 [`Settles`]）：
+/// 逐页那条路上一页的档只要再看几页就定得下，定下来的当场量化、编码，
+/// 缓存那一格从参照换成编好的字节（12 号票，见 [`Window`]）；
+/// 覆盖项把候选裁到只剩一个的那一趟判定在碰卷之前就定死，当场编，
+/// 参照一张都不进缓存（06 号票，见 [`pinned_for_the_first_pass`]）。
 /// 编好的字节进的是缓存，**这一遍仍旧一个字节都不写出去**。
 ///
 /// **产出的是输出页，不是源页**（页几何批 03 号票）：一张源页读一次、解一次，切成一到多张
@@ -1387,9 +1391,22 @@ fn first_pass(
 ) -> Result<FirstPass> {
     // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）。
     let candidates = Candidates::new(request)?;
+    // 顶死的那一档在碰卷之前就答得出：判定已定，灰度页第一遍当场量化编码，
+    // 参照一张都不进缓存（06 号票，见 [`pinned_for_the_first_pass`]）。
+    let pinned = pinned_for_the_first_pass(request, &candidates);
     // 逐页那条路上参照只在窗口里活着，出了窗口当场量化编码（12 号票，见 [`Window`]）。
     // 上包络那条路上它不在场——那一档要看完整卷才定得下。
     let window = Window::open(request, &candidates, fingerprint);
+    // 两者不同时在场：判定被顶死时窗口不开（见 [`Window::open`]），没有后文可等。
+    debug_assert!(
+        pinned.is_none() || window.is_none(),
+        "滚动窗口与顶死的那一档同时在场"
+    );
+    let settles = match (pinned, window.as_ref()) {
+        (Some(candidate), _) => Settles::UpFront(candidate),
+        (None, Some(window)) => Settles::InTheWindow(window),
+        (None, None) => Settles::AfterTheVolume,
+    };
     // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
     let sources: Vec<PathBuf> = volume
         .pages
@@ -1405,7 +1422,7 @@ fn first_pass(
         cache,
         fingerprint,
         candidates: &candidates,
-        window: window.as_ref(),
+        settles,
         events,
     };
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
@@ -1443,22 +1460,28 @@ fn first_pass(
         .flatten()
         .collect();
     // 窗口收尾排在归位**之后**：序列到头了，尾巴上那几页没有后文可等。
-    // 中止那一支不收尾——手上这半份结果连同整卷一起丢掉，白编一批是白编。
-    let rolled = match window {
-        Some(window) if !events.aborting() => Some(window.close(cache)?),
-        _ => None,
+    // 中止那一支两条都不留——手上这半份结果连同整卷一起丢掉，白编一批是白编。
+    let settled = if events.aborting() {
+        None
+    } else if let Some(window) = window {
+        Some(window.close(cache)?)
+    } else {
+        pinned.map(|candidate| pinned_verdicts(&pages, request.profile.threshold(), candidate))
     };
-    Ok(FirstPass { pages, rolled })
+    Ok(FirstPass { pages, settled })
 }
 
-/// 第一遍交出来的东西：这一卷的输出页，加上滚动窗口路过时定下的那份逐页判定。
+/// 第一遍交出来的东西：这一卷的输出页，加上**第一遍就照它编好了字节**的那份逐页判定。
 ///
-/// 判定那一份只在走窗口的那条路上有（见 [`Window`]），而且**不是**报告用的那一份
-/// ——报告仍旧由 [`summarize_volume`] 一处说了算。它在这里只为一件事：
-/// 拿去和汇总那一份对一遍，两处一旦分家，写出的字节与报告说的那一档就对不上了。
+/// 它只在字节提前编好的那两条路上有——滚动窗口那一条（见 [`Window`]）与顶死那一条
+/// （见 [`pinned_verdicts`]）；上包络那条路上字节要等第二遍才编，这一格因此是 `None`。
+///
+/// 它**不是**报告用的那一份——报告仍旧由 [`summarize_volume`] 一处说了算。
+/// 它在这里只为一件事：拿去和汇总那一份对一遍，两处一旦分家，
+/// 写出的字节与报告说的那一档就对不上了。
 struct FirstPass {
     pages: Vec<OutputPage>,
-    rolled: Option<Vec<Option<Verdict>>>,
+    settled: Option<Vec<Option<Verdict>>>,
 }
 
 /// **计算层**这一卷自己那两样带计数的家伙：解码器与缩放器（`CONTEXT.md` 的《读取层 / 计算层》）。
@@ -1489,9 +1512,29 @@ struct Compute<'a> {
     fingerprint: Option<&'a Fingerprint>,
     /// 两套候选集。这一页判出门之后现取一套（见 [`Candidates::for_gate`]）。
     candidates: &'a Candidates,
-    /// 滚动窗口。上包络那条路上它不在场（见 [`Window::open`]）。
-    window: Option<&'a Window<'a>>,
+    /// 这一卷的档什么时候定得下来——它决定灰度页那一格缓存里装的是什么。
+    settles: Settles<'a>,
     events: progress::Events<'a>,
+}
+
+/// 这一卷的档**什么时候**定得下来。第一遍走完那一格缓存里装参照还是装编好的字节，
+/// 由它一处说了算。
+///
+/// 三者互斥，因此是**一个枚举**而不是「一个可空的窗口 ＋ 一个可空的候选」：两个 `Option`
+/// 表示得出「窗口与顶死那一档同时在场」这个组合，而那个组合不存在
+/// （[`Window::open`] 在那一档答得出时就不开），读代码的人于是得自己跑去两处对一遍。
+#[derive(Clone, Copy)]
+enum Settles<'a> {
+    /// **等整卷**：卷级上包络的基准档要看完整卷才定得下（ADR 0005、ADR 0006）。
+    /// 那一格装参照，第二遍取回来量化编码。
+    AfterTheVolume,
+    /// **再看几页**：一页的档只取决于它前后几页，出了滚动窗口当场量化编码，
+    /// 那一格从参照换成字节（12 号票，见 [`Window`]）。
+    InTheWindow(&'a Window<'a>),
+    /// **碰卷之前就定死**：覆盖项把候选裁到只剩一个，判据说什么都不改结果。
+    /// 第一遍当场量化编码，那一格从头装的就是字节，**参照一张都不进缓存**
+    /// （06 号票，见 [`pinned_for_the_first_pass`]）。
+    UpFront(Candidate),
 }
 
 impl Compute<'_> {
@@ -1523,7 +1566,7 @@ impl Compute<'_> {
         self.events.step();
         // 交进滚动窗口：轮到这一张源页时序列往前走，定下档的那几页当场量化编码
         // （12 号票，见 [`Window`]）。排在报到**之后**——这一步要进出缓存那把锁。
-        if let Some(window) = self.window {
+        if let Settles::InTheWindow(window) = self.settles {
             window.settle(self.cache, index, &pages)?;
         }
         Ok(pages)
@@ -1750,8 +1793,11 @@ impl Compute<'_> {
         ))
     }
 
-    /// 灰度路径上的一张：几何与几何门 → 缩放 → 判据曲线，同时把参照存进缓存。
+    /// 灰度路径上的一张：几何与几何门 → 缩放 → 判据曲线 → 进缓存。
     /// 进来的东西同 [`color_page`](Self::color_page)。
+    ///
+    /// **那一格装参照还是装编好的字节，由 [`Settles`] 一处说了算。**顶死的那一趟
+    /// 判定在碰卷之前就定死，量化与编码当场做完（06 号票）；另外两条路存的是参照。
     fn gray_page(
         &self,
         source: &Path,
@@ -1779,8 +1825,8 @@ impl Compute<'_> {
         // 参照与其后一切量化用的都是对齐过的像素，判据两侧因此同源，
         // 量化仍然是唯一被隔离出来的变量（ADR 0002 决定第 1 条）。
         //
-        // **不要把它读成「对齐过的图就是进缓存的那一份」**：逐页那条路上一页出了滚动窗口
-        // 就当场量化编码成字节（见 [`Window`]），那一格装的不再是参照。
+        // **不要把它读成「对齐过的图就是进缓存的那一份」**：另外两条路上那一格装的是编好的
+        // 字节——逐页那条路上一页出了滚动窗口才编（见 [`Window`]），顶死的那一趟当场就编。
         // 对齐在两副之前，因此两副都吃得到。
         //
         // 上限取 0（默认）时它连纸白都不量——量了也没有一页满足得了条件，
@@ -1794,10 +1840,37 @@ impl Compute<'_> {
             let scores = candidate_scores(&reference, allowed);
             (reference, scores)
         });
-        let slot = cost::stage(cost::Stage::CacheIn, || {
-            let block = cache::compress(reference.image());
-            lock(self.cache).insert(block)
-        })
+        let slot = match self.settles {
+            // 顶死的那一趟：这一页的判定在碰卷之前就定死了，量化与编码当场做完，
+            // 那一格从头装的就是编好的字节，**参照一张都不进缓存**（06 号票）。
+            // 判据曲线照旧求——上面那一格一步没少，试算说得出你点的那一档判据是多少。
+            Settles::UpFront(candidate) => {
+                let verdict = decide::decide(&scores, request.profile.threshold(), Some(candidate));
+                // 定档页那一格是 `None`：覆盖项顶掉了判定，没有哪一页把整卷拉上去
+                // （与 [`driver`] 对上，也与 [`Window::encode`] 那一份同形）。
+                let recorder = self
+                    .fingerprint
+                    .map(|fingerprint| Recorder::new(fingerprint, None));
+                let bytes = gray_bytes(
+                    reference.image(),
+                    verdict,
+                    placement.origin.as_ref(),
+                    salvage,
+                    recorder.as_ref(),
+                )
+                .with_context(|| format!("编 {} 这一页", source.display()))?;
+                cost::stage(cost::Stage::CacheIn, || {
+                    lock(self.cache).insert_encoded(bytes, reference.image())
+                })
+            }
+            // 另外两条路存参照：上包络那一档要等整卷，滚动窗口那一档要再看几页。
+            Settles::AfterTheVolume | Settles::InTheWindow(_) => {
+                cost::stage(cost::Stage::CacheIn, || {
+                    let block = cache::compress(reference.image());
+                    lock(self.cache).insert(block)
+                })
+            }
+        }
         .with_context(|| format!("缓存 {} 这一页", source.display()))?;
         Ok(placement.into_page(
             source,
@@ -1845,9 +1918,6 @@ impl Compute<'_> {
 struct Window<'a> {
     inner: Mutex<Windowed>,
     threshold: Threshold,
-    /// 覆盖项裁到只剩一个候选那一档（见 [`pinned_up_front`]）。它在场时判定被顶掉，
-    /// 迟滞整个不在——每一页当场定档。
-    pinned: Option<Candidate>,
     fingerprint: Option<&'a Fingerprint>,
 }
 
@@ -1892,7 +1962,12 @@ impl<'a> Window<'a> {
     /// - **逐页判定**。上包络那条路要看完整卷才定得下基准档，参照照旧攒一整卷。
     /// - **照做的那一遍**。试算的缓存只记账、不留页（[`cache::Retention::Account`]），
     ///   没有块可换，也没有第二遍等着这些字节。
-    /// - **覆盖项那一档在碰卷之前答得出来**（见 [`pinned_up_front`]）。
+    /// - **判定还有得判**（见 [`pinned_up_front`]）。那一问有两种答不下来的方式，
+    ///   两种都不开窗口，但理由相反：
+    ///   - 答得出那一档（`Some(Some(_))`）——判定整个被顶掉，一页都不必等后文，
+    ///     第一遍当场量化编码，窗口无事可做（06 号票，见 [`pinned_for_the_first_pass`]）。
+    ///   - 答不出来（`None`）——那一问要等整卷判完门，窗口于是让位，
+    ///     那一卷照旧攒整卷参照。
     fn open(
         request: &Request,
         candidates: &Candidates,
@@ -1901,7 +1976,14 @@ impl<'a> Window<'a> {
         if !request.per_page || request.mode != Mode::Process {
             return None;
         }
-        let pinned = pinned_up_front(request, candidates)?;
+        match pinned_up_front(request, candidates) {
+            // 判定还有得判：窗口正是定档的地方。
+            Some(None) => {}
+            // 那一档已经答得出：判定整个被顶掉，第一遍当场量化编码，窗口无事可做（06 号票）。
+            Some(Some(_)) => return None,
+            // 那一问要等整卷判完门：窗口让位，那一卷照旧攒整卷参照。
+            None => return None,
+        }
         Some(Self {
             inner: Mutex::new(Windowed {
                 next: 0,
@@ -1912,7 +1994,6 @@ impl<'a> Window<'a> {
                 verdicts: Vec::new(),
             }),
             threshold: request.profile.threshold(),
-            pinned,
             fingerprint,
         })
     }
@@ -1969,7 +2050,9 @@ impl<'a> Window<'a> {
                     slot: *slot,
                     source: page.source.clone(),
                     gate: *gate,
-                    verdict: decide::decide(scores, self.threshold, self.pinned),
+                    // 窗口开着就说明判定还有得判（见 [`Window::open`]）：顶死的那一趟
+                    // 一页都进不到这里。
+                    verdict: decide::decide(scores, self.threshold, None),
                     origin: page.origin.clone(),
                     salvage: *salvage,
                 }),
@@ -1979,7 +2062,7 @@ impl<'a> Window<'a> {
             })
             .collect();
         let mut windowed = lock_window(&self.inner);
-        windowed.queue(source, seats, self.pinned)
+        windowed.queue(source, seats)
     }
 
     /// 定下档的那几页：取参照 → 量化 → 编码 → 换进缓存那一格。三件贵的都在锁外。
@@ -2024,13 +2107,9 @@ impl Windowed {
     /// **抢跑的先排着**：迟滞数的是序列上的相邻，而序列按卷内页序排
     /// （`hysteresis::pull_back` 的《回看多长》），轮不到就编不进去。
     ///
-    /// `pinned` 在场时判定被顶掉，序列整个不在——每一页当场定档（见 [`pinned_up_front`]）。
-    fn queue(
-        &mut self,
-        source: usize,
-        seats: Vec<Option<Seat>>,
-        pinned: Option<Candidate>,
-    ) -> Vec<Seat> {
+    /// **部分救回页不进序列**：它的判据是在残缺像素上算的，不该去定邻居的档
+    /// （与 [`summarize_volume`] 摘它同一个理由）。
+    fn queue(&mut self, source: usize, seats: Vec<Option<Seat>>) -> Vec<Seat> {
         self.early.insert(source, seats);
         let mut ready = Vec::new();
         while let Some(seats) = {
@@ -2048,7 +2127,7 @@ impl Windowed {
                 };
                 let verdict = seat.verdict;
                 let gate = seat.gate;
-                let rolls = pinned.is_none() && seat.salvage.is_none();
+                let rolls = seat.salvage.is_none();
                 self.seats.push(Some(seat));
                 self.verdicts.push(Some(verdict));
                 let settled = if rolls {
@@ -2061,8 +2140,7 @@ impl Windowed {
                         GeometryGate::Broken => self.broken.admit(page),
                     }
                 } else {
-                    // 覆盖项顶掉了判定，或者这是一张部分救回页：两种都不进序列，
-                    // 那一档此刻就是终局（与 [`summarize_volume`] 逐条对上）。
+                    // 部分救回页不进序列，那一档此刻就是终局（与 [`summarize_volume`] 逐条对上）。
                     vec![hysteresis::Settled {
                         index,
                         pulled: None,
@@ -2108,6 +2186,13 @@ fn lock_window(inner: &Mutex<Windowed>) -> MutexGuard<'_, Windowed> {
 ///
 /// 门不成立那一组被覆盖项裁空（`--dither fs`）时不必等：撞上门的页整趟被拒
 /// （见 [`Candidates::for_gate`]），能走完的卷里其余页只可能是门成立那一组。
+///
+/// **答得出那一档时缓存那一趟往返整个不必走**（06 号票，见 [`pinned_for_the_first_pass`]）：
+/// [`summarize_volume`] 在覆盖项在场时早早返回，每一张灰度页拿到的就是这一档
+/// 加上 [`Reason::Override`]，第一遍当场量化编码即可。
+///
+/// **这一问对候选是被哪一道裁剪裁到只剩一个的一视同仁**——哪几道够得着哪一维、
+/// 为什么每一趟顶死都点着 `--dither`，见 ADR 0005 的《覆盖顶死的那一趟不必等到第二遍》。
 fn pinned_up_front(request: &Request, candidates: &Candidates) -> Option<Option<Candidate>> {
     if request.bit_depth.is_none() && request.dither.is_none() {
         return Some(None);
@@ -2121,6 +2206,40 @@ fn pinned_up_front(request: &Request, candidates: &Candidates) -> Option<Option<
         Err(_) => Some(holds),
         Ok(broken) => (only(broken) == holds).then_some(holds),
     }
+}
+
+/// 顶死的那一档：候选在碰卷之前就裁到只剩它，**而且这一遍真要把字节写出去**（06 号票）。
+///
+/// 在场时灰度页第一遍当场量化编码，缓存那一格从头装的就是字节，参照一张都不进缓存
+/// （见 [`Compute::gray_page`]）。判定已经定死，存参照 → 取回来 → 换字节那一趟往返
+/// 什么都不改变。
+///
+/// **试算不在其内**，与 [`Window::open`] 同一条界：那一趟没有第二遍，编出来的字节
+/// 一个读者都没有，缓存也只记账、不留页（[`cache::Retention::Account`]）。
+fn pinned_for_the_first_pass(request: &Request, candidates: &Candidates) -> Option<Candidate> {
+    if request.mode != Mode::Process {
+        return None;
+    }
+    pinned_up_front(request, candidates).flatten()
+}
+
+/// 顶死的那一趟第一遍就照它编好了字节的那份逐页判定（06 号票）。
+///
+/// 与 [`summarize_volume`] 那一支给出的**必须逐格相同**：覆盖项在场时那边早早返回，
+/// 每一张灰度页拿到的正是同一句 [`decide::decide`]。它只拿去对账，不进报告——
+/// 报告那一份仍旧由汇总一处说了算（见 [`FirstPass`]）。
+fn pinned_verdicts(
+    pages: &[OutputPage],
+    threshold: Threshold,
+    pinned: Candidate,
+) -> Vec<Option<Verdict>> {
+    pages
+        .iter()
+        .map(|page| {
+            page.scores()
+                .map(|scores| decide::decide(scores, threshold, Some(pinned)))
+        })
+        .collect()
 }
 
 /// 一张输出页在**源页上是哪一块**：留下的那个窗口，加上拆分那两级各自的结果。

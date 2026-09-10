@@ -91,13 +91,15 @@ pub struct CacheUsage {
     /// 透传文件不进缓存，彩色分支上的页也不进（ADR 0005 决定第 4 条）。
     pub pages: usize,
     /// 这些页的**参照**摊开来有多少字节：目标尺寸 × 每像素一字节。
-    /// 参照换成编好的字节之后这一格不变——它说的始终是「这一卷有这么多像素过手」。
+    /// 参照换成编好的字节之后这一格不变，一格从头装的就是字节时也照记
+    /// （`PageCache::insert_encoded`）——它说的始终是「这一卷有这么多像素过手」。
     pub raw: u64,
     /// 缓存**为这一卷留下**了多少字节。恒等于 `resident + spilled`。
     ///
     /// 参照那一段是 LZ4 压过的；换成编好的字节之后是那一页 PNG 本身
     /// （`PageCache::replace`），换的那一刻旧那一段从这个数里撤掉——它当场就放掉了。
-    /// 逐页那条路上这个数因此比参照那一摊小一截。
+    /// 逐页那条路上这个数因此比参照那一摊小一截。**覆盖顶死的那一趟从头就没有参照那一摊**
+    /// （`PageCache::insert_encoded`，06 号票）：这个数恰是写出去那几页字节之和。
     ///
     /// **写出那一遍取走一页不撤**（`PageCache::take`）：报告在决策点上与收摊时各拼一次，
     /// 两次要说同一个数。这个数因此不是「此刻内存里躺着多少」，是「这一卷为缓存留下过多少」。
@@ -189,8 +191,8 @@ pub struct Block {
 
 /// 从缓存里取回来的一页：那一格装的是什么，取回来就是什么（见 [`Kind`]）。
 ///
-/// 两个变体分别落在两条路上：上包络那条路取回参照，第二遍量化编码；
-/// 逐页那条路取回编好的字节，第二遍只把它写出去。
+/// 两个变体分成的是两件事：**第二遍还要不要量化编码**。上包络那条路取回参照、第二遍编；
+/// 另外两条路（逐页那条路的滚动窗口、覆盖顶死的那一趟）取回的都是编好的字节，第二遍只写出。
 pub enum Held {
     /// 参照——还要量化、编码才写得出去。
     Reference(GrayImage),
@@ -203,8 +205,14 @@ pub fn compress(image: &GrayImage) -> Block {
     Block {
         size: image.size(),
         block: lz4_flex::compress(image.pixels()),
-        raw: image.pixels().len() as u64,
+        raw: raw_bytes(image),
     }
+}
+
+/// 一页参照摊开来有多少字节。[`CacheUsage::raw`] 那一格的**唯一算法**——
+/// 参照进不进缓存，两个入口都从这里取数（[`compress`] 与 [`PageCache::insert_encoded`]）。
+fn raw_bytes(image: &GrayImage) -> u64 {
+    image.pixels().len() as u64
 }
 
 /// 一页在缓存里的样子：这一格装的是什么，加上那一块待在哪儿。
@@ -218,6 +226,9 @@ struct Entry {
 /// 同一格先后装得下两样：先是参照，等这一页的档定下来就换成编好的字节
 /// （12 号票，见 [`PageCache::replace`]）。**序号不跟着换**——那个序号第一遍就交给了
 /// 这一页的输出页，而换字节的是另一条计算线程，它够不着那张输出页。
+///
+/// **一格也可能从头装的就是字节**：覆盖项在碰卷之前就把候选裁到只剩一个时判定已经定死，
+/// 第一遍当场量化编码，参照一张都不进缓存（06 号票，见 [`PageCache::insert_encoded`]）。
 #[derive(Clone, Copy)]
 enum Kind {
     /// 参照，加上它摊开来有多大。尺寸单独留着而不是从压缩块里读——
@@ -275,8 +286,8 @@ impl PageCache {
     /// 它与 [`CacheUsage::pages`] 的分工写在 `crate::VolumeReport::cached_references` 上。
     ///
     /// 落到这一层只剩一条**给改这个模块的人**的规矩：这个数**只数参照**。
-    /// 缓存哪天改存别的东西（spec 的 P-C：第二遍退化成纯写出，缓存改存编好的字节），
-    /// 那条路要另开一个入口，不许并进 [`insert`](Self::insert)。
+    /// 缓存存别的东西的那条路另开一个入口（[`insert_encoded`](Self::insert_encoded)），
+    /// 不并进 [`insert`](Self::insert)。
     pub fn references(&self) -> usize {
         self.references
     }
@@ -302,6 +313,32 @@ impl PageCache {
         self.usage.raw += raw;
         self.entries.push(Entry {
             kind: Kind::Reference(size),
+            stored,
+        });
+        Ok(self.entries.len() - 1)
+    }
+
+    /// 把一页**编好的字节**直接存进来，返回它的序号（06 号票）。
+    ///
+    /// 覆盖项在碰卷之前就把候选裁到只剩一个时判定已经定死，第一遍当场量化编码：
+    /// 这一格从头装的就是那一页 PNG，**参照一张都不进缓存**，
+    /// [`replace`](Self::replace) 那一趟往返（存参照 → 取回来 → 换字节）整个省掉。
+    ///
+    /// **它与 [`insert`](Self::insert) 是两个入口，不是一个带开关的**：
+    /// [`references`](Self::references) 那个数只数参照，而这条路上没有参照可数。
+    ///
+    /// `reference` 是这一页那份**没进缓存**的参照，只读它有多大：摊开的字节数照旧记进
+    /// [`CacheUsage::raw`]，那一格说的始终是「这一卷有这么多像素过手」，与参照有没有在
+    /// 缓存里待过无关（同一条口径在 [`replace`](Self::replace) 上也成立：换字节不动 `raw`）。
+    /// 收整张图而不是收一个尺寸，是为了这个数**只有一个算法**——[`compress`] 用的是同一句。
+    ///
+    /// 字节照旧过预算这道闸，装不下照样溢写（ADR 0005 决定第 1 条）。
+    pub fn insert_encoded(&mut self, encoded: Vec<u8>, reference: &GrayImage) -> Result<usize> {
+        let stored = self.put(encoded)?;
+        self.usage.pages += 1;
+        self.usage.raw += raw_bytes(reference);
+        self.entries.push(Entry {
+            kind: Kind::Encoded,
             stored,
         });
         Ok(self.entries.len() - 1)
