@@ -5,6 +5,42 @@
 「闸门」说的是**这三条命令**，与 `CONTEXT.md` 的领域术语《几何门》没有关系——
 那一个判的是一页的像素完整性，这一个判的是这个仓库编不编得过、跑不跑得绿。
 
+## 跑得起来需要什么
+
+三条命令之前先要有两样东西，**两样都不出自 Rust 工具链，换一台机器都要重新备**。
+它们不挂在任何特性后面（`image` 与 `unrar-ng` 都是普通依赖），**三条闸门因此各要一份**。
+
+| 要什么 | 谁要它 | 缺了它报错来自 |
+|---|---|---|
+| **一套 C++ 编译器** | `unrar-ng-sys` 的 `build.rs`（`cc::Build` 开着 `.cpp(true)`）要编 UnRAR 那几十份 `.cpp` | `cc` |
+| **一份 `pkg-config` 找得到的 dav1d** | `image` 的 `avif-native` 特性把 AVIF 解码交给 dav1d（`p0-core-pipeline/spec.md` 的《输入》：解码覆盖 AVIF） | `pkg-config` |
+
+**判据是报错来自谁。** 缺了任何一样，**哪一条闸门都**在**编依赖**那一步就停住，
+而那一行报错出自 `cc` 或 `pkg-config`、一个 tonefit 的符号都不提——
+照它去查自己刚改的那几行，查不出任何东西。两句核验各一行，都不必进 cargo：
+
+```
+c++ --version
+pkg-config --modversion dav1d
+```
+
+**本机（Linux）此刻是这么满足的**（measured，2026-09-10）：
+
+- C++ 那一样是系统装的 `g++`——`/usr/bin/cc`、`/usr/bin/c++`、`/usr/bin/g++` 三个都在，
+  `g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`；
+- dav1d 那一样是**系统装的 1.4.1**，`pkg-config --modversion dav1d` 直接答得出，
+  **`PKG_CONFIG_PATH` 一个字都不用设**（这个环境里它根本没设）。
+
+**换一台机器要重新备的正是这两样**，而各自的形态随机器变：Windows MSVC 那一台上
+C++ 由 MSVC 出，dav1d 经 vcpkg 装、`PKG_CONFIG_PATH` 指到它的 pkgconfig 目录
+（那台机器上量到的一张表在 `docs/measurements.md` 的《AVIF 解码的可用路径》）。
+C++ 这一条是收下 `.rar` 之后才有的（`volume-discovery/06`）：在那之前依赖树里
+一个 C/C++ 编译单元都没有，clone 下来只要一个 Rust 工具链就构建得起来。
+
+**本节只说「跑得起来需要什么」，一个决定都不改。** AVIF 解码换不换那条产物无系统依赖的路
+（`zenavif`／rav1d，构建期改要 NASM，见《AVIF 解码的可用路径》），
+以及 `.rar` 那份 UnRAR 许可要认的代价（ADR 0015），都不在这里判。
+
 ## 一条命令跑满三条
 
 ```
