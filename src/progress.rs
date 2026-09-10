@@ -77,10 +77,12 @@ pub enum Event<'a> {
     PassStarted {
         /// 在走哪一遍。
         pass: Pass,
-        /// 这一卷**到此刻为止**的报告。只有[决策点](Pass::Second)那一条带着它，
-        /// 另外两遍是 `None`（停车场 Q52）。
+        /// 这一卷**到此刻为止**的报告。另外两遍恒是 `None`（停车场 Q52），
+        /// 只有[决策点](Pass::Second)那一条带得着它——**而那一条也可能是 `None`**：
+        /// 说自己不读它的观察者不会收到一份白拼的报告
+        /// （[`Progress::reads_the_report_at_the_decision_point`]，07 号票）。
         ///
-        /// 非带不可：决策点问的是「这一卷的第二遍还做不做」，而答得上这一问的东西
+        /// 对**要读它**的那一位非带不可：决策点问的是「这一卷的第二遍还做不做」，而答得上这一问的东西
         /// ——卷级判定、逐页结果、缓存用量、解码计数——要到
         /// [`VolumeFinished`](Self::VolumeFinished) 才交出去，而那一条排在决策点**之后**。
         /// 不带的话，要在这里等人拿主意的调用方手上只有逐步事件，屏上画不出任何
@@ -282,6 +284,9 @@ impl Instruction {
 ///
 /// 一个方法，不是一排：多报一件事是多一个 [`Event`] 变体，而不是多一个方法——
 /// 方法一多，三个实现方每一个都得跟着改一处，其中两处只会填成空函数。
+/// [`reads_the_report_at_the_decision_point`](Self::reads_the_report_at_the_decision_point)
+/// 不破这一条：它**不报事**，答的是一句库自己问不出来的话——这个观察者要不要那一份报告；
+/// 而且它带默认实现，三个实现方一个都没被逼着改。
 ///
 /// 实现方**可以很久不返回**：会话要在决策点上把报告画出来并等用户拿主意
 /// （ADR 0012 决定第 3 条）。库因此保证不在持锁的地方调它，用例里的记账本不受影响。
@@ -290,6 +295,22 @@ pub trait Progress: Send + Sync {
     ///
     /// 不想干预的实现方一律回 [`Instruction::Continue`]——CLI 的进度条就是这样。
     fn observe(&self, event: Event<'_>) -> Instruction;
+
+    /// **决策点那一条带的那份卷报告，这个观察者读不读**（07 号票）。
+    ///
+    /// 拼那一份要遍历逐页结果、读一次缓存用量，一卷一份。库这一侧从前判「拼不拼」问的是
+    /// 「有没有观察者」，而那一问答的不是这件事：命令行那一路装着进度条，却一个字节都不读它
+    /// （见二进制侧的 `Bar`），于是每一卷白拼一份。**该问的是有没有人会读它**——
+    /// 而那只有观察者自己答得出。
+    ///
+    /// 默认**读**。答错方向的代价两边不对称：答「读」最多白拼一份，答「不读」会让真要用它的
+    /// 实现方在决策点上拿到一格 `None`。
+    ///
+    /// 答不读**不少问一句话**：[`Event::PassStarted`] 照发、答复照样当场作数，
+    /// 只是 `so_far` 那一格是 `None`。决策点这一问与那份报告是两件事。
+    fn reads_the_report_at_the_decision_point(&self) -> bool {
+        true
+    }
 }
 
 /// [`Request`](crate::Request) 里装观察者的那一格。
@@ -496,8 +517,9 @@ impl<'a> Events<'a> {
     ///
     /// 报出去的那一条**带着这一卷到此刻为止的报告**（见 [`Event::PassStarted`] 的 `so_far`）：
     /// 要在这里等人拿主意的调用方靠它画出「拿什么主意」。拼那一份要遍历逐页结果、
-    /// 读一次缓存用量，因此收的是一个**闭包**——[没人可问](Self::sink)的那一趟连拼都不拼，
-    /// 而命令行不带进度条的那条路走的正是那一支。
+    /// 读一次缓存用量，因此收的是一个**闭包**——**没人会读它就连拼都不拼**。
+    /// 「没人会读」有两种：[没人可问](Self::sink)是一种，可问的那一位说自己不读
+    /// （[`Progress::reads_the_report_at_the_decision_point`]）是另一种，命令行那一路是后者。
     ///
     /// 回的**不是**[闩](Self::standing)，而这是这一处与两个检查点唯一的差别，理由是问题不同：
     /// 闩答的是「这一趟还走不走」，这里问的是「这一卷的第二遍还做不做」。拿闩来答的话，
@@ -510,26 +532,29 @@ impl<'a> Events<'a> {
     /// 掐全程而不是掐「等人那一半」的理由，见那个类型。
     ///
     /// **没人可问就连表都不掐**：那一趟根本没有人在这里等，掐出来的会是两次取时刻之差，
-    /// 而那是库自己的开销，不该从这一趟的墙钟里减掉。命令行不带进度条的那条路走的正是这里。
+    /// 而那是库自己的开销，不该从这一趟的墙钟里减掉。走这一支的是库外只调 `run`、
+    /// 不装观察者的那一趟（本模块用例里那个 `NobodyWatching` 是同一个形状）。
+    /// **说自己不读那份报告的观察者不走这一支**：它人在场，掐出来的是它真花掉的那一截。
     #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn ask_before_the_second_pass(
         self,
         so_far: impl FnOnce() -> VolumeReport,
     ) -> Instruction {
         // **哨兵**：下面那道判空绕得过 [`Self::ask`] 里那一问，而这一处正是按设计要等人的
-        // 那一处——没人可问的那一趟（命令行不带进度条）也照问不误，见 [`LockSentinel`]。
+        // 那一处——没人可问的那一趟也照问不误，见 [`LockSentinel`]。
         #[cfg(debug_assertions)]
         LockSentinel::assert_none_held(Event::PASS_STARTED);
-        if self.sink.is_none() {
+        let Some(sink) = self.sink else {
             return Instruction::Continue;
-        }
+        };
         // 拼那一份报告是**库自己的工夫**，掐在等人那一截之外：表从它拼完才起
-        // （见 [`Deliberation`]：只掐观察者没返回的那一段）。
-        let so_far = so_far();
+        // （见 [`Deliberation`]：只掐观察者没返回的那一段）。**读它的那一位才拼**——
+        // 谓词问的是「有没有人会读它」，不是「有没有观察者」（07 号票）。
+        let so_far = sink.0.reads_the_report_at_the_decision_point().then(so_far);
         let asked = Instant::now();
         let answer = self.ask(Event::PassStarted {
             pass: Pass::Second,
-            so_far: Some(&so_far),
+            so_far: so_far.as_ref(),
         });
         self.deliberation.add(asked.elapsed());
         answer
