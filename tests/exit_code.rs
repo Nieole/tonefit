@@ -514,3 +514,71 @@ fn what_is_redirected_out_of_a_terminal_folds_to_one_fixed_width() {
         widest(&report)
     );
 }
+
+/// **`--brief` 印出去的那一份真的少了底下两级**（`p4-parking-lot/22` 票面第一、二条）。
+///
+/// **只有真进程看得见这一条**：`Cli::report_fold` 说得出该挑哪一副、
+/// `render::plain::report` 说得出那一副长什么样，两处各有各的用例；说不出的是 `main`
+/// 有没有把前者交给后者——把那一行换回不折的那一副，二进制那一侧一条都不会红。
+/// 与退出码那几条同一个道理：接线本身是进程那一层的事实。
+///
+/// **两趟共用一个工作区，跑之前把上一趟的产物清掉**。共用是必须的：两份报告要逐行比，
+/// 而报告里印着源与去处的**真路径**——换个工作区跑第二趟，那几行连折都没折就已经不同了。
+/// 清产物也是必须的：留着的话第二趟整卷幂等命中，卷级那一行改口说「跳过」，
+/// 比出来的就不是折没折了。
+///
+/// **断言一个字面记号都不认**：印出去之前那一份还要过一遍折行（`main` 里那一句
+/// `folded_text`，折到 100 格），而这个夹具的卷根是一条临时目录路径——卷级那一行
+/// 铁定折断，`contains(" → ")` 会红得莫名其妙。这里问的因此全是**行与行的关系**：
+/// 折起那一副更短、它的每一行都在不折那一副里逐字出现过、两头那两行一格没动。
+/// 前两条钉住「藏掉了正文」，后两条钉住「抬头与末尾那几小结没跟着藏」。
+#[test]
+fn brief_folds_the_report_down_to_one_row_per_directory() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    // 一张读不出的页把这一卷送进隔离：末尾那几小结因此非空，折起那一副得留着它们。
+    volume.file("002.png", b"not a png at all");
+
+    let printed = |brief: bool| {
+        let _ = std::fs::remove_dir_all(space.out());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tonefit"));
+        command
+            .arg("--out")
+            .arg(space.out())
+            .args(["--profile", fixtures::BASELINE_DEVICE])
+            .arg(volume.path());
+        if brief {
+            command.arg("--brief");
+        }
+        let ran = command.output().expect("启动 tonefit");
+        let said = String::from_utf8_lossy(&ran.stdout).into_owned();
+        assert_eq!(ran.status.code(), Some(2), "这一趟该有卷被隔离：{said}");
+        said
+    };
+
+    let whole = printed(false);
+    let folded = printed(true);
+    let rows = |said: &str| said.lines().map(str::to_owned).collect::<Vec<_>>();
+    let (whole, folded) = (rows(&whole), rows(&folded));
+
+    // 折起那一副更短——`main` 真把开关交给了渲染那一头。
+    assert!(
+        folded.len() < whole.len(),
+        "--brief 没折掉任何东西：{folded:?}"
+    );
+    // 而它没另编一套说法：留下的每一行都在不折那一副里逐字出现过。
+    for row in &folded {
+        assert!(
+            whole.contains(row),
+            "折起那一副多出了一行不折那一副没有的：{row}"
+        );
+    }
+    // 两头那两行一格没动：抬头在，末尾那几小结也在。
+    assert_eq!(folded.first(), whole.first(), "抬头跟着折没了");
+    assert_eq!(
+        folded.last(),
+        whole.last(),
+        "末尾那几小结跟着折没了——折起那一副因此说不出这一趟出了什么事"
+    );
+}

@@ -17,9 +17,13 @@
 //! [目录行](directory)：几卷 · 基准档分布 · 几卷进了隔离。
 //! **分组与聚合都不在这里**——它们在 [`super`]，会话的目录表读的是同一份。
 //!
-//! 命令行这一副**三级一并摆出来**：它没有一个键可按，藏起来的那两级在屏上就再也
-//! 没有第二个地方看得到了（停车场 Q171 记着这一笔）。会话那一副折得起来：
-//! 默认只给目录那一级，按 `⏎` 才往下摊。
+//!
+//! # 摊到哪一级由一个开关定（`p4-parking-lot/22`）
+//!
+//! [`ReportFold`]，命令行上的 `--brief`。两副的分别、默认为什么是不折、
+//! 以及它为什么不改产物，**一处答完**：`CONTEXT.md` 的《报告折叠》。
+//! 这一层只落两件事——[哪一副摆哪几行](report)，以及**会话那一副与它无关**
+//! （会话默认只给目录那一级、按 `⏎` 往下摊，那是《展开》那个状态）。
 //!
 //! # 谁在读这一副
 //!
@@ -50,14 +54,33 @@ use tonefit::{Mode, Report, VolumeReport, WhiteAlignLimit};
 
 use super::{Field, Listed, Row, RowKind};
 
+/// 命令行印出去的报告**摊到哪一级**（`p4-parking-lot/22`，收停车场 Q171）。
+///
+/// 两副各是什么、默认为什么取不折、它为什么不进 `Request`：`CONTEXT.md` 的《报告折叠》。
+/// 命令行上挑它的是 `--brief`（见 `crate::Cli` 上那一项的帮助）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportFold {
+    /// **不折**：目录那一行、它那几卷、每一卷的逐页那几行，三级一并摆出来。**默认那一副。**
+    Off,
+    /// **按目录折起**：只到目录那一级，一枝一行；卷级与逐页那两段一行都不印。
+    ByDirectory,
+}
+
 /// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
 ///
 /// 四段按顺序拼起来，中间不加任何东西——会话逐段画出来的与这里拼出来的逐字节相同。
-pub fn report(report: &Report, mode: Mode) -> String {
+///
+/// **折的只有正文那一段**（`fold`，见 [`ReportFold`]）：抬头与末尾那几小结两副都全印。
+/// 那正是折起那一副仍答得出「这一趟出了什么事」的地方——没做成的那几卷、
+/// 进了隔离的那几卷、走不进去的那几处，只有末尾那几小结点得出是哪几个。
+pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     let mut text = super::header(report, mode);
     let listed = super::listed(report);
     for group in super::grouped(&listed) {
         text.push_str(&directory(&group, &listed));
+        if fold == ReportFold::ByDirectory {
+            continue;
+        }
         for at in &group.at {
             if let Some(Listed::Settled(volume)) = listed.get(*at) {
                 text.push_str(&self::volume(volume, report.white_align_limit));
@@ -87,8 +110,9 @@ pub fn tail(report: &Report) -> String {
 /// 一枝的[目录那一行](super::directory)，摆成纯文本。
 ///
 /// 它摆在这一枝那几卷**前面**：命令行印出来的那一份因此与会话读的是同一个层次
-/// （目录 → 卷 → 页），只是命令行三级一并摆出来——那一路没有一个键可按，
-/// 藏起来的那两级在屏上就再也没有第二个地方看得到了。
+/// （目录 → 卷 → 页），只是命令行默认三级一并摆出来——那一路没有一个键可按，
+/// 藏起来的那两级在屏上就再也没有第二个地方看得到了。要藏得当场点名
+/// （[`ReportFold::ByDirectory`]），那一副印出来就只剩这一行。
 pub fn directory(group: &super::Group, listed: &[Listed<'_>]) -> String {
     line(&super::directory(group, listed))
 }

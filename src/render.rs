@@ -16,6 +16,8 @@
 //! 它们上面还有一级：[目录那一行](directory)——卷按目录分组（[`grouped`]），
 //! 一枝一行（`volume-discovery/08`）。**分组与聚合只有那两处出处**：
 //! 命令行那一副的折叠与会话的目录表读的是同一份，两边不许各算各的。
+//! 命令行那一副**摊到哪一级**由一个开关定（[`plain::ReportFold`]，`--brief`）——
+//! 折的是摆出哪几行，分组与聚合两副读的仍是这一处。
 //!
 //! # 措辞一处，排版两处（ADR 0016）
 //!
@@ -1789,6 +1791,16 @@ mod tests {
         VolumeFailure, VolumeTiming,
     };
 
+    /// 命令行印出去的那一份，**不折的那一副**（[`plain::ReportFold::Off`]）。
+    ///
+    /// 下面这一大批用例问的都是「报告上那句话怎么说」，与折不折无关——它们钉着的
+    /// 正是票面第四条要的那件事：**不折的那一副与折叠落地之前逐字相同**
+    /// （`p4-parking-lot/22`）。折起那一副由
+    /// [`the_folded_report_stops_at_the_directory_level`] 一处问。
+    fn unfolded(report: &Report, mode: Mode) -> String {
+        plain::report(report, mode, plain::ReportFold::Off)
+    }
+
     /// 一份卷级上包络。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作定档页。
     fn envelope(base: Candidate) -> Envelope {
         Envelope {
@@ -1924,7 +1936,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::DryRun);
+        let text = unfolded(&report, Mode::DryRun);
 
         assert!(text.contains("dry-run"), "{text}");
         assert!(text.contains("还没落盘"), "{text}");
@@ -1978,7 +1990,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**
         // （构成、掩蔽、聚合——一块的读数由什么组成、怎么加权、怎么收成一个数）、
@@ -2139,7 +2151,7 @@ mod tests {
     fn the_header_says_once_that_splitting_meets_fit_inside() {
         let report = switches_report(FitMode::Inside, true, SplitRule::default());
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(
             text.contains(&Interlock::SpreadsStayFlattened.to_string()),
@@ -2171,7 +2183,7 @@ mod tests {
             (FitMode::Height, split_off),
             (FitMode::Inside, split_off),
         ] {
-            let text = plain::report(&switches_report(fit, true, split), Mode::Process);
+            let text = unfolded(&switches_report(fit, true, split), Mode::Process);
             assert!(!text.contains("互锁"), "{fit:?} {split:?}\n{text}");
         }
     }
@@ -2193,7 +2205,7 @@ mod tests {
             "裁边关着却没咬上"
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(!text.contains("互锁"), "{text}");
         assert!(
@@ -2220,7 +2232,7 @@ mod tests {
         let engaged: Vec<Interlock> = report.interlocks().collect();
         assert_eq!(engaged.len(), 2, "{engaged:?}");
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         for interlock in engaged {
             assert_eq!(
@@ -2271,7 +2283,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // 判定范围与不成立的页数并排：一卷全是彩页时门同样成立，那是「无人可关」，
         // 不是「每一页都贴住了面板」。
@@ -2333,7 +2345,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("输出宽超过面板 1 页"), "{text}");
         assert!(text.contains("最宽 5056x1680"), "{text}");
@@ -2393,7 +2405,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("兜底上界 1 页"), "{text}");
         // 是哪一页要点名——报告里翻不回去就等于没说。
@@ -2452,7 +2464,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(!text.contains("兜底"), "{text}");
     }
@@ -2499,7 +2511,7 @@ mod tests {
         };
         let trimmed = Crop::new(Size::new(1441, 2048), (120, 100), Size::new(1200, 1600));
 
-        let text = plain::report(
+        let text = unfolded(
             &one_page_report(
                 profile.clone(),
                 VolumeVerdict::Envelope(envelope(candidate)),
@@ -2517,7 +2529,7 @@ mod tests {
         assert!(crop_at < scaling_at, "裁边排到了缩放后面：{text}");
 
         // 一个像素都没裁的那一页：逐页那一行一个字不说，抬头那一行照旧说得出裁边开着。
-        let untouched = plain::report(
+        let untouched = unfolded(
             &one_page_report(
                 profile,
                 VolumeVerdict::Envelope(envelope(candidate)),
@@ -2607,7 +2619,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // 卷那一行数得出彩页有几张：走哪条分支不影响它是不是彩页。
         assert!(text.contains("3 页，其中彩页 2 页"), "{text}");
@@ -2655,7 +2667,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**、**目录一行**、
         // 卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
@@ -2712,7 +2724,7 @@ mod tests {
             fingerprint: probed(1),
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("读取串行"), "{text}");
         assert!(text.contains("是网络路径"), "{text}");
@@ -2792,7 +2804,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // 卷级那一行说得出几页失败、整卷去了哪儿。
         assert!(text.contains("隔离 1 页失败"), "{text}");
@@ -2860,7 +2872,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("卷级失败 1 卷"), "{text}");
         assert!(text.contains("library/volume-b"), "{text}");
@@ -2919,7 +2931,7 @@ mod tests {
             },
         ];
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("非卷文件 3 个"), "{text}");
         // 逐条带路径：只报个数的话，用户还得自己回源库里对一遍才知道是哪几个。
@@ -3010,7 +3022,7 @@ mod tests {
             },
         ];
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(text.contains("发现走不进去 2 处"), "{text}");
         // 逐条带路径**与那句为什么**：说不出该去修什么的一句等于没说。
@@ -3112,7 +3124,7 @@ mod tests {
             elapsed: Duration::ZERO,
         };
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         // 逐页那一行：救回了多少，摆在判定前面。
         assert!(text.contains("救回 62.5% · 判定 4bit"), "{text}");
@@ -3176,7 +3188,7 @@ mod tests {
             },
         );
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         assert!(!text.contains("隔离"), "{text}");
         assert!(!text.contains("失败"), "{text}");
@@ -3643,7 +3655,7 @@ mod tests {
             "拼回一段的规矩不在纯文本那一副了"
         );
         assert!(
-            plain::report(&report, Mode::Process).ends_with(&joined),
+            unfolded(&report, Mode::Process).ends_with(&joined),
             "末尾那几小结不在报告末尾了"
         );
     }
@@ -3825,7 +3837,7 @@ mod tests {
         }
         drawn.push_str(&plain::tail(&report));
 
-        assert_eq!(drawn, plain::report(&report, Mode::Process));
+        assert_eq!(drawn, unfolded(&report, Mode::Process));
     }
 
     /// 计时**不进渲染出的文字**：印不印、印在哪由调用方定（加固批 11 号票）。
@@ -3897,8 +3909,8 @@ mod tests {
         }
         assert_eq!(tail(&slow), tail(&quick));
         assert_eq!(
-            plain::report(&slow, Mode::Process),
-            plain::report(&quick, Mode::Process)
+            unfolded(&slow, Mode::Process),
+            unfolded(&quick, Mode::Process)
         );
     }
     /// **窄计数器不进渲染出的文字**（`CONTEXT.md` 的《窄计数器》）：那三个数在报告里，
@@ -3934,8 +3946,8 @@ mod tests {
         }
         assert_eq!(tail(&busy), tail(&quiet));
         assert_eq!(
-            plain::report(&busy, Mode::Process),
-            plain::report(&quiet, Mode::Process)
+            unfolded(&busy, Mode::Process),
+            unfolded(&quiet, Mode::Process)
         );
     }
 
@@ -4432,6 +4444,30 @@ mod tests {
         }
     }
 
+    /// **两枝各一卷**的一份报告：`库/第1话` 与 `库/别的作品/第1话`。
+    ///
+    /// 目录那一级的两条用例都拿它——一条问目录行摆在它那几卷**前面**，
+    /// 一条问折起那一副**停在**这一级（`p4-parking-lot/22`）。
+    ///
+    /// `broken` 说的是第二枝那一卷有没有一页解不出来：它决定**末尾那几小结空不空**，
+    /// 而折起那一副得把它们留着——那一副里只有它们点得出这一趟出了什么事。
+    fn two_branch_report(broken: bool) -> Report {
+        let base = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::Skipped { page_count: 1 },
+            a_volume("库/第1话", base, false).pages.remove(0),
+        );
+        report.volumes[0] = a_volume("库/第1话", base, false);
+        report
+            .volumes
+            .push(a_volume("库/别的作品/第1话", base, broken));
+        report
+    }
+
     /// **分组的层次就是发现出来那棵树的层次**（`volume-discovery/08` 票面第二条）。
     ///
     /// 一个目录**既是卷又装着卷**（ADR 0014）时两条各归各的：那个目录卷自己归
@@ -4531,21 +4567,9 @@ mod tests {
     /// [`directory`] 出的那一行摆出来的样子，会话的目录表读的是同一批格。
     #[test]
     fn the_command_line_folds_the_report_by_directory() {
-        let base = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
-            BitDepth::Four,
-            Dither::Off,
-        ))));
-        let mut report = one_page_report(
-            Profile::resolve("kobo-libra-2").expect("内置型号"),
-            VolumeVerdict::Skipped { page_count: 1 },
-            a_volume("库/第1话", base, false).pages.remove(0),
-        );
-        report.volumes[0] = a_volume("库/第1话", base, false);
-        report
-            .volumes
-            .push(a_volume("库/别的作品/第1话", base, false));
+        let report = two_branch_report(false);
 
-        let text = plain::report(&report, Mode::Process);
+        let text = unfolded(&report, Mode::Process);
 
         let listed = self::listed(&report);
         for group in grouped(&listed) {
@@ -4561,6 +4585,47 @@ mod tests {
         assert!(
             at("库/别的作品  1 卷") < at("库/别的作品/第1话 → "),
             "{text}"
+        );
+    }
+
+    /// **折起那一副停在目录那一级**（票面第一条）：一枝一行，卷级与逐页那两段
+    /// 一行都不印。
+    ///
+    /// 抬头与末尾那几小结**照旧在**：折起要答的是「一屏看得完这一趟怎么样」，
+    /// 而没做成的那几卷与进了隔离的那几卷只有末尾那几小结点得出是哪几个——
+    /// 藏掉它们，折起那一副就成了一份说不出事的报告。
+    ///
+    /// 两副的关系在这里问得出来：折起那一副的每一行**都在摊开那一副里**，
+    /// 逐字相同（同一处 [`directory`] 出的那一行），而摊开那一副多出来的正是
+    /// 卷级与逐页那两段。
+    #[test]
+    fn the_folded_report_stops_at_the_directory_level() {
+        let report = two_branch_report(true);
+
+        let whole = self::unfolded(&report, Mode::Process);
+        let folded = plain::report(&report, Mode::Process, plain::ReportFold::ByDirectory);
+
+        // 抬头照旧：折的是正文，不是这一趟怎么样。
+        assert!(
+            folded.starts_with(&header(&report, Mode::Process)),
+            "{folded}"
+        );
+        // 末尾那几小结照旧：那一卷的失败页只有它点得出来。
+        let tail = plain::tail(&report);
+        assert!(!tail.is_empty(), "夹具该出至少一小结");
+        assert!(folded.ends_with(&tail), "{folded}");
+        // 目录那两行都在，逐字与摊开那一副相同。
+        let listed = self::listed(&report);
+        for group in grouped(&listed) {
+            let said = plain::directory(&group, &listed);
+            assert!(folded.contains(&said), "{said} 不在折起那一副里：{folded}");
+        }
+        // 卷级那一段一行都不印——而不折那一副印着它。
+        assert!(whole.contains("库/第1话 → "), "{whole}");
+        assert!(!folded.contains("库/第1话 → "), "{folded}");
+        assert!(
+            folded.lines().count() < whole.lines().count(),
+            "折起那一副没比不折那一副短：{folded}"
         );
     }
 
