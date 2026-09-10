@@ -11,7 +11,7 @@
 mod fixtures;
 
 use fixtures::{Volume, Workspace};
-use tonefit::Profile;
+use tonefit::{BitDepth, Candidate, Dither, Profile, Reason, VolumeReport, VolumeVerdict};
 
 /// 一台彩色面板设备：彩页只有在彩色 profile 下才走彩色分支（ADR 0010）。
 const COLOR_DEVICE: &str = "kobo-libra-colour";
@@ -27,6 +27,77 @@ fn dry_run_with(space: &Workspace, volume: &Volume, profile: Profile) -> tonefit
         ..fixtures::request(space, [volume.path()])
     })
     .expect("试算应当成功")
+}
+
+/// 跑一趟，把这一卷的报告取出来。
+///
+/// 顶死那几条用例各改各的参数（06 号票的三条来路各点各的那一维），收的因此是拼好的
+/// `Request` 而不是一串参数。
+fn one_volume(request: tonefit::Request) -> VolumeReport {
+    tonefit::run(&request)
+        .expect("处理应当成功")
+        .volumes
+        .into_iter()
+        .next()
+        .expect("一个卷")
+}
+
+/// 两页灰度卷，页恒等通过、几何门两条边都贴着面板。
+///
+/// 顶死那几条用例共用它：三条来路的差别全在**参数**上，卷一模一样才比得出那件事。
+fn two_gray_pages(space: &Workspace) -> Volume {
+    let volume = space.volume("volume-a");
+    let size = fixtures::PASSES_THROUGH;
+    volume.page("001.png", &fixtures::full_bleed_gradient(size));
+    volume.page("002.png", &fixtures::full_bleed_gradient(size));
+    volume
+}
+
+/// 顶死的那一趟该长什么样（06 号票）：候选在碰卷之前就裁到只剩 `candidate`，
+/// 第二遍要用的那一档因此已经定死，量化与编码第一遍当场做完。
+///
+/// 四条断言各钉票面的一条：
+///
+/// - **参照一张都不进缓存**——票面第 1 条，也是这一票唯一的外部信号。
+/// - **缓存里躺着的就是写出去的那几页字节**——账上那个数恰好等于写出的字节数，
+///   「往返」那一趟因此真的省掉了，而不是换了个地方做。
+/// - **判据曲线照旧求**——票面明写要保住的那一条。覆盖了判定也照求判据值，
+///   试算才说得出「你点的那一档判据是多少」；候选只剩一个，那一个的值一格不少。
+/// - **判定理由仍是「覆盖项顶掉判定」**——写进 tEXt 的正是它（`metadata::reason_text`），
+///   理由变了输出字节就变了。
+fn assert_the_pinned_volume_never_cached_a_reference(volume: &VolumeReport, candidate: Candidate) {
+    assert_eq!(
+        volume.verdict,
+        Some(VolumeVerdict::Override(candidate)),
+        "这一趟的判定没有被顶死，测的就不是 06 号票那条路"
+    );
+    assert_eq!(volume.resizes, volume.pages.len(), "缩放照旧每张一次");
+    assert_eq!(
+        volume.cached_references, 0,
+        "顶死的那一趟还是把参照存进了缓存"
+    );
+    assert_eq!(
+        volume.cache.pages,
+        volume.pages.len(),
+        "缓存里该躺着编好的那几页"
+    );
+    for page in &volume.pages {
+        assert_eq!(page.scores().len(), 1, "顶死之后判据曲线不求了");
+        assert_eq!(page.scores()[0].candidate, candidate);
+        assert_eq!(
+            page.verdict().expect("灰度页有判定").reason,
+            Reason::Override
+        );
+    }
+    let written: u64 = volume
+        .pages
+        .iter()
+        .map(|page| std::fs::metadata(&page.output).expect("读回写出的页").len())
+        .sum();
+    assert_eq!(
+        volume.cache.stored, written,
+        "缓存里装的不是编好的那几页——那一趟往返还在"
+    );
 }
 
 /// 灰度卷上三个数说的是同一批页：解码按**源页**数，缩放与参照进缓存按**输出页**数，
@@ -215,31 +286,122 @@ fn a_split_source_page_is_decoded_once_and_resized_twice() {
     assert_eq!(volume_report.cached_references, 2, "两半各存各的参照");
 }
 
-/// **判定被覆盖顶死的那一趟，参照今天照进缓存。**
+/// **来路一 · 两维都被显式点名。**
 ///
-/// 位深与抖动两维都点名之后，第二遍要用的那一档在开卷之前就定死了，缓存那一趟往返
-/// 什么也不改变——06 号票删的就是它。今天这个数不是零，删完之后是零；
-/// 而缩放那一个两边都不动，正好把「删掉的只是缓存那一趟」框住。
+/// `--bit-depth 2 --dither off`：门那两组各自都只剩 `2bit`，两组给出同一个答案，
+/// 那一档因此碰卷之前就答得出（06 号票）。
 #[test]
-fn a_pinned_verdict_still_caches_every_reference_today() {
+fn a_verdict_pinned_by_naming_both_dimensions_caches_no_reference() {
     let space = Workspace::new();
-    let volume = space.volume("volume-a");
-    let size = fixtures::PASSES_THROUGH;
-    volume.page("001.png", &fixtures::full_bleed_gradient(size));
-    volume.page("002.png", &fixtures::full_bleed_gradient(size));
+    let volume = two_gray_pages(&space);
 
-    let report = tonefit::run(&tonefit::Request {
-        bit_depth: Some(tonefit::BitDepth::Two),
-        dither: Some(tonefit::Dither::FloydSteinberg),
+    let report = one_volume(tonefit::Request {
+        bit_depth: Some(BitDepth::Two),
+        dither: Some(Dither::Off),
         ..fixtures::request(&space, [volume.path()])
-    })
-    .expect("处理应当成功");
+    });
 
-    let volume_report = &report.volumes[0];
-    assert_eq!(volume_report.resizes, 2);
+    assert_the_pinned_volume_never_cached_a_reference(
+        &report,
+        Candidate::new(BitDepth::Two, Dither::Off),
+    );
+}
+
+/// **来路二 · 位深那一维由面板灰阶数裁到只剩一档。**
+///
+/// 两级灰阶的面板上写得出的只有 `1bit`（ADR 0003 的硬上界），`--dither off` 裁掉另一维——
+/// **一个 `--bit-depth` 都没点**，候选照样只剩一个。
+///
+/// 它单独证明自己有效：谓词若写成「两维都被点名」，另外两条来路照绿，只有这一条红。
+#[test]
+fn a_verdict_pinned_by_the_panels_gray_levels_caches_no_reference() {
+    let space = Workspace::new();
+    let volume = two_gray_pages(&space);
+
+    let report = one_volume(tonefit::Request {
+        profile: fixtures::baseline_profile()
+            .with_gray_levels(2)
+            .expect("两级在取值范围里"),
+        dither: Some(Dither::Off),
+        ..fixtures::request(&space, [volume.path()])
+    });
+
+    assert_the_pinned_volume_never_cached_a_reference(
+        &report,
+        Candidate::new(BitDepth::One, Dither::Off),
+    );
+}
+
+/// **来路三 · 抖动那一维由几何门裁，门不成立那一组因此整个不在。**
+///
+/// `--dither fs` 撞上一页贴不住面板就是互锁 ③，处置是整趟被拒（ADR 0007 的《后果》）——
+/// 走得完的卷里其余页只可能是门成立那一组，那一档于是不必等整卷判完门。
+///
+/// 它单独证明自己有效：谓词若只认「门那两组给出同一个答案」，这一条当场红——
+/// 门不成立那一组在这一趟上根本不是一个候选集，而是一条拒绝。
+#[test]
+fn a_verdict_pinned_where_the_gate_leaves_only_one_group_caches_no_reference() {
+    let space = Workspace::new();
+    let volume = two_gray_pages(&space);
+
+    let report = one_volume(tonefit::Request {
+        bit_depth: Some(BitDepth::Two),
+        dither: Some(Dither::FloydSteinberg),
+        ..fixtures::request(&space, [volume.path()])
+    });
+
+    assert_the_pinned_volume_never_cached_a_reference(
+        &report,
+        Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
+    );
+}
+
+/// **没被顶死的那一趟一切照旧**（票面末一条）。
+///
+/// 只点名位深：其余页那一组的几何门开着，抖动那一维还有得判，判据照旧说了算——
+/// 那一档要等整卷汇总，参照因此照旧攒到第二遍。
+///
+/// 它是上面三条的对照组，也是「谓词别放得太宽」那一面的钉子。
+#[test]
+fn naming_only_the_bit_depth_still_caches_every_reference() {
+    let space = Workspace::new();
+    let volume = two_gray_pages(&space);
+
+    let report = one_volume(tonefit::Request {
+        bit_depth: Some(BitDepth::Two),
+        ..fixtures::request(&space, [volume.path()])
+    });
+
+    assert_eq!(report.pages.len(), 2);
     assert_eq!(
-        volume_report.cached_references, 2,
-        "两维都顶死了，参照还是等到了第二遍"
+        report.cached_references, 2,
+        "判定还没定死，参照就该等到第二遍"
+    );
+}
+
+/// **试算不在其内。**
+///
+/// 那一趟没有第二遍，编出来的字节一个读者都没有；缓存也只记账、不留页
+/// （`cache::Retention::Account`），没有块可换。顶死的试算因此照旧攒参照——
+/// 这条界与滚动窗口那一条逐字相同（`Window::open` 只在照做那一遍开）。
+///
+/// 代价是预告的缓存用量与照做那一趟不再是同一个数，与逐页那条路同型（停车场 Q430、Q537）。
+#[test]
+fn a_pinned_dry_run_still_caches_every_reference() {
+    let space = Workspace::new();
+    let volume = two_gray_pages(&space);
+
+    let report = one_volume(tonefit::Request {
+        mode: tonefit::Mode::DryRun,
+        bit_depth: Some(BitDepth::Two),
+        dither: Some(Dither::Off),
+        ..fixtures::request(&space, [volume.path()])
+    });
+
+    assert_eq!(report.resizes, 2, "试算的灰度路径照旧要缩放：判据要它");
+    assert_eq!(
+        report.cached_references, 2,
+        "试算编了一遍码——那一趟没有第二遍要这些字节"
     );
 }
 
