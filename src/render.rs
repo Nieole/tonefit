@@ -49,7 +49,8 @@ use std::path::{Path, PathBuf};
 
 use tonefit::{
     CandidateScore, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile, Report,
-    Voice, VolumeFailure, VolumeReport, VolumeVerdict, aggregation, composition, masking,
+    Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit, WhiteAlignment,
+    aggregation, composition, masking,
 };
 // 收场那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
@@ -63,8 +64,9 @@ use tonefit::HARD_SPACE;
 
 /// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
 ///
-/// 眼下三处取它：[基准档分布](base_spread)、[判据那一串](score_line)，
-/// 与失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」）。
+/// 眼下四处取它：[基准档分布](base_spread)、[判据那一串](score_line)、
+/// 失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」），
+/// 与[逐页那一格纸白](paper_white_cell)。
 /// 串起来的整串是**一格**，而「一串东西怎么说」与「一个数怎么写」同属措辞
 /// （ADR 0016 决定第 2 条）——格与格**之间**拿什么隔开是排版的事，不在这里。
 ///
@@ -164,6 +166,19 @@ pub enum RowKind {
     Gate,
     /// 几何门那一行底下的注解（成句）。
     GateNote,
+    /// **纸白对齐那一行**：本次上限、这一卷对齐了几页、超限几页、量不出纸白几页
+    /// （纸白对齐批 02 号票第 1 条）。
+    ///
+    /// 它**恒在**（跳过的卷与一张灰度页都没有的卷除外，那两种什么都没算）：
+    /// 上限取 0 时照样出，上限那一格自己说「没开」——开没开是这一趟的事实，
+    /// 不是可有可无的注解。
+    WhiteAlign,
+    /// [纸白对齐那一行](Self::WhiteAlign)底下的一句注解（成句）：
+    /// **一页都没对齐时它说得出是哪一种原因**。
+    ///
+    /// 与[几何门底下那几句](Self::GateNote)同一个形状、同一条理由：上面那一行是几个数，
+    /// 而「本来就在格点上」与「量不出纸白」是**两句不同的话**，不是同一个 0。
+    WhiteAlignNote,
     /// 卷级判定：上包络。
     Envelope,
     /// 上包络指出的定档页。
@@ -247,6 +262,29 @@ pub enum Field {
     GateBroken,
     /// 本卷抖不抖。
     Dither,
+    /// **本次的纸白对齐上限**，连同它取 0 时那句「没开」。
+    ///
+    /// 字面出处是**措辞**（`CONTEXT.md` 的《格》）：界面层自己造的字面。
+    /// 「级」这个单位与那句「没开」都在格里，与[缩放那一格](Self::Scaling)在失败页上
+    /// 说的那句同一条理由：这一格没有一个自己的列头，摆到哪一副排版上都得自带这几个字。
+    WhiteAlignLimit,
+    /// 这一卷**对齐了几页**。**一页都没量过就不在场**（上限取 0 那一趟照做的报告）。
+    /// 字面出处是**措辞**：一个数怎么写。
+    WhiteAligned,
+    /// 这一卷**离格量超过上限**的几页。字面出处与不在场的条件同
+    /// [`WhiteAligned`](Self::WhiteAligned)。
+    WhiteOverTheLimit,
+    /// 这一卷**量不出纸白**的几页。字面出处与不在场的条件同
+    /// [`WhiteAligned`](Self::WhiteAligned)。
+    WhiteNoPaperWhite,
+    /// **这一页的纸白与钳制宽度**，连同没对上时的那句原因。
+    /// **只在 `--dry-run` 出**，彩色分支与失败页上也不在场。
+    ///
+    /// 字面出处是**措辞**。它不占逐页表的一列，跟在行尾——与[部分救回那一格](Self::Salvage)
+    /// 同一个待遇，那几个字因此也在格里（同 [`WhiteAlignLimit`](Self::WhiteAlignLimit)）。
+    /// 不占列因此也不进那一关（`wording_cells` 从三张表的列导出）：串起它那两样的仍是
+    /// 本模块那个宽度稳的记号（`SEPARATOR`），而行尾错一格不牵连别人。
+    PaperWhite,
     /// 基准档。**表要的就是这一格**，而成句的那一格里说的是同一个数。
     Base,
     /// 上包络那一整句（四个数与「均未标定」那一句，出处在库里）。
@@ -350,10 +388,14 @@ fn interlock_lines(report: &Report) -> String {
 /// 那个页数是**输出**页数——用户打开的那本书里躺着几页。源页数是另一个数
 /// （`VolumeReport::source_pages`，页几何批 03 号票），一个源页可以产出多张输出页；
 /// 两者眼下相等，这一行因此还没有分开说的必要。
-pub fn volume(volume: &VolumeReport) -> Vec<Row> {
+pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
     let mut rows = vec![Row::new(RowKind::Volume, volume_cells(volume))];
     rows.extend(superseded_row(volume));
     rows.extend(verdict_rows(volume));
+    // 纸白对齐那一段接在判定后面（纸白对齐批 02 号票）：判定说的是「这一卷判成什么」，
+    // 它说的是「这一趟对这一卷的像素做了什么」。上限是**这一趟**的事实，因此从外面递进来
+    // ——`VolumeReport` 上不存它，一卷一份就是这一趟那一个值的第二处出处。
+    rows.extend(white_align_rows(volume, limit));
     // 这一卷是怎么读的（13 号票）。它排在跳过那一支**之前**：幂等命中的卷同样把整卷的字节
     // 读了一遍，读法与做事的那一趟是同一个，而「跳过一卷为什么也要等这么久」正问在这里。
     rows.push(Row::one(
@@ -395,14 +437,14 @@ fn volume_cells(volume: &VolumeReport) -> Vec<Cell> {
 /// 这里问的是 [`VolumeReport::skipped`]——跳过在那个结构上由两处一起体现，
 /// 而认哪一处只许有一个出处（见 `VolumeReport::skipped` 的文档）。
 /// 拆分之前这道守卫与 [`volume`] 里那道是同一句 `continue`。
-pub fn pages(volume: &VolumeReport) -> Vec<Row> {
+pub fn pages(volume: &VolumeReport, mode: Mode) -> Vec<Row> {
     if volume.skipped() {
         return Vec::new();
     }
     let mut rows = Vec::new();
     for page in &volume.pages {
         rows.push(Row::new(RowKind::PageGeometry, geometry_cells(page)));
-        rows.push(page_row(page));
+        rows.push(page_row(page, mode));
     }
     rows
 }
@@ -1316,6 +1358,182 @@ fn gate_note(sentence: impl Into<String>) -> Row {
     sentence_row(RowKind::GateNote, sentence)
 }
 
+/// **纸白对齐那一段**：本次上限，加上这一卷对齐了几页、超限几页、量不出纸白几页
+/// （纸白对齐批 02 号票第 1 条）。
+///
+/// # 上限那一格恒在，三个数不恒在
+///
+/// 「这一趟开没开」是**这一趟的事实**，不是可有可无的注解：上限取 0 时这一行照样出，
+/// 那一格自己说「没开」（票面第 6 条）。
+///
+/// 三个数则**只在真量过纸白时才在场**——照做那一趟上限取 0 时对齐连纸白都不量
+/// （`crate::align_white` 那道短路），摆三个 0 上去是编的，而报告不该有编出来的字段
+/// （同一条规矩见 [`Field::ColorPages`]：一格在不在场本身就是一句话）。
+/// **试算那一趟三个数恒在**，上限取 0 时也在：那一趟把守卫另判了一遍，
+/// 数说的是「开了会怎样」（理由在库里那一处）。
+///
+/// # 底下那两句注解
+///
+/// 与[几何门底下那几句](gate_note)同一个形状，**各说各的一件事**：
+///
+/// - **一页都没对齐时说是哪一种原因**：上面那一行是几个数，而**「本来就在格点上」
+///   与「量不出纸白」是两句不同的话，不是同一个 0**（票面第 2 条）。
+///   对齐了哪怕一页就不出这一句——那时那几个数自己说得清。
+/// - **没能对齐的那几页点得出来**（spec 的《Implementation Decisions》第 10 条）。
+///   逐页那一层只在试算出，而这一句**两种模式下都在**：照做那一趟没有别处说得出是哪几页。
+///   只在这一趟真开着时说——上限取 0 时点名的是「离格的页」，那不是同一件事。
+///
+/// # 两种卷一行都不出
+///
+/// 一张灰度页都没有的卷（整卷彩页、整卷失败）根本没经过这一步；跳过的卷一页都没算，
+/// 逐页结果整个是空的。两种都没有可说的，与[几何门那一段](gate_rows)同一条界。
+fn white_align_rows(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
+    let judged: Vec<(&PageReport, WhiteAlignment)> = volume
+        .pages
+        .iter()
+        .filter_map(|page| page.white_alignment().map(|what| (page, what)))
+        .collect();
+    if judged.is_empty() {
+        return Vec::new();
+    }
+    let count =
+        |which: fn(&WhiteAlignment) -> bool| judged.iter().filter(|(_, what)| which(what)).count();
+    let aligned = count(|what| matches!(what, WhiteAlignment::Aligned { .. }));
+    let over = count(|what| matches!(what, WhiteAlignment::OverTheLimit { .. }));
+    let no_paper = count(|what| matches!(what, WhiteAlignment::NoPaperWhite));
+    let on_the_grid = count(|what| matches!(what, WhiteAlignment::OnTheGrid { .. }));
+    let measured = judged.iter().any(|(_, what)| *what != WhiteAlignment::Off);
+
+    let mut cells = vec![Cell::new(Field::WhiteAlignLimit, limit_line(limit))];
+    if measured {
+        cells.push(Cell::new(Field::WhiteAligned, aligned.to_string()));
+        cells.push(Cell::new(Field::WhiteOverTheLimit, over.to_string()));
+        cells.push(Cell::new(Field::WhiteNoPaperWhite, no_paper.to_string()));
+    }
+    let mut rows = vec![Row::new(RowKind::WhiteAlign, cells)];
+    if measured && aligned == 0 {
+        rows.push(sentence_row(
+            RowKind::WhiteAlignNote,
+            why_none_aligned(limit, on_the_grid, over, no_paper),
+        ));
+    }
+    // **没能对齐的那几页点得出来**（spec 的《Implementation Decisions》第 10 条：
+    // 那是「我对你的图没做成什么」，属于屏上该说的实话）。逐页那一层只在试算出，
+    // 而这一句在**两种模式下都在**——照做那一趟没有别处说得出是哪几页。
+    //
+    // **只在这一趟真开着时说**：上限取 0 时守卫把任何离格的页都判成超限，
+    // 那时点名的是「离格的页」而不是「没对上的页」，一卷几十个名字全是噪声。
+    // 与几何门那一句「不成立：…」同一个做法、同一个上界（[`first_few_names`] 取三个）：
+    // 不指名，用户就无从判断上限该不该抬。
+    let missed: Vec<&PageReport> = judged
+        .iter()
+        .filter(|(_, what)| {
+            matches!(
+                what,
+                WhiteAlignment::OverTheLimit { .. } | WhiteAlignment::NoPaperWhite
+            )
+        })
+        .map(|(page, _)| *page)
+        .collect();
+    if limit != WhiteAlignLimit::OFF && !missed.is_empty() {
+        rows.push(sentence_row(
+            RowKind::WhiteAlignNote,
+            format!("没对上：{}", first_few_names(&missed)),
+        ));
+    }
+    rows
+}
+
+/// 本次上限那一格怎么说：**取 0 时那句「没开」就在这一格里**。
+///
+/// 「级」这个单位与那句话都在格里，不在排版那一层：这一格没有自己的列头
+/// （见 [`Field::WhiteAlignLimit`]），而「0 该读成什么」是措辞，一副排版都不许自己编。
+fn limit_line(limit: WhiteAlignLimit) -> String {
+    if limit == WhiteAlignLimit::OFF {
+        format!("{limit} 级（没开）")
+    } else {
+        format!("{limit} 级")
+    }
+}
+
+/// 一页都没对齐时底下那一句：**是哪一种原因**（票面第 2 条）。
+///
+/// 四种说法，前三种各对着一种走到底的情形，末一种是混着的那几卷。
+/// 「本来就在格点上」是**好消息**（这条做法在它身上没有可做的），
+/// 「量不出纸白」是**这条做法对它无效**——两句话说的不是同一件事，摆一个 0 出去两者就没了分别。
+fn why_none_aligned(
+    limit: WhiteAlignLimit,
+    on_the_grid: usize,
+    over: usize,
+    no_paper: usize,
+) -> String {
+    if limit == WhiteAlignLimit::OFF {
+        // 走到这里的只有试算：照做那一趟上限取 0 时一个数都不在场，这一句也就不出。
+        //
+        // **这一句不许说成「开了会怎样」**：上限取 0 时守卫把**任何**离格的页都判成超限，
+        // 那几个数说的是「照 0 级跑」的结果，不是「抬到 4 级会怎样」——真抬上去，
+        // 超限那几页多半就被对齐了。说成后者是屏上的一句假话。
+        return "这一趟没开：超限那个数在这里等于「离格的页有几张」\
+                ——上限取 0 时任何离格量都超限。它们各差多少、上限要抬到几级才钳得动，\
+                逐页那几行一页一页说得出来"
+            .to_owned();
+    }
+    let only = |count: usize| count == on_the_grid + over + no_paper;
+    if only(on_the_grid) {
+        return "一页都没对齐：整卷纸白本来就在格点上，这条做法在它身上没有可做的".to_owned();
+    }
+    if only(no_paper) {
+        return "一页都没对齐：整卷量不出纸白（没有大片平坦白底），这条做法对它无效".to_owned();
+    }
+    if only(over) {
+        return "一页都没对齐：整卷离格量都超过上限，代价超过这一趟愿意付的".to_owned();
+    }
+    let each = [
+        (on_the_grid, "本来就在格点上"),
+        (no_paper, "量不出纸白"),
+        (over, "离格量超过上限"),
+    ];
+    let said: Vec<String> = each
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, why)| format!("{why} {count} 页"))
+        .collect();
+    format!("一页都没对齐：{}", said.join("、"))
+}
+
+/// 逐页那一格：**这一页的纸白与钳制宽度**，外加没对上时的那句原因
+/// （票面第 3 条）。只在 `--dry-run` 出，出不出由 [`pages`] 那一头定。
+///
+/// [没开](WhiteAlignment::Off)那一种不在场：那一趟连纸白都没量，一个数都没有可说的
+/// ——而试算那一趟遇不上它（库那一侧把守卫另判了一遍）。
+///
+/// **没能对齐的那几页要点得出来**（spec 的《Implementation Decisions》第 10 条：
+/// 那是「我对你的图没做成什么」），三种没对上的情形因此各带一句自己的原因。
+fn paper_white_cell(what: WhiteAlignment) -> Option<Cell> {
+    let says = match what {
+        WhiteAlignment::Off => return None,
+        WhiteAlignment::NoPaperWhite => "量不出纸白，没对齐".to_owned(),
+        WhiteAlignment::OnTheGrid { paper_white } => {
+            format!("纸白 {paper_white}{SEPARATOR}本来就在格点上")
+        }
+        WhiteAlignment::OverTheLimit { paper_white } => format!(
+            "纸白 {paper_white}{SEPARATOR}钳制 {} 级{SEPARATOR}超过上限，没对齐",
+            clamp_width(what)
+        ),
+        WhiteAlignment::Aligned { paper_white } => {
+            format!("纸白 {paper_white}{SEPARATOR}钳制 {} 级", clamp_width(what))
+        }
+    };
+    Some(Cell::new(Field::PaperWhite, says))
+}
+
+/// 这一页的钳制宽度。**不由这一层算出来**——`255 − 纸白` 那一句的出处在库里
+/// （`tonefit::WhiteAlignment::clamp_width`），这一层减一遍就是第二处。
+fn clamp_width(what: WhiteAlignment) -> u8 {
+    what.clamp_width()
+        .expect("量出过纸白的那两种情形才走到这里")
+}
+
 /// **成句的那一种行**：一行只有一格，装着整句话（[`Field::Sentence`]）。
 ///
 /// 它们本来就是句子，拆开没有意义——拆的那一刀会把措辞挪到排版那一层去，
@@ -1352,7 +1570,7 @@ fn first_few_names(pages: &[&PageReport]) -> String {
 ///
 /// 失败页那一行说的是**原因**（spec 的 story 26）：报告要让用户知道该去修哪几张。
 /// 原因是由内到外的整条错误链，最外一环指得出是哪一页、卡在哪一步。
-fn page_row(page: &PageReport) -> Row {
+fn page_row(page: &PageReport, mode: Mode) -> Row {
     let Some(branch) = page.branch() else {
         return sentence_row(
             RowKind::PageFailure,
@@ -1368,7 +1586,10 @@ fn page_row(page: &PageReport) -> Row {
         .collect();
     match branch {
         PageBranch::Gray {
-            scores, verdict, ..
+            scores,
+            verdict,
+            white,
+            ..
         } => {
             if page.color() == Some(PageColor::Color) {
                 cells.push(Cell::new(Field::ColorToGray, "彩页转灰"));
@@ -1376,6 +1597,13 @@ fn page_row(page: &PageReport) -> Row {
             cells.push(Cell::new(Field::Candidate, verdict.candidate.to_string()));
             cells.push(Cell::new(Field::Reason, verdict.reason.to_string()));
             cells.push(Cell::new(Field::Scores, score_line(scores)));
+            // 纸白那一格**只在试算出**（纸白对齐批 02 号票第 3 条）：全语料里离格量为 0
+            // 的页占 57.0%、1–2 级的占 41.5%（measurements 的《全语料普查：四成三的页纸白
+            // 不落在格点上》），绝大多数页的钳制宽度因此是 0 或 1，一页不落地恒印没有
+            // 信息量。要它的是**还没决定上限取多少**的那个用户，而他手上正是 `--dry-run`。
+            if mode == Mode::DryRun {
+                cells.extend(paper_white_cell(*white));
+            }
             Row::new(RowKind::PageVerdict, cells)
         }
         PageBranch::Color => {
@@ -1624,6 +1852,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -1673,6 +1902,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore {
                             candidate: one_bit_dithered,
@@ -1726,6 +1956,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(2528, 3360), Size::new(1264, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore {
                             candidate,
@@ -1745,8 +1976,12 @@ mod tests {
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**
         // （构成、掩蔽、聚合——一块的读数由什么组成、怎么加权、怎么收成一个数）、
         // **目录一行**（`volume-discovery/08`：命令行那一副把这一枝摆在它那几卷前面）、
-        // 卷六行（去处、几何门、卷级、定档页、读取、缓存），页两行：一行几何，一行判定。
-        assert_eq!(text.lines().count(), 16);
+        // 卷**七行**（去处、几何门、卷级、定档页、**纸白对齐**、读取、缓存），
+        // 页两行：一行几何，一行判定。纸白对齐那一行**恒在**，这一趟上限取 0 时也在
+        // ——它说的是「没开」（纸白对齐批 02 号票第 6 条）。
+        assert_eq!(text.lines().count(), 17);
+        // 这一趟没开纸白对齐，而那一行照样说得出这件事。
+        assert!(text.contains("纸白对齐 上限 0 级（没开）"), "{text}");
         // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
         assert!(text.contains("适配方式 以高为准"), "{text}");
         assert!(text.contains("裁边 按行列墨量占比"), "{text}");
@@ -1871,6 +2106,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: Vec::new(),
                         verdict: Verdict {
@@ -2016,6 +2252,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(800, 1000), Size::new(800, 1000)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Broken,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -2076,6 +2313,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(5056, 1680), Size::new(5056, 1680)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         // 门照旧成立：溢出的页贴得好好的。
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
@@ -2136,6 +2374,7 @@ mod tests {
                     scaling: Scaling::plan(Size::new(3000, 100), Size::new(1264, 42)),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -2194,6 +2433,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -2240,6 +2480,7 @@ mod tests {
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
+                    white: WhiteAlignment::Off,
                     gate: GeometryGate::Holds,
                     scores: vec![CandidateScore { candidate, score }],
                     verdict: Verdict {
@@ -2312,6 +2553,7 @@ mod tests {
             }),
         };
         let gray_branch = || PageBranch::Gray {
+            white: WhiteAlignment::Off,
             gate: GeometryGate::Holds,
             scores: vec![CandidateScore { candidate, score }],
             verdict: Verdict {
@@ -2324,6 +2566,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2382,6 +2625,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2431,6 +2675,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2491,6 +2736,7 @@ mod tests {
                 scaling: typical_scaling(),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
+                    white: WhiteAlignment::Off,
                     gate: GeometryGate::Holds,
                     scores: vec![CandidateScore { candidate, score }],
                     verdict: Verdict {
@@ -2514,6 +2760,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2593,6 +2840,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             // 点名一个卷、它没做成：做出了东西的卷一个都没有。
             volumes: Vec::new(),
             failed_volumes: vec![VolumeFailure {
@@ -2695,6 +2943,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             volumes: Vec::new(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
@@ -2805,6 +3054,7 @@ mod tests {
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
+                white: WhiteAlignment::Off,
                 gate: GeometryGate::Holds,
                 scores: vec![CandidateScore { candidate, score }],
                 verdict: Verdict { candidate, reason },
@@ -2832,6 +3082,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2906,6 +3157,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -2966,6 +3218,7 @@ mod tests {
                         scaling: typical_scaling(),
                         color: PageColor::Gray,
                         branch: PageBranch::Gray {
+                            white: WhiteAlignment::Off,
                             gate: GeometryGate::Holds,
                             scores: vec![CandidateScore { candidate, score }],
                             verdict: Verdict {
@@ -3016,6 +3269,7 @@ mod tests {
             scaling: typical_scaling(),
             color: PageColor::Gray,
             branch: PageBranch::Gray {
+                white: WhiteAlignment::Off,
                 gate,
                 scores: Vec::new(),
                 verdict: Verdict { candidate, reason },
@@ -3117,7 +3371,7 @@ mod tests {
         let isolated = a_volume_worth_a_row_of_each_kind();
 
         assert_eq!(
-            volume(&isolated)
+            volume(&isolated, WhiteAlignLimit::default())
                 .iter()
                 .map(|row| row.kind)
                 .collect::<Vec<_>>(),
@@ -3128,6 +3382,8 @@ mod tests {
                 RowKind::Gate,
                 RowKind::Envelope,
                 RowKind::Driver,
+                // 纸白对齐接在判定后面，**恒在**：这一趟上限取 0，那一行说的是「没开」。
+                RowKind::WhiteAlign,
                 RowKind::Reading,
                 RowKind::Extraction,
                 RowKind::Cache,
@@ -3135,7 +3391,7 @@ mod tests {
         );
         // 一页两行：一行几何、一行判定，而失败那一页的判定是**另一种行**。
         assert_eq!(
-            pages(&isolated)
+            pages(&isolated, Mode::Process)
                 .iter()
                 .map(|row| row.kind)
                 .collect::<Vec<_>>(),
@@ -3147,7 +3403,7 @@ mod tests {
             ]
         );
 
-        let rows = volume(&isolated);
+        let rows = volume(&isolated, WhiteAlignLimit::default());
         // 卷那一行三格：源、去处、页数。一张彩页都没有，彩页那一格因此不在场。
         assert_eq!(rows[0].cells.len(), 3);
         assert_eq!(rows[0].cell(Field::PageCount), Some("2"));
@@ -3177,7 +3433,7 @@ mod tests {
         let mut skipped = extracted_by(512 * 1024);
         skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
 
-        let rows = volume(&skipped);
+        let rows = volume(&skipped, WhiteAlignLimit::default());
 
         assert_eq!(
             rows.iter().map(|row| row.kind).collect::<Vec<_>>(),
@@ -3214,7 +3470,7 @@ mod tests {
             rows[1]
         );
         // 逐页一行都没有：那一趟根本没算过逐页结果。
-        assert!(pages(&skipped).is_empty());
+        assert!(pages(&skipped, Mode::Process).is_empty());
     }
 
     /// **出了事的那一页与被它拖进隔离的那一卷各是一种行**，失败原因仍是整段文字。
@@ -3233,7 +3489,7 @@ mod tests {
     fn a_failed_page_and_the_volume_it_isolates_are_each_their_own_kind_of_row() {
         let isolated = a_volume_worth_a_row_of_each_kind();
         // 失败的卷是这一种行：卷级那一段里多出来的那一行，成句、只有一格。
-        let volume_rows = volume(&isolated);
+        let volume_rows = volume(&isolated, WhiteAlignLimit::default());
         let marked = volume_rows
             .iter()
             .find(|row| row.kind == RowKind::Isolated)
@@ -3250,12 +3506,12 @@ mod tests {
         let mut skipped = extracted_by(0);
         skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
         assert!(
-            volume(&skipped)
+            volume(&skipped, WhiteAlignLimit::default())
                 .iter()
                 .all(|row| row.kind != RowKind::Isolated)
         );
 
-        let rows = pages(&isolated);
+        let rows = pages(&isolated, Mode::Process);
 
         let failure = rows.last().expect("末一行是失败那一页的判定");
         assert_eq!(failure.kind, RowKind::PageFailure);
@@ -3302,6 +3558,7 @@ mod tests {
             fit: FitMode::default(),
             crop: true,
             split: SplitRule::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             volumes: Vec::new(),
             failed_volumes: vec![failure],
             non_volume_files: Vec::new(),
@@ -3392,21 +3649,33 @@ mod tests {
     #[test]
     fn the_base_column_says_which_one_it_is_or_why_there_is_none() {
         let isolated = a_volume_worth_a_row_of_each_kind();
-        assert_eq!(base_column(&volume(&isolated)), Some("4bit".to_owned()));
+        assert_eq!(
+            base_column(&volume(&isolated, WhiteAlignLimit::default())),
+            Some("4bit".to_owned())
+        );
 
         let mut each = extracted_by(0);
         each.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
-        assert_eq!(base_column(&volume(&each)), Some("跳过".to_owned()));
+        assert_eq!(
+            base_column(&volume(&each, WhiteAlignLimit::default())),
+            Some("跳过".to_owned())
+        );
 
         each = a_volume_worth_a_row_of_each_kind();
         each.verdict = Some(VolumeVerdict::PerPage);
-        assert_eq!(base_column(&volume(&each)), Some("逐页".to_owned()));
+        assert_eq!(
+            base_column(&volume(&each, WhiteAlignLimit::default())),
+            Some("逐页".to_owned())
+        );
 
         each.verdict = Some(VolumeVerdict::Override(Candidate::new(
             BitDepth::Two,
             Dither::FloydSteinberg,
         )));
-        assert_eq!(base_column(&volume(&each)), Some("覆盖 2bit+FS".to_owned()));
+        assert_eq!(
+            base_column(&volume(&each, WhiteAlignLimit::default())),
+            Some("覆盖 2bit+FS".to_owned())
+        );
 
         let failure = VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
@@ -3420,7 +3689,10 @@ mod tests {
 
         // 一张灰度页都没有的卷（判定那一格不在场）：一种都对不上，那一格因此不在场。
         each.verdict = None;
-        assert_eq!(base_column(&volume(&each)), None);
+        assert_eq!(
+            base_column(&volume(&each, WhiteAlignLimit::default())),
+            None
+        );
     }
 
     /// **格里装的是值，不是摆法**（ADR 0016）：缩进、换行与行尾那些分隔符一个都不在里面。
@@ -3435,7 +3707,11 @@ mod tests {
 
         let rows: Vec<Row> = [&isolated, &skipped]
             .into_iter()
-            .flat_map(|each| volume(each).into_iter().chain(pages(each)))
+            .flat_map(|each| {
+                volume(each, WhiteAlignLimit::default())
+                    .into_iter()
+                    .chain(pages(each, Mode::Process))
+            })
             .collect();
 
         assert!(rows.len() > 10, "问这一条要先有足够多的行：{}", rows.len());
@@ -3491,6 +3767,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -3532,8 +3809,8 @@ mod tests {
                 let Listed::Settled(each) = listed[*at] else {
                     continue;
                 };
-                drawn.push_str(&plain::volume(each));
-                drawn.push_str(&plain::pages(each));
+                drawn.push_str(&plain::volume(each, WhiteAlignLimit::default()));
+                drawn.push_str(&plain::pages(each, Mode::Process));
             }
         }
         drawn.push_str(&plain::tail(&report));
@@ -3574,6 +3851,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: vec![CandidateScore { candidate, score }],
                         verdict: Verdict {
@@ -3601,8 +3879,11 @@ mod tests {
         // 只比总的，某一段说了而另一段抵消掉的情形就漏过去了。
         assert_eq!(header(&slow, Mode::Process), header(&quick, Mode::Process));
         for (slower, quicker) in slow.volumes.iter().zip(&quick.volumes) {
-            assert_eq!(volume(slower), volume(quicker));
-            assert_eq!(pages(slower), pages(quicker));
+            assert_eq!(
+                volume(slower, WhiteAlignLimit::default()),
+                volume(quicker, WhiteAlignLimit::default())
+            );
+            assert_eq!(pages(slower, Mode::Process), pages(quicker, Mode::Process));
         }
         assert_eq!(tail(&slow), tail(&quick));
         assert_eq!(
@@ -3635,8 +3916,11 @@ mod tests {
         // 四段逐段比，理由同计时那一条：会话画的是这四段。
         assert_eq!(header(&busy, Mode::Process), header(&quiet, Mode::Process));
         for (loud, silent) in busy.volumes.iter().zip(&quiet.volumes) {
-            assert_eq!(volume(loud), volume(silent));
-            assert_eq!(pages(loud), pages(silent));
+            assert_eq!(
+                volume(loud, WhiteAlignLimit::default()),
+                volume(silent, WhiteAlignLimit::default())
+            );
+            assert_eq!(pages(loud, Mode::Process), pages(silent, Mode::Process));
         }
         assert_eq!(tail(&busy), tail(&quiet));
         assert_eq!(
@@ -3658,12 +3942,12 @@ mod tests {
     fn a_volume_that_was_extracted_says_how_many_bytes_it_took() {
         let untouched = extracted_by(0);
         assert!(
-            !plain::volume(&untouched).contains("摊开"),
+            !plain::volume(&untouched, WhiteAlignLimit::default()).contains("摊开"),
             "没摊开的卷也印了那一行：{}",
-            plain::volume(&untouched)
+            plain::volume(&untouched, WhiteAlignLimit::default())
         );
 
-        let said = plain::volume(&extracted_by(3 * 1024 * 1024));
+        let said = plain::volume(&extracted_by(3 * 1024 * 1024), WhiteAlignLimit::default());
         assert!(said.contains("摊开 3.0 MiB"), "{said}");
         // 字节数走库那一份进位：同一屏上它与缓存那一行得是同一种单位。
         assert!(
@@ -3673,11 +3957,372 @@ mod tests {
 
         let mut skipped = extracted_by(512 * 1024);
         skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 1 });
-        let said = plain::volume(&skipped);
+        let said = plain::volume(&skipped, WhiteAlignLimit::default());
         assert!(
             said.contains("摊开 512.0 KiB"),
             "跳过的卷没说摊了多少：{said}"
         );
+    }
+
+    /// 一份卷报告，**每一页的纸白对齐由 `what` 逐页点名**——底下那几条问的只有那一段。
+    ///
+    /// 别的几格取一个不碍事的取值：卷级判定走 `--per-page`（它不指定档页，
+    /// 因此不必让页数与定档页那个下标对得上），页一律是完好的灰度页。
+    fn a_volume_whose_pages_were(what: &[WhiteAlignment]) -> VolumeReport {
+        let candidate = Candidate::new(BitDepth::Four, Dither::Off);
+        let pages: Vec<PageReport> = what
+            .iter()
+            .enumerate()
+            .map(|(at, white)| PageReport {
+                source: PathBuf::from(format!("library/volume-a/{:03}.jpg", at + 1)),
+                output: PathBuf::from(format!("out/volume-a/{:03}.png", at + 1)),
+                size: Size::new(1264, 1680),
+                outcome: PageOutcome::Whole(Processed {
+                    crop: nothing_trimmed(),
+                    backstopped: false,
+                    cut: None,
+                    spread_candidate: false,
+                    scaling: typical_scaling(),
+                    color: PageColor::Gray,
+                    branch: PageBranch::Gray {
+                        white: *white,
+                        gate: GeometryGate::Holds,
+                        scores: Vec::new(),
+                        verdict: Verdict {
+                            candidate,
+                            reason: Reason::LowestWithinThreshold,
+                        },
+                    },
+                }),
+            })
+            .collect();
+        VolumeReport {
+            volume: PathBuf::from("library/volume-a"),
+            output: PathBuf::from("out/volume-a"),
+            superseded: None,
+            verdict: Some(VolumeVerdict::PerPage),
+            cache: cache_usage(),
+            extracted: 0,
+            io: io_plan(),
+            decodes: pages.len(),
+            resizes: pages.len(),
+            cached_references: pages.len(),
+            timing: VolumeTiming::default(),
+            source_pages: pages.len(),
+            pages,
+        }
+    }
+
+    /// 卷级那一行上纸白对齐说的那一句（含底下那句注解），摆成纯文本。
+    fn white_align_said(volume: &VolumeReport, limit: WhiteAlignLimit) -> String {
+        self::volume(volume, limit)
+            .iter()
+            .filter(|row| matches!(row.kind, RowKind::WhiteAlign | RowKind::WhiteAlignNote))
+            .map(plain::line)
+            .collect()
+    }
+
+    /// **上限取 0 时那一行照样出，说的是「没开」**（纸白对齐批 02 号票第 6 条）。
+    ///
+    /// 开没开是**这一趟的事实**，不是可有可无的注解：整行消失的话，「这一趟没开」
+    /// 与「这一卷本来就在格点上」在屏上长得一模一样，而那是两件事。
+    ///
+    /// **三个数这时不在场**：照做那一趟上限取 0 时一页都没量过（`tonefit::align_white`
+    /// 那道短路），摆三个 0 出去是编的——报告不该有编出来的字段
+    /// （`CONTEXT.md` 的《格》：一格在不在场本身就是一句话）。
+    #[test]
+    fn the_white_alignment_line_is_there_even_when_the_limit_is_zero() {
+        let volume = a_volume_whose_pages_were(&[WhiteAlignment::Off, WhiteAlignment::Off]);
+
+        let rows = self::volume(&volume, WhiteAlignLimit::OFF);
+        let line = rows
+            .iter()
+            .find(|row| row.kind == RowKind::WhiteAlign)
+            .expect("上限取 0 时纸白对齐那一行整行没了");
+
+        assert_eq!(line.cell(Field::WhiteAlignLimit), Some("0 级（没开）"));
+        for absent in [
+            Field::WhiteAligned,
+            Field::WhiteOverTheLimit,
+            Field::WhiteNoPaperWhite,
+        ] {
+            assert_eq!(
+                line.cell(absent),
+                None,
+                "一页都没量过，{absent:?} 那一格却摆出了一个数"
+            );
+        }
+        // 一句注解都不跟：上面那一格已经把「没开」说完了。
+        assert!(
+            !rows.iter().any(|row| row.kind == RowKind::WhiteAlignNote),
+            "没开那一趟还多印了一句注解"
+        );
+
+        let said = white_align_said(&volume, WhiteAlignLimit::OFF);
+        assert_eq!(said, "  纸白对齐 上限 0 级（没开）\n", "{said}");
+    }
+
+    /// **试算那一趟上限取 0 时，底下那一句说得出那几个数到底是什么**
+    /// （票面第 3 条那一半的卷级形态）。
+    ///
+    /// 试算把守卫另判了一遍（理由在库里那一处），逐页因此答的是
+    /// [超过上限](WhiteAlignment::OverTheLimit)这样的真话——上限取 0 时**每一页离格的都超限**。
+    /// 那几个数于是在场，而它们说的不是「这一趟做过什么」：不点破的话，
+    /// 「超限 2 页」读起来像是这一趟真去试着对齐过。
+    ///
+    /// **也不许把它说成「开了会怎样」**：上限抬到 4 级之后，超限那几页多半就被对齐了，
+    /// 这个数并不预告那一趟。它只说得出**离格的页有几张**——这一条把两头都钉着。
+    #[test]
+    fn a_trial_at_the_default_limit_says_what_its_numbers_actually_are() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::OverTheLimit { paper_white: 253 },
+            WhiteAlignment::OnTheGrid {
+                paper_white: u8::MAX,
+            },
+        ]);
+
+        let said = white_align_said(&volume, WhiteAlignLimit::OFF);
+
+        assert!(
+            said.contains("上限 0 级（没开） · 对齐 0 页 · 超限 1 页 · 量不出纸白 0 页"),
+            "试算那一趟上限取 0 时那几个数没出来：{said}"
+        );
+        assert!(
+            said.contains("这一趟没开：超限那个数在这里等于「离格的页有几张」"),
+            "那几个数说的是什么没点破：{said}"
+        );
+        // **不许把它说成「开了会怎样」**：上限一抬，那几页多半就被对齐了，这个数不预告那一趟。
+        assert!(
+            !said.contains("开了之后会怎样"),
+            "那一句把「照 0 级跑的结果」说成了「开了会怎样」，那是屏上的假话：{said}"
+        );
+    }
+
+    /// **对齐了几页、超限几页、量不出纸白几页**（票面第 1 条）。
+    ///
+    /// 五种情形一卷里都摆上：三个数各数各的，而「本来就在格点上」那一种不占一个数
+    /// ——它是「这条做法在它身上没有可做的」，与另外两种不是同一件事，
+    /// 一页都没对齐时由底下那一句说（见下一条）。
+    #[test]
+    fn the_white_alignment_line_counts_what_it_did_to_every_page() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::Aligned { paper_white: 253 },
+            WhiteAlignment::Aligned { paper_white: 254 },
+            WhiteAlignment::OverTheLimit { paper_white: 247 },
+            WhiteAlignment::NoPaperWhite,
+            WhiteAlignment::OnTheGrid {
+                paper_white: u8::MAX,
+            },
+        ]);
+
+        let said = white_align_said(&volume, fixtures_limit());
+        // 底下跟着的是**点名那一句**（没对上的那两页），不是「一页都没对齐」那一句
+        // ——这一卷对齐了两页。
+        assert_eq!(
+            said,
+            "  纸白对齐 上限 4 级 · 对齐 2 页 · 超限 1 页 · 量不出纸白 1 页\n    \
+             没对上：library/volume-a/003.jpg、library/volume-a/004.jpg\n",
+            "{said}"
+        );
+    }
+
+    /// **一卷一页都没对齐时，「本来就在格点上」与「量不出纸白」是两句不同的话**
+    /// （票面第 2 条，这一票的核心）。
+    ///
+    /// 两卷在那一行的三个数上**逐字相同**（对齐 0 · 超限 0 · 量不出纸白 0 与 …… 2 页），
+    /// 而它们的意思正相反：一卷是好消息（这条做法在它身上没有可做的），
+    /// 一卷是这条做法对它无效。分辨它们的只有底下那一句。
+    #[test]
+    fn a_volume_nothing_was_aligned_in_says_which_of_the_two_reasons_it_was() {
+        let on_the_grid = a_volume_whose_pages_were(&[
+            WhiteAlignment::OnTheGrid {
+                paper_white: u8::MAX,
+            },
+            WhiteAlignment::OnTheGrid {
+                paper_white: u8::MAX,
+            },
+        ]);
+        let no_paper = a_volume_whose_pages_were(&[WhiteAlignment::NoPaperWhite; 2]);
+
+        let good_news = white_align_said(&on_the_grid, fixtures_limit());
+        let treatable = white_align_said(&no_paper, fixtures_limit());
+
+        assert!(
+            good_news.contains("整卷纸白本来就在格点上"),
+            "整卷在格点上的卷没说出它是哪一种原因：{good_news}"
+        );
+        assert!(
+            treatable.contains("整卷量不出纸白"),
+            "整卷量不出纸白的卷没说出它是哪一种原因：{treatable}"
+        );
+        assert_ne!(
+            good_news, treatable,
+            "两卷说的是同一句话：那正是「同一个 0」的毛病"
+        );
+        // 两句都跟在那一行**底下**，而不是把那一行改掉：数照旧在那儿。
+        for said in [&good_news, &treatable] {
+            assert!(said.contains("对齐 0 页"), "{said}");
+        }
+    }
+
+    /// 一页都没对齐的另外两种：**整卷都超限**，与**几种混着**。
+    ///
+    /// 与上一条是一对：那一条问「两种走到底的情形说的是不是两句话」，
+    /// 这一条把余下两支走一遍——混着的那一卷**只列非零的那几种**，
+    /// 摆一串 0 出去就把「一格在不在场本身就是一句话」那条规矩丢了。
+    #[test]
+    fn a_volume_nothing_was_aligned_in_names_the_mix_when_there_is_one() {
+        let all_over = a_volume_whose_pages_were(&[
+            WhiteAlignment::OverTheLimit { paper_white: 247 },
+            WhiteAlignment::OverTheLimit { paper_white: 240 },
+        ]);
+        let said = white_align_said(&all_over, fixtures_limit());
+        assert!(said.contains("整卷离格量都超过上限"), "{said}");
+
+        let mixed = a_volume_whose_pages_were(&[
+            WhiteAlignment::OverTheLimit { paper_white: 247 },
+            WhiteAlignment::NoPaperWhite,
+        ]);
+        let said = white_align_said(&mixed, fixtures_limit());
+        assert!(
+            said.contains("一页都没对齐：量不出纸白 1 页、离格量超过上限 1 页"),
+            "{said}"
+        );
+        assert!(
+            !said.contains("本来就在格点上 0 页"),
+            "混着的那一句把一个 0 也列了出来：{said}"
+        );
+    }
+
+    /// **没能对齐的那几页点得出来**（spec 的《Implementation Decisions》第 10 条：
+    /// 「没能对齐的那几页**必须点得出来**——那是「我对你的图没做成什么」，
+    /// 属于屏上该说的实话」）。
+    ///
+    /// 逐页那一层只在试算出，因此**照做那一趟没有别处说得出是哪几页**：这一句两种模式下都在。
+    /// 与几何门那一句「不成立：…」同一个做法、同一个上界（头三页，其余报个数收口）。
+    ///
+    /// **上限取 0 时不说**：那时守卫把任何离格的页都判成超限，点名的是「离格的页」，
+    /// 而不是「这一趟没做成的页」——一卷几十个名字全是噪声，而且是另一件事。
+    #[test]
+    fn the_pages_that_did_not_get_aligned_are_named() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::Aligned { paper_white: 253 },
+            WhiteAlignment::OverTheLimit { paper_white: 247 },
+            WhiteAlignment::NoPaperWhite,
+        ]);
+
+        let said = white_align_said(&volume, fixtures_limit());
+        // 002 超限、003 量不出纸白，两种都是「没做成」；001 对齐了，不在这一句里。
+        assert!(
+            said.contains("没对上：library/volume-a/002.jpg、library/volume-a/003.jpg"),
+            "没对上的那几页点不出来：{said}"
+        );
+        assert!(
+            !said.contains("001.jpg"),
+            "对齐了的那一页也被点名了：{said}"
+        );
+
+        // 一页都没落空的卷不说这一句。
+        let all_aligned =
+            a_volume_whose_pages_were(&[WhiteAlignment::Aligned { paper_white: 253 }]);
+        assert!(
+            !white_align_said(&all_aligned, fixtures_limit()).contains("没对上"),
+            "一页都没落空的卷也印了那一句"
+        );
+
+        // **上限取 0 时不说**：那一趟点名的会是「离格的页」，那是另一件事。
+        let off = a_volume_whose_pages_were(&[
+            WhiteAlignment::OverTheLimit { paper_white: 253 },
+            WhiteAlignment::NoPaperWhite,
+        ]);
+        let said = white_align_said(&off, WhiteAlignLimit::OFF);
+        assert!(
+            !said.contains("没对上"),
+            "没开那一趟点了名，而那几页并不是「这一趟没做成的」：{said}"
+        );
+    }
+
+    /// **对齐了哪怕一页就不跟「是哪一种原因」那一句**：那时那几个数自己说得清。
+    ///
+    /// 底下那一句**点名**是另一件事（见 `the_pages_that_did_not_get_aligned_are_named`）：
+    /// 它答的是「哪几页没做成」，与「一页都没对齐是为什么」不是同一问。
+    #[test]
+    fn a_volume_that_aligned_something_needs_no_reason() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::Aligned { paper_white: 253 },
+            WhiteAlignment::NoPaperWhite,
+        ]);
+
+        let said = white_align_said(&volume, fixtures_limit());
+        assert!(
+            !said.contains("一页都没对齐"),
+            "对齐了一页，还印着「一页都没对齐」那一句：{said}"
+        );
+    }
+
+    /// **一张灰度页都没有的卷一行都不出**：整卷彩页、整卷失败的卷根本没经过这一步，
+    /// 跳过的卷一页都没算。摆一行出来是编的，与[几何门那一段](gate_rows)同一条界。
+    #[test]
+    fn a_volume_with_no_gray_page_says_nothing_about_the_white_alignment() {
+        let skipped = {
+            let mut each = a_volume_whose_pages_were(&[]);
+            each.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+            each
+        };
+
+        for volume in [a_volume_whose_pages_were(&[]), skipped] {
+            let rows = self::volume(&volume, fixtures_limit());
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| matches!(row.kind, RowKind::WhiteAlign | RowKind::WhiteAlignNote)),
+                "一张灰度页都没有的卷印了纸白对齐那一行"
+            );
+        }
+    }
+
+    /// **逐页那一层只在 `--dry-run` 出**（票面第 3 条）。
+    ///
+    /// 全语料里离格量为 0 的页占 57.0%、1–2 级的占 41.5%（measurements 的《全语料普查：
+    /// 四成三的页纸白不落在格点上》），绝大多数页的钳制宽度因此是 0 或 1，
+    /// 一页不落地恒印没有信息量。要它的是**还没决定上限取多少**的那个用户，
+    /// 而他手上正是 `--dry-run`。
+    ///
+    /// **没能对齐的那几页点得出来**：那是「我对你的图没做成什么」
+    /// （spec 的《Implementation Decisions》第 10 条）。
+    #[test]
+    fn the_per_page_paper_white_is_a_dry_run_only_thing() {
+        let volume = a_volume_whose_pages_were(&[
+            WhiteAlignment::Aligned { paper_white: 253 },
+            WhiteAlignment::NoPaperWhite,
+        ]);
+
+        let cells = |mode| -> Vec<String> {
+            self::pages(&volume, mode)
+                .iter()
+                .filter_map(|row| row.cell(Field::PaperWhite).map(str::to_owned))
+                .collect()
+        };
+
+        assert!(
+            cells(Mode::Process).is_empty(),
+            "照做那一趟也逐页印了纸白：{:?}",
+            cells(Mode::Process)
+        );
+        assert_eq!(
+            cells(Mode::DryRun),
+            vec![
+                "纸白 253 ⋅ 钳制 2 级".to_owned(),
+                "量不出纸白，没对齐".to_owned(),
+            ],
+            "试算那一趟逐页那一格没说出纸白与钳制宽度"
+        );
+    }
+
+    /// 够得着夹具那 2 级离格量的一个上限。取 4 只因为它眼下是那个占位值
+    /// （`CONTEXT.md` 的《尚未确立》）；这几条与它取多少无关，只要大得过 2。
+    fn fixtures_limit() -> WhiteAlignLimit {
+        WhiteAlignLimit::new(4)
     }
 
     /// 一份摊开了 `extracted` 字节的卷报告，逐页那一摞是空的——这一条只问卷级那几行。
@@ -3720,6 +4365,7 @@ mod tests {
                     scaling: typical_scaling(),
                     color: PageColor::Gray,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: Vec::new(),
                         verdict: Verdict {
@@ -3984,8 +4630,8 @@ mod tests {
             .map(|group| directory(group, &listed))
             .collect();
         for one in &volumes {
-            rows.extend(volume(one));
-            rows.extend(pages(one));
+            rows.extend(volume(one, WhiteAlignLimit::default()));
+            rows.extend(pages(one, Mode::Process));
         }
 
         let stable = |said: &str, whose: &str| {

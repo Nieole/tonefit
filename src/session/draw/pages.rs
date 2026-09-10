@@ -44,7 +44,7 @@
 //! **[兜底退回](Field::Backstop)那一格仍不进表**，而它不是漏掉的：那件事由
 //! [行尾那个词](says)（`兜底上界`）说，两处都摆就是同一件事说两遍。
 
-use tonefit::{PageReport, Panel, VolumeReport};
+use tonefit::{Mode, PageReport, Panel, VolumeReport, WhiteAlignLimit};
 
 use super::paint::{Painted, Tone};
 use super::table::{Table, driver};
@@ -202,6 +202,11 @@ impl Entry {
         // 那一档在屏上的载体，而且比一个词多说了一个数（见 [`says`]）。
         self.notes
             .extend(row.cell(Field::Salvage).map(str::to_owned));
+        // **这一页的纸白与钳制宽度**同样跟在行尾（`纸白 253 ⋅ 钳制 2 级`）：它只在试算那一副
+        // 出（见 [`crate::render::pages`]），一列专门留给它就意味着执行那一趟整列空着。
+        // 措辞连同「纸白」「钳制」那几个字都在格里，这一层一个字都没添。
+        self.notes
+            .extend(row.cell(Field::PaperWhite).map(str::to_owned));
         // 成句的那一行（失败页、彩色分支）整句跟在行尾：它本来就是句子，拆成格没有意义。
         self.notes
             .extend(row.cell(Field::Sentence).map(str::to_owned));
@@ -262,11 +267,11 @@ impl Entry {
 /// 行从 [`crate::render::pages`] 来（一页两行：几何一行、判定一行），
 /// 要紧在哪几处从 [`crate::render::notable`] 来——两处都是逐页、同序，
 /// 这里只把它们并到一行上。**跳过的卷两处都是空的**：它一页都没重做。
-fn entries(volume: &VolumeReport, panel: Panel) -> Vec<Entry> {
+fn entries(volume: &VolumeReport, panel: Panel, mode: Mode) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
     // 按「几何那一行起一页」分组，而不是按「每两行一页」切：后者把
     // `render::pages` 的行数写死在这里，添一行就悄悄错位。
-    for row in render::pages(volume) {
+    for row in render::pages(volume, mode) {
         match row.kind {
             RowKind::PageGeometry => entries.push(Entry::opened(&row)),
             _ => {
@@ -313,16 +318,22 @@ pub(super) struct Opened {
 /// **一页都列不出来时给的是一句话，不是一张空表**（`p3-session-legibility/11` 票面
 /// 第三条）：跳过的卷根本没有逐页结果，而一张要紧的页都没有的卷是**一句好消息**——
 /// 空表说不出这件事，它读起来像画坏了。
+///
+/// `mode` 与 `limit` 是**这一趟的前提**，两样都只为纸白对齐那一项递进来
+/// （纸白对齐批 02 号票）：逐页那一格纸白只在 `--dry-run` 出，
+/// 而抬头读的那几行卷级行里有一行要照本次上限说话。
 pub(super) fn pages(
     volume: &VolumeReport,
     panel: Panel,
+    mode: Mode,
+    limit: WhiteAlignLimit,
     room: u16,
     listing: Listing,
     at: usize,
 ) -> Opened {
-    let all = entries(volume, panel);
+    let all = entries(volume, panel, mode);
     let notable = all.iter().filter(|entry| entry.matters()).count();
-    let heading = heading(volume, listing, notable, all.len());
+    let heading = heading(volume, limit, listing, notable, all.len());
     let shown: Vec<&Entry> = match listing {
         Listing::Notable => all.iter().filter(|entry| entry.matters()).collect(),
         Listing::All => all.iter().collect(),
@@ -348,8 +359,14 @@ pub(super) fn pages(
 ///
 /// 「它是第几卷」不在这里：那个数在报告区那一格的抬头上（[`super::report::report_title`]），
 /// 一个数不摆两处。
-fn heading(volume: &VolumeReport, listing: Listing, notable: usize, total: usize) -> String {
-    let rows = render::volume(volume);
+fn heading(
+    volume: &VolumeReport,
+    limit: WhiteAlignLimit,
+    listing: Listing,
+    notable: usize,
+    total: usize,
+) -> String {
+    let rows = render::volume(volume, limit);
     let mut said = Vec::new();
     if let Some(base) = render::base_column(&rows) {
         said.push(format!("基准档 {base}"));
@@ -486,8 +503,24 @@ mod tests {
     fn the_default_listing_is_the_pages_that_matter_and_a_shows_them_all() {
         let volume = fixture::a_page_of_every_kind("卷二");
 
-        let notable = pages(&volume, panel(), 200, Listing::Notable, 0);
-        let all = pages(&volume, panel(), 200, Listing::All, 0);
+        let notable = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            200,
+            Listing::Notable,
+            0,
+        );
+        let all = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            200,
+            Listing::All,
+            0,
+        );
 
         assert_eq!(body(&notable).len(), 6, "{:?}", body(&notable));
         assert_eq!(body(&all).len(), 8, "{:?}", body(&all));
@@ -528,7 +561,15 @@ mod tests {
     fn a_volume_with_nothing_worth_listing_says_so_instead_of_showing_an_empty_table() {
         // `--per-page` 那一卷没有定档页，一页也没出过事：要紧的页因此一张都没有。
         let plain = fixture::per_page_volume("名侦探 05");
-        let opened = pages(&plain, panel(), 120, Listing::Notable, 0);
+        let opened = pages(
+            &plain,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            120,
+            Listing::Notable,
+            0,
+        );
         assert_eq!(opened.table.rows.len(), 1, "给了一张表");
         assert!(opened.table.rows[0].text.contains("没有要紧的页"));
         assert_eq!(opened.table.cursor, None, "一行都没有却有光标");
@@ -539,13 +580,29 @@ mod tests {
             opened.heading
         );
         // 切到全部页就有表了：那一页在。
-        let all = pages(&plain, panel(), 120, Listing::All, 0);
+        let all = pages(
+            &plain,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            120,
+            Listing::All,
+            0,
+        );
         assert_eq!(body(&all).len(), 1);
 
         // 跳过的卷两副都是那一句，而它是「不要紧」那一档。
         let skipped = fixture::skipped_volume("棋魂 07", 184);
         for listing in [Listing::Notable, Listing::All] {
-            let opened = pages(&skipped, panel(), 120, listing, 0);
+            let opened = pages(
+                &skipped,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                120,
+                listing,
+                0,
+            );
             assert_eq!(opened.table.rows.len(), 1);
             assert!(opened.table.rows[0].text.contains("一页都没有重做"));
             assert_eq!(opened.table.rows[0].tone, Tone::Muted);
@@ -557,14 +614,32 @@ mod tests {
     fn the_heading_pins_the_base_and_the_driver_of_this_volume() {
         let volume = fixture::a_page_of_every_kind("卷二");
 
-        let heading = pages(&volume, panel(), 200, Listing::Notable, 0).heading;
+        let heading = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            200,
+            Listing::Notable,
+            0,
+        )
+        .heading;
 
-        let rows = render::volume(&volume);
+        let rows = render::volume(&volume, WhiteAlignLimit::default());
         assert!(heading.contains(&render::base_column(&rows).expect("有基准档")));
         assert!(heading.contains(&driver(&rows).expect("有定档页")));
         // 列着几页也在：切到全部页之后这一格换一种说法——屏上看得出切没切过去。
         assert!(heading.contains("要紧的页 6/8"), "{heading}");
-        let all = pages(&volume, panel(), 200, Listing::All, 0).heading;
+        let all = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            200,
+            Listing::All,
+            0,
+        )
+        .heading;
         assert!(all.contains("全部 8 页（要紧的 6 页）"), "{all}");
     }
 
@@ -575,23 +650,61 @@ mod tests {
 
         // 列头占第零行：第 0 页是表上第 1 行。
         assert_eq!(
-            pages(&volume, panel(), 200, Listing::All, 0).table.cursor,
+            pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                200,
+                Listing::All,
+                0
+            )
+            .table
+            .cursor,
             Some(1)
         );
         assert_eq!(
-            pages(&volume, panel(), 200, Listing::All, 3).table.cursor,
+            pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                200,
+                Listing::All,
+                3
+            )
+            .table
+            .cursor,
             Some(4)
         );
         // 越界不算错：八页的卷上第 99 页收到最后一页。
         assert_eq!(
-            pages(&volume, panel(), 200, Listing::All, 99).table.cursor,
+            pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                200,
+                Listing::All,
+                99
+            )
+            .table
+            .cursor,
             Some(8)
         );
         // 只列要紧的那一副上只有六页，同一个数落在别处——两副列的不是同一批页。
         assert_eq!(
-            pages(&volume, panel(), 200, Listing::Notable, 99)
-                .table
-                .cursor,
+            pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                200,
+                Listing::Notable,
+                99
+            )
+            .table
+            .cursor,
             Some(6)
         );
     }
@@ -604,8 +717,24 @@ mod tests {
     fn a_narrow_pane_drops_the_scores_first_and_keeps_the_verdict() {
         let volume = fixture::a_page_of_every_kind("卷二");
 
-        let wide = pages(&volume, panel(), 200, Listing::All, 0);
-        let narrow = pages(&volume, panel(), 44, Listing::All, 0);
+        let wide = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            200,
+            Listing::All,
+            0,
+        );
+        let narrow = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            44,
+            Listing::All,
+            0,
+        );
 
         assert!(
             wide.table.rows[0].text.contains("判据"),
@@ -618,7 +747,15 @@ mod tests {
         assert!(narrow.table.rows[0].text.contains("判定"), "判定被砍掉了");
         assert!(narrow.table.rows[0].text.contains("页名"), "页名被砍掉了");
         // 砍无可砍时页名从中间省略，两头留着——不恐慌、不错位。
-        let sliver = pages(&volume, panel(), 6, Listing::All, 0);
+        let sliver = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            6,
+            Listing::All,
+            0,
+        );
         assert_eq!(body(&sliver).len(), 8, "砍无可砍时行也还在");
     }
 
@@ -673,12 +810,20 @@ mod tests {
     fn the_five_cells_that_used_to_sit_outside_the_table_are_laid_out_in_it() {
         let volume = fixture::a_page_with_every_geometry_cell("卷三");
         let cell = |field: Field| {
-            render::pages(&volume)
+            render::pages(&volume, Mode::Process)
                 .into_iter()
                 .find_map(|row| row.cell(field).map(str::to_owned))
                 .unwrap_or_else(|| panic!("{field:?} 那一格不在这一卷的行上"))
         };
-        let opened = pages(&volume, panel(), 240, Listing::All, 0);
+        let opened = pages(
+            &volume,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            240,
+            Listing::All,
+            0,
+        );
 
         let said = body(&opened).join("\n");
         for field in [
@@ -717,10 +862,30 @@ mod tests {
         let bare = fixture::a_page_of_every_kind("卷二");
         let full = fixture::a_page_with_every_geometry_cell("卷三");
 
-        let without = pages(&bare, panel(), 240, Listing::All, 0).table.rows[0]
+        let without = pages(
+            &bare,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            240,
+            Listing::All,
+            0,
+        )
+        .table
+        .rows[0]
             .text
             .clone();
-        let with = pages(&full, panel(), 240, Listing::All, 0).table.rows[0]
+        let with = pages(
+            &full,
+            panel(),
+            Mode::Process,
+            WhiteAlignLimit::default(),
+            240,
+            Listing::All,
+            0,
+        )
+        .table
+        .rows[0]
             .text
             .clone();
 
@@ -761,7 +926,17 @@ mod tests {
         // 留下哪几列：列头那一行上出现了哪几个词。**比的是列，不是宽度**——
         // 每一列多宽照旧按真列出来的那几行算，切一副列法列宽跟着变是应当的。
         let kept = |listing| {
-            let head = pages(&volume, panel(), 240, listing, 0).table.rows[0]
+            let head = pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                240,
+                listing,
+                0,
+            )
+            .table
+            .rows[0]
                 .text
                 .clone();
             PageColumn::ALL
@@ -772,12 +947,30 @@ mod tests {
         };
 
         assert_eq!(
-            body(&pages(&volume, panel(), 240, Listing::Notable, 0)).len(),
+            body(&pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                240,
+                Listing::Notable,
+                0
+            ))
+            .len(),
             1,
             "只列要紧的页那一副该只剩失败那一张"
         );
         assert_eq!(
-            body(&pages(&volume, panel(), 240, Listing::All, 0)).len(),
+            body(&pages(
+                &volume,
+                panel(),
+                Mode::Process,
+                WhiteAlignLimit::default(),
+                240,
+                Listing::All,
+                0
+            ))
+            .len(),
             2
         );
         assert_eq!(

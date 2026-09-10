@@ -17,6 +17,7 @@ use crate::progress::Instruction;
 use crate::quantize::{Candidate, Dither};
 use crate::resample::Scaling;
 use crate::spread::{Cut, SplitRule};
+use crate::white::{WhiteAlignLimit, WhiteAlignment};
 
 /// 一次处理调用的结果。
 ///
@@ -45,6 +46,16 @@ pub struct Report {
     /// 每一页是哪一块，都照它算出来。逐页那一行只在**这一张真是切出来的一半**时才说话，
     /// 而「整卷没有一张跨页」与「整趟没开拆分」是两件事——分辨它们只有这一项。
     pub split: SplitRule,
+    /// 这一趟的《纸白对齐上限》（纸白对齐批 01、02 号票）。
+    ///
+    /// 与 [`fit`](Self::fit)、[`crop`](Self::crop)、[`split`](Self::split) 并排，
+    /// 理由是同一条：这一趟的像素是照哪条规矩出的，读的人要知道。**取 0 也要说得出**——
+    /// 「这一趟没开」与「这一卷本来就在格点上」在逐页那几格上长得一样
+    /// （两者都是一页没改），分辨它们只有这一项。
+    ///
+    /// 取值的唯一出处仍是 [`WhiteAlignLimit::default`](crate::WhiteAlignLimit)：
+    /// 这一格装的是**这一趟用的那个值**，不是又一个默认值。
+    pub white_align_limit: WhiteAlignLimit,
     pub volumes: Vec<VolumeReport>,
     /// 这一趟**没做成**的那几卷，按点名顺序（05 号票：卷级失败）。
     ///
@@ -808,6 +819,18 @@ pub enum PageBranch {
         /// 判定说的是**量化格点**。文件里写着的那个位深可能更低——一页只用得上几个取值时，
         /// 调色板装得下同样的像素而位宽更窄，那是编码器接口以内的事（ADR 0004，见 `encode`）。
         verdict: Verdict,
+        /// **纸白对齐对这一页做了什么**（纸白对齐批 02 号票）。
+        ///
+        /// 它与上面那一格几何门落在同一支上，理由也是同一条：这条路径就是
+        /// 纸白对齐的范围——彩色分支不经那一步（ADR 0010 决定第 4 条），
+        /// 失败页连像素都没有。摆一个「没对齐」上去是编的，报告不该有编出来的字段。
+        ///
+        /// 它**跟着页走，不由报告那侧倒推**：量纸白的地方只有一处
+        /// （`crate::align_white`），照尺寸或照像素重算一遍就是第二处。
+        ///
+        /// 卷级那一行的三个数就是数它数出来的，逐页那一层（只在 `--dry-run` 出）
+        /// 读的也是它。
+        white: WhiteAlignment,
     },
     /// 彩色分支：只做缩放，不量化、不进灰度缓存、不进卷级上包络
     /// （ADR 0005 决定第 4 条）。彩色 profile 下的彩页走这里。
@@ -840,6 +863,18 @@ impl PageReport {
     pub fn gate(&self) -> Option<GeometryGate> {
         match self.branch() {
             Some(PageBranch::Gray { gate, .. }) => Some(*gate),
+            _ => None,
+        }
+    }
+
+    /// **纸白对齐对这一页做了什么**（纸白对齐批 02 号票）。彩色分支与失败页上都没有——
+    /// 一条不经那一步（ADR 0010 决定第 4 条），一张连像素都没有。
+    ///
+    /// 卷级那一行的三个数从这里数出来，逐页那一层读的也是它：
+    /// 「这一趟对你的图做了什么」只有这一个出处。
+    pub fn white_alignment(&self) -> Option<WhiteAlignment> {
+        match self.branch() {
+            Some(PageBranch::Gray { white, .. }) => Some(*white),
             _ => None,
         }
     }

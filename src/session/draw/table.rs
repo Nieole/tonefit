@@ -50,7 +50,7 @@
 
 use std::path::Path;
 
-use tonefit::{VolumeFailure, VolumeReport};
+use tonefit::{VolumeFailure, VolumeReport, WhiteAlignLimit};
 
 use super::overview::{DECIDING, spell};
 use super::paint::{Painted, Tone};
@@ -255,8 +255,8 @@ impl Entry {
     /// `at` 是**光标停上去指的是哪一卷**：收摊了的那几卷各是自己的下标，
     /// 决策点上那一份是 [`Volume::Summarized`]——它不在收摊了的那几卷里
     /// （`p2-loose-ends/08`：不许摊开上一卷冒充它）。
-    fn of_volume(at: Volume, volume: &VolumeReport, waiting: bool) -> Self {
-        let rows = render::volume(volume);
+    fn of_volume(at: Volume, volume: &VolumeReport, limit: WhiteAlignLimit, waiting: bool) -> Self {
+        let rows = render::volume(volume, limit);
         let mark = Mark::of(volume);
         let mut notes = Vec::new();
         if mark == Mark::Isolated {
@@ -380,7 +380,9 @@ fn entries(live: &Live, only: &Branch) -> Vec<Entry> {
         .iter()
         .enumerate()
         .filter(|(at, _)| only.volumes.contains(&Volume::Settled(*at)))
-        .map(|(at, volume)| Entry::of_volume(Volume::Settled(at), volume, false))
+        .map(|(at, volume)| {
+            Entry::of_volume(Volume::Settled(at), volume, report.white_align_limit, false)
+        })
         .collect();
     entries.extend(
         report
@@ -399,7 +401,14 @@ fn entries(live: &Live, only: &Branch) -> Vec<Entry> {
     entries.extend(
         live.summarized()
             .filter(|_| only.volumes.contains(&Volume::Summarized { after }))
-            .map(|volume| Entry::of_volume(Volume::Summarized { after }, volume, true)),
+            .map(|volume| {
+                Entry::of_volume(
+                    Volume::Summarized { after },
+                    volume,
+                    report.white_align_limit,
+                    true,
+                )
+            }),
     );
     entries
 }

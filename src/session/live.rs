@@ -318,6 +318,7 @@ impl Live {
                 fit: request.fit,
                 crop: request.crop,
                 split: request.split,
+                white_align_limit: request.white_align_limit,
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
                 // 非卷文件整份在预扫走完就齐了，而事件流不报它——攒到一半的这一份因此
@@ -939,7 +940,7 @@ pub(crate) mod fixture {
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
         Envelope, GeometryGate, GrayImage, IoPlan, Medium, Mode as RunMode, PageBranch, PageColor,
         PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Salvage,
-        Scaling, Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
+        Scaling, Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict, WhiteAlignment,
     };
 
     /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
@@ -1086,6 +1087,7 @@ pub(crate) mod fixture {
                 scaling: Scaling::plan(source, target),
                 color: PageColor::Gray,
                 branch: PageBranch::Gray {
+                    white: WhiteAlignment::Off,
                     gate: GeometryGate::Holds,
                     scores: vec![CandidateScore {
                         candidate,
@@ -1214,6 +1216,7 @@ pub(crate) mod fixture {
         // 面板宽 1264（`kobo-libra-2`，见 [`request`]）：这一张比它宽，因此宽溢出。
         let wide = Size::new(1600, 1680);
         let gray = |gate: GeometryGate, verdict: Verdict| PageBranch::Gray {
+            white: WhiteAlignment::Off,
             gate,
             scores: every_candidate(),
             verdict,
@@ -1367,6 +1370,7 @@ pub(crate) mod fixture {
                     // 彩页走灰度分支：逐页那一行因此标着「彩页转灰」。
                     color: PageColor::Color,
                     branch: PageBranch::Gray {
+                        white: WhiteAlignment::Off,
                         gate: GeometryGate::Holds,
                         scores: every_candidate(),
                         verdict: Verdict {

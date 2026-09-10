@@ -240,6 +240,7 @@ pub fn run(request: &Request) -> Result<Report> {
         fit: request.fit,
         crop: request.crop,
         split: request.split,
+        white_align_limit: request.white_align_limit,
         volumes,
         failed_volumes,
         non_volume_files,
@@ -1154,6 +1155,12 @@ enum Branch {
         /// （ADR 0005 决定第 4 条）、失败页也不进，页序与缓存序因此不重合，
         /// 而重新数出来的序号会静默地把另一页的像素写到这一页的位置上。
         slot: usize,
+        /// **纸白对齐对这一页做了什么**（纸白对齐批 02 号票）。
+        ///
+        /// 它跟着页走，不由报告那一步按像素重算：量纸白的地方只有一处
+        /// （[`align_white`]），重算一遍就是第二处——而对齐过的图上
+        /// 重算出来的答案还是错的（那时纸白已经是 255 了）。
+        white: WhiteAlignment,
     },
     /// 彩色分支：第一遍缩放并编好的 PNG 字节，等写出那一遍按阅读顺序落位。
     ///
@@ -1256,10 +1263,16 @@ impl OutputPage {
                     scaling: *scaling,
                     color: *color,
                     branch: match branch {
-                        Branch::Gray { scores, gate, .. } => PageBranch::Gray {
+                        Branch::Gray {
+                            scores,
+                            gate,
+                            white,
+                            ..
+                        } => PageBranch::Gray {
                             scores: scores.clone(),
                             verdict: verdict.expect("灰度路径上必有判定"),
                             gate: *gate,
+                            white: *white,
                         },
                         Branch::Color { .. } => PageBranch::Color,
                     },
@@ -1831,7 +1844,27 @@ impl Compute<'_> {
         //
         // 上限取 0（默认）时它连纸白都不量——量了也没有一页满足得了条件，
         // 而默认那条路上一页都不改是这一票最强的验收。
-        let (scaled, _alignment) = white::align_white(scaled, request.white_align_limit);
+        let (scaled, alignment) = white::align_white(scaled, request.white_align_limit);
+        // **试算把守卫另判一遍**（纸白对齐批 02 号票第 3 条）。逐页那一层是给**还没决定
+        // 上限取多少**的用户看的，而那个用户按定义上限就是 0——上面那道短路让他每一页
+        // 都读到「没开」，一个数都拿不到，票面那句话就成了只在 `--white-align-limit 255`
+        // 这个他不会想到去传的咒语下才成立。
+        //
+        // `judge` 只判不改（三条守卫在它那一处），像素一个都不碰：这里判的正是
+        // `align_white` 短路时原样交回来的那一张。判一遍的代价是每页一遍平坦掩码，
+        // 摆在同一页那六档判据旁边不算什么，而 `--dry-run` 一个字节都不写。
+        //
+        // **照做那一趟不判**：那一趟的报告说的是「做过什么」，上限取 0 时它什么都没做，
+        // 连量都不该量——短路挡的正是这份白花的工夫。
+        //
+        // **它不进剖面那几段**：剖面的段是照做那一趟的成本模型（见 `cost`），
+        // 而这一笔只在试算上花，记进任何一段都会让那一段在两种模式下不是同一个东西。
+        let alignment = match alignment {
+            WhiteAlignment::Off if request.mode == Mode::DryRun => {
+                white::judge(&scaled, request.white_align_limit)
+            }
+            settled => settled,
+        };
         // 建参照与六个候选合在同一格里：参照那一侧的低通、掩蔽加权与高频起伏
         // 也是判据的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，
         // 「判据占多少」就少算了一截，而剖面存在的理由正是这个数。
@@ -1882,7 +1915,12 @@ impl Compute<'_> {
                 spread_candidate: piece.candidate,
                 scaling,
                 color,
-                branch: Branch::Gray { scores, gate, slot },
+                branch: Branch::Gray {
+                    scores,
+                    gate,
+                    slot,
+                    white: alignment,
+                },
                 salvage,
             },
         ))
@@ -2043,7 +2081,10 @@ impl<'a> Window<'a> {
             .iter()
             .map(|page| match &page.outcome {
                 Outcome::Processed {
-                    branch: Branch::Gray { scores, gate, slot },
+                    branch:
+                        Branch::Gray {
+                            scores, gate, slot, ..
+                        },
                     salvage,
                     ..
                 } => Some(Seat {
@@ -3317,6 +3358,8 @@ mod tests {
                     scores,
                     gate: GeometryGate::Holds,
                     slot,
+                    // 这一组用例问的是窗口与序列，不是纸白：默认那一趟的取值。
+                    white: WhiteAlignment::Off,
                 },
                 salvage: None,
             },
