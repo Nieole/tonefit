@@ -94,7 +94,7 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
 ///
 /// **一趟都没跑过时到不了这里**：那一刻[掀开它那个键根本不派动作](crate::session::state::Overlay::Premises)
 /// （`super::super::state` 的 `revealing` 在 `Stage::Fresh` 上不派它，停车场 Q167），
-/// 屏底那一行因此也不摆它。从前挡它的是 `super::super::press` 里的一道闸，
+/// 屏底那一行因此也不摆它。从前挡它的是 `crate::session::terminal::press` 里的一道闸，
 /// 那一道连同它那句话一起没了。真到了就说同一句——画不出来的东西不该画成一格空白。
 fn premises(live: Option<&Live>) -> Vec<Painted> {
     let Some(live) = live else {

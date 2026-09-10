@@ -218,7 +218,7 @@ pub struct Live {
     /// 这一趟**在决策点上等人**吗（`CONTEXT.md` 的《会话》：续做）。
     ///
     /// 试算是，几卷都一样；执行一趟走到底，在决策点上不停。
-    /// 起手那一刻就定死（[`super::press`] 拼 `Request` 时判的），跑起来之后不再变。
+    /// 起手那一刻就定死（`crate::session::terminal::press` 拼 `Request` 时判的），跑起来之后不再变。
     resumes: Resuming,
     /// 在决策点上答过的那几个字里**最弱**的那一个。一次都没答过就是 `None`。
     ///
