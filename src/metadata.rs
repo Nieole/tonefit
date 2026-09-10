@@ -525,6 +525,11 @@ fn params_text(
     );
     line("reading-order", &request.split.order.name());
     line("filter", &request.filter.name());
+    // 纸白对齐的上限改的是缩放之后那一步的像素（纸白对齐批 01 号票）：参照与其后一切量化
+    // 跟着变，上一趟的输出一张都不能留。**取值 0 也照样写进来**——从「关」改到「开」
+    // 与从 4 改到 2 是同一类改动，而 ADR 0002 的《后果》里记过一次漏收的同型事故
+    // （「地板不在里面……旧输出会被静默跳过」）。
+    line("white-align-limit", &request.white_align_limit);
     line(
         "bit-depth",
         &request
@@ -558,6 +563,7 @@ mod tests {
     use crate::request::Mode;
     use crate::resample::Filter;
     use crate::spread::SplitRule;
+    use crate::white::WhiteAlignLimit;
     use std::path::PathBuf;
 
     /// 一处参数改动，连同它在断言里的说法。
@@ -573,6 +579,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             filter: Filter::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             bit_depth: None,
             dither: None,
             per_page: false,
@@ -589,7 +596,7 @@ mod tests {
     #[test]
     fn every_parameter_that_changes_the_output_changes_the_hash() {
         let baseline = params_hash(&request());
-        let changes: [Change; 9] = [
+        let changes: [Change; 10] = [
             ("面板", |request| {
                 request.profile = Profile::resolve("kobo-clara-hd").expect("内置型号")
             }),
@@ -615,6 +622,11 @@ mod tests {
             // 裁边换掉，适配之前的页尺寸就变了（页几何批 02 号票）。
             ("裁边", |request| request.crop = false),
             ("滤波器", |request| request.filter = Filter::Bicubic),
+            // 从**默认的 0**（关）改到开：那正是这一项最要紧的一次改动，
+            // 而它恰好是「取值 0 也照样进哈希」不成立时唯一漏得掉的那一次。
+            ("纸白对齐上限", |request| {
+                request.white_align_limit = WhiteAlignLimit::new(4)
+            }),
             ("位深覆盖", |request| {
                 request.bit_depth = Some(BitDepth::Four)
             }),

@@ -10,6 +10,7 @@ use crate::progress::ProgressSink;
 use crate::quantize::{BitDepth, Dither};
 use crate::resample::Filter;
 use crate::spread::SplitRule;
+use crate::white::WhiteAlignLimit;
 
 /// 一次调用做到哪一步。
 ///
@@ -64,6 +65,15 @@ pub struct Request {
     pub split: SplitRule,
     /// 残差段的重采样滤波器（`--filter`）。整数倍预缩那一级不受它影响（ADR 0001）。
     pub filter: Filter,
+    /// 纸白对齐的上限（`--white-align-limit`，纸白对齐批 01 号票）。**默认 0，即关闭。**
+    ///
+    /// 它是**口味层**的一项：这一趟愿意为对齐付多少色调，不是面板的物理事实。
+    /// 上限即开关，不另做布尔开关（理由见 [`WhiteAlignLimit`]）。
+    ///
+    /// 它改的是**缩放之后、构造参照之前**那一步的像素，参照与其后一切量化因此都跟着变，
+    /// 幂等收着它（见 `crate::metadata`）——**取值 0 也照样收**：从「关」改到「开」
+    /// 与从 4 改到 2 是同一类改动，而 ADR 0002 的《后果》里记过一次漏收的同型事故。
+    pub white_align_limit: WhiteAlignLimit,
     /// 位深覆盖（`--bit-depth`）。特殊卷靠它手工兜底（spec 的 story 23）。
     ///
     /// 覆盖项裁的是**候选集**：点名一档位深，候选就只剩那一档的。裁到只剩一个候选时判定

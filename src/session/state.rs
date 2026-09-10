@@ -1940,6 +1940,9 @@ impl Session {
             crop: taste.crop(),
             split: taste.split_rule(),
             filter: taste.filter(),
+            // 口味层里还没有这一项：会话那一层是纸白对齐批 04 号票，
+            // 落地之前这里恒取默认（关）。默认值只有 `WhiteAlignLimit::default` 一个出处。
+            white_align_limit: tonefit::WhiteAlignLimit::default(),
             bit_depth: taste.bit_depth,
             dither: taste.dither,
             per_page: taste.per_page(),

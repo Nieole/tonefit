@@ -72,7 +72,7 @@ fn a_dry_run_predicts_the_skip() {
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {
-    let changes: [Change; 11] = [
+    let changes: [Change; 12] = [
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
         }),
@@ -113,6 +113,13 @@ fn a_changed_parameter_redoes_the_volume() {
             request.split.order = tonefit::ReadingOrder::LeftToRight
         }),
         ("关掉上包络", |request| request.per_page = true),
+        // 纸白对齐的上限改的是缩放之后那一步的像素（纸白对齐批 01 号票）：
+        // 参照与其后一切量化跟着变。这里改的是**从默认的 0（关）到开**那一次——
+        // 「取值 0 也照样进参数哈希」不成立时，唯一漏得掉的正是它，
+        // 而用户会看见「我改了参数却没效果」，还找不出原因（ADR 0002 的《后果》记过同型事故）。
+        ("打开纸白对齐", |request| {
+            request.white_align_limit = tonefit::WhiteAlignLimit::new(4)
+        }),
     ];
 
     for (what, change) in changes {

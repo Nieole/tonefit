@@ -107,6 +107,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
         crop: true,
         split: tonefit::SplitRule::default(),
         filter: Filter::default(),
+        white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
         per_page: false,

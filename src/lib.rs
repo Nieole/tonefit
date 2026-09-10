@@ -47,6 +47,7 @@ mod sink;
 mod source;
 mod spread;
 mod survey;
+mod white;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -85,6 +86,7 @@ pub use spread::{Cut, Gutter, ReadingOrder, Side, SplitRule, SplitThreshold};
 // 认得的归档扩展名那一串：命令行的 `--help` 也要说它，而格式集只有一个出处
 // （`source::ARCHIVE_FORMATS`）。见二进制侧的 `inputs_help`。
 pub use source::listed_archive_extensions;
+pub use white::{WhiteAlignLimit, WhiteAlignment, align_white};
 
 use color::ColorImage;
 use metadata::{Fingerprint, Origin, PageRecord, Record, Recorder};
@@ -1773,6 +1775,17 @@ impl Compute<'_> {
         let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
             self.counters.resampler.resize(&image, size, request.filter)
         })?;
+        // 纸白对齐落在这里，**缩放之后、构造参照之前**（纸白对齐批 01 号票）：
+        // 参照与其后一切量化用的都是对齐过的像素，判据两侧因此同源，
+        // 量化仍然是唯一被隔离出来的变量（ADR 0002 决定第 1 条）。
+        //
+        // **不要把它读成「对齐过的图就是进缓存的那一份」**：逐页那条路上一页出了滚动窗口
+        // 就当场量化编码成字节（见 [`Window`]），那一格装的不再是参照。
+        // 对齐在两副之前，因此两副都吃得到。
+        //
+        // 上限取 0（默认）时它连纸白都不量——量了也没有一页满足得了条件，
+        // 而默认那条路上一页都不改是这一票最强的验收。
+        let (scaled, _alignment) = white::align_white(scaled, request.white_align_limit);
         // 建参照与六个候选合在同一格里：参照那一侧的低通、掩蔽加权与高频起伏
         // 也是判据的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，
         // 「判据占多少」就少算了一截，而剖面存在的理由正是这个数。
@@ -3147,6 +3160,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             filter: Filter::default(),
+            white_align_limit: WhiteAlignLimit::default(),
             bit_depth: None,
             dither: None,
             per_page: false,

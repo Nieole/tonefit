@@ -34,7 +34,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Event, Filter, FitMode, Instruction, Interlock, IoMode, Mode,
     Pass, Profile, Progress, ProgressSink, ReadingOrder, Report, Request, SplitRule,
-    SplitThreshold,
+    SplitThreshold, WhiteAlignLimit,
 };
 
 use preset::Preset;
@@ -182,6 +182,23 @@ struct Cli {
     #[arg(long, value_name = "滤波器")]
     filter: Option<String>,
 
+    /// 纸白对齐的上限：最多把多宽的一段近白色调压平到纯白，默认 0。
+    ///
+    /// **默认 0 就是关闭**：那时只有纸白本来就落在 255 上的页满足条件，即一页都不改，
+    /// 产物与不带这个功能时逐字节相同。不另设一个开关——上限即开关。
+    ///
+    /// 开了之后每一页各量各的纸白（全页 3×3 邻域方差为零的像素里出现次数最多的那个灰度），
+    /// 把 `[纸白, 255]` 这一段钳到 255，低于纸白的取值一个都不动。
+    /// 钳制宽度就是这一页的《离格量》，也就是代价：被压平的色调有多宽。
+    ///
+    /// 要点是**白底上不再撒抖动点**：平坦白底上误差扩散必须撒点，密度是离格量除以格点间距
+    /// ——纸白 253 的页在 2bit 上要撒 2.4%，真机上看得一清二楚；纸白 255 一个点都不撒。
+    ///
+    /// 三种页照样原样出：纸白已经在 255 上的、离格量超过这个上限的、
+    /// 以及满版无纸边、根本量不出纸白的。彩页不经这一步。
+    #[arg(long, value_name = "级数")]
+    white_align_limit: Option<u8>,
+
     /// 覆盖自动判定的位深：1、2、4、8。面板灰阶数那道上界仍在，越界的覆盖会被拒绝。
     #[arg(long, value_name = "位深")]
     bit_depth: Option<u32>,
@@ -303,6 +320,15 @@ impl Cli {
         }
     }
 
+    /// 本次纸白对齐的上限（纸白对齐批 01 号票）。不点名就是默认的 0，即关闭。
+    ///
+    /// **它眼下不收预设**：预设那一层是 03 号票，落地之前这里只认命令行。
+    /// 默认值不在这里——它在 `WhiteAlignLimit::default`，抬默认值那一趟只改那一处。
+    fn white_align_limit(&self) -> WhiteAlignLimit {
+        self.white_align_limit
+            .map_or_else(WhiteAlignLimit::default, WhiteAlignLimit::new)
+    }
+
     /// 本次要不要点名位深。不点名就由判据说了算。
     fn bit_depth_override(&self, preset: &Preset) -> Result<Option<BitDepth>> {
         match self.bit_depth {
@@ -377,6 +403,7 @@ impl Cli {
             crop: self.crop(preset),
             split: self.split_rule(preset)?,
             filter: self.residual_filter(preset)?,
+            white_align_limit: self.white_align_limit(),
             bit_depth: self.bit_depth_override(preset)?,
             dither: self.dither_override(preset)?,
             per_page: self.per_page(preset),
@@ -436,11 +463,17 @@ const LONG_HELP_INDENT: u16 = 10;
 /// clap 给**短**帮助那一档缩进。
 ///
 /// `-h` 把每一项的短帮助摆在**开关那一列后面**，缩进因此比长帮助深得多——它随这份命令行上
-/// 最长的那个开关走，眼下是 31 格。clap 不交出这个数，只能照它排出来的帮助**数格子**
+/// 最长的那个开关走。眼下是 35 格，撑开那一列的是 `--white-align-limit <级数>`。
+///
+/// **这个数不是「最长那个开关的显示宽度」，数出来才对得上**：clap 排版按**字符数**算，
+/// 而中文一个字占两格——它把每一行填到同一个字符数，落在屏上的列因此逐行不同。
+/// 最深的那几行是值名里中文最多的（`<滤波器>`、`<字节数>` 各三个字），
+/// 不是撑开那一列的 `--white-align-limit` 自己。
+/// clap 不交出这个数，只能照它排出来的帮助**数格子**
 /// （与 `docs/measurements.md` 那种实测数字无关，那里装的是图像处理量出来的东西）：
 /// [`tests::the_help_folds_every_line_into_the_terminal`] 钉着「`-h` 没有一行过终端那么宽」，
 /// 添一个更长的开关时它当场变红。
-const SHORT_HELP_INDENT: u16 = 31;
+const SHORT_HELP_INDENT: u16 = 35;
 
 /// 一档帮助折到多宽：**终端有多宽**（[`wrap::terminal_width`]）减掉 clap 加在外面的那一档缩进。
 ///
@@ -2019,6 +2052,65 @@ io-mode = \"concurrent\"
         assert!(help.contains("横向平移"), "{help}");
         // 拆开的收益与它不换什么：不必横向翻动，而缩放系数不变。
         assert!(help.contains("缩放系数完全相同"), "{help}");
+    }
+
+    /// `--white-align-limit` 在命令行上认得，不点名就是默认的 0（纸白对齐批 01 号票）。
+    ///
+    /// **默认值不在这里比死**：拿的是 `WhiteAlignLimit::default`，那是它唯一的出处。
+    /// 抬默认值那一趟只改那一处，这一条不必跟着改。
+    #[test]
+    fn the_white_align_limit_takes_a_number_of_levels_and_defaults_to_off() {
+        let limit = |arguments: &[&str]| {
+            let mut line = vec!["--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            parse(&line).white_align_limit()
+        };
+
+        assert_eq!(limit(&[]), WhiteAlignLimit::default(), "不点名就该是默认值");
+        assert_eq!(limit(&[]).levels(), 0, "默认值不是 0，即默认不再是「关」");
+        assert_eq!(
+            limit(&["--white-align-limit", "4"]),
+            WhiteAlignLimit::new(4)
+        );
+        // 关得掉：点名 0 与不点名合出同一个值。
+        assert_eq!(
+            limit(&["--white-align-limit", "0"]),
+            WhiteAlignLimit::OFF,
+            "点名 0 不是关"
+        );
+        // 认不出的取值在拼 Request 之前就被挡下，不静默套默认值。
+        assert!(
+            Cli::try_parse_from([
+                "tonefit",
+                "--out",
+                "out",
+                "--profile",
+                "kobo-libra-2",
+                "--white-align-limit",
+                "很宽",
+                "volume-a",
+            ])
+            .is_err()
+        );
+    }
+
+    /// 帮助里要说得出**它是什么**、以及**取 0 是什么意思**（票面明写的那一条）。
+    ///
+    /// 少了「取 0 是关」，看见默认值是 0 的人不知道那是「关着」还是「一级都不许钳」；
+    /// 少了钳制那一段的说法，他不知道自己在拿什么换什么。
+    #[test]
+    fn the_white_align_help_says_what_it_is_and_what_zero_means() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--white-align-limit"), "{help}");
+        assert!(help.contains("纸白对齐"), "{help}");
+        // 取 0 是关，且关掉之后逐字节相同。
+        assert!(help.contains("默认 0 就是关闭"), "{help}");
+        assert!(help.contains("逐字节相同"), "{help}");
+        // 手段与代价：钳的是哪一段、代价是被压平的色调有多宽。
+        assert!(help.contains("[纸白, 255]"), "{help}");
+        assert!(help.contains("离格量"), "{help}");
+        // 三种页照样原样出——「我对你的图没做成什么」得先在帮助里说得出来。
+        assert!(help.contains("满版无纸边"), "{help}");
     }
 
     #[test]

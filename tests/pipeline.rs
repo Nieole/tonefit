@@ -677,6 +677,185 @@ fn transparent_areas_come_out_as_paper_white() {
     );
 }
 
+/// 把这一卷钉在 8bit 跑一遍，纸白对齐的上限点名给出（纸白对齐批 01 号票）。
+///
+/// **钉在 8bit 是下面那几条成立的前提**：量化于是成了恒等，写出的就是对齐那一步的结果。
+/// 混进判定那一档格点，这几条一条都分不出对齐做没做——就近取整自己就会把 253 送到 255 上。
+/// 三个开关都是用户手上真有的，理由与 [`fixtures::run_volume_at_eight_bits`] 同一条。
+fn run_aligning(
+    space: &Workspace,
+    volume: &fixtures::Volume,
+    fit: FitMode,
+    limit: tonefit::WhiteAlignLimit,
+) -> tonefit::Report {
+    tonefit::run(&Request {
+        profile: fixtures::baseline_profile()
+            .with_gray_levels(256)
+            .expect("全集可用"),
+        fit,
+        bit_depth: Some(BitDepth::Eight),
+        dither: Some(Dither::Off),
+        white_align_limit: limit,
+        ..fixtures::request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
+/// 一张页走完整趟管线之后写出来的像素，上限点名给出。
+///
+/// 每一趟各起一个工作区：同一个输出根跑两趟，第二趟会把第一趟的字节盖掉，
+/// 而这几条要的正是两趟的对照。
+fn written_pixels(
+    page: &image::DynamicImage,
+    fit: FitMode,
+    limit: tonefit::WhiteAlignLimit,
+) -> Vec<u8> {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", page);
+
+    let report = run_aligning(&space, &volume, fit, limit);
+
+    fixtures::read_png(&report.volumes[0].pages[0].output).pixels
+}
+
+/// **整条路的 tracer bullet**：命令行上的那个数一路走到写出的像素上。
+///
+/// 默认 0 那一趟与源**逐字节相同**（一页都不改），点名 4 那一趟把 `[纸白, 255]`
+/// 那一段搬到 255、低于纸白的一个都不动。
+#[test]
+fn the_limit_reaches_the_written_pixels_and_a_limit_of_zero_changes_nothing() {
+    // 恒等通过的尺寸配四边顶着墨的一张页：缩放与裁边都不插一脚，
+    // 写出的因此就是对齐对源做的事（页几何批 09 号票）。
+    let paper = fixtures::OFF_GRID_PAPER_WHITE;
+    let page = fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, paper);
+    let source = fixtures::luma_pixels(&page);
+
+    let closed = written_pixels(
+        &page,
+        FitMode::default(),
+        tonefit::WhiteAlignLimit::default(),
+    );
+    let opened = written_pixels(&page, FitMode::default(), fixtures::ALIGNING_LIMIT);
+
+    fixtures::assert_pixels(&source, &closed);
+    assert_ne!(opened, source, "点名 4 那一趟一个像素都没动");
+    fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &opened);
+}
+
+/// **几何门不成立的页照样对齐**：它只是没有抖动那一维，纸白该在格点上还是要在。
+#[test]
+fn a_page_outside_the_geometry_gate_is_aligned_all_the_same() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    // fit-inside 上两边都比面板小的页不放大，一条边都贴不住面板——门在它身上不成立。
+    let paper = fixtures::OFF_GRID_PAPER_WHITE;
+    let page = fixtures::page_with_paper_white(fixtures::SMALLER_THAN_TARGET, paper);
+    volume.page("001.png", &page);
+
+    let report = run_aligning(&space, &volume, FitMode::Inside, fixtures::ALIGNING_LIMIT);
+
+    let reported = &report.volumes[0].pages[0];
+    assert_eq!(
+        reported.gate(),
+        Some(GeometryGate::Broken),
+        "夹具没咬住：这一页的门本该不成立"
+    );
+    let written = fixtures::read_png(&reported.output);
+    assert_eq!(written.size, fixtures::SMALLER_THAN_TARGET);
+    let source = fixtures::luma_pixels(&page);
+    fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &written.pixels);
+}
+
+/// **满版无纸边的页整页逐像素不变**：量不出纸白就不硬猜一个（spec 的 story 6）。
+///
+/// 这一条**分得出「量不出纸白」与「离格量超了上限」**，靠的是夹具角上那一块平坦像素
+/// 不够那道门限的纸白（见 [`fixtures::full_bleed_page_without_paper`]）：
+/// 拆掉那道门限，众数落在 253 上、离格只有 2 级，钳得动，那一块连同背景最亮那一档
+/// 一起被推上 255——这一句当场红。角上没有那一块的话，众数会落到 0、离格 255 级，
+/// 被上限那条守卫拦下，像素照旧不变，**这一条就永远绿着而什么都没验到**（停车场 Q521）。
+#[test]
+fn a_full_bleed_page_without_paper_comes_out_untouched() {
+    let page = fixtures::full_bleed_page_without_paper(fixtures::PASSES_THROUGH);
+
+    let written = written_pixels(&page, FitMode::default(), fixtures::ALIGNING_LIMIT);
+
+    fixtures::assert_pixels(&fixtures::luma_pixels(&page), &written);
+}
+
+/// **彩页不经这一步**（ADR 0010：那条路径既不量化也不抖动，对齐对它没有意义）。
+///
+/// 同一卷里放一张彩页与一张灰度页，两张的纸白都落在同一个离格取值上，一趟跑完：
+/// 灰度那张搬到了 255，彩页那张仍是 253。只断言彩页没变的话，
+/// 「这一趟根本没开对齐」与「彩页不经这一步」分不开。
+#[test]
+fn a_color_page_never_meets_the_white_alignment() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let size = fixtures::PASSES_THROUGH;
+    let paper = fixtures::OFF_GRID_PAPER_WHITE;
+    let color = color_page_on_off_grid_paper(size);
+    volume.page("001.png", &color);
+    volume.page("002.png", &fixtures::page_with_paper_white(size, paper));
+    // 取样点先在**源**上验一遍：它落进墨那一条的话，下面两句就都成了空话。
+    let (x, y) = (size.width * 7 / 8, size.height / 2);
+    assert_eq!(
+        color.to_rgb8().get_pixel(x, y).0,
+        [paper, paper, paper],
+        "取样点没落在彩页的纸白上"
+    );
+
+    let report = tonefit::run(&Request {
+        // 彩色面板：只有在它上面彩页才走彩色分支（ADR 0010）。
+        profile: fixtures::profile("kobo-libra-colour")
+            .with_gray_levels(256)
+            .expect("全集可用"),
+        bit_depth: Some(BitDepth::Eight),
+        dither: Some(Dither::Off),
+        white_align_limit: fixtures::ALIGNING_LIMIT,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let pages = &report.volumes[0].pages;
+    assert_eq!(pages[0].color(), Some(PageColor::Color));
+    // 彩页那一张的纸白原样留着：`[纸白, 255]` 那一段一格都没动。
+    assert_eq!(
+        fixtures::read_color_png(&pages[0].output).pixel(x, y),
+        [paper, paper, paper],
+        "彩页的纸白被对齐了"
+    );
+    // 同一趟里灰度那一张搬到了 255——上限确实开着。
+    assert_eq!(pages[1].color(), Some(PageColor::Gray));
+    assert_eq!(
+        fixtures::read_png(&pages[1].output).pixel(x, y),
+        u8::MAX,
+        "灰度页的纸白没被对齐：这一趟压根没开"
+    );
+}
+
+/// 一张彩页，**纸白落在离格的那个取值上**。
+///
+/// 照 [`fixtures::page_with_paper_white`] 的形状染色：纸白那两条竖条三通道相等、原样留着，
+/// 墨与灰调那两条逐行换色相，整页因此有真实的色度覆盖（彩页识别看的正是它）。
+/// 纸白不染是要点——染成纯白之后，「经没经过纸白对齐」在字节上就看不出分别了。
+fn color_page_on_off_grid_paper(size: Size) -> image::DynamicImage {
+    let gray = fixtures::page_with_paper_white(size, fixtures::OFF_GRID_PAPER_WHITE).to_luma8();
+    image::DynamicImage::ImageRgb8(image::ImageBuffer::from_fn(
+        size.width,
+        size.height,
+        |x, y| {
+            let value = gray.get_pixel(x, y)[0];
+            if value >= fixtures::OFF_GRID_PAPER_WHITE {
+                return image::Rgb([value, value, value]);
+            }
+            let mut pixel = [0u8; 3];
+            pixel[(y % 3) as usize] = 255 - value / 2;
+            image::Rgb(pixel)
+        },
+    ))
+}
+
 /// `--fit inside` 那条路上，比面板小的页**不放大**（spec 的 story 17）。
 #[test]
 fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels_when_fitted_inside() {
