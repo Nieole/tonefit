@@ -645,6 +645,8 @@ fn render(
         crop: crop.on(),
         split: SplitRule::default(),
         filter: Filter::default(),
+        // 默认 0，即关闭：这一份快照最强的那条验收就是它一页都不改（纸白对齐批 01 号票）。
+        white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
         per_page: false,

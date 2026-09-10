@@ -984,6 +984,7 @@ pub(crate) mod fixture {
             crop: true,
             split: tonefit::SplitRule::default(),
             filter: tonefit::Filter::default(),
+            white_align_limit: tonefit::WhiteAlignLimit::default(),
             bit_depth: None,
             dither: None,
             per_page: false,

@@ -350,6 +350,110 @@ pub fn line_art(size: Size) -> DynamicImage {
     }))
 }
 
+/// **纸白离格**的那个取值：253 到 2bit 的最近格点（255）差 2 级。
+///
+/// 取 253 不是随手挑的：武器種族傳說原档那四页量出来的纸白就是它，而那四页正是真机上
+/// 五个人里五个说「明显影响观感」、零接受的那一批（measurements 的《真机三组》）。
+/// 白底上误差扩散必须撒点的密度就是 `2/85` = 2.4%。
+pub const OFF_GRID_PAPER_WHITE: u8 = 253;
+
+/// 纸白取 `paper` 的一页：**大片纸白**、一竖条墨、一竖条从纯黑爬到纸白之下的灰调，四边顶着墨。
+///
+/// 现有夹具全是合成图，纸白多半正好落在 255 上——纸白对齐在它们身上一律是空操作，
+/// 那几条性质一条都走不到。这一张是入口：`paper` 取 [`OFF_GRID_PAPER_WHITE`] 就是一张
+/// 离格的页，取 255 就是一张本来就在格点上的页，两者只差这一个取值。
+///
+/// **那一竖条灰调爬到 `paper − 1` 为止**：钳制只动 `[纸白, 255]` 那一段、低于纸白的一个都不动
+/// ——这条性质在只有两个取值的页上是句空话，要有它才断言得出来。
+///
+/// 四边那一圈墨让裁边成为空操作（同 [`full_bleed_gradient`]）：这一张说的是纸白，不是裁边。
+/// 纸白那两条竖条合起来占半页，**平坦像素里它的个数最多**，墨那一条抢不走。
+pub fn page_with_paper_white(size: Size, paper: u8) -> DynamicImage {
+    let (w, h) = (size.width, size.height);
+    let last = (h - 1).max(1);
+    inked_border(DynamicImage::ImageLuma8(ImageBuffer::from_fn(
+        w,
+        h,
+        |x, y| {
+            Luma([match x * 4 / w {
+                1 => 0,
+                2 => (y * u32::from(paper.saturating_sub(1)) / last) as u8,
+                _ => paper,
+            }])
+        },
+    )))
+}
+
+/// 满版无纸边的一页：整幅都是画面，**平坦像素少到量不出纸白**。
+///
+/// 画集就是这个形状——实测的那一部（Venus）12 页全部量不到纸白，最大平坦区只有 4430 px，
+/// 达不到 5000 那道门槛（measurements 的《全语料普查：四成三的页纸白不落在格点上》）。
+/// 纸白对齐在它身上该**整页原样**：不硬猜一个纸白，猜出来的那个值会把整页改坏（spec 的 story 6）。
+///
+/// 四件事各由页上的一样东西担着：
+///
+/// - **背景一个平坦像素都没有**：`BLOCK` 见方的色块斜着铺开，再压上逐像素 ±3 的细纹理。
+///   相邻两块差 8 级、同一块内相邻两像素差 6 级——两者互不抵消，
+///   **任何一个 3×3 窗口里都有两个取值**。
+/// - **平坦像素有，但不够**：角上一块 [`PAPER_PATCH`] 见方的 [`OFF_GRID_PAPER_WHITE`]，
+///   **实测 `67² = 4489` 个平坦像素**——边界按最近像素延拓，贴着页角那一行一列也算平坦，
+///   只有贴着纹理的那一行一列不算。**照着 Venus 那 4430 取的，稳稳在 5000 以下**。
+///   背景全是纹理、一个平坦像素都不贡献，这一块因此就是全页的平坦像素总数。
+///   **它是这张页的要害**：没有它，`MIN_FLAT` 那道门限拆掉之后众数会落到 0、离格 255 级，
+///   被上限那条守卫拦下——像素照旧不变，用例照旧全绿，那道门限就**一句话都没被验到**。
+/// - **「硬猜就把图改坏」演示得出来**：那一块是 253，硬猜出来的纸白离格只有 2 级，
+///   钳得动；背景最亮 252，跟着一起被推上 255。
+/// - **裁边是空操作**：每一行、每一列都扫过全部色块，墨（低于墨阈 200）实测占 57%~71%，
+///   一条行列都不会被当成白边——这一张说的不是裁边。
+pub fn full_bleed_page_without_paper(size: Size) -> DynamicImage {
+    /// 一块多大。
+    const BLOCK: u32 = 8;
+    /// 色调铺满一轮要几块：`41 + 8×26 = 249`，加减那 3 级之后是 38 到 252。
+    const STEPS: u32 = 27;
+    DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
+        if x < PAPER_PATCH && y < PAPER_PATCH {
+            return Luma([OFF_GRID_PAPER_WHITE]);
+        }
+        let tone = (41 + (x / BLOCK + y / BLOCK) % STEPS * 8) as u8;
+        Luma([if (x + y) % 2 == 0 { tone + 3 } else { tone - 3 }])
+    }))
+}
+
+/// [`full_bleed_page_without_paper`] 角上那一块纸白多大。理由见那里。
+pub const PAPER_PATCH: u32 = 68;
+
+/// 够得着 [`OFF_GRID_PAPER_WHITE`] 那 2 级离格量的一个《纸白对齐上限》。
+///
+/// 取 4 只因为它眼下是那个占位值（`CONTEXT.md` 的《尚未确立》）。
+/// **这几条性质与它取多少无关**，只要大得过夹具那 2 级——标定把 4 换掉，这里不必跟着改。
+pub const ALIGNING_LIMIT: tonefit::WhiteAlignLimit = tonefit::WhiteAlignLimit::new(4);
+
+/// 一张页按 `[paper, 255] → 255` 钳过之后该长的样子：纸白那一段搬到纯白，
+/// **低于纸白的一个都不动**。断言里拿它当期望值，配 [`assert_pixels`]。
+pub fn clamped_to_white(source: &[u8], paper: u8) -> Vec<u8> {
+    source
+        .iter()
+        .map(|&value| if value >= paper { u8::MAX } else { value })
+        .collect()
+}
+
+/// 断言两张页**逐像素相同**，失败时说得出是第几个像素、从什么变成了什么。
+///
+/// **不拿 `assert_eq!` 直接比两个切片**：那样失败时印出来的是整片像素——实测一张
+/// 800×1680 的页印了 12 MB，终端与日志一起被冲掉，而真正要说的只是「哪一个像素动了」。
+pub fn assert_pixels(want: &[u8], got: &[u8]) {
+    assert_eq!(want.len(), got.len(), "像素个数对不上");
+    let differs = want.iter().zip(got).position(|(a, b)| a != b);
+    if let Some(at) = differs {
+        panic!(
+            "第 {at} 个像素本该是 {} 却是 {}（共 {} 处不同）",
+            want[at],
+            got[at],
+            want.iter().zip(got).filter(|(a, b)| a != b).count()
+        );
+    }
+}
+
 /// 一页留白，左上角一块 `patch` 大的灰调补丁——低位深下唯一会崩的就是这块。
 ///
 /// 补丁竖直方向 0→255，与 [`gradient`] 同一条斜坡，只是圈在一小块里。
@@ -810,6 +914,7 @@ pub fn request<'a>(
         crop: true,
         split: tonefit::SplitRule::default(),
         filter: tonefit::Filter::default(),
+        white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
         per_page: false,
