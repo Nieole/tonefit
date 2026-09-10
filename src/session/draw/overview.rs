@@ -267,7 +267,7 @@ fn left_clause(left: Option<Duration>) -> String {
 
 /// 收场之后的抬头。
 ///
-/// 没做成那一句照库那一侧的原话（拒绝执行是一种，那条线程恐慌了是另一种）；
+/// 没做成那一句照 [`crate::render::undone`]（拒绝执行是一种，那条线程恐慌了是另一种）；
 /// 做成了那一种照 [`crate::render::outcome`]——「按停停在半路」与「点名的卷都走过了」
 /// 的分别在 `Report::outcome` 上，措辞跟报告那一套走，会话不另编一句。
 ///
@@ -278,7 +278,10 @@ fn ended_title(live: &Live) -> Painted {
         // **拒绝执行是「出事」那一档**（spec 的《语义色》）：错在这一趟的参数上，
         // 换一个卷不会变好，而这一句是屏上唯一说得出它的地方。
         // 「没做成」三个字就在这一句里——颜色不是唯一载体（见 [`super::paint`]）。
-        Some(said) => Painted::new(format!("这一趟没做成：{said}"), Tone::Trouble),
+        //
+        // **措辞出自 [`crate::render::undone`]**：退出会话时 stdout 上跟在报告后面的
+        // 那一段说的是同一句（21 号票），会话不另编一份。
+        Some(said) => Painted::new(crate::render::undone(said), Tone::Trouble),
         None => Painted::plain(format!(
             "收场 {} · {} 卷 · 用了 {}",
             crate::render::outcome(live.report().outcome),

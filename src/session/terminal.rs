@@ -44,7 +44,9 @@ const TICK: Duration = Duration::from_millis(80);
 /// 全部成功 `0`、有卷被隔离 `2`、有卷没做成 `3`、拒绝执行 `1`。一趟都没跑过是 `0`。
 ///
 /// 退出前把那份报告照原格式印到 **stdout**：会话整个画在 stderr 上，
-/// `tonefit > 报告.txt` 因此仍然成立。
+/// `tonefit > 报告.txt` 因此仍然成立。**最后那一趟没做成也照印**——
+/// 攒下来的那一份连同它为什么没做成，先前那一趟做成了的报告也不跟着丢
+/// （21 号票，见 [`Running::report`]）。
 pub fn enter() -> Result<u8> {
     if !stderr().is_terminal() {
         return Err(no_terminal_error());

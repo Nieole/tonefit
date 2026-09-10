@@ -116,6 +116,23 @@ impl FitMode {
     }
 }
 
+/// **换成[以高为准](FitMode::Height)之后，这一页的[几何门](GeometryGate)成不成立。**
+///
+/// 互锁 ③ 那条拒绝按页分岔靠的就是这一问（见 `crate::Candidates::for_gate`，
+/// `p4-parking-lot/21`）：成立的页指得出 `--fit height` 那条出路，不成立的只有一种页——
+/// 以高为准算出的目标尺寸越过[兜底上界](MAX_TARGET_PIXELS)、被退回 fit-inside 的那种
+/// （07 号票）。对后一种劝人换适配方式是假话，那一句因此改说剩下的两条路。
+///
+/// **它不是第二处判定**：门仍由 [`GeometryGate::of`] 判（本仓库唯一一处），目标尺寸仍由
+/// [`FitMode::target`] 算（本仓库唯一一处）。这里只是把「换一条路会怎样」这一问
+/// 摆到它该在的那一层——问的人在候选集那一头，手上只有源尺寸与面板。
+///
+/// **这一趟点的是哪个适配方式它不问**：以高为准上走得到那条拒绝的页恒是被兜底上界
+/// 退回去的那一种，这一问在它身上恒答「不成立」——两条路因此说同一句。
+pub(crate) fn holds_by_height(source: Size, panel: Size) -> bool {
+    GeometryGate::of(FitMode::Height.target(source, panel).size(), panel).holds()
+}
+
 impl std::fmt::Display for FitMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

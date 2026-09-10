@@ -1314,33 +1314,51 @@ struct Candidates {
     /// 门成立时的候选集。它非空——覆盖项把它裁空的话，整趟在碰卷之前就被拒了
     /// （见 [`ensure_the_overrides_leave_a_candidate`]）。
     holds: Vec<Candidate>,
-    /// 门不成立时的候选集。覆盖项把它裁空时是 `Err`：`--dither fs` 撞上一页贴不住面板
-    /// 就是这个局面。错误留到真撞上那一页时才报——门是**页**的事实，一卷里可能一页都不撞。
-    broken: Result<Vec<Candidate>>,
+    /// 门不成立时的候选集。覆盖项把它裁空时是 `None`：`--dither fs` 撞上一页贴不住面板
+    /// 就是这个局面，那正是互锁 ③。这一格留到真撞上那一页时才说话——门是**页**的事实，
+    /// 一卷里可能一页都不撞。
+    ///
+    /// **它不装那句拒绝**（从前装的是一个碰卷之前备好的 `Err`）：对用户说什么要
+    /// **这一页**才说得全——够得着以高为准那条出路的页与够不着的页听见的不是同一句
+    /// （21 号票，停车场 Q102）。那一句因此由 [`for_gate`](Self::for_gate) 现造。
+    broken: Option<Vec<Candidate>>,
 }
 
 impl Candidates {
     fn new(request: &Request) -> Result<Self> {
         Ok(Self {
             holds: candidates(request, GeometryGate::Holds)?,
-            broken: candidates(request, GeometryGate::Broken),
+            // 丢掉的那个错误是[规则那一句](Interlock::DitherOutsideTheGate)，出路那一半
+            // 还没有页可判（见 [`why_nothing_is_left`]）——这里只要「裁空了没有」。
+            // 位深那一维在上一行就拦下了（它不看门），走到这里的 `Err` 只可能是互锁 ③。
+            broken: candidates(request, GeometryGate::Broken).ok(),
         })
     }
 
     /// 门是这个结果的页该拿哪一套。
     ///
-    /// 裁空那一支上**重说一遍**错误，而不是把它搬走：撞上门的页可能有好几张，
-    /// 每一张都要指得出自己，而 `anyhow::Error` 复制不了。
+    /// 裁空那一支上**当场造那句拒绝**，而不是重说一遍备好的那一份：撞上门的页可能有
+    /// 好几张，而**每一张听见的不是同一句**——出路由这一页的几何定（21 号票）。
+    /// 判据只有一问：**换成以高为准之后，这一页的门成不成立**。成立就指得出那条出路；
+    /// 不成立的只有一种页——以高为准算出的目标尺寸越过[兜底上界](max_target_pixels)、
+    /// 被退回 fit-inside 的那种（07 号票），对它劝换适配方式是假话。
     ///
-    /// 重说的那一份仍戴着 [`Refusal`]：这一支的处置是「维持拒绝」（互锁 ③），
+    /// 判定本身**不在这里**：那一问住在几何那一层
+    /// （[`geometry::holds_by_height`]，门与目标尺寸各自的唯一出处都在它里面），
+    /// 这一处只是问它一句、把答案交给措辞。收源尺寸与面板而不是收一个算好的布尔，
+    /// 是为了让门成立那一支**一分钱都不花**。
+    ///
+    /// 造出来的那一份戴着 [`Refusal`]：这一支的处置是「维持拒绝」（互锁 ③），
     /// 摘掉标记它就降级成了「这一卷没做成」，而 `--dither fs` 对每一卷都错。
-    fn for_gate(&self, gate: GeometryGate) -> Result<&[Candidate]> {
+    fn for_gate(&self, gate: GeometryGate, source: Size, panel: Size) -> Result<&[Candidate]> {
         match gate {
             GeometryGate::Holds => Ok(&self.holds),
-            GeometryGate::Broken => self
-                .broken
-                .as_deref()
-                .map_err(|error| Refusal(format!("{error:#}")).into()),
+            GeometryGate::Broken => self.broken.as_deref().ok_or_else(|| {
+                Refusal(dither_outside_the_gate_error(geometry::holds_by_height(
+                    source, panel,
+                )))
+                .into()
+            }),
         }
     }
 }
@@ -1829,7 +1847,7 @@ impl Compute<'_> {
         let gate = GeometryGate::of(size, panel.resolution);
         let allowed = self
             .candidates
-            .for_gate(gate)
+            .for_gate(gate, image.size(), panel.resolution)
             .with_context(|| format!("{} 这一页关上了几何门", source.display()))?;
         let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
             self.counters.resampler.resize(&image, size, request.filter)
@@ -2244,8 +2262,8 @@ fn pinned_up_front(request: &Request, candidates: &Candidates) -> Option<Option<
     };
     let holds = only(&candidates.holds);
     match &candidates.broken {
-        Err(_) => Some(holds),
-        Ok(broken) => (only(broken) == holds).then_some(holds),
+        None => Some(holds),
+        Some(broken) => (only(broken) == holds).then_some(holds),
     }
 }
 
@@ -2754,9 +2772,17 @@ fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
 /// 两道界只有一道动得了：面板灰阶数走 `--gray-levels`（ADR 0003），几何门动不了——
 /// 它是页的几何事实，不是一个可以放宽的档位。
 ///
-/// 出来的是那句话本身，不是一个错误：戴 [`Refusal`] 那一步由 [`candidates`] 统一做，
-/// 两支因此不会一支戴一支忘。两支都是**覆盖项**与面板对不上，错在这一趟的参数上，
-/// 换一个卷不会变好（05 号票）。
+/// **两支说得出的话不一样全，那不是漏。**位深那一句碰卷之前就说得全——面板灰阶数是
+/// **这一趟**的事实。抖动那一支回的只有[规则那一句](Interlock::DitherOutsideTheGate)：
+/// 出路那一半要**这一页**才答得出（够得着以高为准的页与够不着的页听见的不是同一句，
+/// 21 号票、停车场 Q102），补上它并戴上 [`Refusal`] 的是 [`Candidates::for_gate`]。
+/// 门是页的几何事实，判定与措辞因此都只在碰上那一页时才收得了口。
+///
+/// 出来的是那句话本身，不是一个错误。**位深那一支戴 [`Refusal`] 由 [`candidates`] 做**，
+/// 而抖动那一支走的是另一条路（上一段说的那件事）：它那句话要补全，戴标记因此也由
+/// 补全它的 [`Candidates::for_gate`] 做。**两支仍不会一支戴一支忘**——各自那一处都只有
+/// 一个出口，而 [`Candidates::new`] 那一行 `.ok()` 是它们分家的地方，写在那儿。
+/// 两支都是**覆盖项**与面板对不上，错在这一趟的参数上，换一个卷不会变好（05 号票）。
 fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> {
     let panel = request.profile.panel();
     let depths = BitDepth::candidates(panel.gray_levels);
@@ -2773,56 +2799,42 @@ fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> 
         ));
     }
     // 抖动那一维：几何门不成立而 `--dither` 点了抖动。那正是互锁 ③，
-    // 处置是维持拒绝（页几何批 05 号票）。
+    // 处置是维持拒绝（页几何批 05 号票）。**出路那一半不在这里**，见上面那一段。
     Interlock::dither_outside_the_gate(request.dither, gate)
-        .then(|| dither_outside_the_gate_error(request.fit))
+        .then(|| Interlock::DitherOutsideTheGate.to_string())
 }
 
 /// 互锁 ③ 咬上时那条拒绝的说法（05 号票的处置 ③：**维持拒绝**）。
 ///
 /// 规则那一句由 [`Interlock`] 自己说——同一句还要从 `--help` 里出来，措辞只有那一份。
-/// 这里补的是**这一趟**才知道的那件事：适配方式那一侧还有没有出路。撞上的是哪一页
-/// 由错误链外层带着（见 [`Candidates::broken`]）。
+/// 这里补的是**这一页**才知道的那件事：适配方式那一侧还有没有出路。撞上的是哪一页
+/// 由错误链外层带着（见 [`Compute::gray_page`]）。
 ///
-/// 两条路上说法不同，而且**两边都不许把话说满**——把话说满正是本票要改掉的毛病：
+/// **按页分岔**（21 号票，收停车场 Q102）：`by_height_holds` 答的是
+/// 「换成以高为准之后，**这一页**的门成不成立」，判定在 [`Candidates::for_gate`]。
+/// 两支各只说对这一页成立的那一半——从前这句话把两条路的例外一次全说，
+/// 够得着出路的人得先读一条对他不成立的建议，够不着的人得先读一条劝他敲了会撞第二次的命令。
 ///
-/// - **fit-inside 上**，`--fit height` 把这一页放大到面板高，门跟着成立（页几何批 01 号票）。
-///   **但不是每一页都够得着这条出路**：宽高比极端到以高为准算出的目标尺寸越过
-///   [兜底上界](FitMode::target)的页会被退回 fit-inside，换过去仍是这条拒绝（07 号票）。
-///   那道例外要跟着说出来，不然用户照着敲一遍只会撞第二次。
-/// - **以高为准上**根本没有出路：那条路上每一页的高都等于面板高，门恒成立；
-///   走得到这里的只能是被兜底上界退回去的页——它已经是一张 fit-inside 的页了。
-///   那时劝人换 `--fit height` 是**假话**，改说剩下的那两条路。
-///
-/// 这里判不出手上这一页是哪一种：错误在碰卷之前就备好（[`Candidates::new`]），
-/// 那时没有页可量。**能做的是把话说全**——两条路各自的例外都写进去，
-/// 用户照着敲不会撞第二次。
-///
-/// **按页分岔没有做。**判门的地方（[`Compute::gray_page`]）手上有这一页的源尺寸，
-/// 也有 [`geometry::Fit::backstopped`]，答得出「这一页换个适配方式解不解得了」——挪得动，
-/// 不是做不到。不做的理由是那一步改的**不是这句话摆在哪里，是这句话说什么**：
-/// 分岔之后够得着出路的页只听见前半句，够不着的只听见后半句，而对用户说什么
-/// 是拍板的事，不是这一处的实现细节（停车场 Q102）。
+/// - **门跟着成立**：`--fit height` 把这一页放大到面板高（页几何批 01 号票），
+///   那条出路对**这一页**当真，例外因此不必再提。
+/// - **门仍不成立**：这一页宽高比极端到以高为准算出的目标尺寸越过
+///   [兜底上界](FitMode::target)、会被退回 fit-inside（07 号票）——退回来的仍是
+///   一张 fit-inside 的页。劝它换 `--fit height` 是**假话**，改说剩下的那两条路。
+///   这一支与这一趟点的是哪个适配方式无关：以高为准上走得到拒绝的页恒是这一种。
 ///
 /// 出来的是那句话本身，不是一个错误，理由见 [`why_nothing_is_left`]（05 号票）。
 ///
 /// **记号里面那个空格是[不许断的那个空格](HARD_SPACE)**：这句话劝人换一条命令，
 /// 断成两行之后抄不出一条能用的命令（停车场 Q106）。规矩只有一处出处，就是那条公共 API。
-fn dither_outside_the_gate_error(fit: FitMode) -> String {
-    let way_out = match fit {
-        FitMode::Inside => format!(
-            "改得动的是几何：--fit{HARD_SPACE}height 把这一页放大到面板高，门跟着成立。\
-             够不着这条出路的只有一种页——宽高比极端到以高为准算出的目标尺寸越过 {} 像素、\
-             会被兜底上界退回 fit-inside 的那种（07 号票）；那种页换过去仍是这条拒绝，\
-             走下面那两条",
+fn dither_outside_the_gate_error(by_height_holds: bool) -> String {
+    let way_out = if by_height_holds {
+        format!("改得动的是几何：--fit{HARD_SPACE}height 把这一页放大到面板高，门跟着成立")
+    } else {
+        format!(
+            "适配方式这一侧没有出路：以高为准让每一页都贴住面板高，而这一页算出的目标尺寸\
+             越过 {} 像素、被兜底上界退回 fit-inside 出（07 号票），门是在那张退回来的页上判的",
             max_target_pixels()
-        ),
-        FitMode::Height => format!(
-            "适配方式这一侧已经没有出路：以高为准让每一页都贴住面板高，\
-             走到这里的只能是目标尺寸越过 {} 像素、被兜底上界退回 fit-inside 出的那种页\
-             （07 号票），门是在那张退回来的页上判的",
-            max_target_pixels()
-        ),
+        )
     };
     format!(
         "{}。{way_out}。剩下两条路——不点 --dither{HARD_SPACE}fs（判据自己会替这一页把抖动关掉），\
