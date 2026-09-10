@@ -81,8 +81,8 @@ struct Cli {
     /// 行为相同。
     ///
     /// **命令行上显式点到的那一项赢**：`--preset 漫画 --filter hamming` 就是「套那一份，
-    /// 再改这一项」。三个关掉什么的开关（--no-crop、--no-split、--per-page）只说得出一个方向，
-    /// 预设把裁边关掉之后这一趟没有再开回来的写法。
+    /// 再改这一项」。关掉什么的那三个开关各有反面（`--crop`、`--split`、`--no-per-page`），
+    /// 预设把裁边关掉之后，这一趟用 `--crop` 把它开回来。
     ///
     /// 预设**不装处理范围与输出根**——那两样每趟都不同，混进去会让人套用预设时误写到上一次的
     /// 输出目录。`--out` 因此照旧必填，`--profile` 只在预设供了型号时才不必填。
@@ -144,8 +144,21 @@ struct Cli {
     /// 那是要更大实际利用面积的代价，不是缺陷。整页空白的页原样通过。
     ///
     /// 它与别的开关咬在一起时会怎样，见 `--help` 末尾的《开关互锁》。
-    #[arg(long)]
+    ///
+    /// **反面是 `--crop`**：预设把裁边关掉之后，这一趟用它开回来。
+    /// 两个一起点名当场是一条错误——同一趟里说不出「裁又不裁」。
+    #[arg(long, conflicts_with = "crop")]
     no_crop: bool,
+
+    /// 裁掉页面白边——**`--no-crop` 的反面**，而**默认就是它**。
+    ///
+    /// 因此只有一种情形用得着：套的那份预设里写着 `crop = false`，而这一趟要裁。
+    /// 不套预设的那一趟点不点它是同一个结果。
+    ///
+    /// 裁法、它认下的那两件事、以及关掉要付什么，一并写在 `--no-crop` 那一条上——
+    /// 一对开关说的是同一件事的两面，说法只有一份。
+    #[arg(long)]
+    crop: bool,
 
     /// 不把跨页拆成两页。**默认是拆的**：tonefit 在装订沟上把跨页切成两半，每半用满面板高。
     ///
@@ -162,8 +175,21 @@ struct Cli {
     /// 关掉本项，所有跨页都走那条路。
     ///
     /// 它与别的开关咬在一起时会怎样，见 `--help` 末尾的《开关互锁》。
-    #[arg(long)]
+    ///
+    /// **反面是 `--split`**：预设把拆分关掉之后，这一趟用它开回来。
+    /// 两个一起点名当场是一条错误——同一趟里说不出「拆又不拆」。
+    #[arg(long, conflicts_with = "split")]
     no_split: bool,
+
+    /// 把跨页拆成两页——**`--no-split` 的反面**，而**默认就是它**。
+    ///
+    /// 因此只有一种情形用得着：套的那份预设里写着 `split = false`，而这一趟要拆。
+    /// 不套预设的那一趟点不点它是同一个结果。
+    ///
+    /// 怎么判跨页、切点怎么找、不切的那一种是什么，一并写在 `--no-split` 那一条上。
+    /// 阈值与先后仍走 `--split-threshold` 与 `--reading-order`，本项不碰它们。
+    #[arg(long)]
+    split: bool,
 
     /// 跨页候选的阈值：页宽高比要有面板宽高比的这么多倍才算候选，默认 1.5。
     ///
@@ -216,8 +242,20 @@ struct Cli {
     /// 关闭卷级上包络，位深回到逐页最优，档位由段式迟滞收一道：孤立地**高出邻居**的页
     /// 压回邻居那一档。体积最小，代价是**翻页跳变仍在**——够长的一段整段留住自己那一档，
     /// 与它前后就差着，翻过去的一瞬间灰调的颗粒感换一种粗细。
-    #[arg(long)]
+    ///
+    /// **反面是 `--no-per-page`**：预设把上包络关掉之后，这一趟用它留住上包络。
+    /// 两个一起点名当场是一条错误——同一趟里说不出「关又不关」。
+    #[arg(long, conflicts_with = "no_per_page")]
     per_page: bool,
+
+    /// 留着卷级上包络——**`--per-page` 的反面**，而**默认就是它**。
+    ///
+    /// 因此只有一种情形用得着：套的那份预设里写着 `per-page = true`，而这一趟要上包络。
+    /// 不套预设的那一趟点不点它是同一个结果。
+    ///
+    /// 关掉上包络换来什么、代价是什么，一并写在 `--per-page` 那一条上。
+    #[arg(long)]
+    no_per_page: bool,
 
     /// 两遍之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
     /// 超出的页溢写临时文件，运行结束即收走。
@@ -263,10 +301,13 @@ struct Cli {
 /// 于是每一项都落到默认值上，与本票之前逐字相同。这不是靠比对来保证的，是同一段代码走过去
 /// 的结果。
 ///
-/// **三个布尔开关的覆盖是单向的。** `--no-crop`、`--no-split`、`--per-page` 在命令行上
-/// 只说得出一个方向，说不出它们的反面；预设把裁边关掉之后，这一趟没有再把它开回来的写法
-/// （要开回来就改预设，或者这一趟不套它）。取值一致性因此仍然成立——预设里的 `crop = false`
-/// 与命令行上的 `--no-crop` 是同一件事——只是覆盖不对称。
+/// **三对布尔开关两个方向都说得出**（`p4-parking-lot/20`）：`--crop` / `--no-crop`、
+/// `--split` / `--no-split`、`--per-page` / `--no-per-page`。预设里的 `crop = false`
+/// 与命令行上的 `--no-crop` 是同一件事，而预设把裁边关掉之后这一趟用 `--crop` 开得回来——
+/// 覆盖因此是对称的。
+///
+/// 一对里**一个都不点就是「没说」**，那一格照上一段落到预设、再落到默认值上；
+/// **同时点名两个当场是一条错误**，由 clap 的 `conflicts_with` 挡（见 [`said`]）。
 impl Cli {
     /// 这一趟要套用的预设。**只在显式点名时读盘。**
     fn preset(&self) -> Result<Preset> {
@@ -296,11 +337,11 @@ impl Cli {
         }
     }
 
-    /// 本次裁不裁边（02 号票）。**默认裁**，`--no-crop` 关掉它。
+    /// 本次裁不裁边（02 号票）。**默认裁**，`--no-crop` 关掉它、`--crop` 开回来。
     fn crop(&self, preset: &Preset) -> bool {
         // 默认值不在这里：它在 `TasteLayer::crop`，会话拼 `Request` 时读的是同一个
         // （`Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它）。
-        !self.no_crop && preset.taste.crop()
+        said(self.crop, self.no_crop).unwrap_or_else(|| preset.taste.crop())
     }
 
     /// 本次的报告**摊到哪一级**（`p4-parking-lot/22`）。**默认摊开**，`--brief` 折起它。
@@ -317,10 +358,11 @@ impl Cli {
         }
     }
 
-    /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它。
-    /// 关掉的只是上包络那一层，迟滞改走段式（`CONTEXT.md` 的《段式迟滞》）。
+    /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它、
+    /// `--no-per-page` 关回去。关掉的只是上包络那一层，迟滞改走段式
+    /// （`CONTEXT.md` 的《段式迟滞》）。
     fn per_page(&self, preset: &Preset) -> bool {
-        self.per_page || preset.taste.per_page()
+        said(self.per_page, self.no_per_page).unwrap_or_else(|| preset.taste.per_page())
     }
 
     /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
@@ -330,7 +372,7 @@ impl Cli {
     fn split_rule(&self, preset: &Preset) -> Result<SplitRule> {
         let stored = preset.taste.split_rule();
         Ok(SplitRule {
-            on: !self.no_split && stored.on,
+            on: said(self.split, self.no_split).unwrap_or(stored.on),
             threshold: match &self.split_threshold {
                 Some(text) => SplitThreshold::parse(text)?,
                 None => stored.threshold,
@@ -446,6 +488,23 @@ impl Cli {
             output_root: self.out.expect(REQUIRED_BY_CLAP),
             inputs: self.inputs,
         })
+    }
+}
+
+/// 一对开关**说出来的那个方向**：点了正面是 `Some(true)`，点了反面是 `Some(false)`，
+/// 一个都没点是 `None`——「没说」。
+///
+/// 「没说」与「说了一个恰好等于默认的值」在这里仍是两件事：前者往下落到预设、
+/// 再落到默认值，后者当场定死。分不开这两者，`--crop` 对着一份写着 `crop = false`
+/// 的预设就开不回来了。
+///
+/// **两个一起点名走不到这里**：clap 的 `conflicts_with` 挡在前面（见各对开关的
+/// `#[arg]`），错在哪、该怎么敲由它说，这里不再写第二份说法。
+fn said(yes: bool, no: bool) -> Option<bool> {
+    match (yes, no) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        (false, false) => None,
     }
 }
 
@@ -1386,57 +1445,145 @@ io-mode = \"concurrent\"
             "64M",
             "--io-mode",
             "serial",
+            // 三对布尔开关也在里面：预设把这三项说到了另一侧（`crop = false`、
+            // `split = false`、`per-page = true`），命令行在这里逐项说反面。
+            // 反面落地之前它们进不来——那时命令行只说得出预设已经说到的那一侧，
+            // 「命令行赢」在它们身上无从分辨（停车场 Q55）。
+            "--crop",
+            "--split",
+            "--no-per-page",
         ];
         let mut with_preset = vec!["--preset", "漫画"];
         with_preset.extend_from_slice(&flags);
 
-        // 裁边、拆分、逐页三项不在这里：命令行只说得出一个方向，而预设把前两项已经关到了
-        // 命令行说得出的那一侧、把第三项开到了那一侧——「命令行赢」在它们身上无从分辨。
-        // 单向那条规矩由 `the_switches_that_only_say_one_thing_stay_one_way` 钉。
-        let mut typed_out = flags.to_vec();
-        typed_out.extend(["--no-crop", "--no-split", "--per-page"]);
-
         assert_eq!(
             request_line(&with_preset, &preset),
-            request_line(&typed_out, &no_preset()),
+            request_line(&flags, &no_preset()),
             "预设盖过了命令行上显式点到的那一项"
         );
     }
 
-    /// 三个只说得出一个方向的开关：预设关得掉，命令行关不回来。
+    /// **预设关掉的开关，命令行开得回来**（本票验收第 1 条）。
     ///
-    /// 钉的是那条**单向**的规矩本身（见 `Cli` 那个 `impl` 的抬头）——它是有意的取舍，
-    /// 不是漏了三个 flag，因此得有一行说得出它当下是什么样。
+    /// 钉的是**两个方向**。开回来那一半是新的：从前命令行只说得出关的那一侧，
+    /// 预设把裁边关掉之后这一趟就没有再开回来的写法了（停车场 Q55）。
+    /// 关下去那一半照旧成立，一并验在这里——三对开关各有反面之后，
+    /// 「命令行上显式点到的那一项赢」在它们身上才两个方向都分辨得出。
     #[test]
-    fn the_switches_that_only_say_one_thing_stay_one_way() {
+    fn a_switch_a_preset_closed_opens_back_up_on_the_command_line() {
         let off = preset::read(
             "[preset.\"漫画\".taste]\ncrop = false\nsplit = false\nper-page = true\n",
             "漫画",
         )
         .expect("读得懂");
+        let line = ["--preset", "漫画", "--profile", "kobo-libra-2"];
+
+        assert!(!parse(&line).crop(&off), "预设关不掉裁边");
+        assert!(
+            !parse(&line).split_rule(&off).expect("合得出").on,
+            "预设关不掉拆分"
+        );
+        assert!(parse(&line).per_page(&off), "预设开不了逐页");
+
+        let mut opened = line.to_vec();
+        opened.extend(["--crop", "--split", "--no-per-page"]);
+        assert!(parse(&opened).crop(&off), "--crop 没把预设关掉的裁边开回来");
+        assert!(
+            parse(&opened).split_rule(&off).expect("合得出").on,
+            "--split 没把预设关掉的拆分开回来"
+        );
+        assert!(
+            !parse(&opened).per_page(&off),
+            "--no-per-page 没把预设开着的逐页关回去"
+        );
+
+        // 另一个方向：预设说的是开着的那一侧，命令行关得下去。
         let on = preset::read(
             "[preset.\"漫画\".taste]\ncrop = true\nsplit = true\nper-page = false\n",
             "漫画",
         )
         .expect("读得懂");
-        let line = ["--preset", "漫画", "--profile", "kobo-libra-2"];
-
-        // 预设关得掉，命令行上没有把它开回来的写法。
-        let cli = parse(&line);
-        assert!(!cli.crop(&off), "预设关不掉裁边");
-        assert!(!cli.split_rule(&off).expect("合得出").on, "预设关不掉拆分");
-        assert!(cli.per_page(&off), "预设开不了逐页");
-
-        // 反过来，命令行说得出的那一个方向压得过预设。
-        let mut relented = line.to_vec();
-        relented.extend(["--no-crop", "--no-split", "--per-page"]);
-        let cli = parse(&relented);
-        assert!(!cli.crop(&on), "--no-crop 没压过预设");
+        let mut closed = line.to_vec();
+        closed.extend(["--no-crop", "--no-split", "--per-page"]);
+        assert!(!parse(&closed).crop(&on), "--no-crop 没压过预设");
         assert!(
-            !cli.split_rule(&on).expect("合得出").on,
+            !parse(&closed).split_rule(&on).expect("合得出").on,
             "--no-split 没压过预设"
         );
-        assert!(cli.per_page(&on), "--per-page 没压过预设");
+        assert!(parse(&closed).per_page(&on), "--per-page 没压过预设");
+    }
+
+    /// **一对开关同时点名当场说得清是哪两个**（本票验收第 2 条）。
+    ///
+    /// 三对逐对都验。挡它的是 clap 的 `conflicts_with`，本仓库不自己写第二份说法——
+    /// 那一层说得出错在哪、该怎么敲，而自己写的那一份只会与它的用法行对不上。
+    #[test]
+    fn a_switch_and_its_opposite_in_the_same_run_is_an_error() {
+        for (yes, no) in [
+            ("--crop", "--no-crop"),
+            ("--split", "--no-split"),
+            ("--per-page", "--no-per-page"),
+        ] {
+            let complaint = Cli::try_parse_from([
+                "tonefit",
+                "--out",
+                "out",
+                "--profile",
+                "kobo-libra-2",
+                yes,
+                no,
+                "volume-a",
+            ])
+            .err()
+            .expect("同一趟里说不出一件事的两面")
+            .render()
+            .to_string();
+
+            assert!(
+                complaint.contains(yes),
+                "{yes} 与 {no} 撞上，说法里没有 {yes}：{complaint}"
+            );
+            assert!(
+                complaint.contains(no),
+                "{yes} 与 {no} 撞上，说法里没有 {no}：{complaint}"
+            );
+        }
+    }
+
+    /// **三对开关，每一项的帮助里都说得出它的反面**（本票验收第 3 条）。
+    ///
+    /// 问的是**那一项自己**的帮助原文，不是整份渲染出来的帮助：整份里六个长名都在，
+    /// `contains` 说不出「反面写在哪一项名下」——而这一条要的正是「站在这一项上
+    /// 看得见另一半」。
+    ///
+    /// 认的是**打了反引号**的那个长名（`` `--split` ``），不是裸的 `--split`：
+    /// `--no-split` 的帮助里本来就有 `--split-threshold`，裸着比会被它蒙混过去。
+    #[test]
+    fn the_help_says_each_switch_and_its_opposite() {
+        let command = Cli::command();
+
+        for (yes, no) in [
+            ("crop", "no-crop"),
+            ("split", "no-split"),
+            ("per-page", "no-per-page"),
+        ] {
+            for (one, other) in [(yes, no), (no, yes)] {
+                let id = one.replace('-', "_");
+                let argument = command
+                    .get_arguments()
+                    .find(|argument| argument.get_id() == id.as_str())
+                    .unwrap_or_else(|| panic!("--{one} 该在命令行上"));
+                let help = argument
+                    .get_long_help()
+                    .expect("这一项该有长帮助")
+                    .to_string();
+
+                assert!(
+                    help.contains(&format!("`--{other}`")),
+                    "--{one} 的帮助里没有它的反面 --{other}：{help}"
+                );
+            }
+        }
     }
 
     /// **摊开与折起由 `--brief` 一个开关定**（`p4-parking-lot/22` 票面第二条）。

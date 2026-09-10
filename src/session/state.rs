@@ -3916,8 +3916,8 @@ impl Session {
             Field::GrayLevels => spell(self.device.gray_levels, "跟随面板"),
             Field::Threshold => self.threshold_shown(),
             Field::Fit => spell_name(self.taste.fit, FitMode::name),
-            Field::Crop => spell_flag(self.taste.crop, true, "裁", "不裁"),
-            Field::Split => spell_flag(self.taste.split, true, "拆", "不拆"),
+            Field::Crop => spell_flag(self.taste.crop, self.taste.crop(), "裁", "不裁"),
+            Field::Split => spell_flag(self.taste.split, self.taste.split_rule().on, "拆", "不拆"),
             Field::SplitThreshold => spell(
                 self.taste.split_threshold.map(SplitThreshold::value),
                 &SplitThreshold::default().value().to_string(),
@@ -3932,7 +3932,7 @@ impl Session {
                 Some(dither) => dither.name().to_owned(),
                 None => "自动（判据说了算）".to_owned(),
             },
-            Field::PerPage => spell_flag(self.taste.per_page, false, "开", "关"),
+            Field::PerPage => spell_flag(self.taste.per_page, self.taste.per_page(), "开", "关"),
             Field::CacheBudget => match self.taste.cache_budget {
                 Some(budget) => budget.to_string(),
                 None => format!("默认（{}）", CacheBudget::default()),
@@ -3974,11 +3974,25 @@ fn spell_name<T: Copy + Default>(value: Option<T>, name: impl Fn(T) -> &'static 
     }
 }
 
-fn spell_flag(value: Option<bool>, fallback: bool, yes: &str, no: &str) -> String {
+/// 一个布尔项在屏上的写法。`taken` 是这一格**落到默认值之后**的取值，
+/// 由 [`TasteLayer`] 那几个方法交出来（`taste.crop()`、`taste.split_rule().on`、……）。
+///
+/// **不收一个写死的默认值**：那会是口味层默认值的第二份出处，而屏上那句「默认（裁）」
+/// 与这一趟真拼出来的 `Request` 从此各说各的——口味层改了向，屏上照旧印着旧话
+/// （`p4-parking-lot/20` 验收第 4 条）。
+///
+/// **这一条没有用例钉得住，说清楚为什么。** 两头都从 [`TasteLayer`] 那几个方法取之后，
+/// 「屏上说的等于真做的」就是同义反复：一条断言的两边落到同一个函数上，
+/// 把 `taken` 换回字面量它照样绿——字面量此刻恰好等于默认值。
+/// 拦住第二份出处的是**这个参数的名字与这段话**：它要的是「这一格最后取到什么」，
+/// 不是「默认值是什么」，调用点因此写 `self.taste.crop()`。
+/// `value` 与 `taken` 两个参数不合并，理由在
+/// [`tests::saying_the_default_out_loud_still_reads_differently_from_saying_nothing`]。
+fn spell_flag(value: Option<bool>, taken: bool, yes: &str, no: &str) -> String {
     let word = |flag: bool| if flag { yes } else { no };
     match value {
         Some(flag) => word(flag).to_owned(),
-        None => format!("默认（{}）", word(fallback)),
+        None => format!("默认（{}）", word(taken)),
     }
 }
 
@@ -5871,10 +5885,51 @@ mod tests {
         assert_eq!(trial.cache_budget, run.cache_budget);
     }
 
-    /// 一项都没改的会话拼出来的，与**一个 flag 都不加的命令行**拼出来的逐项相同。
+    /// 屏上「**没说**」与「**说了一个恰好等于默认的值**」仍是两句话
+    ///（`p4-parking-lot/20` 验收第 5 条）。
+    ///
+    /// 三行布尔项各验一遍：没说那一格印「默认（裁）」，说了 `Some(true)` 印「裁」。
+    /// 两者拼出来的 `Request` 一模一样，差别只在**存成预设时**才落到盘上
+    /// （「这一项不写」与「这一项写着 `crop = true`」，见 [`Session::preset`] 与停车场 Q58）——
+    /// 而屏上看不见的差别用户改不动。
+    ///
+    /// **收默认值那一步因此不能把 `Option` 拍平**：`spell_flag` 收的是
+    /// 「说了没有」与「落到默认之后取到什么」两个东西，拍成一个具体值就一刀切掉了这个区分。
+    #[test]
+    fn saying_the_default_out_loud_still_reads_differently_from_saying_nothing() {
+        let mut session = Session::new();
+
+        for (field, spoken, said, silent) in [
+            (Field::Crop, true, "裁", "默认（裁）"),
+            (Field::Split, true, "拆", "默认（拆）"),
+            (Field::PerPage, false, "关", "默认（关）"),
+        ] {
+            assert_eq!(session.shown(field), silent, "{field:?} 没说那一格");
+
+            match field {
+                Field::Crop => session.taste.crop = Some(spoken),
+                Field::Split => session.taste.split = Some(spoken),
+                Field::PerPage => session.taste.per_page = Some(spoken),
+                _ => unreachable!("上面那张表只有这三行"),
+            }
+            assert_eq!(
+                session.shown(field),
+                said,
+                "{field:?} 说了一个恰好等于默认的值，屏上却与没说是同一句"
+            );
+        }
+    }
+
+    /// 一项都没改的会话拼出来的，与**一个 flag 都不加的命令行**拼出来的**逐格相同**
+    ///（`p4-parking-lot/20` 验收第 4 条）。
     ///
     /// 「命令行没点、预设也没说」那一档与会话读的是同一个（`preset::TasteLayer` 那几个
     /// 方法），这一条钉的就是那件事：默认值没有第二个出处。
+    ///
+    /// **比的是整份 `Request` 的 `Debug`，不是挑几个字段**，与命令行那一侧的
+    /// `crate::tests::request_line` 同一条道理：挑着比就等于在用例里自己重列一遍那张单子，
+    /// 而**漏掉一项**恰恰是这条要防的事——往 `Request` 添一格、两边各填各的，
+    /// 逐项那种写法一个字都不会说。观察者两边都是 `None`，比得起来。
     #[test]
     fn an_untouched_session_asks_for_what_a_bare_command_line_asks_for() {
         let mut session = Session::new();
@@ -5898,18 +5953,11 @@ mod tests {
         .request(&crate::preset::Preset::default())
         .expect("拼得出来");
 
-        assert_eq!(asked.fit, command_line.fit);
-        assert_eq!(asked.crop, command_line.crop);
-        assert_eq!(asked.split, command_line.split);
-        assert_eq!(asked.filter, command_line.filter);
-        assert_eq!(asked.bit_depth, command_line.bit_depth);
-        assert_eq!(asked.dither, command_line.dither);
-        assert_eq!(asked.per_page, command_line.per_page);
-        assert_eq!(asked.cache_budget, command_line.cache_budget);
-        assert_eq!(asked.io_mode, command_line.io_mode);
-        assert_eq!(asked.metadata, command_line.metadata);
-        assert_eq!(asked.inputs, command_line.inputs);
-        assert_eq!(asked.output_root, command_line.output_root);
+        assert_eq!(
+            format!("{asked:?}"),
+            format!("{command_line:?}"),
+            "会话与光命令行拼出来的不是同一份"
+        );
     }
 
     /// 退出只由那几个键说得出来，别的键按到底都退不出去。
