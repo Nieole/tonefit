@@ -1,27 +1,27 @@
-//! 四条真机判读结论立成的护栏：判据合不合**人眼**。
+//! 五条真机判读结论立成的护栏：判据合不合**人眼**。
 //!
 //! 与 `tests/metric.rs` 是**两类东西**。那一篇验的是「代码做了它该做的」，出处是 ADR 0002；
 //! 这一篇验的是「代码合不合人眼」，出处是 `.scratch/metric-recalibration/judgements/`
-//! 底下那几轮真机判读。判据的下一次改动撞到这四条会**当场红**，
+//! 底下那几轮真机判读。判据的下一次改动撞到这五条会**当场红**，
 //! 而不是要再上一次机才发现。
 //!
 //! **只认真机那几轮。**`judgements/README.md` 写着口径：第四、五轮是模型判读局部放大块，
 //! **不作标定依据**；第六轮起是人在 Kobo Libra 2 上整页 1:1 看，那几轮才作数。
-//! 这四条一条都不引模型那两轮，每一条各指回它那一轮的逐对数据。
+//! 这五条一条都不引模型那两轮，每一条各指回它那一轮的逐对数据。
 //!
-//! **写性质，不写读数。**四条断的都是「这两样东西之间的关系」——谁更干净、撒不撒点、
-//! 三格结论同不同——一条都不断具体读数。换面板即换低通核、换夹具即换页，
+//! **写性质，不写读数。**五条断的都是「两样东西之间的关系」——谁更干净、撒不撒点、
+//! 三格结论同不同、界放不放行——一条都不断具体读数。换面板即换低通核、换夹具即换页，
 //! 读数会动而关系不该动（ADR 0002：判据数值不可跨面板比较）。
 //!
-//! **前三条用合成夹具，第四条走 opt-in 真实素材。**真实素材不入库（spec 的
-//! 《Testing Decisions》），第四条那四页是真实版面，合成造不出来。
+//! **前三条用合成夹具，后两条走 opt-in 真实素材。**真实素材不入库（spec 的
+//! 《Testing Decisions》），那两条各自那几页是真实版面，合成造不出来。
 //!
 //! **自带 harness**（`Cargo.toml` 里 `[[test]] harness = false`）：理由与 `tests/smoke.rs`
-//! 是同一条，写在那一篇的模块文档里，这里不复述。这一篇要它只为第四条——**跳过要说得出口**。
+//! 是同一条，写在那一篇的模块文档里，这里不复述。这一篇要它只为后两条——**跳过要说得出口**。
 //!
 //! ```text
-//! cargo test --test perceptual                            # 前三条，第四条印一行跳过
-//! TONEFIT_SAMPLES=<素材目录> cargo test --test perceptual   # 四条全跑
+//! cargo test --test perceptual                            # 前三条，后两条各印一行跳过
+//! TONEFIT_SAMPLES=<素材目录> cargo test --test perceptual   # 五条全跑
 //! ```
 //!
 //! 素材指过来了却指错地方**不是跳过**：那是点名要跑，当场红（同 `tests/smoke.rs`）。
@@ -30,12 +30,14 @@ mod fixtures;
 
 use std::path::{Path, PathBuf};
 
-use tonefit::{BitDepth, Candidate, GrayImage, Reference, Score, Size, quantize, score};
+use tonefit::{
+    BitDepth, Candidate, GeometryGate, GrayImage, Reference, Score, Size, quantize, score,
+};
 
 /// 一条用例：它的名字，加它自己。名字给命令行的过滤词比对，也给落款用。
 type Case = (&'static str, fn() -> Outcome);
 
-/// 这一篇的四条，按票面的次序。
+/// 这一篇的五条，按票面的次序。
 const CASES: &[Case] = &[
     (
         "near_white_flat_tones_never_favour_dithering",
@@ -52,6 +54,10 @@ const CASES: &[Case] = &[
     (
         "off_grid_by_one_real_pages_still_favour_four_bit_plain",
         off_grid_by_one_real_pages_still_favour_four_bit_plain,
+    ),
+    (
+        "continuous_tone_pages_never_take_the_candidate_the_eye_called_banded",
+        continuous_tone_pages_never_take_the_candidate_the_eye_called_banded,
     ),
 ];
 
@@ -106,7 +112,7 @@ fn selected(name: &str) -> bool {
 ///
 /// 缩小不影响这三条：一、三条的页是平坦调，每一块的读数本来就一样；第二条数的是
 /// 白底上有几个像素被撒了点，那是**逐像素**的事，与分块聚合无关。
-/// 第四条不走它——真实页有多大就是多大。
+/// 后两条不走它——真实页有多大就是多大。
 const PAGE: Size = Size::new(640, 832);
 
 /// 第七轮 L 组那十五格：《离格量》u × 三种背景亮度，逐格的目标灰度。
@@ -356,6 +362,93 @@ fn off_grid_by_one_real_pages_still_favour_four_bit_plain() -> Outcome {
         "{} 下 {} 页离格 1 的真实页，4bit 不抖逐页干净过 2bit+FS",
         directory.display(),
         OFF_GRID_BY_ONE_PAGES.len()
+    ))
+}
+
+/// 第十轮 P 组那两对的**参照 8bit** 在素材目录里的位置。
+///
+/// 闸① 那十二页同在这一个目录下，第十轮只从里面取了四页重新配对（见
+/// `.scratch/metric-recalibration/calibration/pack_round_ten.py`）。
+const BANDED_DIRECTORY: &str = "_实验-判据重标定/闸1补测包/参照8bit/G_闸1补测";
+
+/// 第十轮 P 组里 `4bit+FS` 与 `4bit 不抖` 正面相对的那两对（对 01 与对 04），
+/// 页名取自 `judgements/第十轮闸1的4bitFS与对齐后B组.json` 的 `P_闸1`。
+const BANDED_PAGES: [&str; 2] = [
+    "FCD-DFC-15-1056-随心所欲照片列印机-05-1.png",
+    "FCD-DFC-15-1054-梦境导演椅-05-1.png",
+];
+
+/// 真机在那两页上选的那一档。它**留在候选集里**是这一条的前提
+/// （`metric-recalibration/06`——删掉它——已 wontfix）。
+const THE_EYE_PICKED: Candidate = fixtures::dithered(BitDepth::Four);
+
+/// **第五条：连续灰调页上选不到真机说有色带的那一档。**
+///
+/// 出处：第十轮 P 组 **`4bit+FS` 对 `4bit 不抖` 2/2 全胜，两次理由都是对方有色带**
+/// （`judgements/第十轮闸1的4bitFS与对齐后B组.json` 的 `P_闸1` 对 01 与对 04）。
+/// 那两页是哆啦A梦 v15 里的连续灰调页，色带风险面积 44.89% 与 52.20%——
+/// 落在 measurements 的《色带风险面积把五组真机页分成两侧》那张表的闸① 那一侧。
+///
+/// 性质：候选集里**排在 [`THE_EYE_PICKED`] 之前的每一档都在界外**。
+/// 候选由小到大、选的是界以内最低的一档（`src/decide.rs`）：前面那几档都过不了界，
+/// 逐页判定就只能落到真机选的那一档上——要么它自己在界内，要么一档都不在、
+/// 走兜底取候选上界，而门成立时上界正是它。**断的是「界放不放行」，不是任何一个读数**：
+/// 界从 profile 上取，标定把它换掉时这一条不必跟着改。
+///
+/// 守的是什么：`4bit 不抖` 就近取整在连续灰调上造出的台阶真机看得见，而判据只用低通项读它、
+/// 按幅度给分（第九轮那一条）。界向上抖一格就把这一档圈回来，这一条当场红。
+///
+/// **这一条合成不出来**：要的是真实版面上那片连续灰调，合成的平坦块没有台阶边。
+/// 于是走 opt-in 真实素材，照同篇第四条那一套（口径见模块文档）。
+fn continuous_tone_pages_never_take_the_candidate_the_eye_called_banded() -> Outcome {
+    let Some(root) = samples() else {
+        return Outcome::Skipped(format!(
+            "{SAMPLES} 没有指向任何目录，第十轮 P 组那两对这一趟一页都没验。\n\
+             要跑就 `{SAMPLES}=<素材目录> cargo test --test perceptual`；\
+             那两页在素材目录下的 {BANDED_DIRECTORY}/。"
+        ));
+    };
+    let directory = root.join(BANDED_DIRECTORY);
+    assert!(
+        directory.is_dir(),
+        "{SAMPLES} 指向 {}，而 {BANDED_DIRECTORY}/ 不在它底下：\
+         点名要跑真实素材却指错了地方，静悄悄通过等于骗人",
+        root.display()
+    );
+
+    let profile = fixtures::baseline_profile();
+    let threshold = profile.threshold();
+    // 那两页的参照高已等于面板高（渲出来就是目标尺寸），几何门成立：候选六个、带抖动那一维。
+    let candidates = Candidate::all(profile.panel().gray_levels, GeometryGate::Holds);
+    assert!(
+        candidates.contains(&THE_EYE_PICKED),
+        "候选集里没有 {THE_EYE_PICKED}：真机选的就是它，没有它这一条无从谈起"
+    );
+
+    let mut checked = 0;
+    for name in BANDED_PAGES {
+        let page = directory.join(name);
+        let reference = baseline_reference(read_gray_page(&page));
+        for candidate in candidates
+            .iter()
+            .copied()
+            .take_while(|&it| it != THE_EYE_PICKED)
+        {
+            let score = reading(&reference, candidate);
+            println!("  {name} {candidate}：{score}");
+            assert!(
+                !threshold.admits(score),
+                "{name} 上 {candidate} 读成 {score}、落在界以内，逐页判定会先选走它：\
+                 真机在这一页上选的是 {THE_EYE_PICKED}，而 `4bit 不抖` 那一张被逐字判了「有色带」\
+                 （第十轮 P 组 2/2，两次理由都是色带）"
+            );
+            checked += 1;
+        }
+    }
+
+    Outcome::Ran(format!(
+        "第十轮 P 组那 {} 页上，排在 {THE_EYE_PICKED} 之前的 {checked} 档一档都不在界内",
+        BANDED_PAGES.len()
     ))
 }
 

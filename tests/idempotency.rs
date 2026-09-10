@@ -72,9 +72,21 @@ fn a_dry_run_predicts_the_skip() {
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {
-    let changes: [Change; 10] = [
+    let changes: [Change; 11] = [
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
+        }),
+        // 阈值是**界**，判据是**量**（`CONTEXT.md`）：界挪一格，逐页判定就可能落到另一档上，
+        // 上一趟的输出整卷过期。换档位不需要判据变——标定重新夹一次窗口就够了
+        // （`metric-recalibration/07` 就是这么一趟），幂等得拦得住那一趟。
+        // 改动相对当前取值（翻倍）：标定把界换成多少，这一条都不必跟着改。
+        ("换阈值", |request| {
+            let doubled = request.profile.threshold().value() * 2.0;
+            request.profile = request
+                .profile
+                .clone()
+                .with_threshold(doubled)
+                .expect("两倍仍在 0 与 255 之间")
         }),
         ("覆盖面板灰阶数", |request| {
             request.profile = fixtures::baseline_profile()
