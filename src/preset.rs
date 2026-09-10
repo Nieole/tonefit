@@ -60,7 +60,8 @@ const PRESET_FILE: &str = "tonefit/presets.toml";
 
 /// 一份读进来、逐项验过的预设。
 ///
-/// 每一项都是 `Option`：预设**只说它说到的那几项**，没说到的落到命令行的默认值上。
+/// 每一项都是 `Option`：预设**只说它说到的那几项**，没说到的落到默认值上——
+/// 而那些默认值只有一处出处（[`TasteLayer`] 那几个方法），命令行与会话读的是同一个。
 /// 「没写」与「写成默认值」在这里是同一个结果，两者都不该盖掉命令行上显式点到的那一项。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Preset {
