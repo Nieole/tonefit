@@ -31,6 +31,7 @@ gray-levels = 12
 [preset.\"漫画\".taste]
 fit = \"inside\"
 filter = \"hamming\"
+white-align-limit = 2
 cache-budget = \"64M\"
 ";
 
@@ -44,6 +45,8 @@ const TYPED_OUT: &[&str] = &[
     "inside",
     "--filter",
     "hamming",
+    "--white-align-limit",
+    "2",
     "--cache-budget",
     "64M",
 ];
@@ -172,11 +175,10 @@ fn a_preset_that_cannot_be_read_stops_the_run_before_it_starts() {
         volume.path(),
     );
     assert_eq!(missing.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&missing.stderr).contains("预设"),
-        "{}",
-        String::from_utf8_lossy(&missing.stderr)
-    );
+    let complaint = String::from_utf8_lossy(&missing.stderr);
+    assert!(complaint.contains("预设"), "{complaint}");
+    // 那句里带着一份照抄就能用的样例，口味层那一节里有纸白对齐上限（03 号票）。
+    assert!(complaint.contains("white-align-limit"), "{complaint}");
 }
 
 /// `--preset` 供了型号时 `-p` 不再必填；其余情况必填照旧（07 号票的验收）。

@@ -423,14 +423,16 @@ impl Cli {
         }
     }
 
-    /// 本次纸白对齐的上限（纸白对齐批 01 号票）。不点名就是默认的 4 级，即默认开着
-    /// （05 号票抬的那一趟）；关掉要自己点名 0。
+    /// 本次纸白对齐的上限（纸白对齐批 01 号票）。命令行点了名就是那个数，没点就是预设说的，
+    /// 预设也没说才是默认的 4 级，即默认开着（05 号票抬的那一趟）；关掉要自己点名 0。
     ///
-    /// **它眼下不收预设**：预设那一层是 03 号票，落地之前这里只认命令行。
-    /// 默认值不在这里——它在 `WhiteAlignLimit::default`，抬默认值那一趟只改那一处。
-    fn white_align_limit(&self) -> WhiteAlignLimit {
+    /// **命令行点名的 0 也赢**：它是一个说了的值，不是「没说」——`--preset 漫画 --white-align-limit 0`
+    /// 就是「套那一份，再改这一项」（03 号票）。数值项没有那三对布尔开关的单向毛病，
+    /// 因此不另做反面开关。默认值不在这里——它在 `WhiteAlignLimit::default`，
+    /// 落到它那一步走 `TasteLayer::white_align_limit`，与其余口味项同一条路。
+    fn white_align_limit(&self, preset: &Preset) -> WhiteAlignLimit {
         self.white_align_limit
-            .map_or_else(WhiteAlignLimit::default, WhiteAlignLimit::new)
+            .map_or_else(|| preset.taste.white_align_limit(), WhiteAlignLimit::new)
     }
 
     /// 本次要不要点名位深。不点名就由判据说了算。
@@ -507,7 +509,7 @@ impl Cli {
             crop: self.crop(preset),
             split: self.split_rule(preset)?,
             filter: self.residual_filter(preset)?,
-            white_align_limit: self.white_align_limit(),
+            white_align_limit: self.white_align_limit(preset),
             bit_depth: self.bit_depth_override(preset)?,
             dither: self.dither_override(preset)?,
             envelope: self.envelope(preset),
@@ -1348,6 +1350,7 @@ split = false
 split-threshold = 1.75
 reading-order = \"ltr\"
 filter = \"hamming\"
+white-align-limit = 2
 bit-depth = 2
 dither = \"fs\"
 envelope = true
@@ -1371,6 +1374,8 @@ io-mode = \"concurrent\"
             "ltr",
             "--filter",
             "hamming",
+            "--white-align-limit",
+            "2",
             "--bit-depth",
             "2",
             "--dither",
@@ -1471,6 +1476,9 @@ io-mode = \"concurrent\"
             "rtl",
             "--filter",
             "bicubic",
+            // 预设说 2，命令行说 0——数值项的「关」也是一个说了的值，压得过预设（03 号票）。
+            "--white-align-limit",
+            "0",
             "--bit-depth",
             "4",
             "--dither",
@@ -2347,29 +2355,57 @@ io-mode = \"concurrent\"
     /// **合出来的那个值不在这里比死**：拿的是 `WhiteAlignLimit::default`，那是它唯一的出处。
     /// 底下那一句**比的是那个数本身**，也只有这一句比它——默认值一动它就红，
     /// 而那正是这件事该有的分量：抬默认值改的是**不加参数的人拿到的产物**。
+    ///
+    /// 预设那一层（03 号票）也在这里：预设说了就用预设的，**命令行显式点到的赢**——
+    /// `--preset 漫画 --white-align-limit 0` 是「套那一份，再改这一项」；两处都没说才落到默认值。
     #[test]
     fn the_white_align_limit_takes_a_number_of_levels_and_defaults_to_four() {
-        let limit = |arguments: &[&str]| {
+        let limit = |arguments: &[&str], preset: &Preset| {
             let mut line = vec!["--profile", "kobo-libra-2"];
             line.extend_from_slice(arguments);
-            parse(&line).white_align_limit()
+            parse(&line).white_align_limit(preset)
         };
 
-        assert_eq!(limit(&[]), WhiteAlignLimit::default(), "不点名就该是默认值");
         assert_eq!(
-            limit(&[]).levels(),
+            limit(&[], &no_preset()),
+            WhiteAlignLimit::default(),
+            "不点名就该是默认值"
+        );
+        assert_eq!(
+            limit(&[], &no_preset()).levels(),
             4,
             "默认值不是 4：不加参数的那一趟对齐得动的页不再是这一批"
         );
         assert_eq!(
-            limit(&["--white-align-limit", "4"]),
+            limit(&["--white-align-limit", "4"], &no_preset()),
             WhiteAlignLimit::new(4)
         );
         // 关得掉：点名 0 与不点名合出同一个值。
         assert_eq!(
-            limit(&["--white-align-limit", "0"]),
+            limit(&["--white-align-limit", "0"], &no_preset()),
             WhiteAlignLimit::OFF,
             "点名 0 不是关"
+        );
+
+        // 预设说了 2：命令行不点名就是 2，点名 0 就是 0（命令行赢）；预设没说这一项就回默认。
+        let stored = preset::read("[preset.\"漫画\".taste]\nwhite-align-limit = 2\n", "漫画")
+            .expect("读得懂");
+        assert_eq!(
+            limit(&["--preset", "漫画"], &stored),
+            WhiteAlignLimit::new(2),
+            "预设存的上限没被用上"
+        );
+        assert_eq!(
+            limit(&["--preset", "漫画", "--white-align-limit", "0"], &stored),
+            WhiteAlignLimit::OFF,
+            "预设盖过了命令行上显式点到的 0"
+        );
+        let silent =
+            preset::read("[preset.\"漫画\".taste]\nfit = \"inside\"\n", "漫画").expect("读得懂");
+        assert_eq!(
+            limit(&["--preset", "漫画"], &silent),
+            WhiteAlignLimit::default(),
+            "预设没说这一项，该与其余口味项一样回到默认值"
         );
         // 认不出的取值在拼 Request 之前就被挡下，不静默套默认值。
         assert!(
