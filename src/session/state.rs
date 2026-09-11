@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Panel,
-    Profile, ReadingOrder, Request, SplitThreshold,
+    Profile, ReadingOrder, Request, SplitThreshold, WhiteAlignLimit,
 };
 
 use super::complete;
@@ -419,6 +419,7 @@ pub enum Field {
     SplitThreshold,
     ReadingOrder,
     Filter,
+    WhiteAlignLimit,
     BitDepth,
     Dither,
     Envelope,
@@ -435,19 +436,22 @@ pub enum Field {
 /// 设备层的三项，次序就是屏上的次序（`p1-session/07` 的分法）。
 pub const DEVICE_FIELDS: [Field; 3] = [Field::Profile, Field::GrayLevels, Field::Threshold];
 
-/// 口味层的十一项，次序就是屏上的次序（`p1-session/07` 的分法）。
+/// 口味层的十二项，次序就是屏上的次序（`p1-session/07` 的分法）。
 ///
 /// 前五项是页几何那一批添的（适配方式、裁边、拆分与阈值、阅读方向），
-/// 后六项是 spec 的《会话：三层与预设》原本就列着的那几项。
+/// 纸白对齐上限是纸白对齐那一批添的（04 号票），摆在滤波器之后——
+/// 与它在管线里的位置同序（缩放之后、量化之前），也与 [`TasteLayer`] 的字段同序；
+/// 其余六项是 spec 的《会话：三层与预设》原本就列着的那几项。
 /// 这张单子与 [`TasteLayer`] 的字段**一一对应**，由本模块的
-/// `the_taste_layer_on_screen_is_the_taste_layer_a_preset_stores` 拴住。
-pub const TASTE_FIELDS: [Field; 11] = [
+/// `the_two_layers_on_screen_are_the_two_layers_a_preset_stores` 拴住。
+pub const TASTE_FIELDS: [Field; 12] = [
     Field::Fit,
     Field::Crop,
     Field::Split,
     Field::SplitThreshold,
     Field::ReadingOrder,
     Field::Filter,
+    Field::WhiteAlignLimit,
     Field::BitDepth,
     Field::Dither,
     Field::Envelope,
@@ -482,6 +486,7 @@ impl Field {
             | Field::SplitThreshold
             | Field::ReadingOrder
             | Field::Filter
+            | Field::WhiteAlignLimit
             | Field::BitDepth
             | Field::Dither
             | Field::Envelope
@@ -503,6 +508,7 @@ impl Field {
             Field::SplitThreshold => "拆分阈值",
             Field::ReadingOrder => "阅读方向",
             Field::Filter => "滤波器",
+            Field::WhiteAlignLimit => "纸白对齐上限",
             Field::BitDepth => "位深",
             Field::Dither => "抖动",
             Field::Envelope => "上包络",
@@ -539,9 +545,11 @@ impl Field {
     /// 这一行怎么改。逐个变体都列出来，理由与 [`layer`](Self::layer) 同一条。
     pub fn shape(self) -> Shape {
         match self {
-            Field::GrayLevels | Field::Threshold | Field::SplitThreshold | Field::CacheBudget => {
-                Shape::Text
-            }
+            Field::GrayLevels
+            | Field::Threshold
+            | Field::SplitThreshold
+            | Field::WhiteAlignLimit
+            | Field::CacheBudget => Shape::Text,
             Field::Out | Field::AddVolume => Shape::Path,
             Field::Profile
             | Field::Fit
@@ -1921,9 +1929,7 @@ impl Session {
             crop: taste.crop(),
             split: taste.split_rule(),
             filter: taste.filter(),
-            // 口味层里还没有这一项：会话那一层是纸白对齐批 04 号票，
-            // 落地之前这里恒取默认（关）。默认值只有 `WhiteAlignLimit::default` 一个出处。
-            white_align_limit: tonefit::WhiteAlignLimit::default(),
+            white_align_limit: taste.white_align_limit(),
             bit_depth: taste.bit_depth,
             dither: taste.dither,
             envelope: taste.envelope(),
@@ -3473,6 +3479,7 @@ impl Session {
             Field::GrayLevels
             | Field::Threshold
             | Field::SplitThreshold
+            | Field::WhiteAlignLimit
             | Field::CacheBudget
             | Field::Out
             | Field::Volume(_)
@@ -3500,6 +3507,7 @@ impl Session {
             Field::SplitThreshold => self.taste.split_threshold.is_none(),
             Field::ReadingOrder => self.taste.reading_order.is_none(),
             Field::Filter => self.taste.filter.is_none(),
+            Field::WhiteAlignLimit => self.taste.white_align_limit.is_none(),
             Field::BitDepth => self.taste.bit_depth.is_none(),
             Field::Dither => self.taste.dither.is_none(),
             Field::Envelope => self.taste.envelope.is_none(),
@@ -3754,6 +3762,7 @@ impl Session {
                 .taste
                 .split_threshold
                 .map(|threshold| threshold.value().to_string()),
+            Field::WhiteAlignLimit => self.taste.white_align_limit.map(|limit| limit.to_string()),
             Field::CacheBudget => self.taste.cache_budget.map(crate::preset::spell_budget),
             Field::Out => self.scope.out.as_ref().map(|out| out.display().to_string()),
             // 转着改的行与卷行没有可编辑的写法；「再打一个」进编辑时缓冲是空的。
@@ -3805,6 +3814,12 @@ impl Session {
                 self.taste.split_threshold = match typed {
                     "" => None,
                     text => Some(SplitThreshold::parse(text)?),
+                };
+            }
+            Field::WhiteAlignLimit => {
+                self.taste.white_align_limit = match typed {
+                    "" => None,
+                    text => Some(parse_white_align_limit(text)?),
                 };
             }
             Field::CacheBudget => {
@@ -3926,6 +3941,10 @@ impl Session {
             ),
             Field::ReadingOrder => spell_name(self.taste.reading_order, ReadingOrder::name),
             Field::Filter => spell_name(self.taste.filter, Filter::name),
+            Field::WhiteAlignLimit => spell(
+                self.taste.white_align_limit,
+                &WhiteAlignLimit::default().to_string(),
+            ),
             Field::BitDepth => match self.taste.bit_depth {
                 Some(depth) => format!("{}bit", depth.bits()),
                 None => "自动（判据说了算）".to_owned(),
@@ -3960,6 +3979,18 @@ impl Session {
 /// 三个布尔项转一格：没说 → 开 → 关 → 没说。
 fn turn_flag(flag: Option<bool>, step: Step) -> Option<bool> {
     turn(flag, step, |flag| ring(flag, true, next_flag))
+}
+
+/// 纸白对齐上限那一行打出来的文本：**一个 0 到 255 的整数级数**，与 `--white-align-limit`
+/// 同一条界（那一头是 clap 按 `u8` 收的，预设那一头是 TOML 按 `u8` 读的）。
+///
+/// 会话是三处里唯一要自己把字变成数的地方——另两处各有解析器替它做；
+/// 这一句措辞因此只在这里，说的是那条界本身，不抄 `u8` 的英文报错。
+fn parse_white_align_limit(text: &str) -> anyhow::Result<WhiteAlignLimit> {
+    text.trim()
+        .parse::<u8>()
+        .map(WhiteAlignLimit::new)
+        .map_err(|_| anyhow::anyhow!("纸白对齐上限「{text}」要是 0 到 255 之间的整数级数，0 是关"))
 }
 
 fn spell<T: std::fmt::Display>(value: Option<T>, fallback: &str) -> String {
@@ -5213,7 +5244,7 @@ mod tests {
     /// **「没说」与「说了一个恰好等于默认值的值」存出去是两份不同的 TOML**（停车场 Q58）。
     ///
     /// 屏上那一格的差别（`默认（height）` 与 `height`）到这一步才落到盘上：前者那一项
-    /// **不写**，后者写。不分开的话，存一份「只说了两项」的预设就无从谈起——只能十一项
+    /// **不写**，后者写。不分开的话，存一份「只说了两项」的预设就无从谈起——只能十二项
     /// 全写满，而那意味着套用它时把每一项都盖了一遍，命令行上再想只改一项就没有余地了。
     #[test]
     fn what_was_never_said_is_not_written_and_a_default_that_was_said_is() {
@@ -6018,7 +6049,7 @@ mod tests {
 
     /// 屏上的两层与预设装的两层是**同一层**：格数一项不多一项不少。
     ///
-    /// 断的**不是** `TASTE_FIELDS.len() == 11`——那个数写在类型里，永远红不了。
+    /// 断的**不是** `TASTE_FIELDS.len() == 12`——那个数写在类型里，永远红不了。
     /// 断的是它与**盘上那份预设**的格数对得上：`preset::write` 把一份说满了的
     /// `Preset`（`preset::every_field`，没有 `..Default::default()`）写成 TOML，
     /// 那两节里各有几个键，两层就各有几格。往 `TasteLayer` 加一个字段而左栏没跟着加一行，
@@ -6737,6 +6768,117 @@ mod tests {
 
         assert_eq!(session.taste.cache_budget, None);
         assert!(session.shown(Field::CacheBudget).starts_with("默认"));
+    }
+
+    /// **纸白对齐上限在会话里调得动，改完下一趟生效**（纸白对齐批 04 号票的验收）。
+    ///
+    /// 与拆分阈值同型：走到那一行、`⏎` 进编辑、打一个数、`⏎` 收下。**打 0 是「关」，
+    /// 是一个说了的值**——拼出来的 `Request` 照它走、不落到默认上，存成预设时
+    /// `white-align-limit = 0` 写出去（与 03 号票同一份取值写法）。清空缓冲才是「没说」，
+    /// 落回默认值。
+    ///
+    /// 越界的数（256）挡在编辑态，用户打的东西不丢，已收下的值不动
+    /// （与 [`a_value_that_does_not_parse_stays_in_the_editor`] 同一个形状）。
+    #[test]
+    fn the_white_align_limit_is_edited_in_the_session_and_takes_effect_next_run() {
+        let mut session = Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.scope.out = Some(PathBuf::from("出"));
+        let limit_of = |session: &Session| {
+            session
+                .request(RunMode::Process)
+                .expect("拼得出来")
+                .white_align_limit
+        };
+        let stored = |session: &Session| {
+            crate::preset::write(&std::collections::BTreeMap::from([(
+                "存出去".to_owned(),
+                session.preset(),
+            )]))
+            .expect("写得出来")
+        };
+
+        // 一、没说：屏上印默认值，拼出来的请求走默认，预设里不写这一项。
+        assert_eq!(Field::WhiteAlignLimit.layer(), Layer::Taste);
+        assert!(session.shown(Field::WhiteAlignLimit).starts_with("默认"));
+        assert_eq!(limit_of(&session), WhiteAlignLimit::default());
+        assert!(!stored(&session).contains("white-align-limit"));
+
+        // 二、走到那一行，进编辑，打 0，收下：关掉。
+        session.go_to(Field::WhiteAlignLimit);
+        session.press(Key::Enter);
+        assert!(matches!(session.focus(), Focus::Editing(_)), "回车该进编辑");
+        session.press(Key::Char('0'));
+        session.press(Key::Enter);
+        assert_eq!(session.focus(), &Focus::Config);
+        assert_eq!(session.taste.white_align_limit, Some(WhiteAlignLimit::OFF));
+        assert_eq!(
+            session.shown(Field::WhiteAlignLimit),
+            "0",
+            "0 是说了的值，不印「默认」"
+        );
+        assert_eq!(limit_of(&session), WhiteAlignLimit::OFF, "下一趟该按关掉走");
+        assert!(
+            stored(&session).contains("white-align-limit = 0"),
+            "存成预设时 0 该写出去：\n{}",
+            stored(&session)
+        );
+
+        // 三、越界的数：留在编辑态，缓冲不丢，已收下的值不动。
+        session.press(Key::Enter);
+        let Focus::Editing(edit) = session.focus() else {
+            panic!("该进编辑态");
+        };
+        assert_eq!(edit.buffer, "0", "进编辑时缓冲里该摆着当前取值");
+        session.press(Key::Backspace);
+        for glyph in "256".chars() {
+            session.press(Key::Char(glyph));
+        }
+        session.press(Key::Enter);
+        let Focus::Editing(edit) = session.focus() else {
+            panic!("256 超出 u8，该留在编辑态");
+        };
+        assert_eq!(edit.buffer, "256", "用户打的东西被丢掉了");
+        assert!(session.notice().is_some(), "解析不过要说一句");
+        assert_eq!(session.taste.white_align_limit, Some(WhiteAlignLimit::OFF));
+
+        // 四、改成 2 收得下；清空落回「没说」。
+        for _ in 0..3 {
+            session.press(Key::Backspace);
+        }
+        session.press(Key::Char('2'));
+        session.press(Key::Enter);
+        assert_eq!(
+            session.taste.white_align_limit,
+            Some(WhiteAlignLimit::new(2))
+        );
+        assert_eq!(limit_of(&session), WhiteAlignLimit::new(2));
+
+        session.press(Key::Enter);
+        session.press(Key::Backspace);
+        session.press(Key::Enter);
+        assert_eq!(session.taste.white_align_limit, None);
+        assert!(session.shown(Field::WhiteAlignLimit).starts_with("默认"));
+        assert_eq!(limit_of(&session), WhiteAlignLimit::default());
+
+        // 五、跑起来之后这一行与别的行一样只读——跑着与等答话两个阶段都是
+        // （[`Stage::read_only`]）：回车不进编辑，打的字一个都不落；
+        // 收场之后又改得动——趟与趟之间改，正是会话的定义。
+        session.run_started();
+        session.go_to(Field::WhiteAlignLimit);
+        assert_eq!(session.action(Key::Enter), Action::Ignored, "跑着时该只读");
+        for key in [Key::Enter, Key::Char('0'), Key::Enter] {
+            session.press(key);
+        }
+        assert_eq!(session.taste.white_align_limit, None, "跑着时改动了口味层");
+        session.at_the_decision_point(true);
+        assert_eq!(
+            session.action(Key::Enter),
+            Action::Ignored,
+            "等答话时该只读"
+        );
+        session.run_finished();
+        assert_eq!(session.action(Key::Enter), Action::Edit, "收场之后该改得动");
     }
 
     /// 打进来的卷勾得掉，也删得掉（spec 的 story 16）。
