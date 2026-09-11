@@ -47,6 +47,7 @@ use tonefit::{
 
 use super::complete;
 use super::live::{Branch, Live, Reach, Volume};
+use super::tone::Tone;
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -1399,11 +1400,18 @@ pub struct Session {
 /// **屏底那一句**：一句话，连同**它有多重**。
 ///
 /// 打成一个类型而不是一对裸值，与卷表那一行「一行字加一种语义」同一条理由：
-/// 两样是一起定出来的——说出这一句的那个动作既定了措辞、也定了它成没成——
-/// 而 `(String, NoticeKind)` 在调用处看不出哪一半是哪一半。
+/// 两样是一起定出来的——说出这一句的那个动作既定了措辞、也定了它有多重——
+/// 而 `(String, Tone)` 在调用处看不出哪一半是哪一半。
 ///
 /// 从前这一格是一个裸 `String`：按 `x` 跑不起来的那一句与「存好了一份预设」因此
 /// **同色同位**，一条拒绝读起来像一次成功（`p4-parking-lot/09`，收停车场 Q157）。
+///
+/// **它有多重就是[语义色](Tone)，不另有一个三档的类型**（`no-false-line/05`，
+/// 收停车场 Q198）：从前语义色住在画法那一层、这一层够不着，屏底那一句只好自己挂
+/// 「没做成／先问一句／做成了」三档，再由画法折成语义色。语义色搬到 `tui` 特性前面之后
+/// 那一折没了——说出口的那一刻就是这一档。**三个出口各定一档**：
+/// [没做成](Self::refused)是出事、[先问一句](Self::asked)是注意、[做成了](Self::done)是平常；
+/// 不要紧那一档屏底这一句今天没有一句挂它。
 ///
 /// **两个出口都认它**：说进来的那一头是 [`Session::says`]（本模块每一句话的唯一出口），
 /// 读出去的那一头是 [`Session::notice`]。
@@ -1411,58 +1419,35 @@ pub struct Session {
 pub struct Notice {
     /// 这一句怎么说。
     said: String,
-    /// 这一句是[哪一种](NoticeKind)。
-    kind: NoticeKind,
+    /// 这一句有多重。
+    tone: Tone,
 }
 
-/// 屏底那一句**是哪一种**：三种，按轻重分。
-///
-/// **这里不认颜色，也不认语义色那个类型**：四种语义色住在画法那一层，
-/// 而那一层在 `tui` 特性后面、这一层不在（见 `crate::session` 模块文档）。
-/// 状态机答的是「刚才那一下成没成」，折成哪一档语义由画法那一头定
-/// （`crate::session::draw::footer`）——与[一行](crate::render::RowKind)折成语义
-/// 同一条路（ADR 0016：措辞一处、排版两副）。
-///
-/// **三种不多不少**：多一种是个要当场拿的主意，而画法那一头对着它逐条挑语义、不留 `_`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeKind {
-    /// **没做成**：跑不起来（型号没挑、输出根没填）、标定图写不出去、
-    /// 打进去的值解析不过、这一步此刻按不动（还没跑过就想展开）。
-    Refused,
-    /// **撤不回来，先问一句**：覆盖一份同名预设、删掉一份预设。
+impl Notice {
+    /// 一句话加一档。
+    fn new(said: String, tone: Tone) -> Self {
+        Self { said, tone }
+    }
+
+    /// **没做成**（[出事](Tone::Trouble)）：跑不起来（型号没挑、输出根没填）、
+    /// 标定图写不出去、打进去的值解析不过、这一步此刻按不动（还没跑过就想展开）。
+    fn refused(said: String) -> Self {
+        Self::new(said, Tone::Trouble)
+    }
+
+    /// **撤不回来，先问一句**（[注意](Tone::Caution)）：覆盖一份同名预设、删掉一份预设。
     /// 那一句里摆着「再按一次」，而按下去没有撤销。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
     )]
-    Asked,
-    /// **做成了**：存好了、删掉了、套上了、标定图出完了。
-    Done,
-}
-
-impl Notice {
-    /// 一句话加一种。
-    fn new(said: String, kind: NoticeKind) -> Self {
-        Self { said, kind }
-    }
-
-    /// [没做成](NoticeKind::Refused)那一种。
-    fn refused(said: String) -> Self {
-        Self::new(said, NoticeKind::Refused)
-    }
-
-    /// [先问一句](NoticeKind::Asked)那一种。
-    #[cfg_attr(
-        not(feature = "tui"),
-        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
-    )]
     fn asked(said: String) -> Self {
-        Self::new(said, NoticeKind::Asked)
+        Self::new(said, Tone::Caution)
     }
 
-    /// [做成了](NoticeKind::Done)那一种。
+    /// **做成了**（[平常](Tone::Plain)）：存好了、删掉了、套上了、标定图出完了。
     fn done(said: String) -> Self {
-        Self::new(said, NoticeKind::Done)
+        Self::new(said, Tone::Plain)
     }
 
     /// 这一句怎么说。
@@ -1470,13 +1455,9 @@ impl Notice {
         &self.said
     }
 
-    /// 这一句是[哪一种](NoticeKind)。
-    #[cfg_attr(
-        not(feature = "tui"),
-        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
-    )]
-    pub fn kind(&self) -> NoticeKind {
-        self.kind
+    /// 这一句有多重。
+    pub fn tone(&self) -> Tone {
+        self.tone
     }
 }
 
@@ -1564,13 +1545,13 @@ impl Session {
 
     /// 上一个动作要说的[那句话](Notice)，**连同它有多重**。
     ///
-    /// **读出去的那一头就是这里**：屏底那一格照它挑语义色
+    /// **读出去的那一头就是这里**：屏底那一格照它上色、配行首那个记号
     /// （`crate::session::draw::footer`，收停车场 Q157）。
     pub fn notice(&self) -> Option<&Notice> {
         self.notice.as_ref()
     }
 
-    /// **说一句没做成的**（[`NoticeKind::Refused`]）：跑不起来的那几种（型号没挑、
+    /// **说一句没做成的**（[`Notice::refused`]，[出事](Tone::Trouble)）：跑不起来的那几种（型号没挑、
     /// 输出根没填）、这一步此刻按不动的那几种，就是靠它说出口的。
     ///
     /// 名字照旧叫 `complain`：它说的本来就只有这一种，而**做成了的那几句各有各的出口**
@@ -6702,6 +6683,38 @@ mod tests {
         assert_eq!(
             session.taste.cache_budget,
             Some(CacheBudget::parse("512M").expect("认得的写法"))
+        );
+    }
+
+    /// **屏底那一句自己说得出它有多重，说的就是语义色**（`no-false-line/05`，收停车场 Q198）。
+    ///
+    /// 从前这一格挂的是另一个三档的类型（没做成／先问一句／做成了）：语义色住在画法那一层，
+    /// 这一层够不着，屏底那一句因此要画法再折一次——「这一句有多重」于是有两个类型说得出。
+    /// 这一条在 `tui` 特性**外面**跑：状态机说出口的那一句直接挂着[语义色](Tone)，
+    /// 三种各是哪一档不必绕到画法去问。
+    #[test]
+    fn the_bottom_line_says_how_heavy_it_is_in_the_one_tone_type() {
+        let mut session = Session::new();
+
+        session.complain("先挑型号：跑不起来".to_owned());
+        assert_eq!(
+            session.notice().expect("拒绝要说一句").tone(),
+            Tone::Trouble,
+            "没做成的那一句不是「出事」"
+        );
+
+        session.ask_before_erasing("画集");
+        assert_eq!(
+            session.notice().expect("问一句要说出口").tone(),
+            Tone::Caution,
+            "先问一句的那一句不是「注意」"
+        );
+
+        session.saved("漫画");
+        assert_eq!(
+            session.notice().expect("存完要说一句").tone(),
+            Tone::Plain,
+            "做成了的那一句不是「平常」"
         );
     }
 

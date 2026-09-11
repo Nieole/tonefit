@@ -7,12 +7,13 @@
 //!
 //! # 要说的那句话挂着一档语义（`p4-parking-lot/09`，收停车场 Q157）
 //!
-//! 末几行那一句**分得出轻重**：行首一个记号、整句一种[语义色](Tone)，两者由 [`marked`]
-//! 那一个 `match` 一起定。从前它是一个裸串、一格不上色——按 `x` 跑不起来的那一句与
-//! 「存好了一份预设」同色同位，一条拒绝读起来像一次成功。
+//! 末几行那一句**分得出轻重**：行首一个记号、整句一种[语义色](Tone)。从前它是一个裸串、
+//! 一格不上色——按 `x` 跑不起来的那一句与「存好了一份预设」同色同位，一条拒绝读起来像一次成功。
 //!
-//! **「这一句是哪一种」由说出它的那一头定**（[`NoticeKind`]，`crate::session::state`）：
-//! 那一层在 `tui` 特性前面、认不得语义色，交出来的是「成没成」；这一层把它折成语义与记号。
+//! **它有多重由说出它的那一头定**（[`Notice::tone`]，`crate::session::state`）：语义色在
+//! `tui` 特性前面，状态机说出口的那一刻就挂上了；这一层只给它配行首那个记号（[`marked`]）。
+//! 从前那一层认不得语义色、自己另挂一个三档的类型，这一层再折一次——「这一句有多重」于是有
+//! 两个类型说得出（`no-false-line/05`，收停车场 Q198）。
 //!
 //! # 这一行与 `?` 那张表分的是哪一刀
 //!
@@ -45,15 +46,16 @@ use ratatui::text::Line;
 use tonefit::Instruction;
 
 use super::keys;
-use super::paint::{Painted, Tone};
+use super::paint::Painted;
 use super::report::expandable;
 use super::yielding::{FOOTER_HEIGHT, footer_max_rows};
 use crate::session::complete;
 use crate::session::live::{Live, Reach};
 use crate::session::state::{
-    Action, Covered, Edit, Focus, Follow, Key, KeyGroup, Listing, Notice, NoticeKind, Overlay,
-    Picker, Session, Stage, Step, Values, stage_keys,
+    Action, Covered, Edit, Focus, Follow, Key, KeyGroup, Listing, Notice, Overlay, Picker, Session,
+    Stage, Step, Values, stage_keys,
 };
+use crate::session::tone::Tone;
 use crate::session::viewport::Viewport;
 use crate::wrap;
 
@@ -241,21 +243,26 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, screen: Rect) -> Ve
 /// 从前这一句是一个裸串、一格不上色：按 `x` 跑不起来的那一句与「存好了一份预设」
 /// **同色同位**，一条拒绝读起来像一次成功。
 ///
-/// 三种各对上四档里的一档（四档见 [`super::paint`]；`CONTEXT.md` 的《语义色》那一列
-/// 还没收屏底这一处，改它归 28 号票，停车场 Q163 记着）：
+/// **它有多重是说出它的那一头定的**（[`Notice::tone`]）：状态机的三个出口各挂一档，
+/// 这一层照那一档配记号（四档在屏上各是什么样见 [`super::paint`]）：
 ///
-/// | [这一句是哪一种](NoticeKind) | 记号 | 语义 | 凭什么 |
-/// |---|---|---|---|
-/// | [没做成](NoticeKind::Refused) | `✗` | [出事](Tone::Trouble) | 按下去那一件根本没发生 |
-/// | [先问一句](NoticeKind::Asked) | `!` | [注意](Tone::Caution) | 下一下按了就撤不回来 |
-/// | [做成了](NoticeKind::Done) | `✓` | [平常](Tone::Plain) | 事办成了，不必特别看它 |
+/// | [这一句有多重](Tone) | 记号 | 状态机哪一个出口说的 |
+/// |---|---|---|
+/// | [出事](Tone::Trouble) | `✗` | 没做成：按下去那一件根本没发生 |
+/// | [注意](Tone::Caution) | `!` | 先问一句：下一下按了就撤不回来 |
+/// | [平常](Tone::Plain) | `✓` | 做成了：事办成了，不必特别看它 |
+/// | [不要紧](Tone::Muted) | `-` | 今天没有一个出口挂它；穷举逼出来的一格，与卷表上「跳过」同形 |
 ///
-/// # 记号与语义在这里绑成一对
+/// # 记号是这一处自己配的，语义色不带它
 ///
-/// 与卷表那几行同一条（见 [`super::table::Mark`]）：**一个 `match` 同时定记号与语义**，
-/// 添一种不配语义（或反过来）根本编不过去。「颜色不是唯一载体」因此不靠人记着——
-/// 那三个字符逐个过得了 [`tonefit::width_is_stable`] 那一关，
-/// 不上色的终端上、以及色盲眼里，一条拒绝与一次成功照旧分得开。
+/// 「颜色不是唯一载体」是对**每一处**的要求（`crate::session::tone` 的《它不带记号》），
+/// 屏底这一句的记号因此由这一个 `match` 配，卷表那几行由它们自己那个
+/// [`super::table::Mark`] 配（那一头方向相反：记号定语义）。**四档一格不留 `_`**，
+/// 添一档不配记号根本编不过去；反过来，状态机将来多一个出口挂在既有的一档上，
+/// 这里不必改、它自然得到那一档的记号——记号跟的是轻重，不是哪一个出口。
+/// 那几个字符逐个过得了 [`tonefit::width_is_stable`] 那一关，
+/// 不上色的终端上、以及色盲眼里，一条拒绝与一次成功照旧分得开；
+/// 「上了色就配着记号」这一条的闸门在 [`super::paint`]，扩到了屏底这一句。
 ///
 /// **屏底那一句的措辞一个字都没动**：记号是这一层添的排版，与措辞出自哪里无关
 /// （说那几句话的是 `crate::session::state`）。
@@ -265,10 +272,12 @@ pub(super) fn footer(session: &Session, live: Option<&Live>, screen: Rect) -> Ve
 /// 一句长话在窄屏上至多多折出一行，一个字都不会从行尾丢掉。
 /// 屏底这一格摆不下就往下长（见 [`super::yielding::footer_height`]）。
 fn marked(notice: &Notice) -> Painted {
-    let (glyph, tone) = match notice.kind() {
-        NoticeKind::Refused => ('✗', Tone::Trouble),
-        NoticeKind::Asked => ('!', Tone::Caution),
-        NoticeKind::Done => ('✓', Tone::Plain),
+    let tone = notice.tone();
+    let glyph = match tone {
+        Tone::Trouble => '✗',
+        Tone::Caution => '!',
+        Tone::Plain => '✓',
+        Tone::Muted => '-',
     };
     Painted::new(format!("{glyph} {}", notice.said()), tone)
 }
@@ -1306,9 +1315,9 @@ mod tests {
     ///
     /// 四件事：
     ///
-    /// - 三种各挂各的语义（没做成出事、先问一句注意、做成了平常），而**三种互不相同**
-    ///   ——同一档就等于没分出轻重；
-    /// - **记号与语义绑成一对**（见 [`marked`]）：每一种行首都另有一个记号，
+    /// - 三种各挂各的语义（没做成出事、先问一句注意、做成了平常）——**说出它的那一头挂的**，
+    ///   这一层原样画出来——而**三种互不相同**：同一档就等于没分出轻重；
+    /// - **每一档配一个记号**（见 [`marked`]）：每一种行首都另有一个记号，
     ///   三个字形逐个在哪种终端上都占一格（[`tonefit::width_is_stable`]）；
     /// - **措辞一个字都没动**：记号是这一层添的，那一句原样跟在它后面；
     /// - 屏底那一格上**真摆得出来**：那一句连同它的记号画得到屏上。

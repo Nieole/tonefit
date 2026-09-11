@@ -53,10 +53,11 @@ use std::path::Path;
 use tonefit::{VolumeFailure, VolumeReport, WhiteAlignLimit};
 
 use super::overview::{DECIDING, spell};
-use super::paint::{Painted, Tone};
+use super::paint::Painted;
 use crate::render::{self, Field, Row, RowKind};
 use crate::session::columns::{self, Column, VolumeColumn, Widths};
 use crate::session::live::{Branch, Live, Volume};
+use crate::session::tone::Tone;
 
 /// 一格不在场时那一列上写什么。
 ///

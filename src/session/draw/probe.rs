@@ -154,7 +154,7 @@ pub(super) struct OnScreen {
     /// 这一行上出现过的前景色，去重、按出现次序。**终端默认色不算一种**：
     /// 「这一行没上色」问的就是这一列空不空。
     pub(super) colours: Vec<Color>,
-    /// 逐格：这一格压没压暗（[`Tone::Muted`](super::paint::Tone) 是压暗的）。
+    /// 逐格：这一格压没压暗（[`Tone::Muted`](crate::session::tone::Tone) 是压暗的）。
     /// 整行问 [`dim`](Self::dim)，只问左栏那几列问 [`dim_before`](Self::dim_before)。
     dimmed: Vec<bool>,
 }

@@ -33,11 +33,12 @@ use std::path::Path;
 use super::directories::directories;
 use super::keys::{self, Starters};
 use super::pages;
-use super::paint::{Painted, Tone};
+use super::paint::Painted;
 use super::table::{Table, table};
 use crate::render::{Field, Row, RowKind};
 use crate::session::live::{Live, Volume};
 use crate::session::state::{Focus, Follow, Session};
+use crate::session::tone::Tone;
 use crate::session::viewport::Viewport;
 
 /// 报告区：**边跑边攒**的那一份，措辞出自 [`crate::render`]。

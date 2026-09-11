@@ -61,7 +61,7 @@ cargo xtask gate
 | | 命令 | target 目录 | 盖住的那一趟 |
 |---|---|---|---|
 | 1 | `cargo test` | `target`（默认那个） | **默认构建**（`tui` 开着）。库、命令行、会话，加上 `tests/` 那十几个二进制。 |
-| 2 | `cargo test --no-default-features` | `target/gate/no-default-features` | **甩掉终端库**那一趟。会话里不碰终端的那几个模块（`session` 下的 `state`、`live`、`run`、`complete`、`viewport`、`columns`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
+| 2 | `cargo test --no-default-features` | `target/gate/no-default-features` | **甩掉终端库**那一趟。会话里不碰终端的那几个模块（`session` 下的 `state`、`live`、`run`、`complete`、`viewport`、`columns`、`tone`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
 | 3 | `cargo check --features profiling` | `target/gate/profiling` | **开着量具**那一趟。`src/cost.rs` 的 `tally`（两张原子计数表）只有这一条够得着。 |
 
 **这三条不要裸敲。**右边那一列只有走 `cargo xtask` 才成立：裸敲一次
