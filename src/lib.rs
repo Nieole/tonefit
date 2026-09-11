@@ -98,7 +98,7 @@ pub use source::listed_archive_extensions;
 pub use white::{WhiteAlignLimit, WhiteAlignment, align_white};
 
 use color::ColorImage;
-use metadata::{Fingerprint, Origin, PageRecord, Record, Recorder};
+use metadata::{Fingerprint, Origin, PageRecord, PageSource, Record, Recorder};
 use sink::Sink;
 use source::{Member, Volume};
 use spread::Split;
@@ -1624,6 +1624,19 @@ impl Compute<'_> {
         relative: &Path,
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
+        // 页级源哈希**趁字节还在手上**算（two-pass-rework/13）：第一遍本来就把这一个成员的
+        // 字节整个读进来了，在这里喂一遍哈希，源就不必为它多读一遍。它算的是**源成员**，
+        // 切开之后的每一半因此共用同一个——哪一半由来路说（见 [`PageSource`]）。
+        //
+        // 只在有人会读它的那一趟算：`--no-metadata` 一个记录都不写（story 30：不为没人读的
+        // 字段做功）；上包络那条路一页的档由全卷定，写了也答不了「这一页变没变」，试算一个字节
+        // 都不写——两者在 [`Settles`] 里都是「等整卷」那一条。读不出字节的成员没有它——
+        // 那一页会变成失败页，而失败页不写（见 [`Recorder::failed`]）。
+        let page_source = bytes
+            .as_ref()
+            .ok()
+            .filter(|_| self.fingerprint.is_some() && self.settles.encodes_in_the_first_pass())
+            .map(|bytes| cost::stage(cost::Stage::Hash, || PageSource::of(relative, bytes)));
         let read = bytes.and_then(|bytes| {
             cost::stage(cost::Stage::Decode, || self.counters.decoder.decode(&bytes))
                 .with_context(|| format!("解 {} 这一页", source.display()))
@@ -1636,7 +1649,7 @@ impl Compute<'_> {
             // 失败页**恒产出一张**占位页：没有像素可切，切不出第二张来。
             Err(error) => {
                 let placement =
-                    Placement::new(relative, 0, OUTPUTS_PER_FAILED_PAGE, self.fingerprint);
+                    Placement::new(relative, 0, OUTPUTS_PER_FAILED_PAGE, self.fingerprint, None);
                 return Ok(vec![placement.into_page(
                     source,
                     Outcome::Failed {
@@ -1649,10 +1662,24 @@ impl Compute<'_> {
         let panel = self.request.profile.panel();
         if panel.color && color.is_color() {
             let image = cost::stage(cost::Stage::ToColor, || color::to_color(&decoded));
-            self.color_pages(source, relative, image, color, salvage)
+            self.color_pages(
+                source,
+                relative,
+                image,
+                color,
+                salvage,
+                page_source.as_ref(),
+            )
         } else {
             let image = cost::stage(cost::Stage::ToGray, || gray::to_gray(&decoded));
-            self.gray_pages(source, relative, image, color, salvage)
+            self.gray_pages(
+                source,
+                relative,
+                image,
+                color,
+                salvage,
+                page_source.as_ref(),
+            )
         }
     }
 
@@ -1672,6 +1699,7 @@ impl Compute<'_> {
         image: GrayImage,
         color: PageColor,
         salvage: Option<Salvage>,
+        page_source: Option<&PageSource>,
     ) -> Result<Vec<OutputPage>> {
         let request = self.request;
         let panel = request.profile.panel().resolution;
@@ -1703,7 +1731,7 @@ impl Compute<'_> {
             .map(|(ordinal, (image, piece))| {
                 self.gray_page(
                     source,
-                    Placement::new(relative, ordinal, count, self.fingerprint),
+                    Placement::new(relative, ordinal, count, self.fingerprint, page_source),
                     image,
                     piece,
                     color,
@@ -1727,6 +1755,7 @@ impl Compute<'_> {
         image: ColorImage,
         color: PageColor,
         salvage: Option<Salvage>,
+        page_source: Option<&PageSource>,
     ) -> Result<Vec<OutputPage>> {
         let request = self.request;
         let panel = request.profile.panel().resolution;
@@ -1759,7 +1788,7 @@ impl Compute<'_> {
             .map(|(ordinal, (image, piece))| {
                 self.color_page(
                     source,
-                    Placement::new(relative, ordinal, count, self.fingerprint),
+                    Placement::new(relative, ordinal, count, self.fingerprint, page_source),
                     &image,
                     piece,
                     color,
@@ -1806,10 +1835,17 @@ impl Compute<'_> {
                 })?;
                 // 指纹与来路两样一起在、一起不在（见 [`Placement::new`]）：
                 // `zip` 把那件事写成一句，而不是在这里再判一次。
-                let record = self
-                    .fingerprint
-                    .zip(placement.origin.as_ref())
-                    .map(|(fingerprint, origin)| Record::color(fingerprint, origin, salvage));
+                let record =
+                    self.fingerprint
+                        .zip(placement.origin.as_ref())
+                        .map(|(fingerprint, origin)| {
+                            Record::color(
+                                fingerprint,
+                                origin,
+                                placement.page_source.as_ref(),
+                                salvage,
+                            )
+                        });
                 let encoded = cost::stage(cost::Stage::Encode, || {
                     encode::color_png(&scaled, record.as_ref())
                 })
@@ -1918,6 +1954,7 @@ impl Compute<'_> {
                     reference.image(),
                     verdict,
                     placement.origin.as_ref(),
+                    placement.page_source.as_ref(),
                     salvage,
                     recorder.as_ref(),
                 )
@@ -2054,6 +2091,15 @@ struct Placement {
     /// 它的来路，写进 tEXt（见 [`Origin`]）。**只有记着的那一趟才有**，
     /// 见 [`OutputPage::origin`]。
     origin: Option<Origin>,
+    /// 它自己那一份源哈希，写进 tEXt（见 [`PageSource`]；two-pass-rework/13）。
+    ///
+    /// 来路之外**再窄一层**：来路只要记着就有，这一项还要这一页的字节只取决于它自己
+    /// （见 [`Compute::split_and_branch`]）。一个源页切出的几张共用同一份——它算的是源成员。
+    ///
+    /// 它**不进** [`OutputPage`]：唯一的读者是第一遍盖记录的那一下（[`Compute::gray_page`]
+    /// 与 [`Compute::color_page`]），第二遍盖记录的两种页——上包络那条路上的灰度页、
+    /// 失败页——按规矩都不写它。
+    page_source: Option<PageSource>,
 }
 
 impl Placement {
@@ -2066,16 +2112,27 @@ impl Placement {
     /// **这一句只说到指纹为止，反向不成立**：指纹在不等于 [`Recorder`] 在。试算那一趟
     /// 指纹照算（幂等那一道要问它），而第二遍不走、第一遍也不编——来路于是照造，没有读者。
     /// 那一处白造本票没收，记在停车场 `Q490`。
-    fn new(relative: &Path, ordinal: usize, count: usize, records: Option<&Fingerprint>) -> Self {
+    ///
+    /// `page_source` 由调用方按 [`Compute::split_and_branch`] 那一处的判据交进来，
+    /// 一族几张各拿一份拷贝——32 个字符，不值得为它借一条生命期。
+    fn new(
+        relative: &Path,
+        ordinal: usize,
+        count: usize,
+        records: Option<&Fingerprint>,
+        page_source: Option<&PageSource>,
+    ) -> Self {
         Self {
             target: output_name(relative, ordinal, count),
             origin: records
                 .is_some()
                 .then(|| Origin::new(relative, ordinal, count)),
+            page_source: page_source.cloned(),
         }
     }
 
-    /// 配上这一张的结局，就是第一遍产出的一张输出页。
+    /// 配上这一张的结局，就是第一遍产出的一张输出页。页级源哈希到此为止，理由见
+    /// [`Placement::page_source`]。
     fn into_page(self, source: &Path, outcome: Outcome) -> OutputPage {
         OutputPage {
             source: source.to_path_buf(),
@@ -2211,10 +2268,13 @@ impl Encode<'_> {
                     cache::Held::Reference(reference) => reference,
                 };
                 let verdict = verdict.expect("灰度路径上必有判定");
+                // 参照留到这一遍才编的，只有上包络那条路（与 Q635 那一角）：这一页的档由全卷定，
+                // 页级源哈希答不了「这一页变没变」，因此不写（见 [`PageSource`] 的《哪些页有》）。
                 gray_bytes(
                     &reference,
                     verdict,
                     page.origin.as_ref(),
+                    None,
                     *salvage,
                     recorder,
                 )
@@ -2236,19 +2296,22 @@ fn gray_bytes(
     reference: &GrayImage,
     verdict: Verdict,
     origin: Option<&Origin>,
+    page_source: Option<&PageSource>,
     salvage: Option<Salvage>,
     recorder: Option<&Recorder>,
 ) -> Result<Vec<u8>> {
     let quantized = cost::stage(cost::Stage::Quantize, || {
         quantize::quantize(reference, verdict.candidate)
     });
-    // 两个调用处传进来的这两样**恒是一起在、一起不在**：两处的记录器都由同一份指纹派生
+    // 两个调用处传进来的记录器与来路**恒是一起在、一起不在**：两处的记录器都由同一份指纹派生
     // （[`Encode`] 那一份在 `crate::process_volume`，第一遍那一份在 [`Compute::gray_page`]），
     // 而来路的在场与否问的正是那份指纹（见 [`Placement::new`]）。`zip` 因此不是在防一个
     // 真会发生的组合，是把那句话写成编译器认得的形状。
+    // 页级源哈希不在这个 `zip` 里：它是真的可空——第一遍那一处有，第二遍那一处没有
+    // （见 [`Placement::page_source`]）。
     let record = recorder
         .zip(origin)
-        .map(|(recorder, origin)| recorder.gray(origin, verdict, salvage));
+        .map(|(recorder, origin)| recorder.gray(origin, page_source, verdict, salvage));
     cost::stage(cost::Stage::Encode, || {
         encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
     })
@@ -3240,7 +3303,7 @@ mod tests {
         let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
         let written = |ordinal: usize, count: usize| {
             let origin = Origin::new(Path::new("001.png"), ordinal, count);
-            let record = Record::color(&fingerprint, &origin, None);
+            let record = Record::color(&fingerprint, &origin, None, None);
             encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
         };
 
@@ -3293,7 +3356,7 @@ mod tests {
         let fingerprint = Fingerprint::new(&request(), "0".repeat(32));
         let written = |count: usize| {
             let origin = Origin::new(Path::new("001.png"), 0, count);
-            let record = Record::color(&fingerprint, &origin, None);
+            let record = Record::color(&fingerprint, &origin, None, None);
             encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
         };
 
