@@ -18,7 +18,7 @@
 //! |---|---|
 //! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的预扫），加 [`Live::walked`] |
 //! | 总览块的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
-//! | 总览块的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔 |
+//! | 总览块的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成执行那一副 |
 //! | 总览块的出事行 | 同上，而失败页那一样连当前这一卷已经报过的那几条一起数（[`Live::failures_so_far`]） |
 //! | 报告区 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句、`PageFailed` 那几条 |
 //!
@@ -190,7 +190,7 @@ fn only_expandable(volumes: &[Volume]) -> Vec<Volume> {
         .collect()
 }
 
-/// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍。
+/// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍、这一遍写不写盘。
 #[derive(Debug, Clone)]
 pub struct Walking {
     /// 卷标识：源目录路径，或源归档的文件路径。
@@ -205,6 +205,17 @@ pub struct Walking {
     pub walked: u64,
     /// 在走哪一遍。开卷之后、第一条 `PassStarted` 到达之前是 `None`。
     pub pass: Option<Pass>,
+    /// **这一卷在往盘上写吗**：走到按档写出那一遍，而且这一遍真写盘。
+    ///
+    /// 执行那一趟走到那一遍就在写；续做那一趟那一遍前头是决策点，**答了继续才写**
+    /// （答收尾的那一卷等于走了一次试算，`CONTEXT.md` 的《会话》：决策点），
+    /// 答过「剩下的卷都这样·继续」之后的那几卷不再问、走到那一遍当场就在写。
+    /// 幂等命中跳过的卷到不了那一遍，恒是假。
+    ///
+    /// 它是[「这一趟真写出过没有」](Live::has_written)翻面的依据：这一卷收摊时它是真，
+    /// 那一趟就真写出过一卷了。挂在当前卷这一条上而不是 `Live` 上，是因为它**逐卷问**——
+    /// 卷收摊这一条整个撤掉，下一卷从假起，不必另记一格再手动清。
+    pub writes: bool,
 }
 
 /// 一趟跑起来之后攒下来的东西。**一趟一份**：按下试算或执行时新造一个，
@@ -238,6 +249,13 @@ pub struct Live {
     /// 也要从这一刻起不再开——不再停下来问，人就没有在等，
     /// 而那一格开了就再也关不上（决策点上的答话是关它的唯一一条路）。
     for_the_rest: Option<Instruction>,
+    /// **这一趟到此刻为止真写出过东西没有**（`no-false-line/04`，收停车场 Q196）。
+    ///
+    /// 一格布尔、**只升不降**，形状与闩相同（`super::run::Latch`）：翻成真的那一刻是
+    /// **第一卷真写完**——[在写的那一卷](Walking::writes)收摊
+    /// （[`volume_finished`](Self::volume_finished)），此后答什么、收什么场都不再动它。
+    /// 读法见 [`has_written`](Self::has_written)，与另两个谓词的分别也写在那儿。
+    written: bool,
     /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
     ///
     /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
@@ -314,6 +332,7 @@ impl Live {
             resumes,
             decided: None,
             for_the_rest: None,
+            written: false,
             summarized: None,
             deliberated: Duration::ZERO,
             deliberating_since: None,
@@ -385,6 +404,7 @@ impl Live {
             steps,
             walked: 0,
             pass: None,
+            writes: false,
         });
     }
 
@@ -392,9 +412,22 @@ impl Live {
     ///
     /// **决策点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
     /// 报告区就画得出「拿什么主意」。另外两遍那一格是 `None`，这里因此不动它。
+    ///
+    /// **走到按档写出那一遍，「这一卷写不写盘」在这里定一半**（[`Walking::writes`]）：
+    /// 执行那一趟走到这一遍就在写；续做那一趟这一遍前头是决策点，要等答话
+    /// （另一半在 [`decide`](Self::decide)），只有答过「剩下的卷都这样·继续」的那几卷
+    /// 不再问、当场就在写。
     pub fn pass_started(&mut self, pass: Pass, so_far: Option<&VolumeReport>) {
         if let Some(walking) = &mut self.volume {
             walking.pass = Some(pass);
+            if pass == Pass::Second {
+                walking.writes = match self.resumes {
+                    // 试算走的也是 `Mode::Process`（参照要留着），因此认的是库真收到的那个字：
+                    // 用例里 `DryRun` 起而不等人的那一趟，这一遍照旧一个字节都不写。
+                    Resuming::GoesOn => self.ran_as == RunMode::Process,
+                    Resuming::Waits => self.for_the_rest == Some(Instruction::Continue),
+                };
+            }
         }
         if let Some(so_far) = so_far {
             self.summarized = Some(so_far.clone());
@@ -430,7 +463,16 @@ impl Live {
     /// **它那几页失败页从此在报告里**：在途那一格由 [`finish_volume`](Self::finish_volume)
     /// 清零，它们从此由 `Report::failures` 数——两截换手，
     /// [`failures_so_far`](Self::failures_so_far) 的和一格不变。
+    ///
+    /// **「这一趟真写出过没有」在这里翻面**（[`has_written`](Self::has_written)）：
+    /// 收摊的这一卷[在写](Walking::writes)，那一趟就真写出过一卷了。翻面点是**这一条**，
+    /// 不是答继续那一帧（那一刻盘上还什么都没有）——[`decide`](Self::decide) 只记
+    /// 「这一卷要写了」，写完与否要等它收摊才知道：第二遍里没做成的那一卷走的是
+    /// [`volume_failed`](Self::volume_failed)，不算写出过。
     pub fn volume_finished(&mut self, report: &VolumeReport) {
+        if self.volume.as_ref().is_some_and(|walking| walking.writes) {
+            self.written = true;
+        }
         self.report.volumes.push(report.clone());
         self.finish_volume();
     }
@@ -542,14 +584,34 @@ impl Live {
     /// 决策点上答出第一个继续它就翻成执行；这一条答「这一趟是怎么起的」，
     /// 起手那一刻就定死，答什么都不动它。
     ///
-    /// **总览块那两行按它画**（`super::draw::overview`）：那两行说的是「这一趟交出来的是
-    /// 什么」，而那件事在决策点上答话前后是同一件——跟着 [`mode`](Self::mode) 走的话，
-    /// 答出继续的那一帧屏上会换一副内容、并可能矮一行（停车场 Q149）。
+    /// **总览块那两行在第一卷真写完之前按它画**（`super::draw::overview::delivered_as`）：
+    /// 那两行说的是「这一趟交出来的是什么」，而在真写出过一卷之前，`t` 起的那一趟交出来的
+    /// 确实只有判定；之后问的是 [`has_written`](Self::has_written)。
     pub fn started_as(&self) -> RunMode {
         match self.resumes {
             Resuming::Waits => RunMode::DryRun,
             Resuming::GoesOn => self.ran_as,
         }
+    }
+
+    /// **这一趟到此刻为止真写出过东西没有**（`no-false-line/04`，收停车场 Q196）。
+    ///
+    /// 第三个谓词，与另两个各问一个时刻：[`started_as`](Self::started_as) 答「起手按的
+    /// 哪一个键」，起手就定死；[`mode`](Self::mode) 答「此刻在写没写」，决策点上答出继续
+    /// 那一帧就翻；这一条答「**真写出过没有**」，翻成真的那一刻是**第一卷真写完**
+    /// ——[在写的那一卷](Walking::writes)收摊（[`volume_finished`](Self::volume_finished)），
+    /// 不是答继续那一帧（那一刻盘上还什么都没有），也不是收场（收场时它必然早已翻过）。
+    /// **一趟之内只从假变真一次**，形状与闩相同（`super::run::Latch`）。
+    ///
+    /// **总览块那两行按它翻面**：`t` 起的那一趟在此之前给判定分布，之后给完成与跳过、隔离几卷。
+    /// 为什么是这一个谓词而不是另两个，只写在那两行分岔的那一处
+    /// （`super::draw::overview::delivered_as`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "屏外只有本模块的用例读它，而画法在 tui 特性后面")
+    )]
+    pub fn has_written(&self) -> bool {
+        self.written
     }
 
     /// 这一趟在决策点上等人吗（`CONTEXT.md` 的《会话》：续做）。
@@ -577,6 +639,10 @@ impl Live {
     /// 记下来的是答过的那几个字里**最弱**的那一个（见 [`decided`](Self::decided)）：
     /// 一趟里每一卷各答一次，而抬头那一行问的是「这一趟落过盘没有」——
     /// 头一卷答了继续、第二卷答了收尾的那一趟，盘上有头一卷。
+    ///
+    /// **答的是继续，停在决策点上的这一卷从此在写**（[`Walking::writes`]）：
+    /// 「这一趟真写出过没有」要等它收摊才翻面（[`volume_finished`](Self::volume_finished)），
+    /// 这里只记下它要写了。
     pub fn decide(&mut self, said: Instruction, reach: Reach) {
         self.decided = Some(match self.decided {
             Some(before) => before.min(said),
@@ -584,6 +650,11 @@ impl Live {
         });
         if reach == Reach::ForTheRest {
             self.for_the_rest = Some(said);
+        }
+        if said == Instruction::Continue
+            && let Some(walking) = &mut self.volume
+        {
+            walking.writes = true;
         }
         self.stop_deliberating();
     }
@@ -1600,7 +1671,8 @@ mod tests {
     /// **决策点上答出继续，`mode` 翻面而「起手按的哪一个键」一格不动**（停车场 Q149）。
     ///
     /// 两条答的不是同一个问题：`mode` 答「此刻落过盘没有」（报告抬头与总览块的抬头走它），
-    /// `started_as` 答「这一趟是怎么起的」（总览块那两行走它，一趟之内一格不变）。
+    /// `started_as` 答「这一趟是怎么起的」（总览块那两行在第一卷真写完之前走它，一趟之内一格不变；
+    /// 之后走 `has_written`，见 [`the_run_has_written_once_the_first_volume_it_wrote_is_finished`]）。
     #[test]
     fn answering_at_a_decision_point_moves_the_mode_but_not_what_the_run_started_as() {
         let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
@@ -1619,6 +1691,109 @@ mod tests {
         let processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         assert_eq!(processing.mode(), RunMode::Process);
         assert_eq!(processing.started_as(), RunMode::Process);
+    }
+
+    /// **「真写出过没有」在第一卷真写完那一刻翻面：不在答继续那一帧，也不为答收尾与跳过的卷翻**
+    /// （`no-false-line/04`，收停车场 Q196）。
+    ///
+    /// 三个谓词一路对着问：`started_as` 一格不动，`mode` 在答继续那一帧就翻，
+    /// `has_written` 要等那一卷收摊——它们各答一个时刻，差的正是这一帧。
+    #[test]
+    fn the_run_has_written_once_the_first_volume_it_wrote_is_finished() {
+        let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        trial.run_started(3, 3000);
+        assert!(!trial.has_written(), "还没开卷就说写出过了");
+
+        // 头一卷幂等命中：到不了决策点，一个字节都没写。
+        trial.volume_started(Path::new("库/卷一"), 1000);
+        trial.volume_finished(&fixture::skipped_volume("卷一", 180));
+        assert!(!trial.has_written(), "跳过的卷算成写出过了");
+
+        // 第二卷停在决策点上，答收尾：这一卷等于走了一次试算。
+        trial.volume_started(Path::new("库/卷二"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
+        trial.decide(Instruction::Finish, Reach::ThisVolume);
+        trial.volume_finished(&fixture::processed_volume("卷二", None));
+        assert!(!trial.has_written(), "答了收尾的那一卷一个字节都没写");
+
+        // 第三卷答继续：答话那一帧盘上还什么都没有，收摊那一刻才写完。
+        trial.volume_started(Path::new("库/卷三"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷三", None)));
+        trial.decide(Instruction::Continue, Reach::ThisVolume);
+        assert_eq!(trial.mode(), RunMode::Process, "此刻在写");
+        assert!(
+            !trial.has_written(),
+            "答继续那一帧就翻面了——正是 Q149 要拦的那一帧"
+        );
+        trial.volume_finished(&fixture::processed_volume("卷三", None));
+        assert!(trial.has_written(), "第一卷真写完了，却还说没写出过");
+        assert_eq!(trial.started_as(), RunMode::DryRun, "起手那一副不该跟着翻");
+    }
+
+    /// **只升不降**：翻成真之后，再答收尾、再来一卷跳过的、收场，都不动它——
+    /// 一趟之内只从假变真一次，屏上那一格因此不来回跳。
+    #[test]
+    fn having_written_is_a_latch() {
+        let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        trial.run_started(3, 3000);
+        trial.volume_started(Path::new("库/卷一"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
+        trial.decide(Instruction::Continue, Reach::ThisVolume);
+        trial.volume_finished(&fixture::processed_volume("卷一", None));
+        assert!(trial.has_written());
+
+        trial.volume_started(Path::new("库/卷二"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
+        trial.decide(Instruction::Finish, Reach::ThisVolume);
+        trial.volume_finished(&fixture::processed_volume("卷二", None));
+        assert!(trial.has_written(), "答了一次收尾，写出过的那一格缩回去了");
+
+        trial.volume_started(Path::new("库/卷三"), 1000);
+        trial.volume_finished(&fixture::skipped_volume("卷三", 180));
+        trial.run_finished(RunOutcome::Completed);
+        trial.returned(Ok(trial.report().clone()));
+        assert!(trial.has_written(), "收场把写出过的那一格抹掉了");
+    }
+
+    /// **答了继续却没做成的那一卷不算写出过**：第二遍里废掉的卷走的是 `VolumeFailed`，
+    /// 盘上没有它。「剩下的卷都这样·继续」之后的那几卷不再问，走到按档写出那一遍
+    /// 当场就在写——头一卷写出来就翻面。
+    ///
+    /// 执行那一趟每一卷都写，头一卷收摊就翻；用例里 `DryRun` 起而不等人的那一趟一个字节
+    /// 都不写，跑完也不翻。
+    #[test]
+    fn a_volume_that_failed_while_being_written_does_not_count_as_written() {
+        let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        trial.run_started(3, 3000);
+        trial.volume_started(Path::new("库/卷一"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
+        trial.decide(Instruction::Continue, Reach::ForTheRest);
+        trial.volume_failed(Path::new("库/卷一"), "写不出去");
+        assert!(!trial.has_written(), "第二遍里废掉的那一卷算成写出过了");
+
+        // 往下不再问：走到按档写出那一遍就在写。
+        trial.volume_started(Path::new("库/卷二"), 1000);
+        trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
+        assert!(!trial.has_written(), "这一卷还没收摊");
+        trial.volume_finished(&fixture::processed_volume("卷二", None));
+        assert!(
+            trial.has_written(),
+            "「剩下的卷都这样」之后写出的那一卷没让它翻面"
+        );
+
+        let mut processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        processing.run_started(1, 1000);
+        processing.volume_started(Path::new("库/卷一"), 1000);
+        processing.pass_started(Pass::Second, None);
+        processing.volume_finished(&fixture::processed_volume("卷一", None));
+        assert!(processing.has_written(), "执行那一趟头一卷收摊就该翻面");
+
+        let mut dry = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
+        dry.run_started(1, 1000);
+        dry.volume_started(Path::new("库/卷一"), 1000);
+        dry.pass_started(Pass::Second, None);
+        dry.volume_finished(&fixture::processed_volume("卷一", None));
+        assert!(!dry.has_written(), "只算不写的那一趟说自己写出过了");
     }
 
     /// 退出码与命令行那一路一致：拒绝执行 `1`，有卷被隔离 `2`，全部成功 `0`。
