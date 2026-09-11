@@ -884,6 +884,42 @@ pub fn run_volume_fitted_inside(space: &Workspace, volume: &Volume) -> tonefit::
     .expect("处理应当成功")
 }
 
+/// 把这一卷**开着卷级上包络**跑一遍（`--envelope`，ADR 0006；默认关着，ADR 0018）。
+///
+/// 问基准档、定档页、特例页、迟滞升档——上包络那条路**内部的构造**——的用例点名它。
+/// 默认那条路上卷级根本没有基准档（`VolumeVerdict::PerPage`），这几样在那里问不出来。
+pub fn run_volume_under_the_envelope(space: &Workspace, volume: &Volume) -> tonefit::Report {
+    run_volume_under_the_envelope_with(space, volume, baseline_profile())
+}
+
+/// 同上，但点名 profile。
+pub fn run_volume_under_the_envelope_with(
+    space: &Workspace,
+    volume: &Volume,
+    profile: Profile,
+) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        profile,
+        envelope: true,
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
+/// 同上，但按 **fit-inside**：上包络那几条多半拿小页铺长卷图快，而小页只在 fit-inside
+/// 上还是小页（见 [`run_volume_fitted_inside`]）。
+pub fn run_volume_under_the_envelope_fitted_inside(
+    space: &Workspace,
+    volume: &Volume,
+) -> tonefit::Report {
+    tonefit::run(&tonefit::Request {
+        envelope: true,
+        fit: tonefit::FitMode::Inside,
+        ..request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
 /// 点名若干卷跑一遍，用基准设备的 profile。目录与归档都走这里。
 pub fn run_paths<'a>(
     space: &Workspace,
@@ -900,8 +936,9 @@ pub fn run_paths_expecting_failure<'a>(
     tonefit::run(&request(space, inputs)).expect_err("处理应当失败")
 }
 
-/// 拼一个用基准 profile、输出到工作区 `out/` 的 `Request`。
-/// 换 profile 或要复用同一个 `Request` 的用例自己拼。
+/// 拼一个用基准 profile、输出到工作区 `out/` 的 `Request`——**一个 flag 都不加的那一趟**：
+/// 上包络关着，位深逐页各判各的（ADR 0018）。
+/// 换 profile、开上包络或要复用同一个 `Request` 的用例自己拼。
 pub fn request<'a>(
     space: &Workspace,
     inputs: impl IntoIterator<Item = &'a Path>,
@@ -917,7 +954,7 @@ pub fn request<'a>(
         white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
-        per_page: false,
+        envelope: false,
         cache_budget: tonefit::CacheBudget::default(),
         mode: tonefit::Mode::Process,
         io_mode: tonefit::IoMode::default(),

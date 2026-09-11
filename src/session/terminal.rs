@@ -1310,7 +1310,7 @@ mod tests {
         session.device.profile = Some("boox-poke6".to_owned());
         session.device.gray_levels = Some(12);
         session.taste.filter = Some(tonefit::Filter::Hamming);
-        session.taste.per_page = Some(true);
+        session.taste.envelope = Some(true);
         session.scope.out = Some(PathBuf::from("出"));
         session.scope.volumes.push(state::Picked {
             path: PathBuf::from("库/卷一"),
@@ -1348,7 +1348,7 @@ mod tests {
                 .expect("拼得出来");
         assert_eq!(asked.profile, command_line.profile);
         assert_eq!(asked.filter, command_line.filter);
-        assert_eq!(asked.per_page, command_line.per_page);
+        assert_eq!(asked.envelope, command_line.envelope);
         assert_eq!(asked.inputs, command_line.inputs);
     }
 
@@ -1368,7 +1368,7 @@ mod tests {
         let file = presets.path().expect("说得出位置").to_path_buf();
         std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
         let by_hand = "# 手写的\n[preset.\"漫画\".taste]\nfilter = \"box\"\n\n\
-                       [preset.\"画集\".taste]\nper-page = true\n";
+                       [preset.\"画集\".taste]\nenvelope = true\n";
         std::fs::write(&file, by_hand).expect("写得出来");
 
         // `p` 开那一栏，`↑` 绕到末尾那一行上，`⏎` 打一个名字。
@@ -1570,7 +1570,7 @@ mod tests {
 
         tap(&mut session, &mut running, &presets, Key::Char('p'));
         // 开了那一栏之后，别处把它换成了另一份内容。
-        std::fs::write(&file, "[preset.\"画集\".taste]\nper-page = true\n").expect("写得出来");
+        std::fs::write(&file, "[preset.\"画集\".taste]\nenvelope = true\n").expect("写得出来");
         tap(&mut session, &mut running, &presets, Key::Char('d'));
         tap(&mut session, &mut running, &presets, Key::Char('d'));
 

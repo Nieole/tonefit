@@ -5,9 +5,14 @@
 //! 边长与尾巴宽度、上包络的分位、迟滞页数、特例判据的立脚点分位与倍数、编码器在灰度与
 //! 调色板之间的取舍，任何一处动一下都会在这里露出来。
 //!
+//! **两条路各记各的**（ADR 0018）：头一组是**不加参数的人拿到的那一套**——默认那条路，
+//! 位深逐页各判各的、不做迟滞；其余几组开着 `--envelope`，那条路的形态一格没动
+//! （ADR 0006 的决定），上包络的分位、迟滞页数、特例判据那几个数只有在那条路上才露面。
+//! 卷行的标签写着走的是哪条路，两趟的数因此混不到一起比。
+//!
 //! 非退化的上分位与迟滞升档要页数够多才走得到，因此有四个长卷专门喂它们——三个在
-//! `--fit inside` 上，一个在默认那条路上（迟滞升档在两条路上升的不是同一档，见 `SMALL_PAGES`
-//! 与 `envelope-hysteresis-gate-holds`）；
+//! `--fit inside` 上，一个在默认适配方式上（迟滞升档在两条路上升的不是同一档，见 `SMALL_PAGES`
+//! 与 `envelope-hysteresis-gate-holds`）；这几卷只考上包络那一层，默认那条路上不跑。
 //! 特例那一条不挑卷长，短卷夹具里就走得到（立脚点逐页各取一个，见 `envelope` 的 `outlying`）。
 //! 判据自己那一层的分块聚合则要**局部**损伤才走得到，`local-damage` 专喂它。
 //! 归档卷单列一个，让写进容器的页字节数也进快照。
@@ -53,7 +58,8 @@ const HEADER: &str = "\
 #
 # 接受之前先答一句「为什么变」。这份快照存在的全部理由，就是不让判定在无人察觉时改动。
 #
-# 卷行：`[型号 适配方式 裁边] 卷名 · 几何门 · 卷级判定`。
+# 卷行：`[型号 适配方式 裁边 路] 卷名 · 几何门 · 卷级判定`。
+# 路是 `per-page`（默认：位深逐页各判各的，ADR 0018）或 `envelope`（`--envelope`：卷级上包络加迟滞）。
 # 页行：页名 · 裁后尺寸 · 目标尺寸 · 判定候选 · 输出字节 · 理由。
 # 裁后尺寸那一列是 `-` 表示这一页一个像素都没裁掉（源尺寸由夹具定死，见 tests/golden.rs）。
 # 透传行：非图片文件原样搬过去的那些，名字与字节数。
@@ -186,17 +192,29 @@ fn compare(committed: Option<&str>, produced: &str) -> Result<(), String> {
 /// 这一趟算出来的整份快照。
 fn snapshot() -> String {
     let space = Workspace::new();
-    // fit-inside 与裁边关着那两组各起一个工作区：几组有同名的卷，
+    // 默认那条路、fit-inside 与裁边关着那三组各起一个工作区：几组有同名的卷，
     // 源目录撞在一起会看不出是谁的。
+    let default = Workspace::new();
     let inside = Workspace::new();
     let kept = Workspace::new();
     let mut text = String::from(HEADER);
+    // 头一组：不加参数的人拿到的那一套（默认适配方式、裁边、逐页）。
+    render(
+        &mut text,
+        &default,
+        fixtures::BASELINE_DEVICE,
+        FitMode::Height,
+        Margins::Trim,
+        Route::PerPage,
+        &default_cases(),
+    );
     render(
         &mut text,
         &space,
         fixtures::BASELINE_DEVICE,
         FitMode::Height,
         Margins::Trim,
+        Route::Envelope,
         &height_cases(),
     );
     render(
@@ -205,6 +223,7 @@ fn snapshot() -> String {
         COLOR_DEVICE,
         FitMode::Height,
         Margins::Trim,
+        Route::Envelope,
         &color_cases(),
     );
     render(
@@ -213,6 +232,7 @@ fn snapshot() -> String {
         fixtures::BASELINE_DEVICE,
         FitMode::Inside,
         Margins::Trim,
+        Route::Envelope,
         &fit_inside_cases(),
     );
     render(
@@ -221,9 +241,35 @@ fn snapshot() -> String {
         fixtures::BASELINE_DEVICE,
         FitMode::Height,
         Margins::Keep,
+        Route::Envelope,
         &kept_margin_cases(),
     );
     text
+}
+
+/// 位深走哪条路（ADR 0018）。
+///
+/// 它在这个文件里是个枚举而不是 `bool`，理由与 [`Margins`] 同一条：卷行要印出它，
+/// 而 `[型号 height crop true]` 读不出那个 `true` 说的是哪一项。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    /// 默认：位深逐页各判各的，不做迟滞。
+    PerPage,
+    /// `--envelope`：卷级上包络加迟滞，卷内其余页共用基准档。
+    Envelope,
+}
+
+impl Route {
+    fn key(self) -> &'static str {
+        match self {
+            Route::PerPage => "per-page",
+            Route::Envelope => "envelope",
+        }
+    }
+
+    fn on(self) -> bool {
+        self == Route::Envelope
+    }
 }
 
 /// 裁边这一维在快照里的两种取值。
@@ -288,7 +334,7 @@ const SMALL_PAGES: [&str; 3] = [
     "envelope-hysteresis",
 ];
 
-/// 默认那条路（以高为准）上跑的夹具卷：除 [`SMALL_PAGES`] 那三卷之外的全部。
+/// 默认适配方式（以高为准）上跑的夹具卷：除 [`SMALL_PAGES`] 那三卷之外的全部。
 ///
 /// 摘掉的只有那三卷，不是「全部长卷」：`envelope-hysteresis-gate-holds` 也是六十页，
 /// 而它的页在这条路上不会被放大，留在这一组里正是它存在的理由（08 号票）。
@@ -296,6 +342,19 @@ fn height_cases() -> Vec<Case> {
     mono_cases()
         .into_iter()
         .filter(|case| !SMALL_PAGES.contains(&case.name))
+        .collect()
+}
+
+/// **默认那条路**（逐页，ADR 0018）上跑的夹具卷：[`height_cases`] 里只记卷级摘要的那几卷
+/// 之外的全部。
+///
+/// 摘掉的是只考上包络那一层的长卷（`Case::summary`）：那一层在默认那条路上根本不在场，
+/// 卷级那一行只会写「逐页」，六十页跑下来一个观测点都没有。留下的每一卷逐页记行——
+/// 这一组记的正是每一页拿到判据说它要的那一档。
+fn default_cases() -> Vec<Case> {
+    height_cases()
+        .into_iter()
+        .filter(|case| !case.summary_only)
         .collect()
 }
 
@@ -615,6 +674,7 @@ fn render(
     device: &str,
     fit: FitMode,
     crop: Margins,
+    route: Route,
     cases: &[Case],
 ) {
     // 目录卷要活到 `run` 之后（`Volume` 一落地就把临时目录收走），归档卷写完即成文件。
@@ -638,8 +698,13 @@ fn render(
 
     let report = tonefit::run(&Request {
         inputs,
-        // 各设备、各适配方式一个输出根：同一个工作区里几趟并列，互不覆盖。
-        output_root: space.out_named(&format!("out-{device}-{}-{}", fit_key(fit), crop.key())),
+        // 各设备、各适配方式、各条路一个输出根：同一个工作区里几趟并列，互不覆盖。
+        output_root: space.out_named(&format!(
+            "out-{device}-{}-{}-{}",
+            fit_key(fit),
+            crop.key(),
+            route.key()
+        )),
         profile: fixtures::profile(device),
         fit,
         crop: crop.on(),
@@ -656,7 +721,8 @@ fn render(
         white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
-        per_page: false,
+        // 走哪条路由这一组定（见 [`Route`]）：头一组是默认（逐页），其余几组开着上包络。
+        envelope: route.on(),
         cache_budget: CacheBudget::default(),
         mode: Mode::Process,
         io_mode: IoMode::default(),
@@ -676,9 +742,10 @@ fn render(
         let name = volume_name(volume);
         let mut block = vec![
             format!(
-                "[{device} {} {}] {name}{}",
+                "[{device} {} {} {}] {name}{}",
                 fit_key(fit),
                 crop.key(),
+                route.key(),
                 if volume.isolated() { " · 隔离" } else { "" }
             ),
             format!("  几何门 {}", gate(volume)),

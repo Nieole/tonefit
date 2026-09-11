@@ -128,7 +128,7 @@ impl std::fmt::Display for Threshold {
 /// 那个 5.113 **不是一条感知事实，是一个回归证人**：它说的是「界低于我，有一类页会失去
 /// 『抖过之后落回界内』这个行为」（`tests/pipeline.rs` 的
 /// `dithering_can_bring_a_page_back_within_the_threshold` 与
-/// `per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_reason`
+/// `the_default_path_gives_every_page_its_own_bit_depth_and_reason`
 /// 两条钉着它）。**夹具换了、性质改了，动的是取点，不是窗口。**
 /// 两条约束把取点圈在 **[5.113, 5.134)，0.021 宽**；中点 5.1235，取到
 /// [`crate::metadata`] 那份参数哈希记的三位小数就是 5.123

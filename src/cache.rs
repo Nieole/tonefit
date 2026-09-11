@@ -1,9 +1,10 @@
 //! 卷缓存：第一遍存下一页，第二遍取回（ADR 0005：解码一次，缓存缩放后的图）。
 //!
-//! 一格先后装得下两样（见 [`Kind`]）：第一遍存进来的**参照**——判据算过的那张 8 位灰度图，
-//! 与量化编码之后**编好的字节**。上包络那条路上一格从头到尾只装参照，第二遍取回来才量化编码；
-//! 逐页那条路上一页的档在滚动窗口里就定下来了，参照当场换成编好的 PNG，
-//! 第二遍退化成把字节按阅读顺序写出去（12 号票）。两条路上源页都在第一遍之后再没人碰。
+//! 一格装的是两样之一（见 [`Kind`]）：第一遍存进来的**参照**——判据算过的那张 8 位灰度图，
+//! 或者量化编码之后**编好的字节**。上包络那条路上一格装参照，第二遍取回来才量化编码；
+//! 默认那条路（逐页）与覆盖顶死那一趟上一页的档第一遍就定了，当场量化编码，
+//! 一格从头装的就是编好的 PNG，第二遍退化成把字节按阅读顺序写出去（12、06 号票；ADR 0018）。
+//! 两条路上源页都在第一遍之后再没人碰。
 //!
 //! 内存优先，超出预算的那些页溢写临时文件。**缓存只活在一次运行之内**：
 //! 进程结束即释放内存、收走临时文件，不提供跨运行的持久缓存。
@@ -91,15 +92,13 @@ pub struct CacheUsage {
     /// 透传文件不进缓存，彩色分支上的页也不进（ADR 0005 决定第 4 条）。
     pub pages: usize,
     /// 这些页的**参照**摊开来有多少字节：目标尺寸 × 每像素一字节。
-    /// 参照换成编好的字节之后这一格不变，一格从头装的就是字节时也照记
-    /// （`PageCache::insert_encoded`）——它说的始终是「这一卷有这么多像素过手」。
+    /// 一格从头装的就是字节时也照记（`PageCache::insert_encoded`）——它说的始终是
+    /// 「这一卷有这么多像素过手」。
     pub raw: u64,
     /// 缓存**为这一卷留下**了多少字节。恒等于 `resident + spilled`。
     ///
-    /// 参照那一段是 LZ4 压过的；换成编好的字节之后是那一页 PNG 本身
-    /// （`PageCache::replace`），换的那一刻旧那一段从这个数里撤掉——它当场就放掉了。
-    /// 逐页那条路上这个数因此比参照那一摊小一截。**覆盖顶死的那一趟从头就没有参照那一摊**
-    /// （`PageCache::insert_encoded`，06 号票）：这个数恰是写出去那几页字节之和。
+    /// 参照那一段是 LZ4 压过的；编好的字节是那一页 PNG 本身。**默认那条路与覆盖顶死的那一趟
+    /// 从头就没有参照那一摊**（`PageCache::insert_encoded`）：这个数恰是写出去那几页字节之和。
     ///
     /// **写出那一遍取走一页不撤**（`PageCache::take`）：报告在决策点上与收摊时各拼一次，
     /// 两次要说同一个数。这个数因此不是「此刻内存里躺着多少」，是「这一卷为缓存留下过多少」。
@@ -192,7 +191,7 @@ pub struct Block {
 /// 从缓存里取回来的一页：那一格装的是什么，取回来就是什么（见 [`Kind`]）。
 ///
 /// 两个变体分成的是两件事：**第二遍还要不要量化编码**。上包络那条路取回参照、第二遍编；
-/// 另外两条路（逐页那条路的滚动窗口、覆盖顶死的那一趟）取回的都是编好的字节，第二遍只写出。
+/// 另外两条路（默认那条路、覆盖顶死的那一趟）取回的都是编好的字节，第二遍只写出。
 pub enum Held {
     /// 参照——还要量化、编码才写得出去。
     Reference(GrayImage),
@@ -223,12 +222,9 @@ struct Entry {
 
 /// 一格装的是什么。
 ///
-/// 同一格先后装得下两样：先是参照，等这一页的档定下来就换成编好的字节
-/// （12 号票，见 [`PageCache::replace`]）。**序号不跟着换**——那个序号第一遍就交给了
-/// 这一页的输出页，而换字节的是另一条计算线程，它够不着那张输出页。
-///
-/// **一格也可能从头装的就是字节**：覆盖项在碰卷之前就把候选裁到只剩一个时判定已经定死，
-/// 第一遍当场量化编码，参照一张都不进缓存（06 号票，见 [`PageCache::insert_encoded`]）。
+/// 一格从头到尾只装一样：上包络那条路上是参照——那一档要看完整卷才定得下；
+/// 一页的档第一遍就定得下的那两条路上（默认那条路逐页各判各的，覆盖顶死的那一趟碰卷之前
+/// 就定死）是编好的字节，参照一张都不进缓存（见 [`PageCache::insert_encoded`]）。
 #[derive(Clone, Copy)]
 enum Kind {
     /// 参照，加上它摊开来有多大。尺寸单独留着而不是从压缩块里读——
@@ -307,7 +303,7 @@ impl PageCache {
         let Block { size, block, raw } = page;
         let stored = self.put(block)?;
         // 只数**存进来的参照**（04 号票的窄计数器），所以加在这里而不是 `put` 里：
-        // 12 号票的 `replace` 换掉的是同一页，它也走 `put`，记进去就成了凭空多一张。
+        // 编好的字节也走 `put`，记进去就成了凭空多一张。
         self.references += 1;
         self.usage.pages += 1;
         self.usage.raw += raw;
@@ -318,18 +314,19 @@ impl PageCache {
         Ok(self.entries.len() - 1)
     }
 
-    /// 把一页**编好的字节**直接存进来，返回它的序号（06 号票）。
+    /// 把一页**编好的字节**直接存进来，返回它的序号（06 号票；ADR 0018 之后默认那条路也走它）。
     ///
-    /// 覆盖项在碰卷之前就把候选裁到只剩一个时判定已经定死，第一遍当场量化编码：
+    /// 一页的档第一遍就定得下的那两条路——覆盖项在碰卷之前把候选裁到只剩一个，
+    /// 或者默认那条路上逐页各判各的、判据一出来这一页就定了——量化编码当场做完：
     /// 这一格从头装的就是那一页 PNG，**参照一张都不进缓存**，
-    /// [`replace`](Self::replace) 那一趟往返（存参照 → 取回来 → 换字节）整个省掉。
+    /// 存参照 → 取回来 → 换字节那一趟往返整个不存在。
     ///
     /// **它与 [`insert`](Self::insert) 是两个入口，不是一个带开关的**：
     /// [`references`](Self::references) 那个数只数参照，而这条路上没有参照可数。
     ///
     /// `reference` 是这一页那份**没进缓存**的参照，只读它有多大：摊开的字节数照旧记进
     /// [`CacheUsage::raw`]，那一格说的始终是「这一卷有这么多像素过手」，与参照有没有在
-    /// 缓存里待过无关（同一条口径在 [`replace`](Self::replace) 上也成立：换字节不动 `raw`）。
+    /// 缓存里待过无关。
     /// 收整张图而不是收一个尺寸，是为了这个数**只有一个算法**——[`compress`] 用的是同一句。
     ///
     /// 字节照旧过预算这道闸，装不下照样溢写（ADR 0005 决定第 1 条）。
@@ -342,75 +339,6 @@ impl PageCache {
             stored,
         });
         Ok(self.entries.len() - 1)
-    }
-
-    /// 把第 `index` 页的参照换成编好的那一页 PNG（12 号票）。
-    ///
-    /// **序号不动**：它第一遍就交给了这一页的输出页，而换字节的可能是另一条计算线程。
-    /// 参照当场放掉——这一格从此只占那一页 PNG 那么多，逐页那条路上「参照只在窗口里活着」
-    /// 靠的正是这一句。
-    ///
-    /// 编好的字节**照旧过预算这道闸**：装得下就留在内存里，装不下照样溢写
-    /// （ADR 0005 决定第 1 条对它一样成立）。参照那一段字节从用量里减掉；
-    /// 它若溢写过，临时文件里那一段就此作废，文件不缩（见 [`CacheUsage::spilled`]）。
-    ///
-    /// **撤旧账排在落新块之前**：不那样的话，预算那一问会把正要放掉的那一段也算进去，
-    /// 装得下的页会白白溢写。代价是新块落不下去（写盘失败）时这一格留在半空状态——
-    /// 那一支整卷作废（`crate::first_pass` 回 `Err`），没有谁会再看这一格。
-    pub fn replace(&mut self, index: usize, encoded: Vec<u8>) -> Result<()> {
-        let Some(entry) = self.entries.get_mut(index) else {
-            bail!(
-                "缓存里没有第 {index} 页：只存下了 {} 页",
-                self.entries.len()
-            );
-        };
-        ensure!(
-            matches!(entry.kind, Kind::Reference(_)),
-            "缓存里第 {index} 页装的不是参照，换不得"
-        );
-        // 只记账那一遍没有块可换，也没有第二遍等着这些字节：撞上它是调用方走错了路。
-        ensure!(
-            self.retention == Retention::Keep,
-            "这一遍的缓存只记账、不留页：第 {index} 页换不得"
-        );
-        // 先把旧的那一段从账上撤掉，新的那一段才问得出「预算还装不装得下」。
-        let was = std::mem::replace(&mut entry.stored, Stored::Taken);
-        entry.kind = Kind::Encoded;
-        self.forget(was);
-        let stored = self.put(encoded)?;
-        self.entries[index].stored = stored;
-        Ok(())
-    }
-
-    /// 读回第 `index` 页的参照，**不动那一格**。
-    ///
-    /// 滚动窗口拿它去量化编码，紧接着一句 [`replace`](Self::replace) 把那一格换掉——
-    /// 旧字节在那一句里才从账上撤下来。这一步只读不改，因此中途出错不留下一格半空的账。
-    pub fn reference(&mut self, index: usize) -> Result<GrayImage> {
-        let Some(entry) = self.entries.get(index) else {
-            bail!(
-                "缓存里没有第 {index} 页：只存下了 {} 页",
-                self.entries.len()
-            );
-        };
-        let Kind::Reference(size) = entry.kind else {
-            bail!("缓存里第 {index} 页装的不是参照");
-        };
-        let pixels = (size.width as usize) * (size.height as usize);
-        let slot = match &entry.stored {
-            Stored::Memory(block) => return unpack(block, size, pixels, index),
-            Stored::Spilled(slot) => *slot,
-            Stored::Measured => bail!(
-                "这一遍的缓存只记账、不留页：第 {index} 页取不回来。\
-                 dry-run 没有第二遍，取页说明调用方走错了路"
-            ),
-            Stored::Taken => bail!("缓存里第 {index} 页已经取走过了"),
-        };
-        let spill = self.spill.as_mut().expect("有溢写记录就有溢写文件");
-        let block = spill
-            .read(slot)
-            .with_context(|| format!("从溢写文件读缓存里第 {index} 页"))?;
-        unpack(&block, size, pixels, index)
     }
 
     /// 取走一页。**一页只取一次**：取走即放掉，这一卷的缓存跟着写出一页一页地空下去。
@@ -466,21 +394,6 @@ impl PageCache {
             self.usage.spilled += length;
         }
         Ok(stored)
-    }
-
-    /// 把一块字节从账上撤掉。只记账，不动那一块——它的去留由调用方定。
-    fn forget(&mut self, stored: Stored) {
-        let (length, resident) = match &stored {
-            Stored::Memory(block) => (block.len() as u64, true),
-            Stored::Spilled(slot) => (slot.len as u64, false),
-            Stored::Measured | Stored::Taken => return,
-        };
-        self.usage.stored -= length;
-        if resident {
-            self.usage.resident -= length;
-        } else {
-            self.usage.spilled -= length;
-        }
     }
 
     /// 溢写文件，没有就现建一个。
@@ -582,34 +495,12 @@ mod tests {
         GrayImage::new(size, pixels)
     }
 
-    /// 一格换成编好的字节之后取回来的就是那串字节，参照当场从账上下来（12 号票）。
-    ///
-    /// 序号不动：它第一遍就交给了这一页的输出页，而换字节的可能是另一条计算线程。
-    #[test]
-    fn a_page_swapped_for_its_encoded_bytes_comes_back_as_bytes() {
-        let spill_dir = tempfile::tempdir().expect("建溢写目录");
-        let image = page(Size::new(64, 48));
-        let mut cache =
-            PageCache::spilling_into(CacheBudget::default(), Retention::Keep, spill_dir.path());
-
-        let index = cache.insert(compress(&image)).expect("存一页");
-        let reference_bytes = cache.usage().stored;
-        let encoded = vec![7u8; 32];
-        cache.replace(index, encoded.clone()).expect("换成字节");
-
-        let usage = cache.usage();
-        assert_eq!(usage.pages, 1, "换字节不该多数出一页来");
-        assert_eq!(usage.raw, 64 * 48, "「压缩前」说的仍是那些像素");
-        assert_eq!(usage.stored, encoded.len() as u64, "参照没有从账上下来");
-        assert_eq!(usage.stored, usage.resident + usage.spilled);
-        assert!(usage.stored < reference_bytes, "夹具不对：字节没比参照小");
-
+    /// 取走第 `index` 页，它得是参照——上包络那条路上那一格从头到尾装的就是参照。
+    fn reference_taken(cache: &mut PageCache, index: usize) -> GrayImage {
         match cache.take(index).expect("取回那一页") {
-            Held::Encoded(bytes) => assert_eq!(bytes, encoded),
-            Held::Reference(_) => panic!("换过之后取回来的还是参照"),
+            Held::Reference(restored) => restored,
+            Held::Encoded(_) => panic!("第 {index} 页装的是字节，不是参照"),
         }
-        // 取走不减账：报告在决策点上与收摊时各拼一次，两次要说同一个数。
-        assert_eq!(cache.usage(), usage, "取走一页把用量改了");
     }
 
     /// 上包络那条路上一格从头到尾只装参照，取回来的就是参照。
@@ -628,32 +519,6 @@ mod tests {
         }
     }
 
-    /// 溢写过的那一格照样换得动：旧的那一段从账上下来，新的那一段自己再过一遍预算。
-    ///
-    /// 临时文件不缩——那一段死字节占的是盘，不占内存，而预算限的是峰值内存。
-    #[test]
-    fn a_spilled_page_can_be_swapped_and_its_share_comes_off_the_books() {
-        let spill_dir = tempfile::tempdir().expect("建溢写目录");
-        let image = page(Size::new(64, 48));
-        let mut cache =
-            PageCache::spilling_into(CacheBudget::new(0), Retention::Keep, spill_dir.path());
-
-        let index = cache.insert(compress(&image)).expect("存一页");
-        assert!(cache.usage().spilled > 0, "这一页没有溢写，下面就白测了");
-
-        let encoded = vec![3u8; 16];
-        cache.replace(index, encoded.clone()).expect("换成字节");
-
-        let usage = cache.usage();
-        assert_eq!(usage.resident, 0, "预算为零时不该有常驻");
-        assert_eq!(usage.spilled, encoded.len() as u64, "旧那一段没从账上下来");
-        assert_eq!(usage.stored, usage.resident + usage.spilled);
-        match cache.take(index).expect("取回那一页") {
-            Held::Encoded(bytes) => assert_eq!(bytes, encoded, "溢写之后换出来的字节变了"),
-            Held::Reference(_) => panic!("换过之后取回来的还是参照"),
-        }
-    }
-
     /// 一页只取一次：第二遍每一页只写出去一次，取第二回说明调用方走错了路。
     #[test]
     fn a_page_is_taken_only_once() {
@@ -667,23 +532,6 @@ mod tests {
         cache.take(index).expect("头一次取得回来");
 
         assert!(cache.take(index).is_err(), "同一页取回了两次");
-        assert!(cache.reference(index).is_err(), "取走之后还读得回参照");
-    }
-
-    /// 只记账那一遍没有块可换，也没有第二遍等着这些字节：撞上它是调用方走错了路。
-    #[test]
-    fn an_accounting_only_cache_refuses_the_swap() {
-        let spill_dir = tempfile::tempdir().expect("建溢写目录");
-        let mut cache =
-            PageCache::spilling_into(CacheBudget::default(), Retention::Account, spill_dir.path());
-        let index = cache
-            .insert(compress(&page(Size::new(64, 48))))
-            .expect("量一页");
-
-        assert!(
-            cache.replace(index, vec![1, 2, 3]).is_err(),
-            "只记账的一遍竟换了字节"
-        );
     }
 
     /// 存进去的与取出来的逐字节相同——内存与溢写两条路都是。
@@ -696,7 +544,7 @@ mod tests {
             let mut cache = PageCache::spilling_into(budget, Retention::Keep, spill_dir.path());
 
             let index = cache.insert(compress(&image)).expect("存一页");
-            let restored = cache.reference(index).expect("取回那一页");
+            let restored = reference_taken(&mut cache, index);
 
             assert_eq!(restored.size(), image.size(), "预算 {budget}");
             assert_eq!(restored.pixels(), image.pixels(), "预算 {budget}");
@@ -735,7 +583,7 @@ mod tests {
         assert_eq!(usage.raw, 64 * (40 + 48 + 56));
         // 界的两侧各取回一页：内存那条路与溢写那条路给出的是同一张图。
         for (index, image) in pages.iter().enumerate() {
-            let restored = cache.reference(index).expect("取回一页");
+            let restored = reference_taken(&mut cache, index);
             assert_eq!(restored.pixels(), image.pixels(), "第 {index} 页");
         }
     }
@@ -793,7 +641,7 @@ mod tests {
             "只记账的一遍建出了临时文件"
         );
         // 页真的没留下：来取就是调用方走错了路，不是悄悄给一张空图。
-        assert!(cache.reference(index).is_err(), "只记账的一遍竟取回了页");
+        assert!(cache.take(index).is_err(), "只记账的一遍竟取回了页");
     }
 
     /// 记账与真留页给出同一份用量——dry-run 的预告因此与照做时对得上。

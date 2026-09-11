@@ -629,15 +629,16 @@ fn aborting_in_the_first_pass_never_lets_the_second_one_start() {
     );
 }
 
-/// **逐页那条路上第一遍答中止，输出目录同样纹丝不动**（12 号票第 6 条前半）。
+/// **上包络那条路上第一遍答中止，输出目录同样纹丝不动**（12 号票第 6 条前半）。
 ///
-/// 那条路上第一遍多了一道工序：一页的档在滚动窗口里定下来的当场就量化、编码了。
-/// **编好不等于写出**——字节进的是缓存，落盘仍旧只在第二遍。上面那一条测的是默认那条路，
-/// 而窗口是这条路上新加的东西，正是该另钉一遍的地方。
+/// 上面那一条测的是默认那条路（逐页）：那条路上第一遍多了一道工序——一页判完当场就
+/// 量化、编码了。**编好不等于写出**——字节进的是缓存，落盘仍旧只在第二遍。
+/// 上包络那条路上参照攒一整卷、第二遍才编，两条路各钉一遍，「第二遍开始之前一个字节
+/// 都没写」才在两条路上都站得住。
 ///
 /// 断言与上面那条同形：第二遍不在走过的那张单子上，输出根下一个名字都没有。
 #[test]
-fn aborting_in_the_first_pass_writes_nothing_on_the_per_page_path_either() {
+fn aborting_in_the_first_pass_writes_nothing_on_the_envelope_path_either() {
     let space = Workspace::new();
     let volume = three_page_volume(&space, "volume-a");
     let stop = StopsAtAPageBoundary::new(
@@ -649,7 +650,7 @@ fn aborting_in_the_first_pass_writes_nothing_on_the_per_page_path_either() {
     );
 
     let report = tonefit::run(&Request {
-        per_page: true,
+        envelope: true,
         progress: Some(ProgressSink::new(stop.clone())),
         ..fixtures::request(&space, [volume.path()])
     })

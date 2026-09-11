@@ -112,7 +112,8 @@ fn a_changed_parameter_redoes_the_volume() {
         ("换阅读方向", |request| {
             request.split.order = tonefit::ReadingOrder::LeftToRight
         }),
-        ("关掉上包络", |request| request.per_page = true),
+        // 走哪条路改的是每一页的档（ADR 0018 的《后果》：翻默认那一趟全库不命中，正是这一项）。
+        ("打开上包络", |request| request.envelope = true),
         // 纸白对齐的上限改的是缩放之后那一步的像素（纸白对齐批 01 号票）：
         // 参照与其后一切量化跟着变。**默认值抬到 4 之后**（05 号票），这一格改的是
         // **从默认的 4（开）关回 0** 那一次——不放心的人关掉它，上一趟对齐过的输出
@@ -385,12 +386,19 @@ fn an_output_written_without_metadata_is_redone() {
 }
 
 /// 记录写全六项：幂等那四项，加上判定与它的理由（spec 的 story 7 随文件走的那一份）。
+///
+/// 跑在 `--envelope` 那条路上：理由那一句要指名定档页（`driven by page`），
+/// 而定档页只有上包络才有。默认那条路的记录由下面那一条钉。
 #[test]
 fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
     let space = Workspace::new();
     let volume = two_pages_and_an_extra(&space);
 
-    let report = fixtures::run_volume(&space, &volume);
+    let report = tonefit::run(&Request {
+        envelope: true,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
 
     let envelope = match report.volumes[0].verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope,
@@ -432,30 +440,27 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
     );
 }
 
-/// **逐页那条路上那份记录是第一遍盖的，字段一格不差**（12 号票）。
+/// **默认那条路（逐页）上那份记录是第一遍盖的，字段一格不差**（12 号票）。
 ///
-/// 那条路上量化与编码提到了第一遍——一页的档在滚动窗口里定下来的当场就编好了，
-/// 盖记录的于是不再是第二遍的 `Encode`，而是窗口自己。这一条问的就是**换了盖章的人之后
-/// 那七项还对不对**：判定与理由取自报告，而报告由汇总那一处独立算出来
-/// ——两处对不上，写出去的字节就与报告说的那一档分了家。
+/// 那条路上量化与编码提到了第一遍——一页判完当场就编好了，盖记录的于是不再是第二遍的
+/// `Encode`，而是第一遍自己。这一条问的就是**换了盖章的人之后那七项还对不对**：
+/// 判定与理由取自报告，而报告由汇总那一处独立算出来——两处对不上，
+/// 写出去的字节就与报告说的那一档分了家。
 ///
-/// 定档页那一项在这条路上恒不在场（`--per-page` 关掉了上包络），理由因此是逐页那三种之一，
-/// 不带 `driven by page`。
+/// 定档页那一项在这条路上恒不在场（上包络关着），理由因此是逐页那两种之一，
+/// 不带 `driven by page`。段式迟滞那一种（`hysteresis pull-back`）已随迟滞退场（ADR 0018），
+/// 不再产出。
 #[test]
-fn the_record_on_the_per_page_path_still_names_the_verdict_and_its_reason() {
+fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
     let space = Workspace::new();
     let volume = two_pages_and_an_extra(&space);
 
-    let report = tonefit::run(&Request {
-        per_page: true,
-        ..fixtures::request(&space, [volume.path()])
-    })
-    .expect("处理应当成功");
+    let report = fixtures::run_volume(&space, &volume);
 
     assert_eq!(
         report.volumes[0].verdict,
         Some(VolumeVerdict::PerPage),
-        "上包络没被关掉，测的就不是滚动窗口那条路"
+        "默认走到了上包络，测的就不是逐页那条路"
     );
     for page in &report.volumes[0].pages {
         let verdict = fixtures::verdict(page);
@@ -479,7 +484,7 @@ fn the_record_on_the_per_page_path_still_names_the_verdict_and_its_reason() {
             Some(verdict.candidate.to_string()),
             "写进 tEXt 的那一档与报告说的不是同一档"
         );
-        // 逐页那三种的字面，一律不带定档页。
+        // 逐页那两种的字面，一律不带定档页。
         let reason = field("tonefit:reason").expect("理由没写进去");
         assert!(
             !reason.contains("driven by page"),
@@ -490,7 +495,6 @@ fn the_record_on_the_per_page_path_still_names_the_verdict_and_its_reason() {
             match verdict.reason {
                 Reason::LowestWithinThreshold => "lowest candidate within threshold",
                 Reason::NoneWithinThreshold => "none within threshold, top candidate",
-                Reason::RunHysteresis => "hysteresis pull-back",
                 other => panic!("逐页那条路上不该出现的理由：{other:?}"),
             },
             "写进 tEXt 的理由与报告说的不是同一句"
