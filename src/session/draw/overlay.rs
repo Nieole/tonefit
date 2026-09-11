@@ -9,8 +9,17 @@
 //!
 //! | 掀开的是 | 正文出自 | 它答的是 |
 //! |---|---|---|
-//! | [全部键](Overlay::Keys) | [`keys`]（问 [`Session::key_table`]） | 此刻按得动哪些键 |
+//! | [全部键](Overlay::Keys) | [`keys`]（问 [`Session::key_table`]），末尾接 [`passes`] | 此刻按得动哪些键；横条上那个词在做什么、为什么非做不可 |
 //! | [这一趟的前提](Overlay::Premises) | [`premises`]（[`crate::render::header`]） | 这份报告是照哪几条算出来的 |
+//!
+//! # 键位之外的那一节：三遍各在做什么
+//!
+//! `?` 那一张从「键位表」扩成「键位 + 这一趟在做什么」（`two-pass-rework/01`）：末尾一节，
+//! 三遍各一行——横条上那个词（[`pass_name`]，与横条同一处出处），加一句它**为什么非做不可**。
+//! 「为什么」落在这里而不在横条或屏底：横条在最窄那一档上只有 30 列，只放得下骨架；
+//! 屏底的单一职责是按键提示，不摆常驻散文。**不显示活的当前阶段**：读图定档满核并行，
+//! 同一刻不同线程在不同阶段，「现在在做哪一格」没有单一答案——这一节因此一个字都不随
+//! 当前遍变，一趟都没跑过时也在。
 //!
 //! # 键位表从按键表取，不另抄一份
 //!
@@ -34,8 +43,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
+use tonefit::Pass;
 
 use super::keys::{Wording, merged};
+use super::overview::pass_name;
 use super::paint::Painted;
 use crate::session::live::Live;
 use crate::session::state::{KeyGroup, Overlay, Session};
@@ -56,7 +67,7 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
     let which = covered.overlay;
     // 两张差的只有这一句：底下那一副画法一格不分岔。
     let body = match which {
-        Overlay::Keys => keys(session),
+        Overlay::Keys => keys_and_passes(session),
         Overlay::Premises => premises(live),
     };
     let block = Block::default()
@@ -109,15 +120,97 @@ fn premises(live: Option<&Live>) -> Vec<Painted> {
 /// 一趟都还没跑过时，前提那一张里说什么。
 const NOT_RUN_YET: &str = "还没跑过：这一趟的前提要等按下 t 试算或 x 执行才有。";
 
-/// **全部键**那一张的正文：一组一段，一行一件事。
+/// **全部键**那一张的正文：键位那几组（[`keys`]），末尾接三遍那一节（[`passes`]）。
+///
+/// 两截**同一副行形**（出自同一处 [`section`]），读的人不必换一种眼光；
+/// 但两截各对各的列——键那一列与遍那一列宽度不同，混着对齐会把短的那一截推出去。
+fn keys_and_passes(session: &Session) -> Vec<Painted> {
+    let mut rows = keys(session);
+    rows.push(blank_row());
+    rows.extend(passes());
+    rows
+}
+
+/// **三遍各在做什么、为什么非做不可**那一节：抬头一行，三遍各一行。
+///
+/// 词从横条那一处取（[`pass_name`]），这里只出「为什么」（[`WHY`]）——三个词因此只有一处出处。
+/// 对齐的那一列按三个词里最宽的算。
+fn passes() -> Vec<Painted> {
+    let names = WHY.map(|(pass, why)| (pass_name(Some(pass)), why));
+    let column = widest(names.iter().map(|(name, _)| *name));
+    section(PASSES_TITLE, column, names)
+}
+
+/// **一节**：抬头一行，底下一行一件事——三格缩进、对齐到 `column` 那么宽的一列、三格、那句话。
+///
+/// 键位那几组与三遍那一节**同一副行形**，出自这一处；`column` 由调用方给，
+/// 因为对齐的范围是它定的（键位那几组跨组对齐，三遍那一节自己对自己）。
+/// 对齐按**显示宽度**算（[`crate::wrap::width`]）——`⇧⇥` 与 `Ctrl-C` 不一样宽。
+fn section<'a>(
+    title: &str,
+    column: u16,
+    rows: impl IntoIterator<Item = (impl AsRef<str>, &'a str)>,
+) -> Vec<Painted> {
+    let mut lines = vec![Painted::plain(format!(" {title}"))];
+    for (spelt, what) in rows {
+        let spelt = spelt.as_ref();
+        let pad = " ".repeat(usize::from(
+            column.saturating_sub(crate::wrap::width(spelt)),
+        ));
+        lines.push(Painted::plain(format!("   {spelt}{pad}   {what}")));
+    }
+    lines
+}
+
+/// 一列里最宽的那一格有多宽。
+fn widest<'a>(spelt: impl Iterator<Item = &'a str>) -> u16 {
+    spelt.map(crate::wrap::width).max().unwrap_or_default()
+}
+
+/// 节与节之间空的那一行。
+///
+/// 摆的是一个空格而不是空串：**空文字折出零行**（`crate::wrap::fold`），而这里要的正是一行。
+fn blank_row() -> Painted {
+    Painted::plain(" ".to_owned())
+}
+
+/// 三遍那一节的抬头。「本卷那一行」指的是总览块里当前卷那一行（`super::overview`）——
+/// 横条前面那个词就是这三个之一。
+const PASSES_TITLE: &str = "三遍 · 本卷那一行上那个词各在做什么";
+
+/// 三遍按走的次序，各配一句**为什么非做不可**（spec 的《遍与它的名字》）。
+///
+/// 一句话答两件事：这一遍**做什么**，以及**为什么它不能并进别的遍**——
+/// 对指纹不读一遍源字节就答不出「做过没有」；读图定档不看过像素就定不下档；
+/// 按档写出要等全卷读完——一页失败整卷进隔离，而哪页失败要解过才知道
+/// （spec 的《默认翻成逐页》：不做真单遍）。前两遍盘上一个字节都不写，
+/// 「跑到一半停下来会留下什么」由此答得出（`super::overview::volume_row`）。
+///
+/// 三遍是哪三个在这里点名：[`Pass`] 非穷尽，横条那一处多一遍只会印「这一遍」，
+/// 而这一张列不出它——那时该来这里补一行。
+const WHY: [(Pass, &str); 3] = [
+    (
+        Pass::Fingerprint,
+        "不读一遍源字节，答不出这一卷上一趟做过没有；对得上整卷跳过",
+    ),
+    (
+        Pass::First,
+        "看过像素才知道哪一档够用：解码、缩放、算判据，一个字节都不写",
+    ),
+    (
+        Pass::Second,
+        "等全卷读完才写：一页失败整卷进隔离，而哪页失败要解过才知道",
+    ),
+];
+
+/// **键位**那几组：一组一段，一行一件事。
 ///
 /// **一个键都不在这里列**：[`Session::key_table`] 问的是按键表自己，本函数只把
 /// 问出来的每一个动作翻成屏上那句话——**措辞与屏底那一行同一处出处**
 /// （[`super::keys::says`]），这一张取长的那一句。派得出同一件事的那几个键
 /// [并成一行](merged)（`↑ ↓ j k` 是一件事，不是四件）。
 ///
-/// **键那一列对齐**：一列对得齐才扫得动，而这一张就是拿来扫的。
-/// 对齐按**显示宽度**算（[`crate::wrap::width`]）——`⇧⇥` 与 `Ctrl-C` 不一样宽。
+/// **键那一列对齐**：一列对得齐才扫得动，而这一张就是拿来扫的。行形出自 [`section`]。
 fn keys(session: &Session) -> Vec<Painted> {
     let stage = session.stage();
     let table: Vec<(KeyGroup, Vec<(String, &'static str)>)> = session
@@ -125,27 +218,20 @@ fn keys(session: &Session) -> Vec<Painted> {
         .into_iter()
         .map(|(group, keys)| (group, merged(group, stage, &keys, Wording::Long)))
         .collect();
-    let column = table
-        .iter()
-        .flat_map(|(_, rows)| rows.iter())
-        .map(|(spelt, _)| crate::wrap::width(spelt))
-        .max()
-        .unwrap_or_default();
+    // **跨组对齐**：一张表一列，不是一组一列。
+    let column = widest(
+        table
+            .iter()
+            .flat_map(|(_, rows)| rows.iter())
+            .map(|(spelt, _)| spelt.as_str()),
+    );
     let mut rows = Vec::new();
     for (group, listed) in table {
         // 组与组之间空一行：一段一组，扫的时候先认组、再认键。
-        // 摆的是一个空格而不是空串：**空文字折出零行**（`crate::wrap::fold`），
-        // 而这里要的正是一行。
         if !rows.is_empty() {
-            rows.push(Painted::plain(" ".to_owned()));
+            rows.push(blank_row());
         }
-        rows.push(Painted::plain(format!(" {}", group.title())));
-        for (spelt, what) in listed {
-            let pad = " ".repeat(usize::from(
-                column.saturating_sub(crate::wrap::width(&spelt)),
-            ));
-            rows.push(Painted::plain(format!("   {spelt}{pad}   {what}")));
-        }
+        rows.extend(section(group.title(), column, listed));
     }
     rows
 }
@@ -155,7 +241,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::super::keys::{says, spelled};
-    use super::super::probe::{a_run_in_flight, same_screen, screen, snapshot, tight};
+    use super::super::probe::{
+        a_run_in_flight, a_run_walking, same_screen, screen, snapshot, tight,
+    };
     use super::super::shell;
     use super::*;
     use crate::session::live::Volume;
@@ -245,7 +333,7 @@ mod tests {
 "│   c          按这块面板出一张标定图                                          █"
 "│   p          开预设那一栏                                                    █"
 "│   t          试算：只算不写，报告照出                                        █"
-"│   x          执行：写到输出根                                                █"
+"│   x          执行：写到输出根                                                ║"
 "│                                                                              ║"
 "│ 取值栏 · 摊开的那一列                                                        ║"
 "│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
@@ -334,7 +422,7 @@ mod tests {
 "│   ↑ ↓ j k    在目录表上挪一枝                                                █"
 "│   ⏎ 空格     展开这一枝：摊出它底下那几卷                                    █"
 "│   ⇥ ⇧⇥       把焦点切回左栏                                                  █"
-"│   e          把这一卷的逐页摊开                                              █"
+"│   e          把这一卷的逐页摊开                                              ║"
 "│   g          回到跟随：光标交回给最新那一卷                                  ║"
 "│                                                                              ║"
 "│ 展开一个目录 · 卷表                                                          ║"
@@ -464,7 +552,7 @@ mod tests {
 "│   t          试算：只算不写，报告照出                                        █"
 "│   x          执行：写到输出根                                                █"
 "│                                                                              █"
-"│ 取值栏 · 摊开的那一列                                                        █"
+"│ 取值栏 · 摊开的那一列                                                        ║"
 "│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
 "│   ← Esc      一格不改地退一步（下钻进去之后回的是面板那一层）                ║"
 "│   → ⏎ 空格   把停着的这一格定下来                                            ║"
@@ -492,7 +580,7 @@ mod tests {
 "│   c          按这块面板出一张标定图                                          █"
 "│   p          开预设那一栏                                                    █"
 "│   t          试算：只算不写，报告照出                                        █"
-"│   x          执行：写到输出根                                                █"
+"│   x          执行：写到输出根                                                ║"
 "│                                                                              ║"
 "│ 取值栏 · 摊开的那一列                                                        ║"
 "│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
@@ -503,6 +591,102 @@ mod tests {
 "│   ↑ ↓ j k    在这一栏上挪一份                                                ║"
 "│   ⏎ 空格     打一个名字，存成一份预设                                        ║"
 "│   Esc p      退一步，回配置                                                  ▼"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+" ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · Ctrl-C 退出                       "
+" 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
+" 部                                                                             "
+"#;
+
+    /// **`?` 那张表从「键位表」扩成「键位 + 这一趟在做什么」**（`two-pass-rework/01`）：
+    /// 末尾多一节，三遍各一行——横条上那个词，加一句它**为什么非做不可**。
+    ///
+    /// 「为什么」落在这里而不在横条或屏底：横条在最窄那一档上只有 30 列，只放得下骨架；
+    /// 屏底的单一职责是按键提示，不摆常驻散文（spec 的《遍与它的名字》）。
+    ///
+    /// 屏上读得出的两件事：**一趟都没跑过时这一节也在**——「为什么要走两遍」在按下 `x`
+    /// 之前就问得出，它说的是这个程序怎么做事，不是此刻的状态；三个词与横条上那个词
+    /// **同一处出处**（[`pass_name`]），逐字相同。开卷不是一遍，这一节不列它（停车场 Q283）。
+    #[test]
+    fn the_key_table_ends_with_what_each_pass_does_and_why() {
+        let mut session = key_table();
+        for _ in 0..40 {
+            session.press(Key::Down);
+        }
+        same_screen(
+            &snapshot(|frame| shell(frame, &mut session, None), 80, 24),
+            THE_KEY_TABLE_ENDS_WITH_THE_PASSES,
+        );
+        let fresh = tight(&screen(&mut session, None, 120, 60));
+        for pass in [Pass::Fingerprint, Pass::First, Pass::Second] {
+            let name = pass_name(Some(pass));
+            assert!(
+                fresh.contains(&tight(name)),
+                "{pass:?} 那个词不在表上：{fresh}"
+            );
+        }
+        assert!(!fresh.contains(&tight("开卷")), "{fresh}");
+    }
+
+    /// **不显示活的当前阶段**（票面第五条）：读图定档满核并行，同一刻不同线程在不同阶段，
+    /// 「现在在做哪一格」没有单一答案——走读图定档与走按档写出时这一张**逐字相同**，
+    /// 而三遍那一节在跑着的时候照样在。
+    #[test]
+    fn the_key_table_does_not_follow_the_pass_being_walked() {
+        let mut session = Session::new();
+        session.run_started();
+        session.press(Key::Char('?'));
+        for _ in 0..40 {
+            session.press(Key::Down);
+        }
+        let first = screen(
+            &mut session,
+            Some(&a_run_walking(false, Some(Pass::First))),
+            120,
+            60,
+        );
+        let second = screen(
+            &mut session,
+            Some(&a_run_walking(false, Some(Pass::Second))),
+            120,
+            60,
+        );
+        assert_eq!(first, second, "这一张跟着当前遍变了");
+        let running = tight(&first);
+        for said in [
+            "对指纹",
+            "读图定档",
+            "按档写出",
+            "整卷跳过",
+            "一个字节都不写",
+            "整卷进隔离",
+        ] {
+            assert!(running.contains(&tight(said)), "{said}：{running}");
+        }
+    }
+
+    /// 见 [`the_key_table_ends_with_what_each_pass_does_and_why`]：滚到底那一副，
+    /// 末一节是三遍。
+    const THE_KEY_TABLE_ENDS_WITH_THE_PASSES: &str = r#"
+"┌全部键 · Esc 关───────────────────────────────────────────────────────────────┐"
+"│                                                                              ▲"
+"│ 取值栏 · 摊开的那一列                                                        ║"
+"│   ↑ ↓ j k    在这一列取值上挪一格                                            ║"
+"│   ← Esc      一格不改地退一步（下钻进去之后回的是面板那一层）                ║"
+"│   → ⏎ 空格   把停着的这一格定下来                                            █"
+"│                                                                              █"
+"│ 预设栏                                                                       █"
+"│   ↑ ↓ j k    在这一栏上挪一份                                                █"
+"│   ⏎ 空格     套用停着的那一份                                                █"
+"│   Esc p      退一步，回配置                                                  █"
+"│   d          删掉停着的那一份（按两下）                                      █"
+"│                                                                              ║"
+"│ 任何时候                                                                     ║"
+"│   Ctrl-C     退出会话                                                        ║"
+"│                                                                              ║"
+"│ 三遍 · 本卷那一行上那个词各在做什么                                          ║"
+"│   对指纹     不读一遍源字节，答不出这一卷上一趟做过没有；对得上整卷跳过      ║"
+"│   读图定档   看过像素才知道哪一档够用：解码、缩放、算判据，一个字节都不写    ║"
+"│   按档写出   等全卷读完才写：一页失败整卷进隔离，而哪页失败要解过才知道      ▼"
 "└──────────────────────────────────────────────────────────────────────────────┘"
 " ↑ ↓ j k 读 · Esc ? F1 关（回到刚才那一块） · Ctrl-C 退出                       "
 " 只列此刻这个阶段派得出的键，按焦点分组——屏底那一行摆的是最常用的几个，这里是全 "
@@ -570,6 +754,7 @@ mod tests {
     }
 
     /// **这一张表是按键表自己，不是另抄的一份**（票面：`?` 那张表要从按键表取）。
+    /// 键位之外只有末尾三遍那一节（[`passes`]），它一个键都不列。
     ///
     /// 两头对：**按键表派得出的每一个动作都在这一张上**（逐个键问一遍
     /// [`Session::action`]，问出来不是「没有意义」的就该在屏上读得到它那句话），
@@ -598,7 +783,8 @@ mod tests {
                 assert!(screen.contains(&tight(&spelled(key))), "{key:?} 不在屏上");
             }
         }
-        // 一个没有主的字母在这一张上一处都没有。
+        // 一个没有主的字母在这一张上一处都没有。**三遍那一节也在这一屏上**（[`passes`]）：
+        // 它没有键那一列，但一个字母溜进那三句散文里也会在这里读成一个键——那节因此全是汉字。
         assert!(!screen.contains('z'), "{screen}");
     }
 
