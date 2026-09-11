@@ -11,9 +11,14 @@
 //! （见 [`Lodgers`]）。
 //!
 //! **按页跳过没有改这一层的形态**（two-pass-rework/14）：留下的页的字节从上一趟的输出里
-//! 读回来（[`Written::bytes_of`]），改写过卷级那一项之后照写页那条路写进这一趟的临时容器，
+//! 读回来（[`Written::bytes_of`]），**原样**照写页那条路写进这一趟的临时容器
+//! （two-pass-rework/15：记录里没有要改写的卷级那一项了，搬就是 raw copy），
 //! 收尾照旧整个换掉。「不产出半成品」「清掉陈旧产物」「最终位置只在收尾这一步被碰到」
-//! 三条因此一字没动；归档卷仍旧整包重打，只是留下的成员一个像素都不碰。
+//! 三条因此一字没动；归档卷仍旧整包重打，只是留下的成员一个字节都不碰。
+//!
+//! 页级那条路上整卷跳过还要向上一趟的输出问一句「除了这些再没有别的了吗」
+//! （[`Written::holds_nothing_but`]）：页级依据逐页各比各的，看不见源里删掉的那一页
+//! 在输出里留下的陈旧产物，而那正是收尾清掉的那一类东西——不问，它就永远留着。
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -143,6 +148,15 @@ impl Lodgers {
         self.0
             .iter()
             .any(|inside| inside.iter().next() == Some(name))
+    }
+
+    /// 去处直接那一层的 `name` **有人认领**吗：是这一卷自己的成员（`mine`），或通往某个借住的卷。
+    ///
+    /// 没人认领的就是陈旧产物。收尾清它（[`DirectorySink::swap_members`]）与整卷跳过之前问
+    /// 「还有没有别的」（[`Written::holds_nothing_but`]）用的是**同一句**——两处对「什么算陈旧」
+    /// 各说各的，跳过放过的东西收尾就会清掉，或者反过来。
+    fn spoken_for(&self, name: &OsStr, mine: &BTreeSet<OsString>) -> bool {
+        mine.contains(name) || self.leads_to_one(name)
     }
 }
 
@@ -297,7 +311,7 @@ impl DirectorySink {
                 .with_context(|| format!("把 {} 改名到 {}", source.display(), target.display()))?;
         }
         for name in names_in(&self.path)? {
-            if mine.contains(&name) || self.lodgers.leads_to_one(&name) {
+            if self.lodgers.spoken_for(&name, &mine) {
                 continue;
             }
             let stale = self.path.join(&name);
@@ -318,8 +332,9 @@ impl Drop for DirectorySink {
     }
 }
 
-/// 上一趟写出的输出容器，只读。幂等要问它两件事：一页里记着什么指纹，一个成员还在不在；
-/// 按页跳过再向它要第三件——留下的那几页的字节（[`bytes_of`](Self::bytes_of)，two-pass-rework/14）。
+/// 上一趟写出的输出容器，只读。幂等要问它三件事：一页里记着什么指纹，一个成员还在不在，
+/// 除了点名的这些成员还有没有别的（[`holds_nothing_but`](Self::holds_nothing_but)，two-pass-rework/15）；
+/// 按页跳过再向它要第四件——留下的那几页的字节（[`bytes_of`](Self::bytes_of)，two-pass-rework/14）。
 ///
 /// 与 [`Sink`] 对称，也共用同一套容器知识——归档成员名怎么拼只此一份（见 [`archive_name`]）。
 /// 两个方向分成两个类型，因为它们的生命期不同：写那一侧要建容器、要收尾，
@@ -346,7 +361,7 @@ impl Written {
         }
     }
 
-    /// 读回一页里记着的那份记录：幂等那四项，加上这一张的来路。成员不在、
+    /// 读回一页里记着的那份记录：幂等依据那几项，加上这一张的来路。成员不在、
     /// 或它没有记录，就是 `None`（ADR 0006：读回 tEXt 比对）。
     ///
     /// 只读到第一个 IDAT 为止，一个像素都不解——成本停在这里，跳过一卷才比重做一卷便宜。
@@ -399,6 +414,36 @@ impl Written {
         match self {
             Written::Directory(root) => root.join(relative).is_file(),
             Written::Archive(archive) => archive.by_name(&archive_name(relative)).is_ok(),
+        }
+    }
+
+    /// 除了 `members` 这些成员，这个容器里**再没有别的了**吗（two-pass-rework/15）。
+    ///
+    /// 页级那条路上整卷跳过要问它：页级依据逐页各比各的，源里删掉的那一页没有人替它说
+    /// 「我不该在这儿」——它那一族在输出里成了陈旧产物，而卷级那一个数从前顺手盖住了这件事。
+    /// 不问这一句，那一族会被静默地留在输出里，下一趟又被跳过，从此永久留着。
+    ///
+    /// 问的范围与收尾清陈旧产物的**同一句**（[`Lodgers::spoken_for`]，见 [`DirectorySink::swap_members`]）：
+    /// 目录卷只看直接那一层（成员全在那一层上），通往[借住的卷](Lodgers)的那些不算——它们是别人的；
+    /// 归档卷看全部成员名。列不出来就答「有别的」——那时重做一遍，不会得出错的结论。
+    pub fn holds_nothing_but<'a>(
+        &mut self,
+        members: impl IntoIterator<Item = &'a Path>,
+        lodgers: &Lodgers,
+    ) -> bool {
+        match self {
+            Written::Directory(root) => {
+                let mine: BTreeSet<OsString> = members
+                    .into_iter()
+                    .filter_map(|member| member.iter().next().map(OsStr::to_os_string))
+                    .collect();
+                names_in(root)
+                    .is_ok_and(|names| names.iter().all(|name| lodgers.spoken_for(name, &mine)))
+            }
+            Written::Archive(archive) => {
+                let mine: BTreeSet<String> = members.into_iter().map(archive_name).collect();
+                archive.file_names().all(|name| mine.contains(name))
+            }
         }
     }
 }
