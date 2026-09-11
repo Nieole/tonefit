@@ -4,7 +4,7 @@
 //! 不在任何外部状态库：文件被移动、改名、重新打包都不会丢，而 tonefit 也就不必为了幂等
 //! 去维护一份全库索引——那正是 ADR 0009 关掉的东西。
 //!
-//! 七个字段分三摞：
+//! 七个字段分三摞，外加一项只在默认路径上才有的：
 //!
 //! - **幂等依据**四项：工具版本、profile 名、参数哈希、源哈希。重跑时读回来逐项比，
 //!   四项都对得上就不必重做（见 [`Fingerprint`]）。
@@ -13,6 +13,9 @@
 //!   由内容决定（跨页拆分，页几何批 04 号票），输出成员名因此在碰像素之前预告不出来。
 //! - **判定记录**两项：判定与理由。两者由前四项推出来，因此不进比对；它们在这里，
 //!   是为了让「这一页为什么是这一档」随文件走（spec 的 story 7）。
+//! - **页级源哈希**一项（two-pass-rework/13）：只算这一张来自的那个源成员，与来路合起来
+//!   是这一页**自己**的幂等依据（见 [`PageSource`]）。它摆在卷级那四项**旁边**，不替代它们：
+//!   跳过与重做仍按卷（`crate::can_skip` 不读它）——那是 expand–contract 的 expand 那一步。
 //!
 //! tEXt 的取值是 Latin-1，中文写不进去：本模块产出的字符串一律 ASCII。
 //! 报告那一侧的中文说法（见 `crate::report` 与 `main`）不替代它，它也不替代报告——
@@ -45,6 +48,7 @@ const TOOL_KEYWORD: &str = "Software";
 const PROFILE_KEYWORD: &str = "tonefit:profile";
 const PARAMS_KEYWORD: &str = "tonefit:params";
 const SOURCE_KEYWORD: &str = "tonefit:source";
+const PAGE_SOURCE_KEYWORD: &str = "tonefit:page-source";
 const ORIGIN_KEYWORD: &str = "tonefit:origin";
 const VERDICT_KEYWORD: &str = "tonefit:verdict";
 const REASON_KEYWORD: &str = "tonefit:reason";
@@ -148,7 +152,61 @@ impl Origin {
     }
 }
 
-/// 一页输出 PNG 里读回来的记录，幂等要的那两摞。
+/// 页级源哈希：一张输出页**自己那一份**幂等依据里代表源的那一项（two-pass-rework/13）。
+///
+/// 卷级那一份（[`Fingerprint`] 的 `source`）说的是「这一卷变没变」；这一份说的是
+/// 「这一张来自的那个源成员变没变」。默认路径上一页的档只取决于它自己
+/// （ADR 0018 决定第 2 条：不做迟滞），这一问因此才有答案——卷级上包络那条路上答不了，
+/// 一页的档由全卷定。
+///
+/// # 为什么是多一个键，而不是 `tonefit:source` 那一格多一层形态
+///
+/// 旧记录只有卷级那一份，而它们必须**照旧读得懂、照旧按卷比**：`can_skip` 一个字不改
+/// （expand，不 contract）。多一个键，旧读法碰都不碰它；改 `source` 的写法则每一个读它的地方
+/// 都得先拆再比，[`Fingerprint`] 的相等也就不再是「四项逐字相同」。缺了这个键的记录
+/// 读回来是 `page_source: None`——它是老形态的记录，不是坏记录。
+///
+/// # 喂什么
+///
+/// 与 [`SourceHasher`] 喂一个成员时**逐字节相同**（名字带长度前缀、字节带长度前缀），只是只喂
+/// 这一个成员：同一条规矩，两个作用域。名字照喂，理由与卷级那一份相同——两页对调名字，
+/// 输出整个错位。
+///
+/// # 跨页拆分下它指得回哪一半
+///
+/// 一个源页切出两张输出页，两张的页级源哈希**相同**：它们来自同一个成员的同一批字节。
+/// 哪一半由 [`Origin`] 说（`001.jpg 1/2` 对 `001.jpg 2/2`）——两项合在一起才是页级依据，
+/// 这一项单独不成立。
+///
+/// # 哪些页有
+///
+/// 只在**这一页的字节只取决于它自己**时写：默认路径与覆盖顶死那一趟（`crate::Settles`
+/// 答「第一遍就编好」的那两条）。上包络那条路一页的档由全卷定，失败页的占位尺寸由全卷定
+/// （卷内统一尺寸），两处都不写；`--no-metadata` 那一趟连算都不算。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageSource(String);
+
+impl PageSource {
+    /// 一个源成员的页级源哈希：名字与字节都算，规矩见类型文档。
+    pub fn of(relative: &Path, bytes: &[u8]) -> Self {
+        let mut hasher = SourceHasher::new();
+        hasher.member(relative, bytes);
+        Self(hasher.finish())
+    }
+
+    /// 写进 tEXt 的那串字。
+    fn text(&self) -> &str {
+        &self.0
+    }
+
+    /// 从 tEXt 里读回来。不是 [`HASH_HEX`] 个十六进制字符就是 `None`——那不是本工具写的记录。
+    fn parse(text: &str) -> Option<Self> {
+        (text.len() == HASH_HEX && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| Self(text.to_owned()))
+    }
+}
+
+/// 一页输出 PNG 里读回来的记录，幂等要的那两摞，加上页级那一项。
 ///
 /// 两摞一趟读回来而不是各读一次：读一页记录要开文件、解 PNG 头，那笔成本
 /// 「跳过一卷比重做一卷便宜」全靠它压着（见 [`RECORD_PREFIX`]）。
@@ -161,6 +219,21 @@ pub struct PageRecord {
     /// 而幂等从不该给一个证不出来的命中。代价是升级之后每一卷重做一趟，
     /// 那一趟之后每一页都带着它。
     pub origin: Option<Origin>,
+    /// 这一张自己那一份源哈希（two-pass-rework/13）。**旧记录没有这一项**，上包络那条路
+    /// 与失败页也没有（见 [`PageSource`]）——缺了它是「页级答不了」，不是坏记录；
+    /// 卷级那四项照旧比、照旧命中。这一票没有谁读它做判定，它在这里是为了读得回来
+    /// ——生产路径上因此还没有读者，那正是 expand 那一步该有的样子。
+    ///
+    /// 挂的是 `expect` 不是 `allow`：读者一接上（按页跳过那一票），这一句就成了没兑现的预期，
+    /// 编译器当场报，不靠人记得回来删（停车场 Q669）。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "读它做判定的是按页跳过那一票；这一票只负责它读得回来"
+        )
+    )]
+    pub page_source: Option<PageSource>,
 }
 
 impl PageRecord {
@@ -185,6 +258,9 @@ impl PageRecord {
                 source: field(SOURCE_KEYWORD)?,
             },
             origin: field(ORIGIN_KEYWORD).as_deref().and_then(Origin::parse),
+            page_source: field(PAGE_SOURCE_KEYWORD)
+                .as_deref()
+                .and_then(PageSource::parse),
         })
     }
 
@@ -237,9 +313,9 @@ fn escape(name: &str) -> String {
 
 /// 记录落在文件开头这么多字节以内。
 ///
-/// 写出来的 PNG 是 IHDR、色板、六个 tEXt、IDAT 这个次序（见 `crate::encode`），
+/// 写出来的 PNG 是 IHDR、色板、那几个 tEXt、IDAT 这个次序（见 `crate::encode`），
 /// 记录因此紧挨着文件头。读的那一端顺着这个事实只取开头一截：一页 PNG 有好几 MB，
-/// 为了六行记录把它整个搬进内存不值当。
+/// 为了几行记录把它整个搬进内存不值当。
 ///
 /// 截短了只会读不出记录——那时这一卷重做，不会得出错的结论。
 pub const RECORD_PREFIX: u64 = 64 * 1024;
@@ -304,10 +380,12 @@ const COLOR_REASON: &str = "color branch, scaled only";
 const FAILED_VERDICT: &str = "failed";
 const FAILED_REASON: &str = "page could not be decoded, blank placeholder";
 
-/// 一页要写进 tEXt 的全部字段：幂等那四项由整卷共用，来路、判定与理由逐页各一份。
+/// 一页要写进 tEXt 的全部字段：幂等那四项由整卷共用，来路、判定与理由逐页各一份，
+/// 页级源哈希逐页各一份而且**不一定在**（见 [`PageSource`] 的《哪些页有》）。
 pub struct Record<'a> {
     fingerprint: &'a Fingerprint,
     origin: String,
+    page_source: Option<String>,
     verdict: String,
     reason: String,
 }
@@ -320,26 +398,39 @@ impl<'a> Record<'a> {
     /// 而它本来也用不上——`volume-p95, driven by page …` 是灰度那一侧的理由。
     ///
     /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
-    pub fn color(fingerprint: &'a Fingerprint, origin: &Origin, salvage: Option<Salvage>) -> Self {
+    /// `page_source` 是这一张自己那一份源哈希，写不写由调用方按 [`PageSource`] 的《哪些页有》定。
+    pub fn color(
+        fingerprint: &'a Fingerprint,
+        origin: &Origin,
+        page_source: Option<&PageSource>,
+        salvage: Option<Salvage>,
+    ) -> Self {
         Self {
             fingerprint,
             origin: origin.text(),
+            page_source: page_source.map(|source| source.text().to_owned()),
             verdict: COLOR_VERDICT.to_owned(),
             reason: salvaged_text(salvage, COLOR_REASON.to_owned()),
         }
     }
 
-    /// 七个字段，按写进文件的顺序。
-    pub fn fields(&self) -> [(&'static str, &str); 7] {
-        [
-            (TOOL_KEYWORD, &self.fingerprint.tool),
+    /// 全部字段，按写进文件的顺序：七项，页级源哈希在场时是八项，紧跟在卷级那一份之后。
+    pub fn fields(&self) -> Vec<(&'static str, &str)> {
+        let mut fields = vec![
+            (TOOL_KEYWORD, self.fingerprint.tool.as_str()),
             (PROFILE_KEYWORD, &self.fingerprint.profile),
             (PARAMS_KEYWORD, &self.fingerprint.params),
             (SOURCE_KEYWORD, &self.fingerprint.source),
-            (ORIGIN_KEYWORD, &self.origin),
+        ];
+        if let Some(page_source) = &self.page_source {
+            fields.push((PAGE_SOURCE_KEYWORD, page_source));
+        }
+        fields.extend([
+            (ORIGIN_KEYWORD, self.origin.as_str()),
             (VERDICT_KEYWORD, &self.verdict),
             (REASON_KEYWORD, &self.reason),
-        ]
+        ]);
+        fields
     }
 }
 
@@ -366,10 +457,19 @@ impl<'a> Recorder<'a> {
     /// 灰度路径上的一页：判定与理由都有。
     ///
     /// `salvage` 是这一页救回了多少，完好页是 `None`（04 号票，见 [`salvaged_text`]）。
-    pub fn gray(&self, origin: &Origin, verdict: Verdict, salvage: Option<Salvage>) -> Record<'a> {
+    /// `page_source` 是这一张自己那一份源哈希——默认路径与顶死那一趟第一遍盖记录时有，
+    /// 上包络那条路第二遍盖记录时没有（见 [`PageSource`] 的《哪些页有》）。
+    pub fn gray(
+        &self,
+        origin: &Origin,
+        page_source: Option<&PageSource>,
+        verdict: Verdict,
+        salvage: Option<Salvage>,
+    ) -> Record<'a> {
         Record {
             fingerprint: self.fingerprint,
             origin: origin.text(),
+            page_source: page_source.map(|source| source.text().to_owned()),
             verdict: verdict.candidate.to_string(),
             reason: salvaged_text(salvage, reason_text(verdict.reason, self.driver)),
         }
@@ -385,10 +485,14 @@ impl<'a> Recorder<'a> {
     /// （见 `crate::process_volume`）。填它们只是因为记录本身是七项一套的。
     ///
     /// 失败页那一族恒只有一张（`crate::OUTPUTS_PER_FAILED_PAGE`）：它没有像素可切。
+    ///
+    /// 页级源哈希**不写**：占位页的尺寸是卷内统一尺寸，由全卷定，这一页的字节因此不只
+    /// 取决于它自己——与上包络那条路同一条理由（见 [`PageSource`] 的《哪些页有》）。
     pub fn failed(&self, origin: &Origin) -> Record<'a> {
         Record {
             fingerprint: self.fingerprint,
             origin: origin.text(),
+            page_source: None,
             verdict: FAILED_VERDICT.to_owned(),
             reason: FAILED_REASON.to_owned(),
         }
@@ -782,12 +886,16 @@ mod tests {
         };
         // 成员名取一个**带中文的**：那是这批素材的常态，而 tEXt 只装得下 Latin-1。
         let origin = Origin::new(Path::new("第 1 话/001.jpg"), 0, 2);
+        let page_source = PageSource::of(Path::new("第 1 话/001.jpg"), b"jpeg bytes");
         let records = [
-            Recorder::new(&fingerprint, Some(86)).gray(&origin, verdict, None),
-            Record::color(&fingerprint, &origin, None),
-            Recorder::new(&fingerprint, Some(86)).gray(&origin, verdict, Some(half())),
-            Record::color(&fingerprint, &origin, Some(half())),
+            Recorder::new(&fingerprint, Some(86)).gray(&origin, None, verdict, None),
+            Record::color(&fingerprint, &origin, None, None),
+            Recorder::new(&fingerprint, Some(86)).gray(&origin, None, verdict, Some(half())),
+            Record::color(&fingerprint, &origin, None, Some(half())),
             Recorder::new(&fingerprint, Some(86)).failed(&origin),
+            // 页级那一项在场的两种：字段多一项，同样得是 ASCII。
+            Recorder::new(&fingerprint, None).gray(&origin, Some(&page_source), verdict, None),
+            Record::color(&fingerprint, &origin, Some(&page_source), None),
         ];
 
         for record in &records {
@@ -821,25 +929,12 @@ mod tests {
         let old_record = Record {
             fingerprint: &yesterday,
             origin: origin.text(),
+            page_source: None,
             verdict: "2bit".to_owned(),
             reason: "hysteresis pull-back".to_owned(),
         };
-        let mut bytes = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.set_color(png::ColorType::Grayscale);
-            for (keyword, value) in old_record.fields() {
-                encoder
-                    .add_text_chunk(keyword.to_owned(), value.to_owned())
-                    .expect("写得进 tEXt");
-            }
-            let mut writer = encoder.write_header().expect("写 PNG 头");
-            writer.write_image_data(&[0]).expect("写像素");
-            writer.finish().expect("收尾");
-        }
-
-        let read = PageRecord::read(std::io::Cursor::new(bytes)).expect("旧记录该读得回来");
+        let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&old_record)))
+            .expect("旧记录该读得回来");
 
         assert_eq!(
             read.fingerprint, yesterday,
@@ -853,6 +948,85 @@ mod tests {
             !read.matches(&today, Path::new("001.jpg"), 0, 1),
             "参数哈希变了却命中了：翻默认那一趟从没点过开关的用户本该全部重做"
         );
+    }
+
+    /// 一张只有一个像素、盖着 `record` 的 PNG：读回记录的用例要的只是 tEXt，像素越少越好。
+    fn one_pixel_png(record: &Record) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_color(png::ColorType::Grayscale);
+        for (keyword, value) in record.fields() {
+            encoder
+                .add_text_chunk(keyword.to_owned(), value.to_owned())
+                .expect("写得进 tEXt");
+        }
+        let mut writer = encoder.write_header().expect("写 PNG 头");
+        writer.write_image_data(&[0]).expect("写像素");
+        writer.finish().expect("收尾");
+        bytes
+    }
+
+    /// **页级源哈希写下去、读得回来；旧记录读回来是「没有」，不是「坏了」**（two-pass-rework/13）。
+    ///
+    /// 两份记录只差那一项：新的带着它，读回来逐字相同；老的没有，读回来 `page_source` 是 `None`，
+    /// 而卷级那四项与来路照旧读得回、照旧命中——幂等的判据一个字没变。
+    /// 写法不对的取值（不是 32 个十六进制字符）同样读成 `None`：那不是本工具写的记录。
+    #[test]
+    fn the_page_level_basis_reads_back_and_an_old_record_reads_back_without_it() {
+        let fingerprint = Fingerprint::new(&request(), SourceHasher::new().finish());
+        let origin = Origin::new(Path::new("001.jpg"), 1, 2);
+        let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
+
+        let today = Record::color(&fingerprint, &origin, Some(&page_source), None);
+        let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&today)))
+            .expect("新记录该读得回来");
+        assert_eq!(read.page_source, Some(page_source.clone()));
+        assert!(read.matches(&fingerprint, Path::new("001.jpg"), 1, 2));
+
+        let yesterday = Record::color(&fingerprint, &origin, None, None);
+        let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&yesterday)))
+            .expect("旧记录该读得回来");
+        assert_eq!(read.page_source, None, "旧记录读出了一个不存在的页级源哈希");
+        assert!(
+            read.matches(&fingerprint, Path::new("001.jpg"), 1, 2),
+            "旧记录在卷级那四项上本该照旧命中"
+        );
+
+        let malformed = Record {
+            page_source: Some("not a hash".to_owned()),
+            ..Record::color(&fingerprint, &origin, None, None)
+        };
+        let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&malformed)))
+            .expect("其余几项齐着，记录该读得回来");
+        assert_eq!(read.page_source, None, "写法不对的取值被当成了页级源哈希");
+    }
+
+    /// 页级源哈希的**写法钉死**（two-pass-rework/13）：它要落进真实输出，按页跳过那一票
+    /// 落地之后改一次定义就是全库页级不命中一趟（停车场 Q667）。字面量是本票落地那一刻
+    /// 算出来的数——规矩是「只喂这一个成员的 [`SourceHasher`]」，名字与字节都算，
+    /// 两页对调名字，输出整个错位，页级也得看得见。
+    #[test]
+    fn the_page_source_has_a_frozen_definition() {
+        let page = PageSource::of(Path::new("ch1/001.jpg"), b"one");
+
+        assert_eq!(
+            page.text(),
+            "20ec99fd09b7c84efdf8e48d87fd3e8b",
+            "页级源哈希的定义变了"
+        );
+        assert_ne!(
+            PageSource::of(Path::new("ch1/002.jpg"), b"one"),
+            page,
+            "换了名字，页级源哈希却没变"
+        );
+        assert_ne!(
+            PageSource::of(Path::new("ch1/001.jpg"), b"two"),
+            page,
+            "换了字节，页级源哈希却没变"
+        );
+        // 一族两张共用同一份：它算的是源成员，不是切出来的哪一半。
+        assert_eq!(PageSource::of(Path::new("ch1/001.jpg"), b"one"), page);
     }
 
     /// 救回了多少这一半的页数，`Salvage` 造不出来——它只在 `decode` 里量得出。
@@ -875,17 +1049,17 @@ mod tests {
         let origin = Origin::new(Path::new("001.jpg"), 0, 1);
         assert_eq!(
             Recorder::new(&fingerprint, Some(86))
-                .gray(&origin, verdict, Some(half()))
+                .gray(&origin, None, verdict, Some(half()))
                 .reason,
             "salvaged 50.0% recovered, volume-p95, driven by page 087"
         );
         assert_eq!(
-            Record::color(&fingerprint, &origin, Some(half())).reason,
+            Record::color(&fingerprint, &origin, None, Some(half())).reason,
             "salvaged 50.0% recovered, color branch, scaled only"
         );
         // 完好页那一句一个字都不动：添的这一句只属于救回来的页。
         assert_eq!(
-            Record::color(&fingerprint, &origin, None).reason,
+            Record::color(&fingerprint, &origin, None, None).reason,
             COLOR_REASON,
             "完好页的理由被救回那一句污染了"
         );
