@@ -17,7 +17,7 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
-use tonefit::{Mode as RunMode, PageOutcome};
+use tonefit::{Mode as RunMode, PageOutcome, Pass};
 
 use super::yielding::CONFIG_WIDTH;
 use super::{main_pane, shell};
@@ -278,11 +278,19 @@ pub(super) fn snapshot_of(session: &mut Session, live: &Live, width: u16, height
     snapshot(|frame| shell(frame, session, Some(live)), width, height)
 }
 
-/// 一趟跑到一半：两卷跑完（一卷幂等命中、一卷带失败页），第三卷正走第二遍。
+/// 一趟跑到一半：两卷跑完（一卷幂等命中、一卷带失败页），第三卷正走按档写出那一遍。
 ///
 /// 时钟往回拨一段固定的量，快照因此不随机器快慢而变——与黄金快照同一条规矩
 /// （`tonefit::Report::elapsed`：计时只进结构，不进渲染出的文字）。
 pub(super) fn a_run_in_flight(failures: bool) -> Live {
+    a_run_walking(failures, Some(Pass::Second))
+}
+
+/// 同一趟，第三卷正走**点名的那一遍**——`None` 是开卷之后、第一条 `PassStarted` 到达之前那一格。
+///
+/// 横条上那个词（`super::overview`）与 `?` 表末尾三遍那一节（`super::overlay`）的用例都要它：
+/// 前者三遍加开卷各问一遍，后者问走哪一遍那一张是不是同一张。
+pub(super) fn a_run_walking(failures: bool, pass: Option<Pass>) -> Live {
     let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
     live.run_started(3, 5000);
     live.volume_started(Path::new("库/卷一"), 1000);
@@ -294,7 +302,9 @@ pub(super) fn a_run_in_flight(failures: bool) -> Live {
         &fixture::processed_volume("卷二", broken),
     );
     live.volume_started(Path::new("库/卷三"), 3000);
-    live.pass_started(tonefit::Pass::Second, None);
+    if let Some(pass) = pass {
+        live.pass_started(pass, None);
+    }
     for _ in 0..1000 {
         live.stepped();
     }

@@ -4,7 +4,7 @@
 //! ```text
 //! ┌执行 · 第 3/3 卷 · 还剩约 3m20s ─────────────────      ← 抬头
 //! │ 总体 [==================>           ] 3000/5000 步 · 已用 5m00s    ← 全局那一行
-//! │ 本卷 卷三 · 第二遍 [==========>                   ] 1000/3000 步 ← 当前卷那一行
+//! │ 本卷 卷三 · 按档写出 [==========>                   ] 1000/3000 步 ← 当前卷那一行
 //! │ 完成 1 卷 · 跳过 1 卷                                             ← 结论行
 //! │ 出事 隔离 1 卷 · 失败 1 页                                        ← 出事行，没事就不出现
 //! └─────────────────────────────────────────────────
@@ -315,8 +315,8 @@ fn overall_row(live: &Live, room: u16) -> String {
 /// 当前卷那一行：**在走哪一卷的哪一遍**，以及这一遍走到第几步。
 ///
 /// 「在走哪一遍」只有 `PassStarted` 答得出（命令行那一路当下没有去处，见 `crate::Bar`）。
-/// 非说不可，是因为三遍的性质完全不同：幂等那一道只读不写，第一遍碰像素，
-/// 第二遍才往盘上写字节——「跑到一半停下来会留下什么」全看它停在哪一遍。
+/// 非说不可，是因为三遍的性质完全不同：对指纹只读不写，读图定档碰像素、盘上仍不写，
+/// 按档写出才往盘上写字节——「跑到一半停下来会留下什么」全看它停在哪一遍。
 ///
 /// **卷与卷之间这一行是空的，行不撤**：编一条横条上去只会让人以为它卡住了，
 /// 而撤掉那一行会让下面的报告每过一卷跳一格。
@@ -350,10 +350,17 @@ fn walking_line(walking: &Walking, room: u16) -> String {
     with_a_bar(&head, &tail, walking.walked, walking.steps, room)
 }
 
-/// 在走哪一遍。三遍与 `VolumeTiming` 的三段是同一条分界线（`CONTEXT.md` 的《进度》）。
+/// 在走哪一遍——**横条上那个词的唯一出处**。三遍与 `VolumeTiming` 的三截是同一条分界线
+/// （`CONTEXT.md` 的《进度》：遍）。
+///
+/// **叫的是它在做什么，不是第几遍**（`two-pass-rework/01`）：「第一遍 / 第二遍」看得见
+/// 进度在走，看不出在做什么、为什么非做两遍不可——而那正是一个真实用户问出来的第一个问题。
+/// 三个词与词汇表《遍》那一条逐字相同；各自**为什么非做不可**那一句不在这一行上
+/// （最窄那一档只有 30 列，只放得下骨架），落在 `?` 那张表里（[`super::overlay`]），
+/// 那一张从这里取词，不另抄一份。
 ///
 /// `_` 那一支不是遗漏：[`Pass`] 非穷尽，多一遍不该逼着这里跟着改。
-fn pass_name(pass: Option<Pass>) -> &'static str {
+pub(super) fn pass_name(pass: Option<Pass>) -> &'static str {
     match pass {
         // 开卷之后、第一条 `PassStarted` 到达之前：打开容器、列成员，还没走进任何一遍。
         //
@@ -361,9 +368,12 @@ fn pass_name(pass: Option<Pass>) -> &'static str {
         // （`p4-parking-lot/13`）：横条因此在这一格上真的会走，而这一格只说得出「开卷」
         // ——摊开不是一遍，`Pass` 上没有它（停车场 Q283）。
         None => "开卷",
-        Some(Pass::Fingerprint) => "幂等这一道",
-        Some(Pass::First) => "第一遍",
-        Some(Pass::Second) => "第二遍",
+        // 算出本卷指纹，与上一趟写在输出里的比（`CONTEXT.md` 的《管线》：幂等这一道）。
+        Some(Pass::Fingerprint) => "对指纹",
+        // 解码、缩放、算判据，定下每一页要哪一档（《管线》：第一遍）。
+        Some(Pass::First) => "读图定档",
+        // 按定下的档量化、编码、写进输出（《管线》：第二遍）。
+        Some(Pass::Second) => "按档写出",
         Some(_) => "这一遍",
     }
 }
@@ -612,7 +622,7 @@ mod tests {
     use super::super::footer::running_prompt;
     use super::super::main_pane;
     use super::super::probe::{
-        a_run_in_flight, main_snapshot, same_screen, screen, snapshot, tight,
+        a_run_in_flight, a_run_walking, main_snapshot, same_screen, screen, snapshot, tight,
     };
     use super::super::yielding::MAIN_MIN_WIDTH;
     use super::*;
@@ -757,7 +767,7 @@ mod tests {
     const A_RUN_IN_FLIGHT: &str = r#"
 "┌执行 · 第 3/3 卷 · 还剩约 3m20s───────────────────────────────────────────────────────────────┐"
 "│ 总体 [==================>           ] 3000/5000 步 · 已用 5m00s                              │"
-"│ 本卷 卷三 · 第二遍 [==========>                   ] 1000/3000 步                             │"
+"│ 本卷 卷三 · 按档写出 [==========>                   ] 1000/3000 步                           │"
 "│ 完成 1 卷 · 跳过 1 卷                                                                        │"
 "│ 出事 隔离 1 卷 · 失败 1 页                                                                   │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
@@ -793,7 +803,7 @@ mod tests {
     const A_RUN_ASKED_TO_FINISH: &str = r#"
 "┌执行 · 第 3/3 卷 · 还剩约 3m20s · 收尾中──────────────────────────────────────────────────────┐"
 "│ 总体 [==================>           ] 3000/5000 步 · 已用 5m00s                              │"
-"│ 本卷 卷三 · 第二遍 [==========>                   ] 1000/3000 步                             │"
+"│ 本卷 卷三 · 按档写出 [==========>                   ] 1000/3000 步                           │"
 "│ 完成 1 卷 · 跳过 1 卷                                                                        │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────┘"
 "#;
@@ -1249,15 +1259,16 @@ mod tests {
             vec![BAR_WIDTH as usize; 2],
             "宽终端上横条缩了"
         );
-        // 收窄了：当前卷那一行的字更多（卷名与在走哪一遍），它那一条因此先短一格。
-        assert_eq!(bars(&live, 45), vec![9, 8], "没按各自剩下的格收窄");
+        // 收窄了：当前卷那一行的字更多（卷名与在走哪一遍），它那一条因此先短几格。
+        assert_eq!(bars(&live, 47), vec![11, 8], "没按各自剩下的格收窄");
         // 再窄一格，当前卷那一条整条让掉——而它那两个数还在。
-        assert_eq!(bars(&live, 44), vec![8], "该让的是横条，不是数");
+        assert_eq!(bars(&live, 46), vec![10], "该让的是横条，不是数");
         assert!(
-            block_at(&live, Instruction::Continue, false, 44).contains("1000/3000 步"),
+            block_at(&live, Instruction::Continue, false, 46).contains("1000/3000 步"),
             "让掉横条之后连数也没了"
         );
-        // 再窄一格，全局那一条也让掉，两行的数与「已用」照旧整条在屏上。
+        // 全局那一条的字少，多撑两列；再窄一格它也让掉，两行的数与「已用」照旧整条在屏上。
+        assert_eq!(bars(&live, 44), vec![8], "全局那一条该还在");
         assert!(bars(&live, 43).is_empty(), "窄到摆不下还画着横条");
         let bare = block_at(&live, Instruction::Continue, false, 43);
         for said in ["3000/5000 步", "已用 5m00s", "1000/3000 步"] {
@@ -1267,7 +1278,7 @@ mod tests {
         // **全局那一条不跟着换卷跳**：卷与卷之间当前卷那一行是空的，而它一格不动。
         // 两行合用一个数的话，它的刻度会在换卷那一刻涨一截——同一个「走了六成」
         // 上一刻十八格、下一刻六格，看着像整趟往回退了。
-        for width in [WIDE, 50, 46, 45, 44] {
+        for width in [WIDE, 50, 47, 46, 45, 44] {
             assert_eq!(
                 bars(&between, width).first(),
                 bars(&live, width).first(),
@@ -1285,6 +1296,55 @@ mod tests {
         );
         assert!(narrow.contains('⋯'), "从行尾硬截了：{narrow}");
         assert!(narrow.contains("已用 5m00s"), "末一截被截掉了：{narrow}");
+    }
+
+    /// **横条上那个词说得出这一遍在做什么**（`two-pass-rework/01`）：三遍各叫它做的事，
+    /// 开卷那一支不变。
+    ///
+    /// 从前那三个词是「幂等这一道 / 第一遍 / 第二遍」——看得见进度在走，看不出在做什么、
+    /// 为什么非做两遍不可（spec 的《遍与它的名字》）。**「为什么」不在这一行上**：
+    /// 最窄那一档只有 30 列，只放得下骨架，那一句落在 `?` 那张表里
+    /// （`super::super::overlay`）。
+    #[test]
+    fn the_pass_on_the_bar_says_what_it_does() {
+        for (pass, said) in [
+            (Some(Pass::Fingerprint), "对指纹"),
+            (Some(Pass::First), "读图定档"),
+            (Some(Pass::Second), "按档写出"),
+            // 开卷之后、第一条 `PassStarted` 到达之前那一格：不是一遍，词不变。
+            (None, "开卷"),
+        ] {
+            let shown = block(&a_run_walking(false, pass), Instruction::Continue, false);
+            assert!(
+                shown.contains(&format!("本卷 卷三 · {said} [")),
+                "{pass:?} 那一遍横条上说的不是「{said}」：{shown}"
+            );
+        }
+    }
+
+    /// **最窄那一档上这一行仍摆得下**（票面第四条）：主区只有 30 列，横条让完正文仍长——
+    /// 从中间省略，而**两头都在**：哪一卷、走到第几步。三遍各问一遍，最长的那个词
+    /// 也不许把哪一头顶出去。
+    #[test]
+    fn the_narrowest_tier_keeps_both_ends_of_the_volume_row_for_every_pass() {
+        for pass in [Pass::Fingerprint, Pass::First, Pass::Second] {
+            let shown = block_at(
+                &a_run_walking(false, Some(pass)),
+                Instruction::Continue,
+                false,
+                MAIN_MIN_WIDTH,
+            );
+            let row = shown
+                .lines()
+                .find(|row| row.contains("本卷"))
+                .unwrap_or_else(|| panic!("{pass:?}：当前卷那一行不在屏上：{shown}"));
+            assert!(row.contains("本卷 卷三"), "{pass:?}：卷名那一头没了：{row}");
+            assert!(
+                row.contains("1000/3000 步"),
+                "{pass:?}：步数那一头没了：{row}"
+            );
+            assert!(!row.contains('['), "{pass:?}：最窄那一档还画着横条：{row}");
+        }
     }
 
     /// 时长两级就够：秒、分秒、时分。
