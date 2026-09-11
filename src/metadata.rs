@@ -348,7 +348,7 @@ impl<'a> Record<'a> {
 /// 两者绑成一个类型，因为盖记录处处要它们成对：指纹填前四项，定档页把上包络那句
 /// `volume-p95, driven by page 087` 写全，缺一项都盖不出一份完整的记录。
 ///
-/// `driver` 指进 [`crate::VolumeReport::pages`]。上包络不在场（`--per-page`、
+/// `driver` 指进 [`crate::VolumeReport::pages`]。上包络不在场（没开 `--envelope`、
 /// 覆盖项顶掉判定）时没有定档页可指，那时是 `None`。
 pub struct Recorder<'a> {
     fingerprint: &'a Fingerprint,
@@ -431,7 +431,6 @@ fn reason_text(reason: Reason, driver: Option<usize>) -> String {
             None => "volume-p95".to_owned(),
         },
         Reason::Hysteresis => "hysteresis raise".to_owned(),
-        Reason::RunHysteresis => "hysteresis pull-back".to_owned(),
         Reason::Outlier => "outlier, decided on its own".to_owned(),
         Reason::OutsideTheGate => "outside the geometry gate, dither off".to_owned(),
     }
@@ -537,7 +536,9 @@ fn params_text(
             .map_or_else(|| "auto".to_owned(), |depth| depth.to_string()),
     );
     line("dither", &request.dither.map_or("auto", Dither::name));
-    line("per-page", &request.per_page);
+    // 走的是哪条路——上包络开着还是逐页各判各的——改的是每一页的档（ADR 0018）：
+    // 翻默认那一趟从没点过这个开关的用户全部不命中，ADR 0018 的《后果》认下了它。
+    line("envelope", &request.envelope);
     text
 }
 
@@ -582,7 +583,7 @@ mod tests {
             white_align_limit: WhiteAlignLimit::default(),
             bit_depth: None,
             dither: None,
-            per_page: false,
+            envelope: false,
             cache_budget: CacheBudget::default(),
             mode: Mode::Process,
             io_mode: IoMode::default(),
@@ -632,7 +633,7 @@ mod tests {
                 request.bit_depth = Some(BitDepth::Four)
             }),
             ("抖动覆盖", |request| request.dither = Some(Dither::Off)),
-            ("逐页", |request| request.per_page = true),
+            ("上包络", |request| request.envelope = true),
         ];
 
         for (what, change) in changes {
@@ -799,6 +800,58 @@ mod tests {
         assert_eq!(
             records[0].reason, "volume-p95, driven by page 087",
             "定档页那一句与 ADR 0006 对不上"
+        );
+    }
+
+    /// **旧输出里 `hysteresis pull-back` 那一句仍认得**（two-pass-rework/11 的验收）。
+    ///
+    /// 段式迟滞随 ADR 0018 退场，这一句不再产出；但它写在一批真实输出的 tEXt 里，
+    /// 读回来时要当作一份**正常的记录**——判为不命中（参数哈希变了，走的路不同），
+    /// 不判为错、不当成别的工具写的。理由那一项本来就不进比对（[`PageRecord::read`]
+    /// 只读幂等那四项与来路），这一条把「不读」钉成一句断言：换了理由的写法，
+    /// 旧记录照样读得回、照样按指纹比。
+    #[test]
+    fn a_record_carrying_the_retired_pull_back_reason_still_reads_back_as_a_miss() {
+        let today = Fingerprint::new(&request(), SourceHasher::new().finish());
+        let yesterday = Fingerprint {
+            params: "0123456789abcdef0123456789abcdef".to_owned(),
+            ..today.clone()
+        };
+        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let old_record = Record {
+            fingerprint: &yesterday,
+            origin: origin.text(),
+            verdict: "2bit".to_owned(),
+            reason: "hysteresis pull-back".to_owned(),
+        };
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_color(png::ColorType::Grayscale);
+            for (keyword, value) in old_record.fields() {
+                encoder
+                    .add_text_chunk(keyword.to_owned(), value.to_owned())
+                    .expect("写得进 tEXt");
+            }
+            let mut writer = encoder.write_header().expect("写 PNG 头");
+            writer.write_image_data(&[0]).expect("写像素");
+            writer.finish().expect("收尾");
+        }
+
+        let read = PageRecord::read(std::io::Cursor::new(bytes)).expect("旧记录该读得回来");
+
+        assert_eq!(
+            read.fingerprint, yesterday,
+            "读回来的指纹不是写进去的那一份"
+        );
+        assert!(
+            read.matches(&yesterday, Path::new("001.jpg"), 0, 1),
+            "同一份指纹该命中——理由那一句不进比对"
+        );
+        assert!(
+            !read.matches(&today, Path::new("001.jpg"), 0, 1),
+            "参数哈希变了却命中了：翻默认那一趟从没点过开关的用户本该全部重做"
         );
     }
 

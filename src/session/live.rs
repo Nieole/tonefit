@@ -992,7 +992,7 @@ pub(crate) mod fixture {
             white_align_limit: tonefit::WhiteAlignLimit::default(),
             bit_depth: None,
             dither: None,
-            per_page: false,
+            envelope: false,
             cache_budget: CacheBudget::default(),
             mode,
             io_mode: tonefit::IoMode::default(),
@@ -1142,7 +1142,7 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一份 **`--per-page`** 的卷报告：上包络关着，卷内没有基准档（迟滞改走段式）。
+    /// 一份**默认路径（逐页）**的卷报告：上包络关着，卷内没有基准档，每一页各判各的。
     ///
     /// 只换判定那一格，逐页那几行照 [`processed_volume`]：这一份要问的是
     /// 「卷表档位那一列照卷级判定说的写」（P3 卷表那一票），与页上画着什么无关。

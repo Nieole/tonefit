@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use clap::builder::{Resettable, StyledStr};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -81,8 +81,8 @@ struct Cli {
     /// 行为相同。
     ///
     /// **命令行上显式点到的那一项赢**：`--preset 漫画 --filter hamming` 就是「套那一份，
-    /// 再改这一项」。关掉什么的那三个开关各有反面（`--crop`、`--split`、`--no-per-page`），
-    /// 预设把裁边关掉之后，这一趟用 `--crop` 把它开回来。
+    /// 再改这一项」。三对布尔开关各有反面（`--crop`／`--no-crop`、`--split`／`--no-split`、
+    /// `--envelope`／`--no-envelope`），预设把裁边关掉之后，这一趟用 `--crop` 把它开回来。
     ///
     /// 预设**不装处理范围与输出根**——那两样每趟都不同，混进去会让人套用预设时误写到上一次的
     /// 输出目录。`--out` 因此照旧必填，`--profile` 只在预设供了型号时才不必填。
@@ -239,22 +239,35 @@ struct Cli {
     #[arg(long, value_name = "模式")]
     dither: Option<String>,
 
-    /// 关闭卷级上包络，位深回到逐页最优，档位由段式迟滞收一道：孤立地**高出邻居**的页
-    /// 压回邻居那一档。体积最小，代价是**翻页跳变仍在**——够长的一段整段留住自己那一档，
-    /// 与它前后就差着，翻过去的一瞬间灰调的颗粒感换一种粗细。
+    /// 打开卷级上包络：位深按卷取 p95 上包络并加迟滞，卷内其余页共用一个基准档，
+    /// 报告指得出定档页。买到的是卷级齐整——翻页处灰调的颗粒感不换粗细；
+    /// 付的是体积——其余页要为定档页那一档多付位深。
     ///
-    /// **反面是 `--no-per-page`**：预设把上包络关掉之后，这一趟用它留住上包络。
-    /// 两个一起点名当场是一条错误——同一趟里说不出「关又不关」。
-    #[arg(long, conflicts_with = "no_per_page")]
-    per_page: bool,
+    /// **默认不开**：默认路径上位深逐页各判各的，每一页拿到判据说它要的那一档，
+    /// 不为一卷里少数几页的需要付全卷的体积。翻页处档位不同是内容不同的自然结果，
+    /// 不是要被平滑掉的东西。
+    ///
+    /// **反面是 `--no-envelope`**：预设把上包络打开之后，这一趟用它关回去。
+    /// 两个一起点名当场是一条错误——同一趟里说不出「开又不开」。
+    #[arg(long, conflicts_with = "no_envelope")]
+    envelope: bool,
 
-    /// 留着卷级上包络——**`--per-page` 的反面**，而**默认就是它**。
+    /// 关掉卷级上包络——**`--envelope` 的反面**，而**默认就是它**。
     ///
-    /// 因此只有一种情形用得着：套的那份预设里写着 `per-page = true`，而这一趟要上包络。
+    /// 因此只有一种情形用得着：套的那份预设里写着 `envelope = true`，而这一趟要逐页。
     /// 不套预设的那一趟点不点它是同一个结果。
     ///
-    /// 关掉上包络换来什么、代价是什么，一并写在 `--per-page` 那一条上。
+    /// 打开上包络换来什么、代价是什么，一并写在 `--envelope` 那一条上。
     #[arg(long)]
+    no_envelope: bool,
+
+    /// **已退场的开关。** 逐页判定现在就是默认，这一项写不写都一样——留成不做事的别名
+    /// 最坏：脚本里那一行看着还在、行为已经反过来。点到它当场报错，指去 `--envelope`。
+    #[arg(long, hide = true)]
+    per_page: bool,
+
+    /// **已退场的开关**，与 `--per-page` 一对。点到它当场报错，指去 `--envelope`。
+    #[arg(long, hide = true)]
     no_per_page: bool,
 
     /// 两遍之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
@@ -302,7 +315,7 @@ struct Cli {
 /// 的结果。
 ///
 /// **三对布尔开关两个方向都说得出**（`p4-parking-lot/20`）：`--crop` / `--no-crop`、
-/// `--split` / `--no-split`、`--per-page` / `--no-per-page`。预设里的 `crop = false`
+/// `--split` / `--no-split`、`--envelope` / `--no-envelope`。预设里的 `crop = false`
 /// 与命令行上的 `--no-crop` 是同一件事，而预设把裁边关掉之后这一趟用 `--crop` 开得回来——
 /// 覆盖因此是对称的。
 ///
@@ -358,11 +371,29 @@ impl Cli {
         }
     }
 
-    /// 本次关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关**，`--per-page` 打开它、
-    /// `--no-per-page` 关回去。关掉的只是上包络那一层，迟滞改走段式
-    /// （`CONTEXT.md` 的《段式迟滞》）。
-    fn per_page(&self, preset: &Preset) -> bool {
-        said(self.per_page, self.no_per_page).unwrap_or_else(|| preset.taste.per_page())
+    /// 本次开不开卷级上包络（ADR 0018 决定第 5 条）。**默认不开**，`--envelope` 打开它、
+    /// `--no-envelope` 关回去。默认值不在这里：它在 `TasteLayer::envelope`，
+    /// 会话拼 `Request` 时读的是同一个。
+    fn envelope(&self, preset: &Preset) -> bool {
+        said(self.envelope, self.no_envelope).unwrap_or_else(|| preset.taste.envelope())
+    }
+
+    /// **`--per-page` 与 `--no-per-page` 已退场**：点到任何一个当场是一条错误，指去
+    /// `--envelope`（ADR 0018 决定第 2 条；spec 的 story 9）。
+    ///
+    /// 不留成不做事的别名：逐页判定已是默认，`--per-page` 写不写都一样，留着它，
+    /// 脚本里那一行看着还在、行为已经反过来，而且用户永远不会发现。
+    /// 也不交给 clap 当「不认得的参数」——那一句说不出该改成什么。
+    fn refuse_retired_switches(&self) -> Result<()> {
+        let retired = match (self.per_page, self.no_per_page) {
+            (false, false) => return Ok(()),
+            (true, _) => "--per-page",
+            (_, true) => "--no-per-page",
+        };
+        bail!(
+            "`{retired}` 已退场：位深默认就逐页各判各的，这个开关写不写都一样。\
+             要卷级齐整（上包络加迟滞）改用 `--envelope`；要逐页，把它删掉即可。"
+        )
     }
 
     /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
@@ -479,7 +510,7 @@ impl Cli {
             white_align_limit: self.white_align_limit(),
             bit_depth: self.bit_depth_override(preset)?,
             dither: self.dither_override(preset)?,
-            per_page: self.per_page(preset),
+            envelope: self.envelope(preset),
             cache_budget: self.cache_budget(preset)?,
             mode: self.mode(),
             io_mode: self.io_mode(preset)?,
@@ -845,6 +876,9 @@ fn execute() -> Result<u8> {
     {
         return calibrate(profile, *gray_levels, out);
     }
+    // 退场的开关先拦：那一句「改用 `--envelope`」要在读预设之前说——预设读不懂时
+    // 用户该先听见的是这一句，不是那一份文件的错。
+    cli.refuse_retired_switches()?;
     // 预设先读：它供得出型号，而下面每一项都可能落到它身上。**不点名就一个字节都不读盘。**
     let preset = cli.preset()?;
     let bar = Bar::new(cli.inputs.len());
@@ -1316,7 +1350,7 @@ reading-order = \"ltr\"
 filter = \"hamming\"
 bit-depth = 2
 dither = \"fs\"
-per-page = true
+envelope = true
 cache-budget = \"1G\"
 io-mode = \"concurrent\"
 ";
@@ -1341,7 +1375,7 @@ io-mode = \"concurrent\"
             "2",
             "--dither",
             "fs",
-            "--per-page",
+            "--envelope",
             "--cache-budget",
             "1G",
             "--io-mode",
@@ -1446,12 +1480,12 @@ io-mode = \"concurrent\"
             "--io-mode",
             "serial",
             // 三对布尔开关也在里面：预设把这三项说到了另一侧（`crop = false`、
-            // `split = false`、`per-page = true`），命令行在这里逐项说反面。
+            // `split = false`、`envelope = true`），命令行在这里逐项说反面。
             // 反面落地之前它们进不来——那时命令行只说得出预设已经说到的那一侧，
             // 「命令行赢」在它们身上无从分辨（停车场 Q55）。
             "--crop",
             "--split",
-            "--no-per-page",
+            "--no-envelope",
         ];
         let mut with_preset = vec!["--preset", "漫画"];
         with_preset.extend_from_slice(&flags);
@@ -1472,7 +1506,7 @@ io-mode = \"concurrent\"
     #[test]
     fn a_switch_a_preset_closed_opens_back_up_on_the_command_line() {
         let off = preset::read(
-            "[preset.\"漫画\".taste]\ncrop = false\nsplit = false\nper-page = true\n",
+            "[preset.\"漫画\".taste]\ncrop = false\nsplit = false\nenvelope = true\n",
             "漫画",
         )
         .expect("读得懂");
@@ -1483,34 +1517,75 @@ io-mode = \"concurrent\"
             !parse(&line).split_rule(&off).expect("合得出").on,
             "预设关不掉拆分"
         );
-        assert!(parse(&line).per_page(&off), "预设开不了逐页");
+        assert!(parse(&line).envelope(&off), "预设开不了上包络");
 
         let mut opened = line.to_vec();
-        opened.extend(["--crop", "--split", "--no-per-page"]);
+        opened.extend(["--crop", "--split", "--no-envelope"]);
         assert!(parse(&opened).crop(&off), "--crop 没把预设关掉的裁边开回来");
         assert!(
             parse(&opened).split_rule(&off).expect("合得出").on,
             "--split 没把预设关掉的拆分开回来"
         );
         assert!(
-            !parse(&opened).per_page(&off),
-            "--no-per-page 没把预设开着的逐页关回去"
+            !parse(&opened).envelope(&off),
+            "--no-envelope 没把预设开着的上包络关回去"
         );
 
         // 另一个方向：预设说的是开着的那一侧，命令行关得下去。
         let on = preset::read(
-            "[preset.\"漫画\".taste]\ncrop = true\nsplit = true\nper-page = false\n",
+            "[preset.\"漫画\".taste]\ncrop = true\nsplit = true\nenvelope = false\n",
             "漫画",
         )
         .expect("读得懂");
         let mut closed = line.to_vec();
-        closed.extend(["--no-crop", "--no-split", "--per-page"]);
+        closed.extend(["--no-crop", "--no-split", "--envelope"]);
         assert!(!parse(&closed).crop(&on), "--no-crop 没压过预设");
         assert!(
             !parse(&closed).split_rule(&on).expect("合得出").on,
             "--no-split 没压过预设"
         );
-        assert!(parse(&closed).per_page(&on), "--per-page 没压过预设");
+        assert!(parse(&closed).envelope(&on), "--envelope 没压过预设");
+    }
+
+    /// **`--per-page` 与 `--no-per-page` 退场了：点到当场报错，指去 `--envelope`**
+    /// （two-pass-rework/11 的验收：不静默、不当别名；spec 的 story 9）。
+    ///
+    /// 两条都要认得：说法里点得出敲的是哪一个、该改成哪一个。
+    /// 不交给 clap 当「不认得的参数」——那一句说不出该改成什么，而旧脚本里那一行
+    /// 恰恰需要一句「改成什么」。
+    #[test]
+    fn the_retired_per_page_switches_are_refused_and_point_at_envelope() {
+        for retired in ["--per-page", "--no-per-page"] {
+            let error = parse(&[retired, "--profile", "kobo-libra-2"])
+                .refuse_retired_switches()
+                .expect_err("退场的开关不该放行")
+                .to_string();
+
+            assert!(
+                error.contains(retired),
+                "说法里没点出敲的是 {retired}：{error}"
+            );
+            assert!(
+                error.contains("--envelope"),
+                "{retired} 的说法里没指去 --envelope：{error}"
+            );
+        }
+    }
+
+    /// **上包络默认关着**（ADR 0018 决定第 2、5 条）：一个 flag 都不加是逐页，
+    /// `--envelope` 打开它。默认值只有 `TasteLayer::envelope` 一处，这里比的是它落到
+    /// 命令行上的结果。
+    #[test]
+    fn the_envelope_is_off_unless_the_command_line_opens_it() {
+        let line = ["--profile", "kobo-libra-2"];
+        assert!(!parse(&line).envelope(&no_preset()), "默认走到了上包络");
+
+        let mut opened = line.to_vec();
+        opened.push("--envelope");
+        assert!(
+            parse(&opened).envelope(&no_preset()),
+            "--envelope 没把上包络打开"
+        );
     }
 
     /// **一对开关同时点名当场说得清是哪两个**（本票验收第 2 条）。
@@ -1522,7 +1597,7 @@ io-mode = \"concurrent\"
         for (yes, no) in [
             ("--crop", "--no-crop"),
             ("--split", "--no-split"),
-            ("--per-page", "--no-per-page"),
+            ("--envelope", "--no-envelope"),
         ] {
             let complaint = Cli::try_parse_from([
                 "tonefit",
@@ -1565,7 +1640,7 @@ io-mode = \"concurrent\"
         for (yes, no) in [
             ("crop", "no-crop"),
             ("split", "no-split"),
-            ("per-page", "no-per-page"),
+            ("envelope", "no-envelope"),
         ] {
             for (one, other) in [(yes, no), (no, yes)] {
                 let id = one.replace('-', "_");

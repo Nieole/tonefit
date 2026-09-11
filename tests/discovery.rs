@@ -196,9 +196,11 @@ fn a_directory_that_keeps_its_chapters_in_folders_splits_into_one_volume_each() 
     }
 
     // 这两个取值分得开那一档要在**门不成立**那条路上读，因此跑 fit-inside
-    // （见夹具里 `FAR_OUTSIDE` 与 `TINY` 各自的说明）。
+    // （见夹具里 `FAR_OUTSIDE` 与 `TINY` 各自的说明）。「两卷各有各的上包络」
+    // 要开着上包络才问得出——默认路径上卷级根本没有基准档（ADR 0018）。
     let report = tonefit::run(&tonefit::Request {
         fit: tonefit::FitMode::Inside,
+        envelope: true,
         ..fixtures::request(&space, [works.as_path()])
     })
     .expect("处理应当成功");

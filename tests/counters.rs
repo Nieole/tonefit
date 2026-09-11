@@ -7,6 +7,10 @@
 //! 三个数：解码次数（既有，`VolumeReport::decodes`）、缩放次数、参照进缓存次数。
 //! 解码那一个的断言散在 `idempotency`、`resume`、`concurrency` 几处，跟着它们各自那条性质走；
 //! 这里只收另外两个，以及三个数之间那几条互相说明的关系。
+//!
+//! **参照进缓存那一个分两条路读**：上包络那条路（`--envelope`）上基准档要看完整卷才定得下，
+//! 每张灰度输出页存一份参照；默认那条路（逐页，ADR 0018）上一页判完当场量化编码，
+//! **参照一张都不进缓存**（spec 的 P-B）。问「按输出页数存参照」的用例因此开着上包络跑。
 
 mod fixtures;
 
@@ -100,10 +104,36 @@ fn assert_the_pinned_volume_never_cached_a_reference(volume: &VolumeReport, cand
     );
 }
 
-/// 灰度卷上三个数说的是同一批页：解码按**源页**数，缩放与参照进缓存按**输出页**数，
-/// 而这一卷没有跨页，三者相等。
+/// 上包络那条路上灰度卷的三个数说的是同一批页：解码按**源页**数，缩放与参照进缓存按
+/// **输出页**数，而这一卷没有跨页，三者相等。
 #[test]
-fn every_page_of_a_gray_volume_is_resized_once_and_cached_once() {
+fn every_page_of_a_gray_volume_is_resized_once_and_cached_once_under_the_envelope() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let size = fixtures::PASSES_THROUGH;
+    volume.page("001.png", &fixtures::full_bleed_gradient(size));
+    volume.page("002.png", &fixtures::full_bleed_gradient(size));
+
+    let report = fixtures::run_volume_under_the_envelope(&space, &volume);
+
+    let volume_report = &report.volumes[0];
+    assert_eq!(volume_report.pages.len(), 2);
+    assert_eq!(volume_report.decodes, 2);
+    assert_eq!(volume_report.resizes, 2, "每张输出页缩放一次");
+    assert_eq!(
+        volume_report.cached_references, 2,
+        "上包络那条路上每张灰度输出页存一份参照"
+    );
+}
+
+/// **默认那条路（逐页）上参照一张都不进缓存**（spec 的 P-B；ADR 0018 之后窗口长度是 0）。
+///
+/// 一页的档只取决于它自己，判据一出来就定了：量化与编码第一遍当场做完，缓存那一格从头
+/// 装的就是编好的字节——与覆盖顶死那一趟同一条路（06 号票），只是那一档是判出来的、
+/// 不是被顶掉的。四条断言与 [`assert_the_pinned_volume_never_cached_a_reference`] 同形：
+/// 缩放照旧每张一次；参照零份；缓存里躺着的就是写出去的那几页字节；理由是逐页判出来的那一种。
+#[test]
+fn the_default_path_caches_no_reference_and_encodes_each_page_as_it_is_decided() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     let size = fixtures::PASSES_THROUGH;
@@ -113,12 +143,37 @@ fn every_page_of_a_gray_volume_is_resized_once_and_cached_once() {
     let report = fixtures::run_volume(&space, &volume);
 
     let volume_report = &report.volumes[0];
-    assert_eq!(volume_report.pages.len(), 2);
-    assert_eq!(volume_report.decodes, 2);
-    assert_eq!(volume_report.resizes, 2, "每张输出页缩放一次");
     assert_eq!(
-        volume_report.cached_references, 2,
-        "灰度路径上每张输出页存一份参照"
+        volume_report.verdict,
+        Some(VolumeVerdict::PerPage),
+        "默认走到了上包络，测的就不是逐页那条路"
+    );
+    assert_eq!(volume_report.resizes, 2, "缩放照旧每张一次");
+    assert_eq!(
+        volume_report.cached_references, 0,
+        "默认那条路上参照还是进了缓存——那一趟往返白付"
+    );
+    assert_eq!(
+        volume_report.cache.pages,
+        volume_report.pages.len(),
+        "缓存里该躺着编好的那几页"
+    );
+    for page in &volume_report.pages {
+        assert_eq!(
+            page.verdict().expect("灰度页有判定").reason,
+            Reason::LowestWithinThreshold,
+            "{} 的档不是它自己判出来的",
+            page.source.display()
+        );
+    }
+    let written: u64 = volume_report
+        .pages
+        .iter()
+        .map(|page| std::fs::metadata(&page.output).expect("读回写出的页").len())
+        .sum();
+    assert_eq!(
+        volume_report.cache.stored, written,
+        "缓存里装的不是编好的那几页——那一趟往返还在"
     );
 }
 
@@ -157,7 +212,12 @@ fn a_color_page_is_resized_once_and_never_cached() {
     volume.page("001.png", &fixtures::color_page(size));
     volume.page("002.png", &fixtures::full_bleed_gradient(size));
 
-    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
+    // 开着上包络：灰度那一页要存参照，「彩页不存」才比得出来。
+    let report = fixtures::run_volume_under_the_envelope_with(
+        &space,
+        &volume,
+        fixtures::profile(COLOR_DEVICE),
+    );
 
     let volume_report = &report.volumes[0];
     assert_eq!(
@@ -220,9 +280,17 @@ fn a_dry_run_skips_only_the_color_resize_of_a_mixed_volume() {
     volume.page("002.png", &fixtures::full_bleed_gradient(size));
 
     // 试算排在前头：照做那一趟写下了输出，跟在它后面的试算会被幂等整卷跳过。
+    // 开着上包络：默认那条路上照做不存参照、试算照旧存（试算没有第二遍要那些字节），
+    // 第三个数在那条路上本来就不同（停车场 Q430、Q537）。
     let profile = fixtures::profile(COLOR_DEVICE);
-    let trial = dry_run_with(&space, &volume, profile.clone());
-    let done = fixtures::run_volume_with(&space, &volume, profile);
+    let trial = tonefit::run(&tonefit::Request {
+        profile: profile.clone(),
+        mode: tonefit::Mode::DryRun,
+        envelope: true,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("试算应当成功");
+    let done = fixtures::run_volume_under_the_envelope_with(&space, &volume, profile);
 
     let (done, trial) = (&done.volumes[0], &trial.volumes[0]);
     assert_eq!(trial.decodes, done.decodes);
@@ -276,7 +344,7 @@ fn a_split_source_page_is_decoded_once_and_resized_twice() {
         ),
     );
 
-    let report = fixtures::run_volume(&space, &volume);
+    let report = fixtures::run_volume_under_the_envelope(&space, &volume);
 
     let volume_report = &report.volumes[0];
     assert_eq!(volume_report.source_pages, 1);
@@ -359,16 +427,18 @@ fn a_verdict_pinned_where_the_gate_leaves_only_one_group_caches_no_reference() {
 /// **没被顶死的那一趟一切照旧**（票面末一条）。
 ///
 /// 只点名位深：其余页那一组的几何门开着，抖动那一维还有得判，判据照旧说了算——
-/// 那一档要等整卷汇总，参照因此照旧攒到第二遍。
+/// 上包络那条路上那一档要等整卷汇总，参照因此照旧攒到第二遍。
 ///
-/// 它是上面三条的对照组，也是「谓词别放得太宽」那一面的钉子。
+/// 它是上面三条的对照组，也是「谓词别放得太宽」那一面的钉子。开着上包络跑：
+/// 默认那条路上没被顶死的页同样当场编码，参照零份，分不出「顶死」与「没顶死」。
 #[test]
-fn naming_only_the_bit_depth_still_caches_every_reference() {
+fn naming_only_the_bit_depth_still_caches_every_reference_under_the_envelope() {
     let space = Workspace::new();
     let volume = two_gray_pages(&space);
 
     let report = one_volume(tonefit::Request {
         bit_depth: Some(BitDepth::Two),
+        envelope: true,
         ..fixtures::request(&space, [volume.path()])
     });
 
@@ -383,7 +453,7 @@ fn naming_only_the_bit_depth_still_caches_every_reference() {
 ///
 /// 那一趟没有第二遍，编出来的字节一个读者都没有；缓存也只记账、不留页
 /// （`cache::Retention::Account`），没有块可换。顶死的试算因此照旧攒参照——
-/// 这条界与滚动窗口那一条逐字相同（`Window::open` 只在照做那一遍开）。
+/// 这条界与默认那条路（逐页）逐字相同：当场编码只在照做那一遍。
 ///
 /// 代价是预告的缓存用量与照做那一趟不再是同一个数，与逐页那条路同型（停车场 Q430、Q537）。
 #[test]
@@ -424,8 +494,10 @@ fn both_counters_are_exact_when_the_first_pass_runs_on_every_core() {
         );
     }
 
+    // 开着上包络：参照那一个要有东西可数。
     let report = tonefit::run(&tonefit::Request {
         io_mode: tonefit::IoMode::Concurrent,
+        envelope: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");

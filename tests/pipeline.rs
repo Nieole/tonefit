@@ -519,8 +519,9 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
         &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
     );
 
-    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）；
+    // 「上包络那一侧的豁免」要开着上包络才问得出。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 夹具自证：那一页确实是救回来的，尺寸也确实贴不住面板。
@@ -573,8 +574,9 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
     );
     volume.page("004.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
-    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）；「不低于基准档」
+    // 要有基准档可比——开着上包络。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 夹具自证：那一页两刀都挨着——既是部分救回，几何门在它身上又不成立。
@@ -635,7 +637,8 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
 
     // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）：以高为准让每一页的高
     // 都等于面板高，一条边永远贴着，这一卷就没有「一页成立的都没有」可谈。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 「其余页不能空着」是上包络那一层的规矩，开着它才问得出。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
     assert_eq!(
@@ -2224,7 +2227,8 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
 
     // 混排卷只在 fit-inside 上是混排卷（页几何批 01 号票）：以高为准会把那张封面放大到
     // 面板高，门跟着成立，一卷五页都拿满候选，「一张封面否决整卷」这件事就无从谈起。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 「其余页的基准档带不带抖动」要有基准档——开着上包络。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
     // 判定范围是五页，被排除的只有封面那一张——报告说得出这两个数（06 号票）。
@@ -2304,7 +2308,8 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     // 跨页宽幅页贴住的是宽边，两侧留边换成上下留边，门同样成立。
     volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
-    let report = run_volume(&space, &volume);
+    // 「抖动模式全卷共用一个」是上包络那条路的性质，开着它才问得出。
+    let report = fixtures::run_volume_under_the_envelope(&space, &volume);
 
     let volume_report = &report.volumes[0];
     assert_eq!(volume_report.judged_by_the_gate().count(), 3);
@@ -2353,10 +2358,10 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
 }
 
 #[test]
-fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_reason() {
-    // `--per-page` 关闭上包络，给「只要最小体积」留的出口（ADR 0006 决定第 6 条）。
-    // 迟滞不跟着关，改走段式——这两页各在序列的一头，一侧邻居都够不上长度，一页不动。
-    // 换回来的正是翻页跳变：这两页的判据差得远，档位于是也差着。
+fn the_default_path_gives_every_page_its_own_bit_depth_and_reason() {
+    // 默认路径上位深逐页各判各的、不做迟滞（ADR 0018 决定第 2 条）：每一页拿到判据说它要的
+    // 那一档，不为一卷里少数几页的需要付全卷的体积。这两页的判据差得远，档位于是也差着——
+    // 那是内容不同的自然结果，不是要被平滑掉的东西（决定第 1 条）。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 连续渐变页：低位深上必然崩，判定该落在候选上界那一档。
@@ -2369,7 +2374,6 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
     );
 
     let report = tonefit::run(&Request {
-        per_page: true,
         // 第二页要贴不住面板才钉得住「另一页的几何不牵连这一页」，而门不成立那一支
         // 只在 fit-inside 上走得到（页几何批 01 号票）。
         fit: FitMode::Inside,
@@ -2380,7 +2384,7 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
     assert_eq!(
         report.volumes[0].verdict,
         Some(VolumeVerdict::PerPage),
-        "上包络没被关掉"
+        "默认走到了上包络"
     );
     let pages = &report.volumes[0].pages;
     // 头一页贴住面板，门在它这里放行（ADR 0007 决定第 1 条：门逐页判）：抖动那一维在场，
@@ -2393,13 +2397,12 @@ fn per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_re
         Candidate::new(BitDepth::Four, Dither::FloydSteinberg),
         "另一页的几何把这一页的抖动带走了"
     );
-    // 第二页会被下游再缩一次，抖动因此不在它的候选里——`--per-page` 也放不开这一维。
+    // 第二页会被下游再缩一次，抖动因此不在它的候选里——逐页判定也放不开这一维。
     assert_eq!(
         fixtures::verdict(&pages[1]).candidate,
         Candidate::new(BitDepth::One, Dither::Off)
     );
-    // 卷级那一层关着，两页的理由因此都是逐页判出来的那一种，而档位差着——
-    // 翻页跳变正是 `--per-page` 换回来的东西。
+    // 卷级那一层关着，两页的理由因此都是逐页判出来的那一种，而档位差着。
     for page in pages {
         assert_eq!(
             fixtures::verdict(page).reason,
@@ -2669,8 +2672,8 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     // 抖动要点名关掉，否则测不到这一条：同一页同一块面板上 2bit+FS 落在界内
     // （见 dithering_can_bring_a_page_back_within_the_threshold），兜底就不触发了。
     //
-    // 兜底是**逐页**那一层的规则，`--per-page` 是它在报告里露面的地方：卷级那一层开着时，
-    // 理由说的是基准档从哪来，而「一档都不达标」这件事仍摆在同一页的判据值里。
+    // 兜底是**逐页**那一层的规则，默认路径是它在报告里露面的地方：卷级那一层开着时
+    // （`--envelope`），理由说的是基准档从哪来，而「一档都不达标」这件事仍摆在同一页的判据值里。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -2681,7 +2684,6 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     let report = tonefit::run(&Request {
         profile: profile.clone(),
         dither: Some(Dither::Off),
-        per_page: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -2698,6 +2700,7 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     let with_envelope = tonefit::run(&Request {
         profile,
         dither: Some(Dither::Off),
+        envelope: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -2726,7 +2729,10 @@ fn dithering_can_bring_a_page_back_within_the_threshold() {
         fixtures::verdict(page).candidate,
         Candidate::new(BitDepth::Four, Dither::FloydSteinberg)
     );
-    assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
+    assert_eq!(
+        fixtures::verdict(page).reason,
+        Reason::LowestWithinThreshold
+    );
     // 不抖动的那两档全部越界，抖过的这一档在界内：判据自己说出了这笔交换。
     let threshold = report.profile.threshold();
     for scored in page.scores() {
@@ -2871,21 +2877,20 @@ fn a_cache_past_its_budget_spills_to_a_temp_file_and_writes_the_very_same_pages(
     assert_eq!(roomy_bytes, cramped_bytes, "溢写之后写出的页变了");
 }
 
-/// 逐页那条路上第二遍退化成纯写出：一页的档在滚动窗口里定下来的当场量化编码，
-/// 缓存那一格从参照换成编好的字节（12 号票）。
+/// 默认那条路（逐页）上第二遍退化成纯写出：一页判完当场量化编码，缓存那一格从头装的
+/// 就是编好的字节，参照一张都不进缓存（12 号票；ADR 0018 之后窗口长度是 0）。
 ///
-/// 断言的是**溢写换的仍旧只是它待在哪里**：同一卷在两种预算下写出的字节逐字节相同。
-/// 这一条同时把换字节那一步的两条路都走到——预算够用时新旧两段都在内存里，
-/// 预算为零时旧的那一段在临时文件里、新的那一段也接在它后面。
+/// 断言的是**溢写换的仍旧只是它待在哪里**：同一卷在两种预算下写出的字节逐字节相同，
+/// 而编好的字节照旧过 `--cache-budget` 这道闸——预算为零时它们在临时文件里。
 #[test]
-fn the_rolling_window_writes_the_very_same_pages_whether_it_spills_or_not() {
+fn the_default_path_writes_the_very_same_pages_whether_it_spills_or_not() {
     let roomy = one_per_page_volume_with_budget(CacheBudget::default());
     let cramped = one_per_page_volume_with_budget(CacheBudget::new(0));
 
     assert_eq!(
         roomy.0.verdict,
         Some(VolumeVerdict::PerPage),
-        "上包络没被关掉，测的就不是滚动窗口那条路"
+        "默认走到了上包络，测的就不是逐页那条路"
     );
     assert_eq!(roomy.0.cache.spilled, 0, "预算够用时不该溢写");
     assert!(cramped.0.cache.spilled > 0, "预算为零时没有发生溢写");
@@ -2894,10 +2899,14 @@ fn the_rolling_window_writes_the_very_same_pages_whether_it_spills_or_not() {
         cramped.0.cache.stored,
         cramped.0.cache.resident + cramped.0.cache.spilled
     );
-    // 缓存里此后装的是编好的字节，而不是参照：它比参照压过之后还小一截。
+    // 缓存里装的是编好的字节，而不是参照：它比参照压过之后还小一截。
     assert!(
         roomy.0.cache.stored < roomy.0.cache.raw,
         "缓存装的还是那些像素"
+    );
+    assert_eq!(
+        roomy.0.cached_references, 0,
+        "默认路径上参照不该进缓存（spec 的 P-B：默认路径上参照不再进缓存）"
     );
 
     let verdicts = |volume: &tonefit::VolumeReport| -> Vec<_> {
@@ -2907,16 +2916,12 @@ fn the_rolling_window_writes_the_very_same_pages_whether_it_spills_or_not() {
     assert_eq!(roomy.1, cramped.1, "溢写之后写出的页变了");
 }
 
-/// 逐页判定 + 点名预算处理同一个卷，把卷报告与写出的字节一起带回来。
-///
-/// 五页一色是有意的：段够长，迟滞一页都不压，滚动窗口于是从头到尾一页一页地放行——
-/// 「出了窗口当场编码」在这条序列上走得最满。
+/// 默认那条路（逐页）上点名预算处理同一个卷，把卷报告与写出的字节一起带回来。
 fn one_per_page_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Vec<u8>>) {
     let space = Workspace::new();
     let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 5]);
 
     let report = tonefit::run(&Request {
-        per_page: true,
         cache_budget: budget,
         // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
         fit: FitMode::Inside,
@@ -2955,11 +2960,47 @@ fn one_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Ve
     (volume_report, written)
 }
 
+/// 试算预告缓存用量——**上包络那条路上**预告与照做逐格相同。
+///
+/// 第一遍在两种模式下是同一遍：判据照求，缓存也照建。`--cache-budget` 是本次的参数之一，
+/// 而 dry-run 存在的意义就是「照做之前先看一眼这组参数」（spec 的 story 6）——
+/// 预告里少了缓存用量，撑不住的预算就要等到照做时才发现。
+///
+/// 这条承诺只在上包络那条路上整个成立：那条路上照做也攒参照，两趟缓存里装的是同一摊东西。
+/// 默认那条路由下面那一条钉——它预告得出页数与像素数，预告不出字节数（停车场 Q430、Q537、Q638）。
 #[test]
-fn a_dry_run_predicts_what_the_cache_will_hold() {
-    // 第一遍在两种模式下是同一遍：判据照求，缓存也照建。`--cache-budget` 是本次的参数之一，
-    // 而 dry-run 存在的意义就是「照做之前先看一眼这组参数」（spec 的 story 6）——
-    // 预告里少了缓存用量，撑不住的预算就要等到照做时才发现。
+fn a_dry_run_predicts_what_the_cache_will_hold_under_the_envelope() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
+    volume.page("002.png", &fixtures::screentone(fixtures::DOUBLE_PANEL));
+
+    let predicted = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        envelope: true,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("dry-run 应当成功");
+    let done = fixtures::run_volume_under_the_envelope(&space, &volume);
+
+    assert!(predicted.volumes[0].cache.stored > 0, "dry-run 没有建缓存");
+    assert_eq!(
+        predicted.volumes[0].cache, done.volumes[0].cache,
+        "dry-run 预告的缓存用量与照做时不一样"
+    );
+    // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
+    assert_eq!(predicted.volumes[0].decodes, 2);
+}
+
+/// **默认那条路上试算预告得出缓存里躺几页、过手多少像素，预告不出字节数。**
+///
+/// 试算只记账、不留页，也没有第二遍要那些字节，因此照旧攒**参照**、预告参照那一摊
+/// （`Settles::for_this_run`）；照做那一趟一页判完当场编码，缓存里躺的是**编好的字节**。
+/// 两个数从此不是同一个——而且**谁大谁小随内容变**：渐变页 LZ4 压得极好、抖过的 PNG 反而大，
+/// 预告因此不是上界（停车场 Q638；Q430、Q537 记的是同一件事在另外两条路上的形态）。
+/// 这里钉住的是仍然成立的那两格：页数与像素数两趟相同，字节数不比。
+#[test]
+fn a_dry_run_on_the_default_path_predicts_the_pages_and_the_pixels_but_not_the_bytes() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -2972,13 +3013,23 @@ fn a_dry_run_predicts_what_the_cache_will_hold() {
     .expect("dry-run 应当成功");
     let done = run_volume(&space, &volume);
 
-    assert!(predicted.volumes[0].cache.stored > 0, "dry-run 没有建缓存");
+    let (predicted, done) = (&predicted.volumes[0], &done.volumes[0]);
     assert_eq!(
-        predicted.volumes[0].cache, done.volumes[0].cache,
-        "dry-run 预告的缓存用量与照做时不一样"
+        done.verdict,
+        Some(VolumeVerdict::PerPage),
+        "默认走到了上包络"
+    );
+    assert!(predicted.cache.stored > 0, "dry-run 没有建缓存");
+    assert_eq!(
+        predicted.cache.pages, done.cache.pages,
+        "预告的页数与照做时不一样"
+    );
+    assert_eq!(
+        predicted.cache.raw, done.cache.raw,
+        "预告过手的像素数与照做时不一样"
     );
     // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
-    assert_eq!(predicted.volumes[0].decodes, 2);
+    assert_eq!(predicted.decodes, 2);
 }
 
 /// 卷级用例的合成卷：`levels` 里每一项造一页，页名按阅读顺序编号。页用 `fixtures::TINY`，
@@ -3030,7 +3081,8 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -3063,7 +3115,8 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -3099,7 +3152,8 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
     let envelope = envelope_of(volume_report);
@@ -3216,7 +3270,8 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
     let salvaged = &reported.pages[3];
@@ -3271,10 +3326,11 @@ fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
         write(&fixtures::solid(fixtures::TINY, level));
     }
 
-    // 同上：小页只在 fit-inside 上还是小页。
+    // 同上：小页只在 fit-inside 上还是小页。问的是上包络，开着它。
     let report = tonefit::run(&Request {
         profile: fixtures::profile(COLOR_DEVICE),
         fit: FitMode::Inside,
+        envelope: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -3338,7 +3394,8 @@ fn run_with_a_run_of_fitted_inside(length: usize) -> tonefit::VolumeReport {
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
     // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    let report = fixtures::run_volume_fitted_inside(&space, &volume);
+    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")
 }
@@ -3403,23 +3460,25 @@ fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport 
         &levels_with_a_run_of(length),
     );
 
-    let report = run_volume(&space, &volume);
+    let report = fixtures::run_volume_under_the_envelope(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")
 }
 
-/// 段式迟滞：`--per-page` 那条路上，孤立偏离的一页被压回邻居那一档
-/// （`CONTEXT.md` 的《段式迟滞》，10 号票）。
+/// **孤立地高出邻居的那一页拿到判据说它要的那一档**（ADR 0018 决定第 1、2 条）。
 ///
-/// 逐页判定「一页说了不算」的另一半：卷级上包络那一层关着时，档位不再由基准档兜着，
-/// 一页孤立地要求更高的档就是一次翻页跳变对——上去一次、下来一次。段式迟滞压掉的正是它。
+/// 段式迟滞曾在这里（10 号票）：默认路径上一页孤立地高出邻居就被压回邻居那一档。
+/// 09 号票真机之后去掉——压回的那一档 74% 看得见色带，而它防的「翻页跳变」被判为不是问题：
+/// 漫画页本来就是一页一个内容，页与页的档位不同是内容不同的自然结果。
+/// 这一条钉的正是「不压了」：中间那一页要 4bit 就拿 4bit，理由是它自己判出来的那一种，
+/// 邻居一页不动。
 ///
 /// 这一条跑在 **fit-inside** 上：门在每一页上都不成立，候选集里没有抖动那一维，
-/// 压回的于是在位深这一维上分胜负。
+/// 高出邻居的于是在位深这一维上分得清。
 #[test]
-fn an_isolated_page_is_pulled_back_to_its_neighbours_depth_when_the_envelope_is_off() {
+fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
     let space = Workspace::new();
-    // 中间那一页远在界外，前后各两页只要 2bit：孤岛长一页，够不上迟滞要的页数。
+    // 中间那一页远在界外，前后各两页只要 2bit：从前的段式迟滞正好压得着它。
     let volume = volume_of_solids(
         &space,
         &[
@@ -3432,7 +3491,6 @@ fn an_isolated_page_is_pulled_back_to_its_neighbours_depth_when_the_envelope_is_
     );
 
     let report = tonefit::run(&Request {
-        per_page: true,
         // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
         fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
@@ -3443,27 +3501,30 @@ fn an_isolated_page_is_pulled_back_to_its_neighbours_depth_when_the_envelope_is_
     assert_eq!(
         volume_report.verdict,
         Some(VolumeVerdict::PerPage),
-        "上包络没被关掉"
+        "默认走到了上包络"
     );
     let pages = &volume_report.pages;
-    // 夹具先自证：那一页逐页判定要的确实是更高的一档，压回才有东西可压。
+    // 夹具先自证：那一页逐页判定要的确实是更高的一档，「不压」才有东西可钉。
     assert_eq!(
         lowest_within_threshold(&pages[2], &report),
         BitDepth::Four,
         "夹具不对：中间那一页逐页判定并不偏离邻居"
     );
 
-    // 压回邻居那一档，理由说得出这一档是怎么来的。
+    // 它拿到自己那一档。这一档是兜底取到的候选上界：`FAR_OUTSIDE` 在 fit-inside 的
+    // 候选集上一档都不达标（见
+    // `a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own`）。
     assert_eq!(
         fixtures::verdict(&pages[2]).candidate,
-        fixtures::plain(BitDepth::Two)
+        fixtures::plain(BitDepth::Four),
+        "孤立偏离的那一页被压回了邻居那一档——段式迟滞该退场了（ADR 0018）"
     );
     assert_eq!(
         fixtures::verdict(&pages[2]).reason,
-        Reason::RunHysteresis,
-        "孤立偏离的那一页没被压回"
+        Reason::NoneWithinThreshold,
+        "这一档不是它自己判出来的"
     );
-    // 邻居一页不动：压的是孤岛，不是全卷——它们各自那一档本来就是判出来的。
+    // 邻居一页不动：它们各自那一档本来就是判出来的，没有谁抬它们（抬是上包络那一层的事）。
     for (position, page) in pages.iter().enumerate() {
         if position == 2 {
             continue;
@@ -3471,72 +3532,13 @@ fn an_isolated_page_is_pulled_back_to_its_neighbours_depth_when_the_envelope_is_
         assert_eq!(
             fixtures::verdict(page).candidate,
             fixtures::plain(BitDepth::Two),
-            "{} 被孤岛带走了",
+            "{} 被那一页带走了",
             page.source.display()
         );
         assert_eq!(
             fixtures::verdict(page).reason,
             Reason::LowestWithinThreshold,
-            "{} 的理由不该是迟滞",
-            page.source.display()
-        );
-    }
-}
-
-/// 段式迟滞压的是孤岛，不是「偏离」本身：连续够长的一段留住它自己那一档
-/// （`CONTEXT.md` 的《段式迟滞》，10 号票）。
-///
-/// 与上一条同一卷，只把偏离那一段从一页加到三页——迟滞页数就是三，够了。
-/// 「一页说了不算」的另一面是「够了就算」：不留住这一段，段式迟滞就成了「全卷取最低档」，
-/// 那笔降配也不再有边。
-#[test]
-fn a_run_long_enough_keeps_its_own_depth_when_the_envelope_is_off() {
-    let space = Workspace::new();
-    let volume = volume_of_solids(
-        &space,
-        &[
-            fixtures::NEEDS_TWO_BITS,
-            fixtures::NEEDS_TWO_BITS,
-            fixtures::FAR_OUTSIDE,
-            fixtures::FAR_OUTSIDE,
-            fixtures::FAR_OUTSIDE,
-            fixtures::NEEDS_TWO_BITS,
-            fixtures::NEEDS_TWO_BITS,
-        ],
-    );
-
-    let report = tonefit::run(&Request {
-        per_page: true,
-        // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）。
-        fit: FitMode::Inside,
-        ..fixtures::request(&space, [volume.path()])
-    })
-    .expect("处理应当成功");
-
-    let pages = &report.volumes[0].pages;
-    // 那一段留住自己那一档，理由仍是逐页那一层给的——它们没被压回，也没被谁抬上去。
-    // 这一档是兜底取到的候选上界：`FAR_OUTSIDE` 在 fit-inside 的候选集上一档都不达标
-    // （见 `a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own`）。
-    for page in &pages[2..5] {
-        assert_eq!(
-            fixtures::verdict(page).candidate,
-            fixtures::plain(BitDepth::Four),
-            "{} 被压回去了",
-            page.source.display()
-        );
-        assert_eq!(
-            fixtures::verdict(page).reason,
-            Reason::NoneWithinThreshold,
-            "{} 的档不是它自己判出来的",
-            page.source.display()
-        );
-    }
-    // 段外一页不动：段式迟滞只压，不抬（抬是上包络那一层的事）。
-    for page in pages[..2].iter().chain(&pages[5..]) {
-        assert_eq!(
-            fixtures::verdict(page).candidate,
-            fixtures::plain(BitDepth::Two),
-            "{} 被那一段抬上去了",
+            "{} 的理由不是逐页判出来的",
             page.source.display()
         );
     }

@@ -420,7 +420,7 @@ pub enum Field {
     Filter,
     BitDepth,
     Dither,
-    PerPage,
+    Envelope,
     CacheBudget,
     IoMode,
     // 范围层
@@ -449,7 +449,7 @@ pub const TASTE_FIELDS: [Field; 11] = [
     Field::Filter,
     Field::BitDepth,
     Field::Dither,
-    Field::PerPage,
+    Field::Envelope,
     Field::CacheBudget,
     Field::IoMode,
 ];
@@ -483,7 +483,7 @@ impl Field {
             | Field::Filter
             | Field::BitDepth
             | Field::Dither
-            | Field::PerPage
+            | Field::Envelope
             | Field::CacheBudget
             | Field::IoMode => Layer::Taste,
             Field::Out | Field::Volume(_) | Field::AddVolume => Layer::Scope,
@@ -504,7 +504,7 @@ impl Field {
             Field::Filter => "滤波器",
             Field::BitDepth => "位深",
             Field::Dither => "抖动",
-            Field::PerPage => "逐页",
+            Field::Envelope => "上包络",
             Field::CacheBudget => "缓存预算",
             Field::IoMode => "读取策略",
             Field::Out => "输出根",
@@ -550,7 +550,7 @@ impl Field {
             | Field::Filter
             | Field::BitDepth
             | Field::Dither
-            | Field::PerPage
+            | Field::Envelope
             | Field::IoMode => Shape::Cycle,
             Field::Volume(_) => Shape::Volume,
         }
@@ -1945,7 +1945,7 @@ impl Session {
             white_align_limit: tonefit::WhiteAlignLimit::default(),
             bit_depth: taste.bit_depth,
             dither: taste.dither,
-            per_page: taste.per_page(),
+            envelope: taste.envelope(),
             cache_budget: taste.cache_budget(),
             mode,
             io_mode: taste.io_mode(),
@@ -3460,7 +3460,7 @@ impl Session {
                     ring(dither, Dither::Off, next_dither)
                 });
             }
-            Field::PerPage => self.taste.per_page = turn_flag(self.taste.per_page, step),
+            Field::Envelope => self.taste.envelope = turn_flag(self.taste.envelope, step),
             Field::IoMode => {
                 self.taste.io_mode = turn(self.taste.io_mode, step, |mode| {
                     ring(mode, IoMode::Auto, next_io_mode)
@@ -3500,7 +3500,7 @@ impl Session {
             Field::Filter => self.taste.filter.is_none(),
             Field::BitDepth => self.taste.bit_depth.is_none(),
             Field::Dither => self.taste.dither.is_none(),
-            Field::PerPage => self.taste.per_page.is_none(),
+            Field::Envelope => self.taste.envelope.is_none(),
             Field::CacheBudget => self.taste.cache_budget.is_none(),
             Field::IoMode => self.taste.io_mode.is_none(),
             Field::Out => self.scope.out.is_none(),
@@ -3763,7 +3763,7 @@ impl Session {
             | Field::Filter
             | Field::BitDepth
             | Field::Dither
-            | Field::PerPage
+            | Field::Envelope
             | Field::IoMode
             | Field::Volume(_)
             | Field::AddVolume => None,
@@ -3837,7 +3837,7 @@ impl Session {
             | Field::Filter
             | Field::BitDepth
             | Field::Dither
-            | Field::PerPage
+            | Field::Envelope
             | Field::IoMode
             | Field::Volume(_) => {}
         }
@@ -3932,7 +3932,7 @@ impl Session {
                 Some(dither) => dither.name().to_owned(),
                 None => "自动（判据说了算）".to_owned(),
             },
-            Field::PerPage => spell_flag(self.taste.per_page, self.taste.per_page(), "开", "关"),
+            Field::Envelope => spell_flag(self.taste.envelope, self.taste.envelope(), "开", "关"),
             Field::CacheBudget => match self.taste.cache_budget {
                 Some(budget) => budget.to_string(),
                 None => format!("默认（{}）", CacheBudget::default()),
@@ -5902,14 +5902,14 @@ mod tests {
         for (field, spoken, said, silent) in [
             (Field::Crop, true, "裁", "默认（裁）"),
             (Field::Split, true, "拆", "默认（拆）"),
-            (Field::PerPage, false, "关", "默认（关）"),
+            (Field::Envelope, false, "关", "默认（关）"),
         ] {
             assert_eq!(session.shown(field), silent, "{field:?} 没说那一格");
 
             match field {
                 Field::Crop => session.taste.crop = Some(spoken),
                 Field::Split => session.taste.split = Some(spoken),
-                Field::PerPage => session.taste.per_page = Some(spoken),
+                Field::Envelope => session.taste.envelope = Some(spoken),
                 _ => unreachable!("上面那张表只有这三行"),
             }
             assert_eq!(

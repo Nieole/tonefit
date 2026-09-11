@@ -110,7 +110,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
         white_align_limit: tonefit::WhiteAlignLimit::default(),
         bit_depth: None,
         dither: None,
-        per_page: false,
+        envelope: false,
         cache_budget: CacheBudget::default(),
         mode: Mode::Process,
         io_mode: IoMode::default(),

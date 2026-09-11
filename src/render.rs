@@ -143,7 +143,7 @@ impl Cell {
 /// 排版按它分派：纯文本那一副按它定缩进与前缀（见 [`plain`]），
 /// 表那一副按它挑列、上色、给行首记号。
 ///
-/// 一个变体对应报告上的一种行，**不多不少**：`--per-page` 与覆盖顶掉判定各是一种，
+/// 一个变体对应报告上的一种行，**不多不少**：默认逐页与覆盖顶掉判定各是一种，
 /// 而不是「卷级那一行的三种写法」——表要照它们各自的说法填基准档那一列，
 /// 分不开就得回头去认字符串。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +187,7 @@ pub enum RowKind {
     Driver,
     /// 卷级判定：覆盖项顶掉了判定（成句）。
     Override,
-    /// 卷级判定：`--per-page`，没有卷级基准档（成句）。
+    /// 卷级判定：默认那条路（逐页各判各的），没有卷级基准档（成句）。
     PerPage,
     /// 这一趟怎么读的。
     Reading,
@@ -357,6 +357,13 @@ pub fn header(report: &Report, mode: Mode) -> String {
     text.push_str(&format!("判据聚合 {}\n", aggregation()));
     if mode == Mode::DryRun {
         text.push_str("dry-run：只算不写，下面的路径都还没落盘\n");
+        // 试算只记账、不留页，缓存那一行报的是**参照**那一摊；照做时默认路径缓存里装的是
+        // 编好的 PNG，那个数与它不是同一个、也不见得更小（停车场 Q638）。`--envelope` 那条路
+        // 两趟攒的是同一摊参照，数才相同。抬头不带那个开关（Q637），这里两条路各说一句。
+        text.push_str(
+            "缓存那一行是参照压过之后的大小：默认路径照做时缓存里装的是编好的 PNG，\
+             字节数与它不同；--envelope 那条路两趟相同\n",
+        );
     }
     text
 }
@@ -517,7 +524,7 @@ pub enum Notable {
 /// 它与 [`Notable`] 一起挂在特性后面，理由写在那一头。
 #[cfg(any(feature = "tui", test))]
 pub fn notable(volume: &VolumeReport, panel: Panel) -> Vec<Vec<Notable>> {
-    // 定档页只有上包络定出来的卷才有：`--per-page` 与覆盖那两种卷级判定里没有一页
+    // 定档页只有上包络定出来的卷才有：默认逐页与覆盖那两种卷级判定里没有一页
     // 站在分位秩上（见 `tonefit::VolumeVerdict`）。
     let driver = match volume.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => Some(envelope.driver),
@@ -581,7 +588,7 @@ pub fn failed_volume(failure: &VolumeFailure) -> Row {
 /// 一张灰度页都没有的卷（整卷彩页、整卷失败）根本没有候选可判，那一格因此不在场。
 ///
 /// **五种说法只有这一处**：它们与卷级那几行成句的那几句说的是同一件事
-/// （「跳过 幂等命中……」「无（--per-page）……」「判定 X（覆盖项裁到只剩一个候选）」），
+/// （「跳过 幂等命中……」「无（默认逐页）……」「判定 X（覆盖项裁到只剩一个候选）」），
 /// 表那一副只是把它压成一列摆得下的宽度，不编第二套说法（spec 的《卷表》）。
 ///
 /// **两路都读它**：会话的卷表把它摆成一列，而目录那一行的[基准档分布](directory)
@@ -1262,8 +1269,8 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
         )],
         VolumeVerdict::PerPage => vec![sentence_row(
             RowKind::PerPage,
-            "无（--per-page）：上包络关着，候选逐页最优，孤立地高出邻居的页压回邻居那一档，\
-             够长的一段之间仍会换档",
+            "无（默认逐页）：上包络关着，每一页拿到判据说它要的那一档，页与页之间会换档；\
+             要卷级齐整开 --envelope",
         )],
         // 上面那一支已经把跳过的卷送走了。
         VolumeVerdict::Skipped { .. } => Vec::new(),
@@ -1304,7 +1311,7 @@ fn isolated_row(volume: &VolumeReport) -> Option<Row> {
 fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
     let judged = volume.judged_by_the_gate().count();
     let broken: Vec<&PageReport> = volume.outside_the_gate().collect();
-    // `--per-page` 一开就没有卷级的抖动模式：它跟着位深一起逐页可变。
+    // 默认那条路（逐页）上没有卷级的抖动模式：它跟着位深一起逐页可变。
     let dither = verdict
         .dither()
         .map_or_else(|| "逐页".to_owned(), |dither| dither.to_string());
@@ -3491,7 +3498,7 @@ mod tests {
             vec![Notable::Driver]
         );
 
-        // 定档页只有上包络定出来的卷才有：`--per-page` 那一种一页都不站在分位秩上。
+        // 定档页只有上包络定出来的卷才有：逐页那一种一页都不站在分位秩上。
         let mut per_page = a_volume_worth_a_row_of_each_kind();
         per_page.verdict = Some(VolumeVerdict::PerPage);
         assert_eq!(notable(&per_page, panel)[0], Vec::new());
@@ -4112,7 +4119,7 @@ mod tests {
 
     /// 一份卷报告，**每一页的纸白对齐由 `what` 逐页点名**——底下那几条问的只有那一段。
     ///
-    /// 别的几格取一个不碍事的取值：卷级判定走 `--per-page`（它不指定档页，
+    /// 别的几格取一个不碍事的取值：卷级判定走默认那条路（逐页，它不指定档页，
     /// 因此不必让页数与定档页那个下标对得上），页一律是完好的灰度页。
     fn a_volume_whose_pages_were(what: &[WhiteAlignment]) -> VolumeReport {
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
@@ -4974,7 +4981,6 @@ mod tests {
             Reason::Override,
             Reason::VolumeEnvelope,
             Reason::Hysteresis,
-            Reason::RunHysteresis,
             Reason::Outlier,
             Reason::OutsideTheGate,
         ] {
@@ -4986,7 +4992,6 @@ mod tests {
                 | Reason::Override
                 | Reason::VolumeEnvelope
                 | Reason::Hysteresis
-                | Reason::RunHysteresis
                 | Reason::Outlier
                 | Reason::OutsideTheGate => {}
             }

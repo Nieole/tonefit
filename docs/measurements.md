@@ -1603,8 +1603,8 @@ L 组的**近白列与中灰列各自复现了这两组**：
 本仓那张满幅渐变夹具（`full_bleed_gradient`）正是这一类页，它的 `4bit+FS` 读 **5.113**。
 `tests/pipeline.rs` 两条钉着它：`dithering_can_bring_a_page_back_within_the_threshold`
 （ADR 0007 的收益——不抖那几档全部越界，抖过的这一档落回界内）与
-`per_page_turns_the_envelope_off_and_gives_every_page_its_own_bit_depth_and_reason`
-（`--per-page` 上两页的理由都是「界以内最低的一档」）。**界低于 5.113，两条同时红。**
+`the_default_path_gives_every_page_its_own_bit_depth_and_reason`
+（默认路径上两页的理由都是「界以内最低的一档」）。**界低于 5.113，两条同时红。**
 
 > **那 5.113 不是一条感知事实，是一个回归证人。**它说的是「界低于我，有一类页会失去
 > 『抖过之后落回界内』这个行为」——拿它挑窗口里的落点是对的，**拿它当窗口的边界是错的**。

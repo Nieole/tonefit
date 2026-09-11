@@ -118,8 +118,8 @@ pub struct TasteLayer {
     pub bit_depth: Option<BitDepth>,
     /// 覆盖自动选择的抖动模式（`--dither`）。
     pub dither: Option<Dither>,
-    /// 关掉卷级上包络（`--per-page`）。迟滞不跟着关，改走段式（`crate::hysteresis`）。
-    pub per_page: Option<bool>,
+    /// 开不开卷级上包络（`--envelope`；`--no-envelope` 关掉它）。
+    pub envelope: Option<bool>,
     /// 缓存预算（`--cache-budget`）。
     pub cache_budget: Option<CacheBudget>,
     /// 读取策略（`--io-mode`）。
@@ -146,9 +146,11 @@ impl TasteLayer {
         self.crop.unwrap_or(true)
     }
 
-    /// 关不关卷级上包络（ADR 0006 决定第 6 条）。**默认不关。**
-    pub fn per_page(&self) -> bool {
-        self.per_page.unwrap_or(false)
+    /// 开不开卷级上包络。**默认不开**：默认路径上位深逐页各判各的（ADR 0018 决定第 2 条），
+    /// 要卷级齐整的人显式打开它（决定第 5 条）。这个 `false` 与 [`crop`](Self::crop) 那个
+    /// `true` 同一个理由只在这一处：`Request::envelope` 是个裸 `bool`。
+    pub fn envelope(&self) -> bool {
+        self.envelope.unwrap_or(false)
     }
 
     /// 怎么拆跨页。三项收成库那一侧的一份规矩，各自的默认在 [`SplitRule::default`]。
@@ -738,7 +740,7 @@ struct OnDiskTaste {
     #[serde(skip_serializing_if = "Option::is_none")]
     dither: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    per_page: Option<bool>,
+    envelope: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_budget: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -803,7 +805,7 @@ fn resolve(raw: OnDisk) -> Result<Preset> {
                 .as_deref()
                 .map(Dither::resolve)
                 .transpose()?,
-            per_page: raw.taste.per_page,
+            envelope: raw.taste.envelope,
             cache_budget: raw
                 .taste
                 .cache_budget
@@ -843,7 +845,7 @@ impl From<&Preset> for OnDisk {
                 filter: preset.taste.filter.map(|filter| filter.name().to_owned()),
                 bit_depth: preset.taste.bit_depth.map(BitDepth::bits),
                 dither: preset.taste.dither.map(|dither| dither.name().to_owned()),
-                per_page: preset.taste.per_page,
+                envelope: preset.taste.envelope,
                 cache_budget: preset.taste.cache_budget.map(spell_budget),
                 io_mode: preset.taste.io_mode.map(|mode| mode.name().to_owned()),
             },
@@ -944,7 +946,7 @@ pub fn every_field() -> Preset {
             filter: Some(Filter::Hamming),
             bit_depth: Some(BitDepth::Two),
             dither: Some(Dither::FloydSteinberg),
-            per_page: Some(true),
+            envelope: Some(true),
             cache_budget: Some(CacheBudget::parse("1G").expect("认得的写法")),
             io_mode: Some(IoMode::Concurrent),
         },
@@ -1117,7 +1119,7 @@ fit = \"inside\"
     /// 点名的预设不在文件里：把文件里有的那几个端出来。
     #[test]
     fn a_preset_that_is_not_in_the_file_names_the_ones_that_are() {
-        let text = "[preset.\"漫画\".taste]\nfit = \"inside\"\n\n[preset.\"画集\".taste]\nper-page = true\n";
+        let text = "[preset.\"漫画\".taste]\nfit = \"inside\"\n\n[preset.\"画集\".taste]\nenvelope = true\n";
 
         let error = read(text, "小说").expect_err("没有这个预设").to_string();
 
