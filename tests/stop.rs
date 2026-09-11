@@ -38,6 +38,15 @@
 //! `.scratch/p4-parking-lot/issues/18-*.md` 的《落地记录》第八节，这里不复述。
 //!
 //! 后面两卷各一页：它们只用来说明「下一卷不开工」，一页就够，不必陪着跑。
+//!
+//! # 为什么开着 `--envelope`
+//!
+//! 上面两个空当都靠**第二遍里还有编**。默认路径自 ADR 0018 起一页判完当场编码
+//! （`two-pass-rework/11`），第二遍只剩写——「一批的编」那个秒级空当整个没了，
+//! 三个相之间只隔毫秒，第二下 `SIGINT` 赶不赶得上成了一枚硬币（五趟两红，停车场 Q670）。
+//! 上包络那条路上第二遍照旧按批编（`src/envelope.rs`），[`spawn`] 因此显式带上
+//! `--envelope`：这两条问的是「`Ctrl-C` 到底有没有变成那两个字」，两级停的检查点
+//! 两条路共用，走哪条路不改结论——改的只是记号之间隔得够不够宽。
 
 // `Ctrl-C` 在 Windows 上不是一个信号（那一头是 `SetConsoleCtrlHandler`，见 `Cargo.toml`
 // 里 `ctrlc` 那一条的注释），送它要另一套 API。**装那个键**两个平台上是同一句
@@ -193,6 +202,8 @@ fn spawn(space: &Workspace, inputs: &[PathBuf]) -> Child {
         .arg("--out")
         .arg(space.out())
         .args(["--profile", fixtures::BASELINE_DEVICE])
+        // 第二遍要有编，两个记号之间才隔得开——模块文档《为什么开着 `--envelope`》。
+        .arg("--envelope")
         .args(inputs)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
