@@ -399,7 +399,7 @@ pub struct VolumeReport {
     /// [`page_count`](Self::page_count)。
     pub pages: Vec<PageReport>,
     /// **留下的输出页**有几张（two-pass-rework/14：按页跳过）：上一趟写的还在、页级依据一项没变，
-    /// 这一趟从上一趟的输出里搬进来（只改写记录里卷级源哈希那一项），不解码、不判、不编。
+    /// 这一趟从上一趟的输出里原样搬进来，不解码、不判、不编。
     ///
     /// 与 [`pages`](Self::pages) 合起来才是整本书：`pages.len()` 是重做的，这一个是留下的。
     /// 整卷跳过的卷这里是 0——那一卷一页都没搬，卷级判定是 [`VolumeVerdict::Skipped`]，
@@ -574,8 +574,10 @@ pub enum VolumeVerdict {
     /// 默认那条路：上包络没开，位深逐页各判各的、不做迟滞，卷内没有基准档
     /// （ADR 0018 决定第 2 条）。抖动模式也跟着逐页可变；报告里逐页各说各的理由。
     PerPage,
-    /// 幂等命中：输出已经在，且工具版本、profile、参数、源四项都没变，本卷一页都没有重做
-    /// （ADR 0006：同一批 tEXt 字段兼作幂等依据）。
+    /// 幂等命中：输出已经在，且工具版本、profile、参数、源都没变，本卷一页都没有重做
+    /// （ADR 0006：同一批 tEXt 字段兼作幂等依据）。源那一项按这一趟的作用域比：
+    /// `--envelope` 那条路是全卷一个数，默认路径是每一页各自那一份加上透传文件与陈旧产物那两问
+    /// （two-pass-rework/15，见 `crate::compare_with_the_prior_output`）。
     ///
     /// `page_count` 是这一卷的**输出**页数——上一趟写在那儿、这一趟逐个比过依据的那些页
     /// （见 `crate::compare_with_the_prior_output`）。不做工作也数得出来：那份名单从记录里

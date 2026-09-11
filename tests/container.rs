@@ -914,6 +914,44 @@ fn a_directory_volume_leaves_the_volumes_lodging_in_its_output_alone() {
     );
 }
 
+/// **借住的卷不算陈旧产物：混装目录再跑一趟，三卷各自整卷跳过**（two-pass-rework/15）。
+///
+/// 默认路径上整卷跳过要问上一趟的输出「除了这些成员再没有别的了吗」——源里删掉的那一页留在
+/// 输出里的陈旧产物正靠这一句挡住。而封面那一卷的去处 `out/N和S` 里**本来就有别的**：
+/// 借住在里面的两话。它们通往别的卷，不是陈旧产物，问的范围与收尾清陈旧产物的同一个
+/// （`sink::DirectorySink`）。这一条断了的症状是静默的：每一个混装目录从此每趟都把封面那一卷搬一遍。
+#[test]
+fn a_directory_volume_with_lodgers_still_skips_as_a_whole() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let mixed = space.volume("N和S");
+    mixed.page("cover.png", &page);
+    for chapter in ["第1话.cbz", "第2话.cbz"] {
+        let mut archive = fixtures::Cbz::new(mixed.path().join(chapter));
+        archive.page("001.png", &page);
+        archive.write();
+    }
+    let first = run_paths(&space, [mixed.path()]);
+    assert_eq!(first.volumes.len(), 3, "夹具不对：封面与两话没各自成卷");
+
+    let second = run_paths(&space, [mixed.path()]);
+
+    assert_eq!(second.volumes.len(), 3);
+    for volume in &second.volumes {
+        assert_eq!(
+            volume.verdict,
+            Some(tonefit::VolumeVerdict::Skipped { page_count: 1 }),
+            "{} 没有整卷跳过",
+            volume.volume.display()
+        );
+    }
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["N和S/cover.png", "N和S/第1话.cbz", "N和S/第2话.cbz"],
+        "跳过的那一趟动了输出"
+    );
+}
+
 /// **混装目录里那一卷中途失败，盘上一个字节都没动**——它自己上一趟的产物与借住的卷都在。
 ///
 /// 这是上一条的另一半（票 `p4-parking-lot/16` 的第三条验收）：收窄的是「换掉什么」，

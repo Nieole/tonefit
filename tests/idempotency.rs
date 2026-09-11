@@ -157,8 +157,10 @@ fn the_cache_budget_alone_does_not_redo_the_volume() {
     );
 }
 
-/// 卷里任何一个成员变了、多了、少了，这一卷都**不能整卷跳过**（卷级源哈希看得见每一种，
-/// ADR 0006 的《决定》末段）。默认路径上重做的只是变了的那几页（two-pass-rework/14，
+/// 卷里任何一个成员变了、多了、少了，这一卷都**不能整卷跳过**。默认路径上四种各由页级那条路的
+/// 一句看见（two-pass-rework/15）：改了、多了看页级依据，少了看输出里多出来的陈旧产物，
+/// 透传文件看输出里那一份与源逐字节相同——卷级那一个数从前一句盖住四种，收掉它之后三句各管各的。
+/// 默认路径上重做的只是变了的那几页（two-pass-rework/14，
 /// 由 `adding_removing_or_renaming_a_page_redoes_only_what_changed` 钉），这里钉的是
 /// 「没被跳过」加上**输出里剩下什么**：只断言前者的话，源里删掉的那一页仍然可以
 /// 原封不动地留在输出里。为什么那是个陷阱，见 `sink::DirectorySink`。
@@ -452,6 +454,9 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
 /// 定档页那一项在这条路上恒不在场（上包络关着），理由因此是逐页那两种之一，
 /// 不带 `driven by page`。段式迟滞那一种（`hysteresis pull-back`）已随迟滞退场（ADR 0018），
 /// 不再产出。
+///
+/// 源那一项在这条路上是**页级**的 `tonefit:page-source`；卷级的 `tonefit:source` 不写
+/// （two-pass-rework/15：默认路径不再算、不再记卷级依据）。
 #[test]
 fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
     let space = Workspace::new();
@@ -474,13 +479,19 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
             Some(format!("tonefit {}", env!("CARGO_PKG_VERSION")))
         );
         assert_eq!(field("tonefit:profile"), Some("kobo-libra-2".to_owned()));
-        for keyword in ["tonefit:params", "tonefit:source"] {
+        for keyword in ["tonefit:params", "tonefit:page-source"] {
             let value = field(keyword).unwrap_or_else(|| panic!("{keyword} 没写进去"));
             assert!(
                 value.len() == 32 && value.chars().all(|c| c.is_ascii_hexdigit()),
                 "{keyword} 不是十六进制哈希：{value}"
             );
         }
+        assert_eq!(
+            field("tonefit:source"),
+            None,
+            "默认路径上写了卷级源哈希：{}",
+            page.output.display()
+        );
         assert_eq!(
             field("tonefit:verdict"),
             Some(verdict.candidate.to_string()),
@@ -504,7 +515,8 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
     }
 }
 
-/// 彩色分支不量化，没有判定位深可写（ADR 0005 决定第 4 条）；幂等那四项一项不少。
+/// 彩色分支不量化，没有判定位深可写（ADR 0005 决定第 4 条）；幂等依据一项不少——
+/// 默认路径上是共用的三项加页级源哈希（two-pass-rework/15）。
 #[test]
 fn a_color_page_carries_the_same_record_without_a_bit_depth() {
     let space = Workspace::new();
@@ -523,7 +535,12 @@ fn a_color_page_carries_the_same_record_without_a_bit_depth() {
         Some(format!("tonefit {}", env!("CARGO_PKG_VERSION")))
     );
     assert!(fixtures::png_field(&text, "tonefit:params").is_some());
-    assert!(fixtures::png_field(&text, "tonefit:source").is_some());
+    assert!(fixtures::png_field(&text, "tonefit:page-source").is_some());
+    assert_eq!(
+        fixtures::png_field(&text, "tonefit:source"),
+        None,
+        "默认路径上的彩页写了卷级源哈希"
+    );
     assert_eq!(
         fixtures::png_field(&text, "tonefit:verdict"),
         Some("color".to_owned()),
@@ -613,18 +630,18 @@ fn a_split_page_records_which_source_member_it_came_from() {
     assert_eq!(origin(2), "002.png 1/1");
 }
 
-/// **每张输出页记着它自己那一份源哈希**（two-pass-rework/13：页级依据）。
+/// **每张输出页记着它自己那一份源哈希，卷级那一份不再写**（two-pass-rework/13 的页级依据；
+/// two-pass-rework/15 收掉卷级那一份）。
 ///
-/// 卷级那一项 `tonefit:source` 照旧写、照旧全卷同一个；多出来的 `tonefit:page-source`
-/// 只算这一张来自的那个源成员——改了一页，只有那一页的页级哈希变，旁边那一页的纹丝不动，
-/// 而卷级那一项两页一起变。这正是 spec 的 story 23：一页的幂等依据只取决于这一页自己。
+/// `tonefit:page-source` 只算这一张来自的那个源成员——改了一页，只有那一页的页级哈希变，
+/// 旁边那一页的纹丝不动。这正是 spec 的 story 23：一页的幂等依据只取决于这一页自己。
+/// 默认路径上的记录里没有 `tonefit:source`：那一项只对上包络成立（它论证的是基准档由全卷定），
+/// 留着就是第二个出处，两份对不上时没人说得清哪份作数。
 ///
-/// 13 号票只把它算出来、记下去；14 号票拿它按页跳过——改了一页之后没变的那一页**留下**，
-/// 它那一项卷级源哈希在搬的时候改写成这一趟的（见 `metadata::restamp_source`），
-/// 因此第二趟的输出里两页的卷级那一项仍旧全卷同一个。读的是输出里的文件而不是
-/// `pages[index]`：留下的页不在逐页结果里（`VolumeReport::pages` 只列这一趟做了的）。
+/// 读的是输出里的文件而不是 `pages[index]`：留下的页不在逐页结果里
+/// （`VolumeReport::pages` 只列这一趟做了的）。
 #[test]
-fn every_page_on_the_default_path_carries_its_own_source_hash_beside_the_volume_one() {
+fn every_page_on_the_default_path_carries_its_own_source_hash_and_no_volume_level_one() {
     let space = Workspace::new();
     let volume = two_pages_and_an_extra(&space);
 
@@ -636,37 +653,34 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_beside_the_volume_
     );
     let basis = |report: &tonefit::Report, name: &str| {
         let output = report.volumes[0].output.join(name);
-        (
-            recorded(&output, "tonefit:source"),
-            recorded(&output, "tonefit:page-source"),
-        )
+        assert_eq!(
+            fixtures::png_field(&fixtures::read_png_text(&output), "tonefit:source"),
+            None,
+            "默认路径上 {name} 写了卷级源哈希"
+        );
+        recorded(&output, "tonefit:page-source")
     };
-    let (volume_a, page_a) = basis(&first, "001.png");
-    let (volume_b, page_b) = basis(&first, "002.png");
+    let page_a = basis(&first, "001.png");
+    let page_b = basis(&first, "002.png");
     for hash in [&page_a, &page_b] {
         assert!(
             hash.len() == 32 && hash.chars().all(|c| c.is_ascii_hexdigit()),
             "tonefit:page-source 不是十六进制哈希：{hash}"
         );
     }
-    assert_eq!(volume_a, volume_b, "卷级源哈希该全卷同一个");
     assert_ne!(page_a, page_b, "两张不同的源页给出了同一个页级源哈希");
-    assert_ne!(page_a, volume_a, "页级那一份与卷级那一份写成了同一个数");
 
-    // 改第一页：只有它的页级哈希变，第二页的不动；卷级那一项两页一起变——
-    // 第二页留下没重做，那一项是搬的时候改写的。
+    // 改第一页：只有它的页级哈希变，第二页的不动——第二页留下没重做，字节原样搬过来。
     volume.page("001.png", &fixtures::gradient(fixtures::TINY));
     let second = fixtures::run_volume(&space, &volume);
     assert_redone(second.volumes[0].verdict, "改了一页");
-    let (volume_a2, page_a2) = basis(&second, "001.png");
-    let (volume_b2, page_b2) = basis(&second, "002.png");
+    let page_a2 = basis(&second, "001.png");
+    let page_b2 = basis(&second, "002.png");
     assert_ne!(page_a2, page_a, "改了第一页，它的页级源哈希却没变");
     assert_eq!(
         page_b2, page_b,
         "改的是第一页，第二页的页级源哈希却跟着变了"
     );
-    assert_ne!(volume_a2, volume_a, "改了一页，卷级源哈希却没变");
-    assert_eq!(volume_a2, volume_b2, "卷级源哈希该全卷同一个");
 }
 
 /// **跨页拆分下页级依据定义得清楚**（two-pass-rework/13）：一个源页出两张输出页，
@@ -796,42 +810,187 @@ fn a_pinned_run_records_the_page_level_basis_too() {
             page_source.len() == 32 && page_source.chars().all(|c| c.is_ascii_hexdigit()),
             "tonefit:page-source 不是十六进制哈希：{page_source}"
         );
+        assert_eq!(
+            fixtures::png_field(&fixtures::read_png_text(&page.output), "tonefit:source"),
+            None,
+            "顶死的那一趟写了卷级源哈希：一份记录只带一种源哈希"
+        );
     }
 }
 
-/// **旧记录（只有卷级那一份）照旧读得懂**，跳过与重做一个字不变（two-pass-rework/13）。
+/// **`--envelope` 加两维都点名的那一趟按页记依据、按页跳过**（two-pass-rework/15；停车场 Q665、Q698）。
 ///
-/// 本票之前写出的每一页都没有 `tonefit:page-source`。把这一趟写出的页里那个块剥掉，
-/// 造出来的就是一份老形态的输出——再跑一趟仍旧**整卷跳过**：幂等的判据还是卷级那四项加来路，
-/// 页级那一项缺了是「页级答不了」，不是坏记录，更不是重做的理由。
-/// 反过来说，这一条红了就是有人把页级那一项塞进了 `can_skip`，那是 14 号票的活，不是这一票的。
+/// 依据的作用域问的是「这一页的字节取决于什么」，不是开关的名字：位深与抖动都点名，每一页的档碰卷之前就定死，
+/// 上包络根本没接手——这一趟与不开 `--envelope` 的顶死那一趟同一个待遇：记页级那一项、不记卷级那一项，
+/// 改一页只重做那一页。这一角从前两种都写（本票之前），如今只带一种。
 #[test]
-fn an_output_carrying_only_the_volume_level_basis_is_still_skipped_as_a_whole() {
+fn a_pinned_run_under_the_envelope_records_and_skips_by_page() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let pinned_under_the_envelope = || {
+        tonefit::run(&Request {
+            bit_depth: Some(BitDepth::Four),
+            dither: Some(tonefit::Dither::Off),
+            envelope: true,
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("处理应当成功")
+    };
+
+    let first = pinned_under_the_envelope();
+    assert!(
+        matches!(first.volumes[0].verdict, Some(VolumeVerdict::Override(_))),
+        "夹具没走到顶死那一趟：{:?}",
+        first.volumes[0].verdict
+    );
+    for page in &first.volumes[0].pages {
+        let text = fixtures::read_png_text(&page.output);
+        assert!(
+            fixtures::png_field(&text, "tonefit:page-source").is_some(),
+            "顶死的那一趟没写页级源哈希：{}",
+            page.output.display()
+        );
+        assert_eq!(
+            fixtures::png_field(&text, "tonefit:source"),
+            None,
+            "顶死的那一趟写了卷级源哈希：{}",
+            page.output.display()
+        );
+    }
+
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let second = pinned_under_the_envelope();
+    assert_eq!(second.volumes[0].decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(second.volumes[0].retained_pages, 1);
+}
+
+/// **旧输出（默认路径上带卷级依据的那些）判为不命中，重做一次之后转成新形态**（two-pass-rework/15）。
+///
+/// 两种旧形态各钉一次，都是默认路径上曾经写出的：只带卷级那一项的（13 号票之前），
+/// 与两种都带的（13 与 14 号票之间）。默认路径这一趟只认页级那一项，而且**另一种在场就不认**
+/// ——放过它，旧形态会借着留下的页一直传下去，输出里从此两种形态混着。旧 tEXt 键读到仍认得：
+/// 判不命中，不判错，重做那一趟照常。重做之后每一页只带页级那一项，再跑一趟整卷跳过。
+///
+/// 两种形态本工具今天都写不出来，按块造：剥掉页级那一项、或添上一块卷级那一项。
+#[test]
+fn an_old_output_carrying_the_volume_level_basis_is_redone_once_and_comes_out_in_the_new_form() {
+    /// 一种旧形态：它在断言里的说法，与把新写出的页造旧的那一下。
+    type Aging = (&'static str, fn(&[u8]) -> Vec<u8>);
+    let cases: [Aging; 2] = [
+        ("只带卷级那一项", |png| {
+            with_text_chunk(
+                &without_text_chunk(png, "tonefit:page-source"),
+                "tonefit:source",
+                "0123456789abcdef0123456789abcdef",
+            )
+        }),
+        ("两种都带", |png| {
+            with_text_chunk(png, "tonefit:source", "0123456789abcdef0123456789abcdef")
+        }),
+    ];
+    for (what, age) in cases {
+        let space = Workspace::new();
+        let volume = two_pages_and_an_extra(&space);
+        let first = fixtures::run_volume(&space, &volume);
+        for page in &first.volumes[0].pages {
+            let written = fs::read(&page.output).expect("读回写出的页");
+            fs::write(&page.output, age(&written)).expect("写回造旧的页");
+            let text = fixtures::read_png_text(&page.output);
+            assert!(
+                fixtures::png_field(&text, "tonefit:source").is_some(),
+                "夹具不对：{what}的那一页没有卷级那一项"
+            );
+        }
+
+        let second = fixtures::run_volume(&space, &volume);
+
+        let redone = &second.volumes[0];
+        assert_redone(redone.verdict, what);
+        assert_eq!(
+            redone.decodes, 2,
+            "{what}的旧输出没有整卷重做：留下了页，旧形态就传下去了"
+        );
+        assert_eq!(redone.retained_pages, 0, "{what}的旧输出留下了页");
+        for page in &redone.pages {
+            let text = fixtures::read_png_text(&page.output);
+            assert_eq!(
+                fixtures::png_field(&text, "tonefit:source"),
+                None,
+                "{what}重做之后 {} 仍带着卷级那一项",
+                page.output.display()
+            );
+            assert!(
+                fixtures::png_field(&text, "tonefit:page-source").is_some(),
+                "{what}重做之后 {} 没有页级那一项",
+                page.output.display()
+            );
+        }
+
+        let third = fixtures::run_volume(&space, &volume);
+        assert_eq!(
+            third.volumes[0].verdict,
+            Some(VolumeVerdict::Skipped { page_count: 2 }),
+            "{what}的旧输出重做一次之后仍没有整卷跳过"
+        );
+    }
+}
+
+/// **输出里多出来的成员挡住整卷跳过，而且被清掉**（two-pass-rework/15）。
+///
+/// 页级依据逐页各比各的，看不见「输出里多了一个谁都不认的成员」——卷级那一个数从前顺手盖住了
+/// 这件事（源里删掉一页、全卷那一个数就变）。收掉它之后整卷跳过得另问一句「除了这些再没有别的了吗」：
+/// 不问，源里删掉的那一页会被静默地留在输出里，下一趟又被跳过，从此永久留着。
+/// 这里摆一件谁都不认的成员：这一趟不跳（页都留下、一页不解），收尾把它清掉，再下一趟整卷跳过。
+#[test]
+fn a_stale_member_in_the_output_blocks_the_whole_skip_and_is_cleared() {
     let space = Workspace::new();
     let volume = two_pages_and_an_extra(&space);
     let first = fixtures::run_volume(&space, &volume);
-
-    for page in &first.volumes[0].pages {
-        let written = fs::read(&page.output).expect("读回写出的页");
-        let stripped = without_text_chunk(&written, "tonefit:page-source");
-        assert_ne!(
-            stripped.len(),
-            written.len(),
-            "夹具不对：这一页本来就没有页级源哈希"
-        );
-        fs::write(&page.output, &stripped).expect("写回剥掉那一项的页");
-        let text = fixtures::read_png_text(&page.output);
-        assert_eq!(fixtures::png_field(&text, "tonefit:page-source"), None);
-        assert!(fixtures::png_field(&text, "tonefit:source").is_some());
-    }
+    fs::write(first.volumes[0].output.join("003.png"), b"not ours").expect("摆一件陈旧产物");
 
     let second = fixtures::run_volume(&space, &volume);
+
+    let cleared = &second.volumes[0];
+    assert_eq!(cleared.verdict, Some(VolumeVerdict::PerPage));
+    assert_eq!(cleared.decodes, 0, "没变的页也被解码了");
+    assert_eq!(cleared.retained_pages, 2);
     assert_eq!(
-        second.volumes[0].verdict,
-        Some(VolumeVerdict::Skipped { page_count: 2 }),
-        "只带卷级依据的旧输出没被整卷跳过"
+        fixtures::directory_members(&cleared.output),
+        ["001.png", "002.png", "ComicInfo.xml"],
+        "陈旧产物没被清掉"
     );
-    assert_eq!(second.volumes[0].decodes, 0, "跳过的卷还是解码了");
+
+    let third = fixtures::run_volume(&space, &volume);
+    assert_eq!(
+        third.volumes[0].verdict,
+        Some(VolumeVerdict::Skipped { page_count: 2 }),
+        "清掉陈旧产物之后的下一趟没有整卷跳过"
+    );
+}
+
+/// 一页 PNG 在 IHDR 之后插一个 tEXt 块（关键字 `keyword`、取值 `value`），其余字节原样。
+///
+/// 与 [`without_text_chunk`] 一对：造两种都带的旧形态只有这一条路——本工具今天写不出那样的页。
+fn with_text_chunk(png: &[u8], keyword: &str, value: &str) -> Vec<u8> {
+    const SIGNATURE: usize = 8;
+    let ihdr_end = {
+        let length = u32::from_be_bytes(png[SIGNATURE..SIGNATURE + 4].try_into().expect("4 字节"));
+        SIGNATURE + 4 + 4 + length as usize + 4
+    };
+    let mut data = Vec::from(keyword.as_bytes());
+    data.push(0);
+    data.extend_from_slice(value.as_bytes());
+    let mut chunk = Vec::new();
+    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    chunk.extend_from_slice(b"tEXt");
+    chunk.extend_from_slice(&data);
+    let mut body = Vec::from(&b"tEXt"[..]);
+    body.extend_from_slice(&data);
+    chunk.extend_from_slice(&crc32fast::hash(&body).to_be_bytes());
+    let mut kept = png[..ihdr_end].to_vec();
+    kept.extend_from_slice(&chunk);
+    kept.extend_from_slice(&png[ihdr_end..]);
+    kept
 }
 
 /// 一页 PNG 剥掉关键字为 `keyword` 的那个 tEXt 块，其余字节原样。
@@ -862,7 +1021,8 @@ fn without_text_chunk(png: &[u8], keyword: &str) -> Vec<u8> {
 /// **失败页的占位页不记页级依据**，同一卷里的好页照记（two-pass-rework/13）。
 ///
 /// 占位页按卷内统一尺寸出（12 号票），那个尺寸由全卷定——这一页的字节因此不只取决于它自己，
-/// 与上包络那条路同一条理由。它随身带的仍是七项：卷级依据、来路、`failed` 与那句自证。
+/// 与上包络那条路同一条理由。默认路径上卷级那一项也不写（two-pass-rework/15），它随身带的是
+/// 共用的三项、来路、`failed` 与那句自证：哪一种源哈希都没有，永远留不下来，而隔离的卷本来每趟都重做。
 #[test]
 fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
     let space = Workspace::new();
@@ -880,11 +1040,19 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
         Some("failed".to_owned()),
         "头一页不是占位页"
     );
-    assert!(fixtures::png_field(&placeholder, "tonefit:source").is_some());
+    assert_eq!(
+        fixtures::png_field(&placeholder, "tonefit:source"),
+        None,
+        "默认路径上的占位页写了卷级源哈希"
+    );
     assert_eq!(
         fixtures::png_field(&placeholder, "tonefit:page-source"),
         None,
         "占位页写了页级源哈希——它的尺寸由全卷定，页级答不了"
+    );
+    assert!(
+        fixtures::png_field(&placeholder, "tonefit:params").is_some(),
+        "占位页丢了共用的三项"
     );
     let neighbour = fixtures::read_png_text(&reported.pages[1].output);
     assert!(
@@ -900,8 +1068,8 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
 /// 只有 1；报告说得出这一卷留下了几页、重做了几页，而卷那一行的页数仍是整本书的页数。
 ///
 /// 下半段钉的是**产物一字不差**：按页跳过省的是工，不是结果——同一卷往一个空的输出根
-/// 整卷重做一遍，两份输出逐字节相同。留下的页那一项卷级源哈希因此是改写过的
-/// （`metadata::restamp_source`），不是原样照搬的旧数。
+/// 整卷重做一遍，两份输出逐字节相同。留下的页是原样搬的：默认路径上一页的记录只取决于它自己
+/// （two-pass-rework/15 收掉了卷级那一项），搬过来一个字节不用改。
 #[test]
 fn changing_one_page_redoes_only_that_page() {
     let space = Workspace::new();
@@ -1070,9 +1238,9 @@ fn an_archive_volume_is_skipped_by_page_too() {
     );
 }
 
-/// **按页跳过之后的下一趟整卷跳过**（two-pass-rework/14）：留下的页那一项卷级源哈希在搬的时候
-/// 改写成了这一趟的，输出于是与整卷重做的一样齐——下一趟卷级那四项每一页都对得上，
-/// 不必再逐页比、逐页搬。这一条断了的症状是静默的：那一卷从此每趟都把整卷搬一遍。
+/// **按页跳过之后的下一趟整卷跳过**（two-pass-rework/14）：输出与整卷重做的一样齐——
+/// 下一趟每一页各自都没变、透传文件没变、输出里再没有别的（two-pass-rework/15 的「齐」），
+/// 不必再逐页搬。这一条断了的症状是静默的：那一卷从此每趟都把整卷搬一遍。
 #[test]
 fn the_run_after_a_partial_one_skips_the_volume_as_a_whole() {
     let space = Workspace::new();
