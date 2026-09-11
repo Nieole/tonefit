@@ -32,6 +32,7 @@
 //!
 //! [preset."漫画".taste]
 //! fit = "inside"
+//! white-align-limit = 2
 //! cache-budget = "1G"
 //! ```
 //!
@@ -52,7 +53,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, IoMode, Profile, ReadingOrder, SplitRule,
-    SplitThreshold,
+    SplitThreshold, WhiteAlignLimit,
 };
 
 /// 预设文件在用户配置目录下的位置。
@@ -92,9 +93,12 @@ pub struct DeviceLayer {
 
 /// 口味层：这一趟的立场，**逐项列举**。
 ///
-/// 十一项：适配方式、裁边、拆分与它的阈值、阅读方向、滤波器、位深、抖动、逐页、
-/// 缓存预算、读取策略。前五项是页几何那一批添的，后六项是 spec 的《会话：三层与预设》
-/// 原本就列着的那几项。
+/// 十二项：适配方式、裁边、拆分与它的阈值、阅读方向、滤波器、纸白对齐上限、位深、抖动、
+/// 上包络、缓存预算、读取策略。前五项是页几何那一批添的，纸白对齐上限是纸白对齐那一批添的
+/// （03 号票），其余六项是 spec 的《会话：三层与预设》原本就列着的那几项。
+///
+/// **纸白对齐上限在这一层、不在设备层**：它是「这一趟愿意为对齐付多少色调」的取舍，
+/// 不是面板的物理事实（`CONTEXT.md` 的《纸白对齐上限》）。
 ///
 /// **`--dry-run` 与 `--no-metadata` 不在里面**，按它们各自是什么判的：前者是这一趟做到
 /// 哪一步（`Mode`），试算与执行是同一条回路的两半，不是一份存得住的立场；后者一开就把
@@ -114,6 +118,8 @@ pub struct TasteLayer {
     pub reading_order: Option<ReadingOrder>,
     /// 残差段的重采样滤波器（`--filter`）。
     pub filter: Option<Filter>,
+    /// 纸白对齐的上限（`--white-align-limit`）。**取 0 是「关」，是一个说了的值**，不是「没说」。
+    pub white_align_limit: Option<WhiteAlignLimit>,
     /// 覆盖自动判定的位深（`--bit-depth`）。
     pub bit_depth: Option<BitDepth>,
     /// 覆盖自动选择的抖动模式（`--dither`）。
@@ -166,6 +172,11 @@ impl TasteLayer {
     /// 残差段的重采样滤波器（ADR 0001）。
     pub fn filter(&self) -> Filter {
         self.filter.unwrap_or_default()
+    }
+
+    /// 纸白对齐的上限。默认值只在 `WhiteAlignLimit::default` 一处，这里不复述那个数。
+    pub fn white_align_limit(&self) -> WhiteAlignLimit {
+        self.white_align_limit.unwrap_or_default()
     }
 
     /// 缓存预算（ADR 0005）。
@@ -720,6 +731,9 @@ struct OnDiskDevice {
 }
 
 /// 口味层在盘上的形状。
+///
+/// 数值项的类型就是命令行上那一项的类型（`white_align_limit` 与 `--white-align-limit` 同为 `u8`）：
+/// 越界的数、负数、一串字在读进来那一刻就是错误，与 clap 在命令行上挡下它们是同一条界。
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct OnDiskTaste {
@@ -735,6 +749,8 @@ struct OnDiskTaste {
     reading_order: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    white_align_limit: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bit_depth: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -798,6 +814,7 @@ fn resolve(raw: OnDisk) -> Result<Preset> {
                 .as_deref()
                 .map(Filter::resolve)
                 .transpose()?,
+            white_align_limit: raw.taste.white_align_limit.map(WhiteAlignLimit::new),
             bit_depth: raw.taste.bit_depth.map(BitDepth::from_bits).transpose()?,
             dither: raw
                 .taste
@@ -843,6 +860,7 @@ impl From<&Preset> for OnDisk {
                     .reading_order
                     .map(|order| order.name().to_owned()),
                 filter: preset.taste.filter.map(|filter| filter.name().to_owned()),
+                white_align_limit: preset.taste.white_align_limit.map(WhiteAlignLimit::levels),
                 bit_depth: preset.taste.bit_depth.map(BitDepth::bits),
                 dither: preset.taste.dither.map(|dither| dither.name().to_owned()),
                 envelope: preset.taste.envelope,
@@ -889,7 +907,22 @@ fn no_panel_to_calibrate_against_error() -> anyhow::Error {
     )
 }
 
-/// 还没有预设文件时的说法：把位置说出来，再把格式当场教一遍。
+/// 还没有预设文件时印出来的样例。**照抄就能用**：它自己就是一份读得懂的预设
+/// （`the_sample_printed_when_there_is_no_file_is_itself_a_readable_preset` 钉着），
+/// 每一行都是一项用户可能想说的非默认取值。**纸白对齐上限那一行不写 0**：0 是「关」，
+/// 照抄样例的人会在不知情时把默认开着的那一步关掉。行首的两格是排版，TOML 不认缩进。
+const SAMPLE: &str = r#"
+  [preset."漫画".device]
+  profile = "kobo-libra-2"
+  gray-levels = 12
+
+  [preset."漫画".taste]
+  fit = "inside"
+  white-align-limit = 2
+  cache-budget = "1G"
+"#;
+
+/// 还没有预设文件时的说法：把位置说出来，再把格式当场教一遍（[`SAMPLE`]）。
 ///
 /// 教格式而不是只报「文件不在」：预设是用户自己手写的一份文件，而写它的人手上
 /// 只有这条错误——`--help` 那一段也说得到，但那要他先想到去看。
@@ -897,15 +930,7 @@ fn no_preset_file_error(path: &Path) -> anyhow::Error {
     anyhow!(
         "还没有预设文件：{} 不在。\n\
          一份文件装多个命名预设，各装设备层与口味层两层：\n\
-         \n\
-         \x20 [preset.\"漫画\".device]\n\
-         \x20 profile = \"kobo-libra-2\"\n\
-         \x20 gray-levels = 12\n\
-         \n\
-         \x20 [preset.\"漫画\".taste]\n\
-         \x20 fit = \"inside\"\n\
-         \x20 cache-budget = \"1G\"\n\
-         \n\
+         {SAMPLE}\n\
          处理范围与输出根不进预设——那两样每趟都不同（ADR 0009）。",
         path.display()
     )
@@ -923,12 +948,18 @@ fn no_such_preset_error<P>(name: &str, presets: &BTreeMap<String, P>) -> anyhow:
     anyhow!("预设文件里没有「{name}」。有的是：{}。", names.join(" "))
 }
 
-/// 一份每一项都写满的预设。往返用例要的是「每一项都验过」，不是「随便挑几项」。
+/// 一份**除下一段那一格外**每一项都写满的预设。往返用例要的是「每一项都验过」，
+/// 不是「随便挑几项」。
 ///
 /// 会话那一侧的用例也拿它（`crate::session::state`）：屏上的两层与盘上的两层格数对不对得上，
 /// 靠的正是这一份「说满了」的预设——它**没有 `..Default::default()`**，
 /// 往任何一层加一个字段，这里当场编译不过；补完之后盘上那一节就多一个键，
 /// 而屏上的行数没跟着变，那一条断言随之变红。
+///
+/// **纸白对齐上限此刻故意留白**：屏上那一行归纸白对齐批 04 号票，它落地之前这里写 `Some`
+/// 就是让上面那条断言替 04 号票先红。它的往返另有
+/// `the_white_align_limit_round_trips_through_the_file` 一条钉着；04 号票把那一行摆上屏之后，
+/// 这一格改成 `Some`，那条单独的用例随之退场（停车场 Q649）。
 #[cfg(test)]
 pub fn every_field() -> Preset {
     Preset {
@@ -944,6 +975,8 @@ pub fn every_field() -> Preset {
             split_threshold: Some(SplitThreshold::parse("1.75").expect("是个正数")),
             reading_order: Some(ReadingOrder::LeftToRight),
             filter: Some(Filter::Hamming),
+            // 故意留白，见上面那段（Q649）。
+            white_align_limit: None,
             bit_depth: Some(BitDepth::Two),
             dither: Some(Dither::FloydSteinberg),
             envelope: Some(true),
@@ -1056,6 +1089,11 @@ sharpen = true
             "[preset.\"漫画\".taste]\nreading-order = \"ttb\"\n",
             "[preset.\"漫画\".taste]\nio-mode = \"parallel\"\n",
             "[preset.\"漫画\".taste]\nbit-depth = 3\n",
+            // 与 `--white-align-limit` 同一条界（u8）：越界、负数、一串字都读不懂。
+            "[preset.\"漫画\".taste]\nwhite-align-limit = 256\n",
+            "[preset.\"漫画\".taste]\nwhite-align-limit = -1\n",
+            "[preset.\"漫画\".taste]\nwhite-align-limit = \"很宽\"\n",
+            "[preset.\"漫画\".taste]\nwhite-align-limit = 2.5\n",
             "[preset.\"漫画\".taste]\nsplit-threshold = 0.0\n",
             "[preset.\"漫画\".taste]\ncache-budget = \"512T\"\n",
             "[preset.\"漫画\".device]\nprofile = \"boox-poke6\"\ngray-levels = 0\n",
@@ -1149,6 +1187,85 @@ reading-order = \"left-to-right\"
         assert_eq!(preset.taste.filter, Some(Filter::Area));
         assert_eq!(preset.taste.dither, Some(Dither::FloydSteinberg));
         assert_eq!(preset.taste.reading_order, Some(ReadingOrder::LeftToRight));
+    }
+
+    /// **口味层认 `white-align-limit`**（纸白对齐批 03 号票）：键名就是去掉 `--` 的 flag 名，
+    /// 取值是命令行上那个级数。**取 0 也是一个说了的值**——它是「关」，不是「没说」，
+    /// 读回来是 `Some(OFF)`，不落到默认值上。
+    ///
+    /// 没写这一项的预设读回来是 `None`：落到默认值那一步在 [`TasteLayer::white_align_limit`]，
+    /// 与其余口味项同一条路。
+    #[test]
+    fn a_preset_stores_the_white_align_limit_in_its_taste_layer() {
+        let two = read("[preset.\"漫画\".taste]\nwhite-align-limit = 2\n", "漫画").expect("读得懂");
+        assert_eq!(two.taste.white_align_limit, Some(WhiteAlignLimit::new(2)));
+        assert_eq!(two.taste.white_align_limit(), WhiteAlignLimit::new(2));
+
+        let off = read("[preset.\"漫画\".taste]\nwhite-align-limit = 0\n", "漫画").expect("读得懂");
+        assert_eq!(
+            off.taste.white_align_limit,
+            Some(WhiteAlignLimit::OFF),
+            "0 是关，不是没说"
+        );
+
+        let silent = read("[preset.\"漫画\".taste]\nfit = \"inside\"\n", "漫画").expect("读得懂");
+        assert_eq!(silent.taste.white_align_limit, None);
+        assert_eq!(
+            silent.taste.white_align_limit(),
+            WhiteAlignLimit::default(),
+            "预设没说就该落到默认值"
+        );
+    }
+
+    /// 纸白对齐上限写出去再读回来是同一个数，**0 也写得出去**：`skip_serializing_if` 跳的是
+    /// 「没说」，不是「说了 0」——漏了这一格，存进预设的「关」读回来就成了默认的「开」。
+    ///
+    /// 替 [`every_field`] 里故意留白的那一格顶着往返；那一格改成 `Some` 之后本条退场（Q649）。
+    #[test]
+    fn the_white_align_limit_round_trips_through_the_file() {
+        for limit in [
+            WhiteAlignLimit::OFF,
+            WhiteAlignLimit::new(2),
+            WhiteAlignLimit::new(255),
+        ] {
+            let preset = Preset {
+                taste: TasteLayer {
+                    white_align_limit: Some(limit),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            let text = one("漫画", &preset);
+
+            assert!(text.contains("white-align-limit"), "没写出去：\n{text}");
+            assert_eq!(
+                read(&text, "漫画").expect("读得回来"),
+                preset,
+                "写出去的是：\n{text}"
+            );
+        }
+    }
+
+    /// 文件还不在时印出来的那份样例**照抄就能用**：它自己就是一份读得懂的预设，
+    /// 而口味层那一节里带着纸白对齐上限（03 号票的验收）。
+    ///
+    /// 样例是用户手上唯一的一份格式说明（见 [`no_preset_file_error`]）——它要是读不懂，
+    /// 或者少了一项，用户照抄之后撞上的就是「读不懂预设」或者不知道有这一项可写。
+    #[test]
+    fn the_sample_printed_when_there_is_no_file_is_itself_a_readable_preset() {
+        let sample = read(SAMPLE, "漫画").expect("样例自己得读得懂");
+
+        assert!(
+            sample.taste.white_align_limit.is_some(),
+            "样例里没有纸白对齐上限"
+        );
+        assert!(
+            no_preset_file_error(Path::new("presets.toml"))
+                .to_string()
+                .contains("white-align-limit"),
+            "印出来的那句里没带上这一项"
+        );
     }
 
     /// **存一份新的：原文一个字节都不改。**
