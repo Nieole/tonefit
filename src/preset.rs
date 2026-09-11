@@ -948,18 +948,16 @@ fn no_such_preset_error<P>(name: &str, presets: &BTreeMap<String, P>) -> anyhow:
     anyhow!("预设文件里没有「{name}」。有的是：{}。", names.join(" "))
 }
 
-/// 一份**除下一段那一格外**每一项都写满的预设。往返用例要的是「每一项都验过」，
-/// 不是「随便挑几项」。
+/// 一份每一项都写满的预设。往返用例要的是「每一项都验过」，不是「随便挑几项」。
 ///
 /// 会话那一侧的用例也拿它（`crate::session::state`）：屏上的两层与盘上的两层格数对不对得上，
 /// 靠的正是这一份「说满了」的预设——它**没有 `..Default::default()`**，
 /// 往任何一层加一个字段，这里当场编译不过；补完之后盘上那一节就多一个键，
 /// 而屏上的行数没跟着变，那一条断言随之变红。
 ///
-/// **纸白对齐上限此刻故意留白**：屏上那一行归纸白对齐批 04 号票，它落地之前这里写 `Some`
-/// 就是让上面那条断言替 04 号票先红。它的往返另有
-/// `the_white_align_limit_round_trips_through_the_file` 一条钉着；04 号票把那一行摆上屏之后，
-/// 这一格改成 `Some`，那条单独的用例随之退场（停车场 Q649）。
+/// **纸白对齐上限写的是 0**：那是「关」，一个说了的值——往返里带着它，
+/// 「0 写得出去、读回来仍是 `Some(OFF)` 而不是落到默认」就在同一条用例里钉住了
+/// （`skip_serializing_if` 跳的是「没说」，不是「说了 0」）。
 #[cfg(test)]
 pub fn every_field() -> Preset {
     Preset {
@@ -975,8 +973,7 @@ pub fn every_field() -> Preset {
             split_threshold: Some(SplitThreshold::parse("1.75").expect("是个正数")),
             reading_order: Some(ReadingOrder::LeftToRight),
             filter: Some(Filter::Hamming),
-            // 故意留白，见上面那段（Q649）。
-            white_align_limit: None,
+            white_align_limit: Some(WhiteAlignLimit::OFF),
             bit_depth: Some(BitDepth::Two),
             dither: Some(Dither::FloydSteinberg),
             envelope: Some(true),
@@ -1215,36 +1212,6 @@ reading-order = \"left-to-right\"
             WhiteAlignLimit::default(),
             "预设没说就该落到默认值"
         );
-    }
-
-    /// 纸白对齐上限写出去再读回来是同一个数，**0 也写得出去**：`skip_serializing_if` 跳的是
-    /// 「没说」，不是「说了 0」——漏了这一格，存进预设的「关」读回来就成了默认的「开」。
-    ///
-    /// 替 [`every_field`] 里故意留白的那一格顶着往返；那一格改成 `Some` 之后本条退场（Q649）。
-    #[test]
-    fn the_white_align_limit_round_trips_through_the_file() {
-        for limit in [
-            WhiteAlignLimit::OFF,
-            WhiteAlignLimit::new(2),
-            WhiteAlignLimit::new(255),
-        ] {
-            let preset = Preset {
-                taste: TasteLayer {
-                    white_align_limit: Some(limit),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-
-            let text = one("漫画", &preset);
-
-            assert!(text.contains("white-align-limit"), "没写出去：\n{text}");
-            assert_eq!(
-                read(&text, "漫画").expect("读得回来"),
-                preset,
-                "写出去的是：\n{text}"
-            );
-        }
     }
 
     /// 文件还不在时印出来的那份样例**照抄就能用**：它自己就是一份读得懂的预设，
