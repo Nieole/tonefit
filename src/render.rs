@@ -158,6 +158,9 @@ pub enum RowKind {
     Volume,
     /// 过期副本那一行（成句）。
     Superseded,
+    /// **按页跳过**那一行（成句，two-pass-rework/14）：这一卷留下几页、重做几页。
+    /// 一页都没留下的卷没有它。出处只有 [`retained_row`]。
+    Retained,
     /// 幂等命中而跳过那一行（成句）。
     Skipped,
     /// 隔离那一行（成句）。
@@ -408,6 +411,9 @@ fn interlock_lines(report: &Report) -> String {
 pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
     let mut rows = vec![Row::new(RowKind::Volume, volume_cells(volume))];
     rows.extend(superseded_row(volume));
+    // 按页跳过那一行排在卷级各行**之前**（two-pass-rework/14）：底下几何门、纸白对齐、
+    // 档位分布数的都只是这一趟重做的那几页，先说清整本书里有几页没重做，那几个数才读得对。
+    rows.extend(retained_row(volume));
     rows.extend(verdict_rows(volume));
     // 纸白对齐那一段接在判定后面（纸白对齐批 02 号票）：判定说的是「这一卷判成什么」，
     // 它说的是「这一趟对这一卷的像素做了什么」。上限是**这一趟**的事实，因此从外面递进来
@@ -1156,6 +1162,25 @@ fn superseded_row(volume: &VolumeReport) -> Option<Row> {
             path.display()
         ),
     ))
+}
+
+/// 按页跳过那一行（two-pass-rework/14；`CONTEXT.md` 的《留下的页》）。**只有留下了页的卷才有它**。
+///
+/// 两个数一句说完：留下的（`VolumeReport::retained_pages`）与重做的（逐页结果的条数），
+/// 两者之和就是卷那一行的页数。后半句与整卷跳过那一句（[`SKIPPED`]）同一个形状——
+/// 点名没变的是哪几项：那一句点的是卷级源，这一句点的是**页级**源。
+fn retained_row(volume: &VolumeReport) -> Option<Row> {
+    (volume.retained_pages > 0).then(|| {
+        sentence_row(
+            RowKind::Retained,
+            format!(
+                "按页跳过 留下 {} 页、重做 {} 页：留下的页工具版本、profile、参数、页级源均未变，\
+                 从上一趟的输出里搬过来，不解码、不判、不编",
+                volume.retained_pages,
+                volume.pages.len()
+            ),
+        )
+    })
 }
 
 /// 摊开那一行（ADR 0015 决定第 3 条）。**只有摊开过的卷才有它**。
@@ -2030,6 +2055,7 @@ mod tests {
                 cached_references: 1,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
+                retained_pages: 0,
                 source_pages: 1,
             }],
             elapsed: Duration::ZERO,
@@ -2752,6 +2778,7 @@ mod tests {
                 resizes: 3,
                 cached_references: 2,
                 timing: VolumeTiming::default(),
+                retained_pages: 0,
                 source_pages: 3,
                 pages: vec![
                     page("001", PageColor::Color, PageBranch::Color),
@@ -2797,6 +2824,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 pages: Vec::new(),
+                retained_pages: 0,
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
@@ -2847,6 +2875,7 @@ mod tests {
                 output: PathBuf::from("out/volume-a"),
                 superseded: None,
                 pages: Vec::new(),
+                retained_pages: 0,
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
@@ -2941,6 +2970,7 @@ mod tests {
                 resizes: 1,
                 cached_references: 1,
                 timing: VolumeTiming::default(),
+                retained_pages: 0,
                 source_pages: 2,
                 pages: vec![good, failed],
             }],
@@ -3333,6 +3363,7 @@ mod tests {
                 resizes: 2,
                 cached_references: 2,
                 timing: VolumeTiming::default(),
+                retained_pages: 0,
                 source_pages: 2,
                 pages: vec![whole, salvaged],
             }],
@@ -3438,6 +3469,7 @@ mod tests {
             resizes: 1,
             cached_references: 1,
             timing: VolumeTiming::default(),
+            retained_pages: 0,
             source_pages: 2,
             pages: vec![
                 PageReport {
@@ -3593,6 +3625,37 @@ mod tests {
         skipped.pages = Vec::new();
         skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 184 });
         assert!(notable(&skipped, panel).is_empty());
+    }
+
+    /// **按页跳过的卷多一行，说得出留下几页、重做几页**（two-pass-rework/14）；
+    /// 卷那一行的页数是整本书的。一页都没留下的卷没有这一行——一格在不在场本身就是一句话。
+    #[test]
+    fn a_volume_skipped_by_page_says_how_many_pages_it_kept_and_how_many_it_redid() {
+        let mut per_page = a_volume_worth_a_row_of_each_kind();
+        per_page.verdict = Some(VolumeVerdict::PerPage);
+        per_page.retained_pages = 3;
+
+        let rows = volume(&per_page, WhiteAlignLimit::OFF);
+        assert_eq!(rows[0].cell(Field::PageCount), Some("5"));
+        assert_eq!(
+            rows.iter().map(|row| row.kind).take(3).collect::<Vec<_>>(),
+            vec![RowKind::Volume, RowKind::Superseded, RowKind::Retained]
+        );
+        assert_eq!(
+            rows[2].cell(Field::Sentence),
+            Some(
+                "按页跳过 留下 3 页、重做 2 页：留下的页工具版本、profile、参数、页级源均未变，\
+                 从上一趟的输出里搬过来，不解码、不判、不编"
+            )
+        );
+
+        per_page.retained_pages = 0;
+        assert!(
+            volume(&per_page, WhiteAlignLimit::OFF)
+                .iter()
+                .all(|row| row.kind != RowKind::Retained),
+            "一页都没留下的卷也出了按页跳过那一行"
+        );
     }
 
     /// **卷级与逐页出的是行，每一行说得出它是什么行**（ADR 0016）。
@@ -4162,6 +4225,7 @@ mod tests {
             output: PathBuf::from("out/volume-b"),
             superseded: None,
             pages: Vec::new(),
+            retained_pages: 0,
             source_pages: 12,
             verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
             cache: cache_usage(),
@@ -4383,6 +4447,7 @@ mod tests {
             resizes: pages.len(),
             cached_references: pages.len(),
             timing: VolumeTiming::default(),
+            retained_pages: 0,
             source_pages: pages.len(),
             pages,
         }
@@ -4744,6 +4809,7 @@ mod tests {
             cached_references: 0,
             timing: VolumeTiming::default(),
             pages: Vec::new(),
+            retained_pages: 0,
             source_pages: 0,
         }
     }
@@ -4793,6 +4859,7 @@ mod tests {
             cached_references: usize::from(!broken),
             timing: VolumeTiming::default(),
             pages: vec![page],
+            retained_pages: 0,
             source_pages: 1,
         }
     }

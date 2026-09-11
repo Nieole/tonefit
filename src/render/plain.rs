@@ -203,6 +203,7 @@ pub(super) fn line(row: &Row) -> String {
                 .map_or_else(String::new, |count| format!("，其中彩页 {count} 页")),
         ),
         RowKind::Superseded
+        | RowKind::Retained
         | RowKind::Skipped
         | RowKind::Isolated
         | RowKind::Salvaged

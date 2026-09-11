@@ -387,12 +387,24 @@ pub struct VolumeReport {
     /// 报告因此得指出来。这是本票「问题可见且有界」那一句的直接后件：
     /// 隔离这套机制自己制造了一份会骗人的东西，藏起来就等于白做。
     pub superseded: Option<PathBuf>,
-    /// 按阅读顺序排列的**输出页**。
+    /// 按阅读顺序排列的、**这一趟做了的输出页**。
     ///
     /// 一个源页产出一到多张输出页（页几何批 03 号票），同一源页切出来的那几张挨着排。
     /// 因此这里的条数是输出那一侧的数，源那一侧的数在 [`source_pages`](Self::source_pages)。
     /// 一张源页切成几张由跨页拆分说了算（页几何批 04 号票），上界是 `crate::MAX_OUTPUTS_PER_SOURCE_PAGE`。
+    ///
+    /// **留下的页不在里面**（two-pass-rework/14）：那几页这一趟没解、没判、没编，逐页结果
+    /// 里的每一格——几何、判据、判定——都无从谈起，摆一份编出来的上去不如不摆。
+    /// 它们有几张在 [`retained_pages`](Self::retained_pages)；整本书有几页问
+    /// [`page_count`](Self::page_count)。
     pub pages: Vec<PageReport>,
+    /// **留下的输出页**有几张（two-pass-rework/14：按页跳过）：上一趟写的还在、页级依据一项没变，
+    /// 这一趟从上一趟的输出里搬进来（只改写记录里卷级源哈希那一项），不解码、不判、不编。
+    ///
+    /// 与 [`pages`](Self::pages) 合起来才是整本书：`pages.len()` 是重做的，这一个是留下的。
+    /// 整卷跳过的卷这里是 0——那一卷一页都没搬，卷级判定是 [`VolumeVerdict::Skipped`]，
+    /// 页数在它身上；头一趟、`--envelope` 那条路、整卷重做的卷同样是 0。
+    pub retained_pages: usize,
     /// 本卷的**源页数**：这一卷有几张待处理的图片（页几何批 03 号票）。
     ///
     /// 与输出页数分开说，因为两者从此不是同一个数：一个源页可以产出多张输出页。
@@ -565,9 +577,9 @@ pub enum VolumeVerdict {
     /// 幂等命中：输出已经在，且工具版本、profile、参数、源四项都没变，本卷一页都没有重做
     /// （ADR 0006：同一批 tEXt 字段兼作幂等依据）。
     ///
-    /// `page_count` 是这一卷的**输出**页数——上一趟写在那儿、这一趟逐个比过指纹的那些页
-    /// （见 `crate::can_skip`）。不做工作也数得出来：那份名单在碰像素之前就给得出
-    /// （`crate::page_targets`）。源那一侧的数在 [`VolumeReport::source_pages`]。
+    /// `page_count` 是这一卷的**输出**页数——上一趟写在那儿、这一趟逐个比过依据的那些页
+    /// （见 `crate::compare_with_the_prior_output`）。不做工作也数得出来：那份名单从记录里
+    /// 读回来。源那一侧的数在 [`VolumeReport::source_pages`]。
     ///
     /// 它不叫 `pages`：[`VolumeReport::pages`] 是逐页结果，而跳过的那一趟一份都没有。
     /// 读页数一律走 [`VolumeReport::page_count`]。
@@ -605,11 +617,12 @@ impl VolumeReport {
     /// 一个源页可以产出多张输出页（页几何批 03 号票）。
     ///
     /// 跳过的卷没有逐页结果，页数从卷级判定里取——那份名单在碰像素之前就给得出，
-    /// 报告不该因为跳过就说这一卷是 0 页。
+    /// 报告不该因为跳过就说这一卷是 0 页。按页跳过的卷把留下的那几张加回来
+    /// （[`retained_pages`](Self::retained_pages)）：它们同样躺在输出里。
     pub fn page_count(&self) -> usize {
         match self.verdict {
             Some(VolumeVerdict::Skipped { page_count }) => page_count,
-            _ => self.pages.len(),
+            _ => self.pages.len() + self.retained_pages,
         }
     }
 

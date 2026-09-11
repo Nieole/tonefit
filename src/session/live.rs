@@ -1129,6 +1129,7 @@ pub(crate) mod fixture {
             output: PathBuf::from(format!("出/{name}")),
             superseded: None,
             pages: Vec::new(),
+            retained_pages: 0,
             source_pages: page_count,
             verdict: Some(VolumeVerdict::Skipped { page_count }),
             cache: cache_usage(),
@@ -1194,6 +1195,7 @@ pub(crate) mod fixture {
             volume: PathBuf::from(format!("库/{name}")),
             output: PathBuf::from(out),
             superseded: None,
+            retained_pages: 0,
             source_pages: pages.len(),
             verdict: Some(VolumeVerdict::Envelope(Envelope {
                 base: candidate,
@@ -1398,6 +1400,7 @@ pub(crate) mod fixture {
             volume: PathBuf::from(format!("库/{name}")),
             output: PathBuf::from(format!("出/隔离/{name}")),
             superseded: None,
+            retained_pages: 0,
             source_pages: pages.len(),
             // 其余页那一组是 `001`、`003`、`006` 三张：彩页、特例、门不成立、
             // 部分救回、失败五张都在进这一层之前被摘走了（见 `Envelope::body_pages`）。
@@ -1477,6 +1480,7 @@ pub(crate) mod fixture {
             volume: PathBuf::from(format!("库/{name}")),
             output: PathBuf::from(format!("出/隔离/{name}")),
             superseded: None,
+            retained_pages: 0,
             source_pages: pages.len(),
             verdict: Some(VolumeVerdict::Envelope(Envelope {
                 base,

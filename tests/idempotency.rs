@@ -157,11 +157,11 @@ fn the_cache_budget_alone_does_not_redo_the_volume() {
     );
 }
 
-/// 源哈希是**卷级**的（为什么，见 ADR 0006 的《决定》末段）：卷里任何一个成员变了、
-/// 多了、少了，整卷都得重做。「少了一页」是逐页哈希看不见、而这一条钉得住的那一种。
-///
-/// 重做之后**输出里剩下什么**一并钉住：只断言「没被跳过」的话，源里删掉的那一页
-/// 仍然可以原封不动地留在输出里。为什么那是个陷阱，见 `sink::DirectorySink`。
+/// 卷里任何一个成员变了、多了、少了，这一卷都**不能整卷跳过**（卷级源哈希看得见每一种，
+/// ADR 0006 的《决定》末段）。默认路径上重做的只是变了的那几页（two-pass-rework/14，
+/// 由 `adding_removing_or_renaming_a_page_redoes_only_what_changed` 钉），这里钉的是
+/// 「没被跳过」加上**输出里剩下什么**：只断言前者的话，源里删掉的那一页仍然可以
+/// 原封不动地留在输出里。为什么那是个陷阱，见 `sink::DirectorySink`。
 #[test]
 fn a_changed_source_redoes_the_volume() {
     const INTACT: &[&str] = &["001.png", "002.png", "ComicInfo.xml"];
@@ -204,6 +204,8 @@ fn a_changed_source_redoes_the_volume() {
 }
 
 /// 页名换了也是源变了：只哈希字节的话，两页对调名字看不出来，而输出会整个错位。
+/// 这一卷不能整卷跳过；改了名的那一页重做，旧名字下的那一张清走（旁边没变的页留下，
+/// 那一半由 `adding_removing_or_renaming_a_page_redoes_only_what_changed` 钉）。
 #[test]
 fn renaming_a_source_page_redoes_the_volume() {
     let redone = rerun(
@@ -617,7 +619,10 @@ fn a_split_page_records_which_source_member_it_came_from() {
 /// 只算这一张来自的那个源成员——改了一页，只有那一页的页级哈希变，旁边那一页的纹丝不动，
 /// 而卷级那一项两页一起变。这正是 spec 的 story 23：一页的幂等依据只取决于这一页自己。
 ///
-/// 这一票只把它算出来、记下去；谁都还没拿它跳过——重做那一趟仍旧整卷重做，由旁边那几条钉着。
+/// 13 号票只把它算出来、记下去；14 号票拿它按页跳过——改了一页之后没变的那一页**留下**，
+/// 它那一项卷级源哈希在搬的时候改写成这一趟的（见 `metadata::restamp_source`），
+/// 因此第二趟的输出里两页的卷级那一项仍旧全卷同一个。读的是输出里的文件而不是
+/// `pages[index]`：留下的页不在逐页结果里（`VolumeReport::pages` 只列这一趟做了的）。
 #[test]
 fn every_page_on_the_default_path_carries_its_own_source_hash_beside_the_volume_one() {
     let space = Workspace::new();
@@ -629,15 +634,15 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_beside_the_volume_
         Some(VolumeVerdict::PerPage),
         "默认走到了上包络，测的就不是逐页那条路"
     );
-    let basis = |report: &tonefit::Report, index: usize| {
-        let output = &report.volumes[0].pages[index].output;
+    let basis = |report: &tonefit::Report, name: &str| {
+        let output = report.volumes[0].output.join(name);
         (
-            recorded(output, "tonefit:source"),
-            recorded(output, "tonefit:page-source"),
+            recorded(&output, "tonefit:source"),
+            recorded(&output, "tonefit:page-source"),
         )
     };
-    let (volume_a, page_a) = basis(&first, 0);
-    let (volume_b, page_b) = basis(&first, 1);
+    let (volume_a, page_a) = basis(&first, "001.png");
+    let (volume_b, page_b) = basis(&first, "002.png");
     for hash in [&page_a, &page_b] {
         assert!(
             hash.len() == 32 && hash.chars().all(|c| c.is_ascii_hexdigit()),
@@ -648,12 +653,13 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_beside_the_volume_
     assert_ne!(page_a, page_b, "两张不同的源页给出了同一个页级源哈希");
     assert_ne!(page_a, volume_a, "页级那一份与卷级那一份写成了同一个数");
 
-    // 改第一页：只有它的页级哈希变，第二页的不动；卷级那一项两页一起变。
+    // 改第一页：只有它的页级哈希变，第二页的不动；卷级那一项两页一起变——
+    // 第二页留下没重做，那一项是搬的时候改写的。
     volume.page("001.png", &fixtures::gradient(fixtures::TINY));
     let second = fixtures::run_volume(&space, &volume);
     assert_redone(second.volumes[0].verdict, "改了一页");
-    let (volume_a2, page_a2) = basis(&second, 0);
-    let (volume_b2, page_b2) = basis(&second, 1);
+    let (volume_a2, page_a2) = basis(&second, "001.png");
+    let (volume_b2, page_b2) = basis(&second, "002.png");
     assert_ne!(page_a2, page_a, "改了第一页，它的页级源哈希却没变");
     assert_eq!(
         page_b2, page_b,
@@ -884,6 +890,461 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
     assert!(
         fixtures::png_field(&neighbour, "tonefit:page-source").is_some(),
         "同一卷里的好页丢了页级源哈希"
+    );
+}
+
+/// **改了一页，只重做那一页**（two-pass-rework/14：按页跳过；ADR 0018 决定第 4 条）。
+///
+/// 默认路径上一页的档只取决于它自己，页级依据（`tonefit:page-source` 加来路）因此答得了
+/// 「这一页变没变」。改掉两页里的一页再跑：没变的那一页**不解码、不判、不编**——解码次数
+/// 只有 1；报告说得出这一卷留下了几页、重做了几页，而卷那一行的页数仍是整本书的页数。
+///
+/// 下半段钉的是**产物一字不差**：按页跳过省的是工，不是结果——同一卷往一个空的输出根
+/// 整卷重做一遍，两份输出逐字节相同。留下的页那一项卷级源哈希因此是改写过的
+/// （`metadata::restamp_source`），不是原样照搬的旧数。
+#[test]
+fn changing_one_page_redoes_only_that_page() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let first = fixtures::run_volume(&space, &volume);
+    let before = fixtures::fingerprint(&first.volumes[0].output);
+
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let second = fixtures::run_volume(&space, &volume);
+
+    let redone = &second.volumes[0];
+    assert_eq!(redone.verdict, Some(VolumeVerdict::PerPage));
+    assert_eq!(redone.decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(redone.retained_pages, 1, "报告说不出留下了几页");
+    assert_eq!(redone.pages.len(), 1, "报告里重做的不止那一页");
+    assert_eq!(
+        redone.pages[0]
+            .source
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("001.png"),
+        "重做的不是改了的那一页"
+    );
+    assert_eq!(redone.page_count(), 2, "卷那一行的页数该是整本书的页数");
+    let after = fixtures::fingerprint(&redone.output);
+    assert_ne!(after, before, "改了的那一页没有重写");
+    assert_eq!(
+        fixtures::directory_members(&redone.output),
+        ["001.png", "002.png", "ComicInfo.xml"]
+    );
+
+    // 同一卷整卷重做一遍：与按页跳过那一趟的产物逐字节相同。
+    let from_scratch = tonefit::run(&Request {
+        output_root: space.out_named("from-scratch"),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        from_scratch.volumes[0].decodes, 2,
+        "夹具不对：这一趟没有整卷重做"
+    );
+    assert_eq!(
+        after,
+        fixtures::fingerprint(&from_scratch.volumes[0].output),
+        "按页跳过的产物与整卷重做的不是同一份"
+    );
+}
+
+/// **删一页、加一页、改名一页，都只重做该重做的**（two-pass-rework/14）。
+///
+/// 三种都挪动了后面每一页在阅读顺序里的位置，而位置**不进依据**：页级依据是这一页的名字
+/// 加字节（加来路），挪了位置的页两样都没变，留下它们正对。删掉的那一页在输出里成了陈旧产物，
+/// 收尾整个换掉时一并清走；加进来的、改了名的那一页在新名字下没有记录，只有它重做。
+#[test]
+fn adding_removing_or_renaming_a_page_redoes_only_what_changed() {
+    struct Case {
+        what: &'static str,
+        touch: fn(&Volume),
+        decodes: usize,
+        retained: usize,
+        members: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            what: "删了一页",
+            touch: |volume| {
+                fs::remove_file(volume.path().join("001.png")).expect("删掉一页");
+            },
+            decodes: 0,
+            retained: 1,
+            members: &["002.png", "ComicInfo.xml"],
+        },
+        Case {
+            what: "加了一页",
+            touch: |volume| {
+                volume.page("000.png", &fixtures::gradient(fixtures::TINY));
+            },
+            decodes: 1,
+            retained: 2,
+            members: &["000.png", "001.png", "002.png", "ComicInfo.xml"],
+        },
+        Case {
+            what: "改了一页的名字",
+            touch: |volume| {
+                fs::rename(volume.path().join("001.png"), volume.path().join("000.png"))
+                    .expect("给一页改名");
+            },
+            decodes: 1,
+            retained: 1,
+            members: &["000.png", "002.png", "ComicInfo.xml"],
+        },
+    ];
+
+    for case in cases {
+        let space = Workspace::new();
+        let volume = two_pages_and_an_extra(&space);
+        fixtures::run_volume(&space, &volume);
+        (case.touch)(&volume);
+
+        let report = fixtures::run_volume(&space, &volume);
+
+        let redone = &report.volumes[0];
+        assert_redone(redone.verdict, case.what);
+        assert_eq!(
+            redone.decodes, case.decodes,
+            "{}之后解码的页数不对",
+            case.what
+        );
+        assert_eq!(
+            redone.retained_pages, case.retained,
+            "{}之后留下的页数不对",
+            case.what
+        );
+        assert_eq!(
+            fixtures::directory_members(&redone.output),
+            case.members,
+            "{}之后输出里的成员不对",
+            case.what
+        );
+    }
+}
+
+/// **归档卷也按页跳过**（two-pass-rework/14）：留下的成员从上一趟的归档里搬进新包，
+/// 不解码、不判、不编——包仍是整个重打的（成员按写入顺序排），但留下的那一页一个像素都不碰。
+/// 产物与整卷重做的逐字节相同，成员顺序因此也是阅读顺序。
+#[test]
+fn an_archive_volume_is_skipped_by_page_too() {
+    let space = Workspace::new();
+    let pack = |first: &image::DynamicImage| {
+        let mut cbz = space.cbz("volume-a");
+        cbz.page("001.png", first)
+            .page("002.png", &fixtures::screentone(fixtures::TINY))
+            .file("ComicInfo.xml", b"<ComicInfo/>");
+        cbz.write()
+    };
+    let path = pack(&fixtures::solid(fixtures::TINY, 128));
+    fixtures::run_paths(&space, [path.as_path()]);
+
+    let path = pack(&fixtures::gradient(fixtures::TINY));
+    let second = fixtures::run_paths(&space, [path.as_path()]);
+
+    let redone = &second.volumes[0];
+    assert_redone(redone.verdict, "改了归档里的一页");
+    assert_eq!(redone.decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(redone.retained_pages, 1);
+    assert_eq!(redone.page_count(), 2);
+    let members = fixtures::read_cbz(&redone.output);
+    assert_eq!(
+        members
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["001.png", "002.png", "ComicInfo.xml"],
+        "成员顺序不是阅读顺序"
+    );
+
+    let from_scratch = tonefit::run(&Request {
+        output_root: space.out_named("from-scratch"),
+        ..fixtures::request(&space, [path.as_path()])
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        members,
+        fixtures::read_cbz(&from_scratch.volumes[0].output),
+        "按页跳过的归档与整卷重做的不是同一份"
+    );
+}
+
+/// **按页跳过之后的下一趟整卷跳过**（two-pass-rework/14）：留下的页那一项卷级源哈希在搬的时候
+/// 改写成了这一趟的，输出于是与整卷重做的一样齐——下一趟卷级那四项每一页都对得上，
+/// 不必再逐页比、逐页搬。这一条断了的症状是静默的：那一卷从此每趟都把整卷搬一遍。
+#[test]
+fn the_run_after_a_partial_one_skips_the_volume_as_a_whole() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    fixtures::run_volume(&space, &volume);
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let partial = fixtures::run_volume(&space, &volume);
+    assert_eq!(
+        partial.volumes[0].retained_pages, 1,
+        "夹具不对：这一趟没有按页跳过"
+    );
+
+    let third = fixtures::run_volume(&space, &volume);
+
+    assert_eq!(
+        third.volumes[0].verdict,
+        Some(VolumeVerdict::Skipped { page_count: 2 }),
+        "按页跳过之后的下一趟没有整卷跳过"
+    );
+    assert_eq!(third.volumes[0].decodes, 0);
+}
+
+/// **走 `--envelope` 那条路时照旧整卷重做**（two-pass-rework/14）：那条路上一页的档由全卷定，
+/// 记录里没有页级依据，改一页整卷重做——两页都解码，一页都不留。
+#[test]
+fn under_the_envelope_a_changed_page_still_redoes_the_whole_volume() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    fixtures::run_volume_under_the_envelope(&space, &volume);
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+
+    let report = fixtures::run_volume_under_the_envelope(&space, &volume);
+
+    let redone = &report.volumes[0];
+    assert!(
+        matches!(redone.verdict, Some(VolumeVerdict::Envelope(_))),
+        "夹具没走到上包络：{:?}",
+        redone.verdict
+    );
+    assert_eq!(redone.decodes, 2, "上包络那条路上留下了页");
+    assert_eq!(redone.retained_pages, 0);
+    assert_eq!(redone.pages.len(), 2);
+}
+
+/// **试算预告的就是按页跳过**（spec 的 story 6，two-pass-rework/14）：改一页之后试算，
+/// 报告说留下一页、只解一页——与照做那一趟同一个数，尽管试算一个字节都不写。
+#[test]
+fn a_dry_run_predicts_the_skip_by_page() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    fixtures::run_volume(&space, &volume);
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+
+    let report = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+
+    let predicted = &report.volumes[0];
+    assert_eq!(predicted.decodes, 1, "试算把没变的那一页也解了");
+    assert_eq!(predicted.retained_pages, 1);
+    assert_eq!(predicted.pages.len(), 1);
+}
+
+/// **一页坏了整卷进隔离目录，留下的页跟着去**（two-pass-rework/14；12 号票的隔离不变）。
+///
+/// 卷仍是去处的单位：重做的那一页失败，整卷去隔离目录，而隔离目录里那一份得是整本书——
+/// 留下的页从干净去处里搬过去，干净去处那一份原样留着当过期副本。占位页按卷内统一尺寸出，
+/// 那个尺寸数的是整本书：这一卷只重做了一页而且它失败了，众数由留下的那一页定。
+/// 坏页修好之后再跑：没变的那一页仍从干净去处里留下，重做的只有修好的那一页。
+#[test]
+fn a_failed_page_isolates_the_volume_and_the_retained_pages_go_along() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let first = fixtures::run_volume(&space, &volume);
+    let clean = first.volumes[0].output.clone();
+    let neighbour = fixtures::read_png(&clean.join("002.png"));
+
+    volume.file("001.png", b"not a png at all");
+    let isolated = fixtures::run_volume(&space, &volume);
+
+    let reported = &isolated.volumes[0];
+    assert!(reported.isolated(), "坏页没让这一卷进隔离目录");
+    assert_eq!(reported.decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(reported.retained_pages, 1);
+    assert_eq!(reported.superseded.as_deref(), Some(clean.as_path()));
+    assert_eq!(
+        fixtures::directory_members(&reported.output),
+        ["001.png", "002.png", "ComicInfo.xml"],
+        "隔离目录里那一份不是整本书"
+    );
+    let placeholder = fixtures::read_png(&reported.output.join("001.png"));
+    assert_eq!(
+        placeholder.size, neighbour.size,
+        "占位页没按卷内统一尺寸出——留下的那一页没数进众数"
+    );
+
+    // 坏页修好：没变的那一页仍从干净去处里留下，只重做修好的那一页。
+    volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let mended = fixtures::run_volume(&space, &volume);
+    let reported = &mended.volumes[0];
+    assert!(!reported.isolated(), "修好了还在隔离目录里");
+    assert_eq!(reported.output, clean);
+    assert_eq!(reported.decodes, 1, "修好之后没变的那一页也被解码了");
+    assert_eq!(reported.retained_pages, 1);
+    assert!(
+        reported.superseded.is_some(),
+        "隔离目录里那一份该报成过期副本"
+    );
+}
+
+/// **切开的那一族整族留下、整族重做**（two-pass-rework/14；页几何批 04 号票的来路）。
+///
+/// 一张跨页切成两张输出页，页级源哈希相同、来路各说自己是哪一半。改旁边那一页，
+/// 这一族两张都留下——留下的数按**输出页**数，是 2。反过来把那张跨页换成一张单页：
+/// 一族从两张变一张，`001-1.png`、`001-2.png` 成了陈旧产物，收尾整个换掉时一并清走。
+#[test]
+fn a_split_family_is_retained_or_redone_as_a_whole() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+    volume.page("002.png", &fixtures::solid(fixtures::TINY, 128));
+    let first = fixtures::run_volume(&space, &volume);
+    assert_eq!(first.volumes[0].page_count(), 3, "夹具没被切开");
+
+    // 改旁边那一页：跨页那一族两张都留下。
+    volume.page("002.png", &fixtures::gradient(fixtures::TINY));
+    let second = fixtures::run_volume(&space, &volume);
+    let redone = &second.volumes[0];
+    assert_eq!(redone.decodes, 1, "跨页那一族被重做了");
+    assert_eq!(redone.retained_pages, 2, "留下的数该按输出页数");
+    assert_eq!(redone.page_count(), 3);
+    assert_eq!(
+        fixtures::directory_members(&redone.output),
+        ["001-1.png", "001-2.png", "002.png"]
+    );
+
+    // 跨页换成单页：那一族从两张变一张，旧的两半清走。
+    volume.page("001.png", &fixtures::solid(fixtures::TINY, 40));
+    let third = fixtures::run_volume(&space, &volume);
+    let redone = &third.volumes[0];
+    assert_eq!(redone.decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(redone.retained_pages, 1);
+    assert_eq!(redone.page_count(), 2);
+    assert_eq!(
+        fixtures::directory_members(&redone.output),
+        ["001.png", "002.png"],
+        "切开的旧两半留在了输出里"
+    );
+}
+
+/// **一张灰度页都没重做、却留下了页，卷级判定仍是这条路的**（two-pass-rework/14）：只改透传文件，
+/// 两页都留下、零解码、透传文件补上——报告说的是「逐页」，不是「一张灰度页都没有」，
+/// 卷表上它因此不会与整卷彩页、整卷失败的卷混成一档。
+#[test]
+fn a_volume_with_only_its_passthrough_file_changed_keeps_every_page_and_says_per_page() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    fixtures::run_volume(&space, &volume);
+    volume.file("ComicInfo.xml", b"<ComicInfo><Title>2</Title></ComicInfo>");
+
+    let report = fixtures::run_volume(&space, &volume);
+
+    let reported = &report.volumes[0];
+    assert_eq!(reported.verdict, Some(VolumeVerdict::PerPage));
+    assert_eq!(reported.decodes, 0, "没变的页也被解码了");
+    assert_eq!(reported.retained_pages, 2);
+    assert_eq!(reported.pages.len(), 0);
+    assert_eq!(reported.page_count(), 2);
+    assert_eq!(
+        fs::read(reported.output.join("ComicInfo.xml")).expect("读回透传文件"),
+        b"<ComicInfo><Title>2</Title></ComicInfo>",
+        "改了的透传文件没有重写"
+    );
+}
+
+/// **部分救回页也留得下，留下之后它仍是部分救回页**（two-pass-rework/14；04 号票的救回不变）。
+///
+/// 救回页有自己的尺寸、判据与判定，字节只取决于它自己，页级依据照写；改旁边那一页，它留下——
+/// 记录里那句「salvaged …」随它走，产物与整卷重做逐字节相同。报告里的救回清单只数这一趟重做的页，
+/// 留下的那一张不在里面（`VolumeReport::pages` 只列这一趟做了的）。
+#[test]
+fn a_salvaged_page_is_retained_like_any_other() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.file("001.png", &fixtures::truncated_page(fixtures::TINY));
+    volume.page("002.png", &fixtures::solid(fixtures::TINY, 128));
+    let first = fixtures::run_volume(&space, &volume);
+    assert_eq!(
+        first.volumes[0].salvaged().count(),
+        1,
+        "夹具不对：头一页没被救回"
+    );
+    assert!(
+        !first.volumes[0].isolated(),
+        "夹具不对：救回页把卷送进了隔离目录"
+    );
+
+    volume.page("002.png", &fixtures::gradient(fixtures::TINY));
+    let second = fixtures::run_volume(&space, &volume);
+
+    let reported = &second.volumes[0];
+    assert_eq!(reported.decodes, 1, "救回页也被重做了");
+    assert_eq!(reported.retained_pages, 1);
+    assert_eq!(
+        reported.salvaged().count(),
+        0,
+        "留下的页进了这一趟的救回清单"
+    );
+    let text = fixtures::read_png_text(&reported.output.join("001.png"));
+    assert!(
+        fixtures::png_field(&text, "tonefit:reason")
+            .is_some_and(|reason| reason.starts_with("salvaged ")),
+        "留下的救回页丢了那句自证"
+    );
+    let from_scratch = tonefit::run(&Request {
+        output_root: space.out_named("from-scratch"),
+        ..fixtures::request(&space, [volume.path()])
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        fixtures::fingerprint(&reported.output),
+        fixtures::fingerprint(&from_scratch.volumes[0].output),
+        "按页跳过的产物与整卷重做的不是同一份"
+    );
+}
+
+/// **新切出的一张撞上留下的同名一张，照样拦下**（two-pass-rework/14；页几何批 04 号票的撞名）。
+///
+/// 头一趟 `001.jpg` 是单页（输出 `001.png`）、`001-1.png` 是另一页；把 `001.jpg` 换成跨页，
+/// 它切出的 `001-1.png` 撞上留下的那一张——撞名要在写出第一个字节之前说，卷级失败、
+/// 上一趟的输出纹丝不动。
+#[test]
+fn a_freshly_split_page_colliding_with_a_retained_one_is_caught() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page("001.jpg", &fixtures::solid(fixtures::TINY, 128));
+    volume.page("001-1.png", &fixtures::screentone(fixtures::TINY));
+    let first = fixtures::run_volume(&space, &volume);
+    assert!(first.failed_volumes.is_empty(), "夹具不对：头一趟就撞了名");
+    let before = fixtures::fingerprint(&first.volumes[0].output);
+
+    volume.page(
+        "001.jpg",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+    let second = fixtures::run_volume(&space, &volume);
+
+    let [failed] = &second.failed_volumes[..] else {
+        panic!("撞名没被记成卷级失败：{:?}", second.failed_volumes);
+    };
+    assert!(
+        failed.reason.contains("001-1.png"),
+        "那句原因没指出撞在哪个成员上：{}",
+        failed.reason
+    );
+    assert_eq!(
+        fixtures::fingerprint(&first.volumes[0].output),
+        before,
+        "撞名那一趟动了上一趟的输出"
     );
 }
 
