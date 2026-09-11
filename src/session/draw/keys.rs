@@ -17,8 +17,23 @@
 //! [眼下这一块](crate::session::state::Session::keys_here)，
 //! `?` 那张表问的是[每一块](crate::session::state::Session::key_table)。
 //! **画法这一层因此一个键都不自己列。**
+//!
+//! # 屏上顺口提到一个键的那几句散文
+//!
+//! 两处摆键之外，屏上还有几句话**提到**一个键：一趟都没跑过时总览块与报告区各说的那一句
+//! （`还没跑过。t 试算 · x 执行`）、前提那一张与展不开时那一句（`先按 t 试算或 x 执行`）、
+//! 屏底说明那一行（`按 ⇥ 列出这一层`、`那时按 x 接着做第二遍……`、`g 把它交回给最新那一卷`）。
+//! **那几句不是「此刻按什么」**，措辞是它们自己的——从按键表取的只有**键与写法**
+//! （`no-false-line/06`，收停车场 Q190）：[`spelt_for`] 答「派得出这件事的那几个键怎么写」，
+//! [`starters`] 答「起一趟的那两个键怎么写」。从前那几处的键是字面串，
+//! 换一个键位要改六处，而屏上没有一处会红。
+//!
+//! **提到的键派不出来时，那一截不说**——与屏底那一行不摆按不动的键同一条规矩
+//! （`super::footer::listed` 补不动的行上不说「按 ⇥」是先例）。那几句只在派得出的阶段露面，
+//! 这一条因此屏上到不了（停车场 Q644）；它在，是因为类型说得出「没有」。
+//! `tests/single_source.rs` 另有一条扫代码：那几句从前的字面在代码里不许再出现。
 
-use crate::session::state::{Action, Key, KeyGroup, Listing, Pane, Stage, Step};
+use crate::session::state::{Action, Key, KeyGroup, Listing, Pane, Session, Stage, Step};
 use tonefit::{Instruction, Mode as RunMode};
 
 use crate::session::live::Reach;
@@ -120,6 +135,85 @@ pub(super) fn prompt(
                 .join(" · "),
         ),
     }
+}
+
+/// **派得出这件事的那几个键怎么写**，不带措辞——屏上那几句散文里提到一个键的地方问它
+/// （模块文档《屏上顺口提到一个键的那几句散文》）。与 [`spelled`] 差在问的对象：
+/// 那一个答**一个键**怎么写，这一个答**一件事**由哪几个键派、并成一行怎么写。
+///
+/// 同义的几个键一个不漏，中间一个空格，与 [`merged`] 同一条。**一个都派不出来就是 `None`**。
+pub(super) fn spelt_for(keys: &[(Key, Action)], want: impl Fn(Action) -> bool) -> Option<String> {
+    let spelt: Vec<String> = keys
+        .iter()
+        .filter(|(_, action)| want(*action))
+        .map(|(key, _)| spelled(*key))
+        .collect();
+    match spelt.is_empty() {
+        true => None,
+        false => Some(spelt.join(" ")),
+    }
+}
+
+/// **起一趟的那两个键**在屏上怎么写：试算那个与执行那个。
+///
+/// 「还没跑过」那几句都提到它们（总览块、报告区、前提那一张、展不开时那一句），
+/// 各说各的话，键与写法只有这一处问出来。**一格是 `None` 就是此刻没有键起得了那一趟**：
+/// 一趟都没跑过时两个都在（左栏浏览时的按键表，`Session::browsing_action`），
+/// 跑起来之后三层只读、一个都派不出——那时屏上也没有一句要提它们。
+///
+/// `pub` 而不是 `pub(super)`：展不开时那一句在 `crate::session::terminal` 上说，
+/// 那一层在画法外面——它是画法之外唯一一处读这一份的地方。
+pub struct Starters {
+    /// 试算那个键。
+    pub dry: Option<String>,
+    /// 执行那个键。
+    pub run: Option<String>,
+}
+
+impl Starters {
+    /// 从一张 `(Key, Action)` 表里问出那两个键。
+    pub(super) fn of(keys: &[(Key, Action)]) -> Self {
+        Self {
+            dry: spelt_for(keys, |action| action == Action::Start(RunMode::DryRun)),
+            run: spelt_for(keys, |action| action == Action::Start(RunMode::Process)),
+        }
+    }
+
+    /// 派得出来的那几个键各配上它起的那一趟叫什么：`t 试算`、`x 执行`；派不出的不在里面。
+    ///
+    /// 「还没跑过」那几句提到这两个键时说的都是这一对，**怎么接进句子是各句自己的事**
+    /// （中间一个 `·`、一个「或」……）。那两个词与总览块抬头上「这一趟是什么」
+    /// （`super::overview::run_name`）同一批，出处各一份记在停车场 Q643。
+    pub fn named(&self) -> Vec<String> {
+        [(self.dry.as_deref(), "试算"), (self.run.as_deref(), "执行")]
+            .into_iter()
+            .filter_map(|(key, what)| key.map(|key| format!("{key} {what}")))
+            .collect()
+    }
+
+    /// 用例喂的那一副**假键**：与真按键表不同，句子里印出来的才分得出是「问出来的」
+    /// 还是「抄上去的」——真按键表上恰好就是 `t`／`x`，拿它喂进去两者长得一样。
+    #[cfg(test)]
+    pub fn faked(dry: Option<&str>, run: Option<&str>) -> Self {
+        Self {
+            dry: dry.map(str::to_owned),
+            run: run.map(str::to_owned),
+        }
+    }
+}
+
+/// 此刻起一趟按哪两个键——问的是**每一块**（[`Session::key_table`]），
+/// 不是[眼下这一块](Session::keys_here)。
+///
+/// 「还没跑过」那几句在取值栏摊着、预设栏开着时照旧在屏上，而那两块上起不了一趟：
+/// 键在左栏那一组里。问眼下这一块的话，光标一摊开取值那句话就丢了键。
+pub fn starters(session: &Session) -> Starters {
+    let everywhere: Vec<(Key, Action)> = session
+        .key_table()
+        .into_iter()
+        .flat_map(|(_, keys)| keys)
+        .collect();
+    Starters::of(&everywhere)
 }
 
 /// 一个键在屏上怎么写。**屏底那一行与 `?` 那张表写的是同一批记号**
@@ -263,5 +357,82 @@ pub(super) fn says(group: KeyGroup, stage: Stage, action: Action) -> Says {
         // 派不出动作的键根本不进这两处（[`Session::keys_here`] 与
         // [`Session::keys_of`] 各先滤了一道）。
         Action::Ignored => Says::same("在这里没有意义"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::state::Field;
+
+    /// **散文里的键问的是交给它的那张表，不是写死的字**（`no-false-line/06`）。
+    ///
+    /// 喂一张与真按键表不同的表：答出来的得是这张表上的键。写死 `t` 的话这一条当场红——
+    /// 而真按键表上 `t` 恰好就是试算，拿它喂进去分不出「问出来的」与「抄上去的」。
+    #[test]
+    fn what_a_sentence_spells_is_the_key_the_table_it_was_handed_dispatches() {
+        let table = [
+            (Key::Char('r'), Action::Start(RunMode::DryRun)),
+            (Key::Tab, Action::Complete),
+            (Key::Char('w'), Action::Start(RunMode::Process)),
+            (Key::Enter, Action::Choose),
+            (Key::Space, Action::Choose),
+        ];
+
+        assert_eq!(
+            spelt_for(&table, |action| action == Action::Start(RunMode::DryRun)),
+            Some("r".to_owned())
+        );
+        assert_eq!(
+            spelt_for(&table, |action| action == Action::Complete),
+            Some("⇥".to_owned())
+        );
+        // 同义的几个键一个不漏，与屏底那一行同一条。
+        assert_eq!(
+            spelt_for(&table, |action| action == Action::Choose),
+            Some("⏎ 空格".to_owned())
+        );
+        // 派不出来就没有：那一截随之不说。
+        assert_eq!(spelt_for(&table, |action| action == Action::Quit), None);
+
+        let starters = Starters::of(&table);
+        assert_eq!(starters.dry, Some("r".to_owned()));
+        assert_eq!(starters.run, Some("w".to_owned()));
+        assert_eq!(starters.named(), vec!["r 试算", "w 执行"]);
+        // 派不出的那个连它那个词一起不在。
+        assert_eq!(Starters::faked(None, Some("w")).named(), vec!["w 执行"]);
+        assert!(Starters::faked(None, None).named().is_empty());
+    }
+
+    /// **起一趟的两个键问的是每一块，不是眼下这一块**：取值栏摊着时那两句照旧在屏上，
+    /// 而那一块上起不了一趟。跑起来之后一个都派不出——那时屏上也没有一句要提它们。
+    #[test]
+    fn the_starters_are_found_whichever_block_the_focus_is_on() {
+        let mut session = Session::new();
+        let browsing = starters(&session);
+        assert_eq!(browsing.dry, Some("t".to_owned()));
+        assert_eq!(browsing.run, Some("x".to_owned()));
+
+        // 摊开一列取值：眼下这一块派不出起一趟，每一块里仍旧问得到。
+        session.go_to(Field::Fit);
+        session.press(Key::Enter);
+        assert!(session.valuing().is_some(), "取值栏没摊开");
+        assert!(
+            !session
+                .keys_here()
+                .iter()
+                .any(|(_, action)| matches!(action, Action::Start(_))),
+            "取值栏上起得了一趟？那这一条问的就不是它要问的事"
+        );
+        let unfolded = starters(&session);
+        assert_eq!(unfolded.dry, browsing.dry);
+        assert_eq!(unfolded.run, browsing.run);
+
+        // 跑起来之后三层只读：一个都派不出。
+        session.press(Key::Esc);
+        session.run_started();
+        let running = starters(&session);
+        assert_eq!(running.dry, None);
+        assert_eq!(running.run, None);
     }
 }

@@ -55,6 +55,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use tonefit::{Instruction, Mode as RunMode, Pass, Report, VolumeReport, VolumeVerdict};
 
 use super::footer::stopping_name;
+use super::keys::Starters;
 use super::paint::{Painted, Tone};
 use crate::session::live::{Live, Walking};
 
@@ -142,14 +143,22 @@ impl Overview {
     }
 }
 
-/// 一趟都还没跑过时这一块里那一句提到的两个键。
+/// **一趟都还没跑过时**这一块：抬头「总览」，正文一句——还没跑过，起一趟按哪两个键。
 ///
-/// **屏底那一行不用它**：那一行的键出自按键表（`Session::keys_here`），措辞出自
-/// [`super::keys::says`]。这一处是「还没跑过」那一句里的一截提示，仍旧手抄——
-/// 这一笔连同报告区那一段同样的一句记在停车场 Q190。
-const START_KEYS: &str = "t 试算 · x 执行";
+/// 两个键出自按键表（[`Starters::named`]，`super::keys` 模块文档《屏上顺口提到一个键的那几句散文》）；
+/// **措辞不取屏底那一行的**：这一句不是「此刻按什么」。
+pub(super) fn idle(starters: &Starters, width: u16) -> Overview {
+    Overview {
+        title: Painted::plain("总览".to_owned()),
+        rows: vec![Painted::plain(format!(
+            " 还没跑过。{}",
+            starters.named().join(" · ")
+        ))],
+        width,
+    }
+}
 
-/// 算出这一块：抬头一行、正文一到四行。
+/// 算出这一块：抬头一行、正文一到四行。**一趟都没跑过时不到这里**（[`idle`]）。
 ///
 /// **按停按到哪一级、以及等答话那一句都挂在抬头上**（停车场 Q71、`p1-session/14`）：
 /// 按下收尾之后横条照旧往前走，而「它在等什么」只写在屏底——眼睛盯着横条的人不会往下
@@ -158,19 +167,7 @@ const START_KEYS: &str = "t 试算 · x 执行";
 ///
 /// **等答话排在按停那一级之前**：横条这时一动不动，而「它为什么不动」是眼睛盯着这一块的人
 /// 第一眼要看到的（按过的停要等答完话才继续作数）。
-pub(super) fn overview(
-    live: Option<&Live>,
-    pressed: Instruction,
-    deciding: bool,
-    width: u16,
-) -> Overview {
-    let Some(live) = live else {
-        return Overview {
-            title: Painted::plain("总览".to_owned()),
-            rows: vec![Painted::plain(format!(" 还没跑过。{START_KEYS}"))],
-            width,
-        };
-    };
+pub(super) fn overview(live: &Live, pressed: Instruction, deciding: bool, width: u16) -> Overview {
     let room = width.saturating_sub(2);
     let mut rows = vec![Painted::plain(overall_row(live, room))];
     rows.extend(volume_row(live, room).map(Painted::plain));
@@ -240,8 +237,8 @@ fn title(live: &Live, pressed: Instruction, deciding: bool) -> Painted {
     ))
 }
 
-/// 这一趟是什么。两个词与「还没跑过」那一句里那两个键同一批（[`START_KEYS`]，
-/// `CONTEXT.md` 的《会话》：试算）。
+/// 这一趟是什么。两个词与「还没跑过」那一句里跟在两个键后面的同一批
+/// （[`Starters::named`]，`CONTEXT.md` 的《会话》：试算）。
 ///
 /// **抬头照 [`Live::mode`] 说的走**：试算答出第一个继续之后它就是执行了——那一卷真写了
 /// 出去，而这一行答的正是「**此刻**在写没写」，报告抬头（`crate::render::header`）跟的
@@ -657,7 +654,7 @@ mod tests {
     /// 同上，**摆在指定宽度的一格里**：窄档那几条要它（见
     /// [`the_bars_give_way_before_the_numbers_do`]）。
     fn block_at(live: &Live, pressed: Instruction, deciding: bool, width: u16) -> String {
-        let top = overview(Some(live), pressed, deciding, width);
+        let top = overview(live, pressed, deciding, width);
         let height = top.height();
         snapshot(
             |frame| frame.render_widget(top.draw(), frame.area()),
@@ -968,7 +965,7 @@ mod tests {
     #[test]
     fn answering_go_on_does_not_move_the_overview() {
         let mut live = a_dry_run_stopped_at_a_decision_point();
-        let before = overview(Some(&live), Instruction::Continue, true, WIDE);
+        let before = overview(&live, Instruction::Continue, true, WIDE);
         let (settled, trouble, height) = (settled_row(&live), trouble_row(&live), before.height());
         assert!(
             settled.contains("判定 "),
@@ -984,7 +981,7 @@ mod tests {
             "答了继续，出事行换了一副内容"
         );
         assert_eq!(
-            overview(Some(&live), Instruction::Continue, false, WIDE).height(),
+            overview(&live, Instruction::Continue, false, WIDE).height(),
             height,
             "答了继续，这一块矮了一行"
         );
@@ -1037,12 +1034,12 @@ mod tests {
         let noisy = a_run_in_flight(true);
 
         assert_eq!(
-            overview(Some(&quiet), Instruction::Continue, false, WIDE).height(),
+            overview(&quiet, Instruction::Continue, false, WIDE).height(),
             OVERVIEW_HEIGHT - 1,
             "没出事还画着出事行"
         );
         assert_eq!(
-            overview(Some(&noisy), Instruction::Continue, false, WIDE).height(),
+            overview(&noisy, Instruction::Continue, false, WIDE).height(),
             OVERVIEW_HEIGHT
         );
         assert!(!block(&quiet, Instruction::Continue, false).contains("出事"));
@@ -1050,7 +1047,7 @@ mod tests {
         // **收场之后当前卷那一行也让出去**：那时再没有「本卷」可说。
         assert_eq!(
             overview(
-                Some(&a_run_that_finished_clean()),
+                &a_run_that_finished_clean(),
                 Instruction::Continue,
                 false,
                 WIDE
@@ -1302,14 +1299,23 @@ mod tests {
     fn the_overview_is_the_last_thing_the_main_pane_gives_up() {
         assert_eq!(
             OVERVIEW_HEIGHT,
-            overview(
-                Some(&a_run_in_flight(true)),
-                Instruction::Continue,
-                false,
-                WIDE
-            )
-            .height(),
+            overview(&a_run_in_flight(true), Instruction::Continue, false, WIDE).height(),
             "最高那一副与留位子的那个数对不上"
         );
+    }
+
+    /// **「还没跑过」那一句里的两个键出自交给它的那张表**（`no-false-line/06`，
+    /// 收停车场 Q190）：喂一副假键（[`Starters::faked`]），句子里得是这一副。
+    /// 派不出来的那个键连带它那个词一起不说。
+    #[test]
+    fn the_idle_block_names_the_keys_the_table_hands_it() {
+        let both = Starters::faked(Some("r"), Some("w"));
+        assert_eq!(idle(&both, WIDE).rows[0].text, " 还没跑过。r 试算 · w 执行");
+
+        let only_dry = Starters::faked(Some("r"), None);
+        assert_eq!(idle(&only_dry, WIDE).rows[0].text, " 还没跑过。r 试算");
+
+        let neither = Starters::faked(None, None);
+        assert_eq!(idle(&neither, WIDE).rows[0].text, " 还没跑过。");
     }
 }

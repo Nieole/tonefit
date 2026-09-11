@@ -31,6 +31,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::path::Path;
 
 use super::directories::directories;
+use super::keys::{self, Starters};
 use super::pages;
 use super::paint::{Painted, Tone};
 use super::table::{Table, table};
@@ -89,7 +90,7 @@ pub(super) fn report_pane(
         area.height.saturating_sub(2),
     );
     let Some(live) = live else {
-        let rows = Painted::plain(NOT_RUN_YET.to_owned()).folded(inside.width);
+        let rows = Painted::plain(not_run_yet(&keys::starters(session))).folded(inside.width);
         frame.render_widget(Paragraph::new(rows).block(block), area);
         return;
     };
@@ -207,11 +208,22 @@ fn folded(table: &Table, width: u16, focused: bool) -> (Vec<Line<'static>>, Opti
     (rows, cursor)
 }
 
-/// 一趟都还没跑过时这一格里说什么。
-const NOT_RUN_YET: &str = "
- 按 t 试算：只算不写，报告照出。
-              按 x 执行：写到输出根。
-              跑起来之前必填的两项是型号与输出根。";
+/// 一趟都还没跑过时这一格里说什么：两个键各一句，加上跑起来之前必填的两项。
+///
+/// 两个键出自按键表（[`keys::starters`]，`keys` 模块文档《屏上顺口提到一个键的那几句散文》），
+/// 两句是这一格自己的话——比 [`Starters::named`] 那一对长，说的是按下去**会怎样**；
+/// 哪一个键派不出来，它那一句就不说。三行的缩进照旧（头一行一格、后两行十四格）。
+fn not_run_yet(starters: &Starters) -> String {
+    let mut said = String::from("\n");
+    if let Some(dry) = &starters.dry {
+        said.push_str(&format!(" 按 {dry} 试算：只算不写，报告照出。\n"));
+    }
+    if let Some(run) = &starters.run {
+        said.push_str(&format!("              按 {run} 执行：写到输出根。\n"));
+    }
+    said.push_str("              跑起来之前必填的两项是型号与输出根。");
+    said
+}
 
 /// 默认那一副的正文：**卷表 · 失败页 · 末尾那几小结**。
 ///
@@ -1871,5 +1883,20 @@ mod tests {
         let all = tight(&screen(&mut session, Some(&live), 120, 22));
         assert!(all.contains(&tight("记号  页名")), "{all}");
         assert!(all.contains(&tight("001.jpg")), "{all}");
+    }
+
+    /// **「还没跑过」那一段里的两个键出自交给它的那张表**（`no-false-line/06`，
+    /// 收停车场 Q190）：喂一副假键（[`Starters::faked`]），那两句里得是这一副。
+    /// 三行的缩进一格不变（80×24 那张快照钉的是真按键表那一副）；派不出来的键连它那一句一起不说。
+    #[test]
+    fn the_not_run_yet_paragraph_names_the_keys_the_table_hands_it() {
+        assert_eq!(
+            not_run_yet(&Starters::faked(Some("r"), Some("w"))),
+            "\n 按 r 试算：只算不写，报告照出。\n              按 w 执行：写到输出根。\n              跑起来之前必填的两项是型号与输出根。"
+        );
+        assert_eq!(
+            not_run_yet(&Starters::faked(None, None)),
+            "\n              跑起来之前必填的两项是型号与输出根。"
+        );
     }
 }

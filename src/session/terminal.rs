@@ -26,6 +26,7 @@ use ratatui::crossterm::terminal::{
 use tonefit::{Mode as RunMode, Request};
 
 use super::draw;
+use super::draw::keys::Starters;
 use super::live::{Branch, Live, Resuming, Volume};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
@@ -390,6 +391,18 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
     ))
 }
 
+/// 一趟都没跑过时[展开一卷](expand)与[展开一枝](open)那两支说的那一句。
+///
+/// 起一趟的两个键出自按键表（[`Starters::named`]，`draw::keys` 模块文档
+/// 《屏上顺口提到一个键的那几句散文》），措辞是这一层自己的；两个都派不出来时只说要等报告。
+fn not_run_yet(starters: &Starters) -> String {
+    let keys = starters.named();
+    match keys.is_empty() {
+        true => "还没跑过：报告出来了才展得开".to_owned(),
+        false => format!("还没跑过：先按 {}，报告出来了才展得开", keys.join("或 ")),
+    }
+}
+
 /// 展开**光标停着的那一卷**的逐页，或者换到下一卷。
 ///
 /// **展开的是报告区那个光标停着的那一卷**（`p3-session-legibility/10`）：
@@ -417,7 +430,7 @@ fn expand(session: &mut Session, running: &Running, action: Action) {
         // （`super::state::Session::browsing_action` 那一道，停车场 Q167），
         // 而攒着的那一份没有恰恰只有那一种情形。留着是因为 `Running::live` 的取值域上
         // 它在，而悄悄什么都不做比说一句更坏。
-        session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
+        session.complain(not_run_yet(&draw::keys::starters(session)));
         return;
     };
     expanding(session, &live, action);
@@ -508,7 +521,7 @@ fn open(session: &mut Session, running: &Running) {
     let Some(live) = running.live() else {
         // 与[展开一卷](expand)那一支同一条：一趟都没跑过时这个键不派动作，
         // 焦点也进不到报告区上去——这一支到不了。
-        session.complain("还没跑过：先按 t 试算或 x 执行，报告出来了才展得开".to_owned());
+        session.complain(not_run_yet(&draw::keys::starters(session)));
         return;
     };
     let branches = live.branches();
@@ -1621,5 +1634,34 @@ mod tests {
         // 认不出的键原地放过，不必在状态机那边各占一个取值。
         assert_eq!(translate(&press(KeyCode::F(5))), None);
         assert_eq!(translate(&press(KeyCode::PageDown)), None);
+    }
+
+    /// **「还没跑过」那一句里的两个键出自交给它的那张表**（`no-false-line/06`，
+    /// 收停车场 Q190）：喂一副假键（[`Starters::faked`]），句子里得是这一副。
+    /// 那两支按键本来到不了（见 [`expand`]），直接调它问那一句。
+    #[test]
+    fn the_not_run_yet_complaint_names_the_keys_the_table_hands_it() {
+        assert_eq!(
+            not_run_yet(&Starters::faked(Some("r"), Some("w"))),
+            "还没跑过：先按 r 试算或 w 执行，报告出来了才展得开"
+        );
+        assert_eq!(
+            not_run_yet(&Starters::faked(None, None)),
+            "还没跑过：报告出来了才展得开"
+        );
+
+        // 真会话里那一句：问的是真按键表。
+        let mut session = Session::new();
+        expand(&mut session, &Running::default(), Action::Expand);
+        let said = session.notice().expect("说一句").said().to_owned();
+        let starters = draw::keys::starters(&session);
+        assert!(
+            said.contains(&format!("{} 试算", starters.dry.expect("试算那个键"))),
+            "{said}"
+        );
+        assert!(
+            said.contains(&format!("{} 执行", starters.run.expect("执行那个键"))),
+            "{said}"
+        );
     }
 }

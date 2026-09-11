@@ -128,6 +128,47 @@ const TRUNCATION_USED: [(&str, usize); 3] = [
 /// 钉着它的那条用例一句，两句说的是两件事（这一份不自己编 / 这一份存的就是它给的字节）。
 const LATCH_CODE_SIGNPOSTED: [(&str, usize); 2] = [("src/session/run.rs", 2), ("src/main.rs", 2)];
 
+/// **屏上顺口提到一个键的那几句话**从前手抄时各自的字面（`no-false-line/06`，收停车场 Q190）：
+/// 一趟都没跑过时总览块与报告区各说的那一句、前提那一张与展不开时那一句、
+/// 屏底说明那一行的三句。记号取的是**键挨着措辞**的那一截——一句手抄的话必然带着它，
+/// 而从按键表拼出来的那一句在代码里写的是 `{key}`。
+///
+/// **记号写的是今天的键位**：换了键位再手抄一份，这几条记号就认不出它了。这一条守的是
+/// 「这几句不许抄回去」，「换键位屏上一起变」由 `src/session/draw.rs` 那条成屏用例守。
+const KEY_SENTENCE_MARKS: [&str; 6] = [
+    "t 试算 · x 执行",
+    "按 t 试算：只算不写",
+    "t 试算或 x 执行",
+    "按 ⇥ 列出这一层",
+    "按 x 接着做第二遍",
+    "g 把它交回给最新那一卷",
+];
+
+/// 那几句问键的家：一个键怎么写、派得出一件事的几个键怎么写、起一趟的两个键怎么写。
+const KEY_HOME: &str = "src/session/draw/keys.rs";
+
+/// 家里真住着的三格：**只问名字，不问实现**。
+const KEY_HOME_MARKS: [&str; 3] = ["fn spelt_for(", "fn starters(", "pub fn named("];
+
+/// 「续做」那一句要预告一个还没到的阶段上按什么，那一手读表放在按键表旁边（停车场 Q641）。
+const KEY_STAGE_HOME: &str = "src/session/state.rs";
+const KEY_STAGE_MARK: &str = "pub fn stage_keys(";
+
+/// 读着那一份的几个文件，各跟着它问的那一手与**至少出现几次**（下界取实数，
+/// 与 [`TRUNCATION_USED`] 同一条：多一处不该变红，少一处必须变红）。
+///
+/// `overview.rs` 问的是 [`Starters::named`]：它自己不问会话，那两个键由 `draw.rs` 问出来交给它。
+/// `footer.rs` 两手：说明那一行问 `key_of`，「续做」那一句问 `stage_keys`。
+const KEY_READERS: [(&str, &str, usize); 7] = [
+    ("src/session/draw.rs", "starters(", 2),
+    ("src/session/draw/overview.rs", "Starters::named", 2),
+    ("src/session/draw/report.rs", "starters(", 1),
+    ("src/session/draw/overlay.rs", "starters(", 1),
+    ("src/session/terminal.rs", "starters(", 3),
+    ("src/session/draw/footer.rs", "key_of(", 3),
+    ("src/session/draw/footer.rs", "stage_keys(", 1),
+];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -144,6 +185,21 @@ fn squashed(text: &str) -> String {
     text.chars()
         .filter(|ch| !ch.is_whitespace() && !matches!(ch, '*' | '/' | '`'))
         .collect()
+}
+
+/// 只留**代码**：砍掉 `#[cfg(test)] mod tests` 起的整段，再去掉注释行。
+///
+/// 屏上那几句话在**快照**里出现是记录（成屏用例逐字符比的就是它），在 **doc comment**
+/// 里出现是引用（说的正是「从前这一句是手抄的」）——两处都不是第二个出处。
+/// **在代码里出现才是**：代码里写着 `t 试算` 就是屏上多了一处手抄的键。
+/// 本仓库每个模块的用例都收在文件末尾那一个 `mod tests` 里（`draw.rs` 顶上那个
+/// `#[cfg(test)] mod probe;` 不是它，因此不会把整个文件砍掉）。
+fn code_only(text: &str) -> String {
+    let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or(text);
+    code.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 该扫的那几处：仓库根上那几份交付文档（词条自己也在里面）、全部实现、`docs/`。
@@ -327,6 +383,64 @@ fn the_way_to_truncate_a_list_lives_in_one_place() {
         assert!(
             found >= least,
             "{file} 里用那一处公共件的地方从 {least} 处掉到了 {found} 处"
+        );
+    }
+}
+
+/// 屏上顺口提到一个键的那几句话，键只有按键表一处出处；抄回一句就当场变红
+/// （`no-false-line/06`，收停车场 Q190）。
+///
+/// 屏底那一行与 `?` 那张表的键早已从按键表问出来（`p4-parking-lot/07`），而屏上还有六七句
+/// **散文**提着一个键：「还没跑过。t 试算 · x 执行」「按 ⇥ 列出这一层」「那时按 x 接着做第二遍」……
+/// 从前那几个字母是手抄的——换一个键位，屏底上一行跟着变、下一行不变，而没有一条用例红。
+///
+/// **三件事一起问**，与前三条同一个形状：**代码里**没有第二份（[`code_only`]，快照与文档里
+/// 出现是记录不是出处）、[家里那三格](KEY_HOME_MARKS)与[读表那一手](KEY_STAGE_MARK)真住着、
+/// [读着它的那几个文件](KEY_READERS)还在读。只问头一件的话，把 `keys.rs` 那几手整个删掉、
+/// 六句各写一副别的字，这一条也是绿的。
+#[test]
+fn the_keys_the_screen_mentions_come_from_the_key_table() {
+    let marks: Vec<String> = KEY_SENTENCE_MARKS
+        .iter()
+        .map(|mark| squashed(mark))
+        .collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&code_only(&read(path)));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(
+        carrying,
+        Vec::<PathBuf>::new(),
+        "屏上提到键的那几句话在代码里又抄了一份"
+    );
+
+    let home = squashed(&read(&root().join(KEY_HOME)));
+    for mark in KEY_HOME_MARKS {
+        assert!(
+            home.contains(&squashed(mark)),
+            "{KEY_HOME} 里少了「{mark}」那一手"
+        );
+    }
+    assert!(
+        squashed(&read(&root().join(KEY_STAGE_HOME))).contains(&squashed(KEY_STAGE_MARK)),
+        "{KEY_STAGE_HOME} 里少了「{KEY_STAGE_MARK}」那一手"
+    );
+
+    for (file, signpost, least) in KEY_READERS {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：读着那一份的几处按文件路径记在 KEY_READERS 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let found = squashed(&read(&path)).matches(&squashed(signpost)).count();
+        assert!(
+            found >= least,
+            "{file} 里问按键表的那一手「{signpost}」从 {least} 处掉到了 {found} 处"
         );
     }
 }

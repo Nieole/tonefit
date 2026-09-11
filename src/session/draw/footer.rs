@@ -33,6 +33,10 @@
 //! **这一层挑的是动作，不是键**：「就在这一行上动手」「试算」「退出」——
 //! 派得出它的是哪几个键、那一句怎么说，一律由 [`Asked`] 问出来。
 //!
+//! **说明那一行里顺口提到的键同样问按键表**（[`Asked::key_of`]，`keys` 模块文档
+//! 《屏上顺口提到一个键的那几句散文》）：`按 ⇥ 列出这一层`、`那时按 x 接着做第二遍……`、
+//! `g 把它交回给最新那一卷` 三句是散文，措辞是它们自己的，只有**键与写法**取自按键表。
+//!
 //! 这一格有多高不由本模块定：折出来几行就几行，上下限在 [`super::yielding::footer_height`]。
 //! **每一行都按显示宽度折**（[`crate::wrap`]），摆不下时让位的次序见 [`footer`]。
 
@@ -48,7 +52,7 @@ use crate::session::complete;
 use crate::session::live::{Live, Reach};
 use crate::session::state::{
     Action, Covered, Edit, Focus, Follow, Key, KeyGroup, Listing, Notice, NoticeKind, Overlay,
-    Picker, Session, Stage, Step, Values,
+    Picker, Session, Stage, Step, Values, stage_keys,
 };
 use crate::session::viewport::Viewport;
 use crate::wrap;
@@ -85,6 +89,12 @@ impl<'a> Asked<'a> {
     /// 一个键都派不出来就没有这一条——屏上不摆按不动的键。
     fn on(&self, want: impl Fn(Action) -> bool) -> Option<String> {
         keys::prompt(self.group, self.stage, &self.here, want)
+    }
+
+    /// **派得出这件事的那几个键怎么写**，不带措辞（[`keys::spelt_for`]）：说明那一行里
+    /// 顺口提到一个键的地方问它，措辞是那句话自己的。一个键都派不出来就是 `None`。
+    fn key_of(&self, want: impl Fn(Action) -> bool) -> Option<String> {
+        keys::spelt_for(&self.here, want)
     }
 
     /// **就在这一行上动手**那一条：随光标停的那一行而变（摊开／改／打一个路径／勾上），
@@ -361,7 +371,7 @@ fn report_prompt(asked: &Asked, session: &Session) -> Prompt {
     }
     parts.push(asked.on(|action| action == Action::Reveal(Overlay::Premises)));
     parts.push(asked.on(|action| matches!(action, Action::Focus(_))));
-    with_stage(asked, parts, following_line(stopped))
+    with_stage(asked, parts, following_line(asked, stopped))
 }
 
 /// **展开着一枝时**屏底那两行（`volume-discovery/08`）。
@@ -385,7 +395,7 @@ fn opened_prompt(asked: &Asked, session: &Session) -> Prompt {
     parts.push(asked.on(|action| action == Action::Reveal(Overlay::Premises)));
     parts.push(asked.on(|action| action == Action::Collapse));
     parts.push(asked.on(|action| matches!(action, Action::Focus(_))));
-    with_stage(asked, parts, following_line(stopped))
+    with_stage(asked, parts, following_line(asked, stopped))
 }
 
 /// 报告区那一行底下说的那件事：**跟随此刻是什么样**（`CONTEXT.md` 的《会话》：跟随）。
@@ -393,10 +403,15 @@ fn opened_prompt(asked: &Asked, session: &Session) -> Prompt {
 /// 跑着与等答话时它让位给阶段那一维那一句（见 [`stage_parts`]）：那一句说的是此刻在等
 /// 什么，比这一句急。**「跟随停了」屏上因此另有一处常驻**——报告区那一格的抬头，
 /// 那一处不随阶段让位。
-fn following_line(stopped: bool) -> &'static str {
-    match stopped {
-        true => " 跟随停了：报告再长，光标也不动——g 把它交回给最新那一卷",
-        false => " 跟随着最新的那一卷：一卷收摊，光标就落到它上面",
+///
+/// 停了那一句末尾提到**回到跟随那个键**，它问按键表（[`Asked::key_of`]）；派不出来就不提。
+fn following_line(asked: &Asked, stopped: bool) -> String {
+    match (stopped, asked.key_of(|action| action == Action::Follow)) {
+        (true, Some(key)) => {
+            format!(" 跟随停了：报告再长，光标也不动——{key} 把它交回给最新那一卷")
+        }
+        (true, None) => " 跟随停了：报告再长，光标也不动".to_owned(),
+        (false, _) => " 跟随着最新的那一卷：一卷收摊，光标就落到它上面".to_owned(),
     }
 }
 
@@ -420,12 +435,18 @@ fn following_line(stopped: bool) -> &'static str {
 /// 但时态不同：那两句是收场之后的结果，这两句是此刻在等的事。
 fn running_parts(asked: &Asked, pressed: Instruction) -> (Vec<Option<String>>, String) {
     let waiting = match pressed {
-        Instruction::Continue => resuming_line(asked.live),
+        // 预告的是**这一趟要停的那个决策点**上按什么：会话此刻还没走到那儿，
+        // 因此按那个阶段去问阶段那一维（[`stage_keys`]），闩照此刻的带过去。
+        Instruction::Continue => {
+            resuming_line(asked.live, &stage_keys(Stage::Deciding(pressed)))
+        }
         Instruction::Finish => {
             "收尾：等当前卷跑完就停，剩下的卷一个都不开工；盘上只留完整的卷，下一趟幂等接着走"
+                .to_owned()
         }
         Instruction::Abort => {
             "中止：当前卷停在这一页上，它那格 partial 丢掉——那一卷等于没做，最终位置上一个字节都没动过"
+                .to_owned()
         }
     };
     (
@@ -455,17 +476,44 @@ fn running_parts(asked: &Asked, pressed: Instruction) -> (Vec<Option<String>>, S
 ///   与「它忘了问」在屏上没有分别。
 ///
 /// 执行那一趟与还没跑过时这一行是空的，与从前逐格相同：那两种没有「续不续做」可言。
-fn resuming_line(live: Option<&Live>) -> &'static str {
+///
+/// **答话那三个键出自按键表**——`answers` 是决策点那个阶段上[阶段那一维派得出的键](stage_keys)
+/// （`keys` 模块文档《屏上顺口提到一个键的那几句散文》）。三句各自的措辞照旧是这一句自己的
+/// （停车场 Q626 管它们的措辞），派不出来的键连它那一句一起不说。
+fn resuming_line(live: Option<&Live>, answers: &[(Key, Action)]) -> String {
     let Some(live) = live else {
-        return "";
+        return String::new();
     };
     if !live.resumes() {
-        return "";
+        return String::new();
     }
     if live.for_the_rest().is_some() {
-        return "剩下的卷都这样：往下的决策点不再停下来问，这一趟一路做到底";
+        return "剩下的卷都这样：往下的决策点不再停下来问，这一趟一路做到底".to_owned();
     }
-    "续做：每一卷第一遍走完都会停下来等你拿主意——那时按 x 接着做第二遍（第一遍不重算），按 a 剩下的卷都这样，按 s 收尾"
+    let pressing: Vec<String> = [
+        (
+            Action::Answer(Instruction::Continue, Reach::ThisVolume),
+            "接着做第二遍（第一遍不重算）",
+        ),
+        (
+            Action::Answer(Instruction::Continue, Reach::ForTheRest),
+            "剩下的卷都这样",
+        ),
+        (
+            Action::Answer(Instruction::Finish, Reach::ThisVolume),
+            "收尾",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(action, what)| {
+        keys::spelt_for(answers, |answer| answer == action).map(|key| format!("按 {key} {what}"))
+    })
+    .collect();
+    let stops = "续做：每一卷第一遍走完都会停下来等你拿主意";
+    match pressing.is_empty() {
+        true => stops.to_owned(),
+        false => format!("{stops}——那时{}", pressing.join("，")),
+    }
 }
 
 /// **停在决策点上等人拿主意**时阶段那一维摆出来的那几条（`p1-session/14`、
@@ -718,7 +766,8 @@ fn editing_keys(asked: &Asked, edit: &Edit) -> String {
 /// **而只在那个键真派得出动作的行上说**：`⇥` 只有[路径项](crate::session::state::Shape::Path)
 /// 补得动（见 `super::super::state::editing_action`），改一个文本项时按它一个动作都不派。
 /// 那一句从前无条件摆着，屏底上一行不摆 `⇥`、下一行却劝人按它——
-/// 而屏上不摆按不动的键（`p4-parking-lot/07`，评审提的）。
+/// 而屏上不摆按不动的键（`p4-parking-lot/07`，评审提的）。**那个键怎么写同样问按键表**
+/// （[`Asked::key_of`]）：上一行写 `⇥`、下一行也写 `⇥`，出处只有一处。
 ///
 /// **列得下几条列几条，剩下几条说出来。** 从前这里硬性只列 12 条，第 13 条起
 /// 没有任何交代——一层里有三十个目录时，屏上说的是「这一层有十二个东西」。
@@ -737,10 +786,10 @@ fn listed(asked: &Asked, session: &Session, edit: &Edit, width: u16, room: usize
         // 补不动的行上同样不说（见上）：问的是按键表，与按键那一行同一处。
         return match (
             session.notice(),
-            asked.on(|action| action == Action::Complete),
+            asked.key_of(|action| action == Action::Complete),
         ) {
             (Some(_), _) | (None, None) => String::new(),
-            (None, Some(_)) => " 按 ⇥ 列出这一层".to_owned(),
+            (None, Some(key)) => format!(" 按 {key} 列出这一层"),
         };
     }
     // 只留这一层里的那个名字，切法在 `complete` 那一侧——分隔符表只有一份。
@@ -1318,5 +1367,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **说明那一行里提到的键出自交给它的那张表**（`no-false-line/06`，收停车场 Q190）。
+    ///
+    /// 三句各喂一副与真按键表不同的键：句子里得是那一副。写死 `x`／`a`／`s`、`⇥`、`g`
+    /// 的话这一条当场红——而真按键表上恰好就是那几个字，拿它喂进去分不出「问出来的」
+    /// 与「抄上去的」。派不出来的键连它那一截一起不说：屏上不摆按不动的键。
+    #[test]
+    fn the_explaining_line_names_the_keys_the_table_hands_it() {
+        // 续做那一句：三个答话键。
+        let mut resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        resuming.run_started(20, 20_000);
+        let answers = [
+            (
+                Key::Char('r'),
+                Action::Answer(Instruction::Continue, Reach::ThisVolume),
+            ),
+            (
+                Key::Char('w'),
+                Action::Answer(Instruction::Continue, Reach::ForTheRest),
+            ),
+            (
+                Key::Char('z'),
+                Action::Answer(Instruction::Finish, Reach::ThisVolume),
+            ),
+            (Key::Interrupt, Action::Quit),
+        ];
+        assert_eq!(
+            resuming_line(Some(&resuming), &answers),
+            "续做：每一卷第一遍走完都会停下来等你拿主意——那时按 r 接着做第二遍（第一遍不重算），按 w 剩下的卷都这样，按 z 收尾"
+        );
+        assert_eq!(
+            resuming_line(Some(&resuming), &[(Key::Interrupt, Action::Quit)]),
+            "续做：每一卷第一遍走完都会停下来等你拿主意"
+        );
+
+        // 跟随停了那一句：回到跟随那个键。
+        let reading = Asked {
+            here: vec![(Key::Char('r'), Action::Follow)],
+            group: KeyGroup::Report,
+            stage: Stage::Ended,
+            live: None,
+        };
+        assert_eq!(
+            following_line(&reading, true),
+            " 跟随停了：报告再长，光标也不动——r 把它交回给最新那一卷"
+        );
+        assert_eq!(
+            following_line(&reading, false),
+            " 跟随着最新的那一卷：一卷收摊，光标就落到它上面"
+        );
+        let cannot = Asked {
+            here: Vec::new(),
+            ..reading
+        };
+        assert_eq!(
+            following_line(&cannot, true),
+            " 跟随停了：报告再长，光标也不动"
+        );
+
+        // 列出这一层那一句：补全那个键。
+        let mut session = Session::new();
+        session.go_to(Field::Out);
+        session.press(Key::Enter);
+        let Focus::Editing(edit) = session.focus() else {
+            panic!("没进编辑");
+        };
+        let typing = Asked {
+            here: vec![(Key::Char('r'), Action::Complete)],
+            group: KeyGroup::Editing,
+            stage: session.stage(),
+            live: None,
+        };
+        assert_eq!(listed(&typing, &session, edit, 120, 3), " 按 r 列出这一层");
+        let cannot = Asked {
+            here: Vec::new(),
+            ..typing
+        };
+        assert_eq!(listed(&cannot, &session, edit, 120, 3), "");
     }
 }

@@ -68,7 +68,9 @@
 mod config;
 mod directories;
 mod footer;
-mod keys;
+/// `pub(super)`：展不开时那一句（`super::terminal::not_run_yet`）要问
+/// [起一趟的那两个键](keys::starters)——它是画法之外唯一一处读这一份的地方。
+pub(super) mod keys;
 mod overlay;
 mod overview;
 mod pages;
@@ -250,7 +252,11 @@ fn scrollbar(frame: &mut Frame, area: Rect, view: &Viewport) {
 pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Option<&Live>) {
     // **宽度在算的时候就要有**：横条摆不下时收窄到几格由它定（见 `overview::fitted_bar`），
     // 而切格子只切高度——上下两格与这一格一样宽。
-    let top = overview(live, session.stopping(), session.deciding(), area.width);
+    // 一趟都没跑过时这一块说的是「按哪两个键跑起来」，键问按键表（[`keys::starters`]）。
+    let top = match live {
+        Some(live) => overview(live, session.stopping(), session.deciding(), area.width),
+        None => overview::idle(&keys::starters(session), area.width),
+    };
     let [pinned, report] = main_split(area, top.height());
 
     frame.render_widget(top.draw(), pinned);
@@ -293,6 +299,36 @@ mod tests {
         // 一趟都没跑过时，主区说的是「按哪个键跑起来」。
         assert!(screen.contains("t试算"), "{screen}");
         assert!(screen.contains("x执行"), "{screen}");
+    }
+
+    /// **屏上提到起一趟那两个键的每一处，说的都是按键表自己那两个**（`no-false-line/06`，
+    /// 收停车场 Q190）。
+    ///
+    /// 拿按键表答的那两个键去问屏，不写死 `t`／`x`：总览块那一句与报告区那两句都得挨着它们
+    /// （屏底那一行本来就问按键表）。改一处按键表，几处一起跟着变；哪一处仍是手抄的，
+    /// 这一条在换键位那一刻当场红。各处**不抄**的那一半（喂一副假键，句子里得是那一副）
+    /// 在各模块自己的用例里；屏上这几句从前的字面在代码里不许再出现，由 `tests/single_source.rs` 扫。
+    #[test]
+    fn every_mention_of_the_starting_keys_is_the_key_tables_own() {
+        let mut session = Session::new();
+        let starters = keys::starters(&session);
+        let dry = starters.dry.expect("一趟都没跑过时试算那个键在");
+        let run = starters.run.expect("一趟都没跑过时执行那个键在");
+
+        let screen = tight(&screen(&mut session, None, 120, 40));
+
+        for said in [
+            // 总览块那一句。
+            format!("还没跑过。{dry} 试算 · {run} 执行"),
+            // 报告区那两句。
+            format!("按 {dry} 试算："),
+            format!("按 {run} 执行："),
+        ] {
+            assert!(
+                screen.contains(&tight(&said)),
+                "「{said}」不在屏上：{screen}"
+            );
+        }
     }
 
     /// **停在决策点上等人拿主意时屏上是什么样**（`p1-session/14`，ADR 0012）。
