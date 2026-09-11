@@ -2,19 +2,23 @@
 //! （`CONTEXT.md` 的《会话》：卷表；`volume-discovery/08`）。
 //!
 //! ```text
-//!  记号  卷名        页数  基准档   定档页   耗时
-//!  ✓     棋魂 07      184  2bit+FS  087.png  1m12s
-//!  !     哆啦 03      212  4bit+FS  011.png  2m03s  隔离
-//!  -     名侦探 05    190  跳过              3s
-//!  ✗     消失的那卷     -  没做成    卷根不在了
+//!  记号  卷名        页数  档位分布               耗时
+//!  ✓     棋魂 07      184  2bit+FS 183 ⋅ 1bit 1   1m12s
+//!  !     哆啦 03      212  4bit 200 ⋅ 4bit+FS 12  2m03s  隔离
+//!  -     名侦探 05    190  跳过                   3s
+//!  ✗     消失的那卷     -  没做成                        卷根不在了
 //! ```
+//!
+//! **档位分布那一列**（`CONTEXT.md` 的《档位分布》，`two-pass-rework/02`）让位深齐不齐一眼看得出。
+//! `--envelope` 那一趟多一列**定档页**（`087.png`），摆在分布与耗时之间；
+//! 默认逐页那一趟整列不在，连列头都不占——一格在不在场本身就是一句话（`CONTEXT.md` 的《格》）。
 //!
 //! # 它吃的是同一批行
 //!
 //! 卷级那几行由 [`crate::render::volume`] 出（ADR 0016：一行带着它是什么行与若干格），
 //! 命令行那一路把同一批行摆成一段散文（[`crate::render::plain`]）。
 //! **这里是第二副排版，不是第二份数据**：措辞一个字都不在这里重写——
-//! 档位那一列写什么问 [`crate::render::base_column`]，卷名与定档页走
+//! 档位分布那一列写什么问 [`crate::render::tally_column`]，卷名与定档页走
 //! [`crate::render::volume_name`]，耗时走 [`super::overview::spell`]，
 //! 没做成那一卷的原因出自 [`crate::render::failed_volume`]。
 //!
@@ -23,8 +27,8 @@
 //!
 //! # 表上没有列的那几句
 //!
-//! 成句的那几行**不塞进格**。表答得出的（跳过、逐页、覆盖、隔离）由档位那一列与
-//! 记号／行尾那个词说；表与报告别处都答不出的那两种（过期副本、部分救回）
+//! 成句的那几行**不塞进格**。表答得出的（跳过、隔离、判定落到页上之后的样子）由
+//! 档位分布那一列与记号／行尾那个词说；表与报告别处都答不出的那两种（过期副本、部分救回）
 //! **摆在那一卷那一行底下**，整段折行——见 [`under`]。
 //!
 //! # 哪几列、砍哪几列不在这里
@@ -61,11 +65,11 @@ use crate::session::tone::Tone;
 
 /// 一格不在场时那一列上写什么。
 ///
-/// **只有页数用它**：它夹在卷名与档位中间，空着读起来像掉了一个数；
+/// **只有页数用它**：它夹在卷名与档位分布中间，空着读起来像掉了一个数；
 /// 而定档页与耗时排在末尾，空着就是「这一卷没有这件事」，不必再说一遍。
 ///
 /// 取 `-` 而不是破折号 `—`：后者过不了 [`tonefit::width_is_stable`] 那一关
-/// （停车场 Q154）。它夹在卷名与档位中间，右边还有三列。
+/// （停车场 Q154）。它夹在卷名与档位分布中间，右边还有三列。
 const ABSENT: &str = "-";
 
 /// 行首记号：**这一卷怎么样，一个字符说完。**
@@ -80,11 +84,11 @@ const ABSENT: &str = "-";
 /// 「颜色不是唯一载体」这条因此**不靠人记着**：一行有颜色就必有一个记号，
 /// 两者出自同一个取值，添一种记号不配语义（或反过来）根本编不过去。
 ///
-/// **接住颜色的是这个记号，不是档位那一列上的那几个字。** 那几个字（「跳过」「没做成」）
-/// 出自 [`crate::render::base_column`]——它是**措辞**，命令行那一路读的也是它，
+/// **接住颜色的是这个记号，不是档位分布那一列上的那几个字。** 那几个字（「跳过」「没做成」）
+/// 出自 [`crate::render::tally_column`]——它是**措辞**，命令行那一路读的也是它，
 /// 而命令行不上色（spec 的《Out of Scope》）。它们说的恰好是同一件事，因此屏上一行
 /// 常常有两个载体；但**靠得住的那一个是记号**：砍列砍到只剩两列时它与卷名仍在
-/// （[`crate::session::columns`]），而档位那一列是砍得掉的。
+/// （[`crate::session::columns`]），而档位分布那一列是砍得掉的。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mark {
     /// 正常跑完。
@@ -202,9 +206,9 @@ struct Entry {
     name: String,
     /// 输出页数。
     pages: Option<String>,
-    /// 基准档，或者这一卷为什么没有一档。
-    base: Option<String>,
-    /// 定档页，只印最后那一段。
+    /// 档位分布：这一卷用了哪几档、各多少页；或者这一卷为什么一档都没有。
+    tally: Option<String>,
+    /// 定档页，只印最后那一段。**只在 `--envelope` 那条路上在场。**
     driver: Option<String>,
     /// 这一卷做了多久。
     elapsed: Option<String>,
@@ -226,7 +230,7 @@ impl Entry {
             VolumeColumn::Mark => None,
             VolumeColumn::Name => Some(&self.name),
             VolumeColumn::Pages => self.pages.as_deref(),
-            VolumeColumn::Base => self.base.as_deref(),
+            VolumeColumn::Tally => self.tally.as_deref(),
             VolumeColumn::Driver => self.driver.as_deref(),
             VolumeColumn::Elapsed => self.elapsed.as_deref(),
         }
@@ -278,7 +282,7 @@ impl Entry {
                 .find(|row| row.kind == RowKind::Volume)
                 .and_then(|row| row.cell(Field::PageCount))
                 .map(str::to_owned),
-            base: render::base_column(&rows),
+            tally: render::tally_column(&rows),
             driver: driver(&rows),
             elapsed: Some(spell(volume.timing.elapsed)),
             notes,
@@ -302,7 +306,7 @@ impl Entry {
             mark: Mark::Failed,
             name: render::volume_name(&failure.volume),
             pages: None,
-            base: render::base_column(rows),
+            tally: render::tally_column(rows),
             driver: None,
             elapsed: None,
             notes: row
@@ -325,8 +329,8 @@ impl Entry {
 /// - [部分救回](RowKind::Salvaged)——末尾那一小结说得出它，但那一段**收场之后才画**
 ///   （见 [`super::report`]），而跑着的那几十分钟里源文件不全这件事就没人说。
 ///
-/// 别的成句的那几行表上都答得出：跳过、逐页、覆盖在档位那一列上
-/// （[`crate::render::base_column`]），隔离在行首记号与行尾那个词上。
+/// 别的成句的那几行表上都答得出：跳过在档位分布那一列上（[`crate::render::tally_column`]），
+/// 逐页与覆盖那两句说的「候选从哪来」由同一列上的分布显示出来，隔离在行首记号与行尾那个词上。
 /// 几何门那几句注解不在这里——表**有意**不带几何，追下去要展开那一卷
 /// （`p3-session-legibility/11` 的逐页表），而把它们摆回来就是把这一票要消灭的
 /// 那四五行长句原样搬回屏上。

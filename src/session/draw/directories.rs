@@ -229,7 +229,7 @@ mod tests {
             body[0]
         );
         assert!(body[0].ends_with("隔离 1 卷"), "{}", body[0]);
-        // 分布逐条问 `render::base_column`——跳过那一卷也在里面。
+        // 分布逐条问 `render` 那一头的 `base_of`——跳过那一卷也在里面。
         assert!(body[0].contains("跳过 1"), "{}", body[0]);
         assert!(
             body[1].starts_with(" ✓") && body[1].contains("库/乙"),

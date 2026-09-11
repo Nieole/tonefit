@@ -66,8 +66,8 @@ use tonefit::HARD_SPACE;
 
 /// **把一串东西串起来的那个记号**：一格里装着好几样时拿它隔开，两侧各一个空格。
 ///
-/// 眼下四处取它：[基准档分布](base_spread)、[判据那一串](score_line)、
-/// 失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」），
+/// 眼下五处取它：[基准档分布](base_spread)与[档位分布](tally_row)（两处都走 [`tallied`]）、
+/// [判据那一串](score_line)、失败页那一格（[`geometry_cells`] 里「失败页 ⋅ 卷内统一尺寸留白」），
 /// 与[逐页那一格纸白](paper_white_cell)。
 /// 串起来的整串是**一格**，而「一串东西怎么说」与「一个数怎么写」同属措辞
 /// （ADR 0016 决定第 2 条）——格与格**之间**拿什么隔开是排版的事，不在这里。
@@ -144,8 +144,8 @@ impl Cell {
 /// 表那一副按它挑列、上色、给行首记号。
 ///
 /// 一个变体对应报告上的一种行，**不多不少**：默认逐页与覆盖顶掉判定各是一种，
-/// 而不是「卷级那一行的三种写法」——表要照它们各自的说法填基准档那一列，
-/// 分不开就得回头去认字符串。
+/// 而不是「卷级那一行的三种写法」——目录那一行的[基准档分布](directory)要照它们
+/// 各自的说法数，分不开就得回头去认字符串。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     /// **目录那一行**：这一枝底下几卷、基准档怎么分布、几卷进了隔离
@@ -189,6 +189,9 @@ pub enum RowKind {
     Override,
     /// 卷级判定：默认那条路（逐页各判各的），没有卷级基准档（成句）。
     PerPage,
+    /// **档位分布**那一行（一格，见 [`Field::Tally`]）：接在卷级判定后面，两条路上都在——
+    /// 三种判定说「候选从哪来」，它说「判定落到页上之后长什么样」。出处只有 [`tally_row`]。
+    Tally,
     /// 这一趟怎么读的。
     Reading,
     /// 开工前摊到临时目录的那一笔。
@@ -287,8 +290,13 @@ pub enum Field {
     /// 不占列因此也不进那一关（`wording_cells` 从三张表的列导出）：串起它那两样的仍是
     /// 本模块那个宽度稳的记号（`SEPARATOR`），而行尾错一格不牵连别人。
     PaperWhite,
-    /// 基准档。**表要的就是这一格**，而成句的那一格里说的是同一个数。
+    /// 基准档。**目录那一行的[基准档分布](directory)要的就是这一格**（[`base_of`]），
+    /// 而成句的那一格里说的是同一个数。卷表不读它——那一列是[档位分布](Self::Tally)。
     Base,
+    /// **档位分布**：这一卷用了哪几档、各多少页，排成一串（`2bit+FS 229 ⋅ 1bit 1`；
+    /// 词条在 `CONTEXT.md` 的《档位分布》，数法在 [`tally_row`]）。
+    /// **一页判定都没有就不在场**（跳过的卷、一张灰度页都没有的卷）。
+    Tally,
     /// 上包络那一整句（四个数与「均未标定」那一句，出处在库里）。
     Envelope,
     /// 一个候选：覆盖顶掉判定时是那个覆盖值，逐页判定时是这一页判成的那一档。
@@ -581,20 +589,67 @@ pub fn failed_volume(failure: &VolumeFailure) -> Row {
     )
 }
 
-/// 卷表**档位那一列**上写什么：这一卷判成的那一档，或者它**为什么没有一档**。
+/// 卷表**档位分布那一列**上写什么：[分布那一格](Field::Tally)，或者这一卷**为什么一页都没判**
+/// （`two-pass-rework/02`，spec 的 story 4、18）。
 ///
-/// 收的是 [`volume`]（或 [`failed_volume`]）出的那几行：这一卷是哪一种判定已经由
+/// 收的是 [`volume`]（或 [`failed_volume`]）出的那几行：分布那一格就是
+/// [那一行](RowKind::Tally)上的字，一格不改；没有那一行的卷是哪一种已经由 [`RowKind`] 分好了，
+/// 回头去认字符串就是第二个出处。一种都对不上时给 `None`——
+/// 一张灰度页都没有的卷（整卷彩页、整卷失败）一页判定都没有，那一格因此不在场。
+///
+/// **两条路上它都说得出话**（`CONTEXT.md` 的《档位分布》）；定档页那一列在不在场，
+/// 才是两条路在表上的分别。
+///
+/// **「跳过」与「没做成」只有 [`why_nothing_judged`] 一处**：目录那一行的[基准档分布](directory)
+/// 对这两种卷说的是同一个词（[`base_of`]），两处不各写一遍。
+///
+/// **读它的只有会话**（卷表那一列与逐页表钉住的抬头），而会话整个挂在 `tui` 后面：
+/// 关掉那个特性的**非测试**构建里它一个读者都没有——**那不是死代码，是那一趟的前提**
+/// （同一副写法见 [`undone`]）。分布那一格本身两副排版都读，它在 [`tally_row`]。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
+)]
+pub fn tally_column(rows: &[Row]) -> Option<String> {
+    rows.iter().find_map(|row| match row.kind {
+        RowKind::Tally => row.cell(Field::Tally).map(str::to_owned),
+        // 其余各行说的不是这一卷的档位。这里留 `_` 是对的：行的种类还会长
+        // （每多一种页的行都要在这里加一条 `None`），而**说得出档位的只有上面那一种
+        // 加上没有一档的那两种**——漏掉一种的后果是那一格不在场，屏上当场看得见，
+        // 不是悄悄印错一个档。
+        _ => why_nothing_judged(row.kind).map(str::to_owned),
+    })
+}
+
+/// 一卷**为什么一页都没判**的那两句：跳过（一页都没重做）、没做成（卷根本没交出来）。
+///
+/// 卷表的[档位分布那一列](tally_column)与目录那一行的[基准档分布](base_of)对这两种卷
+/// 写的是同一个词——它们与那两种卷成句的那一句说的是同一件事
+/// （「跳过 幂等命中……」、没做成那一句原因），只是压成一列摆得下的宽度，不编第二套说法。
+/// 两处各写一遍，迟早有一处改了另一处没改。
+fn why_nothing_judged(kind: RowKind) -> Option<&'static str> {
+    match kind {
+        RowKind::Skipped => Some("跳过"),
+        RowKind::FailedVolume => Some("没做成"),
+        _ => None,
+    }
+}
+
+/// 一卷在目录那一行的[基准档分布](directory)里**算作哪一档**：判成的那一档，
+/// 或者它**为什么没有一档**。
+///
+/// 收的是 [`verdict_rows`]（或 [`failed_volume`]）出的那几行：这一卷是哪一种判定已经由
 /// [`RowKind`] 分好了，回头去认字符串就是第二个出处。一种都对不上时给 `None`——
-/// 一张灰度页都没有的卷（整卷彩页、整卷失败）根本没有候选可判，那一格因此不在场。
+/// 一张灰度页都没有的卷（整卷彩页、整卷失败）根本没有候选可判，那一卷因此不进分布。
 ///
 /// **五种说法只有这一处**：它们与卷级那几行成句的那几句说的是同一件事
 /// （「跳过 幂等命中……」「无（默认逐页）……」「判定 X（覆盖项裁到只剩一个候选）」），
-/// 表那一副只是把它压成一列摆得下的宽度，不编第二套说法（spec 的《卷表》）。
+/// 分布只是把它压成一个词，不编第二套说法。
 ///
-/// **两路都读它**：会话的卷表把它摆成一列，而目录那一行的[基准档分布](directory)
-/// 逐卷问它一遍——命令行那一副的折叠与会话的目录表因此数的是同一批字
-/// （`volume-discovery/08`）。卷级那几行摆成散文的那一路本身不分列，不读它。
-pub fn base_column(rows: &[Row]) -> Option<String> {
+/// **读它的只有目录那一级**（[`Listed::base`]）：命令行那一副的折叠与会话的目录表因此
+/// 数的是同一批字（`volume-discovery/08`）。卷表那一列不读它——那一列是[档位分布](tally_column)，
+/// 默认路径上每卷都算作「逐页」的这一份在那里一个字的信息量都没有（spec 的 story 18）。
+fn base_of(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
         // 判出了基准档的那一种：那一格就是它（[`Field::Base`] 的文档说的正是这一处）。
         RowKind::Envelope => row.cell(Field::Base).map(str::to_owned),
@@ -602,12 +657,8 @@ pub fn base_column(rows: &[Row]) -> Option<String> {
             .cell(Field::Candidate)
             .map(|candidate| format!("覆盖 {candidate}")),
         RowKind::PerPage => Some("逐页".to_owned()),
-        RowKind::Skipped => Some("跳过".to_owned()),
-        RowKind::FailedVolume => Some("没做成".to_owned()),
-        // 其余各行说的不是这一卷的档位。这里留 `_` 是对的：行的种类还会长
-        // （每多一种页的行都要在这里加一条 `None`），而**说得出档位的只有上面那几种**——
-        // 漏掉一种的后果是那一格不在场，屏上当场看得见，不是悄悄印错一个档。
-        _ => None,
+        // 其余各行说的不是这一卷的档位（`_` 留在这里的理由见 [`tally_column`]）。
+        _ => why_nothing_judged(row.kind).map(str::to_owned),
     })
 }
 
@@ -616,7 +667,7 @@ pub fn base_column(rows: &[Row]) -> Option<String> {
 /// **两种，不多不少**（`CONTEXT.md` 的《失败》把它们分得很清楚）：
 /// [收摊了的那几卷](Self::Settled)带着一份卷报告，[没做成的那几卷](Self::Failed)
 /// 连一份都没有，只有一个路径与一句原因。目录那一行要数的两件事各要一种——
-/// 卷数把两种都算进去，[基准档分布](directory)照 [`base_column`] 逐条问，
+/// 卷数把两种都算进去，[基准档分布](directory)照 [`base_of`] 逐条问，
 /// 而那一处对没做成的卷答的正是「没做成」。
 ///
 /// **收的是引用，一条报告都不复制**：报告一趟能有几百卷，而分组只要认得出
@@ -638,19 +689,17 @@ impl Listed<'_> {
         }
     }
 
-    /// 这一条在[基准档那一列](base_column)上写什么。**目录那一行的分布逐条问它**，
+    /// 这一条在[基准档分布](directory)里算作哪一档（[`base_of`]）。**目录那一行逐条问它**，
     /// 不另编一套说法。
     ///
-    /// **只建[判定那几行](verdict_rows)，不把整卷现一遍**：[`base_column`] 认的四种行
+    /// **只建[判定那几行](verdict_rows)，不把整卷现一遍**：[`base_of`] 认的四种行
     /// （上包络 · 覆盖 · 逐页 · 跳过）全出自那一处，而 [`volume`] 还要把两条路径与
     /// 读法、缓存各摆一遍——目录那一行逐卷问它，几百卷的一趟每帧都要付那一笔。
-    /// 认哪几种行仍旧只有 [`base_column`] 一处，这里只是少喂它几行它本来就不看的。
+    /// 认哪几种行仍旧只有 [`base_of`] 一处，这里只是少喂它几行它本来就不看的。
     fn base(&self) -> Option<String> {
         match self {
-            Self::Settled(report) => base_column(&verdict_rows(report)),
-            Self::Failed(failure) => {
-                base_column(std::slice::from_ref(&self::failed_volume(failure)))
-            }
+            Self::Settled(report) => base_of(&verdict_rows(report)),
+            Self::Failed(failure) => base_of(std::slice::from_ref(&self::failed_volume(failure))),
         }
     }
 
@@ -740,7 +789,7 @@ fn directory_of(root: &Path) -> &Path {
 /// 一卷都没进隔离的目录没有隔离那一格——一格在不在场本身就是一句话（见 [`Row::cell`]）。
 ///
 /// 卷数把**没做成的那几卷也算进去**：它们同样是这一枝底下点到过的卷，
-/// 而「几卷没做成」由分布那一格说（[`base_column`] 对它们答的是「没做成」）。
+/// 而「几卷没做成」由分布那一格说（[`base_of`] 对它们答的是「没做成」）。
 pub fn directory(group: &Group, listed: &[Listed<'_>]) -> Row {
     let inside: Vec<Listed<'_>> = group
         .at
@@ -773,28 +822,34 @@ pub fn isolated_note(count: &str) -> String {
 
 /// **基准档分布**：这一枝底下各档各有几卷，多的排在前面。
 ///
-/// 各档怎么写照 [`base_column`]——卷表那一列写的是同一批字，跳过与没做成也在里面。
-/// **串起来的那个[记号](SEPARATOR)是措辞**，与[判据那一串](score_line)同一条
-/// （ADR 0016 决定第 2 条）。
+/// 各档怎么写照 [`base_of`]——跳过与没做成也在里面（它们与卷表那一列写的是同一个词，
+/// 见 [`why_nothing_judged`]）。**串起来的那个[记号](SEPARATOR)是措辞**，与[判据那一串](score_line)
+/// 同一条（ADR 0016 决定第 2 条）。
 ///
-/// 排法：**卷多的在前**，一样多的按头一次出现的先后（`sort_by` 是稳定的）。
-/// 按报告先后原样排的话，一枝里最常见的那一档常常落在末尾——而扫一眼要看出来的
-/// 正是「这一枝多半判成哪一档」。
+/// 排法见 [`tallied`]：**卷多的在前**。按报告先后原样排的话，一枝里最常见的那一档
+/// 常常落在末尾——而扫一眼要看出来的正是「这一枝多半判成哪一档」。
 fn base_spread(inside: &[Listed<'_>]) -> String {
-    let mut counted: Vec<(String, usize)> = Vec::new();
-    for one in inside {
-        let Some(base) = one.base() else {
-            continue;
-        };
-        match counted.iter_mut().find(|(said, _)| *said == base) {
+    tallied(inside.iter().filter_map(Listed::base))
+}
+
+/// **数一串东西各出现几次，摆成「东西 数」那一串**：多的在前，一样多的按头一次出现的先后
+/// （`sort_by_key` 是稳定的）。一个都没有就是空串。
+///
+/// 两处分布共用它：[目录那一行的基准档分布](base_spread)数的是卷，
+/// [卷那一行的档位分布](tally_row)数的是页。「一串东西怎么说」是措辞
+/// （ADR 0016 决定第 2 条），两处各写一遍排法就会各排各的。
+fn tallied<T: PartialEq + std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
+    let mut counted: Vec<(T, usize)> = Vec::new();
+    for item in items {
+        match counted.iter_mut().find(|(seen, _)| *seen == item) {
             Some((_, count)) => *count += 1,
-            None => counted.push((base, 1)),
+            None => counted.push((item, 1)),
         }
     }
     counted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     counted
         .iter()
-        .map(|(said, count)| format!("{said} {count}"))
+        .map(|(item, count)| format!("{item} {count}"))
         .collect::<Vec<_>>()
         .join(SEPARATOR)
 }
@@ -1238,7 +1293,8 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
     rows.extend(gate_rows(volume, verdict));
     rows.extend(match verdict {
         // 上包络与它指出的定档页是**两行**：定档页是一页的名字，而上包络那一句是这一卷的判定。
-        // 表要的基准档另占一格——它与那一句里说的是同一个数，取值不必回头认字符串。
+        // 目录那一行的基准档分布要的基准档另占一格——它与那一句里说的是同一个数，
+        // 取值不必回头认字符串。
         VolumeVerdict::Envelope(envelope) => vec![
             Row::new(
                 RowKind::Envelope,
@@ -1275,7 +1331,33 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
         // 上面那一支已经把跳过的卷送走了。
         VolumeVerdict::Skipped { .. } => Vec::new(),
     });
+    // 判定落到页上之后长什么样，接在判定后面：三种判定说的是「候选从哪来」，
+    // 这一行说的是「最后各页写成了哪一档」。
+    rows.extend(tally_row(volume));
     rows
+}
+
+/// [档位分布那一行](RowKind::Tally)（`two-pass-rework/02`；词条在 `CONTEXT.md` 的《档位分布》）。
+///
+/// 数的是**页上写着的判定**（[`PageReport::verdict`]）：上包络重定过的话就是重定过的那一个，
+/// 写出去的就是它——两条路上因此都说得出话，而上包络那一路上分布**不是「一档全包」**
+/// （`src/envelope.rs` 的模块文档）。彩页与失败页没有判定，不在里面——彩页几张在卷那一行
+/// 自己那一格（[`color_pages`]），失败几页在隔离那一行。
+///
+/// **一页判定都没有就没有这一行**（一格在不在场本身就是一句话）：一张灰度页都没有的卷
+/// 走到这里，跳过的卷在 [`verdict_rows`] 上一步就送走了。
+///
+/// 排法见 [`tallied`]：**页多的档在前**——扫一眼要看出来的是「这一卷多半写成哪一档」，
+/// 而上包络那一路上排在头一位的多半就是基准档，特例页与几何门不成立的页跟在后面。
+fn tally_row(volume: &VolumeReport) -> Option<Row> {
+    let tally = tallied(
+        volume
+            .pages
+            .iter()
+            .filter_map(PageReport::verdict)
+            .map(|verdict| verdict.candidate),
+    );
+    (!tally.is_empty()).then(|| Row::one(RowKind::Tally, Cell::new(Field::Tally, tally)))
 }
 
 /// 被隔离的卷那一行，排在卷级各行之首（12 号票：含失败页的卷被标记）。
@@ -2054,10 +2136,12 @@ mod tests {
         // profile 一行、适配方式一行、裁边一行、跨页拆分一行、判据形状**三行**
         // （构成、掩蔽、聚合——一块的读数由什么组成、怎么加权、怎么收成一个数）、
         // **目录一行**（`volume-discovery/08`：命令行那一副把这一枝摆在它那几卷前面）、
-        // 卷**七行**（去处、几何门、卷级、定档页、**纸白对齐**、读取、缓存），
+        // 卷**八行**（去处、几何门、卷级、定档页、**档位分布**、**纸白对齐**、读取、缓存），
         // 页两行：一行几何，一行判定。纸白对齐那一行**恒在**，这一趟上限取 0 时也在
         // ——它说的是「没开」（纸白对齐批 02 号票第 6 条）。
-        assert_eq!(text.lines().count(), 17);
+        assert_eq!(text.lines().count(), 18);
+        // 这一卷只有一页、判成 4bit：档位分布就是这一档一页（`two-pass-rework/02`）。
+        assert!(text.contains("\n  档位分布 4bit 1\n"), "{text}");
         // 这一趟没开纸白对齐，而那一行照样说得出这件事。
         assert!(text.contains("纸白对齐 上限 0 级（没开）"), "{text}");
         // 这一趟的页尺寸照哪三条规矩算出来的，抬头都说得出（页几何批 01、02、04 号票）。
@@ -3532,7 +3616,9 @@ mod tests {
                 RowKind::Gate,
                 RowKind::Envelope,
                 RowKind::Driver,
-                // 纸白对齐接在判定后面，**恒在**：这一趟上限取 0，那一行说的是「没开」。
+                // 档位分布接在判定后面：判定落到页上之后长什么样（`two-pass-rework/02`）。
+                RowKind::Tally,
+                // 纸白对齐接在分布后面，**恒在**：这一趟上限取 0，那一行说的是「没开」。
                 RowKind::WhiteAlign,
                 RowKind::Reading,
                 RowKind::Extraction,
@@ -3562,7 +3648,7 @@ mod tests {
         assert_eq!(rows[3].cells.len(), 3);
         assert_eq!(rows[3].cell(Field::GateScope), Some("1"));
         assert_eq!(rows[3].cell(Field::GateBroken), Some("0"));
-        // 基准档单占一格：表要的就是这一个值，不必回头去认那一整句话。
+        // 基准档单占一格：目录那一行的分布要的就是这一个值，不必回头去认那一整句话。
         assert_eq!(rows[4].cell(Field::Base), Some("4bit"));
         assert!(
             rows[4]
@@ -3597,6 +3683,7 @@ mod tests {
         );
         for field in [
             Field::Base,
+            Field::Tally,
             Field::GateScope,
             Field::GateBroken,
             Field::Dither,
@@ -3791,30 +3878,30 @@ mod tests {
         );
     }
 
-    /// **档位那一列写什么，五种说法只有一处**（[`base_column`]，P3 的卷表）。
+    /// **一卷在基准档分布里算作哪一档，五种说法只有一处**（[`base_of`]，目录那一行）。
     ///
-    /// 判出了基准档的写那一档；剩下四种写的是**它为什么没有一档**，
+    /// 判出了基准档的算那一档；剩下四种算的是**它为什么没有一档**，
     /// 与卷级那几行成句的那几句说的是同一件事。一张灰度页都没有的卷一种都对不上，
-    /// 那时那一格不在场——表上留白，不编一个档出来。
+    /// 那时它不进分布——不编一个档出来。
     #[test]
-    fn the_base_column_says_which_one_it_is_or_why_there_is_none() {
+    fn a_volume_counts_in_the_base_spread_as_its_base_or_as_why_there_is_none() {
         let isolated = a_volume_worth_a_row_of_each_kind();
         assert_eq!(
-            base_column(&volume(&isolated, WhiteAlignLimit::default())),
+            base_of(&volume(&isolated, WhiteAlignLimit::default())),
             Some("4bit".to_owned())
         );
 
         let mut each = extracted_by(0);
         each.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
         assert_eq!(
-            base_column(&volume(&each, WhiteAlignLimit::default())),
+            base_of(&volume(&each, WhiteAlignLimit::default())),
             Some("跳过".to_owned())
         );
 
         each = a_volume_worth_a_row_of_each_kind();
         each.verdict = Some(VolumeVerdict::PerPage);
         assert_eq!(
-            base_column(&volume(&each, WhiteAlignLimit::default())),
+            base_of(&volume(&each, WhiteAlignLimit::default())),
             Some("逐页".to_owned())
         );
 
@@ -3823,7 +3910,7 @@ mod tests {
             Dither::FloydSteinberg,
         )));
         assert_eq!(
-            base_column(&volume(&each, WhiteAlignLimit::default())),
+            base_of(&volume(&each, WhiteAlignLimit::default())),
             Some("覆盖 2bit+FS".to_owned())
         );
 
@@ -3833,16 +3920,151 @@ mod tests {
         };
         let gone = failed_volume(&failure);
         assert_eq!(
-            base_column(std::slice::from_ref(&gone)),
+            base_of(std::slice::from_ref(&gone)),
             Some("没做成".to_owned())
         );
 
-        // 一张灰度页都没有的卷（判定那一格不在场）：一种都对不上，那一格因此不在场。
+        // 一张灰度页都没有的卷（判定那一格不在场）：一种都对不上，它因此不进分布。
         each.verdict = None;
+        assert_eq!(base_of(&volume(&each, WhiteAlignLimit::default())), None);
+    }
+
+    /// **档位分布那一行：这一卷用了哪几档、各多少页**（`two-pass-rework/02`，spec 的 story 4）。
+    ///
+    /// 数的是**页上写着的判定**——上包络重定过的话就是重定过的那一个，写出去的就是它。
+    /// 彩页与失败页没有判定，不在里面；**页多的档在前**，一样多的按头一次出现的先后。
+    /// 跳过的卷与一张灰度页都没有的卷没有这一行——那一趟一页都没判。
+    ///
+    /// 表那一列（[`tally_column`]）与纯文本那一副读的是同一格：两副排版，一套措辞（ADR 0016）。
+    #[test]
+    fn the_tally_row_counts_the_pages_by_the_candidate_they_were_written_at() {
+        let two_fs = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        let one = Candidate::new(BitDepth::One, Dither::Off);
+        let four = Candidate::new(BitDepth::Four, Dither::Off);
+        let page = |at: &str, color: PageColor, branch: PageBranch| PageReport {
+            source: PathBuf::from(format!("库/第1话/{at}.jpg")),
+            output: PathBuf::from(format!("out/第1话/{at}.png")),
+            size: Size::new(1264, 1680),
+            outcome: PageOutcome::Whole(Processed {
+                crop: nothing_trimmed(),
+                backstopped: false,
+                cut: None,
+                spread_candidate: false,
+                scaling: typical_scaling(),
+                color,
+                branch,
+            }),
+        };
+        let judged = |at: &str, candidate: Candidate, reason: Reason| {
+            page(
+                at,
+                PageColor::Gray,
+                PageBranch::Gray {
+                    white: WhiteAlignment::Off,
+                    gate: GeometryGate::Holds,
+                    scores: Vec::new(),
+                    verdict: Verdict { candidate, reason },
+                },
+            )
+        };
+
+        // 默认那条路：七页里五页有判定——2bit+FS 两页、4bit 两页、1bit 一页，
+        // 外加一张彩页与一张失败页。一样多的两档按头一次出现的先后排。
+        let mut per_page = a_volume("库/第1话", Some(VolumeVerdict::PerPage), false);
+        per_page.pages = vec![
+            judged("001", two_fs, Reason::LowestWithinThreshold),
+            judged("002", one, Reason::LowestWithinThreshold),
+            judged("003", two_fs, Reason::LowestWithinThreshold),
+            judged("004", four, Reason::NoneWithinThreshold),
+            page("005", PageColor::Color, PageBranch::Color),
+            a_volume("库/第1话", None, true).pages.remove(0),
+            judged("007", four, Reason::LowestWithinThreshold),
+        ];
+        let rows = volume(&per_page, WhiteAlignLimit::default());
+        let tally = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Tally)
+            .expect("档位分布那一行");
+        assert_eq!(tally.cells.len(), 1, "那一行只有分布这一格");
         assert_eq!(
-            base_column(&volume(&each, WhiteAlignLimit::default())),
-            None
+            tally.cell(Field::Tally),
+            Some("2bit+FS 2 ⋅ 4bit 2 ⋅ 1bit 1")
         );
+        // 它接在卷级判定那一行后面：分布说的是判定落到页上之后的样子。
+        let at = |kind: RowKind| rows.iter().position(|row| row.kind == kind);
+        assert!(at(RowKind::PerPage) < at(RowKind::Tally), "{rows:?}");
+        assert!(at(RowKind::Tally) < at(RowKind::WhiteAlign), "{rows:?}");
+        // 表那一列与纯文本那一副读的是同一格。
+        assert_eq!(
+            tally_column(&rows),
+            Some("2bit+FS 2 ⋅ 4bit 2 ⋅ 1bit 1".to_owned())
+        );
+        assert!(
+            plain::volume(&per_page, WhiteAlignLimit::default())
+                .contains("\n  档位分布 2bit+FS 2 ⋅ 4bit 2 ⋅ 1bit 1\n"),
+            "{}",
+            plain::volume(&per_page, WhiteAlignLimit::default())
+        );
+
+        // 上包络那条路：**不是「一档全包」**（`src/envelope.rs` 第一句）——分布集中在基准档，
+        // 特例页那一档另在场，几何门不成立的页（位深跟着基准档、抖动关掉）也各自在场。
+        let mut enveloped = per_page.clone();
+        let four_fs = Candidate::new(BitDepth::Four, Dither::FloydSteinberg);
+        enveloped.verdict = Some(VolumeVerdict::Envelope(envelope(four_fs)));
+        enveloped.pages = vec![
+            judged("001", four_fs, Reason::VolumeEnvelope),
+            judged("002", four_fs, Reason::VolumeEnvelope),
+            judged("003", four_fs, Reason::LowestWithinThreshold),
+            judged(
+                "004",
+                Candidate::new(BitDepth::Eight, Dither::Off),
+                Reason::Outlier,
+            ),
+            judged("005", four, Reason::OutsideTheGate),
+        ];
+        assert_eq!(
+            tally_column(&volume(&enveloped, WhiteAlignLimit::default())),
+            Some("4bit+FS 3 ⋅ 8bit 1 ⋅ 4bit 1".to_owned())
+        );
+
+        // 覆盖顶死：每一页都是那一个候选，分布因此只有一档——那正是它说的话。
+        let mut pinned = per_page.clone();
+        pinned.verdict = Some(VolumeVerdict::Override(two_fs));
+        pinned.pages = vec![
+            judged("001", two_fs, Reason::Override),
+            judged("002", two_fs, Reason::Override),
+        ];
+        assert_eq!(
+            tally_column(&volume(&pinned, WhiteAlignLimit::default())),
+            Some("2bit+FS 2".to_owned())
+        );
+
+        // 跳过的卷没有这一行：表那一列写的是「跳过」，与行首记号说的是同一件事。
+        let mut skipped = extracted_by(0);
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 12 });
+        let rows = volume(&skipped, WhiteAlignLimit::default());
+        assert!(
+            rows.iter().all(|row| row.kind != RowKind::Tally),
+            "{rows:?}"
+        );
+        assert_eq!(tally_column(&rows), Some("跳过".to_owned()));
+        // 没做成的卷连一份卷报告都没有：写「没做成」。
+        let gone = failed_volume(&VolumeFailure {
+            volume: PathBuf::from("library/volume-b"),
+            reason: "卷根不在了".to_owned(),
+        });
+        assert_eq!(
+            tally_column(std::slice::from_ref(&gone)),
+            Some("没做成".to_owned())
+        );
+        // 一张灰度页都没有的卷：一页判定都没有，那一格不在场——表上留白，不编一个档出来。
+        let unjudged = a_volume("库/第1话", None, true);
+        let rows = volume(&unjudged, WhiteAlignLimit::default());
+        assert!(
+            rows.iter().all(|row| row.kind != RowKind::Tally),
+            "{rows:?}"
+        );
+        assert_eq!(tally_column(&rows), None);
     }
 
     /// **格里装的是值，不是摆法**（ADR 0016）：缩进、换行与行尾那些分隔符一个都不在里面。
@@ -4529,7 +4751,7 @@ mod tests {
     /// 一份**只答得出档位**的卷报告：这几条问的是分组与目录那一行，不是逐页。
     ///
     /// `verdict` 是 `None` 时它一档都判不出来（整卷彩页、整卷失败那一档），
-    /// [`base_column`] 对它答的正是「不在场」。
+    /// [`base_of`] 与 [`tally_column`] 对它答的都是「不在场」。
     fn a_volume(root: &str, verdict: Option<VolumeVerdict>, broken: bool) -> VolumeReport {
         let page = PageReport {
             source: PathBuf::from(format!("{root}/001.jpg")),
@@ -4637,7 +4859,7 @@ mod tests {
 
     /// **目录那一行说的是几卷 · 基准档怎么分布 · 几卷进了隔离**（票面第一条）。
     ///
-    /// 分布逐条问 [`base_column`]——卷表那一列写的是同一批字，跳过与没做成也在里面；
+    /// 分布逐条问 [`base_of`]——跳过与没做成也在里面，与卷表那一列写的是同一个词；
     /// **卷多的排在前**，一样多的按头一次出现的先后。
     /// 隔离那一格**一卷都没有就不在场**（一格在不在场本身就是一句话）。
     #[test]
@@ -4840,8 +5062,8 @@ mod tests {
             BitDepth::Four,
             Dither::Off,
         ))));
-        // **基准档那一列的五种说法各摆一卷**（见 [`base_column`]）：判出档位、跳过、
-        // 逐页、覆盖、没做成。分布那一格因此也串得起来——它逐条问的就是那一列。
+        // **基准档分布的五种说法各摆一卷**（见 [`base_of`]）：判出档位、跳过、
+        // 逐页、覆盖、没做成。目录那一行的分布那一格因此串得起来——它逐条问的就是它。
         // 「没做成」出自 `Listed::Failed`，那一卷连一份卷报告都没有。
         // **头一卷的名字里带一个 `·`（U+00B7）**：卷名、页名与去处路径都是**原样**那一档
         // ——用户的字节，宽度永远稳不住，摆不下时从中间省略（`CONTEXT.md`《格》）。
@@ -4879,6 +5101,16 @@ mod tests {
             processed.crop = Crop::new(Size::new(1441, 2048), (20, 24), Size::new(1400, 2000));
             processed.color = PageColor::Color;
         }
+        // **档位分布那一格要两档才串得起来**：头一卷再添一页、判成另一档
+        // （`two-pass-rework/02`），那一格因此也带上了那个记号。
+        let mut second = volumes[0].pages[0].clone();
+        second.source = PathBuf::from("库/第1话·上/002.jpg");
+        if let PageOutcome::Whole(processed) = &mut second.outcome
+            && let PageBranch::Gray { verdict, .. } = &mut processed.branch
+        {
+            verdict.candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        }
+        volumes[0].pages.push(second);
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第5话"),
             reason: "卷根不在了".to_owned(),
@@ -4907,8 +5139,8 @@ mod tests {
             }
         };
 
-        // 那两格真的串起来了——不然这一条问的是两个一个记号都没有的串。
-        for field in [Field::Bases, Field::Scores] {
+        // 那三格真的串起来了——不然这一条问的是几个一个记号都没有的串。
+        for field in [Field::Bases, Field::Tally, Field::Scores] {
             assert!(
                 rows.iter()
                     .filter_map(|row| row.cell(field))
