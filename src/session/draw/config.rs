@@ -19,8 +19,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::Styled;
-use super::paint::Tone;
+use super::paint;
 use crate::session::state::{Field, Focus, Layer, Session, Stage, Values};
+use crate::session::tone::Tone;
 use crate::session::viewport::Viewport;
 
 /// 左栏那一格的抬头：**三层此刻改不改得动**，改不动的话说清是哪一刻改不动。
@@ -130,7 +131,7 @@ pub(super) fn config(frame: &mut Frame, area: Rect, session: &Session) {
             // 压暗这件事因此与卷表上跳过的那几行同一个出处（[`Tone`]），
             // 这一块自己一个颜色都不挑。**接住这个颜色的是抬头**（[`heading`]）：
             // 不上色的终端上「按不动」照旧写在那里。
-            (true, _) => Tone::Muted.style(),
+            (true, _) => paint::style(Tone::Muted),
             (false, true) => Style::default().add_modifier(Modifier::REVERSED),
             (false, false) => Style::default(),
         };

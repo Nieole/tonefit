@@ -46,11 +46,12 @@
 
 use tonefit::{Mode, PageReport, Panel, VolumeReport, WhiteAlignLimit};
 
-use super::paint::{Painted, Tone};
+use super::paint::Painted;
 use super::table::{Table, driver};
 use crate::render::{self, Field, Notable, Row, RowKind};
 use crate::session::columns::{self, Column, PageColumn, Widths};
 use crate::session::state::Listing;
+use crate::session::tone::Tone;
 
 /// 行首记号：**这一页要不要紧，一个字符说完。**
 ///

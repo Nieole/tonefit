@@ -120,7 +120,7 @@ impl Entry {
 /// （`CONTEXT.md` 的《会话》：跟随——屏上那个光标恒是一卷，这一副只是把它归到一行上）。
 /// 指着的那一卷此刻不在表上时不报错，与卷表同一条。
 ///
-/// 每一行带着它是哪一种[语义](super::paint::Tone)，出处仍是行首那个
+/// 每一行带着它是哪一种[语义](crate::session::tone::Tone)，出处仍是行首那个
 /// [记号](Mark)——本模块一个颜色名都不写。
 pub(super) fn directories(
     live: &Live,

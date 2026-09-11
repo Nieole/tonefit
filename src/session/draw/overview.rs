@@ -56,8 +56,9 @@ use tonefit::{Instruction, Mode as RunMode, Pass, Report, VolumeReport, VolumeVe
 
 use super::footer::stopping_name;
 use super::keys::Starters;
-use super::paint::{Painted, Tone};
+use super::paint::Painted;
 use crate::session::live::{Live, Walking};
+use crate::session::tone::Tone;
 
 /// 总览块**最高**几行：四行正文加上下两条边（跑着、而且出了事的那一副）。
 ///

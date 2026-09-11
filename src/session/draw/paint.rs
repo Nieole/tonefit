@@ -1,4 +1,4 @@
-//! 画法那几块共用的**语义色**：四种语义、四种样子，**一处出处**
+//! 画法那几块共用的**语义色在屏上什么样**：四种语义、四种样子，**一处出处**
 //! （`CONTEXT.md` 的《会话》：语义色）。
 //!
 //! | 语义 | 屏上 | 用在哪 |
@@ -8,13 +8,14 @@
 //! | [出事](Tone::Trouble) | 红 | 失败页、卷级失败、拒绝执行、屏底那一句报的「没做成」 |
 //! | [不要紧](Tone::Muted) | 暗 | 跳过的卷、只读时的左栏 |
 //!
-//! 末三格是 `p4-parking-lot/09` 添的（收停车场 Q155／Q156／Q157）。
-//! `CONTEXT.md` 的《语义色》那一列还只认添之前那一份——改它归 28 号票，
-//! 停车场 Q163 记着这一笔。
+//! **四种语义那个类型不住在这里**：它在 [`crate::session::tone`]，`tui` 特性**前面**——
+//! 屏底那一句由状态机说出口，说出口的那一刻就定了它有多重，而状态机在特性前面
+//! （`no-false-line/05`，收停车场 Q198）。本模块管的是**样子**：四种各是什么颜色、
+//! 上不上色。
 //!
 //! # 画法各处按语义要色，不自己挑颜色
 //!
-//! **挑颜色的地方只有 [`Tone::style`] 一处**：画法各处交出来的是**语义**
+//! **挑颜色的地方只有 [`style`] 一处**：画法各处交出来的是**语义**
 //! （这一行是隔离、是跳过、是没做成），不是「黄」「红」「暗」——那是四处画法各挑一遍颜色
 //! 与「改一次颜色只改一处」的分别。屏上那几块因此一个 `Color::` 都不写。
 //!
@@ -40,6 +41,11 @@
 //! 色盲、以及不上色的终端上因此一个字都不丢——[`NO_COLOR`](colourful) 那一张快照与
 //! 上色那一张**文字逐格相同**（`the_same_screen_reads_the_same_with_or_without_colour`）。
 //!
+//! **这是对每一处的要求，不是语义色那个类型的一个属性**（[`crate::session::tone`] 的
+//! 《它不带记号》说的为什么）。守它的是**一条闸门**
+//! （`every_painted_block_carries_a_word_or_a_mark_of_its_own`）：走一遍主区与屏底，
+//! 凡是上了色的地方都得配着一个字或一个行首记号。
+//!
 //! # 不是语义色的那几样
 //!
 //! 光标那一格**反白**、层抬头**加粗**、预设栏那条文件路径**压暗**：三样都不在这四种里，
@@ -53,50 +59,32 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 
-/// **四种语义**，屏上一种一个样子（见模块文档那张表）。
-///
-/// 画法各处要的是这四个字之一，不是颜色：颜色名只在 [`style`](Self::style) 里出现。
-///
-/// **四种有轻重**，按 [`Ord`] 从轻到重排：不要紧 < 平常 < 注意 < 出事。
-/// 派生它是为了一件具体的事——**一行上摆着好几件事时取最重的那一种**
-/// （总览块的出事行同时数着隔离与失败页，见 [`super::overview`]）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Tone {
-    /// **不要紧**：跳过的卷、只读时的左栏。屏上压暗。
-    Muted,
-    /// **平常**：正常跑完的卷、普通的页、非卷文件那一小结、屏底那一句报的「做成了」。
-    /// 屏上是终端默认色。
-    Plain,
-    /// **注意**：隔离、部分救回、宽溢出、兜底上界、几何门不成立、特例页、过期副本，
-    /// 以及屏底那一句问的「再按一次」。屏上黄。
-    Caution,
-    /// **出事**：失败页、卷级失败、拒绝执行，以及屏底那一句报的「没做成」。屏上红。
-    Trouble,
-}
+use crate::session::tone::Tone;
 
-impl Tone {
-    /// 这一种语义在屏上什么样。**本仓库唯一写得出颜色名的地方。**
-    ///
-    /// **只用 16 色里的基本色，一处都不定背景色**：背景归用户自己的终端主题，
-    /// 定了背景的那一格在深色底与浅色底之间必坏掉一边。
-    ///
-    /// 「**暗**」取的是 [`Modifier::DIM`] 而不是某一个灰：灰是个**绝对**的颜色，
-    /// 深色底上的暗灰读不出来；DIM 压的是**当前这个前景色**，深色浅色两边都活。
-    /// 它照旧归 [`colourful`] 管——它是这四种语义色之一，不是排版上的强调
-    /// （模块文档《不是语义色的那几样》）。
-    ///
-    /// 不上色那一趟四种一律给 [`Style::default`]：**屏上的字一格不变**，
-    /// 变的只有样式（样式改不动缓冲里的字符）。
-    pub(super) fn style(self) -> Style {
-        if !colourful() {
-            return Style::default();
-        }
-        match self {
-            Self::Plain => Style::default(),
-            Self::Caution => Style::default().fg(Color::Yellow),
-            Self::Trouble => Style::default().fg(Color::Red),
-            Self::Muted => Style::default().add_modifier(Modifier::DIM),
-        }
+/// 一种语义在屏上什么样。**本仓库唯一写得出颜色名的地方。**
+///
+/// 它是对 [`Tone`] 的一个自由函数而不是它的方法：那个类型在 `tui` 特性前面，
+/// 而颜色是终端库的东西，只有画法这一层认得——语义与样子因此分住两头。
+///
+/// **只用 16 色里的基本色，一处都不定背景色**：背景归用户自己的终端主题，
+/// 定了背景的那一格在深色底与浅色底之间必坏掉一边。
+///
+/// 「**暗**」取的是 [`Modifier::DIM`] 而不是某一个灰：灰是个**绝对**的颜色，
+/// 深色底上的暗灰读不出来；DIM 压的是**当前这个前景色**，深色浅色两边都活。
+/// 它照旧归 [`colourful`] 管——它是这四种语义色之一，不是排版上的强调
+/// （模块文档《不是语义色的那几样》）。
+///
+/// 不上色那一趟四种一律给 [`Style::default`]：**屏上的字一格不变**，
+/// 变的只有样式（样式改不动缓冲里的字符）。
+pub(super) fn style(tone: Tone) -> Style {
+    if !colourful() {
+        return Style::default();
+    }
+    match tone {
+        Tone::Plain => Style::default(),
+        Tone::Caution => Style::default().fg(Color::Yellow),
+        Tone::Trouble => Style::default().fg(Color::Red),
+        Tone::Muted => Style::default().add_modifier(Modifier::DIM),
     }
 }
 
@@ -129,7 +117,7 @@ impl Painted {
     /// 交给终端库画，**一行不折**。总览块那几行走它——那一格摆不下时那一行已经
     /// 从中间省略过了（见 `super::overview::Overview::draw`），不由终端库从行尾硬截。
     pub(super) fn line(&self) -> Line<'static> {
-        Line::styled(self.text.clone(), self.tone.style())
+        Line::styled(self.text.clone(), style(self.tone))
     }
 
     /// 折成这一格摆得下的那几行，**整段一个语义**（折出来的每一行都跟着上同一种色——
@@ -138,10 +126,10 @@ impl Painted {
     /// 折行的规矩在**终端库之外**（[`crate::wrap`]）：`--help` 与命令行印出来的报告折的是
     /// 同一套，而那两处根本没有终端库。这里只交代**折到多宽**。
     pub(super) fn folded(&self, width: u16) -> Vec<Line<'static>> {
-        let style = self.tone.style();
+        let look = style(self.tone);
         crate::wrap::fold(&self.text, width)
             .into_iter()
-            .map(|row| Line::styled(row, style))
+            .map(|row| Line::styled(row, look))
             .collect()
     }
 
@@ -232,19 +220,19 @@ mod tests {
         let four = [Tone::Muted, Tone::Plain, Tone::Caution, Tone::Trouble];
 
         forcing(true, || {
-            assert_eq!(Tone::Plain.style(), Style::default(), "平常就是终端默认色");
-            assert_eq!(Tone::Caution.style().fg, Some(Color::Yellow));
-            assert_eq!(Tone::Trouble.style().fg, Some(Color::Red));
+            assert_eq!(style(Tone::Plain), Style::default(), "平常就是终端默认色");
+            assert_eq!(style(Tone::Caution).fg, Some(Color::Yellow));
+            assert_eq!(style(Tone::Trouble).fg, Some(Color::Red));
             assert!(
-                Tone::Muted.style().add_modifier.contains(Modifier::DIM),
+                style(Tone::Muted).add_modifier.contains(Modifier::DIM),
                 "「暗」压的是当前这个前景色"
             );
             for tone in four {
-                assert_eq!(tone.style().bg, None, "{tone:?} 定了背景色");
+                assert_eq!(style(tone).bg, None, "{tone:?} 定了背景色");
             }
             for (at, one) in four.iter().enumerate() {
                 for two in &four[at + 1..] {
-                    assert_ne!(one.style(), two.style(), "{one:?} 与 {two:?} 长得一样");
+                    assert_ne!(style(*one), style(*two), "{one:?} 与 {two:?} 长得一样");
                 }
             }
         });
@@ -258,26 +246,9 @@ mod tests {
     fn no_color_takes_every_tone_back_to_the_terminal_default() {
         forcing(false, || {
             for tone in [Tone::Muted, Tone::Plain, Tone::Caution, Tone::Trouble] {
-                assert_eq!(tone.style(), Style::default(), "{tone:?} 还上着色");
+                assert_eq!(style(tone), Style::default(), "{tone:?} 还上着色");
             }
         });
-    }
-
-    /// **四种语义有轻重，一行上摆着好几件事时取最重的那一种。**
-    ///
-    /// 总览块的出事行同时数着隔离（注意）与失败页（出事），而它只有一种颜色
-    /// （见 [`super::super::overview`]）。
-    #[test]
-    fn the_four_tones_run_from_the_least_to_the_most_serious() {
-        assert!(Tone::Muted < Tone::Plain);
-        assert!(Tone::Plain < Tone::Caution);
-        assert!(Tone::Caution < Tone::Trouble);
-        assert_eq!(
-            [Tone::Caution, Tone::Trouble, Tone::Plain]
-                .into_iter()
-                .max(),
-            Some(Tone::Trouble)
-        );
     }
 
     /// 六种卷都齐的那一趟，画在主区上、屏上那几行连同颜色一起取回来。
@@ -366,7 +337,9 @@ mod tests {
 
     /// **屏上每一处上过色的地方，都另有一个字或一个行首记号**（票面第二条）。
     ///
-    /// 走一遍主区，**逐段问**：凡是上了色的地方，那一段的头一行必带着底下那几个载体之一。
+    /// **这是对每一处的闸门，不是语义色那个类型的一个属性**（`no-false-line/05`）：
+    /// 语义色不带记号，各处各配各的，因此要有一条用例走一遍屏、逐处问。
+    /// 走一遍主区与屏底，**逐段问**：凡是上了色的地方，那一段的头一行必带着底下那几个载体之一。
     /// 这一条挡的是「往后添一处上色却忘了配一个字」——那种改动去掉颜色就丢信息，
     /// 而 `NO_COLOR` 那一趟与色盲的眼睛看到的正是去掉颜色的那一份。
     ///
@@ -380,6 +353,10 @@ mod tests {
     /// 与失败页那一段都是红的）：那一道缝由
     /// [`the_row_that_went_wrong_is_red_and_says_so`] 在同一份夹具上补一句，
     /// 停车场 Q353 记着这件事。
+    ///
+    /// **屏底那一句也在这一条的地界里**：从前它只照主区那一份夹具，而屏底那一句在主区外面
+    /// （`shell` 才画得到它）。状态机说出口的三种里上色的是两种（没做成红、先问一句黄；
+    /// 做成了是平常，不上色），各画一屏问一遍——那一屏上上了色的就是它，而它得配着记号。
     #[test]
     fn every_painted_block_carries_a_word_or_a_mark_of_its_own() {
         /// 四种记号，加上屏上说得出「怎么了」的那几个词。
@@ -396,7 +373,6 @@ mod tests {
             "部分救回",
         ];
 
-        let rows = rows_of_a_run_with_every_kind(true);
         // **这一行在屏上是什么样子**：它出现过的那几种前景色（去重、按出现次序，见
         // [`OnScreen::colours`]）加上压没压暗。没上色就是 `None`——它把前后两段隔开，
         // 与样子变了是同一件事。这不是[语义色](Tone)：屏上读回来的是色，不是档。
@@ -405,23 +381,52 @@ mod tests {
             (!row.colours.is_empty() || dim).then(|| (row.colours.clone(), dim))
         };
 
-        let mut heads = 0usize;
-        let mut above: Option<(Vec<Color>, bool)> = None;
-        for row in &rows {
-            let here = looks(row);
-            if here.is_some() && here != above {
-                heads += 1;
-                let text = tight(&row.text);
-                assert!(
-                    CARRIERS.iter().any(|carrier| text.contains(carrier)),
-                    "这一段头一行上了色却没有一个字接得住：{}",
-                    row.text
-                );
+        // 走一遍一屏，逐段问；答的是这一屏上有几段上色的。
+        let painted_blocks_on = |rows: &[OnScreen]| -> usize {
+            let mut heads = 0usize;
+            let mut above: Option<(Vec<Color>, bool)> = None;
+            for row in rows {
+                let here = looks(row);
+                if here.is_some() && here != above {
+                    heads += 1;
+                    let text = tight(&row.text);
+                    assert!(
+                        CARRIERS.iter().any(|carrier| text.contains(carrier)),
+                        "这一段头一行上了色却没有一个字接得住：{}",
+                        row.text
+                    );
+                }
+                above = here;
             }
-            above = here;
-        }
+            heads
+        };
 
+        // 主区：六种卷都齐的那一趟。
+        let heads = painted_blocks_on(&rows_of_a_run_with_every_kind(true));
         assert!(heads >= 3, "这一趟该有几段上色的：{heads}");
+
+        // 屏底那一句：一趟都没跑过的一屏上，上了色的只有它。
+        let bottom_line_carries = |session: &mut Session, said: &str| {
+            let rows = forcing(true, || {
+                painted(|frame| shell(frame, session, None), WIDE, TALL)
+            });
+            let bottom = row_saying(&rows, said);
+            assert!(
+                !bottom.colours.is_empty(),
+                "屏底那一句没上色，这一条问了个空：{}",
+                bottom.text
+            );
+            let heads = painted_blocks_on(&rows);
+            assert!(heads >= 1, "「{said}」那一屏上一段上色的都没数到");
+        };
+
+        let mut refused = Session::new();
+        refused.complain("先挑型号：跑不起来".to_owned());
+        bottom_line_carries(&mut refused, "先挑型号：跑不起来");
+
+        let mut asked = Session::new();
+        asked.ask_before_erasing("画集");
+        bottom_line_carries(&mut asked, "真要删掉「画集」吗");
     }
 
     /// **一段整段上色时，接住颜色的是那一段的头一行**（票面第二条）。
