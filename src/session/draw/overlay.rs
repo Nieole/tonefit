@@ -45,7 +45,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use tonefit::Pass;
 
-use super::keys::{Wording, merged};
+use super::keys::{Starters, Wording, merged, starters};
 use super::overview::pass_name;
 use super::paint::Painted;
 use crate::session::live::Live;
@@ -68,7 +68,7 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
     // 两张差的只有这一句：底下那一副画法一格不分岔。
     let body = match which {
         Overlay::Keys => keys_and_passes(session),
-        Overlay::Premises => premises(live),
+        Overlay::Premises => premises(session, live),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -107,9 +107,9 @@ pub(super) fn overlay(frame: &mut Frame, area: Rect, session: &mut Session, live
 /// （`super::super::state` 的 `revealing` 在 `Stage::Fresh` 上不派它，停车场 Q167），
 /// 屏底那一行因此也不摆它。从前挡它的是 `crate::session::terminal::press` 里的一道闸，
 /// 那一道连同它那句话一起没了。真到了就说同一句——画不出来的东西不该画成一格空白。
-fn premises(live: Option<&Live>) -> Vec<Painted> {
+fn premises(session: &Session, live: Option<&Live>) -> Vec<Painted> {
     let Some(live) = live else {
-        return vec![Painted::plain(NOT_RUN_YET.to_owned())];
+        return vec![Painted::plain(not_run_yet(&starters(session)))];
     };
     vec![Painted::plain(crate::render::header(
         live.report(),
@@ -118,7 +118,16 @@ fn premises(live: Option<&Live>) -> Vec<Painted> {
 }
 
 /// 一趟都还没跑过时，前提那一张里说什么。
-const NOT_RUN_YET: &str = "还没跑过：这一趟的前提要等按下 t 试算或 x 执行才有。";
+///
+/// 两个键出自按键表（[`Starters::named`]，`super::keys` 模块文档《屏上顺口提到一个键的那几句散文》），
+/// 措辞是这一张自己的；两个都派不出来时只说要等跑起来。
+fn not_run_yet(starters: &Starters) -> String {
+    let keys = starters.named();
+    match keys.is_empty() {
+        true => "还没跑过：这一趟的前提要等跑起来才有。".to_owned(),
+        false => format!("还没跑过：这一趟的前提要等按下 {}才有。", keys.join("或 ")),
+    }
+}
 
 /// **全部键**那一张的正文：键位那几组（[`keys`]），末尾接三遍那一节（[`passes`]）。
 ///
@@ -814,5 +823,20 @@ mod tests {
         // 跑着的时候它在这一张上：**只列此刻这个阶段派得出的键**的另一半。
         let running = tight(&screen(&mut session, None, 120, 60));
         assert!(running.contains(&tight("按一次收尾")), "{running}");
+    }
+
+    /// **前提那一张「还没跑过」那一句里的两个键出自交给它的那张表**（`no-false-line/06`，
+    /// 收停车场 Q190）：喂一副假键（[`Starters::faked`]），句子里得是这一副。
+    /// 两个键都派不出来时不提键。
+    #[test]
+    fn the_premises_not_run_yet_line_names_the_keys_the_table_hands_it() {
+        assert_eq!(
+            not_run_yet(&Starters::faked(Some("r"), Some("w"))),
+            "还没跑过：这一趟的前提要等按下 r 试算或 w 执行才有。"
+        );
+        assert_eq!(
+            not_run_yet(&Starters::faked(None, None)),
+            "还没跑过：这一趟的前提要等跑起来才有。"
+        );
     }
 }

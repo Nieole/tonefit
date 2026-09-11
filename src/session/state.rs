@@ -2954,6 +2954,27 @@ fn stage_action(key: Key, stage: Stage) -> Action {
     }
 }
 
+/// **阶段那一维在某个阶段上派得出的每一个键**，连同它派的那件事，次序照 [`every_key`]。
+///
+/// 与 [`Session::keys_here`] 差的是问的**不一定是此刻**：屏底有一句话在跑着的当口就要
+/// 预告决策点上按什么（`super::draw::footer` 的「续做」那一句，`p1-session/14`），
+/// 而那一刻会话还没走到那个阶段。这一条按给定的阶段把[阶段那一维](stage_action)问一遍
+/// ——键仍旧只有那一处出处，这里一个都不另列（`no-false-line/06`，收停车场 Q190）。
+///
+/// 只问阶段那一维：[掀开覆盖层那两个键](revealing)与各块自己的键不在里面，
+/// 而预告决策点上按什么要问的正是答话那三个——它们只归这一维。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+)]
+pub fn stage_keys(stage: Stage) -> Vec<(Key, Action)> {
+    every_key()
+        .into_iter()
+        .map(|key| (key, stage_action(key, stage)))
+        .filter(|(_, action)| *action != Action::Ignored)
+        .collect()
+}
+
 /// 跑起来之后阶段那一维派得出的键：**一个改动键都不派，只留按停**。
 ///
 /// 「跑起来之后三层只读」（`CONTEXT.md` 的《会话》）因此是结构上成立的，
