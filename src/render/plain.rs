@@ -237,6 +237,9 @@ pub(super) fn line(row: &Row) -> String {
         // 覆盖与逐页那两种同样挂在「卷级」后面：三种判定在纸上是同一行的三种说法。
         RowKind::Override | RowKind::PerPage => format!("  卷级 {}\n", cell(row, Field::Sentence)),
         RowKind::Driver => format!("    定档页 {}\n", cell(row, Field::Source)),
+        // 档位分布接在卷级判定后面，与它同一级：判定说「候选从哪来」，它说「各页写成了哪一档」。
+        // 「档位分布」是列头——会话的卷表把同一格摆在这四个字底下（`two-pass-rework/02`）。
+        RowKind::Tally => format!("  档位分布 {}\n", cell(row, Field::Tally)),
         RowKind::Reading => format!("  {}\n", cell(row, Field::Reading)),
         RowKind::Cache => format!("  缓存 {}\n", cell(row, Field::Cache)),
         // 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」一行读下来，

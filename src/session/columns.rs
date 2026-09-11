@@ -61,7 +61,7 @@ pub(super) const GAP: usize = 2;
 ///
 /// 取 `⋯`（U+22EF）而不是 `…`（U+2026）：后者过不了
 /// [`width_is_stable`](tonefit::width_is_stable) 那一关（停车场 Q154）。
-/// 省略过的是名字那一列，它右边还有三列。
+/// 省略过的是名字那一列，它右边还可能留着几列。
 const ELLIPSIS: char = '⋯';
 
 /// 一列的字**是谁写的**：`CONTEXT.md`《格》立的那一维——**字面出处 (Provenance)**，
@@ -212,9 +212,11 @@ pub(super) enum VolumeColumn {
     Name,
     /// 输出页数。
     Pages,
-    /// 基准档，或者这一卷为什么没有一档（跳过、逐页、覆盖、没做成）。
-    Base,
-    /// 定档页：这一卷的档位是哪一页定出来的。
+    /// 档位分布（`CONTEXT.md` 的《档位分布》），或者这一卷为什么一页都没判（跳过、没做成）。
+    /// **一张灰度页都没有的卷这一格不在场**（`two-pass-rework/02`）。
+    Tally,
+    /// 定档页：这一卷的档位是哪一页定出来的。**只在 `--envelope` 那条路上在场**——
+    /// 默认逐页那一趟整列不在（[`fit`] 的第零步让掉它，连列头都不占）。
     Driver,
     /// 这一卷做了多久。
     Elapsed,
@@ -225,19 +227,26 @@ impl Column for VolumeColumn {
         Self::Mark,
         Self::Name,
         Self::Pages,
-        Self::Base,
+        Self::Tally,
         Self::Driver,
         Self::Elapsed,
     ];
 
-    /// **砍列的次序：耗时 → 定档页 → 页数。**
+    /// **砍列的次序：耗时 → 定档页 → 页数 → 档位分布。**
     ///
     /// 记号与卷名不在这里边——它们**恒在**：一行上先要认得出这是哪一卷、它出没出事。
     ///
     /// 次序按「摆不下时先舍谁」排：耗时最先——它是这一卷做完之后的一个旁证；
-    /// 定档页次之——追下去要展开那一卷才看得清；页数压后——它是这一卷有多厚，
-    /// 与卷名一起就已经是一句话。
-    const DROPPED_IN_TURN: &'static [Self] = &[Self::Elapsed, Self::Driver, Self::Pages];
+    /// 定档页次之——追下去要展开那一卷才看得清；页数再次——它是这一卷有多厚，
+    /// 与卷名一起就已经是一句话；**档位分布压后**——它是这张表要答的那件事，
+    /// 但它也是这张表上最宽的一格（两档就二十格，`two-pass-rework/02`），
+    /// 留着它去收窄卷名，卷名就只剩一个省略号，那一行连是哪一卷都认不出了。
+    /// 它让掉之后跳过与没做成那两个词跟着丢，而行首记号说的是同一件事
+    /// （`super::draw::table::Mark`）：靠得住的载体是记号，不是这一格。
+    /// 从前这一列写的是基准档、一格最宽十二格，那时它恒在、砍无可砍只收窄卷名；
+    /// 分布那一格宽出一倍，这一条重新想过，结论翻了。
+    const DROPPED_IN_TURN: &'static [Self] =
+        &[Self::Elapsed, Self::Driver, Self::Pages, Self::Tally];
 
     const NARROWED: Self = Self::Name;
 
@@ -246,7 +255,7 @@ impl Column for VolumeColumn {
             Self::Mark => "记号",
             Self::Name => "卷名",
             Self::Pages => "页数",
-            Self::Base => "基准档",
+            Self::Tally => "档位分布",
             Self::Driver => "定档页",
             Self::Elapsed => "耗时",
         }
@@ -263,10 +272,10 @@ impl Column for VolumeColumn {
             Self::Mark => Provenance::Mark,
             Self::Name => Provenance::Verbatim,
             Self::Pages => Provenance::Wording(Some(Field::PageCount)),
-            // **判出了档位的那一种就是这一格**；另外四种说法（跳过 · 逐页 · 覆盖 · 没做成）
-            // 由 [`crate::render::base_column`] 就地写出、不占一格，而它们逐条进了目录那一行的
-            // [分布](Field::Bases)——那一关因此照旧问得到（停车场 Q377）。
-            Self::Base => Provenance::Wording(Some(Field::Base)),
+            // **有判定的卷就是这一格**；跳过与没做成那两个词由 [`crate::render::tally_column`]
+            // 就地写出、不占一格，而它们逐条进了目录那一行的[分布](Field::Bases)——
+            // 那一关因此照旧问得到（停车场 Q377）。
+            Self::Tally => Provenance::Wording(Some(Field::Tally)),
             // 定档页那一格是**一条路径的最后一段**（见 `super::draw::table::driver`）。
             Self::Driver => Provenance::Verbatim,
             // **这一列的字是画法那一层自己造的**（`super::draw::overview::spell`）：
@@ -727,12 +736,15 @@ mod tests {
     }
 
     /// 一份够宽的量：各列都比列头宽一点。
+    ///
+    /// 档位分布那一格照真实那一副的量级给（两档，`two-pass-rework/02`）：
+    /// 它是这张表上最宽的一格，砍列的次序正是对着它重新想过的。
     fn measured() -> Widths<VolumeColumn> {
         let mut widths = Widths::new();
         widths.widen(VolumeColumn::Mark, "✓");
         widths.widen(VolumeColumn::Name, "棋魂 07");
         widths.widen(VolumeColumn::Pages, "184");
-        widths.widen(VolumeColumn::Base, "2bit+FS");
+        widths.widen(VolumeColumn::Tally, "2bit+FS 183 ⋅ 4bit 1");
         widths.widen(VolumeColumn::Driver, "087.png");
         widths.widen(VolumeColumn::Elapsed, "1m12s");
         widths
@@ -745,13 +757,13 @@ mod tests {
 
         // 「记号」两个汉字四格，而记号本身一格：列头撑着这一列。
         assert_eq!(widths.of(VolumeColumn::Mark), 4);
-        // 「基准档」六格，`2bit+FS` 七格：这一次是格撑着列头。
-        assert_eq!(widths.of(VolumeColumn::Base), 7);
+        // 「档位分布」八格，`2bit+FS 183 ⋅ 4bit 1` 二十格：这一次是格撑着列头。
+        assert_eq!(widths.of(VolumeColumn::Tally), 20);
         // 中文两格：「棋魂 07」是 2+2+1+2 = 7 格，不是七个字符。
         assert_eq!(widths.of(VolumeColumn::Name), 7);
     }
 
-    /// **给一个宽度，问该留哪几列**：按 `耗时 → 定档页 → 页数` 那个次序砍。
+    /// **给一个宽度，问该留哪几列**：按 `耗时 → 定档页 → 页数 → 档位分布` 那个次序砍。
     ///
     /// 这一条钉的是那个次序本身——它只有 [`Column::DROPPED_IN_TURN`] 一处出处，
     /// 而屏上砍成什么样全由 [`fit`] 说了算。
@@ -769,7 +781,7 @@ mod tests {
             VolumeColumn::Mark,
             VolumeColumn::Name,
             VolumeColumn::Pages,
-            VolumeColumn::Base,
+            VolumeColumn::Tally,
             VolumeColumn::Driver,
         ];
         assert_eq!(fit(full - 1, &widths), without_elapsed);
@@ -779,16 +791,24 @@ mod tests {
             VolumeColumn::Mark,
             VolumeColumn::Name,
             VolumeColumn::Pages,
-            VolumeColumn::Base,
+            VolumeColumn::Tally,
         ];
         assert_eq!(
             fit(line_width(&without_elapsed, &widths) - 1, &widths),
             without_driver
         );
 
-        // 再窄：页数也让掉，剩下记号、卷名、基准档三列。
-        let bare = vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Base];
-        assert_eq!(fit(line_width(&without_driver, &widths) - 1, &widths), bare);
+        // 再窄：页数也让掉，剩下记号、卷名、档位分布三列。
+        let without_pages = vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Tally];
+        assert_eq!(
+            fit(line_width(&without_driver, &widths) - 1, &widths),
+            without_pages
+        );
+
+        // 再窄：分布也让掉，剩下记号与卷名——**它在收窄卷名之前让**：
+        // 二十格的一格留着，卷名就只剩一个省略号，那一行就认不出是哪一卷了。
+        let bare = vec![VolumeColumn::Mark, VolumeColumn::Name];
+        assert_eq!(fit(line_width(&without_pages, &widths) - 1, &widths), bare);
     }
 
     /// **目录那张表按它自己那个次序砍：基准档分布 → 卷数**（`volume-discovery/08`）。
@@ -902,7 +922,9 @@ mod tests {
 
     /// **最窄那一档上卷名与行首记号仍在。**
     ///
-    /// 砍到没得砍了也停在这三列上：一行上先要认得出这是哪一卷、它出没出事。
+    /// 砍到没得砍了也停在这两列上：一行上先要认得出这是哪一卷、它出没出事。
+    /// 档位分布不在里面（`two-pass-rework/02`）：跳过与没做成那两个词丢了，
+    /// 行首记号仍说着同一件事——靠得住的载体是它（见 `super::draw::table::Mark`）。
     #[test]
     fn the_narrowest_table_still_has_its_marks_and_its_volume_names() {
         let widths = measured();
@@ -925,6 +947,10 @@ mod tests {
             assert!(
                 !kept.contains(&VolumeColumn::Pages),
                 "{room} 格上还留着页数"
+            );
+            assert!(
+                !kept.contains(&VolumeColumn::Tally),
+                "{room} 格上还留着档位分布"
             );
         }
     }
@@ -996,14 +1022,12 @@ mod tests {
     #[test]
     fn narrowing_the_name_column_makes_the_row_fit() {
         let mut widths = measured();
-        let room = 16;
+        // 记号四格加一个空再加卷名七格是十三格：十格上砍无可砍，只剩收窄卷名。
+        let room = 10;
 
         let kept = plan(room, &mut widths);
 
-        assert_eq!(
-            kept,
-            vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Base]
-        );
+        assert_eq!(kept, vec![VolumeColumn::Mark, VolumeColumn::Name]);
         assert_eq!(line_width(&kept, &widths), room, "收窄之后没有正好摆下");
         // 名字那一列收得再窄也留一格：它恒在（见 [`plan`]）。
         let mut sliver: Widths<PageColumn> = Widths::new();

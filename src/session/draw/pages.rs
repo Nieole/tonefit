@@ -300,7 +300,7 @@ fn entries(volume: &VolumeReport, panel: Panel, mode: Mode) -> Vec<Entry> {
 /// 两样装在一个类型里而不是一对裸值，与 [`Table`] 同一条理由：它们是同一次拼出来的，
 /// 而「第二个 `String` 是什么」在调用处看不出来。
 pub(super) struct Opened {
-    /// 钉在这一格顶上的那一行：这一卷的基准档、定档页、这一副列着几页。
+    /// 钉在这一格顶上的那一行：这一卷的档位分布、定档页、这一副列着几页。
     ///
     /// **它不随表滚**（见 [`super::report`]）：逐页翻到第三屏时「这一卷判成哪一档」
     /// 还得答得出来，而那正是翻这几页要比的东西。
@@ -349,11 +349,12 @@ pub(super) fn pages(
     Opened { heading, table }
 }
 
-/// 钉在这一格顶上那一行：**这一卷的基准档 · 定档页 · 这一副列着几页**（票面：抬头钉住）。
+/// 钉在这一格顶上那一行：**这一卷的档位分布 · 定档页 · 这一副列着几页**（票面：抬头钉住）。
 ///
-/// 前两格与卷表上那两列**同一个出处**（[`crate::render::base_column`] 与
-/// [`driver`]）：展开着的时候卷表不在屏上，而「这一卷判成哪一档、是哪一页定的」
-/// 正是逐页那几行要比的东西。不在场就不出（跳过的卷没有定档页）。
+/// 前两格与卷表上那两列**同一个出处**（[`crate::render::tally_column`] 与
+/// [`driver`]）：展开着的时候卷表不在屏上，而「这一卷各页写成了哪几档、是哪一页定的」
+/// 正是逐页那几行要比的东西。不在场就不出：跳过的卷没有定档页，
+/// 默认逐页那一趟也没有（`two-pass-rework/02`——定档页只在 `--envelope` 那条路上在场）。
 ///
 /// 末一格说的是[这一副列的是哪几页](Listing)——**切换状态屏上看得出**就落在它身上
 /// （屏底那一行摆的是那个键，见 [`super::footer`]：按键提示的家是屏底，状态的家是抬头）。
@@ -369,8 +370,14 @@ fn heading(
 ) -> String {
     let rows = render::volume(volume, limit);
     let mut said = Vec::new();
-    if let Some(base) = render::base_column(&rows) {
-        said.push(format!("基准档 {base}"));
+    if let Some(tally) = render::tally_column(&rows) {
+        // 有分布的卷挂上列头；一页都没判的卷（跳过）只剩那一个词，列头不挂——
+        // 「档位分布 跳过」不是一句话，表上那一列有列头撑着，抬头没有。
+        said.push(if rows.iter().any(|row| row.kind == RowKind::Tally) {
+            format!("档位分布 {tally}")
+        } else {
+            tally
+        });
     }
     if let Some(driver) = driver(&rows) {
         said.push(format!("定档页 {driver}"));
@@ -560,7 +567,7 @@ mod tests {
     /// 跳过的卷另说一句：它根本没有逐页结果，而那与「没有要紧的页」不是一回事。
     #[test]
     fn a_volume_with_nothing_worth_listing_says_so_instead_of_showing_an_empty_table() {
-        // `--per-page` 那一卷没有定档页，一页也没出过事：要紧的页因此一张都没有。
+        // 默认逐页那一卷没有定档页，一页也没出过事：要紧的页因此一张都没有。
         let plain = fixture::per_page_volume("名侦探 05");
         let opened = pages(
             &plain,
@@ -607,12 +614,15 @@ mod tests {
             assert_eq!(opened.table.rows.len(), 1);
             assert!(opened.table.rows[0].text.contains("一页都没有重做"));
             assert_eq!(opened.table.rows[0].tone, Tone::Muted);
+            // 抬头只剩「跳过」那一个词：没有分布可挂列头，也没有定档页、没有页数可说。
+            assert_eq!(opened.heading, " 跳过", "{}", opened.heading);
         }
     }
 
-    /// **抬头钉住这一卷的基准档与定档页，两格与卷表那两列同一个出处**（票面：抬头）。
+    /// **抬头钉住这一卷的档位分布与定档页，两格与卷表那两列同一个出处**（票面：抬头；
+    /// 基准档那一格换成分布是 `two-pass-rework/02`）。
     #[test]
-    fn the_heading_pins_the_base_and_the_driver_of_this_volume() {
+    fn the_heading_pins_the_tally_and_the_driver_of_this_volume() {
         let volume = fixture::a_page_of_every_kind("卷二");
 
         let heading = pages(
@@ -627,8 +637,13 @@ mod tests {
         .heading;
 
         let rows = render::volume(&volume, WhiteAlignLimit::default());
-        assert!(heading.contains(&render::base_column(&rows).expect("有基准档")));
+        assert!(heading.contains(&render::tally_column(&rows).expect("有档位分布")));
         assert!(heading.contains(&driver(&rows).expect("有定档页")));
+        // 这一卷八页里六页有判定：基准档那五页加特例那一页，分布把两档各摆出来。
+        assert!(
+            heading.starts_with(" 档位分布 4bit 5 ⋅ 8bit 1 · 定档页 003.jpg"),
+            "{heading}"
+        );
         // 列着几页也在：切到全部页之后这一格换一种说法——屏上看得出切没切过去。
         assert!(heading.contains("要紧的页 6/8"), "{heading}");
         let all = pages(

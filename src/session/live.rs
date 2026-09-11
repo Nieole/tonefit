@@ -1233,7 +1233,9 @@ pub(crate) mod fixture {
 
     /// 一份**覆盖顶掉判定**的卷报告：覆盖项把候选裁到只剩一个，卷级基准档无从谈起。
     ///
-    /// 与 [`per_page_volume`] 同一条：只换判定那一格。
+    /// 与 [`per_page_volume`] 差一处：那一页的判定跟着换成被覆盖成的那一个候选、理由是覆盖——
+    /// 卷表的档位分布那一列数的正是页上的判定（`two-pass-rework/02`），
+    /// 页上写着 4bit 而卷级说覆盖成 2bit+FS，那一行就是一份自相矛盾的报告。
     #[cfg_attr(
         not(feature = "tui"),
         allow(
@@ -1242,12 +1244,19 @@ pub(crate) mod fixture {
         )
     )]
     pub fn overridden_volume(name: &str) -> VolumeReport {
+        let pinned = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        let mut volume = processed_volume(name, None);
+        if let PageOutcome::Whole(processed) = &mut volume.pages[0].outcome
+            && let PageBranch::Gray { verdict, .. } = &mut processed.branch
+        {
+            *verdict = Verdict {
+                candidate: pinned,
+                reason: Reason::Override,
+            };
+        }
         VolumeReport {
-            verdict: Some(VolumeVerdict::Override(Candidate::new(
-                BitDepth::Two,
-                Dither::FloydSteinberg,
-            ))),
-            ..processed_volume(name, None)
+            verdict: Some(VolumeVerdict::Override(pinned)),
+            ..volume
         }
     }
 
