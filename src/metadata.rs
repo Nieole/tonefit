@@ -15,7 +15,8 @@
 //!   是为了让「这一页为什么是这一档」随文件走（spec 的 story 7）。
 //! - **页级源哈希**一项（two-pass-rework/13）：只算这一张来自的那个源成员，与来路合起来
 //!   是这一页**自己**的幂等依据（见 [`PageSource`]）。它摆在卷级那四项**旁边**，不替代它们：
-//!   跳过与重做仍按卷（`crate::can_skip` 不读它）——那是 expand–contract 的 expand 那一步。
+//!   整卷齐着仍按卷跳；卷不齐时按它逐页留下没变的页（two-pass-rework/14，
+//!   见 `crate::compare_with_the_prior_output`）。
 //!
 //! tEXt 的取值是 Latin-1，中文写不进去：本模块产出的字符串一律 ASCII。
 //! 报告那一侧的中文说法（见 `crate::report` 与 `main`）不替代它，它也不替代报告——
@@ -27,6 +28,7 @@ use std::path::Path;
 
 use crate::decide::{Reason, Verdict};
 use crate::decode::Salvage;
+use crate::geometry::Size;
 use crate::metric::{Aggregation, Composition, Masking, aggregation, composition, masking};
 use crate::quantize::Dither;
 use crate::request::Request;
@@ -80,6 +82,15 @@ impl Fingerprint {
             source,
         }
     }
+
+    /// 除源哈希之外那三项——工具版本、profile 名、参数哈希——都对得上吗。
+    ///
+    /// **页级依据**要的正是这三项（two-pass-rework/14）：源那一项换成这一页自己的
+    /// [`PageSource`]。卷级那一份说「这一卷变没变」，而按页跳过问的是「这一页变没变」
+    /// ——卷里别的页改了，卷级源哈希必变，这一页却不该因此重做。
+    pub fn same_but_for_the_source(&self, other: &Self) -> bool {
+        self.tool == other.tool && self.profile == other.profile && self.params == other.params
+    }
 }
 
 /// 一张输出页的**来路**：它来自哪个源成员，在那一族里排第几，那一族一共几张。
@@ -90,7 +101,7 @@ impl Fingerprint {
 /// ——有装订沟就切成两张，没有就一张（页几何批 04 号票）。输出成员名因此预告不出来，
 /// 从前那条「按预告的名单逐个比指纹」的路走不下去了。这一项把方向反过来：
 /// 名单从**上一趟写在输出里的记录**读回来，一张输出页自己说得出它来自哪个源页、
-/// 那一族该有几张（见 `crate::can_skip`）。
+/// 那一族该有几张（见 `crate::compare_with_the_prior_output`）。
 ///
 /// **「输出里少一张就该察觉」这条能力因此没有丢**，而且比从前更严：一族两张里删掉一张，
 /// 剩下那一张仍写着「1/2」，第二张找不到，这一卷重做。缺了这个计数就只剩「至少有一张」，
@@ -125,7 +136,7 @@ impl Origin {
         }
     }
 
-    /// 这一族一共几张。幂等靠它知道还该去找几张（见 `crate::can_skip`）。
+    /// 这一族一共几张。幂等靠它知道还该去找几张（见 `crate::compare_with_the_prior_output`）。
     pub fn count(&self) -> usize {
         self.count
     }
@@ -161,10 +172,11 @@ impl Origin {
 ///
 /// # 为什么是多一个键，而不是 `tonefit:source` 那一格多一层形态
 ///
-/// 旧记录只有卷级那一份，而它们必须**照旧读得懂、照旧按卷比**：`can_skip` 一个字不改
-/// （expand，不 contract）。多一个键，旧读法碰都不碰它；改 `source` 的写法则每一个读它的地方
+/// 旧记录只有卷级那一份，而它们必须**照旧读得懂、照旧按卷比**：卷级那一问一个字不改
+/// （[`PageRecord::matches`]）。多一个键，旧读法碰都不碰它；改 `source` 的写法则每一个读它的地方
 /// 都得先拆再比，[`Fingerprint`] 的相等也就不再是「四项逐字相同」。缺了这个键的记录
-/// 读回来是 `page_source: None`——它是老形态的记录，不是坏记录。
+/// 读回来是 `page_source: None`——它是老形态的记录，不是坏记录：整卷齐着照旧整卷跳，
+/// 只是卷不齐时它留不下来。
 ///
 /// # 喂什么
 ///
@@ -183,6 +195,13 @@ impl Origin {
 /// 只在**这一页的字节只取决于它自己**时写：默认路径与覆盖顶死那一趟（`crate::Settles`
 /// 答「第一遍就编好」的那两条）。上包络那条路一页的档由全卷定，失败页的占位尺寸由全卷定
 /// （卷内统一尺寸），两处都不写；`--no-metadata` 那一趟连算都不算。
+///
+/// # 谁读它
+///
+/// 按页跳过（two-pass-rework/14，见 `crate::compare_with_the_prior_output`）：幂等那一道
+/// 给每个源页各算一份，拿去与上一趟写在输出里的这一项比——对得上、来路也对得上、
+/// 其余三项依据没变，这一页就**留下**，不解码、不判、不编。写它与读它用的是同一个
+/// [`PageSource::of`]，两侧因此不会各算各的。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageSource(String);
 
@@ -213,6 +232,11 @@ impl PageSource {
 pub struct PageRecord {
     /// 幂等依据那四项。
     pub fingerprint: Fingerprint,
+    /// 这一张写出时的像素尺寸，读自 IHDR——读记录本来就要解到那一块，白拿的。
+    ///
+    /// 留下的页要它（two-pass-rework/14）：占位页按卷内统一尺寸出，而那个尺寸是全卷的众数，
+    /// 留下的页也在分母里——不数它们，一卷只重做一页时众数就由那一页说了算。
+    pub size: Size,
     /// 这一张的来路。**旧记录没有这一项**——它是页几何批 04 号票加的。
     ///
     /// 缺了它幂等**不命中**：一张说不出自己那一族有几张的页，证不了「输出里没少东西」，
@@ -221,18 +245,8 @@ pub struct PageRecord {
     pub origin: Option<Origin>,
     /// 这一张自己那一份源哈希（two-pass-rework/13）。**旧记录没有这一项**，上包络那条路
     /// 与失败页也没有（见 [`PageSource`]）——缺了它是「页级答不了」，不是坏记录；
-    /// 卷级那四项照旧比、照旧命中。这一票没有谁读它做判定，它在这里是为了读得回来
-    /// ——生产路径上因此还没有读者，那正是 expand 那一步该有的样子。
-    ///
-    /// 挂的是 `expect` 不是 `allow`：读者一接上（按页跳过那一票），这一句就成了没兑现的预期，
-    /// 编译器当场报，不靠人记得回来删（停车场 Q669）。
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "读它做判定的是按页跳过那一票；这一票只负责它读得回来"
-        )
-    )]
+    /// 卷级那四项照旧比、照旧命中，只是这一页留不下来、整卷不齐时跟着重做
+    /// （见 [`PageRecord::matches_by_page`]）。
     pub page_source: Option<PageSource>,
 }
 
@@ -244,7 +258,8 @@ impl PageRecord {
     /// 它的成本要停在这里，否则跳过一卷比重做一卷还贵。
     pub fn read(source: impl BufRead + Seek) -> Option<Self> {
         let reader = png::Decoder::new(source).read_info().ok()?;
-        let text = &reader.info().uncompressed_latin1_text;
+        let info = reader.info();
+        let text = &info.uncompressed_latin1_text;
         let field = |keyword: &str| {
             text.iter()
                 .find(|chunk| chunk.keyword == keyword)
@@ -257,6 +272,7 @@ impl PageRecord {
                 params: field(PARAMS_KEYWORD)?,
                 source: field(SOURCE_KEYWORD)?,
             },
+            size: Size::new(info.width, info.height),
             origin: field(ORIGIN_KEYWORD).as_deref().and_then(Origin::parse),
             page_source: field(PAGE_SOURCE_KEYWORD)
                 .as_deref()
@@ -264,10 +280,17 @@ impl PageRecord {
         })
     }
 
-    /// 这一页记的正是「这份指纹下、那个源成员切出来的第几张」吗。
+    /// 这一页记的是「那个源成员切出来的第几张」吗——来路对得上。
     ///
-    /// 三样都要对上：指纹（这一卷变没变）、来路（这一张属于哪个源页的哪一格）。
-    /// 来路缺项即不命中，理由见 [`PageRecord::origin`]。
+    /// 来路缺项即不是，理由见 [`PageRecord::origin`]。它只答这一张**属于哪一格**，
+    /// 不答该不该重做：那一问分两个作用域，见下面两个方法。
+    pub fn is_the_page(&self, relative: &Path, ordinal: usize, count: usize) -> bool {
+        self.origin.as_ref() == Some(&Origin::new(relative, ordinal, count))
+    }
+
+    /// 这一页记的正是「这份指纹下、那个源成员切出来的第几张」吗——**卷级**依据。
+    ///
+    /// 两样都要对上：指纹（这一卷变没变）、来路（这一张属于哪个源页的哪一格）。
     pub fn matches(
         &self,
         fingerprint: &Fingerprint,
@@ -275,9 +298,78 @@ impl PageRecord {
         ordinal: usize,
         count: usize,
     ) -> bool {
-        self.fingerprint == *fingerprint
-            && self.origin.as_ref() == Some(&Origin::new(relative, ordinal, count))
+        self.fingerprint == *fingerprint && self.is_the_page(relative, ordinal, count)
     }
+
+    /// 这一页记的正是「这一趟的工具、profile 与参数下，字节没变的那个源成员切出来的第几张」吗
+    /// ——**页级**依据（two-pass-rework/14）。
+    ///
+    /// 与 [`matches`](Self::matches) 只差源那一项：卷级源哈希换成这一页自己的
+    /// [`PageSource`]。旧记录没有那一项，答的恒是否——它证不了「这一页没变」，
+    /// 而幂等从不该给一个证不出来的命中。
+    pub fn matches_by_page(
+        &self,
+        fingerprint: &Fingerprint,
+        page_source: &PageSource,
+        relative: &Path,
+        ordinal: usize,
+        count: usize,
+    ) -> bool {
+        self.fingerprint.same_but_for_the_source(fingerprint)
+            && self.page_source.as_ref() == Some(page_source)
+            && self.is_the_page(relative, ordinal, count)
+    }
+}
+
+/// 把一页输出 PNG 里**卷级源哈希那一项**改写成 `fingerprint` 的，其余字节一个不动
+/// （two-pass-rework/14：留下的页）。
+///
+/// 留下的页是上一趟写的，它那一项记着上一趟的卷级源哈希；卷里别的页改了，那个数就过期了。
+/// 改写它，这一趟的输出才与整卷重做那一趟**逐字节相同**——下一趟卷级那四项每一页都对得上，
+/// 整卷跳过，不必再逐页比；不改写，留下的页会一直记着旧数，那一卷从此每趟都要按页比、
+/// 按页搬。像素、页级源哈希、来路、判定与理由在这一页上都只取决于它自己，
+/// 因此都是对的，不必碰。
+///
+/// 只改那一块：tEXt 的数据是「关键字 `\0` 取值」，取值恒是 [`HASH_HEX`] 个字符，
+/// 新旧等长，原地覆盖再重算那一块的 CRC（PNG 的 CRC-32 盖的是块类型加数据）即可，
+/// 一个像素都不解、不重编。找不到那一块、长度对不上，就是这一页不是本工具写的
+/// ——那样的页留不下来（见 [`PageRecord::read`]），走到这里是调用方的错，当场报。
+pub fn restamp_source(png: &mut [u8], fingerprint: &Fingerprint) -> anyhow::Result<()> {
+    const SIGNATURE: usize = 8;
+    let source = fingerprint.source.as_bytes();
+    // 新值与旧值都得恰好是那么长——原地覆盖靠的正是等长。指纹里那一项由 [`SourceHasher::finish`]
+    // 写出，恒是这个长度；这里再问一遍，是不让一个长度不对的指纹变成一次越界。
+    anyhow::ensure!(
+        source.len() == HASH_HEX,
+        "这一趟的卷级源哈希长 {} 字节，不是 {HASH_HEX}",
+        source.len()
+    );
+    let mut at = SIGNATURE;
+    let mut leader = SOURCE_KEYWORD.as_bytes().to_vec();
+    leader.push(0);
+    while at + 8 <= png.len() {
+        let length = u32::from_be_bytes(png[at..at + 4].try_into().expect("4 字节")) as usize;
+        let (kind, data) = (at + 4, at + 8);
+        // 长度是文件里读来的数，先问一句再拿它算位置：一个坏文件不该变成一次溢出。
+        let Some(crc) = data.checked_add(length).filter(|crc| crc + 4 <= png.len()) else {
+            break;
+        };
+        if &png[kind..data] == b"tEXt" && png[data..crc].starts_with(&leader) {
+            let value = data + leader.len();
+            anyhow::ensure!(
+                crc - value == HASH_HEX,
+                "卷级源哈希那一项长 {} 字节，不是 {HASH_HEX}",
+                crc - value
+            );
+            png[value..crc].copy_from_slice(source);
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&png[kind..crc]);
+            png[crc..crc + 4].copy_from_slice(&hasher.finalize().to_be_bytes());
+            return Ok(());
+        }
+        at = crc + 4;
+    }
+    anyhow::bail!("这一页里没有卷级源哈希那一项，不是本工具写的记录")
 }
 
 /// 一个相对路径写成一串字：分隔符按 `/` 归一。
@@ -1000,6 +1092,96 @@ mod tests {
         let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&malformed)))
             .expect("其余几项齐着，记录该读得回来");
         assert_eq!(read.page_source, None, "写法不对的取值被当成了页级源哈希");
+    }
+
+    /// **改写卷级源哈希那一项，其余字节一个不动**（two-pass-rework/14：留下的页）。
+    ///
+    /// 改过的页与一开始就按新指纹写出的那一页**逐字节相同**——那正是留下的页要买的东西：
+    /// 产物与整卷重做的一样，不是「像素一样、记录旧着」。页级那一问改前改后都命中
+    /// （它不看卷级那一项），卷级那一问改后按新指纹命中、按旧指纹不再命中。
+    /// 没有那一项的页（`--no-metadata` 写的）改不了，报错——那样的页留不下来。
+    #[test]
+    fn restamping_the_volume_source_rewrites_that_one_field_and_nothing_else() {
+        let yesterday = Fingerprint::new(&request(), "0".repeat(HASH_HEX));
+        let today = Fingerprint::new(&request(), "f".repeat(HASH_HEX));
+        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
+        let written = |fingerprint: &Fingerprint| {
+            one_pixel_png(&Record::color(
+                fingerprint,
+                &origin,
+                Some(&page_source),
+                None,
+            ))
+        };
+
+        let mut page = written(&yesterday);
+        restamp_source(&mut page, &today).expect("改得了");
+        assert_eq!(
+            page,
+            written(&today),
+            "改过的页与按新指纹写的那一页不是同一份字节"
+        );
+
+        let read = PageRecord::read(std::io::Cursor::new(page)).expect("改过的页该读得回来");
+        assert!(read.matches(&today, Path::new("001.jpg"), 0, 1));
+        assert!(!read.matches(&yesterday, Path::new("001.jpg"), 0, 1));
+        assert!(read.matches_by_page(&today, &page_source, Path::new("001.jpg"), 0, 1));
+
+        let mut bare = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bare, 1, 1);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_color(png::ColorType::Grayscale);
+            let mut writer = encoder.write_header().expect("写 PNG 头");
+            writer.write_image_data(&[0]).expect("写像素");
+            writer.finish().expect("收尾");
+        }
+        assert!(
+            restamp_source(&mut bare, &today).is_err(),
+            "没有那一项的页也被「改」成功了"
+        );
+    }
+
+    /// **页级那一问与卷级那一问只差源那一项**（two-pass-rework/14）：卷里别的页改了，卷级源哈希变，
+    /// 卷级不命中，页级照旧命中；这一页自己改了，页级源哈希变，页级不命中。
+    /// 工具版本、profile、参数三项任何一项变了，两问一起不命中。旧记录（没有页级那一项）页级恒不命中。
+    #[test]
+    fn the_page_level_question_differs_from_the_volume_level_one_only_in_the_source() {
+        let then = Fingerprint::new(&request(), "0".repeat(HASH_HEX));
+        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
+        let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&Record::color(
+            &then,
+            &origin,
+            Some(&page_source),
+            None,
+        ))))
+        .expect("记录该读得回来");
+        let page = Path::new("001.jpg");
+
+        // 卷里别的页改了：卷级变、页级不变。
+        let volume_changed = Fingerprint::new(&request(), "1".repeat(HASH_HEX));
+        assert!(!read.matches(&volume_changed, page, 0, 1));
+        assert!(read.matches_by_page(&volume_changed, &page_source, page, 0, 1));
+        // 这一页自己改了：页级不命中。
+        let edited = PageSource::of(page, b"other bytes");
+        assert!(!read.matches_by_page(&volume_changed, &edited, page, 0, 1));
+        // 参数变了：两问一起不命中。
+        let mut other = request();
+        other.crop = false;
+        let reparameterised = Fingerprint::new(&other, "0".repeat(HASH_HEX));
+        assert!(!read.matches(&reparameterised, page, 0, 1));
+        assert!(!read.matches_by_page(&reparameterised, &page_source, page, 0, 1));
+        // 来路对不上：两问一起不命中。
+        assert!(!read.matches_by_page(&then, &page_source, page, 0, 2));
+        // 旧记录：页级恒不命中，卷级照旧。
+        let old = PageRecord::read(std::io::Cursor::new(one_pixel_png(&Record::color(
+            &then, &origin, None, None,
+        ))))
+        .expect("旧记录该读得回来");
+        assert!(old.matches(&then, page, 0, 1));
+        assert!(!old.matches_by_page(&then, &page_source, page, 0, 1));
     }
 
     /// 页级源哈希的**写法钉死**（two-pass-rework/13）：它要落进真实输出，按页跳过那一票

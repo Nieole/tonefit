@@ -314,6 +314,7 @@ fn tail_row(said: &Row) -> Painted {
         RowKind::Directory
         | RowKind::Volume
         | RowKind::Superseded
+        | RowKind::Retained
         | RowKind::Skipped
         | RowKind::Isolated
         | RowKind::Salvaged

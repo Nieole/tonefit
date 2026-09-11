@@ -9,6 +9,11 @@
 //! 两种形态**都先写到临时容器、收尾时才改名到最终位置**（见 [`Sink`]）。
 //! 目录卷的去处里**借住着别的卷**时，收尾换掉的范围收窄到这一卷自己那几个成员
 //! （见 [`Lodgers`]）。
+//!
+//! **按页跳过没有改这一层的形态**（two-pass-rework/14）：留下的页的字节从上一趟的输出里
+//! 读回来（[`Written::bytes_of`]），改写过卷级那一项之后照写页那条路写进这一趟的临时容器，
+//! 收尾照旧整个换掉。「不产出半成品」「清掉陈旧产物」「最终位置只在收尾这一步被碰到」
+//! 三条因此一字没动；归档卷仍旧整包重打，只是留下的成员一个像素都不碰。
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -313,11 +318,15 @@ impl Drop for DirectorySink {
     }
 }
 
-/// 上一趟写出的输出容器，只读。幂等要问它两件事：一页里记着什么指纹，一个成员还在不在。
+/// 上一趟写出的输出容器，只读。幂等要问它两件事：一页里记着什么指纹，一个成员还在不在；
+/// 按页跳过再向它要第三件——留下的那几页的字节（[`bytes_of`](Self::bytes_of)，two-pass-rework/14）。
 ///
 /// 与 [`Sink`] 对称，也共用同一套容器知识——归档成员名怎么拼只此一份（见 [`archive_name`]）。
 /// 两个方向分成两个类型，因为它们的生命期不同：写那一侧要建容器、要收尾，
 /// 读这一侧连打开都可能失败，而失败就是「重做」这个平常答案。
+///
+/// **归档那一支握着一个打开的句柄。**要在这一趟的容器收尾改名**之前**放掉它：
+/// 最终位置就是它打开的那个文件，Windows 上开着句柄的文件改不了名。
 pub enum Written {
     Directory(PathBuf),
     Archive(Box<zip::ZipArchive<BufReader<File>>>),
@@ -357,6 +366,30 @@ impl Written {
                     .read_to_end(&mut prefix)
                     .ok()?;
                 PageRecord::read(Cursor::new(prefix))
+            }
+        }
+    }
+
+    /// 一个成员的全部字节（two-pass-rework/14：留下的页从这里搬）。
+    ///
+    /// 与 [`record_of`](Self::record_of) 不同，这一读**整页**：那一头只要开头一截的记录，
+    /// 这一头要的正是整页——它要原样写进这一趟的容器。读不出来是这一卷做不成
+    /// （比对之后、写出之前上一趟的输出被人动了），不是重做的理由：那时重做也未必对。
+    pub fn bytes_of(&mut self, relative: &Path) -> Result<Vec<u8>> {
+        match self {
+            Written::Directory(root) => {
+                let path = root.join(relative);
+                std::fs::read(&path).with_context(|| format!("读回上一趟写的 {}", path.display()))
+            }
+            Written::Archive(archive) => {
+                let name = archive_name(relative);
+                let mut bytes = Vec::new();
+                archive
+                    .by_name(&name)
+                    .with_context(|| format!("上一趟的输出里找 {name}"))?
+                    .read_to_end(&mut bytes)
+                    .with_context(|| format!("读回上一趟写的成员 {name}"))?;
+                Ok(bytes)
             }
         }
     }

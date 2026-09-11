@@ -28,6 +28,13 @@ clap = { version = "4.6.6", features = ["derive"] }
 # 探宽度的活不能交给 ratatui：那一份挂在 `tui` 特性后面，而闸门的第二条把 `tui` 关掉，
 # 命令行那两处照旧要问。
 console = { version = "0.16.4", default-features = false, features = ["std"] }
+# 留下的页要把记录里卷级源哈希那一项改写成这一趟的（`metadata::restamp_source`，
+# two-pass-rework/14），而改一个 tEXt 块就得重算那一块的 CRC——PNG 用的正是这一种 CRC-32。
+# 这一条**不是新的一棵树**：`png`、`flate2`、`zip` 都传递依赖着同一个版本，底下
+# `[dev-dependencies]` 里夹具手搓 ZIP 也早就直接列着它——这里只是把它列进运行时那一侧，
+# 变成本仓库自己说得出口的一条依赖，与底下 `unicode-width` 那一条同一个道理。
+# `Cargo.lock` 一格没动。
+crc32fast = "1.5.1"
 # 命令行那一头的两级停要按得动 `Ctrl-C`（ADR 0013 决定第 3 条）。
 #
 # **这一条与上面 `console`、底下 `unicode-width` 那两条不同**：它们是把树里现成的传递依赖

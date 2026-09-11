@@ -711,6 +711,7 @@ mod tests {
             output: PathBuf::from("出/卷一"),
             superseded: None,
             pages: Vec::new(),
+            retained_pages: 0,
             source_pages: 0,
             verdict: None,
             cache: crate::CacheUsage::new(crate::CacheBudget::default()),

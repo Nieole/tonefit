@@ -64,7 +64,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use rayon::prelude::*;
 
 pub use cache::{CacheBudget, CacheUsage, format_bytes};
@@ -318,7 +318,9 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 /// 只报步不改预告的话，固实归档上进度条会冲过头。
 ///
 /// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
-/// 剩下的由 [`Event::VolumeFinished`] 一次性了结。
+/// 剩下的由 [`Event::VolumeFinished`] 一次性了结。**按页跳过的卷同理**（two-pass-rework/14）：
+/// 留下的页第一遍不走，那几步少报；第二遍它们照样一步一张（搬也是写）。哪几页会留下
+/// 要幂等那一道比过才知道，而预扫在它之前，预告因此减不掉它们。
 ///
 /// 第二段那个数**也是上界**，理由与上面那条不同：一个源页产出几张要解了像素才知道，
 /// 而这一步在解码之前。取的是[每个源页最多几张](MAX_OUTPUTS_PER_SOURCE_PAGE)——
@@ -466,16 +468,23 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// dry-run 走同一条路，只是不建输出容器，第二遍也就没有可写的地方。
 ///
 /// 两遍之前还有一道**幂等**：上一趟的输出还在、四项依据一项没变，这一卷就整个不做
-/// （见 [`volume_fingerprint`]）。dry-run 也走这一道——它预告的是照做时会发生的事，
-/// 而照做时会发生的正是「跳过」（spec 的 story 6、story 8）。
+/// （见 [`volume_fingerprint`] 与 [`compare_with_the_prior_output`]）。dry-run 也走这一道——
+/// 它预告的是照做时会发生的事，而照做时会发生的正是「跳过」（spec 的 story 6、story 8）。
+///
+/// **卷不齐时按页**（two-pass-rework/14；ADR 0018 决定第 4 条）：默认路径上一页的档只取决于
+/// 它自己，页级依据对得上的页**留下**——不读、不解、不判、不编，第二遍从上一趟的输出里
+/// 搬过来；对不上的页重做。卷仍是去处、撞名、透传文件的单位：留下的与重做的按阅读顺序
+/// 一起写进同一个容器，收尾照旧整个换掉（见 `crate::sink`）。`--envelope` 那条路一页的档
+/// 由全卷定，没有页级依据，照旧整卷跳、整卷重做。
 ///
 /// **卷的去处到第一遍走完才定得下来**（12 号票）：有失败页的卷整个进隔离目录，
 /// 而哪一页失败要解过才知道。输出容器因此在第一遍之后才建——写出全在第二遍，
 /// 早建一步只会让隔离的卷在干净的去处留下一个空壳。
 ///
-/// **隔离的卷不被幂等跳过**：跳过只认干净的那个去处（见 [`can_skip`]）。这是有意的——
-/// 那不是一份做完了的输出，而失败清单每一趟都要重新给得出来（spec 的 story 26）。
-/// 代价是有坏页的卷每趟都重做一遍，直到坏页被修好。
+/// **隔离的卷不被幂等跳过**：跳过只认干净的那个去处（见 [`compare_with_the_prior_output`]）。
+/// 这是有意的——那不是一份做完了的输出，而失败清单每一趟都要重新给得出来（spec 的 story 26）。
+/// 代价是有坏页的卷每趟都重做一遍，直到坏页被修好——按页那一支上重做的只是与干净去处里
+/// 那一份对不上的页，坏页修好之后没变的页照样留下。
 ///
 /// `probes` 是这一趟共用的那份介质探测（ADR 0009 决定第 2 条，见 `medium`）。这一卷问它
 /// 一次，答案变成一份[读取计划](IoPlan)：这一卷读几条、为什么是这个数，报告照它说。
@@ -624,26 +633,39 @@ fn process_volume(
         cores(),
     );
     let writes = request.mode == Mode::Process;
+    // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）；
+    // 这一卷的档什么时候定得下来，决定灰度页那一格缓存里装的是参照还是编好的字节
+    // （见 [`Settles`]）。两样从前在第一遍里备，提到这里是因为幂等那一道也要问后者：
+    // **页级依据在这一趟成不成立**，答的是照做那一趟的形态（见 [`Settles::if_processing`]）。
+    let candidates = Candidates::new(request)?;
+    let settles = Settles::for_this_run(request, &candidates);
+    // 上一趟写在干净去处的输出，比对与留下的页都从它来（two-pass-rework/14）。开在幂等那一道
+    // **之前**：头一趟没有它，页级那一份就一个都不必算。
+    let prior_output = request
+        .metadata
+        .then(|| sink::Written::open(&clean, volume.container))
+        .flatten();
+    let walks = Settles::if_processing(request, &candidates);
+    let by_page = prior_output.is_some() && walks.encodes_in_the_first_pass();
 
     // `--no-metadata` 关掉记录，幂等的依据无处可写也无处可读，这一整道于是不在。
     //
     // 算指纹与拿它比是**同一段**（`CONTEXT.md` 的《管线》：算出本卷的指纹，与上一趟写在
     // 输出里的比）：比的那一半要开输出容器、逐成员读回记录，同样是真 I/O。摊到段外，
     // 「跳过一卷花在幂等上多久」就会少算一截，而那正是这个数存在的理由（加固批 11 号票）。
-    // 命中时它是**上一趟写在输出里的那几张**的张数，不是这一步预告出来的数：
-    // 一个源页产出几张由内容决定，而跳过的这一趟一个像素都不碰（见 [`can_skip`]）。
-    let mut written_pages = None;
+    // 比出来的答案有三种（见 [`Reuse`]）：整卷跳、按页留、整卷重做。
+    let mut reuse = Reuse::Nothing;
     let fingerprint = if request.metadata {
         events.pass_started(Pass::Fingerprint);
         timed(&mut timing.fingerprint, || -> Result<_> {
-            let fingerprint = volume_fingerprint(&mut volume, request, &io, events)?;
+            let hashes = volume_fingerprint(&mut volume, request, &io, by_page, events)?;
             // 中止之后**不再问幂等**。不是因为答案会错——下一句就把整卷连同这个答案一起
             // 丢掉了——而是因为问一次要开上一趟的输出容器、逐页读回记录，那是实打实的 I/O。
             // 「立刻停」停的正是这种活。手上那份哈希此刻也只喂了一半，它同样走不出这一卷。
             if !events.aborting() {
-                written_pages = can_skip(&clean, &volume, &fingerprint);
+                reuse = compare_with_the_prior_output(prior_output, &volume, &hashes);
             }
-            Ok(Some(fingerprint))
+            Ok(Some(hashes.fingerprint))
         })?
     } else {
         // 掐表在这个 `if` 之内：整道不在时那一段是零，而不是一个「什么都没做」的很小的数。
@@ -654,37 +676,45 @@ fn process_volume(
         // 最终位置纹丝不动（见本函数的《中止：回 `None`》）。
         return Ok(None);
     }
-    if let Some(output_pages) = written_pages {
-        let report = VolumeReport {
-            volume: volume.root,
-            output: clean,
-            // 跳过的卷是干净的，隔离目录里若还留着一份，那是上一趟坏页时写的。
-            superseded: superseded(&isolated),
-            pages: Vec::new(),
-            source_pages,
-            verdict: Some(VolumeVerdict::Skipped {
-                page_count: output_pages,
-            }),
-            cache: CacheUsage::new(request.cache_budget),
-            // 跳过的卷这一格**不是零**：幂等那一道照样把整卷的字节读了一遍，
-            // 而读之前得先摊开（见 `VolumeReport::extracted`）。
-            extracted,
-            decodes: 0,
-            // 跳过的卷一张都没缩、一张参照都没进缓存——两个数与解码那一个同形（窄计数器）。
-            resizes: 0,
-            cached_references: 0,
-            io,
-            // 两遍一遍都不走，三段里只有幂等那一段有数。
-            timing: VolumeTiming {
-                elapsed: wall_clock(),
-                ..timing
-            },
-        };
-        // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
-        // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
-        events.volume_finished(&report);
-        return Ok(Some(report));
-    }
+    // 三种答案三条路（见 [`Reuse`]）：整卷跳过在这里就收摊；按页那一支带着留下的页与
+    // 打开着的上一趟输出往下走（two-pass-rework/14）；整卷重做一页都不留。
+    // 往下第一遍只走要重做的那些源页，第二遍按阅读顺序把留下的照搬、重做的写出。
+    let (retained, mut prior_output) = match reuse {
+        Reuse::Whole { page_count } => {
+            let report = VolumeReport {
+                volume: volume.root,
+                output: clean,
+                // 跳过的卷是干净的，隔离目录里若还留着一份，那是上一趟坏页时写的。
+                superseded: superseded(&isolated),
+                pages: Vec::new(),
+                retained_pages: 0,
+                source_pages,
+                verdict: Some(VolumeVerdict::Skipped { page_count }),
+                cache: CacheUsage::new(request.cache_budget),
+                // 跳过的卷这一格**不是零**：幂等那一道照样把整卷的字节读了一遍，
+                // 而读之前得先摊开（见 `VolumeReport::extracted`）。
+                extracted,
+                decodes: 0,
+                // 跳过的卷一张都没缩、一张参照都没进缓存——两个数与解码那一个同形（窄计数器）。
+                resizes: 0,
+                cached_references: 0,
+                io,
+                // 两遍一遍都不走，三段里只有幂等那一段有数。
+                timing: VolumeTiming {
+                    elapsed: wall_clock(),
+                    ..timing
+                },
+            };
+            // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
+            // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
+            events.volume_finished(&report);
+            return Ok(Some(report));
+        }
+        Reuse::ByPage { retained, output } => (retained, Some(output)),
+        Reuse::Nothing => (Retained::nothing(source_pages), None),
+    };
+    let redo = retained.redo();
+    let retained_pages = retained.pages();
 
     // dry-run 没有第二遍，缓存于是只记账不留页：用量照旧预告得出，临时文件一个不建。
     let retention = match request.mode {
@@ -702,15 +732,16 @@ fn process_volume(
         pages: scored,
         settled,
     } = timed(&mut timing.first_pass, || {
-        first_pass(
-            &mut volume,
+        let compute = Compute {
             request,
-            &cache,
-            &counters,
-            fingerprint.as_ref(),
-            &io,
+            counters: &counters,
+            cache: &cache,
+            fingerprint: fingerprint.as_ref(),
+            candidates: &candidates,
+            settles,
             events,
-        )
+        };
+        first_pass(&mut volume, &redo, &compute, &io)
     })?;
     if events.aborting() {
         // 中止停在第一遍的页边界上：手上这半份逐页结果连同这一卷一起丢掉。
@@ -724,20 +755,31 @@ fn process_volume(
     // 一个源页产出几张由内容决定），因此比的是区间而不是等号：下界是一张源页至少出一张，
     // 上界是每张都被切开。越出这个区间说明拆分与预告分了家，而那是一种静默的错——
     // 报告照出，进度条却要么冲过头、要么停在半路。
+    let at_most = redo.len() * max_outputs_per_source_page(request);
     debug_assert!(
-        (members.source_pages..=members.output_pages).contains(&scored.len()),
-        "第一遍产出 {} 张，而源页 {} 张、上界 {} 张",
+        (redo.len()..=at_most).contains(&scored.len()),
+        "第一遍产出 {} 张，而重做的源页 {} 张、上界 {at_most} 张",
         scored.len(),
-        members.source_pages,
-        members.output_pages
+        redo.len()
     );
-    // 真正产出的那批成员名在这里第一次齐了：加了序号的名字可能撞上卷里本来就有的成员
-    // （源里同时有 `001.jpg` 与 `001-1.png`），而那一撞要在写出第一个字节之前拦下。
-    ensure_no_two_outputs_collide(&volume, &scored)?;
 
     let (verdicts, verdict) = cost::stage(cost::Stage::Summarize, || {
         summarize_volume(&scored, request)
     });
+    // 一张灰度页都没重做、却留下了页（只补透传文件、重做的只有彩页）：这一卷的候选仍是从
+    // 这条路上来的——留下的页正是上一趟按这条路判的——报告说的就该是这条路，而不是
+    // 「一张灰度页都没有」（two-pass-rework/14）。整卷重做的卷这里是 `None`，不动。
+    let verdict = verdict.or_else(|| {
+        (retained_pages > 0)
+            .then(|| walks.verdict_by_itself())
+            .flatten()
+    });
+    // 留下的与重做的按阅读顺序交错成第二遍要写的那一串（two-pass-rework/14）。
+    let slots = in_reading_order(&volume, &retained, &scored, &verdicts)?;
+    // 真正产出的那批成员名在这里第一次齐了：加了序号的名字可能撞上卷里本来就有的成员
+    // （源里同时有 `001.jpg` 与 `001-1.png`），而那一撞要在写出第一个字节之前拦下。
+    // 留下的页照样在这一批里：新切出的一张与留下的一张撞名，同样不能静默覆盖。
+    ensure_no_two_outputs_collide(&volume, &slots)?;
     // 第一遍提前编好字节的那两条路各自也定了一份档，而字节已经照它编好了
     // （默认那条路与顶死那一条，见 [`first_pass_verdicts`]）。
     // 两份必须逐格相同：报告说的那一档与写出去的那一页，一处出处。
@@ -745,7 +787,11 @@ fn process_volume(
         settled.as_ref().is_none_or(|settled| *settled == verdicts),
         "第一遍编字节用的档与汇总定的档分了家：{settled:?} 对 {verdicts:?}"
     );
-    let uniform = uniform_size(&scored, request.profile.panel().resolution);
+    // 卷内统一尺寸数的是**整本书**：留下的页也在分母里，只重做一页时众数不该由那一页说了算。
+    let uniform = uniform_size(
+        slots.iter().filter_map(Slot::size),
+        request.profile.panel().resolution,
+    );
     // 有一页失败，整卷就去隔离目录；另一个去处留着的那一份这一趟碰都不碰。
     let (output, elsewhere) = if scored.iter().any(OutputPage::failed) {
         (isolated, clean)
@@ -781,6 +827,7 @@ fn process_volume(
                     .zip(&verdicts)
                     .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
                     .collect(),
+                retained_pages,
                 source_pages,
                 verdict,
                 cache: usage,
@@ -831,7 +878,18 @@ fn process_volume(
                 cache: &cache,
                 recorder: recorder.as_ref(),
             };
-            second_pass(&scored, &verdicts, &encode, &mut sink, events)?;
+            let retaining =
+                prior_output
+                    .as_mut()
+                    .zip(fingerprint.as_ref())
+                    .map(|(output, fingerprint)| Retaining {
+                        output,
+                        fingerprint,
+                    });
+            second_pass(&slots, &encode, &mut sink, retaining, events)?;
+            // 留下的页都搬完了，上一趟的输出放掉：归档那一支握着最终位置上那个文件的句柄，
+            // 收尾改名之前必须放（见 [`sink::Written`]）。
+            drop(prior_output.take());
             for extra in &volume.extras {
                 // 透传文件也是第二遍写出的成员，页边界那个检查点照样在循环头上。
                 if events.aborting() {
@@ -881,9 +939,11 @@ fn superseded(elsewhere: &Path) -> Option<PathBuf> {
 /// 一页好页都没有的卷退到面板分辨率：卷内没有可参照的尺寸了，那就照这块面板的满幅出。
 ///
 /// 数的是**输出页**：一个源页产出的那几张各有各的尺寸（页几何批 03 号票），众数因此在切开之后取。
-fn uniform_size(pages: &[OutputPage], panel: Size) -> Size {
+/// **留下的页也数**（two-pass-rework/14）：它们的尺寸记在上一趟的记录里，与重做的那几张一起
+/// 按阅读顺序喂进来——整本书的众数，不是这一趟碰过的那几张的众数。
+fn uniform_size(sizes: impl Iterator<Item = Size>, panel: Size) -> Size {
     let mut counted: Vec<(Size, usize)> = Vec::new();
-    for size in pages.iter().filter_map(OutputPage::size) {
+    for size in sizes {
         match counted.iter_mut().find(|(seen, _)| *seen == size) {
             Some((_, count)) => *count += 1,
             None => counted.push((size, 1)),
@@ -1081,7 +1141,7 @@ struct OutputPage {
     /// 与 [`source`](Self::source) 不是重复：那一项是**给人读的身份**（卷根接上相对路径，
     /// 报告与错误信息指人用它），这一项是**写进 tEXt 的索引**（卷内相对路径，转义成 ASCII，
     /// 带着那一族的位次）。幂等靠它把输出页反查回源页——一个源页产出几张由内容决定，
-    /// 输出成员名因此在碰像素之前预告不出来（见 [`Origin`] 与 [`can_skip`]）。
+    /// 输出成员名因此在碰像素之前预告不出来（见 [`Origin`] 与 [`compare_with_the_prior_output`]）。
     ///
     /// **关掉记录的那一趟它整个不在**（07 号票）：它唯一的消费者是 [`Recorder`]，
     /// 而 `--no-metadata` 那一趟一个 [`Recorder`] 都不在场——既没有记录可写，
@@ -1401,36 +1461,28 @@ impl Candidates {
 /// 是中止就把整卷丢掉，那半份清单谁也看不见。
 fn first_pass(
     volume: &mut Volume,
-    request: &Request,
-    cache: &Mutex<cache::PageCache>,
-    counters: &ComputeCounters,
-    fingerprint: Option<&Fingerprint>,
+    redo: &[usize],
+    compute: &Compute,
     io: &IoPlan,
-    events: progress::Events,
 ) -> Result<FirstPass> {
-    // 两套候选在碰卷之前备好，页判出门之后现取一套（见 [`Candidates`]）。
-    let candidates = Candidates::new(request)?;
-    // 这一卷的档什么时候定得下来——它决定灰度页那一格缓存里装的是参照还是编好的字节
-    // （见 [`Settles`]）。
-    let settles = Settles::for_this_run(request, &candidates);
-    // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
-    let sources: Vec<PathBuf> = volume
-        .pages
-        .iter()
-        .map(|page| volume.identity(page))
-        .collect();
-    let Volume { pages, reader, .. } = volume;
-    let members: Vec<&Member> = pages.iter().collect();
-
-    let compute = Compute {
+    let Compute {
         request,
-        counters,
-        cache,
-        fingerprint,
-        candidates: &candidates,
         settles,
         events,
-    };
+        ..
+    } = compute;
+    let (settles, events) = (*settles, *events);
+    // 页的身份先取出来：读取层要借走 `reader`，此后就没有一个完整的 `Volume` 可问了。
+    //
+    // **只走 `redo` 点名的那些源页**（two-pass-rework/14）：留下的页不读、不解、不判、不编，
+    // 它们的字节第二遍从上一趟的输出里搬。整卷重做时 `redo` 就是全部源页。
+    let sources: Vec<PathBuf> = redo
+        .iter()
+        .map(|&index| volume.identity(&volume.pages[index]))
+        .collect();
+    let Volume { pages, reader, .. } = volume;
+    let members: Vec<&Member> = redo.iter().map(|&index| &pages[index]).collect();
+
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
         read::reads(reader, &members, io.readers.count, read::BUDGET)
             // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止就不再往下发页。
@@ -1508,6 +1560,8 @@ struct ComputeCounters {
 ///
 /// 装成一个结构体而不是一串参数，是因为它要整个被闭包借走：拆成六个参数，
 /// 闭包的捕获清单就得逐个写一遍，而漏掉一个的报错在 rayon 那一层读起来毫无线索。
+/// 由 [`process_volume`] 装好交给 [`first_pass`]：候选与 [`Settles`] 在幂等那一道就要问
+/// （页级依据这一趟成不成立），那两样因此在第一遍之前就备好了。
 struct Compute<'a> {
     request: &'a Request,
     /// 解码与缩放两个动作，连同各自记着的那个数（见 [`ComputeCounters`]）。
@@ -1558,6 +1612,16 @@ impl Settles {
         if request.mode != Mode::Process {
             return Self::AfterTheVolume;
         }
+        Self::if_processing(request, candidates)
+    }
+
+    /// **照做那一趟**走哪一条——不看这一趟的模式。
+    ///
+    /// 按页跳过的谓词要的是它，不是 [`for_this_run`](Self::for_this_run)
+    /// （two-pass-rework/14）：试算要预告的是照做时会发生的事（spec 的 story 6），
+    /// 而照做时留不留得下一页，只看这一页的字节是不是只取决于它自己——那是参数的性质，
+    /// 与这一趟写不写无关。试算自己那一格缓存装什么，仍由上面那一问答。
+    fn if_processing(request: &Request, candidates: &Candidates) -> Self {
         match pinned_up_front(request, candidates) {
             Some(Some(candidate)) => Self::UpFront(candidate),
             None => Self::AfterTheVolume,
@@ -1572,6 +1636,17 @@ impl Settles {
         match self {
             Self::AfterTheVolume => false,
             Self::OnItsOwn | Self::UpFront(_) => true,
+        }
+    }
+
+    /// 这条路上一张灰度页都没判时该报的卷级判定：默认那条路仍是逐页，顶死的那一趟仍是覆盖——
+    /// 两条路上「候选从哪来」不取决于这一趟判了几页；等整卷的那条路答不出来（基准档要判过才有）。
+    /// 按页跳过留下了页、重做的里头没有灰度页时用它（two-pass-rework/14）。
+    fn verdict_by_itself(self) -> Option<VolumeVerdict> {
+        match self {
+            Self::OnItsOwn => Some(VolumeVerdict::PerPage),
+            Self::UpFront(candidate) => Some(VolumeVerdict::Override(candidate)),
+            Self::AfterTheVolume => None,
         }
     }
 
@@ -2143,6 +2218,112 @@ impl Placement {
     }
 }
 
+/// 第二遍按阅读顺序要写的一格：这一趟**重做**的一张，或上一趟写的、**留下**的一张
+/// （two-pass-rework/14；`CONTEXT.md` 的《留下的页》）。
+///
+/// 两种绑成一个枚举而不是两张表：归档卷的成员按写入顺序排，留下的与重做的**交错**着
+/// 才是阅读顺序（理由与彩页为什么不在第一遍写出是同一条，见 [`second_pass`]）。
+/// 卷内统一尺寸、撞名校验也走这一串——两件事问的都是整本书，不是这一趟碰过的那几张。
+enum Slot<'a> {
+    /// 这一趟重做的一张，连同汇总给它的判定（彩页与失败页没有）。
+    Redone {
+        page: &'a OutputPage,
+        verdict: Option<Verdict>,
+    },
+    /// 上一趟写的、留下的一张，第二遍从上一趟的输出里搬过来（见 [`Retaining::carry_over`]）。
+    Retained(&'a RetainedPage),
+}
+
+impl<'a> Slot<'a> {
+    /// 它来自哪个源页。
+    fn source(&self) -> &Path {
+        match self {
+            Slot::Redone { page, .. } => &page.source,
+            Slot::Retained(page) => &page.source,
+        }
+    }
+
+    /// 它在输出容器里的相对位置。
+    fn target(&self) -> &Path {
+        match self {
+            Slot::Redone { page, .. } => &page.target,
+            Slot::Retained(page) => &page.target,
+        }
+    }
+
+    /// 它写出去的像素尺寸。这一趟重做的失败页没有——它的尺寸正要由别的页定出来。
+    fn size(&self) -> Option<Size> {
+        match self {
+            Slot::Redone { page, .. } => page.size(),
+            Slot::Retained(page) => Some(page.size),
+        }
+    }
+
+    /// 这一格要写出去的东西：重做的一张现取字节（编或从缓存取回），留下的一张只记下名字，
+    /// 字节等写出时从上一趟的输出里搬——那一份读起来要 `&mut`，不进并行那一段。
+    fn ready(&self, encode: &Encode) -> Result<Ready<'a>> {
+        match *self {
+            Slot::Redone { page, verdict } => Ok(Ready::Encoded {
+                target: &page.target,
+                bytes: encode.page(page, verdict)?,
+            }),
+            Slot::Retained(page) => Ok(Ready::Retained(&page.target)),
+        }
+    }
+}
+
+/// [`Slot`] 在第二遍上备好、轮到它写出时手上的东西。
+enum Ready<'a> {
+    /// 这一趟编好的字节，写到 `target`。
+    Encoded {
+        target: &'a Path,
+        bytes: Cow<'a, [u8]>,
+    },
+    /// 留下的一张，轮到它时从上一趟的输出里搬（见 [`Retaining::carry_over`]）。
+    Retained(&'a Path),
+}
+
+/// 留下的与重做的按**阅读顺序**交错成第二遍要写的那一串（two-pass-rework/14）。
+///
+/// 走的是源页序：留下的那一族按记录里的次序摆，重做的那几张从第一遍的产出里按序取——
+/// 第一遍产出本来就按源页序摆、同一源页切出的几张挨着（见 [`first_pass`]），
+/// 因此「属于这一源页的那几张」就是产出里接下来来路相同的那一段。`verdicts` 与 `scored`
+/// 等长同序（见 [`summarize_volume`]），重做的每一张把自己那一份带上。
+///
+/// 产出里有一张排不进去（来路对不上任何一个要重做的源页）是管线内部对不上了，回 `Err`
+/// 而不是静默少写一页：少一页的卷在阅读器里与一本正经的书没有分别。
+fn in_reading_order<'a>(
+    volume: &Volume,
+    retained: &'a Retained,
+    scored: &'a [OutputPage],
+    verdicts: &[Option<Verdict>],
+) -> Result<Vec<Slot<'a>>> {
+    let mut slots = Vec::with_capacity(scored.len() + retained.pages());
+    let mut next = 0;
+    for (page, kept) in volume.pages.iter().zip(retained.families()) {
+        match kept {
+            Some(family) => slots.extend(family.iter().map(Slot::Retained)),
+            None => {
+                let source = volume.identity(page);
+                while let Some(redone) = scored.get(next).filter(|redone| redone.source == source) {
+                    slots.push(Slot::Redone {
+                        page: redone,
+                        verdict: verdicts[next],
+                    });
+                    next += 1;
+                }
+            }
+        }
+    }
+    ensure!(
+        next == scored.len(),
+        "第一遍产出 {} 张，只有 {next} 张排得进阅读顺序：{} 这一张来路对不上任何一个源页",
+        scored.len(),
+        scored[next].source.display()
+    );
+    Ok(slots)
+}
+
 /// 第二遍：从缓存把每一页取回来写出去。不再碰源页（ADR 0005）。
 ///
 /// **取回来的是什么，看这一卷走的哪条路**（12 号票）。默认那条路上灰度页第一遍就编好了
@@ -2182,23 +2363,18 @@ impl Placement {
 /// 答中止就当场 `Ok(())`。它不必把这件事写进返回值——闩只升不降，调用方再问一次
 /// 恒得同一个答案（见 [`progress::Events::aborting`]），而那里正是决定收不收尾的地方。
 fn second_pass(
-    pages: &[OutputPage],
-    verdicts: &[Option<Verdict>],
+    slots: &[Slot],
     encode: &Encode,
     sink: &mut Sink,
+    mut retaining: Option<Retaining<'_>>,
     events: progress::Events,
 ) -> Result<()> {
-    let work: Vec<(&OutputPage, Option<Verdict>)> = pages
-        .iter()
-        .zip(verdicts)
-        .map(|(page, verdict)| (page, *verdict))
-        .collect();
-    for batch in work.chunks(cores()) {
-        let encoded: Vec<Cow<'_, [u8]>> = batch
+    for batch in slots.chunks(cores()) {
+        let ready: Vec<Ready<'_>> = batch
             .par_iter()
-            .map(|(page, verdict)| encode.page(page, *verdict))
+            .map(|slot| slot.ready(encode))
             .collect::<Result<Vec<_>>>()?;
-        for ((page, _), bytes) in batch.iter().zip(&encoded) {
+        for page in ready {
             // **页边界那个检查点**（ADR 0013 决定第 2 条），而且是三段里唯一一个此刻
             // 真有东西可丢的：写进去的页都在那格 `partial` 里，不收尾就整格丢掉。
             // 停在写出这一侧而不是编码那一侧：白编一批（至多核数张）远比多写一页便宜，
@@ -2206,11 +2382,42 @@ fn second_pass(
             if events.aborting() {
                 return Ok(());
             }
-            cost::stage(cost::Stage::Write, || sink.write_page(&page.target, bytes))?;
+            cost::stage(cost::Stage::Write, || match page {
+                Ready::Encoded { target, bytes } => sink.write_page(target, &bytes),
+                // 留下的页从上一趟的输出里搬过来（two-pass-rework/14）。那一份在按页那一支上
+                // 恒打开着（见 [`Reuse::ByPage`]）；不在就是调用方拿错了路，当场报。
+                Ready::Retained(target) => match retaining.as_mut() {
+                    Some(retaining) => retaining.carry_over(sink, target),
+                    None => bail!("留下 {} 这一页时没有上一趟的输出可搬", target.display()),
+                },
+            })?;
             events.step();
         }
     }
     Ok(())
+}
+
+/// 第二遍搬留下的页要的两样（two-pass-rework/14）：上一趟的输出，与这一趟的指纹。
+///
+/// 两样恒一起在：留下的页只在按页那一支上有（[`Reuse::ByPage`]），而那一支只在记着的那一趟
+/// 走得到（页级依据要写在记录里）。绑成一个类型，好让「有上一趟的输出却没有指纹」这种组合
+/// 写不出来。
+struct Retaining<'a> {
+    output: &'a mut sink::Written,
+    fingerprint: &'a Fingerprint,
+}
+
+impl Retaining<'_> {
+    /// 把 `target` 从上一趟的输出搬进这一趟的容器：读回整页，**改写卷级源哈希那一项**，照写页那条路写进去。
+    ///
+    /// 改写那一项之后这一趟的输出与整卷重做那一趟逐字节相同——为什么非改不可，
+    /// 见 [`metadata::restamp_source`]。除它之外一个字节不动：不解码、不判、不编。
+    fn carry_over(&mut self, sink: &mut Sink, target: &Path) -> Result<()> {
+        let mut bytes = self.output.bytes_of(target)?;
+        metadata::restamp_source(&mut bytes, self.fingerprint)
+            .with_context(|| format!("留下 {} 这一页", target.display()))?;
+        sink.write_page(target, &bytes)
+    }
 }
 
 /// 第二遍上每条计算线程共用的那一摊，与第一遍的 [`Compute`] 同一个用意。
@@ -2339,16 +2546,22 @@ fn volume_fingerprint(
     volume: &mut Volume,
     request: &Request,
     io: &IoPlan,
+    by_page: bool,
     events: progress::Events,
-) -> Result<Fingerprint> {
+) -> Result<SourceHashes> {
     let Volume {
         pages,
         extras,
         reader,
         ..
     } = volume;
+    let source_pages = pages.len();
     let members: Vec<&Member> = pages.iter().chain(extras.iter()).collect();
     let mut hasher = metadata::SourceHasher::new();
+    // 页级那一份**趁字节在手上**顺手算（two-pass-rework/14）：这一遍本来就把每个成员整个
+    // 读进来了，再喂一遍 blake3 远比为它多读一遍源便宜。只在页级依据这一趟成立时算——
+    // 上包络那条路一页的档由全卷定，算出来没人读（story 30）。
+    let mut by_page = by_page.then(|| Vec::with_capacity(source_pages));
     for read in read::reads(reader, &members, io.fingerprint.count, read::BUDGET) {
         // **页边界那个检查点**（ADR 0013 决定第 2 条）：中止停在成员边界上。
         // 并发之下这一条不变：交付按成员序号，`break` 因此停在一个真正的成员边界上；
@@ -2367,24 +2580,123 @@ fn volume_fingerprint(
             Ok(bytes) => cost::stage(cost::Stage::Hash, || hasher.member(relative, bytes)),
             Err(_) => hasher.unreadable(relative),
         }
+        // 透传文件不是页，没有页级那一份；读不出字节的成员在第一遍里会变成失败页，
+        // 而失败页不写页级依据（见 [`Recorder::failed`]）——它在这里也就没有可比的。
+        if let Some(pages) = by_page.as_mut().filter(|_| read.index < source_pages) {
+            let hashed =
+                read.bytes.as_ref().ok().map(|bytes| {
+                    cost::stage(cost::Stage::Hash, || PageSource::of(relative, bytes))
+                });
+            pages.push(hashed);
+        }
         events.step();
     }
-    Ok(Fingerprint::new(request, hasher.finish()))
+    Ok(SourceHashes {
+        fingerprint: Fingerprint::new(request, hasher.finish()),
+        pages: by_page,
+    })
 }
 
-/// 这一卷可以跳过吗：上一趟的输出还齐着，且每一页都记着这份指纹（spec 的 story 8）。
+/// 幂等那一道算出来的源哈希，**两个作用域一趟读出**（two-pass-rework/14）。
+///
+/// 卷级一个数（进 [`Fingerprint`]），页级每个源页一个（[`PageSource`]），两份喂的是同一批字节。
+/// 分开读两遍的话，命中不了的那些卷要把源多读一遍，而幂等那一道「不是免费的」已经写在
+/// `CONTEXT.md` 里——不该再贵一倍。
+struct SourceHashes {
+    fingerprint: Fingerprint,
+    /// 每个源页自己那一份，按源页序。读不出字节的成员是 `None`；
+    /// 这一趟页级依据不成立（上包络那条路、Q635 那一角）时整份是 `None`，
+    /// 那时一个都没算——不是算了没人读。**中止之后可能短于源页数**，与卷级那一份一样
+    /// 走不出这一卷。
+    pages: Option<Vec<Option<PageSource>>>,
+}
+
+/// 上一趟写在**干净去处**的输出**能复用多少**——幂等那一道比出来的答案（`CONTEXT.md` 的《幂等这一道》）。
+///
+/// 三种，按代价从小到大排：整卷一页不做、按页只做变了的、整卷重做。
+enum Reuse {
+    /// 上一趟的输出还齐着，每一页都记着这份指纹、透传文件都在——**整卷跳过**
+    /// （spec 的 story 8）。`page_count` 是上一趟写在那儿的输出页数。
+    ///
+    /// 上一趟按页跳过的卷这一趟也走这里：留下的页那一项卷级源哈希在搬的时候改写成了
+    /// 那一趟的（见 [`metadata::restamp_source`]），输出与整卷重做的逐字节相同。
+    Whole { page_count: usize },
+    /// 卷不齐，**按页**（two-pass-rework/14）：逐源页答留不留（[`Retained`]）。
+    /// 一页都不留也是这一支——那时与整卷重做走的是同一条路，只是留下的页由搬代替了做。
+    ///
+    /// `output` 是打开着的上一趟输出，留下的页从它里面搬（见 [`Retaining::carry_over`]）。
+    /// 归档那一支上它握着最终位置上那个文件的句柄，从这里一直握到第二遍搬完——
+    /// 中间隔着第一遍与决策点（ADR 0012）；那段时间里 Windows 上动不了上一趟的输出，认下。
+    ByPage {
+        retained: Retained,
+        output: sink::Written,
+    },
+    /// 无从比：头一趟、上一趟的输出不在或不齐而页级依据这一趟不成立——**整卷重做**。
+    Nothing,
+}
+
+/// 这一卷逐源页「留不留」的答案（two-pass-rework/14）：按源页序，留下的那一族是它每一张的
+/// [`RetainedPage`]，重做的那一页是 `None`。整卷重做就是每一格都 `None`。
+struct Retained(Vec<Option<Vec<RetainedPage>>>);
+
+impl Retained {
+    /// 一页都不留：整卷重做。
+    fn nothing(source_pages: usize) -> Self {
+        Self((0..source_pages).map(|_| None).collect())
+    }
+
+    /// 逐源页的答案，按源页序。
+    fn families(&self) -> &[Option<Vec<RetainedPage>>] {
+        &self.0
+    }
+
+    /// 要重做的源页序号，按源页序。第一遍只走它们。
+    fn redo(&self) -> Vec<usize> {
+        self.0
+            .iter()
+            .enumerate()
+            .filter(|(_, kept)| kept.is_none())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// 留下的**输出**页有几张。报告印的是它（`VolumeReport::retained_pages`）。
+    fn pages(&self) -> usize {
+        self.0.iter().flatten().map(Vec::len).sum()
+    }
+}
+
+/// 上一趟写的还在、这一趟**留下**的一张输出页（`CONTEXT.md` 的《留下的页》）。
+struct RetainedPage {
+    /// 它来自哪个源页，与 [`OutputPage::source`] 同一个写法：撞名要指得出是哪两个源成员。
+    source: PathBuf,
+    /// 它在输出容器里的相对位置，与上一趟写它时同一个（见 [`output_name`]）。
+    target: PathBuf,
+    /// 上一趟写它时的像素尺寸，读自它的记录。卷内统一尺寸要数它（见 [`uniform_size`]）。
+    size: Size,
+}
+
+/// 拿上一趟的输出比这一趟的依据（spec 的 story 8；two-pass-rework/14 把答案从两种扩成三种）。
+///
+/// `output` 是上一趟写在干净去处的输出，由调用方开好交进来（头一趟没有，那就是整卷重做）；
+/// 按页那一支把它原样带出去，留下的页第二遍从它里面搬。
 ///
 /// **两件事都要问。**指纹只随页走，透传文件不带记录——只问指纹的话，
 /// 有人从输出里删掉 ComicInfo.xml 之后这一卷会永远跳过，那个文件再也补不回来。
 ///
-/// 一页读不出记录就整卷重做，不逐页续做：判定是卷级的（ADR 0006 决定第 3 条），
-/// 补写的那几页会拿到一个由**当前**全卷算出的基准档，与旁边幸存的旧页对不上。
+/// **卷级先问，页级后问。**每一页都记着这份指纹、透传文件都在，就是整卷跳过——
+/// 与本票落地之前逐字相同，旧记录（只有卷级那一份）、`--envelope` 那条路都走这一支。
+/// 卷不齐时才逐页看页级依据（工具、profile、参数三项没变，这一页的源成员字节没变，
+/// 来路对得上，见 [`PageRecord::matches_by_page`]）：对得上的留下，对不上的重做。
+/// 页级依据这一趟不成立（`hashes.pages` 是 `None`）时没有第二问，卷不齐就整卷重做。
+///
+/// **只认干净的那个去处**：隔离目录里那一份不是做完了的输出，失败清单每一趟都要重新给得出来
+/// （spec 的 story 26）。上一趟进了隔离而更早一趟留在干净去处的那一份，照旧拿来比——
+/// 坏页修好之后，没变的页从那一份里留下。
 ///
 /// 一页都没有的卷永远不命中：记录随页走，没有页就没有地方放它。这一支从 ADR 0014
 /// 之后**够不着了**——一页都没有的东西不是卷，预扫就把它丢掉了；留着这一句，
 /// 是因为「记录随页走」这条不变量要写在它成立的地方。
-///
-/// 一个源页产出的那几张输出页**每一张**都要带着这份指纹，少一张就重做。
 ///
 /// # 名单从哪儿来（页几何批 04 号票）
 ///
@@ -2393,66 +2705,145 @@ fn volume_fingerprint(
 ///
 /// 方向因此反过来：名单从**上一趟写在输出里的记录**读回来。一张输出页自己说得出
 /// 它来自哪个源成员、那一族该有几张（[`Origin`]），于是按源页逐族去探——
-/// 先试一对一那个名字，不在就试切开的那一族，头一张说出总共几张，再把余下的逐个对上。
+/// 先试一对一那个名字，不在就试切开的那一族，头一张说出总共几张，再把余下的逐个对上
+/// （见 [`written_family`]）。
 ///
 /// **「输出里少一张就该察觉」这条能力因此没有丢，而且比从前更严**：
-/// 一族两张里删掉一张，剩下那一张仍写着「1/2」，第二张找不到，整卷重做
+/// 一族两张里删掉一张，剩下那一张仍写着「1/2」，第二张找不到，那一族重做
 /// （`p0-hardening/03` 靠的正是这条能力）。缺了那个计数就只剩「至少有一张」，
 /// 一张跨页被删掉半边会静默地留在输出里。
 ///
 /// 命中时答的是**上一趟写在那儿的输出页数**，不是这一趟预告出来的数：
 /// 那个数眼下只给得出上界（见 [`MemberCounts`]），而报告里印的那个要是真数。
-fn can_skip(output: &Path, volume: &Volume, fingerprint: &Fingerprint) -> Option<usize> {
-    if volume.pages.is_empty() {
-        return None;
+///
+/// # 删一页、加一页、改名（two-pass-rework/14）
+///
+/// 输出成员名由源成员名推出（[`output_name`]），页级依据连名字一起喂（[`PageSource`]）：
+/// 删掉源里一页，它那一族在输出里成了陈旧产物，收尾整个换掉时一并清走（见 `crate::sink`），
+/// 其余页各自对得上、各自留下；加一页、改名一页，新名字下没有记录，那一页重做，
+/// 旧名字下的那几张同样是陈旧产物。阅读顺序里的位置**不进依据**——它由名字的次序定，
+/// 挪动位置的那几页字节与名字都没变，留下它们正对。
+fn compare_with_the_prior_output(
+    output: Option<sink::Written>,
+    volume: &Volume,
+    hashes: &SourceHashes,
+) -> Reuse {
+    let Some(mut written) = output.filter(|_| !volume.pages.is_empty()) else {
+        return Reuse::Nothing;
+    };
+    let fingerprint = &hashes.fingerprint;
+    // 中止之后页级那一份可能没喂满，短掉的那些当「没有」比：这一份反正走不出这一卷。
+    let page_source = |index: usize| {
+        hashes
+            .pages
+            .as_ref()
+            .and_then(|pages| pages.get(index))
+            .and_then(Option::as_ref)
+    };
+    let mut whole = true;
+    let mut page_count = 0;
+    let mut retained: Vec<Option<Vec<RetainedPage>>> = Vec::with_capacity(volume.pages.len());
+    for (index, page) in volume.pages.iter().enumerate() {
+        let relative = &page.relative;
+        let Some(family) = written_family(&mut written, relative) else {
+            whole = false;
+            retained.push(None);
+            continue;
+        };
+        let count = family.len();
+        page_count += count;
+        // 两个作用域各比一遍，判据各在自己那一处（[`PageRecord::matches`] 与
+        // [`PageRecord::matches_by_page`]），这里只数「齐不齐」。
+        let by_volume = |(ordinal, written): (usize, &WrittenPage)| {
+            written
+                .record
+                .matches(fingerprint, relative, ordinal, count)
+        };
+        let by_page = |(ordinal, written): (usize, &WrittenPage)| {
+            page_source(index).is_some_and(|ours| {
+                written
+                    .record
+                    .matches_by_page(fingerprint, ours, relative, ordinal, count)
+            })
+        };
+        if !family.iter().enumerate().all(by_volume) {
+            whole = false;
+        }
+        retained.push(family.iter().enumerate().all(by_page).then(|| {
+            family
+                .iter()
+                .map(|written| RetainedPage {
+                    source: volume.identity(page),
+                    target: written.target.clone(),
+                    size: written.record.size,
+                })
+                .collect()
+        }));
     }
-    let mut written = sink::Written::open(output, volume.container)?;
-    let mut pages = 0;
-    for page in &volume.pages {
-        pages += written_family(&mut written, &page.relative, fingerprint)?;
-    }
-    volume
+    let extras_in_place = volume
         .extras
         .iter()
-        .all(|extra| written.holds(&extra.relative))
-        .then_some(pages)
+        .all(|extra| written.holds(&extra.relative));
+    if whole && extras_in_place {
+        return Reuse::Whole { page_count };
+    }
+    if hashes.pages.is_none() {
+        return Reuse::Nothing;
+    }
+    Reuse::ByPage {
+        retained: Retained(retained),
+        output: written,
+    }
 }
 
-/// 一个源页那一族输出页在上一趟的输出里齐不齐；齐就答它有几张，缺一张就是 `None`。
+/// 上一趟的输出里的一张页：它的成员名，与它记着的记录。
+struct WrittenPage {
+    target: PathBuf,
+    record: PageRecord,
+}
+
+/// 上一趟的输出里，一个源页那一族输出页：每一张的成员名与记录，按阅读顺序；
+/// 缺一张、来路对不上，就是 `None`——那一族这一趟重做。
 ///
 /// 两支：一对一那个名字在，就只此一张（记录自己也得说是 `1/1`——名字对上而记录说
 /// 「共两张」的话，另一张要么被删了、要么是别的参数跑出来的）；不在，就按切开那一族探，
 /// 头一张（`…-1.png`）的记录说出总共几张，剩下的逐个对上。
 ///
+/// 它只问**来路**，不问依据：一族齐不齐是容器的事实，齐了之后按卷级还是页级比
+/// 由调用方定（见 [`compare_with_the_prior_output`]）。
+///
 /// 名字怎么拼只有一个出处（[`output_name`]），两支拼的都是它。
-fn written_family(
-    written: &mut sink::Written,
-    relative: &Path,
-    fingerprint: &Fingerprint,
-) -> Option<usize> {
-    let matched = |record: Option<PageRecord>, ordinal: usize, count: usize| {
-        record.is_some_and(|record| record.matches(fingerprint, relative, ordinal, count))
-    };
-    if let Some(record) = written.record_of(&output_name(relative, 0, 1)) {
-        return record.matches(fingerprint, relative, 0, 1).then_some(1);
+fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<WrittenPage>> {
+    let one = output_name(relative, 0, 1);
+    if let Some(record) = written.record_of(&one) {
+        return record.is_the_page(relative, 0, 1).then(|| {
+            vec![WrittenPage {
+                target: one,
+                record,
+            }]
+        });
     }
     // 一对一那个名字不在。那这一族要么是切开的，要么根本没写出来——头一张说了算：
     // 它记着自己那一族共几张，而余下几张的名字由那个数推得出来。
     let first_of_many = output_name(relative, 0, MORE_THAN_ONE);
     let first = written.record_of(&first_of_many)?;
     let count = first.origin.as_ref()?.count();
-    if count < MORE_THAN_ONE || !first.matches(fingerprint, relative, 0, count) {
+    if count < MORE_THAN_ONE || !first.is_the_page(relative, 0, count) {
         return None;
     }
-    (1..count)
-        .all(|ordinal| {
-            matched(
-                written.record_of(&output_name(relative, ordinal, count)),
-                ordinal,
-                count,
-            )
-        })
-        .then_some(count)
+    let mut family = vec![WrittenPage {
+        target: first_of_many,
+        record: first,
+    }];
+    for ordinal in 1..count {
+        let target = output_name(relative, ordinal, count);
+        let record = written.record_of(&target)?;
+        if !record.is_the_page(relative, ordinal, count) {
+            return None;
+        }
+        family.push(WrittenPage { target, record });
+    }
+    Some(family)
 }
 
 /// 卷级上包络的定档页序号，写进 tEXt 那句 `volume-p95, driven by page 087` 用它。
@@ -2676,7 +3067,7 @@ fn output_names(relative: &Path, count: usize) -> Vec<PathBuf> {
 /// 买的是**别白做一整卷**。真正产出的那批名字等第一遍走完再查一遍
 /// （见 [`ensure_no_two_outputs_collide`]）。
 ///
-/// 幂等不再问它：名单改从上一趟写在输出里的记录读回来（见 [`can_skip`]）。
+/// 幂等不再问它：名单改从上一趟写在输出里的记录读回来（见 [`compare_with_the_prior_output`]）。
 ///
 /// 透传文件原名不动，不必单列一份。
 fn one_to_one_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
@@ -2773,11 +3164,10 @@ fn ensure_one_member_per_output(volume: &Volume, targets: &[Vec<PathBuf>]) -> Re
 /// 而这里正是两批名字第一次同时在手上的地方（第二遍还没开始，输出容器还没建）。
 ///
 /// 报错指得出是哪两个源成员：输出页自己记着它来自哪一张（[`OutputPage::source`]），
-/// 而透传成员按原名占着位。
-fn ensure_no_two_outputs_collide(volume: &Volume, pages: &[OutputPage]) -> Result<()> {
-    let written = pages
-        .iter()
-        .map(|page| (page.source.as_path(), page.target.as_path()));
+/// 而透传成员按原名占着位。**留下的页一并查**（two-pass-rework/14）：它们同样要占输出里的一格，
+/// 新切出的 `001-1.png` 撞上留下的同名一张，与撞上源里的同名成员是同一回事。
+fn ensure_no_two_outputs_collide(volume: &Volume, pages: &[Slot]) -> Result<()> {
+    let written = pages.iter().map(|page| (page.source(), page.target()));
     let extras = volume
         .extras
         .iter()
@@ -3115,6 +3505,24 @@ mod tests {
         }
     }
 
+    /// 只带卷级依据去比上一趟的输出：整卷跳过答 `Some(输出页数)`，否则 `None`。
+    ///
+    /// 页级那一份不给（`pages: None`），因此答不出「按页」——本文件里那几条钉的是
+    /// 卷级那一问（`p0-hardening/03`、页几何批 04 号票），按页那一问在
+    /// `tests/idempotency.rs` 上测。
+    fn whole_skip(output: &Path, volume: &Volume, fingerprint: &Fingerprint) -> Option<usize> {
+        let hashes = SourceHashes {
+            fingerprint: fingerprint.clone(),
+            pages: None,
+        };
+        let written = sink::Written::open(output, volume.container);
+        match compare_with_the_prior_output(written, volume, &hashes) {
+            Reuse::Whole { page_count } => Some(page_count),
+            Reuse::ByPage { .. } => panic!("没给页级依据，不该答按页"),
+            Reuse::Nothing => None,
+        }
+    }
+
     /// 一张走灰度路径的输出页。`values` 是三个候选各自的判据值。
     fn gray(source: &str, target: &str, size: Size, values: [f32; 3], slot: usize) -> OutputPage {
         let scores = CANDIDATES
@@ -3287,7 +3695,7 @@ mod tests {
     #[test]
     fn a_skip_needs_the_fingerprint_on_every_output_page_of_a_source_page() {
         let space = tempfile::tempdir().expect("建临时目录");
-        // 一个真卷：一张源页，好让 `can_skip` 拿得到容器形态与透传清单。
+        // 一个真卷：一张源页，好让幂等那一道拿得到容器形态与透传清单。
         let root = space.path().join("volume-a");
         fs::create_dir_all(&root).expect("建源卷");
         let page = GrayImage::new(Size::new(4, 4), vec![128; 16]);
@@ -3314,7 +3722,7 @@ mod tests {
             fs::write(output.join(name), written(ordinal, 2)).expect("写一张输出页");
         }
         assert_eq!(
-            can_skip(&output, &volume, &fingerprint),
+            whole_skip(&output, &volume, &fingerprint),
             Some(2),
             "两半都齐着还是重做了"
         );
@@ -3322,7 +3730,7 @@ mod tests {
         // 后一半被删掉：整卷重做。剩下那一张仍写着「1/2」，缺口因此看得见。
         fs::remove_file(output.join(&names[1])).expect("删掉后一半");
         assert_eq!(
-            can_skip(&output, &volume, &fingerprint),
+            whole_skip(&output, &volume, &fingerprint),
             None,
             "输出里少了一张，这一卷仍然被跳过了"
         );
@@ -3334,7 +3742,7 @@ mod tests {
         let stale = encode::png(&page, BitDepth::One, None).expect("编一张不带记录的页");
         fs::write(old.join(&names[0]), &stale).expect("写一张输出页");
         fs::write(old.join(&names[1]), &stale).expect("写一张输出页");
-        assert_eq!(can_skip(&old, &volume, &fingerprint), None);
+        assert_eq!(whole_skip(&old, &volume, &fingerprint), None);
     }
 
     /// 没切开的那一族只有一张，而且它得**自己说是一张**（页几何批 04 号票）。
@@ -3363,12 +3771,12 @@ mod tests {
         let honest = space.path().join("out-one");
         fs::create_dir_all(&honest).expect("建输出容器");
         fs::write(honest.join("001.png"), written(1)).expect("写一张输出页");
-        assert_eq!(can_skip(&honest, &volume, &fingerprint), Some(1));
+        assert_eq!(whole_skip(&honest, &volume, &fingerprint), Some(1));
 
         let lying = space.path().join("out-claims-two");
         fs::create_dir_all(&lying).expect("建输出容器");
         fs::write(lying.join("001.png"), written(2)).expect("写一张输出页");
-        assert_eq!(can_skip(&lying, &volume, &fingerprint), None);
+        assert_eq!(whole_skip(&lying, &volume, &fingerprint), None);
     }
 
     /// 卷内统一尺寸的众数在**切开之后**取：同一源页的两半各算一张（页几何批 03 号票）。
@@ -3379,13 +3787,19 @@ mod tests {
     fn the_uniform_size_counts_output_pages() {
         let narrow = Size::new(500, 800);
         let wide = Size::new(600, 800);
-        let pages = vec![
+        let pages = [
             gray("001.jpg", "001-1.png", narrow, [9.0, 4.0, 1.0], 0),
             gray("001.jpg", "001-2.png", narrow, [9.0, 4.0, 1.0], 1),
             gray("002.jpg", "002.png", wide, [9.0, 4.0, 1.0], 2),
         ];
 
-        assert_eq!(uniform_size(&pages, Size::new(1264, 1680)), narrow);
+        assert_eq!(
+            uniform_size(
+                pages.iter().filter_map(OutputPage::size),
+                Size::new(1264, 1680)
+            ),
+            narrow
+        );
     }
 
     /// 汇总那一层的序号指进**输出页**那个序列，不是源页那个（页几何批 03 号票）。
@@ -3489,7 +3903,7 @@ mod tests {
             })
             .collect();
 
-        let pages = vec![
+        let pages = [
             gray(
                 "volume-a/001.jpg",
                 "001-1.png",
@@ -3521,11 +3935,15 @@ mod tests {
 
         let mut sink =
             Sink::create(&out, Container::Directory, sink::Lodgers::default()).expect("建输出容器");
+        let slots: Vec<Slot> = pages
+            .iter()
+            .map(|page| Slot::Redone { page, verdict })
+            .collect();
         second_pass(
-            &pages,
-            &[verdict, verdict],
+            &slots,
             &encode,
             &mut sink,
+            None,
             progress::Events::new(Some(&watching), &standing, &deliberation),
         )
         .expect("写出这两张");
