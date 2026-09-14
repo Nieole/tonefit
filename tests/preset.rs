@@ -81,7 +81,7 @@ fn a_preset_hashes_to_what_it_expands_to_not_to_its_name() {
 
 /// 改了预设的内容而名字没变，下一趟必须重做（07 号票的验收）。
 ///
-/// 断言落在**同一个输出根**上：第二趟若被幂等跳过，盘上那一页仍带着第一趟的参数哈希。
+/// 断言落在**同一个输出目录**上：第二趟若被幂等跳过，盘上那一页仍带着第一趟的参数哈希。
 /// 哈希换了，就说明那一页是这一趟重新写出来的。
 #[test]
 fn changing_a_presets_content_without_changing_its_name_redoes_the_volume() {
@@ -93,7 +93,7 @@ fn changing_a_presets_content_without_changing_its_name_redoes_the_volume() {
     succeeds(run(&config, &out, &["--preset", "漫画"], volume.path()));
     let before = params_hash(&out);
 
-    // 名字一个字没改，滤波器换了一个。
+    // 名字一个字没改，缩放算法换了一个。
     config_with(&space, &PRESETS.replace("hamming", "bicubic"));
     succeeds(run(&config, &out, &["--preset", "漫画"], volume.path()));
 
@@ -154,7 +154,7 @@ fn a_preset_that_cannot_be_read_stops_the_run_before_it_starts() {
         ),
         ("取值拼错", "[preset.\"漫画\".taste]\nfit = \"cover\"\n"),
         (
-            "范围层混了进来",
+            "路径与输出混了进来",
             "[preset.\"漫画\".taste]\nout = \"别处\"\n",
         ),
     ] {
@@ -177,7 +177,7 @@ fn a_preset_that_cannot_be_read_stops_the_run_before_it_starts() {
     assert_eq!(missing.status.code(), Some(1));
     let complaint = String::from_utf8_lossy(&missing.stderr);
     assert!(complaint.contains("预设"), "{complaint}");
-    // 那句里带着一份照抄就能用的样例，口味层那一节里有纸白对齐上限（03 号票）。
+    // 那句里带着一份照抄就能用的样例，处理选项那一节里有提白上限（03 号票）。
     assert!(complaint.contains("white-align-limit"), "{complaint}");
 }
 
@@ -265,12 +265,12 @@ fn succeeds(output: Output) {
     );
 }
 
-/// 输出根下那一卷唯一那一页。
+/// 输出目录下那一卷唯一那一页。
 fn output_page(out: &Path) -> PathBuf {
     out.join("卷一").join("001.png")
 }
 
-/// 输出根下那一页记着的参数哈希。
+/// 输出目录下那一页记着的参数哈希。
 fn params_hash(out: &Path) -> String {
     let text = fixtures::read_png_text(&output_page(out));
     fixtures::png_field(&text, "tonefit:params").expect("记录里该有参数哈希")

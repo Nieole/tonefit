@@ -1,4 +1,4 @@
-//! 预设：一份命名的落盘配置，装**设备层**与**口味层**两层（`CONTEXT.md` 的《会话》）。
+//! 预设：一份命名的落盘配置，装**设备设置**与**处理选项**两层（`CONTEXT.md` 的《会话》）。
 //!
 //! 这个模块只答一个问题：**盘上那份预设写的是什么。**「这一趟到底用哪些值」是另一件事，
 //! 在 [`crate::Cli`] 那一侧——那里才有命令行，而命令行与预设撞上时的规矩写在
@@ -6,7 +6,7 @@
 //!
 //! # 三件本模块不做的事
 //!
-//! **不装范围层。** 处理范围与输出根每趟都不同，混进预设会让人套用它时误写到上一次的
+//! **不装路径与输出。** 处理范围与输出目录每趟都不同，混进预设会让人套用它时误写到上一次的
 //! 输出目录（ADR 0009：处理范围是用户点名的子集）。这不是靠自觉——两层都写着
 //! `deny_unknown_fields`，写进来的 `inputs` 或 `out` 当场是一条错误，不是被悄悄忽略的一行。
 //!
@@ -38,7 +38,7 @@
 //!
 //! 两层在文件里是**两节**，不是一堆平铺的键。那条分界线画在**生命周期**上
 //! （`CONTEXT.md` 的《会话》），而分界线只写在文档里、不写进格式的话，
-//! 把 `filter` 填进设备层这种事就没有人拦得住。
+//! 把 `filter` 填进设备设置这种事就没有人拦得住。
 //!
 //! # 取值的写法只有一份
 //!
@@ -66,69 +66,69 @@ const PRESET_FILE: &str = "tonefit/presets.toml";
 /// 「没写」与「写成默认值」在这里是同一个结果，两者都不该盖掉命令行上显式点到的那一项。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Preset {
-    /// 设备层：绑面板，由标定决定，改一次管很久。
+    /// 设备设置：绑面板，由标定决定，改一次管很久。
     pub device: DeviceLayer,
-    /// 口味层：这一趟的立场。
+    /// 处理选项：这一趟的立场。
     pub taste: TasteLayer,
 }
 
-/// 设备层：**型号 + 感知可分辨级数 + 阈值**。
+/// 设备设置：**型号 + 可见灰阶数 + 画质门槛**。
 ///
 /// 三项都是「判定的依据」那一类：错了不是这一趟不好看，是判定拿错了尺子。
 ///
-/// **阈值在这一层，不在口味层。** 它跟着面板走、不可跨面板比较（ADR 0002），
-/// 数值由真机盲测在一块面板上夹出（`Profile::threshold`）——与感知可分辨级数一样，
-/// 是标定的产物、绑着那块面板、改一次管很久。口味层那一层的东西改了只是这一趟的取舍，
-/// 而阈值改了，同一批页的判定整个换一套。三层的分界线画在生命周期上，它落在这一侧。
+/// **画质门槛在这一层，不在处理选项。** 它跟着面板走、不可跨面板比较（ADR 0002），
+/// 数值由真机盲测在一块面板上夹出（`Profile::threshold`）——与可见灰阶数一样，
+/// 是标定的产物、绑着那块面板、改一次管很久。处理选项那一层的东西改了只是这一趟的取舍，
+/// 而画质门槛改了，同一批页的判定整个换一套。三组设置的分界线画在生命周期上，它落在这一侧。
 /// 后两项**要连同型号一起写**，理由见 [`no_panel_to_calibrate_against_error`]。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DeviceLayer {
     /// 目标设备型号，已归一成内置表里的规范名。
     pub profile: Option<String>,
-    /// 覆盖面板灰阶数（`--gray-levels`）：在真机上数出来的感知可分辨级数。
+    /// 覆盖屏幕灰阶数（`--gray-levels`）：在真机上数出来的可见灰阶数。
     pub gray_levels: Option<u32>,
-    /// 覆盖判定用的阈值（`--threshold`）。
+    /// 覆盖判定用的画质门槛（`--threshold`）。
     pub threshold: Option<f32>,
 }
 
-/// 口味层：这一趟的立场，**逐项列举**。
+/// 处理选项：这一趟的立场，**逐项列举**。
 ///
-/// 十二项：适配方式、裁边、拆分与它的阈值、阅读方向、滤波器、纸白对齐上限、位深、抖动、
-/// 上包络、缓存预算、读取策略。前五项是页几何那一批添的，纸白对齐上限是纸白对齐那一批添的
-/// （03 号票），其余六项是 spec 的《会话：三层与预设》原本就列着的那几项。
+/// 十二项：缩放方式、裁白边、拆分与它的判定宽度、阅读方向、缩放算法、提白上限、灰阶档位、抖动、
+/// 整卷统一灰阶、内存上限、读盘方式。前五项是页几何那一批添的，提白上限是纸色提白那一批添的
+/// （03 号票），其余六项是 spec 的《会话：三组设置与预设》原本就列着的那几项。
 ///
-/// **纸白对齐上限在这一层、不在设备层**：它是「这一趟愿意为对齐付多少色调」的取舍，
-/// 不是面板的物理事实（`CONTEXT.md` 的《纸白对齐上限》）。
+/// **提白上限在这一层、不在设备设置**：它是「这一趟愿意为对齐付多少色调」的取舍，
+/// 不是面板的物理事实（`CONTEXT.md` 的《提白上限》）。
 ///
 /// **`--dry-run` 与 `--no-metadata` 不在里面**，按它们各自是什么判的：前者是这一趟做到
-/// 哪一步（`Mode`），试算与执行是同一条回路的两半，不是一份存得住的立场；后者一开就把
+/// 哪一步（`Mode`），预览与转换是同一条回路的两半，不是一份存得住的立场；后者一开就把
 /// 记录与幂等一起关掉，那是对**这一批输出**的处置——存进预设就意味着「这一套参数从此不留
 /// 记录」，而那是每一趟各自要拿的主意。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TasteLayer {
-    /// 适配方式（`--fit`）。
+    /// 缩放方式（`--fit`）。
     pub fit: Option<FitMode>,
-    /// 裁不裁边（`--no-crop` 关掉它）。
+    /// 裁不裁白边（`--no-crop` 关掉它）。
     pub crop: Option<bool>,
     /// 拆不拆跨页（`--no-split` 关掉它）。
     pub split: Option<bool>,
-    /// 跨页候选的阈值（`--split-threshold`）。
+    /// 跨页判定宽度（`--split-threshold`）。
     pub split_threshold: Option<SplitThreshold>,
     /// 拆开后两半的先后（`--reading-order`）。
     pub reading_order: Option<ReadingOrder>,
-    /// 残差段的重采样滤波器（`--filter`）。
+    /// 残差段的重采样缩放算法（`--filter`）。
     pub filter: Option<Filter>,
-    /// 纸白对齐的上限（`--white-align-limit`）。**取 0 是「关」，是一个说了的值**，不是「没说」。
+    /// 纸色提白的上限（`--white-align-limit`）。**取 0 是「关」，是一个说了的值**，不是「没说」。
     pub white_align_limit: Option<WhiteAlignLimit>,
-    /// 覆盖自动判定的位深（`--bit-depth`）。
+    /// 覆盖自动判定的灰阶档位（`--bit-depth`）。
     pub bit_depth: Option<BitDepth>,
     /// 覆盖自动选择的抖动模式（`--dither`）。
     pub dither: Option<Dither>,
-    /// 开不开卷级上包络（`--envelope`；`--no-envelope` 关掉它）。
+    /// 开不开整卷统一灰阶（`--envelope`；`--no-envelope` 关掉它）。
     pub envelope: Option<bool>,
-    /// 缓存预算（`--cache-budget`）。
+    /// 内存上限（`--cache-budget`）。
     pub cache_budget: Option<CacheBudget>,
-    /// 读取策略（`--io-mode`）。
+    /// 读盘方式（`--io-mode`）。
     pub io_mode: Option<IoMode>,
 }
 
@@ -146,13 +146,13 @@ impl TasteLayer {
         self.fit.unwrap_or_default()
     }
 
-    /// 裁不裁边。**默认裁**，而这个 `true` 在本仓库只有这一处：
+    /// 裁不裁白边。**默认裁**，而这个 `true` 在本仓库只有这一处：
     /// `Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它。
     pub fn crop(&self) -> bool {
         self.crop.unwrap_or(true)
     }
 
-    /// 开不开卷级上包络。**默认不开**：默认路径上位深逐页各判各的（ADR 0018 决定第 2 条），
+    /// 开不开整卷统一灰阶。**默认不开**：默认路径上灰阶档位逐页各判各的（ADR 0018 决定第 2 条），
     /// 要卷级齐整的人显式打开它（决定第 5 条）。这个 `false` 与 [`crop`](Self::crop) 那个
     /// `true` 同一个理由只在这一处：`Request::envelope` 是个裸 `bool`。
     pub fn envelope(&self) -> bool {
@@ -169,22 +169,22 @@ impl TasteLayer {
         }
     }
 
-    /// 残差段的重采样滤波器（ADR 0001）。
+    /// 残差段的重采样缩放算法（ADR 0001）。
     pub fn filter(&self) -> Filter {
         self.filter.unwrap_or_default()
     }
 
-    /// 纸白对齐的上限。默认值只在 `WhiteAlignLimit::default` 一处，这里不复述那个数。
+    /// 纸色提白的上限。默认值只在 `WhiteAlignLimit::default` 一处，这里不复述那个数。
     pub fn white_align_limit(&self) -> WhiteAlignLimit {
         self.white_align_limit.unwrap_or_default()
     }
 
-    /// 缓存预算（ADR 0005）。
+    /// 内存上限（ADR 0005）。
     pub fn cache_budget(&self) -> CacheBudget {
         self.cache_budget.unwrap_or_default()
     }
 
-    /// 读取策略（ADR 0009）。
+    /// 读盘方式（ADR 0009）。
     pub fn io_mode(&self) -> IoMode {
         self.io_mode.unwrap_or_default()
     }
@@ -718,7 +718,7 @@ struct OnDisk {
     taste: OnDiskTaste,
 }
 
-/// 设备层在盘上的形状。
+/// 设备设置在盘上的形状。
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct OnDiskDevice {
@@ -730,7 +730,7 @@ struct OnDiskDevice {
     threshold: Option<f64>,
 }
 
-/// 口味层在盘上的形状。
+/// 处理选项在盘上的形状。
 ///
 /// 数值项的类型就是命令行上那一项的类型（`white_align_limit` 与 `--white-align-limit` 同为 `u8`）：
 /// 越界的数、负数、一串字在读进来那一刻就是错误，与 clap 在命令行上挡下它们是同一条界。
@@ -766,7 +766,7 @@ struct OnDiskTaste {
 /// 把盘上那份验成一组类型好的值。**点名的那个预设整份都要读得懂**——
 /// 与这一趟有没有拿命令行盖掉其中某一项无关：一项一项当场解析出来，解析不出来就报错。
 ///
-/// 「整份」这句话之所以成立，靠的是[设备层那两个覆盖项要连同型号一起写](no_panel_to_calibrate_against_error)：
+/// 「整份」这句话之所以成立，靠的是[设备设置那两个覆盖项要连同型号一起写](no_panel_to_calibrate_against_error)：
 /// 它们的界挂在 profile 上（`Profile::with_gray_levels` 与 `with_threshold` 是那两个界唯一的
 /// 出处），没有型号就没有面板可验，那一支会静默地放过一个越界的数。
 fn resolve(raw: OnDisk) -> Result<Preset> {
@@ -851,7 +851,7 @@ impl From<&Preset> for OnDisk {
                 fit: preset.taste.fit.map(|fit| fit.name().to_owned()),
                 crop: preset.taste.crop,
                 split: preset.taste.split,
-                // 拆分阈值在盘上是个数，而它的界只有 `SplitThreshold::parse` 一处出处，
+                // 跨页判定宽度在盘上是个数，而它的界只有 `SplitThreshold::parse` 一处出处，
                 // 那一处收的是文本。`f64` 的 `Display` 是能原样读回来的最短写法，
                 // 转一道文本因此不丢精度——往返用例钉着这一点。
                 split_threshold: preset.taste.split_threshold.map(SplitThreshold::value),
@@ -871,12 +871,12 @@ impl From<&Preset> for OnDisk {
     }
 }
 
-/// 把缓存预算写成 `CacheBudget::parse` 认得的写法：整 G/M/K 就带后缀，其余原样写字节数。
+/// 把内存上限写成 `CacheBudget::parse` 认得的写法：整 G/M/K 就带后缀，其余原样写字节数。
 ///
 /// `CacheBudget` 的 `Display` 顶不了这件事——那一份是给人看的（`512 MiB`），
 /// 而 `parse` 读不回来。往返用例逐个验 `parse(spell(x)) == x`。
 ///
-/// 会话也拿它（`p1-session/08`）：光标停在缓存预算那一行按下回车时，缓冲里摆的
+/// 会话也拿它（`p1-session/08`）：光标停在内存上限那一行按下回车时，缓冲里摆的
 /// 必须是**改一个字就能再收下**的写法，而那与写进预设的写法是同一件事。
 pub fn spell_budget(budget: CacheBudget) -> String {
     const UNITS: [(u64, &str); 3] = [(1024 * 1024 * 1024, "G"), (1024 * 1024, "M"), (1024, "K")];
@@ -889,27 +889,27 @@ pub fn spell_budget(budget: CacheBudget) -> String {
     bytes.to_string()
 }
 
-/// 设备层写了覆盖项却没写型号时的说法。
+/// 设备设置写了覆盖项却没写型号时的说法。
 ///
 /// 这条规矩不是为了让校验好写，是因为那两个数**本来就绑着一块面板**：
-/// 感知可分辨级数是在某一台真机上数出来的，阈值是在某一块面板上盲测夹出来的，
-/// 而判据跟着面板走、不可跨面板比较（ADR 0002）。一份不说是哪块面板的
-/// 「12 级 / 阈值 5.2」，套到下一台设备上就是一次无声的跨面板搬运。
+/// 可见灰阶数是在某一台真机上数出来的，画质门槛是在某一块面板上盲测夹出来的，
+/// 而画质分跟着面板走、不可跨面板比较（ADR 0002）。一份不说是哪块面板的
+/// 「12 级 / 画质门槛 5.2」，套到下一台设备上就是一次无声的跨面板搬运。
 ///
-/// 校验因此顺带完整了：设备层要么一项覆盖都没有，要么连型号一起在场，
+/// 校验因此顺带完整了：设备设置要么一项覆盖都没有，要么连型号一起在场，
 /// 于是[读进来那一刻](resolve)每一项都验得动——「整份都要读得懂」不必再带个例外。
 fn no_panel_to_calibrate_against_error() -> anyhow::Error {
     anyhow!(
-        "预设的设备层写了 gray-levels 或 threshold，却没有写 profile。\
-         那两个数都是在**某一块面板上**标定出来的——感知可分辨级数是在真机上数出来的，\
-         阈值是在一块面板上盲测夹出来的，而判据跟着面板走、不可跨面板比较（ADR 0002）。\
-         把型号一起写进设备层，或者把这两项交给命令行。"
+        "预设的设备设置写了 gray-levels 或 threshold，却没有写 profile。\
+         那两个数都是在**某一块面板上**标定出来的——可见灰阶数是在真机上数出来的，\
+         画质门槛是在一块面板上盲测夹出来的，而画质分跟着面板走、不可跨面板比较（ADR 0002）。\
+         把型号一起写进设备设置，或者把这两项交给命令行。"
     )
 }
 
 /// 还没有预设文件时印出来的样例。**照抄就能用**：它自己就是一份读得懂的预设
 /// （`the_sample_printed_when_there_is_no_file_is_itself_a_readable_preset` 钉着），
-/// 每一行都是一项用户可能想说的非默认取值。**纸白对齐上限那一行不写 0**：0 是「关」，
+/// 每一行都是一项用户可能想说的非默认取值。**提白上限那一行不写 0**：0 是「关」，
 /// 照抄样例的人会在不知情时把默认开着的那一步关掉。行首的两格是排版，TOML 不认缩进。
 const SAMPLE: &str = r#"
   [preset."漫画".device]
@@ -929,9 +929,9 @@ const SAMPLE: &str = r#"
 fn no_preset_file_error(path: &Path) -> anyhow::Error {
     anyhow!(
         "还没有预设文件：{} 不在。\n\
-         一份文件装多个命名预设，各装设备层与口味层两层：\n\
+         一份文件装多个命名预设，各装设备设置与处理选项两层：\n\
          {SAMPLE}\n\
-         处理范围与输出根不进预设——那两样每趟都不同（ADR 0009）。",
+         处理范围与输出目录不进预设——那两样每趟都不同（ADR 0009）。",
         path.display()
     )
 }
@@ -955,7 +955,7 @@ fn no_such_preset_error<P>(name: &str, presets: &BTreeMap<String, P>) -> anyhow:
 /// 往任何一层加一个字段，这里当场编译不过；补完之后盘上那一节就多一个键，
 /// 而屏上的行数没跟着变，那一条断言随之变红。
 ///
-/// **纸白对齐上限写的是 0**：那是「关」，一个说了的值——往返里带着它，
+/// **提白上限写的是 0**：那是「关」，一个说了的值——往返里带着它，
 /// 「0 写得出去、读回来仍是 `Some(OFF)` 而不是落到默认」就在同一条用例里钉住了
 /// （`skip_serializing_if` 跳的是「没说」，不是「说了 0」）。
 #[cfg(test)]
@@ -1017,7 +1017,7 @@ mod tests {
         assert_eq!(read(&text, "空的").expect("读得回来"), Preset::default());
     }
 
-    /// 每一种缓存预算的写法都读得回同一个预算。
+    /// 每一种内存上限的写法都读得回同一个预算。
     #[test]
     fn every_budget_spelling_reads_back_as_the_same_budget() {
         for text in ["1", "1023", "1K", "5M", "512M", "1G", "3G"] {
@@ -1060,9 +1060,9 @@ sharpen = true
         assert!(error.contains("漫画"), "{error}");
     }
 
-    /// 预设不装范围层：处理范围与输出根写进来是错误，不是被忽略的两行（07 号票的验收）。
+    /// 预设不装路径与输出：处理范围与输出目录写进来是错误，不是被忽略的两行（07 号票的验收）。
     ///
-    /// 靠的是两层各自的 `deny_unknown_fields`——「预设不含范围层」因此是格式的性质，
+    /// 靠的是两层各自的 `deny_unknown_fields`——「预设不含路径与输出」因此是格式的性质，
     /// 不是「我们没去读它」这种自觉。
     #[test]
     fn the_scope_layer_has_no_place_in_a_preset() {
@@ -1072,7 +1072,7 @@ sharpen = true
             "[preset.\"漫画\"]\nout = \"D:/out\"\n",
             "[preset.\"漫画\".scope]\nout = \"D:/out\"\n",
         ] {
-            assert!(read(text, "漫画").is_err(), "范围层不该被收下：{text}");
+            assert!(read(text, "漫画").is_err(), "路径与输出不该被收下：{text}");
         }
     }
 
@@ -1100,7 +1100,7 @@ sharpen = true
         }
     }
 
-    /// 设备层那两个覆盖项**要连同型号一起写**，否则当场报错。
+    /// 设备设置那两个覆盖项**要连同型号一起写**，否则当场报错。
     ///
     /// 两件事一条规矩管住：那两个数绑着一块面板（ADR 0002），不说是哪块就是一次
     /// 无声的跨面板搬运；而它们的界也挂在 profile 上——不要求型号在场，
@@ -1123,7 +1123,7 @@ sharpen = true
         // 界也因此每一次都验得动：越界的数不再依赖「这一趟有没有盖掉它」。
         assert!(read("[preset.\"漫画\".device]\ngray-levels = 0\n", "漫画").is_err());
 
-        // 反过来，一项覆盖都没有的设备层照旧收下——口味层单独成一份预设是正当的。
+        // 反过来，一项覆盖都没有的设备设置照旧收下——处理选项单独成一份预设是正当的。
         assert_eq!(
             read("[preset.\"漫画\".taste]\nfit = \"inside\"\n", "漫画")
                 .expect("读得懂")
@@ -1186,7 +1186,7 @@ reading-order = \"left-to-right\"
         assert_eq!(preset.taste.reading_order, Some(ReadingOrder::LeftToRight));
     }
 
-    /// **口味层认 `white-align-limit`**（纸白对齐批 03 号票）：键名就是去掉 `--` 的 flag 名，
+    /// **处理选项认 `white-align-limit`**（纸色提白批 03 号票）：键名就是去掉 `--` 的 flag 名，
     /// 取值是命令行上那个级数。**取 0 也是一个说了的值**——它是「关」，不是「没说」，
     /// 读回来是 `Some(OFF)`，不落到默认值上。
     ///
@@ -1215,7 +1215,7 @@ reading-order = \"left-to-right\"
     }
 
     /// 文件还不在时印出来的那份样例**照抄就能用**：它自己就是一份读得懂的预设，
-    /// 而口味层那一节里带着纸白对齐上限（03 号票的验收）。
+    /// 而处理选项那一节里带着提白上限（03 号票的验收）。
     ///
     /// 样例是用户手上唯一的一份格式说明（见 [`no_preset_file_error`]）——它要是读不懂，
     /// 或者少了一项，用户照抄之后撞上的就是「读不懂预设」或者不知道有这一项可写。
@@ -1225,7 +1225,7 @@ reading-order = \"left-to-right\"
 
         assert!(
             sample.taste.white_align_limit.is_some(),
-            "样例里没有纸白对齐上限"
+            "样例里没有提白上限"
         );
         assert!(
             no_preset_file_error(Path::new("presets.toml"))

@@ -78,7 +78,7 @@ impl Cbz {
         self.rot()
     }
 
-    /// 同上，非图片成员。透传文件读不出来是**卷级**的失败，不是失败页——
+    /// 同上，非图片成员。透传文件读不出来是**卷级**的失败，不是坏页——
     /// 12 号票隔离的是页，而透传文件逐字节照搬，搬不动就没有别的办法。
     pub fn rotten_file(&mut self, name: &str, bytes: &[u8]) -> &mut Self {
         self.file(name, bytes);

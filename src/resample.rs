@@ -19,9 +19,9 @@ use crate::gray::GrayImage;
 /// 总缩放比到这个值才触发预缩：低于它，整数倍预缩无处可缩（`CONTEXT.md`）。
 const PRESCALE_THRESHOLD: f64 = 2.0;
 
-/// 残差段的重采样滤波器。
+/// 残差段的重采样缩放算法。
 ///
-/// 全套常见滤波器暴露出来供标定与排查（ADR 0001），默认是 Lanczos3。
+/// 全套常见缩放算法暴露出来供标定与排查（ADR 0001），默认是 Lanczos3。
 /// 预缩那一级不在这里选：它恒为等权 box。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Filter {
@@ -37,7 +37,7 @@ pub enum Filter {
 }
 
 impl Filter {
-    /// 按名字解析。大小写不论，`box` 与 `area` 是同一个滤波器。
+    /// 按名字解析。大小写不论，`box` 与 `area` 是同一个缩放算法。
     pub fn resolve(name: &str) -> Result<Self> {
         let key = name.trim().to_ascii_lowercase();
         FILTERS
@@ -47,7 +47,7 @@ impl Filter {
             .ok_or_else(|| unknown_filter_error(name))
     }
 
-    /// 这个滤波器的规范名，取表里第一个指向它的那个。
+    /// 这个缩放算法的规范名，取表里第一个指向它的那个。
     ///
     /// 参数哈希拿它当稳定写法（见 `crate::metadata`）：那串字节要落进输出文件、
     /// 几个月后还要比对，因此不能搭在 `Debug` 那种没有稳定承诺的写法上。
@@ -60,7 +60,7 @@ impl Filter {
             .iter()
             .find(|(_, filter)| *filter == self)
             .map(|(name, _)| *name)
-            .expect("表覆盖全部滤波器")
+            .expect("表覆盖全部缩放算法")
     }
 
     /// 交给重采样器的那一个。
@@ -75,7 +75,7 @@ impl Filter {
     }
 }
 
-/// 名字 → 滤波器。同一个变体可以有多个名字。
+/// 名字 → 缩放算法。同一个变体可以有多个名字。
 const FILTERS: &[(&str, Filter)] = &[
     ("area", Filter::Area),
     ("box", Filter::Area),
@@ -85,11 +85,11 @@ const FILTERS: &[(&str, Filter)] = &[
     ("lanczos3", Filter::Lanczos3),
 ];
 
-/// 未知滤波器的说法：把认得的名字全端出来。
+/// 未知缩放算法的说法：把认得的名字全端出来。
 fn unknown_filter_error(name: &str) -> anyhow::Error {
     let names: Vec<_> = FILTERS.iter().map(|(name, _)| *name).collect();
     anyhow!(
-        "未知滤波器「{name}」。认得的是：{}。它只作用于残差段——整数倍预缩那一级恒为 box。",
+        "未知缩放算法「{name}」。认得的是：{}。它只作用于残差段——整数倍预缩那一级恒为 box。",
         names.join(" ")
     )
 }
@@ -97,7 +97,7 @@ fn unknown_filter_error(name: &str) -> anyhow::Error {
 /// 一页的缩放：源尺寸到目标尺寸之间那条路。
 ///
 /// **它只由两个尺寸算出**（[`Scaling::plan`]），不需要像素。报告因此在**没真去缩**的那一趟上
-/// 照样说得出这一页该怎么缩——彩色分支的试算就是那一趟（`crate::Compute::color_page`）。
+/// 照样说得出这一页该怎么缩——彩色分支的预览就是那一趟（`crate::Compute::color_page`）。
 ///
 /// 三个量是一条链：`总缩放比 = 预缩倍数 × 残差比`。预缩退化为恒等时倍数是 1，
 /// 残差比就是总缩放比本身。
@@ -158,11 +158,11 @@ impl std::fmt::Display for Scaling {
         if self.prescaled() {
             write!(
                 f,
-                " ⋅ 预缩 {}x ⋅ 残差比 {:.3}",
+                " ⋅ 先整数缩小 {}x ⋅ 再缩 {:.3}",
                 self.prescale, self.residual
             )?;
         } else {
-            f.write_str(" ⋅ 未预缩")?;
+            f.write_str(" ⋅ 一次缩放")?;
         }
         Ok(())
     }
@@ -177,7 +177,7 @@ impl std::fmt::Display for Scaling {
 /// **数的是「这一张图被缩了几回」，不是「重采样器被叫了几回」**：彩色那一张三个通道各走一遍
 /// （见 [`resize_color`](Self::resize_color)），按后者数一张彩页会记成三次，而它只是一张。
 ///
-/// 计数是原子的，缩放本身因此**不需要独占**：第一遍在 rayon 上满核跑（13 号票），
+/// 计数是原子的，缩放本身因此**不需要独占**：分析环节在 rayon 上满核跑（13 号票），
 /// 而一个要 `&mut` 的计数器会把整条计算层串回一条线。
 #[derive(Debug, Default)]
 pub struct Resampler {
@@ -210,7 +210,7 @@ impl Resampler {
     /// 残差段是卷积重采样，卷积核只在同一通道内取样。分通道于是不是近似，
     /// 而是把灰度那条路径原样用过来：彩色分支不必另写一份缩放，两条路径也不会各自漂移。
     ///
-    /// 彩色分支只做缩放（ADR 0005 决定第 4 条），因此这里之后就直接编码写出，没有判据也没有量化。
+    /// 彩色分支只做缩放（ADR 0005 决定第 4 条），因此这里之后就直接编码写出，没有画质分也没有量化。
     /// **编码因此是这一趟结果唯一的消费者**：不编码的那一趟根本不必叫它，
     /// 报告要的缩放靠 [`Scaling::plan`] 算得出来（见 `crate::Compute::color_page`）。
     pub fn resize_color(
@@ -363,8 +363,8 @@ mod tests {
 
     /// 不变量（`CONTEXT.md`）：残差比恒 < 2，且预缩绝不缩过头——预缩之后仍不小于目标。
     ///
-    /// 扫的是真实几何算出来的目标尺寸，不是编出来的比值：取整发生在适配方式那一层，
-    /// 这条不变量必须在取整之后仍然成立。**两种适配方式各扫一遍**（页几何批 01 号票）——
+    /// 扫的是真实几何算出来的目标尺寸，不是编出来的比值：取整发生在缩放方式那一层，
+    /// 这条不变量必须在取整之后仍然成立。**两种缩放方式各扫一遍**（页几何批 01 号票）——
     /// 目标尺寸的来源换了，总缩放比跟着换，而这两条不变量是缩放这一层的，不该跟着换。
     ///
     /// 以高为准带来了一支从前不存在的情形：**总缩放比小于 1**，也就是放大。

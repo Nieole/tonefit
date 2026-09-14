@@ -41,7 +41,7 @@ fn a_rerun_with_the_same_parameters_and_source_skips_the_volume() {
     assert!(skipped.pages.is_empty(), "跳过的卷不该有逐页结果");
     // 页数是源那一侧的事实，不做工作也数得出来。
     assert_eq!(skipped.page_count(), 2);
-    // 几何门跟着页走，而这一趟一页都没算：判定范围因此是空的。
+    // 尺寸贴合检查跟着页走，而这一趟一页都没算：判定范围因此是空的。
     assert_eq!(skipped.judged_by_the_gate().count(), 0);
     assert_eq!(
         fixtures::fingerprint(&skipped.output),
@@ -76,11 +76,11 @@ fn a_changed_parameter_redoes_the_volume() {
         ("换 profile", |request| {
             request.profile = fixtures::profile("kobo-clara-hd")
         }),
-        // 阈值是**界**，判据是**量**（`CONTEXT.md`）：界挪一格，逐页判定就可能落到另一档上，
-        // 上一趟的输出整卷过期。换档位不需要判据变——标定重新夹一次窗口就够了
+        // 画质门槛是**界**，画质分是**量**（`CONTEXT.md`）：界挪一格，逐页判定就可能落到另一档上，
+        // 上一趟的输出整卷过期。换档位不需要画质分变——标定重新夹一次窗口就够了
         // （`metric-recalibration/07` 就是这么一趟），幂等得拦得住那一趟。
         // 改动相对当前取值（翻倍）：标定把界换成多少，这一条都不必跟着改。
-        ("换阈值", |request| {
+        ("换画质门槛", |request| {
             let doubled = request.profile.threshold().value() * 2.0;
             request.profile = request
                 .profile
@@ -88,38 +88,42 @@ fn a_changed_parameter_redoes_the_volume() {
                 .with_threshold(doubled)
                 .expect("两倍仍在 0 与 255 之间")
         }),
-        ("覆盖面板灰阶数", |request| {
+        ("覆盖屏幕灰阶数", |request| {
             request.profile = fixtures::baseline_profile()
                 .with_gray_levels(4)
                 .expect("4 级灰阶")
         }),
-        ("点名位深", |request| {
+        ("点名灰阶档位", |request| {
             request.bit_depth = Some(BitDepth::Four)
         }),
-        ("换滤波器", |request| request.filter = Filter::Bicubic),
-        // 适配方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
-        // 几何门、判据参照与判定都要重算，上一趟的输出一张都不能留。
-        ("换适配方式", |request| request.fit = FitMode::Inside),
-        // 裁边改的是**适配之前**的页尺寸（页几何批 02 号票）：同上，整卷重算。
-        ("关掉裁边", |request| request.crop = false),
+        ("换缩放算法", |request| {
+            request.filter = Filter::Bicubic
+        }),
+        // 缩放方式改的是目标尺寸本身（页几何批 01 号票）：换了它，这一卷每一页的尺寸、
+        // 尺寸贴合检查、画质分参照与判定都要重算，上一趟的输出一张都不能留。
+        ("换缩放方式", |request| request.fit = FitMode::Inside),
+        // 裁白边改的是**适配之前**的页尺寸（页几何批 02 号票）：同上，整卷重算。
+        ("关掉裁白边", |request| request.crop = false),
         // 拆分那三项改的是**这一卷有几页、每一页是哪一块**（页几何批 04 号票）。
         // 阅读方向只换两半的先后，但那正是成员名的次序——`001-1.png` 从右半变成左半，
         // 字节整个换了一张。
         ("关掉拆分", |request| request.split.on = false),
-        ("换拆分阈值", |request| {
+        ("换跨页判定宽度", |request| {
             request.split.threshold = tonefit::SplitThreshold::parse("2.5").expect("正数")
         }),
         ("换阅读方向", |request| {
             request.split.order = tonefit::ReadingOrder::LeftToRight
         }),
         // 走哪条路改的是每一页的档（ADR 0018 的《后果》：翻默认那一趟全库不命中，正是这一项）。
-        ("打开上包络", |request| request.envelope = true),
-        // 纸白对齐的上限改的是缩放之后那一步的像素（纸白对齐批 01 号票）：
+        ("打开整卷统一灰阶", |request| {
+            request.envelope = true
+        }),
+        // 纸色提白的上限改的是缩放之后那一步的像素（纸色提白批 01 号票）：
         // 参照与其后一切量化跟着变。**默认值抬到 4 之后**（05 号票），这一格改的是
         // **从默认的 4（开）关回 0** 那一次——不放心的人关掉它，上一趟对齐过的输出
         // 必须整卷过期；而「取值 0 也照样进参数哈希」不成立时，唯一漏得掉的正是 0 这一头。
         // 漏了它，用户会看见「我关掉了却没效果」，还找不出原因（ADR 0002 的《后果》记过同型事故）。
-        ("关掉纸白对齐", |request| {
+        ("关掉纸色提白", |request| {
             request.white_align_limit = tonefit::WhiteAlignLimit::OFF
         }),
     ];
@@ -143,7 +147,7 @@ fn switching_to_another_alias_of_the_same_panel_redoes_the_volume() {
     assert_redone(redone.verdict, "换了同一块面板的另一个别名");
 }
 
-/// 缓存预算限的是峰值内存，一个像素都不改（ADR 0005）：改它不该让整库重做。
+/// 内存上限管的是峰值内存，一个像素都不改（ADR 0005）：改它不该让整库重做。
 #[test]
 fn the_cache_budget_alone_does_not_redo_the_volume() {
     let redone = rerun(
@@ -391,8 +395,8 @@ fn an_output_written_without_metadata_is_redone() {
 
 /// 记录写全六项：幂等那四项，加上判定与它的理由（spec 的 story 7 随文件走的那一份）。
 ///
-/// 跑在 `--envelope` 那条路上：理由那一句要指名定档页（`driven by page`），
-/// 而定档页只有上包络才有。默认那条路的记录由下面那一条钉。
+/// 跑在 `--envelope` 那条路上：理由那一句要指名代表页（`driven by page`），
+/// 而代表页只有整卷统一灰阶才有。默认那条路的记录由下面那一条钉。
 #[test]
 fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
     let space = Workspace::new();
@@ -406,7 +410,7 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
 
     let envelope = match report.volumes[0].verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope,
-        other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+        other => panic!("这一卷该由整卷统一灰阶定档，实际是 {other:?}"),
     };
     let page = report.volumes[0]
         .pages
@@ -430,7 +434,7 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
             "{keyword} 不是十六进制哈希：{value}"
         );
     }
-    // 判定与理由：ADR 0006 要的那一句，定档页指名道姓。
+    // 判定与理由：ADR 0006 要的那一句，代表页指名道姓。
     assert_eq!(
         field("tonefit:verdict"),
         Some(fixtures::verdict(page).candidate.to_string())
@@ -444,14 +448,14 @@ fn the_record_names_the_tool_the_profile_the_verdict_and_its_reason() {
     );
 }
 
-/// **默认那条路（逐页）上那份记录是第一遍盖的，字段一格不差**（12 号票）。
+/// **默认那条路（逐页）上那份记录是分析环节盖的，字段一格不差**（12 号票）。
 ///
-/// 那条路上量化与编码提到了第一遍——一页判完当场就编好了，盖记录的于是不再是第二遍的
-/// `Encode`，而是第一遍自己。这一条问的就是**换了盖章的人之后那七项还对不对**：
+/// 那条路上量化与编码提到了分析环节——一页判完当场就编好了，盖记录的于是不再是写出环节的
+/// `Encode`，而是分析环节自己。这一条问的就是**换了盖章的人之后那七项还对不对**：
 /// 判定与理由取自报告，而报告由汇总那一处独立算出来——两处对不上，
 /// 写出去的字节就与报告说的那一档分了家。
 ///
-/// 定档页那一项在这条路上恒不在场（上包络关着），理由因此是逐页那两种之一，
+/// 代表页那一项在这条路上恒不在场（整卷统一灰阶关着），理由因此是逐页那两种之一，
 /// 不带 `driven by page`。段式迟滞那一种（`hysteresis pull-back`）已随迟滞退场（ADR 0018），
 /// 不再产出。
 ///
@@ -467,7 +471,7 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
     assert_eq!(
         report.volumes[0].verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络，测的就不是逐页那条路"
+        "默认走到了整卷统一灰阶，测的就不是逐页那条路"
     );
     for page in &report.volumes[0].pages {
         let verdict = fixtures::verdict(page);
@@ -497,11 +501,11 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
             Some(verdict.candidate.to_string()),
             "写进 tEXt 的那一档与报告说的不是同一档"
         );
-        // 逐页那两种的字面，一律不带定档页。
+        // 逐页那两种的字面，一律不带代表页。
         let reason = field("tonefit:reason").expect("理由没写进去");
         assert!(
             !reason.contains("driven by page"),
-            "逐页那条路上竟指了一张定档页：{reason}"
+            "逐页那条路上竟指了一张代表页：{reason}"
         );
         assert_eq!(
             reason,
@@ -515,7 +519,7 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
     }
 }
 
-/// 彩色分支不量化，没有判定位深可写（ADR 0005 决定第 4 条）；幂等依据一项不少——
+/// 彩色分支不量化，没有判定灰阶档位可写（ADR 0005 决定第 4 条）；幂等依据一项不少——
 /// 默认路径上是共用的三项加页级源哈希（two-pass-rework/15）。
 #[test]
 fn a_color_page_carries_the_same_record_without_a_bit_depth() {
@@ -544,7 +548,7 @@ fn a_color_page_carries_the_same_record_without_a_bit_depth() {
     assert_eq!(
         fixtures::png_field(&text, "tonefit:verdict"),
         Some("color".to_owned()),
-        "彩色分支上没有判定位深可写"
+        "彩色分支上没有判定灰阶档位可写"
     );
 
     // 同一卷再跑一趟照样跳过：彩页的记录与灰度页的是同一批字段。
@@ -635,7 +639,7 @@ fn a_split_page_records_which_source_member_it_came_from() {
 ///
 /// `tonefit:page-source` 只算这一张来自的那个源成员——改了一页，只有那一页的页级哈希变，
 /// 旁边那一页的纹丝不动。这正是 spec 的 story 23：一页的幂等依据只取决于这一页自己。
-/// 默认路径上的记录里没有 `tonefit:source`：那一项只对上包络成立（它论证的是基准档由全卷定），
+/// 默认路径上的记录里没有 `tonefit:source`：那一项只对整卷统一灰阶成立（它论证的是统一档位由全卷定），
 /// 留着就是第二个出处，两份对不上时没人说得清哪份作数。
 ///
 /// 读的是输出里的文件而不是 `pages[index]`：留下的页不在逐页结果里
@@ -649,7 +653,7 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_and_no_volume_leve
     assert_eq!(
         first.volumes[0].verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络，测的就不是逐页那条路"
+        "默认走到了整卷统一灰阶，测的就不是逐页那条路"
     );
     let basis = |report: &tonefit::Report, name: &str| {
         let output = report.volumes[0].output.join(name);
@@ -683,7 +687,7 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_and_no_volume_leve
     );
 }
 
-/// **跨页拆分下页级依据定义得清楚**（two-pass-rework/13）：一个源页出两张输出页，
+/// **拆分跨页下页级依据定义得清楚**（two-pass-rework/13）：一个源页出两张输出页，
 /// 两张的页级源哈希**相同**——它们来自同一个成员的同一批字节——而来路那一项各说自己是哪一半。
 /// 两项合在一起，每一张都指得回「源页 001.png 的第几半」；没切开的那一张另有自己的哈希。
 ///
@@ -728,7 +732,7 @@ fn both_halves_of_a_split_page_share_one_source_hash_and_the_origin_tells_them_a
 /// （ADR 0006 决定第 3 条），「这一页变没变」答不了这一页该不该重做。卷级那一份照旧写，
 /// 同一卷再跑一趟照旧整卷跳过——那条路上的记录与本票落地之前是同一批字段。
 ///
-/// 卷里放一张彩页：灰度页的记录在第二遍盖，彩页的在第一遍就盖（ADR 0010），
+/// 卷里放一张彩页：灰度页的记录在写出环节盖，彩页的在分析环节就盖（ADR 0010），
 /// 两处各走各的代码，只测灰度页的话彩页那一处写了也看不见。
 #[test]
 fn the_envelope_path_records_no_page_level_basis_and_still_skips_as_a_whole() {
@@ -749,7 +753,7 @@ fn the_envelope_path_records_no_page_level_basis_and_still_skips_as_a_whole() {
     let first = under_the_envelope();
     assert!(
         matches!(first.volumes[0].verdict, Some(VolumeVerdict::Envelope(_))),
-        "夹具没走到上包络：{:?}",
+        "夹具没走到整卷统一灰阶：{:?}",
         first.volumes[0].verdict
     );
     assert_eq!(
@@ -766,7 +770,7 @@ fn the_envelope_path_records_no_page_level_basis_and_still_skips_as_a_whole() {
         assert_eq!(
             fixtures::png_field(&text, "tonefit:page-source"),
             None,
-            "上包络那条路上写了页级源哈希：{}",
+            "整卷统一灰阶那条路上写了页级源哈希：{}",
             page.output.display()
         );
     }
@@ -778,9 +782,9 @@ fn the_envelope_path_records_no_page_level_basis_and_still_skips_as_a_whole() {
     );
 }
 
-/// **覆盖顶死的那一趟照写页级依据**（two-pass-rework/13）：位深与抖动都点名，每一页的档在碰卷之前
+/// **覆盖顶死的那一趟照写页级依据**（two-pass-rework/13）：灰阶档位与抖动都点名，每一页的档在碰卷之前
 /// 就定死，字节只取决于这一页自己——「写不写」问的是这件事，不是开关的名字（停车场 Q665）。
-/// 卷级那一行报的是 `Override`，不是逐页也不是上包络，而页级依据两种页都有。
+/// 卷级那一行报的是 `Override`，不是逐页也不是整卷统一灰阶，而页级依据两种页都有。
 #[test]
 fn a_pinned_run_records_the_page_level_basis_too() {
     let space = Workspace::new();
@@ -820,8 +824,8 @@ fn a_pinned_run_records_the_page_level_basis_too() {
 
 /// **`--envelope` 加两维都点名的那一趟按页记依据、按页跳过**（two-pass-rework/15；停车场 Q665、Q698）。
 ///
-/// 依据的作用域问的是「这一页的字节取决于什么」，不是开关的名字：位深与抖动都点名，每一页的档碰卷之前就定死，
-/// 上包络根本没接手——这一趟与不开 `--envelope` 的顶死那一趟同一个待遇：记页级那一项、不记卷级那一项，
+/// 依据的作用域问的是「这一页的字节取决于什么」，不是开关的名字：灰阶档位与抖动都点名，每一页的档碰卷之前就定死，
+/// 整卷统一灰阶根本没接手——这一趟与不开 `--envelope` 的顶死那一趟同一个待遇：记页级那一项、不记卷级那一项，
 /// 改一页只重做那一页。这一角从前两种都写（本票之前），如今只带一种。
 #[test]
 fn a_pinned_run_under_the_envelope_records_and_skips_by_page() {
@@ -1018,10 +1022,10 @@ fn without_text_chunk(png: &[u8], keyword: &str) -> Vec<u8> {
     kept
 }
 
-/// **失败页的占位页不记页级依据**，同一卷里的好页照记（two-pass-rework/13）。
+/// **坏页的空白占位页不记页级依据**，同一卷里的好页照记（two-pass-rework/13）。
 ///
-/// 占位页按卷内统一尺寸出（12 号票），那个尺寸由全卷定——这一页的字节因此不只取决于它自己，
-/// 与上包络那条路同一条理由。默认路径上卷级那一项也不写（two-pass-rework/15），它随身带的是
+/// 空白占位页按卷内统一尺寸出（12 号票），那个尺寸由全卷定——这一页的字节因此不只取决于它自己，
+/// 与整卷统一灰阶那条路同一条理由。默认路径上卷级那一项也不写（two-pass-rework/15），它随身带的是
 /// 共用的三项、来路、`failed` 与那句自证：哪一种源哈希都没有，永远留不下来，而隔离的卷本来每趟都重做。
 #[test]
 fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
@@ -1038,21 +1042,21 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
     assert_eq!(
         fixtures::png_field(&placeholder, "tonefit:verdict"),
         Some("failed".to_owned()),
-        "头一页不是占位页"
+        "头一页不是空白占位页"
     );
     assert_eq!(
         fixtures::png_field(&placeholder, "tonefit:source"),
         None,
-        "默认路径上的占位页写了卷级源哈希"
+        "默认路径上的空白占位页写了卷级源哈希"
     );
     assert_eq!(
         fixtures::png_field(&placeholder, "tonefit:page-source"),
         None,
-        "占位页写了页级源哈希——它的尺寸由全卷定，页级答不了"
+        "空白占位页写了页级源哈希——它的尺寸由全卷定，页级答不了"
     );
     assert!(
         fixtures::png_field(&placeholder, "tonefit:params").is_some(),
-        "占位页丢了共用的三项"
+        "空白占位页丢了共用的三项"
     );
     let neighbour = fixtures::read_png_text(&reported.pages[1].output);
     assert!(
@@ -1067,7 +1071,7 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
 /// 「这一页变没变」。改掉两页里的一页再跑：没变的那一页**不解码、不判、不编**——解码次数
 /// 只有 1；报告说得出这一卷留下了几页、重做了几页，而卷那一行的页数仍是整本书的页数。
 ///
-/// 下半段钉的是**产物一字不差**：按页跳过省的是工，不是结果——同一卷往一个空的输出根
+/// 下半段钉的是**产物一字不差**：按页跳过省的是工，不是结果——同一卷往一个空的输出目录
 /// 整卷重做一遍，两份输出逐字节相同。留下的页是原样搬的：默认路径上一页的记录只取决于它自己
 /// （two-pass-rework/15 收掉了卷级那一项），搬过来一个字节不用改。
 #[test]
@@ -1277,16 +1281,16 @@ fn under_the_envelope_a_changed_page_still_redoes_the_whole_volume() {
     let redone = &report.volumes[0];
     assert!(
         matches!(redone.verdict, Some(VolumeVerdict::Envelope(_))),
-        "夹具没走到上包络：{:?}",
+        "夹具没走到整卷统一灰阶：{:?}",
         redone.verdict
     );
-    assert_eq!(redone.decodes, 2, "上包络那条路上留下了页");
+    assert_eq!(redone.decodes, 2, "整卷统一灰阶那条路上留下了页");
     assert_eq!(redone.retained_pages, 0);
     assert_eq!(redone.pages.len(), 2);
 }
 
-/// **试算预告的就是按页跳过**（spec 的 story 6，two-pass-rework/14）：改一页之后试算，
-/// 报告说留下一页、只解一页——与照做那一趟同一个数，尽管试算一个字节都不写。
+/// **预览预告的就是按页跳过**（spec 的 story 6，two-pass-rework/14）：改一页之后预览，
+/// 报告说留下一页、只解一页——与照做那一趟同一个数，尽管预览一个字节都不写。
 #[test]
 fn a_dry_run_predicts_the_skip_by_page() {
     let space = Workspace::new();
@@ -1301,7 +1305,7 @@ fn a_dry_run_predicts_the_skip_by_page() {
     .expect("处理应当成功");
 
     let predicted = &report.volumes[0];
-    assert_eq!(predicted.decodes, 1, "试算把没变的那一页也解了");
+    assert_eq!(predicted.decodes, 1, "预览把没变的那一页也解了");
     assert_eq!(predicted.retained_pages, 1);
     assert_eq!(predicted.pages.len(), 1);
 }
@@ -1309,7 +1313,7 @@ fn a_dry_run_predicts_the_skip_by_page() {
 /// **一页坏了整卷进隔离目录，留下的页跟着去**（two-pass-rework/14；12 号票的隔离不变）。
 ///
 /// 卷仍是去处的单位：重做的那一页失败，整卷去隔离目录，而隔离目录里那一份得是整本书——
-/// 留下的页从干净去处里搬过去，干净去处那一份原样留着当过期副本。占位页按卷内统一尺寸出，
+/// 留下的页从干净去处里搬过去，干净去处那一份原样留着当过期副本。空白占位页按卷内统一尺寸出，
 /// 那个尺寸数的是整本书：这一卷只重做了一页而且它失败了，众数由留下的那一页定。
 /// 坏页修好之后再跑：没变的那一页仍从干净去处里留下，重做的只有修好的那一页。
 #[test]
@@ -1336,7 +1340,7 @@ fn a_failed_page_isolates_the_volume_and_the_retained_pages_go_along() {
     let placeholder = fixtures::read_png(&reported.output.join("001.png"));
     assert_eq!(
         placeholder.size, neighbour.size,
-        "占位页没按卷内统一尺寸出——留下的那一页没数进众数"
+        "空白占位页没按卷内统一尺寸出——留下的那一页没数进众数"
     );
 
     // 坏页修好：没变的那一页仍从干净去处里留下，只重做修好的那一页。
@@ -1425,9 +1429,9 @@ fn a_volume_with_only_its_passthrough_file_changed_keeps_every_page_and_says_per
     );
 }
 
-/// **部分救回页也留得下，留下之后它仍是部分救回页**（two-pass-rework/14；04 号票的救回不变）。
+/// **残缺页也留得下，留下之后它仍是残缺页**（two-pass-rework/14；04 号票的救回不变）。
 ///
-/// 救回页有自己的尺寸、判据与判定，字节只取决于它自己，页级依据照写；改旁边那一页，它留下——
+/// 救回页有自己的尺寸、画质分与判定，字节只取决于它自己，页级依据照写；改旁边那一页，它留下——
 /// 记录里那句「salvaged …」随它走，产物与整卷重做逐字节相同。报告里的救回清单只数这一趟重做的页，
 /// 留下的那一张不在里面（`VolumeReport::pages` 只列这一趟做了的）。
 #[test]
@@ -1479,7 +1483,7 @@ fn a_salvaged_page_is_retained_like_any_other() {
 /// **新切出的一张撞上留下的同名一张，照样拦下**（two-pass-rework/14；页几何批 04 号票的撞名）。
 ///
 /// 头一趟 `001.jpg` 是单页（输出 `001.png`）、`001-1.png` 是另一页；把 `001.jpg` 换成跨页，
-/// 它切出的 `001-1.png` 撞上留下的那一张——撞名要在写出第一个字节之前说，卷级失败、
+/// 它切出的 `001-1.png` 撞上留下的那一张——撞名要在写出第一个字节之前说，卷转换失败、
 /// 上一趟的输出纹丝不动。
 #[test]
 fn a_freshly_split_page_colliding_with_a_retained_one_is_caught() {
@@ -1502,7 +1506,7 @@ fn a_freshly_split_page_colliding_with_a_retained_one_is_caught() {
     let second = fixtures::run_volume(&space, &volume);
 
     let [failed] = &second.failed_volumes[..] else {
-        panic!("撞名没被记成卷级失败：{:?}", second.failed_volumes);
+        panic!("撞名没被记成卷转换失败：{:?}", second.failed_volumes);
     };
     assert!(
         failed.reason.contains("001-1.png"),
@@ -1577,7 +1581,7 @@ fn recorded(output: &std::path::Path, keyword: &str) -> String {
         .unwrap_or_else(|| panic!("{keyword} 没写进 {}", output.display()))
 }
 
-/// 两页加一个透传文件的卷。两页都小于面板，几何门在两页上都不成立——本文件测的每一条都与门无关。
+/// 两页加一个透传文件的卷。两页都小于面板，尺寸贴合检查在两页上都不成立——本文件测的每一条都与门无关。
 fn two_pages_and_an_extra(space: &Workspace) -> Volume {
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::solid(fixtures::TINY, 128));

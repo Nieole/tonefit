@@ -27,15 +27,15 @@
 //!
 //! **两处的键与措辞出自同一处**（`p4-parking-lot/07`，停车场 Q166、Q180）：
 //! 这一行从前是各状态那几个函数里手写的字面串——同一个键因此有两句措辞
-//! （这一行上是 `t 试算`，那一张上是 `t 试算：只算不写，报告照出`），
+//! （这一行上是 `t 预览`，那一张上是 `t 预览：只算不写，报告照出`），
 //! 改一个键位要动两处，而只动一处不会有任何一条用例红；取值栏那两层上三个键同义，
 //! 而这一行只摆得出其中两个。**问出来之后那两笔都不存在**。
 //!
-//! **这一层挑的是动作，不是键**：「就在这一行上动手」「试算」「退出」——
+//! **这一层挑的是动作，不是键**：「就在这一行上动手」「预览」「退出」——
 //! 派得出它的是哪几个键、那一句怎么说，一律由 [`Asked`] 问出来。
 //!
 //! **说明那一行里顺口提到的键同样问按键表**（[`Asked::key_of`]，`keys` 模块文档
-//! 《屏上顺口提到一个键的那几句散文》）：`按 ⇥ 列出这一层`、`那时按 x 接着做第二遍……`、
+//! 《屏上顺口提到一个键的那几句散文》）：`按 ⇥ 列出这一层`、`那时按 x 接着做写出环节……`、
 //! `g 把它交回给最新那一卷` 三句是散文，措辞是它们自己的，只有**键与写法**取自按键表。
 //!
 //! 这一格有多高不由本模块定：折出来几行就几行，上下限在 [`super::yielding::footer_height`]。
@@ -70,7 +70,7 @@ pub(super) struct Asked<'a> {
     /// 屏上这一块是哪一组：措辞随它变（同一个 `Esc` 在取值栏上是「一格不改地退一步」、
     /// 编辑到一半是「丢掉」）。
     group: KeyGroup,
-    /// 这一趟走到哪个阶段：按停那个键与退出会话那一句随它变。
+    /// 这一趟走到哪个阶段：按停止那个键与退出会话那一句随它变。
     stage: Stage,
     /// 那一趟攒着的那一份。**只给「屏上摆不摆这一条」用**——按键表答不出
     /// 「报告里此刻有没有卷」（见 [`report_prompt`]）。
@@ -110,7 +110,7 @@ impl<'a> Asked<'a> {
         })
     }
 
-    /// **退出会话**那一条。跑着与等答话时只剩 `Ctrl-C`（`q`／`Esc` 那时按不动，
+    /// **退出会话**那一条。跑着与等待确认时只剩 `Ctrl-C`（`q`／`Esc` 那时按不动，
     /// 停车场 Q63），而那一句还要说出盘上会剩下什么——两件事都由按键表与
     /// [措辞那一处](super::keys::says)答，这里不分岔。
     fn quit(&self) -> Option<String> {
@@ -283,9 +283,9 @@ fn marked(notice: &Notice) -> Painted {
 }
 
 /// **阶段那一维此刻摆得出的那几条**（ADR 0017），连同下一行说的那句话：
-/// 跑着是按停那一副，等答话是答话那一副。没跑过与收场了这一维一个键都不派，因此是 `None`。
+/// 跑着是按停止那一副，等待确认是答话那一副。没跑过与结束了这一维一个键都不派，因此是 `None`。
 ///
-/// 焦点那一维上摆得下它的那几块都拼它——**按停与答话那三个键在哪一块上都按得动**
+/// 焦点那一维上摆得下它的那几块都拼它——**按停止与答话那三个键在哪一块上都按得动**
 /// （`super::super::state::stage_action`），而屏上不摆按不动的键的另一半是
 /// **按得动的键要摆出来**。
 ///
@@ -321,16 +321,16 @@ fn with_stage(
 
 /// **焦点落在左栏时**屏底那两行。
 ///
-/// 跑着与等答话时这一块自己只剩一个键：`⇥`——它不改三层里的任何一格，
+/// 跑着与等待确认时这一块自己只剩一个键：`⇥`——它不改三组设置里的任何一格，
 /// 而几十分钟的一趟里回头看第一卷正是这一下（ADR 0017）。**那一条不必在这里分岔**：
-/// 三层只读的时候改动那几件事的键根本不派，问出来就是空的。
+/// 三组设置只读的时候改动那几件事的键根本不派，问出来就是空的。
 ///
 /// 留下的这几件事各有理由：
 ///
 /// - **就在这一行上动手**（[`Asked::hands_on`]）是这一屏上唯一随行而变的那一件；
-/// - **试算与执行**与光标停在哪儿无关，而「配好了之后按哪个键」是这一屏上最该
+/// - **预览与转换**与光标停在哪儿无关，而「配好了之后按哪个键」是这一屏上最该
 ///   一直看得见的事；
-/// - **`⇥ 报告区` 只在上一趟收场之后才摆**：一趟都没跑过时那个键根本不派动作
+/// - **`⇥ 报告区` 只在上一趟结束之后才摆**：一趟都没跑过时那个键根本不派动作
 ///   （`super::super::state::Session::browsing_action`），问出来就没有这一条；
 /// - **退出会话一行不让**（停车场 Q75）。
 ///
@@ -358,8 +358,8 @@ fn config_prompt(asked: &Asked) -> Prompt {
 /// 而屏上不摆按不动的键。**这一问按键表答不出来**（它读不到那一趟攒下来的东西），
 /// 因此由这一层拿 `live` 挡一道——挡的是「摆不摆这一条」，键与措辞照旧问出来。
 ///
-/// **`g` 只在跟随停了时摆**：跟随着的时候按它一格不变（`CONTEXT.md` 的《会话》：跟随），
-/// 而「跟随此刻停没停」屏上另有一处说（报告区那一格的抬头，见
+/// **`g` 只在自动滚动停了时摆**：自动滚动着的时候按它一格不变（`CONTEXT.md` 的《会话》：自动滚动），
+/// 而「自动滚动此刻停没停」屏上另有一处说（报告区那一格的抬头，见
 /// [`super::report::report_title`]）——这里只摆那个键。
 ///
 /// **[这一趟的前提](Overlay::Premises)那一条摆在这一块上**
@@ -407,20 +407,20 @@ fn opened_prompt(asked: &Asked, session: &Session) -> Prompt {
     with_stage(asked, parts, following_line(asked, stopped))
 }
 
-/// 报告区那一行底下说的那件事：**跟随此刻是什么样**（`CONTEXT.md` 的《会话》：跟随）。
+/// 报告区那一行底下说的那件事：**自动滚动此刻是什么样**（`CONTEXT.md` 的《会话》：自动滚动）。
 ///
-/// 跑着与等答话时它让位给阶段那一维那一句（见 [`stage_parts`]）：那一句说的是此刻在等
-/// 什么，比这一句急。**「跟随停了」屏上因此另有一处常驻**——报告区那一格的抬头，
+/// 跑着与等待确认时它让位给阶段那一维那一句（见 [`stage_parts`]）：那一句说的是此刻在等
+/// 什么，比这一句急。**「自动滚动停了」屏上因此另有一处常驻**——报告区那一格的抬头，
 /// 那一处不随阶段让位。
 ///
-/// 停了那一句末尾提到**回到跟随那个键**，它问按键表（[`Asked::key_of`]）；派不出来就不提。
+/// 停了那一句末尾提到**回到自动滚动那个键**，它问按键表（[`Asked::key_of`]）；派不出来就不提。
 fn following_line(asked: &Asked, stopped: bool) -> String {
     match (stopped, asked.key_of(|action| action == Action::Follow)) {
         (true, Some(key)) => {
-            format!(" 跟随停了：报告再长，光标也不动——{key} 把它交回给最新那一卷")
+            format!(" 自动滚动停了：报告再长，光标也不动——{key} 把它交回给最新那一卷")
         }
-        (true, None) => " 跟随停了：报告再长，光标也不动".to_owned(),
-        (false, _) => " 跟随着最新的那一卷：一卷收摊，光标就落到它上面".to_owned(),
+        (true, None) => " 自动滚动停了：报告再长，光标也不动".to_owned(),
+        (false, _) => " 自动滚动到最新的那一卷：一卷收摊，光标就落到它上面".to_owned(),
     }
 }
 
@@ -431,37 +431,37 @@ fn following_line(asked: &Asked, stopped: bool) -> String {
 /// 分成两处，改一级的措辞就要在两处对着改。
 ///
 /// 上一行：配置这时只读（spec 的《会话：布局与交互》），因此一个改动键都不派；
-/// 「只读」那件事本身写在左栏抬头上（见 [`super::config::config`]）。按到中止之后
-/// 按停那个键也不摆了——闩到了顶，再按一次没有更强的一级可去
+/// 「只读」那件事本身写在左栏抬头上（见 [`super::config::config`]）。按到立即停止之后
+/// 按停止那个键也不摆了——闩到了顶，再按一次没有更强的一级可去
 /// （`super::super::state::running_action` 在那一级上派的是「没有意义」），
 /// 而**屏上不摆按不动的键**：这一条不必在这里判，问出来就是空的。
 ///
-/// 下一行：收尾那一句非说不可——按下去之后屏上一切照旧地往前走，几千页的卷还要跑几分钟，
-/// 不说清「在等当前卷跑完」，看上去就像那一下没按上。中止那一句说的是**盘上会剩下什么**。
+/// 下一行：做完再停那一句非说不可——按下去之后屏上一切照旧地往前走，几千页的卷还要跑几分钟，
+/// 不说清「在等当前卷跑完」，看上去就像那一下没按上。立即停止那一句说的是**盘上会剩下什么**。
 /// 没按过时它是空的，与浏览时那一行同一个样子（那一行也是空的）。
 ///
-/// 措辞与报告里那两句（`crate::render::outcome` 的「按停」）说的是同一件事，
-/// 但时态不同：那两句是收场之后的结果，这两句是此刻在等的事。
+/// 措辞与报告里那两句（`crate::render::outcome` 的「按停止」）说的是同一件事，
+/// 但时态不同：那两句是结束之后的结果，这两句是此刻在等的事。
 fn running_parts(asked: &Asked, pressed: Instruction) -> (Vec<Option<String>>, String) {
     let waiting = match pressed {
-        // 预告的是**这一趟要停的那个决策点**上按什么：会话此刻还没走到那儿，
+        // 预告的是**这一趟要停的那个确认点**上按什么：会话此刻还没走到那儿，
         // 因此按那个阶段去问阶段那一维（[`stage_keys`]），闩照此刻的带过去。
         Instruction::Continue => {
             resuming_line(asked.live, &stage_keys(Stage::Deciding(pressed)))
         }
         Instruction::Finish => {
-            "收尾：等当前卷跑完就停，剩下的卷一个都不开工；盘上只留完整的卷，下一趟幂等接着走"
+            "做完再停：等当前卷跑完就停，剩下的卷一个都不开工；盘上只留完整的卷，下一趟幂等接着走"
                 .to_owned()
         }
         Instruction::Abort => {
-            "中止：当前卷停在这一页上，它那格 partial 丢掉——那一卷等于没做，最终位置上一个字节都没动过"
+            "立即停止：当前卷停在这一页上，它那格 partial 丢掉——那一卷等于没做，最终位置上一个字节都没动过"
                 .to_owned()
         }
     };
     (
         vec![
             // 行首那一截与总览块那一格的抬头同一个出处（见 [`stopping_name`]）。
-            // 没按过时它是「跑着」——那不是按停的一级，因此不在那张表里。
+            // 没按过时它是「跑着」——那不是按停止的一级，因此不在那张表里。
             Some(format!("{}……", stopping_name(pressed).unwrap_or("跑着"))),
             asked.on(|action| action == Action::Stop),
         ],
@@ -472,21 +472,21 @@ fn running_parts(asked: &Asked, pressed: Instruction) -> (Vec<Option<String>>, S
     )
 }
 
-/// 还没按过停的时候，屏底第二行说的那件事：**这一趟在决策点上怎么走**
+/// 还没按过停的时候，屏底第二行说的那件事：**这一趟在确认点上怎么走**
 /// （ADR 0012 决定第 3 条，`p1-session/14`、`volume-discovery/07`）。
 ///
 /// 两句都要在**跑起来的当口**说，不能等到停下来才说：
 ///
-/// - **续做那一趟**要预告它会停：每一卷跑到第二遍之前都不走了，不预告的话，
+/// - **接着写出那一趟**要预告它会停：每一卷跑到写出环节之前都不走了，不预告的话，
 ///   横条停住看上去与卡住没有分别。答话那三个键连同「一卷一次」一起预告出来——
 ///   几十卷的一趟里，「还要按几下」是用户当场就想知道的那件事。
-/// - **答过「剩下的卷都这样」之后**要说清它不再问了：往下的决策点当场照那个默认答案答掉
+/// - **答过「后面的卷都写出」之后**要说清它不再问了：往下的确认点当场照那个默认答案答掉
 ///   （`super::super::run::Gate`），横条从此一路走到底。不说的话，「它怎么不问了」
 ///   与「它忘了问」在屏上没有分别。
 ///
-/// 执行那一趟与还没跑过时这一行是空的，与从前逐格相同：那两种没有「续不续做」可言。
+/// 执行那一趟与还没跑过时这一行是空的，与从前逐格相同：那两种没有「续不接着写出」可言。
 ///
-/// **答话那三个键出自按键表**——`answers` 是决策点那个阶段上[阶段那一维派得出的键](stage_keys)
+/// **答话那三个键出自按键表**——`answers` 是确认点那个阶段上[阶段那一维派得出的键](stage_keys)
 /// （`keys` 模块文档《屏上顺口提到一个键的那几句散文》）。三句各自的措辞照旧是这一句自己的
 /// （停车场 Q626 管它们的措辞），派不出来的键连它那一句一起不说。
 fn resuming_line(live: Option<&Live>, answers: &[(Key, Action)]) -> String {
@@ -497,20 +497,20 @@ fn resuming_line(live: Option<&Live>, answers: &[(Key, Action)]) -> String {
         return String::new();
     }
     if live.for_the_rest().is_some() {
-        return "剩下的卷都这样：往下的决策点不再停下来问，这一趟一路做到底".to_owned();
+        return "后面的卷都写出：往下的确认点不再停下来问，这一趟一路做到底".to_owned();
     }
     let pressing: Vec<String> = [
         (
             Action::Answer(Instruction::Continue, Reach::ThisVolume),
-            "接着做第二遍（第一遍不重算）",
+            "接着做写出环节（分析环节不重算）",
         ),
         (
             Action::Answer(Instruction::Continue, Reach::ForTheRest),
-            "剩下的卷都这样",
+            "后面的卷都写出",
         ),
         (
             Action::Answer(Instruction::Finish, Reach::ThisVolume),
-            "收尾",
+            "做完再停",
         ),
     ]
     .into_iter()
@@ -518,31 +518,31 @@ fn resuming_line(live: Option<&Live>, answers: &[(Key, Action)]) -> String {
         keys::spelt_for(answers, |answer| answer == action).map(|key| format!("按 {key} {what}"))
     })
     .collect();
-    let stops = "续做：每一卷第一遍走完都会停下来等你拿主意";
+    let stops = "接着写出：每一卷分析环节走完都会停下来等你拿主意";
     match pressing.is_empty() {
         true => stops.to_owned(),
         false => format!("{stops}——那时{}", pressing.join("，")),
     }
 }
 
-/// **停在决策点上等人拿主意**时阶段那一维摆出来的那几条（`p1-session/14`、
+/// **停在确认点上等人拿主意**时阶段那一维摆出来的那几条（`p1-session/14`、
 /// `volume-discovery/07`，ADR 0012）。
 ///
-/// 上一行是这时按得动的那三个键，下一行说**此刻这一卷是什么样**——决策点问的是
-/// 「这一卷的第二遍还做不做」，而答这一问要知道的正是「这一卷现在还什么都没写」。
+/// 上一行是这时按得动的那三个键，下一行说**此刻这一卷是什么样**——确认点问的是
+/// 「这一卷的写出环节还做不做」，而答这一问要知道的正是「这一卷现在还什么都没写」。
 ///
-/// **说的是这一卷，不是输出根**：一趟里每一卷各停一次，答过继续的那几卷早就写出去了
-/// （`volume-discovery/07`）。说成「输出根一个字节都没有」的话，
+/// **说的是这一卷，不是输出目录**：一趟里每一卷各停一次，答过继续的那几卷早就写出去了
+/// （`volume-discovery/07`）。说成「输出目录一个字节都没有」的话，
 /// 第二卷停下来的那一刻它就是一句假话。
 ///
 /// 三个答话键各带一句它买的东西（措辞见 [`super::keys::says`]）：`x` 那一句是
-/// **第一遍不重算**（续做整件事就是为了它），`a` 那一句是**往下不再问**，
-/// `s` 那一句是**等价于 dry-run**（`CONTEXT.md` 的《会话》：决策点）。
+/// **分析环节不重算**（接着写出整件事就是为了它），`a` 那一句是**往下不再问**，
+/// `s` 那一句是**等价于 dry-run**（`CONTEXT.md` 的《会话》：确认点）。
 fn deciding_parts(asked: &Asked) -> (Vec<Option<String>>, String) {
     (
         vec![
             Some("等你拿主意……".to_owned()),
-            // **三个各摆一条，次序是这一层挑的**：`x` 在先——续做整件事就是为了它，
+            // **三个各摆一条，次序是这一层挑的**：`x` 在先——接着写出整件事就是为了它，
             // 而按键表问出来的次序是**字母序**（`a` `s` `x`），把主路那一个摆到了末尾。
             // 挑的是动作，键与措辞照旧问出来。
             asked.on(|action| {
@@ -556,16 +556,16 @@ fn deciding_parts(asked: &Asked) -> (Vec<Option<String>>, String) {
             }),
             asked.on(|action| matches!(action, Action::Answer(Instruction::Finish, _))),
         ],
-        " 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有第二遍一步没走——这一卷此刻一个字节都没写"
+        " 上面那份报告是真的：判定、逐页结果、缓存用量都算出来了，只有写出环节一步没走——这一卷此刻一个字节都没写"
             .to_owned(),
     )
 }
 
 /// 跑着的那一副屏底两行。**只给用例用**——真会话里它由 [`footer`] 从
-/// [`Asked`] 拼出来，而用例问的是「按停按到这一级时那两行说什么」，
+/// [`Asked`] 拼出来，而用例问的是「按停止时按到这一级时那两行说什么」，
 /// 拼一个会话出来那几步不是它要说的事。
 ///
-/// 按到哪一级由 `s` 按几次说了算（两级停是同一个键按两次，ADR 0013）：
+/// 按到哪一级由 `s` 按几次说了算（两级停止是同一个键按两次，ADR 0013）：
 /// 这里照那条规矩把会话推到那一级去，不另拼一个状态。
 #[cfg(test)]
 pub(super) fn running_prompt(pressed: Instruction, live: Option<&Live>) -> Prompt {
@@ -585,7 +585,7 @@ pub(super) fn running_prompt(pressed: Instruction, live: Option<&Live>) -> Promp
     Prompt::listing(parts, what)
 }
 
-/// 按停按到的那一级**叫什么**。没按过就没有名字——那不是按停的一级。
+/// 按停止时按到的那一级**叫什么**。没按过就没有名字——那不是按停止的一级。
 ///
 /// **屏上提到它的两处都用这一个**：屏底那一行的行首（[`running_parts`]），
 /// 与总览块那一格的抬头（[`super::overview::overview`]，停车场 Q71）。
@@ -593,8 +593,8 @@ pub(super) fn running_prompt(pressed: Instruction, live: Option<&Live>) -> Promp
 pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
     match pressed {
         Instruction::Continue => None,
-        Instruction::Finish => Some("收尾中"),
-        Instruction::Abort => Some("中止中"),
+        Instruction::Finish => Some("做完再停中"),
+        Instruction::Abort => Some("立即停止中"),
     }
 }
 
@@ -607,9 +607,9 @@ pub(super) fn stopping_name(pressed: Instruction) -> Option<&'static str> {
 /// **展开的是第几卷不在这里说**，那个数在报告区那一格的抬头上
 /// （见 [`super::report::report_title`]）；这一副列着几页同理，那一句钉在这一格顶上
 /// （见 [`super::pages::pages`]）。这里是按键提示的家，一个数都不摆第二遍——
-/// 与按停那一级同一条规矩（见 [`stopping_name`]）。
+/// 与按停止那一级同一条规矩（见 [`stopping_name`]）。
 ///
-/// **换一副列法那一条等答话时不摆**：那一刻 `a` 是[「剩下的卷都这样」](Action::Answer)
+/// **换一副列法那一条等待确认时不摆**：那一刻 `a` 是[「后面的卷都写出」](Action::Answer)
 /// （见 `super::super::state::expanded_action`），而屏上不摆按不动的键——
 /// 这一条同样不必在这里判，问出来就是空的。摆出来的那一句说的是**按过去是哪一副**，
 /// 不是「切换」：一个 toggle 说不出去哪儿。
@@ -633,21 +633,21 @@ fn expanded_prompt(asked: &Asked, session: &Session) -> Prompt {
     )
 }
 
-/// 展开那一副底下说的那件事：**这一副列的是哪几页**（`CONTEXT.md` 的《会话》：要紧的页）。
+/// 展开那一副底下说的那件事：**这一副列的是哪几页**（`CONTEXT.md` 的《会话》：需留意的页）。
 ///
 /// 只列要紧的那一档要把那六种数出来：屏上一页一个词说得出它要紧在哪儿，
-/// 但「一共有哪几种算要紧」在别处一个字都没有。判据的出处是
+/// 但「一共有哪几种算要紧」在别处一个字都没有。画质分的出处是
 /// [`crate::render::notable`]，这一句是它在屏上的说法。
 fn listed_pages(listing: Listing) -> &'static str {
     match listing {
         Listing::Notable => {
-            " 只列要紧的页：特例 · 失败 · 部分救回 · 几何门不成立 · 宽溢出 · 兜底上界，加上定档页"
+            " 只列需留意的页：差异大 · 坏页 · 残缺 · 尺寸未贴合屏幕 · 页面超宽 · 兜底上界，加上代表页"
         }
         Listing::All => " 列着全部页：要紧的那几页照旧靠行首记号跳出来",
     }
 }
 
-/// 预设那一栏屏底那两行：**上一行说这时按得动的键**，下一行说这一栏与三层的关系。
+/// 预设那一栏屏底那两行：**上一行说这时按得动的键**，下一行说这一栏与三组设置的关系。
 ///
 /// 上一行随光标停在哪一行而变，与浏览时同一条（见 [`Asked::hands_on`]）：停在一份预设上
 /// 是套用它，停在末尾那一行上是打一个名字存下来。**`d` 只在停着一份预设时摆出来**：
@@ -660,16 +660,16 @@ fn listed_pages(listing: Listing) -> &'static str {
 /// （[`Session::ask_before_erasing`]）——与撞名那一问同一条路，按键这一行因此不必为它改口。
 ///
 /// 打名字那一副照编辑一行的样子（见 [`editing_keys`]）：缓冲加一句按键提示。
-/// 下一行这时说的是**存出去的是哪两层**——范围层不进预设是这一栏最要紧的一条性质，
+/// 下一行这时说的是**存出去的是哪两层**——路径与输出不进预设是这一栏最要紧的一条性质，
 /// 而用户按下 `⏎` 之前唯一会读的就是屏底这两行。
 fn picking_prompt(asked: &Asked, picker: &Picker) -> Prompt {
     let Some(naming) = picker.naming() else {
         let what = match picker.picked() {
             Some(name) => format!(
-                " 套用「{name}」：设备层与口味层整个换成那一份（它没说的那几项跟着回到「默认」），\
-                 眼下配好的两层随之丢掉；范围层不动"
+                " 套用「{name}」：设备设置与处理选项整个换成那一份（它没说的那几项跟着回到「默认」），\
+                 眼下配好的两层随之丢掉；路径与输出不动"
             ),
-            None => " 存的是设备层与口味层。范围层（输出根与卷）不进预设".to_owned(),
+            None => " 存的是设备设置与处理选项。路径与输出（输出目录与卷）不进预设".to_owned(),
         };
         return Prompt::listing(
             vec![
@@ -691,7 +691,7 @@ fn picking_prompt(asked: &Asked, picker: &Picker) -> Prompt {
     );
     Prompt::new(
         format!(" 预设名 {}▏  {keys}", naming.buffer),
-        " 存的是设备层与口味层。范围层（输出根与卷）不进预设，套用时因此写不到上一次的目录去",
+        " 存的是设备设置与处理选项。路径与输出（输出目录与卷）不进预设，套用时因此写不到上一次的目录去",
     )
 }
 
@@ -729,11 +729,11 @@ fn valuing_prompt(asked: &Asked, values: &Values) -> Prompt {
     };
     let what = match (values.panel().is_some(), values.at_a_panel()) {
         (true, _) => {
-            " 这块面板底下的型号输出完全一致，挑哪一个都一样；换掉型号会把标定出来的灰阶数与阈值清空"
+            " 这块面板底下的型号输出完全一致，挑哪一个都一样；换掉型号会把标定出来的屏幕灰阶数与画质门槛清空"
         }
         (false, true) => {
             " 设备只是面板的别名，面板相同的型号输出完全一致——\
-             内置表里没有你那台设备时，挑一个面板相同的顶上，再按实测填感知可分辨级数"
+             内置表里没有你那台设备时，挑一个面板相同的顶上，再按实测填可见灰阶数"
         }
         (false, false) => {
             " 第一格是「没说」：它跟着默认值走，存成预设时那一项不写进去——\
@@ -847,7 +847,7 @@ fn spelled(names: &[&str], left: usize) -> String {
 /// **一张覆盖层掀着时**屏底那两行（`p3-session-legibility/12`）。
 ///
 /// 上一行是这一块上派得出的**全部**键：这一块自己那几个（`↑↓` 读、`Esc` 关、
-/// 另一张那个键换过去），加上**阶段那一维那几个**——按停与答话在覆盖层掀着时
+/// 另一张那个键换过去），加上**阶段那一维那几个**——按停止与答话在覆盖层掀着时
 /// 照样按得动（`p4-parking-lot/06`，见 `super::super::state::overlay_action`）。
 ///
 /// **`Esc 关` 说清它回哪儿去**：覆盖层**盖住**一块焦点、不替掉它，而「刚才那一块」
@@ -864,7 +864,7 @@ fn spelled(names: &[&str], left: usize) -> String {
 ///
 /// 下一行说的是**这一张是什么**：`?` 那一张要说清它只列此刻这个阶段派得出的键
 /// （屏上不摆按不动的键在这一张上也成立），前提那一张要说清它为什么不在卷表上方。
-/// **跑着与等答话时让给阶段那一维那一句**：按停买的是什么、答话那三个各答什么，
+/// **跑着与等待确认时让给阶段那一维那一句**：按停止买的是什么、答话那三个各答什么，
 /// 是那一刻屏上最要紧的一句——与[展开着那一副](expanded_prompt)同一条让法。
 fn overlaid_prompt(asked: &Asked, covered: &Covered) -> Prompt {
     with_stage(
@@ -1061,42 +1061,45 @@ mod tests {
         );
     }
 
-    /// **两级停按下去之后屏上说清它在等什么**（本票的验收）。
+    /// **两级停止按下去之后屏上说清它在等什么**（本票的验收）。
     ///
-    /// 收尾那一句非说不可：按下去之后进度条照旧往前走，不说清「在等当前卷跑完」，
-    /// 看上去就像那一下没按上。中止那一句说的是盘上会剩下什么。
+    /// 做完再停那一句非说不可：按下去之后进度条照旧往前走，不说清「在等当前卷跑完」，
+    /// 看上去就像那一下没按上。立即停止那一句说的是盘上会剩下什么。
     #[test]
     fn pressing_stop_says_what_it_is_waiting_for() {
         let mut session = Session::new();
         session.run_started();
 
-        // 没按过：提示条上摆着那个键，按一次是收尾、再一次是中止，两级都写着。
+        // 没按过：提示条上摆着那个键，按一次是做完再停、再一次是立即停止，两级都写着。
         let idle = tight(&screen(&mut session, None, 120, 40));
         assert!(
-            idle.contains(&tight("s 停（按一次收尾，再按一次中止）")),
+            idle.contains(&tight("s 停（按一次做完再停，再按一次立即停止）")),
             "{idle}"
         );
 
-        // 按一次：收尾。屏上说清它在等当前卷跑完，也说清下一次按下去会怎样。
+        // 按一次：做完再停。屏上说清它在等当前卷跑完，也说清下一次按下去会怎样。
         session.press(Key::Char('s'));
         let finishing = tight(&screen(&mut session, None, 120, 40));
-        assert!(finishing.contains(&tight("收尾中")), "{finishing}");
+        assert!(finishing.contains(&tight("做完再停中")), "{finishing}");
         assert!(
             finishing.contains(&tight("等当前卷跑完就停")),
             "{finishing}"
         );
         assert!(
-            finishing.contains(&tight("s 再按一次就中止")),
+            finishing.contains(&tight("s 再按一次就立即停止")),
             "{finishing}"
         );
 
-        // 再按一次：中止。说的是盘上会剩下什么——那一卷等于没做。
+        // 再按一次：立即停止。说的是盘上会剩下什么——那一卷等于没做。
         session.press(Key::Char('s'));
         let aborting = tight(&screen(&mut session, None, 120, 40));
-        assert!(aborting.contains(&tight("中止中")), "{aborting}");
+        assert!(aborting.contains(&tight("立即停止中")), "{aborting}");
         assert!(aborting.contains(&tight("partial 丢掉")), "{aborting}");
         // 闩到了顶，那个键从此按不动——屏上因此也不再摆它。
-        assert!(!aborting.contains(&tight("再按一次就中止")), "{aborting}");
+        assert!(
+            !aborting.contains(&tight("再按一次就立即停止")),
+            "{aborting}"
+        );
 
         // 三级各说各的，上一行一句都不重样；没按过时下一行是空的。
         let keys: std::collections::BTreeSet<String> = [
@@ -1115,33 +1118,33 @@ mod tests {
         );
     }
 
-    /// **试算在跑起来的当口就预告它会逐卷停下来**（`p1-session/14` 票面第四条，
+    /// **预览在跑起来的当口就预告它会逐卷停下来**（`p1-session/14` 票面第四条，
     /// `volume-discovery/07`）。
     ///
-    /// 非说不可：横条会在每一卷的第二遍之前停住，而停住与卡住在屏上没有分别。
+    /// 非说不可：横条会在每一卷的写出环节之前停住，而停住与卡住在屏上没有分别。
     /// 「一卷一次」与答话那三个键一起预告出来——几十卷的一趟里，
     /// 「还要按几下」是用户当场就想知道的那件事。
     ///
-    /// **答过「剩下的卷都这样」之后换一句**：往下不再问了，而「它怎么不问了」
+    /// **答过「后面的卷都写出」之后换一句**：往下不再问了，而「它怎么不问了」
     /// 与「它忘了问」在屏上同样没有分别。
     ///
-    /// 执行那一趟这一行仍旧是空的：它没有「续不续做」可言，与从前逐格相同。
+    /// 执行那一趟这一行仍旧是空的：它没有「续不接着写出」可言，与从前逐格相同。
     #[test]
     fn a_trial_says_it_will_stop_at_every_volume_while_it_runs() {
-        // 试算：预告它会停下来，一卷一次，三个键都摆出来。
+        // 预览：预告它会停下来，一卷一次，三个键都摆出来。
         let mut resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         resuming.run_started(20, 20_000);
         let said = running_prompt(Instruction::Continue, Some(&resuming)).what;
-        assert!(said.contains("续做"), "{said}");
+        assert!(said.contains("接着写出"), "{said}");
         assert!(said.contains("每一卷"), "{said}");
-        for key in ["x 接着做第二遍", "a 剩下的卷都这样", "s 收尾"] {
+        for key in ["x 接着做写出环节", "a 后面的卷都写出", "s 做完再停"] {
             assert!(said.contains(key), "{key}：{said}");
         }
 
-        // 答过「剩下的卷都这样」：换成「往下不再问」那一句。
+        // 答过「后面的卷都写出」：换成「往下不再问」那一句。
         resuming.decide(Instruction::Continue, Reach::ForTheRest);
         let said = running_prompt(Instruction::Continue, Some(&resuming)).what;
-        assert!(said.contains("剩下的卷都这样"), "{said}");
+        assert!(said.contains("后面的卷都写出"), "{said}");
         assert!(said.contains("不再停下来问"), "{said}");
         assert!(!said.contains("等你拿主意"), "{said}");
 
@@ -1150,11 +1153,11 @@ mod tests {
         assert_eq!(
             running_prompt(Instruction::Continue, Some(&processing)).what,
             "",
-            "执行那一趟不该多说一句"
+            "转换那一趟不该多说一句"
         );
     }
 
-    /// **出标定图那个键只在设备层那三行上列得出来，而它说的那两行屏上都在**（13 号票）。
+    /// **出灰阶测试图那个键只在设备设置那三行上列得出来，而它说的那两行屏上都在**（13 号票）。
     ///
     /// 两半各是一条性质：**列不列**（屏上不摆按不动的键）与**说得下说不下**
     /// （屏底那一格恒三行，说两行就让掉一行提示）。后者非验不可——那两行里一行是路径，
@@ -1167,13 +1170,13 @@ mod tests {
     fn the_chart_key_sits_on_the_device_layer_and_what_it_says_fits() {
         let mut session = Session::new();
 
-        // 设备层那三行上都列得出它。
+        // 设备设置那三行上都列得出它。
         for field in [Field::Profile, Field::GrayLevels, Field::Threshold] {
             session.go_to(field);
             session.press(Key::Char('?'));
             let screen = tight(&screen(&mut session, None, 120, 60));
             assert!(
-                screen.contains(&tight("按这块面板出一张标定图")),
+                screen.contains(&tight("按这块面板出一张灰阶测试图")),
                 "{field:?}：{screen}"
             );
             session.press(Key::Esc);
@@ -1184,7 +1187,7 @@ mod tests {
             session.press(Key::Char('?'));
             let screen = tight(&screen(&mut session, None, 120, 60));
             assert!(
-                !screen.contains(&tight("按这块面板出一张标定图")),
+                !screen.contains(&tight("按这块面板出一张灰阶测试图")),
                 "{field:?}：{screen}"
             );
             session.press(Key::Esc);
@@ -1294,7 +1297,7 @@ mod tests {
 
         let path = tight(&screen(&mut session, None, 120, 40));
 
-        assert!(path.contains("输出根库"), "{path}");
+        assert!(path.contains("输出目录库"), "{path}");
         assert!(path.contains("补这一层"), "{path}");
         assert!(path.contains(&tight("按 ⇥ 列出这一层")), "{path}");
 
@@ -1303,7 +1306,7 @@ mod tests {
         session.go_to(Field::CacheBudget);
         session.press(Key::Enter);
         let text = tight(&screen(&mut session, None, 120, 40));
-        assert!(text.contains("缓存预算"), "{text}");
+        assert!(text.contains("内存上限"), "{text}");
         assert!(!text.contains("补这一层"), "{text}");
         assert!(!text.contains(&tight("按 ⇥ 列出这一层")), "{text}");
     }
@@ -1385,7 +1388,7 @@ mod tests {
     /// 与「抄上去的」。派不出来的键连它那一截一起不说：屏上不摆按不动的键。
     #[test]
     fn the_explaining_line_names_the_keys_the_table_hands_it() {
-        // 续做那一句：三个答话键。
+        // 接着写出那一句：三个答话键。
         let mut resuming = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         resuming.run_started(20, 20_000);
         let answers = [
@@ -1405,14 +1408,14 @@ mod tests {
         ];
         assert_eq!(
             resuming_line(Some(&resuming), &answers),
-            "续做：每一卷第一遍走完都会停下来等你拿主意——那时按 r 接着做第二遍（第一遍不重算），按 w 剩下的卷都这样，按 z 收尾"
+            "接着写出：每一卷分析环节走完都会停下来等你拿主意——那时按 r 接着做写出环节（分析环节不重算），按 w 后面的卷都写出，按 z 做完再停"
         );
         assert_eq!(
             resuming_line(Some(&resuming), &[(Key::Interrupt, Action::Quit)]),
-            "续做：每一卷第一遍走完都会停下来等你拿主意"
+            "接着写出：每一卷分析环节走完都会停下来等你拿主意"
         );
 
-        // 跟随停了那一句：回到跟随那个键。
+        // 自动滚动停了那一句：回到自动滚动那个键。
         let reading = Asked {
             here: vec![(Key::Char('r'), Action::Follow)],
             group: KeyGroup::Report,
@@ -1421,11 +1424,11 @@ mod tests {
         };
         assert_eq!(
             following_line(&reading, true),
-            " 跟随停了：报告再长，光标也不动——r 把它交回给最新那一卷"
+            " 自动滚动停了：报告再长，光标也不动——r 把它交回给最新那一卷"
         );
         assert_eq!(
             following_line(&reading, false),
-            " 跟随着最新的那一卷：一卷收摊，光标就落到它上面"
+            " 自动滚动到最新的那一卷：一卷收摊，光标就落到它上面"
         );
         let cannot = Asked {
             here: Vec::new(),
@@ -1433,7 +1436,7 @@ mod tests {
         };
         assert_eq!(
             following_line(&cannot, true),
-            " 跟随停了：报告再长，光标也不动"
+            " 自动滚动停了：报告再长，光标也不动"
         );
 
         // 列出这一层那一句：补全那个键。

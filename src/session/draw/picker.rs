@@ -19,15 +19,15 @@ use crate::session::state::Picker;
 use crate::session::viewport::Viewport;
 
 /// 预设那一栏末尾那一行。**说的是「当前两层」而不是「这一份配置」**：
-/// 存出去的不含范围层，而那一行是屏上唯一说得到这件事的地方
+/// 存出去的不含路径与输出，而那一行是屏上唯一说得到这件事的地方
 /// （抬头说的是这一栏装什么，这一行说的是按下去会存什么）。
-const ADD_PRESET: &str = "＋ 把当前的设备层与口味层存成一份预设";
+const ADD_PRESET: &str = "＋ 把当前的设备设置与处理选项存成一份预设";
 
 /// 预设那一栏：盘上有的那几份摆成一列，末尾一行是「存成一份新的」。
 ///
-/// **抬头把「不装范围层」说出来**（`crate::preset` 的抬头写着为什么）：
-/// 套用一份预设不会动输出根与卷清单，而那正是用户按下这个键之前最该放心的一件事。
-/// 与左栏范围层那一块的抬头（`Layer::Scope`）说的是同一件事的两半。
+/// **抬头把「不装路径与输出」说出来**（`crate::preset` 的抬头写着为什么）：
+/// 套用一份预设不会动输出目录与卷清单，而那正是用户按下这个键之前最该放心的一件事。
+/// 与左栏路径与输出那一块的抬头（`Layer::Scope`）说的是同一件事的两半。
 ///
 /// 光标那一行反白，与左栏同一副样子（见 [`super::config::config`]）：
 /// 反白说的是「就在这一行上动手」。
@@ -89,7 +89,7 @@ pub(super) fn presets(frame: &mut Frame, area: Rect, picker: &Picker) {
         cursor,
     );
     let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(
-        super::yielding::title("预设 · 装设备层与口味层，范围层不进", area.width),
+        super::yielding::title("预设 · 装设备设置与处理选项，路径与输出不进", area.width),
     ));
     super::scrolling(frame, area, body, &view);
 }
@@ -164,12 +164,12 @@ mod tests {
 
     /// 见 [`the_preset_column_lists_what_is_on_disk_and_a_row_to_store_into`]。
     const THE_PRESET_COLUMN: &str = r#"
-"┌预设 · 装设备层与口味层，范围层不进───────────────┐"
+"┌预设 · 装设备设置与处理选项，路径与输出不进───────┐"
 "│ C:/配置/tonefit/presets.toml                     │"
 "│                                                  │"
 "│  漫画                                            │"
 "│  画集                                            │"
-"│  ＋ 把当前的设备层与口味层存成一份预设           │"
+"│  ＋ 把当前的设备设置与处理选项存成一份预设       │"
 "│                                                  │"
 "│                                                  │"
 "└──────────────────────────────────────────────────┘"
@@ -220,11 +220,11 @@ mod tests {
         assert!(last.contains(&tight("⏎ 空格 打个名字存下来")), "{last}");
         assert!(!last.contains(&tight("d 删掉")), "{last}");
 
-        // 打起字来：缓冲在屏底，而**范围层不进预设**这句话就摆在它下面一行。
+        // 打起字来：缓冲在屏底，而**路径与输出不进预设**这句话就摆在它下面一行。
         session.press(Key::Enter);
         session.press(Key::Char('新'));
         let naming = tight(&screen(&mut session, None, 120, 40));
         assert!(naming.contains(&tight("预设名 新")), "{naming}");
-        assert!(naming.contains(&tight("范围层")), "{naming}");
+        assert!(naming.contains(&tight("路径与输出")), "{naming}");
     }
 }

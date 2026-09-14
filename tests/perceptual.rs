@@ -1,8 +1,8 @@
-//! 五条真机判读结论立成的护栏：判据合不合**人眼**。
+//! 五条真机判读结论立成的护栏：画质分合不合**人眼**。
 //!
 //! 与 `tests/metric.rs` 是**两类东西**。那一篇验的是「代码做了它该做的」，出处是 ADR 0002；
 //! 这一篇验的是「代码合不合人眼」，出处是 `.scratch/metric-recalibration/judgements/`
-//! 底下那几轮真机判读。判据的下一次改动撞到这五条会**当场红**，
+//! 底下那几轮真机判读。画质分的下一次改动撞到这五条会**当场红**，
 //! 而不是要再上一次机才发现。
 //!
 //! **只认真机那几轮。**`judgements/README.md` 写着口径：第四、五轮是模型判读局部放大块，
@@ -11,7 +11,7 @@
 //!
 //! **写性质，不写读数。**五条断的都是「两样东西之间的关系」——谁更干净、撒不撒点、
 //! 三格结论同不同、界放不放行——一条都不断具体读数。换面板即换低通核、换夹具即换页，
-//! 读数会动而关系不该动（ADR 0002：判据数值不可跨面板比较）。
+//! 读数会动而关系不该动（ADR 0002：画质分数值不可跨面板比较）。
 //!
 //! **前三条用合成夹具，后两条走 opt-in 真实素材。**真实素材不入库（spec 的
 //! 《Testing Decisions》），那两条各自那几页是真实版面，合成造不出来。
@@ -107,7 +107,7 @@ fn selected(name: &str) -> bool {
     arguments.is_empty() || arguments.iter().any(|filter| name.contains(filter))
 }
 
-/// 前三条用的页尺寸。判据只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
+/// 前三条用的页尺寸。画质分只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
 /// 取得比面板小是为了让这一组跑得快（同 `tests/metric.rs`）。
 ///
 /// 缩小不影响这三条：一、三条的页是平坦调，每一块的读数本来就一样；第二条数的是
@@ -120,7 +120,7 @@ const PAGE: Size = Size::new(640, 832);
 /// 逐字取自 `judgements/第七轮真机包04.json` 的《逐格》，三列依次是
 /// [`BRIGHTNESS`] 的近白 / 中灰 / 偏暗。原材料是武器原档 MHZ01_090 的一块 512×512
 /// 无文字白底**只动直流**平移出来的；这里用纯色合成同一个形状——
-/// 那一块的块内起伏只有 5 级，平坦到判据在它身上读的就是这道阶梯本身。
+/// 那一块的块内起伏只有 5 级，平坦到画质分在它身上读的就是这道阶梯本身。
 const LADDER: [(u32, [u8; 3]); 5] = [
     (1, [254, 171, 86]),
     (2, [253, 172, 87]),
@@ -136,11 +136,11 @@ const BRIGHTNESS: [&str; 3] = ["近白", "中灰", "偏暗"];
 /// 第三条拿它当「与另外两列比对的那一列」。
 const NEAR_WHITE: usize = 0;
 
-/// 近白那一列上，今天的判据仍与真机同向的《离格量》。
+/// 近白那一列上，今天的画质分仍与真机同向的《离格量》。
 ///
 /// **真机在整列五格上 5/5 判「2bit 不抖更干净」，无一例外**——第五格（u = 42）也在内，
-/// 而今天的判据在那一格反着说 FS 更好。那是本票量出来**唯一不绿的一格**：读数、
-/// 判据与真机各说了什么，只在票 `grain-floor-absolute/02` 的《落地记录》二写一处；
+/// 而今天的画质分在那一格反着说 FS 更好。那是本票量出来**唯一不绿的一格**：读数、
+/// 画质分与真机各说了什么，只在票 `grain-floor-absolute/02` 的《落地记录》二写一处；
 /// 停车场 **Q447** 记的是「为什么收窄，而不是留一条今天就红的用例」。
 ///
 /// **收窄不等于事实变小。**u = 42 的白底在真机上仍是不抖更干净；这一行只说
@@ -157,7 +157,7 @@ const NEAR_WHITE_AGREEING: [u32; 4] = [1, 2, 8, 21];
 /// 性质：平坦调的背景够亮时，`2bit+FS` **永远不比** `2bit 不抖` 干净。
 /// 断的是这两个候选之间的关系，不是任何一个读数。
 ///
-/// 守的是什么：颗粒项的可见度地板一旦抬到吞掉 2bit 上的 FS 颗粒，
+/// 守的是什么：抖动颗粒项的颗粒可见下限一旦抬到吞掉 2bit 上的 FS 颗粒，
 /// 这一列会整列翻向 FS——而真机说那是错的。地板改动撞上来会在这里红。
 ///
 /// 今天守得住的范围见 [`NEAR_WHITE_AGREEING`]。
@@ -243,7 +243,7 @@ fn on_grid_paper_white_takes_no_dither_dots() -> Outcome {
 /// 出处：第七轮 L 组十五格（`judgements/第七轮真机包04.json`），连同**第八轮复判**
 /// （`judgements/第八轮复判04R.json`）对其中两格的订正。
 ///
-/// 断言：同一个《离格量》的**三种背景亮度**上，判据给出的**结论相同**——
+/// 断言：同一个《离格量》的**三种背景亮度**上，画质分给出的**结论相同**——
 /// 三格要么都说不抖更好，要么都说 FS 更好。
 ///
 /// **真机在其中两行上给的答案相反。**第七轮当场读出来是三行（u = 2 / 21 / 42），
@@ -253,8 +253,8 @@ fn on_grid_paper_white_takes_no_dither_dots() -> Outcome {
 /// **今天站得住的是两行：u = 21 与 u = 42。**（第八轮的四格锚 4/4 与第七轮一致，
 /// 那一趟判读是稳的。）
 ///
-/// 判据对背景亮度是**盲的**——同一个 u 的三格读数逐位几乎相同——因此这一条钉住的
-/// 不是「判据判对了」，是**判据缺哪一项**。
+/// 画质分对背景亮度是**盲的**——同一个 u 的三格读数逐位几乎相同——因此这一条钉住的
+/// 不是「画质分判对了」，是**画质分缺哪一项**。
 ///
 /// **将来加了亮度维之后它该红。红了就把它换成新的断言，那不是回归。**
 /// 换的时候要连这段文档一起换：留着一条写着「结论必须相同」的用例，
@@ -287,9 +287,9 @@ fn the_metric_answers_the_same_at_every_background_brightness() -> Outcome {
         let first = verdicts[NEAR_WHITE];
         assert!(
             verdicts.iter().all(|&favours| favours == first),
-            "u={offset} 的三种背景亮度上判据给了不同的结论：{:?}。\
-             判据今天对亮度是盲的，这一条正是钉着那件事——**它红了多半是好事**：\
-             判据认得出亮度了，那就把这一条换成新的断言（见本条文档）",
+            "u={offset} 的三种背景亮度上画质分给了不同的结论：{:?}。\
+             画质分今天对亮度是盲的，这一条正是钉着那件事——**它红了多半是好事**：\
+             画质分认得出亮度了，那就把这一条换成新的断言（见本条文档）",
             verdicts
                 .iter()
                 .zip(BRIGHTNESS)
@@ -301,7 +301,7 @@ fn the_metric_answers_the_same_at_every_background_brightness() -> Outcome {
         );
     }
     Outcome::Ran(format!(
-        "{} 个《离格量》各三种背景亮度，判据逐个 u 结论相同（缺陷记录：真机在两行上分歧）",
+        "{} 个《离格量》各三种背景亮度，画质分逐个 u 结论相同（缺陷记录：真机在两行上分歧）",
         LADDER.len()
     ))
 }
@@ -311,9 +311,9 @@ const SAMPLES: &str = "TONEFIT_SAMPLES";
 
 /// 第七轮 M 组那四页的**参照 8bit**在素材目录里的位置。
 ///
-/// 是参照那一侧、未经目标位深量化的图，判据要的正是它；怎么渲出来的见
+/// 是参照那一侧、未经目标灰阶档位量化的图，画质分要的正是它；怎么渲出来的见
 /// `.scratch/metric-recalibration/calibration/怎么重跑.md`。
-const OFF_GRID_BY_ONE_DIRECTORY: &str = "_实验-判据重标定/真机包04/参照8bit/离格量1参照";
+const OFF_GRID_BY_ONE_DIRECTORY: &str = "_实验-画质分重标定/真机包04/参照8bit/离格量1参照";
 
 /// M 组逐对那四页，页名取自 `judgements/第七轮真机包04.json`。
 const OFF_GRID_BY_ONE_PAGES: [&str; 4] = ["014.png", "016.png", "018.png", "024.png"];
@@ -369,7 +369,7 @@ fn off_grid_by_one_real_pages_still_favour_four_bit_plain() -> Outcome {
 ///
 /// 闸① 那十二页同在这一个目录下，第十轮只从里面取了四页重新配对（见
 /// `.scratch/metric-recalibration/calibration/pack_round_ten.py`）。
-const BANDED_DIRECTORY: &str = "_实验-判据重标定/闸1补测包/参照8bit/G_闸1补测";
+const BANDED_DIRECTORY: &str = "_实验-画质分重标定/闸1补测包/参照8bit/G_闸1补测";
 
 /// 第十轮 P 组里 `4bit+FS` 与 `4bit 不抖` 正面相对的那两对（对 01 与对 04），
 /// 页名取自 `judgements/第十轮闸1的4bitFS与对齐后B组.json` 的 `P_闸1`。
@@ -395,7 +395,7 @@ const THE_EYE_PICKED: Candidate = fixtures::dithered(BitDepth::Four);
 /// 走兜底取候选上界，而门成立时上界正是它。**断的是「界放不放行」，不是任何一个读数**：
 /// 界从 profile 上取，标定把它换掉时这一条不必跟着改。
 ///
-/// 守的是什么：`4bit 不抖` 就近取整在连续灰调上造出的台阶真机看得见，而判据只用低通项读它、
+/// 守的是什么：`4bit 不抖` 就近取整在连续灰调上造出的台阶真机看得见，而画质分只用整体走样项读它、
 /// 按幅度给分（第九轮那一条）。界向上抖一格就把这一档圈回来，这一条当场红。
 ///
 /// **这一条合成不出来**：要的是真实版面上那片连续灰调，合成的平坦块没有台阶边。
@@ -418,7 +418,7 @@ fn continuous_tone_pages_never_take_the_candidate_the_eye_called_banded() -> Out
 
     let profile = fixtures::baseline_profile();
     let threshold = profile.threshold();
-    // 那两页的参照高已等于面板高（渲出来就是目标尺寸），几何门成立：候选六个、带抖动那一维。
+    // 那两页的参照高已等于面板高（渲出来就是目标尺寸），尺寸贴合屏幕：候选六个、带抖动那一维。
     let candidates = Candidate::all(profile.panel().gray_levels, GeometryGate::Holds);
     assert!(
         candidates.contains(&THE_EYE_PICKED),
@@ -467,7 +467,7 @@ fn samples() -> Option<PathBuf> {
     Some(root)
 }
 
-/// 读一页真实参照图，转成判据吃的 8 位灰度缓冲。
+/// 读一页真实参照图，转成画质分吃的 8 位灰度缓冲。
 fn read_gray_page(path: &Path) -> GrayImage {
     let image = image::open(path).unwrap_or_else(|error| panic!("读 {}：{error}", path.display()));
     fixtures::gray_image(&image)
@@ -515,8 +515,8 @@ fn baseline_reference(image: GrayImage) -> Reference {
     Reference::new(fixtures::baseline_profile().panel(), image)
 }
 
-/// 把 `candidate` 量化出来，量它离参照有多远。位深从候选身上取——
-/// 判据要它算颗粒项那道地板，而候选正是量化这张图的那一档（同 `tests/metric.rs`）。
+/// 把 `candidate` 量化出来，量它离参照有多远。灰阶档位从候选身上取——
+/// 画质分要它算抖动颗粒项那道地板，而候选正是量化这张图的那一档（同 `tests/metric.rs`）。
 fn reading(reference: &Reference, candidate: Candidate) -> Score {
     score(
         reference,

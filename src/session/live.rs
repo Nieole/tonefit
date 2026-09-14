@@ -10,16 +10,16 @@
 //! 因此报告区画的是 [`crate::render`] 的那几个函数——会话不另写一套措辞。
 //!
 //! 报告攒到一半也答得出抬头那几件事（`render::header` 吃的是整份报告，不是一个 profile），
-//! 「已完成卷的判定、定档页、失败页当场可见」于是不必等整趟跑完。
+//! 「已完成卷的判定、代表页、坏页当场可见」于是不必等整趟跑完。
 //!
 //! # 屏上那几行各自的来源
 //!
 //! | 屏上那一行 | 来源 |
 //! |---|---|
-//! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的预扫），加 [`Live::walked`] |
+//! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的清点），加 [`Live::walked`] |
 //! | 总览块的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
 //! | 总览块的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成执行那一副 |
-//! | 总览块的出事行 | 同上，而失败页那一样连当前这一卷已经报过的那几条一起数（[`Live::failures_so_far`]） |
+//! | 总览块的出事行 | 同上，而坏页那一样连当前这一卷已经报过的那几条一起数（[`Live::failures_so_far`]） |
 //! | 报告区 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句、`PageFailed` 那几条 |
 //!
 //! 预告的步数是**上界**不是承诺（`CONTEXT.md` 的《进度》）。拿它画全局进度的实现方
@@ -37,19 +37,19 @@ use tonefit::{
 
 use crate::render::{self, Listed, Row};
 
-/// 这一趟**在决策点上等不等人**（`CONTEXT.md` 的《会话》：续做、等答话）。
+/// 这一趟**在确认点上等不等人**（`CONTEXT.md` 的《会话》：接着写出、等待确认）。
 ///
 /// 一个枚举而不是一个 `bool`：它从 [`super::resuming`] 一路传到 [`Live::new`] 与
 /// [`super::run::Running::start`]，而调用处一个裸 `false` 说不出它否掉的是哪件事
 /// （与 `super::state::Listing` 同一条理由——本仓库不爱看不出意思的裸值）。
 ///
-/// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 3 条：**试算逐卷等答话**
+/// 判它的是 [`super::resuming`]，依据是 ADR 0012 决定第 3 条：**预览逐卷等待确认**
 /// （几卷都一样），而等不等人是调用方的策略、不是库的行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resuming {
-    /// **续做**：每走到一个决策点就停下来等人拿主意（试算，几卷都一样）。
+    /// **接着写出**：每走到一个确认点就停下来等人拿主意（预览，几卷都一样）。
     Waits,
-    /// **不续做**：决策点上不等人，一趟走到底（执行）。
+    /// **不接着写出**：确认点上不等人，一趟走到底（执行）。
     GoesOn,
 }
 
@@ -60,26 +60,26 @@ impl Resuming {
     }
 }
 
-/// 决策点上答的那个字**管几卷**（`CONTEXT.md` 的《会话》：都这样）。
+/// 确认点上答的那个字**管几卷**（`CONTEXT.md` 的《会话》：后面都写出）。
 ///
 /// 与 [`Resuming`] 同一副形状、同一条理由（不爱看不出意思的裸值）：它从
 /// [`super::state::Action::Answer`] 一路传到 [`Live::decide`] 与
 /// [`super::run::Running::decide`]，而调用处一个裸 `true` 说不出它说的是哪件事。
 ///
 /// **它不是闩**：闩只升不降，记的是「这一趟还走不走」；这一格记的是一个**可以是「继续」
-/// 的粘性答案**，摆在观察者那一侧的「决策点的默认答案」上
-/// （见 `super::run::Gate`）。两者分开放，按停按到的那一级因此一格不动。
+/// 的粘性答案**，摆在观察者那一侧的「确认点的默认答案」上
+/// （见 `super::run::Gate`）。两者分开放，按停止时按到的那一级因此一格不动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
-    /// 只答**这一卷**：下一卷的决策点照旧停下来问（`x` 与 `s`）。
+    /// 只答**这一卷**：下一卷的确认点照旧停下来问（`x` 与 `s`）。
     ThisVolume,
-    /// **剩下的卷都这样**：这个字连往下每一卷一起答了，从此不再停（`a`）。
+    /// **后面的卷都写出**：这个字连往下每一卷一起答了，从此不再停（`a`）。
     ForTheRest,
 }
 
 /// **卷表上停得住的那几卷各是哪一卷**（`CONTEXT.md` 的《会话》：卷表）。
 ///
-/// 「报告上第几卷」答不出决策点上那一卷：它停在[攒着的那一份](Live::summarized)上、
+/// 「报告上第几卷」答不出确认点上那一卷：它停在[攒着的那一份](Live::summarized)上、
 /// 不在[收摊了的那几卷](Report::volumes)里，而 `p2-loose-ends/08` 记着
 /// **不许摊开上一卷冒充它**。这个取值认得出这两处，报告区的光标与展开因此指得动它
 /// （`p3-session-legibility/10`）。
@@ -101,12 +101,12 @@ pub enum Volume {
     /// **先后无从复原**：`Report` 把收摊了的与没做成的分成两列存，没做成的那几卷因此
     /// 排在收摊卷后面（停车场 Q151）。本取值一格不动那件事——它只让光标停得上去。
     Failed(usize),
-    /// **决策点上攒着的那一份**：这一卷还没收摊，第二遍一步没走。
+    /// **确认点上攒着的那一份**：这一卷还没收摊，写出环节一步没走。
     ///
     /// 那一格装的是**它前面收摊了几卷**，而那个数就是**它的身份**：它收摊之后正是
     /// [`Settled(after)`](Self::Settled)，而「攒着的那一份」这个位置从此归**下一卷**。
-    /// 少了这个数，一个记着「停在攒着的那一份上」的光标会在下一个决策点悄悄跳到
-    /// 另一卷身上——屏上还写着「跟随停了」，指的却已经不是同一卷
+    /// 少了这个数，一个记着「停在攒着的那一份上」的光标会在下一个确认点悄悄跳到
+    /// 另一卷身上——屏上还写着「自动滚动停了」，指的却已经不是同一卷
     /// （`p2-loose-ends/08` 那条「不许摊开另一卷冒充它」朝前的那一半）。
     ///
     /// **它不是「第几卷」**：那一卷没做成时它谁都不是（[`nearest`](Live::nearest)
@@ -121,7 +121,7 @@ impl Volume {
     /// **它与「停不停得住」是两件事**——那几卷停得住（光标落得上那一行），
     /// 只是按展开时得到的是[一句话](super::terminal)而不是一副逐页表。
     ///
-    /// 判据摆在这里而不是各处 `matches!` 一遍：`⏎`、`⇥`、抬头上那个「第几卷」
+    /// 画质分摆在这里而不是各处 `matches!` 一遍：`⏎`、`⇥`、抬头上那个「第几卷」
     /// 三处问的是同一件事（见 [`Branch::expandable`]）。
     pub fn expandable(self) -> bool {
         !matches!(self, Self::Failed(_))
@@ -137,7 +137,7 @@ impl Volume {
 ///
 /// **它不带那一行**：目录表上一枝写什么在 [`Live::branch_rows`]，而问「哪一枝底下有
 /// 哪几卷」的地方多得多（光标停在哪一枝、展开哪一枝、`⇥` 在哪几卷之间转），
-/// 那一半只是路径比较。把行摆进来，每问一次「哪一枝」就要把每一卷的基准档现算一遍。
+/// 那一半只是路径比较。把行摆进来，每问一次「哪一枝」就要把每一卷的统一档位现算一遍。
 #[derive(Debug, Clone)]
 pub struct Branch {
     /// 这一枝是哪个目录。
@@ -160,11 +160,11 @@ impl Branch {
         only_expandable(&self.volumes)
     }
 
-    /// **这一枝里[跟随](super::state::Follow)该跟到哪一卷**：末一条展得开的，
+    /// **这一枝里[自动滚动](super::state::Follow)该跟到哪一卷**：末一条展得开的，
     /// 也就是这一枝里最新收摊的那一卷。
     ///
     /// 与 [`Live::latest`] 逐条同形，理由也是同一条：没做成的那几卷排在收摊卷**后面**
-    /// （停车场 Q151），跟随落到它们身上之后，这一枝再收摊几卷它都还钉在原地。
+    /// （停车场 Q151），自动滚动落到它们身上之后，这一枝再收摊几卷它都还钉在原地。
     /// **一卷都展不开时退到末一行**——那一刻这一枝上只剩没做成的那几卷，
     /// 而屏上有行就该有光标。
     pub fn latest(&self) -> Option<Volume> {
@@ -205,11 +205,11 @@ pub struct Walking {
     pub walked: u64,
     /// 在走哪一遍。开卷之后、第一条 `PassStarted` 到达之前是 `None`。
     pub pass: Option<Pass>,
-    /// **这一卷在往盘上写吗**：走到按档写出那一遍，而且这一遍真写盘。
+    /// **这一卷在往盘上写吗**：走到写出那一遍，而且这一遍真写盘。
     ///
-    /// 执行那一趟走到那一遍就在写；续做那一趟那一遍前头是决策点，**答了继续才写**
-    /// （答收尾的那一卷等于走了一次试算，`CONTEXT.md` 的《会话》：决策点），
-    /// 答过「剩下的卷都这样·继续」之后的那几卷不再问、走到那一遍当场就在写。
+    /// 执行那一趟走到那一遍就在写；接着写出那一趟那一遍前头是确认点，**答了继续才写**
+    /// （答做完再停的那一卷等于走了一次预览，`CONTEXT.md` 的《会话》：确认点），
+    /// 答过「后面的卷都写出·继续」之后的那几卷不再问、走到那一遍当场就在写。
     /// 幂等命中跳过的卷到不了那一遍，恒是假。
     ///
     /// 它是[「这一趟真写出过没有」](Live::has_written)翻面的依据：这一卷收摊时它是真，
@@ -218,36 +218,36 @@ pub struct Walking {
     pub writes: bool,
 }
 
-/// 一趟跑起来之后攒下来的东西。**一趟一份**：按下试算或执行时新造一个，
+/// 一趟跑起来之后攒下来的东西。**一趟一份**：按下预览或执行时新造一个，
 /// 跑完仍留着——退出会话时印到 stdout 的就是它这一份报告。
 #[derive(Debug, Clone)]
 pub struct Live {
     /// 库那一侧真收到的那个 mode。**屏上照哪一种印走 [`mode`](Self::mode)**，
-    /// 不直接读它：试算走的是 `Mode::Process`（参照要留着，ADR 0012 决定第 5 条），
-    /// 而在决策点上答出继续之前它一个字节都没写。
+    /// 不直接读它：预览走的是 `Mode::Process`（参照要留着，ADR 0012 决定第 5 条），
+    /// 而在确认点上答出继续之前它一个字节都没写。
     ran_as: RunMode,
-    /// 这一趟**在决策点上等人**吗（`CONTEXT.md` 的《会话》：续做）。
+    /// 这一趟**在确认点上等人**吗（`CONTEXT.md` 的《会话》：接着写出）。
     ///
-    /// 试算是，几卷都一样；执行一趟走到底，在决策点上不停。
+    /// 预览是，几卷都一样；执行一趟走到底，在确认点上不停。
     /// 起手那一刻就定死（`crate::session::terminal::press` 拼 `Request` 时判的），跑起来之后不再变。
     resumes: Resuming,
-    /// 在决策点上答过的那几个字里**最弱**的那一个。一次都没答过就是 `None`。
+    /// 在确认点上答过的那几个字里**最弱**的那一个。一次都没答过就是 `None`。
     ///
     /// 屏上那句话与报告抬头都要它，而它们问的是**这一趟落过盘没有**：
-    /// 答过一次继续就有一卷写了出去，答收尾的那几卷一个字节都没写
+    /// 答过一次继续就有一卷写了出去，答做完再停的那几卷一个字节都没写
     /// （见 [`mode`](Self::mode)）。
     ///
     /// **取最弱的那一个，与闩正好相反**（闩取最强的，`super::run::Latch`）：
     /// 两者问的不是同一件事——闩问「这一趟还走不走」，越强越说明要停；
     /// 这一格问「落过盘没有」，而落过盘的证据是那个最弱的字。
     decided: Option<Instruction>,
-    /// 「剩下的卷都这样」摆下的那个**默认答案**（`CONTEXT.md` 的《会话》：都这样）。
+    /// 「后面的卷都写出」摆下的那个**默认答案**（`CONTEXT.md` 的《会话》：后面都写出）。
     /// 没答过这个手势就是 `None`。
     ///
     /// 真替往下那几卷答话的是观察者那一侧（`super::run::Gate`）；这一份是给**屏**的：
     /// 屏底那一行要说清「往下不再问了」，而[等人那一截](Self::deliberating_since)
     /// 也要从这一刻起不再开——不再停下来问，人就没有在等，
-    /// 而那一格开了就再也关不上（决策点上的答话是关它的唯一一条路）。
+    /// 而那一格开了就再也关不上（确认点上的答话是关它的唯一一条路）。
     for_the_rest: Option<Instruction>,
     /// **这一趟到此刻为止真写出过东西没有**（`no-false-line/04`，收停车场 Q196）。
     ///
@@ -256,23 +256,23 @@ pub struct Live {
     /// （[`volume_finished`](Self::volume_finished)），此后答什么、收什么场都不再动它。
     /// 读法见 [`has_written`](Self::has_written)，与另两个谓词的分别也写在那儿。
     written: bool,
-    /// 决策点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
+    /// 确认点上那一卷**到此刻为止**的报告（`PassStarted` 的 `so_far`，停车场 Q52）。
     ///
-    /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
-    /// 第二遍一步没走。报告区在卷表上给它一行（见 `super::draw::table`），
+    /// 它不进 [`report`](Self::report)：那一份装的是**收摊了的卷**，而这一卷还停在确认点上，
+    /// 写出环节一步没走。报告区在卷表上给它一行（见 `super::draw::table`），
     /// 「主区把报告画出来等你拿主意」靠的就是它。一卷收摊时清掉——那时正式的一份在报告里了。
     summarized: Option<VolumeReport>,
-    /// 这一趟在决策点上**等人等掉的那一截**，累计（停车场 Q41，`CONTEXT.md` 的《会话》：
-    /// 决策点上等人的那段时间不算进计时）。
+    /// 这一趟在确认点上**等人等掉的那一截**，累计（停车场 Q41，`CONTEXT.md` 的《会话》：
+    /// 确认点上等人的那段时间不算进计时）。
     ///
     /// 库那一侧自己也减掉它（`Report::elapsed`、`VolumeTiming::elapsed`），但那一份要等
-    /// 这一趟收场才交得出来。会话这一头**边跑边画**，因此自己也得记一份：不记的话，
+    /// 这一趟结束才交得出来。会话这一头**边跑边画**，因此自己也得记一份：不记的话，
     /// 屏上那两个数会在人看着报告的那几分钟里一路往上涨，而那几分钟里库一步都没走——
     /// 「剩 2h13m」说的就成了「用户拿主意还要多久」。
     deliberated: Duration,
     /// 这一次等是从什么时候起的。没在等就是 `None`。
     ///
-    /// 只有**续做那一趟**记它：别的趟在决策点上不等人（观察者当场答字就返回），
+    /// 只有**接着写出那一趟**记它：别的趟在确认点上不等人（观察者当场答字就返回），
     /// 那一格开了就再也关不上。
     deliberating_since: Option<Instant>,
     /// 攒到此刻的报告。开工那一刻它是「零卷的一份」——抬头那几件事已经答得出。
@@ -289,16 +289,16 @@ pub struct Live {
     started: Instant,
     /// 当前卷。卷与卷之间是 `None`。
     volume: Option<Walking>,
-    /// **出现的当场**就说得出口的失败页（`PageFailed`），按出现次序。
+    /// **出现的当场**就说得出口的坏页（`PageFailed`），按出现次序。
     ///
     /// 它不等那一卷跑完：报告区默认只给卷级（逐页展开归 `p1-session/11`），
     /// 而卷级那几行只说得出「几页失败」，说不出**为什么**。同一份原因随后也会在
     /// 那一卷报告的 `PageOutcome::Failed` 里出现一次——那一份是结果，这几条是增量。
     failed_pages: Vec<(PathBuf, String)>,
-    /// **当前这一卷已经报过的失败页**，几条。一卷收摊时清零（见
+    /// **当前这一卷已经报过的坏页**，几条。一卷收摊时清零（见
     /// [`finish_volume`](Self::finish_volume)）——那一刻它们的去处已经定了。
     in_flight_failures: usize,
-    /// **跟着没做成的那几卷一起没了去处的失败页**，几条。
+    /// **跟着没做成的那几卷一起没了去处的坏页**，几条。
     ///
     /// 一卷没做成时它连一份卷报告都没有（[`VolumeFailure`] 只带一句原因），
     /// 它那几页因此**永远进不了** [`report`](Self::report)——而它们确实坏了。
@@ -307,12 +307,12 @@ pub struct Live {
     lost_failures: usize,
     /// 那条线程回来了没有。
     ///
-    /// **这一趟收成了什么样不在这里**——那是[收场](RunOutcome)，在报告上
+    /// **这一趟收成了什么样不在这里**——那是[结束](RunOutcome)，在报告上
     /// （`Report::outcome`），会话不另立一个同义的词。这一格只答「还跑着吗」。
     ended: bool,
     /// 这一趟**没做成**时那句话（`CONTEXT.md` 的《失败》：退出码 `1` 那一种）。
     ///
-    /// 两种都落在这里：**拒绝执行**（错在这一趟的参数上，`run` 返回的是错误本身），
+    /// 两种都落在这里：**拒绝开始**（错在这一趟的参数上，`run` 返回的是错误本身），
     /// 以及那条线程**恐慌**了。两者都没有库交出来的那份报告，退出码都是命令行那一路的
     /// `1`——分得开它们的是这句话本身。
     ///
@@ -320,7 +320,7 @@ pub struct Live {
     /// （见 [`returned`](Self::returned)），退出会话时它连同这一句一起印出去，
     /// 先前那一趟做成了的报告也不跟着丢（见 `super::run::Running::report`）。
     ///
-    /// 会话不因此退出：把这句话画出来，用户当场改（spec 的《卷级失败与退出码》）。
+    /// 会话不因此退出：把这句话画出来，用户当场改（spec 的《卷转换失败与退出码》）。
     undone: Option<String>,
 }
 
@@ -344,9 +344,9 @@ impl Live {
                 white_align_limit: request.white_align_limit,
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
-                // 非卷文件整份在预扫走完就齐了，而事件流不报它——攒到一半的这一份因此
+                // 非漫画文件整份在清点走完就齐了，而事件流不报它——攒到一半的这一份因此
                 // 恒是空的，跑完换成库交出来的那一份（见 [`returned`](Self::returned)）。
-                // 末尾那几小结本来也只在收场之后画（见 `crate::session::draw`）。
+                // 末尾那几小结本来也只在结束之后画（见 `crate::session::draw`）。
                 non_volume_files: Vec::new(),
                 unreachable_places: Vec::new(),
                 outcome: RunOutcome::Completed,
@@ -389,11 +389,11 @@ impl Live {
         }
     }
 
-    /// 预扫完了，开工：总览块那两个数就是 `RunStarted` 报的这两个（03 号票）。
+    /// 清点完了，开工：总览块那两个数就是 `RunStarted` 报的这两个（03 号票）。
     pub fn run_started(&mut self, volumes: usize, steps: u64) {
         self.volumes = volumes;
         self.steps = steps;
-        // 表从这里开始掐：开工之前那一段是预扫与那几道检查，剩余时间算不进去。
+        // 表从这里开始掐：开工之前那一段是清点与那几道检查，剩余时间算不进去。
         self.started = Instant::now();
     }
 
@@ -410,19 +410,19 @@ impl Live {
 
     /// 当前卷开始走某一遍。「进度条现在在走哪一遍」只有它答得出来。
     ///
-    /// **决策点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
+    /// **确认点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
     /// 报告区就画得出「拿什么主意」。另外两遍那一格是 `None`，这里因此不动它。
     ///
-    /// **走到按档写出那一遍，「这一卷写不写盘」在这里定一半**（[`Walking::writes`]）：
-    /// 执行那一趟走到这一遍就在写；续做那一趟这一遍前头是决策点，要等答话
-    /// （另一半在 [`decide`](Self::decide)），只有答过「剩下的卷都这样·继续」的那几卷
+    /// **走到写出那一遍，「这一卷写不写盘」在这里定一半**（[`Walking::writes`]）：
+    /// 执行那一趟走到这一遍就在写；接着写出那一趟这一遍前头是确认点，要等待确认
+    /// （另一半在 [`decide`](Self::decide)），只有答过「后面的卷都写出·继续」的那几卷
     /// 不再问、当场就在写。
     pub fn pass_started(&mut self, pass: Pass, so_far: Option<&VolumeReport>) {
         if let Some(walking) = &mut self.volume {
             walking.pass = Some(pass);
             if pass == Pass::Second {
                 walking.writes = match self.resumes {
-                    // 试算走的也是 `Mode::Process`（参照要留着），因此认的是库真收到的那个字：
+                    // 预览走的也是 `Mode::Process`（参照要留着），因此认的是库真收到的那个字：
                     // 用例里 `DryRun` 起而不等人的那一趟，这一遍照旧一个字节都不写。
                     Resuming::GoesOn => self.ran_as == RunMode::Process,
                     Resuming::Waits => self.for_the_rest == Some(Instruction::Continue),
@@ -431,12 +431,12 @@ impl Live {
         }
         if let Some(so_far) = so_far {
             self.summarized = Some(so_far.clone());
-            // 决策点那一条报出来的下一刻，观察者就停在闸上了（见 `super::run::Watch`）。
+            // 确认点那一条报出来的下一刻，观察者就停在闸上了（见 `super::run::Watch`）。
             // 等人那一截从这里起算——但只有真等人的那一趟（见 [`Self::deliberating_since`]）。
             //
-            // **答过「剩下的卷都这样」之后就不再等**：那一刻起观察者当场照默认答案答字
+            // **答过「后面的卷都写出」之后就不再等**：那一刻起观察者当场照默认答案答字
             // （`super::run::Gate`），没有人在等。这一格照开的话它再也关不上——
-            // 关它的只有决策点上的答话，而往下不会再有一次，屏上那两个数于是从此不动。
+            // 关它的只有确认点上的答话，而往下不会再有一次，屏上那两个数于是从此不动。
             if self.resumes.waits() && self.for_the_rest.is_none() {
                 self.deliberating_since = Some(Instant::now());
             }
@@ -460,14 +460,14 @@ impl Live {
 
     /// 一卷跑完了，把那一卷的报告接到攒着的这一份上。
     ///
-    /// **它那几页失败页从此在报告里**：在途那一格由 [`finish_volume`](Self::finish_volume)
+    /// **它那几页坏页从此在报告里**：在途那一格由 [`finish_volume`](Self::finish_volume)
     /// 清零，它们从此由 `Report::failures` 数——两截换手，
     /// [`failures_so_far`](Self::failures_so_far) 的和一格不变。
     ///
     /// **「这一趟真写出过没有」在这里翻面**（[`has_written`](Self::has_written)）：
     /// 收摊的这一卷[在写](Walking::writes)，那一趟就真写出过一卷了。翻面点是**这一条**，
     /// 不是答继续那一帧（那一刻盘上还什么都没有）——[`decide`](Self::decide) 只记
-    /// 「这一卷要写了」，写完与否要等它收摊才知道：第二遍里没做成的那一卷走的是
+    /// 「这一卷要写了」，写完与否要等它收摊才知道：写出环节里没做成的那一卷走的是
     /// [`volume_failed`](Self::volume_failed)，不算写出过。
     pub fn volume_finished(&mut self, report: &VolumeReport) {
         if self.volume.as_ref().is_some_and(|walking| walking.writes) {
@@ -477,7 +477,7 @@ impl Live {
         self.finish_volume();
     }
 
-    /// 这一卷收摊了：决策点上摆着的那份「到此刻为止」作废。
+    /// 这一卷收摊了：确认点上摆着的那份「到此刻为止」作废。
     ///
     /// 一卷跑完那一条带的是同一卷正式的一份（报告里已经有了），一卷没做成那一条说的是
     /// 它连报告都没有——两种情形下再画那一份都是在画一件已经不成立的事。
@@ -487,7 +487,7 @@ impl Live {
 
     /// 一整卷没做成：记一笔原因，其余卷照做。
     ///
-    /// **它那几页失败页跟着换一格记**（[`lost_failures`](Self::lost_failures)）：
+    /// **它那几页坏页跟着换一格记**（[`lost_failures`](Self::lost_failures)）：
     /// 这一卷没有报告，那几页因此永远进不了 [`report`](Self::report)——不记的话，
     /// 屏上那个「此刻坏了几页」会在这一刻自己往回走。
     pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
@@ -503,9 +503,9 @@ impl Live {
     pub fn run_finished(&mut self, outcome: RunOutcome) {
         self.report.outcome = outcome;
         self.volume = None;
-        // 停在决策点上被中止的那一趟从这里出去：那一等到此为止，没有人会来答它。
+        // 停在确认点上被立即停止的那一趟从这里出去：那一等到此为止，没有人会来答它。
         self.stop_deliberating();
-        // 停在决策点上被中止的那一卷不报「一卷跑完」（`Event::VolumeFinished` 的文档）：
+        // 停在确认点上被立即停止的那一卷不报「一卷跑完」（`Event::VolumeFinished` 的文档）：
         // 它那份「到此刻为止」到这一刻为止也就作废了，而没有别人会来清它。
         self.summary_is_stale();
     }
@@ -515,7 +515,7 @@ impl Live {
     /// 为什么非结清不可，见 [`tonefit::Event::RunStarted`] 的 `steps`：预告的是上界，
     /// 幂等命中的卷提前收摊——不结清，那条横条就永远走不到头。
     ///
-    /// **在途那几页失败页的账在这里清**（[`in_flight_failures`](Self::in_flight_failures)）：
+    /// **在途那几页坏页的账在这里清**（[`in_flight_failures`](Self::in_flight_failures)）：
     /// 到这一刻它们的去处已经定了——跑完那一支进了报告，没做成那一支由
     /// [`volume_failed`](Self::volume_failed) 先挪进 [`lost_failures`](Self::lost_failures)。
     fn finish_volume(&mut self) {
@@ -532,7 +532,7 @@ impl Live {
     /// 那条线程回来了：把攒出来的报告换成库交出来的那一份，或者记下这一趟没做成。
     ///
     /// 换而不是接着用攒的那一份：两者的差别只有 [`Report::elapsed`]，
-    /// 而「这一趟做了多久」只有库那一侧减得掉在决策点上等人的那几分钟（停车场 Q41）。
+    /// 而「这一趟做了多久」只有库那一侧减得掉在确认点上等人的那几分钟（停车场 Q41）。
     pub fn returned(&mut self, done: anyhow::Result<Report>) {
         self.volume = None;
         self.ended = true;
@@ -555,11 +555,11 @@ impl Live {
 
     /// 报告抬头照哪一种印。
     ///
-    /// **试算在答出第一个继续之前印的是 dry-run**，虽然它走的是 `Mode::Process`：
-    /// 那条路留参照是为了答继续时第一遍不重算（ADR 0012 决定第 5 条），
-    /// 而在决策点上答出继续之前，输出根一个字节都没有——抬头那一行
-    /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
-    /// 答了收尾或中止同理：那一趟就此收场，盘上仍旧什么都没有。
+    /// **预览在答出第一个继续之前印的是 dry-run**，虽然它走的是 `Mode::Process`：
+    /// 那条路留参照是为了答继续时分析环节不重算（ADR 0012 决定第 5 条），
+    /// 而在确认点上答出继续之前，输出目录一个字节都没有——抬头那一行
+    /// 「预览：只分析，不写文件，下面列出的输出路径都还没有写入」正是这时要说的话。
+    /// 答了做完再停或立即停止同理：那一趟就此结束，盘上仍旧什么都没有。
     ///
     /// **几十卷的一趟里只要答过一次继续，印的就是执行**：那一卷真写了出去
     /// （见 [`decided`](Self::decided) 那条「取最弱的那一个」）。
@@ -567,8 +567,8 @@ impl Live {
     /// 别的两种（执行、一趟都没跑过）照库收到的那个字印，这一格与从前逐字相同。
     pub fn mode(&self) -> RunMode {
         match (self.resumes, self.decided) {
-            // 中止那一支眼下到不了：会话在决策点上只答得出继续与收尾，
-            // 中止走的是「退出会话」那条路（`Running::leave` 直接推闩，不记这一格）。
+            // 立即停止那一支眼下到不了：会话在确认点上只答得出继续与做完再停，
+            // 立即停止走的是「退出会话」那条路（`Running::leave` 直接推闩，不记这一格）。
             // 仍旧写开，因为 `Instruction` 不非穷尽——多一级的那一天这里编译不过；
             // 而真到了也是同一个答案：那一卷等于没做，盘上一个字节都没有。
             (Resuming::Waits, None | Some(Instruction::Finish | Instruction::Abort)) => {
@@ -578,10 +578,10 @@ impl Live {
         }
     }
 
-    /// **起手按的是哪一个键**：`t` 起的那一趟是试算，`x` 起的那一趟是执行。
+    /// **起手按的是哪一个键**：`t` 起的那一趟是预览，`x` 起的那一趟是执行。
     ///
     /// 与 [`mode`](Self::mode) 差的是**问的时刻**：那一条答「此刻落过盘没有」，
-    /// 决策点上答出第一个继续它就翻成执行；这一条答「这一趟是怎么起的」，
+    /// 确认点上答出第一个继续它就翻成执行；这一条答「这一趟是怎么起的」，
     /// 起手那一刻就定死，答什么都不动它。
     ///
     /// **总览块那两行在第一卷真写完之前按它画**（`super::draw::overview::delivered_as`）：
@@ -597,10 +597,10 @@ impl Live {
     /// **这一趟到此刻为止真写出过东西没有**（`no-false-line/04`，收停车场 Q196）。
     ///
     /// 第三个谓词，与另两个各问一个时刻：[`started_as`](Self::started_as) 答「起手按的
-    /// 哪一个键」，起手就定死；[`mode`](Self::mode) 答「此刻在写没写」，决策点上答出继续
+    /// 哪一个键」，起手就定死；[`mode`](Self::mode) 答「此刻在写没写」，确认点上答出继续
     /// 那一帧就翻；这一条答「**真写出过没有**」，翻成真的那一刻是**第一卷真写完**
     /// ——[在写的那一卷](Walking::writes)收摊（[`volume_finished`](Self::volume_finished)），
-    /// 不是答继续那一帧（那一刻盘上还什么都没有），也不是收场（收场时它必然早已翻过）。
+    /// 不是答继续那一帧（那一刻盘上还什么都没有），也不是结束（结束时它必然早已翻过）。
     /// **一趟之内只从假变真一次**，形状与闩相同（`super::run::Latch`）。
     ///
     /// **总览块那两行按它翻面**：`t` 起的那一趟在此之前给判定分布，之后给完成与跳过、隔离几卷。
@@ -614,7 +614,7 @@ impl Live {
         self.written
     }
 
-    /// 这一趟在决策点上等人吗（`CONTEXT.md` 的《会话》：续做）。
+    /// 这一趟在确认点上等人吗（`CONTEXT.md` 的《会话》：接着写出）。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
@@ -623,7 +623,7 @@ impl Live {
         self.resumes.waits()
     }
 
-    /// 决策点上答过的那个字。还没答、或者这一趟不在那儿停就是 `None`。
+    /// 确认点上答过的那个字。还没答、或者这一趟不在那儿停就是 `None`。
     ///
     /// **只给用例用**——屏上要的是它的**后件**（报告抬头照哪一种印，见
     /// [`mode`](Self::mode)），而那一件由那个函数一处答完。
@@ -632,15 +632,15 @@ impl Live {
         self.decided
     }
 
-    /// 记下决策点上答的那个字，以及它[管几卷](Reach)。
+    /// 记下确认点上答的那个字，以及它[管几卷](Reach)。
     /// **由会话那一头记**（[`super::run::Running::decide`]）：答话的是用户，
     /// 而观察者那一侧只是把它转交给库。
     ///
     /// 记下来的是答过的那几个字里**最弱**的那一个（见 [`decided`](Self::decided)）：
     /// 一趟里每一卷各答一次，而抬头那一行问的是「这一趟落过盘没有」——
-    /// 头一卷答了继续、第二卷答了收尾的那一趟，盘上有头一卷。
+    /// 头一卷答了继续、第二卷答了做完再停的那一趟，盘上有头一卷。
     ///
-    /// **答的是继续，停在决策点上的这一卷从此在写**（[`Walking::writes`]）：
+    /// **答的是继续，停在确认点上的这一卷从此在写**（[`Walking::writes`]）：
     /// 「这一趟真写出过没有」要等它收摊才翻面（[`volume_finished`](Self::volume_finished)），
     /// 这里只记下它要写了。
     pub fn decide(&mut self, said: Instruction, reach: Reach) {
@@ -661,8 +661,8 @@ impl Live {
 
     /// 等人那一截收口，累进 [`deliberated`](Self::deliberated)。没在等就什么都不做。
     ///
-    /// 两条出路：用户答了话（那条线程接着跑），或者这一趟就此收场
-    /// （停在决策点上被中止的那一趟走的是这一条，没有人会来答它）。
+    /// 两条出路：用户答了话（那条线程接着跑），或者这一趟就此结束
+    /// （停在确认点上被立即停止的那一趟走的是这一条，没有人会来答它）。
     fn stop_deliberating(&mut self) {
         if let Some(since) = self.deliberating_since.take() {
             self.deliberated = self.deliberated.saturating_add(since.elapsed());
@@ -682,22 +682,22 @@ impl Live {
         self.deliberated.saturating_add(waiting)
     }
 
-    /// 「剩下的卷都这样」摆下的那个默认答案。没答过这个手势就是 `None`。
+    /// 「后面的卷都写出」摆下的那个默认答案。没答过这个手势就是 `None`。
     ///
-    /// 屏底那一行要它：往下的决策点不再停，而这件事得说出来
+    /// 屏底那一行要它：往下的确认点不再停，而这件事得说出来
     /// （见 `super::draw::footer::resuming_line`）——不说的话，一趟几十卷的批量跑
     /// 看上去与「它忘了问」没有分别。
     pub fn for_the_rest(&self) -> Option<Instruction> {
         self.for_the_rest
     }
 
-    /// 决策点上那一卷到此刻为止的报告。没停在决策点上就是 `None`。
+    /// 确认点上那一卷到此刻为止的报告。没停在确认点上就是 `None`。
     pub fn summarized(&self) -> Option<&VolumeReport> {
         self.summarized.as_ref()
     }
 
     /// **表上停得住的那几卷**（[`Volume`]），**按卷表上的先后**：收摊了的那几卷、
-    /// 没做成的那几卷、末尾是决策点上攒着的那一份。
+    /// 没做成的那几卷、末尾是确认点上攒着的那一份。
     ///
     /// 报告区的光标走的就是这一列（`p3-session-legibility/10`）。**没做成的那几卷
     /// 此刻也在里面**（`p4-parking-lot/10` 收停车场 Q159）：它们在表上占着一行，
@@ -721,13 +721,13 @@ impl Live {
             .collect()
     }
 
-    /// **[跟随](super::state::Follow)跟的是哪一卷**：最新**收摊**的那一卷，
-    /// 决策点上攒着的那一份排在最后。
+    /// **[自动滚动](super::state::Follow)跟的是哪一卷**：最新**收摊**的那一卷，
+    /// 确认点上攒着的那一份排在最后。
     ///
     /// **没做成的那几卷不算最新的**，虽然光标停得上它们（见 [`volumes`](Self::volumes)）：
     /// 报告把它们分成另一列存，先后无从复原（停车场 Q151），而它们在
-    /// [`volumes`](Self::volumes) 里排在收摊卷**后面**——让跟随落到它们身上，
-    /// 后面每收摊一卷跟随都还钉在原地，「跟着最新的走」当场就成了假话。
+    /// [`volumes`](Self::volumes) 里排在收摊卷**后面**——让自动滚动落到它们身上，
+    /// 后面每收摊一卷自动滚动都还钉在原地，「跟着最新的走」当场就成了假话。
     ///
     /// **一卷都没收摊时退到表上最后一行**：那一刻表上只剩没做成的那几卷，
     /// 而屏上有行就该有光标。
@@ -767,7 +767,7 @@ impl Live {
     /// **报告区目录那一级此刻摆得出的那几枝**（[`Branch`]），按表上的先后。
     ///
     /// 收的那一列与[卷表那几行](super::draw::table)**同一个次序**：收摊了的那几卷、
-    /// 没做成的那几卷、末尾是决策点上攒着的那一份——分组因此不会把两处排成两个样子。
+    /// 没做成的那几卷、末尾是确认点上攒着的那一份——分组因此不会把两处排成两个样子。
     ///
     /// **分组只有一处出处**（[`crate::render::grouped`]）：命令行那一副的折叠读的是
     /// 同一份，两边不许各算各的。这里只把下标翻回会话认得的东西。
@@ -796,11 +796,11 @@ impl Live {
             .collect()
     }
 
-    /// 这几枝各自在报告上的[那一行](Row)——几卷 · 基准档分布 · 几卷进了隔离，
+    /// 这几枝各自在报告上的[那一行](Row)——几卷 · 统一档位分布 · 几卷进了隔离，
     /// **与 [`branches`](Self::branches) 同序**（两处都是 [`crate::render::grouped`]
     /// 出的那几组，一个次序）。
     ///
-    /// **只有目录表要它**：那一行的聚合要把每一卷的基准档问一遍，
+    /// **只有目录表要它**：那一行的聚合要把每一卷的统一档位问一遍，
     /// 而别处只要「哪一枝底下有哪几卷」（见 [`Branch`]）。措辞与聚合都在
     /// [`crate::render::directory`]，命令行那一副读的是同一份。
     pub fn branch_rows(&self) -> Vec<Row> {
@@ -814,7 +814,7 @@ impl Live {
     /// 交给[分组](crate::render::grouped)的那一列，**按表上的先后**。
     ///
     /// 与命令行那一路的 [`crate::render::listed`] 差的只有末尾那一条：
-    /// 决策点上攒着的那一份也占一条（它还没收摊，命令行那一路根本走不到这个时刻）。
+    /// 确认点上攒着的那一份也占一条（它还没收摊，命令行那一路根本走不到这个时刻）。
     fn listed(&self) -> Vec<Listed<'_>> {
         render::listed(&self.report)
             .into_iter()
@@ -822,7 +822,7 @@ impl Live {
             .collect()
     }
 
-    /// 这一卷此刻对着哪一份卷报告。**指不着就是 `None`**——决策点上那一卷收摊之后
+    /// 这一卷此刻对着哪一份卷报告。**指不着就是 `None`**——确认点上那一卷收摊之后
     /// [`Volume::Summarized`] 就指不着了（那时它是收摊了的最后一卷），而
     /// [没做成的那几卷](Volume::Failed)**恒指不着**：它们连一份卷报告都没有。
     #[cfg_attr(
@@ -851,7 +851,7 @@ impl Live {
     /// 三档：
     ///
     /// 1. **指得着**就是它自己；
-    /// 2. **决策点上那一卷收摊了**——它此刻是[第 `after` 卷](Volume::Summarized)，
+    /// 2. **确认点上那一卷收摊了**——它此刻是[第 `after` 卷](Volume::Summarized)，
     ///    那个数就是它的身份，因此**跟着它自己走**，而不是跟着「攒着的那一份」
     ///    那个位置跑到下一卷身上；
     /// 3. 剩下的（报告换了一趟、那一卷已经不在表上）**就近落到
@@ -881,16 +881,16 @@ impl Live {
 
     /// 总览块要的那几个数：第几卷 / 共几卷、走了几步 / 共几步、已用多久、还剩多久。
     ///
-    /// **收场之后「已用」就定住了**：那时用的是库交出来的 [`Report::elapsed`]——
-    /// 它是这一趟真做了多久，扣掉了在决策点上等人的那几分钟（停车场 Q41）。
+    /// **结束之后「已用」就定住了**：那时用的是库交出来的 [`Report::elapsed`]——
+    /// 它是这一趟真做了多久，扣掉了在确认点上等人的那几分钟（停车场 Q41）。
     /// 接着读自己那块表的话，跑完坐着不动，屏上那个数会一路往上涨。
     pub fn overall(&self) -> Overall {
         let elapsed = if self.ended {
             self.report.elapsed
         } else {
-            // 减掉在决策点上等人的那一截（停车场 Q41）：库在那段里一步都没走，
+            // 减掉在确认点上等人的那一截（停车场 Q41）：库在那段里一步都没走，
             // 算进来的话「剩多久」说的就成了「用户拿主意还要多久」。
-            // 收场之后换成库交出来的那一个——它减的是同一件事，只是准到纳秒。
+            // 结束之后换成库交出来的那一个——它减的是同一件事，只是准到纳秒。
             //
             // **一次读表算两个数**：被减数与减数都从这一个 `now` 起算。各读各的表时，
             // 减数读得晚一点、因而多算一点，减出来的那个数就小一格（停车场 Q118）。
@@ -926,7 +926,7 @@ impl Live {
         self.started = self.started.checked_sub(by).unwrap_or(self.started);
     }
 
-    /// **出现的当场**收下的那些失败页。
+    /// **出现的当场**收下的那些坏页。
     pub fn failed_pages(&self) -> impl Iterator<Item = (&Path, &str)> {
         self.failed_pages
             .iter()
@@ -950,11 +950,11 @@ impl Live {
             .saturating_add(self.in_flight_failures)
     }
 
-    /// 这一趟的退出码，**与命令行那一路同一套**：拒绝执行是 `1`，
+    /// 这一趟的退出码，**与命令行那一路同一套**：拒绝开始是 `1`，
     /// 其余交给 [`crate::exit_code`]——全部成功 `0`、有卷被隔离 `2`、
-    /// 有卷没做成**或有地方走不进去** `3`。
+    /// 有卷没做成**或有地方无法访问** `3`。
     ///
-    /// 还没跑完时问它没有意义，那时给的是「照现在这份报告收场会是几」——
+    /// 还没跑完时问它没有意义，那时给的是「照现在这份报告结束会是几」——
     /// 会话只在退出那一刻问一次，而那时这一趟一定已经收了场。
     pub fn exit_code(&self) -> u8 {
         match self.undone {
@@ -1021,15 +1021,15 @@ pub(crate) mod fixture {
     /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
     /// 建出目录，返回卷根。
     ///
-    /// 页非有不可：一页都没有的东西不是卷（ADR 0014 决定第 3 条），预扫当场把它丢掉，
-    /// 那条线程于是根本走不到决策点。从前这几条用例只摆一个透传文件，为的是不必造图片。
+    /// 页非有不可：一页都没有的东西不是卷（ADR 0014 决定第 3 条），清点当场把它丢掉，
+    /// 那条线程于是根本走不到确认点。从前这几条用例只摆一个透传文件，为的是不必造图片。
     ///
-    /// 透传文件仍留着：第二遍写的是**全部成员**，它也在里面
+    /// 透传文件仍留着：写出环节写的是**全部成员**，它也在里面
     /// （`tests/resume.rs` 的 `small_volume` 特意留一个透传成员正是这个理由），
     /// 因此「写没写出去」在它身上看得见。
     ///
     /// 页是这批用例里最便宜的一张：高恰是基准面板的高，纯墨到边——两样都是为了让管线
-    /// 在它身上不做工作（不缩放、裁边一个像素都拿不走）。这几条问的是线程、闩与决策点，
+    /// 在它身上不做工作（不缩放、裁白边一个像素都拿不走）。这几条问的是线程、闩与确认点，
     /// 页上画着什么一概不影响。
     pub fn a_real_volume(root: &Path, name: &str) -> PathBuf {
         /// 基准面板的高（`kobo-libra-2`，见 [`request`]）。
@@ -1083,14 +1083,14 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一卷收摊，**两半一起喂**：那一卷报告里的失败页先各报一条
+    /// 一卷收摊，**两半一起喂**：那一卷报告里的坏页先各报一条
     /// [`Live::page_failed`](super::Live::page_failed)，再报那一卷跑完。
     ///
     /// 真跑一趟时一页失败**发两回话**：出现的当场一条事件，那一页随后又在卷报告的
     /// [`PageOutcome::Failed`] 里出现一次（本模块开头那句「事件流就是报告的增量」——
     /// 一份是增量，一份是结果）。直接调
     /// [`Live::volume_finished`](super::Live::volume_finished) 只喂得到后一半，
-    /// 画出来的就是一副**真会话里到不了的屏**：报告区那一段「失败页（出现的当场……）」
+    /// 画出来的就是一副**真会话里到不了的屏**：报告区那一段「坏页（出现的当场……）」
     /// 永远空着，而它改坏了不会有任何一张快照红。
     ///
     /// **屏上画得出那一段的夹具非走这一个不可**；只问卷级那几行的（总览块、目录表那几条）
@@ -1121,7 +1121,7 @@ pub(crate) mod fixture {
 
     /// 一份**幂等命中**的卷报告：一页都没重做，逐页结果因此一条都没有。
     ///
-    /// 快照要的正是这一种——它不必搓判据、候选与几何门，而「跳过说清是哪四项依据没变」
+    /// 快照要的正是这一种——它不必搓画质分、候选与尺寸贴合检查，而「跳过说清是哪四项依据没变」
     /// 与「这一趟怎么读的」两条验收都落在它身上。
     pub fn skipped_volume(name: &str, page_count: usize) -> VolumeReport {
         VolumeReport {
@@ -1142,11 +1142,11 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一份**真做过事**的卷报告：一页完好的灰度页定出卷级基准档。
+    /// 一份**真做过事**的卷报告：一页完好的灰度页定出卷级统一档位。
     ///
-    /// `broken` 给一句原因就再添一张失败页，那时整卷进隔离目录。
-    /// 「一卷跑完当场显示它的判定与定档页」与「失败页带原因」两条验收落在它身上——
-    /// 定档页指的就是那一页完好的。
+    /// `broken` 给一句原因就再添一张坏页，那时整卷进隔离目录。
+    /// 「一卷跑完当场显示它的判定与代表页」与「坏页带原因」两条验收落在它身上——
+    /// 代表页指的就是那一页完好的。
     pub fn processed_volume(name: &str, broken: Option<&str>) -> VolumeReport {
         let candidate = Candidate::new(BitDepth::Four, Dither::Off);
         let source = Size::new(1441, 2048);
@@ -1215,7 +1215,7 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一份**默认路径（逐页）**的卷报告：上包络关着，卷内没有基准档，每一页各判各的。
+    /// 一份**默认路径（逐页）**的卷报告：整卷统一灰阶关着，卷内没有统一档位，每一页各判各的。
     ///
     /// 只换判定那一格，逐页那几行照 [`processed_volume`]：这一份要问的是
     /// 「卷表档位那一列照卷级判定说的写」（P3 卷表那一票），与页上画着什么无关。
@@ -1233,10 +1233,10 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一份**覆盖顶掉判定**的卷报告：覆盖项把候选裁到只剩一个，卷级基准档无从谈起。
+    /// 一份**覆盖顶掉判定**的卷报告：覆盖项把候选裁到只剩一个，卷级统一档位无从谈起。
     ///
     /// 与 [`per_page_volume`] 差一处：那一页的判定跟着换成被覆盖成的那一个候选、理由是覆盖——
-    /// 卷表的档位分布那一列数的正是页上的判定（`two-pass-rework/02`），
+    /// 卷表的灰阶分布那一列数的正是页上的判定（`two-pass-rework/02`），
     /// 页上写着 4bit 而卷级说覆盖成 2bit+FS，那一行就是一份自相矛盾的报告。
     #[cfg_attr(
         not(feature = "tui"),
@@ -1269,21 +1269,21 @@ pub(crate) mod fixture {
     ///
     /// | 页 | 它要紧在哪儿 |
     /// |---|---|
-    /// | `001` | 不要紧：判定跟着卷级基准档走 |
-    /// | `002` | 不要紧：走**彩色分支**，只缩放、不量化，也不进上包络 |
-    /// | `003` | **定档页**（上包络站在它身上） |
-    /// | `004` | **特例页**：判据偏离卷内分布，单独定档；它同时**宽溢出** |
-    /// | `005` | **几何门不成立**：源比目标小，抖动单独关掉 |
+    /// | `001` | 不要紧：判定跟着卷级统一档位走 |
+    /// | `002` | 不要紧：走**彩色分支**，只缩放、不量化，也不进整卷统一灰阶 |
+    /// | `003` | **代表页**（整卷统一灰阶站在它身上） |
+    /// | `004` | **差异大的页**：画质分偏离卷内分布，单独定档；它同时**页面超宽** |
+    /// | `005` | **尺寸未贴合屏幕**：源比目标小，抖动单独关掉 |
     /// | `006` | **兜底上界**：目标尺寸退回过 fit-inside |
-    /// | `007` | **部分救回**：解到哪个像素算哪个像素，行尾说得出救回了多少 |
-    /// | `017` | **失败页**：这一页根本没解出来 |
+    /// | `007` | **残缺**：解到哪个像素算哪个像素，行尾说得出救回了多少 |
+    /// | `017` | **坏页**：这一页根本没解出来 |
     ///
-    /// **「一页同时要紧在好几处」由 `004` 撑着**（特例加宽溢出），而不是拿兜底上界配宽溢出：
+    /// **「一页同时要紧在好几处」由 `004` 撑着**（特例加页面超宽），而不是拿兜底上界配页面超宽：
     /// 那一对**凑不到一起**——退回之后的页恒不超过面板宽
     /// （`Report::backstopped`：两张清单不重叠）。
     ///
-    /// **页的三种状态在这一卷里都有**（完好、部分救回、失败），彩色分支那一条也在：
-    /// 失败页说得出它的尺寸是**卷内统一尺寸**、彩页说得出它不量化也不进上包络，
+    /// **页的三种状态在这一卷里都有**（完好、残缺、失败），彩色分支那一条也在：
+    /// 坏页说得出它的尺寸是**卷内统一尺寸**、彩页说得出它不量化也不进整卷统一灰阶，
     /// 而这两句话只有逐页那几行说得出来——卷级那几行一句都没有（`p1-session/11` 的验收）。
     ///
     /// 与 [`processed_volume`] 分开而不是给它加几页：那一份钉着卷级那几张快照
@@ -1299,7 +1299,7 @@ pub(crate) mod fixture {
         let base = Candidate::new(BitDepth::Four, Dither::Off);
         let source = Size::new(1441, 2048);
         let target = Size::new(1182, 1680);
-        // 面板宽 1264（`kobo-libra-2`，见 [`request`]）：这一张比它宽，因此宽溢出。
+        // 面板宽 1264（`kobo-libra-2`，见 [`request`]）：这一张比它宽，因此页面超宽。
         let wide = Size::new(1600, 1680);
         let gray = |gate: GeometryGate, verdict: Verdict| PageBranch::Gray {
             white: WhiteAlignment::Off,
@@ -1332,10 +1332,10 @@ pub(crate) mod fixture {
         };
         let mut pages = vec![
             ordinary("001"),
-            // 彩色分支：只缩放，不量化，不进灰度缓存也不进上包络——它不要紧，
+            // 彩色分支：只缩放，不量化，不进灰度缓存也不进整卷统一灰阶——它不要紧，
             // 但全部页那一副上要看得见它那一句。
             page("002", target, false, PageBranch::Color),
-            // 定档页：这一卷的基准档就是它判出来的（`Envelope::driver` 指着它）。
+            // 代表页：这一卷的统一档位就是它判出来的（`Envelope::driver` 指着它）。
             page(
                 "003",
                 target,
@@ -1345,7 +1345,7 @@ pub(crate) mod fixture {
                     judged(base, Reason::LowestWithinThreshold),
                 ),
             ),
-            // 特例页，而且它**同时宽溢出**：不参与上包络、按它自己那一档写出，
+            // 差异大的页，而且它**同时页面超宽**：不参与整卷统一灰阶、按它自己那一档写出，
             // 而它比面板宽——翻它要阅读器横向平移。一页因此要紧在两处。
             page(
                 "004",
@@ -1359,15 +1359,15 @@ pub(crate) mod fixture {
                     ),
                 ),
             ),
-            // 几何门不成立：抖动单独关掉，位深仍跟着基准档。
+            // 尺寸未贴合屏幕：抖动单独关掉，灰阶档位仍跟着统一档位。
             page(
                 "005",
                 target,
                 false,
                 gray(GeometryGate::Broken, judged(base, Reason::OutsideTheGate)),
             ),
-            // 兜底上界退回过：它没按这一趟点名的适配方式出。**退回之后恒不超过面板宽**
-            // （`Report::backstopped`：与宽溢出那张清单不重叠），因此它拿的是普通尺寸。
+            // 兜底上界退回过：它没按这一趟点名的缩放方式出。**退回之后恒不超过面板宽**
+            // （`Report::backstopped`：与页面超宽那张清单不重叠），因此它拿的是普通尺寸。
             page(
                 "006",
                 target,
@@ -1375,7 +1375,7 @@ pub(crate) mod fixture {
                 gray(GeometryGate::Holds, judged(base, Reason::VolumeEnvelope)),
             ),
         ];
-        // 部分救回：它有自己的尺寸、判据与判定，却不替整卷说话。
+        // 残缺：它有自己的尺寸、画质分与判定，却不替整卷说话。
         let PageOutcome::Whole(salvaged) = ordinary("007").outcome else {
             unreachable!("上面那一支造的就是完好页");
         };
@@ -1402,8 +1402,8 @@ pub(crate) mod fixture {
             superseded: None,
             retained_pages: 0,
             source_pages: pages.len(),
-            // 其余页那一组是 `001`、`003`、`006` 三张：彩页、特例、门不成立、
-            // 部分救回、失败五张都在进这一层之前被摘走了（见 `Envelope::body_pages`）。
+            // 其余页那一组是 `001`、`003`、`006` 三张：彩页、特例、未贴合屏幕、
+            // 残缺、失败五张都在进这一层之前被摘走了（见 `Envelope::body_pages`）。
             verdict: Some(VolumeVerdict::Envelope(Envelope {
                 base,
                 driver: 2,
@@ -1422,7 +1422,7 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一卷两页：一张**裁过边、还是彩页转灰**的页，加上同一卷里那一张失败页。
+    /// 一卷两页：一张**裁过边、还是彩页转灰**的页，加上同一卷里那一张坏页。
     ///
     /// [每种页各一张](a_page_of_every_kind)那一卷答的是「哪几页要紧」，几何那几格
     /// 在它身上**一格都不在场**——逐页表把那五格收进来之后（`p4-parking-lot/10`，
@@ -1500,20 +1500,20 @@ pub(crate) mod fixture {
         }
     }
 
-    /// 一个判据值。从公开 seam 上真算一个——摆一个编出来的数上去，
-    /// 快照就钉不住「报告说的是判据算出来的东西」。
+    /// 一个画质分值。从公开 seam 上真算一个——摆一个编出来的数上去，
+    /// 快照就钉不住「报告说的是画质分算出来的东西」。
     fn a_score() -> tonefit::Score {
         a_score_of(136)
     }
 
-    /// 一个判据值，深浅由 `shade` 定。候选各不相同的那几个数由它来。
+    /// 一个画质分值，深浅由 `shade` 定。候选各不相同的那几个数由它来。
     fn a_score_of(shade: u8) -> tonefit::Score {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
         tonefit::score(
             &reference,
             &GrayImage::new(Size::new(1, 1), vec![shade]),
-            // 编出来的 1×1，没经过目标位深量化：取工作精度那一档（`metric::score` 的文档）。
+            // 编出来的 1×1，没经过目标灰阶档位量化：取工作精度那一档（`metric::score` 的文档）。
             BitDepth::Eight,
         )
     }
@@ -1609,7 +1609,7 @@ mod tests {
         assert_eq!(live.report().outcome, RunOutcome::Completed);
     }
 
-    /// 失败页在**出现的当场**就收得下，带着原因，不必等那一卷跑完。
+    /// 坏页在**出现的当场**就收得下，带着原因，不必等那一卷跑完。
     #[test]
     fn a_failed_page_is_visible_the_moment_it_happens() {
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
@@ -1681,7 +1681,7 @@ mod tests {
         assert_eq!(live.failures_so_far(), 3);
     }
 
-    /// **决策点上答出继续，`mode` 翻面而「起手按的哪一个键」一格不动**（停车场 Q149）。
+    /// **确认点上答出继续，`mode` 翻面而「起手按的哪一个键」一格不动**（停车场 Q149）。
     ///
     /// 两条答的不是同一个问题：`mode` 答「此刻落过盘没有」（报告抬头与总览块的抬头走它），
     /// `started_as` 答「这一趟是怎么起的」（总览块那两行在第一卷真写完之前走它，一趟之内一格不变；
@@ -1700,13 +1700,13 @@ mod tests {
             "起手那一副不该跟着翻面"
         );
 
-        // 执行那一趟两条恒是同一个答案：它在决策点上不停，一起手就在写。
+        // 执行那一趟两条恒是同一个答案：它在确认点上不停，一起手就在写。
         let processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         assert_eq!(processing.mode(), RunMode::Process);
         assert_eq!(processing.started_as(), RunMode::Process);
     }
 
-    /// **「真写出过没有」在第一卷真写完那一刻翻面：不在答继续那一帧，也不为答收尾与跳过的卷翻**
+    /// **「真写出过没有」在第一卷真写完那一刻翻面：不在答继续那一帧，也不为答做完再停与跳过的卷翻**
     /// （`no-false-line/04`，收停车场 Q196）。
     ///
     /// 三个谓词一路对着问：`started_as` 一格不动，`mode` 在答继续那一帧就翻，
@@ -1717,17 +1717,17 @@ mod tests {
         trial.run_started(3, 3000);
         assert!(!trial.has_written(), "还没开卷就说写出过了");
 
-        // 头一卷幂等命中：到不了决策点，一个字节都没写。
+        // 头一卷幂等命中：到不了确认点，一个字节都没写。
         trial.volume_started(Path::new("库/卷一"), 1000);
         trial.volume_finished(&fixture::skipped_volume("卷一", 180));
         assert!(!trial.has_written(), "跳过的卷算成写出过了");
 
-        // 第二卷停在决策点上，答收尾：这一卷等于走了一次试算。
+        // 第二卷停在确认点上，答做完再停：这一卷等于走了一次预览。
         trial.volume_started(Path::new("库/卷二"), 1000);
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
         trial.decide(Instruction::Finish, Reach::ThisVolume);
         trial.volume_finished(&fixture::processed_volume("卷二", None));
-        assert!(!trial.has_written(), "答了收尾的那一卷一个字节都没写");
+        assert!(!trial.has_written(), "答了做完再停的那一卷一个字节都没写");
 
         // 第三卷答继续：答话那一帧盘上还什么都没有，收摊那一刻才写完。
         trial.volume_started(Path::new("库/卷三"), 1000);
@@ -1743,7 +1743,7 @@ mod tests {
         assert_eq!(trial.started_as(), RunMode::DryRun, "起手那一副不该跟着翻");
     }
 
-    /// **只升不降**：翻成真之后，再答收尾、再来一卷跳过的、收场，都不动它——
+    /// **只升不降**：翻成真之后，再答做完再停、再来一卷跳过的、结束，都不动它——
     /// 一趟之内只从假变真一次，屏上那一格因此不来回跳。
     #[test]
     fn having_written_is_a_latch() {
@@ -1759,17 +1759,20 @@ mod tests {
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
         trial.decide(Instruction::Finish, Reach::ThisVolume);
         trial.volume_finished(&fixture::processed_volume("卷二", None));
-        assert!(trial.has_written(), "答了一次收尾，写出过的那一格缩回去了");
+        assert!(
+            trial.has_written(),
+            "答了一次做完再停，写出过的那一格缩回去了"
+        );
 
         trial.volume_started(Path::new("库/卷三"), 1000);
         trial.volume_finished(&fixture::skipped_volume("卷三", 180));
         trial.run_finished(RunOutcome::Completed);
         trial.returned(Ok(trial.report().clone()));
-        assert!(trial.has_written(), "收场把写出过的那一格抹掉了");
+        assert!(trial.has_written(), "结束把写出过的那一格抹掉了");
     }
 
-    /// **答了继续却没做成的那一卷不算写出过**：第二遍里废掉的卷走的是 `VolumeFailed`，
-    /// 盘上没有它。「剩下的卷都这样·继续」之后的那几卷不再问，走到按档写出那一遍
+    /// **答了继续却没做成的那一卷不算写出过**：写出环节里废掉的卷走的是 `VolumeFailed`，
+    /// 盘上没有它。「后面的卷都写出·继续」之后的那几卷不再问，走到写出那一遍
     /// 当场就在写——头一卷写出来就翻面。
     ///
     /// 执行那一趟每一卷都写，头一卷收摊就翻；用例里 `DryRun` 起而不等人的那一趟一个字节
@@ -1782,16 +1785,16 @@ mod tests {
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
         trial.decide(Instruction::Continue, Reach::ForTheRest);
         trial.volume_failed(Path::new("库/卷一"), "写不出去");
-        assert!(!trial.has_written(), "第二遍里废掉的那一卷算成写出过了");
+        assert!(!trial.has_written(), "写出环节里废掉的那一卷算成写出过了");
 
-        // 往下不再问：走到按档写出那一遍就在写。
+        // 往下不再问：走到写出那一遍就在写。
         trial.volume_started(Path::new("库/卷二"), 1000);
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷二", None)));
         assert!(!trial.has_written(), "这一卷还没收摊");
         trial.volume_finished(&fixture::processed_volume("卷二", None));
         assert!(
             trial.has_written(),
-            "「剩下的卷都这样」之后写出的那一卷没让它翻面"
+            "「后面的卷都写出」之后写出的那一卷没让它翻面"
         );
 
         let mut processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
@@ -1799,7 +1802,7 @@ mod tests {
         processing.volume_started(Path::new("库/卷一"), 1000);
         processing.pass_started(Pass::Second, None);
         processing.volume_finished(&fixture::processed_volume("卷一", None));
-        assert!(processing.has_written(), "执行那一趟头一卷收摊就该翻面");
+        assert!(processing.has_written(), "转换那一趟头一卷收摊就该翻面");
 
         let mut dry = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
         dry.run_started(1, 1000);
@@ -1809,7 +1812,7 @@ mod tests {
         assert!(!dry.has_written(), "只算不写的那一趟说自己写出过了");
     }
 
-    /// 退出码与命令行那一路一致：拒绝执行 `1`，有卷被隔离 `2`，全部成功 `0`。
+    /// 退出码与命令行那一路一致：拒绝开始 `1`，有卷被隔离 `2`，全部成功 `0`。
     #[test]
     fn the_exit_code_is_the_one_the_command_line_would_have_given() {
         let request = fixture::request(RunMode::Process);
@@ -1853,11 +1856,11 @@ mod tests {
         assert_eq!(live.overall().elapsed, Duration::from_secs(42));
     }
 
-    /// **按停停下来的那一趟退出码照旧**：两级都一样，它是用户自己的决定，不是失败
-    /// （ADR 0013；`crate::exit_code` 的文档写着「按停停下来的那一趟不在这里露面」）。
+    /// **按停止停下来的那一趟退出码照旧**：两级都一样，它是用户自己的决定，不是失败
+    /// （ADR 0013；`crate::exit_code` 的文档写着「按停止停下来的那一趟不在这里露面」）。
     ///
     /// 「照旧」不是「恒为零」：报告里有卷被隔离、有卷没做成，那两个数照给——
-    /// 按停不改的是**这一趟收成了什么样**与退出码之间那条对应，而那条对应
+    /// 按停止不改的是**这一趟收成了什么样**与退出码之间那条对应，而那条对应
     /// 与命令行那一路是同一段代码（`crate::exit_code`）。
     #[test]
     fn a_run_that_was_stopped_exits_with_the_code_its_report_earns() {
@@ -1871,7 +1874,7 @@ mod tests {
             assert_eq!(clean.exit_code(), crate::SUCCESS_EXIT, "{level:?}");
             assert_eq!(clean.exit_code(), crate::exit_code(&report), "{level:?}");
 
-            // 其中一卷带着坏页进了隔离：仍是「有卷被隔离」那个数，按停没把它盖掉。
+            // 其中一卷带着坏页进了隔离：仍是「有卷被隔离」那个数，按停止没把它盖掉。
             let mut isolated = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
             let mut report = isolated.report().clone();
             report
@@ -1884,14 +1887,14 @@ mod tests {
         }
     }
 
-    /// **决策点上那一卷的报告摆得住，也收得掉**（停车场 Q52，`p1-session/14`）。
+    /// **确认点上那一卷的报告摆得住，也收得掉**（停车场 Q52，`p1-session/14`）。
     ///
-    /// 它不进 [`Live::report`]：那一份装的是**收摊了的卷**，而这一卷还停在决策点上，
-    /// 第二遍一步没走。混进去的话，退出会话时印到 stdout 的那一份里会多一卷
+    /// 它不进 [`Live::report`]：那一份装的是**收摊了的卷**，而这一卷还停在确认点上，
+    /// 写出环节一步没走。混进去的话，退出会话时印到 stdout 的那一份里会多一卷
     /// 「写在那里、盘上却没有」的东西。
     ///
     /// 三条出路各收一次：一卷跑完（正式那一份进了报告）、一卷没做成（它连报告都没有）、
-    /// 这一趟收场（停在决策点上被中止的那一卷两条都不报，没有别人会来清它）。
+    /// 这一趟结束（停在确认点上被立即停止的那一卷两条都不报，没有别人会来清它）。
     #[test]
     fn the_summary_at_the_decision_point_stands_until_that_volume_lands() {
         let summarized = fixture::processed_volume("卷一", None);
@@ -1903,7 +1906,7 @@ mod tests {
         assert_eq!(
             live.summarized().map(|volume| volume.volume.clone()),
             Some(summarized.volume.clone()),
-            "决策点上那一份没收下"
+            "确认点上那一份没收下"
         );
         assert!(
             live.report().volumes.is_empty(),
@@ -1920,14 +1923,14 @@ mod tests {
         live.volume_failed(Path::new("库/卷一"), "盘拔了");
         assert!(live.summarized().is_none());
 
-        // 这一趟收场（决策点上被中止就是这一条）：同样作废。
+        // 这一趟结束（确认点上被立即停止就是这一条）：同样作废。
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         live.volume_started(Path::new("库/卷一"), 6);
         live.pass_started(Pass::Second, Some(&summarized));
         live.run_finished(RunOutcome::Stopped(Instruction::Abort));
         assert!(live.summarized().is_none());
 
-        // 别的两遍那一格是 `None`，不该把摆着的那一份抹掉——它只在决策点上有。
+        // 别的两遍那一格是 `None`，不该把摆着的那一份抹掉——它只在确认点上有。
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         live.volume_started(Path::new("库/卷一"), 6);
         live.pass_started(Pass::Second, Some(&summarized));
@@ -1935,8 +1938,8 @@ mod tests {
         assert!(live.summarized().is_some(), "另一遍开工把它抹掉了");
     }
 
-    /// **等答话的那几分钟谁都不算**（停车场 Q41，`CONTEXT.md` 的《会话》：
-    /// 决策点上等人的那段时间不算进计时）。
+    /// **等待确认的那几分钟谁都不算**（停车场 Q41，`CONTEXT.md` 的《会话》：
+    /// 确认点上等人的那段时间不算进计时）。
     ///
     /// 不减的话，屏上那两个数会在人看着报告拿主意的那几分钟里一路往上涨，
     /// 而那几分钟里库一步都没走——「剩多久」说的就成了「用户拿主意还要多久」。
@@ -1944,7 +1947,7 @@ mod tests {
     /// 断言不带余量：把开工那一刻往回拨一段，「已用」就该是那一段；等一小会儿再问，
     /// 它**一格都不该多**（拨回去的那一段远大于这中间的调度抖动）。
     ///
-    /// **不等人的那一趟一格不减**：执行那一趟同样走到决策点，但观察者当场答字就返回——
+    /// **不等人的那一趟一格不减**：执行那一趟同样走到确认点，但观察者当场答字就返回——
     /// 那一段是库自己的开销，本来就该算进这一趟。
     #[test]
     fn the_minutes_spent_deciding_are_charged_to_nobody() {
@@ -1957,7 +1960,7 @@ mod tests {
         live.volume_started(Path::new("库/卷一"), 1000);
         live.stepped();
         live.rewind(RAN_FOR);
-        // 决策点：等人那一截从这里起算。
+        // 确认点：等人那一截从这里起算。
         live.pass_started(Pass::Second, Some(&summarized));
         let waiting = live.overall().elapsed;
         assert!(waiting >= RAN_FOR, "等之前那一段被减掉了：{waiting:?}");
@@ -1978,33 +1981,33 @@ mod tests {
             "答完话之后那一截又被算回来了：{resumed:?}"
         );
 
-        // 下一卷的决策点：照旧等人，那一格照旧开——一趟里每一卷各等一次
+        // 下一卷的确认点：照旧等人，那一格照旧开——一趟里每一卷各等一次
         // （`volume-discovery/07`）。
         live.volume_started(Path::new("库/卷二"), 1000);
         live.pass_started(Pass::Second, Some(&summarized));
         assert!(
             live.deliberating_since.is_some(),
-            "第二卷的决策点上没开始等人"
+            "第二卷的确认点上没开始等人"
         );
         let waiting = live.overall().elapsed;
         std::thread::yield_now();
         assert!(
             live.overall().elapsed.saturating_sub(waiting) < Duration::from_secs(1),
-            "第二卷的决策点上等人的那一截被算进了「已用」"
+            "第二卷的确认点上等人的那一截被算进了「已用」"
         );
 
-        // **答「剩下的卷都这样」之后那一格再也不开**：往下的决策点由观察者那一侧
-        // 当场答掉，没有人在等。照开的话它再也关不上——关它的只有决策点上的答话，
+        // **答「后面的卷都写出」之后那一格再也不开**：往下的确认点由观察者那一侧
+        // 当场答掉，没有人在等。照开的话它再也关不上——关它的只有确认点上的答话，
         // 而往下不会再有一次，屏上那两个数于是从此不动。
         live.decide(Instruction::Continue, Reach::ForTheRest);
         live.volume_started(Path::new("库/卷三"), 1000);
         live.pass_started(Pass::Second, Some(&summarized));
         assert!(
             live.deliberating_since.is_none(),
-            "答过「剩下的卷都这样」，等人那一格又开了——没有人在等，而它再也关不上"
+            "答过「后面的卷都写出」，等人那一格又开了——没有人在等，而它再也关不上"
         );
 
-        // 不等人的那一趟：决策点照样报，但那一格不开——观察者当场答字就返回。
+        // 不等人的那一趟：确认点照样报，但那一格不开——观察者当场答字就返回。
         let mut going = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
         going.run_started(1, 1000);
         going.volume_started(Path::new("库/卷一"), 1000);
@@ -2016,11 +2019,11 @@ mod tests {
         );
     }
 
-    /// **试算在答出第一个继续之前印的是 dry-run**（`p1-session/14`，ADR 0012 决定第 5 条）。
+    /// **预览在答出第一个继续之前印的是 dry-run**（`p1-session/14`，ADR 0012 决定第 5 条）。
     ///
-    /// 那一趟走的是 `Mode::Process`——参照要留着，答继续时第一遍才不必重算——
-    /// 而在决策点上答出继续之前，输出根一个字节都没有。抬头那一行
-    /// 「dry-run：只算不写，下面的路径都还没落盘」正是这时要说的话。
+    /// 那一趟走的是 `Mode::Process`——参照要留着，答继续时分析环节才不必重算——
+    /// 而在确认点上答出继续之前，输出目录一个字节都没有。抬头那一行
+    /// 「预览：只分析，不写文件，下面列出的输出路径都还没有写入」正是这时要说的话。
     ///
     /// **一趟里每一卷各答一次**（`volume-discovery/07`），而抬头那一行只有一句：
     /// 答过一次继续就有一卷写了出去，那一趟因此印执行——记下来的是那几个字里
@@ -2029,7 +2032,7 @@ mod tests {
     /// 执行那一趟照库收到的那个字印，这一格与从前逐字相同。
     #[test]
     fn a_trial_that_never_walked_the_second_pass_prints_as_a_dry_run() {
-        // 续做那一趟：起手、答收尾、答中止，三处都是 dry-run；只有答继续那一处不是。
+        // 接着写出那一趟：起手、答做完再停、答立即停止，三处都是 dry-run；只有答继续那一处不是。
         for (said, shown) in [
             (None, RunMode::DryRun),
             (Some(Instruction::Finish), RunMode::DryRun),
@@ -2044,7 +2047,7 @@ mod tests {
             assert_eq!(live.mode(), shown, "答了 {said:?}");
         }
 
-        // 几十卷的一趟：头一卷答继续（它写出去了），第二卷答收尾（这一趟到此为止）。
+        // 几十卷的一趟：头一卷答继续（它写出去了），第二卷答做完再停（这一趟到此为止）。
         // 盘上有头一卷，抬头因此不能说「只算不写」——两个次序都问一遍，
         // 记的是最弱的那一个，与答话的先后无关。
         for said in [
@@ -2063,7 +2066,7 @@ mod tests {
             );
         }
 
-        // 「剩下的卷都这样」摆下的那个默认答案单独记一格：它不是闩，也不替
+        // 「后面的卷都写出」摆下的那个默认答案单独记一格：它不是闩，也不替
         // [`Live::decided`] 作答——那一格记的仍是答过的字。
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         assert_eq!(live.for_the_rest(), None, "没答过那个手势就该是空的");
@@ -2098,7 +2101,7 @@ mod tests {
     /// **一趟摆得出的那几枝，与卷表读的是同一列**（`volume-discovery/08`）。
     ///
     /// 三种条目各归各的枝：收摊了的那几卷按 [`Volume::Settled`] 认，
-    /// 没做成的那几卷按 [`Volume::Failed`] 认，决策点上攒着的那一份按
+    /// 没做成的那几卷按 [`Volume::Failed`] 认，确认点上攒着的那一份按
     /// [`Volume::Summarized`] 认——三种的**次序**与 `super::draw::table` 那一头
     /// 逐格相同，分组因此不会把两处排成两个样子。
     ///
@@ -2127,7 +2130,7 @@ mod tests {
             .map(|branch| branch.directory.display().to_string())
             .collect();
         assert_eq!(names, ["库/甲", "库/乙", "库/丙"], "分的不是那几枝");
-        // 甲那一枝：收摊了的第 0 卷，加上决策点上攒着的那一份。
+        // 甲那一枝：收摊了的第 0 卷，加上确认点上攒着的那一份。
         assert_eq!(
             branches[0].volumes,
             [Volume::Settled(0), Volume::Summarized { after: 2 }]
@@ -2141,7 +2144,7 @@ mod tests {
         // 丙那一枝只有一条没做成的：它**停得住**（光标落得上那一行），却展不开。
         assert_eq!(branches[2].volumes, [Volume::Failed(0)]);
         assert!(branches[2].expandable().is_empty(), "没做成的卷展得开了");
-        // 跟随不落到它身上：那一列排在收摊卷后面，落上去之后再收摊几卷也不动了。
+        // 自动滚动不落到它身上：那一列排在收摊卷后面，落上去之后再收摊几卷也不动了。
         assert_eq!(live.latest(), Some(Volume::Summarized { after: 2 }));
         // 那几行与这几枝**同序**，说得出各枝几卷——措辞与聚合只有
         // `crate::render::directory` 一处出处。

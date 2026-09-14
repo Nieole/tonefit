@@ -4,7 +4,7 @@
 //! 红绿交给当时的负载。断言的是**结构**——这一趟走过的段该有数、没走过的段该是零、
 //! 段与段不重叠、段装得进总耗时。
 //!
-//! 断言里出现的唯一一个具体时长是**用例自己等掉的那一段**（见末一条：决策点上等人的那一截
+//! 断言里出现的唯一一个具体时长是**用例自己等掉的那一段**（见末一条：确认点上等人的那一截
 //! 不算进计时）。它不是机器快慢，是用例摆好的输入，因此可以钉。
 //!
 //! 「计时不进渲染出的文字」不在这里：那是界面层的事实，由 `src/render.rs` 的
@@ -19,7 +19,7 @@ use tonefit::{Event, Instruction, Mode, Pass, Progress, ProgressSink, Request, V
 
 /// 两页加一个透传文件的目录卷。
 ///
-/// 透传成员是有意的：第二遍那一段的段界照**步**那一侧划（写全部成员），
+/// 透传成员是有意的：写出环节那一段的段界照**步**那一侧划（写全部成员），
 /// 卷里一个透传文件都没有的话，「写全部成员」与「写全部页」在这里分不开。
 fn two_pages_and_an_extra(space: &Workspace, name: &str) -> Volume {
     let volume = space.volume(name);
@@ -52,8 +52,8 @@ fn every_volume_and_the_whole_run_say_how_long_they_took() {
         let timing = volume.timing;
         // 这一趟三段都真走了：记录开着、卷要处理、模式是照做。
         assert!(timing.fingerprint > Duration::ZERO, "幂等那一道没有耗时");
-        assert!(timing.first_pass > Duration::ZERO, "第一遍没有耗时");
-        assert!(timing.second_pass > Duration::ZERO, "第二遍没有耗时");
+        assert!(timing.first_pass > Duration::ZERO, "分析环节没有耗时");
+        assert!(timing.second_pass > Duration::ZERO, "写出环节没有耗时");
         assert!(timing.elapsed > Duration::ZERO, "这一卷没有报出耗时");
         assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
         volumes += timing.elapsed;
@@ -80,12 +80,12 @@ fn a_skipped_volume_still_reports_what_the_idempotency_read_cost() {
     assert!(timing.elapsed > Duration::ZERO, "跳过的卷报了零耗时");
     assert!(timing.fingerprint > Duration::ZERO, "幂等那一道没有耗时");
     // 提前收摊：两遍一遍都没走，那两段因此是零而不是一个很小的数。
-    assert_eq!(timing.first_pass, Duration::ZERO, "跳过的卷走了第一遍");
-    assert_eq!(timing.second_pass, Duration::ZERO, "跳过的卷走了第二遍");
+    assert_eq!(timing.first_pass, Duration::ZERO, "跳过的卷走了分析环节");
+    assert_eq!(timing.second_pass, Duration::ZERO, "跳过的卷走了写出环节");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }
 
-/// dry-run 一个文件都不落盘：第二遍那一段无从谈起，第一遍照走（spec 的 story 6）。
+/// dry-run 一个文件都不落盘：写出环节那一段无从谈起，分析环节照走（spec 的 story 6）。
 #[test]
 fn a_dry_run_times_the_first_pass_and_leaves_the_second_at_zero() {
     let space = Workspace::new();
@@ -98,7 +98,7 @@ fn a_dry_run_times_the_first_pass_and_leaves_the_second_at_zero() {
     .expect("处理应当成功");
 
     let timing = report.volumes[0].timing;
-    assert!(timing.first_pass > Duration::ZERO, "dry-run 没走第一遍");
+    assert!(timing.first_pass > Duration::ZERO, "dry-run 没走分析环节");
     assert_eq!(timing.second_pass, Duration::ZERO, "dry-run 写了东西");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }
@@ -117,12 +117,12 @@ fn without_metadata_there_is_no_idempotency_pass_to_time() {
 
     let timing = report.volumes[0].timing;
     assert_eq!(timing.fingerprint, Duration::ZERO, "关了记录还在算指纹");
-    assert!(timing.first_pass > Duration::ZERO, "第一遍没有耗时");
-    assert!(timing.second_pass > Duration::ZERO, "第二遍没有耗时");
+    assert!(timing.first_pass > Duration::ZERO, "分析环节没有耗时");
+    assert!(timing.second_pass > Duration::ZERO, "写出环节没有耗时");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }
 
-/// 在**决策点**上等人的那几分钟不算进计时，两处墙钟都不算（停车场 Q41，ADR 0012）。
+/// 在**确认点**上等人的那几分钟不算进计时，两处墙钟都不算（停车场 Q41，ADR 0012）。
 ///
 /// 会话在那里把报告画出来、等用户拿主意，人会看着报告去泡茶（ADR 0012 的《后果》）。
 /// 算进来的话，`elapsed` 报出来的就不再是「库做了多久」，而是「用户拿主意花了多久」——
@@ -132,10 +132,10 @@ fn without_metadata_there_is_no_idempotency_pass_to_time() {
 /// 报的数要是把等人那段算进去了，两者之差就只剩 `run` 进出之间那点零头，当场红。
 #[test]
 fn waiting_at_the_decision_point_is_charged_to_nobody() {
-    /// 观察者在决策点上等这么久。够长，`run` 自己的零头淹不掉它；够短，用例不因此变慢。
+    /// 观察者在确认点上等这么久。够长，`run` 自己的零头淹不掉它；够短，用例不因此变慢。
     const WAITS: Duration = Duration::from_millis(200);
 
-    /// 只在决策点上磨蹭的观察者，答的是继续——第二遍照走，等的那一段却不该算进它。
+    /// 只在确认点上磨蹭的观察者，答的是继续——写出环节照走，等的那一段却不该算进它。
     ///
     /// `src/progress.rs` 的 `only_the_wait_at_the_decision_point_is_clocked_as_deliberation`
     /// 有一个同形的，隔着 crate 边界共用不了。那一个问「掐出来的那个数对不对」，
@@ -180,6 +180,6 @@ fn waiting_at_the_decision_point_is_charged_to_nobody() {
         timing.elapsed
     );
     // 减掉一截之后段与总仍然对得上：等人不在任何一段里，因此三段一个都没变短。
-    assert!(timing.second_pass > Duration::ZERO, "第二遍没走");
+    assert!(timing.second_pass > Duration::ZERO, "写出环节没走");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }

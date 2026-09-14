@@ -1,4 +1,4 @@
-//! 介质探测、读取并发与进度（13 号票）。
+//! 硬盘类型探测、读取并发与进度（13 号票）。
 //!
 //! 断言全在 `run` 这个 seam 上：报告说这一卷是怎么读的，输出说读法没有改变结果。
 //! 读取层自己的性质——有界通道按字节预算背压、峰值不随并发度长——在 `src/read.rs` 的
@@ -22,17 +22,17 @@ use tonefit::{
     ProgressSink, Request, Size, Verdict, VolumeVerdict,
 };
 
-/// 一条贴住面板高边的窄页：几何门成立，而像素少到几十页连跑也不慢。
+/// 一条贴住面板高边的窄页：尺寸贴合屏幕，而像素少到几十页连跑也不慢。
 ///
 /// 高取基准面板的 1680（`fixtures::BASELINE_DEVICE`），宽远不到面板宽。这个尺寸是
-/// **两种适配方式的公共不动点**：高已经等于面板高，以高为准原样输出，fit-inside
+/// **两种缩放方式的公共不动点**：高已经等于面板高，以高为准原样输出，fit-inside
 /// 也不放大——本文件因此两条路上都跑得快，而门在两条路上都开着。
 ///
-/// 本文件要的正是门开着：候选集里带着抖动那一维，判据每页多求几个，
+/// 本文件要的正是门开着：候选集里带着抖动那一维，画质分每页多求几个，
 /// 乱序跑与顺着跑的差别才有地方露出来。
 ///
 /// 拿它跑的页一律配 `fixtures::full_bleed_gradient` 那圈墨边（页几何批 09 号票）：
-/// 裁边一裁，「原样输出」当场不成立——渐变下方那 21.6% 亮于墨阈的白边会被裁掉，
+/// 裁白边一裁，「原样输出」当场不成立——渐变下方那 21.6% 亮于墨阈的白边会被裁掉，
 /// 页于是又要被放大回面板高，上面那句话就成了假话。
 const TOUCHING: Size = Size::new(200, 1680);
 
@@ -54,7 +54,7 @@ fn long_volume(space: &Workspace, name: &str) -> fixtures::Volume {
 /// 门逐页判，这一卷因此两套候选集都用得上：那两页只剩不抖的三个，另外十页六个都在。
 ///
 /// **它只在 `--fit inside` 下是混排卷**（页几何批 01 号票）：以高为准会把那两页放大到
-/// 面板高，门跟着成立，一卷十二页都拿满候选。用它的两条用例因此各自点名了适配方式。
+/// 面板高，门跟着成立，一卷十二页都拿满候选。用它的两条用例因此各自点名了缩放方式。
 fn volume_with_two_gate_breakers(space: &Workspace, name: &str) -> fixtures::Volume {
     let volume = space.volume(name);
     for index in 0..12 {
@@ -63,7 +63,7 @@ fn volume_with_two_gate_breakers(space: &Workspace, name: &str) -> fixtures::Vol
         } else {
             TOUCHING
         };
-        // 四边顶着墨：这一条钉的是几何门，而裁边会改掉每一页的几何（页几何批 02 号票）。
+        // 四边顶着墨：这一条钉的是尺寸贴合检查，而裁白边会改掉每一页的几何（页几何批 02 号票）。
         volume.page(
             &format!("{index:03}.png"),
             &fixtures::full_bleed_gradient(size),
@@ -92,8 +92,8 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 /// **读法不改变结果。**串行读一趟、并发读一趟，写出的每一个字节都一样。
 ///
-/// 这是本票最要紧的那一条：第一遍从一页一页顺着做改成了乱序满核跑（判据、缓存序号、
-/// 几何门都在那条路上），而这些改动对外应当完全不可见。
+/// 这是本票最要紧的那一条：分析环节从一页一页顺着做改成了乱序满核跑（画质分、缓存序号、
+/// 尺寸贴合检查都在那条路上），而这些改动对外应当完全不可见。
 #[test]
 fn reading_serially_or_concurrently_writes_the_very_same_bytes() {
     let space = Workspace::new();
@@ -120,12 +120,12 @@ fn reading_serially_or_concurrently_writes_the_very_same_bytes() {
         "两种读法写出的字节不一样"
     );
     // 报告里那些算出来的事实也得一样：卷级判定、缓存用量、解码次数。
-    // 几何门不在这一排里——它跟着页走（06 号票），逐页那一处比得更细。
+    // 尺寸贴合检查不在这一排里——它跟着页走（06 号票），逐页那一处比得更细。
     let (one, other) = (&serial.volumes[0], &concurrent.volumes[0]);
     assert_eq!(format!("{:?}", one.verdict), format!("{:?}", other.verdict));
     assert_eq!(one.decodes, other.decodes);
     // 缓存的**总量**与顺序无关，因此两趟必须一样；常驻与溢写的分法则随存入顺序而变，
-    // 而第一遍是乱序满核跑的（见 `cache::PageCache::insert`）——那两个数不在这里断言。
+    // 而分析环节是乱序满核跑的（见 `cache::PageCache::insert`）——那两个数不在这里断言。
     assert_eq!(one.cache.pages, other.cache.pages);
     assert_eq!(one.cache.raw, other.cache.raw);
     assert_eq!(one.cache.stored, other.cache.stored);
@@ -148,7 +148,7 @@ fn reading_serially_or_concurrently_writes_the_very_same_bytes() {
 
 /// `--io-mode` 覆盖自动探测，而报告说得出这个数是点名来的（13 号票）。
 ///
-/// 覆盖的是**策略**不是事实：探到的介质两趟都照实说，变的只是派几条读取。
+/// 覆盖的是**策略**不是事实：探到的硬盘类型两趟都照实说，变的只是派几条读取。
 #[test]
 fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() {
     let space = Workspace::new();
@@ -186,7 +186,7 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
     // 目录卷两路恒相同：幂等那一道与两遍拿的是同一个数（11 号票不动目录卷这一路）。
     assert_eq!(concurrent.fingerprint, concurrent.readers, "{concurrent}");
     assert_eq!(serial.fingerprint, serial.readers, "{serial}");
-    // 探到的介质与点名无关：三趟说的是同一块盘。
+    // 探到的硬盘类型与点名无关：三趟说的是同一块盘。
     assert_eq!(automatic.medium, serial.medium);
     assert_eq!(automatic.medium, concurrent.medium);
     // 报告那句话里点得出是谁定的这个数。
@@ -196,7 +196,7 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
 
 /// 一次运行里，两个卷各拿各的读取计划——不是一趟只判一次（ADR 0009 决定第 2 条）。
 ///
-/// 真实机器上只有一块盘，两个路径的**介质**必然相同；分得开的是另一维：**归档卷的两遍**
+/// 真实机器上只有一块盘，两个路径的**硬盘类型**必然相同；分得开的是另一维：**归档卷的两遍**
 /// 恒串行（幂等那一道不在此列，11 号票）。点名并发之后两个卷仍给出不同的答案，
 /// 「按卷判定」这件事因此在 seam 上看得见。
 #[test]
@@ -224,12 +224,12 @@ fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
     // 归档卷的**两遍**点名并发也改不了：一个 ZipArchive 就是一个游标。
     assert_eq!(archive.readers.chosen_by, ChosenBy::ArchiveScan);
     assert_eq!(archive.readers.count, 1);
-    assert!(archive.to_string().contains("顺序扫"), "{archive}");
+    assert!(archive.to_string().contains("从头读到尾"), "{archive}");
     // 幂等那一道不吃这一条：它各开各的句柄，点名并发就真派得动（11 号票）。
     // 断言的是「与目录卷拿同一个数」，不是一个写死的数——派几条由核数定。
     assert_eq!(archive.fingerprint, directory.readers, "{archive}");
     // 报告一行里两路分得开。单核机器上并发与串行本就分不开，那里这一句退成「串行」。
-    assert!(archive.to_string().contains("幂等那一道"), "{archive}");
+    assert!(archive.to_string().contains("查重时"), "{archive}");
 }
 
 /// **摊开的卷吃得到并发**：`.7z` 的字节开工前就整卷摊进了一个临时目录，
@@ -240,7 +240,7 @@ fn two_volumes_in_one_run_each_carry_their_own_read_plan() {
 /// 不按容器形态，而这正是从前那个数被写死的地方。
 ///
 /// 断言点名了 `--io-mode concurrent`，因此**与跑用例这台机器上装的是什么盘无关**：
-/// 摊开那一卷的临时目录探出来是哪一种介质都不改变这一条。要钉的是
+/// 摊开那一卷的临时目录探出来是哪一种硬盘类型都不改变这一条。要钉的是
 /// 「那个数不再被『归档卷是一条顺序扫』按住」，不是某一块盘的探测结果。
 #[test]
 fn an_extracted_volume_reads_concurrently_while_a_random_access_archive_still_scans() {
@@ -280,10 +280,10 @@ fn an_extracted_volume_reads_concurrently_while_a_random_access_archive_still_sc
         "{extracted}"
     );
     assert_eq!(extracted.fingerprint, extracted.readers, "{extracted}");
-    // 那一行因此只说一次读取策略：不提「顺序扫」，也不必分出「幂等那一道」。
+    // 那一行因此只说一次读盘方式：不提「顺序扫」，也不必分出「幂等那一道」。
     let line = extracted.to_string();
-    assert!(!line.contains("顺序扫"), "{line}");
-    assert!(!line.contains("幂等那一道"), "{line}");
+    assert!(!line.contains("从头读到尾"), "{line}");
+    assert!(!line.contains("查重时"), "{line}");
 
     // 对照：随机取的归档卷点名并发也改不了两遍那一路，口径与从前一字不差。
     let archive = plan(&random);
@@ -293,7 +293,7 @@ fn an_extracted_volume_reads_concurrently_while_a_random_access_archive_still_sc
         "{archive}"
     );
     assert_eq!(archive.readers.count, 1, "{archive}");
-    assert!(archive.to_string().contains("顺序扫"), "{archive}");
+    assert!(archive.to_string().contains("从头读到尾"), "{archive}");
 }
 
 /// 归档卷换一种读法重跑，这一卷**照旧被跳过**（11 号票）。
@@ -359,9 +359,9 @@ fn every_page_is_still_decoded_exactly_once_when_reading_concurrently() {
     assert_eq!(volume.decodes, volume.pages.len());
 }
 
-/// 混排卷里几何门不成立的仍然只有那两页，逐页判定也一趟一个样地不变。
+/// 混排卷里尺寸未贴合屏幕的仍然只有那两页，逐页判定也一趟一个样地不变。
 ///
-/// 并发下页乱序算完，而几何门与候选集都在那条路上。门逐页判（ADR 0007 决定第 1 条）之后
+/// 并发下页乱序算完，而尺寸贴合检查与候选集都在那条路上。门逐页判（ADR 0007 决定第 1 条）之后
 /// 每一页自己判自己，答案本就与调度无关——这一条钉的是它真的无关：从前那一套要在收尾处
 /// 按最小页序定出一个卷级的门，而那时**换一次调度就可能换一个答案**。
 ///
@@ -371,13 +371,13 @@ fn a_mixed_volume_gates_the_same_pages_every_time_under_concurrency() {
     let space = Workspace::new();
     let volume = volume_with_two_gate_breakers(&space, "volume-a");
 
-    // dry-run：一个文件都不落盘，因此同一个输出根跑几趟都互不干扰。
+    // dry-run：一个文件都不落盘，因此同一个输出目录跑几趟都互不干扰。
     let mut before: Option<Vec<(Option<GeometryGate>, Option<Verdict>)>> = None;
     for attempt in 0..4 {
         let report = tonefit::run(&Request {
             io_mode: IoMode::Concurrent,
             mode: Mode::DryRun,
-            // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）：
+            // 未贴合屏幕那一支只在 fit-inside 上走得到（页几何批 01 号票）：
             // 以高为准让每一页的高都等于面板高，一条边永远贴着。
             fit: FitMode::Inside,
             ..fixtures::request(&space, [volume.path()])
@@ -414,7 +414,7 @@ fn a_mixed_volume_gates_the_same_pages_every_time_under_concurrency() {
     }
 }
 
-/// 门不成立而 `--dither fs` 点了抖动：并发之下报的仍是同一页。
+/// 未贴合屏幕而 `--dither fs` 点了抖动：并发之下报的仍是同一页。
 ///
 /// 这一支上没有报告可看——整卷的调用返回 `Err`。那句话里指的那一页因此是唯一的线索，
 /// 它必须与顺着做时是同一页。
@@ -432,7 +432,7 @@ fn a_dither_the_gate_forbids_is_refused_naming_the_same_page_every_time() {
             fit: FitMode::Inside,
             ..fixtures::request(&space, [volume.path()])
         })
-        .expect_err("门不成立时点名抖动该被拒");
+        .expect_err("未贴合屏幕时点名抖动该被拒");
 
         let said = format!("{error:#}");
         assert!(said.contains("003.png"), "第 {attempt} 趟：{said}");
@@ -449,7 +449,7 @@ struct Tally(Arc<Counts>);
 
 #[derive(Default)]
 struct Counts {
-    /// 这一趟开始时预告的**全局**总步数（预扫算出来的那个数）。
+    /// 这一趟开始时预告的**全局**总步数（清点算出来的那个数）。
     named: AtomicU64,
     /// 每个卷开始时预告的步数，按开始顺序。
     started: Mutex<Vec<u64>>,
@@ -501,7 +501,7 @@ impl Tally {
 
 /// 长任务报得出进度（spec 的 story 30），而真走的步数不越过预告。
 ///
-/// 三段各占多少：幂等那一道读全部成员、第一遍走每一页、第二遍写全部**输出**成员。
+/// 三段各占多少：幂等那一道读全部成员、分析环节走每一页、写出环节写全部**输出**成员。
 /// 24 页 + 1 个透传文件。
 ///
 /// **预告是上界，不是承诺**（`CONTEXT.md` 的《进度》）：拆分开着时一张源页最多产出两张
@@ -551,7 +551,7 @@ fn a_long_run_reports_every_step_it_announced() {
     assert_eq!(tally.advanced(), 25 + 24 + 25);
 }
 
-/// dry-run 没有第二遍，预告的步数就少那一段——不预告一段永远走不到的路。
+/// dry-run 没有写出环节，预告的步数就少那一段——不预告一段永远走不到的路。
 #[test]
 fn a_dry_run_announces_only_the_passes_it_will_make() {
     let space = Workspace::new();
@@ -574,7 +574,7 @@ fn a_dry_run_announces_only_the_passes_it_will_make() {
 ///
 /// 不收尾的话进度条会停在三分之一处等下一个卷——「跳过」在屏幕上就成了「卡住」。
 ///
-/// 全局那个数**照样按上界预告**（会话批 03 号票）：预扫只列成员，判不出这一卷会不会命中幂等——
+/// 全局那个数**照样按上界预告**（会话批 03 号票）：清点只列成员，判不出这一卷会不会命中幂等——
 /// 那要读回上一趟写在输出里的记录，是幂等那一道自己的事。差额归谁处理，
 /// 见 `tonefit::Event::RunStarted` 的 `steps`。
 #[test]
@@ -602,7 +602,7 @@ fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
     assert_eq!(
         tally.named(),
         tally.started()[0],
-        "全局那个数没按上界预告：预扫判不出这一卷会命中幂等"
+        "全局那个数没按上界预告：清点判不出这一卷会命中幂等"
     );
 }
 
@@ -612,7 +612,7 @@ fn a_skipped_volume_stops_early_and_still_finishes_its_bar() {
 /// 整笔句柄账在 `source::Reader` 的《一趟同时开着几个句柄》里，这一条钉的是里面最容易
 /// 失守的一格——**正在处理的那一卷是 1，不是点名的卷数**。另两格各有自己的钉子：
 /// 带乘数的那一格是 `src/read.rs` 的 `a_concurrent_read_holds_one_reader_per_worker`，
-/// 预扫那一半是 `src/survey.rs` 的 `a_survey_keeps_no_archive_open`。
+/// 清点那一半是 `src/survey.rs` 的 `a_survey_keeps_no_archive_open`。
 ///
 /// 问的时刻是**每一卷开工那一条事件**：那一刻上一卷已经收摊、这一卷还没按路径重开，
 /// 因此整趟任何一处攥住某个归档不放，都会在这里露馅。
@@ -654,7 +654,7 @@ fn many_archive_volumes_never_hold_more_than_the_one_being_processed() {
     let watch = Handles::new(&library);
     let report = tonefit::run(&Request {
         // 几十卷各走一整趟管线，因此拿这批夹具里最便宜的一张页：`TINY` 配 fit-inside
-        // 不放大、`full_bleed_gradient` 那圈墨边让裁边也不起作用，每一卷于是只剩
+        // 不放大、`full_bleed_gradient` 那圈墨边让裁白边也不起作用，每一卷于是只剩
         // 「开卷、读、写出」这几笔——本条问的正是它们，不是像素。
         fit: FitMode::Inside,
         progress: Some(ProgressSink::new(watch.clone())),

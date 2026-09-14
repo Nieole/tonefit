@@ -4,7 +4,7 @@
 //! 卷写到了哪个目录、隔离目录里那一卷是不是完整的。
 //!
 //! 一条贯穿全篇的界线：**救得回像素就照用**（04 号票收紧了 12 号票的说法）。
-//! 救回到像素的页照用，哪怕只回来一半——那是一张**部分救回页**；
+//! 救回到像素的页照用，哪怕只回来一半——那是一张**残缺页**；
 //! 一个像素都救不回来、尺寸解不出来、或尺寸解得出来而缓冲分配不下，才算失败。
 
 mod fixtures;
@@ -64,7 +64,7 @@ fn three_volumes(space: &Workspace) -> [fixtures::Volume; 3] {
 
 /// 开工那条事件一到，就把 `path` 占成一个普通文件。
 ///
-/// 那一刻排在**开工前那几道检查与预扫之后**（见 `tonefit::Event::RunStarted`），
+/// 那一刻排在**开工前那几道检查与清点之后**（见 `tonefit::Event::RunStarted`），
 /// 因此造得出「探那一次实实在在地过了，随后才坏」这个现场。
 /// 与 `fixtures::RemoveOnceTheSurveyIsDone` 动手的时刻逐字相同，只是它抽走东西、这个占住位置。
 /// 留在本文件里而不是收进夹具：用它的只有下面那一条。
@@ -73,13 +73,13 @@ struct OccupyOnceTheRunStarts(std::path::PathBuf);
 impl tonefit::Progress for OccupyOnceTheRunStarts {
     fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
         if matches!(event, tonefit::Event::RunStarted { .. }) {
-            std::fs::write(&self.0, b"occupied").expect("占住输出根");
+            std::fs::write(&self.0, b"occupied").expect("占住输出目录");
         }
         tonefit::Instruction::Continue
     }
 }
 
-/// 隔离目录在输出根下的名字。测试把它写死，因为它是用户看得见的那个事实。
+/// 隔离目录在输出目录下的名字。测试把它写死，因为它是用户看得见的那个事实。
 const ISOLATED: &str = "_isolated";
 
 /// 一份透传文件的内容。故意带上非 ASCII 与换行——透传要逐字节一致。
@@ -103,7 +103,7 @@ fn one_page_that_cannot_be_decoded_does_not_take_the_volume_down() {
     let report = run_volume(&space, &volume);
 
     let reported = &report.volumes[0];
-    // 失败页按阅读顺序占住自己那一格：页数不因为一页坏了就少一页。
+    // 坏页按阅读顺序占住自己那一格：页数不因为一页坏了就少一页。
     assert_eq!(reported.page_count(), 3);
     assert!(reported.pages[0].failure().is_none());
     assert!(reported.pages[1].failure().is_some(), "坏页没被认出来");
@@ -116,7 +116,7 @@ fn one_page_that_cannot_be_decoded_does_not_take_the_volume_down() {
     }
 }
 
-/// 失败页仍以卷内统一的尺寸产出：一页坏了，卷内尺寸不因此参差。
+/// 坏页仍以卷内统一的尺寸产出：一页坏了，卷内尺寸不因此参差。
 #[test]
 fn a_failed_page_still_comes_out_at_the_size_the_rest_of_the_volume_uses() {
     let space = Workspace::new();
@@ -130,18 +130,18 @@ fn a_failed_page_still_comes_out_at_the_size_the_rest_of_the_volume_uses() {
     let pages = &report.volumes[0].pages;
     let uniform = pages[0].size;
     assert_eq!(pages[2].size, uniform, "夹具不对：两张好页该是同一个尺寸");
-    assert_eq!(pages[1].size, uniform, "失败页没被强制到卷内统一尺寸");
+    assert_eq!(pages[1].size, uniform, "坏页没被强制到卷内统一尺寸");
 
     let written = fixtures::read_png(&pages[1].output);
-    assert_eq!(written.size, uniform, "写出的占位页尺寸对不上报告");
-    // 占位页是纸白：它顶住位置，但不冒充内容。
+    assert_eq!(written.size, uniform, "写出的空白占位页尺寸对不上报告");
+    // 空白占位页是纸白：它顶住位置，但不冒充内容。
     assert!(
         written.pixels.iter().all(|&pixel| pixel == 255),
-        "占位页不是纸白"
+        "空白占位页不是纸白"
     );
 }
 
-/// 含失败页的卷输出到隔离目录，并在报告里被标记（spec 的 story 25）。
+/// 含坏页的卷输出到隔离目录，并在报告里被标记（spec 的 story 25）。
 #[test]
 fn a_volume_with_a_failed_page_goes_to_the_isolation_directory() {
     let space = Workspace::new();
@@ -152,7 +152,7 @@ fn a_volume_with_a_failed_page_goes_to_the_isolation_directory() {
     let report = run_volume(&space, &volume);
 
     let reported = &report.volumes[0];
-    assert!(reported.isolated(), "含失败页的卷没被标记");
+    assert!(reported.isolated(), "含坏页的卷没被标记");
     assert_eq!(reported.output, space.out().join(ISOLATED).join("volume-a"));
     assert!(reported.output.is_dir());
     // 干净的那个去处不该同时有一份：一卷只有一个去处。
@@ -180,7 +180,7 @@ fn a_volume_without_a_failed_page_stays_out_of_the_isolation_directory() {
     assert!(!space.out().join(ISOLATED).exists());
 }
 
-/// `Report` 列出每一个失败页与原因（spec 的 story 26）。
+/// `Report` 列出每一个坏页与原因（spec 的 story 26）。
 #[test]
 fn the_report_lists_every_failed_page_with_a_reason_that_names_it() {
     let space = Workspace::new();
@@ -192,22 +192,22 @@ fn the_report_lists_every_failed_page_with_a_reason_that_names_it() {
     let report = run_volume(&space, &volume);
 
     let failures: Vec<_> = report.failures().collect();
-    assert_eq!(failures.len(), 2, "失败页集数不对");
+    assert_eq!(failures.len(), 2, "坏页集数不对");
     for page in failures {
         let name = page
             .source
             .file_name()
-            .expect("失败页也有名字")
+            .expect("坏页也有名字")
             .to_string_lossy()
             .into_owned();
-        let reason = page.failure().expect("失败页必有原因");
+        let reason = page.failure().expect("坏页必有原因");
         assert!(reason.contains(&name), "原因里没指名是哪一页：{reason}");
     }
     // 卷那一侧数出来的是同一批页。
     assert_eq!(report.volumes[0].failures().count(), 2);
 }
 
-/// 零字节文件、非图片文件、超大尺寸页都只是失败页，不中止进程。
+/// 零字节文件、非图片文件、超大尺寸页都只是坏页，不中止进程。
 #[test]
 fn a_zero_byte_a_non_image_and_an_oversized_page_are_isolated_rather_than_fatal() {
     let space = Workspace::new();
@@ -231,7 +231,7 @@ fn a_zero_byte_a_non_image_and_an_oversized_page_are_isolated_rather_than_fatal(
     }
 }
 
-/// 救回到像素的截断页是**部分救回页**：它按自己的尺寸出，不把卷送进隔离目录，
+/// 救回到像素的截断页是**残缺页**：它按自己的尺寸出，不把卷送进隔离目录，
 /// 而报告说得出它救回了多少（04 号票）。
 #[test]
 fn a_truncated_page_that_still_gives_back_pixels_is_salvaged_rather_than_failed() {
@@ -242,15 +242,15 @@ fn a_truncated_page_that_still_gives_back_pixels_is_salvaged_rather_than_failed(
     let report = run_volume(&space, &volume);
 
     let reported = &report.volumes[0];
-    assert!(!reported.isolated(), "部分救回页不该把卷送进隔离目录");
+    assert!(!reported.isolated(), "残缺页不该把卷送进隔离目录");
     let page = &reported.pages[0];
-    assert!(page.failure().is_none(), "部分救回页不该算失败");
-    assert!(page.verdict().is_some(), "部分救回页照常有判定");
+    assert!(page.failure().is_none(), "残缺页不该算失败");
+    assert!(page.verdict().is_some(), "残缺页照常有判定");
     // 尺寸按它自己的源尺寸算：完整尺寸解得出来，几何因此照常成立。
     assert_eq!(page.size, Size::new(1182, 1680));
 
     // 救回了多少说得出来——这正是「救回 99% 与救回 0 行是同一种结果」被拆开的地方。
-    let salvage = page.salvage().expect("截断页该是一张部分救回页");
+    let salvage = page.salvage().expect("截断页该是一张残缺页");
     assert!(
         (0.0..1.0).contains(&salvage.share()) && salvage.share() > 0.0,
         "救回的比例落在两端上：{}",
@@ -281,7 +281,7 @@ fn a_truncated_page_that_still_gives_back_pixels_is_salvaged_rather_than_failed(
     );
 }
 
-/// 一个像素都救不回来的页是**失败页**（04 号票）：它进隔离目录、进失败清单，
+/// 一个像素都救不回来的页是**坏页**（04 号票）：它进隔离目录、进失败清单，
 /// 退出码跟着变。
 ///
 /// 这是本票的缺陷本身：尺寸解得出来买不到任何像素，而按 12 号票的界线它是一张正常页——
@@ -291,7 +291,7 @@ fn a_page_that_gives_back_no_pixels_at_all_is_a_failed_page() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
-    // 尺寸与那张好页不同：占位页要是按自己的几何出，这一条当场看得出来。
+    // 尺寸与那张好页不同：空白占位页要是按自己的几何出，这一条当场看得出来。
     volume.file(
         "002.png",
         &fixtures::salvages_nothing_page(fixtures::SMALLER_THAN_TARGET),
@@ -303,9 +303,9 @@ fn a_page_that_gives_back_no_pixels_at_all_is_a_failed_page() {
     let page = &reported.pages[1];
     assert!(
         page.salvage().is_none(),
-        "一个像素都没救回来的页被当成了部分救回页"
+        "一个像素都没救回来的页被当成了残缺页"
     );
-    let reason = page.failure().expect("它该是一张失败页");
+    let reason = page.failure().expect("它该是一张坏页");
     assert!(reason.contains("002.png"), "原因里没指名是哪一页：{reason}");
     assert!(
         reason.contains("一个像素都没解出来"),
@@ -313,7 +313,7 @@ fn a_page_that_gives_back_no_pixels_at_all_is_a_failed_page() {
     );
 
     // 三条后果一条不少：进隔离目录、进失败清单、退出码那一侧看得见。
-    assert!(reported.isolated(), "含失败页的卷没进隔离目录");
+    assert!(reported.isolated(), "含坏页的卷没进隔离目录");
     assert_eq!(reported.output, space.out().join(ISOLATED).join("volume-a"));
     assert_eq!(reported.failures().count(), 1);
     assert!(
@@ -321,13 +321,13 @@ fn a_page_that_gives_back_no_pixels_at_all_is_a_failed_page() {
         "退出码读的就是它：`exit_code` 靠它把「有卷被隔离」与「全部成功」分开"
     );
 
-    // 它按卷内统一尺寸留白占位，不按自己那个几何——失败页没有自己的几何可用。
+    // 它按卷内统一尺寸留白占位，不按自己那个几何——坏页没有自己的几何可用。
     assert_eq!(page.size, reported.pages[0].size);
     let written = fixtures::read_png(&page.output);
     assert_eq!(written.size, reported.pages[0].size);
     assert!(
         written.pixels.iter().all(|&pixel| pixel == 255),
-        "占位页不是纸白"
+        "空白占位页不是纸白"
     );
 }
 
@@ -402,12 +402,12 @@ fn the_copy_left_in_the_other_place_is_named_in_the_report() {
 /// 一页好页都没有的卷仍然出得来：卷内统一尺寸退到面板分辨率。
 ///
 /// **它同时钉住「一页都没成」不是「这一卷没做成」**（`p2-loose-ends/05` 把这条写实）。
-/// 从前这条只说得出「整卷进隔离目录」；05 号票让**卷根不见了**的那一卷改走卷级失败（`3`），
-/// 而分开两者的判据是**卷根还在不在**，不是「成了几页」——拿「成功页数为 0」当判据的话，
+/// 从前这条只说得出「整卷进隔离目录」；05 号票让**卷根不见了**的那一卷改走卷转换失败（`3`），
+/// 而分开两者的判定依据是**卷根还在不在**，不是「成了几页」——拿「成功页数为 0」当画质分的话，
 /// 这一卷会跟着一起被收走，而 p0 的 12 号票定死的正是它：一页读不出来不毁掉整卷。
 ///
 /// 这一卷的卷根好端端地在那儿，坏的是里面的字节：它**做出来了**——页序、卷内统一尺寸、
-/// 占位页一样不少，只是内容全是坏的，所以走隔离（`2`）。反过来那一种见
+/// 空白占位页一样不少，只是内容全是坏的，所以走隔离（`2`）。反过来那一种见
 /// `a_volume_whose_root_is_gone_did_not_get_made`，两条各自把一个退出码钉住。
 #[test]
 fn a_volume_whose_every_page_fails_still_comes_out_whole() {
@@ -480,10 +480,10 @@ fn a_dry_run_names_the_isolation_directory_without_writing_anything() {
     assert!(!space.out().exists(), "dry-run 落了盘");
 }
 
-/// 三条路径混在一卷里也不串位：彩色分支、灰度路径、失败页。
+/// 三条路径混在一卷里也不串位：彩色分支、灰度路径、坏页。
 ///
-/// 彩页在彩色 profile 下不进灰度缓存（ADR 0005 决定第 4 条），失败页也不进——页序与缓存序
-/// 因此在**两个**地方脱钩。缓存序号跟着页走而不是第二遍数出来，钉的正是这件事：
+/// 彩页在彩色 profile 下不进灰度缓存（ADR 0005 决定第 4 条），坏页也不进——页序与缓存序
+/// 因此在**两个**地方脱钩。缓存序号跟着页走而不是写出环节数出来，钉的正是这件事：
 /// 数错一格，就会静默地把另一页的像素写到这一页的位置上。
 ///
 /// **四张好页两两分得开**（页几何批 09 号票）：两张彩页各用一个宽，两张灰度页同宽而
@@ -491,13 +491,13 @@ fn a_dry_run_names_the_isolation_directory_without_writing_anything() {
 /// 缓存里两页、以及 003 与 005 这两张**同一夹具**逐字节相同；「写出时每页都写第一页的
 /// 字节」那个变异套上去照样绿——名字承诺的三条路径里，真被比过像素的一条都没有。
 ///
-/// 高一律取面板高（`PANEL`）：这样的页两种适配方式下都原样输出（页几何批 01 号票）。
-/// 裁边在这两类页上也都是空操作——灰度那一张四边顶着墨（见 `fixtures::black_top_band`），
+/// 高一律取面板高（`PANEL`）：这样的页两种缩放方式下都原样输出（页几何批 01 号票）。
+/// 裁白边在这两类页上也都是空操作——灰度那一张四边顶着墨（见 `fixtures::black_top_band`），
 /// 彩页最下面那条色带是纯黑，每一列都有墨。写出的像素因此与源逐个相等，等号写得起。
-/// 灰度页只有纯黑与纯白两个取值，在任何一档位深上都是格点，量化与抖动对它们都是恒等；
+/// 灰度页只有纯黑与纯白两个取值，在任何一档灰阶档位上都是格点，量化与抖动对它们都是恒等；
 /// 彩页不量化（ADR 0005 决定第 4 条），按色带取样。
 ///
-/// 失败页那一格按**卷内众数**尺寸留白占位（见 `tonefit` 的 `uniform_size`）：
+/// 坏页那一格按**卷内众数**尺寸留白占位（见 `tonefit` 的 `uniform_size`）：
 /// 两张灰度页共用一个宽，两张彩页各用一个，众数因此是灰度页那个尺寸，写得出字面值。
 #[test]
 fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
@@ -526,7 +526,7 @@ fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
     let reported = &report.volumes[0];
     assert!(reported.isolated());
     assert_eq!(reported.page_count(), 5);
-    // 只有两张灰度页进得了缓存：彩页与失败页都不进。
+    // 只有两张灰度页进得了缓存：彩页与坏页都不进。
     assert_eq!(reported.cache.pages, 2, "缓存里的页数不对");
     for page in &reported.pages {
         assert!(page.output.is_file(), "{} 没写出来", page.output.display());
@@ -556,13 +556,13 @@ fn a_color_page_a_gray_page_and_a_failed_page_keep_their_own_pixels() {
         }
     }
 
-    // 失败页那一格：卷内众数尺寸的一整张纸白——它顶住位置，但不冒充内容，
+    // 坏页那一格：卷内众数尺寸的一整张纸白——它顶住位置，但不冒充内容，
     // 也没有拿到别人的像素。
     let placeholder = fixtures::read_png(&reported.pages[1].output);
-    assert_eq!(placeholder.size, gray_size, "占位页不是卷内众数尺寸");
+    assert_eq!(placeholder.size, gray_size, "空白占位页不是卷内众数尺寸");
     assert!(
         placeholder.pixels.iter().all(|&pixel| pixel == 255),
-        "占位页装的不是纸白"
+        "空白占位页装的不是纸白"
     );
 }
 
@@ -580,20 +580,20 @@ fn isolating_a_volume_leaves_the_source_untouched() {
     assert_eq!(fixtures::fingerprint(volume.path()), before);
 }
 
-/// 预扫之后才做不成的那一卷**不再毁掉整趟**：其余卷照做，报告照出（05 号票）。
+/// 清点之后才做不成的那一卷**不再毁掉整趟**：其余卷照做，报告照出（05 号票）。
 ///
 /// 这是本票的要害。整趟当场失败在长任务里是最难受的一种结局——前面几十卷的输出还好好地
 /// 躺在盘上，而那份说得清它们各是什么的报告全丢了，退出码只说得出「这一趟没做成」。
 ///
 /// 四件事一起断言，缺一件这条就漏得掉：做完的卷有报告、也有盘上的输出；没做成的那一卷
 /// 指得出自己是谁、说得出为什么；排在它**后面**的卷照常做完（拿三个卷、坏的夹在中间，
-/// 就是为了问这一条）；那一卷在输出根下一个字节都没留。
+/// 就是为了问这一条）；那一卷在输出目录下一个字节都没留。
 ///
 /// 触发方式是**这一卷重开之后把源里的透传文件抽走**——文件被删、盘拔了、权限变了，
 /// 在管线看来是同一件事。抽在这一卷的第一条走遍事件上：管线在开卷那条事件之后按路径把
-/// 这一卷重开一次（见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读到它是第二遍的事。
-/// 那正是「预扫时打得开、轮到它时做不成」。
-/// 透传文件没有页那条出路：页读不出来变成失败页、整卷进隔离目录，
+/// 这一卷重开一次（见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读到它是写出环节的事。
+/// 那正是「清点时打得开、轮到它时做不成」。
+/// 透传文件没有页那条出路：页读不出来变成坏页、整卷进隔离目录，
 /// 而透传文件搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
 #[test]
 fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
@@ -620,22 +620,22 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
 
     // 没做成的那一卷指得出自己是谁，也说得出为什么。
     let [failed] = &report.failed_volumes[..] else {
-        panic!("这一卷没被记成卷级失败：{:?}", report.failed_volumes);
+        panic!("这一卷没被记成卷转换失败：{:?}", report.failed_volumes);
     };
-    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    assert_eq!(failed.volume, doomed.path(), "卷转换失败指错了卷");
     assert!(
         failed.reason.contains("ComicInfo.xml"),
         "没说清是哪个成员搬不动：{}",
         failed.reason
     );
-    // 它在输出根下一个字节都没留：半成品不算输出。
+    // 它在输出目录下一个字节都没留：半成品不算输出。
     assert!(
         !space.out().join("volume-b").exists(),
-        "没做成的卷在输出根下留了东西"
+        "没做成的卷在输出目录下留了东西"
     );
 }
 
-/// 卷根在预扫之后整个消失是**这一卷没做成**（`3`），不是「这一卷全是坏页」（`2`）——
+/// 卷根在清点之后整个消失是**这一卷没做成**（`3`），不是「这一卷全是坏页」（`2`）——
 /// `p2-loose-ends/05` 的要害。
 ///
 /// 缺陷本身是这样的：卷根一消失，它的每一个成员都读不出字节，而那按 p0 的 12 号票是
@@ -643,15 +643,15 @@ fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
 /// 却不说它压根不在了。那不是一卷做出来了。
 ///
 /// 五件事一起断言，缺一件这条就漏得掉：没做成的那一卷指得出自己是谁、说得出为什么；
-/// 它在输出根下**两处**都一个字节没留（干净的去处，以及从前那一沓白页真正落脚的隔离目录）；
+/// 它在输出目录下**两处**都一个字节没留（干净的去处，以及从前那一沓白页真正落脚的隔离目录）；
 /// 排在它前后的卷照常做完、输出也真在盘上；退出码那一侧读得出 `3` 而不是 `2`。
 ///
 /// 抽走的是**整个卷根**，而且抽在开工那条事件上（见 `fixtures::RemoveOnceTheSurveyIsDone`）：
-/// 那一刻这一卷还没重开，路径已经不在，管线单问的那一句因此答得出「它是在预扫之后不见的」。
+/// 那一刻这一卷还没重开，路径已经不在，管线单问的那一句因此答得出「它是在清点之后不见的」。
 /// 与它成对的 `a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone`
 /// 抽的是**卷里的一个透传文件**，动手的时刻也因此晚一步——那一样要等这一卷重开之后才抽得掉
 /// （见 `fixtures::RemoveOnceTheVolumeIsOpen`），不然它根本不进成员表。
-/// 分开这两种与「卷里每一页都读不出来」的判据是**卷根还在不在**，
+/// 分开这两种与「卷里每一页都读不出来」的判定依据是**卷根还在不在**，
 /// 另一侧由 `a_volume_whose_every_page_fails_still_comes_out_whole` 钉着。
 #[test]
 fn a_volume_whose_root_is_gone_did_not_get_made() {
@@ -675,9 +675,9 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
 
     // 没做成的那一卷指得出自己是谁，也说得出为什么。
     let [failed] = &report.failed_volumes[..] else {
-        panic!("卷根不见了没被记成卷级失败：{:?}", report.failed_volumes);
+        panic!("卷根不见了没被记成卷转换失败：{:?}", report.failed_volumes);
     };
-    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    assert_eq!(failed.volume, doomed.path(), "卷转换失败指错了卷");
     assert!(
         failed.reason.contains("不见了"),
         "没说清这一卷是整个不在了：{}",
@@ -687,7 +687,7 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
     // 两处都没留下东西。隔离目录那一句是本票的分水岭：从前整卷白页正是写在那儿。
     assert!(
         !space.out().join("volume-b").exists(),
-        "没做成的卷在输出根下留了东西"
+        "没做成的卷在输出目录下留了东西"
     );
     assert!(
         !space.out().join(ISOLATED).join("volume-b").exists(),
@@ -698,7 +698,7 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
     assert_these_volumes_came_out_whole(&report, &[first.path(), last.path()]);
 
     // 退出码那一侧：`3`，不是 `2`。两句都要——只问失败清单不空，
-    // 「整卷白页照旧写进隔离目录、外加一笔卷级失败」也能骗过去。
+    // 「整卷白页照旧写进隔离目录、外加一笔卷转换失败」也能骗过去。
     assert!(
         report.any_volume_failed(),
         "退出码读的就是它：`exit_code` 靠它把「有卷没做成」与「有卷被隔离」分开"
@@ -709,11 +709,11 @@ fn a_volume_whose_root_is_gone_did_not_get_made() {
     );
 }
 
-/// 归档卷的**卷根就是那个文件**，它在预扫之后不见了同样是这一卷没做成
+/// 归档卷的**卷根就是那个文件**，它在清点之后不见了同样是这一卷没做成
 /// （`volume-discovery/01`）。
 ///
-/// 从前这一条不成立，而且不该成立：预扫打开归档卷之后一直握着那个句柄，文件被删掉也照读
-/// 不误，那一卷仍旧完完整整地做得出来，报「没做成」是撒谎。预扫改成**只数不留**之后，
+/// 从前这一条不成立，而且不该成立：清点打开归档卷之后一直握着那个句柄，文件被删掉也照读
+/// 不误，那一卷仍旧完完整整地做得出来，报「没做成」是撒谎。清点改成**只数不留**之后，
 /// 归档卷与目录卷走同一条路——轮到它时按路径重开——这一条于是与
 /// `a_volume_whose_root_is_gone_did_not_get_made` 同形，那一条的五件事这里同样问。
 ///
@@ -746,11 +746,11 @@ fn an_archive_volume_whose_file_is_gone_did_not_get_made() {
     // 没做成的那一卷指得出自己是谁，也说得出为什么。
     let [failed] = &report.failed_volumes[..] else {
         panic!(
-            "归档卷不见了没被记成卷级失败：{:?}。预扫还攥着它的句柄的话正是这个样子",
+            "归档卷不见了没被记成卷转换失败：{:?}。清点还攥着它的句柄的话正是这个样子",
             report.failed_volumes
         );
     };
-    assert_eq!(failed.volume, doomed, "卷级失败指错了卷");
+    assert_eq!(failed.volume, doomed, "卷转换失败指错了卷");
     assert!(
         failed.reason.contains("不见了"),
         "没说清这一卷是整个不在了：{}",
@@ -760,7 +760,7 @@ fn an_archive_volume_whose_file_is_gone_did_not_get_made() {
     // 两处都没留下东西。归档卷的去处是一个同名文件，不是目录。
     assert!(
         !space.out().join("volume-b.cbz").exists(),
-        "没做成的卷在输出根下留了东西"
+        "没做成的卷在输出目录下留了东西"
     );
     assert!(
         !space.out().join(ISOLATED).join("volume-b.cbz").exists(),
@@ -782,24 +782,24 @@ fn an_archive_volume_whose_file_is_gone_did_not_get_made() {
     assert!(!report.any_isolated(), "卷根不见了被当成「有卷被隔离」");
 }
 
-/// 输出根写不进去是**这一趟的参数**错了：开工前探一次，一页不做地拒掉（06 号票）。
+/// 输出目录写不进去是**这一趟的参数**错了：开工前探一次，一页不做地拒掉（06 号票）。
 ///
-/// 从前这句话由 `Sink::create` 在每一卷里各撞一次——三个卷就是三笔卷级失败、
+/// 从前这句话由 `Sink::create` 在每一卷里各撞一次——三个卷就是三笔卷转换失败、
 /// 同一句话说三遍，而退出码是「有卷没做成」（`3`），含义弱于本该给的那个
 /// 「这一趟没做成」（`1`）。收的是停车场 Q51。
 ///
 /// 四件事一起断言：整趟当场停（`run` 回 `Err`，而 `Err` 就是那个 `1`——命令行那一路
-/// 把 `run` 的错误一律交成 `REFUSED_EXIT`）；那句话指得出是哪个输出根；
+/// 把 `run` 的错误一律交成 `REFUSED_EXIT`）；那句话指得出是哪个输出目录；
 /// **三个卷一个都没被点名**（说一次，不是三次）；盘上一个字节都没多出来。
 ///
-/// 造法是让输出根落在一个**普通文件**下面：那条路径在两个平台上都建不出来，
+/// 造法是让输出目录落在一个**普通文件**下面：那条路径在两个平台上都建不出来，
 /// 而这不必去碰权限位——目录的只读位在 Windows 上根本不作数
 /// （见 `tonefit` 的 `ensure_the_output_root_takes_a_write`）。
 #[test]
 fn an_output_root_that_cannot_be_written_is_refused_before_any_volume() {
     let space = Workspace::new();
     let [first, second, third] = three_volumes(&space);
-    // 输出根落在一个普通文件下面：它底下建不出任何目录。
+    // 输出目录落在一个普通文件下面：它底下建不出任何目录。
     let occupied = space.stray_file("occupied", b"not a directory");
     let output_root = occupied.join("out");
 
@@ -807,13 +807,16 @@ fn an_output_root_that_cannot_be_written_is_refused_before_any_volume() {
         output_root: output_root.clone(),
         ..fixtures::request(&space, [first.path(), second.path(), third.path()])
     })
-    .expect_err("输出根建不出来该整趟拒掉");
+    .expect_err("输出目录建不出来该整趟拒掉");
 
     let said = format!("{error:#}");
-    assert!(said.contains("写不进去"), "没说清是输出根写不进去：{said}");
+    assert!(
+        said.contains("写不进去"),
+        "没说清是输出目录写不进去：{said}"
+    );
     assert!(
         said.contains(&output_root.display().to_string()),
-        "没指出是哪个输出根：{said}"
+        "没指出是哪个输出目录：{said}"
     );
     // 本票的要害：这句话**只说一次**。三个卷一个都不该在里面露面——
     // 它们各撞一次、各记一笔的那个样子正是本票要改掉的。
@@ -826,48 +829,48 @@ fn an_output_root_that_cannot_be_written_is_refused_before_any_volume() {
         b"not a directory".to_vec(),
         "开工前那道检查动了盘上的东西"
     );
-    assert!(!output_root.exists(), "被拒的那一趟仍建出了输出根");
+    assert!(!output_root.exists(), "被拒的那一趟仍建出了输出目录");
 }
 
-/// 试算照样答得出「你这个 `--out` 根本用不了」，而探那一次**不留痕迹**（06 号票）。
+/// 预览照样答得出「你这个 `--out` 根本用不了」，而探那一次**不留痕迹**（06 号票）。
 ///
 /// 两半是同一条性质的两面。`Mode::DryRun` 的契约是「一个文件都不落盘」，
 /// 而那说的是**输出**——页、记录、输出容器，也就是用户留得下的那些东西；
 /// 探针留不下任何东西，探完的盘与没探过逐字节一样，两者因此不冲突，这道检查也就不看模式。
-/// 反过来，试算要是答不出这一句，那份报告就在撒谎：拒绝执行说的是**参数**，
+/// 反过来，预览要是答不出这一句，那份报告就在撒谎：拒绝开始说的是**参数**，
 /// 而两种模式的参数是同一份。
 ///
-/// 「不留痕迹」只在**试算**上验得到：照常处理的那一趟输出根本来就要建出来，
-/// 探针建的与真写建的分不开。试算一个文件都不写，探完输出根仍**不存在**才是那条性质。
+/// 「不留痕迹」只在**预览**上验得到：照常处理的那一趟输出目录本来就要建出来，
+/// 探针建的与真写建的分不开。预览一个文件都不写，探完输出目录仍**不存在**才是那条性质。
 #[test]
 fn a_dry_run_probes_the_output_root_and_leaves_nothing_behind() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TINY));
 
-    // 一、写不进去的输出根在试算里照样被拒。
+    // 一、写不进去的输出目录在预览里照样被拒。
     let occupied = space.stray_file("occupied", b"not a directory");
     let error = tonefit::run(&tonefit::Request {
         output_root: occupied.join("out"),
         mode: Mode::DryRun,
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect_err("试算也该说得出输出根用不了");
+    .expect_err("预览也该说得出输出目录用不了");
     assert!(
         format!("{error:#}").contains("写不进去"),
-        "试算没说清输出根用不了：{error:#}"
+        "预览没说清输出目录用不了：{error:#}"
     );
 
-    // 二、写得进的输出根探完仍不存在：探针把自己建出来的那几级收干净了。
+    // 二、写得进的输出目录探完仍不存在：探针把自己建出来的那几级收干净了。
     let report = tonefit::run(&tonefit::Request {
         mode: Mode::DryRun,
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect("试算该跑得完");
-    assert_eq!(report.volumes.len(), 1, "试算没把这一卷算完");
+    .expect("预览该跑得完");
+    assert_eq!(report.volumes.len(), 1, "预览没把这一卷算完");
     assert!(
         !space.out().exists(),
-        "探过之后输出根留在了盘上：试算该一个文件都不落盘"
+        "探过之后输出目录留在了盘上：预览该一个文件都不落盘"
     );
 }
 
@@ -875,20 +878,20 @@ fn a_dry_run_probes_the_output_root_and_leaves_nothing_behind() {
 /// 收走（06 号票的验收第 2 条）。逐卷现建输出容器那条路因此留着：单卷权限不同、去处被占，
 /// 都是真的「这一卷做不成」，不是「这一趟的参数错了」。
 ///
-/// 造法是把中间那一卷的去处先占成一个**普通文件**：输出根本身好好的、探那一次照样过，
+/// 造法是把中间那一卷的去处先占成一个**普通文件**：输出目录本身好好的、探那一次照样过，
 /// 坏在收尾要把临时容器改名到位的那一步上（临时容器另占一个名字，建它是成的，
 /// 见 `tonefit` 的 `Sink::create`）。
 ///
 /// 与 `an_output_root_that_cannot_be_written_is_refused_before_any_volume` 是一对：
-/// 两条只差被占的是输出根还是其中一卷的去处，而退出码一个 `1` 一个 `3`。
+/// 两条只差被占的是输出目录还是其中一卷的去处，而退出码一个 `1` 一个 `3`。
 /// 「探过之后才坏」那一种由
 /// `an_output_root_taken_after_the_probe_still_fails_volume_by_volume` 钉着。
 #[test]
 fn a_volume_whose_destination_is_taken_is_the_only_one_that_fails() {
     let space = Workspace::new();
     let [first, doomed, last] = three_volumes(&space);
-    // 输出根本身写得进——被占的只有中间那一卷的去处。
-    std::fs::create_dir_all(space.out()).expect("建输出根");
+    // 输出目录本身写得进——被占的只有中间那一卷的去处。
+    std::fs::create_dir_all(space.out()).expect("建输出目录");
     std::fs::write(space.out().join("volume-b"), b"occupied").expect("占住那一卷的去处");
 
     let report = tonefit::run(&fixtures::request(
@@ -899,9 +902,9 @@ fn a_volume_whose_destination_is_taken_is_the_only_one_that_fails() {
 
     // 没做成的只有那一卷，它指得出自己是谁。
     let [failed] = &report.failed_volumes[..] else {
-        panic!("去处被占没被记成卷级失败：{:?}", report.failed_volumes);
+        panic!("去处被占没被记成卷转换失败：{:?}", report.failed_volumes);
     };
-    assert_eq!(failed.volume, doomed.path(), "卷级失败指错了卷");
+    assert_eq!(failed.volume, doomed.path(), "卷转换失败指错了卷");
     // 退出码那一侧：`3`，与开工前那道检查交出的 `1` 分得开。
     assert!(
         report.any_volume_failed(),
@@ -912,15 +915,15 @@ fn a_volume_whose_destination_is_taken_is_the_only_one_that_fails() {
     assert_these_volumes_came_out_whole(&report, &[first.path(), last.path()]);
 }
 
-/// 探得过、真写时才坏的那一种仍走**卷级失败**（`3`），不崩——那道检查「天生有竞态」的
+/// 探得过、真写时才坏的那一种仍走**卷转换失败**（`3`），不崩——那道检查「天生有竞态」的
 /// 正面回答（06 号票的验收第 4 条）。
 ///
-/// 造的是「**探过之后**输出根才被占住」：开工那条事件排在开工前那几道检查与预扫之后
-/// （见 `tonefit::Event::RunStarted`），在那一刻把输出根的名字占成一个普通文件。
-/// 探那一次因此**真的过了**——探针建出输出根、写进去、又收干净——坏的是随后每一卷
+/// 造的是「**探过之后**输出目录才被占住」：开工那条事件排在开工前那几道检查与清点之后
+/// （见 `tonefit::Event::RunStarted`），在那一刻把输出目录的名字占成一个普通文件。
+/// 探那一次因此**真的过了**——探针建出输出目录、写进去、又收干净——坏的是随后每一卷
 /// 去建自己那个临时容器的那一步。盘满是同一个形状的另一种，仓库里造不出来。
 ///
-/// 三件事一起断言：整趟**回 `Ok`**（不是恐慌，也不是拒绝执行）；三个卷各记一笔卷级失败；
+/// 三件事一起断言：整趟**回 `Ok`**（不是恐慌，也不是拒绝开始）；三个卷各记一笔卷转换失败；
 /// 退出码那一侧读得出「有卷没做成」。这一条与
 /// `an_output_root_that_cannot_be_written_is_refused_before_any_volume` 划的是同一条界：
 /// **开工前拦得住的才拒**，拦不住的照旧一卷一卷地记——那不是缺陷，是那道检查的边界。
@@ -935,16 +938,16 @@ fn an_output_root_taken_after_the_probe_still_fails_volume_by_volume() {
         ))),
         ..fixtures::request(&space, [first.path(), second.path(), third.path()])
     })
-    .expect("输出根探过之后才坏不该毁掉整趟，也不该崩");
+    .expect("输出目录探过之后才坏不该毁掉整趟，也不该崩");
 
     // 探那一次真的过了：它没在开工之前把这一趟拒掉。坏在后面，因此三个卷各记一笔。
     assert_eq!(
         report.failed_volumes.len(),
         3,
-        "探过之后才坏的没被记成卷级失败：{:?}",
+        "探过之后才坏的没被记成卷转换失败：{:?}",
         report.failed_volumes
     );
-    assert!(report.volumes.is_empty(), "占着的输出根下不该有卷做成");
+    assert!(report.volumes.is_empty(), "占着的输出目录下不该有卷做成");
     assert!(
         report.any_volume_failed(),
         "退出码读的就是它：探过之后才坏该走「有卷没做成」"

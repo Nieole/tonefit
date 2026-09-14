@@ -1,6 +1,6 @@
-//! 介质：一条读取通道落在什么盘上，以及据此派几条并发去读。
+//! 硬盘类型：一条读取通道落在什么盘上，以及据此派几条并发去读。
 //!
-//! ADR 0009 决定第 2 条：**介质按路径探测**。给定一个路径，先解析到它所在的卷/挂载点
+//! ADR 0009 决定第 2 条：**硬盘类型按路径探测**。给定一个路径，先解析到它所在的卷/挂载点
 //! （本模块叫它[读取通道](Channel)），再查那条通道的寻道惩罚。同一次运行里不同路径各自判定、
 //! 互不影响——一台机器的存储是混合的，「这台机器是 HDD 还是 SSD」这个问题没有答案。
 //!
@@ -21,7 +21,7 @@ use crate::source::ReadingEnd;
 /// 不去解释它的内容。
 type Channel = String;
 
-/// 一条读取通道的介质。
+/// 一条读取通道的硬盘类型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Medium {
     /// 有寻道惩罚：机械盘。并发随机读会互相打断寻道，吞吐反而低于串行（ADR 0009）。
@@ -39,30 +39,30 @@ pub enum Medium {
 impl std::fmt::Display for Medium {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Medium::Seeking => f.write_str("有寻道惩罚（机械盘）"),
-            Medium::Solid => f.write_str("无寻道惩罚（固态盘）"),
+            Medium::Seeking => f.write_str("机械硬盘"),
+            Medium::Solid => f.write_str("固态硬盘"),
             Medium::Unknown { reason } => write!(f, "未知（{reason}）"),
         }
     }
 }
 
-/// `--io-mode`：读取策略，覆盖自动探测。
+/// `--io-mode`：读盘方式，覆盖自动探测。
 ///
 /// 取值说的是**怎么读**，不是**盘是什么**：用户改不了盘的物理事实，改得了的是这一趟的策略。
-/// ADR 0009 的备选方案里被否掉的那一条是「让用户声明介质类型」，它否的是拿声明**代替**探测；
+/// ADR 0009 的备选方案里被否掉的那一条是「让用户声明硬盘类型」，它否的是拿声明**代替**探测；
 /// 这里是探测之上的一道覆盖，NAS 上探测按未知退到串行、而用户实测它并发更快时，出口在这儿。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IoMode {
-    /// 按路径探测介质，据此定读取策略。
+    /// 按路径探测硬盘类型，据此定读盘方式。
     #[default]
     Auto,
-    /// 不论介质，读取串行。
+    /// 不论硬盘类型，读取串行。
     Serial,
-    /// 不论介质，读取并发。
+    /// 不论硬盘类型，读取并发。
     Concurrent,
 }
 
-/// 名字 → 读取策略。第一个指向某个策略的名字是它的规范名（见 [`IoMode::name`]）。
+/// 名字 → 读盘方式。第一个指向某个策略的名字是它的规范名（见 [`IoMode::name`]）。
 const IO_MODES: &[(&str, IoMode)] = &[
     ("auto", IoMode::Auto),
     ("serial", IoMode::Serial),
@@ -77,15 +77,15 @@ impl IoMode {
         match IO_MODES.iter().find(|(listed, _)| *listed == key) {
             Some((_, mode)) => Ok(*mode),
             None => anyhow::bail!(
-                "认不出 I/O 模式 {name}：写 auto（按路径探测介质）、serial（读取串行）\
+                "认不出 I/O 模式 {name}：写 auto（按路径探测硬盘类型）、serial（读取串行）\
                  或 concurrent（读取并发）"
             ),
         }
     }
 
-    /// 这个读取策略的规范名，取表里第一个指向它的那个。
+    /// 这个读盘方式的规范名，取表里第一个指向它的那个。
     ///
-    /// 它不进参数哈希——读取策略改的是这一趟怎么读，不改写出的像素（见 `crate::metadata`）。
+    /// 它不进参数哈希——读盘方式改的是这一趟怎么读，不改写出的像素（见 `crate::metadata`）。
     /// 有这个方法是因为**预设**要把这一项写回盘上，而写出去的那个词必须就是
     /// [`resolve`](Self::resolve) 认得的那个词。
     pub fn name(self) -> &'static str {
@@ -93,7 +93,7 @@ impl IoMode {
             .iter()
             .find(|(_, mode)| *mode == self)
             .map(|(name, _)| *name)
-            .expect("表覆盖全部读取策略")
+            .expect("表覆盖全部读盘方式")
     }
 }
 
@@ -103,7 +103,7 @@ impl IoMode {
 /// 同一个词担两件事，读的人迟早会把它们看成一件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChosenBy {
-    /// 按探测到的介质定的。
+    /// 按探测到的硬盘类型定的。
     Probe,
     /// `--io-mode` 点名的。
     Named,
@@ -131,24 +131,24 @@ pub struct Readers {
 impl std::fmt::Display for Readers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.count {
-            1 => f.write_str("串行")?,
-            count => write!(f, "并发 {count}")?,
+            1 => f.write_str("逐个读")?,
+            count => write!(f, "同时读 {count} 路")?,
         }
         match self.chosen_by {
             ChosenBy::Probe => Ok(()),
-            ChosenBy::Named => f.write_str("（--io-mode 点名）"),
-            ChosenBy::ArchiveScan => f.write_str("（归档卷是一条顺序扫）"),
+            ChosenBy::Named => f.write_str("（--io-mode 指定）"),
+            ChosenBy::ArchiveScan => f.write_str("（压缩包只能从头读到尾）"),
         }
     }
 }
 
-/// 一个卷这一趟怎么读：介质是什么，据此**两路**各派几条读取。
+/// 一个卷这一趟怎么读：硬盘类型是什么，据此**两路**各派几条读取。
 ///
 /// # 为什么是两路
 ///
 /// 一个卷这一趟读两遍源字节，而两遍要的读法不是同一种（`CONTEXT.md` 的《I/O 与并发》）：
 ///
-/// - **两遍那一路**（第一遍解码、第二遍写出）在**读取端是一个归档句柄**的卷上是一条顺序扫。
+/// - **两遍那一路**（分析环节解码、写出环节写出）在**读取端是一个归档句柄**的卷上是一条顺序扫。
 ///   成员按顺序码在一个文件里，顺着扫最快，而读取与计算的重叠由有界通道负责
 ///   （见 `crate::read`），不靠多开几条读取去买。
 /// - **幂等那一道**（`crate` 的 `volume_fingerprint`）没有可与之重叠的计算——它只解压、
@@ -159,7 +159,7 @@ impl std::fmt::Display for Readers {
 /// 一个答案，而不是去对两份计划里哪一份说的是哪一段。
 #[derive(Debug, Clone)]
 pub struct IoPlan {
-    /// 源路径落在什么介质上。`--io-mode` 点名时这里照实说——覆盖的是策略，不是事实。
+    /// 源路径落在什么硬盘类型上。`--io-mode` 点名时这里照实说——覆盖的是策略，不是事实。
     pub medium: Medium,
     /// 两遍那一路。
     pub readers: Readers,
@@ -169,9 +169,9 @@ pub struct IoPlan {
 }
 
 impl IoPlan {
-    /// 定下这一卷的读取策略。
+    /// 定下这一卷的读盘方式。
     ///
-    /// 先按 `--io-mode` 与介质定出一个数——**幂等那一道拿的就是它**，容器形态不参与：
+    /// 先按 `--io-mode` 与硬盘类型定出一个数——**幂等那一道拿的就是它**，容器形态不参与：
     /// 那一道给每条读取线程一个自己的句柄，读法与目录卷同形（见 `crate::read`）。
     ///
     /// **[读取端是一个归档句柄](ReadingEnd::Archive)时，两遍另算，恒为一条。**
@@ -186,7 +186,7 @@ impl IoPlan {
     /// 「读取层没有一处需要认识『固实』」要避开的事。
     ///
     /// **未知按有惩罚办**（ADR 0009 决定第 3 条的「保守并发度」）：并发在机械盘上是真损失，
-    /// 在别的介质上只是没赚到。归档卷的幂等那一道同吃这一条——几个句柄各解各的成员是
+    /// 在别的硬盘类型上只是没赚到。归档卷的幂等那一道同吃这一条——几个句柄各解各的成员是
     /// **随机读**，机械盘上那正是要避开的东西。NAS 的最优策略尚未测量
     /// （`CONTEXT.md` 的《尚未确立》），想要并发的用户走 `--io-mode concurrent`。
     pub(crate) fn decide(medium: Medium, mode: IoMode, reading: ReadingEnd, cores: usize) -> Self {
@@ -216,18 +216,18 @@ impl IoPlan {
 
 impl std::fmt::Display for IoPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "介质 {} ⋅ 读取{}", self.medium, self.readers)?;
+        write!(f, "硬盘 {} ⋅ {}", self.medium, self.readers)?;
         // 两路一样的卷（读取端是一个目录的全部——目录卷与摊开了的卷）只印一次：
         // 多印一句一模一样的话，
         // 读的人要先比一遍两句才知道它们没有分岔。
         if self.fingerprint != self.readers {
-            write!(f, " ⋅ 幂等那一道{}", self.fingerprint)?;
+            write!(f, " ⋅ 查重时{}", self.fingerprint)?;
         }
         Ok(())
     }
 }
 
-/// 按通道缓存的介质探测（ADR 0009 的《后果》：每页查一次挂载表不可接受）。
+/// 按通道缓存的硬盘类型探测（ADR 0009 的《后果》：每页查一次挂载表不可接受）。
 ///
 /// 一次运行建一个，逐卷问它。平台那两步是可换的函数指针：探测要碰真实存储栈，
 /// 而「同一次运行里不同路径可得不同结论」「同一条通道只探一次」这两条性质与碰的是哪块盘无关，
@@ -254,7 +254,7 @@ impl Probes {
         }
     }
 
-    /// 这个路径落在什么介质上。探不出来就是 [`Medium::Unknown`]，连同它停在哪一步。
+    /// 这个路径落在什么硬盘类型上。探不出来就是 [`Medium::Unknown`]，连同它停在哪一步。
     pub(crate) fn medium(&mut self, path: &Path) -> Medium {
         let channel = match (self.channel)(path) {
             Ok(channel) => channel,
@@ -312,7 +312,7 @@ mod platform {
     pub(super) fn channel(path: &Path) -> Result<String> {
         let wide = wide(path.as_os_str());
         let mut buffer = vec![0u16; 512];
-        // 路径不必存在也答得出来——输出根在第一趟运行时还没建出来。
+        // 路径不必存在也答得出来——输出目录在第一趟运行时还没建出来。
         let ok = unsafe {
             GetVolumePathNameW(wide.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32) != 0
         };
@@ -331,7 +331,7 @@ mod platform {
         // 网络盘与认不出类型的盘当场退出：它们后面那条设备查询即便答得出来，
         // 答的也是本地某个转发层的事，不是数据真正待着的地方（ADR 0009 决定第 3 条）。
         match unsafe { GetDriveTypeW(mount.as_ptr()) } {
-            DRIVE_REMOTE => bail!("{channel} 是网络路径，介质无从探测"),
+            DRIVE_REMOTE => bail!("{channel} 是网络路径，硬盘类型无从探测"),
             DRIVE_UNKNOWN => bail!("{channel} 的驱动器类型认不出来"),
             _ => {}
         }
@@ -496,7 +496,7 @@ mod platform {
     }
 
     pub(super) fn seek_penalty(_channel: &String) -> Result<bool> {
-        bail!("本平台还没有介质探测")
+        bail!("这个平台还不能识别硬盘类型")
     }
 }
 
@@ -529,7 +529,7 @@ mod tests {
         match channel.as_str() {
             "hdd" => Ok(true),
             "ssd" => Ok(false),
-            _ => anyhow::bail!("{channel} 是网络路径，介质无从探测"),
+            _ => anyhow::bail!("{channel} 是网络路径，硬盘类型无从探测"),
         }
     }
 
@@ -576,7 +576,7 @@ mod tests {
         };
         assert!(reason.contains("网络路径"), "{reason}");
         let plan = IoPlan::decide(medium, IoMode::Auto, ReadingEnd::Directory, 8);
-        assert_eq!(plan.readers.count, 1, "未知的介质该退到串行");
+        assert_eq!(plan.readers.count, 1, "未知的硬盘类型该退到串行");
         assert!(plan.to_string().contains("网络路径"), "{plan}");
     }
 
@@ -596,7 +596,7 @@ mod tests {
         let serial = IoPlan::decide(Medium::Solid, IoMode::Serial, ReadingEnd::Directory, 8);
         assert_eq!(serial.readers.count, 1);
         assert_eq!(serial.readers.chosen_by, ChosenBy::Named);
-        // 覆盖的是策略，不是事实：探到的介质照实说。
+        // 覆盖的是策略，不是事实：探到的硬盘类型照实说。
         assert_eq!(serial.medium, Medium::Solid);
 
         let concurrent = IoPlan::decide(
@@ -619,14 +619,14 @@ mod tests {
         let seeking = IoPlan::decide(Medium::Seeking, IoMode::Auto, ReadingEnd::Directory, 8);
         assert_eq!(seeking.readers.count, 1);
         assert_eq!(seeking.readers.chosen_by, ChosenBy::Probe);
-        assert!(seeking.to_string().contains("读取串行"), "{seeking}");
+        assert!(seeking.to_string().contains("逐个读"), "{seeking}");
 
         let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, ReadingEnd::Directory, 8);
         assert_eq!(solid.readers.count, 8);
         assert_eq!(solid.readers.chosen_by, ChosenBy::Probe);
-        assert!(solid.to_string().contains("读取并发 8"), "{solid}");
+        assert!(solid.to_string().contains("同时读 8 路"), "{solid}");
 
-        // 目录卷两路恒相同，那一行因此只说一次读取策略。
+        // 目录卷两路恒相同，那一行因此只说一次读盘方式。
         for plan in [&seeking, &solid] {
             assert_eq!(plan.fingerprint, plan.readers, "{plan}");
             assert!(!plan.to_string().contains("幂等"), "{plan}");
@@ -643,22 +643,22 @@ mod tests {
             let plan = IoPlan::decide(Medium::Solid, mode, ReadingEnd::Archive, 8);
             assert_eq!(plan.readers.count, 1, "{mode:?}");
             assert_eq!(plan.readers.chosen_by, ChosenBy::ArchiveScan, "{mode:?}");
-            assert!(plan.to_string().contains("顺序扫"), "{plan}");
+            assert!(plan.to_string().contains("从头读到尾"), "{plan}");
         }
     }
 
-    /// 归档卷的**幂等那一道**不吃「恒串行」那一条：它按介质与点名走，与目录卷同一个数
+    /// 归档卷的**幂等那一道**不吃「恒串行」那一条：它按硬盘类型与点名走，与目录卷同一个数
     /// （11 号票）。报告因此一行里印出两路，两路各说各的。
     #[test]
     fn the_fingerprint_pass_of_an_archive_follows_the_medium_not_the_reading_end() {
         let solid = IoPlan::decide(Medium::Solid, IoMode::Auto, ReadingEnd::Archive, 8);
-        assert_eq!(solid.readers.count, 1, "两遍那一路该还是一条");
-        assert_eq!(solid.fingerprint.count, 8, "幂等那一道该跟着介质走");
+        assert_eq!(solid.readers.count, 1, "分析与写出那一路该还是一条");
+        assert_eq!(solid.fingerprint.count, 8, "幂等那一道该跟着硬盘类型走");
         assert_eq!(solid.fingerprint.chosen_by, ChosenBy::Probe);
         // 一行里两路都说得出来，且分得开是哪一路。
         let line = solid.to_string();
-        assert!(line.contains("读取串行（归档卷是一条顺序扫）"), "{line}");
-        assert!(line.contains("幂等那一道并发 8"), "{line}");
+        assert!(line.contains("逐个读（压缩包只能从头读到尾）"), "{line}");
+        assert!(line.contains("查重时同时读 8 路"), "{line}");
 
         // 机械盘与未知照旧保守：几个句柄各解各的成员是随机读，那正是寻道惩罚要避开的。
         for medium in [
@@ -676,9 +676,7 @@ mod tests {
         assert_eq!(named.fingerprint.count, 1);
         assert_eq!(named.fingerprint.chosen_by, ChosenBy::Named);
         assert!(
-            named
-                .to_string()
-                .contains("幂等那一道串行（--io-mode 点名）"),
+            named.to_string().contains("查重时逐个读（--io-mode 指定）"),
             "{named}"
         );
     }
@@ -695,7 +693,7 @@ mod tests {
 
         let plan = IoPlan::decide(medium, IoMode::Auto, ReadingEnd::Directory, 8);
         assert!(plan.readers.count >= 1);
-        assert!(plan.to_string().starts_with("介质 "), "{plan}");
+        assert!(plan.to_string().starts_with("硬盘 "), "{plan}");
         // 探得出来的那两种才谈得上并发；未知一律串行。
         assert_eq!(
             plan.readers.count > 1,

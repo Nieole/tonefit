@@ -45,14 +45,14 @@ enum CaseSensitivity {
 ///
 /// 返回的每一项都是「可以直接替换掉当前缓冲」的完整写法：目录带上一个分隔符，
 /// 再按一次 `Tab` 就下到那一层。这一层点不开（路径不在、权限不够）就是空清单——
-/// 补全不是错误处理的地方，那件事在真开工时由预扫说。
+/// 补全不是错误处理的地方，那件事在真开工时由清点说。
 pub fn level(typed: &str) -> Vec<String> {
     level_asking_case(typed, remembered)
 }
 
-/// [`level`] 本身，**大小写那条判据由调用方给**。
+/// [`level`] 本身，**大小写那条判定依据由调用方给**。
 ///
-/// 判据从外面交进来，[`level`] 那一路才有一个够得着的缝：探测问的是**跑着的这台机器**，
+/// 画质分从外面交进来，[`level`] 那一路才有一个够得着的缝：探测问的是**跑着的这台机器**，
 /// 而两边的行为（macOS 折得开、Linux 不放宽）得在**每台**机器上都验得到——
 /// 用例自己再按平台分岔一次，就是把本模块刚治好的那个病又犯一遍。
 fn level_asking_case(
@@ -68,7 +68,7 @@ fn level_asking_case(
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Vec::new();
     };
-    // 整层先收下来再筛：判据要先看过这一层有哪些名字（[`remembered`] 拿它去探）。
+    // 整层先收下来再筛：画质分要先看过这一层有哪些名字（[`remembered`] 拿它去探）。
     // 名字与条目各留一份，为的是 `file_type()` **仍旧只对筛得中的那几项问**——
     // 并进上面那一步的话，每一个条目都要摊上一次（`d_type` 答不出的文件系统上那是一次 stat）。
     let read: Vec<std::fs::DirEntry> = entries.flatten().collect();
@@ -127,7 +127,7 @@ fn split(typed: &str) -> (&str, &str) {
 /// 这一层里的一个名字，对不对得上打到一半的那个前缀。
 ///
 /// 认大小写的那一档就是 `str::starts_with`，**一个字都不放宽**；不认的那一支走
-/// [`starts_with_folded`]。分岔的判据是 [`CaseSensitivity`]，**由调用方交进来**。
+/// [`starts_with_folded`]。分岔的依据是 [`CaseSensitivity`]，**由调用方交进来**。
 fn matches_prefix(name: &str, prefix: &str, sensitivity: CaseSensitivity) -> bool {
     match sensitivity {
         CaseSensitivity::Insensitive => starts_with_folded(name, prefix),
@@ -383,7 +383,7 @@ mod tests {
         assert!(listed[0].starts_with(&root.path().display().to_string()));
     }
 
-    /// 判据由调用方给，因此**两边都在每个平台上跑得到**：不认大小写的那一档上敲 `d`
+    /// 画质分由调用方给，因此**两边都在每个平台上跑得到**：不认大小写的那一档上敲 `d`
     /// 补得出 `Doraemon`，**补回来的是盘上那个写法**；认的那一档上一个字都不放宽。
     /// 这两条正是 macOS 与 Linux 各自那一边。
     #[test]
@@ -472,7 +472,7 @@ mod tests {
     ///
     /// 严的那一边选它是因为两边的失败模式不对称：严的失败起来是「补不出来」，
     /// 用户当场看得见、把字敲全就绕过去了；宽的失败起来是**补出一个盘上不存在的名字**，
-    /// 那一串会进缓冲、进处理范围，直到预扫才炸（停车场 Q363）。
+    /// 那一串会进缓冲、进处理范围，直到清点才炸（停车场 Q363）。
     #[test]
     fn an_unanswerable_probe_keeps_case_and_is_not_remembered() {
         let known = OnceLock::new();

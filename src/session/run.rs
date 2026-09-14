@@ -7,33 +7,33 @@
 //!
 //! # 观察者回的那个字
 //!
-//! 就是用户**按停按到的那一级**（ADR 0013）：没按过是[继续](Instruction::Continue)，
-//! 按过一次是[收尾](Instruction::Finish)，再按一次是[中止](Instruction::Abort)。
+//! 就是用户**按停止时按到的那一级**（ADR 0013）：没按过是[继续](Instruction::Continue)，
+//! 按过一次是[做完再停](Instruction::Finish)，再按一次是[立即停止](Instruction::Abort)。
 //! 认键在 [`super::state`]，这一层只把那个字送到计算线程上——见 [`Latch`]。
 //!
-//! **只有一处例外，而它非有不可**：[决策点](at_the_decision_point)上的收尾要让成继续，
-//! 不然第一遍里按下的那一下会把当前卷的第二遍一起吃掉——见 [`answer`]。
+//! **只有一处例外，而它非有不可**：[确认点](at_the_decision_point)上的做完再停要让成继续，
+//! 不然分析环节里按下的那一下会把当前卷的写出环节一起吃掉——见 [`answer`]。
 //!
-//! # 决策点上等人：那条线程停在一道[闸](Gate)上
+//! # 确认点上等人：那条线程停在一道[闸](Gate)上
 //!
-//! **试算走到决策点就停住，每一卷各停一次**（ADR 0012 决定第 3 条，`p1-session/14`、
+//! **预览走到确认点就停住，每一卷各停一次**（ADR 0012 决定第 3 条，`p1-session/14`、
 //! `volume-discovery/07`）：计算线程在观察者里一直等到用户答话，会话这一头照旧画帧、
 //! 认键——那是两条线程，屏不因此冻住。
 //!
-//! **答一次「剩下的卷都这样」就不再停**：那个字摆进闸上的[默认答案](Asked::for_the_rest)，
-//! 往下每一个决策点当场照它答。它与[闩](Latch)分开放——闩只升不降，而这是个可以是
-//! 「继续」的粘性答案，按停按到的那一级因此一格不动。
+//! **答一次「后面的卷都写出」就不再停**：那个字摆进闸上的[默认答案](Asked::for_the_rest)，
+//! 往下每一个确认点当场照它答。它与[闩](Latch)分开放——闩只升不降，而这是个可以是
+//! 「继续」的粘性答案，按停止时按到的那一级因此一格不动。
 //!
 //! 握手只有一处，就是 [`Gate`]：计算线程在它上面等，UI 线程往它上面说一个字并敲钟。
 //! **没有 sleep、没有靠轮询撞运气**——UI 那一侧问的 [`Running::deciding`] 只决定
 //! 屏上此刻画哪一副，答话走的是另一条路（[`Running::decide`]）。
 //!
-//! 会话退出那一条也从这里出去：[`Running::leave`] 把闩推到中止，**同一下也往那道闸上
-//! 说一个中止**——不说的话，那条线程会一直等在闸上，而 `leave` 正等着 join 它。
+//! 会话退出那一条也从这里出去：[`Running::leave`] 把闩推到立即停止，**同一下也往那道闸上
+//! 说一个立即停止**——不说的话，那条线程会一直等在闸上，而 `leave` 正等着 join 它。
 //!
-//! **退出会话走的是同一条路**，只是不经过键盘：[`Running::leave`] 直接把闩推到中止
+//! **退出会话走的是同一条路**，只是不经过键盘：[`Running::leave`] 直接把闩推到立即停止
 //! （停车场 Q63）。会话退出时不能把一条还在往盘上写东西的线程扔在身后，
-//! 而中止停在**页边界**上（ADR 0013 决定第 2 条），当前卷那格 `partial` 丢掉、
+//! 而立即停止停在**页边界**上（ADR 0013 决定第 2 条），当前卷那格 `partial` 丢掉、
 //! 最终位置一个字节都没动过——退出会话不该在盘上留下半卷。
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -49,7 +49,7 @@ use crate::render::plain::ReportFold;
 /// 会话跑过的那一趟：后台那条线程，加上它边跑边攒的东西。
 ///
 /// **跑完不清空**：攒着的那一份报告要留到退出会话那一刻——照原格式印到 stdout 的就是它。
-/// 再按一次试算或执行会把它整个换掉，一趟一份。
+/// 再按一次预览或执行会把它整个换掉，一趟一份。
 #[derive(Default)]
 pub struct Running {
     /// 边跑边攒的那一份。还没跑过就是 `None`。
@@ -60,9 +60,9 @@ pub struct Running {
     ///
     /// 它是 [`Running`]「一趟一份」那条规矩上唯一跨得过趟的东西，而那是有理由的：
     /// [`start`](Self::start) 每次换掉 [`Live`]，最后那一趟一被拒，先前刚跑成的那一趟
-    /// 试算连同它算出来的东西就一起没了（21 号票，收停车场 Q66）。
+    /// 预览连同它算出来的东西就一起没了（21 号票，收停车场 Q66）。
     ///
-    /// **只在做成的那一趟收场时更新**（见 [`collect`](Self::collect)）：没做成的那一趟
+    /// **只在做成的那一趟结束时更新**（见 [`collect`](Self::collect)）：没做成的那一趟
     /// 更新不了它，[`report`](Self::report) 因此拿得到的恒是**先前**那一份，
     /// 与这一趟攒下来的那一份不会是同一段字。「先前那**几**趟里只留最近一份」这个取舍
     /// 连同备选记在停车场 **Q581**。
@@ -82,13 +82,13 @@ pub struct Running {
     /// `tonefit` 的 `progress::Events`）。还没跑过时它也在，只是没有人读——
     /// [`leave`](Self::leave) 因此不必先判一次有没有线程。
     latch: Arc<Latch>,
-    /// 这一趟的[闸](Gate)：**决策点上等人的那一趟**才有，别的趟是 `None`。
+    /// 这一趟的[闸](Gate)：**确认点上等人的那一趟**才有，别的趟是 `None`。
     ///
     /// 与闩同一条寿命，一趟一份（[`start`](Self::start) 每次换一个新的）：
-    /// 上一趟在决策点上答过的字、连同「剩下的卷都这样」摆下的那个默认答案，
+    /// 上一趟在确认点上答过的字、连同「后面的卷都写出」摆下的那个默认答案，
     /// 都不该跟着漏到下一趟去。
-    /// `None` 说的是「这一趟在决策点上不等人」——执行走的是那一支，
-    /// 那时决策点照旧由 [`answer`] 当场答字。
+    /// `None` 说的是「这一趟在确认点上不等人」——执行走的是那一支，
+    /// 那时确认点照旧由 [`answer`] 当场答字。
     gate: Option<Arc<Gate>>,
 }
 
@@ -97,7 +97,7 @@ impl Running {
     ///
     /// 上一趟攒的那一份当场换掉：一趟一份，两趟的报告混在一起没有意义。
     ///
-    /// `resumes` 说的是**这一趟在决策点上等不等人**（ADR 0012 决定第 3 条：等不等人是
+    /// `resumes` 说的是**这一趟在确认点上等不等人**（ADR 0012 决定第 3 条：等不等人是
     /// 调用方的策略）。判它的是 [`super::resuming`]——那一层看得见处理范围有几卷，
     /// 本层只照它说的办：等人的那一趟多一道[闸](Gate)，不等人的那一趟一格不多。
     pub fn start(&mut self, mut request: Request, resumes: Resuming) {
@@ -123,23 +123,23 @@ impl Running {
         self.thread = Some(std::thread::spawn(move || tonefit::run(&request)));
     }
 
-    /// **按停**：把这一趟的闩推到 `level`（ADR 0013）。
+    /// **按停止**：把这一趟的闩推到 `level`（ADR 0013）。
     ///
     /// 按到哪一级由状态机记着（`super::state::Session::stopping`），这里只把那个字
     /// 送到计算线程上——本层不认键，状态机不碰线程。
     ///
     /// **只升不降**：推一个更弱的字进来不作数（[`Latch::raise`] 走 `fetch_max`）。
     /// 走这条路进来的只有两处，各自都只往上推：`s` 那个键升一级，
-    /// [`leave`](Self::leave) 直接推到中止。
+    /// [`leave`](Self::leave) 直接推到立即停止。
     ///
-    /// **中止连那道[闸](Gate)一起推开**：那条线程可能正停在决策点上等人，而它在那儿
-    /// 读不到闩——不推的话它会一直等下去，而按下中止的那一头（`Ctrl-C` 退出会话）
-    /// 正等着 join 它。只推中止、不推收尾，与 [`answer`] 那条规矩是同一句话：
-    /// 决策点上收尾要让，中止不让。收尾在这里让给的是**用户当场那个字**——
+    /// **立即停止连那道[闸](Gate)一起推开**：那条线程可能正停在确认点上等人，而它在那儿
+    /// 读不到闩——不推的话它会一直等下去，而按下立即停止的那一头（`Ctrl-C` 退出会话）
+    /// 正等着 join 它。只推立即停止、不推做完再停，与 [`answer`] 那条规矩是同一句话：
+    /// 确认点上做完再停要让，立即停止不让。做完再停在这里让给的是**用户当场那个字**——
     /// 闸上还等着人答话，那一问不该由闩替他答。
     ///
-    /// 中止推的是[「剩下的卷都这样」](Reach::ForTheRest)那一种：会话要走了，
-    /// 往下每一问的答案都是同一个中止，而摆着默认答案的闸[一句话都不问](Gate::ask)——
+    /// 立即停止推的是[「后面的卷都写出」](Reach::ForTheRest)那一种：会话要走了，
+    /// 往下每一问的答案都是同一个立即停止，而摆着默认答案的闸[一句话都不问](Gate::ask)——
     /// 那正是 `leave` 要 join 的那条线程不会再停下来的保证。
     pub fn stop(&self, level: Instruction) {
         self.latch.raise(level);
@@ -150,27 +150,27 @@ impl Running {
         }
     }
 
-    /// **这一趟此刻停在决策点上等人吗**（`p1-session/14`）。
+    /// **这一趟此刻停在确认点上等人吗**（`p1-session/14`）。
     ///
-    /// 会话每帧问一次，跑着与等答话之间那一下转场就是靠它（见 `super::drive`）。
+    /// 会话每帧问一次，跑着与等待确认之间那一下转场就是靠它（见 `super::drive`）。
     /// 不等人的那一趟恒是 `false`——它连闸都没有。
     pub fn deciding(&self) -> bool {
         self.gate.as_ref().is_some_and(|gate| gate.waiting())
     }
 
-    /// **把用户当场答的那个字送到决策点上**，并记进 [`Live`]。
-    /// `reach` 说的是这个字[管几卷](Reach)——只管这一卷，还是剩下的卷都这样。
+    /// **把用户当场答的那个字送到确认点上**，并记进 [`Live`]。
+    /// `reach` 说的是这个字[管几卷](Reach)——只管这一卷，还是后面的卷都写出。
     ///
     /// 与 [`stop`](Self::stop) 同一条分工：认键在状态机（`super::state::deciding_action`），
     /// 本层只把那个字送到计算线程上。记进 [`Live`] 是因为屏上与报告抬头都要它——
-    /// 答了收尾的那一趟就等于一次 dry-run（见 `Live::mode`）。
+    /// 答了做完再停的那一趟就等于一次 dry-run（见 `Live::mode`）。
     ///
-    /// **它不是闩**：决策点问的是「这一卷的第二遍还做不做」，答完那条线程接着跑；
+    /// **它不是闩**：确认点问的是「这一卷的写出环节还做不做」，答完那条线程接着跑；
     /// 闩问的是「这一趟还走不走」，那一路走 [`stop`](Self::stop)。
-    /// 「剩下的卷都这样」同样不进闩：它是个可以是「继续」的粘性答案，而闩只升不降。
+    /// 「后面的卷都写出」同样不进闩：它是个可以是「继续」的粘性答案，而闩只升不降。
     ///
     /// **先记进 [`Live`]，再往闸上说**：反过来的话，那条线程会在这一头拿到那把锁之前
-    /// 就走到下一个决策点，而那时 [`Live`] 还不知道「剩下的卷都这样」——
+    /// 就走到下一个确认点，而那时 [`Live`] 还不知道「后面的卷都写出」——
     /// 等人那一截于是又开了一次，而往下没有第二次答话来关它
     /// （见 `Live::deliberating_since`，停车场 Q41）。
     pub fn decide(&self, said: Instruction, reach: Reach) {
@@ -195,13 +195,13 @@ impl Running {
         true
     }
 
-    /// 用户退出会话：让那一趟**中止**，等它收完手再走（停车场 Q63）。
+    /// 用户退出会话：让那一趟**立即停止**，等它收完手再走（停车场 Q63）。
     ///
     /// 非等不可：这条线程正往盘上写东西，`main` 一返回它就被连根拔掉，
-    /// 盘上留下的是一格写了一半的 `partial`。中止停在页边界上，等的是一页的功夫。
+    /// 盘上留下的是一格写了一半的 `partial`。立即停止停在页边界上，等的是一页的功夫。
     ///
-    /// 走中止而不是收尾：收尾要等当前卷跑完，那可能是几十分钟，而用户按的是「退出」。
-    /// 手动按过 `s` 之后再退出仍是中止——闩[只升不降](Self::stop)。
+    /// 走立即停止而不是做完再停：做完再停要等当前卷跑完，那可能是几十分钟，而用户按的是「退出」。
+    /// 手动按过 `s` 之后再退出仍是立即停止——闩[只升不降](Self::stop)。
     pub fn leave(&mut self) {
         self.stop(Instruction::Abort);
         self.collect();
@@ -271,7 +271,7 @@ impl Running {
     /// **没做成的那一趟照印**（21 号票，收停车场 Q66）。从前它交回 `None`，
     /// stdout 上一个字节都没有——而用户连**已经算出来的东西**一起丢掉：
     /// 攒到一半的那一份说得出已经做完的哪几卷（见 `Live::returned`），
-    /// [先前刚跑成的那一趟](Self::earlier)试算更是整份都在。
+    /// [先前刚跑成的那一趟](Self::earlier)预览更是整份都在。
     ///
     /// **这一层只答「取哪三段」，怎么接不在这里**：那是纯文本那一副的摆法
     /// （[`crate::render::plain::undone`]，ADR 0016 决定第 3 条——会话退出时留在
@@ -308,7 +308,7 @@ impl Drop for Running {
 struct Watch {
     live: Arc<Mutex<Live>>,
     latch: Arc<Latch>,
-    /// 决策点上等人的那一趟才有这道闸（见 [`Running::gate`]）。
+    /// 确认点上等人的那一趟才有这道闸（见 [`Running::gate`]）。
     gate: Option<Arc<Gate>>,
 }
 
@@ -318,30 +318,30 @@ impl Progress for Watch {
         // **等人那一支尤其非还不可**：会话那一头每帧都要借同一把锁画报告区，
         // 而这一等可能是几分钟（`progress` 那条硬规矩的同一个理由）。
         Running::held(&self.live).observe(&event);
-        // **两支都先过一遍 [`answer`]**：那条规矩（决策点上收尾要让、中止不让）
+        // **两支都先过一遍 [`answer`]**：那条规矩（确认点上做完再停要让、立即停止不让）
         // 因此仍旧只有一个出处，等人不等人只决定**让给谁**。
         match (at_the_decision_point(&event), &self.gate) {
-            // 决策点，而且这一趟等人（ADR 0012 决定第 3 条：等不等人是调用方的策略）。
+            // 确认点，而且这一趟等人（ADR 0012 决定第 3 条：等不等人是调用方的策略）。
             (true, Some(gate)) => match answer(true, self.latch.get()) {
-                // 中止不让，因此这里一句话都不必问：那一级要的就是当前卷等于没做，
-                // 而人早就按下去了。`Running::stop` 把中止也推到闸上，那一处管的是
+                // 立即停止不让，因此这里一句话都不必问：那一级要的就是当前卷等于没做，
+                // 而人早就按下去了。`Running::stop` 把立即停止也推到闸上，那一处管的是
                 // **已经等在闸上**的那条线程；这一处管的是它还没走到这儿的那一半。
                 Instruction::Abort => Instruction::Abort,
-                // `answer` 让掉的那一下（收尾），与从没按过停的那一种：
+                // `answer` 让掉的那一下（做完再停），与从没按过停的那一种：
                 // 停在闸上，交回用户当场答的那个字。
                 _ => gate.ask(),
             },
-            // 别处，或者这一趟不等人：照闩答，决策点上的收尾在那一支让成继续。
+            // 别处，或者这一趟不等人：照闩答，确认点上的做完再停在那一支让成继续。
             (at_the_decision_point, _) => answer(at_the_decision_point, self.latch.get()),
         }
     }
 }
 
-/// 这一条事件是不是**决策点**——每一卷「汇总之后、第二遍之前」那一次问话
-/// （ADR 0012 决定第 2 条，`CONTEXT.md` 的《会话》：决策点）。
+/// 这一条事件是不是**确认点**——每一卷「汇总之后、写出环节之前」那一次问话
+/// （ADR 0012 决定第 2 条，`CONTEXT.md` 的《会话》：确认点）。
 ///
 /// 库那一侧只有这一条事件的答复**当场作数**，其余的都只进闩；[`answer`] 因此只在
-/// 这一条上分岔。判据是事件本身，不是数到第几条——数下去的话，多一条事件就错位。
+/// 这一条上分岔。判定依据是事件本身，不是数到第几条——数下去的话，多一条事件就错位。
 fn at_the_decision_point(event: &Event<'_>) -> bool {
     matches!(
         event,
@@ -352,21 +352,21 @@ fn at_the_decision_point(event: &Event<'_>) -> bool {
     )
 }
 
-/// 会话在一条事件上回哪个字：**闩记着的那一级，只有决策点上的收尾要让**。
+/// 会话在一条事件上回哪个字：**闩记着的那一级，只有确认点上的做完再停要让**。
 ///
-/// 让的理由是两处问的不是同一件事（`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。
-/// 闩答的是「这一趟还走不走」；决策点问的是「**这一卷的第二遍还做不做**」。
-/// 拿闩去答决策点，第一遍里按下的**收尾**会顺手把当前卷的第二遍也吃掉——那一卷等于
-/// 走了一次试算、盘上一个字节都没写，而收尾的定义正是「当前卷跑完才停」
+/// 让的理由是两处问的不是同一件事（`CONTEXT.md` 的《会话》：确认点不是第三个检查点）。
+/// 闩答的是「这一趟还走不走」；确认点问的是「**这一卷的写出环节还做不做**」。
+/// 拿闩去答确认点，分析环节里按下的**做完再停**会顺手把当前卷的写出环节也吃掉——那一卷等于
+/// 走了一次预览、盘上一个字节都没写，而做完再停的定义正是「当前卷跑完才停」
 /// （ADR 0013 决定第 1 条）。盘上会因此少一整卷。
 ///
-/// **中止在决策点上不让**：那一级要的就是当前卷等于没做（ADR 0013 决定第 2 条），
+/// **立即停止在确认点上不让**：那一级要的就是当前卷等于没做（ADR 0013 决定第 2 条），
 /// 与页边界上按下它一个待遇。
 ///
 /// 让掉的那一下**不会丢**：答复照样进库那一侧的闩，而那是个 `fetch_max`——
-/// 记一个更弱的字进去不作数，闩仍是收尾，当前卷跑完之后卷边界那个检查点照样停。
+/// 记一个更弱的字进去不作数，闩仍是做完再停，当前卷跑完之后卷边界那个检查点照样停。
 ///
-/// **这里不等人**：停下来问用户是那道[闸](Gate)的事，本函数只管那一下按停
+/// **这里不等人**：停下来问用户是那道[闸](Gate)的事，本函数只管那一下按停止
 /// 不要把当前卷吃掉。
 fn answer(at_the_decision_point: bool, pressed: Instruction) -> Instruction {
     match pressed {
@@ -375,7 +375,7 @@ fn answer(at_the_decision_point: bool, pressed: Instruction) -> Instruction {
     }
 }
 
-/// **决策点上等人的那道闸**：计算线程停在这里，会话那一头往上面说一个字
+/// **确认点上等人的那道闸**：计算线程停在这里，会话那一头往上面说一个字
 /// （`p1-session/14`，ADR 0012 决定第 3 条）。
 ///
 /// 用条件变量而不是别的：这一头要等到答话为止，而「等到某件事成立」正是它的形状。
@@ -383,17 +383,17 @@ fn answer(at_the_decision_point: bool, pressed: Instruction) -> Instruction {
 /// 而两个数都是猜出来的。
 ///
 /// **它与[闩](Latch)是两件事**，两者都在，各答各的问题：闩答「这一趟还走不走」，
-/// 一路只升不降；这道闸答「这一卷的第二遍还做不做」，一问一答、答完就清空
-/// （`CONTEXT.md` 的《会话》：决策点不是第三个检查点）。
+/// 一路只升不降；这道闸答「这一卷的写出环节还做不做」，一问一答、答完就清空
+/// （`CONTEXT.md` 的《会话》：确认点不是第三个检查点）。
 ///
-/// **答话可以先到**：会话退出时 [`Running::stop`] 往这里说一个中止，而那时计算线程
-/// 可能还没走到决策点。那个字因此留在 [`Asked::said`] 上等着——[`ask`](Self::ask)
+/// **答话可以先到**：会话退出时 [`Running::stop`] 往这里说一个立即停止，而那时计算线程
+/// 可能还没走到确认点。那个字因此留在 [`Asked::said`] 上等着——[`ask`](Self::ask)
 /// 一进来就把它取走，一秒都不等。反过来漏掉这一条的话，`leave` 会 join 一条永远
 /// 等在闸上的线程。
 ///
-/// **答话还可以一次答完剩下的**：「剩下的卷都这样」摆下的是
-/// [默认答案](Asked::for_the_rest)，往下每一个决策点当场照它答、一句话都不问
-/// （`CONTEXT.md` 的《会话》：都这样）。
+/// **答话还可以一次答完剩下的**：「后面的卷都写出」摆下的是
+/// [默认答案](Asked::for_the_rest)，往下每一个确认点当场照它答、一句话都不问
+/// （`CONTEXT.md` 的《会话》：后面都写出）。
 #[derive(Debug, Default)]
 struct Gate {
     asked: Mutex<Asked>,
@@ -404,17 +404,17 @@ struct Gate {
 /// 闸上此刻的样子。
 #[derive(Debug, Default)]
 struct Asked {
-    /// 计算线程正停在决策点上等着吗。屏上画哪一副由它定（[`Running::deciding`]）。
+    /// 计算线程正停在确认点上等着吗。屏上画哪一副由它定（[`Running::deciding`]）。
     waiting: bool,
-    /// 会话答的那个字，还没答就是 `None`。取走即清空——下一个决策点重新问。
+    /// 会话答的那个字，还没答就是 `None`。取走即清空——下一个确认点重新问。
     said: Option<Instruction>,
-    /// **决策点的默认答案**：答过「剩下的卷都这样」之后摆在这儿的那个字
-    /// （`CONTEXT.md` 的《会话》：都这样）。没答过那个手势就是 `None`。
+    /// **确认点的默认答案**：答过「后面的卷都写出」之后摆在这儿的那个字
+    /// （`CONTEXT.md` 的《会话》：后面都写出）。没答过那个手势就是 `None`。
     ///
     /// 与 [`said`](Self::said) 的差就在**取不取走**：那一格一问一答、答完清空，
-    /// 这一格答一次管到这一趟收场。它也不是[闩](Latch)——闩只升不降、记的是
+    /// 这一格答一次管到这一趟结束。它也不是[闩](Latch)——闩只升不降、记的是
     /// 「这一趟还走不走」，而这一格记的是一个可以是「继续」的粘性答案，
-    /// 按停按到的那一级一格不动。
+    /// 按停止时按到的那一级一格不动。
     for_the_rest: Option<Instruction>,
 }
 
@@ -423,12 +423,12 @@ impl Gate {
     ///
     /// 先落座再等：`waiting` 与那一等之间一把锁都没松过，因此屏上不会看到
     /// 「等着」而实际早就走了那种中间态。答话先到的那一种（见类型文档）连座都不落——
-    /// `wait_while` 的判据一进来就不成立，当场取走那个字返回。
+    /// `wait_while` 的画质分一进来就不成立，当场取走那个字返回。
     ///
     /// **摆着默认答案就一句话都不问**：那时连座也不落，[`waiting`](Asked::waiting)
     /// 一格不动，屏上因此不会闪出答话那一副（[`Running::deciding`] 恒为假）。
-    /// 先到的那个字仍旧优先——会话退出推进来的中止排在默认答案前面，
-    /// 「这个手势不动按停按到的那一级」就是这一句。
+    /// 先到的那个字仍旧优先——会话退出推进来的立即停止排在默认答案前面，
+    /// 「这个手势不动按停止时按到的那一级」就是这一句。
     ///
     /// 中毒了照样答：里面是一个字，一条线程恐慌不该让另一条从此等不到人
     /// （与 [`Running::held`] 同一条规矩）。
@@ -445,7 +445,7 @@ impl Gate {
             .wait_while(asked, |asked| asked.said.is_none())
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         asked.waiting = false;
-        // 取走即清空：一趟里每一卷各有一个决策点，上一个答的字不该替下一个作答。
+        // 取走即清空：一趟里每一卷各有一个确认点，上一个答的字不该替下一个作答。
         asked.said.take().unwrap_or(Instruction::Continue)
     }
 
@@ -483,9 +483,9 @@ impl Gate {
     }
 }
 
-/// 会话这一侧的**闩**：用户按停按到过的最强那一级（ADR 0013）。
+/// 会话这一侧的**闩**：用户按停止时按到过的最强那一级（ADR 0013）。
 ///
-/// 「闩」这个说法出自 `CONTEXT.md` 的《进度》（「按停是个闩」）。库那一侧有一个同性质的
+/// 「闩」这个说法出自 `CONTEXT.md` 的《进度》（「按停止是个闩」）。库那一侧有一个同性质的
 /// （`tonefit` 的 `progress::Standing`，记的是**观察者答过**什么），但它是 `pub(crate)` 的，
 /// 二进制 crate 够不着——这一份记的也是另一件事：**用户按过**什么。
 /// 两者的**序**出自同一处，[`Instruction`] 派生的 `Ord`；**把那个序编成一个字节的那一份
@@ -500,7 +500,7 @@ struct Latch(AtomicU8);
 
 impl Latch {
     /// 往上推一级。**`fetch_max` 把「只升不降」写进了操作本身**：
-    /// 推一个更弱的字进来不作数，按停因此是个闩，不是一个可以反悔的开关。
+    /// 推一个更弱的字进来不作数，按停止因此是个闩，不是一个可以反悔的开关。
     fn raise(&self, level: Instruction) {
         self.0.fetch_max(level.code(), Ordering::Relaxed);
     }
@@ -518,11 +518,11 @@ mod tests {
     use crate::session::live::fixture;
     use tonefit::{Mode as RunMode, Profile, RunOutcome};
 
-    /// 等那一趟停到决策点上。真会话里这一步是「画一帧、问一次 `deciding`」转的那个圈
+    /// 等那一趟停到确认点上。真会话里这一步是「画一帧、问一次 `deciding`」转的那个圈
     /// （见 `super::super::drive`），用例不必画，只问。
     ///
     /// **等的是一个会成立的条件，不是一段猜出来的时长**：那条线程一定会走到**下一个**
-    /// 决策点（`Mode::Process`，一卷一个），而它停在那儿之后 [`Running::deciding`] 恒为真——
+    /// 确认点（`Mode::Process`，一卷一个），而它停在那儿之后 [`Running::deciding`] 恒为真——
     /// 转到为止即可，转多少圈不影响结论。`sleep` 反过来是猜：短了没等到、长了白等。
     ///
     /// 答完话再叫它一次，等到的是**下一卷**那个：答话摆上的那个字要等计算线程收走，
@@ -533,7 +533,7 @@ mod tests {
         }
     }
 
-    /// 一趟处理：一个真跑得动的卷（见 [`fixture::a_real_volume`]），连同它的输出根。
+    /// 一趟处理：一个真跑得动的卷（见 [`fixture::a_real_volume`]），连同它的输出目录。
     fn a_one_volume_run(workspace: &tempfile::TempDir) -> Request {
         Request {
             inputs: vec![fixture::a_real_volume(workspace.path(), "卷一")],
@@ -542,7 +542,7 @@ mod tests {
         }
     }
 
-    /// 一趟处理，**三个卷**：逐卷等答话那几条要的正是「不止一卷」
+    /// 一趟处理，**三个卷**：逐卷等待确认那几条要的正是「不止一卷」
     /// （`volume-discovery/07`）。三个而不是两个——「答一次剩下都这样」要看得出
     /// 它管的是**剩下的每一卷**，而不是只管紧挨着的下一卷。
     ///
@@ -560,7 +560,7 @@ mod tests {
         }
     }
 
-    /// 输出根下面此刻有哪些名字。没建出来就是空的——**「连建都没建」与「建了是空的」
+    /// 输出目录下面此刻有哪些名字。没建出来就是空的——**「连建都没建」与「建了是空的」
     /// 在这个形式上是同一个答案**，而两者本票都算「一个文件都没写」。
     fn landed(out: &std::path::Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(out)
@@ -594,19 +594,19 @@ mod tests {
         until_done(&mut running);
 
         let live = running.live().expect("跑过一趟");
-        assert!(live.ended(), "该收场了");
+        assert!(live.ended(), "该结束了");
         assert_eq!(live.undone(), None, "这一趟做成了");
         assert_eq!(live.report().volumes.len(), 1, "事件流没攒出那一卷");
-        // 全局条那两个数是预扫报的，而预扫排在开工那条事件之前（03 号票）。
+        // 全局条那两个数是清点报的，而清点排在开工那条事件之前（03 号票）。
         assert_eq!(live.overall().volumes, 1);
         drop(live);
 
         assert_eq!(running.exit_code(), crate::SUCCESS_EXIT);
         let printed = running.report().expect("有报告可印");
-        assert!(printed.starts_with("profile "), "{printed}");
+        assert!(printed.starts_with("设备配置 "), "{printed}");
     }
 
-    /// **拒绝执行**：会话不退出，那句话留在 [`Live`] 上，退出码是命令行那一路的 `1`。
+    /// **拒绝开始**：会话不退出，那句话留在 [`Live`] 上，退出码是命令行那一路的 `1`。
     /// 那条线程恐慌了走的是同一条路——两者都是「这一趟没做成」，分得开它们的是那句话本身。
     ///
     /// **stdout 上仍旧有东西**（21 号票，收停车场 Q66）：攒下来的那一份照印，
@@ -631,7 +631,7 @@ mod tests {
         // **非空这一句非问不可**：空串上 `starts_with` 与下面那个切片恒成立，
         // 少了它，下面两条就成了「印了那句话就行」，第一段丢掉也红不了。
         let worked_out = crate::render::plain::report(live.report(), live.mode(), ReportFold::Off);
-        assert!(worked_out.starts_with("profile "), "{worked_out}");
+        assert!(worked_out.starts_with("设备配置 "), "{worked_out}");
         drop(live);
 
         assert_eq!(running.exit_code(), crate::REFUSED_EXIT);
@@ -639,14 +639,14 @@ mod tests {
         assert!(printed.starts_with(&worked_out), "{printed}");
         // **两者分得开**：那句话整个落在报告之后，正文里一个字都没有它。
         let after = &printed[worked_out.len()..];
-        assert!(after.contains("这一趟没做成"), "{printed}");
+        assert!(after.contains("这次没能完成"), "{printed}");
         assert!(after.contains(&said), "{printed}");
     }
 
     /// **先前那一趟的报告不跟着没做成的这一趟一起丢掉**（21 号票，收停车场 Q66）。
     ///
     /// 一个会话里跑得了好几趟，而 [`Running`] 一趟一份——`start` 每次换掉 [`Live`]。
-    /// 从前最后那一趟一被拒，stdout 上就一个字节都没有，先前刚跑成的那一趟试算
+    /// 从前最后那一趟一被拒，stdout 上就一个字节都没有，先前刚跑成的那一趟预览
     /// 连同它算出来的东西一起没了。**stdout 上留的是最近一份做成了的报告**
     /// （见 [`Running::earlier`]），没做成的这一趟接在它后面。
     #[test]
@@ -681,13 +681,13 @@ mod tests {
         assert!(printed.contains("处理范围为空"), "{printed}");
         // **两份报告，两个抬头**：先前那一趟一份，这一趟攒下来的一份。只问前一半的话，
         // 中间那一段整个删掉这一条照旧绿——而它正是「已经算出来的东西」那一半。
-        assert_eq!(printed.matches("profile ").count(), 2, "{printed}");
+        assert_eq!(printed.matches("设备配置 ").count(), 2, "{printed}");
     }
 
     /// **闩只升不降**，而**推进去的那个字读回来一格不变**。
     ///
-    /// 「按了中止之后再按收尾仍然是中止」这条性质在会话里有两道保险：键盘上没有那个键
-    /// （`super::state::running_action` 在中止那一级派的是「没有意义」），
+    /// 「按了立即停止之后再按做完再停仍然是立即停止」这条性质在会话里有两道保险：键盘上没有那个键
+    /// （`super::state::running_action` 在立即停止那一级派的是「没有意义」），
     /// 而就算有，`fetch_max` 也不让它降回去。这一条问的是第二道。
     ///
     /// **编码本身这里不验**：那个数与 [`Instruction`] 派生的 `Ord` 对不对得上、越界的数
@@ -721,22 +721,22 @@ mod tests {
         running.stop(Instruction::Abort);
         assert_eq!(running.pressed(), Instruction::Abort);
         running.stop(Instruction::Finish);
-        assert_eq!(running.pressed(), Instruction::Abort, "闩退回收尾了");
+        assert_eq!(running.pressed(), Instruction::Abort, "闩退回做完再停了");
         running.stop(Instruction::Continue);
         assert_eq!(running.pressed(), Instruction::Abort, "闩被抹掉了");
     }
 
-    /// **决策点上的收尾要让成继续**，其余一律照闩答（ADR 0012 决定第 2 条）。
+    /// **确认点上的做完再停要让成继续**，其余一律照闩答（ADR 0012 决定第 2 条）。
     ///
     /// 这一条是本模块唯一一处「回什么」的规矩，而它测得动——`Watch::observe` 本身
     /// 测不动（库外造不出一条事件来），因此那个规矩单独摆成 [`answer`]。
     ///
-    /// 让的是**收尾**那一级，因为决策点问的是「这一卷的第二遍还做不做」而不是
-    /// 「这一趟还走不走」。不让的话，第一遍里按一次 `s`，当前卷等于走了一次试算——
-    /// 盘上一个字节都没写，而收尾说好的是「当前卷跑完才停」。
+    /// 让的是**做完再停**那一级，因为确认点问的是「这一卷的写出环节还做不做」而不是
+    /// 「这一趟还走不走」。不让的话，分析环节里按一次 `s`，当前卷等于走了一次预览——
+    /// 盘上一个字节都没写，而做完再停说好的是「当前卷跑完才停」。
     #[test]
     fn only_the_decision_point_makes_a_finish_step_aside() {
-        // 决策点上：收尾让成继续，另两级原样。
+        // 确认点上：做完再停让成继续，另两级原样。
         assert_eq!(answer(true, Instruction::Continue), Instruction::Continue);
         assert_eq!(answer(true, Instruction::Finish), Instruction::Continue);
         assert_eq!(answer(true, Instruction::Abort), Instruction::Abort);
@@ -751,16 +751,16 @@ mod tests {
         }
     }
 
-    /// **卷跑到一半按一次收尾，那一卷仍旧整卷落盘**——决策点没有把它吃掉。
+    /// **卷跑到一半按一次做完再停，那一卷仍旧整卷落盘**——确认点没有把它吃掉。
     ///
     /// 这一条走的是[真观察者](Watch)，**不开线程也不掐表**（spec 的《Testing Decisions》：
-    /// 双向观察者最直接的好处）：套一层替身，在「一卷开工」那条事件上把闩推到收尾——
+    /// 双向观察者最直接的好处）：套一层替身，在「一卷开工」那条事件上把闩推到做完再停——
     /// 那正是「用户在这一卷跑着的时候按了一次 `s`」，而时机由用例定死，不靠跟线程抢。
-    /// 按在更早的地方（开工那条事件之前）不问决策点：卷边界那个检查点当场就把整趟停了，
+    /// 按在更早的地方（开工那条事件之前）不问确认点：卷边界那个检查点当场就把整趟停了，
     /// 那也对，只是问不到本条要问的那一处。
     ///
-    /// 让路那一步要是没了，这一卷就等于走了一次试算——报告照出、盘上一个字节都没有，
-    /// 而收尾说好的是「当前卷跑完才停」（ADR 0013 决定第 1 条）。
+    /// 让路那一步要是没了，这一卷就等于走了一次预览——报告照出、盘上一个字节都没有，
+    /// 而做完再停说好的是「当前卷跑完才停」（ADR 0013 决定第 1 条）。
     #[test]
     fn finishing_in_the_middle_of_a_volume_still_lets_that_volume_land_whole() {
         /// 一卷开工那一刻按一次 `s`，随后原样交给真正的观察者。
@@ -778,7 +778,7 @@ mod tests {
             }
         }
 
-        // 一页加一个透传文件的卷（见 [`fixture::a_real_volume`]）：第二遍照样要走，
+        // 一页加一个透传文件的卷（见 [`fixture::a_real_volume`]）：写出环节照样要走，
         // 它写的是那个透传成员。
         let workspace = tempfile::tempdir().expect("建得出临时目录");
         let request = a_one_volume_run(&workspace);
@@ -790,28 +790,28 @@ mod tests {
                 watch: Watch {
                     live,
                     latch: Arc::clone(&latch),
-                    // 这一条走的是不等人那一支：它问的是「第一遍里按下的收尾会不会
-                    // 把当前卷的第二遍吃掉」，而那正是 [`answer`] 那条规矩管的事。
+                    // 这一条走的是不等人那一支：它问的是「分析环节里按下的做完再停会不会
+                    // 把当前卷的写出环节吃掉」，而那正是 [`answer`] 那条规矩管的事。
                     gate: None,
                 },
                 latch: Arc::clone(&latch),
             })),
             ..request
         })
-        .expect("按停不是失败");
+        .expect("按停止不是失败");
 
-        assert_eq!(latch.get(), Instruction::Finish, "闩该停在收尾这一级");
-        assert_eq!(report.volumes.len(), 1, "当前卷被收尾吃掉了");
+        assert_eq!(latch.get(), Instruction::Finish, "闩该停在做完再停这一级");
+        assert_eq!(report.volumes.len(), 1, "当前卷被做完再停吃掉了");
         assert!(
             out.join("卷一").join("说明.txt").is_file(),
-            "收尾说好当前卷跑完才停，盘上却没有它"
+            "做完再停说好当前卷跑完才停，盘上却没有它"
         );
         assert_eq!(crate::exit_code(&report), crate::SUCCESS_EXIT);
     }
 
-    /// **试算停在决策点上，答继续就接着做第二遍**（`p1-session/14`，ADR 0012）。
+    /// **预览停在确认点上，答继续就接着做写出环节**（`p1-session/14`，ADR 0012）。
     ///
-    /// 三件事一次问齐：停下来那一刻**盘上什么都没有**（第二遍还没开始）、
+    /// 三件事一次问齐：停下来那一刻**盘上什么都没有**（写出环节还没开始）、
     /// 停着的时候 [`Running::deciding`] 说得出「在等人」、答完那条线程接着跑并把这一卷写全。
     ///
     /// **停下来那一眼非看不可**：跑完再看只看得见最终的样子，而「此刻还没落盘」与
@@ -826,16 +826,16 @@ mod tests {
         running.start(request, Resuming::Waits);
         until_deciding(&running);
 
-        assert!(running.deciding(), "停在决策点上，却说没在等人");
+        assert!(running.deciding(), "停在确认点上，却说没在等人");
         assert_eq!(
             landed(&out),
             Vec::<String>::new(),
-            "第二遍还没开始，盘上却有东西了"
+            "写出环节还没开始，盘上却有东西了"
         );
         // 停在这儿的那一卷手上有一份报告可画（停车场 Q52）——「主区把报告画出来
         // 等你拿主意」靠的就是它。
         let live = running.live().expect("跑过一趟");
-        assert!(live.summarized().is_some(), "决策点上没有报告可画");
+        assert!(live.summarized().is_some(), "确认点上没有报告可画");
         assert!(
             live.report().volumes.is_empty(),
             "这一卷还没收摊，报告里却已经有它了"
@@ -865,14 +865,14 @@ mod tests {
         assert_eq!(running.exit_code(), crate::SUCCESS_EXIT);
     }
 
-    /// **一趟几卷，就在几个决策点上各等一次**（`volume-discovery/07`，ADR 0012
+    /// **一趟几卷，就在几个确认点上各等一次**（`volume-discovery/07`，ADR 0012
     /// 决定第 3 条）。
     ///
     /// 从前这一副只有点名一个路径时到得了，而点名一个路径早已不等于一个卷
     /// （`volume-discovery/03`：`inputs` 装的是「在里面找卷的地方」）。
     ///
-    /// **每一停都看一眼盘**：第 N 个决策点到来时输出根下恰好是前 N-1 卷。
-    /// 那一眼同时钉住三件事——问在第二遍**之前**、答继续的那几卷**真写了出去**、
+    /// **每一停都看一眼盘**：第 N 个确认点到来时输出目录下恰好是前 N-1 卷。
+    /// 那一眼同时钉住三件事——问在写出环节**之前**、答继续的那几卷**真写了出去**、
     /// 而停着的这一卷一个字节都还没有。
     ///
     /// **峰值内存仍随单卷走**（票面第五条）：缓存逐卷建、逐卷丢（ADR 0005），
@@ -897,7 +897,7 @@ mod tests {
             assert_eq!(
                 landed(&out),
                 landed_so_far,
-                "停在决策点上那一刻盘上的东西不对"
+                "停在确认点上那一刻盘上的东西不对"
             );
             // 停着的这一卷手上有它自己那一份报告可画（停车场 Q52）：
             // 每一卷都要画出**那一卷**的报告，而不是只有头一卷有。
@@ -907,7 +907,7 @@ mod tests {
                     .expect("跑过一趟")
                     .summarized()
                     .is_some_and(|volume| !volume.pages.is_empty()),
-                "这一卷的决策点上没有报告可画"
+                "这一卷的确认点上没有报告可画"
             );
             running.decide(Instruction::Continue, Reach::ThisVolume);
         }
@@ -928,16 +928,16 @@ mod tests {
         }
     }
 
-    /// **答一次「剩下的卷都这样」，往下就不再问**（`volume-discovery/07` 票面第三条，
+    /// **答一次「后面的卷都写出」，往下就不再问**（`volume-discovery/07` 票面第三条，
     /// spec 的 story 13：答一次就能挂着去泡茶）。
     ///
     /// 三件事一次问齐：
     ///
     /// - 头一卷之后**一次都不再停**——那一格是观察者那一侧的默认答案，
-    ///   往下每一个决策点当场照它答（[`Gate::ask`] 那条短路）。
+    ///   往下每一个确认点当场照它答（[`Gate::ask`] 那条短路）。
     ///   循环里每转一圈问一次，真停了当场就红，而不是挂在那儿等一个不会来的人。
     /// - 三卷**一个不少**地写了出去。
-    /// - **按停按到的那一级一格不动**（票面第四条）：这个手势不是闩，
+    /// - **按停止时按到的那一级一格不动**（票面第四条）：这个手势不是闩，
     ///   两边那个闩因此都还停在「没按过」。
     #[test]
     fn answering_for_the_rest_once_stops_the_asking_and_leaves_the_latch_alone() {
@@ -953,7 +953,7 @@ mod tests {
         while !running.reap() {
             assert!(
                 !running.deciding(),
-                "答过「剩下的卷都这样」，它却又停下来问了"
+                "答过「后面的卷都写出」，它却又停下来问了"
             );
             std::thread::yield_now();
         }
@@ -962,7 +962,7 @@ mod tests {
         assert_eq!(
             running.pressed(),
             Instruction::Continue,
-            "这个手势把按停那一级也推上去了"
+            "这个手势把按停止那一级也推上去了"
         );
         let live = running.live().expect("跑过一趟");
         assert_eq!(live.report().volumes.len(), 3);
@@ -974,12 +974,12 @@ mod tests {
         assert_eq!(live.mode(), RunMode::Process);
     }
 
-    /// **决策点上答收尾＝一次 dry-run**（`p1-session/14` 票面第三条）：
-    /// 输出根一个文件都没有，而**报告照出**（ADR 0012，`CONTEXT.md` 的《会话》：决策点）。
+    /// **确认点上答做完再停＝一次 dry-run**（`p1-session/14` 票面第三条）：
+    /// 输出目录一个文件都没有，而**报告照出**（ADR 0012，`CONTEXT.md` 的《会话》：确认点）。
     ///
-    /// 报告那一半非钉不可：收尾与中止的分界线就在它上面——停在决策点上的那一卷
+    /// 报告那一半非钉不可：做完再停与立即停止的分界线就在它上面——停在确认点上的那一卷
     /// **做过事**（判定、逐页结果、解码计数都是真的），只有 `timing.second_pass` 是零。
-    /// 那正是试算要看的那份东西。
+    /// 那正是预览要看的那份东西。
     #[test]
     fn answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume() {
         let workspace = tempfile::tempdir().expect("建得出临时目录");
@@ -995,34 +995,38 @@ mod tests {
         assert_eq!(
             landed(&out),
             Vec::<String>::new(),
-            "答了收尾，盘上却写了东西"
+            "答了做完再停，盘上却写了东西"
         );
         let live = running.live().expect("跑过一趟");
-        assert_eq!(live.report().volumes.len(), 1, "答收尾的那一卷该照出报告");
+        assert_eq!(
+            live.report().volumes.len(),
+            1,
+            "答做完再停的那一卷该照出报告"
+        );
         assert_eq!(
             live.report().volumes[0].timing.second_pass,
             std::time::Duration::ZERO,
-            "第二遍一步没走，那一格却不是零"
+            "写出环节一步没走，那一格却不是零"
         );
         assert_eq!(
             live.mode(),
             RunMode::DryRun,
-            "答了收尾，报告抬头却不说这一趟只算不写"
+            "答了做完再停，报告抬头却不说这一趟只算不写"
         );
         drop(live);
-        // 按停不是失败，决策点上停下来同样不是。
+        // 按停止不是失败，确认点上停下来同样不是。
         assert_eq!(running.exit_code(), crate::SUCCESS_EXIT);
         let printed = running.report().expect("有报告可印");
-        assert!(printed.contains("dry-run"), "{printed}");
+        assert!(printed.contains("预览：只分析"), "{printed}");
     }
 
-    /// **等答话的时候退出会话**：那条线程收得回来，那一卷等于没做（票面第六条）。
+    /// **等待确认的时候退出会话**：那条线程收得回来，那一卷等于没做（票面第六条）。
     ///
-    /// 走的是[中止](Running::leave)那一级，与页边界上按下它一个待遇：那一卷不进报告、
-    /// 最终位置上一个字节都没动过、`partial` 也没留下——第二遍还没开始，那一格连建都没建。
+    /// 走的是[立即停止](Running::leave)那一级，与页边界上按下它一个待遇：那一卷不进报告、
+    /// 最终位置上一个字节都没动过、`partial` 也没留下——写出环节还没开始，那一格连建都没建。
     ///
     /// **这一条同时是那道闸的死锁哨兵**：`leave` 要 join 一条正等在闸上的线程，
-    /// 而闩它在那儿读不到。中止不连着把闸推开的话，这条用例会挂住而不是红
+    /// 而闩它在那儿读不到。立即停止不连着把闸推开的话，这条用例会挂住而不是红
     /// （见 [`Running::stop`]）。
     #[test]
     fn leaving_while_the_decision_point_waits_throws_that_volume_away() {
@@ -1041,7 +1045,7 @@ mod tests {
         assert_eq!(live.undone(), None, "退出会话不是「这一趟没做成」");
         assert!(
             live.report().volumes.is_empty(),
-            "中止掉的那一卷进了报告：{:?}",
+            "立即停止掉的那一卷进了报告：{:?}",
             live.report().volumes
         );
         assert!(
@@ -1052,11 +1056,11 @@ mod tests {
         assert_eq!(landed(&out), Vec::<String>::new(), "盘上留下了东西");
     }
 
-    /// **按下中止之后那一趟不会停下来等人**（ADR 0013 决定第 2 条）：中止在决策点上不让，
+    /// **按下立即停止之后那一趟不会停下来等人**（ADR 0013 决定第 2 条）：立即停止在确认点上不让，
     /// 而那一级要的就是当前卷等于没做——人早就按下去了，再问一句没有意义。
     ///
-    /// 抢不抢得在那条线程走到决策点之前按下去不由用例说了算，**而两种收场是同一个答案**：
-    /// 抢到了走 [`Watch::observe`] 那一处短路（闩已是中止，一句话都不问），
+    /// 抢不抢得在那条线程走到确认点之前按下去不由用例说了算，**而两种结束是同一个答案**：
+    /// 抢到了走 [`Watch::observe`] 那一处短路（闩已是立即停止，一句话都不问），
     /// 没抢到走 [`Running::stop`] 推开的那道闸（它已经等在上面了）。两条都不该挂住，
     /// 也都不该把这一卷留在盘上或报告里。
     #[test]
@@ -1067,18 +1071,18 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::Waits);
-        // 真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）：收尾 → 中止。
+        // 真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）：做完再停 → 立即停止。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);
 
-        assert!(!running.deciding(), "按过中止了还停下来等人");
+        assert!(!running.deciding(), "按过立即停止了还停下来等人");
         let live = running.live().expect("跑过一趟");
         assert!(live.ended(), "那条线程还等在闸上没回来");
-        assert_eq!(live.undone(), None, "按停不是「这一趟没做成」");
+        assert_eq!(live.undone(), None, "按停止不是「这一趟没做成」");
         assert!(
             live.report().volumes.is_empty(),
-            "中止掉的那一卷进了报告：{:?}",
+            "立即停止掉的那一卷进了报告：{:?}",
             live.report().volumes
         );
         drop(live);
@@ -1086,9 +1090,9 @@ mod tests {
         assert_eq!(running.exit_code(), crate::SUCCESS_EXIT);
     }
 
-    /// **不续做的那一趟在决策点上不等人**：闸根本不在，那一条照 [`answer`] 当场答字。
+    /// **不接着写出的那一趟在确认点上不等人**：闸根本不在，那一条照 [`answer`] 当场答字。
     ///
-    /// 多卷试算与执行走的都是这一支。它与上面三条的差只有 [`Running::start`] 那个参数——
+    /// 多卷预览与转换走的都是这一支。它与上面三条的差只有 [`Running::start`] 那个参数——
     /// 判它的是 `super::resuming`，本层只照办。
     #[test]
     fn a_run_that_does_not_resume_never_waits_for_anybody() {
@@ -1100,10 +1104,10 @@ mod tests {
         running.start(request, Resuming::GoesOn);
         until_done(&mut running);
 
-        assert!(!running.deciding(), "不续做的那一趟停下来等人了");
+        assert!(!running.deciding(), "不接着写出的那一趟停下来等人了");
         assert_eq!(landed(&out), ["卷一"], "没人拦它，它却没走到底");
         let live = running.live().expect("跑过一趟");
-        assert_eq!(live.decided(), None, "没人在决策点上作过答");
+        assert_eq!(live.decided(), None, "没人在确认点上作过答");
         assert_eq!(
             live.mode(),
             RunMode::Process,
@@ -1111,7 +1115,7 @@ mod tests {
         );
     }
 
-    /// **退出会话走的是中止那一级**（停车场 Q63）：不干等当前卷跑完，
+    /// **退出会话走的是立即停止那一级**（停车场 Q63）：不干等当前卷跑完，
     /// 盘上也不留半卷。
     #[test]
     fn leaving_the_session_aborts_whatever_is_running() {
@@ -1123,7 +1127,7 @@ mod tests {
 
     /// **起下一趟把上一趟按下的停丢掉**：闩一趟一份。
     ///
-    /// 不换的话，第一趟按过中止之后，同一个会话里再按执行会当场被自己上一趟的那一下停掉。
+    /// 不换的话，第一趟按过立即停止之后，同一个会话里再按执行会当场被自己上一趟的那一下停掉。
     #[test]
     fn a_second_run_does_not_inherit_the_stop_pressed_in_the_first() {
         let mut running = Running::default();
@@ -1154,12 +1158,12 @@ mod tests {
         until_done(&mut running);
     }
 
-    /// **按停之后仍然收得回来**：那条线程回来了，退出码照旧是命令行那一路的数，
+    /// **按停止之后仍然收得回来**：那条线程回来了，退出码照旧是命令行那一路的数，
     /// 盘上不留半卷（ADR 0013 决定第 2 条）。
     ///
     /// 抢不抢得在它跑完之前按下去不由用例说了算——这一卷小到几毫秒就走完。
-    /// 两种收场因此都对：抢到了是「按停」，没抢到是「走到头」。要问的那三件事
-    /// 在两种收场下是同一个答案，而**停出来的现场对不对**是库那一侧的事
+    /// 两种结束因此都对：抢到了是「按停止」，没抢到是「走到头」。要问的那三件事
+    /// 在两种结束下是同一个答案，而**停出来的现场对不对**是库那一侧的事
     /// （`tests/events.rs` 的 `aborting_at_a_page_boundary_throws_the_partial_container_away`
     /// 那一批，观察者当场答字，不开线程也不掐表）。
     #[test]
@@ -1170,27 +1174,27 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::GoesOn);
-        // 按两次：收尾 → 中止。真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）。
+        // 按两次：做完再停 → 立即停止。真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);
 
         let live = running.live().expect("跑过一趟");
-        assert!(live.ended(), "按停之后那条线程没回来");
-        assert_eq!(live.undone(), None, "按停不是「这一趟没做成」");
+        assert!(live.ended(), "按停止之后那条线程没回来");
+        assert_eq!(live.undone(), None, "按停止不是「这一趟没做成」");
         assert!(
             matches!(
                 live.report().outcome,
                 RunOutcome::Stopped(Instruction::Abort) | RunOutcome::Completed
             ),
-            "收场说不清：{:?}",
+            "结束说不清：{:?}",
             live.report().outcome
         );
         drop(live);
 
-        // 退出码照旧走 `crate::exit_code`：按停是用户自己的决定，不是失败。
+        // 退出码照旧走 `crate::exit_code`：按停止是用户自己的决定，不是失败。
         assert_eq!(running.exit_code(), crate::SUCCESS_EXIT);
-        // 中止丢掉的是**它自己建的**那格 `partial`，最终位置上一个字节都没动过。
+        // 立即停止丢掉的是**它自己建的**那格 `partial`，最终位置上一个字节都没动过。
         let left_behind: Vec<_> = std::fs::read_dir(&out)
             .into_iter()
             .flatten()

@@ -1,11 +1,11 @@
 //! `score(参照, 候选) -> Score` 这个 seam 上的性质测试（ADR 0002）。
 //!
-//! 断言的是判据的性质，不是具体数值——核尺寸、掩蔽加权的形状都还没标定，数值会动，
-//! 而这几条性质正是判据存在的理由，动了就是判据错了。
+//! 断言的是画质分的性质，不是具体数值——核尺寸、细节放宽加权的形状都还没标定，数值会动，
+//! 而这几条性质正是画质分存在的理由，动了就是画质分错了。
 //!
-//! 判据是两项：低通项与颗粒项。两项**各有一条会把对方推翻的性质**，两条都在这里：
-//! 「1bit 上抖动优于不抖动」（低通项在守）与「抖动骗不过局部均值」（颗粒项在守）。
-//! 只留一条，判据就会退回它修好之前的那一半。
+//! 画质分是两项：整体走样项与抖动颗粒项。两项**各有一条会把对方推翻的性质**，两条都在这里：
+//! 「1bit 上抖动优于不抖动」（整体走样项在守）与「抖动骗不过局部均值」（抖动颗粒项在守）。
+//! 只留一条，画质分就会退回它修好之前的那一半。
 
 mod fixtures;
 
@@ -13,7 +13,7 @@ use tonefit::{BitDepth, Candidate, GrayImage, Reference, Size, quantize, score};
 
 /// 把 `candidate` 量化出来，量它离参照有多远。
 ///
-/// 位深从候选身上取——判据要它算颗粒项那道地板（`metric::Composition::floor`），
+/// 灰阶档位从候选身上取——画质分要它算抖动颗粒项那道地板（`metric::Composition::floor`），
 /// 而候选正是量化这张图的那一档。摆成一处，免得每条用例各写一遍。
 fn reading(reference: &Reference, candidate: Candidate) -> tonefit::Score {
     score(
@@ -23,7 +23,7 @@ fn reading(reference: &Reference, candidate: Candidate) -> tonefit::Score {
     )
 }
 
-/// 性质测试用的页尺寸。判据只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
+/// 性质测试用的页尺寸。画质分只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
 /// 取得比目标尺寸小是为了让这一组用例跑得快，分块数（20×26）仍足够 p99 有意义。
 const PAGE: Size = Size::new(640, 832);
 
@@ -40,7 +40,7 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
         "抖动候选 {dithered_score} 没有赢过不抖动的 {plain_score}"
     );
 
-    // 同一对候选上，逐像素度量给出相反的排序。这正是判据必须低通的理由：
+    // 同一对候选上，逐像素度量给出相反的排序。这正是画质分必须低通的理由：
     // 抖动用高频误差换低频保真，逐像素度量只看得见前者（ADR 0002、measurements 的《抖动》）。
     let plain_pixelwise = pixelwise_rmse(reference.image(), &plain);
     let dithered_pixelwise = pixelwise_rmse(reference.image(), &dithered);
@@ -57,8 +57,8 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
 /// 聚集点阵二值页，box 降采样解析出连续灰调——**网点是因，灰调是果**。
 ///
 /// 它与 [`on_a_gradient_the_dithered_candidate_beats_the_undithered_one`] 分工不同：
-/// 那一条守的是渐变页，这一条守的是网点页，而立判据时的证据出在网点页上。
-/// 补颗粒项时最容易把它撞翻——颗粒项在 1bit 上给两个候选都记一笔。
+/// 那一条守的是渐变页，这一条守的是网点页，而立画质分时的证据出在网点页上。
+/// 补抖动颗粒项时最容易把它撞翻——抖动颗粒项在 1bit 上给两个候选都记一笔。
 #[test]
 fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() {
     let reference = baseline_reference(resolved_screentone(PAGE));
@@ -80,8 +80,8 @@ fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() 
 
 /// 网点页 box 降采样两倍：二值的「因」进去，连续灰调的「果」出来。
 ///
-/// 判据吃的是目标尺寸下的参照，而网点在原始分辨率上还是二值的——不缩这一次，
-/// 各档位深读数全是零，这一条就什么都没量到。
+/// 画质分吃的是目标尺寸下的参照，而网点在原始分辨率上还是二值的——不缩这一次，
+/// 各档灰阶档位读数全是零，这一条就什么都没量到。
 fn resolved_screentone(size: Size) -> image::DynamicImage {
     let doubled = Size::new(size.width * 2, size.height * 2);
     let source = fixtures::gray_image(&fixtures::screentone(doubled));
@@ -104,15 +104,15 @@ fn resolved_screentone(size: Size) -> image::DynamicImage {
     )
 }
 
-/// 抖动保住了局部均值，判据仍要看得见它撒下的颗粒——**真机盲测排反的那一条就在这里**。
+/// 抖动保住了局部均值，画质分仍要看得见它撒下的颗粒——**真机盲测排反的那一条就在这里**。
 ///
-/// 棋魂 0060 上 1bit+FS 真机排第 5、不可接受，同页 2bit 不抖排第 2，而只有低通项的判据
-/// 给出 6.157 对 8.211，把序排反了（见 measurements 的《位深盲测》）。机理是低通项量的
+/// 棋魂 0060 上 1bit+FS 真机排第 5、不可接受，同页 2bit 不抖排第 2，而只有整体走样项的画质分
+/// 给出 6.157 对 8.211，把序排反了（见 measurements 的《位深盲测》）。机理是整体走样项量的
 /// 恰好是误差扩散被设计来优化的那个量。这一条把那个形状搬到合成页上：一张平坦灰调页，
-/// 1bit+FS 的局部均值几乎不差、2bit 不抖整块偏 30 级，判据仍须判前者更差。
+/// 1bit+FS 的局部均值几乎不差、2bit 不抖整块偏 30 级，画质分仍须判前者更差。
 ///
 /// 反过来那一侧由 [`on_a_gradient_the_dithered_candidate_beats_the_undithered_one`] 守着。
-/// 两条各守一项，缺一条判据就退回它修好之前的那一半。
+/// 两条各守一项，缺一条画质分就退回它修好之前的那一半。
 #[test]
 fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
@@ -123,28 +123,28 @@ fn dithering_cannot_hide_behind_the_local_average_it_preserves() {
 
     assert!(
         one_bit_dithered > two_bit_plain,
-        "1bit+FS 的 {one_bit_dithered} 没有差过 2bit 不抖的 {two_bit_plain}：判据看不见颗粒"
+        "1bit+FS 的 {one_bit_dithered} 没有差过 2bit 不抖的 {two_bit_plain}：画质分看不见颗粒"
     );
 }
 
-/// 颗粒项有一道**可见度地板**，而地板**跟着格点间距走**：每一档上各是各的数，
+/// 抖动颗粒项有一道**颗粒可见下限**，而地板**跟着格点间距走**：每一档上各是各的数，
 /// 每一档上颗粒都穿得过去。
 ///
 /// 地板还是绝对值 55 时这条只在 1bit 上成立：那个数卡在 1bit 与 2bit 的格点间距之间，
-/// 2bit 与 4bit 的颗粒项因此恒读零、判据在那两档退回只剩低通项
+/// 2bit 与 4bit 的抖动颗粒项因此恒读零、画质分在那两档退回只剩整体走样项
 /// （measurements 的《颗粒项只在 1bit 上生效》）。
 ///
 /// 两半各守一件事，缺一半地板就退化成别的东西：
 ///
-/// - **收得到**：抖动撒下的颗粒穿得过那一档的地板。地板整条吞掉颗粒项，判据在那一档
-///   就退回只剩低通项。
-/// - **不多收**：抖动仍赢得过同档不抖动。地板一格不减，颗粒项就是逐像素度量的一半，
+/// - **收得到**：抖动撒下的颗粒穿得过那一档的地板。地板整条吞掉抖动颗粒项，画质分在那一档
+///   就退回只剩整体走样项。
+/// - **不多收**：抖动仍赢得过同档不抖动。地板一格不减，抖动颗粒项就是逐像素度量的一半，
 ///   抖动在每一档上都要挨罚——那正是 ADR 0002 关掉的那个洞。
 ///
 /// 页取**纯中灰 128**：三档上它都落在两个格点正中（1bit 差 127、2bit 差 42、4bit 差 8），
 /// 抖动买到的便宜最大，两半在同一张页上因此都量得出来。换成别的灰调，「不多收」那一半
-/// 会在 1bit 上翻掉——不是地板错了，是整个判据上抖动那一侧还要背自己的低通项，
-/// 平坦的中浅灰上两者本来就会交叉（ADR 0002 的《后果》）。只管颗粒项这一项、
+/// 会在 1bit 上翻掉——不是地板错了，是整个画质分上抖动那一侧还要背自己的整体走样项，
+/// 平坦的中浅灰上两者本来就会交叉（ADR 0002 的《后果》）。只管抖动颗粒项这一项、
 /// 不掺低通的那条算术不变量在 `src/metric.rs`，三档各钉一次。
 #[test]
 fn grain_below_the_visibility_floor_is_not_charged_for() {
@@ -168,14 +168,14 @@ fn grain_below_the_visibility_floor_is_not_charged_for() {
     }
 }
 
-/// 颗粒项在 **2bit 上也说得出话**——地板改成比例之前，它在这一档恒读零。
+/// 抖动颗粒项在 **2bit 上也说得出话**——地板改成比例之前，它在这一档恒读零。
 ///
-/// FS 保住局部均值，纯色页上 2bit+FS 的低通项因此近零：这一档的读数几乎全部出自颗粒项。
+/// FS 保住局部均值，纯色页上 2bit+FS 的整体走样项因此近零：这一档的读数几乎全部出自抖动颗粒项。
 /// 地板还是绝对值 55 时那一项被整条吞掉（候选起伏 40.6 < 55），2bit 的读数于是塌到
-/// 只剩低通那一点点——**判据在那一档退化成只剩一项**，而 ADR 0002 决定第 5 条
-/// 立颗粒项时明写过一项不够。这一条钉的就是「那一项回来了」。
+/// 只剩低通那一点点——**画质分在那一档退化成只剩一项**，而 ADR 0002 决定第 5 条
+/// 立抖动颗粒项时明写过一项不够。这一条钉的就是「那一项回来了」。
 ///
-/// 拿同页同档不抖动的读数当尺子：它读的是整块偏移 30，全是低通项。
+/// 拿同页同档不抖动的读数当尺子：它读的是整块偏移 30，全是整体走样项。
 /// 抖动那一侧若也只剩低通，读回来会是零点几；实际读到的是同一个量级的另一个数。
 #[test]
 fn the_grain_term_reads_back_on_two_bits_too() {
@@ -188,21 +188,21 @@ fn the_grain_term_reads_back_on_two_bits_too() {
     assert!(
         dithered_score.value() > plain_score.value() / 2.0,
         "2bit+FS 读成了 {dithered_score}，同档不抖动是 {plain_score}：\
-         抖动那一侧的低通项近零，读数这么低说明颗粒项没收到费"
+         抖动那一侧的整体走样项近零，读数这么低说明抖动颗粒项没收到费"
     );
 }
 
-/// 平缓斜坡**不给自己买掩蔽**：同样的偏移，在斜坡上与在纯色上读数一样。
+/// 平缓斜坡**不给自己买细节放宽**：同样的偏移，在斜坡上与在纯色上读数一样。
 ///
-/// 掩蔽的活动度量在块这个尺度上（不是低通核那一层），量法是「原值离块尺度局部均值有多远」。
-/// 若改成「离块内均值有多远」，一段横跨整块的斜坡就成了活动度——而斜坡恰恰是 banding
-/// 最显眼的地方，它一旦买到掩蔽，判据就分不出画集 056 与 040 那两页
+/// 细节放宽的细节度量在块这个尺度上（不是低通核那一层），量法是「原值离块尺度局部均值有多远」。
+/// 若改成「离块内均值有多远」，一段横跨整块的斜坡就成了细节度——而斜坡恰恰是 banding
+/// 最显眼的地方，它一旦买到细节放宽，画质分就分不出画集 056 与 040 那两页
 /// （见 measurements 的《位深盲测》）。box 局部均值不改变线性斜坡，这一条把它钉住。
 #[test]
 fn a_slow_ramp_does_not_buy_itself_any_masking() {
     let panel = fixtures::baseline_profile().panel();
     let flat = fixtures::gray_image(&fixtures::solid(PAGE, 128));
-    // 40→200 铺满整页高：一块（32 行）里抬 6 级出头，块内均值会把它读成 1.5 级的「活动度」。
+    // 40→200 铺满整页高：一块（32 行）里抬 6 级出头，块内均值会把它读成 1.5 级的「细节度」。
     let ramp = GrayImage::new(
         PAGE,
         (0..PAGE.height)
@@ -232,13 +232,13 @@ fn a_slow_ramp_does_not_buy_itself_any_masking() {
 
     assert!(
         ramp_score.value() > flat_score.value() * 0.97,
-        "斜坡上的 8 级偏移读成了 {ramp_score}，纯色上是 {flat_score}：斜坡买到了掩蔽"
+        "斜坡上的 8 级偏移读成了 {ramp_score}，纯色上是 {flat_score}：斜坡买到了细节放宽"
     );
 }
 
 #[test]
 fn a_known_offset_reads_back_as_that_many_gray_levels() {
-    // 纯色页整页偏一个手算得出的量，判据读出的就该是那个量——量的单位是 8 位灰度级。
+    // 纯色页整页偏一个手算得出的量，画质分读出的就该是那个量——量的单位是 8 位灰度级。
     // 200 在 1bit 的格点上落到 255（偏 55），在 2bit 的 {0,85,170,255} 上落到 170（偏 30）。
     let reference = baseline_reference(fixtures::solid(PAGE, 200));
 
@@ -271,7 +271,7 @@ fn baseline_reference(page: image::DynamicImage) -> Reference {
     )
 }
 
-/// 逐像素 RMSE：判据要压过的那个度量，测试自己算，不走被测代码。
+/// 逐像素 RMSE：画质分要压过的那个度量，测试自己算，不走被测代码。
 fn pixelwise_rmse(reference: &GrayImage, candidate: &GrayImage) -> f64 {
     let sum: f64 = reference
         .pixels()
@@ -316,7 +316,7 @@ fn the_error_never_grows_when_the_bit_depth_does() {
                 "{name}页上 {fine} 的 {fine_score} 反而差过 {coarse} 的 {coarse_score}"
             );
         }
-        // 参照本身未经目标位深量化：8bit 的格点就是工作精度，误差恒为零。
+        // 参照本身未经目标灰阶档位量化：8bit 的格点就是工作精度，误差恒为零。
         assert_eq!(scores[3].1.value(), 0.0, "{name}页的 8bit 不是零误差");
     }
 }
@@ -350,12 +350,12 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     //
     // 不主张两边**相等**：两张页取的不是同一个秩。局促页上分位只圈住最差的一块，
     // 大页上 K 说了算、取的是第 K 差的那一块，而那一块贴着补丁的边——
-    // 低通在那里掺进了留白，掩蔽加权也因边界的活动度而收了手。两样都是判据照定义在做事。
+    // 低通在那里掺进了留白，细节放宽加权也因边界的细节度而收了手。两样都是画质分照定义在做事。
     // 留下的余量按量的：K 从 4 到 20 落差都是 1.6%，一成的带子稳稳罩得住，
     // 而稀释一露头就是量级塌陷（同一份夹具上，聚合退回只取上分位读的是 0.000）。
     assert!(
         roomy_score <= cramped_score && roomy_score.value() >= cramped_score.value() * 0.9,
-        "留白把判据从 {cramped_score} 稀释到了 {roomy_score}"
+        "留白把画质分从 {cramped_score} 稀释到了 {roomy_score}"
     );
 
     // 换成全页聚合就会被稀释：同一块补丁在实际输出尺寸上只占千分之几，
@@ -375,7 +375,7 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     );
 }
 
-/// 一块 `wide × tall` 块大的补丁。判据的分块聚合数的是块，夹具因此也按块说话。
+/// 一块 `wide × tall` 块大的补丁。画质分的分块聚合数的是块，夹具因此也按块说话。
 ///
 /// 块数按 K 推出而不抄下当前那个数字，两头都不能碰：要**够 K**，否则大页那一侧读回 0，
 /// 量的就成了别的事；又不能大到 p99 自己都圈得住，否则退回只取上分位也照样绿
@@ -385,7 +385,7 @@ fn patch_of(wide: usize, tall: usize) -> Size {
     Size::new(shape.tile * wide as u32, shape.tile * tall as u32)
 }
 
-/// 留白里一块灰调补丁的那种页，转成判据吃的灰度缓冲。页本身由 [`fixtures::tone_patch`] 造，
+/// 留白里一块灰调补丁的那种页，转成画质分吃的灰度缓冲。页本身由 [`fixtures::tone_patch`] 造，
 /// 黄金回归的 `local-damage` 用的是同一份——两处量的必须是同一种页。
 fn tone_patch_page(size: Size, patch: Size) -> GrayImage {
     fixtures::gray_image(&fixtures::tone_patch(size, patch))
@@ -400,7 +400,7 @@ fn the_same_error_counts_for_more_in_a_flat_area_than_in_a_textured_one() {
         fixtures::gray_image(&fixtures::fine_texture(PAGE, 128, 40)),
     );
     // 同一个偏移加在两张参照上。低通是线性的，两边的局部均值误差因此逐像素相等，
-    // 判据只剩掩蔽加权这一项还能不同。
+    // 画质分只剩细节放宽加权这一项还能不同。
     let lifted = |reference: &Reference| {
         GrayImage::new(
             reference.size(),
@@ -440,7 +440,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
     // 核由 PPI 推出：面板越密，同一个视角盖住的像素越多，抖动的高频被抹得越干净。
     assert!(
         on(denser) < on(coarser),
-        "换了 PPI 判据没变：{} 对 {}，低通核像是写死的",
+        "换了 PPI 画质分没变：{} 对 {}，低通核像是写死的",
         on(denser),
         on(coarser)
     );
@@ -449,7 +449,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
 /// 一块绝对尺寸的损伤，在该 profile 的**实际输出尺寸**上照样读得出来。
 ///
 /// 分块上分位是**比例**，而值得报警的损伤是**绝对面积**：p99 在 1264×1680 上只圈得住
-/// 最差的 22 块，覆盖不到那么多块的损伤被整块丢掉，三个候选位深读数全是 0，
+/// 最差的 22 块，覆盖不到那么多块的损伤被整块丢掉，三个候选灰阶档位读数全是 0，
 /// 那一页于是判成最低档——而那一小块正是唯一会崩的地方（ADR 0002 的《第 3 条为什么改过》）。
 #[test]
 fn damage_covering_the_tail_width_reads_back_at_every_page_size() {

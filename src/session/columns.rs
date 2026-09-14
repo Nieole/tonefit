@@ -29,7 +29,7 @@
 //! **它按 `UnicodeWidthChar::width` 算，不按 `width_cjk`**：东亚宽度表上标着
 //! **Ambiguous** 的字形在这里一律当一格。这是仓库既有的约定（`crate::wrap` 那一头也是
 //! 它），本模块跟着走，不另立第二套——跟着走的代价由**字形的选法**接住：
-//! **摆进列里的字形一个都不许是歧义宽度**，判据、边界与理由都在
+//! **摆进列里的字形一个都不许是歧义宽度**，画质分、边界与理由都在
 //! [`tonefit::width_is_stable`]。
 //!
 //! 那条规矩管两层：**这一层自己造的字形**（[`ELLIPSIS`] 与三张表的行首记号），
@@ -47,7 +47,7 @@
 //!
 //! 「哪几格要过宽度那一关」因此**只有这一处出处**（`wording_cells` 从它导出）。
 //! 从前措辞那一层还手抄着第二份，往表里添一列那一份不跟着添**也不会红**——
-//! 逐页表添了五格几何列之后，裁边与缩放两格就是那么漏出去的（停车场 Q188）。
+//! 逐页表添了五格几何列之后，裁白边与缩放两格就是那么漏出去的（停车场 Q188）。
 
 use std::marker::PhantomData;
 
@@ -75,14 +75,14 @@ const ELLIPSIS: char = '⋯';
 /// 措辞归造字面的那一层查字形，原样归[从中间省略](elide)，记号归画它的那一层。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Provenance {
-    /// **措辞 (Wording)**：界面层自己造的字面（尺寸、裁边、缩放、判定、理由、页数、分布……）。
+    /// **措辞 (Wording)**：界面层自己造的字面（尺寸、裁白边、缩放、判定、理由、页数、分布……）。
     ///
     /// 字形宽度**必须稳**（[`tonefit::width_is_stable`]），而查它的是**造字面的那一层**——
     /// 带着的正是「查哪一格」：`Some(field)` 是 [`crate::render`] 出的那一格，
     /// 那一层那条用例从 `wording_cells` 拿走全部要查的格；`None` 是画法这一层
     /// 自己造的字，眼下只有[耗时](VolumeColumn::Elapsed)一列，它在自己那一头查。
     Wording(Option<Field>),
-    /// **原样 (Verbatim)**：用户的字节原封带过来（目录名、卷名、页名、去处路径、定档页名）。
+    /// **原样 (Verbatim)**：用户的字节原封带过来（目录名、卷名、页名、去处路径、代表页名）。
     ///
     /// 宽度**永远稳不住**——一个带 emoji 的文件名不该把整张表判红——摆不下时归
     /// [从中间省略](elide)管，**不进那一关**。它因此不必报出自己出自哪一格。
@@ -128,7 +128,7 @@ pub(super) trait Column: Copy + PartialEq + 'static {
     ///
     /// **每一个变体都得自己答**：三处 `match` 一个 `_` 都不留，添一列不写这一格
     /// **编译就过不去**。从前「哪几格要过宽度那一关」在仓库里另有一份手抄的名单，
-    /// 添一列不跟着添也不会红——逐页表的裁边与缩放两列就是那么漏出去的（停车场 Q188）。
+    /// 添一列不跟着添也不会红——逐页表的裁白边与缩放两列就是那么漏出去的（停车场 Q188）。
     fn provenance(self) -> Provenance;
 
     /// 这一列在 [`Widths`] 里的第几格。
@@ -156,14 +156,14 @@ pub(super) enum DirectoryColumn {
     Name,
     /// 这一枝底下几卷。没做成的那几卷也算在里面。
     Volumes,
-    /// 基准档分布：各档各有几卷，排成一串。
+    /// 统一档位分布：各档各有几卷，排成一串。
     Bases,
 }
 
 impl Column for DirectoryColumn {
     const ALL: &'static [Self] = &[Self::Mark, Self::Name, Self::Volumes, Self::Bases];
 
-    /// **砍列的次序：基准档分布 → 卷数。**
+    /// **砍列的次序：统一档位分布 → 卷数。**
     ///
     /// 记号与目录名不在这里边——它们**恒在**：一行上先要认得出这是哪一枝、它出没出事。
     ///
@@ -178,7 +178,7 @@ impl Column for DirectoryColumn {
             Self::Mark => "记号",
             Self::Name => "目录",
             Self::Volumes => "卷数",
-            Self::Bases => "基准档分布",
+            Self::Bases => "统一档位分布",
         }
     }
 
@@ -212,10 +212,10 @@ pub(super) enum VolumeColumn {
     Name,
     /// 输出页数。
     Pages,
-    /// 档位分布（`CONTEXT.md` 的《档位分布》），或者这一卷为什么一页都没判（跳过、没做成）。
+    /// 灰阶分布（`CONTEXT.md` 的《灰阶分布》），或者这一卷为什么一页都没判（跳过、没做成）。
     /// **一张灰度页都没有的卷这一格不在场**（`two-pass-rework/02`）。
     Tally,
-    /// 定档页：这一卷的档位是哪一页定出来的。**只在 `--envelope` 那条路上在场**——
+    /// 代表页：这一卷的档位是哪一页定出来的。**只在 `--envelope` 那条路上在场**——
     /// 默认逐页那一趟整列不在（[`fit`] 的第零步让掉它，连列头都不占）。
     Driver,
     /// 这一卷做了多久。
@@ -232,18 +232,18 @@ impl Column for VolumeColumn {
         Self::Elapsed,
     ];
 
-    /// **砍列的次序：耗时 → 定档页 → 页数 → 档位分布。**
+    /// **砍列的次序：耗时 → 代表页 → 页数 → 灰阶分布。**
     ///
     /// 记号与卷名不在这里边——它们**恒在**：一行上先要认得出这是哪一卷、它出没出事。
     ///
     /// 次序按「摆不下时先舍谁」排：耗时最先——它是这一卷做完之后的一个旁证；
-    /// 定档页次之——追下去要展开那一卷才看得清；页数再次——它是这一卷有多厚，
-    /// 与卷名一起就已经是一句话；**档位分布压后**——它是这张表要答的那件事，
+    /// 代表页次之——追下去要展开那一卷才看得清；页数再次——它是这一卷有多厚，
+    /// 与卷名一起就已经是一句话；**灰阶分布压后**——它是这张表要答的那件事，
     /// 但它也是这张表上最宽的一格（两档就二十格，`two-pass-rework/02`），
     /// 留着它去收窄卷名，卷名就只剩一个省略号，那一行连是哪一卷都认不出了。
     /// 它让掉之后跳过与没做成那两个词跟着丢，而行首记号说的是同一件事
     /// （`super::draw::table::Mark`）：靠得住的载体是记号，不是这一格。
-    /// 从前这一列写的是基准档、一格最宽十二格，那时它恒在、砍无可砍只收窄卷名；
+    /// 从前这一列写的是统一档位、一格最宽十二格，那时它恒在、砍无可砍只收窄卷名；
     /// 分布那一格宽出一倍，这一条重新想过，结论翻了。
     const DROPPED_IN_TURN: &'static [Self] =
         &[Self::Elapsed, Self::Driver, Self::Pages, Self::Tally];
@@ -255,8 +255,8 @@ impl Column for VolumeColumn {
             Self::Mark => "记号",
             Self::Name => "卷名",
             Self::Pages => "页数",
-            Self::Tally => "档位分布",
-            Self::Driver => "定档页",
+            Self::Tally => "灰阶分布",
+            Self::Driver => "代表页",
             Self::Elapsed => "耗时",
         }
     }
@@ -276,7 +276,7 @@ impl Column for VolumeColumn {
             // 就地写出、不占一格，而它们逐条进了目录那一行的[分布](Field::Bases)——
             // 那一关因此照旧问得到（停车场 Q377）。
             Self::Tally => Provenance::Wording(Some(Field::Tally)),
-            // 定档页那一格是**一条路径的最后一段**（见 `super::draw::table::driver`）。
+            // 代表页那一格是**一条路径的最后一段**（见 `super::draw::table::driver`）。
             Self::Driver => Provenance::Verbatim,
             // **这一列的字是画法那一层自己造的**（`super::draw::overview::spell`）：
             // 措辞那一层没有它那一格，字形因此在那一头问。
@@ -290,12 +290,12 @@ impl Column for VolumeColumn {
 /// 与[卷表](VolumeColumn)同一个形状——行首记号与名字恒在，其余按一个固定次序砍。
 /// 列的选法答的是**展开一卷要问的那一件事**：哪一页把整卷的档位拉下来。
 /// 因此从左到右是三段：**这一页是谁**（记号 · 页名）、**它这个样子是怎么来的**
-/// （尺寸 · 裁边 · 缩放 · 跨页 · 彩页转灰）、**它判成哪一档、凭什么**
-/// （判定 · 理由 · 判据），末一格是**去处**——一路由结论走向证据，最后落到盘上那个文件。
+/// （尺寸 · 裁白边 · 缩放 · 跨页 · 彩页转灰）、**它判成哪一档、凭什么**
+/// （判定 · 理由 · 画质分），末一格是**去处**——一路由结论走向证据，最后落到盘上那个文件。
 ///
 /// **十一列一格不少地对着 [`crate::render::pages`] 出的那几格**
 /// （`p4-parking-lot/10`，收停车场 Q162）：几何那五格从前留在表外，跟着丢掉的还有
-/// 失败页那一句「它的尺寸是卷内统一尺寸」（`p1-session/11` 的验收）。
+/// 坏页那一句「它的尺寸是卷内统一尺寸」（`p1-session/11` 的验收）。
 /// 窄屏上它们由[砍列](Self::DROPPED_IN_TURN)让位，而那是**摆不下**，不是不给。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PageColumn {
@@ -305,19 +305,19 @@ pub(super) enum PageColumn {
     Name,
     /// 这一页的输出尺寸。
     Size,
-    /// 裁边裁掉了多少。**一个像素都没裁就不在场。**
+    /// 裁白边裁掉了多少。**一个像素都没裁就不在场。**
     Crop,
-    /// 缩放怎么算的；**失败页说的是它的尺寸从哪来**（`p1-session/11` 的验收）。
+    /// 缩放怎么算的；**坏页说的是它的尺寸从哪来**（`p1-session/11` 的验收）。
     Scaling,
     /// 跨页切出来的哪一半。**不是切出来的就不在场。**
     Cut,
     /// 这一页是彩页转灰。**不是就不在场。**
     ColorToGray,
-    /// 这一页判成的那一档。彩色分支与失败页没有这一格。
+    /// 这一页判成的那一档。彩色分支与坏页没有这一格。
     Verdict,
     /// 判成这一档的理由。
     Reason,
-    /// 各候选的判据值排成一串。
+    /// 各候选的画质分值排成一串。
     Scores,
     /// 去处：这一页写到哪个文件。
     Output,
@@ -338,7 +338,7 @@ impl Column for PageColumn {
         Self::Output,
     ];
 
-    /// **砍列的次序：去处 → 裁边 → 跨页 → 彩页转灰 → 判据 → 尺寸 → 缩放 → 理由。**
+    /// **砍列的次序：去处 → 裁白边 → 跨页 → 彩页转灰 → 画质分 → 尺寸 → 缩放 → 理由。**
     ///
     /// 记号、页名与判定不在这里边——**判成哪一档就是这一副要答的那件事**，
     /// 而先要认得出这是哪一页、它要不要紧。
@@ -347,12 +347,12 @@ impl Column for PageColumn {
     ///
     /// 1. **去处**最先——它是一整条路径，这张表上最宽的一格，而「这一页落到哪儿」
     ///    与那一问离得最远：卷的去处在卷级那一行上，页名与它凑起来就是这一格。
-    /// 2. **裁边 → 跨页 → 彩页转灰**——几何那三格说的是「这一页的形状是怎么来的」，
-    ///    比判定隔着一层；三格之间按宽窄让（裁边是一对尺寸，另两格各一个词）。
+    /// 2. **裁白边 → 跨页 → 彩页转灰**——几何那三格说的是「这一页的形状是怎么来的」，
+    ///    比判定隔着一层；三格之间按宽窄让（裁白边是一对尺寸，另两格各一个词）。
     ///    多数卷这三列一格都不在场，那时它们由 [`fit`] 的第零步先让掉、根本轮不到这里。
-    /// 3. **判据**——它是证据，比结论深一层，也是剩下几列里最宽的一格。
-    /// 4. **尺寸**——宽溢出与兜底那两件事行尾那个词已经说了。
-    /// 5. **缩放**——它是几何那一组里**唯一压到最后的**，只为一件事：失败页那一行靠它
+    /// 3. **画质分**——它是证据，比结论深一层，也是剩下几列里最宽的一格。
+    /// 4. **尺寸**——页面超宽与兜底那两件事行尾那个词已经说了。
+    /// 5. **缩放**——它是几何那一组里**唯一压到最后的**，只为一件事：坏页那一行靠它
     ///    说出「它的尺寸是卷内统一尺寸」（`p1-session/11` 的验收，停车场 Q162
     ///    记着它丢过一次）。那一句在别处一个字都没有。
     /// 6. **理由**压后——它一个词就说清「这一档是怎么来的」，与判定挨着才读得懂。
@@ -378,13 +378,13 @@ impl Column for PageColumn {
             Self::Mark => "记号",
             Self::Name => "页名",
             Self::Size => "尺寸",
-            Self::Crop => "裁边",
+            Self::Crop => "裁白边",
             Self::Scaling => "缩放",
             Self::Cut => "跨页",
             Self::ColorToGray => "彩页",
             Self::Verdict => "判定",
             Self::Reason => "理由",
-            Self::Scores => "判据",
+            Self::Scores => "画质分",
             Self::Output => "去处",
         }
     }
@@ -495,7 +495,7 @@ impl<C: Column> Widths<C> {
     /// 这一列上有一格**在场**，但那一行**这一副不列出来**：只记一笔，不撑宽。
     ///
     /// 两件事分得开是因为它们问的不是同一批行：**这一列在不在场按整卷算**
-    /// （逐页那一副按 `a` 在「要紧的页」与「全部页」之间切，而切的是列哪几页——
+    /// （逐页那一副按 `a` 在「需留意的页」与「全部页」之间切，而切的是列哪几页——
     /// 屏上不该跟着换一副列），**多宽按真列出来的那几行算**（列不出来的那几行
     /// 一个像素都不占，拿它们撑宽只会白挤掉别的列）。
     pub(super) fn note(&mut self, column: C, text: &str) {
@@ -530,7 +530,7 @@ pub(super) fn line_width<C: Column>(kept: &[C], widths: &Widths<C>) -> usize {
 /// # 一整列都不在场就不占地方
 ///
 /// **那是砍列的第零步，与宽度无关**：那一列上一行字都没有，留着它只是让一个列头
-/// 挤掉别的列（逐页那张表上裁边、跨页、彩页转灰三列多数卷一格都不在场，
+/// 挤掉别的列（逐页那张表上裁白边、跨页、彩页转灰三列多数卷一格都不在场，
 /// `p4-parking-lot/10`）。一格在不在场本身就是一句话（`CONTEXT.md` 的《格》）——
 /// **一整列都不在场时那一列没有话说**。
 ///
@@ -659,7 +659,7 @@ fn take(glyphs: impl Iterator<Item = char>, room: usize) -> String {
 mod tests {
     use super::*;
 
-    /// **省略号那一格在哪种终端上都占一格**（判据见 [`tonefit::width_is_stable`]）。
+    /// **省略号那一格在哪种终端上都占一格**（画质分见 [`tonefit::width_is_stable`]）。
     ///
     /// 它是这一层自己造的唯一一个字形，两张表的行首记号各在自己那一头问；
     /// 措辞那一层摆进列里的那几格在 `crate::render` 那一头问。
@@ -737,7 +737,7 @@ mod tests {
 
     /// 一份够宽的量：各列都比列头宽一点。
     ///
-    /// 档位分布那一格照真实那一副的量级给（两档，`two-pass-rework/02`）：
+    /// 灰阶分布那一格照真实那一副的量级给（两档，`two-pass-rework/02`）：
     /// 它是这张表上最宽的一格，砍列的次序正是对着它重新想过的。
     fn measured() -> Widths<VolumeColumn> {
         let mut widths = Widths::new();
@@ -757,13 +757,13 @@ mod tests {
 
         // 「记号」两个汉字四格，而记号本身一格：列头撑着这一列。
         assert_eq!(widths.of(VolumeColumn::Mark), 4);
-        // 「档位分布」八格，`2bit+FS 183 ⋅ 4bit 1` 二十格：这一次是格撑着列头。
+        // 「灰阶分布」八格，`2bit+FS 183 ⋅ 4bit 1` 二十格：这一次是格撑着列头。
         assert_eq!(widths.of(VolumeColumn::Tally), 20);
         // 中文两格：「棋魂 07」是 2+2+1+2 = 7 格，不是七个字符。
         assert_eq!(widths.of(VolumeColumn::Name), 7);
     }
 
-    /// **给一个宽度，问该留哪几列**：按 `耗时 → 定档页 → 页数 → 档位分布` 那个次序砍。
+    /// **给一个宽度，问该留哪几列**：按 `耗时 → 代表页 → 页数 → 灰阶分布` 那个次序砍。
     ///
     /// 这一条钉的是那个次序本身——它只有 [`Column::DROPPED_IN_TURN`] 一处出处，
     /// 而屏上砍成什么样全由 [`fit`] 说了算。
@@ -786,7 +786,7 @@ mod tests {
         ];
         assert_eq!(fit(full - 1, &widths), without_elapsed);
 
-        // 再窄：定档页跟着走。
+        // 再窄：代表页跟着走。
         let without_driver = vec![
             VolumeColumn::Mark,
             VolumeColumn::Name,
@@ -798,7 +798,7 @@ mod tests {
             without_driver
         );
 
-        // 再窄：页数也让掉，剩下记号、卷名、档位分布三列。
+        // 再窄：页数也让掉，剩下记号、卷名、灰阶分布三列。
         let without_pages = vec![VolumeColumn::Mark, VolumeColumn::Name, VolumeColumn::Tally];
         assert_eq!(
             fit(line_width(&without_driver, &widths) - 1, &widths),
@@ -811,7 +811,7 @@ mod tests {
         assert_eq!(fit(line_width(&without_pages, &widths) - 1, &widths), bare);
     }
 
-    /// **目录那张表按它自己那个次序砍：基准档分布 → 卷数**（`volume-discovery/08`）。
+    /// **目录那张表按它自己那个次序砍：统一档位分布 → 卷数**（`volume-discovery/08`）。
     ///
     /// 三张表并排问一遍，钉的是同一条：**各表各有各的次序，而砍的是同一套代码**。
     /// 记号与目录名在最窄那一档上仍在——先要认得出这是哪一枝、它出没出事。
@@ -846,12 +846,12 @@ mod tests {
         widths.widen(PageColumn::Mark, "!");
         widths.widen(PageColumn::Name, "087.png");
         widths.widen(PageColumn::Size, "1182x1680");
-        widths.widen(PageColumn::Crop, "裁边 1441x2048 ⟶ 1400x2000");
-        widths.widen(PageColumn::Scaling, "失败页 ⋅ 卷内统一尺寸留白");
+        widths.widen(PageColumn::Crop, "裁白边 1441x2048 ⟶ 1400x2000");
+        widths.widen(PageColumn::Scaling, "坏页 ⋅ 卷内统一尺寸留白");
         widths.widen(PageColumn::Cut, "跨页右半");
         widths.widen(PageColumn::ColorToGray, "彩页转灰");
         widths.widen(PageColumn::Verdict, "2bit+FS");
-        widths.widen(PageColumn::Reason, "特例页单独定档");
+        widths.widen(PageColumn::Reason, "差异大的页单独定档");
         widths.widen(
             PageColumn::Scores,
             "1bit+FS 32.000 ⋅ 2bit 20.000 ⋅ 4bit 8.000 ⋅ 8bit 2.000",
@@ -896,7 +896,7 @@ mod tests {
         }
     }
 
-    /// **80 列那一档上缩放那一列还在**——失败页那一行靠它说出「它的尺寸是卷内统一尺寸」
+    /// **80 列那一档上缩放那一列还在**——坏页那一行靠它说出「它的尺寸是卷内统一尺寸」
     /// （`p1-session/11` 的验收，停车场 Q162 记着它丢过一次）。
     ///
     /// 这一条钉的是[砍列次序](Column::DROPPED_IN_TURN)排得对不对：缩放压在倒数第二步，
@@ -923,7 +923,7 @@ mod tests {
     /// **最窄那一档上卷名与行首记号仍在。**
     ///
     /// 砍到没得砍了也停在这两列上：一行上先要认得出这是哪一卷、它出没出事。
-    /// 档位分布不在里面（`two-pass-rework/02`）：跳过与没做成那两个词丢了，
+    /// 灰阶分布不在里面（`two-pass-rework/02`）：跳过与没做成那两个词丢了，
     /// 行首记号仍说着同一件事——靠得住的载体是它（见 `super::draw::table::Mark`）。
     #[test]
     fn the_narrowest_table_still_has_its_marks_and_its_volume_names() {
@@ -942,7 +942,7 @@ mod tests {
             );
             assert!(
                 !kept.contains(&VolumeColumn::Driver),
-                "{room} 格上还留着定档页"
+                "{room} 格上还留着代表页"
             );
             assert!(
                 !kept.contains(&VolumeColumn::Pages),
@@ -950,7 +950,7 @@ mod tests {
             );
             assert!(
                 !kept.contains(&VolumeColumn::Tally),
-                "{room} 格上还留着档位分布"
+                "{room} 格上还留着灰阶分布"
             );
         }
     }

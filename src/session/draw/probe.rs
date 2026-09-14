@@ -27,7 +27,7 @@ use crate::session::state::Session;
 /// 屏上一行的字，**按显示宽度跳过宽字符占住的那一格**（停车场 Q60）。
 ///
 /// 一个汉字在缓冲里占两格，而第二格被终端库 `reset` 成一个**空格**（不是空串）：
-/// 一格一格拼回来的文字因此是「设 备 层」，拿 `contains("设备层")` 去问屏上有没有
+/// 一格一格拼回来的文字因此是「设 备 层」，拿 `contains("设备设置")` 去问屏上有没有
 /// 这几个字一律不成立。这一处照那个字形的**显示宽度**往前跳，取回来的是
 /// **屏上真正那一行**。
 ///
@@ -234,7 +234,7 @@ pub(super) fn snapshot(draw: impl FnOnce(&mut Frame), width: u16, height: u16) -
 /// 主区单独一格的快照。快照只钉主区，是因为 `09` 做的就是它——
 /// 把左栏一起钉进来，改一行配置标签就要重录一次这几段。
 ///
-/// 会话给一个新的：那几张快照问的是「跑到这一步主区画成什么样」，与三层配了什么无关。
+/// 会话给一个新的：那几张快照问的是「跑到这一步主区画成什么样」，与三组设置配了什么无关。
 /// 展开那几条走 [`snapshot_of`]：那时要钉的是**整屏**（左栏在不在场是一半）。
 pub(super) fn main_snapshot(live: &Live, width: u16, height: u16) -> String {
     let mut session = Session::new();
@@ -273,12 +273,12 @@ pub(super) fn opened_snapshot(live: &Live, width: u16, height: u16) -> String {
     )
 }
 
-/// **整屏**快照：三层与那一趟一起画，展开着时左栏因此不在场。
+/// **整屏**快照：三组设置与那一趟一起画，展开着时左栏因此不在场。
 pub(super) fn snapshot_of(session: &mut Session, live: &Live, width: u16, height: u16) -> String {
     snapshot(|frame| shell(frame, session, Some(live)), width, height)
 }
 
-/// 一趟跑到一半：两卷跑完（一卷幂等命中、一卷带失败页），第三卷正走按档写出那一遍。
+/// 一趟跑到一半：两卷跑完（一卷幂等命中、一卷带坏页），第三卷正走写出那一遍。
 ///
 /// 时钟往回拨一段固定的量，快照因此不随机器快慢而变——与黄金快照同一条规矩
 /// （`tonefit::Report::elapsed`：计时只进结构，不进渲染出的文字）。
@@ -312,16 +312,16 @@ pub(super) fn a_run_walking(failures: bool, pass: Option<Pass>) -> Live {
     live
 }
 
-/// 一趟**六种卷都齐**的：跳过、隔离、逐页、覆盖、卷级失败，
-/// 外加停在决策点上等答话的那一卷。
+/// 一趟**六种卷都齐**的：跳过、隔离、逐页、覆盖、卷转换失败，
+/// 外加停在确认点上等待确认的那一卷。
 ///
 /// 卷名特意长短不一，宽终端上一列对得齐、窄终端上砍得看得见。
-/// 末一种只有**续做那一趟**到得了：等答话是决策点上的事，而一趟走到底的执行
-/// 在决策点上不停（`CONTEXT.md` 的《会话》：续做）。`resumes` 因此同时定了屏上那两个字
-/// ——答出第一个继续之前它印的是「试算」（见 `Live::mode`）。
+/// 末一种只有**接着写出那一趟**到得了：等待确认是确认点上的事，而一趟走到底的执行
+/// 在确认点上不停（`CONTEXT.md` 的《会话》：接着写出）。`resumes` 因此同时定了屏上那两个字
+/// ——答出第一个继续之前它印的是「预览」（见 `Live::mode`）。
 ///
-/// **隔离那一卷的失败页两半都喂**（走 [`fixture::volume_finished_with_its_failures`]）：报告区因此在表底下
-/// 摆着「失败页（出现的当场……）」那一段——真会话里出得来的那一副，快照里也出得来。
+/// **隔离那一卷的坏页两半都喂**（走 [`fixture::volume_finished_with_its_failures`]）：报告区因此在表底下
+/// 摆着「坏页（出现的当场……）」那一段——真会话里出得来的那一副，快照里也出得来。
 ///
 /// **跨块**：卷表那几条问「六种卷各长什么样」（[`super::report`]），
 /// 语义色那几条问「哪几行上了色、上的是哪一种」（[`super::paint`]）——
@@ -373,17 +373,17 @@ mod tests {
     /// 逐条比的是**页名与那句原因**：两半各说各的原因，那也是走散。
     ///
     /// **它只走得到本模块这两份跨块夹具**——`draw` 底下各块自己 `mod tests` 里搭的那几份
-    /// 够不着（停车场 Q354）。往这两份里添一卷带失败页却忘了走那个口子，这一条当场红。
+    /// 够不着（停车场 Q354）。往这两份里添一卷带坏页却忘了走那个口子，这一条当场红。
     #[test]
     fn every_failed_page_in_the_report_was_reported_the_moment_it_happened() {
         for (which, live) in [
             ("跑到一半", a_run_in_flight(true)),
             (
-                "六种卷 · 执行",
+                "六种卷 · 转换",
                 every_kind_of_volume(RunMode::Process, Resuming::GoesOn),
             ),
             (
-                "六种卷 · 试算",
+                "六种卷 · 预览",
                 every_kind_of_volume(RunMode::DryRun, Resuming::Waits),
             ),
         ] {
@@ -393,7 +393,7 @@ mod tests {
                 .failures()
                 .map(|page| {
                     let PageOutcome::Failed { reason } = &page.outcome else {
-                        unreachable!("`failures` 只给失败页")
+                        unreachable!("`failures` 只给坏页")
                     };
                     (page.source.as_path(), reason.as_str())
                 })
@@ -423,7 +423,7 @@ mod tests {
 
     /// **从缓冲里读回来的就是屏上那一行**：宽字符占住的那一格跳过去了（停车场 Q60）。
     ///
-    /// 判据是「拿屏上那几个字原样问得出来」——[`tight`] 不在这一条里：
+    /// 判定依据是「拿屏上那几个字原样问得出来」——[`tight`] 不在这一条里：
     /// 它去掉的是**空白**，而这一条问的正是「不必先去空白」。
     ///
     /// 左栏那几个标签是现成的样本：它们逐字来自 `crate::session::state::Layer::title`

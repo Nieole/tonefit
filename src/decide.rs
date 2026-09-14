@@ -1,23 +1,23 @@
 //! 选档：在裁剪过的候选里定下这一页的那一个。
 //!
-//! 判据是量、阈值是界（`CONTEXT.md`）。这里做的是把量拿去和界比，选出**界以内最低的一档**——
+//! 画质分是量、画质门槛是界（`CONTEXT.md`）。这里做的是把量拿去和界比，选出**界以内最低的一档**——
 //! 不是误差最小的那一档：误差最小的恒是候选上界，那样判定就白做了。
 //!
-//! 候选进来之前已经裁过两道（都在判据求值之前）：位深按面板灰阶数裁（ADR 0003），
-//! 抖动模式按几何门裁（ADR 0007）。被裁掉的候选不在这里出现，`--bit-depth` 与 `--dither`
+//! 候选进来之前已经裁过两道（都在画质分求值之前）：灰阶档位按屏幕灰阶数裁（ADR 0003），
+//! 抖动模式按尺寸贴合检查裁（ADR 0007）。被裁掉的候选不在这里出现，`--bit-depth` 与 `--dither`
 //! 也够不着它们——那两道界只有 `--gray-levels` 与几何本身动得了。
 //!
-//! 这里只有逐页判定。**默认路径上它就是终局**：位深逐页各判各的，不做迟滞，每一页拿到
-//! 判据说它要的那一档（ADR 0018 决定第 2 条）。卷级的上包络、迟滞与特例页在 `envelope`，
+//! 这里只有逐页判定。**默认路径上它就是终局**：灰阶档位逐页各判各的，不做迟滞，每一页拿到
+//! 画质分说它要的那一档（ADR 0018 决定第 2 条）。卷级的整卷统一灰阶、迟滞与差异大的页在 `envelope`，
 //! 那一层建在这一层之上，只在 `--envelope` 打开时才把这里给出的档重定一遍（ADR 0006）。
 
 use crate::metric::Score;
 use crate::profile::Threshold;
 use crate::quantize::Candidate;
 
-/// 一个候选的判据值。
+/// 一个候选的画质分值。
 ///
-/// 判据是量、阈值是界：这里只有量。判据数值不可跨面板比较（ADR 0002），
+/// 画质分是量、画质门槛是界：这里只有量。画质分数值不可跨面板比较（ADR 0002），
 /// 要看是哪块面板上的数，见 [`crate::Report::profile`]。
 #[derive(Debug, Clone, Copy)]
 pub struct CandidateScore {
@@ -46,29 +46,29 @@ pub struct Verdict {
 /// 默认路径上它根本没开（要 `--envelope` 才在场），覆盖项顶掉它。
 ///
 /// `Hysteresis` 在 spec 点名的那几种之外，理由在 ADR 0006 的后果里：
-/// 上包络**不承诺**卷内绝对一致。升上去的那一段与其余页之间就是一次翻页跳变，
+/// 整卷统一灰阶**不承诺**卷内绝对一致。升上去的那一段与其余页之间就是一次翻页跳变，
 /// 并进 `VolumeEnvelope` 就等于把这句话藏起来。
 ///
-/// 默认路径上**只有前三种**：位深逐页各判各的、不做迟滞（ADR 0018）。旧输出的 tEXt 里
+/// 默认路径上**只有前三种**：灰阶档位逐页各判各的、不做迟滞（ADR 0018）。旧输出的 tEXt 里
 /// 可能还写着 `hysteresis pull-back`，读回来时它只是一段没人解释的字：幂等比的是指纹与来路，
 /// 理由那一项从不读回来（`crate::metadata`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
-    /// 判据落在阈值以内的最低一档，比它更低的都越界了。
+    /// 画质分落在画质门槛以内的最低一档，比它更低的都越界了。
     LowestWithinThreshold,
-    /// 没有一档的判据落在阈值以内：取候选里最高的那一档兜底。
+    /// 没有一档的画质分落在画质门槛以内：取候选里最高的那一档兜底。
     NoneWithinThreshold,
     /// 覆盖项裁到只剩一个候选，判定被顶掉（spec 的 story 23）。
     Override,
-    /// 卷级上包络定的基准档：这一页跟着卷内其余页走（ADR 0006 决定第 3 条）。
+    /// 整卷统一灰阶定的统一档位：这一页跟着卷内其余页走（ADR 0006 决定第 3 条）。
     VolumeEnvelope,
     /// 连续够了迟滞页数的一段，整段升到满足整段的最低一档（ADR 0006 决定第 4 条）。
     Hysteresis,
-    /// 特例页单独定档：不参与上包络，按它自己那一档写出（ADR 0006 决定第 5 条）。
+    /// 差异大的页单独定档：不参与整卷统一灰阶，按它自己那一档写出（ADR 0006 决定第 5 条）。
     Outlier,
-    /// 这一页的几何门不成立：它会被下游再缩一次，抖动因此关掉（ADR 0007 决定第 2、3 条）。
+    /// 这一页的尺寸未贴合屏幕：它会被下游再缩一次，抖动因此关掉（ADR 0007 决定第 2、3 条）。
     ///
-    /// 位深仍跟着卷级基准档走、不低于它——门只拿走抖动，不拿走档次。抖动被拿走之后
+    /// 灰阶档位仍跟着卷级统一档位走、不低于它——门只拿走抖动，不拿走档次。抖动被拿走之后
     /// 这一页在剩下的那套候选里自己判一次，判出来更高的就用更高的那一档。
     ///
     /// 它与 [`Outlier`](Self::Outlier) 摘的理由不同：那一页偏离卷内分布，这一页只是尺寸不同。
@@ -80,25 +80,25 @@ pub enum Reason {
 impl std::fmt::Display for Reason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Reason::LowestWithinThreshold => "阈值内最低的一档",
-            Reason::NoneWithinThreshold => "没有一档在阈值内，取候选上界",
-            Reason::Override => "覆盖项顶掉判定",
-            Reason::VolumeEnvelope => "卷级上包络",
-            Reason::Hysteresis => "迟滞升档",
-            Reason::Outlier => "特例页单独定档",
-            Reason::OutsideTheGate => "几何门不成立，本页不抖动",
+            Reason::LowestWithinThreshold => "达标的最省空间档位",
+            Reason::NoneWithinThreshold => "没有档位达标，取最高档",
+            Reason::Override => "由你指定的选项定死",
+            Reason::VolumeEnvelope => "整卷统一灰阶",
+            Reason::Hysteresis => "为少换档而升档",
+            Reason::Outlier => "差异大，单独判断",
+            Reason::OutsideTheGate => "没贴合屏幕，不加抖动",
         })
     }
 }
 
 /// 为一页定一个候选。
 ///
-/// `scores` 是这一页各候选的判据值，由小到大——[`Candidate::all`] 就是这个次序，
+/// `scores` 是这一页各候选的画质分值，由小到大——[`Candidate::all`] 就是这个次序，
 /// 「最低的一档」靠的正是它。
 ///
 /// `pinned` 是覆盖项裁到只剩一个候选时的那一个（见 `crate::pinned`）：判定被顶掉，
-/// 判据说什么都不改变结果。裁到只剩一个而**没有**覆盖项的面板（`--gray-levels 2`
-/// 撞上几何门不成立）不走这条路——那不是「被顶掉」，那一档仍是判出来的。
+/// 画质分说什么都不改变结果。裁到只剩一个而**没有**覆盖项的面板（`--gray-levels 2`
+/// 撞上尺寸未贴合屏幕）不走这条路——那不是「被顶掉」，那一档仍是判出来的。
 pub fn decide(
     scores: &[CandidateScore],
     threshold: Threshold,
@@ -116,7 +116,7 @@ pub fn decide(
             reason: Reason::Override,
         };
     }
-    // 候选非空：面板灰阶数至少 2 级（`Profile::with_gray_levels` 挡着），1bit 恒在里面。
+    // 候选非空：屏幕灰阶数至少 2 级（`Profile::with_gray_levels` 挡着），1bit 恒在里面。
     let top = scores.last().expect("候选集不会是空的").candidate;
     match scores.iter().find(|scored| threshold.admits(scored.score)) {
         Some(scored) => Verdict {
@@ -136,14 +136,14 @@ mod tests {
     use crate::profile::Profile;
     use crate::quantize::{BitDepth, Dither};
 
-    /// 基准设备的阈值。选档的用例只关心「界在哪」，不关心它是几。
+    /// 基准设备的画质门槛。选档的用例只关心「界在哪」，不关心它是几。
     fn threshold() -> Threshold {
         Profile::resolve("kobo-libra-2")
             .expect("内置型号")
             .threshold()
     }
 
-    /// 造一组判据值，候选由小到大——`Candidate::all` 给的就是这个次序。
+    /// 造一组画质分值，候选由小到大——`Candidate::all` 给的就是这个次序。
     fn scores(values: &[(Candidate, f32)]) -> Vec<CandidateScore> {
         values
             .iter()
@@ -154,7 +154,7 @@ mod tests {
             .collect()
     }
 
-    /// 界以内最低的那一档。更高的档误差更小，但买不到判据看得见的东西。
+    /// 界以内最低的那一档。更高的档误差更小，但买不到画质分看得见的东西。
     #[test]
     fn the_lowest_candidate_within_the_threshold_wins() {
         let threshold = threshold();
@@ -171,9 +171,9 @@ mod tests {
         assert_eq!(verdict.reason, Reason::LowestWithinThreshold);
     }
 
-    /// 抖动是候选的另一维，选的规则一条不变：同一档位深上抖动排在不抖动之后，
-    /// 因此不抖动过不了界、抖动过得了时，选出的是抖动那一个，而不是升一档位深
-    /// （ADR 0007：上包络取的是这个组合，不设页级抖动开关）。
+    /// 抖动是候选的另一维，选的规则一条不变：同一档灰阶档位上抖动排在不抖动之后，
+    /// 因此不抖动过不了界、抖动过得了时，选出的是抖动那一个，而不是升一档灰阶档位
+    /// （ADR 0007：整卷统一灰阶取的是这个组合，不设页级抖动开关）。
     #[test]
     fn a_dithered_candidate_wins_before_the_next_bit_depth_does() {
         let threshold = threshold();
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(verdict.reason, Reason::NoneWithinThreshold);
     }
 
-    /// 覆盖是覆盖判定，不是参与判定：判据说什么都不影响结果。
+    /// 覆盖是覆盖判定，不是参与判定：画质分说什么都不影响结果。
     #[test]
     fn an_override_wins_regardless_of_the_metric() {
         let threshold = threshold();
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(verdict.reason, Reason::Override);
     }
 
-    /// 只剩一档而没有覆盖项（`--gray-levels 2` 撞上几何门不成立）：那一档无论达不达标
+    /// 只剩一档而没有覆盖项（`--gray-levels 2` 撞上尺寸未贴合屏幕）：那一档无论达不达标
     /// 都是答案，但理由仍是判出来的那两种之一——不是「被顶掉」。
     #[test]
     fn a_single_candidate_is_still_reported_with_a_reason() {

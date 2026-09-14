@@ -27,25 +27,25 @@ use crate::spread::SplitRule;
 /// 咬上之后对用户说的那句话由本类型的 `Display` 给出。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interlock {
-    /// 拆分开着，适配方式却是 fit-inside。
+    /// 拆分开着，缩放方式却是 fit-inside。
     ///
-    /// 咬的是 `--no-split`（默认拆）与 `--fit`：拆分收得下的是**找得到装订沟**的那些跨页，
-    /// 找不到沟的连续跨页不切（页几何批 04 号票），它们照这一趟的适配方式出。
+    /// 咬的是 `--no-split`（默认拆）与 `--fit`：拆分收得下的是**找得到中缝**的那些跨页，
+    /// 找不到沟的连续跨页不切（页几何批 04 号票），它们照这一趟的缩放方式出。
     ///
     /// 处置是 [`Voice::Header`]：组合本身成立，拿到的是**部分收益**，说清楚就够，不该拦。
     SpreadsStayFlattened,
-    /// 裁边关着。
+    /// 裁白边关着。
     ///
-    /// 咬的是 `--no-crop` 与抖动：裁边的要点不是省白边，是让用户**关得掉阅读器那一侧的
+    /// 咬的是 `--no-crop` 与抖动：裁白边的要点不是省白边，是让用户**关得掉阅读器那一侧的
     /// 裁切**（页几何批 02 号票），关掉之后那一侧就得留着。
     ///
     /// 处置是 [`Voice::Silent`]：抹平只在用户的阅读器**会裁**时才发生，而那一层是
     /// **像素完整性**、在 tonefit 视野之外（ADR 0007），逐卷提醒等于噪音。
     ReaderCropWipesTheDither,
-    /// `--dither fs` 撞上一页贴不住面板。
+    /// `--dither fs` 撞上一页没贴合屏幕。
     ///
     /// 咬的是 `--dither` 与**这一页的几何**。别的几条只看开关，这一条不是：
-    /// 几何门逐页判（ADR 0007 决定第 1 条），碰上那一页之前答不出来。
+    /// 尺寸贴合检查逐页判（ADR 0007 决定第 1 条），碰上那一页之前答不出来。
     /// 判定因此不在 [`Interlock::engaged`] 里，在 [`Interlock::dither_outside_the_gate`]；
     /// 真撞上的地方是 `Candidates::broken`。
     ///
@@ -111,7 +111,7 @@ impl Interlock {
     /// [`DitherOutsideTheGate`](Self::DitherOutsideTheGate) 在这一页上咬上了吗。
     ///
     /// 它单独一个入口，不并进 [`engaged`](Self::engaged)：别的几条只看开关，这一条还要一页——
-    /// 几何门是**页**的几何事实，一卷里可能一页都不撞（ADR 0007 决定第 1 条）。
+    /// 尺寸贴合检查是**页**的几何事实，一卷里可能一页都不撞（ADR 0007 决定第 1 条）。
     ///
     /// **那条拒绝就由这一处判出来**（见 `crate::why_nothing_is_left`）：候选集抖动那一维被裁空
     /// 与这一问是同一件事，不是拿它去核对的第二个说法。
@@ -119,10 +119,10 @@ impl Interlock {
     /// 问的是「这一趟点名的那一档，门放不放行」——门放行哪几档只有
     /// [`Dither::candidates`] 一个出处，这里问它，不另写一遍「门拿走的是 FS」。
     /// 两件事因此是推论，不是各写一遍的巧合：点名「不抖动」撞不上（`Dither::Off`
-    /// 在门的两侧都在里面），不点名也撞不上（没有覆盖项可顶，判据自己会替这一页
+    /// 在门的两侧都在里面），不点名也撞不上（没有覆盖项可顶，画质分自己会替这一页
     /// 把抖动关掉）。
     ///
-    /// **判据这么写，措辞没跟着广**：本条对门拿走的**任何**一档都成立，而
+    /// **画质分这么写，措辞没跟着广**：本条对门拿走的**任何**一档都成立，而
     /// [`DitherOutsideTheGate`](Self::DitherOutsideTheGate) 的 `Display` 写死着
     /// `--dither fs`。今天抖动只有两档、两者重合；再添一档就得同一口气改那句话，
     /// 否则拒绝报的是一档、说的是另一档。
@@ -131,7 +131,7 @@ impl Interlock {
     }
 }
 
-/// 三条互锁那几句话——`--help` 的《开关互锁》那一节印的就是它们，会话的前提那一张也是。
+/// 三条互锁那几句话——`--help` 的《选项冲突》那一节印的就是它们，会话的前提那一张也是。
 ///
 /// **记号里面那个空格写成 `\u{a0}`**：那是[不许断的那个空格](crate::HARD_SPACE)，
 /// 规矩只有一处出处，就是库自己那条公共 API（停车场 Q106）。这几句由 `match` 出静态串，
@@ -140,22 +140,22 @@ impl std::fmt::Display for Interlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Interlock::SpreadsStayFlattened => {
-                "拆分开着，适配方式却是 fit-inside：切得开的跨页切开了，\
-                 没有装订沟的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit\u{a0}height，\
-                 代价是它们的宽溢出面板、要横向平移着看。组合本身成立——拿到的是部分收益，\
+                "拆分开着，缩放方式却是 fit-inside：切得开的跨页切开了，\
+                 没有中缝的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit\u{a0}height，\
+                 代价是它们的页面比屏幕宽、要横向平移着看。组合本身成立——拿到的是部分收益，\
                  不是白开"
             }
             Interlock::ReaderCropWipesTheDither => {
-                "裁边关着：阅读器那一侧的白边裁切就得留着，而它一裁就改了页尺寸——\
+                "裁白边关着：阅读器那一侧的白边裁切就得留着，而它一裁就改了页尺寸——\
                  适配不再是 1.0 倍，抖动连同 1 像素周期的结构一起被抹平，字节白付。\
                  两台设备实测过（见 docs/measurements.md 的《真机像素完整性》）。\
                  阅读器那一层 tonefit 看不到，因此只在这里说一次，不进每趟报告"
             }
             Interlock::DitherOutsideTheGate => {
-                "--dither\u{a0}fs 撞上一页贴不住面板：那一页源比目标尺寸还小，按不放大原样输出，\
+                "--dither\u{a0}fs 撞上一页没贴合屏幕：那一页源比目标尺寸还小，按不放大原样输出，\
                  阅读器显示时还要再缩一次，抖动推到高频的误差会被折回低频。\
-                 几何门在它身上不成立，抖动因此关闭，--dither 覆盖不了它——\
-                 门是页的几何事实，不是一个可以放宽的档位（ADR 0007）。\
+                 尺寸贴合检查在它身上不成立，抖动因此关闭，--dither 覆盖不了它——\
+                 尺寸贴合是页的几何事实，不是一个可以放宽的档位（ADR 0007）。\
                  撞上就整趟拒绝、不静默照抖：覆盖项是用户的显式指令，\
                  不是可以按页悄悄放弃的东西"
             }
@@ -203,7 +203,7 @@ mod tests {
         assert!(!engaged(FitMode::Height, split_off));
     }
 
-    /// ② 只看裁边这一项：关着就咬上，适配方式与拆分改不了它。
+    /// ② 只看裁白边这一项：关着就咬上，缩放方式与拆分改不了它。
     #[test]
     fn the_reader_crop_interlock_watches_only_the_crop_switch() {
         for fit in [FitMode::Height, FitMode::Inside] {
@@ -249,7 +249,7 @@ mod tests {
             Some(Dither::Off),
             GeometryGate::Broken
         ));
-        // 不点名就没有覆盖项可顶，判据自己会把这一页的抖动关掉。
+        // 不点名就没有覆盖项可顶，画质分自己会把这一页的抖动关掉。
         assert!(!Interlock::dither_outside_the_gate(
             None,
             GeometryGate::Broken
@@ -263,7 +263,7 @@ mod tests {
     ///
     /// 扫的是两个覆盖项 × 两种门的全部组合，逐格问三件事：裁完还剩不剩、
     /// `crate::why_nothing_is_left` 说不说得出话、以及说话的是不是本条。
-    /// 第三问只在位深那一维过得去时问——两维一起对不上时报的是位深那一句
+    /// 第三问只在灰阶档位那一维过得去时问——两维一起对不上时报的是灰阶档位那一句
     /// （见 `crate::why_nothing_is_left`）。
     #[test]
     fn the_refusal_is_driven_by_this_interlock_alone() {

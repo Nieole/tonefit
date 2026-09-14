@@ -41,17 +41,17 @@ pub const SPREAD: Size = Size::new(5056, 1680);
 /// 「拆开就不必横向翻动」在它身上不成立，而那正是本票的收益所在。
 pub const SPREAD_WITH_GUTTER: Size = Size::new(3024, 2160);
 
-/// 跨页夹具那条装订沟的中心，占页宽的比例。
+/// 跨页夹具那条中缝的中心，占页宽的比例。
 ///
 /// 实测区间是 0.401–0.538（measurements 的《跨页拆分》），这里取偏离正中较远的一侧。
 /// 「切点跟着沟走、不落在正中」那几条用例要的正是一个不在正中的沟：按正中盲切，
 /// 这一页会切进画面 (0.5 − 0.441) × 页宽。
 ///
-/// **不取实测最偏的 0.401**：那一条离装订沟检测窗口的边只剩 0.001，
+/// **不取实测最偏的 0.401**：那一条离中缝检测窗口的边只剩 0.001，
 /// 合成夹具落在那儿量出来的是窗口截断，不是切点（见 `tonefit` 的 `spread`）。
 pub const GUTTER_CENTER: f64 = 0.441;
 
-/// 跨页夹具那条装订沟有多宽，单位是列。占 [`SPREAD_WITH_GUTTER`] 页宽的 1.3%，
+/// 跨页夹具那条中缝有多宽，单位是列。占 [`SPREAD_WITH_GUTTER`] 页宽的 1.3%，
 /// 落在实测的 0.17%–12.47% 之间（measurements 的《跨页拆分》）。
 pub const GUTTER_WIDTH: u32 = 40;
 
@@ -59,7 +59,7 @@ pub const GUTTER_WIDTH: u32 = 40;
 ///
 /// 不借 [`INK_BORDER`] 那个 4：一行要有页宽 0.5% 的墨点才算内容，而 3024 宽的页上
 /// 那条线是 15.1 个像素——两半四条竖边合起来只有 4×4 = 16 个，堪堪压线。
-/// 取 16 让它有四倍余量，裁边在这张页上因此稳稳是空操作。
+/// 取 16 让它有四倍余量，裁白边在这张页上因此稳稳是空操作。
 const SPREAD_INK_BORDER: u32 = 16;
 
 /// 宽高比 30:1 的长条：**目标尺寸的兜底上界拦得住它**（页几何批 07 号票）。
@@ -67,13 +67,13 @@ const SPREAD_INK_BORDER: u32 = 16;
 /// 在基准面板（1264×1680）上以高为准算出 50400×1680，8470 万像素，越过上界的 6710 万；
 /// 退回 fit-inside 之后是 1264×42。解码那一侧拦不住这种页——它自己只有 30 万像素。
 ///
-/// 拿它跑的用例一律配 [`solid`] 的纯墨：整页每一行每一列都是墨，裁边一个像素都拿不走，
+/// 拿它跑的用例一律配 [`solid`] 的纯墨：整页每一行每一列都是墨，裁白边一个像素都拿不走，
 /// 那道守卫因此插不上话，走到的只有兜底这一条（两者各自接不住对方那一张，
 /// 见 `tonefit` 的 `crop` 里那条同名用例）。
 pub const DEGENERATE_STRIP: Size = Size::new(3000, 100);
 
 /// 宽高比 50:1 的**小**长条：以高为准算出的目标尺寸越过兜底上界，而退回的 fit-inside
-/// 两边都比面板小——它因此**一条边都贴不住面板**，几何门在默认适配方式上不成立。
+/// 两边都比面板小——它因此**一条边都贴不住面板**，尺寸贴合检查在默认缩放方式上不成立。
 ///
 /// 那是 07 号票给「以高为准下门恒成立」开的唯一一个例外（见 `tonefit` 的
 /// `GeometryGate::Broken`），也是互锁 ③ 在默认那条路上够得着的唯一形态
@@ -87,62 +87,62 @@ pub const DEGENERATE_STRIP_SMALLER_THAN_PANEL: Size = Size::new(1000, 20);
 
 /// 两边都小于面板：**fit-inside 下**不该被放大。
 ///
-/// 以高为准会把它放大到面板高（页几何批 01 号票），几何门跟着成立——问「不放大」
-/// 或问「门不成立」的用例因此要点名 [`run_volume_fitted_inside`]。
+/// 以高为准会把它放大到面板高（页几何批 01 号票），尺寸贴合检查跟着成立——问「不放大」
+/// 或问「未贴合屏幕」的用例因此要点名 [`run_volume_fitted_inside`]。
 ///
 /// **它不是「一张便宜的页」**：默认那条路上它被放大到 1344×1680，像素比源多 2.8 倍。
 /// 只要一张页的用例用 [`cheap_page`]（页几何批 09 号票）。
 pub const SMALLER_THAN_TARGET: Size = Size::new(800, 1000);
 
 /// 页数多的用例用的小页。卷级的性质只看逐页判定排开之后的分布，与页上有什么内容无关，
-/// 页因此小到只够铺开几块判据分块就行。
+/// 页因此小到只够铺开几块画质分的分块就行。
 ///
 /// 它**只在 fit-inside 上还是小页**：以高为准把每一页放大到面板高（页几何批 01 号票），
 /// 一卷几十页的代价跟着涨两个数量级。拿它铺长卷的用例点名 [`run_volume_fitted_inside`]。
 /// 默认那条路上的长卷用 [`NARROW_PASSES_THROUGH`]。
 pub const TINY: Size = Size::new(160, 224);
 
-/// **默认那条路上**铺长卷用的页：高已经等于基准面板的高，宽只够铺开两块判据分块。
+/// **默认那条路上**铺长卷用的页：高已经等于基准面板的高，宽只够铺开两块画质分的分块。
 ///
-/// 与 [`PASSES_THROUGH`] 同一条性质——两种适配方式下都恒等通过——只是窄得多：
-/// 卷级那几条路径不看页上画着什么，只看逐页判定排开之后的分布，宽因此可以压到判据的
+/// 与 [`PASSES_THROUGH`] 同一条性质——两种缩放方式下都恒等通过——只是窄得多：
+/// 卷级那几条路径不看页上画着什么，只看逐页判定排开之后的分布，宽因此可以压到画质分的
 /// 分块聚合刚好还不退化（分块 32×32，两块就是 64）。一卷六十页约 1.2 秒。
 ///
-/// **几何门在它每一页上都成立**，这正是它与 [`TINY`] 的分水岭：候选集因此是六个而不是三个
+/// **尺寸贴合检查在它每一页上都成立**，这正是它与 [`TINY`] 的分水岭：候选集因此是六个而不是三个
 /// （多出抖动那一维），卷级那几条路径于是走在与默认路径上真实素材同一套候选上
 /// （页几何批 08 号票）。
 pub const NARROW_PASSES_THROUGH: Size = Size::new(64, 1680);
 
 // 下面三个是**卷级用例造分布用的纯色取值**，本仓库测试侧唯一的出处。
 //
-// 判据在纯色页上算得出准数——量化误差就是取值到格点的距离，低通与掩蔽加权都不改它——
-// 逐页判定因此由取值直接定死，而卷级那一层（上包络、特例、迟滞）要的正是一条排得开的分布。
+// 画质分在纯色页上算得出准数——量化误差就是取值到格点的距离，低通与细节放宽加权都不改它——
+// 逐页判定因此由取值直接定死，而卷级那一层（整卷统一灰阶、特例、迟滞）要的正是一条排得开的分布。
 // 三个取值摆在夹具这一侧而不是某个测试二进制里：`tests/golden.rs` 与 `tests/pipeline.rs`
 // 是两个 crate，各写一份就会各自漂（`CLAUDE.md`《文档写作》：单一出处）。
 //
-// 判据读数一律取自基准设备（`BASELINE_DEVICE`），界是 5.123、特例线是 3 倍即 15.369。
+// 画质分读数一律取自基准设备（`BASELINE_DEVICE`），界是 5.123、特例线是 3 倍即 15.369。
 
 /// 逐页判定要 `2bit` 的纯色页：85 正落在 2bit 的格点上（255 = 3×85）。
 ///
-/// **两条适配方式上判出来的都是 `2bit`**：1bit 读 85；门成立时候选集多出抖动那一维，
+/// **两条缩放方式上判出来的都是 `2bit`**：1bit 读 85；门成立时候选集多出抖动那一维，
 /// 而 1bit+FS 在这一档灰调上的颗粒读 71.4，照样过不了界；第一个在界内的都是 2bit，读 0.000。
 pub const NEEDS_TWO_BITS: u8 = 85;
 
 /// 逐页判定**落在 [`NEEDS_TWO_BITS`] 那一档之上**的纯色页：96 在 2bit 上读 11.000——
 /// 过了界（5.123），又远够不上「显著偏离」（15.369）。卷级迟滞那几条用例要的正是这个位置：
-/// 基准档过不了它的界，它却不该被当成特例页摘走。
+/// 统一档位过不了它的界，它却不该被当成差异大的页摘走。
 ///
-/// **落到哪一档由候选集说了算，而候选集由几何门裁**（ADR 0007），两条路上的候选并不相同：
+/// **落到哪一档由候选集说了算，而候选集由尺寸贴合检查裁**（ADR 0007），两条路上的候选并不相同：
 ///
 /// - **门成立**（默认那条路，[`NARROW_PASSES_THROUGH`]）：候选六个，读数
 ///   96.000 / 81.431 / 11.000 / 14.538 / 6.000 / 5.168。纯色页在这套候选上**抖动一档都买不到
-///   便宜**：可见度地板跟着格点间距走（ADR 0002 决定第 5 条），`2bit+FS` 撒下的颗粒读
+///   便宜**：颗粒可见下限跟着格点间距走（ADR 0002 决定第 5 条），`2bit+FS` 撒下的颗粒读
 ///   `sqrt(d(85-d))`，超出 2bit 那道地板（18.33）的那一截照收，读数因此比同档不抖动还高。
-/// - **门不成立**（[`TINY`] 那条路）：候选只有 {1bit, 2bit, 4bit}，读数 96.000 / 11.000 / 6.000。
+/// - **未贴合屏幕**（[`TINY`] 那条路）：候选只有 {1bit, 2bit, 4bit}，读数 96.000 / 11.000 / 6.000。
 ///
 /// **两条路上都是一档都不在界内**：逐页判定走 `decide` 的兜底取候选上界（门成立时是
 /// `4bit+FS`，不成立时是 `4bit`），迟滞那一段同样由 `envelope` 的 `lowest_for` 兜底。
-/// 两条路上它都落在基准档之上的那一档，两处的夹具因此共用它。
+/// 两条路上它都落在统一档位之上的那一档，两处的夹具因此共用它。
 ///
 /// **界还在 5.5 上时门成立那一支走的不是兜底**：那时 `4bit+FS` 的 5.168 恰在界内、
 /// 走「界以内最低的一档」，两条路演示的是两套机制。界降到 5.123 之后
@@ -151,16 +151,16 @@ pub const NEEDS_TWO_BITS: u8 = 85;
 pub const ONE_STEP_ABOVE_TWO_BITS: u8 = 96;
 
 /// 逐页判定落在 `4bit` 的纯色页，且在 2bit 上读 42.000：**远在界外**（超过 15.369），
-/// 特例页判据要的就是这一量级。用它的几条用例都跑在 fit-inside 上。
+/// 差异大的页画质分要的就是这一量级。用它的几条用例都跑在 fit-inside 上。
 pub const FAR_OUTSIDE: u8 = 128;
 
-/// **两种适配方式下都恒等通过**的尺寸：高已经等于基准面板的高，宽不到面板宽。
+/// **两种缩放方式下都恒等通过**的尺寸：高已经等于基准面板的高，宽不到面板宽。
 ///
 /// 以高为准原样输出（缩放比 1.000），fit-inside 也不放大——「输出与源逐字节相同」
-/// 这类断言因此写得下来，而写下来的性质与这一趟走哪条适配方式无关。
+/// 这类断言因此写得下来，而写下来的性质与这一趟走哪条缩放方式无关。
 /// 量解码、转灰、透明区、调色板的用例用它：那几条说的都不是几何。
 ///
-/// **恒等只管缩放这一步**：默认那条路上裁边照跑，页上真有白边就照裁不误，
+/// **恒等只管缩放这一步**：默认那条路上裁白边照跑，页上真有白边就照裁不误，
 /// 「与源逐字节相同」当场不成立。这个尺寸因此要配一张四边顶着墨的页才算数——
 /// 两样凑齐的那一张是 [`cheap_page`]（页几何批 09 号票）。
 pub const PASSES_THROUGH: Size = Size::new(800, 1680);
@@ -180,14 +180,14 @@ pub const COLOR_BANDS: [[u8; 3]; 6] = [
 
 /// 连续渐变页：竖直方向 0→255 的线性斜坡，无边缘。
 ///
-/// **裁边在它身上不是空操作**：下方 21.6% 亮于墨阈（200），按行列墨量占比就是白边，
+/// **裁白边在它身上不是空操作**：下方 21.6% 亮于墨阈（200），按行列墨量占比就是白边，
 /// 默认那条路上会被整片裁掉——1441×2048 的页因此出成 1507×1680，而不是 1182×1680。
 /// 这一页于是**不等于**送进管线的那一页，几何上的断言在它身上写下来会撞上一个解释不了的数。
 ///
 /// 因此：**问几何、问尺寸、问「输出与源逐字节相同」的用例一律用 [`full_bleed_gradient`]**
-/// （页几何批 09 号票）。留着这一个的只有三种用例——白边本身是被测对象的（裁边那几条）、
+/// （页几何批 09 号票）。留着这一个的只有三种用例——白边本身是被测对象的（裁白边那几条）、
 /// 按 `--no-crop` 跑的（[`run_volume_keeping_margins`]），以及根本不进管线的
-/// （`tests/metric.rs` 直接拿它喂判据）。黄金回归那一批夹具也留着它：裁边对它做了什么
+/// （`tests/metric.rs` 直接拿它喂画质分）。黄金回归那一批夹具也留着它：裁白边对它做了什么
 /// 本身就记在快照里（见 `tests/golden.rs` 的 `KEPT_MARGINS`）。
 pub fn gradient(size: Size) -> DynamicImage {
     let last = (size.height - 1).max(1);
@@ -198,11 +198,11 @@ pub fn gradient(size: Size) -> DynamicImage {
 
 /// 连续渐变页，但**四边都顶着墨**：[`gradient`] 外面加一圈 [`INK_BORDER`] 像素宽的黑边。
 ///
-/// 裁边在它身上是**空操作**（页几何批 02 号票），几何、解码、缩放那几条性质因此不与裁边
+/// 裁白边在它身上是**空操作**（页几何批 02 号票），几何、解码、缩放那几条性质因此不与裁白边
 /// 缠在一起：`gradient` 下方亮于墨阈的那一段按行列墨量占比就是白边，会被裁掉，
-/// 而那些用例说的都不是裁边。
+/// 而那些用例说的都不是裁白边。
 ///
-/// 与 [`PASSES_THROUGH`] 同一个用意——那个尺寸让适配方式不起作用，这一圈墨边让裁边不起作用。
+/// 与 [`PASSES_THROUGH`] 同一个用意——那个尺寸让缩放方式不起作用，这一圈墨边让裁白边不起作用。
 /// 页里仍是连续灰调：那一圈只占最外面几个像素。
 pub fn full_bleed_gradient(size: Size) -> DynamicImage {
     inked_border(gradient(size))
@@ -244,10 +244,10 @@ fn inked_border(image: DynamicImage) -> DynamicImage {
     DynamicImage::ImageLuma8(gray)
 }
 
-/// 一张**带装订沟的跨页**：两半各画一段竖直渐变、各自四边顶着墨，中间一条贯穿全高的纸白。
+/// 一张**带中缝的跨页**：两半各画一段竖直渐变、各自四边顶着墨，中间一条贯穿全高的纸白。
 ///
-/// 那条纸白就是装订沟。四边顶着墨买两件事：**裁边在整页上是空操作**（拆分那几条用例
-/// 因此不与裁边缠在一起，与 [`full_bleed_gradient`] 同一个用意），而**每半再裁**那一步
+/// 那条纸白就是中缝。四边顶着墨买两件事：**裁白边在整页上是空操作**（拆分那几条用例
+/// 因此不与裁白边缠在一起，与 [`full_bleed_gradient`] 同一个用意），而**每半再裁**那一步
 /// 恰好只收走沟那一侧——两半的窗口于是严丝合缝地贴着沟，切点错一列当场看得出来。
 ///
 /// 沟的位置由 `center` 定，宽由 `gutter` 定；沟的头一列由 [`gutter_left`] 算出，
@@ -278,7 +278,7 @@ pub fn spread_with_gutter(size: Size, center: f64, gutter: u32) -> DynamicImage 
 /// 转灰那一支一次都跑不到，而灰度路径与彩色分支真要分家只会分在那里
 /// （与 `tonefit` 的 `crop`、`spread` 里那两条同名用例同一个用意）。
 ///
-/// 纸白不染色：装订沟得留着，不然染完就没有沟可找了。
+/// 纸白不染色：中缝得留着，不然染完就没有沟可找了。
 pub fn colorize(page: &DynamicImage) -> DynamicImage {
     let gray = page.to_luma8();
     let (width, height) = (gray.width(), gray.height());
@@ -302,10 +302,10 @@ pub fn gutter_left(size: Size, center: f64, gutter: u32) -> u32 {
 
 /// 网点页，但**四边都顶着墨**：[`screentone`] 外面加一圈 [`INK_BORDER`] 像素宽的黑边。
 ///
-/// 与 [`full_bleed_gradient`] 同一个用意：裁边在它身上是空操作，几何那几条性质因此不与
-/// 裁边缠在一起。要一卷「判定落在**抖过的低位深**上」的页，取它而不是渐变页——
-/// 网点自带高频，参照那一份把颗粒项的触发线抬高，抖动在低位深上因此还赢得过不抖动；
-/// 连续灰调在新判据下判到候选上界那一档（ADR 0002 决定第 5 条，
+/// 与 [`full_bleed_gradient`] 同一个用意：裁白边在它身上是空操作，几何那几条性质因此不与
+/// 裁白边缠在一起。要一卷「判定落在**抖过的低灰阶档位**上」的页，取它而不是渐变页——
+/// 网点自带高频，参照那一份把抖动颗粒项的触发线抬高，抖动在低灰阶档位上因此还赢得过不抖动；
+/// 连续灰调在新画质分下判到候选上界那一档（ADR 0002 决定第 5 条，
 /// measurements 的《颗粒项只在 1bit 上生效》里带网点那两页说的是同一件事）。
 pub fn full_bleed_screentone(size: Size) -> DynamicImage {
     inked_border(screentone(size))
@@ -359,14 +359,14 @@ pub const OFF_GRID_PAPER_WHITE: u8 = 253;
 
 /// 纸白取 `paper` 的一页：**大片纸白**、一竖条墨、一竖条从纯黑爬到纸白之下的灰调，四边顶着墨。
 ///
-/// 现有夹具全是合成图，纸白多半正好落在 255 上——纸白对齐在它们身上一律是空操作，
+/// 现有夹具全是合成图，纸白多半正好落在 255 上——纸色提白在它们身上一律是空操作，
 /// 那几条性质一条都走不到。这一张是入口：`paper` 取 [`OFF_GRID_PAPER_WHITE`] 就是一张
 /// 离格的页，取 255 就是一张本来就在格点上的页，两者只差这一个取值。
 ///
 /// **那一竖条灰调爬到 `paper − 1` 为止**：钳制只动 `[纸白, 255]` 那一段、低于纸白的一个都不动
 /// ——这条性质在只有两个取值的页上是句空话，要有它才断言得出来。
 ///
-/// 四边那一圈墨让裁边成为空操作（同 [`full_bleed_gradient`]）：这一张说的是纸白，不是裁边。
+/// 四边那一圈墨让裁白边成为空操作（同 [`full_bleed_gradient`]）：这一张说的是纸白，不是裁白边。
 /// 纸白那两条竖条合起来占半页，**平坦像素里它的个数最多**，墨那一条抢不走。
 pub fn page_with_paper_white(size: Size, paper: u8) -> DynamicImage {
     let (w, h) = (size.width, size.height);
@@ -388,7 +388,7 @@ pub fn page_with_paper_white(size: Size, paper: u8) -> DynamicImage {
 ///
 /// 画集就是这个形状——实测的那一部（Venus）12 页全部量不到纸白，最大平坦区只有 4430 px，
 /// 达不到 5000 那道门槛（measurements 的《全语料普查：四成三的页纸白不落在格点上》）。
-/// 纸白对齐在它身上该**整页原样**：不硬猜一个纸白，猜出来的那个值会把整页改坏（spec 的 story 6）。
+/// 纸色提白在它身上该**整页原样**：不硬猜一个纸白，猜出来的那个值会把整页改坏（spec 的 story 6）。
 ///
 /// 四件事各由页上的一样东西担着：
 ///
@@ -403,8 +403,8 @@ pub fn page_with_paper_white(size: Size, paper: u8) -> DynamicImage {
 ///   被上限那条守卫拦下——像素照旧不变，用例照旧全绿，那道门限就**一句话都没被验到**。
 /// - **「硬猜就把图改坏」演示得出来**：那一块是 253，硬猜出来的纸白离格只有 2 级，
 ///   钳得动；背景最亮 252，跟着一起被推上 255。
-/// - **裁边是空操作**：每一行、每一列都扫过全部色块，墨（低于墨阈 200）实测占 57%~71%，
-///   一条行列都不会被当成白边——这一张说的不是裁边。
+/// - **裁白边是空操作**：每一行、每一列都扫过全部色块，墨（低于墨阈 200）实测占 57%~71%，
+///   一条行列都不会被当成白边——这一张说的不是裁白边。
 pub fn full_bleed_page_without_paper(size: Size) -> DynamicImage {
     /// 一块多大。
     const BLOCK: u32 = 8;
@@ -422,7 +422,7 @@ pub fn full_bleed_page_without_paper(size: Size) -> DynamicImage {
 /// [`full_bleed_page_without_paper`] 角上那一块纸白多大。理由见那里。
 pub const PAPER_PATCH: u32 = 68;
 
-/// 够得着 [`OFF_GRID_PAPER_WHITE`] 那 2 级离格量的一个《纸白对齐上限》。
+/// 够得着 [`OFF_GRID_PAPER_WHITE`] 那 2 级离格量的一个《提白上限》。
 ///
 /// 取 4 只因为它眼下是那个占位值（`CONTEXT.md` 的《尚未确立》）。
 /// **这几条性质与它取多少无关**，只要大得过夹具那 2 级——标定把 4 换掉，这里不必跟着改。
@@ -454,11 +454,11 @@ pub fn assert_pixels(want: &[u8], got: &[u8]) {
     }
 }
 
-/// 一页留白，左上角一块 `patch` 大的灰调补丁——低位深下唯一会崩的就是这块。
+/// 一页留白，左上角一块 `patch` 大的灰调补丁——低灰阶档位下唯一会崩的就是这块。
 ///
 /// 补丁竖直方向 0→255，与 [`gradient`] 同一条斜坡，只是圈在一小块里。
-/// 页上其余部分是白的：白在任何位深上都是格点，误差恒为零，
-/// 这一页的判据于是完全由那一小块说了算。
+/// 页上其余部分是白的：白在任何灰阶档位上都是格点，误差恒为零，
+/// 这一页的画质分于是完全由那一小块说了算。
 pub fn tone_patch(size: Size, patch: Size) -> DynamicImage {
     let last = (patch.height - 1).max(1);
     DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
@@ -470,7 +470,7 @@ pub fn tone_patch(size: Size, patch: Size) -> DynamicImage {
     }))
 }
 
-/// 四周纸白、中间一块内容的页：**裁边那几条用例的被测对象**（页几何批 02 号票）。
+/// 四周纸白、中间一块内容的页：**裁白边那几条用例的被测对象**（页几何批 02 号票）。
 ///
 /// 内容是竖直方向 0→190 的斜坡——整块都低于墨阈（200），因此内容里每一行、每一列
 /// 都是满的墨，而白边一个墨点都没有。裁出来的窗口于是恰好是 `content` 那一块，
@@ -510,10 +510,10 @@ pub fn page_with_specks_in_the_margin(
     DynamicImage::ImageLuma8(page)
 }
 
-/// 一页上全部墨点的**外接框**有多大。只给裁边那条用例当对照，不是被测代码。
+/// 一页上全部墨点的**外接框**有多大。只给裁白边那条用例当对照，不是被测代码。
 ///
 /// 「本裁法不是外接框」这句话要有一个东西替它作证：同一页上外接框退回整页，
-/// 而裁边裁出了内容那一块。墨阈与 `tonefit` 的 `crop` 同一个（200）。
+/// 而裁白边裁出了内容那一块。墨阈与 `tonefit` 的 `crop` 同一个（200）。
 pub fn ink_bounding_box(image: &DynamicImage) -> Size {
     let gray = image.to_luma8();
     let (mut left, mut top) = (gray.width(), gray.height());
@@ -543,9 +543,9 @@ pub fn solid(size: Size, level: u8) -> DynamicImage {
 /// 又一步都不缩放。写出的像素于是与源**逐字节相同**——断言写得起等号，不必留容差。
 /// 同一卷里给每页配一个不同的 `black_rows`，页与页就两两分得开。
 ///
-/// 那一圈墨边让裁边成为空操作（页几何批 02 号票）：没有它，白底那一大片就是白边，
+/// 那一圈墨边让裁白边成为空操作（页几何批 02 号票）：没有它，白底那一大片就是白边，
 /// 页会被裁成 `宽 × black_rows`，而这一条用例说的是「这一格装的是不是它自己的像素」，
-/// 不是裁边。理由与 [`full_bleed_gradient`] 同一条。
+/// 不是裁白边。理由与 [`full_bleed_gradient`] 同一条。
 pub fn black_top_band(size: Size, black_rows: u32) -> DynamicImage {
     inked_border(DynamicImage::ImageLuma8(ImageBuffer::from_fn(
         size.width,
@@ -571,8 +571,8 @@ pub fn color_page(size: Size) -> DynamicImage {
 /// 截断的页：一张纯黑页的完整 PNG，只留前 `KEPT_FRACTION` 那一段。
 ///
 /// 文件头与 IHDR 都在，IDAT 只剩一截：完整尺寸解得出来，像素解不全，但救得回一段。
-/// 这是**部分救回页**——三种页状态里的第三种（04 号票）：它照常缩放、判定、写出，
-/// 但不参与几何门与卷级上包络。
+/// 这是**残缺页**——三种页状态里的第三种（04 号票）：它照常缩放、判定、写出，
+/// 但不参与尺寸贴合检查与整卷统一灰阶。
 ///
 /// 纯黑是为了让两段一眼分得开：解回来的那一段是 0，救不回来的那一段是纸白 255。
 pub fn truncated_page(size: Size) -> Vec<u8> {
@@ -630,7 +630,7 @@ pub fn oversized_page() -> Vec<u8> {
     header.extend_from_slice(b"IHDR");
     header.extend_from_slice(&u32::from(u16::MAX).to_be_bytes());
     header.extend_from_slice(&u32::from(u16::MAX).to_be_bytes());
-    // 位深 8、灰度、默认压缩与滤波、非隔行。
+    // 灰阶档位 8、灰度、默认压缩与滤波、非隔行。
     header.extend_from_slice(&[8, 0, 0, 0, 0]);
 
     let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -644,8 +644,8 @@ pub fn oversized_page() -> Vec<u8> {
 /// 丢 alpha 会让右半出成黑，按纸白合成才出成白。
 ///
 /// 四边另有一圈 [`INK_BORDER`] 宽的不透明黑，理由与 [`full_bleed_gradient`] 同一条：
-/// 透明区合成之后就是纸白，而纸白按墨量就是白边，裁边会把右半整个裁掉
-/// （页几何批 02 号票）——而这一条用例说的是透明区合成成了什么，不是裁边。
+/// 透明区合成之后就是纸白，而纸白按墨量就是白边，裁白边会把右半整个裁掉
+/// （页几何批 02 号票）——而这一条用例说的是透明区合成成了什么，不是裁白边。
 pub fn page_with_transparency(size: Size) -> DynamicImage {
     DynamicImage::ImageRgba8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
         let border = x < INK_BORDER
@@ -666,7 +666,7 @@ pub fn band_center_row(size: Size, band: usize) -> u32 {
     (band as u32 * 2 + 1) * size.height / (bands * 2)
 }
 
-/// 一次测试的工作区：源卷与输出根目录分处两地，互不嵌套。
+/// 一次测试的工作区：源卷与输出目录分处两地，互不嵌套。
 pub struct Workspace {
     tmp: tempfile::TempDir,
 }
@@ -736,19 +736,19 @@ impl Workspace {
         self.tmp.path()
     }
 
-    /// 输出根目录。此刻还不存在，由被测代码建出来。
+    /// 输出目录。此刻还不存在，由被测代码建出来。
     pub fn out(&self) -> PathBuf {
         self.tmp.path().join("out")
     }
 
-    /// 另起一个输出根，与 [`out`](Self::out) 并列。同一个卷跑两趟、比两份输出的用例用它——
+    /// 另起一个输出目录，与 [`out`](Self::out) 并列。同一个卷跑两趟、比两份输出的用例用它——
     /// 换个工作区跑第二趟就得把卷也生成两份，那时比的就不只是这两趟的差别了。
     pub fn out_named(&self, name: &str) -> PathBuf {
-        assert_ne!(name, "out", "另起的输出根不该与默认那个撞名");
+        assert_ne!(name, "out", "另起的输出目录不该与默认那个撞名");
         self.tmp.path().join(name)
     }
 
-    /// 工作区里一个与卷、输出根并列的目录，此刻还不存在。
+    /// 工作区里一个与卷、输出目录并列的目录，此刻还不存在。
     ///
     /// 预设那一路拿它当**用户配置目录**：子进程的 `%APPDATA%` / `$XDG_CONFIG_HOME`
     /// 指到这里，跑起来的 tonefit 就在临时目录里找预设文件，碰不到这台机器上真正的那一份
@@ -764,20 +764,20 @@ impl Default for Workspace {
     }
 }
 
-/// 同一档位深上不抖动的那个候选。几何门不成立的页只有这一种候选可选。
+/// 同一档灰阶档位上不抖动的那个候选。尺寸未贴合屏幕的页只有这一种候选可选。
 pub const fn plain(bit_depth: BitDepth) -> tonefit::Candidate {
     tonefit::Candidate::new(bit_depth, Dither::Off)
 }
 
-/// 同一档位深上抖过的那个候选，[`plain`] 的孪生。
+/// 同一档灰阶档位上抖过的那个候选，[`plain`] 的孪生。
 ///
-/// 判据的性质用例一律拿这一对并排比。两个摆在一处：只有 `plain` 在共享夹具里、
+/// 画质分的性质用例一律拿这一对并排比。两个摆在一处：只有 `plain` 在共享夹具里、
 /// 另一个各测试二进制各写一遍，是走散的开始。
 pub const fn dithered(bit_depth: BitDepth) -> tonefit::Candidate {
     tonefit::Candidate::new(bit_depth, Dither::FloydSteinberg)
 }
 
-/// 基准设备：`CONTEXT.md` 里阈值标定的那台。不点名 profile 的用例都用它。
+/// 基准设备：`CONTEXT.md` 里画质门槛标定的那台。不点名 profile 的用例都用它。
 pub const BASELINE_DEVICE: &str = "kobo-libra-2";
 
 /// 按型号名取 profile。型号必须在内置表里，不在就是夹具写错了。
@@ -790,10 +790,10 @@ pub fn baseline_profile() -> Profile {
     profile(BASELINE_DEVICE)
 }
 
-/// 与基准面板等大的页尺寸：源即目标，不缩放，几何门两条边都贴住，
+/// 与基准面板等大的页尺寸：源即目标，不缩放，尺寸贴合检查两条边都贴住，
 /// 也就是这台 profile 输出得到的**最大尺寸**。
 ///
-/// 判据的分块聚合按**目标尺寸**铺开块数，「多小的损伤读得出来」因此只在真实输出尺寸上
+/// 画质分的分块聚合按**目标尺寸**铺开块数，「多小的损伤读得出来」因此只在真实输出尺寸上
 /// 问得准（ADR 0002 的《第 3 条为什么改过》）。从 profile 推出而不写死：
 /// 面板表改了，用它的夹具跟着走。
 pub fn panel_sized() -> Size {
@@ -816,10 +816,10 @@ pub fn run_volume_with(space: &Workspace, volume: &Volume, profile: Profile) -> 
 
 /// 把输出钉在 8bit 再跑一遍：量化成了恒等，写出的就是它之前那一步的结果。
 ///
-/// 量重采样、解码或转灰的用例用这个。判定位深会把取值压到那一档的格点上，
+/// 量重采样、解码或转灰的用例用这个。判定灰阶档位会把取值压到那一档的格点上，
 /// 混进来就分不清一处差异出自哪一步——而那几条性质说的都不是量化。
 ///
-/// 三个开关都是用户手上真有的：抬上界走 ADR 0003 给的 `--gray-levels`，点名位深走
+/// 三个开关都是用户手上真有的：抬上界走 ADR 0003 给的 `--gray-levels`，点名灰阶档位走
 /// `--bit-depth`，点名不抖动走 `--dither`。抖动在 8bit 上本来就是恒等（格点即工作精度），
 /// 点名它是为了把候选裁到只剩一个——判定于是整个被顶掉，报告里那一项也就没有歧义。
 pub fn run_volume_at_eight_bits(space: &Workspace, volume: &Volume) -> tonefit::Report {
@@ -848,8 +848,8 @@ fn at_eight_bits(space: &Workspace, volume: &Volume, fit: tonefit::FitMode) -> t
 /// 把这一卷按 `--no-crop` 跑一遍：白边留着（页几何批 02 号票）。
 ///
 /// 点名它的只有一种用例：**页上那一片白本身就是被测对象**，裁掉它就没什么可断言了。
-/// 别的用例一律走默认那条路（裁边开着），需要的话把夹具换成四边顶着墨的那几个
-/// （[`full_bleed_gradient`]、[`line_art`]）——那样钉住的性质与裁边无关，读起来也不必绕。
+/// 别的用例一律走默认那条路（裁白边开着），需要的话把夹具换成四边顶着墨的那几个
+/// （[`full_bleed_gradient`]、[`line_art`]）——那样钉住的性质与裁白边无关，读起来也不必绕。
 pub fn run_volume_keeping_margins(space: &Workspace, volume: &Volume) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
         crop: false,
@@ -860,7 +860,7 @@ pub fn run_volume_keeping_margins(space: &Workspace, volume: &Volume) -> tonefit
 
 /// 把这一卷**不拆跨页**跑一遍（`--no-split`，页几何批 04 号票）。
 ///
-/// 拆与不拆的对照要它：跨页不拆时顶到面板高、宽溢出面板，靠阅读器横向平移看。
+/// 拆与不拆的对照要它：跨页不拆时顶到面板高、页面比屏幕宽，靠阅读器横向平移看。
 pub fn run_volume_without_splitting(space: &Workspace, volume: &Volume) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
         split: tonefit::SplitRule {
@@ -874,7 +874,7 @@ pub fn run_volume_without_splitting(space: &Workspace, volume: &Volume) -> tonef
 
 /// 把这一卷按 **fit-inside** 跑一遍（页几何批 01 号票）。
 ///
-/// 两种用例点名它：问几何门**不成立**那一支的（默认那条路上它是空集——以高为准让每一页的
+/// 两种用例点名它：问尺寸贴合检查**不成立**那一支的（默认那条路上它是空集——以高为准让每一页的
 /// 高都等于面板高），以及拿 [`TINY`] 或 [`SMALLER_THAN_TARGET`] 铺出小页来图快的。
 pub fn run_volume_fitted_inside(space: &Workspace, volume: &Volume) -> tonefit::Report {
     tonefit::run(&tonefit::Request {
@@ -884,10 +884,10 @@ pub fn run_volume_fitted_inside(space: &Workspace, volume: &Volume) -> tonefit::
     .expect("处理应当成功")
 }
 
-/// 把这一卷**开着卷级上包络**跑一遍（`--envelope`，ADR 0006；默认关着，ADR 0018）。
+/// 把这一卷**开着整卷统一灰阶**跑一遍（`--envelope`，ADR 0006；默认关着，ADR 0018）。
 ///
-/// 问基准档、定档页、特例页、迟滞升档——上包络那条路**内部的构造**——的用例点名它。
-/// 默认那条路上卷级根本没有基准档（`VolumeVerdict::PerPage`），这几样在那里问不出来。
+/// 问统一档位、代表页、差异大的页、迟滞升档——整卷统一灰阶那条路**内部的构造**——的用例点名它。
+/// 默认那条路上卷级根本没有统一档位（`VolumeVerdict::PerPage`），这几样在那里问不出来。
 pub fn run_volume_under_the_envelope(space: &Workspace, volume: &Volume) -> tonefit::Report {
     run_volume_under_the_envelope_with(space, volume, baseline_profile())
 }
@@ -906,7 +906,7 @@ pub fn run_volume_under_the_envelope_with(
     .expect("处理应当成功")
 }
 
-/// 同上，但按 **fit-inside**：上包络那几条多半拿小页铺长卷图快，而小页只在 fit-inside
+/// 同上，但按 **fit-inside**：整卷统一灰阶那几条多半拿小页铺长卷图快，而小页只在 fit-inside
 /// 上还是小页（见 [`run_volume_fitted_inside`]）。
 pub fn run_volume_under_the_envelope_fitted_inside(
     space: &Workspace,
@@ -937,8 +937,8 @@ pub fn run_paths_expecting_failure<'a>(
 }
 
 /// 拼一个用基准 profile、输出到工作区 `out/` 的 `Request`——**一个 flag 都不加的那一趟**：
-/// 上包络关着，位深逐页各判各的（ADR 0018）。
-/// 换 profile、开上包络或要复用同一个 `Request` 的用例自己拼。
+/// 整卷统一灰阶关着，灰阶档位逐页各判各的（ADR 0018）。
+/// 换 profile、开整卷统一灰阶或要复用同一个 `Request` 的用例自己拼。
 pub fn request<'a>(
     space: &Workspace,
     inputs: impl IntoIterator<Item = &'a Path>,
@@ -1036,12 +1036,12 @@ pub fn encode_image(image: &DynamicImage, extension: &str) -> Vec<u8> {
 /// 一页的判定。
 ///
 /// 两种页没有判定：彩色分支上的（那条路径不量化，ADR 0005 决定第 4 条），
-/// 以及失败页（它根本没解出来，12 号票）。取它就是用例写错了：
+/// 以及坏页（它根本没解出来，12 号票）。取它就是用例写错了：
 /// 要么点错了页，要么该断言的是 `verdict()` 为空。
 pub fn verdict(page: &tonefit::PageReport) -> tonefit::Verdict {
     page.verdict().unwrap_or_else(|| {
         panic!(
-            "{} 没有判定：它要么走的彩色分支，要么是失败页",
+            "{} 没有判定：它要么走的彩色分支，要么是坏页",
             page.source.display()
         )
     })
@@ -1074,7 +1074,7 @@ pub fn read_png(path: &Path) -> DecodedPng {
 pub fn read_png_bytes(bytes: &[u8]) -> DecodedPng {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     let header = decoder.read_header_info().expect("读 PNG 头").clone();
-    // EXPAND 把低位深灰度按满量程摊回 8 位，把调色板摊成 RGB8。
+    // EXPAND 把低灰阶档位灰度按满量程摊回 8 位，把调色板摊成 RGB8。
     decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info().expect("读 PNG 信息");
     let mut pixels = vec![0; reader.output_buffer_size().expect("PNG 缓冲尺寸")];
@@ -1153,8 +1153,8 @@ pub fn written_bits(depth: png::BitDepth) -> u32 {
 ///
 /// 与 [`directory_members`] 分工：那一个铺平整棵树、答「这个容器里装着什么」，
 /// 这一个只看一层、答「这个目录下此刻摆着哪几样」。**半成品因此看得见**——
-/// 输出根下那格 `<卷名>.partial` 在这个清单里，而它在铺平的成员清单里认不出来。
-/// 断言「中止之后输出根干净」「残留的临时容器不在了」用的都是它。
+/// 输出目录下那格 `<卷名>.partial` 在这个清单里，而它在铺平的成员清单里认不出来。
+/// 断言「立即停止之后输出目录干净」「残留的临时容器不在了」用的都是它。
 ///
 /// 根还没建出来就是「里面什么都没有」：还没轮到输出落盘的用例正要这个答案。
 pub fn names_in(root: &Path) -> Vec<String> {
@@ -1226,7 +1226,7 @@ pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
 
 /// 高频纹理页：`base` 上下各 `amplitude` 的逐像素交替。
 ///
-/// 局部均值恒为 `base`，高频能量却拉满——判据的掩蔽加权该按后者放宽。
+/// 局部均值恒为 `base`，高频能量却拉满——画质分的细节放宽加权该按后者放宽。
 /// 取值不触顶不触底，加一个偏移上去不会被截断，加权方向因此可以单独测。
 pub fn fine_texture(size: Size, base: u8, amplitude: u8) -> DynamicImage {
     DynamicImage::ImageLuma8(ImageBuffer::from_fn(size.width, size.height, |x, y| {
@@ -1238,7 +1238,7 @@ pub fn fine_texture(size: Size, base: u8, amplitude: u8) -> DynamicImage {
     }))
 }
 
-/// 把夹具页转成判据吃的 8 位灰度缓冲。夹具造的都是灰度页，取 luma 即可。
+/// 把夹具页转成画质分吃的 8 位灰度缓冲。夹具造的都是灰度页，取 luma 即可。
 pub fn gray_image(image: &DynamicImage) -> GrayImage {
     let luma = image.to_luma8();
     GrayImage::new(Size::new(luma.width(), luma.height()), luma.into_raw())
@@ -1287,7 +1287,7 @@ pub fn relative_name(root: &Path, path: &Path) -> String {
 
 /// 一个卷的卷级判定，写成一行给人读的话。
 ///
-/// 用词取自 `CONTEXT.md`：上包络定出的那一档叫**基准档**，站在分位秩上的那一页叫**定档页**，
+/// 用词取自 `CONTEXT.md`：整卷统一灰阶定出的那一档叫**统一档位**，站在分位秩上的那一页叫**代表页**，
 /// 因迟滞升上去的那些页叫**迟滞升档**。`Envelope` 自己的 `Display` 另有一份，那一份还带着
 /// 「四者均未标定」那句注脚——快照要的是钉死的一行，注脚每趟都一样，摆进去只是噪声。
 ///
@@ -1295,7 +1295,7 @@ pub fn relative_name(root: &Path, path: &Path) -> String {
 pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
     match volume.verdict {
         Some(tonefit::VolumeVerdict::Envelope(envelope)) => format!(
-            "基准档 {} · 定档页 {} · 其余 {} 页 · 特例 {} 页 · 迟滞升档 {} 页",
+            "统一档位 {} · 代表页 {} · 其余 {} 页 · 特例 {} 页 · 迟滞升档 {} 页",
             envelope.base,
             page_at(volume, envelope.driver),
             envelope.body_pages,
@@ -1313,7 +1313,7 @@ pub fn volume_verdict(volume: &tonefit::VolumeReport) -> String {
     }
 }
 
-/// 卷内第 `index` 页在卷里的名字。定档页靠它指人。
+/// 卷内第 `index` 页在卷里的名字。代表页靠它指人。
 pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
     volume
         .pages
@@ -1322,15 +1322,15 @@ pub fn page_at(volume: &tonefit::VolumeReport, index: usize) -> String {
         .unwrap_or_else(|| format!("第 {index} 页"))
 }
 
-/// 预扫走完的那一刻，把一个**卷根**抽走。
+/// 清点走完的那一刻，把一个**卷根**抽走。
 ///
-/// 造「预扫时打得开、轮到它时整个不在了」用它（`p2-loose-ends/05`）：**预扫排在开工那条
+/// 造「清点时打得开、轮到它时整个不在了」用它（`p2-loose-ends/05`）：**清点排在开工那条
 /// 事件之前**（见 `tonefit` 的 `survey`），这一卷因此已经点开过一次，而轮到它时那个路径
-/// 已经不在——管线单问的那一句正好答得出「它是在预扫之后不见的，不是它里面的页坏了」。
+/// 已经不在——管线单问的那一句正好答得出「它是在清点之后不见的，不是它里面的页坏了」。
 /// 它与「卷里每一页都读不出来」分得开，后者仍走隔离。
 ///
 /// 两种容器形态各有一个构造，抽走的那一刻逐字相同，两条用例之间只差卷根是一棵树还是一个
-/// 文件。归档卷那一个从前造不出来——预扫打开它之后一直握着句柄——预扫改成只数不留之后
+/// 文件。归档卷那一个从前造不出来——清点打开它之后一直握着句柄——清点改成只数不留之后
 /// 造得出来了（`volume-discovery/01`）。
 ///
 /// 抽走**卷里的一个成员**是另一件事，那要等这一卷重开之后才动手，见
@@ -1375,7 +1375,7 @@ impl tonefit::Progress for RemoveOnceTheSurveyIsDone {
 
 /// 点名那一卷**刚被重开**的那一刻，抽走它里面的一个成员。
 ///
-/// 造「预扫时打得开、轮到它时做不成」用它。抽走一个**透传文件**得到的是一个卷级失败
+/// 造「清点时打得开、轮到它时做不成」用它。抽走一个**透传文件**得到的是一个卷转换失败
 /// （透传文件搬不动就交不出这一卷，`CONTEXT.md` 的《失败》）；透传文件排在页之后写，
 /// 那一刻半卷已经进了临时容器，「写到一半才失败」因此也由它造。
 ///
