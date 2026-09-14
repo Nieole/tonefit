@@ -614,16 +614,18 @@ const PRESETS = [
   { name: '画集', says: { fit: '整页放进屏幕', crop: '保留', split: '保持一页', depth: '16 级（4bit）' } },
 ];
 
+// 全部按键只列此刻派得出的键：每一行第三格是派得出它的阶段——I 还没开始 · S 清点中 · R 转换中 · D 等待确认 · E 已结束，
+// 不写即任何阶段都派得出。同一个键在不同阶段做的事不同，就分成几行各写各的；一行都不剩的组整组不出
 const KEYMAP = [
-  ['全局', [['1 2', '切换视图：任务 / 配置'], ['gt gT', '下一个 / 上一个视图'], ['Tab', '同一视图里切换区块'], ['?', '全部按键，再按一次关闭'], ['q', '退出'], ['C-c', '退出（当前卷不保存，不留半成品）']]],
+  ['全局', [['1 2', '切换视图：任务 / 配置'], ['gt gT', '下一个 / 上一个视图'], ['Tab', '同一视图里切换区块'], ['?', '全部按键，再按一次关闭'], ['q', '退出', 'IE'], ['q', '不退出：先按 s 停止，或按 C-c', 'SRD'], ['C-c', '退出（当前卷不保存，不留半成品）']]],
   ['移动', [['j k', '上下一行'], ['C-d C-u', '半屏'], ['C-f C-b', '一屏'], ['gg G', '到顶 / 到底'], ['滚轮', '一格三行'], ['单击', '选中那一行']]],
-  ['卷列表', [['l ⏎', '展开文件夹 / 查看每页结果'], ['h', '收起 / 回上一级'], ['F', '自动滚动到正在处理的卷'], ['/', '搜索卷名或文件夹'], ['n N', '下一个 / 上一个搜索结果'], [']d [d', '下一个 / 上一个问题']]],
-  ['路径', [['o', '添加路径'], ['i ⏎', '修改这一条'], ['空格', '勾选 / 取消勾选'], ['dd', '删除这一条']]],
-  ['转换', [['t', '预览：只分析，不写文件'], ['x', '转换：写到输出目录'], ['s', '停止：按一次做完当前卷再停，按两次立即停']]],
-  ['确认', [['x', '写出这一卷（不用重新分析）'], ['a', '写出，后面的卷不再询问'], ['s', '不写出，结束预览'], ['v', '查看这一卷的每页结果']]],
-  ['每页结果', [['a', '需留意的页 / 全部页'], ['h Esc', '回卷列表']]],
+  ['卷列表', [['l ⏎', '展开文件夹 / 查看每页结果', 'RDE'], ['h', '收起 / 回上一级', 'RDE'], ['F', '自动滚动到正在处理的卷', 'RD'], ['/', '搜索卷名或文件夹', 'RDE'], ['n N', '下一个 / 上一个搜索结果', 'RDE'], [']d [d', '下一个 / 上一个问题', 'RDE']]],
+  ['路径', [['o', '添加路径', 'I'], ['i ⏎', '修改这一条', 'I'], ['空格', '勾选 / 取消勾选', 'I'], ['dd', '删除这一条', 'I'], ['o i', '返回路径列表', 'E']]],
+  ['转换', [['t', '预览：只分析，不写文件', 'IE'], ['x', '转换：写到输出目录', 'IE'], ['s', '停止：按一次做完当前卷，按两次立即停', 'SR']]],
+  ['确认', [['x', '写出这一卷（不用重新分析）', 'D'], ['a', '写出，后面的卷不再询问', 'D'], ['s', '不写出，结束预览', 'D'], ['v', '查看这一卷的每页结果', 'D']]],
+  ['每页结果', [['a', '需留意的页 / 全部页', 'RE'], ['h Esc', '回卷列表', 'RDE']]],
   ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图']]],
-  ['输入', [['Tab', '补全路径'], ['C-w', '删一段'], ['⏎', '确定'], ['Esc', '取消']]],
+  ['输入', [['Tab', '补全路径', 'I'], ['C-w', '删一段', 'IRDE'], ['⏎', '确定', 'IRDE'], ['Esc', '取消', 'IRDE'], ['F1', '全部按键', 'IRDE']]],
   ['灰阶写法', [['1bit', '2 级灰'], ['2bit', '4 级灰'], ['4bit', '16 级灰'], ['+FS', '加抖动（误差扩散）']]],
 ];
 // ───────────────────────── 模拟一趟：预扫 → 对指纹 → 读图定档 →（决策点）→ 按档写出 ─────────────────────────
@@ -895,7 +897,8 @@ function stageHints() {
 }
 function drawFooter(scr) {
   const y = scr.r - 1, W = scr.c;
-  if (S.input) {
+  // 覆盖层盖着输入行时屏底让给覆盖层，关掉之后输入行原样回来
+  if (S.input && !S.overlay) {
     const inp = S.input;
     let x = scr.put(1, y, inp.prompt, 'c-green b');
     x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
@@ -935,9 +938,9 @@ function overviewLines(iw, compact) {
     ];
   }
   if (r.stage === 'surveying') {
-    const found = Math.min(r.tree.vols.length, Math.floor((r.surveyT / SURVEY_SEC) * r.tree.vols.length));
+    // 清点途中库一条事件都不报（CONTEXT《清点》）：这一段只说在清点，不报卷数
     return [
-      [[SPIN[Math.floor(performance.now() / 90) % 10] + ' 清点 ', 'c-magenta b'], [`已找到 ${found} 卷`, 'c-fg'], ['  ⋅ 先数清总量，剩余时间才估得准', 'c-gray']],
+      [[SPIN[Math.floor(performance.now() / 90) % 10] + ' 清点 ', 'c-magenta b'], ['正在找出每个路径里的卷', 'c-fg'], ['  ⋅ 先数清总量，剩余时间才估得准', 'c-gray']],
       [['当前卷 ', 'c-gray'], ['还没开始', 'c-gray d']],
     ];
   }
@@ -1388,8 +1391,11 @@ function drawPresets(scr, x, y, w, h, focused) {
   }
 }
 
+const stageCode = () => (S.run ? { surveying: 'S', running: 'R', deciding: 'D', ended: 'E' }[S.run.stage] : 'I');
 function helpColumns(twoCol) {
-  const groups = KEYMAP.map(([g, ks]) => [[[g, 'c-green b']], ...ks.map(([k, d]) => [[pad(k, 10), 'c-yellow'], [d, 'c-fg']]), []]);
+  const now = stageCode();
+  const groups = KEYMAP.map(([g, ks]) => [g, ks.filter(([, , when]) => !when || when.includes(now))]).filter(([, ks]) => ks.length)
+    .map(([g, ks]) => [[[g, 'c-green b']], ...ks.map(([k, d]) => [[pad(k, 10), 'c-yellow'], [d, 'c-fg']]), []]);
   if (!twoCol) return groups.flat().map((l) => [l, []]);
   const total = groups.reduce((a, g) => a + g.length, 0);
   let acc = 0, split = groups.length;
@@ -1455,10 +1461,10 @@ function drawAll() {
   if (W < 60 || H < 16) { drawTooSmall(scr); return scr; }
   drawHeader(scr);
   if (S.view === 'task') drawTask(scr); else drawConfig(scr);
+  drawCompletions(scr);
   if (S.overlay) scr.dimAll();
   if (S.overlay && S.overlay.kind === 'help') drawHelp(scr);
   else if (S.overlay && S.overlay.kind === 'note') drawNote(scr);
-  drawCompletions(scr);
   drawFooter(scr);
   return scr;
 }
@@ -1598,9 +1604,10 @@ function keyName(e) {
 function onKey(k, raw = k) {
   const r = S.run;
   if (k === 'C-c') { toast([['退出', 'c-fg b'], r && r.stage !== 'ended' ? ['：当前卷不保存，不留半成品（原型里不会真的退出）', 'c-gray'] : ['（原型里不会真的退出；实际程序这时会打印结果）', 'c-gray']]); return true; }
-  // 打字
-  if (S.input) {
+  // 打字：每个字符都进缓冲（? 也是字），全部按键靠 F1 掀开；掀着的时候按键归覆盖层
+  if (S.input && !S.overlay) {
     const inp = S.input;
+    if (k === 'F1') { S.overlay = { kind: 'help', from: 0 }; return true; }
     if (k === 'Escape') { if (inp.kind === 'search') S.search = null; S.input = null; return true; }
     if (k === 'Enter') { submitInput(); return true; }
     if (k === 'Tab') { complete(); return true; }
@@ -1807,7 +1814,7 @@ term.addEventListener('keydown', (e) => {
   if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
   const k = keyName(e);
   const handled = onKey(k, e.key);
-  if (handled || ['Tab', 'Space', ' ', '/', "'"].includes(e.key) || e.key.startsWith('Arrow') || e.ctrlKey) e.preventDefault();
+  if (handled || ['Tab', 'Space', ' ', '/', "'", 'F1'].includes(e.key) || e.key.startsWith('Arrow') || e.ctrlKey) e.preventDefault();
   echo({ Space: '空格', Enter: '⏎', Escape: 'Esc', Backspace: '⌫' }[k] || (e.key.startsWith('Arrow') ? { ArrowDown: '↓', ArrowUp: '↑', ArrowLeft: '←', ArrowRight: '→' }[e.key] : k));
 });
 
@@ -1883,13 +1890,13 @@ function describe() {
   if (S.size[0] < 60 || S.size[1] < 16) {
     title = '窗口太小'; points = ['窗口小于 60×16 时不硬挤：只显示一句提示、当前进度和退出键。', '把窗口放大，原来的画面会自动回来。']; tries = [['q', '退出']];
   } else if (S.overlay && S.overlay.kind === 'help') {
-    title = '全部按键'; points = ['按用途分组列出所有按键，整套是 vim 习惯：j k 上下、C-d C-u 翻半屏、gg G 到顶到底、/ 搜索、dd 删除、]d [d 在问题之间跳。', '打开时除了停止和确认相关的键，其他按键都不起作用；内容放不下可以滚动，底边框显示看到了第几行。']; tries = [['j k', '滚动'], ['Esc ?', '关闭']];
+    title = '全部按键'; points = ['按用途分组，只列出此刻用得上的按键：同一个键在不同阶段做的事不同，说法也跟着变（比如转换进行中 q 不退出）。整套是 vim 习惯：j k 上下、C-d C-u 翻半屏、gg G 到顶到底、/ 搜索、dd 删除、]d [d 在问题之间跳。', '正在输入时 ? 是一个字，这时按 F1 打开。', '打开时除了停止和确认相关的键，其他按键都不起作用；内容放不下可以滚动，底边框显示看到了第几行。']; tries = [['j k', '滚动'], ['Esc ?', '关闭']];
   } else if (S.overlay) {
     title = S.overlay.note.label; points = ['在备注行上按 ⏎ 打开的完整说明：无法访问的文件夹、被忽略的文件这类一行写不下的原因，放在这里。']; tries = [['Esc', '关闭']];
   } else if (S.input && S.input.kind === 'search') {
-    title = '搜索'; points = ['按 / 搜索卷名或文件夹名，匹配的行会加下划线。', '⏎ 跳到第一个结果，之后用 n N 在结果之间切换；收起的文件夹会自动展开到那一卷。']; tries = [['⏎', '跳到结果'], ['n N', '下一个 / 上一个'], ['Esc', '取消']];
+    title = '搜索'; points = ['按 / 搜索卷名或文件夹名，匹配的行会加下划线。', '⏎ 跳到第一个结果，之后用 n N 在结果之间切换；收起的文件夹会自动展开到那一卷。']; tries = [['⏎', '跳到结果'], ['n N', '下一个 / 上一个'], ['Esc', '取消'], ['F1', '全部按键']];
   } else if (S.input) {
-    title = '输入'; points = ['输入只占屏幕最下面一行，按 Tab 补全路径；候选多时会弹出一个能滚动的小列表，不会把底部撑高。', 'C-w 删掉一段，⏎ 确定，Esc 取消；找不到的路径会马上提示。']; tries = [['Tab', '补全 / 下一个'], ['C-w', '删一段'], ['⏎', '确定'], ['Esc', '取消']];
+    title = '输入'; points = ['输入只占屏幕最下面一行，按 Tab 补全路径；候选多时会弹出一个能滚动的小列表，不会把底部撑高。', 'C-w 删掉一段，⏎ 确定，Esc 取消；找不到的路径会马上提示。']; tries = [['Tab', '补全 / 下一个'], ['C-w', '删一段'], ['⏎', '确定'], ['Esc', '取消'], ['F1', '全部按键']];
   } else if (S.view === 'config') {
     title = S.cfg.presets ? '预设' : '配置';
     points = S.cfg.presets ? ['按 p 打开的预设列表显示在右边，左边的设置仍然可见——保存预设时，保存的就是左边这些。', '使用预设会替换全部设置；删除预设需要按两次 dd。']
