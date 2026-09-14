@@ -1,4 +1,4 @@
-//! 标定图：一次上机同时回答两件事。
+//! 灰阶测试图：一次上机同时回答两件事。
 //!
 //! 1. **像素有没有原样贴上**——抖动块与同均值实心块分不分得开，1 像素周期光栅有没有纹理，
 //!    四角标记在不在。这一件不成立时抖动做了等于没做（measurements 的《真机像素完整性》），
@@ -28,32 +28,32 @@ const PAPER: u8 = 255;
 /// 墨黑。判读说明、边框与四角标记的颜色，也是阶梯最暗的那一档。
 const INK: u8 = 0;
 
-/// 画一张标定图并写到 `out`，父目录不在就建出来。
+/// 画一张灰阶测试图并写到 `out`，父目录不在就建出来。
 ///
 /// 库的第三个 seam 落在这一条上，契约见 [`crate::write_calibration_chart`]。
 ///
 /// 写法是最朴素的那一种：建目录、写文件，不走临时文件加改名那一套。
 /// 输出容器要那套是因为**一卷做到一半的目录冒充得了做完的**，下一趟幂等会当它齐了；
-/// 标定图没有那个角色——没有哪一趟程序会回来读它并当它齐了，
+/// 灰阶测试图没有那个角色——没有哪一趟程序会回来读它并当它齐了，
 /// 而人读它是在设备上打开，写坏了一眼就看得见，重敲一次命令即可。
 pub fn write_chart(profile: &Profile, out: &Path) -> Result<()> {
     let bytes = chart_png(profile)?;
     // 点名的是个裸文件名时 `parent()` 给的是空串，那时没有目录要建。
     if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("建标定图的去处 {}", parent.display()))?;
+            .with_context(|| format!("建灰阶测试图的去处 {}", parent.display()))?;
     }
-    std::fs::write(out, &bytes).with_context(|| format!("写标定图 {}", out.display()))
+    std::fs::write(out, &bytes).with_context(|| format!("写灰阶测试图 {}", out.display()))
 }
 
-/// 画一张标定图，编成 PNG 字节。
+/// 画一张灰阶测试图，编成 PNG 字节。
 ///
 /// 8 位工作精度、不带记录，两样都是定死的，理由见 [`crate::write_calibration_chart`]。
 fn chart_png(profile: &Profile) -> Result<Vec<u8>> {
     encode::png(&chart(profile), BitDepth::Eight, None)
 }
 
-/// 按目标 profile 画一张标定图，尺寸恒等于面板分辨率。
+/// 按目标 profile 画一张灰阶测试图，尺寸恒等于面板分辨率。
 fn chart(profile: &Profile) -> GrayImage {
     let layout = Layout::plan(profile);
     let mut canvas = Canvas::new(profile.panel().resolution, PAPER);
@@ -75,7 +75,7 @@ fn chart(profile: &Profile) -> GrayImage {
     canvas.into_image()
 }
 
-/// 一张标定图的版式：哪一行字排在哪儿，两排方块与各条阶梯各占哪一块。
+/// 一张灰阶测试图的版式：哪一行字排在哪儿，两排方块与各条阶梯各占哪一块。
 ///
 /// 尺寸一概按面板算、不写死像素：面板从 824 宽到 1860 宽，同一个常数在两头一个嫌挤一个嫌空。
 /// 整份版式一次算完，画的时候只管照着填——版式与作画分开，两边才不会各算一遍而算得不一样。
@@ -105,7 +105,7 @@ impl Layout {
         let content = resolution.width - margin * 2;
         let available = resolution.height - margin * 2;
 
-        // 位深按面板灰阶数裁（ADR 0003）：图排的是**这台设备真会用到的**那几档，不是位深全集。
+        // 灰阶档位按屏幕灰阶数裁（ADR 0003）：图排的是**这台设备真会用到的**那几档，不是灰阶档位全集。
         let depths = BitDepth::candidates(panel.gray_levels);
         let columns = depths.len() as u32;
         let column = (content - margin * (columns - 1)) / columns;
@@ -119,7 +119,7 @@ impl Layout {
             .iter()
             .map(|&depth| fitting_scale(&header(depth), column))
             .min()
-            .expect("候选位深至少有 1bit 那一档")
+            .expect("候选灰阶档位至少有 1bit 那一档")
             .min(scale);
 
         // 自上而下：方块上面那几组说明、两排方块、方块下面那一组说明，抬头之下剩的全归阶梯。
@@ -378,13 +378,13 @@ fn ruled(kind: Ruling, x: u32, y: u32) -> bool {
     }
 }
 
-/// 一条阶梯：一档候选位深在图上占的那一栏，自上而下由黑到白排满它的全部格点。
+/// 一条阶梯：一档候选灰阶档位在图上占的那一栏，自上而下由黑到白排满它的全部格点。
 ///
-/// 并排是要求（14 号票）：各档位深的阶梯挨在一起，眼睛才比得出「这一条还分得开、
+/// 并排是要求（14 号票）：各档灰阶档位的阶梯挨在一起，眼睛才比得出「这一条还分得开、
 /// 下一条已经糊成一片」。分成几张图看，比的就成了记忆。
 ///
-/// 一条阶梯上的一格叫**一级**，不叫一档：`CONTEXT.md` 里「档」已经归位深与阈值档位
-/// （「对齐的那一档」「基准档」），而这里数的是灰度级，与「灰阶数」「级数」同一个词根。
+/// 一条阶梯上的一格叫**一级**，不叫一档：`CONTEXT.md` 里「档」已经归灰阶档位与画质门槛档位
+/// （「对齐的那一档」「统一档位」），而这里数的是灰度级，与「屏幕灰阶数」「级数」同一个词根。
 struct Ladder {
     depth: BitDepth,
     rect: Rect,
@@ -448,7 +448,7 @@ impl Ladder {
         canvas.outline(self.rect, layout.hairline);
     }
 
-    /// 抬头居中排在这一栏正上方：这是哪一档位深、它有几级。
+    /// 抬头居中排在这一栏正上方：这是哪一档灰阶档位、它有几级。
     fn draw_header(&self, canvas: &mut Canvas, scale: u32) {
         let header = header(self.depth);
         // 字号是按栏宽定的（见 [`fitting_scale`]），抬头因此排得下。`saturating_sub` 兜的是
@@ -475,14 +475,14 @@ fn number_inset(hairline: u32) -> u32 {
     hairline * 3
 }
 
-/// 一条阶梯的抬头：这是哪一档位深、它有几级。
+/// 一条阶梯的抬头：这是哪一档灰阶档位、它有几级。
 fn header(depth: BitDepth) -> String {
     format!("{depth} {}", depth.levels())
 }
 
 /// 印在图上的判读说明，按它挨着的那一段分组。
 ///
-/// 中英两份都印（14 号票要英文，标定图批 01 号票加中文）。这是一个全中文界面的工具，
+/// 中英两份都印（14 号票要英文，灰阶测试图批 01 号票加中文）。这是一个全中文界面的工具，
 /// 「脱离文档也能用」对只有英文的说明并不成立；而英文那一份留着，
 /// 是因为图会被拷到不认这套字的地方去看。
 struct Legend {
@@ -494,7 +494,7 @@ struct Legend {
     english: Vec<String>,
     /// 第一节：像素完整性。紧挨着下面那两排方块。
     pixels: Vec<String>,
-    /// 第二节：感知可分辨级数。紧挨着下面那几条阶梯。
+    /// 第二节：可见灰阶数。紧挨着下面那几条阶梯。
     levels: Vec<String>,
 }
 
@@ -544,11 +544,11 @@ impl Legend {
 /// 排出这块面板的判读说明。
 ///
 /// 说明要点名**数哪一条**：几条阶梯就有几个数，不说清楚，回填给 `--gray-levels`
-/// 的会是随便哪一个。数的是最细的那一条——阶梯按候选位深由小到大排开，它恒在最右边。
+/// 的会是随便哪一个。数的是最细的那一条——阶梯按候选灰阶档位由小到大排开，它恒在最右边。
 fn legend(profile: &Profile) -> Legend {
     let panel = profile.panel();
     let mut levels = vec![
-        "二 感知可分辨级数".to_owned(),
+        "二 可见灰阶数".to_owned(),
         "数最右那条阶梯还分得开几级".to_owned(),
     ];
     // 只剩一条阶梯时不提「其余几条」：`--gray-levels 2` 就是这个样子。
@@ -556,18 +556,18 @@ fn legend(profile: &Profile) -> Legend {
         levels.push("其余几条更粗，只作对照".to_owned());
     }
     levels.push("把那个数回填给 --gray-levels".to_owned());
-    levels.push("数的是看得见的级数，不是物理灰阶数".to_owned());
+    levels.push("数的是看得见的级数，不是屏幕的物理灰阶数".to_owned());
 
     Legend {
         heading: vec![
-            format!("TONEFIT 标定图  {}", profile.device()),
+            format!("TONEFIT 灰阶测试图  {}", profile.device()),
             format!(
                 "{}X{}  {}PPI  {} 级",
                 panel.resolution.width, panel.resolution.height, panel.ppi, panel.gray_levels
             ),
         ],
         order: vec![
-            "以原尺寸打开，关掉缩放与裁边".to_owned(),
+            "以原尺寸打开，关掉缩放与裁白边".to_owned(),
             "先做一，一不过就别做二".to_owned(),
             "阶梯被重采样过，数出的不是面板能显示的级数".to_owned(),
         ],
@@ -834,9 +834,9 @@ mod tests {
         canvas.into_image()
     }
 
-    /// 画一张标定图并从 PNG 字节解回来——测的是**写出去的那张图**，不是中间缓冲。
+    /// 画一张灰阶测试图并从 PNG 字节解回来——测的是**写出去的那张图**，不是中间缓冲。
     fn decode(profile: &Profile) -> GrayImage {
-        let bytes = chart_png(profile).expect("画标定图");
+        let bytes = chart_png(profile).expect("画灰阶测试图");
         let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
         let header = decoder.read_header_info().expect("读 PNG 头").clone();
         decoder.set_transformations(png::Transformations::EXPAND);
@@ -851,12 +851,12 @@ mod tests {
         GrayImage::new(Size::new(header.width, header.height), pixels)
     }
 
-    /// 这一档位深的阶梯该长什么样：它的全部格点，由暗到亮。
+    /// 这一档灰阶档位的阶梯该长什么样：它的全部格点，由暗到亮。
     fn steps_of(depth: BitDepth) -> Vec<u8> {
         (0..depth.levels()).map(|i| grid_level(i, depth)).collect()
     }
 
-    /// 标定图要**能 1:1 显示**：尺寸必须逐像素等于目标面板的分辨率。
+    /// 灰阶测试图要**能 1:1 显示**：尺寸必须逐像素等于目标面板的分辨率。
     #[test]
     fn the_chart_is_exactly_the_panel_resolution() {
         for device in DEVICES {
@@ -867,12 +867,12 @@ mod tests {
             assert_eq!(
                 chart.size(),
                 profile.panel().resolution,
-                "{device} 的标定图贴不住面板"
+                "{device} 的灰阶测试图贴不住面板"
             );
         }
     }
 
-    /// **抖动块与同均值实心块的均值严格相等**（标定图批 01 号票的命门）。
+    /// **抖动块与同均值实心块的均值严格相等**（灰阶测试图批 01 号票的命门）。
     ///
     /// 不相等的话，阅读器重采样过之后两块仍然分得开，判读会给出一个假的「通过」——
     /// 那比没有这张图更糟。断言比的是两块的**和**：两块像素数相同，和相等即均值相等，
@@ -1011,11 +1011,11 @@ mod tests {
         }
     }
 
-    /// 每一档候选位深各占一条阶梯，级与级在图上分得开（14 号票）。
+    /// 每一档候选灰阶档位各占一条阶梯，级与级在图上分得开（14 号票）。
     ///
-    /// 断言不认版式：整幅图逐列扫下去，只要有一列接连走过这一位深的全部格点，
+    /// 断言不认版式：整幅图逐列扫下去，只要有一列接连走过这一灰阶档位的全部格点，
     /// 这条阶梯就在图上、每一级就都露着。阶梯照编码器的格点排，因此这一串取值
-    /// 正是这一档位深真会写出的那些。
+    /// 正是这一档灰阶档位真会写出的那些。
     #[test]
     fn every_candidate_bit_depth_gets_a_ladder_that_shows_all_of_its_steps() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -1030,8 +1030,8 @@ mod tests {
         }
     }
 
-    /// 阶梯止于面板灰阶数那道硬上界（ADR 0003）：e-ink 上没有 8bit 那一条，
-    /// 而把灰阶数覆盖到 256 就有。图排的是**这台设备真会用到的**那几档，不是位深全集。
+    /// 阶梯止于屏幕灰阶数那道硬上界（ADR 0003）：e-ink 上没有 8bit 那一条，
+    /// 而把可见灰阶数覆盖到 256 就有。图排的是**这台设备真会用到的**那几档，不是灰阶档位全集。
     #[test]
     fn the_ladders_stop_where_the_panel_gray_levels_do() {
         let eink = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -1043,13 +1043,13 @@ mod tests {
         );
         assert!(
             has_a_column_running_through(&decode(&full), &steps_of(BitDepth::Eight)),
-            "灰阶数覆盖到 256 之后 8bit 那一条阶梯该在"
+            "可见灰阶数覆盖到 256 之后 8bit 那一条阶梯该在"
         );
     }
 
-    /// 标定图以**无损**方式写出，一个像素都不许改（14 号票）。
+    /// 灰阶测试图以**无损**方式写出，一个像素都不许改（14 号票）。
     ///
-    /// 它是量具，不是被处理的页：判据、上包络、抖动一概不碰它，像素以 8 位工作精度画出来，
+    /// 它是量具，不是被处理的页：画质分、整卷统一灰阶、抖动一概不碰它，像素以 8 位工作精度画出来，
     /// 解回来必须还是同一批字节。图上量出的级数要是被编码器动过手，量的就不是面板了。
     #[test]
     fn the_chart_comes_back_out_of_the_png_pixel_for_pixel() {
@@ -1063,16 +1063,16 @@ mod tests {
             assert_eq!(
                 written.pixels(),
                 painted.pixels(),
-                "{device} 的标定图被改过"
+                "{device} 的灰阶测试图被改过"
             );
         }
     }
 
-    /// 判读说明要把整套做法说完，脱离文档也能用（14 号票、标定图批 01 号票）。
+    /// 判读说明要把整套做法说完，脱离文档也能用（14 号票、灰阶测试图批 01 号票）。
     ///
     /// 缺一不可的几件事：这是哪台设备、哪块面板的图，怎么显示，**两件事的先后**，
-    /// 第一件看什么，第二件数什么、往哪填，以及那个数**是感知可分辨级数、
-    /// 不是面板的物理灰阶数**（ADR 0003 的《后果》）。
+    /// 第一件看什么，第二件数什么、往哪填，以及那个数**是可见灰阶数、
+    /// 不是屏幕的物理灰阶数**（ADR 0003 的《后果》）。
     #[test]
     fn the_printed_instructions_say_how_to_read_the_chart() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -1096,9 +1096,9 @@ mod tests {
         assert!(text.contains("光栅"), "{text}");
         assert!(text.contains("四角标记"), "{text}");
         // 第二件事数什么、往哪填、数出来的是什么。
-        assert!(text.contains("感知可分辨级数"), "{text}");
+        assert!(text.contains("可见灰阶数"), "{text}");
         assert!(text.contains("--gray-levels"), "{text}");
-        assert!(text.contains("不是物理灰阶数"), "{text}");
+        assert!(text.contains("不是屏幕的物理灰阶数"), "{text}");
         // 数哪一条要点名：几条阶梯就有几个数，不说清楚，回填的会是随便哪一个。
         assert!(text.contains("最右"), "{text}");
         // 英文那一份要**自成一套**：三样检查各点一次，脱离中文也走得下来（14 号票）。
@@ -1123,12 +1123,16 @@ mod tests {
         let text: Vec<&str> = legend.lines().map(String::as_str).collect();
         let text = text.join("\n");
 
-        assert_eq!(BitDepth::candidates(2).len(), 1, "灰阶数 2 只留得下 1bit");
+        assert_eq!(
+            BitDepth::candidates(2).len(),
+            1,
+            "屏幕灰阶数 2 只留得下 1bit"
+        );
         assert!(!text.contains("其余几条"), "{text}");
         assert!(text.contains("最右"), "{text}");
     }
 
-    /// **中文判读说明真的画进了图里**，不是只存在于源码常量里（标定图批 01 号票）。
+    /// **中文判读说明真的画进了图里**，不是只存在于源码常量里（灰阶测试图批 01 号票）。
     ///
     /// 逐台设备把每一行含汉字的说明按版式给的落点、字号重新印一遍，再与图上那一块逐像素比。
     /// 对得上，就说明这一行没被裁掉、没被别的东西盖住，字号也是按这块面板算出来的那一个。
@@ -1301,14 +1305,17 @@ mod tests {
     #[test]
     fn writing_the_chart_makes_its_parent_and_lays_down_the_bytes_it_drew() {
         let workspace = tempfile::tempdir().expect("建临时目录");
-        let out = workspace.path().join("还不存在的目录").join("标定图.png");
+        let out = workspace
+            .path()
+            .join("还不存在的目录")
+            .join("灰阶测试图.png");
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
 
-        write_chart(&profile, &out).expect("写标定图");
+        write_chart(&profile, &out).expect("写灰阶测试图");
 
         assert_eq!(
-            std::fs::read(&out).expect("读回标定图"),
-            chart_png(&profile).expect("画标定图"),
+            std::fs::read(&out).expect("读回灰阶测试图"),
+            chart_png(&profile).expect("画灰阶测试图"),
             "落盘的字节与画出来的不是同一份"
         );
     }
@@ -1325,11 +1332,11 @@ mod tests {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
 
         let failure =
-            write_chart(&profile, &blocker.join("标定图.png")).expect_err("父目录建不出来");
+            write_chart(&profile, &blocker.join("灰阶测试图.png")).expect_err("父目录建不出来");
 
         // 说得清 = 说得出是哪件事、卡在哪个路径上。少了后者，会话只能印一句「写失败了」。
         let said = format!("{failure:#}");
-        assert!(said.contains("标定图"), "没说出是哪件事：{said}");
+        assert!(said.contains("灰阶测试图"), "没说出是哪件事：{said}");
         assert!(said.contains("这是一个文件"), "没说出卡在哪儿：{said}");
     }
 }

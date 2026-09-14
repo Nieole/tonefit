@@ -1,0 +1,1976 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tonefit 会话重设计 · 设计稿</title>
+<style>
+:root{
+  --mono:"JetBrains Mono","SF Mono","Cascadia Mono","Menlo","Consolas","PingFang SC","Hiragino Sans GB","Microsoft YaHei",monospace;
+  --serif:"Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC","Source Han Serif","SimSun",serif;
+  --sans:"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  --ink:#0b0c12; --ink2:#12131c; --paper:#ebe6da; --muted:#8a8ea2; --line:rgba(255,255,255,.08);
+  --leaf:#a6e3a1; --amber:#f9e2af; --rose:#f38ba8; --sky:#89b4fa;
+  --fs:13px; --lh:17px; --cw:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--paper)}
+body{
+  font-family:var(--sans);
+  background:
+    radial-gradient(1100px 520px at 12% -8%, rgba(203,166,247,.11), transparent 62%),
+    radial-gradient(900px 520px at 108% 18%, rgba(148,226,213,.08), transparent 60%),
+    radial-gradient(700px 400px at 50% 110%, rgba(249,226,175,.05), transparent 60%),
+    var(--ink);
+  min-height:100vh;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.06;z-index:0;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.mast,.rail,.stage,.foot{position:relative;z-index:1}
+.mast{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;padding:44px 48px 22px;border-bottom:1px solid var(--line)}
+.kicker{font:500 11px/1 var(--mono);letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+.kicker b{color:var(--leaf);font-weight:600}
+h1{font-family:var(--serif);font-weight:700;font-size:clamp(30px,3.4vw,48px);letter-spacing:.03em;margin:.42em 0 .22em;line-height:1.15}
+h1 em{font-style:normal;color:var(--leaf);position:relative}
+h1 em::after{content:"";position:absolute;left:0;right:0;bottom:.06em;height:.09em;background:currentColor;opacity:.35}
+.lede{color:#b9b4a8;max-width:66ch;font-size:14.5px;line-height:1.8;margin:0}
+.stamp{font:11px/1.7 var(--mono);color:var(--muted);text-align:right;border-left:1px solid var(--line);padding-left:20px}
+.stamp span{color:var(--paper)}
+.rail{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:12px 26px;padding:12px 48px;background:rgba(11,12,18,.78);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.group>.lbl{font:10.5px var(--mono);color:var(--muted);letter-spacing:.16em;margin-right:4px}
+.chip{font:12px/1 var(--mono);color:#cfcabd;background:transparent;border:1px solid rgba(255,255,255,.13);padding:7px 11px;border-radius:999px;cursor:pointer;transition:border-color .15s,color .15s,background .15s,transform .15s}
+.chip:hover{border-color:rgba(166,227,161,.55);color:#fff}
+.chip:active{transform:translateY(1px)}
+.chip[aria-pressed="true"]{background:var(--leaf);color:#11111b;border-color:var(--leaf);font-weight:600}
+.chip.play{border-color:rgba(249,226,175,.4);color:var(--amber)}
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:34px;padding:30px 48px 40px;align-items:start}
+.left{min-width:0}
+.scroller{overflow-x:auto;padding-bottom:6px}
+.window{display:inline-block;border-radius:12px;background:var(--t-bg);box-shadow:0 40px 90px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.07);overflow:hidden;transition:background .3s}
+.titlebar{height:34px;display:flex;align-items:center;gap:12px;padding:0 14px;background:color-mix(in srgb,var(--t-bg) 82%,#000);font:12px var(--mono);color:var(--t-gray)}
+.dots{display:flex;gap:7px}.dots i{width:12px;height:12px;border-radius:50%;display:block}
+.dots i:nth-child(1){background:#ff5f57}.dots i:nth-child(2){background:#febc2e}.dots i:nth-child(3){background:#28c840}
+.titlebar .wt{flex:1;text-align:center;margin-right:52px;letter-spacing:.04em}
+.term{padding:10px 14px 14px;font-family:var(--mono);font-size:var(--fs);line-height:var(--lh);color:var(--t-fg);background:var(--t-bg);outline:none;user-select:none;-webkit-user-select:none;cursor:default;font-variant-ligatures:none}
+.term:focus-visible{box-shadow:inset 0 0 0 1px rgba(166,227,161,.25)}
+.term .row{height:var(--lh);white-space:pre;overflow:hidden}
+.term span{display:inline-block;height:var(--lh);vertical-align:top;text-align:center;white-space:pre;overflow:visible}
+.term span.w{font-size:1.14em}
+.term .b{font-weight:700}.term .d{opacity:.55}.term .i{font-style:italic}
+.term .u{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+.term .r{background:var(--t-fg);color:var(--t-bg)}
+.c-fg{color:var(--t-fg)}.c-gray{color:var(--t-gray)}.c-white{color:var(--t-white)}
+.c-red,.c-lred{color:var(--t-red)}.c-green,.c-lgreen{color:var(--t-green)}.c-yellow,.c-lyellow{color:var(--t-yellow)}
+.c-blue,.c-lblue{color:var(--t-blue)}.c-magenta,.c-lmagenta{color:var(--t-magenta)}.c-cyan,.c-lcyan{color:var(--t-cyan)}
+.window[data-pal="mocha"]{--t-bg:#1e1e2e;--t-fg:#cdd6f4;--t-gray:#7f849c;--t-white:#bac2de;--t-red:#f38ba8;--t-green:#a6e3a1;--t-yellow:#f9e2af;--t-blue:#89b4fa;--t-magenta:#f5c2e7;--t-cyan:#94e2d5}
+.window[data-pal="latte"]{--t-bg:#eff1f5;--t-fg:#4c4f69;--t-gray:#8c8fa1;--t-white:#5c5f77;--t-red:#d20f39;--t-green:#40a02b;--t-yellow:#df8e1d;--t-blue:#1e66f5;--t-magenta:#ea76cb;--t-cyan:#179299}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font:12px/1.6 var(--mono);color:var(--muted)}
+.legend b{font-weight:600}
+.legend .sw{display:inline-block;min-width:1.4em;text-align:center;color:var(--paper)}
+.side{display:flex;flex-direction:column;gap:16px;position:sticky;top:74px}
+.card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.01));border-radius:14px;padding:16px 18px}
+.card h3{margin:0 0 10px;font:10.5px var(--mono);letter-spacing:.18em;color:var(--muted);font-weight:500}
+.now-title{font-family:var(--serif);font-size:24px;font-weight:700;margin:2px 0 6px;letter-spacing:.02em}
+.now-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tag{font:11px/1 var(--mono);padding:4px 7px;border-radius:6px;background:rgba(255,255,255,.06);color:#d9d4c7}
+.tag.hot{background:rgba(166,227,161,.14);color:var(--leaf)}
+.points{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+.points li{font-size:13px;line-height:1.65;color:#cbc6b9;padding-left:16px;position:relative}
+.points li::before{content:"";position:absolute;left:2px;top:.72em;width:6px;height:1px;background:var(--leaf)}
+.points code,.try code{font:12px var(--mono);color:var(--amber)}
+.echo{display:flex;flex-wrap:wrap;gap:6px;min-height:28px;align-items:center}
+.kc{font:12px/1 var(--mono);border:1px solid rgba(255,255,255,.2);border-bottom-width:3px;border-radius:6px;padding:5px 8px;color:#eee;background:rgba(255,255,255,.04);animation:pop .35s cubic-bezier(.2,.9,.3,1.4) both}
+.kc.old{opacity:.4;animation:none}
+.echo .hint{font:12px var(--mono);color:var(--muted)}
+.try{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;font-size:13px;color:#cbc6b9;align-items:baseline}
+.try code{white-space:nowrap}
+.foot{padding:0 48px 48px;color:var(--muted);font-size:12.5px;line-height:1.8}
+.foot code{font:12px var(--mono);color:#d9d4c7}
+@keyframes pop{from{transform:translateY(-4px) scale(.9);opacity:0}to{transform:none;opacity:1}}
+@keyframes rise{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+.reveal{animation:rise .8s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.15s}.d3{animation-delay:.28s}.d4{animation-delay:.4s}
+@media (max-width:1320px){.stage{grid-template-columns:1fr}.side{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}}
+@media (max-width:720px){.mast{grid-template-columns:1fr;padding:28px 16px 16px}.stamp{text-align:left;border-left:0;padding-left:0}.rail,.stage,.foot{padding-left:16px;padding-right:16px}}
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="reveal d1">
+    <div class="kicker"><b>tonefit</b> · 会话重设计 · 交互设计稿 r1</div>
+    <h1>一趟几百卷，<em>一屏读得完</em></h1>
+    <p class="lede">页面里是一块按真实字符格排版的终端：中文占两格，颜色只用终端自带的 16 色。点一下终端，就能用 vim 键操作：<code style="font-family:var(--mono);color:var(--amber)">j k</code> 上下移动、<code style="font-family:var(--mono);color:var(--amber)">l</code> 展开、<code style="font-family:var(--mono);color:var(--amber)">x</code> 开始转换、<code style="font-family:var(--mono);color:var(--amber)">?</code> 查看全部按键，也可以用滚轮。</p>
+  </div>
+  <div class="stamp reveal d2">原型不读写任何文件<br>数据是模拟的，进度是加速的<br>离线单文件 · <span>无外部依赖</span></div>
+</header>
+<nav class="rail reveal d3" aria-label="设计稿控制">
+  <div class="group" id="g-scene"><span class="lbl">场景</span></div>
+  <div class="group" id="g-size"><span class="lbl">尺寸</span></div>
+  <div class="group" id="g-pal"><span class="lbl">调色板</span></div>
+  <div class="group" id="g-sim"><span class="lbl">模拟</span></div>
+</nav>
+<main class="stage">
+  <section class="left reveal d4">
+    <div class="scroller">
+      <div class="window" id="win" data-pal="mocha">
+        <div class="titlebar"><div class="dots"><i></i><i></i><i></i></div><div class="wt" id="wtitle">tonefit — 120×36</div></div>
+        <div class="term" id="term" tabindex="0" aria-label="模拟终端，点一下之后按键"></div>
+      </div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </section>
+  <aside class="side reveal d4">
+    <div class="card"><h3>此刻</h3><div class="now-title" id="now-title"></div><div class="now-meta" id="now-meta"></div><ul class="points" id="now-points"></ul></div>
+    <div class="card"><h3>按过的键</h3><div class="echo" id="echo"><span class="hint">点一下终端，再按键</span></div></div>
+    <div class="card"><h3>这一屏可以试</h3><div class="try" id="try"></div></div>
+  </aside>
+</main>
+<footer class="foot">
+  这份设计稿对应已确认的方案：任务 / 配置两个视图；以路径为主线的卷列表；自动滚动只跟随、不自动展开；问题直接标在出问题的地方；需要确认时在总览下方出现提示条；左边设置、右边详情的配置视图；vim 键位并支持滚轮；只用终端 16 色，跟随终端主题；以 120×36 为主，80×24 也能正常使用。
+  卡顿的根本原因（输出没有缓冲、按键积压时逐个重画、刷新画面时占着处理线程的锁、每帧都重算全部内容）不在画面上体现，改造时一并修复。
+</footer>
+<script>
+'use strict';
+// ───────────────────────── 字符格内核：宽度、截断、折行、屏幕缓冲、渲染 ─────────────────────────
+
+function isWide(cp) {
+  return (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0x303e) || (cp >= 0x3041 && cp <= 0x33ff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0xa000 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x20000 && cp <= 0x3fffd);
+}
+const chW = (ch) => (isWide(ch.codePointAt(0)) ? 2 : 1);
+const strW = (s) => { let w = 0; for (const ch of s) w += chW(ch); return w; };
+const segW = (segs) => segs.reduce((a, [t]) => a + strW(t), 0);
+
+function clip(s, w) {
+  let out = '', used = 0;
+  for (const ch of s) { const c = chW(ch); if (used + c > w) break; out += ch; used += c; }
+  return out;
+}
+function pad(s, w, align = 'l') {
+  if (strW(s) > w) s = clip(s, w);
+  const gap = w - strW(s);
+  if (align === 'r') return ' '.repeat(gap) + s;
+  if (align === 'c') return ' '.repeat(gap >> 1) + s + ' '.repeat(gap - (gap >> 1));
+  return s + ' '.repeat(gap);
+}
+// 从中间省略：书名与第几卷两头都要认得出
+function elide(s, w) {
+  if (strW(s) <= w) return s;
+  if (w <= 2) return clip(s, w);
+  const left = Math.ceil((w - 1) / 2), right = w - 1 - left;
+  const head = clip(s, left);
+  const chars = [...s];
+  let tail = '', used = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const c = chW(chars[i]); if (used + c > right) break; tail = chars[i] + tail; used += c;
+  }
+  return head + '⋯' + tail;
+}
+// 按显示宽度折行，带最简单的禁则：收尾标点不落行首
+const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
+// 西文词与路径不劈开，中文逐字可断
+function wrap(text, w) {
+  const lines = [];
+  for (const para of String(text).split('\n')) {
+    const tokens = para.match(/[A-Za-z0-9_.+\-/%~]+|./gu) || [''];
+    let line = '', used = 0;
+    for (const tok of tokens) {
+      const tw = strW(tok);
+      if (used + tw > w && used > 0) {
+        if ([...tok].length === 1 && NO_HEAD.includes(tok) && [...line].length > 1) {
+          const arr = [...line]; const last = arr.pop();
+          lines.push(arr.join('')); line = last; used = chW(last);
+        } else {
+          lines.push(line.replace(/\s+$/, '')); line = ''; used = 0;
+          if (tok === ' ') continue;
+        }
+      }
+      if (tw > w) {
+        for (const ch of tok) { if (used + 1 > w) { lines.push(line); line = ''; used = 0; } line += ch; used += chW(ch); }
+        continue;
+      }
+      line += tok; used += tw;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+class Screen {
+  constructor(cols, rows) {
+    this.c = cols; this.r = rows;
+    this.cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => [' ', '']));
+    this.hits = []; // 点击命中区：{x,y,w,h,act}
+  }
+  // 写到第 x 格之前：劈开了一个宽字符的话，把它残留的那一半清成空格——不然整行多出或少掉一格
+  _split(y, x) {
+    const row = this.cells[y];
+    if (x < 0 || x >= this.c) return;
+    if (row[x][0] === null && x > 0) row[x - 1] = [' ', row[x - 1][1]];
+    if (x + 1 < this.c && row[x + 1][0] === null) row[x + 1] = [' ', row[x + 1][1]];
+  }
+  put(x, y, s, st = '') {
+    if (y < 0 || y >= this.r) return x;
+    for (const ch of s) {
+      const c = chW(ch);
+      if (x + c > this.c) break;
+      if (x >= 0) {
+        this._split(y, x);
+        if (c === 2) this._split(y, x + 1);
+        this.cells[y][x] = [ch, st];
+        if (c === 2) this.cells[y][x + 1] = [null, st];
+      }
+      x += c;
+    }
+    return x;
+  }
+  // segs: [[文字, 样式], ...]；maxW 给了就截在那里
+  line(x, y, segs, maxW) {
+    let used = 0;
+    for (const [t, st] of segs) {
+      if (maxW != null) {
+        const left = maxW - used; if (left <= 0) break;
+        const tt = strW(t) > left ? clip(t, left) : t;
+        this.put(x + used, y, tt, st); used += strW(tt);
+      } else { this.put(x + used, y, t, st); used += strW(t); }
+    }
+    return used;
+  }
+  fill(x, y, w, h, ch = ' ', st = '') {
+    for (let j = y; j < y + h; j++) {
+      if (j < 0 || j >= this.r || w <= 0) continue;
+      this._split(j, Math.max(0, x));
+      this._split(j, Math.min(this.c - 1, x + w - 1));
+      for (let i = x; i < x + w; i++) if (i >= 0 && i < this.c) this.cells[j][i] = [ch, st];
+    }
+  }
+  hit(x, y, w, h, act) { this.hits.push({ x, y, w, h, act }); }
+  // 掀覆盖层之前把底下整屏压暗
+  dimAll() {
+    for (const row of this.cells) for (const c of row) if (!/(^| )d( |$)/.test(c[1])) c[1] = c[1] ? c[1] + ' d' : 'd';
+    this.hits = [];
+  }
+  // openapi-tui 的框：标题嵌在上边框，右上角一枚标记，底边框左右各一段
+  box(x, y, w, h, o = {}) {
+    if (w < 4 || h < 2) return;
+    const [tl, tr, bl, br, hz, vt] = o.thick ? ['┏', '┓', '┗', '┛', '━', '┃'] : ['┌', '┐', '└', '┘', '─', '│'];
+    const st = o.st || 'c-gray';
+    this.fill(x + 1, y + 1, w - 2, h - 2);
+    this.put(x, y, tl + hz.repeat(w - 2) + tr, st);
+    for (let j = 1; j < h - 1; j++) { this.put(x, y + j, vt, st); this.put(x + w - 1, y + j, vt, st); }
+    this.put(x, y + h - 1, bl + hz.repeat(w - 2) + br, st);
+    let rightW = 0;
+    if (o.right) { rightW = segW(o.right) + 2; this.line(x + w - 2 - rightW, y, [[' ', st], ...o.right, [' ', st]]); }
+    if (o.title) this.line(x + 1, y, [[' ', st], ...o.title, [' ', st]], Math.max(0, w - 4 - rightW));
+    let brW = 0;
+    if (o.bottomRight) { brW = segW(o.bottomRight) + 2; this.line(x + w - 2 - brW, y + h - 1, [[' ', st], ...o.bottomRight, [' ', st]]); }
+    if (o.bottomLeft) this.line(x + 1, y + h - 1, [[' ', st], ...o.bottomLeft, [' ', st]], Math.max(0, w - 5 - brW));
+    if (o.scroll) {
+      const { total, from, view } = o.scroll;
+      const track = h - 2;
+      if (total > view && track > 1) {
+        const thumb = Math.max(1, Math.round(track * view / total));
+        const pos = Math.round((track - thumb) * from / Math.max(1, total - view));
+        for (let j = 0; j < thumb; j++) this.put(x + w - 1, y + 1 + pos + j, '┃', o.thumbSt || 'c-fg');
+      }
+    }
+  }
+}
+
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function paint(scr, el, cw) {
+  const rows = [];
+  for (let y = 0; y < scr.r; y++) {
+    const row = scr.cells[y];
+    let html = '', x = 0;
+    while (x < scr.c) {
+      const [ch, st] = row[x];
+      if (ch === null) { x++; continue; }
+      if (ch.codePointAt(0) < 0x7f) {
+        let run = '', n = 0;
+        while (x < scr.c && row[x][0] !== null && row[x][0].codePointAt(0) < 0x7f && row[x][1] === st) { run += row[x][0]; x++; n++; }
+        html += `<span class="${st} a" style="width:${(n * cw).toFixed(2)}px">${esc(run)}</span>`;
+      } else {
+        html += `<span class="${st}${chW(ch) === 2 ? ' w' : ''}" style="width:${(chW(ch) * cw).toFixed(2)}px">${esc(ch)}</span>`;
+        x++;
+      }
+    }
+    rows.push(html);
+  }
+  if (!el._rows || el._rows.length !== scr.r || el._cw !== cw) {
+    el.innerHTML = rows.map((h) => `<div class="row">${h}</div>`).join('');
+    el._rows = rows; el._divs = [...el.children]; el._cw = cw;
+    return;
+  }
+  for (let y = 0; y < scr.r; y++) if (el._rows[y] !== rows[y]) { el._divs[y].innerHTML = rows[y]; el._rows[y] = rows[y]; }
+}
+
+function measureCell(el) {
+  const probe = document.createElement('span');
+  probe.textContent = 'MMMMMMMMMMMMMMMMMMMM';
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit';
+  el.appendChild(probe);
+  const w = probe.getBoundingClientRect().width / 20;
+  probe.remove();
+  return w;
+}
+
+// 盲文点阵横条：宽度稳（东亚宽度 N）
+function bar(frac, w) {
+  const f = Math.max(0, Math.min(1, frac));
+  const full = Math.round(f * w);
+  return ['⣿'.repeat(full), '⣀'.repeat(w - full)];
+}
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (h) return `${h}h${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+// 确定性伪随机：同一卷每次生成的页一样
+function rng(seed) {
+  let s = 0; for (const ch of String(seed)) s = (s * 31 + ch.codePointAt(0)) >>> 0;
+  return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+// ───────────────────────── 假数据：盘、点名路径、发现结果、逐页、配置 ─────────────────────────
+
+const vn = (i) => `第${String(i).padStart(2, '0')}卷`;
+const dirOf = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [vn(i + 1), {}]));
+const FS = {
+  '~': {
+    '漫画库': { '哆啦A梦': dirOf(12), '集英社': { '海贼王': dirOf(18) }, '攻壳机动队': dirOf(6), '银河英雄传说': dirOf(9), '私藏': {}, '字体包.zip': null, '答案.txt': null, 'README.md': null },
+    '下载': { '灰原哀': Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${vn(i + 1)}.cbz`, null])), '轻小说插图': dirOf(3) },
+    'Comics': { '棋魂': dirOf(23), '大友克洋': { 'AKIRA': dirOf(6), '童梦': { '上': {}, '下': {} } }, '火之鸟': dirOf(12), '寄生兽': dirOf(10) },
+    '转好的': {},
+  },
+};
+function fsList(path) {
+  const parts = path.split('/').filter(Boolean);
+  let node = FS;
+  for (const p of parts) { if (!node || typeof node !== 'object' || !(p in node)) return null; node = node[p]; }
+  return node && typeof node === 'object' ? Object.keys(node).map((k) => ({ name: k, dir: node[k] !== null })) : null;
+}
+
+const NAMED0 = [
+  { path: '~/漫画库', kind: '文件夹', on: true },
+  { path: '~/漫画库/银河英雄传说', kind: '文件夹', on: true },
+  ...Array.from({ length: 8 }, (_, i) => ({ path: `~/下载/灰原哀/${vn(i + 1)}.cbz`, kind: '压缩包', on: true })),
+  { path: '~/下载/轻小说插图', kind: '文件夹', on: false },
+  { path: '~/Comics/棋魂', kind: '文件夹', on: true },
+  { path: '~/Comics/大友克洋', kind: '文件夹', on: true },
+];
+const nestedIn = (p, list) => list.find((o) => o.on && o.path !== p && o.kind === '文件夹' && p.startsWith(o.path + '/'));
+
+// 预扫之后才知道的形状：每条点名路径底下有哪几个目录
+const LIB = {
+  '~/漫画库': {
+    groups: [['哆啦A梦', 12, 'doraemon'], ['集英社/海贼王', 18, 'onepiece'], ['攻壳机动队', 6, 'gits'], ['银河英雄传说', 9, 'loghs']],
+    notes: [
+      { kind: 'unreach', label: '无法访问', what: '私藏/', why: '没有权限打开这个文件夹，里面的内容全部跳过' },
+      { kind: 'nonvol', label: '已忽略 3 个文件', what: '字体包.zip、答案.txt、README.md', why: '不是漫画图片或压缩包：不会转换，也不会复制，不算出错' },
+    ],
+  },
+  '~/Comics/棋魂': { groups: [['棋魂', 23, 'hikaru']] },
+  '~/Comics/大友克洋': { groups: [['AKIRA', 6, 'akira'], ['童梦', 2, 'akira', ['上', '下']]] },
+  '~/Comics/火之鸟': { groups: [['火之鸟', 12, 'akira']] },
+  '~/Comics/寄生兽': { groups: [['寄生兽', 10, 'onepiece']] },
+  '~/下载/轻小说插图': { groups: [['轻小说插图', 3, 'loghs']] },
+};
+const MIX = {
+  doraemon: [['2bit+FS', 0.84], ['4bit', 0.13], ['1bit', 0.03]],
+  onepiece: [['2bit+FS', 0.68], ['4bit', 0.29], ['2bit', 0.03]],
+  gits: [['4bit', 0.58], ['2bit+FS', 0.42]],
+  loghs: [['2bit+FS', 0.91], ['4bit', 0.09]],
+  haibara: [['2bit+FS', 0.8], ['4bit', 0.2]],
+  hikaru: [['2bit+FS', 0.74], ['2bit', 0.16], ['4bit', 0.1]],
+  akira: [['2bit+FS', 0.5], ['1bit', 0.34], ['4bit', 0.16]],
+};
+const PLAN = {
+  '哆啦A梦/第05卷': { outliers: 1, wide: 1 },
+  '哆啦A梦/第01卷': { skip: true }, '哆啦A梦/第02卷': { skip: true }, '哆啦A梦/第03卷': { skip: true }, '哆啦A梦/第04卷': { skip: true },
+  '集英社/海贼王/第07卷': { isolated: true, failed: [['017.jpg', 'JPEG 文件不完整']], outliers: 1 },
+  '集英社/海贼王/第11卷': { volFail: '压缩包损坏' },
+  '攻壳机动队/第02卷': { gate: 3 },
+  '棋魂/第15卷': { salvage: 1, wide: 2 },
+  'AKIRA/第03卷': { outliers: 2 },
+  '灰原哀/第05卷': { wide: 1 },
+  '银河英雄传说/第06卷': { outliers: 1 },
+};
+
+let VOL_SEQ = 0, DIR_SEQ = 0;
+function mkDir(label, parentHint, mixKey) { return { id: 'd' + DIR_SEQ++, label, parentHint, mixKey, vols: [] }; }
+function mkVol(dir, name, mixKey) {
+  const r = rng(dir.label + name);
+  const pages = 150 + Math.floor(r() * 90);
+  return { id: 'v' + VOL_SEQ++, dir, name, pages, mixKey, plan: PLAN[`${dir.label}/${name}`] || {} };
+}
+
+// 预扫的结果 → 任务树顶层：分区（≥2 个目录）与顶格目录行；单卷点名路径按父目录跨路径合并
+function discover(named) {
+  const on = named.filter((n) => n.on);
+  const entries = [], vols = [], merged = {};
+  for (const np of on) {
+    if (nestedIn(np.path, on)) continue;
+    if (np.kind === '压缩包') {
+      const parent = np.path.slice(0, np.path.lastIndexOf('/'));
+      if (!merged[parent]) {
+        const d = mkDir(parent.slice(parent.lastIndexOf('/') + 1), parent.slice(0, parent.lastIndexOf('/') + 1), 'haibara');
+        merged[parent] = d; entries.push({ type: 'dir', dir: d });
+      }
+      const d = merged[parent];
+      const v = mkVol(d, np.path.slice(np.path.lastIndexOf('/') + 1).replace(/\.cbz$/, ''), 'haibara');
+      d.vols.push(v); vols.push(v);
+      continue;
+    }
+    const spec = LIB[np.path] || { groups: [[np.path.slice(np.path.lastIndexOf('/') + 1), 5, 'loghs']] };
+    const dirs = spec.groups.map(([label, n, mix, names]) => {
+      const d = mkDir(label, np.path.slice(0, np.path.lastIndexOf('/') + 1), mix);
+      for (let i = 0; i < n; i++) { const v = mkVol(d, names ? names[i] : vn(i + 1), mix); d.vols.push(v); vols.push(v); }
+      return d;
+    });
+    if (dirs.length >= 2) entries.push({ type: 'section', path: np.path, dirs, notes: spec.notes || [] });
+    else entries.push({ type: 'dir', dir: dirs[0], notes: spec.notes || [] });
+  }
+  vols.sort((a, b) => entryOrder(entries, a) - entryOrder(entries, b));
+  return { entries, vols, unchecked: named.filter((n) => !n.on).length };
+}
+function entryOrder(entries, v) {
+  let k = 0;
+  for (const e of entries) {
+    const dirs = e.type === 'section' ? e.dirs : [e.dir];
+    for (const d of dirs) { const i = d.vols.indexOf(v); if (i >= 0) return k + i; k += 1000; }
+  }
+  return 1e9;
+}
+
+// 逐页：确定性生成，同一卷每次都一样
+const PAGE_CACHE = new Map();
+function pagesOf(v) {
+  if (PAGE_CACHE.has(v.id)) return PAGE_CACHE.get(v.id);
+  // 整卷统一灰阶看的是开跑那一刻的快照（newRun 记下的）。没开的那一趟每页各判各的：没有差异大的页，也没有代表页
+  const envelope = !!(S.run && S.run.envelope);
+  const r = rng(v.dir.label + v.name + '#p');
+  const mix = MIX[v.mixKey] || MIX.loghs;
+  const ext = v.mixKey === 'haibara' ? 'png' : 'jpg';
+  const p = v.plan, n = v.pages, list = [];
+  const notable = new Map();
+  const at = (k, f) => { const i = Math.floor(n * (0.12 + 0.76 * ((k * 0.37) % 1))); notable.set(i, [...(notable.get(i) || []), f]); };
+  (p.failed || []).forEach(([name, why], k) => at(k + 0.1, { kind: 'failed', why, name }));
+  for (let k = 0; k < (envelope ? p.outliers || 0 : 0); k++) at(k + 0.3, { kind: 'outlier' });
+  for (let k = 0; k < (p.wide || 0); k++) at(k + 0.55, { kind: 'wide' });
+  for (let k = 0; k < (p.gate || 0); k++) at(k + 0.7, { kind: 'gate' });
+  for (let k = 0; k < (p.salvage || 0); k++) at(k + 0.85, { kind: 'salvage' });
+  for (let i = 0; i < n; i++) {
+    const x = r();
+    let acc = 0, verdict = mix[0][0];
+    for (const [c, w] of mix) { acc += w; if (x < acc) { verdict = c; break; } }
+    const flags = notable.get(i) || [];
+    const name = (flags.find((f) => f.name) || {}).name || `${String(i + 1).padStart(3, '0')}.${ext}`;
+    const ratio = v.mixKey === 'akira' ? 2.31 + r() * 0.2 : 1.12 + r() * 0.18;
+    const page = {
+      name, size: '1182x1680',
+      scale: ratio >= 2 ? `缩小 ${ratio.toFixed(2)} 倍（先对半缩）` : `缩小 ${ratio.toFixed(2)} 倍`,
+      verdict, reason: '达标的最省空间档位', metric: `${verdict} ${(2.6 + r() * 2.4).toFixed(3)}`, notes: [], tone: '',
+    };
+    for (const f of flags) {
+      if (f.kind === 'failed') Object.assign(page, { verdict: '—', reason: '读不出，用空白页占位', metric: '', scale: '', tone: 'bad', notes: [f.why] });
+      if (f.kind === 'outlier') { Object.assign(page, { verdict: '4bit+FS', reason: '差异大，单独判断', metric: '4bit+FS ' + page.metric.split(' ')[1] }); page.notes.push('与其他页差异大'); page.tone ||= 'warn'; }
+      if (f.kind === 'wide') { page.size = '2364x1680'; page.notes.push('页面超宽'); page.tone ||= 'warn'; }
+      if (f.kind === 'gate') { Object.assign(page, { verdict: verdict.replace('+FS', ''), reason: '没贴合屏幕，不加抖动' }); page.notes.push('尺寸未贴合屏幕'); page.tone ||= 'warn'; }
+      if (f.kind === 'salvage') { page.notes.push('只读出 62%'); page.tone ||= 'warn'; }
+    }
+    list.push(page);
+  }
+  if (envelope) envelopeOver(list, mix);
+  PAGE_CACHE.set(v.id, list);
+  return list;
+}
+// 整卷统一灰阶：按省空间的次序累计到 p95 的那一档就是统一档位（CONTEXT.md《整卷统一灰阶》）。
+// 差异大的页、没贴合屏幕的页、坏页各自在场；照统一档位写的页里，本来就判成这一档的头一页当代表页
+const COST = ['1bit', '1bit+FS', '2bit', '2bit+FS', '4bit', '4bit+FS'];
+function envelopeOver(list, mix) {
+  const sorted = [...mix].sort((a, b) => COST.indexOf(a[0]) - COST.indexOf(b[0]));
+  let acc = 0, base = sorted[sorted.length - 1][0];
+  for (const [c, w] of sorted) { acc += w; if (acc >= 0.95) { base = c; break; } }
+  let driver = null;
+  for (const pg of list) {
+    if (pg.reason !== '达标的最省空间档位') continue;
+    if (!driver && pg.verdict === base) driver = pg;
+    Object.assign(pg, { verdict: base, reason: '整卷统一灰阶', metric: `${base} ${pg.metric.split(' ')[1]}` });
+  }
+  const d = driver || list.find((pg) => pg.reason === '整卷统一灰阶');
+  if (d) { d.driver = true; d.notes.push('代表页'); }
+}
+function tallyOf(v) {
+  const m = new Map();
+  for (const pg of pagesOf(v)) if (pg.verdict !== '—') m.set(pg.verdict, (m.get(pg.verdict) || 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1]);
+}
+function problemsOf(v) {
+  const pg = pagesOf(v), c = (k) => pg.filter((x) => x.notes.some((n) => n.startsWith(k))).length;
+  return { failed: pg.filter((x) => x.tone === 'bad').length, outlier: c('与其他页差异大'), wide: c('页面超宽'), gate: c('尺寸未贴合'), salvage: c('只读出') };
+}
+
+// ───── 配置 ─────
+const PANELS = [
+  ['1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kobo-clara-hd', 'kobo-clara-2e', 'kobo-clara-bw', 'boox-poke5', 'boox-poke6', 'kindle-voyage', 'kindle-11']],
+  ['1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 彩色', ['kobo-clara-colour']],
+  ['824x1648 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['boox-palma', 'boox-palma-2']],
+  ['1236x1648 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kindle-paperwhite-11']],
+  ['1264x1680 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kobo-libra-h2o', 'kobo-libra-2', 'boox-leaf2', 'boox-page', 'kindle-oasis-2', 'kindle-oasis-3', 'kindle-paperwhite-12']],
+  ['1264x1680 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 彩色', ['kobo-libra-colour', 'boox-go-color-7', 'kindle-colorsoft']],
+  ['1404x1872 ⋅ 227 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kobo-elipsa', 'kobo-elipsa-2e', 'boox-note-air3', 'boox-tab-ultra', 'boox-go-10-3']],
+  ['1404x1872 ⋅ 227 PPI ⋅ 16 级灰阶 ⋅ 彩色', ['boox-note-air3-c', 'boox-tab-ultra-c']],
+  ['1404x1872 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kobo-aura-one']],
+  ['1440x1920 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kobo-forma', 'kobo-sage']],
+  ['1650x2200 ⋅ 207 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['boox-max-lumi2', 'boox-tab-x']],
+  ['1860x2480 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kindle-scribe']],
+];
+const CONFIG = [
+  { layer: '设备', note: '换设备时才需要改' },
+  { key: 'model', label: '设备型号', kind: 'model', unset: '未选择（开始前必须选）', value: 'kobo-clara-2e',
+    desc: '先选屏幕规格，再选型号：同一种屏幕的型号，转出来的效果完全一样。表里没有你的设备时，挑一个屏幕规格相同的型号，再按实际情况填可见灰阶数。换型号会清空之前填的可见灰阶数和画质门槛。' },
+  { key: 'levels', label: '可见灰阶数', kind: 'text', unset: '默认（按屏幕规格）', value: null,
+    desc: '你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。' },
+  { key: 'threshold', label: '画质门槛', kind: 'text', unset: '跟着型号走', value: null,
+    desc: '画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。' },
+  { layer: '处理选项', note: '每次转换都可以调' },
+  { key: 'fit', label: '缩放方式', kind: 'ring', options: ['按高度铺满', '整页放进屏幕'], unset: '默认（按高度铺满）', value: '整页放进屏幕', preset: null,
+    desc: '按高度铺满：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。整页放进屏幕：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
+  { key: 'crop', label: '裁白边', kind: 'ring', options: ['裁掉', '保留'], unset: '默认（裁掉）', value: null,
+    desc: '自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。' },
+  { key: 'split', label: '拆分跨页', kind: 'ring', options: ['拆成两页', '保持一页'], unset: '默认（拆成两页）', value: null,
+    desc: '把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。开着时，有跨页的卷体积会变大不少。' },
+  { key: 'splitAt', label: '跨页判定宽度', kind: 'text', unset: '默认（1.5 倍）', value: null, desc: '页面的宽高比超过屏幕宽高比的多少倍，才当成跨页处理。' },
+  { key: 'order', label: '阅读方向', kind: 'ring', options: ['从右往左（日漫）', '从左往右'], unset: '默认（从右往左）', value: null, desc: '跨页拆开之后，左右两半谁排在前面。日漫是从右往左。' },
+  { key: 'filter', label: '缩放算法', kind: 'ring', options: ['area', 'bilinear', 'hamming', 'bicubic', 'lanczos3'], unset: '默认（lanczos3）', value: null,
+    desc: '缩小图片时用的算法。lanczos3 最清晰，一般不用改；area 会偏糊，只用来对比。' },
+  { key: 'white', label: '纸色提白', kind: 'text', unset: '默认（4 级）', value: null,
+    desc: '扫描出来的纸色常常略微发灰，加抖动时白底上会冒出零星噪点。开着时把接近纯白的纸色提成纯白，数字是最多提几级灰度；0 = 关闭，结果和没有这个功能时完全一样。' },
+  { key: 'depth', label: '灰阶档位', kind: 'ring', options: ['2 级（1bit）', '4 级（2bit）', '16 级（4bit）'], unset: '自动（按画质判断）', value: null,
+    desc: '指定整卷用几级灰，不再逐页自动判断。电子墨水屏最多显示 16 级灰，所以只有这三档。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰；+FS = 加抖动。' },
+  { key: 'dither', label: '抖动', kind: 'ring', options: ['不加', '加（误差扩散）'], unset: '自动（按画质判断）', value: '加（误差扩散）', preset: null,
+    desc: '用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。' },
+  { key: 'envelope', label: '整卷统一灰阶', kind: 'ring', options: ['开', '关'], unset: '默认（关）', value: null,
+    desc: '关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，和其他页差异特别大的页单独处理。' },
+  { key: 'cache', label: '内存上限', kind: 'text', unset: '默认（512.0 MiB）', value: null, desc: '转换时最多占用多少内存，超出的部分临时写到硬盘上。它限制的是内存占用，不限制卷的大小。' },
+  { key: 'io', label: '读盘方式', kind: 'ring', options: ['自动', '逐个读（机械硬盘）', '同时读（固态硬盘）'], unset: '默认（自动）', value: null,
+    desc: '自动：按硬盘类型自己选。逐个读：适合机械硬盘和网络盘。同时读：适合固态硬盘。' },
+  { layer: '画质判定参数', note: '只读' },
+  { key: 'p1', label: '设备配置', kind: 'info',
+    desc: '下一趟照这份设备配置判定：型号、屏幕规格、画质门槛，门槛是在哪块屏幕上实测的也写着。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。' },
+  { key: 'p2', label: '画质分构成', kind: 'info',
+    desc: '画质分由两部分相加。① 整体走样：把原图和转换后的图都稍微模糊一下（相当于在正常阅读距离看），比较灰度差多少，色带、灰调发闷都算在这里。② 抖动颗粒：抖动的点子本身有多扎眼；起伏不到「相邻两级灰度差的 21.6%」就当看不见，不扣分。21.6% 这个比例是在 boox-poke6 上实测的。' },
+  { key: 'p3', label: '细节放宽', kind: 'info',
+    desc: '线稿密、细节多的地方，瑕疵不容易被看出来，所以扣分打折；大片平涂的地方不打折。最低折扣 0.50：再怎么花的地方，扣分也至少保留一半。中点细节度 8.0：一块区域的细节度（像素偏离周围平均值的程度）到 8.0 时，正好打七五折，也就是不打折和五折的中间。这两个数目前是暂定值，还没用真机校准。' },
+  { key: 'p4', label: '分块取分', kind: 'info',
+    desc: '把页面切成 32x32 像素的小块分别打分。一页的分数取最差那 1% 的小块，但最多只看最差的 8 块。不取平均，免得大片留白把局部的崩坏冲淡。8 这个数是暂定值。' },
+  { key: 'p5', label: '选项冲突', kind: 'info',
+    desc: () => (interlockText()
+      ? '这组设置里有两项凑在一起会互相削弱：上面那句写着是哪两项、代价是什么。组合本身能用，只是拿到的是部分收益。所有可能冲突的组合写在 tonefit --help 的末尾。'
+      : '当前这组设置之间没有互相冲突的组合。所有可能冲突的组合写在 tonefit --help 的末尾。') },
+];
+
+// ───── 画质判定参数：行内那一句取自报告抬头（render::header，ADR 0016），项名与数一个字都不另写 ─────
+const cfgValue = (key) => (CONFIG.find((c) => c.key === key) || {}).value;
+const fmt3 = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(3) : String(v));
+// 画质门槛那一截（profile 的 Threshold）：设备设置里那一行与设备配置那一句印的是同一截
+function thresholdText(c) {
+  const v = c ? c.value : cfgValue('threshold');
+  return v != null ? `${fmt3(v)}（由你指定）` : '5.123（在 boox-poke6 上实测，其他屏幕未验证）';
+}
+// 拆分开着、缩放方式却是整页放进屏幕：抬头上唯一会露面的那一条选项冲突（Interlock::SpreadsStayFlattened）
+function interlockText() {
+  if (cfgValue('fit') !== '整页放进屏幕' || cfgValue('split') === '保持一页') return null;
+  return '拆分开着，缩放方式却是 fit-inside：切得开的跨页切开了，没有中缝的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit height，代价是它们的页面比屏幕宽、要横向平移着看。组合本身成立——拿到的是部分收益，不是白开';
+}
+function premiseText(key) {
+  switch (key) {
+    case 'p1': {
+      const model = cfgValue('model');
+      if (!model) return '型号未选择';
+      const levels = cfgValue('levels');
+      let panel = (PANELS.find(([, ms]) => ms.includes(model)) || [''])[0];
+      if (levels != null) panel = panel.replace(/\d+ 级灰阶/, `${levels} 级灰阶`);
+      return `${model}：${panel} ⋅ 画质门槛 ${thresholdText()}`;
+    }
+    case 'p2': return '整体走样 ＋ 抖动颗粒（起伏不到相邻两级灰度差的 21.6% 不算；这个比例在 boox-poke6 上实测，其他屏幕未验证）';
+    case 'p3': return '大片平涂处扣分不打折 ⋅ 细节越多扣分打折越多，但总保留 50% 以上 ⋅ 细节度 8.0 时折扣走到一半（两个数都是暂定值，还没用真机校准）';
+    case 'p4': return '切成 32x32 的小块分别打分 ⋅ 一页的分数看最差的 1% 小块，但最多只看最差的 8 块（8 块这个数是暂定值）';
+    case 'p5': return interlockText() || '无';
+    default: return '';
+  }
+}
+const PRESETS = [
+  { name: '漫画', says: { fit: null, dither: null } },
+  { name: '画集', says: { fit: '整页放进屏幕', crop: '保留', split: '保持一页', depth: '16 级（4bit）' } },
+];
+
+// 全部按键只列此刻派得出的键：每一行第三格是派得出它的阶段——I 还没开始 · S 清点中 · R 转换中 · D 等待确认 · E 已结束，
+// 不写即任何阶段都派得出。同一个键在不同阶段做的事不同，就分成几行各写各的；一行都不剩的组整组不出
+const KEYMAP = [
+  ['全局', [['1 2', '切换视图：任务 / 配置'], ['gt gT', '下一个 / 上一个视图'], ['Tab', '同一视图里切换区块'], ['?', '全部按键，再按一次关闭'], ['q', '退出', 'IE'], ['q', '不退出：先按 s 停止，或按 C-c', 'SRD'], ['C-c', '退出（当前卷不保存，不留半成品）']]],
+  ['移动', [['j k', '上下一行'], ['C-d C-u', '半屏'], ['C-f C-b', '一屏'], ['gg G', '到顶 / 到底'], ['滚轮', '一格三行'], ['单击', '选中那一行']]],
+  ['卷列表', [['l ⏎', '展开文件夹 / 查看每页结果', 'RDE'], ['h', '收起 / 回上一级', 'RDE'], ['F', '自动滚动到正在处理的卷', 'RD'], ['/', '搜索卷名或文件夹', 'RDE'], ['n N', '下一个 / 上一个搜索结果', 'RDE'], [']d [d', '下一个 / 上一个问题', 'RDE']]],
+  ['路径', [['o', '添加路径', 'I'], ['i ⏎', '修改这一条', 'I'], ['空格', '勾选 / 取消勾选', 'I'], ['dd', '删除这一条', 'I'], ['o i', '返回路径列表', 'E']]],
+  ['转换', [['t', '预览：只分析，不写文件', 'IE'], ['x', '转换：写到输出目录', 'IE'], ['s', '停止：按一次做完当前卷，按两次立即停', 'SR']]],
+  ['确认', [['x', '写出这一卷（不用重新分析）', 'D'], ['a', '写出，后面的卷不再询问', 'D'], ['s', '不写出，结束预览', 'D'], ['v', '查看这一卷的每页结果', 'D']]],
+  ['每页结果', [['a', '需留意的页 / 全部页', 'RE'], ['h Esc', '回卷列表', 'RDE']]],
+  ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图']]],
+  ['输入', [['Tab', '补全路径', 'I'], ['C-w', '删一段', 'IRDE'], ['⏎', '确定', 'IRDE'], ['Esc', '取消', 'IRDE'], ['F1', '全部按键', 'IRDE']]],
+  ['灰阶写法', [['1bit', '2 级灰'], ['2bit', '4 级灰'], ['4bit', '16 级灰'], ['+FS', '加抖动（误差扩散）']]],
+];
+// ───────────────────────── 模拟一趟：预扫 → 对指纹 → 读图定档 →（决策点）→ 按档写出 ─────────────────────────
+
+const PASSES = ['查重', '分析', '写出'];
+const PASS_ST = ['c-magenta', 'c-blue', 'c-cyan'];
+const RATE = 320;          // 读图定档每模拟秒走的步
+const SHOW = 7;            // 屏上的时间是模拟时间的几倍，让数字像一趟真的跑
+const SURVEY_SEC = 1.8;
+
+function newRun(mode, tree) {
+  return {
+    mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
+    // 开跑那一刻的快照：跑起来之后设置锁住，结束后再改也不影响这一趟的结果
+    envelope: (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开',
+    wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + 3 * v.pages, 0),
+    vs: tree.vols.map(() => ({ state: 'queued', pass: -1, done: 0, elapsed: 0, tally: null })),
+  };
+}
+
+function tick(run, dt) {
+  if (!run || run.stage === 'ended' || run.stage === 'deciding') return;
+  run.elapsed += dt;
+  if (run.stage === 'surveying') {
+    run.surveyT += dt;
+    if (run.surveyT >= SURVEY_SEC) { run.stage = 'running'; startNext(run); }
+    return;
+  }
+  let budget = dt;
+  while (budget > 1e-9 && run.stage === 'running') {
+    const v = run.tree.vols[run.cur], s = run.vs[run.cur];
+    const speed = s.pass === 0 ? RATE * 7 : s.pass === 2 ? RATE * 1.6 : RATE;
+    const need = v.pages - s.done, can = budget * speed;
+    if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; budget = 0; }
+    else { s.done = v.pages; run.steps += need; const used = need / speed; s.elapsed += used; budget -= used; passDone(run); }
+  }
+}
+
+function passDone(run) {
+  const v = run.tree.vols[run.cur], s = run.vs[run.cur];
+  if (s.pass === 0) {
+    if (v.plan.volFail) return finishVol(run, 'failed');
+    if (v.plan.skip) return finishVol(run, 'skipped');
+    s.pass = 1; s.done = 0; return;
+  }
+  if (s.pass === 1) {
+    s.tally = tallyOf(v);
+    if (run.mode === 'trial' && !run.forTheRest) { run.stage = 'deciding'; s.state = 'deciding'; return; }
+    s.pass = 2; s.done = 0; return;
+  }
+  run.wrote = true;
+  finishVol(run, v.plan.isolated ? 'isolated' : 'done');
+}
+
+function finishVol(run, state) {
+  const v = run.tree.vols[run.cur], s = run.vs[run.cur];
+  const walked = Math.max(0, s.pass) * v.pages + (s.pass >= 0 && s.pass < 3 ? s.done : 0);
+  run.steps += Math.max(0, 3 * v.pages - walked);   // 一卷收摊时结清预告剩下的步
+  s.state = state; s.pass = 3; s.done = v.pages;
+  if (run.latch >= 1) return endRun(run, 'stopped');
+  startNext(run);
+}
+function startNext(run) {
+  run.cur++;
+  if (run.cur >= run.tree.vols.length) return endRun(run, 'done');
+  Object.assign(run.vs[run.cur], { state: 'running', pass: 0, done: 0 });
+}
+function endRun(run, why) { run.stage = 'ended'; run.outcome = why; if (why === 'done') run.steps = run.total; }
+
+// 决策点上答的那一个字
+function answer(run, key) {
+  if (run.stage !== 'deciding') return false;
+  const s = run.vs[run.cur];
+  if (key === 'x' || key === 'a') {
+    if (key === 'a') run.forTheRest = true;
+    Object.assign(s, { state: 'running', pass: 2, done: 0 });
+    run.stage = 'running';
+    return true;
+  }
+  if (key === 's') {
+    s.state = 'trialed';
+    run.latch = Math.max(run.latch, 1);
+    finishVol(run, 'trialed');
+    return true;
+  }
+  return false;
+}
+// 按停：一级收尾、二级中止
+function stop(run) {
+  if (!run || (run.stage !== 'running' && run.stage !== 'surveying')) return 0;
+  run.latch = Math.min(2, run.latch + 1);
+  if (run.latch === 2) {
+    if (run.cur >= 0 && run.cur < run.vs.length) run.vs[run.cur].state = 'aborted';
+    endRun(run, 'aborted');
+  }
+  return run.latch;
+}
+
+const FINISHED = new Set(['done', 'skipped', 'isolated', 'failed', 'trialed']);
+function stateOf(run, v) { return run ? run.vs[run.tree.vols.indexOf(v)] : null; }
+
+function dirStat(run, d) {
+  const st = { total: d.vols.length, finished: 0, running: null, deciding: null, bad: 0, warn: 0, skipped: 0, elapsed: 0, tally: new Map(), isolated: 0, failedVols: 0, failedPages: 0 };
+  for (const v of d.vols) {
+    const s = stateOf(run, v); if (!s) continue;
+    st.elapsed += s.elapsed;
+    if (FINISHED.has(s.state)) st.finished++;
+    if (s.state === 'running') st.running = v;
+    if (s.state === 'deciding') st.deciding = v;
+    if (s.state === 'skipped') st.skipped++;
+    if (s.state === 'failed') { st.bad++; st.failedVols++; }
+    if (s.state === 'isolated') { st.warn++; st.isolated++; }
+    if (s.tally && s.state !== 'aborted') {
+      for (const [k, n] of s.tally) st.tally.set(k, (st.tally.get(k) || 0) + n);
+      const pr = problemsOf(v);
+      st.failedPages += pr.failed;
+      if (s.state !== 'isolated' && (pr.outlier || pr.wide || pr.gate || pr.salvage)) st.warn++;
+    }
+  }
+  return st;
+}
+function markOf(run, st) {
+  if (!run || run.stage === 'surveying') return ['⋅', 'c-gray'];
+  if (st.deciding) return ['?', 'c-yellow b'];
+  if (st.running) return [SPIN[Math.floor(performance.now() / 90) % SPIN.length], 'c-blue b'];
+  if (st.bad) return ['✗', 'c-red b'];
+  if (st.warn) return ['!', 'c-yellow b'];
+  if (st.finished === st.total) return st.skipped === st.total ? ['-', 'c-gray'] : ['✓', 'c-green'];
+  if (st.finished > 0) return ['◌', 'c-gray'];
+  return ['⋅', 'c-gray'];
+}
+function volMark(s, v) {
+  if (!s) return ['⋅', 'c-gray'];
+  switch (s.state) {
+    case 'running': return [SPIN[Math.floor(performance.now() / 90) % SPIN.length], 'c-blue b'];
+    case 'deciding': return ['?', 'c-yellow b'];
+    case 'skipped': return ['-', 'c-gray'];
+    case 'failed': return ['✗', 'c-red b'];
+    case 'isolated': return ['!', 'c-yellow b'];
+    case 'aborted': return ['⋅', 'c-gray'];
+    case 'trialed': case 'done': {
+      const pr = problemsOf(v);
+      return pr.outlier || pr.wide || pr.gate || pr.salvage ? ['!', 'c-yellow b'] : ['✓', 'c-green'];
+    }
+    default: return ['⋅', 'c-gray'];
+  }
+}
+
+function runTotals(run) {
+  const t = { done: 0, skipped: 0, isolated: 0, failedVols: 0, failedPages: 0, outlier: 0, wide: 0, gate: 0, judged: 0, tally: new Map(), finished: 0, unreach: 0 };
+  if (!run) return t;
+  run.tree.vols.forEach((v, i) => {
+    const s = run.vs[i];
+    if (FINISHED.has(s.state)) t.finished++;
+    if (s.state === 'done') t.done++;
+    if (s.state === 'skipped') t.skipped++;
+    if (s.state === 'isolated') { t.isolated++; t.done++; }
+    if (s.state === 'failed') t.failedVols++;
+    if (s.tally && s.state !== 'aborted') {
+      t.judged++;
+      for (const [k, n] of s.tally) t.tally.set(k, (t.tally.get(k) || 0) + n);
+      const pr = problemsOf(v);
+      t.failedPages += pr.failed; t.outlier += pr.outlier; t.wide += pr.wide; t.gate += pr.gate ? 1 : 0;
+    }
+  });
+  if (run.stage !== 'surveying') for (const e of run.tree.entries) for (const n of e.notes || []) if (n.kind === 'unreach') t.unreach++;
+  return t;
+}
+const tallySegs = (entries, max = 3) => {
+  const segs = [];
+  [...entries].sort((a, b) => b[1] - a[1]).slice(0, max).forEach(([k, n], i) => {
+    if (i) segs.push([' ⋅ ', 'c-gray']);
+    const [depth, fs] = k.split('+');
+    const color = depth === '1bit' ? 'c-magenta' : depth === '2bit' ? 'c-cyan' : depth === '4bit' ? 'c-blue' : 'c-white';
+    segs.push([depth, color]);
+    if (fs) segs.push(['+' + fs, color + ' d']);
+    segs.push([' ' + n, 'c-fg']);
+  });
+  return segs;
+};
+
+// 快进到某个时刻：场景跳转用
+function fastForward(run, until, limit = 20000) {
+  for (let i = 0; i < limit && !until(run); i++) {
+    if (run.stage === 'deciding' || run.stage === 'ended') break;
+    tick(run, 0.05);
+  }
+}
+// ───────────────────────── 全局状态 + 任务视图的画法 ─────────────────────────
+
+const S = {
+  view: 'task',
+  named: NAMED0.map((n) => ({ ...n })),
+  outRoot: '~/转好的',
+  run: null,
+  expanded: new Set(),
+  curKey: 'out',
+  follow: true,
+  pages: null,                 // { vol, cursor, all }
+  cfg: { pane: 'left', cursor: 1, right: 0, drill: null, presets: false, pcursor: 0, applied: '漫画', armedDelete: null },
+  overlay: null,               // { kind:'help'|'note', from, note }
+  input: null,                 // { kind:'add'|'edit'|'out'|'search', prompt, buf, cands, ci, target }
+  search: null,                // { q }
+  toast: null,                 // { segs, until }
+  pending: '',
+  size: [120, 36], pal: 'mocha', speed: 4, playing: true,
+  from: { list: 0, pages: 0, cfg: 0 },
+  lastRows: [], lastView: 0,
+};
+const FOCUS = 'c-green';       // 聚焦块的框色：LightGreen
+const modelName = () => (CONFIG.find((c) => c.key === 'model') || {}).value || '型号未选择';
+const key = (k) => [[k, 'c-fg b']];
+const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 'c-gray']];
+function toast(segs, ms = 2600) { S.toast = { segs, until: performance.now() + ms }; }
+
+// 视口：光标越出格子才滚，留一行余量；滚动量仍由光标推出来
+function viewport(name, cursor, total, h) {
+  let from = S.from[name] || 0;
+  const margin = h > 8 ? 1 : 0;
+  if (cursor < from + margin) from = cursor - margin;
+  if (cursor > from + h - 1 - margin) from = cursor - h + 1 + margin;
+  from = Math.max(0, Math.min(from, Math.max(0, total - h)));
+  S.from[name] = from;
+  return from;
+}
+
+// ───── 顶栏与屏底 ─────
+function drawHeader(scr) {
+  const W = scr.c;
+  let x = 1;
+  [['task', '1', '任务'], ['config', '2', '配置']].forEach(([v, n, label], i) => {
+    if (i) x = scr.put(x, 0, ' │ ', 'c-gray');
+    const on = S.view === v;
+    const start = x;
+    x = scr.put(x, 0, n + ' ', on ? 'c-green b' : 'c-gray');
+    x = scr.put(x, 0, label, on ? 'c-fg b u' : 'c-gray');
+    scr.hit(start, 0, x - start, 1, { tab: v });
+  });
+  const r = S.run;
+  const envOn = (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开';
+  const segs = [['[ ', 'c-blue'], ['tonefit 0.1.0', 'c-blue'], [` ⋅ ${modelName()} ⋅ ${envOn ? '整卷统一灰阶' : '逐页判断'}`, 'c-blue']];
+  if (r && S.view !== 'task' && r.stage !== 'ended') {
+    const pct = Math.floor((r.steps / r.total) * 100);
+    segs.splice(1, 0, [r.stage === 'deciding' ? '? 等待确认 ⋅ ' : SPIN[Math.floor(performance.now() / 90) % 10] + ` 处理中 ${pct}% ⋅ `, r.stage === 'deciding' ? 'c-yellow b' : 'c-cyan']);
+  }
+  segs.push([' ]', 'c-blue']);
+  scr.line(W - 1 - segW(segs), 0, segs);
+}
+
+// 屏底一行：按优先级排，摆不下时从倒数第二个往前舍，`?` 恒在末尾
+function footerHints() {
+  const r = S.run, help = hint('?', '全部按键');
+  if (S.overlay) return [hint('j/k', '滚动'), hint('Esc', '关闭')];
+  if (S.view === 'config') {
+    if (S.cfg.presets) return [hint('⏎', '使用'), hint('dd', '删除'), hint('p', '返回'), hint('j/k', '选择'), help];
+    const ro = readOnly();
+    return [...stageHints(), hint(S.cfg.pane === 'left' ? 'l' : '⏎', ro ? '查看' : S.cfg.pane === 'left' ? '展开' : '确定'), hint('h', '返回'), hint('p', '预设'), hint('1', '任务'), hint('j/k', '选择'), help];
+  }
+  if (S.pages) return [...stageHints(), ...(r.stage === 'deciding' ? [] : [hint('a', S.pages.all ? '只看需留意的页' : '全部页')]), hint('h', '回卷列表'), hint('j/k', '选页'), help];
+  if (!r) return [hint('t', '预览'), hint('x', '转换'), hint('o', '添加路径'), hint('空格', '勾选'), hint('dd', '删除'), hint('j/k', '选择'), hint('2', '配置'), help];
+  return [...stageHints(), hint(']d', '下一个问题'), ...(S.follow || r.stage === 'ended' ? [] : [hint('F', '自动滚动')]), ...openHint(curRow()), hint('/', '搜索'), hint('j/k', '选择'), help];
+}
+function stageHints() {
+  const r = S.run;
+  if (!r) return [];
+  if (r.stage === 'deciding') return [hint('x', '写出'), hint('a', '全部写出'), hint('s', '结束'), ...(S.pages ? [] : [hint('v', '每页结果')])];
+  if (r.stage === 'running' || r.stage === 'surveying') return [hint('s', r.latch ? '再按一次立即停' : '停止')];
+  return S.view === 'config' ? [] : [hint('t', '再预览'), hint('x', '再转换')];
+}
+function drawFooter(scr) {
+  const y = scr.r - 1, W = scr.c;
+  // 覆盖层盖着输入行时屏底让给覆盖层，关掉之后输入行原样回来
+  if (S.input && !S.overlay) {
+    const inp = S.input;
+    let x = scr.put(1, y, inp.prompt, 'c-green b');
+    x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
+    scr.put(x, y, '▏', 'c-green');
+    const right = inp.kind === 'search' ? [...hint('⏎', '跳到结果'), [' ', ''], ...hint('Esc', '取消')]
+      : [...hint('Tab', '补全'), [' ', ''], ...hint('C-w', '删一段'), [' ', ''], ...hint('⏎', '确定'), [' ', ''], ...hint('Esc', '取消')];
+    scr.line(W - 1 - segW(right), y, right);
+    return;
+  }
+  const t = S.toast && S.toast.until > performance.now() ? S.toast : null;
+  const maxW = W - 3 - (S.pending ? 6 : 0);
+  let segs;
+  if (t) segs = t.segs;
+  else {
+    const groups = footerHints();
+    const width = () => groups.reduce((a, g) => a + segW(g), 0) + Math.max(0, groups.length - 1);
+    while (groups.length > 2 && width() > maxW) groups.splice(groups.length - 2, 1);
+    segs = groups.flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
+  }
+  scr.line(1, y, segs, maxW);
+  if (S.pending) scr.put(W - 1 - strW(S.pending) - 1, y, S.pending + '…', 'c-yellow b');
+}
+
+// ───── 总览块 ─────
+function volPath(v) { return `${v.dir.label}/${v.name}`; }
+function overviewLines(iw, compact) {
+  const r = S.run;
+  if (!r) {
+    const on = S.named.filter((n) => n.on).length, off = S.named.length - on;
+    if (compact) return [
+      [['输出目录 ', 'c-gray'], [S.outRoot, 'c-fg b'], [' ⋅ 路径 ', 'c-gray'], [`已勾选 ${on} 个`, 'c-fg'], [' ⋅ ' + modelName(), 'c-gray']],
+      [...hint('t', '预览'), [' ', ''], ...hint('x', '转换'), [' ⋅ ', 'c-gray'], [S.cfg.applied ? `预设「${S.cfg.applied}」（改了 ${changedKeys().length} 项）` : '未使用预设', 'c-yellow']],
+    ];
+    return [
+      [['输出目录 ', 'c-gray'], [S.outRoot, 'c-fg b'], ['   路径 ', 'c-gray'], [`已勾选 ${on} 个`, 'c-fg'], ...(off ? [[` ⋅ ${off} 个未勾选`, 'c-gray']] : []), ['   设备 ', 'c-gray'], [modelName(), 'c-fg'], ['   处理选项 ', 'c-gray'], [S.cfg.applied ? `预设「${S.cfg.applied}」` + (changedKeys().length ? `（改了 ${changedKeys().length} 项）` : '') : '未使用预设', changedKeys().length ? 'c-yellow' : 'c-gray']],
+      [...hint('t', '预览'), ['  只分析，不写文件', 'c-gray'], ['     ', ''], ...hint('x', '转换'), ['  写到输出目录', 'c-gray'], ['     开始后会扫描每个路径里的卷', 'c-gray d']],
+    ];
+  }
+  if (r.stage === 'surveying') {
+    // 清点途中库一条事件都不报（CONTEXT《清点》）：这一段只说在清点，不报卷数
+    return [
+      [[SPIN[Math.floor(performance.now() / 90) % 10] + ' 清点 ', 'c-magenta b'], ['正在找出每个路径里的卷', 'c-fg'], ['  ⋅ 先数清总量，剩余时间才估得准', 'c-gray']],
+      [['当前卷 ', 'c-gray'], ['还没开始', 'c-gray d']],
+    ];
+  }
+  const t = runTotals(r);
+  const frac = r.steps / r.total;
+  const cur = r.cur >= 0 && r.cur < r.tree.vols.length ? r.tree.vols[r.cur] : null;
+  const cs = cur ? r.vs[r.cur] : null;
+  const barW = compact ? Math.max(8, Math.min(20, iw - 64)) : Math.max(10, Math.min(40, iw - 60));
+  const [f, e] = bar(frac, barW);
+  const total = [['总进度 ', 'c-gray'], [f, r.stage === 'ended' ? 'c-green' : 'c-blue'], [e, 'c-gray d'], [` ${Math.floor(frac * 100)}%`, 'c-fg b'], [`  ${Math.floor(r.steps)}/${r.total} 步`, 'c-gray']];
+  let here = [['当前卷 ', 'c-gray'], ['—', 'c-gray d']];
+  if (cur && r.stage !== 'ended') {
+    const pf = cs.pass >= 0 && cs.pass < 3 ? cs.done / cur.pages : 1;
+    const [bf, be] = bar(pf, compact ? 8 : Math.max(8, Math.min(24, iw - 80)));
+    const pass = cs.pass >= 0 && cs.pass < 3 ? cs.pass : 1;
+    here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [PASSES[pass], PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
+  }
+  const wroteYet = r.mode === 'exec' || r.wrote;
+  const concl = wroteYet
+    ? [['完成 ', 'c-gray'], [`${t.done} 卷`, 'c-fg b'], [' ⋅ 跳过 ', 'c-gray'], [`${t.skipped} 卷`, 'c-fg'], [` ⋅ 等待 ${r.tree.vols.length - t.finished} 卷`, 'c-gray']]
+    : [['已分析 ', 'c-gray'], [`${t.judged} 卷`, 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(t.tally)];
+  const trouble = [];
+  const add = (label, st) => { if (trouble.length) trouble.push([' ⋅ ', 'c-gray']); trouble.push([label, st]); };
+  if (t.failedPages) add(`坏页 ${t.failedPages} 页`, 'c-red');
+  if (t.failedVols) add(`转换失败 ${t.failedVols} 卷`, 'c-red');
+  if (t.unreach) add(`无法访问 ${t.unreach} 处`, 'c-red');
+  if (!wroteYet && t.outlier) add(`与其他页差异大 ${t.outlier} 页`, 'c-yellow');
+  if (!wroteYet && t.wide) add(`页面超宽 ${t.wide} 页`, 'c-yellow');
+  const troubleLine = trouble.length ? [['问题 ', 'c-red b'], ...trouble] : null;
+  if (compact) {
+    const [f2, e2] = bar(frac, 10);
+    const l1 = [['总进度 ', 'c-gray'], [f2, r.stage === 'ended' ? 'c-green' : 'c-blue'], [e2, 'c-gray d'], [` ${Math.floor(frac * 100)}%`, 'c-fg b']];
+    if (cur && r.stage !== 'ended') {
+      const pass = cs.pass >= 0 && cs.pass < 3 ? cs.pass : 1;
+      l1.push(['   当前卷 ', 'c-gray'], [elide(volPath(cur), 22), 'c-fg b'], [' ' + PASSES[pass], PASS_ST[pass]], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']);
+    }
+    const short = wroteYet
+      ? [['完成 ', 'c-gray'], [String(t.done), 'c-fg b'], [` ⋅ 跳过 ${t.skipped} ⋅ 等待 ${r.tree.vols.length - t.finished}`, 'c-gray']]
+      : [['已分析 ', 'c-gray'], [`${t.judged} 卷`, 'c-fg b']];
+    const tr = [];
+    const add2 = (s, st) => { if (tr.length) tr.push([' ⋅ ', 'c-gray']); tr.push([s, st]); };
+    if (t.failedPages) add2(`坏页 ${t.failedPages}`, 'c-red');
+    if (t.failedVols) add2(`转换失败 ${t.failedVols}`, 'c-red');
+    if (t.unreach) add2(`无法访问 ${t.unreach}`, 'c-red');
+    if (!wroteYet && t.outlier) add2(`差异大 ${t.outlier}`, 'c-yellow');
+    return [l1, tr.length ? [...short, ['   问题 ', 'c-red b'], ...tr] : short];
+  }
+  return troubleLine ? [total, here, concl, [...troubleLine, ['    ', ''], ...hint(']d', '跳到下一个')]] : [total, here, concl];
+}
+function overviewTitle() {
+  const r = S.run;
+  if (!r) return { title: [['还没开始', 'c-fg b']], right: null };
+  const N = r.tree.vols.length;
+  const wroteYet = r.mode === 'exec' || r.wrote || (r.stage === 'running' && r.vs[r.cur] && r.vs[r.cur].pass === 2);
+  const mode = [wroteYet ? '转换' : '预览', wroteYet ? 'c-cyan b' : 'c-magenta b'];
+  const used = [['已用 ' + fmtDur(r.elapsed * SHOW), 'c-gray']];
+  if (r.stage === 'surveying') return { title: [mode, [' ⋅ 清点中', 'c-fg']], right: used };
+  if (r.stage === 'deciding') return { title: [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷 ⋅ `, 'c-fg'], ['等待确认', 'c-yellow b']], right: used };
+  if (r.stage === 'ended') {
+    const why = r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
+    return { title: [[r.outcome === 'done' ? '完成 ' : r.outcome === 'stopped' ? '已停止 ' : '已中断 ', r.outcome === 'done' ? 'c-green b' : 'c-yellow b'], [why, 'c-fg'], [' ⋅ 用时 ' + fmtDur(r.elapsed * SHOW), 'c-gray']], right: [[`输出目录 ${S.outRoot}`, 'c-gray']] };
+  }
+  const frac = r.steps / r.total;
+  const eta = frac > 0.02 ? (r.elapsed * (1 - frac)) / frac : null;
+  const t = [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷`, 'c-fg'], [eta ? ` ⋅ 预计还要 ${fmtDur(eta * SHOW)}` : ' ⋅ 正在估算剩余时间', 'c-fg']];
+  if (r.latch === 1) t.push([' ⋅ 正在停止：做完当前卷就停', 'c-yellow b']);
+  return { title: t, right: used };
+}
+
+// ───── 任务树的行 ─────
+function taskRows() {
+  const r = S.run, rows = [];
+  if (!r || r.stage === 'surveying') {
+    rows.push({ key: 'out', kind: 'out' });
+    rows.push({ kind: 'label' });
+    S.named.forEach((n, i) => rows.push({ key: 'np:' + n.path, kind: 'named', n, i }));
+    if (!r) rows.push({ key: 'add', kind: 'add' });
+    return rows;
+  }
+  for (const e of r.tree.entries) {
+    if (e.type === 'section') {
+      if (rows.length && rows[rows.length - 1].kind !== 'gap') rows.push({ kind: 'gap' });
+      rows.push({ kind: 'section', e });
+      for (const d of e.dirs) pushDir(rows, d, 1);
+      for (const n of e.notes) rows.push({ key: 'n:' + n.what, kind: 'note', n, indent: 1 });
+      rows.push({ kind: 'gap' });
+    } else {
+      pushDir(rows, e.dir, 0);
+      for (const n of e.notes || []) rows.push({ key: 'n:' + n.what, kind: 'note', n, indent: 1 });
+    }
+  }
+  if (r.tree.unchecked) rows.push({ kind: 'foot', text: `另有 ${r.tree.unchecked} 个路径未勾选，本次不处理` });
+  return rows;
+}
+function pushDir(rows, d, indent) {
+  rows.push({ key: 'd:' + d.id, kind: 'dir', d, indent });
+  if (S.expanded.has(d.id)) for (const v of d.vols) rows.push({ key: 'v:' + v.id, kind: 'vol', v, indent: indent + 1 });
+}
+const selectable = (row) => !!row.key;
+
+// 砍列的次序：耗时先让，再让代表页，最后让灰阶分布。代表页那一列只在整卷统一灰阶那一趟在场
+function cols(iw) {
+  const env = !!(S.run && S.run.envelope);
+  const showTally = iw >= 92, showDriver = env && iw >= 100, showTime = iw >= (env ? 124 : 108);
+  const nameW = Math.max(12, Math.min(30, Math.floor(iw * 0.24)));
+  return { nameW, countW: 9, tallyW: showTally ? 26 : 0, driverW: showDriver ? 15 : 0, timeW: showTime ? 7 : 0 };
+}
+function problemsSegs(st) {
+  const segs = [];
+  const add = (t, s) => { if (segs.length) segs.push([' ⋅ ', 'c-gray']); segs.push([t, s]); };
+  if (st.failedPages) add(`坏页 ${st.failedPages} 页`, 'c-red');
+  if (st.failedVols) add(`转换失败 ${st.failedVols}`, 'c-red');
+  return segs;
+}
+function drawRow(scr, x, y, iw, row, isCur, focused) {
+  const r = S.run, c = cols(iw);
+  const curSeg = isCur ? [focused ? '❯ ' : '› ', focused ? 'c-green b' : 'c-gray'] : ['  ', ''];
+  const ind = '  '.repeat(row.indent || 0);
+  const match = S.search && S.search.q && row.key && rowText(row).includes(S.search.q);
+  const nameSt = (base) => base + (isCur ? ' b' : '') + (match ? ' u' : '');
+  if (row.kind === 'out') {
+    scr.line(x, y, [curSeg, ['输出目录   ', 'c-gray'], [S.outRoot, nameSt('c-fg')], ['   ', ''], ...hint('i', '修改')], iw);
+  } else if (row.kind === 'label') {
+    const n = S.named.length;
+    scr.line(x, y, [['  ', ''], ['处理路径', 'c-fg b'], [` (${n})`, 'c-gray'], ['   ⋅ 开始前不会读取里面的内容', 'c-gray d']], iw);
+  } else if (row.kind === 'add') {
+    scr.line(x, y, [curSeg, ['＋ 添加路径', nameSt('c-green')], ['   ', ''], ...hint('o', '添加')], iw);
+  } else if (row.kind === 'named') {
+    const n = row.n, surveying = r && r.stage === 'surveying';
+    const box = surveying ? [n.on ? SPIN[(Math.floor(performance.now() / 90) + row.i) % 10] + '   ' : '    ', 'c-magenta'] : [n.on ? '[x] ' : '[ ] ', n.on ? 'c-green' : 'c-gray'];
+    const outer = nestedIn(n.path, S.named);
+    const pathW = Math.max(20, Math.min(iw - 40, Math.max(...S.named.map((m) => strW(m.path))) + 2));
+    scr.line(x, y, [curSeg, box, [pad(elide(n.path, pathW), pathW), nameSt(n.on ? 'c-fg' : 'c-gray d')], [' ' + n.kind, 'c-gray'],
+      ...(outer && n.on ? [[' ⋅ 已包含在 ' + outer.path + ' 中，不会重复处理', 'c-yellow']] : []), ...(!n.on ? [[' ⋅ 未勾选，本次不处理', 'c-gray d']] : [])], iw);
+  } else if (row.kind === 'section') {
+    const st = row.e.dirs.map((d) => dirStat(r, d)).reduce((a, s) => ({ fin: a.fin + s.finished, tot: a.tot + s.total, s: [...a.s, s] }), { fin: 0, tot: 0, s: [] });
+    const agg = st.s.reduce((a, s) => ({ ...a, isolated: a.isolated + s.isolated, failedPages: a.failedPages + s.failedPages, failedVols: a.failedVols + s.failedVols, running: a.running || s.running, deciding: a.deciding || s.deciding, bad: a.bad + s.bad, warn: a.warn + s.warn, finished: a.finished + s.finished, total: a.total + s.total, skipped: a.skipped + s.skipped }),
+      { isolated: 0, failedPages: 0, failedVols: 0, running: null, deciding: null, bad: 0, warn: 0, finished: 0, total: 0, skipped: 0 });
+    const unreach = row.e.notes.filter((n) => n.kind === 'unreach').length;
+    if (unreach) agg.bad += unreach;
+    const [m, ms] = markOf(r, agg);
+    const probs = problemsSegs(agg);
+    if (unreach) { if (probs.length) probs.push([' ⋅ ', 'c-gray']); probs.push([`无法访问 ${unreach}`, 'c-red']); }
+    const segs = [['── ', 'c-gray'], [m + ' ', ms], [row.e.path, 'c-fg b'], [` ⋅ ${st.fin}/${st.tot} 卷`, 'c-gray'], ...(probs.length ? [[' ⋅ ', 'c-gray'], ...probs] : []), [' ', '']];
+    const used = scr.line(x, y, segs, iw);
+    if (used < iw) scr.put(x + used, y, '─'.repeat(iw - used), 'c-gray');
+  } else if (row.kind === 'dir' || row.kind === 'vol') {
+    let X = x;
+    X = scr.put(X, y, curSeg[0], curSeg[1]);
+    X = scr.put(X, y, ind, '');
+    const isDir = row.kind === 'dir';
+    const st = isDir ? dirStat(r, row.d) : null;
+    const vs = isDir ? null : stateOf(r, row.v);
+    const [m, ms] = isDir ? markOf(r, st) : volMark(vs, row.v);
+    const chev = isDir ? (S.expanded.has(row.d.id) ? '▾ ' : '▸ ') : '  ';
+    X = scr.put(X, y, chev, 'c-gray');
+    X = scr.put(X, y, m + ' ', ms);
+    const label = isDir ? (row.indent === 0 && row.d.parentHint ? row.d.label : row.d.label) : row.v.name;
+    const nameW = c.nameW - (row.indent || 0) * 2;
+    const running = isDir ? st.running || st.deciding : vs && (vs.state === 'running' || vs.state === 'deciding') ? row.v : null;
+    X = scr.put(X, y, pad(elide(label, nameW), nameW), nameSt(running ? 'c-blue' : isDir ? 'c-fg' : 'c-white'));
+    X += 1;
+    const count = isDir ? `${st.finished}/${st.total} 卷` : `${row.v.pages} 页`;
+    X = scr.put(X, y, pad(count, c.countW, 'r'), isDir && st.finished === st.total ? 'c-fg' : 'c-gray');
+    X += 2;
+    if (c.tallyW) {
+      const tally = isDir ? [...st.tally.entries()] : vs && vs.tally ? vs.tally : [];
+      const w = scr.line(X, y, tally.length ? tallySegs(tally, 2) : [['', '']], c.tallyW);
+      X += c.tallyW + 2; void w;
+    }
+    if (c.driverW) {
+      const driver = !isDir && vs && vs.tally ? (pagesOf(row.v).find((p) => p.driver) || {}).name : null;
+      scr.line(X, y, driver ? [['代表页 ', 'c-gray'], [driver, 'c-fg']] : [['', '']], c.driverW);
+      X += c.driverW + 2;
+    }
+    if (c.timeW) {
+      const secs = isDir ? st.elapsed : vs ? vs.elapsed : 0;
+      scr.put(X, y, pad(secs > 0 ? fmtDur(secs * SHOW) : '', c.timeW, 'r'), 'c-gray');
+      X += c.timeW + 2;
+    }
+    const tailW = x + iw - X;
+    let tail = [];
+    if (isDir) {
+      if (st.deciding) tail = [[st.deciding.name + ' ⋅ ', 'c-fg'], ['等待确认', 'c-yellow b']];
+      else if (st.running) {
+        const s = stateOf(r, st.running), p = Math.max(0, Math.min(2, s.pass));
+        const [bf, be] = bar(s.done / st.running.pages, 8);
+        tail = [[st.running.name + ' ⋅ ', 'c-fg'], [PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(s.done)}/${st.running.pages}`, 'c-gray']];
+      } else if (problemsSegs(st).length) tail = problemsSegs(st);
+      else if (st.finished === 0) tail = [['等待中', 'c-gray d']];
+      else if (st.skipped === st.total) tail = [['已跳过：之前转换过，源文件和设置都没变', 'c-gray d']];
+    } else if (vs) {
+      const pr = problemsOf(row.v);
+      if (vs.state === 'running') {
+        const p = Math.max(0, Math.min(2, vs.pass));
+        const [bf, be] = bar(vs.done / row.v.pages, 10);
+        tail = [[PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(vs.done)}/${row.v.pages}`, 'c-gray']];
+      } else if (vs.state === 'deciding') tail = [['等待确认 ⋅ 已分析，还没写入任何文件', 'c-yellow']];
+      else if (vs.state === 'failed') tail = [['转换失败：' + row.v.plan.volFail, 'c-red']];
+      else if (vs.state === 'skipped') tail = [['已跳过：之前转换过，源文件和设置都没变', 'c-gray d']];
+      else if (vs.state === 'aborted') tail = [['已中断，未保存', 'c-gray d']];
+      else if (vs.state === 'isolated') tail = [['有坏页', 'c-yellow'], [' ⋅ ', 'c-gray'], [`${pr.failed} 页读不出`, 'c-red']];
+      else if (vs.state === 'done' || vs.state === 'trialed') {
+        const bits = [];
+        if (pr.outlier) bits.push(`与其他页差异大 ${pr.outlier}`);
+        if (pr.wide) bits.push(`页面超宽 ${pr.wide}`);
+        if (pr.gate) bits.push(`尺寸未贴合屏幕 ${pr.gate}`);
+        if (pr.salvage) bits.push(`图片部分损坏 ${pr.salvage}`);
+        tail = bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : [];
+      } else tail = [['等待中', 'c-gray d']];
+    }
+    if (tailW > 4) scr.line(X, y, tail, tailW);
+  } else if (row.kind === 'note') {
+    const n = row.n, bad = n.kind === 'unreach';
+    scr.line(x, y, [curSeg, ['  '.repeat(row.indent), ''], ['  ', ''], [bad ? '✗ ' : '- ', bad ? 'c-red b' : 'c-gray'], [n.label + '  ', bad ? nameSt('c-red') : nameSt('c-fg')], [n.what, 'c-fg'], ['  ' + n.why, 'c-gray d']], iw);
+  } else if (row.kind === 'foot') {
+    scr.line(x, y, [['  ', ''], [row.text, 'c-gray d']], iw);
+  }
+}
+function rowText(row) {
+  if (row.kind === 'dir') return row.d.label;
+  if (row.kind === 'vol') return row.v.dir.label + '/' + row.v.name;
+  if (row.kind === 'named') return row.n.path;
+  if (row.kind === 'note') return row.n.label + row.n.what;
+  return '';
+}
+
+function drawList(scr, x, y, w, h) {
+  const rows = taskRows();
+  S.lastRows = rows;
+  const sel = rows.map((r, i) => (selectable(r) ? i : -1)).filter((i) => i >= 0);
+  if (S.follow && S.run && (S.run.stage === 'running' || S.run.stage === 'deciding')) {
+    const v = S.run.tree.vols[S.run.cur];
+    if (v) S.curKey = S.expanded.has(v.dir.id) ? 'v:' + v.id : 'd:' + v.dir.id;
+  }
+  let ci = rows.findIndex((r) => r.key === S.curKey);
+  if (ci < 0 && sel.length) { ci = sel[0]; S.curKey = rows[ci].key; }
+  const ih = h - 2, iw = w - 4;
+  const from = viewport('list', Math.max(0, ci), rows.length, ih);
+  const focused = !S.overlay && !S.input;
+  const r = S.run;
+  const selPos = sel.indexOf(ci) + 1;
+  const title = !r ? [['任务', 'c-fg b'], [' ⋅ 路径', 'c-gray']] : r.stage === 'surveying' ? [['任务', 'c-fg b'], [' ⋅ 正在清点，马上显示卷列表', 'c-gray']] : [['任务', 'c-fg b'], [` ⋅ ${r.tree.vols.length} 卷`, 'c-gray']];
+  const right = r && r.stage !== 'ended' && r.stage !== 'surveying'
+    ? (S.follow ? [['[自动滚动]', 'c-green b']] : [['[已暂停自动滚动 ⋅ F 恢复]', 'c-yellow']]) : null;
+  const bottomLeft = S.search && S.search.q ? [[`/${S.search.q}`, 'c-yellow i'], [' ⋅ n N 跳到下一个 / 上一个', 'c-gray i']] : null;
+  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title, right, bottomRight: [[`${selPos} of ${sel.length}`, focused ? 'c-green' : 'c-gray']], bottomLeft, scroll: { total: rows.length, from, view: ih } });
+  for (let i = 0; i < ih && from + i < rows.length; i++) {
+    const row = rows[from + i];
+    drawRow(scr, x + 2, y + 1 + i, iw, row, from + i === ci, focused);
+    if (row.key) scr.hit(x + 1, y + 1 + i, w - 2, 1, { rowKey: row.key });
+  }
+}
+
+// ───── 决策点问话条 ─────
+function drawDecision(scr, x, y, w) {
+  const r = S.run, v = r.tree.vols[r.cur], s = r.vs[r.cur];
+  const pr = problemsOf(v);
+  const notable = pagesOf(v).filter((p) => p.tone).length;
+  scr.box(x, y, w, 4, { thick: true, st: 'c-yellow', title: [['需要确认', 'c-yellow b'], [' ⋅ 这一卷分析完了，要写出吗？', 'c-fg']], bottomRight: [['目前还没有写入任何文件', 'c-gray']] });
+  if (w < 110) {
+    scr.line(x + 2, y + 1, [['? ', 'c-yellow b'], [elide(volPath(v), 24), 'c-fg b'], ['  ', ''], ...tallySegs(s.tally, 2), ['  需留意的页 ', 'c-gray'], [String(notable), notable ? 'c-yellow b' : 'c-fg']], w - 4);
+    scr.line(x + 2, y + 2, [['x', 'c-yellow b'], [' 写出   ', 'c-fg'], ['a', 'c-yellow b'], [' 写出，后面不再问   ', 'c-fg'], ['s', 'c-yellow b'], [' 不写出，结束   ', 'c-fg'], ['v', 'c-yellow b'], [' 查看每页结果', 'c-fg']], w - 4);
+    return;
+  }
+  scr.line(x + 2, y + 1, [['? ', 'c-yellow b'], [volPath(v), 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意的页 ', 'c-gray'], [String(notable), notable ? 'c-yellow b' : 'c-fg'], ...(pr.outlier ? [[` ⋅ 与其他页差异大 ${pr.outlier}`, 'c-yellow']] : [])], w - 4);
+  scr.line(x + 2, y + 2, [['x', 'c-yellow b'], [' 写出这一卷', 'c-fg'], ['（不用重新分析）     ', 'c-gray'], ['a', 'c-yellow b'], [' 写出', 'c-fg'], ['，后面的卷不再询问     ', 'c-gray'], ['s', 'c-yellow b'], [' 不写出', 'c-fg'], ['，结束预览     ', 'c-gray'], ['v', 'c-yellow b'], [' 查看每页结果', 'c-fg']], w - 4);
+}
+
+// ───── 逐页表 ─────
+function drawPages(scr, x, y, w, h) {
+  const P = S.pages, v = P.vol, r = S.run, s = stateOf(r, v);
+  const all = pagesOf(v);
+  const judged = s && s.tally;
+  const notableOf = (p) => p.tone || p.driver;
+  const list = judged ? (P.all ? all : all.filter(notableOf)) : [];
+  P.cursor = Math.max(0, Math.min(P.cursor, list.length - 1));
+  const iw = w - 4, ih = h - 4;
+  const entry = r.tree.entries.find((e) => (e.type === 'section' ? e.dirs.includes(v.dir) : e.dir === v.dir));
+  const crumbs = [['任务', 'c-gray'], [' › ', 'c-gray'], ...(entry.type === 'section' ? [[entry.path, 'c-gray'], [' › ', 'c-gray']] : []), [v.dir.label, 'c-fg'], [' › ', 'c-gray'], [v.name, 'c-fg b']];
+  const from = viewport('pages', P.cursor, list.length, ih);
+  scr.box(x, y, w, h, { thick: !S.overlay, st: S.overlay ? 'c-gray' : FOCUS, title: crumbs, right: [[P.all ? '[全部页]' : '[需留意的页]', P.all ? 'c-fg b' : 'c-yellow b']],
+    bottomRight: [[list.length ? `${P.cursor + 1} of ${list.length}` : '0 of 0', 'c-green']], bottomLeft: [['a → ' + (P.all ? '只看需留意的页' : '全部页'), 'c-gray i']], scroll: { total: list.length, from, view: ih } });
+  if (!judged) {
+    // 进得来却没有每页结果的只有跳过的卷（见 whyNotExpandable）：它这一趟一页都没重新分析
+    scr.line(x + 2, y + 2, [['这一卷跳过了：', 'c-gray b'], ['之前转换过，源文件和设置都没变，这一趟没有重新分析，所以没有每页结果。', 'c-fg'], ['  h → 回卷列表', 'c-gray']], iw);
+    return;
+  }
+  const notableN = all.filter(notableOf).length;
+  scr.line(x + 2, y + 1, [['灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意 ', 'c-gray'], [`${notableN}/${all.length} 页`, 'c-fg b'], ['   ', ''], [s.state === 'deciding' ? '等待确认：还没写入任何文件' : s.state === 'isolated' ? '这一卷输出在 _isolated/' : '', s.state === 'deciding' ? 'c-yellow' : 'c-yellow']], iw);
+  const C = { name: 10, size: iw >= 84 ? 11 : 0, scale: iw >= 112 ? 24 : 0, verdict: 9, reason: 22, metric: iw >= 98 ? 15 : 0 };
+  const head = [['   ', ''], [pad('页面', C.name), 'c-gray b'], [C.size ? pad('尺寸', C.size) : '', 'c-gray b'], [C.scale ? pad('缩放', C.scale) : '', 'c-gray b'], [pad('灰阶', C.verdict), 'c-gray b'], [pad('原因', C.reason), 'c-gray b'], [C.metric ? pad('画质分', C.metric) : '', 'c-gray b'], ['提示', 'c-gray b']];
+  scr.line(x + 2, y + 2, head, iw);
+  if (!list.length) { scr.line(x + 2, y + 3, [['这一卷没有需要留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
+  for (let i = 0; i < ih - 0 && from + i < list.length; i++) {
+    const p = list[from + i], cur = from + i === P.cursor;
+    const mark = p.tone === 'bad' ? ['✗ ', 'c-red b'] : p.tone === 'warn' ? ['! ', 'c-yellow b'] : ['  ', ''];
+    const [depth, fs] = p.verdict.split('+');
+    const vc = depth === '1bit' ? 'c-magenta' : depth === '2bit' ? 'c-cyan' : depth === '4bit' ? 'c-blue' : 'c-gray';
+    const yy = y + 3 + i;
+    if (yy >= y + h - 1) break;
+    const notesW = Math.max(4, iw + 1 - (2 + 2 + C.name + C.size + C.scale + C.verdict + C.reason + C.metric));
+    scr.line(x + 1, yy, [[cur ? '❯ ' : '  ', 'c-green b'], mark, [pad(p.name, C.name), cur ? 'c-fg b' : 'c-fg'], [C.size ? pad(p.size, C.size) : '', p.notes.includes('页面超宽') ? 'c-yellow' : 'c-gray'],
+      [C.scale ? pad(p.scale, C.scale) : '', 'c-gray'], [pad(depth + (fs ? '+' + fs : ''), C.verdict), vc], [pad(elide(p.reason, C.reason - 1), C.reason), p.tone === 'bad' ? 'c-red' : 'c-fg'], [C.metric ? pad(p.metric, C.metric) : '', 'c-gray'],
+      [elide(p.notes.join(' ⋅ '), notesW), p.tone === 'bad' ? 'c-red' : p.tone === 'warn' ? 'c-yellow' : 'c-fg']], iw + 1);
+    scr.hit(x + 1, yy, w - 2, 1, { page: from + i });
+  }
+}
+
+function drawTask(scr) {
+  const W = scr.c, H = scr.r, compact = H < 30;
+  let y = 1;
+  const lines = overviewLines(W - 4, compact);
+  const { title, right } = overviewTitle();
+  const oh = lines.length + 2;
+  scr.box(0, y, W, oh, { st: 'c-gray', title, right });
+  lines.forEach((l, i) => scr.line(2, y + 1 + i, l, W - 4));
+  y += oh;
+  if (S.run && S.run.stage === 'deciding') { drawDecision(scr, 0, y, W); y += 4; }
+  const h = H - 1 - y;
+  if (S.pages) drawPages(scr, 0, y, W, h);
+  else drawList(scr, 0, y, W, h);
+}
+// ───────────────────────── 配置视图、覆盖层、补全弹层、终端太小 ─────────────────────────
+
+const presetOf = (name) => PRESETS.find((p) => p.name === name);
+function changedKeys() {
+  const p = presetOf(S.cfg.applied);
+  if (!p) return [];
+  return CONFIG.filter((c) => c.key && (c.kind === 'ring' || c.kind === 'text') && (c.value ?? null) !== (p.says[c.key] ?? null)).map((c) => c.label);
+}
+const cfgSelectable = () => CONFIG.map((c, i) => (c.key ? i : -1)).filter((i) => i >= 0);
+const readOnly = () => S.run && S.run.stage !== 'ended';
+const valueOf = (c) => (c.kind === 'info' ? premiseText(c.key) : c.key === 'threshold' ? thresholdText(c) : c.value ?? c.unset);
+
+function drawConfig(scr) {
+  const W = scr.c, H = scr.r, ro = readOnly();
+  const ch = changedKeys();
+  scr.box(0, 1, W, 3, { st: 'c-gray', title: [['预设', 'c-fg b'], ...(ro ? [[' ⋅ 正在转换，设置暂时锁定', 'c-yellow']] : [])], right: [['~/.config/tonefit/presets.toml', 'c-gray d']] });
+  const hs = [...hint('p', '预设'), ['  ', ''], ...hint('c', '灰阶测试图')];
+  scr.line(2, 2, [['当前使用 ', 'c-gray'], [S.cfg.applied ? '「' + S.cfg.applied + '」' : '（未使用预设）', 'c-green b'], ...(ch.length ? [['   改动了 ' + ch.length + ' 项：', 'c-yellow'], [ch.join('、'), 'c-fg']] : [['   与预设一致', 'c-gray']])], W - 6 - segW(hs));
+  scr.line(W - 2 - segW(hs), 2, hs);
+  const y = 4, h = H - 1 - y, narrow = W < 90;
+  const LW = narrow ? W : Math.min(56, Math.floor(W * 0.45));
+  if (!narrow || S.cfg.pane === 'left') drawCfgLeft(scr, 0, y, LW, h, ro);
+  if (!narrow) drawCfgRight(scr, LW, y, W - LW, h, ro);
+  else if (S.cfg.pane === 'right') drawCfgRight(scr, 0, y, W, h, ro);
+}
+
+function drawCfgLeft(scr, x, y, w, h, ro) {
+  const sel = cfgSelectable();
+  const focused = S.cfg.pane === 'left' && !S.overlay && !S.input;
+  const ih = h - 2, iw = w - 4;
+  const from = viewport('cfg', S.cfg.cursor, CONFIG.length, ih);
+  const p = presetOf(S.cfg.applied);
+  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title: [['设置', 'c-fg b'], [' ⋅ 预设会保存这两组', 'c-gray']], right: ro ? [['[已锁定]', 'c-yellow b']] : null,
+    bottomRight: [[`${sel.indexOf(S.cfg.cursor) + 1} of ${sel.length}`, focused ? 'c-green' : 'c-gray']], scroll: { total: CONFIG.length, from, view: ih } });
+  const labelW = Math.min(18, Math.max(10, iw - 24));
+  for (let i = 0; i < ih && from + i < CONFIG.length; i++) {
+    const c = CONFIG[from + i], yy = y + 1 + i, cur = from + i === S.cfg.cursor;
+    if (!c.key) {
+      scr.line(x + 2, yy, [[c.layer, c.layer === '画质判定参数' ? 'c-gray b' : 'c-magenta b'], [' ⋅ ' + c.note, 'c-gray d']], iw);
+      continue;
+    }
+    const set = c.kind === 'model' || c.kind === 'info' ? c.kind === 'model' : c.value != null;
+    const changed = p && (c.kind === 'ring' || c.kind === 'text') && (c.value ?? null) !== (p.says[c.key] ?? null);
+    const vst = (set ? 'c-fg' : 'c-gray') + (ro ? ' d' : '') + (cur && focused ? ' b' : '');
+    scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? 'c-green b' : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
+    scr.hit(x + 1, yy, w - 2, 1, { cfgRow: from + i });
+  }
+}
+
+function drawCfgRight(scr, x, y, w, h, ro) {
+  const focused = S.cfg.pane === 'right' && !S.overlay && !S.input;
+  const iw = w - 4;
+  if (S.cfg.presets) return drawPresets(scr, x, y, w, h, focused);
+  const c = CONFIG[S.cfg.cursor];
+  const lines = [];
+  const choice = (i, label, current, extra) => lines.push({ choice: i, segs: [[focused && S.cfg.right === i ? '❯ ' : '  ', 'c-green b'], [current ? '✓ ' : '  ', 'c-green b'], [label, (current ? 'c-fg b' : 'c-fg') + (ro ? ' d' : '')], ...(extra || [])] });
+  if (c.kind === 'ring') {
+    choice(0, c.unset, c.value == null, [['  未设置：使用默认值，保存预设时不记录', 'c-gray d']]);
+    c.options.forEach((o, i) => choice(i + 1, o, c.value === o));
+  } else if (c.kind === 'model') {
+    if (S.cfg.drill == null) {
+      lines.push({ segs: [['先选屏幕规格，再选型号 ⋅ ', 'c-gray'], ['同一种屏幕的型号效果完全一样', 'c-gray d']] });
+      PANELS.forEach(([label, models], i) => choice(i, label, models.includes(c.value), [[`  ${models.length} 个型号`, 'c-gray d']]));
+    } else {
+      const [label, models] = PANELS[S.cfg.drill];
+      lines.push({ segs: [['屏幕规格 › ', 'c-gray'], [label, 'c-fg b'], ['   h → 回到屏幕规格', 'c-gray d']] });
+      models.forEach((m, i) => choice(i, m, m === c.value));
+    }
+  } else if (c.kind === 'text') {
+    lines.push({ segs: [['当前  ', 'c-gray'], [valueOf(c), 'c-fg b']] });
+    if (!ro) lines.push({ segs: [...hint('i', '修改'), ['   留空 = 使用默认值', 'c-gray d']] });
+  } else {
+    // 行内那一句就是报告抬头里的那一行（render::header，ADR 0016），这里整句摊开
+    for (const l of wrap(`${c.label} ${premiseText(c.key)}`, iw - 2)) lines.push({ segs: [[l, 'c-fg b']] });
+    // 选项冲突一条都没咬上时抬头一个字都不说：那时这一行是界面自己的「无」，不说它与抬头相同
+    if (c.key !== 'p5' || interlockText()) lines.push({ segs: [['与报告抬头里的这一行逐字相同', 'c-gray d']] });
+  }
+  lines.push({ segs: [] });
+  for (const l of wrap(typeof c.desc === 'function' ? c.desc() : c.desc, iw - 2)) lines.push({ segs: [[l, 'c-white']] });
+  if (c.kind === 'info') {
+    lines.push({ segs: [] });
+    for (const l of wrap('这里是此刻的设置，下一趟照它判定；上一趟用的是什么，看退出时印出的那份报告的抬头。', iw - 2)) lines.push({ segs: [[l, 'c-gray']] });
+  }
+  if (c.kind === 'ring' || c.kind === 'text') {
+    const p = presetOf(S.cfg.applied);
+    if (p) {
+      const said = p.says[c.key];
+      lines.push({ segs: [] });
+      lines.push({ segs: [[`预设「${p.name}」中：`, 'c-gray'], [said == null ? '未设置（使用默认值）' : said, 'c-fg'], ...((c.value ?? null) !== (said ?? null) ? [['   ← 与预设不同', 'c-yellow']] : [])] });
+    }
+  }
+  if (ro) { lines.push({ segs: [] }); lines.push({ segs: [['正在转换，设置暂时锁定，结束后才能修改。', 'c-yellow']] }); }
+  const title = [[c.label, 'c-fg b'], ...(c.kind === 'info' ? [[' ⋅ 画质判定参数', 'c-gray']] : [])];
+  const right = c.kind !== 'info' ? [['当前 ', 'c-gray'], [elide(String(valueOf(c)), 22), 'c-fg']] : null;
+  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title, right, bottomLeft: W_NARROW(w) ? [['h → 返回', 'c-gray i']] : null });
+  const ih = h - 2;
+  const choiceLine = lines.findIndex((l) => l.choice === S.cfg.right);
+  const from = viewport('cfgR', Math.max(0, choiceLine), lines.length, ih);
+  for (let i = 0; i < ih && from + i < lines.length; i++) {
+    const l = lines[from + i];
+    scr.line(x + 2, y + 1 + i, l.segs, iw);
+    if (l.choice != null) scr.hit(x + 1, y + 1 + i, w - 2, 1, { cfgChoice: l.choice });
+  }
+}
+const W_NARROW = () => S.size[0] < 90;
+
+function drawPresets(scr, x, y, w, h, focused) {
+  const iw = w - 4;
+  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title: [['预设', 'c-fg b'], [` ⋅ ${PRESETS.length} 个`, 'c-gray']], right: [['p → 返回', 'c-gray']] });
+  let yy = y + 1;
+  PRESETS.forEach((p, i) => {
+    const cur = S.cfg.pcursor === i, applied = S.cfg.applied === p.name;
+    const said = Object.entries(p.says).filter(([, v]) => v != null).map(([k]) => CONFIG.find((c) => c.key === k).label);
+    scr.line(x + 2, yy, [[cur && focused ? '❯ ' : '  ', 'c-green b'], [applied ? '✓ ' : '  ', 'c-green b'], [pad(p.name, 8), cur ? 'c-fg b' : 'c-fg'], [said.length ? `包含 ${said.length} 项设置：${said.join('、')}` : '没有设置任何项（全部默认）', 'c-gray'], ...(applied ? [['   使用中', 'c-green']] : [])], iw);
+    scr.hit(x + 1, yy, w - 2, 1, { preset: i });
+    yy++;
+  });
+  const addCur = S.cfg.pcursor === PRESETS.length;
+  scr.line(x + 2, yy, [[addCur && focused ? '❯ ' : '  ', 'c-green b'], ['  ', ''], ['＋ 把当前设置保存为预设', addCur ? 'c-green b' : 'c-green']], iw);
+  yy += 2;
+  for (const l of wrap('使用预设会替换全部设备和处理选项：预设里没设置的项恢复默认，路径不受影响。保存预设时只记录设置过的项。删除或覆盖预设需要按两次确认。', iw - 2)) scr.line(x + 2, yy++, [[l, 'c-white']], iw);
+  if (S.cfg.armedDelete != null) {
+    yy++;
+    scr.line(x + 2, yy, [['再按一次 dd 删除「' + PRESETS[S.cfg.armedDelete].name + '」：', 'c-yellow b'], ['删除后无法恢复，其他预设不受影响', 'c-yellow']], iw);
+  }
+}
+
+const stageCode = () => (S.run ? { surveying: 'S', running: 'R', deciding: 'D', ended: 'E' }[S.run.stage] : 'I');
+function helpColumns(twoCol) {
+  const now = stageCode();
+  const groups = KEYMAP.map(([g, ks]) => [g, ks.filter(([, , when]) => !when || when.includes(now))]).filter(([, ks]) => ks.length)
+    .map(([g, ks]) => [[[g, 'c-green b']], ...ks.map(([k, d]) => [[pad(k, 10), 'c-yellow'], [d, 'c-fg']]), []]);
+  if (!twoCol) return groups.flat().map((l) => [l, []]);
+  const total = groups.reduce((a, g) => a + g.length, 0);
+  let acc = 0, split = groups.length;
+  for (let i = 0; i < groups.length; i++) { if (acc >= total / 2) { split = i; break; } acc += groups[i].length; }
+  const L = groups.slice(0, split).flat(), R = groups.slice(split).flat();
+  return Array.from({ length: Math.max(L.length, R.length) }, (_, i) => [L[i] || [], R[i] || []]);
+}
+function drawHelp(scr) {
+  const W = scr.c, H = scr.r;
+  const w = Math.min(W - 4, 104), h = H - 2, x = Math.floor((W - w) / 2), y = 1;
+  const twoCol = w >= 100;
+  const lines = helpColumns(twoCol);
+  const ih = h - 2;
+  S.overlay.from = Math.max(0, Math.min(S.overlay.from, lines.length - ih));
+  const from = S.overlay.from;
+  scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['全部按键', 'c-fg b'], [' ⋅ vim 风格 ⋅ 只列当前可用的', 'c-gray']], right: [['? Esc → 关闭', 'c-gray']],
+    bottomRight: [[`${from + 1}–${Math.min(lines.length, from + ih)} of ${lines.length}`, 'c-green']], scroll: { total: lines.length, from, view: ih } });
+  const cw = twoCol ? Math.floor((w - 6) / 2) : w - 4;
+  for (let i = 0; i < ih && from + i < lines.length; i++) {
+    const [l, r] = lines[from + i];
+    scr.line(x + 3, y + 1 + i, l, cw - 2);
+    if (twoCol) scr.line(x + 3 + cw + 1, y + 1 + i, r, cw - 2);
+  }
+}
+function drawNote(scr) {
+  const W = scr.c, H = scr.r, n = S.overlay.note;
+  const w = Math.min(W - 8, 76), body = wrap(n.why, w - 6);
+  const h = Math.min(H - 4, body.length + 6), x = Math.floor((W - w) / 2), y = Math.floor((H - h) / 2);
+  const bad = n.kind === 'unreach';
+  scr.box(x, y, w, h, { thick: true, st: bad ? 'c-red' : FOCUS, title: [[n.label, bad ? 'c-red b' : 'c-fg b']], bottomRight: [['Esc → 关闭', 'c-gray']] });
+  scr.line(x + 3, y + 2, [[n.what, 'c-fg b']], w - 6);
+  body.forEach((l, i) => scr.line(x + 3, y + 4 + i, [[l, 'c-white']], w - 6));
+}
+function drawCompletions(scr) {
+  const inp = S.input;
+  if (!inp || !inp.cands || !inp.cands.length) return;
+  const W = scr.c, H = scr.r;
+  const n = inp.cands.length, vis = Math.min(n, 8), w = Math.min(56, W - 2), h = vis + 2, x = 1, y = H - 1 - h;
+  const from = viewport('cands', inp.ci, n, vis);
+  scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['可选项', 'c-fg b'], [` ⋅ ${n} 项`, 'c-gray']], bottomRight: [[`${inp.ci + 1} of ${n}`, 'c-green']], scroll: { total: n, from, view: vis } });
+  for (let i = 0; i < vis && from + i < n; i++) {
+    const c = inp.cands[from + i], cur = from + i === inp.ci;
+    scr.line(x + 2, y + 1 + i, [[cur ? '❯ ' : '  ', 'c-green b'], [c.name + (c.dir ? '/' : ''), (c.dir ? 'c-blue' : 'c-fg') + (cur ? ' b' : '')], [c.dir ? '' : '  压缩包', 'c-gray d']], w - 4);
+  }
+}
+function drawTooSmall(scr) {
+  const W = scr.c, H = scr.r, r = S.run;
+  const lines = [
+    [['窗口太小', 'c-yellow b']],
+    [[`${W}x${H}，至少需要 60x16`, 'c-fg']],
+    [],
+    r ? [['总体 ', 'c-gray'], [`${Math.floor((r.steps / r.total) * 100)}%`, 'c-fg b'], [r.stage === 'ended' ? ' ⋅ 已结束' : ` ⋅ 第 ${r.cur + 1}/${r.tree.vols.length} 卷`, 'c-gray']] : [['还没开始', 'c-gray']],
+    [],
+    [...hint('q', '退出'), ['  放大窗口后自动恢复', 'c-gray']],
+  ];
+  const top = Math.max(0, Math.floor((H - lines.length) / 2));
+  lines.forEach((l, i) => scr.line(Math.max(0, Math.floor((W - segW(l)) / 2)), top + i, l, W));
+}
+
+function drawAll() {
+  const [W, H] = S.size;
+  const scr = new Screen(W, H);
+  if (W < 60 || H < 16) { drawTooSmall(scr); return scr; }
+  drawHeader(scr);
+  if (S.view === 'task') drawTask(scr); else drawConfig(scr);
+  drawCompletions(scr);
+  if (S.overlay) scr.dimAll();
+  if (S.overlay && S.overlay.kind === 'help') drawHelp(scr);
+  else if (S.overlay && S.overlay.kind === 'note') drawNote(scr);
+  drawFooter(scr);
+  return scr;
+}
+// ───────────────────────── 按键、鼠标、场景、说明卡、主循环 ─────────────────────────
+
+const term = document.getElementById('term');
+let CW = 8;
+
+// ───── 任务树上的挪动 ─────
+function selRows() { const rows = S.lastRows.length ? S.lastRows : taskRows(); return { rows, sel: rows.map((r, i) => (r.key ? i : -1)).filter((i) => i >= 0) }; }
+function listGo(fn) {
+  const { rows, sel } = selRows();
+  if (!sel.length) return;
+  let pos = sel.findIndex((i) => rows[i].key === S.curKey);
+  if (pos < 0) pos = 0;
+  pos = Math.max(0, Math.min(sel.length - 1, fn(pos, sel.length)));
+  S.curKey = rows[sel[pos]].key;
+  if (S.run && (S.run.stage === 'running' || S.run.stage === 'deciding') && S.follow) { S.follow = false; toast([['已暂停自动滚动', 'c-yellow b'], [' ⋅ 按 ', 'c-gray'], ['F', 'c-fg b'], [' 恢复', 'c-gray']]); }
+}
+const curRow = () => S.lastRows.find((r) => r.key === S.curKey);
+const pageH = () => Math.max(4, S.size[1] - 12);
+function moveBy(n) {
+  if (S.overlay && S.overlay.kind === 'help') { S.overlay.from = Math.max(0, S.overlay.from + n); return; }
+  if (S.input && S.input.cands && S.input.cands.length) { S.input.ci = Math.max(0, Math.min(S.input.cands.length - 1, S.input.ci + n)); fillCand(); return; }
+  if (S.view === 'config') {
+    if (S.cfg.presets) { S.cfg.pcursor = Math.max(0, Math.min(PRESETS.length, S.cfg.pcursor + n)); S.cfg.armedDelete = null; return; }
+    if (S.cfg.pane === 'right') { S.cfg.right = Math.max(0, Math.min(rightCount() - 1, S.cfg.right + n)); return; }
+    const sel = cfgSelectable(); let p = sel.indexOf(S.cfg.cursor);
+    p = Math.max(0, Math.min(sel.length - 1, p + n)); S.cfg.cursor = sel[p]; S.cfg.drill = null; return;
+  }
+  if (S.pages) { S.pages.cursor = Math.max(0, S.pages.cursor + n); return; }
+  listGo((p) => p + n);
+}
+function moveEdge(end) {
+  if (S.overlay && S.overlay.kind === 'help') { S.overlay.from = end ? 9999 : 0; return; }
+  if (S.view === 'config' && !S.cfg.presets && S.cfg.pane === 'left') { const sel = cfgSelectable(); S.cfg.cursor = end ? sel[sel.length - 1] : sel[0]; return; }
+  if (S.view === 'config') return moveBy(end ? 999 : -999);
+  if (S.pages) { S.pages.cursor = end ? 99999 : 0; return; }
+  listGo((p, n) => (end ? n - 1 : 0));
+}
+function rightCount() {
+  const c = CONFIG[S.cfg.cursor];
+  if (c.kind === 'ring') return c.options.length + 1;
+  if (c.kind === 'model') return S.cfg.drill == null ? PANELS.length : PANELS[S.cfg.drill][1].length;
+  return 1;
+}
+
+// ───── 一趟 ─────
+function startRun(mode) {
+  if (S.run && S.run.stage !== 'ended') return toast([['正在处理中，', 'c-yellow b'], ['请先按 s 停止', 'c-fg']]);
+  if (!S.named.some((n) => n.on)) return toast([['✗ ', 'c-red b'], ['没有勾选任何路径，无法开始', 'c-red']]);
+  VOL_SEQ = 0; DIR_SEQ = 0; PAGE_CACHE.clear();
+  S.run = newRun(mode, discover(S.named));
+  S.expanded = new Set(); S.pages = null; S.follow = true; S.from.list = 0; S.search = null;
+  S.view = 'task';
+  toast([[mode === 'trial' ? '预览：' : '转换：', mode === 'trial' ? 'c-magenta b' : 'c-cyan b'], [mode === 'trial' ? '只分析不写文件，每卷分析完会停下来问你' : '写到 ' + S.outRoot, 'c-fg']]);
+}
+function findVol(dirLabel, name) { return S.run && S.run.tree.vols.find((v) => v.dir.label === dirLabel && v.name === name); }
+function reveal(v) { S.expanded.add(v.dir.id); S.curKey = 'v:' + v.id; S.follow = false; S.pages = null; }
+
+function targets(kind) {
+  const r = S.run, out = [];
+  if (!r) return out;
+  for (const e of r.tree.entries) {
+    const dirs = e.type === 'section' ? e.dirs : [e.dir];
+    for (const d of dirs) {
+      if (kind.q && d.label.includes(kind.q)) out.push({ key: 'd:' + d.id });
+      for (const v of d.vols) {
+        const s = stateOf(r, v);
+        if (kind.q && (d.label + '/' + v.name).includes(kind.q) && !d.label.includes(kind.q)) out.push({ key: 'v:' + v.id, v });
+        if (kind.trouble && s && s.tally !== undefined) {
+          const pr = s.tally ? problemsOf(v) : {};
+          if (s.state === 'failed' || s.state === 'isolated' || ((s.state === 'done' || s.state === 'trialed') && (pr.outlier || pr.wide || pr.gate || pr.salvage))) out.push({ key: 'v:' + v.id, v });
+        }
+      }
+    }
+    if (kind.trouble) for (const n of e.notes || []) if (n.kind === 'unreach') out.push({ key: 'n:' + n.what });
+  }
+  return out;
+}
+function jump(kind, dir) {
+  const list = targets(kind);
+  if (!list.length) return toast(kind.trouble ? [['✓ ', 'c-green b'], ['目前没有问题', 'c-fg']] : [['没有找到和「' + kind.q + '」相关的卷或文件夹', 'c-yellow']]);
+  const order = taskRowsAll().map((r) => r.key);
+  const at = order.indexOf(S.curKey);
+  const idx = list.map((t) => order.indexOf(t.key));
+  let pick = dir > 0 ? idx.findIndex((i) => i > at) : idx.map((i, j) => [i, j]).filter(([i]) => i < at).pop()?.[1];
+  if (pick == null || pick < 0) pick = dir > 0 ? 0 : list.length - 1;
+  const t = list[pick];
+  if (t.v) reveal(t.v); else { S.curKey = t.key; S.follow = false; }
+  S.pages = null;
+  toast([[kind.trouble ? '问题 ' : '搜索结果 ', kind.trouble ? 'c-red b' : 'c-yellow b'], [`${pick + 1}/${list.length}`, 'c-fg']], 1400);
+}
+function taskRowsAll() { const saved = S.expanded; S.expanded = new Set(S.run.tree.entries.flatMap((e) => (e.type === 'section' ? e.dirs : [e.dir]).map((d) => d.id))); const rows = taskRows(); S.expanded = saved; return rows; }
+
+// ───── 打字 ─────
+function startInput(kind, buf = '') {
+  const prompt = { add: '添加路径  ', edit: '修改路径  ', out: '输出目录  ', search: '/', value: CONFIG[S.cfg.cursor].label + '  ', preset: '保存为预设，名称  ' }[kind];
+  S.input = { kind, prompt, buf, cands: null, ci: 0 };
+  if (kind === 'search') S.search = { q: '' };
+}
+function complete() {
+  const inp = S.input; if (!['add', 'edit', 'out'].includes(inp.kind)) return;
+  if (inp.cands && inp.cands.length > 1) { inp.ci = (inp.ci + 1) % inp.cands.length; fillCand(); return; }
+  const cut = inp.buf.lastIndexOf('/');
+  const base = cut >= 0 ? inp.buf.slice(0, cut) : '~', prefix = cut >= 0 ? inp.buf.slice(cut + 1) : inp.buf;
+  const list = (fsList(base) || []).filter((c) => c.name.toLowerCase().startsWith(prefix.toLowerCase()));
+  if (!list.length) return toast([['这里没有以「' + prefix + '」开头的项', 'c-yellow']], 1600);
+  inp.base = base;
+  if (list.length === 1) { inp.buf = base + '/' + list[0].name + (list[0].dir ? '/' : ''); inp.cands = null; return; }
+  inp.cands = list; inp.ci = 0; fillCand();
+}
+function fillCand() { const inp = S.input, c = inp.cands[inp.ci]; inp.buf = inp.base + '/' + c.name + (c.dir ? '/' : ''); }
+function submitInput() {
+  const inp = S.input; S.input = null;
+  const path = inp.buf.replace(/\/+$/, '');
+  if (inp.kind === 'search') { S.search = { q: inp.buf }; if (inp.buf) jump({ q: inp.buf }, 1); return; }
+  if (inp.kind === 'value') { CONFIG[S.cfg.cursor].value = inp.buf.trim() || null; return toast([['✓ ', 'c-green b'], [CONFIG[S.cfg.cursor].label + ' → ' + (inp.buf.trim() || '未设置'), 'c-fg']]); }
+  if (inp.kind === 'preset') { if (!inp.buf.trim()) return; PRESETS.push({ name: inp.buf.trim(), says: Object.fromEntries(CONFIG.filter((c) => c.kind === 'ring' || c.kind === 'text').map((c) => [c.key, c.value])) }); S.cfg.applied = inp.buf.trim(); return toast([['✓ ', 'c-green b'], ['已保存预设「' + inp.buf.trim() + '」', 'c-fg']]); }
+  if (!path) return;
+  const parent = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1);
+  const hit = (fsList(parent) || []).find((c) => c.name === name);
+  if (!hit && path !== '~') return toast([['✗ ', 'c-red b'], ['找不到「' + path + '」', 'c-red']]);
+  if (inp.kind === 'out') { S.outRoot = path; return toast([['✓ ', 'c-green b'], ['输出目录 → ' + path, 'c-fg']]); }
+  const kind = hit && !hit.dir ? '压缩包' : '文件夹';
+  if (inp.kind === 'edit') { Object.assign(S.named[inp.target], { path, kind }); S.curKey = 'np:' + path; return; }
+  if (S.named.some((n) => n.path === path)) return toast([['这个路径已经在列表里了', 'c-yellow']]);
+  S.named.push({ path, kind, on: true }); S.curKey = 'np:' + path;
+  toast([['✓ ', 'c-green b'], ['已添加 ' + path, 'c-fg'], [' ⋅ ' + kind, 'c-gray']]);
+}
+
+// ───── 按键分派 ─────
+function keyName(e) {
+  if (e.ctrlKey && e.key.length === 1) return 'C-' + e.key.toLowerCase();
+  return { ' ': 'Space', ArrowDown: 'j', ArrowUp: 'k', ArrowLeft: 'h', ArrowRight: 'l' }[e.key] || e.key;
+}
+function onKey(k, raw = k) {
+  const r = S.run;
+  if (k === 'C-c') { toast([['退出', 'c-fg b'], r && r.stage !== 'ended' ? ['：当前卷不保存，不留半成品（原型里不会真的退出）', 'c-gray'] : ['（原型里不会真的退出；实际程序这时会打印结果）', 'c-gray']]); return true; }
+  // 打字：每个字符都进缓冲（? 也是字），全部按键靠 F1 掀开；掀着的时候按键归覆盖层
+  if (S.input && !S.overlay) {
+    const inp = S.input;
+    if (k === 'F1') { S.overlay = { kind: 'help', from: 0 }; return true; }
+    if (k === 'Escape') { if (inp.kind === 'search') S.search = null; S.input = null; return true; }
+    if (k === 'Enter') { submitInput(); return true; }
+    if (k === 'Tab') { complete(); return true; }
+    if (k === 'Backspace') { inp.buf = [...inp.buf].slice(0, -1).join(''); inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
+    if (k === 'C-w') { inp.buf = inp.buf.replace(/[^/\s]*\/?$/, ''); inp.cands = null; return true; }
+    if ((raw === 'ArrowDown' || k === 'C-n') && inp.cands) { moveBy(1); return true; }
+    if ((raw === 'ArrowUp' || k === 'C-p') && inp.cands) { moveBy(-1); return true; }
+    if (raw.startsWith('Arrow')) return true;
+    if ((k.length === 1 && !k.startsWith('C-')) || k === 'Space') { inp.buf += k === 'Space' ? ' ' : k; inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
+    return false;
+  }
+  // 连击键
+  if (S.pending) {
+    const combo = S.pending + k; S.pending = '';
+    if (combo === 'gg') { moveEdge(false); return true; }
+    if (combo === 'gt' || combo === 'gT') { S.view = S.view === 'task' ? 'config' : 'task'; return true; }
+    if (combo === ']d' || combo === '[d') { if (S.view === 'task') jump({ trouble: true }, combo[0] === ']' ? 1 : -1); return true; }
+    if (combo === 'dd') return deleteHere();
+  }
+  if (k === 'g' || k === ']' || k === '[' || (k === 'd' && canDelete())) { S.pending = k; S.pendingAt = performance.now(); return true; }
+  // 覆盖层
+  if (S.overlay) {
+    if (k === 'Escape' || k === '?' || k === 'q' || (S.overlay.kind === 'note' && k === 'Enter')) { S.overlay = null; return true; }
+    if (k === 'j') return moveBy(1), true; if (k === 'k') return moveBy(-1), true;
+    if (k === 'C-d' || k === 'C-f') return moveBy(pageH()), true; if (k === 'C-u' || k === 'C-b') return moveBy(-pageH()), true;
+    if (k === 'G') return moveEdge(true), true;
+    if (r && r.stage === 'deciding' && 'xas'.includes(k)) return answer(r, k), true;
+    if (k === 's' && r) return stopKey(), true;
+    return true;
+  }
+  // 全局
+  if (k === '?') { S.overlay = { kind: 'help', from: 0 }; return true; }
+  if (k === '1') { S.view = 'task'; return true; }
+  if (k === '2') { S.view = 'config'; return true; }
+  if (k === 'j') return moveBy(1), true; if (k === 'k') return moveBy(-1), true;
+  if (k === 'C-d') return moveBy(Math.floor(pageH() / 2)), true; if (k === 'C-u') return moveBy(-Math.floor(pageH() / 2)), true;
+  if (k === 'C-f' || k === 'PageDown') return moveBy(pageH()), true; if (k === 'C-b' || k === 'PageUp') return moveBy(-pageH()), true;
+  if (k === 'G' || k === 'End') return moveEdge(true), true; if (k === 'Home') return moveEdge(false), true;
+  if (k === 'q' || k === 'Escape') {
+    if (k === 'Escape' && S.view === 'config') { configKey('Escape'); return true; }
+    if (k === 'Escape' && S.search) { S.search = null; return true; }
+    if (k === 'Escape' && S.pages) { S.pages = null; return true; }
+    if (k === 'q') toast(r && r.stage !== 'ended' ? [['正在转换：', 'c-yellow b'], ['q 不会退出，请先按 s 停止，或按 C-c 立即退出', 'c-fg']] : [['退出', 'c-fg b'], ['（原型里不会真的退出）', 'c-gray']]);
+    return true;
+  }
+  if (r && r.stage === 'deciding' && (k === 'x' || k === 's' || (k === 'a'))) { answer(r, k); toast(k === 's' ? [['已结束预览：', 'c-yellow b'], ['这一卷不写出，后面的卷也不处理', 'c-fg']] : k === 'a' ? [['全部写出：', 'c-green b'], ['后面的卷不再询问', 'c-fg']] : [['写出这一卷', 'c-green b'], ['（不用重新分析）', 'c-gray']]); return true; }
+  if (k === 's') return stopKey(), true;
+  if (k === 't' || k === 'x') { startRun(k === 't' ? 'trial' : 'exec'); return true; }
+  return S.view === 'config' ? configKey(k) : taskKey(k);
+}
+function stopKey() {
+  const lvl = stop(S.run);
+  if (lvl === 1) toast([['! 正在停止：', 'c-yellow b'], ['做完当前卷就停 ⋅ 再按一次 s 立即停止', 'c-fg']], 4000);
+  if (lvl === 2) toast([['! 已立即停止：', 'c-yellow b'], ['当前卷未保存，输出目录里不会留下半成品', 'c-fg']], 4000);
+}
+function canDelete() { return (S.view === 'task' && !S.run && curRow() && curRow().kind === 'named') || (S.view === 'config' && S.cfg.presets && S.cfg.pcursor < PRESETS.length); }
+function deleteHere() {
+  if (S.view === 'config') {
+    if (S.cfg.armedDelete !== S.cfg.pcursor) { S.cfg.armedDelete = S.cfg.pcursor; return true; }
+    const [gone] = PRESETS.splice(S.cfg.pcursor, 1); S.cfg.armedDelete = null;
+    if (S.cfg.applied === gone.name) S.cfg.applied = null;
+    toast([['已删除预设「' + gone.name + '」', 'c-yellow']]); return true;
+  }
+  const row = curRow(); if (!row || row.kind !== 'named') return true;
+  S.named.splice(row.i, 1);
+  toast([['已删除 ', 'c-yellow'], [row.n.path, 'c-fg']]);
+  S.curKey = S.named[row.i] ? 'np:' + S.named[row.i].path : 'add';
+  return true;
+}
+// 展得开的卷：收摊了的（跳过的也算——每页结果里说一句它跳过了）与确认点上攒着的那一份。
+// 没做成的、立即停止掉的、还在处理的、还没轮到的：停得住，展不开，按下去屏底说为什么。
+const EXPANDABLE = new Set(['done', 'isolated', 'trialed', 'skipped', 'deciding']);
+function whyNotExpandable(v) {
+  const s = stateOf(S.run, v);
+  if (s && EXPANDABLE.has(s.state)) return null;
+  if (s && s.state === 'failed') return [['✗ 转换失败：', 'c-red b'], [v.plan.volFail + '，这一卷没有每页结果', 'c-fg']];
+  if (s && s.state === 'aborted') return [['已中断：', 'c-yellow b'], ['这一卷没有保存，也没有每页结果', 'c-fg']];
+  if (s && s.state === 'running') return [['还在处理：', 'c-yellow b'], ['这一卷做完才有每页结果', 'c-fg']];
+  return [['还没轮到这一卷：', 'c-gray b'], ['做完才有每页结果', 'c-fg']];
+}
+// 屏底只摆按得动的键：光标那一行展不开，就不摆 l
+function openHint(row) {
+  if (!row) return [];
+  if (row.kind === 'dir') return [hint('l', '展开')];
+  if (row.kind === 'vol') return whyNotExpandable(row.v) ? [] : [hint('l', '每页结果')];
+  if (row.kind === 'note') return [hint('⏎', '查看')];
+  return [];
+}
+function taskKey(k) {
+  const r = S.run, row = curRow();
+  if (S.pages) {
+    if (k === 'h' || k === 'Backspace') { S.pages = null; return true; }
+    if (k === 'a') { S.pages.all = !S.pages.all; S.pages.cursor = 0; return true; }
+    return false;
+  }
+  if (k === 'F') { S.follow = true; toast([['自动滚动：', 'c-green b'], ['跟到正在处理的卷', 'c-fg']], 1600); return true; }
+  if (k === '/') { if (r && r.stage !== 'surveying') startInput('search'); return true; }
+  if (k === 'n' || k === 'N') { if (S.search && S.search.q) jump({ q: S.search.q }, k === 'n' ? 1 : -1); return true; }
+  if (k === 'v' && r && r.stage === 'deciding') { S.pages = { vol: r.tree.vols[r.cur], cursor: 0, all: false }; return true; }
+  if (!r || r.stage === 'surveying') {
+    if (r) return false;
+    if (k === 'o') { startInput('add', '~/'); return true; }
+    if (!row) return false;
+    if (k === 'Space' && row.kind === 'named') { row.n.on = !row.n.on; return true; }
+    if ((k === 'i' || k === 'Enter' || k === 'l') && row.kind === 'out') { startInput('out', S.outRoot + '/'); return true; }
+    if ((k === 'i' || k === 'Enter') && row.kind === 'named') { startInput('edit', row.n.path); S.input.target = row.i; return true; }
+    if ((k === 'Enter' || k === 'l') && row.kind === 'add') { startInput('add', '~/'); return true; }
+    return false;
+  }
+  if (r.stage === 'ended' && (k === 'o' || k === 'i')) { S.run = null; S.curKey = 'out'; toast([['返回路径列表', 'c-fg b'], [' ⋅ 上次的结果会在退出时打印', 'c-gray']]); return true; }
+  if (!row) return false;
+  if (k === 'l' || k === 'Enter') {
+    if (row.kind === 'dir') { if (S.expanded.has(row.d.id) && k === 'Enter') S.expanded.delete(row.d.id); else S.expanded.add(row.d.id); return true; }
+    if (row.kind === 'vol') { const why = whyNotExpandable(row.v); if (why) { toast(why); return true; } S.pages = { vol: row.v, cursor: 0, all: false }; return true; }
+    if (row.kind === 'note') { S.overlay = { kind: 'note', note: row.n }; return true; }
+  }
+  if (k === 'h') {
+    if (row.kind === 'vol') { S.expanded.delete(row.v.dir.id); S.curKey = 'd:' + row.v.dir.id; return true; }
+    if (row.kind === 'dir') { S.expanded.delete(row.d.id); return true; }
+  }
+  return false;
+}
+function configKey(k) {
+  const ro = readOnly(), c = CONFIG[S.cfg.cursor];
+  if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
+  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], ['（1072x1448）：拷进设备，用原始尺寸打开（原型不写文件）', 'c-fg']], 3200); return true; }
+  if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
+  if (S.cfg.presets) {
+    if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
+    if (k === 'Enter' || k === 'l') {
+      if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
+      if (S.cfg.pcursor === PRESETS.length) { startInput('preset'); return true; }
+      const p = PRESETS[S.cfg.pcursor];
+      for (const item of CONFIG) if (item.kind === 'ring' || item.kind === 'text') item.value = p.says[item.key] ?? null;
+      S.cfg.applied = p.name;
+      toast([['✓ ', 'c-green b'], ['已使用预设「' + p.name + '」', 'c-fg']]);
+      return true;
+    }
+    return false;
+  }
+  if (S.cfg.pane === 'left') {
+    if (k === 'l' || k === 'Enter') {
+      S.cfg.pane = 'right';
+      if (c.kind === 'ring') S.cfg.right = c.value == null ? 0 : c.options.indexOf(c.value) + 1;
+      if (c.kind === 'model') { S.cfg.drill = null; S.cfg.right = Math.max(0, PANELS.findIndex(([, m]) => m.includes(c.value))); }
+      if (c.kind === 'text' && !ro && k === 'Enter') { S.cfg.pane = 'left'; startInput('value', c.value || ''); }
+      return true;
+    }
+    if (k === 'i' && c.kind === 'text' && !ro) { startInput('value', c.value || ''); return true; }
+    return false;
+  }
+  if (k === 'h' || k === 'Escape') { if (S.cfg.drill != null) { S.cfg.right = S.cfg.drill; S.cfg.drill = null; } else S.cfg.pane = 'left'; return true; }
+  if (k === 'l' || k === 'Enter') {
+    if (c.kind === 'model') {
+      if (S.cfg.drill == null) { S.cfg.drill = S.cfg.right; S.cfg.right = Math.max(0, PANELS[S.cfg.drill][1].indexOf(c.value)); return true; }
+      if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
+      c.value = PANELS[S.cfg.drill][1][S.cfg.right]; S.cfg.drill = null; S.cfg.pane = 'left';
+      toast([['✓ ', 'c-green b'], ['设备型号已改为 ' + c.value, 'c-fg'], ['（之前填的可见灰阶数和画质门槛已清空）', 'c-gray']]); return true;
+    }
+    if (c.kind === 'ring') {
+      if (ro) return toast([['正在转换，', 'c-yellow b'], ['设置已锁定，结束后才能修改', 'c-fg']]), true;
+      c.value = S.cfg.right === 0 ? null : c.options[S.cfg.right - 1]; S.cfg.pane = 'left';
+      toast([['✓ ', 'c-green b'], [c.label + ' → ' + (c.value ?? c.unset), 'c-fg']]); return true;
+    }
+    if (c.kind === 'text' && !ro) { startInput('value', c.value || ''); return true; }
+  }
+  return false;
+}
+
+// ───── 鼠标 ─────
+let wheelAcc = 0;
+term.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  wheelAcc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+  while (Math.abs(wheelAcc) >= 50) { const d = Math.sign(wheelAcc); moveBy(3 * d); wheelAcc -= 50 * d; echo('滚轮 ' + (d > 0 ? '↓3' : '↑3')); }
+}, { passive: false });
+term.addEventListener('mousedown', (e) => {
+  term.focus();
+  const first = term.firstElementChild; if (!first || !S.lastScr) return;
+  const box = first.getBoundingClientRect();
+  const lh = box.height, x = Math.floor((e.clientX - box.left) / CW), y = Math.floor((e.clientY - box.top) / lh);
+  const hit = [...S.lastScr.hits].reverse().find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  if (!hit) return;
+  const a = hit.act;
+  if (a.tab) S.view = a.tab;
+  if (a.rowKey) { if (S.curKey === a.rowKey && e.detail >= 2) onKey('Enter'); S.curKey = a.rowKey; if (S.run && S.run.stage !== 'ended') S.follow = false; }
+  if (a.page != null && S.pages) S.pages.cursor = a.page;
+  if (a.cfgRow != null) { S.cfg.cursor = a.cfgRow; S.cfg.pane = 'left'; S.cfg.drill = null; }
+  if (a.cfgChoice != null) { S.cfg.pane = 'right'; S.cfg.right = a.cfgChoice; }
+  if (a.preset != null) S.cfg.pcursor = a.preset;
+  echo('单击');
+});
+
+// ───── 键位回显 ─────
+const echoEl = document.getElementById('echo');
+function echo(label) {
+  if (echoEl.querySelector('.hint')) echoEl.innerHTML = '';
+  echoEl.querySelectorAll('.kc').forEach((n) => n.classList.add('old'));
+  const k = document.createElement('span'); k.className = 'kc'; k.textContent = label; echoEl.appendChild(k);
+  while (echoEl.children.length > 9) echoEl.firstChild.remove();
+}
+term.addEventListener('keydown', (e) => {
+  if (e.metaKey || (e.altKey && !e.ctrlKey)) return;
+  if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
+  const k = keyName(e);
+  const handled = onKey(k, e.key);
+  if (handled || ['Tab', 'Space', ' ', '/', "'", 'F1'].includes(e.key) || e.key.startsWith('Arrow') || e.ctrlKey) e.preventDefault();
+  echo({ Space: '空格', Enter: '⏎', Escape: 'Esc', Backspace: '⌫' }[k] || (e.key.startsWith('Arrow') ? { ArrowDown: '↓', ArrowUp: '↑', ArrowLeft: '←', ArrowRight: '→' }[e.key] : k));
+});
+
+// ───── 场景 ─────
+const CONFIG0 = CONFIG.map((c) => c.value);
+const PRESETS0 = PRESETS.map((p) => ({ name: p.name, says: { ...p.says } }));
+// 跳场景 = 从同一份假数据重新开始：上一个场景里删掉的路径、换掉的型号、套用的预设都复原
+function resetView() {
+  Object.assign(S, { view: 'task', run: null, pages: null, overlay: null, input: null, search: null, expanded: new Set(), follow: true, curKey: 'out', pending: '', toast: null, from: {}, lastRows: [] });
+  Object.assign(S.cfg, { pane: 'left', presets: false, drill: null, armedDelete: null, applied: '漫画', pcursor: 0 });
+  S.named = NAMED0.map((n) => ({ ...n }));
+  S.outRoot = '~/转好的';
+  CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
+  PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
+}
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+function scene(name) {
+  resetView(); S.playing = true;
+  const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
+  switch (name) {
+    case 'fresh': S.curKey = 'np:~/漫画库'; break;
+    case 'survey': startRun('exec'); S.run.surveyT = 0.8; S.playing = false; S.toast = null; break;
+    case 'running': exec(0.34); { const v = findVol('集英社/海贼王', '第07卷'); if (v) S.expanded.add(v.dir.id); } break;
+    case 'deciding': startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null; break;
+    case 'ended': case 'pages': {
+      exec(1.01);
+      const v = findVol('集英社/海贼王', '第07卷');
+      if (v) { reveal(v); if (name === 'pages') S.pages = { vol: v, cursor: 0, all: false }; }
+      break;
+    }
+    case 'envelope': {
+      CONFIG.find((c) => c.key === 'envelope').value = '开';
+      exec(0.62);
+      const v = findVol('哆啦A梦', '第05卷');
+      if (v) S.expanded.add(v.dir.id);
+      break;
+    }
+    case 'config': S.view = 'config'; S.cfg.cursor = CONFIG.findIndex((c) => c.key === 'fit'); S.cfg.pane = 'right'; S.cfg.right = 2; break;
+    case 'help': exec(0.18); S.overlay = { kind: 'help', from: 0 }; break;
+    case 'add': S.curKey = 'add'; startInput('add', '~/Comics/'); S.input.base = '~/Comics'; S.input.cands = fsList('~/Comics'); S.input.ci = 0; break;
+    case 'search': exec(0.62); startInput('search'); S.input.buf = '海贼'; S.search.q = '海贼'; break;
+  }
+  S.scene = name; syncChips(); term.focus();
+}
+
+// ───── 控制条与说明卡 ─────
+function chips(groupId, items, onPick, isOn) {
+  const g = document.getElementById(groupId);
+  for (const [val, label] of items) {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = label; b.dataset.val = val;
+    b.addEventListener('click', () => { onPick(val); syncChips(); term.focus(); });
+    b._isOn = () => isOn(val);
+    g.appendChild(b);
+  }
+}
+function syncChips() { document.querySelectorAll('.chip').forEach((b) => b._isOn && b.setAttribute('aria-pressed', String(!!b._isOn()))); }
+chips('g-scene', SCENES, scene, (v) => S.scene === v);
+chips('g-size', [['120x36', '120×36'], ['80x24', '80×24'], ['56x14', '56×14 太小']], (v) => { S.size = v.split('x').map(Number); S.from = {}; fitFont(); }, (v) => S.size.join('x') === v);
+chips('g-pal', [['mocha', 'Catppuccin Mocha'], ['latte', 'Catppuccin Latte']], (v) => { S.pal = v; document.getElementById('win').dataset.pal = v; }, (v) => S.pal === v);
+chips('g-sim', [['play', '⏯ 播放 / 暂停'], ['1', '1×'], ['4', '4×'], ['16', '16×']], (v) => { if (v === 'play') S.playing = !S.playing; else S.speed = Number(v); }, (v) => (v === 'play' ? S.playing : S.speed === Number(v)));
+
+document.getElementById('legend').innerHTML = [
+  ['✓', 'c-green', '完成'], ['⠹', 'c-blue', '处理中'], ['?', 'c-yellow', '等待确认'], ['!', 'c-yellow', '需留意'], ['✗', 'c-red', '出错'], ['-', 'c-gray', '已跳过'], ['⋅', 'c-gray', '等待中'],
+].map(([g, c, t]) => `<span><b class="sw" style="color:var(--t-${c.slice(2)})">${g}</b>${t}</span>`).join('') +
+  '<span>灰阶：<b style="color:var(--t-magenta)">1bit</b> <b style="color:var(--t-cyan)">2bit</b> <b style="color:var(--t-blue)">4bit</b>（2 / 4 / 16 级灰，+FS = 加抖动）</span><span>步骤：<b style="color:var(--t-magenta)">查重</b> <b style="color:var(--t-blue)">分析</b> <b style="color:var(--t-cyan)">写出</b></span>';
+document.getElementById('legend').style.cssText += ';--t-green:#a6e3a1;--t-blue:#89b4fa;--t-yellow:#f9e2af;--t-red:#f38ba8;--t-gray:#7f849c;--t-magenta:#f5c2e7;--t-cyan:#94e2d5';
+
+function describe() {
+  const r = S.run;
+  const stage = !r ? '还没开始' : { surveying: '清点中', running: '转换中', deciding: '等待确认', ended: '已结束' }[r.stage];
+  let title, points, tries;
+  if (S.size[0] < 60 || S.size[1] < 16) {
+    title = '窗口太小'; points = ['窗口小于 60×16 时不硬挤：只显示一句提示、当前进度和退出键。', '把窗口放大，原来的画面会自动回来。']; tries = [['q', '退出']];
+  } else if (S.overlay && S.overlay.kind === 'help') {
+    title = '全部按键'; points = ['按用途分组，只列出此刻用得上的按键：同一个键在不同阶段做的事不同，说法也跟着变（比如转换进行中 q 不退出）。整套是 vim 习惯：j k 上下、C-d C-u 翻半屏、gg G 到顶到底、/ 搜索、dd 删除、]d [d 在问题之间跳。', '正在输入时 ? 是一个字，这时按 F1 打开。', '打开时除了停止和确认相关的键，其他按键都不起作用；内容放不下可以滚动，底边框显示看到了第几行。']; tries = [['j k', '滚动'], ['Esc ?', '关闭']];
+  } else if (S.overlay) {
+    title = S.overlay.note.label; points = ['在备注行上按 ⏎ 打开的完整说明：无法访问的文件夹、被忽略的文件这类一行写不下的原因，放在这里。']; tries = [['Esc', '关闭']];
+  } else if (S.input && S.input.kind === 'search') {
+    title = '搜索'; points = ['按 / 搜索卷名或文件夹名，匹配的行会加下划线。', '⏎ 跳到第一个结果，之后用 n N 在结果之间切换；收起的文件夹会自动展开到那一卷。']; tries = [['⏎', '跳到结果'], ['n N', '下一个 / 上一个'], ['Esc', '取消'], ['F1', '全部按键']];
+  } else if (S.input) {
+    title = '输入'; points = ['输入只占屏幕最下面一行，按 Tab 补全路径；候选多时会弹出一个能滚动的小列表，不会把底部撑高。', 'C-w 删掉一段，⏎ 确定，Esc 取消；找不到的路径会马上提示。']; tries = [['Tab', '补全 / 下一个'], ['C-w', '删一段'], ['⏎', '确定'], ['Esc', '取消'], ['F1', '全部按键']];
+  } else if (S.view === 'config') {
+    title = S.cfg.presets ? '预设' : '配置';
+    points = S.cfg.presets ? ['按 p 打开的预设列表显示在右边，左边的设置仍然可见——保存预设时，保存的就是左边这些。', '使用预设会替换全部设置；删除预设需要按两次 dd。']
+      : ['左边是设备和处理选项，右边是选中那一项的详情：可选的值、说明、预设里是怎么设的。选值时不会再把其他行挤出屏幕。', '顶部一行显示当前使用的预设和改动了哪几项；左边带 * 的就是改过的。', '设备型号先选屏幕规格再选型号：同一种屏幕的型号效果一样。', r && r.stage !== 'ended' ? '转换进行中：设置暂时锁定，但可以随时查看；右上角显示着转换进度。' : '画质判定参数在左边最下面，只能查看，每一项都附有说明。'];
+    tries = S.cfg.presets ? [['j k', '选择'], ['⏎', '使用'], ['dd', '删除'], ['p', '返回']] : [['j k', '选择'], ['l ⏎', '展开 / 确定'], ['h', '返回'], ['p', '预设'], ['1', '回任务']];
+  } else if (S.pages) {
+    title = '每页结果'; points = ['从卷进入每页结果会切换整屏：每页的信息列很多，需要整个宽度；顶部显示所在位置，按 h 回到卷列表原来的位置。', '默认只列需要留意的页：读不出、部分损坏、尺寸未贴合屏幕、页面超宽；打开整卷统一灰阶时还有与其他页差异大的页和代表页。按 a 查看全部页。', '顶部的总览一直固定显示，查看细节时进度不会消失。']; tries = [['j k', '选择'], ['a', '全部页'], ['h', '回卷列表']];
+  } else if (!r) {
+    title = '还没开始'; points = ['任务视图的主线是「路径」：开始之前只列出你添加的路径，不会读取里面的内容。', '[x] [ ] 用空格勾选，没勾选的会变暗；一个路径已经包含在另一个路径里时，会标出来。', 'o 添加路径，i 修改，dd 删除；输出目录在列表最上面。'];
+    tries = [['j k', '选择'], ['o', '添加路径'], ['空格', '勾选'], ['dd', '删除'], ['t', '预览'], ['x', '转换']];
+  } else if (r.stage === 'surveying') {
+    title = '清点中'; points = ['开始处理前，先清点每个路径里有哪些卷、总共有多少工作量，这样剩余时间才估得准。', '清点完成后，路径列表会变成卷列表：一个路径下有多个文件夹时显示成一组，下面列出各个文件夹。']; tries = [['s', '停止']];
+  } else if (r.stage === 'deciding') {
+    title = '等待确认'; points = ['预览时每卷分析完会停下来问你，不弹窗：总览下方出现黄色提示条，写着这一卷的灰阶分布和需要留意的页数。', '列表里这一卷标着 ?，自动滚动开着时会滚到这里；这时列表照样可以滚动查看。', '按 v 查看这一卷的每页结果，看完按 h 回来再决定。']; tries = [['x', '写出'], ['a', '全部写出'], ['s', '结束'], ['v', '每页结果']];
+  } else if (r.stage === 'running') {
+    title = '转换中'; points = ['卷列表的最外层只有两种行：分组（一个路径下有多个文件夹）和单独的文件夹。「灰原哀」那一行是 8 个单独添加的 cbz，按所在文件夹合成了一行。', '自动滚动只滚动、不展开：列表跟到正在处理的文件夹，行尾显示第几卷、在哪一步、进度多少。', '手动移动光标后自动滚动会暂停（右上角有提示），按 F 恢复。', '问题直接标在出问题的位置，]d [d 在问题之间跳转。'];
+    if (r.envelope) points.push('整卷统一灰阶打开着：卷行多一列「代表页」，是定下整卷档位的那一页；窗口变窄时，这一列在耗时之后被砍掉。');
+    tries = [['j k', '移动（暂停自动滚动）'], ['F', '自动滚动'], ['l', '展开文件夹'], [']d', '下一个问题'], ['/', '搜索'], ['s', '停止']];
+  } else {
+    title = '已结束'; points = ['结束后标题行显示结果：全部完成、中途停止，还是立即中断。', '转换失败的卷用 ✗ 标在所在文件夹里；无法访问的文件夹和被忽略的文件显示在分组末尾，按 ⏎ 查看完整说明。', '没勾选的路径不会出现在列表里，最下面有一行说明。', '转换失败的卷没有每页结果：在它上面按 l，屏底只说一句原因。'];
+    if (r.envelope) points.push('整卷统一灰阶打开着：卷行多一列「代表页」，是定下整卷档位的那一页。');
+    tries = [[']d', '下一个问题'], ['l ⏎', '展开 / 每页结果'], ['o', '返回路径列表'], ['t', '再预览']];
+  }
+  const meta = [[S.view === 'task' ? '任务视图' : '配置视图', true], [stage], [S.size.join('×')], [S.pal === 'mocha' ? 'Mocha' : 'Latte'], [S.playing ? `模拟 ${S.speed}×` : '模拟暂停']];
+  return { title, points, tries, meta };
+}
+let lastDesc = '';
+function updateSide() {
+  const d = describe(), sig = JSON.stringify(d);
+  if (sig === lastDesc) return;
+  lastDesc = sig;
+  document.getElementById('now-title').textContent = d.title;
+  document.getElementById('now-meta').innerHTML = d.meta.map(([t, hot]) => `<span class="tag${hot ? ' hot' : ''}">${esc(t)}</span>`).join('');
+  document.getElementById('now-points').innerHTML = d.points.map((p) => `<li>${esc(p)}</li>`).join('');
+  document.getElementById('try').innerHTML = d.tries.map(([k, t]) => `<code>${esc(k)}</code><span>${esc(t)}</span>`).join('');
+  document.getElementById('wtitle').textContent = `tonefit — ${S.size.join('×')}`;
+  syncChips();
+}
+
+// ───── 字号：让整块终端装进可用宽度 ─────
+function fitFont() {
+  const avail = Math.max(320, term.closest('.left').clientWidth - 30);
+  document.documentElement.style.setProperty('--fs', '13px');
+  const cw13 = measureCell(term);
+  const fs = Math.max(9, Math.min(15, Math.floor((13 * avail) / (S.size[0] * cw13) * 2) / 2));
+  document.documentElement.style.setProperty('--fs', fs + 'px');
+  document.documentElement.style.setProperty('--lh', Math.round(fs * 1.34) + 'px');
+  CW = measureCell(term);
+  term._rows = null;
+}
+window.addEventListener('resize', () => { fitFont(); });
+
+// ───── 主循环 ─────
+let lastT = performance.now(), lastPaint = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+  if (S.playing && S.run) {
+    const before = S.run.stage;
+    tick(S.run, dt * S.speed);
+    if (before !== S.run.stage && S.run.stage === 'ended') toast([['已结束 ', 'c-green b'], ['按 ]d 在问题之间跳转，o 返回路径列表', 'c-fg']], 5000);
+  }
+  if (S.pending && now - S.pendingAt > 900) S.pending = '';
+  if (now - lastPaint > 45) {
+    const scr = drawAll();
+    paint(scr, term, CW);
+    S.lastScr = scr; lastPaint = now;
+    updateSide();
+  }
+  requestAnimationFrame(frame);
+}
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
+  fitFont(); scene('running'); requestAnimationFrame(frame);
+});
+
+</script>
+</body>
+</html>

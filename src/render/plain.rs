@@ -14,7 +14,7 @@
 //! # 目录那一级也在这一副里（`volume-discovery/08`）
 //!
 //! [`report`] 按**目录**分组（[`super::grouped`]），每一枝那几卷前面摆一行
-//! [目录行](directory)：几卷 · 基准档分布 · 几卷进了隔离。
+//! [目录行](directory)：几卷 · 统一档位分布 · 几卷进了隔离。
 //! **分组与聚合都不在这里**——它们在 [`super`]，会话的目录表读的是同一份。
 //!
 //!
@@ -40,7 +40,7 @@
 //! [`line`] 那个 `match` 就是「拼装的规矩」的全部：一种[行](RowKind)一条。
 //! 缺一格当场恐慌（见 [`cell`]）——那是这一层拼错了，不是数据的事。
 //!
-//! **末尾那一小结也走它**：卷级失败那几卷不在报告正文里，[`super::failed_volume_tail`]
+//! **末尾那一小结也走它**：卷转换失败那几卷不在报告正文里，[`super::failed_volume_tail`]
 //! 把它们逐条摆下来，摆法照的是 [`line`] 里 [`RowKind::FailedVolume`] 那一条——
 //! 那一句原因因此在会话的卷表与命令行的末尾小结之间只有一处出处（Q133）。
 //!
@@ -74,7 +74,7 @@ pub enum ReportFold {
 ///
 /// **折的只有正文那一段**（`fold`，见 [`ReportFold`]）：抬头与末尾那几小结两副都全印。
 /// 那正是折起那一副仍答得出「这一趟出了什么事」的地方——没做成的那几卷、
-/// 进了隔离的那几卷、走不进去的那几处，只有末尾那几小结点得出是哪几个。
+/// 进了隔离的那几卷、无法访问的那几处，只有末尾那几小结点得出是哪几个。
 pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     let mut text = super::header(report, mode);
     let listed = super::listed(report);
@@ -153,7 +153,7 @@ pub fn directory(group: &super::Group, listed: &[Listed<'_>]) -> String {
 
 /// 一个卷的卷级那几行，摆成纯文本（[`super::volume`] 出的行）。
 ///
-/// `limit` 是这一趟的《纸白对齐上限》：卷级那一行要照它说话，
+/// `limit` 是这一趟的《提白上限》：卷级那一行要照它说话，
 /// 而它是**这一趟**的事实，不在 [`VolumeReport`] 上（见 [`super::volume`]）。
 pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> String {
     text(&super::volume(volume, limit))
@@ -209,38 +209,40 @@ pub(super) fn line(row: &Row) -> String {
         | RowKind::Salvaged
         | RowKind::Extraction => format!("  {}\n", cell(row, Field::Sentence)),
         RowKind::Gate => format!(
-            "  几何门 判定范围 灰度页 {} 页 · 不成立 {} 页 · 本卷 {}\n",
+            "  尺寸贴合 检查了 {} 页灰度页 · 没贴合 {} 页 · 抖动 {}\n",
             cell(row, Field::GateScope),
             cell(row, Field::GateBroken),
             cell(row, Field::Dither),
         ),
-        // 几何门底下那几句缩到第四格：它们说的是上一行那两个数，不是并列的另一件事。
+        // 尺寸贴合检查底下那几句缩到第四格：它们说的是上一行那两个数，不是并列的另一件事。
         RowKind::GateNote => format!("    {}\n", cell(row, Field::Sentence)),
         // **上限那一格恒在，三个数不恒在**（见 [`super::white_align_rows`]）：
         // 照做那一趟上限取 0 时一页都没量过，三个 0 摆出去是编的。
         // 「上限」是列头、「页」是单位，两样都在这一层；「级」与那句「没开」在格里，
         // 因为这一格摆到哪一副排版上都得自带它们。
         RowKind::WhiteAlign => format!(
-            "  纸白对齐 上限 {}{}\n",
+            "  纸色提白 上限 {}{}\n",
             cell(row, Field::WhiteAlignLimit),
             row.cell(Field::WhiteAligned).map_or_else(String::new, |_| {
                 format!(
-                    " · 对齐 {} 页 · 超限 {} 页 · 量不出纸白 {} 页",
+                    " · 提白 {} 页 · 超过上限 {} 页 · 找不到纸色 {} 页",
                     cell(row, Field::WhiteAligned),
                     cell(row, Field::WhiteOverTheLimit),
                     cell(row, Field::WhiteNoPaperWhite),
                 )
             }),
         ),
-        // 纸白对齐底下那一句与几何门底下那几句同一个摆法：它说的是上一行那几个数。
+        // 纸色提白底下那一句与尺寸贴合检查底下那几句同一个摆法：它说的是上一行那几个数。
         RowKind::WhiteAlignNote => format!("    {}\n", cell(row, Field::Sentence)),
-        RowKind::Envelope => format!("  卷级 {}\n", cell(row, Field::Envelope)),
+        RowKind::Envelope => format!("  整卷档位 {}\n", cell(row, Field::Envelope)),
         // 覆盖与逐页那两种同样挂在「卷级」后面：三种判定在纸上是同一行的三种说法。
-        RowKind::Override | RowKind::PerPage => format!("  卷级 {}\n", cell(row, Field::Sentence)),
-        RowKind::Driver => format!("    定档页 {}\n", cell(row, Field::Source)),
-        // 档位分布接在卷级判定后面，与它同一级：判定说「候选从哪来」，它说「各页写成了哪一档」。
-        // 「档位分布」是列头——会话的卷表把同一格摆在这四个字底下（`two-pass-rework/02`）。
-        RowKind::Tally => format!("  档位分布 {}\n", cell(row, Field::Tally)),
+        RowKind::Override | RowKind::PerPage => {
+            format!("  整卷档位 {}\n", cell(row, Field::Sentence))
+        }
+        RowKind::Driver => format!("    代表页 {}\n", cell(row, Field::Source)),
+        // 灰阶分布接在卷级判定后面，与它同一级：判定说「候选从哪来」，它说「各页写成了哪一档」。
+        // 「灰阶分布」是列头——会话的卷表把同一格摆在这四个字底下（`two-pass-rework/02`）。
+        RowKind::Tally => format!("  灰阶分布 {}\n", cell(row, Field::Tally)),
         RowKind::Reading => format!("  {}\n", cell(row, Field::Reading)),
         RowKind::Cache => format!("  缓存 {}\n", cell(row, Field::Cache)),
         // 「解出来多大 → 裁完多大 → 缩了多少 → 写出多大」一行读下来，
@@ -257,9 +259,9 @@ pub(super) fn line(row: &Row) -> String {
             cell(row, Field::Output),
         ),
         // 纸白那一格跟在行尾，**在场才说**：它只在 `--dry-run` 出（见 [`super::pages`]），
-        // 摆法与部分救回那一格同一条——不占一列，跟着这一行走。
+        // 摆法与残缺那一格同一条——不占一列，跟着这一行走。
         RowKind::PageVerdict => format!(
-            "    {}{}判定 {}（{}）  判据 {}{}\n",
+            "    {}{}判定 {}（{}）  画质分 {}{}\n",
             marked(row, Field::Salvage),
             marked(row, Field::ColorToGray),
             cell(row, Field::Candidate),
@@ -274,9 +276,9 @@ pub(super) fn line(row: &Row) -> String {
             cell(row, Field::Sentence)
         ),
         RowKind::PageFailure => format!("    {}\n", cell(row, Field::Sentence)),
-        // 卷级失败那一卷在报告**正文**里一行都没有：它连一份卷报告都没有
+        // 卷转换失败那一卷在报告**正文**里一行都没有：它连一份卷报告都没有
         // （见 [`super::failed_volume`]）。这一副摆的是它在**末尾那一小结**里的两行——
-        // 路径一行、原因一行，形状照预扫那条拒绝办。[`super::failed_volume_tail`]
+        // 路径一行、原因一行，形状照清点那条拒绝办。[`super::failed_volume_tail`]
         // 走的就是这一条，报告里印出去的那两行因此与卷表读的是同一行。
         RowKind::FailedVolume => format!(
             "  {}\n    {}\n",
@@ -306,7 +308,7 @@ fn cell(row: &Row, field: Field) -> &str {
         .unwrap_or_else(|| panic!("{:?} 那一行少了 {field:?} 那一格", row.kind))
 }
 
-/// 在场就带一个 `·` 接在后面的那种格：部分救回、彩页转灰都是这个样子。
+/// 在场就带一个 `·` 接在后面的那种格：残缺、彩页转灰都是这个样子。
 ///
 /// 不在场就一个字都不占——那正是「一格在不在场本身就是一句话」（见 [`Row::cell`]）。
 fn marked(row: &Row, field: Field) -> String {

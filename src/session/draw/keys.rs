@@ -9,7 +9,7 @@
 //!
 //! **两份措辞只有这一处出处**（`p4-parking-lot/07` 票面第二条，停车场 Q166）：
 //! 从前屏底那一行的键是各状态那几个函数里手写的字面串，同一个键因此有两句措辞
-//! （屏底 `t 试算`，覆盖层 `t 试算：只算不写，报告照出`），改一个键位要动两处，
+//! （屏底 `t 预览`，覆盖层 `t 预览：只算不写，报告照出`），改一个键位要动两处，
 //! 而只动一处不会有任何一条用例红。
 //!
 //! **键同样不在这里列**：两边都把[按键表](crate::session::state::Session::action)
@@ -21,8 +21,8 @@
 //! # 屏上顺口提到一个键的那几句散文
 //!
 //! 两处摆键之外，屏上还有几句话**提到**一个键：一趟都没跑过时总览块与报告区各说的那一句
-//! （`还没跑过。t 试算 · x 执行`）、前提那一张与展不开时那一句（`先按 t 试算或 x 执行`）、
-//! 屏底说明那一行（`按 ⇥ 列出这一层`、`那时按 x 接着做第二遍……`、`g 把它交回给最新那一卷`）。
+//! （`还没跑过。t 预览 · x 转换`）、前提那一张与展不开时那一句（`先按 t 预览或 x 转换`）、
+//! 屏底说明那一行（`按 ⇥ 列出这一层`、`那时按 x 接着做写出环节……`、`g 把它交回给最新那一卷`）。
 //! **那几句不是「此刻按什么」**，措辞是它们自己的——从按键表取的只有**键与写法**
 //! （`no-false-line/06`，收停车场 Q190）：[`spelt_for`] 答「派得出这件事的那几个键怎么写」，
 //! [`starters`] 答「起一趟的那两个键怎么写」。从前那几处的键是字面串，
@@ -78,7 +78,7 @@ pub(super) enum Wording {
 /// **派得出同一句话的那几个键并成一行**，次序照它们在按键表上被问到的次序。
 ///
 /// 并的依据是**屏上那句话**，不是动作本身：`↑` 派的是「往上挪一格」、`↓` 派的是
-/// 「往下挪一格」，两个动作，而屏上它们是同一件事（`↑ ↓ j k 在三层上挪一行`）。
+/// 「往下挪一格」，两个动作，而屏上它们是同一件事（`↑ ↓ j k 在三组设置上挪一行`）。
 /// 照动作并的话，屏上一半的行是同一句话的两半。
 ///
 /// **同义的那几个键因此一个都不漏**：取值栏上 `⏎`／空格／`→` 三个键同义，
@@ -112,7 +112,7 @@ pub(super) fn merged(
 ///
 /// `here` 是[眼下这一块上派得出动作的每一个键](crate::session::state::Session::keys_here)，
 /// `want` 是屏底那一层挑的**动作**——屏底只摆此刻最常用的几件事，而挑的是
-/// 「就在这一行上动手」「试算」「退出」这种事，不是键。**一个键都派不出来就没有这一条**
+/// 「就在这一行上动手」「预览」「退出」这种事，不是键。**一个键都派不出来就没有这一条**
 /// （`None`）：屏上不摆按不动的键，而那正是「按了没反应」的来源。
 pub(super) fn prompt(
     group: KeyGroup,
@@ -154,17 +154,17 @@ pub(super) fn spelt_for(keys: &[(Key, Action)], want: impl Fn(Action) -> bool) -
     }
 }
 
-/// **起一趟的那两个键**在屏上怎么写：试算那个与执行那个。
+/// **起一趟的那两个键**在屏上怎么写：预览那个与执行那个。
 ///
 /// 「还没跑过」那几句都提到它们（总览块、报告区、前提那一张、展不开时那一句），
 /// 各说各的话，键与写法只有这一处问出来。**一格是 `None` 就是此刻没有键起得了那一趟**：
 /// 一趟都没跑过时两个都在（左栏浏览时的按键表，`Session::browsing_action`），
-/// 跑起来之后三层只读、一个都派不出——那时屏上也没有一句要提它们。
+/// 跑起来之后三组设置只读、一个都派不出——那时屏上也没有一句要提它们。
 ///
 /// `pub` 而不是 `pub(super)`：展不开时那一句在 `crate::session::terminal` 上说，
 /// 那一层在画法外面——它是画法之外唯一一处读这一份的地方。
 pub struct Starters {
-    /// 试算那个键。
+    /// 预览那个键。
     pub dry: Option<String>,
     /// 执行那个键。
     pub run: Option<String>,
@@ -179,13 +179,13 @@ impl Starters {
         }
     }
 
-    /// 派得出来的那几个键各配上它起的那一趟叫什么：`t 试算`、`x 执行`；派不出的不在里面。
+    /// 派得出来的那几个键各配上它起的那一趟叫什么：`t 预览`、`x 转换`；派不出的不在里面。
     ///
     /// 「还没跑过」那几句提到这两个键时说的都是这一对，**怎么接进句子是各句自己的事**
     /// （中间一个 `·`、一个「或」……）。那两个词与总览块抬头上「这一趟是什么」
     /// （`super::overview::run_name`）同一批，出处各一份记在停车场 Q643。
     pub fn named(&self) -> Vec<String> {
-        [(self.dry.as_deref(), "试算"), (self.run.as_deref(), "执行")]
+        [(self.dry.as_deref(), "预览"), (self.run.as_deref(), "转换")]
             .into_iter()
             .filter_map(|(key, what)| key.map(|key| format!("{key} {what}")))
             .collect()
@@ -244,7 +244,7 @@ pub(super) fn spelled(key: Key) -> String {
 ///
 /// **几支随[屏上这一块](KeyGroup)而变**：同一个 [`Action::Move`] 在左栏上挪的是一行配置、
 /// 在取值栏上挪的是一格取值、在逐页表上挪的是一页——动作相同，说的不是同一件事。
-/// **两支随[阶段](Stage)而变**：按停按过一次之后那个键说的是「再按一次就中止」，
+/// **两支随[阶段](Stage)而变**：按停止按过一次之后那个键说的是「再按一次就立即停止」，
 /// 而跑着时 `Ctrl-C` 退出会话的后果与浏览时不是一件事。别的几支与两者都无关。
 ///
 /// **打字那几支只有屏底读得到**（[`Action::Insert`]、[`Action::Backspace`]）：
@@ -258,7 +258,7 @@ pub(super) fn says(group: KeyGroup, stage: Stage, action: Action) -> Says {
             KeyGroup::Picking => Says::two("选", "在这一栏上挪一份"),
             // 覆盖层是**读物**：这一下挪的是从第几行画起，不是一个光标。
             KeyGroup::Overlaid => Says::two("读", "往下读"),
-            _ => Says::two("挪一行", "在三层上挪一行"),
+            _ => Says::two("挪一行", "在三组设置上挪一行"),
         },
         Action::Select(_) => match group {
             KeyGroup::Report => Says::two("选一枝", "在目录表上挪一枝"),
@@ -296,41 +296,44 @@ pub(super) fn says(group: KeyGroup, stage: Stage, action: Action) -> Says {
             KeyGroup::Overlaid => Says::same("关（回到刚才那一块）"),
             _ => Says::two("回配置", "退一步，回配置"),
         },
-        Action::Start(RunMode::DryRun) => Says::two("试算", "试算：只算不写，报告照出"),
-        Action::Start(RunMode::Process) => Says::two("执行", "执行：写到输出根"),
-        // **按停按到哪一级说的不是同一句话**（ADR 0013）：没按过时它是两级停的说明，
-        // 按过一次之后闩已经在收尾上，这个键剩下的只有中止那一级。
+        Action::Start(RunMode::DryRun) => Says::two("预览", "预览：只算不写，报告照出"),
+        Action::Start(RunMode::Process) => Says::two("转换", "转换：写到输出目录"),
+        // **按停止时按到哪一级说的不是同一句话**（ADR 0013）：没按过时它是两级停止的说明，
+        // 按过一次之后闩已经在做完再停上，这个键剩下的只有立即停止那一级。
         Action::Stop => match stage {
             Stage::Running(Instruction::Continue) => Says::two(
-                "停（按一次收尾，再按一次中止）",
-                "停：按一次收尾，再按一次中止",
+                "停（按一次做完再停，再按一次立即停止）",
+                "停：按一次做完再停，再按一次立即停止",
             ),
-            _ => Says::two("再按一次就中止", "再按一次就中止：当前卷停在这一页上"),
+            _ => Says::two(
+                "再按一次就立即停止",
+                "再按一次就立即停止：当前卷停在这一页上",
+            ),
         },
-        // **三个答话键各带一句它买的东西**：`x` 那一句是第一遍不重算（续做整件事
+        // **三个答话键各带一句它买的东西**：`x` 那一句是分析环节不重算（接着写出整件事
         // 就是为了它），`a` 那一句是往下不再问（几十卷的一趟按一下就挂得住）。
         // 两句都短，长短一份就够。
         Action::Answer(Instruction::Continue, Reach::ThisVolume) => {
-            Says::same("接着做第二遍（第一遍不重算）")
+            Says::same("接着做写出环节（分析环节不重算）")
         }
         Action::Answer(Instruction::Continue, Reach::ForTheRest) => {
-            Says::same("剩下的卷都这样（往下不再问）")
+            Says::same("后面的卷都写出（往下不再问）")
         }
         // **「剩下的卷也不开工」非说不可**：一卷的时候那件事说不说都一样，
         // 五十卷的时候它是这个键最大的后果，而只说「这一卷不写」的话，
         // 它读起来像是「跳过这一卷」。长短两份都带着它。
         //
-        // **短的那一份让掉「等价 dry-run」**：等答话时屏底摆的是七件事
+        // **短的那一份让掉「等价 dry-run」**：等待确认时屏底摆的是七件事
         // （逐页表那几个键也在场），而这一行再长一截就把**下一行那句话**挤掉了
         // ——那一句说的正是「这一卷此刻一个字节都没写」，答这一问要知道的就是它。
         // 让掉的这一句在 `?` 那张表上照旧读得到。
         Action::Answer(..) => Says::two(
-            "收尾（这一卷不写，剩下的卷也不开工）",
-            "收尾（这一卷不写，等价 dry-run；剩下的卷也不开工）",
+            "做完再停（这一卷不写，剩下的卷也不开工）",
+            "做完再停（这一卷不写，等价 dry-run；剩下的卷也不开工）",
         ),
         Action::Focus(Pane::Report) => Says::two("报告区", "把焦点切到报告区"),
         Action::Focus(Pane::Config) => Says::two("回配置", "把焦点切回左栏"),
-        Action::Follow => Says::two("回到跟随", "回到跟随：光标交回给最新那一卷"),
+        Action::Follow => Says::two("回到自动滚动", "回到自动滚动：光标交回给最新那一卷"),
         Action::Open => Says::two("展开这一枝", "展开这一枝：摊出它底下那几卷"),
         Action::Expand => Says::two("展开逐页", "把这一卷的逐页摊开"),
         Action::Turn(Step::Next) => Says::same("换下一卷"),
@@ -340,18 +343,18 @@ pub(super) fn says(group: KeyGroup, stage: Stage, action: Action) -> Says {
             _ => Says::two("回目录表", "收起，回目录表"),
         },
         Action::List(Listing::All) => Says::same("列全部页"),
-        Action::List(_) => Says::same("只列要紧的页"),
+        Action::List(_) => Says::same("只列需留意的页"),
         Action::Pick => Says::two("预设", "开预设那一栏"),
         Action::Take => Says::two("套用这一份", "套用停着的那一份"),
         Action::Store => Says::two("存下", "存下来"),
         Action::Erase => Says::two("删掉", "删掉停着的那一份（按两下）"),
-        Action::Chart => Says::two("出标定图", "按这块面板出一张标定图"),
+        Action::Chart => Says::two("出灰阶测试图", "按这块面板出一张灰阶测试图"),
         // 两张各叫什么只有 [`Overlay::what`] 一处，屏底那一行与这一格的抬头共用它。
         Action::Reveal(overlay) => Says::same(overlay.what()),
-        // **跑着与等答话时退出会话的后果要说出来**（停车场 Q63）：那一下走的是中止，
+        // **跑着与等待确认时退出会话的后果要说出来**（停车场 Q63）：那一下走的是立即停止，
         // 当前卷停在这一页上、那一格 partial 丢掉——盘上不留半卷。
         Action::Quit => match stage.read_only() {
-            true => Says::same("退出会话（当前卷中止，盘上不留半卷）"),
+            true => Says::same("退出会话（当前卷立即停止，盘上不留半卷）"),
             false => Says::two("退出", "退出会话"),
         },
         // 派不出动作的键根本不进这两处（[`Session::keys_here`] 与
@@ -368,7 +371,7 @@ mod tests {
     /// **散文里的键问的是交给它的那张表，不是写死的字**（`no-false-line/06`）。
     ///
     /// 喂一张与真按键表不同的表：答出来的得是这张表上的键。写死 `t` 的话这一条当场红——
-    /// 而真按键表上 `t` 恰好就是试算，拿它喂进去分不出「问出来的」与「抄上去的」。
+    /// 而真按键表上 `t` 恰好就是预览，拿它喂进去分不出「问出来的」与「抄上去的」。
     #[test]
     fn what_a_sentence_spells_is_the_key_the_table_it_was_handed_dispatches() {
         let table = [
@@ -398,9 +401,9 @@ mod tests {
         let starters = Starters::of(&table);
         assert_eq!(starters.dry, Some("r".to_owned()));
         assert_eq!(starters.run, Some("w".to_owned()));
-        assert_eq!(starters.named(), vec!["r 试算", "w 执行"]);
+        assert_eq!(starters.named(), vec!["r 预览", "w 转换"]);
         // 派不出的那个连它那个词一起不在。
-        assert_eq!(Starters::faked(None, Some("w")).named(), vec!["w 执行"]);
+        assert_eq!(Starters::faked(None, Some("w")).named(), vec!["w 转换"]);
         assert!(Starters::faked(None, None).named().is_empty());
     }
 
@@ -428,7 +431,7 @@ mod tests {
         assert_eq!(unfolded.dry, browsing.dry);
         assert_eq!(unfolded.run, browsing.run);
 
-        // 跑起来之后三层只读：一个都派不出。
+        // 跑起来之后三组设置只读：一个都派不出。
         session.press(Key::Esc);
         session.run_started();
         let running = starters(&session);

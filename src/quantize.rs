@@ -1,16 +1,16 @@
 //! 把参照按候选量化成候选的像素形态。
 //!
-//! 量化结果回到 8 位工作精度：判据比的是参照与候选在同一精度下的差（ADR 0002），
+//! 量化结果回到 8 位工作精度：画质分比的是参照与候选在同一精度下的差（ADR 0002），
 //! 候选只体现为取值落在哪些格点上、以及误差怎么分布。
 //!
-//! 候选是 (位深, 抖动模式) 组合（`CONTEXT.md`）。从裁剪后的候选里选出一个在 `decide`。
+//! 候选是 (灰阶档位, 抖动模式) 组合（`CONTEXT.md`）。从裁剪后的候选里选出一个在 `decide`。
 
 use anyhow::{Result, anyhow, bail};
 
 use crate::geometry::GeometryGate;
 use crate::gray::GrayImage;
 
-/// 输出每像素比特数。编码属性，与面板的灰阶数不是同一个量（`CONTEXT.md`）。
+/// 输出每像素比特数。编码属性，与面板的屏幕灰阶数不是同一个量（`CONTEXT.md`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BitDepth {
     One,
@@ -20,7 +20,7 @@ pub enum BitDepth {
 }
 
 impl BitDepth {
-    /// 位深全集 {1,2,4,8}，由小到大。
+    /// 灰阶档位全集 {1,2,4,8}，由小到大。
     pub const ALL: [BitDepth; 4] = [
         BitDepth::One,
         BitDepth::Two,
@@ -28,18 +28,18 @@ impl BitDepth {
         BitDepth::Eight,
     ];
 
-    /// 面板灰阶数之内的候选位深，由小到大（ADR 0003：面板灰阶数是位深的硬上界）。
+    /// 屏幕灰阶数之内的候选灰阶档位，由小到大（ADR 0003：面板灰阶数是位深的硬上界）。
     ///
-    /// 裁剪必须发生在判据求值**之前**：参照里没有面板，多出来的那些级到不了眼睛，
-    /// 交给判据自己挑，8bit 会以零误差稳赢。e-ink 恒 16 级，于是裁成 {1,2,4}。
+    /// 裁剪必须发生在画质分求值**之前**：参照里没有面板，多出来的那些级到不了眼睛，
+    /// 交给画质分自己挑，8bit 会以零误差稳赢。e-ink 恒 16 级，于是裁成 {1,2,4}。
     ///
-    /// 灰阶数填的是真机上数出来的实际可分辨级数，不必是 2 的幂——一档位深要么整个装得进，
+    /// 屏幕灰阶数填的是真机上数出来的实际可分辨级数，不必是 2 的幂——一档灰阶档位要么整个装得进，
     /// 要么不装（`--gray-levels 10` 留下 {1,2}）。1bit 只要两级，任何面板都留得住。
     ///
-    /// **几何门不成立时这条上界的依据失效，这里仍照裁。**像素与灰阶不再对齐，
+    /// **尺寸未贴合屏幕时这条上界的依据失效，这里仍照裁。**像素与灰阶不再对齐，
     /// 多出来的级到不到眼睛就不再确定；ADR 0003 说了「不得套用」，也说了该用哪个集合
     /// 尚未测量。P0 于是留着这一裁并把洞记在 `CONTEXT.md` 的《尚未确立》里——
-    /// 抖动那一维不同，它在门不成立时是**整体关闭**（见 [`Dither::candidates`]）。
+    /// 抖动那一维不同，它在未贴合屏幕时是**整体关闭**（见 [`Dither::candidates`]）。
     pub fn candidates(gray_levels: u32) -> Vec<BitDepth> {
         BitDepth::ALL
             .into_iter()
@@ -51,7 +51,7 @@ impl BitDepth {
     pub fn from_bits(bits: u32) -> Result<BitDepth> {
         match BitDepth::ALL.into_iter().find(|depth| depth.bits() == bits) {
             Some(depth) => Ok(depth),
-            None => bail!("位深 {bits} 不在全集 {{1, 2, 4, 8}} 里"),
+            None => bail!("灰阶档位 {bits} 不在全集 {{1, 2, 4, 8}} 里"),
         }
     }
 
@@ -65,7 +65,7 @@ impl BitDepth {
         }
     }
 
-    /// 这个位深能表示的灰度级数。
+    /// 这个灰阶档位能表示的灰度级数。
     pub fn levels(self) -> u32 {
         1 << self.bits()
     }
@@ -79,9 +79,9 @@ impl std::fmt::Display for BitDepth {
 
 /// 抖动模式：候选的另一维。抖动用高频误差换低频保真（`CONTEXT.md`）。
 ///
-/// 只有开关两种，没有第三种：ADR 0007 不许在几何门不成立时「降级成更温和的抖动模式」，
-/// 于是也就没有可降的中间档。抖的那一种取 FS 误差扩散——它量过的三档位深上
-/// 低通判据都最优，另两种（Bayer、蓝噪声）没有一档赢过它（见 measurements 的《抖动》）。
+/// 只有开关两种，没有第三种：ADR 0007 不许在尺寸未贴合屏幕时「降级成更温和的抖动模式」，
+/// 于是也就没有可降的中间档。抖的那一种取 FS 误差扩散——它量过的三档灰阶档位上
+/// 低通画质分都最优，另两种（Bayer、蓝噪声）没有一档赢过它（见 measurements 的《抖动》）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Dither {
     /// 不抖动：按格点就近取整。
@@ -91,9 +91,9 @@ pub enum Dither {
 }
 
 impl Dither {
-    /// 几何门放行的抖动模式（ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。
+    /// 尺寸贴合检查放行的抖动模式（ADR 0007：抖动仅在目标尺寸未被下游缩放时启用）。
     ///
-    /// 门不成立时只剩「不抖动」这一种——**整体关闭**，不降级成更温和的模式。
+    /// 未贴合屏幕时只剩「不抖动」这一种——**整体关闭**，不降级成更温和的模式。
     /// 门逐页判，这一裁因此也是逐页的：同一卷里贴住面板的页仍拿得到两种
     /// （ADR 0007 决定第 1、2 条）。
     pub fn candidates(gate: GeometryGate) -> &'static [Dither] {
@@ -152,13 +152,13 @@ impl std::fmt::Display for Dither {
     }
 }
 
-/// 一个候选：(位深, 抖动模式) 组合（`CONTEXT.md`）。
+/// 一个候选：(灰阶档位, 抖动模式) 组合（`CONTEXT.md`）。
 ///
-/// 两维绑成一个类型而不是各走各的：判据求值、上包络、迟滞、覆盖项要的处处是这个组合。
-/// ADR 0007 说的正是它——「候选是 (位深, 抖动模式)，上包络取的是这个组合，不设页级抖动开关」。
+/// 两维绑成一个类型而不是各走各的：画质分求值、整卷统一灰阶、迟滞、覆盖项要的处处是这个组合。
+/// ADR 0007 说的正是它——「候选是 (灰阶档位, 抖动模式)，整卷统一灰阶取的是这个组合，不设页级抖动开关」。
 ///
-/// **排序即体积由小到大**：位深先，同位深下不抖动在前。「界以内最低的一档」靠的就是这个次序。
-/// 次序与体积同调有实测撑着：抖动的体积代价 +3%~+37%，够不上升一档位深的那一步
+/// **排序即体积由小到大**：灰阶档位先，同灰阶档位下不抖动在前。「界以内最低的一档」靠的就是这个次序。
+/// 次序与体积同调有实测撑着：抖动的体积代价 +3%~+37%，够不上升一档灰阶档位的那一步
 /// （见 measurements 的《抖动》：1bit+FS 13463 < 2bit 24263，2bit+FS 25074 < 4bit 43590）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Candidate {
@@ -171,18 +171,18 @@ impl Candidate {
         Self { bit_depth, dither }
     }
 
-    /// 同一档位深上不抖动的那个候选。只给测试用——几何门不成立时的候选集全长这样，
-    /// 卷级的用例多半只在位深这一维上分胜负，摆到这里省得各个模块各写一遍。
+    /// 同一档灰阶档位上不抖动的那个候选。只给测试用——尺寸未贴合屏幕时的候选集全长这样，
+    /// 卷级的用例多半只在灰阶档位这一维上分胜负，摆到这里省得各个模块各写一遍。
     #[cfg(test)]
     pub(crate) const fn plain(bit_depth: BitDepth) -> Self {
         Candidate::new(bit_depth, Dither::Off)
     }
 
-    /// 这一页的候选集，由小到大：位深按面板灰阶数裁（ADR 0003），抖动模式按几何门裁
-    /// （ADR 0007）。两道裁剪都在判据求值之前。
+    /// 这一页的候选集，由小到大：灰阶档位按屏幕灰阶数裁（ADR 0003），抖动模式按尺寸贴合检查裁
+    /// （ADR 0007）。两道裁剪都在画质分求值之前。
     ///
-    /// e-ink 面板 + 几何门成立 = 六个候选；门在这一页上不成立就回到三个。
-    /// 门不成立的那一套是成立那一套的**子集**——同样的位深，少了抖动那一维。
+    /// e-ink 面板 + 尺寸贴合屏幕 = 六个候选；门在这一页上不成立就回到三个。
+    /// 未贴合屏幕的那一套是成立那一套的**子集**——同样的灰阶档位，少了抖动那一维。
     pub fn all(gray_levels: u32, gate: GeometryGate) -> Vec<Candidate> {
         BitDepth::candidates(gray_levels)
             .into_iter()
@@ -196,8 +196,8 @@ impl Candidate {
 }
 
 impl std::fmt::Display for Candidate {
-    /// 判据值一行要排开六个候选，因此取紧凑写法：`4bit` 与 `4bit+FS`。
-    /// 卷级那一行另有一处把抖动模式的整名写出来（见 `main` 的几何门那一行）。
+    /// 画质分值一行要排开六个候选，因此取紧凑写法：`4bit` 与 `4bit+FS`。
+    /// 卷级那一行另有一处把抖动模式的整名写出来（见 `main` 的尺寸贴合检查那一行）。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.dither {
             Dither::Off => write!(f, "{}", self.bit_depth),
@@ -208,7 +208,7 @@ impl std::fmt::Display for Candidate {
 
 /// 按 `candidate` 量化，再摊回 8 位工作精度。
 ///
-/// 各位深的格点是套嵌的（255 = 3×85 = 15×17），所以位深升高只会让格点变密，
+/// 各灰阶档位的格点是套嵌的（255 = 3×85 = 15×17），所以灰阶档位升高只会让格点变密，
 /// 不会把某个取值推到更远的格点上。抖动改的是误差落在哪里，不是可用的格点。
 pub fn quantize(image: &GrayImage, candidate: Candidate) -> GrayImage {
     match candidate.dither {
@@ -266,7 +266,7 @@ fn floyd_steinberg(image: &GrayImage, depth: BitDepth) -> GrayImage {
 ///
 /// 不直接写 `.round()`：它的语义是「五入远离零」，而 x86-64 的基线指令集里没有这一条
 /// （SSE4.1 的 `roundss` 取的是就近偶入），编译器只能退到 libm 的 `roundf`——
-/// **一个像素一次函数调用**，而误差扩散一页要走几百万次。它是判据里最贵的一块
+/// **一个像素一次函数调用**，而误差扩散一页要走几百万次。它是画质分里最贵的一块
 /// （见 measurements 的《分阶段耗时剖面》）。
 ///
 /// 也不写成 `(value + 0.5).floor()`：那一条在 `0.5` 下方最近的那个 f32 上答错。
@@ -297,7 +297,7 @@ pub(crate) fn grid_index(level: u8, depth: BitDepth) -> u8 {
 
 /// `depth` 的第 `index` 个格点落在哪个 8 位取值上。[`grid_index`] 的逆。
 ///
-/// 标定图的阶梯照它排（见 `crate::calibrate`）：阶梯上的每一级落的就是这一档位深
+/// 灰阶测试图的阶梯照它排（见 `crate::calibrate`）：阶梯上的每一级落的就是这一档灰阶档位
 /// **真会写出**的那个取值，不是随手取的等距灰。阶梯要预告得了输出，格点就必须与编码器同源。
 pub(crate) fn grid_level(index: u32, depth: BitDepth) -> u8 {
     let top = depth.levels() - 1;
@@ -320,7 +320,7 @@ mod tests {
 
     /// 自家的就近取整与 [`f32::round`] 在整个 `0.0..=255.0` 上答得一样。
     ///
-    /// 一个像素答错一格，抖动那一路就换一个格点，而判据只会**略微**偏一点——
+    /// 一个像素答错一格，抖动那一路就换一个格点，而画质分只会**略微**偏一点——
     /// 性质测试全绿，黄金快照整片挪几个字节。断言因此取逐位相等。
     ///
     /// 走两片：每个半格前后各 64 个相邻 f32（换写法要出岔就出在这儿，逐位走满），
@@ -356,7 +356,7 @@ mod tests {
     }
 
     /// 格点的两侧对得上：第 `index` 个格点的取值量化回去还是 `index`，
-    /// 而落在格点上的取值经量化表照样不动。标定图的阶梯与编码器写出的取值因此是同一批数。
+    /// 而落在格点上的取值经量化表照样不动。灰阶测试图的阶梯与编码器写出的取值因此是同一批数。
     #[test]
     fn the_grid_reads_the_same_from_either_side() {
         for depth in BitDepth::ALL {
@@ -382,8 +382,8 @@ mod tests {
         }
     }
 
-    /// 8bit 的格点就是 8 位工作精度本身：参照在这一档上零误差，判据因此必须先裁候选
-    /// 再选（ADR 0003），而不是交给判据自己挑。
+    /// 8bit 的格点就是 8 位工作精度本身：参照在这一档上零误差，画质分因此必须先裁候选
+    /// 再选（ADR 0003），而不是交给画质分自己挑。
     #[test]
     fn eight_bits_is_the_identity() {
         let table = levels_table(BitDepth::Eight);
@@ -392,7 +392,7 @@ mod tests {
         }
     }
 
-    /// 格点套嵌：低位深能表示的取值，高位深一个不少。
+    /// 格点套嵌：低灰阶档位能表示的取值，高灰阶档位一个不少。
     #[test]
     fn the_levels_of_a_lower_depth_all_survive_at_a_higher_one() {
         for depth in BitDepth::ALL {
@@ -411,7 +411,7 @@ mod tests {
         }
     }
 
-    /// e-ink 面板恒 16 级，候选位深因此恒是 {1,2,4}：8bit 不进入候选，也就不进入判据。
+    /// e-ink 面板恒 16 级，候选灰阶档位因此恒是 {1,2,4}：8bit 不进入候选，也就不进入画质分。
     #[test]
     fn an_eink_panel_leaves_three_candidate_depths() {
         assert_eq!(
@@ -430,12 +430,15 @@ mod tests {
     fn only_the_four_listed_bit_depths_resolve() {
         for depth in BitDepth::ALL {
             assert_eq!(
-                BitDepth::from_bits(depth.bits()).expect("全集里的位深"),
+                BitDepth::from_bits(depth.bits()).expect("全集里的灰阶档位"),
                 depth
             );
         }
         for bits in [0, 3, 5, 16] {
-            assert!(BitDepth::from_bits(bits).is_err(), "{bits} 不该解析出位深");
+            assert!(
+                BitDepth::from_bits(bits).is_err(),
+                "{bits} 不该解析出灰阶档位"
+            );
         }
     }
 
@@ -470,7 +473,7 @@ mod tests {
     }
 
     /// 抖动写出的取值同样只落在那一档的格点上：抖动换的是误差的分布，不是可用的取值。
-    /// 落到格点外，编码那一步就写不出这个位深（见 `encode`）。
+    /// 落到格点外，编码那一步就写不出这个灰阶档位（见 `encode`）。
     #[test]
     fn dithering_still_lands_on_the_grid_of_its_bit_depth() {
         let size = Size::new(64, 64);
@@ -490,7 +493,7 @@ mod tests {
     }
 
     /// 抖动把量化误差换成局部平均意义上的保真：一块平缓灰调抖过之后块内均值贴着原值，
-    /// 而不抖动会整块塌到一个格点上。判据看的正是这个差别（ADR 0002）。
+    /// 而不抖动会整块塌到一个格点上。画质分看的正是这个差别（ADR 0002）。
     #[test]
     fn dithering_holds_the_local_average_where_rounding_loses_it() {
         // 200 在 1bit 的格点 {0,255} 上就近取整落到 255，整块偏亮 55 级。
@@ -569,7 +572,7 @@ mod tests {
         for (name, _) in DITHERS {
             assert!(error.contains(name), "清单里少了 {name}：{error}");
         }
-        // 与滤波器那一侧同一条：规范名要能自己解析回来，参数哈希拿它当稳定写法。
+        // 与缩放算法那一侧同一条：规范名要能自己解析回来，参数哈希拿它当稳定写法。
         for (_, dither) in DITHERS {
             assert_eq!(Dither::resolve(dither.name()).expect("规范名"), *dither);
         }

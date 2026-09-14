@@ -6,7 +6,7 @@
 //! `super` 的模块文档《终端库在哪一半》。
 //!
 //! 除了那三件事，这一层还担着**状态机够不着的那几支**（见 [`press`]）：
-//! 起一趟、按停、展开、读写盘上那份预设、把标定图交给库里第三个 seam。
+//! 起一趟、按停止、展开、读写盘上那份预设、把灰阶测试图交给库里第三个 seam。
 //! 那几支要的是那一趟、那块盘与那个库，而状态机三样都不碰。
 
 use std::io::{IsTerminal, Stderr, stderr};
@@ -42,7 +42,7 @@ const TICK: Duration = Duration::from_millis(80);
 /// 进会话，跑到用户退出为止。
 ///
 /// 出的是**最后那一趟**的退出码，与命令行那一路同一套（见 [`super::live::Live::exit_code`]）：
-/// 全部成功 `0`、有卷被隔离 `2`、有卷没做成 `3`、拒绝执行 `1`。一趟都没跑过是 `0`。
+/// 全部成功 `0`、有卷被隔离 `2`、有卷没做成 `3`、拒绝开始 `1`。一趟都没跑过是 `0`。
 ///
 /// 退出前把那份报告照原格式印到 **stdout**：会话整个画在 stderr 上，
 /// `tonefit > 报告.txt` 因此仍然成立。**最后那一趟没做成也照印**——
@@ -60,7 +60,7 @@ pub fn enter() -> Result<u8> {
     // 预设文件那一份。**找不到用户配置目录不在这里拦**：那台机器上会话照进，
     // 只是按下 `p` 那一刻它说得出为什么（见 `preset::Presets`）。
     let presets = Presets::found();
-    // 标定图落在会话是从哪儿敲起来的那个目录里（见 [`chart_file`]）。**一次问出来**：
+    // 灰阶测试图落在会话是从哪儿敲起来的那个目录里（见 [`chart_file`]）。**一次问出来**：
     // 一趟会话里当前目录不会变，而按一次 `c` 问一次只会让两张图落在两个地方。
     // 问不出来（那个目录被删了）时退回空路径，`chart_file` join 出来的于是是个**裸文件名**：
     // 图仍旧落在同一处（进程的当前目录，只是这一头叫不出它的名字），
@@ -107,7 +107,7 @@ fn drive(
                 return Ok(());
             }
         }
-        // 那一趟停在决策点上了：会话跟着停下来等人答话（`p1-session/14`）。
+        // 那一趟停在确认点上了：会话跟着停下来等人答话（`p1-session/14`）。
         // 停在那儿的是计算线程，而状态机碰不到线程——这一层问得到，把答案交进去。
         session.at_the_decision_point(running.deciding());
         // 那一趟跑完了：配置又改得动。
@@ -120,17 +120,17 @@ fn drive(
 /// 把一个键交给会话。
 ///
 /// **只有够得着那一趟、或者够得着盘的那几支不走 [`Session::press`]**：
-/// [起一趟](Action::Start)、[按停](Action::Stop)、[展开](Action::Expand)与
+/// [起一趟](Action::Start)、[按停止](Action::Stop)、[展开](Action::Expand)与
 /// [换一卷](Action::Turn)，加上预设那四支（[列出来](Action::Pick)、
 /// [套用](Action::Take)、[存下来](Action::Store)、[删掉](Action::Erase)）
-/// 与[出标定图](Action::Chart)。
+/// 与[出灰阶测试图](Action::Chart)。
 /// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
 /// 从攒着的那份报告上数出此刻有哪几卷、读写用户配置目录下那份 TOML、
-/// 把标定图交给库里那第三个 seam，
+/// 把灰阶测试图交给库里那第三个 seam，
 /// 都在这一层——状态机一个终端都不碰、不起线程，也读不到那一趟攒下来的东西与盘上的东西。
-/// 拼不出 `Request` 的那两种（型号没挑、输出根没填）当场说一句，会话原地不动。
+/// 拼不出 `Request` 的那两种（型号没挑、输出目录没填）当场说一句，会话原地不动。
 ///
-/// `here` 是标定图落在哪个目录下（见 [`chart_file`]）：真会话里是进程的当前目录，
+/// `here` 是灰阶测试图落在哪个目录下（见 [`chart_file`]）：真会话里是进程的当前目录，
 /// 由 [`enter`] 一次问出来。
 fn press(
     session: &mut Session,
@@ -153,7 +153,7 @@ fn press(
             }
             Exit::Stay
         }
-        // 按停：状态机把闩升一级（收尾 → 中止，ADR 0013），这一层把升到的那一级
+        // 按停止：状态机把闩升一级（做完再停 → 立即停止，ADR 0013），这一层把升到的那一级
         // 交给跑着的那一趟。两处记的是同一个字，出处只有状态机那一份——
         // 这里读的就是它刚升完的结果，不自己再算一次。
         Action::Stop => {
@@ -161,11 +161,11 @@ fn press(
             running.stop(session.stopping());
             exit
         }
-        // 决策点上答话：状态机把会话放回「跑着」那一副，这一层把那个字交给停在
-        // 决策点上的那条线程。与按停同一条分工——认键在那边，碰线程在这边。
-        // **两处记的是同一个字**，而它就在这个动作里带着：决策点回的是当场那个字、
+        // 确认点上答话：状态机把会话放回「跑着」那一副，这一层把那个字交给停在
+        // 确认点上的那条线程。与按停止同一条分工——认键在那边，碰线程在这边。
+        // **两处记的是同一个字**，而它就在这个动作里带着：确认点回的是当场那个字、
         // 不是闩（ADR 0012 决定第 2 条），因此这里不去问状态机再算一次。
-        // 它管几卷（「剩下的卷都这样」）同样带在动作里，摆到那道闸的默认答案上去
+        // 它管几卷（「后面的卷都写出」）同样带在动作里，摆到那道闸的默认答案上去
         // （`Running::decide`）——那一格也不是闩。
         Action::Answer(said, reach) => {
             let exit = session.act(action);
@@ -212,7 +212,7 @@ fn press(
             erase_preset(session, presets);
             Exit::Stay
         }
-        // 出标定图：画图与落盘整件事在库里那第三个 seam 上，而状态机碰不到盘。
+        // 出灰阶测试图：画图与落盘整件事在库里那第三个 seam 上，而状态机碰不到盘。
         // 与预设那三支同一条分法。
         Action::Chart => {
             write_chart(session, here);
@@ -222,18 +222,18 @@ fn press(
     }
 }
 
-/// 这一趟**在决策点上等不等人**，以及它真正走的是哪一种模式（ADR 0012 决定第 3 条）。
+/// 这一趟**在确认点上等不等人**，以及它真正走的是哪一种模式（ADR 0012 决定第 3 条）。
 ///
-/// **试算一律续做，点名了几个路径都一样**（决定第 3 条，`volume-discovery/07`）。
-/// 那一趟因此改走 `Mode::Process`——参照要留着（决定第 5 条：试算走 `Retention::Keep`），
-/// 答继续时第一遍才不必重算。「只算不写」在那条路上重述为**不写输出**：
+/// **预览一律接着写出，点名了几个路径都一样**（决定第 3 条，`volume-discovery/07`）。
+/// 那一趟因此改走 `Mode::Process`——参照要留着（决定第 5 条：预览走 `Retention::Keep`），
+/// 答继续时分析环节才不必重算。「只算不写」在那条路上重述为**不写输出**：
 /// 越过预算的页仍建溢写临时文件，运行结束即收走。
 ///
 /// **不按卷数分岔，也不按点名了几个路径分岔。** 从前这里判的是
 /// `inputs.len() == 1`，而那判的是「点名了一个**路径**」——发现落地之后
 /// （`volume-discovery/03`：`inputs` 的语义是「一批**在里面找卷的地方**」），
 /// 一个路径常常就是几十卷，这两件事早已脱钩。决定第 1 条那条内存理由拦的是
-/// 「一次押住**全部卷**的参照」，而决策点本来就是逐卷的：逐卷停下来问，
+/// 「一次押住**全部卷**的参照」，而确认点本来就是逐卷的：逐卷停下来问，
 /// 缓存始终只押着当前那一卷，内存一点不涨（见 ADR 0012
 /// 《决定第 1 条那条内存理由不覆盖逐卷决策点》）。
 ///
@@ -348,7 +348,7 @@ fn erase_preset(session: &mut Session, presets: &Presets) {
     }
 }
 
-/// **出标定图**：按设备层那块面板画一张，写到 [`chart_file`] 点的那个文件上。
+/// **出灰阶测试图**：按设备设置那块面板画一张，写到 [`chart_file`] 点的那个文件上。
 ///
 /// 落盘整件事在库里（[`tonefit::write_calibration_chart`]）：这一层建的不是目录、
 /// 写的不是文件，只是**点了个名**——父目录不在就建出来也是那一头的事
@@ -369,16 +369,16 @@ fn write_chart(session: &mut Session, here: &Path) {
     }
 }
 
-/// 标定图落在哪个文件上：`here` 下面一个**照 profile 取名**的 PNG。
+/// 灰阶测试图落在哪个文件上：`here` 下面一个**照 profile 取名**的 PNG。
 ///
-/// **不落在输出根下面。** 那是被处理的页的去处，而标定图是量具——
-/// 两者走的不是同一条路（`lib.rs` 的第三个 seam）；何况按 `c` 那一刻输出根多半还空着，
-/// 而「先填一个输出根才出得了标定图」把设备层的事拴在了范围层上。
+/// **不落在输出目录下面。** 那是被处理的页的去处，而灰阶测试图是量具——
+/// 两者走的不是同一条路（`lib.rs` 的第三个 seam）；何况按 `c` 那一刻输出目录多半还空着，
+/// 而「先填一个输出目录才出得了灰阶测试图」把设备设置的事拴在了路径与输出上。
 /// 落在会话是从哪儿敲起来的那个目录里：那是用户此刻人在的地方，图出来就在手边。
 ///
-/// 名字里带着**型号与灰阶数**，因为图跟着这两项变（灰阶数决定排几条阶梯）：
+/// 名字里带着**型号与屏幕灰阶数**，因为图跟着这两项变（屏幕灰阶数决定排几条阶梯）：
 /// 换一台设备出的是另一张图，不该盖掉上一张。同一个 profile 再按一次写的是同样的字节——
-/// 标定图不带记录、不带时间戳，重写一遍等于没变（见 `crate::calibrate`）。
+/// 灰阶测试图不带记录、不带时间戳，重写一遍等于没变（见 `crate::calibrate`）。
 ///
 /// 全用 ASCII：这张图是要**拷进设备**看的，而那一头认不认得中文文件名说不准
 /// （图内留着英文说明也是这个理由）。型号名本来就是内置表里的规范名，
@@ -406,7 +406,7 @@ fn not_run_yet(starters: &Starters) -> String {
 /// 展开**光标停着的那一卷**的逐页，或者换到下一卷。
 ///
 /// **展开的是报告区那个光标停着的那一卷**（`p3-session-legibility/10`）：
-/// 跟随着的时候就是最新收摊的那一卷，跟随停了就是停着的那一卷——包括**决策点上
+/// 自动滚动着的时候就是最新收摊的那一卷，自动滚动停了就是停着的那一卷——包括**确认点上
 /// 那一卷**（`p2-loose-ends/08`：不许摊开上一卷冒充它）。从前它恒是第一卷，
 /// 因为那时报告区还没有光标。
 ///
@@ -674,14 +674,14 @@ mod tests {
         Presets::at(space.path().join("tonefit").join("presets.toml"))
     }
 
-    /// 按一个**不出标定图**的键。
+    /// 按一个**不出灰阶测试图**的键。
     ///
     /// [`press`] 收的那个「图落在哪个目录下」只有 `c` 那一个键用得到，而这几条用例
     /// 一个都不按它。去处仍旧点在**临时目录**里（那份预设文件的上一层，见 [`presets`]）：
     /// 万一往后有人往这几条里加一下 `c`，写出去的东西也落在那儿，
     /// 不会掉进跑用例的那个目录——相对路径会。
     ///
-    /// 出标定图那两条不走这里：它们要说的正是「写到哪儿了、写不出去时怎么办」，
+    /// 出灰阶测试图那两条不走这里：它们要说的正是「写到哪儿了、写不出去时怎么办」，
     /// 因此自己直接调 [`press`]，把去处摆在明面上。
     fn tap(session: &mut Session, running: &mut Running, presets: &Presets, key: Key) -> Exit {
         let file = presets.path().expect("用例里那份预设文件的位置是定死的");
@@ -709,7 +709,7 @@ mod tests {
         );
     }
 
-    /// **按停那个键真的走到了跑着的那一趟身上。**
+    /// **按停止那个键真的走到了跑着的那一趟身上。**
     ///
     /// 两头各自有用例（状态机那边 `one_key_pressed_twice_is_the_two_stage_stop`、
     /// 闩那边 `the_latch_only_ever_goes_up`），接头处只有这一条——而接头处正是本层
@@ -726,7 +726,7 @@ mod tests {
         let nowhere = presets(&space);
         session.run_started();
 
-        // 一次：收尾。两头记的是同一个字。
+        // 一次：做完再停。两头记的是同一个字。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(session.stopping(), tonefit::Instruction::Finish);
         assert_eq!(running.pressed(), tonefit::Instruction::Finish);
 
-        // 再一次：中止。
+        // 再一次：立即停止。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
@@ -760,15 +760,15 @@ mod tests {
         assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
     }
 
-    /// **答话那个键真的走到了停在决策点上的那条线程身上**（`p1-session/14`）。
+    /// **答话那个键真的走到了停在确认点上的那条线程身上**（`p1-session/14`）。
     ///
-    /// 这一条走的是整条路：按 `t` 起一趟（试算，因此 [`resuming`] 把它改成续做的那一趟）→
-    /// 那条线程停在决策点上 → 会话跟着换一副样子 → 按 `s` 答收尾 → 那条线程接着跑完。
+    /// 这一条走的是整条路：按 `t` 起一趟（预览，因此 [`resuming`] 把它改成接着写出的那一趟）→
+    /// 那条线程停在确认点上 → 会话跟着换一副样子 → 按 `s` 答做完再停 → 那条线程接着跑完。
     /// 两头各自有用例（状态机那边 `deciding_action`，闸那边
     /// `answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume`），
     /// **接头处只有这一条**——而接头处正是本层唯一做的事。
     ///
-    /// **等答话时会话不冻屏**由它的形状说出来：那条线程停在闸上，而这一头照旧收键、
+    /// **等待确认时会话不冻屏**由它的形状说出来：那条线程停在闸上，而这一头照旧收键、
     /// 照旧问得动 [`Session::mode`]。等的那一步走的是「转到条件成立为止」，
     /// 不是 sleep 撞运气（见 `Running::deciding`）。
     ///
@@ -777,7 +777,7 @@ mod tests {
     fn answering_at_the_decision_point_reaches_the_thread_waiting_there() {
         let space = tempfile::tempdir().expect("建得出临时目录");
         // 一页加一个透传文件（见 [`super::live::fixture::a_real_volume`]）：页非有不可，
-        // 一页都没有的东西不是卷，那条线程根本走不到决策点。
+        // 一页都没有的东西不是卷，那条线程根本走不到确认点。
         let volume = crate::session::live::fixture::a_real_volume(space.path(), "卷一");
         let out = space.path().join("出");
 
@@ -792,14 +792,14 @@ mod tests {
         // 这一条一个预设键都不按（见 [`presets`]）。
         let nowhere = presets(&space);
 
-        // 按 `t`：试算，因此这一趟改走 `Mode::Process` 并在决策点上等人。
+        // 按 `t`：预览，因此这一趟改走 `Mode::Process` 并在确认点上等人。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('t')),
             Exit::Stay
         );
         assert!(matches!(session.stage(), state::Stage::Running(_)));
 
-        // 那条线程走到决策点上停住；会话每帧问一次，跟着换一副样子（见 [`drive`]）。
+        // 那条线程走到确认点上停住；会话每帧问一次，跟着换一副样子（见 [`drive`]）。
         while !running.deciding() {
             std::thread::yield_now();
         }
@@ -807,22 +807,22 @@ mod tests {
         assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
         assert!(
             running.live().expect("跑过一趟").summarized().is_some(),
-            "决策点上没有报告可画"
+            "确认点上没有报告可画"
         );
 
-        // 等答话时会话仍旧收键：按一个没有意义的键，它照旧原地不动、不退出。
+        // 等待确认时会话仍旧收键：按一个没有意义的键，它照旧原地不动、不退出。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('e')),
             Exit::Stay
         );
         assert!(session.deciding(), "按了一个没有意义的键就走掉了");
 
-        // 按 `s` 答收尾：这一卷一个字节都不写，那条线程接着跑完。
+        // 按 `s` 答做完再停：这一卷一个字节都不写，那条线程接着跑完。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('s')),
             Exit::Stay
         );
-        assert!(!session.deciding(), "答完话会话还停在决策点上");
+        assert!(!session.deciding(), "答完话会话还停在确认点上");
         while !running.reap() {
             std::thread::yield_now();
         }
@@ -831,11 +831,15 @@ mod tests {
         assert_eq!(
             session.focus(),
             &state::Focus::Config,
-            "收场之后配置还改不动"
+            "结束之后配置还改不动"
         );
-        assert!(!out.exists(), "答了收尾，输出根却被建了出来");
+        assert!(!out.exists(), "答了做完再停，输出目录却被建了出来");
         let live = running.live().expect("跑过一趟");
-        assert_eq!(live.report().volumes.len(), 1, "答收尾把报告也一起停掉了");
+        assert_eq!(
+            live.report().volumes.len(),
+            1,
+            "答做完再停把报告也一起停掉了"
+        );
         assert_eq!(
             live.decided(),
             Some(tonefit::Instruction::Finish),
@@ -843,14 +847,14 @@ mod tests {
         );
     }
 
-    /// **试算一律续做，点名了几个路径都一样**（ADR 0012 决定第 3、5 条，
+    /// **预览一律接着写出，点名了几个路径都一样**（ADR 0012 决定第 3、5 条，
     /// `volume-discovery/07` 票面）。
     ///
     /// 各情形问的是同一个函数交出来的那两样：这一趟**真走**哪一种模式、
-    /// 它**在决策点上等不等人**。
+    /// 它**在确认点上等不等人**。
     ///
-    /// 试算那几支两样都变：模式从 `DryRun` 换成 `Process`（参照要留着，
-    /// 答继续时第一遍才不必重算），并且等人。**这一处不再数点名了几个路径**——
+    /// 预览那几支两样都变：模式从 `DryRun` 换成 `Process`（参照要留着，
+    /// 答继续时分析环节才不必重算），并且等人。**这一处不再数点名了几个路径**——
     /// 从前数的是 `inputs.len() == 1`，而发现落地之后一个路径常常就是几十卷
     /// （`volume-discovery/03`），那个数早就不说明有几卷了。
     ///
@@ -866,15 +870,19 @@ mod tests {
             ..live::fixture::request(mode)
         };
 
-        // 试算：改走 Process，并且在决策点上等人——点名一个路径与点名两个一个待遇。
+        // 预览：改走 Process，并且在确认点上等人——点名一个路径与点名两个一个待遇。
         for request in [one(RunMode::DryRun), many(RunMode::DryRun)] {
             let inputs = request.inputs.len();
             let (request, resumes) = resuming(request);
-            assert_eq!(resumes, Resuming::Waits, "试算没续做（{inputs} 个路径）");
+            assert_eq!(
+                resumes,
+                Resuming::Waits,
+                "预览没接着写出（{inputs} 个路径）"
+            );
             assert_eq!(
                 request.mode,
                 RunMode::Process,
-                "续做那一趟得留参照（ADR 0012 决定第 5 条）"
+                "接着写出那一趟得留参照（ADR 0012 决定第 5 条）"
             );
         }
 
@@ -885,13 +893,13 @@ mod tests {
             assert_eq!(
                 resumes,
                 Resuming::GoesOn,
-                "执行那一趟停下来等人了（{inputs} 个路径）"
+                "转换那一趟停下来等人了（{inputs} 个路径）"
             );
             assert_eq!(request.mode, RunMode::Process);
         }
 
         // 一个卷都没勾：范围为空由库那一侧当场拒掉——那一趟一条事件都不发，
-        // 决策点根本到不了，等不等人因此不影响任何事（见 `Running::start` 起的那道闸）。
+        // 确认点根本到不了，等不等人因此不影响任何事（见 `Running::start` 起的那道闸）。
         let (request, resumes) = resuming(Request {
             inputs: Vec::new(),
             ..live::fixture::request(RunMode::DryRun)
@@ -900,7 +908,7 @@ mod tests {
         assert_eq!(request.mode, RunMode::Process);
     }
 
-    /// **「剩下的卷都这样」那个键真的走到了停在决策点上的那条线程身上**
+    /// **「后面的卷都写出」那个键真的走到了停在确认点上的那条线程身上**
     /// （`volume-discovery/07`，spec 的 story 13）。
     ///
     /// 与答话那一条同一个位置：接头处是本层唯一做的事——把状态机认出来的那个字
@@ -908,7 +916,7 @@ mod tests {
     /// `which_keys_do_what_in_which_state`，闸那边
     /// `answering_for_the_rest_once_stops_the_asking_and_leaves_the_latch_alone`）。
     ///
-    /// 走的是整条路：按 `t` 起一趟**两个卷**的试算 → 停在头一卷的决策点上 →
+    /// 走的是整条路：按 `t` 起一趟**两个卷**的预览 → 停在头一卷的确认点上 →
     /// 按 `a` → 那条线程一路把两卷都做完，一次都不再停。
     #[test]
     fn pressing_the_rest_too_reaches_the_thread_waiting_at_the_decision_point() {
@@ -938,17 +946,17 @@ mod tests {
         session.at_the_decision_point(running.deciding());
         assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
 
-        // 按 `a`：这一卷接着做，剩下的卷都这样。
+        // 按 `a`：这一卷接着做，后面的卷都写出。
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Char('a')),
             Exit::Stay
         );
-        assert!(!session.deciding(), "答完话会话还停在决策点上");
+        assert!(!session.deciding(), "答完话会话还停在确认点上");
         while !running.reap() {
             // 真停下来的话当场红，而不是挂在那儿等一个不会来的人。
             assert!(
                 !running.deciding(),
-                "答过「剩下的卷都这样」，它却又停下来问了"
+                "答过「后面的卷都写出」，它却又停下来问了"
             );
             session.at_the_decision_point(running.deciding());
             std::thread::yield_now();
@@ -969,7 +977,7 @@ mod tests {
     /// 与「按得动」在屏上长得一模一样。眼下按键表在那个阶段上就不派它
     /// （`super::state::Session::browsing_action`），屏上因此一处都不摆。
     ///
-    /// 后一半的接头处与按停那一条同一个位置：状态机读不到那一趟攒下来的东西，
+    /// 后一半的接头处与按停止那一条同一个位置：状态机读不到那一趟攒下来的东西，
     /// 「有几卷」「那一卷落在第几行」两个数都由本层从 [`Running::live`] 上数出来。
     /// 不开终端——[`press`] 收的是 `&mut Session` 与 `&mut Running`。
     #[test]
@@ -1003,12 +1011,12 @@ mod tests {
                 output_root: workspace.path().join("出"),
                 ..live::fixture::request(tonefit::Mode::DryRun)
             },
-            // 两卷，因此不续做：这一条问的是展开，与决策点无关（见 [`resuming`]）。
+            // 两卷，因此不接着写出：这一条问的是展开，与确认点无关（见 [`resuming`]）。
             Resuming::GoesOn,
         );
         // 状态机那一头也跟着走一步——真会话里 [`press`] 起完线程就调它
-        // （两处记的是同一趟）。展开那个键**要等这一趟收场**才派得出动作，
-        // 而「收场了」是从「跑着」回来的（见 [`Session::run_finished`]）。
+        // （两处记的是同一趟）。展开那个键**要等这一趟结束**才派得出动作，
+        // 而「结束了」是从「跑着」回来的（见 [`Session::run_finished`]）。
         session.run_started();
         while !running.reap() {
             std::thread::yield_now();
@@ -1016,14 +1024,14 @@ mod tests {
         session.run_finished();
         tap(&mut session, &mut running, &nowhere, Key::Char('e'));
         let expansion = session.expansion().cloned().expect("该展开了");
-        // **展开的是光标停着的那一卷**（`p3-session-legibility/10`）：跟随着的时候
+        // **展开的是光标停着的那一卷**（`p3-session-legibility/10`）：自动滚动着的时候
         // 那是**最新收摊的那一卷**，也就是第二卷。从前它恒是第一卷——那时报告区还没有光标。
         assert_eq!(expansion.volume, Volume::Settled(1));
         assert_eq!(expansion.at, 0, "没落在那一卷的头一页上");
         assert_eq!(
             expansion.listing,
             Listing::Notable,
-            "展开那一下该只列要紧的页"
+            "展开那一下该只列需留意的页"
         );
         assert!(session.notice().is_none(), "展开之后上一句话没抹掉");
 
@@ -1100,7 +1108,7 @@ mod tests {
             [Volume::Settled(0), Volume::Failed(0)],
             "没做成的那一卷停不上去"
         );
-        // 跟随着的时候光标停在最新**收摊**的那一卷上：没做成的那一卷不抢跟随。
+        // 自动滚动着的时候光标停在最新**收摊**的那一卷上：没做成的那一卷不抢自动滚动。
         assert_eq!(session.standing(&live), Some(Volume::Settled(0)));
 
         // 光标挪到没做成的那一卷上（这一趟只有一枝，`↑↓` 在这一枝底下挪）。
@@ -1130,9 +1138,9 @@ mod tests {
         );
     }
 
-    /// **停在设备层上按一个键，标定图就落在盘上**（13 号票第一、二、三条）。
+    /// **停在设备设置上按一个键，灰阶测试图就落在盘上**（13 号票第一、二、三条）。
     ///
-    /// 接头处在这一层：状态机派得出[出标定图](Action::Chart)那个动作，落盘整件事在库里
+    /// 接头处在这一层：状态机派得出[出灰阶测试图](Action::Chart)那个动作，落盘整件事在库里
     /// （[`tonefit::write_calibration_chart`]）。写出来的字节**与库直接写的逐字节相同**——
     /// 这一条就是「会话只是调那个接口」的说法：会话若自己拼过一格像素，两份就分得开。
     /// 图仍是量具（不判定、不量化、无损写出、不带记录）由库那一侧的用例钉着。
@@ -1162,7 +1170,7 @@ mod tests {
             "型号没挑却写出了东西"
         );
 
-        // 挑一个型号、覆盖一次灰阶数，再按一次：图落在那个目录下。
+        // 挑一个型号、覆盖一次屏幕灰阶数，再按一次：图落在那个目录下。
         session.device.profile = Some("boox-poke6".to_owned());
         session.device.gray_levels = Some(8);
         press(&mut session, &mut running, &nowhere, &here, Key::Char('c'));
@@ -1173,14 +1181,14 @@ mod tests {
             .collect();
         assert_eq!(written.len(), 1, "{written:?}");
         let chart = &written[0];
-        // 名字里带着型号与灰阶数：换一台设备出的是另一张图，不该盖掉上一张。
+        // 名字里带着型号与屏幕灰阶数：换一台设备出的是另一张图，不该盖掉上一张。
         let name = chart.file_name().expect("有名字").to_string_lossy();
         assert!(name.contains("boox-poke6") && name.contains("8"), "{name}");
         assert!(name.ends_with(".png"), "{name}");
         // 与库直接写出来的逐字节相同——会话一格像素都没自己拼。
         let straight = space.path().join("库自己写的.png");
         tonefit::write_calibration_chart(
-            &session.chart_profile().expect("设备层填齐了"),
+            &session.chart_profile().expect("设备设置填齐了"),
             &straight,
         )
         .expect("库写得出来");
@@ -1226,9 +1234,9 @@ mod tests {
             .expect("写不出去要说一句")
             .said()
             .to_owned();
-        assert!(said.contains("标定图"), "{said}");
+        assert!(said.contains("灰阶测试图"), "{said}");
         assert!(said.contains("这是个文件"), "{said}");
-        // 三层一格没动，会话还在浏览：下一个键照按。
+        // 三组设置一格没动，会话还在浏览：下一个键照按。
         assert_eq!(session.focus(), &state::Focus::Config);
         assert_eq!(
             tap(&mut session, &mut running, &nowhere, Key::Down),
@@ -1236,12 +1244,12 @@ mod tests {
         );
     }
 
-    /// **存出去再套回来，两层逐格相同，而范围层一格没动**（本票的四条验收）。
+    /// **存出去再套回来，两层逐格相同，而路径与输出一格没动**（本票的四条验收）。
     ///
     /// 走的是真文件：`p` 列出来、末行 `⏎` 打一个名字存下去、改乱两层、再 `p` 套回来。
     /// 盘在临时目录下（见 [`presets`]），一个用户的东西都不碰。
     ///
-    /// 「没说」与「说了默认值」的差别一并钉在这里：存之前把适配方式转到**恰好等于默认值**
+    /// 「没说」与「说了默认值」的差别一并钉在这里：存之前把缩放方式转到**恰好等于默认值**
     /// 的那一档上，套回来之后它仍是「说了」而不是「没说」（停车场 Q58）。
     #[test]
     fn what_the_session_stores_is_what_it_takes_back() {
@@ -1254,7 +1262,7 @@ mod tests {
             path: PathBuf::from("库/卷一"),
             on: true,
         });
-        // 设备层挑一个型号，口味层点两项：一项与默认值不同，一项**恰好等于**默认值。
+        // 设备设置挑一个型号，处理选项点两项：一项与默认值不同，一项**恰好等于**默认值。
         session.device.profile = Some("boox-poke6".to_owned());
         session.taste.filter = Some(tonefit::Filter::Hamming);
         session.taste.fit = Some(tonefit::FitMode::default());
@@ -1286,15 +1294,15 @@ mod tests {
         tap(&mut session, &mut running, &presets, Key::Enter);
 
         assert_eq!(session.preset(), stored, "套回来的两层与存出去的不一样");
-        assert_eq!(session.scope, scope, "套用预设动了范围层");
+        assert_eq!(session.scope, scope, "套用预设动了路径与输出");
         assert_eq!(
             session.taste.fit,
             Some(tonefit::FitMode::default()),
             "「说了一个恰好等于默认值的值」套回来变成了「没说」"
         );
-        // 套完回到浏览，说的那句话里带着「范围层没动」。
+        // 套完回到浏览，说的那句话里带着「路径与输出没动」。
         let said = session.notice().expect("套完要说一句").said().to_owned();
-        assert!(said.contains("范围层"), "{said}");
+        assert!(said.contains("路径与输出"), "{said}");
     }
 
     /// **命令行上 `--preset` 拿到的，与会话里存出去的是同一份**（本票的第五条验收）。
@@ -1643,7 +1651,7 @@ mod tests {
     fn the_not_run_yet_complaint_names_the_keys_the_table_hands_it() {
         assert_eq!(
             not_run_yet(&Starters::faked(Some("r"), Some("w"))),
-            "还没跑过：先按 r 试算或 w 执行，报告出来了才展得开"
+            "还没跑过：先按 r 预览或 w 转换，报告出来了才展得开"
         );
         assert_eq!(
             not_run_yet(&Starters::faked(None, None)),
@@ -1656,11 +1664,11 @@ mod tests {
         let said = session.notice().expect("说一句").said().to_owned();
         let starters = draw::keys::starters(&session);
         assert!(
-            said.contains(&format!("{} 试算", starters.dry.expect("试算那个键"))),
+            said.contains(&format!("{} 预览", starters.dry.expect("预览那个键"))),
             "{said}"
         );
         assert!(
-            said.contains(&format!("{} 执行", starters.run.expect("执行那个键"))),
+            said.contains(&format!("{} 转换", starters.run.expect("转换那个键"))),
             "{said}"
         );
     }

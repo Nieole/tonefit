@@ -13,7 +13,7 @@
 //! | 屏上那一块 | 住在 |
 //! |---|---|
 //! | 摆不下时谁让位 | [`yielding`] |
-//! | 左栏：三层配置 | [`config`] |
+//! | 左栏：三组设置 | [`config`] |
 //! | 预设栏 | [`picker`] |
 //! | 主区上面那一块：总览块 | [`overview`] |
 //! | 主区下面那一块：报告区 | [`report`] |
@@ -53,7 +53,7 @@
 //!
 //! 报告区画的是 [`crate::render`] 那几个函数——命令行与会话共用，一个字都不在这里重写。
 //! 「边跑边攒」因此不必另有一套说法：一卷跑完那条事件带着那一卷的报告（ADR 0011），
-//! [`crate::render::volume`] 收下它就画得出判定、定档页、隔离与这一趟怎么读的。
+//! [`crate::render::volume`] 收下它就画得出判定、代表页、隔离与这一趟怎么读的。
 //!
 //! 长在画法这一层的只有**命令行上根本没有**的那两样：左栏那几行配置的标签与按键提示
 //! （[`config`] 与 [`footer`]），以及总览块的排版（[`overview`]）。
@@ -299,8 +299,8 @@ mod tests {
             assert!(screen.contains(block), "主区少了「{block}」那一块");
         }
         // 一趟都没跑过时，主区说的是「按哪个键跑起来」。
-        assert!(screen.contains("t试算"), "{screen}");
-        assert!(screen.contains("x执行"), "{screen}");
+        assert!(screen.contains("t预览"), "{screen}");
+        assert!(screen.contains("x转换"), "{screen}");
     }
 
     /// **屏上提到起一趟那两个键的每一处，说的都是按键表自己那两个**（`no-false-line/06`，
@@ -314,17 +314,17 @@ mod tests {
     fn every_mention_of_the_starting_keys_is_the_key_tables_own() {
         let mut session = Session::new();
         let starters = keys::starters(&session);
-        let dry = starters.dry.expect("一趟都没跑过时试算那个键在");
-        let run = starters.run.expect("一趟都没跑过时执行那个键在");
+        let dry = starters.dry.expect("一趟都没跑过时预览那个键在");
+        let run = starters.run.expect("一趟都没跑过时转换那个键在");
 
         let screen = tight(&screen(&mut session, None, 120, 40));
 
         for said in [
             // 总览块那一句。
-            format!("还没跑过。{dry} 试算 · {run} 执行"),
+            format!("还没跑过。{dry} 预览 · {run} 转换"),
             // 报告区那两句。
-            format!("按 {dry} 试算："),
-            format!("按 {run} 执行："),
+            format!("按 {dry} 预览："),
+            format!("按 {run} 转换："),
         ] {
             assert!(
                 screen.contains(&tight(&said)),
@@ -333,15 +333,15 @@ mod tests {
         }
     }
 
-    /// **停在决策点上等人拿主意时屏上是什么样**（`p1-session/14`，ADR 0012）。
+    /// **停在确认点上等人拿主意时屏上是什么样**（`p1-session/14`，ADR 0012）。
     ///
     /// 三处一次问齐，各是票面上的一条：
     ///
     /// - **总览块那一格的抬头说得出「它为什么不动」**——横条这时一步都不走，
-    ///   而眼睛盯着横条的人不会往下扫一行（与按停那一级挂在同一处，停车场 Q71）。
+    ///   而眼睛盯着横条的人不会往下扫一行（与按停止那一级挂在同一处，停车场 Q71）。
     /// - **报告区把那一卷画出来了**（停车场 Q52）：判定与逐页那几个数就是拿主意的依据，
     ///   而那一卷此刻还没收摊，报告里没有它。
-    /// - **屏底摆着答话那三个键**，各带着它买的东西：`x` 是第一遍不重算，
+    /// - **屏底摆着答话那三个键**，各带着它买的东西：`x` 是分析环节不重算，
     ///   `a` 是往下不再问，`s` 是等价 dry-run**外加剩下的卷也不开工**。
     ///   跑着时那一副（`s` 停、两级）在这里一个字都不该剩下。
     #[test]
@@ -355,11 +355,14 @@ mod tests {
 
         let mut session = Session::new();
         session.run_started();
-        // 跑着的时候屏底摆的是按停那一副，而续做那一趟先预告它会停下来。
+        // 跑着的时候屏底摆的是按停止那一副，而接着写出那一趟先预告它会停下来。
         let running = tight(&screen(&mut session, Some(&live), 120, 40));
-        assert!(running.contains(&tight("s 停（按一次收尾")), "{running}");
         assert!(
-            running.contains(&tight("每一卷第一遍走完都会停下来等你拿主意")),
+            running.contains(&tight("s 停（按一次做完再停")),
+            "{running}"
+        );
+        assert!(
+            running.contains(&tight("每一卷分析环节走完都会停下来等你拿主意")),
             "{running}"
         );
 
@@ -376,7 +379,7 @@ mod tests {
             "{waiting}"
         );
         assert!(!waiting.contains(&tight("还剩")), "{waiting}");
-        // 二、那一卷画出来了：**表上给它一行**，记号、档位与定档页都在屏上——
+        // 二、那一卷画出来了：**表上给它一行**，记号、档位与代表页都在屏上——
         // 拿主意要看的正是这几个数，而末尾那一句说清它还没收摊
         // （见 [`super::report::the_volume_waiting_at_the_decision_point_gets_a_row_of_its_own`]）。
         for said in ["卷一", "4bit", "001.jpg", "等你拿主意"] {
@@ -384,28 +387,28 @@ mod tests {
         }
         // 抬头那一行说清这一趟此刻只算不写——盘上一个字节都没有。
         // **问的是总览块那个抬头**：`dry-run` 那三个字从前是从屏底那一行上撞见的
-        // （`s 收尾（……等价 dry-run……）`），而屏底此刻摆的是短的那一份
+        // （`s 做完再停（……等价 dry-run……）`），而屏底此刻摆的是短的那一份
         // （见下一段），这一条因此改问它本来要问的那一处。
-        assert!(waiting.contains(&tight("试算 · 第 1/1 卷")), "{waiting}");
+        assert!(waiting.contains(&tight("预览 · 第 1/1 卷")), "{waiting}");
         // 三、答话那三个键，连同它们各自买的东西。
         // **「等价 dry-run」不在这一行上**：屏底那一句是短的那一份，而这一格再长一截
         // 就把下一行那句话（「这一卷此刻一个字节都没写」）挤掉了——那一句正是答这一问
         // 要知道的。长的那一份在 `?` 那张表上（`p4-parking-lot/07`，见
         // `super::keys::says`）。
         for key in [
-            "x 接着做第二遍",
-            "第一遍不重算",
-            "a 剩下的卷都这样",
+            "x 接着做写出环节",
+            "分析环节不重算",
+            "a 后面的卷都写出",
             "往下不再问",
-            "s 收尾",
+            "s 做完再停",
             "剩下的卷也不开工",
             "Ctrl-C 退出会话",
         ] {
             assert!(waiting.contains(&tight(key)), "{key}：{waiting}");
         }
-        // 跑着那一副在这里一个字都不剩：两级停不是这一刻的事。
+        // 跑着那一副在这里一个字都不剩：两级停止不是这一刻的事。
         assert!(
-            !waiting.contains(&tight("按一次收尾，再按一次中止")),
+            !waiting.contains(&tight("按一次做完再停，再按一次立即停止")),
             "{waiting}"
         );
 

@@ -10,8 +10,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 「哪几种算拒绝执行」单子上那几项的字样，肯定式与否定式都算：耗时那一格与
-/// 命令行的预扫转轮从前抄的是「输出不在源里」这一副说法，那同样是一份抄件。
+/// 「哪几种算拒绝开始」单子上那几项的字样，肯定式与否定式都算：耗时那一格与
+/// 命令行的清点转轮从前抄的是「输出不在源里」这一副说法，那同样是一份抄件。
 ///
 /// 挑的是**只在这张单子上出现**的那几项，别的两项都当不了记号：
 /// 「处理范围为空」另有运行时的出处（`run` 那句 `bail!`）；
@@ -27,7 +27,7 @@ const REFUSAL_MARKS: [&str; 5] = [
     "输出不在源里",
     "两个卷撞同一个去处",
     "两个卷不撞同一个去处",
-    "预扫发现点名的路径点不开",
+    "清点发现点名的路径点不开",
 ];
 
 /// 那张单子的家，相对仓库根。
@@ -89,7 +89,7 @@ const LATCH_CODE_SIGNPOST: &str = "Instruction::code";
 /// 而**把这一句现拼出来**只有一处要做——收口那一句报的是一个当场算出来的数，
 /// 因此必然写成 `format!("另有 {..} ..")`。
 ///
-/// 六处从前各写各的：报告末尾那三小结、预扫那条拒绝、撞名那条拒绝，加上点名头几页那一句。
+/// 六处从前各写各的：报告末尾那三小结、清点那条拒绝、撞名那条拒绝，加上点名头几页那一句。
 /// 现在形状只在 [`TRUNCATION_HOME`]，六处各自出的仍是自己那句抬头与自己那个量词。
 const TRUNCATION_MARKS: [&str; 1] = ["另有 {"];
 
@@ -136,11 +136,11 @@ const LATCH_CODE_SIGNPOSTED: [(&str, usize); 2] = [("src/session/run.rs", 2), ("
 /// **记号写的是今天的键位**：换了键位再手抄一份，这几条记号就认不出它了。这一条守的是
 /// 「这几句不许抄回去」，「换键位屏上一起变」由 `src/session/draw.rs` 那条成屏用例守。
 const KEY_SENTENCE_MARKS: [&str; 6] = [
-    "t 试算 · x 执行",
-    "按 t 试算：只算不写",
-    "t 试算或 x 执行",
+    "t 预览 · x 转换",
+    "按 t 预览：只算不写",
+    "t 预览或 x 转换",
     "按 ⇥ 列出这一层",
-    "按 x 接着做第二遍",
+    "按 x 接着做写出环节",
     "g 把它交回给最新那一卷",
 ];
 
@@ -150,7 +150,7 @@ const KEY_HOME: &str = "src/session/draw/keys.rs";
 /// 家里真住着的三格：**只问名字，不问实现**。
 const KEY_HOME_MARKS: [&str; 3] = ["fn spelt_for(", "fn starters(", "pub fn named("];
 
-/// 「续做」那一句要预告一个还没到的阶段上按什么，那一手读表放在按键表旁边（停车场 Q641）。
+/// 「接着写出」那一句要预告一个还没到的阶段上按什么，那一手读表放在按键表旁边（停车场 Q641）。
 const KEY_STAGE_HOME: &str = "src/session/state.rs";
 const KEY_STAGE_MARK: &str = "pub fn stage_keys(";
 
@@ -158,7 +158,7 @@ const KEY_STAGE_MARK: &str = "pub fn stage_keys(";
 /// 与 [`TRUNCATION_USED`] 同一条：多一处不该变红，少一处必须变红）。
 ///
 /// `overview.rs` 问的是 [`Starters::named`]：它自己不问会话，那两个键由 `draw.rs` 问出来交给它。
-/// `footer.rs` 两手：说明那一行问 `key_of`，「续做」那一句问 `stage_keys`。
+/// `footer.rs` 两手：说明那一行问 `key_of`，「接着写出」那一句问 `stage_keys`。
 const KEY_READERS: [(&str, &str, usize); 7] = [
     ("src/session/draw.rs", "starters(", 2),
     ("src/session/draw/overview.rs", "Starters::named", 2),
@@ -191,7 +191,7 @@ fn squashed(text: &str) -> String {
 ///
 /// 屏上那几句话在**快照**里出现是记录（成屏用例逐字符比的就是它），在 **doc comment**
 /// 里出现是引用（说的正是「从前这一句是手抄的」）——两处都不是第二个出处。
-/// **在代码里出现才是**：代码里写着 `t 试算` 就是屏上多了一处手抄的键。
+/// **在代码里出现才是**：代码里写着 `t 预览` 就是屏上多了一处手抄的键。
 /// 本仓库每个模块的用例都收在文件末尾那一个 `mod tests` 里（`draw.rs` 顶上那个
 /// `#[cfg(test)] mod probe;` 不是它，因此不会把整个文件砍掉）。
 fn code_only(text: &str) -> String {
@@ -233,7 +233,7 @@ fn collect(dir: &Path, extension: &str, descend: bool, into: &mut Vec<PathBuf>) 
     }
 }
 
-/// 加第六种拒绝执行只改一处——这一条是那句话的闸门（P4 01 号票，收停车场 Q91）。
+/// 加第六种拒绝开始只改一处——这一条是那句话的闸门（P4 01 号票，收停车场 Q91）。
 ///
 /// 从前那张单子在实现文档里抄了五份，加一种要五处一起改（Shotgun Surgery）。
 /// 现在单子只在 `CONTEXT.md` 的《失败》，五处只留指路。
@@ -255,7 +255,7 @@ fn the_refusal_list_lives_in_one_place() {
     assert_eq!(
         carrying,
         vec![home.clone()],
-        "「哪几种算拒绝执行」那张单子长出了第二份"
+        "「哪几种算拒绝开始」那张单子长出了第二份"
     );
 
     let entry = squashed(&read(&home));
@@ -263,7 +263,7 @@ fn the_refusal_list_lives_in_one_place() {
     {
         assert!(
             entry.contains(&squashed(mark)),
-            "《失败》的**拒绝执行**里少了「{mark}」"
+            "《失败》的**拒绝开始**里少了「{mark}」"
         );
     }
 
@@ -285,12 +285,12 @@ fn the_refusal_list_lives_in_one_place() {
 
 /// 闩的编码只有一处，抄出第二份就当场变红（P4 19 号票，收停车场 Q70）。
 ///
-/// 从前这三格在**两个 crate 里各有一份**（库、会话），18 号票给命令行接上两级停之后
+/// 从前这三格在**两个 crate 里各有一份**（库、会话），18 号票给命令行接上两级停止之后
 /// 成了三份，靠三条用例分别拴着——而那三条各拴各的，谁也发现不了另外两份跟自己
 /// 分了家。现在编码只在 [`LATCH_CODE_HOME`] 的 `Instruction::code`／`from_code`，
 /// 另外两份闩只剩「存在哪儿、由谁往上推」。
 ///
-/// **三件事一起问**，与[拒绝执行那一条](the_refusal_list_lives_in_one_place)同一个形状：
+/// **三件事一起问**，与[拒绝开始那一条](the_refusal_list_lives_in_one_place)同一个形状：
 /// 别处没有第二份（问的是[读回来那一侧](LATCH_DECODE_MARKS)）、家里[编进去那三格](LATCH_CODE_MARKS)
 /// 真住着、另外两份闩指回来的路标还在。只问头一件的话，把 `code` 整个删掉这一条也是绿的。
 #[test]
@@ -341,7 +341,7 @@ fn the_latch_encoding_lives_in_one_place() {
 /// 每一次都只是在数。六处各有一个自己的上限、各拼一遍收口那一句，
 /// 而它们谁也发现不了另外五处跟自己分了家。
 ///
-/// **三件事一起问**，与[拒绝执行那一条](the_refusal_list_lives_in_one_place)、
+/// **三件事一起问**，与[拒绝开始那一条](the_refusal_list_lives_in_one_place)、
 /// [闩的编码那一条](the_latch_encoding_lives_in_one_place)同一个形状：
 /// 别处没有第二份、[家里那两格](TRUNCATION_HOME_MARKS)真住着、
 /// [用着它的那三个文件](TRUNCATION_USED)还在用。
@@ -391,7 +391,7 @@ fn the_way_to_truncate_a_list_lives_in_one_place() {
 /// （`no-false-line/06`，收停车场 Q190）。
 ///
 /// 屏底那一行与 `?` 那张表的键早已从按键表问出来（`p4-parking-lot/07`），而屏上还有六七句
-/// **散文**提着一个键：「还没跑过。t 试算 · x 执行」「按 ⇥ 列出这一层」「那时按 x 接着做第二遍」……
+/// **散文**提着一个键：「还没跑过。t 预览 · x 转换」「按 ⇥ 列出这一层」「那时按 x 接着做写出环节」……
 /// 从前那几个字母是手抄的——换一个键位，屏底上一行跟着变、下一行不变，而没有一条用例红。
 ///
 /// **三件事一起问**，与前三条同一个形状：**代码里**没有第二份（[`code_only`]，快照与文档里

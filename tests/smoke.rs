@@ -130,7 +130,7 @@ fn real_material_runs_through_the_pipeline(root: &Path) -> usize {
     let processed = report.volumes.iter().map(check_volume).sum::<usize>();
     summarize(&report);
 
-    // 一页都没处理成也可能一路 `Ok`：整批素材都读不出来时，每一卷都是清一色的占位页。
+    // 一页都没处理成也可能一路 `Ok`：整批素材都读不出来时，每一卷都是清一色的空白占位页。
     // 那时这一趟什么都没验证到，而它看上去与验证过了一模一样。
     assert!(
         processed > 0,
@@ -218,15 +218,15 @@ fn check_volume(volume: &VolumeReport) -> usize {
     processed
 }
 
-/// 一卷的**跨页拆分**这一行：跨页候选几页、真切开几页、装订沟长什么样（04 号票的验收）。
+/// 一卷的**拆分跨页**这一行：跨页候选几页、真切开几页、中缝长什么样（04 号票的验收）。
 ///
 /// 误报率那条基线说的是**跨页候选那一关**该把单页挡在外面：实测哆啦A梦 15/16、
-/// 改革之獸 16/16 命中；棋魂 2/16、画集 1/16 误报，而误报的沟宽 21–24%、真装订沟窄得多
+/// 改革之獸 16/16 命中；棋魂 2/16、画集 1/16 误报，而误报的沟宽 21–24%、真中缝窄得多
 /// （见 measurements 的《跨页拆分》）。这一行把两个数并排印出来——
 /// **单页卷上跨页候选那一栏不是 0，就是这道防线漏了**，而漏下去的是不是被沟那一关接住了，
 /// 「切开」那一栏答得出来。
 ///
-/// 两个数都从**报告里读**，不在这里拿同一套判据重算一遍：spec 的《Testing Decisions》
+/// 两个数都从**报告里读**，不在这里拿同一套画质分重算一遍：spec 的《Testing Decisions》
 /// 定死「Seam 只用 `run(Request) -> Report` 这一个……不新开公开 seam」。
 /// 重算一遍的话，这一行量的是它自己，不是管线。
 ///
@@ -323,11 +323,11 @@ impl Written {
 ///
 /// 自带 harness 不捕获输出，因此不必再 `-- --nocapture`：印了就看得见。
 ///
-/// 冒烟不断言判定，可判定恰恰是跑它的人要看的东西——真实素材上的档位分布，
+/// 冒烟不断言判定，可判定恰恰是跑它的人要看的东西——真实素材上的灰阶分布，
 /// 是 `CONTEXT.md` 的《尚未确立》里那几条目前唯一的现场数据来源。
 fn summarize(report: &Report) {
     println!("profile：{}", report.profile);
-    println!("跨页拆分：{}", report.split);
+    println!("拆分跨页：{}", report.split);
     for volume in &report.volumes {
         println!(
             "  {} · {} 页{}\n    {}",
@@ -350,20 +350,20 @@ fn summarize(report: &Report) {
             println!("    彩色分支 {color} 页");
         }
         println!("    {}", spread_line(volume));
-        // 部分救回页在真实素材上是「这份片源下歪了」的现场证据（04 号票），
+        // 残缺页在真实素材上是「这份片源下歪了」的现场证据（04 号票），
         // 而它不进隔离目录、也没有退出码替它喊：不印出来，跑冒烟的人无从知道。
         for page in volume.salvaged() {
             println!(
-                "    部分救回 {}：{}",
+                "    残缺 {}：{}",
                 page.source.display(),
-                page.salvage().expect("这是一张部分救回页"),
+                page.salvage().expect("这是一张残缺页"),
             );
         }
         for page in volume.failures() {
             println!(
-                "    失败页 {}：{}",
+                "    坏页 {}：{}",
                 page.source.display(),
-                page.failure().expect("这是一张失败页"),
+                page.failure().expect("这是一张坏页"),
             );
         }
     }

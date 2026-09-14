@@ -25,13 +25,13 @@ fn the_exit_code_tells_the_four_ways_a_run_can_end_apart() {
     let isolated = space.volume("volume-b");
     isolated.page("001.png", &fixtures::gradient(fixtures::TINY));
     isolated.file("002.png", b"not a png at all");
-    // 一个像素都救不回来的页同样是失败页（04 号票）：它单独一卷，退出码要跟着变。
+    // 一个像素都救不回来的页同样是坏页（04 号票）：它单独一卷，退出码要跟着变。
     // 它此前是一张「正常页」——整趟做完、退出码 0，脚本什么都察觉不到。
     let salvages_nothing = space.volume("volume-c");
     salvages_nothing.page("001.png", &fixtures::gradient(fixtures::TINY));
     salvages_nothing.file("002.png", &fixtures::salvages_nothing_page(fixtures::TINY));
 
-    // 预扫时打得开、轮到它时做不成的卷（05 号票）。造它的是一个**读不出字节的透传成员**：
+    // 清点时打得开、轮到它时做不成的卷（05 号票）。造它的是一个**读不出字节的透传成员**：
     // 归档结构完好，中央目录列得出它，坏的是那一个成员——只有真去读才看得出来。
     // 透传文件没有页那条出路，搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
     let mut failed = space.cbz("volume-d");
@@ -69,12 +69,12 @@ fn the_exit_code_tells_the_four_ways_a_run_can_end_apart() {
         Some(3),
         "有卷被隔离又有卷没做成时报的不是更重的那一个"
     );
-    // 拒绝执行是第四个数，不能和上面几个混在一起：那一趟根本没做成，一页都没做。
+    // 拒绝开始是第四个数，不能和上面几个混在一起：那一趟根本没做成，一页都没做。
     // 点一个不存在的卷——它落在源那一侧，不会先撞上「输出与源卷相互嵌套」那道拒绝。
     assert_eq!(
         tonefit(&space, &[&clean.path().join("根本不存在的卷")]),
         Some(1),
-        "拒绝执行的一趟不是 1"
+        "拒绝开始的一趟不是 1"
     );
 }
 
@@ -116,7 +116,7 @@ fn a_broken_archive_is_refused_when_named_and_skipped_when_discovered() {
     );
 }
 
-/// **非卷文件一整张表也不动退出码**（ADR 0014 决定第 3、5 条，`volume-discovery/04`）。
+/// **非漫画文件一整张表也不动退出码**（ADR 0014 决定第 3、5 条，`volume-discovery/04`）。
 ///
 /// 三类一次全摆上：卷架上的 txt、一页都没有的归档、发现出来但点不开的归档。
 /// 这一趟因此有一份不空的清单，而脚本那一侧看到的与全部成功一模一样——
@@ -146,17 +146,17 @@ fn a_list_of_non_volume_files_never_changes_the_exit_code() {
     assert_eq!(
         tonefit(&space, &[library.as_path()]),
         Some(0),
-        "一份不空的非卷文件清单改了退出码"
+        "一份不空的非漫画文件清单改了退出码"
     );
     // 「其余照做」不只是退出码：好的那一卷真在盘上，那三个一个字节都没有。
     assert_eq!(
         fixtures::directory_members(&space.out()),
         ["库/好的.cbz"],
-        "非卷文件跟着进了输出，或者好的那一卷没做"
+        "非漫画文件跟着进了输出，或者好的那一卷没做"
     );
 }
 
-/// **摊不下就是卷级失败，其余卷照做，退出码 `3`**（`volume-discovery/05`，ADR 0015）。
+/// **摊不下就是卷转换失败，其余卷照做，退出码 `3`**（`volume-discovery/05`，ADR 0015）。
 ///
 /// 固实归档开工前要整卷摊到系统临时目录，而这一趟的临时目录**根本不在**——
 /// 子进程的 `TMP` / `TEMP` / `TMPDIR` 指着一个没建出来的路径。「磁盘不够」在用例里造不出来，
@@ -182,7 +182,7 @@ fn a_volume_that_cannot_be_extracted_fails_alone_and_the_run_ends_with_three() {
     assert_eq!(
         tonefit_with_temp(&space, &[library.as_path()], Some(nowhere.as_path())),
         Some(3),
-        "摊不开的那一卷没被记成卷级失败"
+        "摊不开的那一卷没被记成卷转换失败"
     );
     // 「其余卷照做」不只是退出码：好的那一卷真在盘上，摊不开的那一卷一个字节都没有。
     assert_eq!(
@@ -198,7 +198,7 @@ fn a_volume_that_cannot_be_extracted_fails_alone_and_the_run_ends_with_three() {
 /// 这一条与本文件那条坏 zip 是同一副骨架——换的只是「点不开」的来处，
 /// 而这正是它要钉住的：两个数一格不动。
 ///
-/// 库那一侧的两半（拒绝那句话说得出是口令、发现的进非卷文件清单）由 `tests/container.rs`
+/// 库那一侧的两半（拒绝那句话说得出是口令、发现的进非漫画文件清单）由 `tests/container.rs`
 /// 钉着；这里只问进程那一层看得见的那个数。
 #[test]
 fn an_encrypted_rar_is_refused_when_named_and_skipped_when_discovered() {
@@ -228,13 +228,13 @@ fn an_encrypted_rar_is_refused_when_named_and_skipped_when_discovered() {
     );
 }
 
-/// **发现走不进去的一个目录让这一趟收在 `3` 上，其余卷照常跑完**
+/// **发现无法访问的一个目录让这一趟收在 `3` 上，其余卷照常跑完**
 /// （`p4-parking-lot/11`，收停车场 Q117）。
 ///
 /// 从前这一趟收在 `0` 上：那棵子树整个消失，报告一行不说——用户拿到的是一份看起来成功、
 /// 实际少了几十卷的输出。NAS 上一个权限没配好的作品目录正是这个样子。
 ///
-/// **它与卷级失败共用那个数**，不新开第五个：两者交出的东西一样（那一块一个字节都没有）、
+/// **它与卷转换失败共用那个数**，不新开第五个：两者交出的东西一样（那一块一个字节都没有）、
 /// 用户下一步该查的也一样（文件还在不在、盘还挂着没有、权限变没变），
 /// 见二进制侧的 `FAILED_VOLUME_EXIT`。
 ///
@@ -260,7 +260,7 @@ fn a_place_that_cannot_be_entered_ends_the_run_with_three() {
     // 断言之前先把门打开：断言红了也不至于留下一个删不掉的临时目录。
     open_the_door(&closed);
 
-    assert_eq!(code, Some(3), "走不进去的那一处没让这一趟离开 `0`");
+    assert_eq!(code, Some(3), "无法访问的那一处没让这一趟离开 `0`");
     // 「其余卷照常跑完」不只是退出码：好的那一卷真在盘上。
     assert_eq!(members, ["库/好的.cbz"], "其余卷没照常跑完");
 }
@@ -287,14 +287,14 @@ fn a_named_place_that_cannot_be_entered_is_still_refused() {
 /// **一棵含操作系统目录、卷卷都成的树收在 `0` 上**（本票，收停车场 Q203）。
 ///
 /// 从前这一趟恒收在 `3` 上：`System Volume Information` 这一类**永远**读不动，
-/// 于是每一趟都进走不进去的地方那一栏、每一趟都把退出码从 `0` 拖走，重跑一百遍都一样。
+/// 于是每一趟都进无法访问的地方那一栏、每一趟都把退出码从 `0` 拖走，重跑一百遍都一样。
 /// 点名一个盘根或共享根的人因此永远拿不到 `0`，而那一栏劝他做的事对这一类一件都做不了
-/// （为什么做不了，见 `CONTEXT.md` 的《不看的地方 (IgnoredPlace)》）。
+/// （为什么做不了，见 `CONTEXT.md` 的《自动跳过的目录 (IgnoredPlace)》）。
 ///
 /// 这一条在两种机器上问的不是同一件事，两边都不恒真：
 ///
 /// - **关得上门的机器**上，那个 `System Volume Information` 真读不动——这正是 Q203
-///   那个场景的复现：不看的地方不进那一栏，退出码因此回到 `0`。
+///   那个场景的复现：自动跳过的目录不进那一栏，退出码因此回到 `0`。
 /// - **关不上门的机器**上（Windows 没有这一手，root 底下权限位不作数），它读得动，
 ///   而它底下那一卷**没有**出现在输出树上——按名字绕过在发现那一层就作数，
 ///   与读不读得动无关。
@@ -332,11 +332,11 @@ fn a_tree_with_places_we_never_look_at_still_ends_the_run_with_zero() {
     // 断言之前先把门打开：断言红了也不至于留下一个删不掉的工作区。
     open_the_door(&never_readable);
 
-    assert_eq!(code, Some(0), "不看的地方把这一趟从 `0` 上拖走了");
+    assert_eq!(code, Some(0), "自动跳过的目录把这一趟从 `0` 上拖走了");
     assert_eq!(
         members,
         ["库/好的.cbz"],
-        "走进了不看的地方，它底下的卷进了输出"
+        "走进了自动跳过的目录，它底下的卷进了输出"
     );
 }
 
@@ -352,7 +352,7 @@ fn shut_the_door(dir: &Path) -> bool {
     }
     if std::fs::read_dir(dir).is_ok() {
         // 这一手没作数（root 绕过权限位）。**门要打回去**：不然临时目录里留下一个
-        // `0o000` 的目录，而收场那一手删不掉它。
+        // `0o000` 的目录，而结束那一手删不掉它。
         open_the_door(dir);
         return false;
     }
@@ -418,7 +418,7 @@ fn the_refusal_on_stderr_spells_its_commands_with_a_plain_space() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 两边都比面板小的页：fit-inside 上按不放大原样输出，一条边都贴不住，
-    // 几何门因此不成立，而这一趟点了抖动。
+    // 尺寸贴合检查因此不成立，而这一趟点了抖动。
     //
     // **换成以高为准它就贴住面板高了**，那条出路对它当真——拒绝按页分岔之后
     // （21 号票），只有这样的页才听得见 `--fit height`，两条命令因此一次都问得到。
