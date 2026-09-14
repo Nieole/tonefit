@@ -1,9 +1,9 @@
 //! Profile 与面板表。
 //!
-//! 面板是物理显示面板：分辨率 + PPI + 灰阶数 + 彩色，四项俱全才是 profile 的主键（`CONTEXT.md`）。
+//! 面板是物理显示面板：分辨率 + PPI + 屏幕灰阶数 + 彩色，四项俱全才是 profile 的主键（`CONTEXT.md`）。
 //! 设备只是面板的别名，多对一——表里面板是少数几个常量，型号一行一个。
 //!
-//! 阈值档位属于 profile、不属于面板：面板是物理事实，档位是标定出来的（ADR 0003）。
+//! 画质门槛档位属于 profile、不属于面板：面板是物理事实，档位是标定出来的（ADR 0003）。
 //! 同一面板可以有多个 profile，所以 profile 不是面板的同义词。
 
 use std::fmt::Write as _;
@@ -18,9 +18,9 @@ use crate::metric::Score;
 pub struct Panel {
     /// 面板分辨率。目标尺寸由它 fit-inside 算出，两者不是一回事（`CONTEXT.md`）。
     pub resolution: Size,
-    /// 每英寸像素数。判据的低通核由它推出（ADR 0002）。
+    /// 每英寸像素数。画质分的低通核由它推出（ADR 0002）。
     pub ppi: u32,
-    /// 面板物理能显示的灰度级数。位深的硬上界（ADR 0003）。
+    /// 面板物理能显示的灰度级数。灰阶档位的硬上界（ADR 0003）。
     ///
     /// 彩色面板上它说的仍是黑白那一层：Kaleido 是黑白面板加一层彩色滤光片，
     /// 灰度页在它上面与在纯黑白面板上走同一条路。
@@ -46,9 +46,9 @@ impl std::fmt::Display for Panel {
     }
 }
 
-/// 判据的可接受上限（`CONTEXT.md`：**判据是量，阈值是界**）。
+/// 画质分的可接受上限（`CONTEXT.md`：**画质分是量，画质门槛是界**）。
 ///
-/// 与判据同一把尺，单位是 8 位灰度级。跟着判据一起不可跨面板比较（ADR 0002）。
+/// 与画质分同一把尺，单位是 8 位灰度级。跟着画质分一起不可跨面板比较（ADR 0002）。
 ///
 /// 数值从哪来，`Display` 一并写在数值旁边——报告与文档都得说出来（spec 的 Further Notes）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,7 +57,7 @@ pub struct Threshold {
     source: ThresholdSource,
 }
 
-/// 一个阈值是怎么定出来的。判定只看数值，这一项只进 `Display`。
+/// 一个画质门槛是怎么定出来的。判定只看数值，这一项只进 `Display`。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ThresholdSource {
     /// 内置值，由真实素材上的人工盲测定出（见 measurements 的《位深盲测》）。
@@ -70,23 +70,23 @@ pub enum ThresholdSource {
 }
 
 impl Threshold {
-    /// 这个判据值在界以内吗。
+    /// 这个画质分值在界以内吗。
     pub fn admits(self, score: Score) -> bool {
         score.value() <= self.value
     }
 
-    /// 这个判据值是不是**远在**界外——超出界的 `factor` 倍。
+    /// 这个画质分值是不是**远在**界外——超出界的 `factor` 倍。
     ///
-    /// 特例页判据要的就是它（ADR 0006 决定第 5 条：特例页不参与上包络，单独定档）：
+    /// 差异大的页画质分要的就是它（ADR 0006 决定第 5 条：差异大的页不参与整卷统一灰阶，单独定档）：
     /// 不是刚过线，是远在界外。倍数由调用方给——那是个未标定的占位值，
-    /// 属于上包络那一层（见 `crate::envelope`），不属于界。
+    /// 属于整卷统一灰阶那一层（见 `crate::envelope`），不属于界。
     pub(crate) fn far_outside(self, score: Score, factor: f32) -> bool {
         score.value() > self.value * factor
     }
 
     /// 界的数值，8 位灰度级。
     ///
-    /// 判定只经 [`admits`](Self::admits)。读出数值是给渲染与测试用的——用它相对地造判据值，
+    /// 判定只经 [`admits`](Self::admits)。读出数值是给渲染与测试用的——用它相对地造画质分值，
     /// 那些用例就不必抄下当前这个数字，标定把数字换掉时也不用跟着改。
     pub fn value(self) -> f32 {
         self.value
@@ -101,23 +101,23 @@ impl Threshold {
 impl std::fmt::Display for Threshold {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let source = match self.source {
-            ThresholdSource::Calibrated => "盲测标定于 boox-poke6，其余面板未复核",
-            ThresholdSource::Pinned => "点名指定",
+            ThresholdSource::Calibrated => "在 boox-poke6 上实测，其他屏幕未验证",
+            ThresholdSource::Pinned => "由你指定",
         };
-        write!(f, "阈值 {:.3}（{source}）", self.value)
+        write!(f, "画质门槛 {:.3}（{source}）", self.value)
     }
 }
 
 /// 内置的界，由真实素材上的人工盲测定出。
 ///
-/// **窗口有两道，取窄的那一道。** 外面那道是位深盲测在 boox-poke6 上夹出的 [4.930, 6.022)——
-/// 下界是被判可接受的最高判据值（画集 040 的 2bit+FS），上界是被判不可接受的最低判据值
+/// **窗口有两道，取窄的那一道。** 外面那道是灰阶档位盲测在 boox-poke6 上夹出的 [4.930, 6.022)——
+/// 下界是被判可接受的最高画质分值（画集 040 的 2bit+FS），上界是被判不可接受的最低画质分值
 /// （画集 056 的 4bit 不抖，目视明显色块）。**上界由 banding 定，不由 1bit 定**：
-/// 判据补上颗粒项之后 1bit+FS 退到 21 以上，够不着界。
+/// 画质分补上抖动颗粒项之后 1bit+FS 退到 21 以上，够不着界。
 ///
 /// 里面那道是**第十轮真机在连续灰调页上夹出的 [5.079, 5.134)**，与外面那道**同一条口径**：
-/// 下界是被判可接受的最高判据值（`随心所欲照片列印机-05-1` 的 4bit+FS，判读者选的就是它），
-/// 上界是被判不可接受的最低判据值（`梦境导演椅-05-1` 的 4bit 不抖，判读者逐字说了「有色带」）。
+/// 下界是被判可接受的最高画质分值（`随心所欲照片列印机-05-1` 的 4bit+FS，判读者选的就是它），
+/// 上界是被判不可接受的最低画质分值（`梦境导演椅-05-1` 的 4bit 不抖，判读者逐字说了「有色带」）。
 ///
 /// **窗口是真机定的，落在窗口里的哪一点是别的东西定的——两层别混。**
 /// 窗口 [5.079, 5.134) 只有新的真机判读动得了；**取点**另有两条约束：
@@ -134,21 +134,21 @@ impl std::fmt::Display for Threshold {
 /// [`crate::metadata`] 那份参数哈希记的三位小数就是 5.123
 /// （见 measurements 的《取值还要够高：让 `4bit+FS` 真的进得了界》）。
 ///
-/// **它在真实语料上不把任何一卷虚抬一档**：八卷 1187 页的卷级扫描里，卷级基准档在
+/// **它在真实语料上不把任何一卷虚抬一档**：八卷 1187 页的卷级扫描里，卷级统一档位在
 /// (5.0, 5.134) 这条窗口上与 5.500 **逐卷相同**，一卷都不动（见 measurements 的
 /// 《卷级扫描：界在这条窗口里挪动，八卷基准档一卷都不动》）。
 ///
-/// 判据跟着面板走、不可跨面板比较（ADR 0002），而这里是一个常数——**其余面板沿用这个数，
+/// 画质分跟着面板走、不可跨面板比较（ADR 0002），而这里是一个常数——**其余面板沿用这个数，
 /// 没有复核**。`Display` 把这句话写在数值旁边，[`Profile::with_threshold`] 是出口。
 /// **两道窗口各在各的面板上量的**（外面那道 boox-poke6，里面那道 kobo-libra-2），
 /// 两者不可比；取窄的那一道是保守取法，不是把它们并成了一道。
 ///
-/// **它仍然挡掉 2bit 不抖**——那一档真机排第 2、比 2bit+FS 省 18% 体积，而判据在棋魂两页上
-/// 读它 8.250 与 18.878。那不是界的问题，是判据认为那两页的灰调塌陷值这么多；
-/// 两侧都只有一份数据，复核之前判据说了算（见 `CONTEXT.md` 的《尚未确立》）。
+/// **它仍然挡掉 2bit 不抖**——那一档真机排第 2、比 2bit+FS 省 18% 体积，而画质分在棋魂两页上
+/// 读它 8.250 与 18.878。那不是界的问题，是画质分认为那两页的灰调塌陷值这么多；
+/// 两侧都只有一份数据，复核之前画质分说了算（见 `CONTEXT.md` 的《尚未确立》）。
 ///
 /// **「候选上界恒过关」这条不成立，而且不是这一次才不成立的。** 8.5 是 4bit 量化步长的一半，
-/// 保证 4bit 恒在界内；5.123 不保证，5.500 那时也已经不保证——颗粒项那道地板改按格点间距
+/// 保证 4bit 恒在界内；5.123 不保证，5.500 那时也已经不保证——抖动颗粒项那道地板改按格点间距
 /// 收费之后（ADR 0002 决定第 5 条），抖动那一档的读数整体抬了上来。
 /// 门的两侧各有多少页超出、最大到哪里，见 measurements 的
 /// 《候选上界不恒在界内：门的两侧各有多少页超出》——**那几个页数只在那一处**，这里不抄
@@ -182,15 +182,15 @@ impl Profile {
         }
     }
 
-    /// 覆盖面板灰阶数（`--gray-levels`）。
+    /// 覆盖屏幕灰阶数（`--gray-levels`）。
     ///
     /// 填的是在真机上数出来的实际可分辨级数，未收录的面板与实测修正都走这一条（ADR 0003）。
-    /// 数出来的级数不必是 2 的幂：按它裁剪候选位深是 06 号票的事，这里只管记下。
+    /// 数出来的级数不必是 2 的幂：按它裁剪候选灰阶档位是 06 号票的事，这里只管记下。
     /// 界在 2 与 256 之间——低于 2 级的面板什么都显示不出，而阶梯图本身是 8 位灰度，
     /// 数不出 256 级以上。
     pub fn with_gray_levels(mut self, gray_levels: u32) -> Result<Self> {
         if !(2..=256).contains(&gray_levels) {
-            bail!("灰阶数 {gray_levels} 数不出来：取值在 2 与 256 之间（e-ink 恒 16）");
+            bail!("屏幕灰阶数 {gray_levels} 数不出来：取值在 2 与 256 之间（e-ink 恒 16）");
         }
         self.panel.gray_levels = gray_levels;
         Ok(self)
@@ -198,18 +198,18 @@ impl Profile {
 
     /// 覆盖判定用的界——**点名那一种唯一的入口**。
     ///
-    /// 点得动它的地方有三处：命令行 `--threshold`、预设的设备层、会话里那一行。
+    /// 点得动它的地方有三处：命令行 `--threshold`、预设的设备设置、会话里那一行。
     /// 三处都经这里，出来的都是 [`ThresholdSource::Pinned`]（为什么是一种而不是三种，
     /// 见那个变体的文档）。
     ///
-    /// 判据跟着面板走、不可跨面板比较（ADR 0002），而内置值是一个常数（见 [`DEFAULT_THRESHOLD`]）。
+    /// 画质分跟着面板走、不可跨面板比较（ADR 0002），而内置值是一个常数（见 [`DEFAULT_THRESHOLD`]）。
     /// 在自己那台设备上盲测出来的界走这一条：把同一页的各档输出拷进设备，
-    /// 记下最低的那个**不可接受**档的判据值，界取在它之下。判据值由 `--dry-run` 逐页给出。
+    /// 记下最低的那个**不可接受**档的画质分值，界取在它之下。画质分值由 `--dry-run` 逐页给出。
     ///
-    /// 单位与判据同为 8 位灰度级，因此界落在 0 与 255 之间；取大了各档全部过关，界就不成其为界。
+    /// 单位与画质分同为 8 位灰度级，因此界落在 0 与 255 之间；取大了各档全部过关，界就不成其为界。
     pub fn with_threshold(mut self, threshold: f32) -> Result<Self> {
         if !(threshold.is_finite() && threshold > 0.0 && threshold <= 255.0) {
-            bail!("阈值 {threshold} 不是一个界：取值在 0 与 255 之间，与判据同为 8 位灰度级");
+            bail!("画质门槛 {threshold} 不是一个界：取值在 0 与 255 之间，与画质分同为 8 位灰度级");
         }
         self.threshold = Threshold {
             value: threshold,
@@ -273,7 +273,7 @@ impl Profile {
         self.panel
     }
 
-    /// 本次位深判定用的阈值。
+    /// 本次灰阶档位判定用的画质门槛。
     pub fn threshold(&self) -> Threshold {
         self.threshold
     }
@@ -288,13 +288,13 @@ impl std::fmt::Display for Profile {
 /// 未知型号的说法：把内置清单按面板分组端出来，再给出表外设备的兜底办法。
 ///
 /// 面板相同的型号输出完全一致，所以「挑一个面板相同的型号顶上」是可行的一步；
-/// 灰阶数是唯一挑不出来的那项，走 `--gray-levels`（ADR 0003）。
+/// 屏幕灰阶数是唯一挑不出来的那项，走 `--gray-levels`（ADR 0003）。
 fn unknown_device_error(device: &str) -> anyhow::Error {
     let mut text = format!("未知型号「{device}」。内置型号按面板分组：\n");
     for (panel, devices) in Profile::devices_by_panel() {
         writeln!(text, "  {panel}\n    {}", devices.join(" ")).expect("写进 String 不会失败");
     }
-    text.push_str("设备不在表里：挑一个面板相同的型号，再按实测用 --gray-levels 覆盖灰阶数。");
+    text.push_str("设备不在表里：挑一个面板相同的型号，再按实测用 --gray-levels 覆盖屏幕灰阶数。");
     anyhow!(text)
 }
 
@@ -311,7 +311,7 @@ fn canonical(device: &str) -> String {
     key.trim_matches('-').to_owned()
 }
 
-/// e-ink 面板的灰阶数恒为 16（`CONTEXT.md`）。
+/// e-ink 面板的屏幕灰阶数恒为 16（`CONTEXT.md`）。
 const EINK_GRAY_LEVELS: u32 = 16;
 
 /// 一块纯黑白 e-ink 面板。
@@ -328,7 +328,7 @@ const fn eink(width: u32, height: u32, ppi: u32) -> Panel {
 ///
 /// 分辨率与 PPI 填的是**黑白那一层**的规格——面板的主键、目标尺寸与低通核都由它推出。
 /// 彩色滤光片让彩色内容的实际分辨率降到黑白层之下（各家口径是一半），
-/// 但 P0 的彩色分支只做缩放、不做判据，这个折减到不了任何判定上；
+/// 但 P0 的彩色分支只做缩放、不做画质分，这个折减到不了任何判定上；
 /// 真要利用它得先测（`CONTEXT.md` 的《尚未确立》）。
 const fn kaleido(width: u32, height: u32, ppi: u32) -> Panel {
     Panel {

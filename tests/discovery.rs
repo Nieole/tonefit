@@ -1,7 +1,7 @@
 //! 发现：点名的一个路径展开成一批卷（ADR 0014）。
 //!
 //! 外部行为是**盘上的字节**：造一棵树、跑一趟、看输出树的形状。这一份里的每一条都这么问，
-//! 只有「各自一份上包络」那一条另看报告——那是发现改动卷边界之后**唯一**从盘上看不出来的
+//! 只有「各自一份整卷统一灰阶」那一条另看报告——那是发现改动卷边界之后**唯一**从盘上看不出来的
 //! 后果（同一批页，分成两卷与合成一卷写出的字节可以相同，定档却不同）。
 //!
 //! 退出码那一条不在这里：「点名的 / 发现的」只决定点不开时的处置，而处置的差别是
@@ -29,7 +29,7 @@ fn every_chapter_in_a_two_level_library_becomes_its_own_volume() {
     let report = fixtures::run_paths(&space, [library.as_path()]);
 
     assert_eq!(report.volumes.len(), 2, "两话没各自成卷");
-    // 点名路径自己的名字打头，其下按源的结构镜像——基准点是点名路径的**父目录**。
+    // 处理路径自己的名字打头，其下按源的结构镜像——基准点是处理路径的**父目录**。
     assert_eq!(
         fixtures::directory_members(&space.out()),
         ["库/作品/第1话.cbz", "库/作品/第2话.cbz"]
@@ -87,7 +87,7 @@ fn a_split_rar_comes_out_as_one_volume_named_after_the_sequence() {
 ///
 /// 「与改动前逐字节相同」由黄金回归钉着（`tests/golden.rs` 比的是产物的哈希，
 /// 那一批夹具正是这个形状）；这一条问的是**去处**——发现给输出加了一层镜像，
-/// 而点名一个卷时那层镜像必须退化成「就是它自己的名字」，否则页会直接撒进输出根。
+/// 而点名一个卷时那层镜像必须退化成「就是它自己的名字」，否则页会直接撒进输出目录。
 #[test]
 fn a_named_directory_volume_still_lands_under_its_own_name() {
     let space = Workspace::new();
@@ -173,10 +173,10 @@ fn an_archive_that_keeps_its_chapters_in_folders_loses_no_page() {
     assert_eq!(report.volumes[0].source_pages, 3, "归档里有页没被收下");
 }
 
-/// 分目录装的**目录**裂成几个卷，**各自一份上包络**。
+/// 分目录装的**目录**裂成几个卷，**各自一份整卷统一灰阶**。
 ///
-/// 这是本票买下的那笔代价，正面写在这里：同一批页从前合成一卷取一个上包络，
-/// 如今两个章节各定各的档。夹具让两边的判定落在不同的档上，两份上包络因此分得开——
+/// 这是本票买下的那笔代价，正面写在这里：同一批页从前合成一卷取一个整卷统一灰阶，
+/// 如今两个章节各定各的档。夹具让两边的判定落在不同的档上，两份整卷统一灰阶因此分得开——
 /// 合成一卷时它们只会有一个数。
 #[test]
 fn a_directory_that_keeps_its_chapters_in_folders_splits_into_one_volume_each() {
@@ -195,9 +195,9 @@ fn a_directory_that_keeps_its_chapters_in_folders_splits_into_one_volume_each() 
         );
     }
 
-    // 这两个取值分得开那一档要在**门不成立**那条路上读，因此跑 fit-inside
-    // （见夹具里 `FAR_OUTSIDE` 与 `TINY` 各自的说明）。「两卷各有各的上包络」
-    // 要开着上包络才问得出——默认路径上卷级根本没有基准档（ADR 0018）。
+    // 这两个取值分得开那一档要在**未贴合屏幕**那条路上读，因此跑 fit-inside
+    // （见夹具里 `FAR_OUTSIDE` 与 `TINY` 各自的说明）。「两卷各有各的整卷统一灰阶」
+    // 要开着整卷统一灰阶才问得出——默认路径上卷级根本没有统一档位（ADR 0018）。
     let report = tonefit::run(&tonefit::Request {
         fit: tonefit::FitMode::Inside,
         envelope: true,
@@ -210,7 +210,7 @@ fn a_directory_that_keeps_its_chapters_in_folders_splits_into_one_volume_each() 
     assert_eq!(
         depths,
         [tonefit::BitDepth::Two, tonefit::BitDepth::Four],
-        "两卷共用了一份上包络"
+        "两卷共用了一份整卷统一灰阶"
     );
 }
 
@@ -235,13 +235,13 @@ fn nothing_without_a_page_writes_a_single_byte() {
     let report = fixtures::run_paths(&space, [library.as_path()]);
 
     assert_eq!(report.volumes.len(), 1, "不是卷的东西成了卷");
-    assert!(report.failed_volumes.is_empty(), "非卷文件被记成了失败");
+    assert!(report.failed_volumes.is_empty(), "非漫画文件被记成了失败");
     assert_eq!(fixtures::directory_members(&space.out()), ["库/第1话.cbz"]);
 }
 
-/// 非卷文件那张表：三类各带路径与一句为什么，**与输出树的形状逐条对得上**（`volume-discovery/04`）。
+/// 非漫画文件那张表：三类各带路径与一句为什么，**与输出树的形状逐条对得上**（`volume-discovery/04`）。
 ///
-/// 一棵树一次问全 spec《非卷文件》点名的那几种形状：两层 cbz、混装目录、
+/// 一棵树一次问全 spec《非漫画文件》点名的那几种形状：两层 cbz、混装目录、
 /// 一页都没有的 zip、坏 zip、卷架上的 txt。清单与输出树是**互补**的两张表——
 /// 清单上的在输出里一个字节都没有，输出里的在清单上一条都没有——这一条同时钉这两半。
 /// 缺了任何一半这条用例都不成立：只看输出，「什么没被转」照旧说不出；只看清单，
@@ -282,8 +282,8 @@ fn every_file_no_volume_took_is_listed_with_a_reason_of_its_own() {
             "库/答案.txt · 既不是页也不是归档",
         ]
     );
-    // 清单不为空，而这一趟一卷都没失败：非卷文件不是失败（`CONTEXT.md` 的《失败》）。
-    assert!(report.failed_volumes.is_empty(), "非卷文件被记成了失败");
+    // 清单不为空，而这一趟一卷都没失败：非漫画文件不是失败（`CONTEXT.md` 的《失败》）。
+    assert!(report.failed_volumes.is_empty(), "非漫画文件被记成了失败");
     assert_eq!(report.volumes.len(), 3, "封面与两话没各自成卷");
     // 输出树里**只有产物**：清单上那三个一个字节都没有，而卷内的透传文件照旧在。
     assert_eq!(
@@ -300,7 +300,7 @@ fn every_file_no_volume_took_is_listed_with_a_reason_of_its_own() {
 /// 卷内的透传文件**照旧搬**，而且不出现在清单里（`volume-discovery/04`）。
 ///
 /// 与上一条的分界只有一条：`ComicInfo.xml` 躺的那一层**有页**。阅读器靠它读作者、
-/// 卷号与阅读方向，砍掉是净损失——非卷文件那张表收的是没有任何卷要的那些，不是它。
+/// 卷号与阅读方向，砍掉是净损失——非漫画文件那张表收的是没有任何卷要的那些，不是它。
 #[test]
 fn a_pass_through_member_of_a_real_volume_is_never_listed() {
     let space = Workspace::new();
@@ -315,7 +315,7 @@ fn a_pass_through_member_of_a_real_volume_is_never_listed() {
 
     assert!(
         report.non_volume_files.is_empty(),
-        "卷内的透传文件进了非卷文件清单：{:?}",
+        "卷内的透传文件进了非漫画文件清单：{:?}",
         listed(&space, &report)
     );
     assert_eq!(
@@ -363,7 +363,7 @@ fn naming_the_same_path_twice_does_the_work_once() {
     );
 }
 
-/// **预扫报出来的那两个数不因收编而多数一遍。**
+/// **清点报出来的那两个数不因收编而多数一遍。**
 ///
 /// 两头一起问：开工那条事件报出来的卷数与**这一趟实际做的卷数**对得上；
 /// 而点名 `库 库/作品`、点名 `库 库`、只点名 `库` 三趟报出来的卷数与全局总步数逐个相同。
@@ -430,9 +430,9 @@ fn two_named_paths_that_do_not_overlap_both_come_out() {
     );
 }
 
-/// 单独点名一个**不看的地方**（回收站），上面那个库点名了也折不掉它。
+/// 单独点名一个**自动跳过的目录**（回收站），上面那个库点名了也折不掉它。
 ///
-/// 折的是**卷根**，不是点名路径之间的前缀关系：`库` 与 `库/#recycle` 是嵌套的两条路径，
+/// 折的是**卷根**，不是处理路径之间的前缀关系：`库` 与 `库/#recycle` 是嵌套的两条路径，
 /// 而点名 `库` 那一趟一个回收站里的卷根都没走到（见
 /// [`discovery_does_not_walk_into_the_places_we_never_look_at`]），
 /// 两边因此不重叠。按前缀折的话，用户明说要的那个回收站会连同它底下的卷一起消失。
@@ -455,11 +455,11 @@ fn an_ignored_place_named_on_its_own_is_not_folded_away() {
     );
 }
 
-/// 收编换的是去处，不是**「点名的 / 发现的」**那条分别：被外层收编掉的那个点名路径
+/// 收编换的是去处，不是**「点名的 / 发现的」**那条分别：被外层收编掉的那个处理路径
 /// 点不开时仍是整趟拒绝（ADR 0014 决定第 5 条）。
 ///
 /// `库/坏的.cbz` 同时是点名的（用户自己点了它）与发现出来的（点名 `库` 走到了它）。
-/// 收编要是顺手把那顶帽子摘了，它就变成「发现出来的点不开的归档」——进非卷文件、
+/// 收编要是顺手把那顶帽子摘了，它就变成「发现出来的点不开的归档」——进非漫画文件、
 /// 其余照做，而用户明说了要处理它。
 #[test]
 fn a_named_path_swallowed_by_an_outer_one_is_still_refused_when_it_cannot_be_opened() {
@@ -480,7 +480,7 @@ fn a_named_path_swallowed_by_an_outer_one_is_still_refused_when_it_cannot_be_ope
     assert!(said.contains("整趟不做"), "没整趟拒绝：{said}");
 }
 
-/// 非卷文件那张表也不因收编而重复列出：那一层被点名两遍，`说明.txt` 仍只有一条。
+/// 非漫画文件那张表也不因收编而重复列出：那一层被点名两遍，`说明.txt` 仍只有一条。
 ///
 /// 它与卷数是同一遍开卷的两份产出（见 `src/survey.rs` 的《另两份产出》）——
 /// 收编排在开卷之前，两份因此一起只数一遍。
@@ -490,7 +490,7 @@ fn a_file_no_volume_took_is_listed_once_however_often_its_directory_is_named() {
     let library = directory(&space, "库");
     let works = directory(&space, "库/作品");
     write_archive(&space, "库/作品/第1话.cbz", 2);
-    std::fs::write(space.dir("库/作品/说明.txt"), "读我").expect("摆一个非卷文件");
+    std::fs::write(space.dir("库/作品/说明.txt"), "读我").expect("摆一个非漫画文件");
 
     let report = fixtures::run_paths(&space, [library.as_path(), works.as_path()]);
 
@@ -500,7 +500,7 @@ fn a_file_no_volume_took_is_listed_once_however_often_its_directory_is_named() {
     );
 }
 
-/// 输出根落在点名路径底下仍然当场拒绝——发现因此不会把上一趟的产物当成源。
+/// 输出目录落在处理路径底下仍然当场拒绝——发现因此不会把上一趟的产物当成源。
 #[test]
 fn an_output_root_inside_a_named_directory_is_still_refused() {
     let space = Workspace::new();
@@ -511,20 +511,20 @@ fn an_output_root_inside_a_named_directory_is_still_refused() {
         output_root: library.join("out"),
         ..fixtures::request(&space, [library.as_path()])
     })
-    .expect_err("输出根落在点名路径底下该拒绝");
+    .expect_err("输出目录落在处理路径底下该拒绝");
 
     assert!(error.to_string().contains("相互嵌套"), "{error}");
 }
 
-/// 不看的地方整棵子树都不进去，而且**报告上一个字都没有**。
+/// 自动跳过的目录整棵子树都不进去，而且**报告上一个字都没有**。
 ///
 /// 打包环境留下的那几个与操作系统留下的那几个（`System Volume Information` 一类，
-/// **永远**读不动）共一份名单、共一条判据——名单与「哪几个是发现才撞得到的」
+/// **永远**读不动）共一份名单、共一条判定依据——名单与「哪几个是发现才撞得到的」
 /// 都写在 `src/source.rs` 的 `IGNORED_DIRECTORIES` 上。
 ///
 /// 三句话：**卷数只有那一个**、**报告的两栏都空着**、**输出树上只有留着的那一卷**。
 /// 中间那句是这一条的要害：绕过发生在发现那一层，它们根本不成为候选，
-/// 因此走不进去的地方那一栏收不到它们——收到了就是把「不看」说成了「看不了」。
+/// 因此无法访问的地方那一栏收不到它们——收到了就是把「不看」说成了「看不了」。
 #[test]
 fn discovery_does_not_walk_into_the_places_we_never_look_at() {
     let space = Workspace::new();
@@ -549,13 +549,13 @@ fn discovery_does_not_walk_into_the_places_we_never_look_at() {
     assert_eq!(report.volumes.len(), 1, "走进了不该走的目录");
     assert!(
         report.unreachable_places.is_empty(),
-        "不看的地方上了走不进去的地方那一栏：{:?}",
+        "自动跳过的目录上了无法访问的地方那一栏：{:?}",
         report.unreachable_places
     );
     assert_eq!(
         listed(&space, &report),
         Vec::<String>::new(),
-        "不看的地方上了非卷文件那一栏"
+        "自动跳过的目录上了非漫画文件那一栏"
     );
     assert_eq!(
         fixtures::directory_members(&space.out()),
@@ -565,7 +565,7 @@ fn discovery_does_not_walk_into_the_places_we_never_look_at() {
 
 /// **反过来那一半：名字只是挨得近的目录照旧走进去。**
 ///
-/// 判据是**整个名字**（大小写不敏感），不是前缀、不是包含，更不是「读不读得动」。
+/// 判定依据是**整个名字**（大小写不敏感），不是前缀、不是包含，更不是「读不读得动」。
 /// 三种放宽各有一个用户会真撞上的样子：`System Volume Information 备份` 是有人手动
 /// 拷出来的一份，`.Trash-10000` 是另一个 uid 的回收站以外的普通目录，
 /// `$RECYCLE.BIN.old` 是换盘时留下的。按前缀或包含认，这三处连同它们底下的卷一起静默消失
@@ -577,7 +577,7 @@ fn discovery_does_not_walk_into_the_places_we_never_look_at() {
 /// 权限那一半的反向在 `tests/exit_code.rs` 的
 /// `a_place_that_cannot_be_entered_ends_the_run_with_three` 与 `src/survey.rs` 的
 /// `a_directory_that_cannot_be_read_says_so`：名字不在名单上而真读不动的目录，
-/// 照旧进走不进去的地方那一栏、照旧进退出码。那两条要关得上门的机器才问得出来，
+/// 照旧进无法访问的地方那一栏、照旧进退出码。那两条要关得上门的机器才问得出来，
 /// 这一条平台无关。
 #[test]
 fn a_name_that_merely_looks_like_one_we_never_look_at_is_still_walked_into() {
@@ -594,7 +594,11 @@ fn a_name_that_merely_looks_like_one_we_never_look_at_is_still_walked_into() {
 
     let report = fixtures::run_paths(&space, [library.as_path()]);
 
-    assert_eq!(report.volumes.len(), 3, "挨得近的名字被当成了不看的地方");
+    assert_eq!(
+        report.volumes.len(),
+        3,
+        "挨得近的名字被当成了自动跳过的目录"
+    );
     assert_eq!(
         fixtures::directory_members(&space.out()),
         [
@@ -628,7 +632,7 @@ fn discovery_does_not_follow_a_symlink() {
 /// 跑一趟，交出**开工那条事件报出来的两个数**（这一趟有几个卷、最多走多少步）
 /// 与这一趟的报告。
 ///
-/// 走**试算**（`Mode::DryRun`）：这两个数由预扫算出、一个文件都不落盘，同一个工作区
+/// 走**预览**（`Mode::DryRun`）：这两个数由清点算出、一个文件都不落盘，同一个工作区
 /// 因此跑得了好几趟而互不干扰——落盘那一路第二趟会撞上第一趟的产物，比的就不只是
 /// 点名方式的差别了。
 fn announced(space: &Workspace, inputs: &[&Path]) -> ((usize, u64), tonefit::Report) {
@@ -676,7 +680,7 @@ impl tonefit::Progress for StartedVolumes {
     }
 }
 
-/// 非卷文件那张表，摊成一行一条的 `工作区相对路径 · 哪一类`，按名字排序。
+/// 非漫画文件那张表，摊成一行一条的 `工作区相对路径 · 哪一类`，按名字排序。
 ///
 /// 类那一半只取一个短标签，不取界面上那句完整的话：措辞归界面层
 /// （`src/render.rs` 的 `non_volume_reason`，那一句在那里钉着），
@@ -722,11 +726,11 @@ fn write_archive(space: &Workspace, name: &str, pages: usize) -> PathBuf {
     archive.write()
 }
 
-/// 一个卷的基准档。
+/// 一个卷的统一档位。
 fn base_depth(volume: &tonefit::VolumeReport) -> tonefit::BitDepth {
     match volume.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope.base.bit_depth,
-        ref other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+        ref other => panic!("这一卷该由整卷统一灰阶定档，实际是 {other:?}"),
     }
 }
 

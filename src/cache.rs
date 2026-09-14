@@ -1,10 +1,10 @@
-//! 卷缓存：第一遍存下一页，第二遍取回（ADR 0005：解码一次，缓存缩放后的图）。
+//! 卷缓存：分析环节存下一页，写出环节取回（ADR 0005：解码一次，缓存缩放后的图）。
 //!
-//! 一格装的是两样之一（见 [`Kind`]）：第一遍存进来的**参照**——判据算过的那张 8 位灰度图，
-//! 或者量化编码之后**编好的字节**。上包络那条路上一格装参照，第二遍取回来才量化编码；
-//! 默认那条路（逐页）与覆盖顶死那一趟上一页的档第一遍就定了，当场量化编码，
-//! 一格从头装的就是编好的 PNG，第二遍退化成把字节按阅读顺序写出去（12、06 号票；ADR 0018）。
-//! 两条路上源页都在第一遍之后再没人碰。
+//! 一格装的是两样之一（见 [`Kind`]）：分析环节存进来的**参照**——画质分算过的那张 8 位灰度图，
+//! 或者量化编码之后**编好的字节**。整卷统一灰阶那条路上一格装参照，写出环节取回来才量化编码；
+//! 默认那条路（逐页）与覆盖顶死那一趟上一页的档分析环节就定了，当场量化编码，
+//! 一格从头装的就是编好的 PNG，写出环节退化成把字节按阅读顺序写出去（12、06 号票；ADR 0018）。
+//! 两条路上源页都在分析环节之后再没人碰。
 //!
 //! 内存优先，超出预算的那些页溢写临时文件。**缓存只活在一次运行之内**：
 //! 进程结束即释放内存、收走临时文件，不提供跨运行的持久缓存。
@@ -18,7 +18,7 @@ use anyhow::{Context, Result, bail, ensure};
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 
-/// 缓存预算（`--cache-budget`）：缓存最多在内存里留这么多字节。
+/// 内存上限（`--cache-budget`）：缓存最多在内存里留这么多字节。
 ///
 /// 量的是**压缩之后**的字节——那才是真正占着内存的那个数。超出的页不被丢弃，而是溢写临时文件，
 /// 因此预算限的是峰值内存，不是卷的大小上限（spec 的 story 31）。
@@ -51,14 +51,14 @@ impl CacheBudget {
             "k" => 1024,
             "m" => 1024 * 1024,
             "g" => 1024 * 1024 * 1024,
-            _ => bail!("认不出缓存预算 {text} 的单位：后缀写 K、M 或 G"),
+            _ => bail!("认不出内存上限 {text} 的单位：后缀写 K、M 或 G"),
         };
         let Ok(count) = digits.parse::<u64>() else {
-            bail!("认不出缓存预算 {text}：写成字节数，或带 K/M/G 后缀，例如 512M");
+            bail!("认不出内存上限 {text}：写成字节数，或带 K/M/G 后缀，例如 512M");
         };
         match count.checked_mul(scale) {
             Some(bytes) => Ok(Self(bytes)),
-            None => bail!("缓存预算 {text} 大得装不进 64 位字节数"),
+            None => bail!("内存上限 {text} 大得装不进 64 位字节数"),
         }
     }
 
@@ -100,7 +100,7 @@ pub struct CacheUsage {
     /// 参照那一段是 LZ4 压过的；编好的字节是那一页 PNG 本身。**默认那条路与覆盖顶死的那一趟
     /// 从头就没有参照那一摊**（`PageCache::insert_encoded`）：这个数恰是写出去那几页字节之和。
     ///
-    /// **写出那一遍取走一页不撤**（`PageCache::take`）：报告在决策点上与收摊时各拼一次，
+    /// **写出那一遍取走一页不撤**（`PageCache::take`）：报告在确认点上与收摊时各拼一次，
     /// 两次要说同一个数。这个数因此不是「此刻内存里躺着多少」，是「这一卷为缓存留下过多少」。
     pub stored: u64,
     /// 其中留在内存里的字节。
@@ -137,11 +137,11 @@ impl std::fmt::Display for CacheUsage {
             format_bytes(self.raw)
         )?;
         if self.spilled == 0 {
-            write!(f, "，未溢写（预算 {}）", self.budget)
+            write!(f, "，没有写到临时文件（内存上限 {}）", self.budget)
         } else {
             write!(
                 f,
-                "，内存 {} + 临时文件 {}（预算 {}）",
+                "，内存 {} + 临时文件 {}（内存上限 {}）",
                 format_bytes(self.resident),
                 format_bytes(self.spilled),
                 self.budget
@@ -153,9 +153,9 @@ impl std::fmt::Display for CacheUsage {
 /// 这一遍的缓存留不留页。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Retention {
-    /// 留下：第二遍要从这里把页取回来。
+    /// 留下：写出环节要从这里把页取回来。
     Keep,
-    /// 只记账。dry-run 没有第二遍，留下的字节没人取——但用量与会不会溢写仍要预告
+    /// 只记账。dry-run 没有写出环节，留下的字节没人取——但用量与会不会溢写仍要预告
     /// （spec 的 story 6：先看一份报告再决定照不照做，`--cache-budget` 正是要确认的参数之一）。
     /// 因此照压、照按预算算账，只是不留下块，也就**不建临时文件**——
     /// dry-run 那句「不写输出」在命令行这一路是连临时文件都不建，峰值内存也不为一次预演白占。
@@ -190,8 +190,8 @@ pub struct Block {
 
 /// 从缓存里取回来的一页：那一格装的是什么，取回来就是什么（见 [`Kind`]）。
 ///
-/// 两个变体分成的是两件事：**第二遍还要不要量化编码**。上包络那条路取回参照、第二遍编；
-/// 另外两条路（默认那条路、覆盖顶死的那一趟）取回的都是编好的字节，第二遍只写出。
+/// 两个变体分成的是两件事：**写出环节还要不要量化编码**。整卷统一灰阶那条路取回参照、写出环节编；
+/// 另外两条路（默认那条路、覆盖顶死的那一趟）取回的都是编好的字节，写出环节只写出。
 pub enum Held {
     /// 参照——还要量化、编码才写得出去。
     Reference(GrayImage),
@@ -222,8 +222,8 @@ struct Entry {
 
 /// 一格装的是什么。
 ///
-/// 一格从头到尾只装一样：上包络那条路上是参照——那一档要看完整卷才定得下；
-/// 一页的档第一遍就定得下的那两条路上（默认那条路逐页各判各的，覆盖顶死的那一趟碰卷之前
+/// 一格从头到尾只装一样：整卷统一灰阶那条路上是参照——那一档要看完整卷才定得下；
+/// 一页的档分析环节就定得下的那两条路上（默认那条路逐页各判各的，覆盖顶死的那一趟碰卷之前
 /// 就定死）是编好的字节，参照一张都不进缓存（见 [`PageCache::insert_encoded`]）。
 #[derive(Clone, Copy)]
 enum Kind {
@@ -294,7 +294,7 @@ impl PageCache {
     /// 判的是这一页放进去之后会不会越过预算，因此单页大过整个预算时它自己溢写，
     /// 已经在内存里的那些页不受牵连。
     ///
-    /// **谁常驻、谁溢写随存入顺序而变**，而第一遍是乱序满核跑的（13 号票）：同一个卷、
+    /// **谁常驻、谁溢写随存入顺序而变**，而分析环节是乱序满核跑的（13 号票）：同一个卷、
     /// 同一份预算，两趟跑出来的 `resident` 与 `spilled` 分法可能不同。总量不受影响——
     /// `pages`、`raw`、`stored` 与顺序无关，写出的字节也一个不差，分法只改这一页
     /// 待在内存里还是临时文件里。认下它是因为另一头更贵：要让分法确定，存入就得按页序串起来，
@@ -316,8 +316,8 @@ impl PageCache {
 
     /// 把一页**编好的字节**直接存进来，返回它的序号（06 号票；ADR 0018 之后默认那条路也走它）。
     ///
-    /// 一页的档第一遍就定得下的那两条路——覆盖项在碰卷之前把候选裁到只剩一个，
-    /// 或者默认那条路上逐页各判各的、判据一出来这一页就定了——量化编码当场做完：
+    /// 一页的档分析环节就定得下的那两条路——覆盖项在碰卷之前把候选裁到只剩一个，
+    /// 或者默认那条路上逐页各判各的、画质分一出来这一页就定了——量化编码当场做完：
     /// 这一格从头装的就是那一页 PNG，**参照一张都不进缓存**，
     /// 存参照 → 取回来 → 换字节那一趟往返整个不存在。
     ///
@@ -344,7 +344,7 @@ impl PageCache {
     /// 取走一页。**一页只取一次**：取走即放掉，这一卷的缓存跟着写出一页一页地空下去。
     ///
     /// 用量一格不减——报告说的是这一卷**为缓存留下过**多少（见 [`CacheUsage::stored`]），
-    /// 而决策点上交出去的那一份与收摊时那一份要说同一个数
+    /// 而确认点上交出去的那一份与收摊时那一份要说同一个数
     /// （`crate::process_volume` 的 `assemble` 拼两次）。
     pub fn take(&mut self, index: usize) -> Result<Held> {
         let Some(entry) = self.entries.get_mut(index) else {
@@ -364,7 +364,7 @@ impl PageCache {
                 .with_context(|| format!("从溢写文件读缓存里第 {index} 页"))?,
             Stored::Measured => bail!(
                 "这一遍的缓存只记账、不留页：第 {index} 页取不回来。\
-                 dry-run 没有第二遍，取页说明调用方走错了路"
+                 dry-run 没有写出环节，取页说明调用方走错了路"
             ),
             Stored::Taken => bail!("缓存里第 {index} 页已经取走过了：一页只写出一次"),
         };
@@ -495,7 +495,7 @@ mod tests {
         GrayImage::new(size, pixels)
     }
 
-    /// 取走第 `index` 页，它得是参照——上包络那条路上那一格从头到尾装的就是参照。
+    /// 取走第 `index` 页，它得是参照——整卷统一灰阶那条路上那一格从头到尾装的就是参照。
     fn reference_taken(cache: &mut PageCache, index: usize) -> GrayImage {
         match cache.take(index).expect("取回那一页") {
             Held::Reference(restored) => restored,
@@ -503,7 +503,7 @@ mod tests {
         }
     }
 
-    /// 上包络那条路上一格从头到尾只装参照，取回来的就是参照。
+    /// 整卷统一灰阶那条路上一格从头到尾只装参照，取回来的就是参照。
     #[test]
     fn a_page_that_was_never_swapped_comes_back_as_the_reference() {
         let spill_dir = tempfile::tempdir().expect("建溢写目录");
@@ -519,7 +519,7 @@ mod tests {
         }
     }
 
-    /// 一页只取一次：第二遍每一页只写出去一次，取第二回说明调用方走错了路。
+    /// 一页只取一次：写出环节每一页只写出去一次，取第二回说明调用方走错了路。
     #[test]
     fn a_page_is_taken_only_once() {
         let spill_dir = tempfile::tempdir().expect("建溢写目录");
@@ -535,7 +535,7 @@ mod tests {
     }
 
     /// 存进去的与取出来的逐字节相同——内存与溢写两条路都是。
-    /// LZ4 无损是「第二遍不改变任何输出」的前提。
+    /// LZ4 无损是「写出环节不改变任何输出」的前提。
     #[test]
     fn what_goes_in_comes_back_out_byte_for_byte_wherever_it_was_kept() {
         let spill_dir = tempfile::tempdir().expect("建溢写目录");
@@ -617,7 +617,7 @@ mod tests {
 
     /// 只记账那一遍：用量照记，页不留，临时文件一个不建。
     ///
-    /// dry-run 走的就是这条路——它没有第二遍，留下的字节没人取，但 `--cache-budget`
+    /// dry-run 走的就是这条路——它没有写出环节，留下的字节没人取，但 `--cache-budget`
     /// 撑不撑得住仍要预告得出来（spec 的 story 6）。
     #[test]
     fn an_accounting_only_cache_measures_everything_and_keeps_nothing() {
@@ -711,14 +711,14 @@ mod tests {
         assert!(said.contains("2 页"), "{said}");
         assert!(said.contains("1.0 MiB"), "{said}");
         assert!(said.contains("压缩前 4.0 MiB"), "{said}");
-        assert!(said.contains("未溢写"), "{said}");
+        assert!(said.contains("没有写到临时文件"), "{said}");
         // 进位按 1024，单位就得标 MiB：`--cache-budget 512M` 收的正是这个量。
-        assert!(said.contains("预算 512.0 MiB"), "{said}");
+        assert!(said.contains("内存上限 512.0 MiB"), "{said}");
 
         usage.resident = 0;
         usage.spilled = usage.stored;
         let said = usage.to_string();
         assert!(said.contains("临时文件 1.0 MiB"), "{said}");
-        assert!(!said.contains("未溢写"), "{said}");
+        assert!(!said.contains("没有写到临时文件"), "{said}");
     }
 }

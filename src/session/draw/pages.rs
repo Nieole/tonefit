@@ -1,22 +1,22 @@
 //! 屏上那一块：**逐页表**——展开一卷之后报告区里一页一行的那张表
-//! （`CONTEXT.md` 的《会话》：展开、要紧的页）。
+//! （`CONTEXT.md` 的《会话》：展开、需留意的页）。
 //!
 //! ```text
-//!  记号  页名     尺寸       缩放                       判定     理由              判据
-//!  ✓     001.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      4bit     阈值内最低的一档  1bit+FS 32.000 ⋅ ⋯
-//!  *     087.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      2bit+FS  卷级上包络        ⋯                   定档页
-//!  !     104.jpg  1182x1680  缩放比 1.219 ⋅ 未预缩      4bit     特例页单独定档    ⋯                   特例页
-//!  ✗     017.jpg  1182x1680  失败页 ⋅ 卷内统一尺寸留白                                                 失败 解不出完整尺寸
+//!  记号  页名     尺寸       缩放                       判定     理由              画质分
+//!  ✓     001.jpg  1182x1680  缩放比 1.219 ⋅ 一次缩放      4bit     达标的最省空间档位    1bit+FS 32.000 ⋅ ⋯
+//!  *     087.jpg  1182x1680  缩放比 1.219 ⋅ 一次缩放      2bit+FS  整卷统一灰阶        ⋯                   代表页
+//!  !     104.jpg  1182x1680  缩放比 1.219 ⋅ 一次缩放      4bit     差异大的页单独定档    ⋯                   差异大的页
+//!  ✗     017.jpg  1182x1680  坏页 ⋅ 卷内统一尺寸留白                                                 失败 解不出完整尺寸
 //! ```
 //!
 //! 上面那一副是**砍剩的那几列**：这一卷一页都没裁过、没切过、没有彩页转灰，
 //! 那三列因此连列头都不占，而去处那一列让给了宽度。
 //! 十一列的全套与[砍列的次序](PageColumn)在 [`crate::session::columns`] 那一处。
 //!
-//! # 默认只列**要紧的页**
+//! # 默认只列**需留意的页**
 //!
 //! 展开一卷的目的通常只有一个——**哪一页把整卷拉下来**——而两百页的卷里那几页不该由
-//! 用户自己在四百行里找（`p3-session-legibility/11`）。「哪几页要紧」的判据**不在这里**，
+//! 用户自己在四百行里找（`p3-session-legibility/11`）。「哪几页要紧」的画质分**不在这里**，
 //! 在 [`crate::render::notable`]：那一处与逐页那几行、与命令行印出去的那一份挨着，
 //! 而这一层只把判出来的那几种摆成屏上的一个词与一个[记号](Mark)。
 //! `a` 切到[全部页](Listing::All)。
@@ -26,15 +26,15 @@
 //! 同一批行（[`crate::render::pages`]）、同一套[砍列](crate::session::columns)、
 //! 同一份[视口](crate::session::viewport::Viewport)、同一组[语义色](Tone)——
 //! 差的只有列（[`PageColumn`]）与记号那几种。措辞照旧一个字都不在这里重写：
-//! 表上那十列与失败页那一句全出自 [`crate::render`]。
+//! 表上那十列与坏页那一句全出自 [`crate::render`]。
 //!
 //! 长在这一层的只有**命令行上根本没有**的那三样：列头、[行首记号](Mark)、
 //! 以及[要紧在哪儿那几个词](says)。
 //!
 //! # 逐页那几格**一格不少**
 //!
-//! 裁边、缩放、跨页哪一侧、彩页转灰、去处五格从前留在表外，`p4-parking-lot/10`
-//! 把它们收了进来（停车场 Q162）。跟着回来的是失败页那一句
+//! 裁白边、缩放、跨页哪一侧、彩页转灰、去处五格从前留在表外，`p4-parking-lot/10`
+//! 把它们收了进来（停车场 Q162）。跟着回来的是坏页那一句
 //! **它的尺寸是卷内统一尺寸**（[`Field::Scaling`] 那一格，`p1-session/11` 的验收）。
 //!
 //! **摆不下时它们仍是先让的那几列**（[`PageColumn::DROPPED_IN_TURN`](Column::DROPPED_IN_TURN)）：
@@ -63,25 +63,25 @@ use crate::session::tone::Tone;
 /// [语义](Tone)（[`tone`](Self::tone)）。「颜色不是唯一载体」因此不靠人记着——
 /// 添一种要紧法不配记号根本编不过去。
 ///
-/// **一页可以同时要紧在好几处**（以高为准的跨页卷里，定档页多半也是一张宽溢出的页），
+/// **一页可以同时要紧在好几处**（以高为准的跨页卷里，代表页多半也是一张页面超宽的页），
 /// 而一行只有一种语义：取**最重的那一个**（[`Ord`] 从轻到重排，与 [`Tone`] 同一个做法）。
 /// 具体要紧在哪几处不靠这一个字符说，靠行尾那几个词（[`says`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Mark {
-    /// 不要紧的一页：判定跟着卷级基准档走，几何与解码都没出过事。
+    /// 不要紧的一页：判定跟着卷级统一档位走，几何与解码都没出过事。
     Fine,
-    /// **定档页**：这一卷的基准档就是它判出来的。不是出了事，是这一卷的答案。
+    /// **代表页**：这一卷的统一档位就是它判出来的。不是出了事，是这一卷的答案。
     Driver,
-    /// 要留神的一页：特例、部分救回、几何门不成立、宽溢出、兜底上界，五者之一。
+    /// 要留神的一页：特例、残缺、尺寸未贴合屏幕、页面超宽、兜底上界，五者之一。
     Caution,
-    /// 失败页：这一页根本没解出来。
+    /// 坏页：这一页根本没解出来。
     Failed,
 }
 
 impl Mark {
     /// 屏上那一个字符。
     ///
-    /// 定档页取 `*` 而不是另一个记号：它与 `✓` 一样不是坏事，
+    /// 代表页取 `*` 而不是另一个记号：它与 `✓` 一样不是坏事，
     /// 而一颗星在一屏 `✓` 里一眼看得出来——「这一卷的档是它定的」正是要一眼看见的那件事。
     fn glyph(self) -> char {
         match self {
@@ -94,8 +94,8 @@ impl Mark {
 
     /// 这一种记号是哪一种[语义](Tone)——**这一行整行按它上色**。
     ///
-    /// 逐条对上 `CONTEXT.md` 的《语义色》：失败页是「出事」，那五样是「注意」，
-    /// 定档页与普通页都是「平常」——定档页在四档里一档都不占，它不是一件要留神的事。
+    /// 逐条对上 `CONTEXT.md` 的《语义色》：坏页是「出事」，那五样是「注意」，
+    /// 代表页与普通页都是「平常」——代表页在四档里一档都不占，它不是一件要留神的事。
     fn tone(self) -> Tone {
         match self {
             Self::Fine | Self::Driver => Tone::Plain,
@@ -107,47 +107,47 @@ impl Mark {
 
 /// 一页**要紧在哪儿**在屏上写成什么样：行尾那个词，加上它挂哪一个[记号](Mark)。
 ///
-/// **判据不在这里**（在 [`crate::render::notable`]）：这一处只答「屏上怎么说」。
+/// **画质分不在这里**（在 [`crate::render::notable`]）：这一处只答「屏上怎么说」。
 /// 那几个词逐字取自 `CONTEXT.md` 的《语义色》那一档里列的名字——
 /// 它们在 spec、在报告末尾那几小结、在这里说的是同一批事。
 ///
 /// **两种不给词**，理由同一条：屏上本来就跟着 [`crate::render`] 出的那一格，
 /// 而那一格自己就说得出这件事——多加一个词是同一件事说两遍。
 ///
-/// - [失败页](Notable::Failed)行尾跟着那一句原因，它以「失败」开头；
-/// - [部分救回](Notable::Salvaged)行尾跟着 `Field::Salvage` 那一格（`救回 62.0%`），
+/// - [坏页](Notable::Failed)行尾跟着那一句原因，它以「失败」开头；
+/// - [残缺](Notable::Salvaged)行尾跟着 `Field::Salvage` 那一格（`救回 62.0%`），
 ///   而它比一个词多说了**救回了多少**——救回 5% 与救回 95% 是两回事，
-///   一个「部分救回」把那个数抹平了。
+///   一个「残缺」把那个数抹平了。
 fn says(what: Notable) -> (Option<&'static str>, Mark) {
     match what {
         Notable::Failed => (None, Mark::Failed),
         Notable::Salvaged => (None, Mark::Caution),
-        Notable::Outlier => (Some("特例页"), Mark::Caution),
-        Notable::OutsideTheGate => (Some("几何门不成立"), Mark::Caution),
-        Notable::Overflowed => (Some("宽溢出"), Mark::Caution),
+        Notable::Outlier => (Some("差异大的页"), Mark::Caution),
+        Notable::OutsideTheGate => (Some("尺寸未贴合屏幕"), Mark::Caution),
+        Notable::Overflowed => (Some("页面超宽"), Mark::Caution),
         Notable::Backstopped => (Some("兜底上界"), Mark::Caution),
-        Notable::Driver => (Some("定档页"), Mark::Driver),
+        Notable::Driver => (Some("代表页"), Mark::Driver),
     }
 }
 
 /// 表上的一行：一页。
 ///
 /// 不在场的格是 `None`——**一格在不在场本身就是一句话**（`CONTEXT.md` 的《格》）：
-/// 失败页没有判定，走彩色分支的页没有判据。
+/// 坏页没有判定，走彩色分支的页没有画质分。
 struct Entry {
     /// 行首记号：这一页要紧的那几处里最重的那一个。
     mark: Mark,
     /// 页名：**源那一侧的成员名**，只印最后那一段。
     ///
-    /// 走 [`crate::render::volume_name`]，与卷表定档页那一列、与这一副的
+    /// 走 [`crate::render::volume_name`]，与卷表代表页那一列、与这一副的
     /// [抬头](heading)印的是同一个——三处要是各取各的，抬头说 `001.jpg`
     /// 而表上写 `001.png`，读的人会以为那是两页。
     name: String,
     /// 这一页的输出尺寸。
     size: Option<String>,
-    /// 裁边裁掉了多少。一个像素都没裁就不在场。
+    /// 裁白边裁掉了多少。一个像素都没裁就不在场。
     crop: Option<String>,
-    /// 缩放怎么算的；失败页说的是它的尺寸从哪来。
+    /// 缩放怎么算的；坏页说的是它的尺寸从哪来。
     scaling: Option<String>,
     /// 跨页切出来的哪一半。不是切出来的就不在场。
     cut: Option<String>,
@@ -157,19 +157,19 @@ struct Entry {
     verdict: Option<String>,
     /// 判成这一档的理由。
     reason: Option<String>,
-    /// 各候选的判据值排成一串。
+    /// 各候选的画质分值排成一串。
     scores: Option<String>,
     /// 去处：这一页写到哪个文件。
     output: Option<String>,
     /// 跟在行尾的那几句：**成句或成词，不塞进格**——要紧在哪几处那几个词，
-    /// 外加成句的那一行（失败页那一句原因、彩色分支那一句）。
+    /// 外加成句的那一行（坏页那一句原因、彩色分支那一句）。
     ///
     /// 摆不下时整行折下去，走 [`crate::wrap`]，与卷表那一头同一条。
     notes: Vec<String>,
 }
 
 impl Entry {
-    /// 一页开头那一行（[几何](RowKind::PageGeometry)）：尺寸、裁边、缩放、跨页与去处
+    /// 一页开头那一行（[几何](RowKind::PageGeometry)）：尺寸、裁白边、缩放、跨页与去处
     /// 五格从这里来。
     ///
     /// **名字不从这里来**——那一行上只有去处（一条输出路径），而这一副印的是源那一侧的
@@ -199,16 +199,16 @@ impl Entry {
         self.verdict = row.cell(Field::Candidate).map(str::to_owned);
         self.reason = row.cell(Field::Reason).map(str::to_owned);
         self.scores = row.cell(Field::Scores).map(str::to_owned);
-        // **救回了多少**跟在行尾（`救回 62.0%`）：它是[部分救回](Notable::Salvaged)
+        // **救回了多少**跟在行尾（`救回 62.0%`）：它是[残缺](Notable::Salvaged)
         // 那一档在屏上的载体，而且比一个词多说了一个数（见 [`says`]）。
         self.notes
             .extend(row.cell(Field::Salvage).map(str::to_owned));
-        // **这一页的纸白与钳制宽度**同样跟在行尾（`纸白 253 ⋅ 钳制 2 级`）：它只在试算那一副
+        // **这一页的纸白与钳制宽度**同样跟在行尾（`纸白 253 ⋅ 钳制 2 级`）：它只在预览那一副
         // 出（见 [`crate::render::pages`]），一列专门留给它就意味着执行那一趟整列空着。
         // 措辞连同「纸白」「钳制」那几个字都在格里，这一层一个字都没添。
         self.notes
             .extend(row.cell(Field::PaperWhite).map(str::to_owned));
-        // 成句的那一行（失败页、彩色分支）整句跟在行尾：它本来就是句子，拆成格没有意义。
+        // 成句的那一行（坏页、彩色分支）整句跟在行尾：它本来就是句子，拆成格没有意义。
         self.notes
             .extend(row.cell(Field::Sentence).map(str::to_owned));
     }
@@ -226,7 +226,7 @@ impl Entry {
         self.mark > Mark::Fine
     }
 
-    /// 这一页要紧在哪几处：记号取最重的那一个，那几个词按判据给的次序跟在行尾。
+    /// 这一页要紧在哪几处：记号取最重的那一个，那几个词按画质分给的次序跟在行尾。
     ///
     /// 那几个词排在成句的那一句**前面**：句子摆不下时整行折下去，而这几个词是扫一眼
     /// 就要看见的东西。
@@ -245,7 +245,7 @@ impl Entry {
     ///
     /// **不在场的那几格一个字都不占**（`CONTEXT.md` 的《格》：一格在不在场本身就是
     /// 一句话）——卷表那一处的 `ABSENT` 治的是**夹在中间**的页数，而这张表上真会不在场的
-    /// 那几格（裁边、跨页、彩页转灰、判定那三格）空着就是「这一页没有这件事」。
+    /// 那几格（裁白边、跨页、彩页转灰、判定那三格）空着就是「这一页没有这件事」。
     fn text(&self, column: PageColumn) -> String {
         match column {
             PageColumn::Mark => self.mark.glyph().to_string(),
@@ -300,7 +300,7 @@ fn entries(volume: &VolumeReport, panel: Panel, mode: Mode) -> Vec<Entry> {
 /// 两样装在一个类型里而不是一对裸值，与 [`Table`] 同一条理由：它们是同一次拼出来的，
 /// 而「第二个 `String` 是什么」在调用处看不出来。
 pub(super) struct Opened {
-    /// 钉在这一格顶上的那一行：这一卷的档位分布、定档页、这一副列着几页。
+    /// 钉在这一格顶上的那一行：这一卷的灰阶分布、代表页、这一副列着几页。
     ///
     /// **它不随表滚**（见 [`super::report`]）：逐页翻到第三屏时「这一卷判成哪一档」
     /// 还得答得出来，而那正是翻这几页要比的东西。
@@ -311,17 +311,17 @@ pub(super) struct Opened {
 
 /// **逐页表**：列头一行，此后一页一行。
 ///
-/// `room` 是这一格里正文摆得下几列；`listing` 是这一副列[要紧的页](Listing::Notable)
+/// `room` 是这一格里正文摆得下几列；`listing` 是这一副列[需留意的页](Listing::Notable)
 /// 还是[全部页](Listing::All)；`at` 是光标停在列出来的第几页上
 /// （越界不算错，就近收到最后一页上——与 [`Viewport`](crate::session::viewport::Viewport)
 /// 那条同一个规矩）。
 ///
 /// **一页都列不出来时给的是一句话，不是一张空表**（`p3-session-legibility/11` 票面
-/// 第三条）：跳过的卷根本没有逐页结果，而一张要紧的页都没有的卷是**一句好消息**——
+/// 第三条）：跳过的卷根本没有逐页结果，而一张需留意的页都没有的卷是**一句好消息**——
 /// 空表说不出这件事，它读起来像画坏了。
 ///
-/// `mode` 与 `limit` 是**这一趟的前提**，两样都只为纸白对齐那一项递进来
-/// （纸白对齐批 02 号票）：逐页那一格纸白只在 `--dry-run` 出，
+/// `mode` 与 `limit` 是**这一趟的前提**，两样都只为纸色提白那一项递进来
+/// （纸色提白批 02 号票）：逐页那一格纸白只在 `--dry-run` 出，
 /// 而抬头读的那几行卷级行里有一行要照本次上限说话。
 pub(super) fn pages(
     volume: &VolumeReport,
@@ -349,12 +349,12 @@ pub(super) fn pages(
     Opened { heading, table }
 }
 
-/// 钉在这一格顶上那一行：**这一卷的档位分布 · 定档页 · 这一副列着几页**（票面：抬头钉住）。
+/// 钉在这一格顶上那一行：**这一卷的灰阶分布 · 代表页 · 这一副列着几页**（票面：抬头钉住）。
 ///
 /// 前两格与卷表上那两列**同一个出处**（[`crate::render::tally_column`] 与
 /// [`driver`]）：展开着的时候卷表不在屏上，而「这一卷各页写成了哪几档、是哪一页定的」
-/// 正是逐页那几行要比的东西。不在场就不出：跳过的卷没有定档页，
-/// 默认逐页那一趟也没有（`two-pass-rework/02`——定档页只在 `--envelope` 那条路上在场）。
+/// 正是逐页那几行要比的东西。不在场就不出：跳过的卷没有代表页，
+/// 默认逐页那一趟也没有（`two-pass-rework/02`——代表页只在 `--envelope` 那条路上在场）。
 ///
 /// 末一格说的是[这一副列的是哪几页](Listing)——**切换状态屏上看得出**就落在它身上
 /// （屏底那一行摆的是那个键，见 [`super::footer`]：按键提示的家是屏底，状态的家是抬头）。
@@ -372,20 +372,20 @@ fn heading(
     let mut said = Vec::new();
     if let Some(tally) = render::tally_column(&rows) {
         // 有分布的卷挂上列头；一页都没判的卷（跳过）只剩那一个词，列头不挂——
-        // 「档位分布 跳过」不是一句话，表上那一列有列头撑着，抬头没有。
+        // 「灰阶分布 跳过」不是一句话，表上那一列有列头撑着，抬头没有。
         said.push(if rows.iter().any(|row| row.kind == RowKind::Tally) {
-            format!("档位分布 {tally}")
+            format!("灰阶分布 {tally}")
         } else {
             tally
         });
     }
     if let Some(driver) = driver(&rows) {
-        said.push(format!("定档页 {driver}"));
+        said.push(format!("代表页 {driver}"));
     }
     // 一页逐页结果都没有的卷（跳过）不说这一句：那一格里的那句话已经说清为什么。
     if total > 0 {
         said.push(match listing {
-            Listing::Notable => format!("要紧的页 {notable}/{total}"),
+            Listing::Notable => format!("需留意的页 {notable}/{total}"),
             Listing::All => format!("全部 {total} 页（要紧的 {notable} 页）"),
         });
     }
@@ -395,7 +395,7 @@ fn heading(
 /// 一页都列不出来时那一句话。列得出来就是 `None`。
 ///
 /// 两种，各说各的：**跳过的卷**根本没有逐页结果（不要紧那一档：它不是坏消息，
-/// 也不是这一趟做的事）；**一张要紧的页都没有**是一句好消息，照实说出来。
+/// 也不是这一趟做的事）；**一张需留意的页都没有**是一句好消息，照实说出来。
 fn nothing_to_list(volume: &VolumeReport, listing: Listing, empty: bool) -> Option<Painted> {
     if !empty {
         return None;
@@ -408,7 +408,7 @@ fn nothing_to_list(volume: &VolumeReport, listing: Listing, empty: bool) -> Opti
     }
     Some(match listing {
         Listing::Notable => Painted::plain(format!(
-            " 这一卷没有要紧的页：{} 页里没有一页出事、也没有一页被摘出去，卷级判定也不是哪一页定出来的。",
+            " 这一卷没有需留意的页：{} 页里没有一页出事、也没有一页被摘出去，卷级判定也不是哪一页定出来的。",
             volume.pages.len()
         )),
         // 全部页那一副也空：这一卷连一页都没有。真实素材上到不了（一页都没有的东西不是卷），
@@ -423,7 +423,7 @@ fn nothing_to_list(volume: &VolumeReport, listing: Listing, empty: bool) -> Opti
 /// [各答一半](Widths::note)：
 ///
 /// - **哪几列在场按整卷算**（`all`）：`a` 换的是列哪几页，屏上不该跟着换一副表。
-///   彩页转灰与跨页都不在[要紧的页](crate::render::Notable)那七种里，
+///   彩页转灰与跨页都不在[需留意的页](crate::render::Notable)那七种里，
 ///   只按 `shown` 量的话，一卷里那几页恰好都不要紧时整列会随 `a` 一开一合。
 /// - **每一列多宽按真列出来的那几行算**（`shown`）：列不出来的那几行一个像素都不占。
 ///
@@ -470,7 +470,7 @@ fn laid_out(shown: &[&Entry], all: &[Entry], room: u16, at: usize) -> Table {
 mod tests {
     use super::*;
 
-    /// **逐页表自己造的那几个字形在哪种终端上都占一格**（判据见
+    /// **逐页表自己造的那几个字形在哪种终端上都占一格**（画质分见
     /// [`tonefit::width_is_stable`]，停车场 Q154）。
     ///
     /// 与卷表那一条同一件事，两张表因此各问各的：添一种记号不过这一关就红。
@@ -487,7 +487,7 @@ mod tests {
     use crate::render::Cell;
     use crate::session::live::fixture;
 
-    /// 这一趟那块面板。宽溢出比的就是它的宽。
+    /// 这一趟那块面板。页面超宽比的就是它的宽。
     fn panel() -> Panel {
         fixture::request(tonefit::Mode::DryRun).profile.panel()
     }
@@ -503,10 +503,10 @@ mod tests {
             .collect()
     }
 
-    /// **默认只列要紧的页，`a` 切到全部页**（票面第二条）。
+    /// **默认只列需留意的页，`a` 切到全部页**（票面第二条）。
     ///
     /// 夹具那一卷八页，要紧的六页——普通那两页只在全部页那一副上。
-    /// 每一种要紧法在屏上都另有一个词（「颜色不是唯一载体」），失败页那一句原因照旧成句。
+    /// 每一种要紧法在屏上都另有一个词（「颜色不是唯一载体」），坏页那一句原因照旧成句。
     #[test]
     fn the_default_listing_is_the_pages_that_matter_and_a_shows_them_all() {
         let volume = fixture::a_page_of_every_kind("卷二");
@@ -532,27 +532,30 @@ mod tests {
 
         assert_eq!(body(&notable).len(), 6, "{:?}", body(&notable));
         assert_eq!(body(&all).len(), 8, "{:?}", body(&all));
-        // 六种要紧法各带一个词（失败页那一句本来就以「失败」开头，不再多一个词）。
+        // 六种要紧法各带一个词（坏页那一句本来就以「失败」开头，不再多一个词）。
         let said = body(&notable).join("\n");
         for word in [
-            "定档页",
-            "特例页",
-            "几何门不成立",
-            "宽溢出",
+            "代表页",
+            "差异大的页",
+            "尺寸未贴合屏幕",
+            "页面超宽",
             "兜底上界",
-            // 部分救回与失败两档**不给词**：行尾跟着的那一格自己就说得出，
+            // 残缺与失败两档**不给词**：行尾跟着的那一格自己就说得出，
             // 而它比一个词多说了一个数（见 [`says`]）。
             "救回 62.0%",
             "失败 解不出完整尺寸",
         ] {
             assert!(said.contains(word), "{word} 没说出来：{said}");
         }
-        // **一页要紧在好几处时，那几个词一个不少**（`004` 是特例页，而且它宽溢出）。
+        // **一页要紧在好几处时，那几个词一个不少**（`004` 是差异大的页，而且它页面超宽）。
         let both = body(&notable)
             .into_iter()
             .find(|row| row.contains("004.jpg"))
             .expect("特例那一页在");
-        assert!(both.contains("特例页") && both.contains("宽溢出"), "{both}");
+        assert!(
+            both.contains("差异大的页") && both.contains("页面超宽"),
+            "{both}"
+        );
         // 普通那两页只在全部页那一副上，而它们身上一个要紧的词都没有。
         // 彩色分支那一句也在那一副上——它只有逐页那几行说得出。
         let only_all = body(&all).join("\n");
@@ -562,12 +565,12 @@ mod tests {
         assert!(!said.contains("002.jpg"), "彩页混进了要紧那一副：{said}");
     }
 
-    /// **一张要紧的页都没有的卷说一句话，不给一张空表**（票面第三条）。
+    /// **一张需留意的页都没有的卷说一句话，不给一张空表**（票面第三条）。
     ///
-    /// 跳过的卷另说一句：它根本没有逐页结果，而那与「没有要紧的页」不是一回事。
+    /// 跳过的卷另说一句：它根本没有逐页结果，而那与「没有需留意的页」不是一回事。
     #[test]
     fn a_volume_with_nothing_worth_listing_says_so_instead_of_showing_an_empty_table() {
-        // 默认逐页那一卷没有定档页，一页也没出过事：要紧的页因此一张都没有。
+        // 默认逐页那一卷没有代表页，一页也没出过事：需留意的页因此一张都没有。
         let plain = fixture::per_page_volume("名侦探 05");
         let opened = pages(
             &plain,
@@ -579,11 +582,11 @@ mod tests {
             0,
         );
         assert_eq!(opened.table.rows.len(), 1, "给了一张表");
-        assert!(opened.table.rows[0].text.contains("没有要紧的页"));
+        assert!(opened.table.rows[0].text.contains("没有需留意的页"));
         assert_eq!(opened.table.cursor, None, "一行都没有却有光标");
         // 抬头照旧说得出这一副列着几页——那个数就是「零张要紧的」。
         assert!(
-            opened.heading.contains("要紧的页 0/1"),
+            opened.heading.contains("需留意的页 0/1"),
             "{}",
             opened.heading
         );
@@ -614,13 +617,13 @@ mod tests {
             assert_eq!(opened.table.rows.len(), 1);
             assert!(opened.table.rows[0].text.contains("一页都没有重做"));
             assert_eq!(opened.table.rows[0].tone, Tone::Muted);
-            // 抬头只剩「跳过」那一个词：没有分布可挂列头，也没有定档页、没有页数可说。
+            // 抬头只剩「跳过」那一个词：没有分布可挂列头，也没有代表页、没有页数可说。
             assert_eq!(opened.heading, " 跳过", "{}", opened.heading);
         }
     }
 
-    /// **抬头钉住这一卷的档位分布与定档页，两格与卷表那两列同一个出处**（票面：抬头；
-    /// 基准档那一格换成分布是 `two-pass-rework/02`）。
+    /// **抬头钉住这一卷的灰阶分布与代表页，两格与卷表那两列同一个出处**（票面：抬头；
+    /// 统一档位那一格换成分布是 `two-pass-rework/02`）。
     #[test]
     fn the_heading_pins_the_tally_and_the_driver_of_this_volume() {
         let volume = fixture::a_page_of_every_kind("卷二");
@@ -637,15 +640,15 @@ mod tests {
         .heading;
 
         let rows = render::volume(&volume, WhiteAlignLimit::default());
-        assert!(heading.contains(&render::tally_column(&rows).expect("有档位分布")));
-        assert!(heading.contains(&driver(&rows).expect("有定档页")));
-        // 这一卷八页里六页有判定：基准档那五页加特例那一页，分布把两档各摆出来。
+        assert!(heading.contains(&render::tally_column(&rows).expect("有灰阶分布")));
+        assert!(heading.contains(&driver(&rows).expect("有代表页")));
+        // 这一卷八页里六页有判定：统一档位那五页加特例那一页，分布把两档各摆出来。
         assert!(
-            heading.starts_with(" 档位分布 4bit 5 ⋅ 8bit 1 · 定档页 003.jpg"),
+            heading.starts_with(" 灰阶分布 4bit 5 ⋅ 8bit 1 · 代表页 003.jpg"),
             "{heading}"
         );
         // 列着几页也在：切到全部页之后这一格换一种说法——屏上看得出切没切过去。
-        assert!(heading.contains("要紧的页 6/8"), "{heading}");
+        assert!(heading.contains("需留意的页 6/8"), "{heading}");
         let all = pages(
             &volume,
             panel(),
@@ -728,7 +731,7 @@ mod tests {
     /// **窄下来按那个固定次序砍列，记号、页名与判定仍在**（票面第一条：与卷表同一套砍列）。
     ///
     /// 砍列那个次序的用例在 [`crate::session::columns`]（纯函数，终端库外面）；
-    /// 这一条问的是**摆出来之后**：判据那一串先让掉，而「哪一页判成哪一档」一直在。
+    /// 这一条问的是**摆出来之后**：画质分那一串先让掉，而「哪一页判成哪一档」一直在。
     #[test]
     fn a_narrow_pane_drops_the_scores_first_and_keeps_the_verdict() {
         let volume = fixture::a_page_of_every_kind("卷二");
@@ -753,12 +756,12 @@ mod tests {
         );
 
         assert!(
-            wide.table.rows[0].text.contains("判据"),
-            "宽了也没有判据那一列"
+            wide.table.rows[0].text.contains("画质分"),
+            "宽了也没有画质分那一列"
         );
         assert!(
-            !narrow.table.rows[0].text.contains("判据"),
-            "窄了还留着判据"
+            !narrow.table.rows[0].text.contains("画质分"),
+            "窄了还留着画质分"
         );
         assert!(narrow.table.rows[0].text.contains("判定"), "判定被砍掉了");
         assert!(narrow.table.rows[0].text.contains("页名"), "页名被砍掉了");
@@ -775,7 +778,7 @@ mod tests {
         assert_eq!(body(&sliver).len(), 8, "砍无可砍时行也还在");
     }
 
-    /// **几何那五格各落进自己那一列**：裁边 · 缩放 · 跨页 · 彩页转灰 · 去处
+    /// **几何那五格各落进自己那一列**：裁白边 · 缩放 · 跨页 · 彩页转灰 · 去处
     /// （`p4-parking-lot/10`，收停车场 Q162）。
     ///
     /// 喂的是一行手搓的[几何行](Row)与一行判定行——**这一条问的是「哪一格落进哪一列」**，
@@ -786,8 +789,16 @@ mod tests {
     #[test]
     fn each_of_the_five_cells_lands_in_its_own_column() {
         let on_the_geometry_row = [
-            (Field::Crop, PageColumn::Crop, "裁边 1441x2048 ⟶ 1400x2000"),
-            (Field::Scaling, PageColumn::Scaling, "缩放比 1.219 ⋅ 未预缩"),
+            (
+                Field::Crop,
+                PageColumn::Crop,
+                "裁白边 1441x2048 ⟶ 1400x2000",
+            ),
+            (
+                Field::Scaling,
+                PageColumn::Scaling,
+                "缩放比 1.219 ⋅ 一次缩放",
+            ),
             (Field::Cut, PageColumn::Cut, "跨页右半"),
             (Field::Output, PageColumn::Output, "出/隔离/卷三/001.png"),
         ];
@@ -817,7 +828,7 @@ mod tests {
         assert_eq!(entry.text(PageColumn::ColorToGray), "彩页转灰");
     }
 
-    /// **五格摆进表里，失败页那一行因此说得出它的尺寸是卷内统一的**
+    /// **五格摆进表里，坏页那一行因此说得出它的尺寸是卷内统一的**
     /// （`p4-parking-lot/10` 收停车场 Q162；那一句是 `p1-session/11` 的验收）。
     ///
     /// 与上一条是一对：那一条问「哪一格落进哪一列」，这一条问**整表摆出来**——
@@ -860,17 +871,17 @@ mod tests {
         ] {
             assert!(head.contains(column.head()), "{column:?} 没有列头：{head}");
         }
-        // **失败页那一行说得出它的尺寸是卷内统一的**：那一句就在缩放那一格里。
+        // **坏页那一行说得出它的尺寸是卷内统一的**：那一句就在缩放那一格里。
         let failed = body(&opened)
             .into_iter()
             .find(|row| row.contains("017.jpg"))
             .expect("失败那一页在");
-        assert!(failed.contains("卷内统一尺寸"), "{failed}");
+        assert!(failed.contains("用空白页占位"), "{failed}");
     }
 
     /// **一整列都不在场时那一列连列头都不占**（[`columns::fit`] 的第零步）。
     ///
-    /// 多数卷一页都没裁过、没切过、没有彩页转灰——三个空列头挤掉的是判据那一串，
+    /// 多数卷一页都没裁过、没切过、没有彩页转灰——三个空列头挤掉的是画质分那一串，
     /// 而那正是这一副要答的那一问的证据。[`fixture::a_page_of_every_kind`] 那一卷
     /// 就是这一档：几何那三格一格都不在场。
     #[test]
@@ -905,7 +916,7 @@ mod tests {
             .text
             .clone();
 
-        for head in ["裁边", "彩页"] {
+        for head in ["裁白边", "彩页"] {
             assert!(
                 !without.contains(head),
                 "空着的 {head} 那一列还占着：{without}"
@@ -915,7 +926,7 @@ mod tests {
         // 跨页那一列两卷都空着——两份夹具都没有切开的页（见
         // [`fixture::a_page_with_every_geometry_cell`]）。
         assert!(!with.contains("跨页"), "{with}");
-        // 恒在的那几列空着也留着：判定那一格在失败页上不在场，而它是这一副要答的那件事。
+        // 恒在的那几列空着也留着：判定那一格在坏页上不在场，而它是这一副要答的那件事。
         assert!(without.contains("判定"), "{without}");
         // 缩放那一列每一页都有：它一格不空，因此这一档上照旧在。
         assert!(without.contains("缩放"), "{without}");
@@ -925,15 +936,15 @@ mod tests {
     ///
     /// 「一整列都不在场就不占地方」那一步问的若是**这一副列出来的那几页**，
     /// 一个只管「列哪几页」的键就会换掉整张表的列——而彩页转灰与跨页都不在
-    /// [要紧的页](crate::render::notable)那七种里，一卷里带着它们的页恰好都不要紧
+    /// [需留意的页](crate::render::notable)那七种里，一卷里带着它们的页恰好都不要紧
     /// 时那一列会随 `a` 一开一合。
     ///
     /// 这一卷就是那一档：几何全齐的那一页判定被覆盖顶掉、因此**不要紧**
-    /// （只列要紧的页那一副上只剩失败那一张）。
+    /// （只列需留意的页那一副上只剩失败那一张）。
     #[test]
     fn pressing_a_changes_which_pages_are_listed_and_not_which_columns_there_are() {
         let mut volume = fixture::a_page_with_every_geometry_cell("卷三");
-        // 覆盖顶掉判定：这一卷没有定档页，几何全齐的那一页因此一处都不要紧。
+        // 覆盖顶掉判定：这一卷没有代表页，几何全齐的那一页因此一处都不要紧。
         volume.verdict = Some(tonefit::VolumeVerdict::Override(tonefit::Candidate::new(
             tonefit::BitDepth::Four,
             tonefit::Dither::Off,
@@ -974,7 +985,7 @@ mod tests {
             ))
             .len(),
             1,
-            "只列要紧的页那一副该只剩失败那一张"
+            "只列需留意的页那一副该只剩失败那一张"
         );
         assert_eq!(
             body(&pages(

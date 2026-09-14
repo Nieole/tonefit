@@ -333,10 +333,10 @@ fn an_archive_carries_its_non_page_members_across_byte_for_byte() {
 #[test]
 fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
     let space = Workspace::new();
-    // 高已经等于面板高：这样的页是两种适配方式的**公共不动点**（页几何批 01 号票），
+    // 高已经等于面板高：这样的页是两种缩放方式的**公共不动点**（页几何批 01 号票），
     // 尺寸断言因此写得出一个字面值。本条问的是容器形态，不是几何。
     const PAGE: Size = Size::new(200, 1680);
-    // 四边顶着墨：裁边在它身上是空操作（页几何批 02 号票），尺寸断言仍写得出字面值。
+    // 四边顶着墨：裁白边在它身上是空操作（页几何批 02 号票），尺寸断言仍写得出字面值。
     let page = fixtures::full_bleed_gradient(PAGE);
     let loose = space.volume("volume-a");
     loose.page("001.png", &page);
@@ -374,11 +374,11 @@ fn an_archive_whose_structure_cannot_be_read_is_refused_without_leaving_output()
 
 /// 透传文件的字节读不出来仍然是**卷级**的失败，而且要指名是哪个成员。
 ///
-/// 页不再走这条路——坏页变成失败页，整卷进隔离目录（12 号票，见 `isolation.rs`）。
+/// 页不再走这条路——坏页变成坏页，整卷进隔离目录（12 号票，见 `isolation.rs`）。
 /// 透传文件没有那条出路：它逐字节照搬，搬不动就交不出这一卷，
 /// 编一份空的 ComicInfo.xml 顶上去只会让阅读器读到假的书籍元信息。
 ///
-/// **卷级失败不再毁掉整趟**（05 号票）：`run` 回的是 `Ok`，那一卷记在
+/// **卷转换失败不再毁掉整趟**（05 号票）：`run` 回的是 `Ok`，那一卷记在
 /// `Report::failed_volumes` 里，指名与原因都在那一条上。整趟当场失败的老样子换掉了——
 /// 那时前面几十卷的输出还在盘上，而说得清它们是什么的报告全丢了。
 #[test]
@@ -397,9 +397,9 @@ fn a_pass_through_file_whose_bytes_are_corrupt_is_named_in_the_failed_volume() {
         "没做成的卷混进了做出东西的那一列"
     );
     let [failed] = &report.failed_volumes[..] else {
-        panic!("这一卷没被记成卷级失败：{:?}", report.failed_volumes);
+        panic!("这一卷没被记成卷转换失败：{:?}", report.failed_volumes);
     };
-    assert_eq!(failed.volume, path, "卷级失败指错了卷");
+    assert_eq!(failed.volume, path, "卷转换失败指错了卷");
     assert!(failed.reason.contains("ComicInfo.xml"), "{}", failed.reason);
 }
 
@@ -425,7 +425,7 @@ fn a_file_that_is_neither_a_directory_nor_a_known_archive_is_refused() {
 /// 不是「不认得这个扩展名」。
 ///
 /// 两句话分得开才有用：前者说的是这个文件坏了，后者说的是这个格式没收。
-/// 点名的这一种整趟拒绝（发现出来的那一种进非卷文件清单，见 `tests/exit_code.rs`）。
+/// 点名的这一种整趟拒绝（发现出来的那一种进非漫画文件清单，见 `tests/exit_code.rs`）。
 /// 两个格式各问一遍：那句话一格式一份（`source` 的 `seven_zip_is_unreadable` 与
 /// `rar_is_unreadable`），少测一个就少守一句。
 #[test]
@@ -448,8 +448,8 @@ fn a_file_that_only_looks_like_a_solid_archive_is_refused_for_being_unreadable()
 
 /// `.zip` 与 `.cbz` 是同一种字节：同内容的一对，产物逐字节相同，去处也是同一个名字。
 ///
-/// 两个扩展名各跑一趟、各写一个输出根，比的才是「读法有没有分岔」这一件事——
-/// 同一个输出根下这一对是撞车（见 `tests/pipeline.rs`），比不成。
+/// 两个扩展名各跑一趟、各写一个输出目录，比的才是「读法有没有分岔」这一件事——
+/// 同一个输出目录下这一对是撞车（见 `tests/pipeline.rs`），比不成。
 #[test]
 fn a_zip_is_read_as_a_cbz_and_comes_back_out_as_a_cbz() {
     let space = Workspace::new();
@@ -531,7 +531,7 @@ fn an_archive_that_fails_partway_leaves_no_half_written_output() {
     let message = &report.failed_volumes[0].reason;
     assert!(message.contains("ComicInfo.xml"), "{message}");
     let left_behind: Vec<_> = std::fs::read_dir(space.out())
-        .expect("输出根目录")
+        .expect("输出目录")
         .map(|entry| {
             entry
                 .expect("列输出")
@@ -562,8 +562,8 @@ fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
         .page("002.png", &page)
         .rotten_file("ComicInfo.xml", COMIC_INFO.as_bytes());
     broken.write();
-    let report = tonefit::run(&request).expect("卷级失败不该毁掉整趟");
-    assert_eq!(report.failed_volumes.len(), 1, "这一卷没被记成卷级失败");
+    let report = tonefit::run(&request).expect("卷转换失败不该毁掉整趟");
+    assert_eq!(report.failed_volumes.len(), 1, "这一卷没被记成卷转换失败");
 
     assert_eq!(
         member_names(&output),
@@ -574,9 +574,9 @@ fn a_run_that_fails_leaves_the_previous_output_archive_intact() {
 
 /// 混排卷在归档里仍按阅读顺序排。
 ///
-/// 彩页走的是彩色分支，第一遍就缩放并编好（ADR 0005 决定第 4 条），但它与灰度页
+/// 彩页走的是彩色分支，分析环节就缩放并编好（ADR 0005 决定第 4 条），但它与灰度页
 /// 一同在写出那一遍按页序落位。归档成员按**写入顺序**排，而页名的字典序与阅读顺序
-/// 本来就对不上（`1` `2` `10`）——彩页要是在第一遍就写进归档，成员顺序会变成
+/// 本来就对不上（`1` `2` `10`）——彩页要是在分析环节就写进归档，成员顺序会变成
 /// 「先全部彩页、再全部灰度页」，按归档顺序翻页的阅读器于是跳着读。
 #[test]
 fn color_and_gray_pages_come_out_of_the_archive_in_reading_order() {
@@ -632,7 +632,7 @@ fn every_archive_member_carries_its_own_pixels_at_its_own_size() {
     // 三张灰度页：尺寸与黑带高度都不同，任意两张既不同形也不同图。
     //
     // 高一律取面板高（1264×1680 那块，见 `fixtures::BASELINE_DEVICE`）：这样的页是
-    // **两种适配方式的公共不动点**（页几何批 01 号票），写出的像素因此与源逐个相等，
+    // **两种缩放方式的公共不动点**（页几何批 01 号票），写出的像素因此与源逐个相等，
     // 断言问得出「这一格装的是不是它自己的像素」。宽各不相同，串位照样红。
     let grays = [
         ("1.png", Size::new(160, 1680), 8),
@@ -830,7 +830,7 @@ fn a_run_that_fails_leaves_the_previous_output_directory_intact() {
     assert_eq!(
         fixtures::names_in(&space.out()),
         ["volume-a"],
-        "输出根里多了东西"
+        "输出目录里多了东西"
     );
 }
 
@@ -842,8 +842,8 @@ fn a_run_that_fails_leaves_the_previous_output_directory_intact() {
 /// **同时是**两话输出的父目录。从前收尾把最终位置整个换掉，两话上一趟的产物跟着被删
 /// ——同一趟里它们随后照写，末了的盘是对的；而**这一趟没走完**，它们就再也回不来了。
 ///
-/// 按停按在**头一卷跑完那一条上**：发现是先序的，封面那一卷恒是头一个，
-/// 收尾因此停在它与两话之间——正是「没走完」那个形状（ADR 0013 决定第 1 条）。
+/// 按停止按在**头一卷跑完那一条上**：发现是先序的，封面那一卷恒是头一个，
+/// 做完再停因此停在它与两话之间——正是「没走完」那个形状（ADR 0013 决定第 1 条）。
 ///
 /// 一条用例同时钉住两半，因为收窄的正是它们之间那条界线：借住的卷**一个字节没动**，
 /// 而这一卷自己的陈旧产物照旧清得掉。
@@ -881,14 +881,14 @@ fn a_directory_volume_leaves_the_volumes_lodging_in_its_output_alone() {
         )),
         ..fixtures::request(&space, [mixed.path()])
     })
-    .expect("按停不是失败");
+    .expect("按停止不是失败");
 
-    // 收尾停在卷边界上：封面那一卷做完了，两话一页都没开工。
+    // 做完再停会停在卷边界上：封面那一卷做完了，两话一页都没开工。
     assert_eq!(
         second.outcome,
         tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish)
     );
-    assert_eq!(second.volumes.len(), 1, "收尾没停在封面那一卷之后");
+    assert_eq!(second.volumes.len(), 1, "做完再停没停在封面那一卷之后");
     // 封面那一卷**真的重做了**：没重做的话它连收尾都走不到，这条用例就什么都没问。
     assert_ne!(
         std::fs::read(space.out().join("N和S/cover.png")).expect("读回重做出来的封面"),
@@ -910,7 +910,7 @@ fn a_directory_volume_leaves_the_volumes_lodging_in_its_output_alone() {
     assert_eq!(
         fixtures::names_in(&space.out()),
         ["N和S"],
-        "输出根里留下了那格临时目录"
+        "输出目录里留下了那格临时目录"
     );
 }
 
@@ -986,12 +986,12 @@ fn a_mixed_directory_that_fails_partway_leaves_the_whole_place_as_it_was() {
         )),
         ..fixtures::request(&space, [mixed.path()])
     })
-    .expect("卷级失败不该毁掉整趟");
+    .expect("卷转换失败不该毁掉整趟");
 
     assert_eq!(
         failed.failed_volumes.len(),
         1,
-        "抽走透传文件之后封面那一卷没被记成卷级失败"
+        "抽走透传文件之后封面那一卷没被记成卷转换失败"
     );
     assert_eq!(
         fixtures::fingerprint(&space.out()),
@@ -1001,18 +1001,18 @@ fn a_mixed_directory_that_fails_partway_leaves_the_whole_place_as_it_was() {
     assert_eq!(
         fixtures::names_in(&space.out()),
         ["N和S"],
-        "输出根里留下了半成品"
+        "输出目录里留下了半成品"
     );
 }
 
 /// 上一趟**异常死亡**留下的那格临时容器，这一趟认得出来，也清得掉。
 ///
-/// 正常收场时它由析构收走：跑完改名到位（本文件上面那几条），或者中途失败、被中止
-/// （`tests/events.rs` 里中止那几条）。进程被硬杀掉时析构跑不到，盘上就留着一格
+/// 正常结束时它由析构收走：跑完改名到位（本文件上面那几条），或者中途失败、被立即停止
+/// （`tests/events.rs` 里立即停止那几条）。进程被硬杀掉时析构跑不到，盘上就留着一格
 /// 改不了名的临时容器——而临时名字是**推得出来**的，下一趟因此认得出它。
 /// 那正是它不取随机名字的理由（见 `tonefit` 的 `sink` 里 `partial_path` 那一段）。
 ///
-/// 它落在本文件而不是中止那几条旁边，因为问的是**容器怎么收尾**，不是按停：
+/// 它落在本文件而不是立即停止那几条旁边，因为问的是**容器怎么收尾**，不是按停止：
 /// 清残留这条能力是 `p0-hardening/03` 落地的，本条只是补上它一直没有的用例
 /// （会话批 04 号票要求「异常死亡留下的残留，下一趟能识别并清理」，而那件事在这一层）。
 ///
@@ -1090,10 +1090,10 @@ fn both_container_shapes_hold_the_same_members_after_a_page_is_deleted() {
 
 /// 跑一趟，**这一卷刚被重开那一刻**把源里的透传文件抽走，返回那份报告。
 ///
-/// 造「写到一半才失败」用它：成员在那一刻就枚举完了，读到它是第二遍的事，那时页已经写进
+/// 造「写到一半才失败」用它：成员在那一刻就枚举完了，读到它是写出环节的事，那时页已经写进
 /// 临时容器。抽走那一刻与判别式的理由都在 `fixtures::RemoveOnceTheVolumeIsOpen` 上。
 ///
-/// 回的是报告而不是错误：**预扫之后才出的卷级失败不毁掉整趟**（05 号票），
+/// 回的是报告而不是错误：**清点之后才出的卷转换失败不毁掉整趟**（05 号票），
 /// 那一卷记在 `Report::failed_volumes` 里，原因也在那一条上。
 fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit::Report {
     let removal = fixtures::RemoveOnceTheVolumeIsOpen::member(volume.path(), "ComicInfo.xml");
@@ -1101,11 +1101,11 @@ fn run_losing_the_extra(space: &Workspace, volume: &fixtures::Volume) -> tonefit
         progress: Some(tonefit::ProgressSink::new(removal)),
         ..fixtures::request(space, [volume.path()])
     })
-    .expect("卷级失败不该毁掉整趟");
+    .expect("卷转换失败不该毁掉整趟");
     assert_eq!(
         report.failed_volumes.len(),
         1,
-        "抽走透传文件之后这一卷没被记成卷级失败"
+        "抽走透传文件之后这一卷没被记成卷转换失败"
     );
     report
 }
@@ -1121,10 +1121,10 @@ fn lodged_chapters(space: &Workspace) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// 头一卷跑完那一条上改口答**收尾**：这一趟因此停在卷边界上，后面的卷一页都不开工
+/// 头一卷跑完那一条上改口答**做完再停**：这一趟因此停在卷边界上，后面的卷一页都不开工
 /// （ADR 0013 决定第 1 条）。
 ///
-/// 决策点上照旧答继续——在那里答收尾的话头一卷连第二遍都不走，输出一个字节都不写
+/// 确认点上照旧答继续——在那里答做完再停的话头一卷连写出环节都不走，输出一个字节都不写
 /// （见 `tonefit` 的 `process_volume`），而要问的正是「它写完了、收尾了，下一卷没开工」。
 #[derive(Default)]
 struct StopOnceTheFirstVolumeIsDone(AtomicBool);
@@ -1237,7 +1237,7 @@ fn a_seven_zip_comes_out_byte_for_byte_the_same_as_the_cbz_holding_the_same_page
         .file("ComicInfo.xml", COMIC_INFO.as_bytes());
     let solid = sevenz.write();
 
-    // 两趟各写各的输出根：两个卷同名，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
+    // 两趟各写各的输出目录：两个卷同名，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
     let from_cbz = run_paths(&space, [packed.as_path()]);
     let from_seven_zip = tonefit::run(&tonefit::Request {
         output_root: space.out_named("out-7z"),
@@ -1267,10 +1267,10 @@ fn a_seven_zip_comes_out_byte_for_byte_the_same_as_the_cbz_holding_the_same_page
     );
 }
 
-/// **摊开的临时目录跑到一半在、跑完不在、中止之后也不在**（`volume-discovery/05`）。
+/// **摊开的临时目录跑到一半在、跑完不在、立即停止之后也不在**（`volume-discovery/05`）。
 ///
 /// 三问一次答完，因为它们是同一条寿命的三个时刻：那一份活在卷上，卷一放掉就收
-/// （见 `source::Extraction`）。中止走的是既有的两级停——那一卷当场返回，卷跟着析构
+/// （见 `source::Extraction`）。立即停止走的是既有的两级停止——那一卷当场返回，卷跟着析构
 /// （ADR 0013 决定第 2 条）。
 ///
 /// 「跑到一半」只有**跑到一半**才看得见，因此从观察者那一侧看（与本文件
@@ -1278,7 +1278,7 @@ fn a_seven_zip_comes_out_byte_for_byte_the_same_as_the_cbz_holding_the_same_page
 /// 别处不会出现的成员名：系统临时目录是公共的，光按名字前缀筛会把别的用例正在用的
 /// 那一份也筛进来。
 ///
-/// **它证的不是「摊开途中按得停」。**观察者要先**看见**那个目录才改口答中止，
+/// **它证的不是「摊开途中按得停」。**观察者要先**看见**那个目录才改口答立即停止，
 /// 也就是说这一条按下去的那一刻早晚随摊开报不报到而变，它自己说不出停在了哪儿。
 /// 那半句由 [`aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out`]
 /// 与 [`a_rar_can_be_stopped_while_it_is_being_extracted_too`] 钉着
@@ -1296,7 +1296,7 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
 
     for (name, answer) in [
         ("out-完整", tonefit::Instruction::Continue),
-        ("out-中止", tonefit::Instruction::Abort),
+        ("out-立即停止", tonefit::Instruction::Abort),
     ] {
         let watcher = WatchTheExtraction::answering(MARKER, answer);
         let report = tonefit::run(&tonefit::Request {
@@ -1306,7 +1306,7 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
         })
         .expect("摊开这件事本身不该让整趟失败");
         if answer == tonefit::Instruction::Abort {
-            assert!(report.volumes.is_empty(), "中止掉的那一卷进了报告");
+            assert!(report.volumes.is_empty(), "立即停止掉的那一卷进了报告");
         }
 
         let seen = watcher.seen();
@@ -1320,10 +1320,10 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
     }
 }
 
-/// **摊开途中按中止，整卷解完之前就停住了**（`p4-parking-lot/13`，ADR 0013 决定第 2 条）。
+/// **摊开途中按立即停止，整卷解完之前就停住了**（`p4-parking-lot/13`，ADR 0013 决定第 2 条）。
 ///
 /// 这一条问的正是上面那一条够不着的那半句。上面那一条按在摊开**之后**——观察者要先看见
-/// 那个目录才改口；这一条按在摊开**途中**：摊开那一段自己报到，第一条报到上就答中止。
+/// 那个目录才改口；这一条按在摊开**途中**：摊开那一段自己报到，第一条报到上就答立即停止。
 ///
 /// **「整卷解完之前」怎么钉住**：那个临时目录**最多装过几个成员**。卷里有
 /// [`EXTRACTED_MEMBERS`] 个，而摊开途中就停住的话，它装过的比这个数少。
@@ -1331,11 +1331,11 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
 /// **少于全部**（那就是「不必等整卷解完」）。数的是盘上的事实，不是库里的调用次数。
 ///
 /// **「一遍都没走进去」另问一句**：这一卷一条 `PassStarted` 都不该有。摊开排在幂等那一道
-/// 之前，中止落在摊开途中，那一道因此连开工都不该报——报了就说明它接着往下走了一段
+/// 之前，立即停止落在摊开途中，那一道因此连开工都不该报——报了就说明它接着往下走了一段
 /// （起了几条读取线程去读一个只摊了一半的临时目录）。这一句钉的是 `process_volume` 里
 /// `source::open` 紧接着那个检查点；少了它，那一句拿掉也不会有人红。
 ///
-/// 剩下三件与两级停的既有承诺是同一批：那一卷不进报告、最终位置上一个字节都没动、
+/// 剩下三件与两级停止的既有承诺是同一批：那一卷不进报告、最终位置上一个字节都没动、
 /// 临时目录收干净。
 #[test]
 fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
@@ -1347,7 +1347,7 @@ fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
         progress: Some(tonefit::ProgressSink::new(watcher.clone())),
         ..fixtures::request(&space, [solid.as_path()])
     })
-    .expect("按停不是失败");
+    .expect("按停止不是失败");
 
     let most = watcher.most_members_extracted();
     assert!(
@@ -1356,21 +1356,21 @@ fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
     );
     assert!(
         most < EXTRACTED_MEMBERS,
-        "摊开途中按中止，它还是把整卷解完了：临时目录装过 {most} 个成员，卷里一共 {EXTRACTED_MEMBERS} 个"
+        "摊开途中按立即停止，它还是把整卷解完了：临时目录装过 {most} 个成员，卷里一共 {EXTRACTED_MEMBERS} 个"
     );
     assert!(
         !watcher.any_pass_started(),
-        "摊开途中被中止的那一卷还报出了一遍的开工"
+        "摊开途中被立即停止的那一卷还报出了一遍的开工"
     );
 
-    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert!(report.volumes.is_empty(), "被立即停止的那一卷进了报告");
     assert!(
         fixtures::names_in(&space.out()).is_empty(),
-        "中止之后输出根里还剩着东西：{:?}",
+        "立即停止之后输出目录里还剩着东西：{:?}",
         fixtures::names_in(&space.out())
     );
     for dir in watcher.dirs_seen() {
-        assert!(!dir.exists(), "中止之后 {} 还在", dir.display());
+        assert!(!dir.exists(), "立即停止之后 {} 还在", dir.display());
     }
 }
 
@@ -1436,19 +1436,19 @@ fn a_rar_can_be_stopped_while_it_is_being_extracted_too() {
         progress: Some(tonefit::ProgressSink::new(watcher.clone())),
         ..fixtures::request(&space, [solid.as_path()])
     })
-    .expect("按停不是失败");
+    .expect("按停止不是失败");
 
     let extracted = watcher.steps_while_extracting();
     assert!(extracted > 0, "`.rar` 摊开那一段一步都没报");
     assert!(
         extracted < fixtures::rar::members().len(),
-        "`.rar` 摊开途中按中止，它还是把整卷解完了：{extracted} 步，而卷里一共 {} 个成员",
+        "`.rar` 摊开途中按立即停止，它还是把整卷解完了：{extracted} 步，而卷里一共 {} 个成员",
         fixtures::rar::members().len()
     );
-    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert!(report.volumes.is_empty(), "被立即停止的那一卷进了报告");
     assert!(
         fixtures::names_in(&space.out()).is_empty(),
-        "中止之后输出根里还剩着东西"
+        "立即停止之后输出目录里还剩着东西"
     );
 }
 
@@ -1594,10 +1594,10 @@ impl tonefit::Progress for WhileExtracting {
     }
 }
 
-/// **摊不开是卷级失败，其余卷照做**（`volume-discovery/05`，ADR 0015）。
+/// **摊不开是卷转换失败，其余卷照做**（`volume-discovery/05`，ADR 0015）。
 ///
-/// 造它的是一个**压缩流被打坏的** `.7z`：归档头完好，预扫列得出成员——那一卷因此
-/// 既不是「点名的点不开」也不是非卷文件；坏的是那一段字节，只有真去摊开才看得出来。
+/// 造它的是一个**压缩流被打坏的** `.7z`：归档头完好，清点列得出成员——那一卷因此
+/// 既不是「点名的点不开」也不是非漫画文件；坏的是那一段字节，只有真去摊开才看得出来。
 /// 磁盘不够走的是同一条路（[`source::extract`] 的每一个 `Err`），
 /// 而那一种在用例里造不出来。退出码那一格由 `tests/exit_code.rs` 钉着。
 #[test]
@@ -1619,7 +1619,7 @@ fn a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume() {
     assert_eq!(
         report.failed_volumes.len(),
         1,
-        "摊不开的那一卷没被记成卷级失败"
+        "摊不开的那一卷没被记成卷转换失败"
     );
     assert_eq!(report.failed_volumes[0].volume, broken);
     assert_eq!(
@@ -1642,7 +1642,7 @@ fn a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume() {
 ///
 /// 四个包装的是同一份内容，那个前提的出处只有一处：`.rar` 那一侧是签进仓的字节
 /// （造它的命令行见 `fixtures::rar` 抬头），另外三个照 `fixtures::rar::members()` 灌。
-/// 四卷各写各的输出根：卷名都一样，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
+/// 四卷各写各的输出目录：卷名都一样，落到同一处会撞车（ADR 0015 认下的那种归一撞车）。
 #[test]
 fn every_archive_format_turns_the_same_pages_into_the_same_product() {
     let space = Workspace::new();
@@ -1845,11 +1845,11 @@ fn a_split_rar_missing_one_of_its_parts_says_so_instead_of_making_half_a_volume(
     );
 }
 
-/// **摊不开的 `.rar` 是卷级失败，其余卷照做**（ADR 0015 决定第 3 条，
+/// **摊不开的 `.rar` 是卷转换失败，其余卷照做**（ADR 0015 决定第 3 条，
 /// 与 `.7z` 那一条 `a_seven_zip_that_cannot_be_extracted_fails_only_its_own_volume` 并列）。
 ///
-/// 造它的是一份**成员字节被打坏的** `.rar`：归档头完好，预扫列得出成员——那一卷因此
-/// 既不是「点名的点不开」也不是非卷文件；坏的是那一段字节，只有真去摊开才看得出来。
+/// 造它的是一份**成员字节被打坏的** `.rar`：归档头完好，清点列得出成员——那一卷因此
+/// 既不是「点名的点不开」也不是非漫画文件；坏的是那一段字节，只有真去摊开才看得出来。
 /// 「磁盘不够」走的是同一条路（`source::extract` 的每一个 `Err`），而那一种在用例里
 /// 造不出来；退出码那一格由 `tests/exit_code.rs` 钉着，且那一条对格式无所谓——
 /// 它断在临时目录根本不在上，摊开那一层是两个格式共用的。
@@ -1872,7 +1872,7 @@ fn a_rar_that_cannot_be_extracted_fails_only_its_own_volume() {
     assert_eq!(
         report.failed_volumes.len(),
         1,
-        "摊不开的那一卷没被记成卷级失败"
+        "摊不开的那一卷没被记成卷转换失败"
     );
     assert_eq!(report.failed_volumes[0].volume, broken);
     assert_eq!(
@@ -1886,7 +1886,7 @@ fn a_rar_that_cannot_be_extracted_fails_only_its_own_volume() {
 /// ADR 0014 决定第 5 条）。
 ///
 /// 头都是密的，列成员就要口令，而 tonefit 一处都问不出口令——这一卷因此**点不开**。
-/// 点不开的处置早就定死了：点名的整趟拒绝（他明说了要处理它），发现的进非卷文件那张表、
+/// 点不开的处置早就定死了：点名的整趟拒绝（他明说了要处理它），发现的进非漫画文件那张表、
 /// 其余卷照做。加密只是「点不开」的又一个来处，不是第五种结局。
 ///
 /// 那句话要说得出**为什么**：一个带口令的包没有坏，说成「可能已损坏」会把用户支去修
@@ -1911,14 +1911,14 @@ fn an_encrypted_rar_is_refused_when_named_and_listed_as_a_non_volume_file_when_d
         "拒绝那句话没说是口令的事：{message}"
     );
 
-    // 发现它：进非卷文件那张表，其余卷照做。
+    // 发现它：进非漫画文件那张表，其余卷照做。
     let report = run_paths(&space, [library.as_path()]);
     let listed: Vec<&std::path::Path> = report
         .non_volume_files
         .iter()
         .map(|file| file.path.as_path())
         .collect();
-    assert_eq!(listed, [locked.as_path()], "加密卷没进非卷文件清单");
+    assert_eq!(listed, [locked.as_path()], "加密卷没进非漫画文件清单");
     assert!(
         matches!(
             report.non_volume_files[0].reason,
@@ -1993,8 +1993,8 @@ impl WatchTheExtraction {
 impl tonefit::Progress for WatchTheExtraction {
     /// 每条事件都看一眼，而那个字**要等摊开真的发生了才答**。
     ///
-    /// 开工那一条上就答中止的话，卷边界那个检查点当场停下，摊开压根没发生——
-    /// 这条用例要问的正是「摊开之后中止，那一份收不收得走」。
+    /// 开工那一条上就答立即停止的话，卷边界那个检查点当场停下，摊开压根没发生——
+    /// 这条用例要问的正是「摊开之后立即停止，那一份收不收得走」。
     fn observe(&self, _event: tonefit::Event<'_>) -> tonefit::Instruction {
         self.look();
         if self.seen.lock().expect("读回见过的目录").is_empty() {

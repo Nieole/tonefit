@@ -1,11 +1,11 @@
-//! 续做：试算与执行之间那一个决策点（会话批 06 号票，ADR 0012）。
+//! 接着写出：预览与转换之间那一个确认点（会话批 06 号票，ADR 0012）。
 //!
-//! 断言全在 `run` 这个 seam 上：装一个在决策点上答话的观察者进去，看它答的那个字
-//! 改变了什么——盘上有没有东西、报告出不出、第一遍走了几次。
+//! 断言全在 `run` 这个 seam 上：装一个在确认点上答话的观察者进去，看它答的那个字
+//! 改变了什么——盘上有没有东西、报告出不出、分析环节走了几次。
 //!
-//! 决策点与两个**检查点**不是一回事，后者在 `tests/events.rs`：检查点问的是
-//! 「这一趟还走不走」，答收尾要当前卷跑完；决策点问的是「这一卷的第二遍还做不做」，
-//! 答收尾这一卷就不写了。两边共用同一个 [`Instruction`]，停出来的现场不同。
+//! 确认点与两个**检查点**不是一回事，后者在 `tests/events.rs`：检查点问的是
+//! 「这一趟还走不走」，答做完再停要当前卷跑完；确认点问的是「这一卷的写出环节还做不做」，
+//! 答做完再停这一卷就不写了。两边共用同一个 [`Instruction`]，停出来的现场不同。
 //!
 //! 「等人的那段时间不算进计时」不在这里，在 `tests/timing.rs`：那是计时的性质，
 //! 而那个文件是计时唯一的出处。
@@ -20,8 +20,8 @@ use tonefit::{CacheBudget, Event, Instruction, Mode, Pass, Progress, ProgressSin
 
 /// 两页加一个透传文件的目录卷。
 ///
-/// 透传成员是有意的：「答收尾就一个文件都不写」要连它一起管住——第二遍写的是**全部成员**，
-/// 只看页的话，透传那个循环漏在决策点外面这条用例看不出来。
+/// 透传成员是有意的：「答做完再停就一个文件都不写」要连它一起管住——写出环节写的是**全部成员**，
+/// 只看页的话，透传那个循环漏在确认点外面这条用例看不出来。
 fn small_volume(space: &Workspace, name: &str) -> Volume {
     let volume = space.volume(name);
     volume.page("001.png", &fixtures::full_bleed_gradient(TINY));
@@ -39,15 +39,15 @@ fn named(volume: &Path) -> String {
         .into_owned()
 }
 
-/// 在决策点上答一个字的观察者，其余每一条事件一律回继续。
+/// 在确认点上答一个字的观察者，其余每一条事件一律回继续。
 ///
-/// 点名卷是为了让答的那个字**落得准**：一趟里每一卷各有一个决策点，不点名就只按得到
+/// 点名卷是为了让答的那个字**落得准**：一趟里每一卷各有一个确认点，不点名就只按得到
 /// 头一卷那个。`None` 即每一卷都按。
 #[derive(Clone)]
 struct AtTheDecisionPoint {
-    /// 输出根。每到一个决策点就看它一眼。
+    /// 输出目录。每到一个确认点就看它一眼。
     out: PathBuf,
-    /// 只在这个卷的决策点上答。`None` 即每一卷都答。
+    /// 只在这个卷的确认点上答。`None` 即每一卷都答。
     volume: Option<String>,
     /// 答的是哪个字。
     instruction: Instruction,
@@ -59,17 +59,17 @@ struct AtTheDecisionPoint {
 struct Seen {
     /// 当前这一卷叫什么。
     current: String,
-    /// 每一遍开工时是哪一卷的哪一遍，按到达顺序。决策点问了几次、问在哪儿，看它。
+    /// 每一遍开工时是哪一卷的哪一遍，按到达顺序。确认点问了几次、问在哪儿，看它。
     passes: Vec<(String, Pass)>,
-    /// 每到一个决策点时输出根下有哪些名字，按到达顺序。
+    /// 每到一个确认点时输出目录下有哪些名字，按到达顺序。
     ///
-    /// 「第二遍还没开始」只有这一眼看得出来：跑完再看只看得见最终的样子，
+    /// 「写出环节还没开始」只有这一眼看得出来：跑完再看只看得见最终的样子，
     /// 而「这一卷此刻还没落盘」与「它落过盘又被收走了」在那个形式上分不开
     /// （同一个手法见 `tests/events.rs` 的 `StopsAtAPageBoundary`）。
     at_each_decision_point: Vec<Vec<String>>,
     /// 报了「一卷跑完」的卷，按到达顺序。
     finished: Vec<String>,
-    /// 每一个决策点那一条**带着的那份报告**，按到达顺序。没带就是 `None`。
+    /// 每一个确认点那一条**带着的那份报告**，按到达顺序。没带就是 `None`。
     ///
     /// 会话要在这里把报告画出来等人拿主意（ADR 0012 决定第 3 条），而拿主意要看的
     /// 那几件事——卷级判定、逐页结果、缓存用量、解码计数——只有这一份说得出。
@@ -91,7 +91,7 @@ impl AtTheDecisionPoint {
         self.seen.lock().expect("记账没有中毒").passes.clone()
     }
 
-    /// 每一个决策点到来的那一刻输出根下有哪些名字。
+    /// 每一个确认点到来的那一刻输出目录下有哪些名字。
     fn at_each_decision_point(&self) -> Vec<Vec<String>> {
         self.seen
             .lock()
@@ -105,7 +105,7 @@ impl AtTheDecisionPoint {
         self.seen.lock().expect("记账没有中毒").finished.clone()
     }
 
-    /// 每一个决策点带着的那份报告。
+    /// 每一个确认点带着的那份报告。
     fn so_far(&self) -> Vec<Option<tonefit::VolumeReport>> {
         self.seen.lock().expect("记账没有中毒").so_far.clone()
     }
@@ -145,16 +145,16 @@ fn run_with(
         progress: Some(ProgressSink::new(watcher.clone())),
         ..fixtures::request(space, volumes.iter().map(Volume::path))
     })
-    .expect("在决策点上停下来不是失败")
+    .expect("在确认点上停下来不是失败")
 }
 
-/// 决策点**每一卷各一个**，且落在「汇总之后、第二遍之前」（ADR 0012 决定第 2 条）。
+/// 确认点**每一卷各一个**，且落在「汇总之后、写出环节之前」（ADR 0012 决定第 2 条）。
 ///
-/// 「第二遍之前」由**那一眼**钉住：第一个决策点到来时输出根还是空的，第二个到来时里面
-/// 只有上一卷。决策点要是挪到了第二遍之内（哪怕只挪过建容器那一句），当前卷的那格
+/// 「写出环节之前」由**那一眼**钉住：第一个确认点到来时输出目录还是空的，第二个到来时里面
+/// 只有上一卷。确认点要是挪到了写出环节之内（哪怕只挪过建容器那一句），当前卷的那格
 /// `partial` 就会出现在这一眼里。
 ///
-/// 「每卷各一个」由遍的清单钉住：三个卷各走三遍，第二遍那一条一卷不多、一卷不少。
+/// 「每卷各一个」由遍的清单钉住：三个卷各走三遍，写出环节那一条一卷不多、一卷不少。
 /// 少一条，那一卷根本没问过人；多一条，人会被同一卷问两遍。
 #[test]
 fn every_volume_gets_one_decision_point_before_a_byte_of_it_is_written() {
@@ -163,7 +163,7 @@ fn every_volume_gets_one_decision_point_before_a_byte_of_it_is_written() {
         .into_iter()
         .map(|name| small_volume(&space, name))
         .collect();
-    // 每一卷都答继续：这一条问的是决策点在哪儿、有几个，不是它能不能停下来。
+    // 每一卷都答继续：这一条问的是确认点在哪儿、有几个，不是它能不能停下来。
     let watcher = AtTheDecisionPoint::new(&space, None, Instruction::Continue);
 
     let report = run_with(&space, &volumes, &watcher);
@@ -182,7 +182,7 @@ fn every_volume_gets_one_decision_point_before_a_byte_of_it_is_written() {
             ("volume-c".to_owned(), Pass::First),
             ("volume-c".to_owned(), Pass::Second),
         ],
-        "决策点不是每一卷各一个"
+        "确认点不是每一卷各一个"
     );
     assert_eq!(
         watcher.at_each_decision_point(),
@@ -191,14 +191,14 @@ fn every_volume_gets_one_decision_point_before_a_byte_of_it_is_written() {
             vec!["volume-a".to_owned()],
             vec!["volume-a".to_owned(), "volume-b".to_owned()],
         ],
-        "决策点到来时当前卷已经在盘上了：它排到第二遍之内去了"
+        "确认点到来时当前卷已经在盘上了：它排到写出环节之内去了"
     );
 }
 
-/// 单卷答**收尾**：停在这儿，输出根一个文件都没有，而报告照出（ADR 0012 决定第 2 条）。
+/// 单卷答**做完再停**：停在这儿，输出目录一个文件都没有，而报告照出（ADR 0012 决定第 2 条）。
 ///
-/// 那正是 dry-run 的效果，而这份报告正是试算要看的那份东西——判定、逐页结果、解码计数
-/// 一样不少，只有第二遍那一段是零。三件事一起断言：`run` 回的是 `Ok`（停下来不是失败）、
+/// 那正是 dry-run 的效果，而这份报告正是预览要看的那份东西——判定、逐页结果、解码计数
+/// 一样不少，只有写出环节那一段是零。三件事一起断言：`run` 回的是 `Ok`（停下来不是失败）、
 /// 盘上什么都没有、报告是完整的。
 #[test]
 fn finishing_at_the_decision_point_writes_nothing_and_still_reports_the_volume() {
@@ -211,30 +211,30 @@ fn finishing_at_the_decision_point_writes_nothing_and_still_reports_the_volume()
     assert_eq!(
         fixtures::names_in(&space.out()),
         Vec::<String>::new(),
-        "答收尾之后输出根下还留着东西"
+        "答做完再停之后输出目录下还留着东西"
     );
-    assert!(!space.out().exists(), "答收尾之后输出根被建了出来");
+    assert!(!space.out().exists(), "答做完再停之后输出目录被建了出来");
 
-    assert_eq!(report.volumes.len(), 1, "答收尾把报告也一起停掉了");
+    assert_eq!(report.volumes.len(), 1, "答做完再停把报告也一起停掉了");
     assert_eq!(
         watcher.finished(),
         ["volume-a"],
-        "停在决策点上的那一卷没报「一卷跑完」"
+        "停在确认点上的那一卷没报「一卷跑完」"
     );
     let stopped = &report.volumes[0];
-    assert!(!stopped.skipped(), "这一卷被幂等跳过了，测的就不是决策点了");
+    assert!(!stopped.skipped(), "这一卷被幂等跳过了，测的就不是确认点了");
     assert_eq!(stopped.page_count(), 2, "报告里没有逐页结果");
     assert!(
         stopped.verdict.is_some(),
         "汇总没做就停下来了：报告没有卷级判定"
     );
-    assert_eq!(stopped.decodes, stopped.source_pages, "第一遍没有走完");
+    assert_eq!(stopped.decodes, stopped.source_pages, "分析环节没有走完");
     assert_eq!(
         stopped.timing.second_pass,
         std::time::Duration::ZERO,
-        "答收尾之后第二遍还是走了"
+        "答做完再停之后写出环节还是走了"
     );
-    // 报到那一侧只多出一条：决策点自己。第二遍一步都没走。
+    // 报到那一侧只多出一条：确认点自己。写出环节一步都没走。
     assert_eq!(
         watcher.passes(),
         [
@@ -242,10 +242,10 @@ fn finishing_at_the_decision_point_writes_nothing_and_still_reports_the_volume()
             ("volume-a".to_owned(), Pass::First),
             ("volume-a".to_owned(), Pass::Second),
         ],
-        "遍的清单与「第二遍没走」对不上"
+        "环节的清单与「写出环节没走」对不上"
     );
 
-    // 这一趟的收场：点名的卷进了报告，因此说的是**走到头**。
+    // 这一趟的结束：点名的卷进了报告，因此说的是**走到头**。
     // 它是停车场 Q53 记着的那一件——同一个手势，单卷收「走到头」、多卷收「停在半路」
     // （多卷那一半由本文件的
     // `finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_starts_no_more`
@@ -254,20 +254,20 @@ fn finishing_at_the_decision_point_writes_nothing_and_still_reports_the_volume()
     assert_eq!(
         report.outcome,
         tonefit::RunOutcome::Completed,
-        "单卷停在决策点上，这一趟的收场变了（停车场 Q53）"
+        "单卷停在确认点上，这一趟的结束变了（停车场 Q53）"
     );
 }
 
-/// **上包络那条路上答收尾同样一个字节都不写**（12 号票第 6 条）。
+/// **整卷统一灰阶那条路上答做完再停同样一个字节都不写**（12 号票第 6 条）。
 ///
-/// 上面那一条测的是默认那条路（逐页）：第一遍就把每一页量化编码完了——一页判完当场编，
+/// 上面那一条测的是默认那条路（逐页）：分析环节就把每一页量化编码完了——一页判完当场编，
 /// 缓存那一格从头装的就是编好的字节。**编好不等于写出**：字节进的是缓存，落盘仍旧只在
-/// 第二遍，「第二遍开始之前一个字节都没写」因此一格没动
-/// （ADR 0005 的《第二遍在逐页那条路上退化成纯写出》）。上包络那条路上参照攒一整卷、
-/// 第二遍才编——另一条路，另钉一遍。
+/// 写出环节，「写出环节开始之前一个字节都没写」因此一格没动
+/// （ADR 0005 的《第二遍在逐页那条路上退化成纯写出》）。整卷统一灰阶那条路上参照攒一整卷、
+/// 写出环节才编——另一条路，另钉一遍。
 ///
 /// 与上面那条只差 `envelope` 一个字段，而它管的正是那条不变式在另一条路上还站不站得住。
-/// 输出根看两眼：决策点到来的那一刻一眼，跑完一眼——只看后一眼的话，
+/// 输出目录看两眼：确认点到来的那一刻一眼，跑完一眼——只看后一眼的话，
 /// 「从没建过」与「建了又丢掉」分不开。
 #[test]
 fn finishing_at_the_decision_point_writes_nothing_on_the_envelope_path_either() {
@@ -280,36 +280,36 @@ fn finishing_at_the_decision_point_writes_nothing_on_the_envelope_path_either() 
         progress: Some(ProgressSink::new(watcher.clone())),
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect("在决策点上停下来不是失败");
+    .expect("在确认点上停下来不是失败");
 
     assert_eq!(
         watcher.at_each_decision_point(),
         [Vec::<String>::new()],
-        "到决策点时输出根下已经有东西了"
+        "到确认点时输出目录下已经有东西了"
     );
-    assert!(!space.out().exists(), "答收尾之后输出根被建了出来");
+    assert!(!space.out().exists(), "答做完再停之后输出目录被建了出来");
 
     let stopped = &report.volumes[0];
     assert!(
         matches!(stopped.verdict, Some(tonefit::VolumeVerdict::Envelope(_))),
-        "上包络没开着，测的就不是攒整卷参照那条路"
+        "整卷统一灰阶没开着，测的就不是攒整卷参照那条路"
     );
     assert_eq!(stopped.page_count(), 2, "报告里没有逐页结果");
     assert_eq!(
         stopped.timing.second_pass,
         std::time::Duration::ZERO,
-        "答收尾之后第二遍还是走了"
+        "答做完再停之后写出环节还是走了"
     );
 }
 
-/// 决策点上答**中止**：那一卷等于没做，报告里没有它（ADR 0013 决定第 2 条）。
+/// 确认点上答**立即停止**：那一卷等于没做，报告里没有它（ADR 0013 决定第 2 条）。
 ///
-/// 它与答收尾在同一处按下，停出来的现场却相反——**分得开才有意义**：
-/// 收尾留下一份报告，中止连报告都没有。
+/// 它与答做完再停在同一处按下，停出来的现场却相反——**分得开才有意义**：
+/// 做完再停留下一份报告，立即停止连报告都没有。
 ///
-/// 「输出容器连建都不建」是本票带来的行为变化，这一条钉的就是它：从前决策点还不认这个字，
-/// 第二遍照样开工，`Sink::create` 先建出那格 `partial` 再由析构丢掉。现在那一格压根不出现，
-/// 而**在决策点上看的那一眼**是它唯一测得到的形式——跑完再看，「从没建过」与
+/// 「输出容器连建都不建」是本票带来的行为变化，这一条钉的就是它：从前确认点还不认这个字，
+/// 写出环节照样开工，`Sink::create` 先建出那格 `partial` 再由析构丢掉。现在那一格压根不出现，
+/// 而**在确认点上看的那一眼**是它唯一测得到的形式——跑完再看，「从没建过」与
 /// 「建了又丢掉」分不开。
 #[test]
 fn aborting_at_the_decision_point_leaves_the_volume_out_of_the_report_entirely() {
@@ -322,7 +322,7 @@ fn aborting_at_the_decision_point_leaves_the_volume_out_of_the_report_entirely()
 
     let report = run_with(&space, &volumes, &watcher);
 
-    assert!(report.volumes.is_empty(), "被中止的那一卷进了报告");
+    assert!(report.volumes.is_empty(), "被立即停止的那一卷进了报告");
     assert_eq!(
         watcher.finished(),
         Vec::<String>::new(),
@@ -331,19 +331,19 @@ fn aborting_at_the_decision_point_leaves_the_volume_out_of_the_report_entirely()
     assert_eq!(
         fixtures::names_in(&space.out()),
         Vec::<String>::new(),
-        "中止之后输出根下还留着东西"
+        "立即停止之后输出目录下还留着东西"
     );
     assert_eq!(
         report.outcome,
         tonefit::RunOutcome::Stopped(Instruction::Abort),
-        "这一趟没说自己是被中止的"
+        "这一趟没说自己是被立即停止的"
     );
-    // 决策点到来的那一刻输出根还是空的，之后也没有第二个决策点：
+    // 确认点到来的那一刻输出目录还是空的，之后也没有第二个确认点：
     // 那一格 `partial` 从没建过，下一卷也没开工。
     assert_eq!(
         watcher.at_each_decision_point(),
         [Vec::<String>::new()],
-        "中止之后还有卷走到了决策点，或者当前卷已经建出了 partial"
+        "立即停止之后还有卷走到了确认点，或者当前卷已经建出了 partial"
     );
     assert_eq!(
         watcher
@@ -352,17 +352,17 @@ fn aborting_at_the_decision_point_leaves_the_volume_out_of_the_report_entirely()
             .filter(|(volume, _)| volume == "volume-b")
             .count(),
         0,
-        "中止之后下一卷开工了"
+        "立即停止之后下一卷开工了"
     );
 }
 
-/// 单卷答**继续**：第一遍只走一次，而分成两趟跑要走两次（ADR 0012 的《背景》）。
+/// 单卷答**继续**：分析环节只走一次，而分成两趟跑要走两次（ADR 0012 的《背景》）。
 ///
-/// 「贵的那一遍不白跑两次」是续做存在的理由，而 `decodes` 是它唯一量得出来的形式
-/// （ADR 0005：解码一次，缓存缩放后的图）。对照的那一组是**没有续做时会发生的事**：
+/// 「贵的那一遍不白跑两次」是接着写出存在的理由，而 `decodes` 是它唯一量得出来的形式
+/// （ADR 0005：解码一次，缓存缩放后的图）。对照的那一组是**没有接着写出时会发生的事**：
 /// 先一趟 dry-run 看报告、满意了再一趟照做——两趟加起来解码两遍。
 ///
-/// 只断言「续做那一趟解码了几次」的话，这条用例在管线退化成「每趟各解一遍」时照样绿：
+/// 只断言「接着写出那一趟解码了几次」的话，这条用例在管线退化成「每趟各解一遍」时照样绿：
 /// 那时它量的只是一趟的开销。要有对照，省下的那一遍才说得出口。
 #[test]
 fn resuming_walks_the_expensive_pass_once_where_two_runs_walk_it_twice() {
@@ -373,7 +373,10 @@ fn resuming_walks_the_expensive_pass_once_where_two_runs_walk_it_twice() {
     let resumed = run_with(&space, std::slice::from_ref(&volume), &watcher);
 
     let done = &resumed.volumes[0];
-    assert_eq!(done.decodes, done.source_pages, "续做那一趟解码了不止一遍");
+    assert_eq!(
+        done.decodes, done.source_pages,
+        "接着写出那一趟解码了不止一遍"
+    );
     assert_eq!(
         watcher
             .passes()
@@ -381,7 +384,7 @@ fn resuming_walks_the_expensive_pass_once_where_two_runs_walk_it_twice() {
             .filter(|(_, pass)| *pass == Pass::First)
             .count(),
         1,
-        "第一遍走了不止一次"
+        "分析环节走了不止一次"
     );
     assert_eq!(
         fixtures::directory_members(&done.output),
@@ -389,14 +392,14 @@ fn resuming_walks_the_expensive_pass_once_where_two_runs_walk_it_twice() {
         "答继续之后这一卷没有写全"
     );
 
-    // 对照：不续做的那条路。试算一趟、照做一趟，同一批源页解码两遍。
+    // 对照：不接着写出的那条路。预览一趟、照做一趟，同一批源页解码两遍。
     let apart = Workspace::new();
     let volume = small_volume(&apart, "volume-a");
     let trial = tonefit::run(&Request {
         mode: Mode::DryRun,
         ..fixtures::request(&apart, [volume.path()])
     })
-    .expect("试算应当成功");
+    .expect("预览应当成功");
     let execution = fixtures::run_volume(&apart, &volume);
     assert_eq!(
         trial.volumes[0].decodes + execution.volumes[0].decodes,
@@ -405,17 +408,17 @@ fn resuming_walks_the_expensive_pass_once_where_two_runs_walk_it_twice() {
     );
 }
 
-/// 多卷：每一卷各问一次，答收尾的那一卷停在决策点上，**剩下的卷一个都不开工**。
+/// 多卷：每一卷各问一次，答做完再停的那一卷停在确认点上，**剩下的卷一个都不开工**。
 ///
-/// 三件事一起断言，因为它们合起来才是「多卷不续做」的样子（ADR 0012 决定第 1 条）：
+/// 三件事一起断言，因为它们合起来才是「多卷不接着写出」的样子（ADR 0012 决定第 1 条）：
 ///
-/// - 前一卷照旧写出去了——决策点是**这一卷**的事，不牵连已经做完的；
-/// - 答收尾的那一卷有报告、盘上没有它；
-/// - 后一卷连开卷都没有，收场说的是被按停停在半路（卷边界那个检查点接手）。
+/// - 前一卷照旧写出去了——确认点是**这一卷**的事，不牵连已经做完的；
+/// - 答做完再停的那一卷有报告、盘上没有它；
+/// - 后一卷连开卷都没有，结束说的是被按停止停在半路（卷边界那个检查点接手）。
 ///
 /// **缓存逐卷建、逐卷丢**也在这里量：每一卷报出来的缓存页数只有自己那几页。
 /// 缓存要是跨卷活着，第二卷会报出两卷的量——而那正是 ADR 0012 决定第 1 条
-/// 拿来否掉「多卷也续做」的那个理由（预算是**每卷**的）。
+/// 拿来否掉「多卷也接着写出」的那个理由（预算是**每卷**的）。
 #[test]
 fn finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_starts_no_more() {
     let space = Workspace::new();
@@ -430,7 +433,7 @@ fn finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_s
     assert_eq!(
         fixtures::names_in(&space.out()),
         ["volume-a"],
-        "盘上不是只有决策点之前做完的那一卷"
+        "盘上不是只有确认点之前做完的那一卷"
     );
     assert_eq!(
         report
@@ -448,7 +451,7 @@ fn finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_s
             .filter(|(volume, _)| volume == "volume-c")
             .count(),
         0,
-        "第三卷开工了：决策点上按下的那个字没有拦住卷边界"
+        "第三卷开工了：确认点上按下的那个字没有拦住卷边界"
     );
     assert_eq!(
         report.outcome,
@@ -467,10 +470,10 @@ fn finishing_at_one_volume_decision_point_leaves_the_earlier_volumes_whole_and_s
     }
 }
 
-/// 命令行那一路的 `--dry-run` 一字不变：没有第二遍，也就**没有决策点**。
+/// 命令行那一路的 `--dry-run` 一字不变：没有写出环节，也就**没有确认点**。
 ///
 /// dry-run 走 `Retention::Account`，留下的字节没人取，也就没有下一步可续
-/// （ADR 0012 决定第 5 条）。在它那条路上报一个决策点出去，会话就得替一个续不了的问题
+/// （ADR 0012 决定第 5 条）。在它那条路上报一个确认点出去，会话就得替一个续不了的问题
 /// 想一个答案，而命令行这一路那个问题根本不存在。
 ///
 /// 用量照旧预告得出：预算为零时它照说会溢写多少——那是 `--cache-budget` 要确认的东西，
@@ -488,7 +491,7 @@ fn a_dry_run_has_no_second_pass_and_therefore_no_decision_point() {
         progress: Some(ProgressSink::new(watcher.clone())),
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect("试算应当成功");
+    .expect("预览应当成功");
 
     assert_eq!(
         watcher.passes(),
@@ -496,19 +499,19 @@ fn a_dry_run_has_no_second_pass_and_therefore_no_decision_point() {
             ("volume-a".to_owned(), Pass::Fingerprint),
             ("volume-a".to_owned(), Pass::First),
         ],
-        "dry-run 报了第二遍：决策点漏到命令行这一路上了"
+        "dry-run 报了写出环节：确认点漏到命令行这一路上了"
     );
-    assert!(!space.out().exists(), "dry-run 在输出根下留了东西");
+    assert!(!space.out().exists(), "dry-run 在输出目录下留了东西");
     assert!(
         report.volumes[0].cache.spilled > 0,
         "预算为零，用量却没预告出溢写"
     );
 }
 
-/// 试算那条路上「不写**输出**」成立，而越过预算的页照样溢写（ADR 0012 决定第 5 条）。
+/// 预览那条路上「不写**输出**」成立，而越过预算的页照样溢写（ADR 0012 决定第 5 条）。
 ///
 /// 会话单卷那条路走的是 `Mode::Process`（`Retention::Keep`）——参照要留着，人答继续时
-/// 第二遍从缓存里取。dry-run 那句「一个文件都不落盘」在这条路上因此重述为
+/// 写出环节从缓存里取。dry-run 那句「一个文件都不落盘」在这条路上因此重述为
 /// **「不写输出」**：越过预算的页仍建溢写临时文件，运行结束即收走
 /// （收走那一半在 `src/cache.rs` 的 `a_spilled_cache_leaves_no_file_behind`）。
 ///
@@ -525,23 +528,23 @@ fn the_trial_path_spills_over_budget_pages_and_still_writes_no_output() {
         progress: Some(ProgressSink::new(watcher.clone())),
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect("在决策点上停下来不是失败");
+    .expect("在确认点上停下来不是失败");
 
     let stopped = &report.volumes[0];
     assert!(stopped.cache.spilled > 0, "预算为零却一页都没溢写");
     assert_eq!(stopped.cache.resident, 0, "预算为零却还有页留在内存里");
-    assert!(!space.out().exists(), "试算那条路写了输出");
+    assert!(!space.out().exists(), "预览那条路写了输出");
 }
 
-/// **决策点那一条带着这一卷到此刻为止的报告**（停车场 Q52，`p1-session/14`）。
+/// **确认点那一条带着这一卷到此刻为止的报告**（停车场 Q52，`p1-session/14`）。
 ///
 /// 不带的话，要在这里等人拿主意的调用方手上只有逐步事件：卷级判定、逐页结果、
-/// 缓存用量、解码计数都要到「一卷跑完」那一条才交出去，而那一条排在决策点**之后**。
-/// 屏上因此画不出任何可供拿主意的东西——「试算跑到决策点停住，主区把报告画出来」
+/// 缓存用量、解码计数都要到「一卷跑完」那一条才交出去，而那一条排在确认点**之后**。
+/// 屏上因此画不出任何可供拿主意的东西——「预览跑到确认点停住，主区把报告画出来」
 /// 就落不了地。
 ///
-/// 带的是**那一刻为真**的一份，不是预告：第一遍已经走完（解码计数等于源页数），
-/// 第二遍一步没走（那一段是零）。它与随后「一卷跑完」交出来的那一份的差也就只有计时——
+/// 带的是**那一刻为真**的一份，不是预告：分析环节已经走完（解码计数等于源页数），
+/// 写出环节一步没走（那一段是零）。它与随后「一卷跑完」交出来的那一份的差也就只有计时——
 /// 这一条一并比一遍，两份分了家的话，屏上看到的与最终报告说的就不是同一件事。
 ///
 /// **别的两遍那一条不带**：那时还没有汇总可交。
@@ -554,19 +557,22 @@ fn the_decision_point_carries_the_volume_report_as_it_stands() {
     let report = run_with(&space, std::slice::from_ref(&volume), &watcher);
 
     let so_far = watcher.so_far();
-    assert_eq!(so_far.len(), 1, "决策点问了不止一次");
-    let so_far = so_far[0].as_ref().expect("决策点那一条没带报告");
+    assert_eq!(so_far.len(), 1, "确认点问了不止一次");
+    let so_far = so_far[0].as_ref().expect("确认点那一条没带报告");
 
-    // 第一遍走完了：判定在、逐页结果在、每张源页解码一次。
+    // 分析环节走完了：判定在、逐页结果在、每张源页解码一次。
     assert_eq!(so_far.page_count(), 2, "带的那份报告里没有逐页结果");
     assert!(so_far.verdict.is_some(), "带的那份报告里没有卷级判定");
-    assert_eq!(so_far.decodes, so_far.source_pages, "第一遍还没走完就问了");
-    // 第二遍还没开始：那一段是零，而输出根此刻还是空的（那一眼由
+    assert_eq!(
+        so_far.decodes, so_far.source_pages,
+        "分析环节还没走完就问了"
+    );
+    // 写出环节还没开始：那一段是零，而输出目录此刻还是空的（那一眼由
     // `every_volume_gets_one_decision_point_before_a_byte_of_it_is_written` 钉着）。
     assert_eq!(
         so_far.timing.second_pass,
         std::time::Duration::ZERO,
-        "带的那份报告说第二遍已经走过了"
+        "带的那份报告说写出环节已经走过了"
     );
 
     // 与最终那一份**只差计时**：屏上看到的与报告说的必须是同一件事。
@@ -587,10 +593,10 @@ fn the_decision_point_carries_the_volume_report_as_it_stands() {
         assert_eq!(early.output, late.output);
         assert_eq!(early.size, late.size);
     }
-    // 答了继续，第二遍真走过：最终那一份的第二遍不再是零，而这一卷落了盘。
+    // 答了继续，写出环节真走过：最终那一份的写出环节不再是零，而这一卷落了盘。
     assert!(
         landed.timing.second_pass > std::time::Duration::ZERO,
-        "答了继续，第二遍却没走"
+        "答了继续，写出环节却没走"
     );
     assert_eq!(fixtures::names_in(&space.out()), ["volume-a"]);
 }

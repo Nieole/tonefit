@@ -14,7 +14,7 @@ use tonefit::{
 fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 四边顶着墨的渐变页：这一条说的是几何与位深，不是裁边（页几何批 02 号票）。
+    // 四边顶着墨的渐变页：这一条说的是几何与灰阶档位，不是裁白边（页几何批 02 号票）。
     volume.page(
         "001.png",
         &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
@@ -30,7 +30,7 @@ fn each_page_becomes_a_png_at_the_target_size_and_the_decided_bit_depth() {
 
     let written = fixtures::read_png(&pages[0].output);
     assert_eq!(written.size, Size::new(1264, 1680));
-    // 这一页贴住面板，几何门放行抖动：判据落在 4bit+FS 上——连续灰调在低位深上
+    // 这一页贴住面板，尺寸贴合检查放行抖动：画质分落在 4bit+FS 上——连续灰调在低灰阶档位上
     // 塌得厉害（1bit 121.5、2bit 38.8、2bit+FS 27.7），第一个进得了界的是它。
     assert_eq!(
         fixtures::verdict(&pages[0]).candidate,
@@ -54,14 +54,14 @@ fn a_gradient_written_at_a_low_bit_depth_comes_out_without_measurable_banding() 
 
     let report = run_volume(&dithered, &volume);
 
-    // 判据自己挑的那一档是抖过的——这一条问的是抖动消不消得掉色带，前提是判据确实要它。
+    // 画质分自己挑的那一档是抖过的——这一条问的是抖动消不消得掉色带，前提是画质分确实要它。
     let page = &report.volumes[0].pages[0];
     assert_eq!(
         fixtures::verdict(page).candidate.dither,
         Dither::FloydSteinberg
     );
 
-    // **色带那一档点名 2bit**，不跟着判定走：可见度地板跟着格点间距走之后（ADR 0002
+    // **色带那一档点名 2bit**，不跟着判定走：颗粒可见下限跟着格点间距走之后（ADR 0002
     // 决定第 5 条），连续灰调页判到 4bit+FS，而 4bit 的格距只有 17——色带小到分不出
     // 「看得见」与「消掉了」，量不出这一条要量的东西。判定那一维由上一条用例钉着。
     let depth = BANDING_DEPTH;
@@ -75,7 +75,7 @@ fn a_gradient_written_at_a_low_bit_depth_comes_out_without_measurable_banding() 
             ..fixtures::request(&space, [volume.path()])
         })
         .expect("处理应当成功");
-        // 同一档位深、同一页，两趟的差别只剩抖动这一项。
+        // 同一档灰阶档位、同一页，两趟的差别只剩抖动这一项。
         worst_banding_step(&fixtures::read_png(&report.volumes[0].pages[0].output))
     };
 
@@ -114,14 +114,14 @@ fn worst_banding_step(written: &fixtures::DecodedPng) -> f64 {
 /// 量色带的块高，行。
 const BANDING_BLOCK: usize = 8;
 
-/// 量色带点名的那一档位深。取 2bit：格距 85，不抖动时的色带一步跨掉几十级，
+/// 量色带点名的那一档灰阶档位。取 2bit：格距 85，不抖动时的色带一步跨掉几十级，
 /// 「消没消掉」因此量得出来。4bit 的格距只有 17，两侧的差别缩在噪声里。
 const BANDING_DEPTH: BitDepth = BitDepth::Two;
 
 #[test]
 fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
-    // 写出去的取值只能落在判定那一档的格点上——判据比的就是这些格点与参照的差，
-    // 文件里出现格点之外的取值，等于判据算的不是最终输出。
+    // 写出去的取值只能落在判定那一档的格点上——画质分比的就是这些格点与参照的差，
+    // 文件里出现格点之外的取值，等于画质分算的不是最终输出。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -235,7 +235,7 @@ fn every_supported_format_decodes() {
     let volume = space.volume("volume-a");
     // 恒等通过的尺寸：读回来的就是解码器给出的那张图，中间不隔一层缩放。
     let size = fixtures::PASSES_THROUGH;
-    // 四边顶着墨：裁边在它身上是空操作，读回来的尺寸因此仍是源尺寸（页几何批 02 号票）。
+    // 四边顶着墨：裁白边在它身上是空操作，读回来的尺寸因此仍是源尺寸（页几何批 02 号票）。
     let page = fixtures::full_bleed_gradient(size);
     let names = [
         "01.avif", "02.bmp", "03.gif", "04.jpg", "05.png", "06.tiff", "07.webp",
@@ -271,7 +271,7 @@ fn every_supported_format_decodes() {
 fn color_pages_go_through_the_oklab_lightness_channel() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 用两种适配方式都恒等通过的尺寸，像素与色带一一对应。
+    // 用两种缩放方式都恒等通过的尺寸，像素与色带一一对应。
     let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::color_page(size));
 
@@ -333,8 +333,8 @@ fn a_color_page_on_a_monochrome_profile_is_grayed_and_still_reported_as_color() 
 fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cache() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 两种适配方式都恒等通过的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
-    // 灰度页那一张四边顶着墨：这个尺寸只管缩放，裁边照跑，不挡着它就把「恒等」裁没了
+    // 两种缩放方式都恒等通过的尺寸：色带与像素一一对应，断言谈的就是源上那几个取值。
+    // 灰度页那一张四边顶着墨：这个尺寸只管缩放，裁白边照跑，不挡着它就把「恒等」裁没了
     // （页几何批 09 号票）。
     let size = fixtures::PASSES_THROUGH;
     volume.page("001.png", &fixtures::color_page(size));
@@ -345,9 +345,9 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
     let volume_report = &report.volumes[0];
     let pages = &volume_report.pages;
     assert_eq!(pages[0].color(), Some(PageColor::Color));
-    // 彩色分支不量化：既没有判定，也没有判据曲线。
+    // 彩色分支不量化：既没有判定，也没有画质分曲线。
     assert_eq!(pages[0].verdict(), None, "彩色分支上不该有判定");
-    assert!(pages[0].scores().is_empty(), "彩色分支上不该有判据曲线");
+    assert!(pages[0].scores().is_empty(), "彩色分支上不该有画质分曲线");
     // 不进灰度缓存：缓存里只剩那一张灰度页。
     assert_eq!(volume_report.cache.pages, 1, "彩页不该进灰度缓存");
     // 每页仍然只解码一次（ADR 0005）。
@@ -376,7 +376,7 @@ fn a_color_page_on_a_color_profile_keeps_its_color_and_stays_out_of_the_gray_cac
 
 /// dry-run 下彩色分支也一个文件都不落盘，报告照出（spec 的 story 6）。
 ///
-/// 彩色分支上没有判据可预告——那条路径不量化——所以这一遍连编码都省了。
+/// 彩色分支上没有画质分可预告——那条路径不量化——所以这一遍连编码都省了。
 /// 要预告的只有几何：目标尺寸与缩放照旧算得出来。
 #[test]
 fn a_dry_run_reports_the_color_branch_without_writing_anything() {
@@ -404,7 +404,7 @@ fn a_dry_run_reports_the_color_branch_without_writing_anything() {
     assert!(!space.out().exists(), "dry-run 落了盘");
 }
 
-/// 试算跳过彩页那一整套缩放之后，报告里那一页**一个字不变**（两遍管线批 05 号票）。
+/// 预览跳过彩页那一整套缩放之后，报告里那一页**一个字不变**（两遍管线批 05 号票）。
 ///
 /// 缩放比、目标尺寸、彩页标记三样都只靠源尺寸与目标尺寸做算术，不需要像素——
 /// 这条用例把「省掉的确实只是像素那一趟」框住。计数那一侧在 `tests/counters.rs`。
@@ -414,30 +414,30 @@ fn a_dry_run_reports_the_same_color_geometry_as_the_real_thing() {
     let volume = space.volume("volume-a");
     // 窄而高，照 `NARROW_PASSES_THROUGH` 的路子办：这一条只问几何，页上画着什么不影响，
     // 而高正好是面板的两倍——预缩因此真触发，省掉的那一趟不是空操作。
-    // 不取 `DOUBLE_PANEL`：那是一张 850 万像素的彩页，一趟试算加一趟照做要一分多钟。
+    // 不取 `DOUBLE_PANEL`：那是一张 850 万像素的彩页，一趟预览加一趟照做要一分多钟。
     volume.page("001.png", &fixtures::color_page(Size::new(64, 3360)));
 
-    // 试算排在前头：照做那一趟写下了输出，跟在它后面的试算会被幂等整卷跳过。
+    // 预览排在前头：照做那一趟写下了输出，跟在它后面的预览会被幂等整卷跳过。
     let profile = fixtures::profile(COLOR_DEVICE);
     let trial = tonefit::run(&Request {
         profile: profile.clone(),
         mode: Mode::DryRun,
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect("试算应当成功");
+    .expect("预览应当成功");
     let done = fixtures::run_volume_with(&space, &volume, profile);
 
     let (trial, done) = (&trial.volumes[0].pages[0], &done.volumes[0].pages[0]);
     assert_eq!(trial.color(), Some(PageColor::Color));
-    assert_eq!(trial.size, done.size, "试算报的目标尺寸变了");
-    assert_eq!(trial.scaling(), done.scaling(), "试算报的缩放变了");
+    assert_eq!(trial.size, done.size, "预览报的目标尺寸变了");
+    assert_eq!(trial.scaling(), done.scaling(), "预览报的缩放变了");
     assert!(
         trial.scaling().expect("彩页缩放过").prescaled(),
         "这一页连预缩都没触发，省掉的那一趟不够贵，问不出这条性质"
     );
 }
 
-/// 彩色分支上的页不在几何门的**判定范围**内（ADR 0010 决定第 4 条）。
+/// 彩色分支上的页不在尺寸贴合检查的**判定范围**内（ADR 0010 决定第 4 条）。
 ///
 /// 门撑的是抖动与面板灰阶那道硬上界（ADR 0007、ADR 0003），两者只作用在灰度路径上：
 /// 彩页既不量化也不抖动，它的几何事实对那两件事没有说话的资格。
@@ -461,7 +461,7 @@ fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
         volume
     };
 
-    // 两趟都点名 fit-inside：头一页要贴不住面板，而门不成立那一支只在这条路上走得到
+    // 两趟都点名 fit-inside：头一页要贴不住面板，而未贴合屏幕那一支只在这条路上走得到
     // （页几何批 01 号票）。
     let run = |space: &Workspace, volume: &fixtures::Volume, profile| {
         tonefit::run(&Request {
@@ -497,14 +497,14 @@ fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
     assert_eq!(on_mono.judged_by_the_gate().count(), 2);
 }
 
-/// 部分救回页**在**几何门的判定范围内（ADR 0007 决定第 1 条）：那是文件头里的真尺寸，
+/// 残缺页**在**尺寸贴合检查的判定范围内（ADR 0007 决定第 1 条）：那是文件头里的真尺寸，
 /// 它答得出「这一页会不会被下游再缩一次」。
 ///
 /// 04 号票把它摘出去，是因为那时门对整卷只有一个结果——一张没解全的页不该替另外
 /// 一百多页回答这个问题。门改成逐页判之后那条理由不在了：它答的只是自己那一页，
 /// 而另一页照旧抖得动。
 ///
-/// 上包络那一侧的豁免没有跟着变：它那条判据曲线仍是在一页大半留白的图上求出来的，
+/// 整卷统一灰阶那一侧的豁免没有跟着变：它那条画质分曲线仍是在一页大半留白的图上求出来的，
 /// 代表不了这一卷。两处于是分了家，这一条把分家钉住。
 #[test]
 fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
@@ -519,8 +519,8 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
         &fixtures::full_bleed_gradient(fixtures::DOUBLE_PANEL),
     );
 
-    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）；
-    // 「上包络那一侧的豁免」要开着上包络才问得出。
+    // 未贴合屏幕那一支只在 fit-inside 上走得到（页几何批 01 号票）；
+    // 「整卷统一灰阶那一侧的豁免」要开着整卷统一灰阶才问得出。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
@@ -544,16 +544,16 @@ fn a_salvaged_page_answers_the_geometry_gate_for_itself_only() {
         Dither::FloydSteinberg,
         "一张救回来的小页把另一页的抖动也带走了"
     );
-    // 上包络那一侧照旧摘它：其余页只剩那一张完好页。
+    // 整卷统一灰阶那一侧照旧摘它：其余页只剩那一张完好页。
     assert_eq!(envelope_of(reported).body_pages, 1);
 }
 
-/// 两刀落在同一页上时，几何门那一刀在外层（ADR 0007 决定第 3 条）。
+/// 两刀落在同一页上时，尺寸贴合检查那一刀在外层（ADR 0007 决定第 3 条）。
 ///
-/// 一张既没解全、又贴不住面板的页：04 号票让部分救回页「按自己那条曲线单独定档」，
-/// 门这一条让门外的页不低于卷级基准档。两条撞在一起门赢——摘部分救回页的理由是
-/// 它那条判据曲线不具代表性（一页大半留白，而留白在任何位深上都是格点、误差恒为零，
-/// 判出来必偏低），而不具代表性的曲线更没有资格把这一页压到基准档以下。
+/// 一张既没解全、又贴不住面板的页：04 号票让残缺页「按自己那条曲线单独定档」，
+/// 门这一条让门外的页不低于卷级统一档位。两条撞在一起门赢——摘残缺页的理由是
+/// 它那条画质分曲线不具代表性（一页大半留白，而留白在任何灰阶档位上都是格点、误差恒为零，
+/// 判出来必偏低），而不具代表性的曲线更没有资格把这一页压到统一档位以下。
 ///
 /// 这一条钉的正是那个组合：两条规矩各自的用例都碰不到它。
 #[test]
@@ -565,7 +565,7 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
         "001.png",
         &fixtures::truncated(&fixtures::line_art(fixtures::SMALLER_THAN_TARGET)),
     );
-    // 三页完好的渐变正片，都贴得住面板：基准档由它们定出，比那一页高。
+    // 三页完好的渐变正片，都贴得住面板：统一档位由它们定出，比那一页高。
     // 四边顶着墨，「正好两倍面板」「B 类中位页」这两个形状才真的是它们送进来的形状。
     volume.page("002.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     volume.page(
@@ -574,12 +574,12 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
     );
     volume.page("004.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
-    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）；「不低于基准档」
-    // 要有基准档可比——开着上包络。
+    // 未贴合屏幕那一支只在 fit-inside 上走得到（页几何批 01 号票）；「不低于统一档位」
+    // 要有统一档位可比——开着整卷统一灰阶。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
-    // 夹具自证：那一页两刀都挨着——既是部分救回，几何门在它身上又不成立。
+    // 夹具自证：那一页两刀都挨着——既是残缺，尺寸贴合检查在它身上又不成立。
     assert!(
         reported.pages[0].salvage().is_some(),
         "夹具不对：那一页没被截断"
@@ -589,7 +589,7 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
     let base = envelope_of(reported).base;
     assert_eq!(envelope_of(reported).body_pages, 3);
 
-    // 它自己那条曲线要的那一档比基准档低——不然这条用例分不出谁在外层。
+    // 它自己那条曲线要的那一档比统一档位低——不然这条用例分不出谁在外层。
     let scores = reported.pages[0].scores();
     let threshold = fixtures::baseline_profile().threshold();
     let own = scores
@@ -599,17 +599,17 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
         .candidate;
     assert!(
         own.bit_depth < base.bit_depth,
-        "夹具不对：那一页自己那一档不比基准档低（{:?} vs {:?}）",
+        "夹具不对：那一页自己那一档不比统一档位低（{:?} vs {:?}）",
         own.bit_depth,
         base.bit_depth
     );
 
-    // 门在外层：拿的是基准档的位深、抖动关掉，不是它自己那条曲线判出的那一档。
+    // 门在外层：拿的是统一档位的灰阶档位、抖动关掉，不是它自己那条曲线判出的那一档。
     let verdict = fixtures::verdict(&reported.pages[0]);
     assert_eq!(
         verdict.candidate,
         Candidate::new(base.bit_depth, Dither::Off),
-        "门外的部分救回页掉到了基准档以下"
+        "门外的残缺页掉到了统一档位以下"
     );
     assert_eq!(verdict.reason, Reason::OutsideTheGate);
 }
@@ -617,11 +617,11 @@ fn a_salvaged_page_outside_the_gate_never_falls_below_the_volume_base() {
 /// 一卷里的灰度页一页不剩地落在救回那一侧时，**两处都不摘**：摘一页是为了护着别人，
 /// 而那时没有别人可护（04 号票）。
 ///
-/// 几何门那一侧同理（ADR 0007 决定第 5 条）：两页都贴不住面板，一页成立的都没有——
-/// 它们于是自己就当其余页，卷级基准档由它们定出、必然不抖。这一条要是不成立，
+/// 尺寸贴合检查那一侧同理（ADR 0007 决定第 5 条）：两页都贴不住面板，一页成立的都没有——
+/// 它们于是自己就当其余页，卷级统一档位由它们定出、必然不抖。这一条要是不成立，
 /// 一整卷会被下游再缩一次的页会带着抖动写出去，正是 ADR 0007 拦的那件事。
-/// 其余页不能空着，这两页因此照旧定得出一个基准档，理由也仍是「卷级上包络」——
-/// 不是「几何门不成立」：那一种说的是「摘出去了」，而这一卷没有别人可摘给。
+/// 其余页不能空着，这两页因此照旧定得出一个统一档位，理由也仍是「整卷统一灰阶」——
+/// 不是「尺寸未贴合屏幕」：那一种说的是「摘出去了」，而这一卷没有别人可摘给。
 #[test]
 fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
     let space = Workspace::new();
@@ -635,9 +635,9 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
         &fixtures::truncated(&fixtures::line_art(fixtures::TINY)),
     );
 
-    // 门不成立那一支只在 fit-inside 上走得到（页几何批 01 号票）：以高为准让每一页的高
+    // 未贴合屏幕那一支只在 fit-inside 上走得到（页几何批 01 号票）：以高为准让每一页的高
     // 都等于面板高，一条边永远贴着，这一卷就没有「一页成立的都没有」可谈。
-    // 「其余页不能空着」是上包络那一层的规矩，开着它才问得出。
+    // 「其余页不能空着」是整卷统一灰阶那一层的规矩，开着它才问得出。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
@@ -653,7 +653,7 @@ fn a_volume_of_nothing_but_salvaged_pages_lets_them_speak_for_themselves() {
     // 一页成立的都没有，抖动因此整卷关闭（ADR 0007 决定第 5 条）。
     let envelope = envelope_of(reported);
     assert_eq!(envelope.base.dither, Dither::Off);
-    // 一页不剩地落在救回那一侧，上包络那一侧同样一页都不摘：两页都进其余页。
+    // 一页不剩地落在救回那一侧，整卷统一灰阶那一侧同样一页都不摘：两页都进其余页。
     assert_eq!(envelope.body_pages, 2);
     for page in &reported.pages {
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
@@ -680,7 +680,7 @@ fn transparent_areas_come_out_as_paper_white() {
     );
 }
 
-/// 把这一卷钉在 8bit 跑一遍，纸白对齐的上限点名给出（纸白对齐批 01 号票）。
+/// 把这一卷钉在 8bit 跑一遍，纸色提白的上限点名给出（纸色提白批 01 号票）。
 ///
 /// **钉在 8bit 是下面那几条成立的前提**：量化于是成了恒等，写出的就是对齐那一步的结果。
 /// 混进判定那一档格点，这几条一条都分不出对齐做没做——就近取整自己就会把 253 送到 255 上。
@@ -706,7 +706,7 @@ fn run_aligning(
 
 /// 一张页走完整趟管线之后写出来的像素，上限点名给出。
 ///
-/// 每一趟各起一个工作区：同一个输出根跑两趟，第二趟会把第一趟的字节盖掉，
+/// 每一趟各起一个工作区：同一个输出目录跑两趟，第二趟会把第一趟的字节盖掉，
 /// 而这几条要的正是两趟的对照。
 fn written_pixels(
     page: &image::DynamicImage,
@@ -731,7 +731,7 @@ fn written_pixels(
 /// ——不点名那一趟由 [`the_default_run_aligns_an_off_grid_page`] 单独钉着。
 #[test]
 fn the_limit_reaches_the_written_pixels_and_a_limit_of_zero_changes_nothing() {
-    // 恒等通过的尺寸配四边顶着墨的一张页：缩放与裁边都不插一脚，
+    // 恒等通过的尺寸配四边顶着墨的一张页：缩放与裁白边都不插一脚，
     // 写出的因此就是对齐对源做的事（页几何批 09 号票）。
     let paper = fixtures::OFF_GRID_PAPER_WHITE;
     let page = fixtures::page_with_paper_white(fixtures::PASSES_THROUGH, paper);
@@ -745,7 +745,7 @@ fn the_limit_reaches_the_written_pixels_and_a_limit_of_zero_changes_nothing() {
     fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &opened);
 }
 
-/// **不加任何参数的那一趟也对齐**（纸白对齐批 05 号票：默认值抬到 4）。
+/// **不加任何参数的那一趟也对齐**（纸色提白批 05 号票：默认值抬到 4）。
 ///
 /// 这是抬默认值那一件事的全部后果所在：离格的页从此**在默认跑法上**被搬到格点上，
 /// 白底不再撒点。上面那条 tracer bullet 点名给上限，测不到这件事
@@ -780,7 +780,7 @@ fn the_default_run_aligns_an_off_grid_page() {
     fixtures::assert_pixels(&fixtures::clamped_to_white(&source, paper), &written);
 }
 
-/// **几何门不成立的页照样对齐**：它只是没有抖动那一维，纸白该在格点上还是要在。
+/// **尺寸未贴合屏幕的页照样对齐**：它只是没有抖动那一维，纸白该在格点上还是要在。
 #[test]
 fn a_page_outside_the_geometry_gate_is_aligned_all_the_same() {
     let space = Workspace::new();
@@ -875,7 +875,7 @@ fn a_color_page_never_meets_the_white_alignment() {
 ///
 /// 照 [`fixtures::page_with_paper_white`] 的形状染色：纸白那两条竖条三通道相等、原样留着，
 /// 墨与灰调那两条逐行换色相，整页因此有真实的色度覆盖（彩页识别看的正是它）。
-/// 纸白不染是要点——染成纯白之后，「经没经过纸白对齐」在字节上就看不出分别了。
+/// 纸白不染是要点——染成纯白之后，「经没经过纸色提白」在字节上就看不出分别了。
 fn color_page_on_off_grid_paper(size: Size) -> image::DynamicImage {
     let gray = fixtures::page_with_paper_white(size, fixtures::OFF_GRID_PAPER_WHITE).to_luma8();
     image::DynamicImage::ImageRgb8(image::ImageBuffer::from_fn(
@@ -898,7 +898,7 @@ fn color_page_on_off_grid_paper(size: Size) -> image::DynamicImage {
 fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels_when_fitted_inside() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 四边顶着墨：这一条说的是「不放大」，裁边不该插一脚（页几何批 02 号票）。
+    // 四边顶着墨：这一条说的是「不放大」，裁白边不该插一脚（页几何批 02 号票）。
     let page = fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET);
     volume.page("001.png", &page);
 
@@ -918,11 +918,11 @@ fn a_page_smaller_than_the_target_keeps_its_size_and_its_pixels_when_fitted_insi
     );
 }
 
-/// **默认这条路反过来：比面板矮的页被放大到面板高**，几何门跟着成立，抖动不再被关掉
+/// **默认这条路反过来：比面板矮的页被放大到面板高**，尺寸贴合检查跟着成立，抖动不再被关掉
 /// （页几何批 01 号票）。
 ///
 /// 这是本票认下的第二笔代价，与跨页那一笔并列：比面板小的卷会被放大。
-/// 上一条用例是它的对照——同一页同一块面板，只换适配方式。
+/// 上一条用例是它的对照——同一页同一块面板，只换缩放方式。
 #[test]
 fn a_page_shorter_than_the_panel_is_enlarged_until_it_touches_the_panel_height() {
     let space = Workspace::new();
@@ -955,7 +955,7 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    // 两页渐变都四边顶着墨：这两条说的是适配方式，裁边不该插一脚（页几何批 02 号票）。
+    // 两页渐变都四边顶着墨：这两条说的是缩放方式，裁白边不该插一脚（页几何批 02 号票）。
     volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     volume.page(
         "03.png",
@@ -979,14 +979,14 @@ fn the_target_size_is_the_page_fitted_inside_the_panel() {
 
 /// 默认这条路上目标高**恒等于面板高**，宽按源宽高比算出、不设上限（页几何批 01 号票）。
 ///
-/// 与上一条用例同一批页、同一块面板，只换适配方式：分岔只出在头一页与末一页身上，
+/// 与上一条用例同一批页、同一块面板，只换缩放方式：分岔只出在头一页与末一页身上，
 /// 中间那张 B 类中位页两条路上一模一样——下一条用例把那件事单独钉住。
 #[test]
 fn the_target_size_leads_with_the_panel_height_by_default() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    // 两页渐变都四边顶着墨：这两条说的是适配方式，裁边不该插一脚（页几何批 02 号票）。
+    // 两页渐变都四边顶着墨：这两条说的是缩放方式，裁白边不该插一脚（页几何批 02 号票）。
     volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
     volume.page(
         "03.png",
@@ -1021,10 +1021,10 @@ fn the_target_size_leads_with_the_panel_height_by_default() {
 ///
 /// 以高为准让宽随源比例算出、阅读上不设上限，而目标宽 = 源宽 × 面板高 ÷ 源高：
 /// 一根长条在面板上算出的尺寸能到几亿像素，那块缓冲分配不下会**中止整趟**——
-/// 不是变成一个失败页，是整趟死掉。管线本来有隔离机制专防「一页坏内容毁掉一整卷」
+/// 不是变成一个坏页，是整趟死掉。管线本来有隔离机制专防「一页坏内容毁掉一整卷」
 /// （`CONTEXT.md` 的《失败》），这条用例要的正是那条性质回来。
 ///
-/// 退回的是 fit-inside，**不是失败页**：那一页的像素是好的，退回来仍然读得了，
+/// 退回的是 fit-inside，**不是坏页**：那一页的像素是好的，退回来仍然读得了，
 /// 变成一张白页反而丢内容。
 ///
 /// 写在 `run` 这个 seam 上而不只写在几何那一层：几何那一层答得出「该退回」，
@@ -1033,16 +1033,16 @@ fn the_target_size_leads_with_the_panel_height_by_default() {
 fn a_page_whose_target_would_not_fit_in_memory_falls_back_and_the_run_finishes() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 整页纯墨：裁边一个像素都拿不走，这一页走得到的只有兜底那一条。
+    // 整页纯墨：裁白边一个像素都拿不走，这一页走得到的只有兜底那一条。
     volume.page("01.png", &fixtures::solid(fixtures::DEGENERATE_STRIP, 0));
-    // 一张普通页做对照，四边顶着墨，裁边同样不插一脚。
+    // 一张普通页做对照，四边顶着墨，裁白边同样不插一脚。
     volume.page("02.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
     let report = run_volume(&space, &volume);
 
     let pages = &report.volumes[0].pages;
     assert_eq!(pages.len(), 2);
-    // 整趟跑完了，而那一页也没被记成失败页——卷因此仍在干净的去处。
+    // 整趟跑完了，而那一页也没被记成坏页——卷因此仍在干净的去处。
     assert_eq!(report.failures().count(), 0);
     assert!(!report.any_isolated());
     // 退回 fit-inside：3000×100 等比缩进面板是 1264×42。以高为准会算出 50400×1680。
@@ -1063,7 +1063,7 @@ fn a_page_whose_target_would_not_fit_in_memory_falls_back_and_the_run_finishes()
     assert!(!pages[1].backstopped());
 }
 
-/// **普通漫画页两种适配方式产出同一个尺寸。**
+/// **普通漫画页两种缩放方式产出同一个尺寸。**
 ///
 /// 那不是巧合，是「页比面板更瘦长、本来就受高度约束」的直接后果：两条路上宽都由同一个
 /// `面板高 ÷ 源高` 算出。实测棋魂完全版 230 页、N和S 第43话 24 页 **100% 一致**
@@ -1104,7 +1104,7 @@ fn an_ordinary_comic_page_comes_out_the_same_size_either_way() {
             "{}",
             left.source.display()
         );
-        // 比的是**像素**，不是文件字节：适配方式进了参数哈希（见 `crate::metadata`），
+        // 比的是**像素**，不是文件字节：缩放方式进了参数哈希（见 `crate::metadata`），
         // 两趟的 tEXt 本来就不同，而那正是幂等要的（换了它这一卷要重做）。
         let (left_png, right_png) = (
             fixtures::read_png(&left.output),
@@ -1122,24 +1122,24 @@ fn an_ordinary_comic_page_comes_out_the_same_size_either_way() {
     assert_eq!(by_height.wider_than_the_panel().count(), 0);
 }
 
-/// 裁边那几条用例共用的一页：1441×2048 的纸，中间 1200×1600 那一块是内容。
+/// 裁白边那几条用例共用的一页：1441×2048 的纸，中间 1200×1600 那一块是内容。
 ///
 /// 四边的白边各不相等（左 120 上 100 右 121 下 348）：窗口摆错一边就当场对不上。
 const MARGINED: Size = fixtures::TYPICAL;
 const CONTENT: Size = Size::new(1200, 1600);
 const CONTENT_AT: (u32, u32) = (120, 100);
 
-/// **裁边发生在适配之前**（页几何批 02 号票）：目标尺寸从裁完的那个尺寸算出来，
+/// **裁白边发生在适配之前**（页几何批 02 号票）：目标尺寸从裁完的那个尺寸算出来，
 /// 而不是从解出来的那个。
 ///
-/// 同一页跑两趟，只换裁边这一个开关：裁的那一趟目标尺寸是 1200×1600 顶到面板高，
+/// 同一页跑两趟，只换裁白边这一个开关：裁的那一趟目标尺寸是 1200×1600 顶到面板高，
 /// 不裁的那一趟是 1441×2048 顶到面板高。两个数不同，正是「先裁后适配」的现场——
 /// 反过来（先适配再裁）会得出第三个数，而那个数一页都对不上。
 ///
 /// 报告逐页说得出裁掉了多少：裁前裁后两个尺寸加左上角，四边因此都减得出来。
 #[test]
 fn margins_come_off_before_the_page_meets_the_panel() {
-    // 两趟各起一个工作区：同一个输出根会被后一趟覆盖，那时比的就不是两趟的差别了。
+    // 两趟各起一个工作区：同一个输出目录会被后一趟覆盖，那时比的就不是两趟的差别了。
     let build = |space: &Workspace| {
         let volume = space.volume("volume-a");
         volume.page(
@@ -1154,7 +1154,7 @@ fn margins_come_off_before_the_page_meets_the_panel() {
     let kept = fixtures::run_volume_keeping_margins(&kept_space, &build(&kept_space));
 
     let page = &report.volumes[0].pages[0];
-    let crop = page.crop().expect("处理成了的页有裁边");
+    let crop = page.crop().expect("处理成了的页有裁白边");
     // 裁掉了多少：报告自己说得出来。右边与下边减得出来——
     // 1441 - 1200 - 120 = 121，2048 - 1600 - 100 = 348。
     assert_eq!(crop.before(), MARGINED);
@@ -1174,8 +1174,8 @@ fn margins_come_off_before_the_page_meets_the_panel() {
     // `--no-crop` 退回从前的行为：一个像素都不裁，目标尺寸从 1441×2048 算出
     // （1441 × 1680 ÷ 2048 = 1182）。
     let kept_page = &kept.volumes[0].pages[0];
-    let kept_crop = kept_page.crop().expect("处理成了的页有裁边");
-    assert!(!kept_crop.trimmed(), "关掉了裁边却还是裁了");
+    let kept_crop = kept_page.crop().expect("处理成了的页有裁白边");
+    assert!(!kept_crop.trimmed(), "关掉了裁白边却还是裁了");
     assert_eq!(kept_crop.after(), MARGINED);
     assert_eq!(kept_page.size, Size::new(1182, 1680));
 }
@@ -1202,7 +1202,7 @@ fn a_speck_in_the_margin_is_not_content() {
     let report = run_volume(&space, &volume);
 
     let pages = &report.volumes[0].pages;
-    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁边").after();
+    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁白边").after();
     assert_eq!(window(&pages[0]), CONTENT);
     assert_eq!(window(&pages[1]), CONTENT, "三粒噪点把窗口撑回了整页");
     assert_eq!(pages[0].size, pages[1].size, "噪点改变了目标尺寸");
@@ -1227,8 +1227,8 @@ fn a_blank_page_is_not_cropped_away() {
     let report = run_volume(&space, &volume);
 
     let page = &report.volumes[0].pages[0];
-    assert!(!page.crop().expect("处理成了的页有裁边").trimmed());
-    // 与不裁边那一趟同一个目标尺寸：1441 × 1680 ÷ 2048 = 1182。
+    assert!(!page.crop().expect("处理成了的页有裁白边").trimmed());
+    // 与不裁白边那一趟同一个目标尺寸：1441 × 1680 ÷ 2048 = 1182。
     assert_eq!(page.size, Size::new(1182, 1680));
     assert_eq!(fixtures::read_png(&page.output).size, page.size);
 }
@@ -1264,7 +1264,7 @@ fn pages_with_different_margins_are_magnified_differently_and_that_is_accepted()
     assert_eq!(pages[0].size, Size::new(1680, 1680));
     assert_eq!(pages[1].size, Size::new(1061, 1680));
     // 同一块内容在两页上放大得不一样多——那就是字号跳动。
-    let gain = |page: &tonefit::PageReport| page.crop().expect("有裁边").linear_gain();
+    let gain = |page: &tonefit::PageReport| page.crop().expect("有裁白边").linear_gain();
     assert!(
         gain(&pages[0]) - gain(&pages[1]) > 0.5,
         "两页的线性放大只差 {:.3}，夹具没把跳动造出来",
@@ -1272,9 +1272,9 @@ fn pages_with_different_margins_are_magnified_differently_and_that_is_accepted()
     );
 }
 
-/// **裁边与适配方式正交：四种组合都跑得通**（页几何批 02 号票）。
+/// **裁白边与缩放方式正交：四种组合都跑得通**（页几何批 02 号票）。
 ///
-/// 两个开关各改一件事——裁边改的是适配之前的页尺寸，适配方式改的是页怎么顶上面板——
+/// 两个开关各改一件事——裁白边改的是适配之前的页尺寸，缩放方式改的是页怎么顶上面板——
 /// 组合起来不该有哪一种走不下去。断言只要外部可见的三件事：跑得完、写出来的页解得回来、
 /// 尺寸与报告说的对得上。具体数值由上面那几条各自钉着。
 #[test]
@@ -1298,24 +1298,24 @@ fn all_four_combinations_of_crop_and_fit_run_through() {
                 crop,
                 ..fixtures::request(&space, [volume.path()])
             })
-            .unwrap_or_else(|error| panic!("{fit:?} + 裁边 {crop} 没跑下来：{error:#}"));
+            .unwrap_or_else(|error| panic!("{fit:?} + 裁白边 {crop} 没跑下来：{error:#}"));
 
             let pages = &report.volumes[0].pages;
-            assert_eq!(pages.len(), 3, "{fit:?} + 裁边 {crop}");
+            assert_eq!(pages.len(), 3, "{fit:?} + 裁白边 {crop}");
             for page in pages {
                 let written = fixtures::read_png(&page.output);
-                assert_eq!(written.size, page.size, "{fit:?} + 裁边 {crop}");
+                assert_eq!(written.size, page.size, "{fit:?} + 裁白边 {crop}");
                 // 裁过没裁过，报告都答得出来；关着的那一趟一页都不许裁。
-                let cropped = page.crop().expect("处理成了的页有裁边");
-                assert!(crop || !cropped.trimmed(), "关掉了裁边却还是裁了");
+                let cropped = page.crop().expect("处理成了的页有裁白边");
+                assert!(crop || !cropped.trimmed(), "关掉了裁白边却还是裁了");
             }
-            assert_eq!(report.crop, crop, "报告没记住这一趟开没开裁边");
+            assert_eq!(report.crop, crop, "报告没记住这一趟开没开裁白边");
             assert_eq!(report.fit, fit);
         }
     }
 }
 
-/// **部分救回页不裁边**（页几何批 02 号票）。
+/// **残缺页不裁白边**（页几何批 02 号票）。
 ///
 /// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而纸白按墨量就是白边——
 /// 裁掉它等于把「这一页缺了一半」从产物里抹掉，报告里那个救回比例也就再对不上尺寸。
@@ -1330,16 +1330,16 @@ fn a_salvaged_page_keeps_the_blank_it_could_not_decode() {
     let report = run_volume(&space, &volume);
 
     let page = &report.volumes[0].pages[0];
-    assert!(page.salvage().is_some(), "夹具没造出一张部分救回页");
+    assert!(page.salvage().is_some(), "夹具没造出一张残缺页");
     assert!(
-        !page.crop().expect("处理成了的页有裁边").trimmed(),
+        !page.crop().expect("处理成了的页有裁白边").trimmed(),
         "把救回页缺的那一段当白边裁掉了"
     );
     // 尺寸仍是文件头里的那个：1441 × 1680 ÷ 2048 = 1182。
     assert_eq!(page.size, Size::new(1182, 1680));
 }
 
-/// 跨页拆分那几条用例共用的一页：带装订沟的跨页，沟中心取实测最偏的那一页。
+/// 拆分跨页那几条用例共用的一页：带中缝的跨页，沟中心取实测最偏的那一页。
 fn spread_page() -> image::DynamicImage {
     fixtures::spread_with_gutter(
         fixtures::SPREAD_WITH_GUTTER,
@@ -1368,7 +1368,7 @@ fn output_names(volume: &tonefit::VolumeReport) -> Vec<String> {
         .collect()
 }
 
-/// **切点落在装订沟上，而每半各自再裁一次**（页几何批 04 号票）。
+/// **切点落在中缝上，而每半各自再裁一次**（页几何批 04 号票）。
 ///
 /// 这一条把票面的三件事钉在一处，因为它们在产物上是同一组数：
 ///
@@ -1408,9 +1408,9 @@ fn a_spread_is_cut_at_its_gutter_and_each_half_is_cropped_again() {
 
     let source = fixtures::SPREAD_WITH_GUTTER;
     let (from, to) = gutter_span();
-    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁边");
+    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁白边");
     let (right, left) = (window(&pages[0]), window(&pages[1]));
-    // 窗口都长在源页上：裁边、切开、每半再裁三段叠成源页上的一块。
+    // 窗口都长在源页上：裁白边、切开、每半再裁三段叠成源页上的一块。
     assert_eq!((right.before(), left.before()), (source, source));
     assert_eq!(
         (left.left(), left.after()),
@@ -1456,7 +1456,7 @@ fn a_spread_is_cut_at_its_gutter_and_each_half_is_cropped_again() {
     assert_eq!(scale(&pages[1]), scale(&unsplit.pages[0]));
 }
 
-/// **找不到装订沟就是连续跨页，不切**（页几何批 04 号票的硬约束）。
+/// **找不到中缝就是连续跨页，不切**（页几何批 04 号票的硬约束）。
 ///
 /// 一幅画横跨两页，切开就毁了。它退回以高为准，靠阅读器横向平移看——报告因此把它
 /// 点在「输出宽超过面板」那一小结里（页几何批 01 号票）。
@@ -1468,8 +1468,8 @@ fn a_spread_without_a_gutter_is_left_whole_and_read_by_panning() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 竖直渐变的宽幅页：每一列长得一模一样，一条空白列都挑不出来。
-    // 四边顶着墨，裁边因此不动它的宽高比——裁掉渐变下方那一片会把 3.01 推到 3.84，
-    // 「够得上跨页候选」就成了裁边送的，而不是夹具造的（页几何批 09 号票）。
+    // 四边顶着墨，裁白边因此不动它的宽高比——裁掉渐变下方那一片会把 3.01 推到 3.84，
+    // 「够得上跨页候选」就成了裁白边送的，而不是夹具造的（页几何批 09 号票）。
     volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
     let report = run_volume(&space, &volume);
@@ -1480,7 +1480,7 @@ fn a_spread_without_a_gutter_is_left_whole_and_read_by_panning() {
     assert_eq!(output_names(reported), ["001.png"], "没切开却改了成员名");
     let page = &reported.pages[0];
     assert!(page.cut().is_none());
-    // 退回以高为准：宽溢出面板，靠横向平移看。
+    // 退回以高为准：页面比屏幕宽，靠横向平移看。
     assert!(page.size.width > report.profile.panel().resolution.width);
     assert_eq!(report.wider_than_the_panel().count(), 1);
     // **夹具自证**：这一页够得上跨页候选，挡下它的只能是「没有沟」。
@@ -1520,7 +1520,7 @@ fn the_reading_order_decides_which_half_gets_the_first_name() {
                 (
                     page.cut().expect("这是切出来的一半").side(),
                     fixtures::relative_name(&reported.output, &page.output),
-                    page.crop().expect("处理成了的页有裁边"),
+                    page.crop().expect("处理成了的页有裁白边"),
                 )
             })
             .collect();
@@ -1590,11 +1590,11 @@ fn a_volume_that_mixes_single_pages_and_spreads_lands_both_right() {
     }
 }
 
-/// **拆分关得掉，阈值调得动**（页几何批 04 号票的头两条验收）。
+/// **拆分关得掉，判定宽度调得动**（页几何批 04 号票的头两条验收）。
 ///
-/// 关掉与把阈值抬到这一页的比值之上，两条路都让它原样出一张——而两条路**不是同一件事**，
+/// 关掉与把判定宽度抬到这一页的比值之上，两条路都让它原样出一张——而两条路**不是同一件事**，
 /// 报告分得开：关掉那一趟连跨页候选都不判（`spread_candidate` 为假，因为整卷不拆），
-/// 抬高阈值那一趟是这一页够不上候选。两处都断言，不然「阈值可调」与「开关关得掉」
+/// 抬高判定宽度那一趟是这一页够不上候选。两处都断言，不然「判定宽度可调」与「开关关得掉」
 /// 在产物上长得一模一样。
 #[test]
 fn the_split_switch_and_its_threshold_both_leave_the_spread_whole() {
@@ -1637,15 +1637,15 @@ fn the_split_switch_and_its_threshold_both_leave_the_spread_whole() {
         threshold: raised,
         ..tonefit::SplitRule::default()
     });
-    assert_eq!(count, 1, "阈值抬到比值之上还是切开了");
+    assert_eq!(count, 1, "判定宽度抬到比值之上还是切开了");
     assert_eq!(names, ["001.png"]);
-    assert!(!candidate, "阈值抬上去了，这一页不该再是跨页候选");
-    assert_eq!(rule.threshold, raised, "报告没记住这一趟的阈值");
+    assert!(!candidate, "判定宽度抬上去了，这一页不该再是跨页候选");
+    assert_eq!(rule.threshold, raised, "报告没记住这一趟的判定宽度");
 }
 
 /// **彩色分支上的跨页也切得开，而且切在同一处**（页几何批 04 号票）。
 ///
-/// 拆分的次序（裁边 → 判跨页 → 拆分 → 每半再裁）在灰度路径与彩色分支上**各写了一遍**
+/// 拆分的次序（裁白边 → 判跨页 → 拆分 → 每半再裁）在灰度路径与彩色分支上**各写了一遍**
 /// （`crate::Compute` 的 `gray_pages` 与 `color_pages`）。两处代码不共用，漏改一处
 /// 不会有编译错——只会让彩页在切开这件事上悄悄走另一条路。这一条把两条路并排跑一遍：
 /// 同一张跨页，一次在黑白面板上（转灰、走灰度路径）、一次在彩色面板上（走彩色分支），
@@ -1658,7 +1658,7 @@ fn the_color_branch_splits_a_spread_at_the_very_same_place() {
     let cut_windows = |device: &str| {
         let space = Workspace::new();
         let volume = space.volume("volume-a");
-        // 彩色的跨页：把带装订沟的那一页染成彩色，纸白仍是纸白。
+        // 彩色的跨页：把带中缝的那一页染成彩色，纸白仍是纸白。
         volume.page("001.png", &fixtures::colorize(&spread_page()));
         let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(device));
         let reported = &report.volumes[0];
@@ -1668,7 +1668,7 @@ fn the_color_branch_splits_a_spread_at_the_very_same_place() {
             .map(|page| {
                 (
                     page.cut().expect("这是切出来的一半").side(),
-                    page.crop().expect("处理成了的页有裁边"),
+                    page.crop().expect("处理成了的页有裁白边"),
                 )
             })
             .collect();
@@ -1697,11 +1697,11 @@ fn the_color_branch_splits_a_spread_at_the_very_same_place() {
     assert_eq!(gray_sizes, color_sizes);
 }
 
-/// **部分救回页不切**（页几何批 04 号票）。
+/// **残缺页不切**（页几何批 04 号票）。
 ///
 /// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而一张缺了右半边的跨页按墨量看
-/// 就是「装订沟正好在中间」——切开它等于把「这一页缺了一半」变成两张各自完整的页。
-/// 与「部分救回页不裁边」是同一句话的两半：缺的那一段不是白边，也不是装订沟。
+/// 就是「中缝正好在中间」——切开它等于把「这一页缺了一半」变成两张各自完整的页。
+/// 与「残缺页不裁白边」是同一句话的两半：缺的那一段不是白边，也不是中缝。
 #[test]
 fn a_salvaged_spread_is_not_cut_at_the_blank_it_could_not_decode() {
     let space = Workspace::new();
@@ -1713,12 +1713,8 @@ fn a_salvaged_spread_is_not_cut_at_the_blank_it_could_not_decode() {
 
     let reported = &report.volumes[0];
     let page = &reported.pages[0];
-    assert!(page.salvage().is_some(), "夹具没造出一张部分救回页");
-    assert_eq!(
-        reported.page_count(),
-        1,
-        "把救回页缺的那一段当成装订沟切开了"
-    );
+    assert!(page.salvage().is_some(), "夹具没造出一张残缺页");
+    assert_eq!(reported.page_count(), 1, "把救回页缺的那一段当成中缝切开了");
     assert!(page.cut().is_none());
 }
 
@@ -1735,7 +1731,7 @@ fn the_target_size_comes_from_the_profiles_panel() {
     for (device, expected) in cases {
         let space = Workspace::new();
         let volume = space.volume("volume-a");
-        // 四边顶着墨：这一条说的是「面板从 profile 来」，裁边不该插一脚（页几何批 02 号票）。
+        // 四边顶着墨：这一条说的是「面板从 profile 来」，裁白边不该插一脚（页几何批 02 号票）。
         volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
 
         let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(device));
@@ -1768,9 +1764,9 @@ fn the_report_gives_the_total_ratio_the_prescale_and_the_residual_of_every_page(
     assert_scaling(&report, expected);
 }
 
-/// **预缩与总缩放比跟着适配方式走**（页几何批 01 号票）。
+/// **预缩与总缩放比跟着缩放方式走**（页几何批 01 号票）。
 ///
-/// 同一批页、同一块面板，只换适配方式：目标高改成恒等于面板高，总缩放比 = 源高 ÷ 面板高
+/// 同一批页、同一块面板，只换缩放方式：目标高改成恒等于面板高，总缩放比 = 源高 ÷ 面板高
 /// 跟着变，预缩那一级于是也可能换一个倍数。分岔只出在两头——中间三页两条路上目标尺寸相同，
 /// 三个数因此一个不动。
 #[test]
@@ -1799,7 +1795,7 @@ fn the_total_ratio_follows_the_fit_mode() {
 fn scaling_volume(space: &Workspace) -> fixtures::Volume {
     let volume = space.volume("volume-a");
     volume.page("01.png", &fixtures::line_art(fixtures::SPREAD));
-    // 四页渐变一律四边顶着墨：这两条说的是预缩与总缩放比，而裁边会改掉每一页的源高
+    // 四页渐变一律四边顶着墨：这两条说的是预缩与总缩放比，而裁白边会改掉每一页的源高
     // （页几何批 02 号票），那时手算的期望值量的就不是缩放了。
     volume.page(
         "02.png",
@@ -1908,7 +1904,7 @@ fn a_prescaled_screentone_page_takes_its_tones_from_the_box_step() {
 
 #[test]
 fn the_filter_changes_the_residual_step_and_never_the_prescale() {
-    // 总缩放比正好 2.000：预缩一步到位，残差段无事可做。换滤波器于是逐字节不变——
+    // 总缩放比正好 2.000：预缩一步到位，残差段无事可做。换缩放算法于是逐字节不变——
     // 预缩那一级恒为 box，`--filter` 够不着它。够得着的话，Lanczos3 会在这里
     // 把二值网点解析成准连续谱，与 area 的输出天差地别。
     assert_eq!(
@@ -1917,7 +1913,7 @@ fn the_filter_changes_the_residual_step_and_never_the_prescale() {
         "预缩那一级被 --filter 改掉了"
     );
 
-    // 比值 1.219 的页只有残差段：换滤波器就换结果。
+    // 比值 1.219 的页只有残差段：换缩放算法就换结果。
     assert_ne!(
         one_page_with(fixtures::TYPICAL, Filter::Lanczos3),
         one_page_with(fixtures::TYPICAL, Filter::Area),
@@ -1933,9 +1929,9 @@ fn the_filter_changes_the_residual_step_and_never_the_prescale() {
     );
 }
 
-/// 用点名的滤波器处理一张网点页，把写出的 PNG 字节读回来。
+/// 用点名的缩放算法处理一张网点页，把写出的 PNG 字节读回来。
 ///
-/// 关掉自描述元数据：记录里带着参数哈希，而滤波器正是它收的一项——留着它，
+/// 关掉自描述元数据：记录里带着参数哈希，而缩放算法正是它收的一项——留着它，
 /// 两次输出必然逐字节不同，`assert_ne!` 那几条会因为几行 tEXt 而通过，
 /// 与像素有没有变毫无关系。关掉之后文件里只剩像素那一侧，比字节才是在比重采样。
 fn one_page_with(size: Size, filter: Filter) -> Vec<u8> {
@@ -1958,7 +1954,7 @@ fn the_report_names_the_profile_and_the_panel_it_used() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::cheap_page());
-    // 覆盖过灰阶数的 profile：报告要给出本次实际用的那块面板，而不是内置表里的原样。
+    // 覆盖过屏幕灰阶数的 profile：报告要给出本次实际用的那块面板，而不是内置表里的原样。
     let profile = fixtures::profile("boox-tab-x")
         .with_gray_levels(8)
         .expect("8 级可用");
@@ -2038,7 +2034,7 @@ fn each_volume_mirrors_its_source_tree_under_its_own_output_directory() {
 
 /// 两个源成员要写到同一个输出上就拦下，不静默覆盖——**拦的是那一卷**（05 号票）。
 ///
-/// 撞名是**那一卷内容**的性质：换一卷根本不成立。它因此走卷级失败那条路，
+/// 撞名是**那一卷内容**的性质：换一卷根本不成立。它因此走卷转换失败那条路，
 /// 而不是整趟拒绝（那一种留给「错在这一趟参数上」的，见 `src/lib.rs` 的 `Refusal`）。
 /// 拦下这件事一点没松：这一卷一个字节都没写出去，报告里指名道姓说着为什么。
 #[test]
@@ -2126,7 +2122,7 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
     for page in pages {
         assert!(
             !page.scores().is_empty(),
-            "{} 缺判据",
+            "{} 缺画质分",
             page.source.display()
         );
         assert!(
@@ -2135,7 +2131,7 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
             page.output.display()
         );
     }
-    // 渐变页在低位深上必然崩：报告里的数是真算出来的，不是一排零。
+    // 渐变页在低灰阶档位上必然崩：报告里的数是真算出来的，不是一排零。
     let gradient = &pages[0].scores();
     assert!(
         gradient[0].score > gradient[2].score,
@@ -2150,9 +2146,9 @@ fn a_dry_run_gives_the_metric_for_every_page_and_writes_nothing() {
 
 #[test]
 fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
-    // 候选是两道裁剪的乘积，都在判据求值之前：位深按面板灰阶数裁（ADR 0003），
-    // 抖动模式按这一页的几何门裁（ADR 0007）。这一页贴住面板，门放行，
-    // 于是每档位深各两个候选。页四边顶着墨，裁边不改它贴住的是哪条边。
+    // 候选是两道裁剪的乘积，都在画质分求值之前：灰阶档位按屏幕灰阶数裁（ADR 0003），
+    // 抖动模式按这一页的尺寸贴合检查裁（ADR 0007）。这一页贴住面板，门放行，
+    // 于是每档灰阶档位各两个候选。页四边顶着墨，裁白边不改它贴住的是哪条边。
     let cases = [(None, 16), (Some(4), 4), (Some(256), 256)];
 
     for (gray_levels, effective) in cases {
@@ -2187,10 +2183,10 @@ fn the_candidates_a_dry_run_scores_are_the_ones_the_panel_can_show() {
 /// **一张不具代表性的封面不否决整卷的抖动**（06 号票，ADR 0007 决定第 1～3 条）。
 ///
 /// 混合尺寸卷：四页正片贴住面板，一张封面比目标还小。门逐页判，那一张封面只关掉自己
-/// 那一页的抖动；另外四页照旧跟着卷级基准档抖。同一卷在从前那套口径下会**整卷**不抖动。
+/// 那一页的抖动；另外四页照旧跟着卷级统一档位抖。同一卷在从前那套口径下会**整卷**不抖动。
 ///
 /// 三件事一条用例里钉齐，因为它们互为对方的前提：少数页不连坐（第二条验收标准）、
-/// 真会被下游缩放的页确实不抖（第三条）、而位深仍按卷统一（ADR 0006 要消灭的翻页跳变
+/// 真会被下游缩放的页确实不抖（第三条）、而灰阶档位仍按卷统一（ADR 0006 要消灭的翻页跳变
 /// 没有跟着回来）。
 #[test]
 fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volume() {
@@ -2201,13 +2197,13 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
         "001.png",
         &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
     );
-    // 四页正片，都贴得住面板。五页一律四边顶着墨：这一条说的是几何门逐页判，
-    // 而裁边会改掉每一页的几何（页几何批 02 号票）。
+    // 四页正片，都贴得住面板。五页一律四边顶着墨：这一条说的是尺寸贴合检查逐页判，
+    // 而裁白边会改掉每一页的几何（页几何批 02 号票）。
     //
-    // 正片取**网点页**而不是渐变页：这一条要基准档落在抖过的那一档、且**低于**封面
-    // 自己判出来的那一档，两件事缺一条就分不出「取更严的」与「只拿基准档」。
-    // 网点自带高频、抖动在低位深上还赢得过不抖动（见 `fixtures::full_bleed_screentone`），
-    // 基准档因此是 2bit+FS；连续灰调在新判据下判到 4bit+FS，与封面那一档齐平。
+    // 正片取**网点页**而不是渐变页：这一条要统一档位落在抖过的那一档、且**低于**封面
+    // 自己判出来的那一档，两件事缺一条就分不出「取更严的」与「只拿统一档位」。
+    // 网点自带高频、抖动在低灰阶档位上还赢得过不抖动（见 `fixtures::full_bleed_screentone`），
+    // 统一档位因此是 2bit+FS；连续灰调在新画质分下判到 4bit+FS，与封面那一档齐平。
     volume.page(
         "002.png",
         &fixtures::full_bleed_screentone(fixtures::DOUBLE_PANEL),
@@ -2227,7 +2223,7 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
 
     // 混排卷只在 fit-inside 上是混排卷（页几何批 01 号票）：以高为准会把那张封面放大到
     // 面板高，门跟着成立，一卷五页都拿满候选，「一张封面否决整卷」这件事就无从谈起。
-    // 「其余页的基准档带不带抖动」要有基准档——开着上包络。
+    // 「其余页的统一档位带不带抖动」要有统一档位——开着整卷统一灰阶。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
     let reported = &report.volumes[0];
 
@@ -2245,12 +2241,12 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
         Dither::FloydSteinberg,
         "一张封面把整卷的抖动带走了"
     );
-    // 正片各页跟着基准档走，抖动那一维一个不落。
+    // 正片各页跟着统一档位走，抖动那一维一个不落。
     for page in &reported.pages[1..] {
         assert_eq!(
             fixtures::verdict(page).candidate,
             base,
-            "{} 没跟上卷级基准档",
+            "{} 没跟上卷级统一档位",
             page.source.display()
         );
     }
@@ -2259,7 +2255,7 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
     assert_eq!(cover.candidate.dither, Dither::Off);
     assert_eq!(cover.reason, Reason::OutsideTheGate);
     // 门只拿走抖动，不拿走档次（ADR 0007 决定第 3 条）：抖动被拿走之后封面在剩下那套候选里
-    // 自己判一次，判出来比基准档高就用它自己那一档——不抖的同一档保真更差，只给基准档会亏着它。
+    // 自己判一次，判出来比统一档位高就用它自己那一档——不抖的同一档保真更差，只给统一档位会亏着它。
     let threshold = fixtures::baseline_profile().threshold();
     let cover_scores = reported.pages[0].scores();
     let own = cover_scores
@@ -2270,32 +2266,32 @@ fn one_undersized_cover_does_not_take_the_dither_away_from_the_rest_of_the_volum
         .candidate;
     assert!(
         own.bit_depth > base.bit_depth,
-        "夹具不对：封面自己那一档不比基准档高，这条用例就分不出「取更严的」与「只拿基准档」"
+        "夹具不对：封面自己那一档不比统一档位高，这条用例就分不出「取更严的」与「只拿统一档位」"
     );
     assert_eq!(
         cover.candidate.bit_depth,
         own.bit_depth.max(base.bit_depth),
         "封面没取更严的那一档"
     );
-    // 被裁掉的候选不进入判据：门先判，判据在门放行的那套候选上求值。
+    // 被裁掉的候选不进入画质分：门先判，画质分在门放行的那套候选上求值。
     assert!(
         reported.pages[0]
             .scores()
             .iter()
             .all(|scored| scored.candidate.dither == Dither::Off),
-        "封面的判据里还留着抖动候选"
+        "封面的画质分里还留着抖动候选"
     );
     assert!(
         reported.pages[1]
             .scores()
             .iter()
             .any(|scored| scored.candidate.dither == Dither::FloydSteinberg),
-        "正片的判据里被连坐掉了抖动候选"
+        "正片的画质分里被连坐掉了抖动候选"
     );
 }
 
-/// 每一页都缩下来贴住面板时门就成立，抖动这才跟着位深一起按卷定下
-/// （ADR 0007：上包络取的是这个组合，不设页级抖动开关）。
+/// 每一页都缩下来贴住面板时门就成立，抖动这才跟着灰阶档位一起按卷定下
+/// （ADR 0007：整卷统一灰阶取的是这个组合，不设页级抖动开关）。
 #[test]
 fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     let space = Workspace::new();
@@ -2308,7 +2304,7 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     // 跨页宽幅页贴住的是宽边，两侧留边换成上下留边，门同样成立。
     volume.page("003.png", &fixtures::full_bleed_gradient(fixtures::SPREAD));
 
-    // 「抖动模式全卷共用一个」是上包络那条路的性质，开着它才问得出。
+    // 「抖动模式全卷共用一个」是整卷统一灰阶那条路的性质，开着它才问得出。
     let report = fixtures::run_volume_under_the_envelope(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -2316,7 +2312,7 @@ fn a_volume_whose_pages_all_land_on_the_panel_keeps_the_gate_open() {
     assert_eq!(volume_report.outside_the_gate().count(), 0);
     let base = match volume_report.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope.base,
-        other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+        other => panic!("这一卷该由整卷统一灰阶定档，实际是 {other:?}"),
     };
     assert_eq!(base.dither, Dither::FloydSteinberg);
     // 抖动模式全卷共用一个：页级没有开关。
@@ -2345,7 +2341,7 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
     assert_eq!(
         page.0.verdict(),
         page.1.verdict(),
-        "dry-run 预告的位深与照做时不一样"
+        "dry-run 预告的灰阶档位与照做时不一样"
     );
     assert!(page.1.output.is_file());
     // 预告的那一档就是文件里写着的那一档：这一页的取值铺满 4bit 格点，灰度胜出，
@@ -2359,22 +2355,22 @@ fn processing_writes_the_pages_a_dry_run_only_predicted() {
 
 #[test]
 fn the_default_path_gives_every_page_its_own_bit_depth_and_reason() {
-    // 默认路径上位深逐页各判各的、不做迟滞（ADR 0018 决定第 2 条）：每一页拿到判据说它要的
-    // 那一档，不为一卷里少数几页的需要付全卷的体积。这两页的判据差得远，档位于是也差着——
+    // 默认路径上灰阶档位逐页各判各的、不做迟滞（ADR 0018 决定第 2 条）：每一页拿到画质分说它要的
+    // 那一档，不为一卷里少数几页的需要付全卷的体积。这两页的画质分差得远，档位于是也差着——
     // 那是内容不同的自然结果，不是要被平滑掉的东西（决定第 1 条）。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 连续渐变页：低位深上必然崩，判定该落在候选上界那一档。
-    // 四边顶着墨，裁边不改它的几何（页几何批 02 号票）。
+    // 连续渐变页：低灰阶档位上必然崩，判定该落在候选上界那一档。
+    // 四边顶着墨，裁白边不改它的几何（页几何批 02 号票）。
     volume.page("001.png", &fixtures::full_bleed_gradient(fixtures::TYPICAL));
-    // 二值线稿页：1bit 就装得下，判据因此是零，最低那一档直接过关。
+    // 二值线稿页：1bit 就装得下，画质分因此是零，最低那一档直接过关。
     volume.page(
         "002.png",
         &fixtures::line_art(fixtures::SMALLER_THAN_TARGET),
     );
 
     let report = tonefit::run(&Request {
-        // 第二页要贴不住面板才钉得住「另一页的几何不牵连这一页」，而门不成立那一支
+        // 第二页要贴不住面板才钉得住「另一页的几何不牵连这一页」，而未贴合屏幕那一支
         // 只在 fit-inside 上走得到（页几何批 01 号票）。
         fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
@@ -2384,7 +2380,7 @@ fn the_default_path_gives_every_page_its_own_bit_depth_and_reason() {
     assert_eq!(
         report.volumes[0].verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络"
+        "默认走到了整卷统一灰阶"
     );
     let pages = &report.volumes[0].pages;
     // 头一页贴住面板，门在它这里放行（ADR 0007 决定第 1 条：门逐页判）：抖动那一维在场，
@@ -2411,14 +2407,14 @@ fn the_default_path_gives_every_page_its_own_bit_depth_and_reason() {
             page.source.display()
         );
     }
-    // 判定是从判据来的：报告里同时给出被判定的那一档的判据值。
+    // 判定是从画质分来的：报告里同时给出被判定的那一档的画质分值。
     for page in pages {
         assert!(
             page.scores()
                 .iter()
                 .any(|scored| scored.candidate.bit_depth
                     == fixtures::verdict(page).candidate.bit_depth),
-            "{} 的判定位深不在候选里",
+            "{} 的判定灰阶档位不在候选里",
             page.source.display()
         );
     }
@@ -2426,8 +2422,8 @@ fn the_default_path_gives_every_page_its_own_bit_depth_and_reason() {
 
 #[test]
 fn the_lowest_bit_depth_within_the_threshold_wins() {
-    // 判据是量、阈值是界：选的是「界以内的最低一档」，不是「误差最小的一档」——
-    // 后者恒是候选上界，位深判定就白做了。
+    // 画质分是量、画质门槛是界：选的是「界以内的最低一档」，不是「误差最小的一档」——
+    // 后者恒是候选上界，灰阶档位判定就白做了。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::line_art(fixtures::PASSES_THROUGH));
@@ -2442,22 +2438,22 @@ fn the_lowest_bit_depth_within_the_threshold_wins() {
         .position(|scored| {
             scored.candidate.bit_depth == fixtures::verdict(page).candidate.bit_depth
         })
-        .expect("判定位深必须在候选里");
+        .expect("判定灰阶档位必须在候选里");
     assert!(
         threshold.admits(page.scores()[chosen].score),
-        "判定的那一档越过了阈值"
+        "判定的那一档越过了画质门槛"
     );
     assert!(
         page.scores()[..chosen]
             .iter()
             .all(|scored| !threshold.admits(scored.score)),
-        "还有更低的一档也在阈值内"
+        "还有更低的一档也在画质门槛内"
     );
 }
 
 #[test]
 fn an_override_replaces_what_the_metric_would_have_chosen() {
-    // 两维都点名，候选只剩一个：判定整个被顶掉，判据说什么都不改变结果。
+    // 两维都点名，候选只剩一个：判定整个被顶掉，画质分说什么都不改变结果。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 这一页自动判定会给 2bit+FS（见 each_page_becomes_a_png_at_the_target_size...）。
@@ -2480,11 +2476,11 @@ fn an_override_replaces_what_the_metric_would_have_chosen() {
         report.volumes[0].verdict,
         Some(VolumeVerdict::Override(fixtures::plain(BitDepth::Two)))
     );
-    // 覆盖了判定，不等于不给判据：报告仍要说得清「你点的这一档判据是多少」。
-    assert!(!page.scores().is_empty(), "覆盖之后判据值没了");
+    // 覆盖了判定，不等于不给画质分：报告仍要说得清「你点的这一档画质分是多少」。
+    assert!(!page.scores().is_empty(), "覆盖之后画质分值没了");
 }
 
-/// 覆盖项裁的是候选集，一次裁一维：只点了位深，抖动那一维还有得判，判据照旧说了算。
+/// 覆盖项裁的是候选集，一次裁一维：只点了灰阶档位，抖动那一维还有得判，画质分照旧说了算。
 /// 报告因此不说「被顶掉」——那一卷仍有分布可聚合。
 #[test]
 fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
@@ -2505,7 +2501,7 @@ fn an_override_on_one_axis_leaves_the_other_to_the_metric() {
         Reason::Override,
         "还有一维在判，不该说被顶掉"
     );
-    // 候选只剩点名那一档位深的两个，抖动那一维原样留着。
+    // 候选只剩点名那一档灰阶档位的两个，抖动那一维原样留着。
     assert_eq!(
         page.scores()
             .iter()
@@ -2533,7 +2529,7 @@ fn dither_fs() -> String {
     format!("--dither{}fs", tonefit::HARD_SPACE)
 }
 
-/// 几何门是**页的**几何事实，不是自动选择：`--dither` 覆盖不了它
+/// 尺寸贴合检查是**页的**几何事实，不是自动选择：`--dither` 覆盖不了它
 /// （ADR 0007：不成立时整体关闭，不降级）。那是互锁 ③，处置是**维持拒绝**
 /// （页几何批 05 号票）。
 ///
@@ -2547,7 +2543,7 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 四边顶着墨：门问的是裁完之后的几何，而这一条要的是「源两边都比面板小」本身
-    // 关的门，不是裁边替它关的（页几何批 09 号票）。
+    // 关的门，不是裁白边替它关的（页几何批 09 号票）。
     volume.page(
         "001.png",
         &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
@@ -2561,13 +2557,13 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
         fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
     })
-    .expect_err("几何门不成立时点名抖动应当被拒绝");
+    .expect_err("尺寸未贴合屏幕时点名抖动应当被拒绝");
 
     let said = error.to_string();
-    assert!(said.contains("几何门"), "{said}");
+    assert!(said.contains("尺寸贴合检查"), "{said}");
     // 是哪一页关的门要说出来——那是唯一能让用户看懂这条拒绝的信息。
     assert!(format!("{error:#}").contains("001.png"), "{error:#}");
-    // 门放宽不了，几何却动得了：换个适配方式这一页就贴住面板了（页几何批 01 号票）。
+    // 门放宽不了，几何却动得了：换个缩放方式这一页就贴住面板了（页几何批 01 号票）。
     // 不说这一句，用户手上只剩「换一批源页」。
     assert!(format!("{error:#}").contains(&fit_height()), "{error:#}");
     // **这一页够得着那条出路，因此只听见前半句**（21 号票）：兜底上界退回去的那种页
@@ -2582,7 +2578,7 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
     assert!(said.contains("门跟着成立。剩下两条路"), "{said}");
 }
 
-/// **以高为准上 `--dither fs` 仍撞得上几何门，而那时那条出路是假话**
+/// **以高为准上 `--dither fs` 仍撞得上尺寸贴合检查，而那时那条出路是假话**
 /// （页几何批 05 号票的处置 ③，07 号票开的那个例外）。
 ///
 /// 以高为准让每一页的高都等于面板高，门恒成立——除了被兜底上界退回 fit-inside 的那几页：
@@ -2590,18 +2586,18 @@ fn a_dither_the_geometry_gate_forbids_is_refused() {
 /// 这一趟走的正是那条缝。
 ///
 /// 处置仍是**维持拒绝**：覆盖项是显式指令，不按页悄悄放弃。要钉住的是**措辞**——
-/// 同一张页在两种适配方式上都被拒，而 fit-inside 那一侧原本无条件劝人「换 --fit height，
+/// 同一张页在两种缩放方式上都被拒，而 fit-inside 那一侧原本无条件劝人「换 --fit height，
 /// 门跟着成立」。这一张页正是那句话的反例：换过去照样被拒。
 ///
-/// **拒绝按页分岔之后，两条路上说的是同一句**（21 号票，停车场 Q102）：判据是
-/// 「换成以高为准之后，这一页的门成不成立」，而这一张页两种适配方式下都贴不住面板，
+/// **拒绝按页分岔之后，两条路上说的是同一句**（21 号票，停车场 Q102）：判定依据是
+/// 「换成以高为准之后，这一页的门成不成立」，而这一张页两种缩放方式下都贴不住面板，
 /// 两侧因此都听不见那个开关。从前 fit-inside 那一侧提了它、再把例外补在后面——
 /// 那正是「一次把两条出路都说了」的形态，够不着出路的人得先读一条对他不成立的建议。
 #[test]
 fn on_neither_fit_does_the_refusal_offer_a_fit_mode_that_changes_nothing() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 整页纯墨：裁边一个像素都拿不走，走得到的只有兜底那一条。
+    // 整页纯墨：裁白边一个像素都拿不走，走得到的只有兜底那一条。
     volume.page(
         "001.png",
         &fixtures::solid(fixtures::DEGENERATE_STRIP_SMALLER_THAN_PANEL, 0),
@@ -2614,15 +2610,15 @@ fn on_neither_fit_does_the_refusal_offer_a_fit_mode_that_changes_nothing() {
                 fit,
                 ..fixtures::request(&space, [volume.path()])
             })
-            .expect_err("这一页两种适配方式下都贴不住面板，点名抖动应当被拒绝")
+            .expect_err("这一页两种缩放方式下都贴不住面板，点名抖动应当被拒绝")
         )
     };
 
     let on_height = refused(FitMode::Height);
-    assert!(on_height.contains("几何门"), "{on_height}");
+    assert!(on_height.contains("尺寸贴合检查"), "{on_height}");
     // 是哪一页关的门照旧说得出来。
     assert!(on_height.contains("001.png"), "{on_height}");
-    // **不再劝人换适配方式**：这一趟用的就是以高为准。
+    // **不再劝人换缩放方式**：这一趟用的就是以高为准。
     assert!(!on_height.contains(&fit_height()), "{on_height}");
     // 换成说清这一页是怎么走到这儿的，以及剩下的那两条路。
     assert!(on_height.contains("兜底上界"), "{on_height}");
@@ -2642,13 +2638,13 @@ fn on_neither_fit_does_the_refusal_offer_a_fit_mode_that_changes_nothing() {
         "{on_inside}"
     );
     // 两条路上逐字是同一句：够不着出路这件事是**页**的几何事实，与这一趟点的是哪个
-    // 适配方式无关（判据见 `tonefit` 的 `dither_outside_the_gate_error`）。
+    // 缩放方式无关（画质分见 `tonefit` 的 `dither_outside_the_gate_error`）。
     assert_eq!(on_height, on_inside);
 }
 
 #[test]
 fn a_bit_depth_the_panel_cannot_show_is_refused() {
-    // 灰阶数是硬上界（ADR 0003）：覆盖的是自动判定，不是上界。
+    // 屏幕灰阶数是硬上界（ADR 0003）：覆盖的是自动判定，不是上界。
     // 上界只有 `--gray-levels` 动得了，错误信息因此必须指向它。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -2666,14 +2662,14 @@ fn a_bit_depth_the_panel_cannot_show_is_refused() {
 
 #[test]
 fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
-    // 灰阶数压到 4 级、抖动点名关掉，候选只剩 {1,2}；渐变页在这两档上都远远越界。
+    // 屏幕灰阶数压到 4 级、抖动点名关掉，候选只剩 {1,2}；渐变页在这两档上都远远越界。
     // 没有可用档时取候选上界兜底——判定要有，理由要说出是兜底。
     //
     // 抖动要点名关掉，否则测不到这一条：同一页同一块面板上 2bit+FS 落在界内
     // （见 dithering_can_bring_a_page_back_within_the_threshold），兜底就不触发了。
     //
     // 兜底是**逐页**那一层的规则，默认路径是它在报告里露面的地方：卷级那一层开着时
-    // （`--envelope`），理由说的是基准档从哪来，而「一档都不达标」这件事仍摆在同一页的判据值里。
+    // （`--envelope`），理由说的是统一档位从哪来，而「一档都不达标」这件事仍摆在同一页的画质分值里。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -2695,7 +2691,7 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
     );
     assert_eq!(fixtures::verdict(page).reason, Reason::NoneWithinThreshold);
 
-    // 上包络开着时档位不变：一页的卷，基准档只能是这一页要的那一档。
+    // 整卷统一灰阶开着时档位不变：一页的卷，统一档位只能是这一页要的那一档。
     // 兜底的那一档是候选上界，卷级那一层不会、也不该把它再抬高。
     let with_envelope = tonefit::run(&Request {
         profile,
@@ -2713,7 +2709,7 @@ fn when_no_candidate_is_within_the_threshold_the_top_one_is_used() {
 /// 抖动买到的是**保真**：同一页同一块面板，不抖动那三档一个都不达标——连候选上界
 /// 那一档也不达标——抖过之后 4bit 就落回界内（ADR 0007 的收益，见 measurements 的《抖动》）。
 ///
-/// 这一条不点名灰阶数：可见度地板跟着格点间距走之后（ADR 0002 决定第 5 条），
+/// 这一条不点名屏幕灰阶数：颗粒可见下限跟着格点间距走之后（ADR 0002 决定第 5 条），
 /// 连续灰调页在 2bit 上抖不抖都够不着界（27.695 对 38.796），
 /// 抖动买回来的那一档是 4bit（5.113 对 6.713）。
 #[test]
@@ -2733,7 +2729,7 @@ fn dithering_can_bring_a_page_back_within_the_threshold() {
         fixtures::verdict(page).reason,
         Reason::LowestWithinThreshold
     );
-    // 不抖动的那两档全部越界，抖过的这一档在界内：判据自己说出了这笔交换。
+    // 不抖动的那两档全部越界，抖过的这一档在界内：画质分自己说出了这笔交换。
     let threshold = report.profile.threshold();
     for scored in page.scores() {
         assert_eq!(
@@ -2748,16 +2744,16 @@ fn dithering_can_bring_a_page_back_within_the_threshold() {
 
 #[test]
 fn the_threshold_says_where_it_came_from() {
-    // spec 的 Further Notes：报告要自己说出一个数是怎么来的。阈值标定之后这条不是消失了，
+    // spec 的 Further Notes：报告要自己说出一个数是怎么来的。画质门槛标定之后这条不是消失了，
     // 是换了内容——它现在要说出标定在哪块面板上做的，以及本机这块有没有复核。
     let said = fixtures::baseline_profile().to_string();
-    assert!(said.contains("标定"), "{said}");
+    assert!(said.contains("实测"), "{said}");
     assert!(
         said.contains("boox-poke6"),
         "没说出标定在哪块面板上做的：{said}"
     );
     assert!(
-        said.contains("未复核"),
+        said.contains("其他屏幕未验证"),
         "没说出其余面板沿用同一个数：{said}"
     );
 
@@ -2766,7 +2762,7 @@ fn the_threshold_says_where_it_came_from() {
         .with_threshold(2.0)
         .expect("2.0 在界的取值范围内")
         .to_string();
-    assert!(pinned.contains("阈值 2.000（点名指定）"), "{pinned}");
+    assert!(pinned.contains("画质门槛 2.000（由你指定）"), "{pinned}");
     // 那句话**不提入口**：同一个数从命令行、预设、会话三处点进来都是这一句
     // （`p1-session/12` 判的：来源分的是这个数怎么定出来的，不是从哪个入口点的名）。
     assert!(!pinned.contains("命令行"), "{pinned}");
@@ -2774,9 +2770,9 @@ fn the_threshold_says_where_it_came_from() {
 
 #[test]
 fn every_page_is_decoded_exactly_once() {
-    // 两遍管线的不变量（ADR 0005：解码一次，缓存缩放后的图）：第一遍解码，
-    // 第二遍只从缓存读。计数是这条不变量在 `run` 这个 seam 上看得见的形式——
-    // 第二遍一旦回头碰源页，这个数立刻大于页数。
+    // 两遍管线的不变量（ADR 0005：解码一次，缓存缩放后的图）：分析环节解码，
+    // 写出环节只从缓存读。计数是这条不变量在 `run` 这个 seam 上看得见的形式——
+    // 写出环节一旦回头碰源页，这个数立刻大于页数。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::gradient(fixtures::TYPICAL));
@@ -2877,7 +2873,7 @@ fn a_cache_past_its_budget_spills_to_a_temp_file_and_writes_the_very_same_pages(
     assert_eq!(roomy_bytes, cramped_bytes, "溢写之后写出的页变了");
 }
 
-/// 默认那条路（逐页）上第二遍退化成纯写出：一页判完当场量化编码，缓存那一格从头装的
+/// 默认那条路（逐页）上写出环节退化成纯写出：一页判完当场量化编码，缓存那一格从头装的
 /// 就是编好的字节，参照一张都不进缓存（12 号票；ADR 0018 之后窗口长度是 0）。
 ///
 /// 断言的是**溢写换的仍旧只是它待在哪里**：同一卷在两种预算下写出的字节逐字节相同，
@@ -2890,7 +2886,7 @@ fn the_default_path_writes_the_very_same_pages_whether_it_spills_or_not() {
     assert_eq!(
         roomy.0.verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络，测的就不是逐页那条路"
+        "默认走到了整卷统一灰阶，测的就不是逐页那条路"
     );
     assert_eq!(roomy.0.cache.spilled, 0, "预算够用时不该溢写");
     assert!(cramped.0.cache.spilled > 0, "预算为零时没有发生溢写");
@@ -2938,7 +2934,7 @@ fn one_per_page_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeRepor
     (volume_report, written)
 }
 
-/// 用点名的缓存预算处理同一个卷，把卷报告与写出的字节一起带回来。
+/// 用点名的内存上限处理同一个卷，把卷报告与写出的字节一起带回来。
 fn one_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Vec<u8>>) {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
@@ -2960,13 +2956,13 @@ fn one_volume_with_budget(budget: CacheBudget) -> (tonefit::VolumeReport, Vec<Ve
     (volume_report, written)
 }
 
-/// 试算预告缓存用量——**上包络那条路上**预告与照做逐格相同。
+/// 预览预告缓存用量——**整卷统一灰阶那条路上**预告与照做逐格相同。
 ///
-/// 第一遍在两种模式下是同一遍：判据照求，缓存也照建。`--cache-budget` 是本次的参数之一，
+/// 分析环节在两种模式下一模一样：画质分照求，缓存也照建。`--cache-budget` 是本次的参数之一，
 /// 而 dry-run 存在的意义就是「照做之前先看一眼这组参数」（spec 的 story 6）——
 /// 预告里少了缓存用量，撑不住的预算就要等到照做时才发现。
 ///
-/// 这条承诺只在上包络那条路上整个成立：那条路上照做也攒参照，两趟缓存里装的是同一摊东西。
+/// 这条承诺只在整卷统一灰阶那条路上整个成立：那条路上照做也攒参照，两趟缓存里装的是同一摊东西。
 /// 默认那条路由下面那一条钉——它预告得出页数与像素数，预告不出字节数（停车场 Q430、Q537、Q638）。
 #[test]
 fn a_dry_run_predicts_what_the_cache_will_hold_under_the_envelope() {
@@ -2988,13 +2984,13 @@ fn a_dry_run_predicts_what_the_cache_will_hold_under_the_envelope() {
         predicted.volumes[0].cache, done.volumes[0].cache,
         "dry-run 预告的缓存用量与照做时不一样"
     );
-    // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
+    // 写出环节在 dry-run 里无事可做，分析环节照旧只解码一次。
     assert_eq!(predicted.volumes[0].decodes, 2);
 }
 
-/// **默认那条路上试算预告得出缓存里躺几页、过手多少像素，预告不出字节数。**
+/// **默认那条路上预览预告得出缓存里躺几页、过手多少像素，预告不出字节数。**
 ///
-/// 试算只记账、不留页，也没有第二遍要那些字节，因此照旧攒**参照**、预告参照那一摊
+/// 预览只记账、不留页，也没有写出环节要那些字节，因此照旧攒**参照**、预告参照那一摊
 /// （`Settles::for_this_run`）；照做那一趟一页判完当场编码，缓存里躺的是**编好的字节**。
 /// 两个数从此不是同一个——而且**谁大谁小随内容变**：渐变页 LZ4 压得极好、抖过的 PNG 反而大，
 /// 预告因此不是上界（停车场 Q638；Q430、Q537 记的是同一件事在另外两条路上的形态）。
@@ -3017,7 +3013,7 @@ fn a_dry_run_on_the_default_path_predicts_the_pages_and_the_pixels_but_not_the_b
     assert_eq!(
         done.verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络"
+        "默认走到了整卷统一灰阶"
     );
     assert!(predicted.cache.stored > 0, "dry-run 没有建缓存");
     assert_eq!(
@@ -3028,22 +3024,22 @@ fn a_dry_run_on_the_default_path_predicts_the_pages_and_the_pixels_but_not_the_b
         predicted.cache.raw, done.cache.raw,
         "预告过手的像素数与照做时不一样"
     );
-    // 第二遍在 dry-run 里无事可做，第一遍照旧只解码一次。
+    // 写出环节在 dry-run 里无事可做，分析环节照旧只解码一次。
     assert_eq!(predicted.decodes, 2);
 }
 
 /// 卷级用例的合成卷：`levels` 里每一项造一页，页名按阅读顺序编号。页用 `fixtures::TINY`，
 /// 因此只在 **fit-inside** 上还是小页。
 ///
-/// 造页一律用纯色页：判据在纯色页上算得出准数——量化误差就是取值到格点的距离，
-/// 低通与掩蔽加权都不改它。逐页判定因此由取值直接定死，卷级那一层要的正是一条排得开的分布。
+/// 造页一律用纯色页：画质分在纯色页上算得出准数——量化误差就是取值到格点的距离，
+/// 低通与细节放宽加权都不改它。逐页判定因此由取值直接定死，卷级那一层要的正是一条排得开的分布。
 fn volume_of_solids(space: &Workspace, levels: &[u8]) -> fixtures::Volume {
     volume_of_solids_sized(space, fixtures::TINY, levels)
 }
 
 /// 同上，但点名页尺寸。**默认那条路上的卷级用例走这一条**（08 号票）：
 /// `fixtures::TINY` 在以高为准下会被放大到面板高，一卷六十页的代价涨两个数量级，
-/// 而 `fixtures::NARROW_PASSES_THROUGH` 两种适配方式下都恒等通过。
+/// 而 `fixtures::NARROW_PASSES_THROUGH` 两种缩放方式下都恒等通过。
 fn volume_of_solids_sized(space: &Workspace, size: Size, levels: &[u8]) -> fixtures::Volume {
     let volume = space.volume("volume-a");
     for (index, &level) in levels.iter().enumerate() {
@@ -3061,7 +3057,7 @@ fn volume_of_solids_sized(space: &Workspace, size: Size, levels: &[u8]) -> fixtu
 
 #[test]
 fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_set_it() {
-    // 位深不再逐页各判各的（ADR 0006）：其余页共用一个基准档，翻页时不逐页变动。
+    // 灰阶档位不再逐页各判各的（ADR 0006）：其余页共用一个统一档位，翻页时不逐页变动。
     // 九页只要 1bit、十页要 2bit：p95 站在 2bit 上，那九页跟着多付一档——
     // 体积不再最优是明知故犯的交换。
     let space = Workspace::new();
@@ -3080,8 +3076,8 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
     }
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    // 放大到面板高，而这几条问的是整卷统一灰阶、特例与迟滞，与几何无关。
+    // 整卷统一灰阶默认关着（ADR 0018），问它的用例显式开。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -3094,19 +3090,19 @@ fn the_body_of_a_volume_shares_one_bit_depth_and_the_report_names_the_page_that_
         assert_eq!(
             fixtures::verdict(page).candidate.bit_depth,
             BitDepth::Two,
-            "{} 没跟着基准档走",
+            "{} 没跟着统一档位走",
             page.source.display()
         );
         assert_eq!(fixtures::verdict(page).reason, Reason::VolumeEnvelope);
     }
-    // 定档页指得出来，而且它的需求就是基准档：站在 p95 秩上的正是它。
+    // 代表页指得出来，而且它的需求就是统一档位：站在 p95 秩上的正是它。
     let driver = &volume_report.pages[envelope.driver];
     assert_eq!(lowest_within_threshold(driver, &report), BitDepth::Two);
 }
 
 #[test]
 fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_its_own() {
-    // 特例页不参与上包络，单独定档（ADR 0006 决定第 5 条）。
+    // 差异大的页不参与整卷统一灰阶，单独定档（ADR 0006 决定第 5 条）。
     // 卷内只有一页远在界外：它自己拿 4bit，其余页照旧留在 2bit 上。
     let space = Workspace::new();
     let mut levels = vec![fixtures::NEEDS_TWO_BITS; 19];
@@ -3114,8 +3110,8 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    // 放大到面板高，而这几条问的是整卷统一灰阶、特例与迟滞，与几何无关。
+    // 整卷统一灰阶默认关着（ADR 0018），问它的用例显式开。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -3123,7 +3119,7 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
     assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
     assert_eq!(envelope.outlier_pages, 1);
     assert_eq!(envelope.body_pages, 19);
-    assert_ne!(envelope.driver, 19, "特例页不该定出基准档");
+    assert_ne!(envelope.driver, 19, "差异大的页不该定出统一档位");
 
     let outlier = &volume_report.pages[19];
     assert_eq!(
@@ -3140,8 +3136,8 @@ fn a_page_far_outside_the_threshold_is_taken_out_of_the_envelope_and_decided_on_
 
 /// 二十页里两页远在界外，占一成：其余页那十八页留在自己要的那一档上，不被这两页拖高。
 ///
-/// 与上一条用例的差别只有特例页的**页数**：一页与两页在 `run` 这个 seam 上必须同一个结论。
-/// 特例页多到什么程度才不再算特例，由立脚点那一层说了算（见 `envelope` 的 `ANCHOR_QUANTILE`），
+/// 与上一条用例的差别只有差异大的页的**页数**：一页与两页在 `run` 这个 seam 上必须同一个结论。
+/// 差异大的页多到什么程度才不再算特例，由立脚点那一层说了算（见 `envelope` 的 `ANCHOR_QUANTILE`），
 /// 而不该由「恰好有几页」说了算。
 #[test]
 fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
@@ -3151,8 +3147,8 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     let volume = volume_of_solids(&space, &levels);
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    // 放大到面板高，而这几条问的是整卷统一灰阶、特例与迟滞，与几何无关。
+    // 整卷统一灰阶默认关着（ADR 0018），问它的用例显式开。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let volume_report = &report.volumes[0];
@@ -3161,7 +3157,7 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     assert_eq!(envelope.body_pages, 18);
     // 其余页那一档不被那两页抬高：剩下那十八页要的仍然是 2bit。
     assert_eq!(envelope.base, fixtures::plain(BitDepth::Two));
-    // 占比进报告：「一页都没摘出来」与「本来就没有特例页」要分得开（01 号票）。
+    // 占比进报告：「一页都没摘出来」与「本来就没有差异大的页」要分得开（01 号票）。
     assert_eq!(envelope.outlier_share(), 0.1);
 
     for page in &volume_report.pages[18..] {
@@ -3179,10 +3175,10 @@ fn the_body_keeps_its_base_when_a_tenth_of_the_volume_is_far_outside() {
     }
 }
 
-/// 彩页不污染灰度页的卷级上包络（ADR 0006 决定第 5 条：彩色 profile 下彩页
-/// 根本不进灰度上包络）。同一批灰度页，把彩页混进去前后，基准档、定档页与逐页判定一个不变。
+/// 彩页不污染灰度页的整卷统一灰阶（ADR 0006 决定第 5 条：彩色 profile 下彩页
+/// 根本不进灰度整卷统一灰阶）。同一批灰度页，把彩页混进去前后，统一档位、代表页与逐页判定一个不变。
 ///
-/// 混排还钉住定档页那个序号：上包络在**灰度页**的序列上取分位，报告里的序号却指进整卷的页。
+/// 混排还钉住代表页那个序号：整卷统一灰阶在**灰度页**的序列上取分位，报告里的序号却指进整卷的页。
 /// 卷内混着彩页时两者不重合，换算漏掉一次，报告就会指着另一页说「就是它定的档」。
 #[test]
 fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
@@ -3216,18 +3212,18 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
         "混进彩页之后灰度页的判定变了"
     );
 
-    // 上包络只数灰度页：其余 19 页 + 特例 1 页，彩页一页不算。
+    // 整卷统一灰阶只数灰度页：其余 19 页 + 特例 1 页，彩页一页不算。
     let envelope = envelope_of(&mixed);
     assert_eq!(envelope.base, envelope_of(&alone).base);
     assert_eq!(envelope.body_pages, 19);
     assert_eq!(envelope.outlier_pages, 1);
 
-    // 定档页指的仍是同一张灰度页——序号已经从灰度序换回页序。
+    // 代表页指的仍是同一张灰度页——序号已经从灰度序换回页序。
     let driver_rank = |volume: &tonefit::VolumeReport| {
         let driver = envelope_of(volume).driver;
         assert!(
             volume.pages[driver].verdict().is_some(),
-            "定档页必须是一张灰度页"
+            "代表页必须是一张灰度页"
         );
         volume.pages[..driver]
             .iter()
@@ -3237,40 +3233,40 @@ fn color_pages_stay_out_of_the_envelope_of_the_gray_pages() {
     assert_eq!(
         driver_rank(&alone),
         driver_rank(&mixed),
-        "定档页指到了另一页上"
+        "代表页指到了另一页上"
     );
     assert_ne!(
         envelope_of(&alone).driver,
         envelope_of(&mixed).driver,
-        "夹具不对：混排没有把定档页的序号推开，这条用例就什么都没钉住"
+        "夹具不对：混排没有把代表页的序号推开，这条用例就什么都没钉住"
     );
 }
 
-/// 部分救回页不进卷级上包络，按自己那条判据曲线单独定档（04 号票）。
+/// 残缺页不进整卷统一灰阶，按自己那条画质分曲线单独定档（04 号票）。
 ///
-/// 它的判据是在一页大半留白的图上求出来的：留白在任何位深上都是格点、误差恒为零，
-/// 那条曲线代表不了这一卷。让它进上包络，一张残页就替整卷定了档。
+/// 它的画质分是在一页大半留白的图上求出来的：留白在任何灰阶档位上都是格点、误差恒为零，
+/// 那条曲线代表不了这一卷。让它进整卷统一灰阶，一张残页就替整卷定了档。
 ///
-/// 夹具让那一页**比其余页更吃位深**：其余页三页加它一共四页，p95 的秩落在最后一名上，
-/// 它一旦进得去，基准档就是它那一档。断言因此钉得住「摘出去改变了结果」，
+/// 夹具让那一页**比其余页更吃灰阶档位**：其余页三页加它一共四页，p95 的秩落在最后一名上，
+/// 它一旦进得去，统一档位就是它那一档。断言因此钉得住「摘出去改变了结果」，
 /// 而不只是「字段填对了」。
 #[test]
 fn salvaged_pages_stay_out_of_the_volume_envelope() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    // 其余页三页纯白：任何位深上都是格点，判据恒为零，定的是最低那一档。
+    // 其余页三页纯白：任何灰阶档位上都是格点，画质分恒为零，定的是最低那一档。
     for name in ["001.png", "002.png", "003.png"] {
         volume.page(name, &fixtures::solid(fixtures::TINY, 255));
     }
-    // 救回来的那一页：解回来的那一段是连续渐变，低位深上必然崩。
+    // 救回来的那一页：解回来的那一段是连续渐变，低灰阶档位上必然崩。
     volume.file(
         "004.png",
         &fixtures::truncated(&fixtures::gradient(fixtures::TINY)),
     );
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    // 放大到面板高，而这几条问的是整卷统一灰阶、特例与迟滞，与几何无关。
+    // 整卷统一灰阶默认关着（ADR 0018），问它的用例显式开。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     let reported = &report.volumes[0];
@@ -3284,23 +3280,23 @@ fn salvaged_pages_stay_out_of_the_volume_envelope() {
     let envelope = envelope_of(reported);
     assert_eq!(envelope.body_pages, 3);
     assert_eq!(envelope.outlier_pages, 0);
-    // 定档页指的是一张完好页——序号已经从其余页序换回页序。
+    // 代表页指的是一张完好页——序号已经从其余页序换回页序。
     assert!(
         reported.pages[envelope.driver].salvage().is_none(),
-        "定档页是一张部分救回页"
+        "代表页是一张残缺页"
     );
 
-    // 它自己那一档由它自己的判据定，理由因此不是「卷级上包络」。
+    // 它自己那一档由它自己的画质分定，理由因此不是「整卷统一灰阶」。
     let decided = fixtures::verdict(salvaged);
     assert_ne!(decided.reason, Reason::VolumeEnvelope);
-    // 而它确实比其余页更吃位深：进得去的话，基准档就是它那一档。
+    // 而它确实比其余页更吃灰阶档位：进得去的话，统一档位就是它那一档。
     assert!(
         decided.candidate > envelope.base,
-        "夹具不对：这一页不比其余页更吃位深（{} 对 {}），摘不摘它都是同一个基准档",
+        "夹具不对：这一页不比其余页更吃灰阶档位（{} 对 {}），摘不摘它都是同一个统一档位",
         decided.candidate,
         envelope.base
     );
-    // 其余页三页仍然跟着基准档走。
+    // 其余页三页仍然跟着统一档位走。
     for page in &reported.pages[..3] {
         assert_eq!(fixtures::verdict(page).candidate, envelope.base);
     }
@@ -3326,7 +3322,7 @@ fn run_with_a_color_page_every(every: usize) -> tonefit::VolumeReport {
         write(&fixtures::solid(fixtures::TINY, level));
     }
 
-    // 同上：小页只在 fit-inside 上还是小页。问的是上包络，开着它。
+    // 同上：小页只在 fit-inside 上还是小页。问的是整卷统一灰阶，开着它。
     let report = tonefit::run(&Request {
         profile: fixtures::profile(COLOR_DEVICE),
         fit: FitMode::Inside,
@@ -3344,8 +3340,8 @@ const COLOR_DEVICE: &str = "kobo-libra-colour";
 fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
     // 迟滞限制档位切换频率：一页说了不算，连续够了才升档（ADR 0006 决定第 4 条）。
     // 两个卷除了要求更高的那一段长了一页，其余完全相同。
-    // 这一条跑在 **fit-inside** 上，几何门在每一页上都不成立，候选集里没有抖动那一维——
-    // 升的因此是位深。默认那条路由下面那一条守着（08 号票），两条路升的不是同一档。
+    // 这一条跑在 **fit-inside** 上，尺寸贴合检查在每一页上都不成立，候选集里没有抖动那一维——
+    // 升的因此是灰阶档位。默认那条路由下面那一条守着（08 号票），两条路升的不是同一档。
     let raised = run_with_a_run_of_fitted_inside(3);
     let unchanged = run_with_a_run_of_fitted_inside(2);
 
@@ -3375,12 +3371,12 @@ fn a_sustained_run_raises_the_depth_but_one_page_short_of_it_does_not() {
     }
 }
 
-/// 六十页的取值：第 31 页起 `length` 页要求高于基准档，剩下的都是其余页。
+/// 六十页的取值：第 31 页起 `length` 页要求高于统一档位，剩下的都是其余页。
 ///
 /// **六十页是 p95 撑得住一段三页的最小规模**：秩 `ceil(0.95n)` 要落在其余页上，
-/// 即 `ceil(0.95n) ≤ n-3`，解得 n ≥ 60；60 页时秩是 57，基准档之上还剩得下三页。
+/// 即 `ceil(0.95n) ≤ n-3`，解得 n ≥ 60；60 页时秩是 57，统一档位之上还剩得下三页。
 /// 这条不等式数的是页在判定序列上的**名次**，与候选集是三个还是六个无关——
-/// 两条适配方式因此喂同一串取值，差别全在页尺寸上（08 号票）。
+/// 两条缩放方式因此喂同一串取值，差别全在页尺寸上（08 号票）。
 fn levels_with_a_run_of(length: usize) -> Vec<u8> {
     let mut levels = vec![fixtures::NEEDS_TWO_BITS; 60];
     levels[30..30 + length].fill(fixtures::ONE_STEP_ABOVE_TWO_BITS);
@@ -3393,25 +3389,25 @@ fn run_with_a_run_of_fitted_inside(length: usize) -> tonefit::VolumeReport {
     let volume = volume_of_solids(&space, &levels_with_a_run_of(length));
 
     // 小页夹具只在 fit-inside 上还是小页（页几何批 01 号票）：以高为准会把每一页
-    // 放大到面板高，而这几条问的是上包络、特例与迟滞，与几何无关。
-    // 上包络默认关着（ADR 0018），问它的用例显式开。
+    // 放大到面板高，而这几条问的是整卷统一灰阶、特例与迟滞，与几何无关。
+    // 整卷统一灰阶默认关着（ADR 0018），问它的用例显式开。
     let report = fixtures::run_volume_under_the_envelope_fitted_inside(&space, &volume);
 
     report.volumes.into_iter().next().expect("一个卷")
 }
 
-/// **迟滞升档在默认适配方式上也真跑一遍**（08 号票，了结停车场 Q6）。
+/// **迟滞升档在默认缩放方式上也真跑一遍**（08 号票，了结停车场 Q6）。
 ///
-/// ADR 0006 决定第 4 条是这个产品的核心行为之一，而 `page-geometry/01` 把默认适配方式
+/// ADR 0006 决定第 4 条是这个产品的核心行为之一，而 `page-geometry/01` 把默认缩放方式
 /// 换成以高为准之后，喂它的那几个长卷全留在了 `--fit inside` 上——上面那一条端到端用例
 /// 因此从没在用户默认走的那条路上跑过。`src/envelope.rs` 那一层的单元用例不碰几何，
 /// 丢的不是覆盖，是「默认这一趟真跑一遍」。
 ///
-/// **两条路升的不是同一档，所以两条都要留着。** 这一趟的页两种适配方式下都恒等通过，
-/// 几何门于是**每一页都成立**（ADR 0007 决定第 1 条），候选集多出抖动那一维：
-/// 基准档是 `2bit`，而基准档过不了界的那一段升到 `4bit+FS`——**走的是「界以内最低的一档」**。
+/// **两条路升的不是同一档，所以两条都要留着。** 这一趟的页两种缩放方式下都恒等通过，
+/// 尺寸贴合检查于是**每一页都成立**（ADR 0007 决定第 1 条），候选集多出抖动那一维：
+/// 统一档位是 `2bit`，而统一档位过不了界的那一段升到 `4bit+FS`——**走的是「界以内最低的一档」**。
 /// fit-inside 那条路上同一批取值升的是 `4bit` 不抖，而且走的是另一套机制（兜底取候选上界）：
-/// 两条路各自的判据读数与机制，出处是 `fixtures` 的 `ONE_STEP_ABOVE_TWO_BITS`。
+/// 两条路各自的画质分读数与机制，出处是 `fixtures` 的 `ONE_STEP_ABOVE_TWO_BITS`。
 #[test]
 fn a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_does_not() {
     let raised = run_with_a_run_of_on_the_default_fit(3);
@@ -3450,8 +3446,8 @@ fn a_sustained_run_raises_that_stretch_on_the_default_fit_but_one_page_short_doe
     }
 }
 
-/// 同一卷跑在**默认适配方式**上：取值一个不改，只把页换成两种适配方式下都恒等通过的
-/// 那一个，几何门因此每一页都成立。
+/// 同一卷跑在**默认缩放方式**上：取值一个不改，只把页换成两种缩放方式下都恒等通过的
+/// 那一个，尺寸贴合检查因此每一页都成立。
 fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport {
     let space = Workspace::new();
     let volume = volume_of_solids_sized(
@@ -3465,7 +3461,7 @@ fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport 
     report.volumes.into_iter().next().expect("一个卷")
 }
 
-/// **孤立地高出邻居的那一页拿到判据说它要的那一档**（ADR 0018 决定第 1、2 条）。
+/// **孤立地高出邻居的那一页拿到画质分说它要的那一档**（ADR 0018 决定第 1、2 条）。
 ///
 /// 段式迟滞曾在这里（10 号票）：默认路径上一页孤立地高出邻居就被压回邻居那一档。
 /// 09 号票真机之后去掉——压回的那一档 74% 看得见色带，而它防的「翻页跳变」被判为不是问题：
@@ -3474,7 +3470,7 @@ fn run_with_a_run_of_on_the_default_fit(length: usize) -> tonefit::VolumeReport 
 /// 邻居一页不动。
 ///
 /// 这一条跑在 **fit-inside** 上：门在每一页上都不成立，候选集里没有抖动那一维，
-/// 高出邻居的于是在位深这一维上分得清。
+/// 高出邻居的于是在灰阶档位这一维上分得清。
 #[test]
 fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
     let space = Workspace::new();
@@ -3501,7 +3497,7 @@ fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
     assert_eq!(
         volume_report.verdict,
         Some(VolumeVerdict::PerPage),
-        "默认走到了上包络"
+        "默认走到了整卷统一灰阶"
     );
     let pages = &volume_report.pages;
     // 夹具先自证：那一页逐页判定要的确实是更高的一档，「不压」才有东西可钉。
@@ -3524,7 +3520,7 @@ fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
         Reason::NoneWithinThreshold,
         "这一档不是它自己判出来的"
     );
-    // 邻居一页不动：它们各自那一档本来就是判出来的，没有谁抬它们（抬是上包络那一层的事）。
+    // 邻居一页不动：它们各自那一档本来就是判出来的，没有谁抬它们（抬是整卷统一灰阶那一层的事）。
     for (position, page) in pages.iter().enumerate() {
         if position == 2 {
             continue;
@@ -3546,13 +3542,13 @@ fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
 
 #[test]
 fn an_override_leaves_no_volume_envelope_to_speak_of() {
-    // `--bit-depth` 顶掉的是判定本身，卷级基准档因此无从谈起——理由仍分得清是覆盖。
+    // `--bit-depth` 顶掉的是判定本身，卷级统一档位因此无从谈起——理由仍分得清是覆盖。
     let space = Workspace::new();
     let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 4]);
 
     let report = tonefit::run(&Request {
         bit_depth: Some(BitDepth::Four),
-        // 门不成立时候选集里没有抖动那一维，`--bit-depth` 一点名就只剩一个候选，
+        // 未贴合屏幕时候选集里没有抖动那一维，`--bit-depth` 一点名就只剩一个候选，
         // 判定整个被顶掉——这一条要的正是那个局面（页几何批 01 号票）。
         fit: FitMode::Inside,
         ..fixtures::request(&space, [volume.path()])
@@ -3570,17 +3566,17 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
     }
 }
 
-/// 取这一卷的上包络。不是上包络定的档就是用例造错了输入。
+/// 取这一卷的整卷统一灰阶。不是整卷统一灰阶定的档就是用例造错了输入。
 fn envelope_of(volume: &tonefit::VolumeReport) -> tonefit::Envelope {
     match volume.verdict {
         Some(VolumeVerdict::Envelope(envelope)) => envelope,
-        other => panic!("这一卷该由上包络定档，实际是 {other:?}"),
+        other => panic!("这一卷该由整卷统一灰阶定档，实际是 {other:?}"),
     }
 }
 
-/// 这一页逐页判定会选的那一档：判据落在阈值以内的最低一档。
+/// 这一页逐页判定会选的那一档：画质分落在画质门槛以内的最低一档。
 ///
-/// 卷级那一层把 `verdict` 重定过了，逐页要的那一档因此得从判据曲线与阈值现算——
+/// 卷级那一层把 `verdict` 重定过了，逐页要的那一档因此得从画质分曲线与画质门槛现算——
 /// 报告留着 `scores`，算得出来正是它留着的理由。
 fn lowest_within_threshold(page: &tonefit::PageReport, report: &tonefit::Report) -> BitDepth {
     let threshold = report.profile.threshold();
@@ -3614,10 +3610,10 @@ fn two_volumes_that_would_write_to_the_same_place_are_refused() {
     // 把那一条也念出来就是给了一句对不上号的指引（下一条是它的反面）。
     assert!(error.contains("分批处理"), "{error}");
     assert!(!error.contains("只差扩展名"), "{error}");
-    // 拒绝要发生在写出第一个字节之前，输出根因此根本不该被建出来。
+    // 拒绝要发生在写出第一个字节之前，输出目录因此根本不该被建出来。
     assert!(
         !space.out().exists(),
-        "拒之前已经动过输出根：撞车没能在开工前查出来"
+        "拒之前已经动过输出目录：撞车没能在开工前查出来"
     );
 }
 
@@ -3645,7 +3641,7 @@ fn a_directory_and_an_archive_of_the_same_name_do_not_collide() {
 /// 这一对不行——它们的卷名本来就相同，怎么分批都还是同一个去处。那句话因此得点出
 /// 扩展名归一这条规则（ADR 0015），不然用户看着两个不同的文件名想不出为什么会撞。
 ///
-/// 退出码不在这里测：拒绝执行恒是 `REFUSED_EXIT`，那条映射由 `tests/exit_code.rs`
+/// 退出码不在这里测：拒绝开始恒是 `REFUSED_EXIT`，那条映射由 `tests/exit_code.rs`
 /// 与 `src/render.rs` 的用例钉着，与撞车是哪一种无关。
 #[test]
 fn a_zip_and_a_cbz_of_the_same_name_collide_and_the_message_says_why() {
@@ -3676,14 +3672,14 @@ fn a_zip_and_a_cbz_of_the_same_name_collide_and_the_message_says_why() {
     // 说得出是扩展名归一造成的：这一对只差扩展名，以及归一成的是哪一个。
     assert!(error.contains("只差扩展名"), "{error}");
     assert!(error.contains("扩展名一律归一成 .cbz"), "{error}");
-    // 而**不**给「分批处理」那条出路：这一对的卷名本来就相同，换输出根分不开
+    // 而**不**给「分批处理」那条出路：这一对的卷名本来就相同，换输出目录分不开
     // （上一条是它的反面）。
     assert!(!error.contains("分批处理"), "{error}");
     // 拒绝要发生在写出第一个字节之前。
-    assert!(!space.out().exists(), "拒之前已经动过输出根");
+    assert!(!space.out().exists(), "拒之前已经动过输出目录");
 }
 
-/// **报告说得出这一趟的纸白对齐对每一页做了什么**（纸白对齐批 02 号票第 1 条）。
+/// **报告说得出这一趟的纸色提白对每一页做了什么**（纸色提白批 02 号票第 1 条）。
 ///
 /// 三页各落在一种情形上，卷级那一行的三个数正是数它们数出来的：离格且钳得动的一页、
 /// 本来就在格点上的一页、量不出纸白的一页。**断言的是 `Report` 里的内容**，
@@ -3738,15 +3734,15 @@ fn the_report_says_what_the_white_alignment_did_to_each_page() {
     );
 }
 
-/// **上限取 0 时，试算照样说得出每一页差多少**（02 号票第 3 条）。
+/// **上限取 0 时，预览照样说得出每一页差多少**（02 号票第 3 条）。
 ///
 /// 逐页那一层是给**点名关掉、又想知道抬上去会钳掉多少**的用户看的。
 /// 对齐那条路上有一道短路——上限取 0 时连纸白都不量（`tonefit::align_white`）——
-/// 于是照做那一趟每一页都是「没开」。试算把守卫另判一遍，答的因此是
+/// 于是照做那一趟每一页都是「没开」。预览把守卫另判一遍，答的因此是
 /// 「离格量超过上限」这样的真话：**上限抬到 2 级这一页就钳得动**，
 /// 而那正是他要的那个数。
 ///
-/// **两种模式一起断言**，因为这一条的实义就在两者之差：只测试算的话，
+/// **两种模式一起断言**，因为这一条的实义就在两者之差：只测预览的话，
 /// 「照做那一趟不白花这份工夫」就没有一处钉着。
 ///
 /// **上限点名给 0，不借默认值**（05 号票把默认值抬到了 4）：这一条问的自始至终是
@@ -3769,7 +3765,7 @@ fn a_dry_run_still_measures_every_page_when_the_limit_is_zero() {
         .expect("处理应当成功");
         report.volumes[0].pages[0]
             .white_alignment()
-            .expect("灰度页有纸白对齐那一格")
+            .expect("灰度页有纸色提白那一格")
     };
 
     let dry_run = at(Mode::DryRun);
@@ -3778,7 +3774,7 @@ fn a_dry_run_still_measures_every_page_when_the_limit_is_zero() {
         WhiteAlignment::OverTheLimit {
             paper_white: fixtures::OFF_GRID_PAPER_WHITE
         },
-        "试算没说得出这一页的纸白：还没决定上限的用户因此一个数都拿不到"
+        "预览没说得出这一页的纸白：还没决定上限的用户因此一个数都拿不到"
     );
     // 钳制宽度是那个用户真正要的数——上限抬到它，这一页就钳得动。
     // **期望值写成字面量，不拿 `255 − 纸白` 再算一遍**：那样算出来的数与被测那一句同源，

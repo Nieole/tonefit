@@ -40,7 +40,7 @@ fn gray_levels_override_the_panels_own_count() {
     let overridden = built_in.clone().with_gray_levels(8).expect("8 级数得出来");
 
     assert_eq!(overridden.panel().gray_levels, 8);
-    // 只动灰阶数：分辨率与 PPI 仍是内置表里那块面板，型号也没变。
+    // 只动屏幕灰阶数：分辨率与 PPI 仍是内置表里那块面板，型号也没变。
     assert_eq!(overridden.panel().resolution, built_in.panel().resolution);
     assert_eq!(overridden.panel().ppi, built_in.panel().ppi);
     assert_eq!(overridden.device(), built_in.device());
@@ -54,7 +54,10 @@ fn a_gray_level_count_no_panel_could_have_is_refused() {
             .with_gray_levels(levels)
         {
             Ok(profile) => panic!("{levels} 级不该被收下，却给出了 {profile}"),
-            Err(error) => assert!(error.to_string().contains("灰阶数"), "{levels}：{error}"),
+            Err(error) => assert!(
+                error.to_string().contains("屏幕灰阶数"),
+                "{levels}：{error}"
+            ),
         }
     }
 }
