@@ -25,14 +25,25 @@
 //! 画法自己按**屏上那几块**又分了几个模块（左栏、预设栏、总览块、报告区连同它那三张表、
 //! 屏底），**名单只在 [`draw`] 的模块文档那张表里**，这里不抄第二份。
 //!
+//! # 新界面与旧界面并存
+//!
+//! ADR 0019 那一副（任务 / 配置两个视图）**在测试里长出来**，真会话仍进旧界面，切换在
+//! `session-redesign/15`。新的那几个模块：视图 × 阶段 × 焦点的新取值与新界面的状态机在
+//! [`view`]（挂在 [`state::Session`] 上一格），**一张按键表**在 [`keymap`]（屏底由它派生），
+//! 家目录缩写在 [`home`]，屏上一格要什么样子（语义色之外的种类色）在 [`look`]；
+//! 整屏画法与屏上那几块在 [`shell`]（一块一个模块，名单在它的模块文档里），
+//! 终端层把一个输入交给新会话的那一支是 [`terminal`] 的 `input`（与旧的 `press` 并排）。
+//!
 //! # 终端库在哪一半
 //!
-//! **分界就是这几行 `mod`。**上面七个模块（[`columns`]、[`state`]、[`live`]、[`run`]、
-//! [`complete`]、[`viewport`]、[`tone`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
+//! **分界就是这几行 `mod`。**上面十一个模块（[`columns`]、[`state`]、[`live`]、[`run`]、
+//! [`complete`]、[`viewport`]、[`tone`]、[`look`]、[`home`]、[`keymap`]、[`view`]）一个终端库都不
+//! `use`，因此摆在特性**外面**：`--no-default-features`
 //! 那一趟照编、照跑它们自带的用例（`p2-loose-ends/01`，闸门的第二条）；只在 `test` 里的
-//! [`scene`] 也在外面，那一趟照跑它不经画法的那几条。真要终端库的那两个
-//! （[`draw`] 画，[`terminal`] 进出终端并翻译 crossterm 键码）留在 `tui` 后面——
-//! [`draw`] 底下那几个模块跟着它整棵在后面，新拆一块不必再挂一次 `cfg`。
+//! [`scene`] 也在外面，那一趟照跑它不经画法的那几条。真要终端库的那三个
+//! （[`draw`] 画旧界面，[`shell`] 画新界面，[`terminal`] 进出终端并翻译 crossterm 键码）
+//! 留在 `tui` 后面——[`draw`] 与 [`shell`] 底下那几个模块跟着它们整棵在后面，
+//! 新拆一块不必再挂一次 `cfg`。
 //!
 //! 整个 `session` 模块挂在 `any(feature = "tui", test)` 上，而不是无条件：
 //! `tui` 关掉的那一趟**没有会话**（[`crate::without_arguments`] 恒不接手），
@@ -67,14 +78,46 @@ mod state;
 mod tone;
 mod viewport;
 
+// 新界面那几个模块（《新界面与旧界面并存》）：真会话还没切过去，非测试那一趟里没有一个读者。
+// **这一句挂在模块上**而不是逐处：整个模块此刻都是「还没接上」，不是几处零星的死代码；
+// 切到新界面（`session-redesign/15`）时这一句自己报「没用上」（`unfulfilled_lint_expectations`），
+// 那时拆掉，此后真死代码照报。闸门 2 那一趟里「只有画法读得到」的那几处**各挂各的一句**
+// （`docs/agents/gate.md`《读结果》），不在模块上放开。
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod home;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod keymap;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod look;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod view;
+
 // 场景夹具：按设计稿导出的场景数据摆出那一趟与三组设置（`session-redesign/05`）。
-// 它一个终端库都不 `use`，因此与上面七个一样摆在特性外面：`--no-default-features`
+// 它一个终端库都不 `use`，因此与上面十一个一样摆在特性外面：`--no-default-features`
 // 那一趟照编、照跑它自带的用例；只有对着设计快照字网格的那几条挂在 `tui` 后面。
 #[cfg(test)]
 mod scene;
 
 #[cfg(feature = "tui")]
 mod draw;
+#[cfg(feature = "tui")]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod shell;
 #[cfg(feature = "tui")]
 mod terminal;
 

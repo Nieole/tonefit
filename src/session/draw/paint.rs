@@ -59,7 +59,9 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 
+use crate::session::look::{Hue, Kind, Look};
 use crate::session::tone::Tone;
+use tonefit::{BitDepth, Pass};
 
 /// 一种语义在屏上什么样。**本仓库唯一写得出颜色名的地方。**
 ///
@@ -85,6 +87,78 @@ pub(super) fn style(tone: Tone) -> Style {
         Tone::Caution => Style::default().fg(Color::Yellow),
         Tone::Trouble => Style::default().fg(Color::Red),
         Tone::Muted => Style::default().add_modifier(Modifier::DIM),
+    }
+}
+
+/// **新界面**的一格什么样（`session-redesign/06`；spec《颜色》）：颜色的要法（[`Hue`]）译成
+/// 16 个具名色里的一个，四样修饰照搬。**种类色在屏上各是哪一色，只在这一处**：
+///
+/// | 要的是 | 屏上 |
+/// |---|---|
+/// | 默认 | 终端默认色 |
+/// | 次要 | 暗灰（ANSI 8）——框线、标签、说明 |
+/// | 语义色 | 平常默认色 · 注意黄 · 出事红 · 不要紧暗灰**并压暗** |
+/// | 灰阶档位 | 1bit 品红 · 2bit 青 · 4bit 蓝 |
+/// | 环节 | 查重品红 · 分析蓝 · 写出青 |
+/// | 完成 · 处理中 | 绿 · 蓝 |
+/// | 聚焦框与光标 | 亮绿 |
+/// | 顶栏右端那一块 | 蓝 |
+///
+/// **`NO_COLOR` 在场时颜色一律退回终端默认色，修饰不退**（`CONTEXT.md` 的《语义色》）：
+/// 加粗、下划线、斜体、压暗都不靠颜色说话，抹掉了屏上没有一个字补得回来；「不要紧」那一档
+/// 的压暗也因此照旧——它退掉的只是那一灰。与旧界面的 [`style`] 差在这一点：那一处把压暗也算在
+/// 颜色里，旧快照照旧，两副并存到 `session-redesign/15`。
+///
+/// **不设背景色**：一处都不定，深色浅色两边都得活（Q737 那条断言在 `super::design`）。
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
+)]
+pub(in crate::session) fn look(look: Look) -> Style {
+    let mut style = Style::default();
+    if colourful()
+        && let Some(colour) = colour_of(look.hue)
+    {
+        style = style.fg(colour);
+    }
+    if look.bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if look.dim || look.hue == Hue::Tone(Tone::Muted) {
+        style = style.add_modifier(Modifier::DIM);
+    }
+    if look.underlined {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    if look.italic {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    style
+}
+
+/// 颜色的要法 → 具名色；终端默认色是 `None`。[`look`] 那张表就是这个 `match`。
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
+)]
+fn colour_of(hue: Hue) -> Option<Color> {
+    match hue {
+        Hue::Plain | Hue::Tone(Tone::Plain) => None,
+        Hue::Faint | Hue::Tone(Tone::Muted) => Some(Color::DarkGray),
+        Hue::Tone(Tone::Caution) => Some(Color::Yellow),
+        Hue::Tone(Tone::Trouble) => Some(Color::Red),
+        Hue::Kind(Kind::Depth(BitDepth::One)) => Some(Color::Magenta),
+        Hue::Kind(Kind::Depth(BitDepth::Two)) => Some(Color::Cyan),
+        Hue::Kind(Kind::Depth(BitDepth::Four)) => Some(Color::Blue),
+        Hue::Kind(Kind::Depth(BitDepth::Eight)) => None,
+        Hue::Kind(Kind::Pass(Pass::Fingerprint)) => Some(Color::Magenta),
+        Hue::Kind(Kind::Pass(Pass::First)) => Some(Color::Blue),
+        Hue::Kind(Kind::Pass(Pass::Second)) => Some(Color::Cyan),
+        // 环节那个枚举是 `non_exhaustive`：库添第四遍时这一色再定。
+        Hue::Kind(Kind::Pass(_)) => None,
+        Hue::Kind(Kind::Done) => Some(Color::Green),
+        Hue::Kind(Kind::Working | Kind::Banner) => Some(Color::Blue),
+        Hue::Kind(Kind::Focus) => Some(Color::LightGreen),
     }
 }
 
@@ -179,7 +253,7 @@ mod forcing {
     ///
     /// 两副样子要在同一条用例里比（票面第五条：两张快照文字逐格相同），
     /// 而环境变量在一个进程里只有一份。
-    pub(super) fn forcing<T>(colourful: bool, body: impl FnOnce() -> T) -> T {
+    pub(in crate::session) fn forcing<T>(colourful: bool, body: impl FnOnce() -> T) -> T {
         FORCED.with(|held| held.set(Some(colourful)));
         let out = body();
         FORCED.with(|held| held.set(None));
@@ -188,7 +262,10 @@ mod forcing {
 }
 
 #[cfg(test)]
-use forcing::{forced, forcing};
+use forcing::forced;
+// 新界面那一侧的用例也要按住「不上色」（`super::super::shell`）。
+#[cfg(test)]
+pub(in crate::session) use forcing::forcing;
 
 #[cfg(test)]
 mod tests {
@@ -202,6 +279,50 @@ mod tests {
     use crate::session::live::{Live, Resuming};
     use crate::session::state::Session;
     use tonefit::Mode as RunMode;
+
+    /// **新界面的种类色各是哪一色、`NO_COLOR` 只退颜色**（`session-redesign/06`，spec《颜色》）：
+    /// 灰阶档位、环节、完成与处理中、聚焦框各一色；不上色那一趟每一种都退回终端默认色，
+    /// 而加粗、压暗、下划线、斜体一样不少——「不要紧」那一档的压暗也照旧。
+    #[test]
+    fn every_kind_has_its_colour_and_no_colour_strips_only_the_hue() {
+        let kinds = [
+            (Kind::Depth(BitDepth::One), Color::Magenta),
+            (Kind::Depth(BitDepth::Two), Color::Cyan),
+            (Kind::Depth(BitDepth::Four), Color::Blue),
+            (Kind::Pass(Pass::Fingerprint), Color::Magenta),
+            (Kind::Pass(Pass::First), Color::Blue),
+            (Kind::Pass(Pass::Second), Color::Cyan),
+            (Kind::Done, Color::Green),
+            (Kind::Working, Color::Blue),
+            (Kind::Focus, Color::LightGreen),
+            (Kind::Banner, Color::Blue),
+        ];
+        for (kind, colour) in kinds {
+            let coloured = forcing(true, || look(Look::kind(kind).bold().underlined()));
+            assert_eq!(coloured.fg, Some(colour), "{kind:?}");
+            assert_eq!(coloured.bg, None, "{kind:?} 不设背景色");
+            let bare = forcing(false, || look(Look::kind(kind).bold().underlined()));
+            assert_eq!(bare.fg, None, "{kind:?} 不上色时退回默认色");
+            assert!(
+                bare.add_modifier
+                    .contains(Modifier::BOLD | Modifier::UNDERLINED),
+                "{kind:?} 不上色时修饰照旧"
+            );
+        }
+        let muted = forcing(false, || look(Look::tone(Tone::Muted)));
+        assert_eq!(muted.fg, None);
+        assert!(muted.add_modifier.contains(Modifier::DIM), "压暗照旧");
+        let dimmed = forcing(false, || look(Look::FAINT.dim().italic()));
+        assert!(
+            dimmed
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
+        assert_eq!(
+            forcing(true, || look(Look::tone(Tone::Caution))).fg,
+            Some(Color::Yellow)
+        );
+    }
 
     /// 一屏够宽够高，六种卷一行不砍。
     const WIDE: u16 = 96;

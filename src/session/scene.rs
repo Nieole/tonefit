@@ -8,9 +8,11 @@
 //! 提到的每一处建出那棵树，作家目录。**数据只从场景数据来**：不在 Rust 里重写设计稿的
 //! 伪随机与模拟（Q718）；逐页结果只有屏上开着的那一卷有整份，其余各卷照灰阶分布补页（Q736）。
 //!
-//! 会话的**界面状态**（视图、光标、展开、覆盖层、输入行……）**不在这里摆**：新骨架落地之后
-//! 由各票按 [`Data::session`] 补。这里摆的只有那一趟（[`Scene::live`]）、三组设置
-//! （[`Scene::session`] 上的 `device`／`taste`／`scope`，加上阶段）与预设文件。
+//! 会话的**界面状态**（视图、光标、展开、覆盖层、输入行……）按 [`Data::session`] 摆进
+//! [`Session::views`]，**各票接上自己那一块**：本票（`session-redesign/06`）摆的是视图、
+//! 开跑之前卷列表的光标与套着的预设（[`views_of`]）；树上的光标、展开、每页结果、覆盖层、
+//! 输入行随各票补。这里另摆那一趟（[`Scene::live`]）、三组设置
+//! （[`Scene::session`] 上的 `device`／`taste`／`scope`，加上阶段）、家目录与预设文件。
 //!
 //! 夹具**不读写用户配置目录、不改进程的环境变量**：家目录与预设文件都在临时目录里，
 //! 由 [`Scene`] 的字段交出去、由调用方往下传（spec《输入行与路径》：家目录由会话入口问一次往下传，
@@ -31,8 +33,10 @@ use tonefit::{
     UnreachablePlace, Verdict, VolumeReport, VolumeVerdict, WhiteAlignment,
 };
 
+use super::home::Home;
 use super::live::{Live, Reach, Resuming, fixture};
-use super::state::{Key, Picked, Session};
+use super::state::{Key, NamedPath, Session};
+use super::view::{Applied, Cursor, Input, View, Views};
 use crate::preset::{self, Preset, Presets};
 use crate::render;
 
@@ -270,6 +274,125 @@ pub(crate) fn sequences() -> Vec<String> {
         .collect()
 }
 
+/// **交互序列**的一步（`CONTEXT.md` 的《会话》：交互序列；`manifest.json` 的 `steps`）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Step {
+    /// 按一个键，名字照清单上的写法：`j`、`Space`、`Enter`、`Escape`、`Tab`、`F1`、`C-w`。
+    Key(String),
+    /// 打一串字。
+    Type(String),
+    /// 单击第几列第几行。
+    Click(u16, u16),
+    /// 双击第几列第几行。
+    DoubleClick(u16, u16),
+    /// 滚轮几格（负数往上）。
+    Wheel(i16),
+    /// 推进几秒（屏上的秒）。
+    Advance(f64),
+    /// 换尺寸：列 × 行。
+    Resize(u16, u16),
+}
+
+impl Step {
+    /// 这一步交给新会话的输入。打字那一步是一个一个字符（各自一个输入）；推进与换尺寸不是输入。
+    pub(crate) fn inputs(&self) -> Vec<Input> {
+        match self {
+            Self::Key(name) => vec![key_named(name)],
+            Self::Type(text) => text.chars().map(|c| Input::Key(Key::Char(c))).collect(),
+            Self::Click(x, y) => vec![Input::Click { x: *x, y: *y }],
+            // 双击等于 `⏎`：终端层按阈值内的第二下认出来（随鼠标那一票），这里先给两下。
+            Self::DoubleClick(x, y) => vec![Input::Click { x: *x, y: *y }; 2],
+            Self::Wheel(notches) => vec![Input::Wheel(*notches)],
+            Self::Advance(_) | Self::Resize(_, _) => Vec::new(),
+        }
+    }
+}
+
+/// 清单上一个键的名字 → 输入。设计稿的键名照浏览器的 `KeyboardEvent.key`，几个记号另有名字。
+fn key_named(name: &str) -> Input {
+    match name {
+        "Space" => Input::Key(Key::Space),
+        "Enter" => Input::Key(Key::Enter),
+        "Escape" => Input::Key(Key::Esc),
+        "Tab" => Input::Key(Key::Tab),
+        "Backspace" => Input::Key(Key::Backspace),
+        "F1" => Input::Key(Key::F1),
+        "C-c" => Input::Key(Key::Interrupt),
+        _ => match name.strip_prefix("C-") {
+            Some(letter) if letter.chars().count() == 1 => {
+                Input::Ctrl(letter.chars().next().expect("一个字母"))
+            }
+            _ => {
+                let mut chars = name.chars();
+                let (Some(c), None) = (chars.next(), chars.next()) else {
+                    panic!("清单上的键名认不出：{name}");
+                };
+                Input::Key(Key::Char(c))
+            }
+        },
+    }
+}
+
+/// 一串交互序列：从哪个场景起、多大的屏、逐步输入。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Sequence {
+    pub(crate) name: String,
+    pub(crate) scene: String,
+    pub(crate) size: (u16, u16),
+    pub(crate) steps: Vec<Step>,
+}
+
+/// 清单上这一串序列。
+pub(crate) fn sequence(name: &str) -> Sequence {
+    let manifest = json("manifest.json");
+    let entry = manifest["sequences"]
+        .as_array()
+        .expect("清单上有序列那一列")
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("清单上没有「{name}」这一串"));
+    let pair = |value: &Value| -> (u16, u16) {
+        let both = value.as_array().expect("两个数");
+        (
+            both[0].as_u64().expect("列数") as u16,
+            both[1].as_u64().expect("行数") as u16,
+        )
+    };
+    let steps = entry["steps"]
+        .as_array()
+        .expect("这一串有步")
+        .iter()
+        .map(|step| {
+            if let Some(key) = step["key"].as_str() {
+                Step::Key(key.to_owned())
+            } else if let Some(text) = step["type"].as_str() {
+                Step::Type(text.to_owned())
+            } else if step.get("click").is_some() {
+                let (x, y) = pair(&step["click"]);
+                Step::Click(x, y)
+            } else if step.get("dblclick").is_some() {
+                let (x, y) = pair(&step["dblclick"]);
+                Step::DoubleClick(x, y)
+            } else if let Some(notches) = step["wheel"].as_i64() {
+                Step::Wheel(notches as i16)
+            } else if let Some(seconds) = step["advance"].as_f64() {
+                Step::Advance(seconds)
+            } else if step.get("resize").is_some() {
+                let (cols, rows) = pair(&step["resize"]);
+                Step::Resize(cols, rows)
+            } else {
+                panic!("「{name}」里这一步认不出：{step}")
+            }
+        })
+        .collect();
+    Sequence {
+        name: name.to_owned(),
+        scene: entry["scene"].as_str().expect("从哪个场景起").to_owned(),
+        size: pair(&entry["size"]),
+        steps,
+    }
+}
+
 fn parse(value: Value) -> Data {
     serde_json::from_value(value)
         .unwrap_or_else(|error| panic!("场景数据读不成夹具的形状：{error}"))
@@ -312,7 +435,7 @@ pub(crate) struct Scene {
     pub(crate) home: PathBuf,
     /// 预设文件，在临时目录里（不在家目录底下：家目录底下只有假盘上那几样）。
     pub(crate) presets: Presets,
-    /// 三组设置摆好了的会话，阶段照这一趟。**界面状态没摆**（见模块文档）。
+    /// 三组设置摆好了的会话，阶段照这一趟，家目录与界面状态里本票那几格也摆好了（见模块文档）。
     pub(crate) session: Session,
     /// 那一趟。还没开跑的场景是 `None`。
     pub(crate) live: Option<Live>,
@@ -341,14 +464,16 @@ impl Scene {
         session.device = device;
         session.taste = taste;
         session.scope.out = Some(expand(&home, &data.output));
-        session.scope.volumes = data
+        session.scope.paths = data
             .paths
             .iter()
-            .map(|named| Picked {
+            .map(|named| NamedPath {
                 path: expand(&home, &named.path),
                 on: named.checked,
             })
             .collect();
+        session.home = Home::at(&home);
+        session.views = views_of(&data, &home, &presets);
         let epoch = Instant::now();
         let live = data
             .run
@@ -382,6 +507,33 @@ impl Scene {
     pub(crate) fn now(&self) -> Instant {
         self.epoch + elapsed(self.data.run.as_ref())
     }
+}
+
+/// 场景数据 `session` 那一段里本票认得的几格：视图、开跑之前卷列表的光标、套着的预设。
+/// 树上的光标（目录、卷、备注）随树那一票认；认不得的先停在输出目录那一行上。
+fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
+    let mut views = Views::default();
+    views.view = match data.session["view"].as_str() {
+        Some("config") => View::Config,
+        _ => View::Task,
+    };
+    let cursor = &data.session["cursor"];
+    views.task.cursor = match cursor["kind"].as_str() {
+        Some("out") => Cursor::Output,
+        Some("add") => Cursor::Add,
+        Some("path") => Cursor::Path(expand(
+            home,
+            cursor["path"].as_str().expect("光标那一条路径"),
+        )),
+        _ => Cursor::Output,
+    };
+    views.config.applied = data.applied_preset.as_ref().map(|name| Applied {
+        name: name.clone(),
+        preset: presets
+            .read(name)
+            .unwrap_or_else(|error| panic!("套着的预设「{name}」读不出：{error:#}")),
+    });
+    views
 }
 
 /// `~/` 换成家目录。
@@ -1270,10 +1422,10 @@ mod tests {
             "{name}"
         );
         assert_eq!(
-            scene.session.scope.volumes,
+            scene.session.scope.paths,
             data.paths
                 .iter()
-                .map(|named| Picked {
+                .map(|named| NamedPath {
                     path: scene.path(&named.path),
                     on: named.checked,
                 })
@@ -1594,6 +1746,37 @@ mod tests {
         assert_eq!(live.failures_so_far(), 1, "坏页 1 页");
         assert_eq!(live.report().failed_volumes.len(), 1, "转换失败 1 卷");
         assert_eq!(live.unreachable_places().len(), 1, "无法访问 1 处");
+    }
+
+    /// **清单上每一串交互序列都读得成步**，每一步都翻得成输入（`session-redesign/06`）：
+    /// 键名一个都不认不出，打字那一步一个字一个输入，推进与换尺寸不是输入。
+    #[test]
+    fn every_sequence_in_the_manifest_reads_into_steps() {
+        let names = sequences();
+        assert!(!names.is_empty());
+        for name in &names {
+            let sequence = sequence(name);
+            assert_eq!(sequence.name, *name);
+            assert!(!sequence.steps.is_empty(), "「{name}」没有步");
+            assert!(sequence.size.0 > 0 && sequence.size.1 > 0);
+            for step in &sequence.steps {
+                let inputs = step.inputs();
+                match step {
+                    Step::Advance(_) | Step::Resize(_, _) => assert!(inputs.is_empty()),
+                    Step::Type(text) => assert_eq!(inputs.len(), text.chars().count()),
+                    Step::DoubleClick(_, _) => assert_eq!(inputs.len(), 2),
+                    _ => assert_eq!(inputs.len(), 1, "「{name}」的 {step:?}"),
+                }
+            }
+        }
+        assert_eq!(
+            sequence("fresh-dd").steps,
+            [Step::Key("d".to_owned()), Step::Key("d".to_owned())]
+        );
+        assert_eq!(key_named("Space"), Input::Key(Key::Space));
+        assert_eq!(key_named("C-w"), Input::Ctrl('w'));
+        assert_eq!(key_named("C-c"), Input::Key(Key::Interrupt));
+        assert_eq!(key_named("?"), Input::Key(Key::Char('?')));
     }
 
     /// **11 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。

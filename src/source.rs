@@ -796,8 +796,11 @@ pub(crate) fn output_name_of(name: &str, container: Container) -> String {
     }
 }
 
-/// 扩展名是否表明这是一个归档卷。大小写不敏感。
-pub(crate) fn is_archive(path: &Path) -> bool {
+/// 扩展名是否表明这是一个归档卷。大小写不敏感。**不碰盘。**
+///
+/// **公开**是因为会话那一侧开跑之前也要认：卷列表上每条处理路径标「文件夹」还是「压缩包」，
+/// 而那一副一次都不碰盘（ADR 0019 决定第 2 条）——认得的归档扩展名只有这一份。
+pub fn is_archive(path: &Path) -> bool {
     archive_reading(path).is_some()
 }
 

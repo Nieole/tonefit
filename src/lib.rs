@@ -94,8 +94,9 @@ pub use resample::{Filter, Scaling};
 pub use spread::{Cut, Gutter, ReadingOrder, Side, SplitRule, SplitThreshold};
 pub use survey::SurveyedVolume;
 // 认得的归档扩展名那一串：命令行的 `--help` 也要说它，而格式集只有一个出处
-// （`source::ARCHIVE_FORMATS`）。见二进制侧的 `inputs_help`。
-pub use source::listed_archive_extensions;
+// （`source::ARCHIVE_FORMATS`）。见二进制侧的 `inputs_help`。会话开跑之前那一副按扩展名
+// 认文件夹还是压缩包，读的也是这一份（`is_archive`）。
+pub use source::{is_archive, listed_archive_extensions};
 pub use white::{WhiteAlignLimit, WhiteAlignment, align_white};
 
 use color::ColorImage;
