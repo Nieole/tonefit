@@ -368,14 +368,29 @@ const NAMED0 = [
   { path: '~/Comics/大友克洋', kind: '文件夹', on: true },
 ];
 const nestedIn = (p, list) => list.find((o) => o.on && o.path !== p && o.kind === '文件夹' && p.startsWith(o.path + '/'));
+// 备注行行尾那一句：无法访问的地方一行就是一处（`entries` 恒一条），给那条错误链；非漫画文件一行装整组，给那一小结抬头那一句
+const noteBrief = (n) => (n.kind === 'unreach' ? n.entries[0][1] : n.said);
+// 说明卡的全文：那一小结摞成一块的样子（抬头一句，然后每条路径一行、原因一行；render::plain 的摆法）
+const noteText = (n) => [n.said, ...n.entries.flatMap(([path, why]) => [`  ${path}`, `    ${why}`])].join('\n');
 
 // 预扫之后才知道的形状：每条点名路径底下有哪几个目录
 const LIB = {
   '~/漫画库': {
     groups: [['哆啦A梦', 12, 'doraemon'], ['集英社/海贼王', 18, 'onepiece'], ['攻壳机动队', 6, 'gits'], ['银河英雄传说', 9, 'loghs']],
+    // 备注行装的是报告末尾那两小结拆散后挂回来的那一条（CONTEXT《备注行》）：`said` 是那一小结抬头那一句，
+    // `entries` 是逐条的路径与原因，字都出自 src/render.rs（unreachable_tail / non_volume_tail / non_volume_reason）；
+    // 路径与那条错误链是原样带过来的（假数据）。说明卡的全文见 noteText
     notes: [
-      { kind: 'unreach', label: '无法访问', what: '私藏/', why: '没有权限打开这个文件夹，里面的内容全部跳过' },
-      { kind: 'nonvol', label: '已忽略 3 个文件', what: '字体包.zip、答案.txt、README.md', why: '不是漫画图片或压缩包：不会转换，也不会复制，不算出错' },
+      { kind: 'unreach', label: '无法访问', what: '私藏/',
+        said: '无法访问 1 处：打不开这些文件夹，里面有没有卷无从知道，全部跳过。这一趟因此**不是「全都做成了」**，退出码跟着变；别的卷该做的照做，上面那些就是做出来的。要那底下的东西，先把下面这几处修好再重跑',
+        entries: [['~/漫画库/私藏', '列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)']] },
+      { kind: 'nonvol', label: '已忽略 3 个文件', what: '字体包.zip、答案.txt、README.md',
+        said: '非漫画文件 3 个：不属于任何一卷，没有转换也没有复制，输出里没有它们。这**不算出错**，退出码不变；源文件没动，需要的话去原位置取',
+        entries: [
+          ['~/漫画库/字体包.zip', '压缩包里没有图片：不算一卷，输出里不会有空的压缩包'],
+          ['~/漫画库/答案.txt', '它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制'],
+          ['~/漫画库/README.md', '它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制'],
+        ] },
     ],
   },
   '~/Comics/棋魂': { groups: [['棋魂', 23, 'hikaru']] },
@@ -451,6 +466,17 @@ function entryOrder(entries, v) {
   return 1e9;
 }
 
+// 假数据里每一页的目标高：尺寸那一格与缩放那一格都从它来（它与型号 kobo-clara-2e 的面板高 1448 对不上，是旧假数据，停车场 Q733）
+const TARGET_H = 1680;
+const sizeText = (w) => `${w}x${TARGET_H}`;
+// 缩放那一格照 tonefit::Scaling 的 Display：总缩放比 ≥ 2 取整数部分预缩，残差比按预缩后的实际像素高（向上取整）算；
+// 设计稿的假数据只有总缩放比，源页高从它与目标高反推
+function scalingText(ratio) {
+  const srcH = Math.round(ratio * TARGET_H), total = srcH / TARGET_H;
+  if (total < 2) return `缩放比 ${total.toFixed(3)} ⋅ 一次缩放`;
+  const pre = Math.floor(total);
+  return `缩放比 ${total.toFixed(3)} ⋅ 先整数缩小 ${pre}x ⋅ 再缩 ${(Math.ceil(srcH / pre) / TARGET_H).toFixed(3)}`;
+}
 // 逐页：确定性生成，同一卷每次都一样
 const PAGE_CACHE = new Map();
 function pagesOf(v) {
@@ -475,17 +501,22 @@ function pagesOf(v) {
     const flags = notable.get(i) || [];
     const name = (flags.find((f) => f.name) || {}).name || `${String(i + 1).padStart(3, '0')}.${ext}`;
     const ratio = v.mixKey === 'akira' ? 2.31 + r() * 0.2 : 1.12 + r() * 0.18;
+    // 画质分那一格：设计稿只印判成那一档的分（`候选 分`，三位小数）；库那一格是六个候选整串（停车场 Q725）
+    const score = (2.6 + r() * 2.4).toFixed(3);
+    // kinds 是这一页要紧在哪几处（语义字段：outlier / wide / gate / salvage / failed，加上 envelopeOver 给的 driver），
+    // 数它靠这一列，不回头认屏上的字；notes 是屏上提示那一列的词，由 kinds 派生
     const page = {
-      name, size: '1182x1680',
-      scale: ratio >= 2 ? `缩小 ${ratio.toFixed(2)} 倍（先对半缩）` : `缩小 ${ratio.toFixed(2)} 倍`,
-      verdict, reason: '达标的最省空间档位', metric: `${verdict} ${(2.6 + r() * 2.4).toFixed(3)}`, notes: [], tone: '',
+      name, size: sizeText(1182),
+      scale: scalingText(ratio),
+      verdict, reason: '达标的最省空间档位', metric: `${verdict} ${score}`, kinds: flags.map((f) => f.kind), notes: [], tone: '',
     };
     for (const f of flags) {
-      if (f.kind === 'failed') Object.assign(page, { verdict: '—', reason: '读不出，用空白页占位', metric: '', scale: '', tone: 'bad', notes: [f.why] });
-      if (f.kind === 'outlier') { Object.assign(page, { verdict: '4bit+FS', reason: '差异大，单独判断', metric: '4bit+FS ' + page.metric.split(' ')[1] }); page.notes.push('与其他页差异大'); page.tone ||= 'warn'; }
-      if (f.kind === 'wide') { page.size = '2364x1680'; page.notes.push('页面超宽'); page.tone ||= 'warn'; }
-      if (f.kind === 'gate') { Object.assign(page, { verdict: verdict.replace('+FS', ''), reason: '没贴合屏幕，不加抖动' }); page.notes.push('尺寸未贴合屏幕'); page.tone ||= 'warn'; }
-      if (f.kind === 'salvage') { page.notes.push('只读出 62%'); page.tone ||= 'warn'; }
+      // 坏页：判定、理由、画质分三格不在场；缩放那一格改说它的尺寸从哪来（render::geometry_cells），行尾那一句是 render::failure_line
+      if (f.kind === 'failed') Object.assign(page, { verdict: '', reason: '', metric: '', scale: '读不出 ⋅ 用空白页占位', tone: 'bad', notes: ['失败 ' + f.why] });
+      if (f.kind === 'outlier') { Object.assign(page, { verdict: '4bit+FS', reason: '差异大，单独判断', metric: `4bit+FS ${score}` }); page.notes.push('差异大的页'); page.tone ||= 'warn'; }
+      if (f.kind === 'wide') { page.size = sizeText(2364); page.notes.push('页面超宽'); page.tone ||= 'warn'; }
+      if (f.kind === 'gate') { const bare = verdict.replace('+FS', ''); Object.assign(page, { verdict: bare, reason: '没贴合屏幕，不加抖动', metric: `${bare} ${score}` }); page.notes.push('尺寸未贴合屏幕'); page.tone ||= 'warn'; }
+      if (f.kind === 'salvage') { page.notes.push('救回 62.0%'); page.tone ||= 'warn'; }
     }
     list.push(page);
   }
@@ -507,16 +538,16 @@ function envelopeOver(list, mix) {
     Object.assign(pg, { verdict: base, reason: '整卷统一灰阶', metric: `${base} ${pg.metric.split(' ')[1]}` });
   }
   const d = driver || list.find((pg) => pg.reason === '整卷统一灰阶');
-  if (d) { d.driver = true; d.notes.push('代表页'); }
+  if (d) { d.driver = true; d.kinds.push('driver'); d.notes.push('代表页'); }
 }
 function tallyOf(v) {
   const m = new Map();
-  for (const pg of pagesOf(v)) if (pg.verdict !== '—') m.set(pg.verdict, (m.get(pg.verdict) || 0) + 1);
+  for (const pg of pagesOf(v)) if (pg.verdict) m.set(pg.verdict, (m.get(pg.verdict) || 0) + 1);
   return [...m.entries()].sort((a, b) => b[1] - a[1]);
 }
 function problemsOf(v) {
-  const pg = pagesOf(v), c = (k) => pg.filter((x) => x.notes.some((n) => n.startsWith(k))).length;
-  return { failed: pg.filter((x) => x.tone === 'bad').length, outlier: c('与其他页差异大'), wide: c('页面超宽'), gate: c('尺寸未贴合'), salvage: c('只读出') };
+  const pg = pagesOf(v), c = (k) => pg.filter((x) => x.kinds.includes(k)).length;
+  return { failed: c('failed'), outlier: c('outlier'), wide: c('wide'), gate: c('gate'), salvage: c('salvage') };
 }
 
 // ───── 配置 ─────
@@ -535,34 +566,34 @@ const PANELS = [
   ['1860x2480 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kindle-scribe']],
 ];
 const CONFIG = [
-  { layer: '设备', note: '换设备时才需要改' },
-  { key: 'model', label: '设备型号', kind: 'model', unset: '未选择（开始前必须选）', value: 'kobo-clara-2e',
+  { layer: '设备设置', note: '换设备时才需要改' },
+  { key: 'model', label: '型号', kind: 'model', unset: '未挑（跑起来之前必填）', value: 'kobo-clara-2e',
     desc: '先选屏幕规格，再选型号：同一种屏幕的型号，转出来的效果完全一样。表里没有你的设备时，挑一个屏幕规格相同的型号，再按实际情况填可见灰阶数。换型号会清空之前填的可见灰阶数和画质门槛。' },
   { key: 'levels', label: '可见灰阶数', kind: 'text', unset: '默认（按屏幕规格）', value: null,
     desc: '你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。' },
-  { key: 'threshold', label: '画质门槛', kind: 'text', unset: '跟着型号走', value: null,
+  { key: 'threshold', label: '画质门槛', kind: 'text', unset: '跟着型号走（先挑一个）', value: null,
     desc: '画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。' },
   { layer: '处理选项', note: '每次转换都可以调' },
-  { key: 'fit', label: '缩放方式', kind: 'ring', options: ['按高度铺满', '整页放进屏幕'], unset: '默认（按高度铺满）', value: '整页放进屏幕', preset: null,
+  { key: 'fit', label: '缩放方式', kind: 'ring', options: ['height', 'inside'], unset: '默认（height）', value: 'inside', preset: null,
     desc: '按高度铺满：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。整页放进屏幕：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
-  { key: 'crop', label: '裁白边', kind: 'ring', options: ['裁掉', '保留'], unset: '默认（裁掉）', value: null,
+  { key: 'crop', label: '裁白边', kind: 'ring', options: ['裁', '不裁'], unset: '默认（裁）', value: null,
     desc: '自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。' },
-  { key: 'split', label: '拆分跨页', kind: 'ring', options: ['拆成两页', '保持一页'], unset: '默认（拆成两页）', value: null,
+  { key: 'split', label: '拆分跨页', kind: 'ring', options: ['拆', '不拆'], unset: '默认（拆）', value: null,
     desc: '把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。开着时，有跨页的卷体积会变大不少。' },
-  { key: 'splitAt', label: '跨页判定宽度', kind: 'text', unset: '默认（1.5 倍）', value: null, desc: '页面的宽高比超过屏幕宽高比的多少倍，才当成跨页处理。' },
-  { key: 'order', label: '阅读方向', kind: 'ring', options: ['从右往左（日漫）', '从左往右'], unset: '默认（从右往左）', value: null, desc: '跨页拆开之后，左右两半谁排在前面。日漫是从右往左。' },
+  { key: 'splitAt', label: '跨页判定宽度', kind: 'text', unset: '默认（1.5）', value: null, desc: '页面的宽高比超过屏幕宽高比的多少倍，才当成跨页处理。' },
+  { key: 'order', label: '阅读方向', kind: 'ring', options: ['rtl', 'ltr'], unset: '默认（rtl）', value: null, desc: '跨页拆开之后，左右两半谁排在前面。日漫是从右往左。' },
   { key: 'filter', label: '缩放算法', kind: 'ring', options: ['area', 'bilinear', 'hamming', 'bicubic', 'lanczos3'], unset: '默认（lanczos3）', value: null,
     desc: '缩小图片时用的算法。lanczos3 最清晰，一般不用改；area 会偏糊，只用来对比。' },
-  { key: 'white', label: '纸色提白', kind: 'text', unset: '默认（4 级）', value: null,
+  { key: 'white', label: '提白上限', kind: 'text', unset: '默认（4）', value: null,
     desc: '扫描出来的纸色常常略微发灰，加抖动时白底上会冒出零星噪点。开着时把接近纯白的纸色提成纯白，数字是最多提几级灰度；0 = 关闭，结果和没有这个功能时完全一样。' },
-  { key: 'depth', label: '灰阶档位', kind: 'ring', options: ['2 级（1bit）', '4 级（2bit）', '16 级（4bit）'], unset: '自动（按画质判断）', value: null,
+  { key: 'depth', label: '灰阶档位', kind: 'ring', options: ['1bit', '2bit', '4bit'], unset: '自动（画质分说了算）', value: null,
     desc: '指定整卷用几级灰，不再逐页自动判断。电子墨水屏最多显示 16 级灰，所以只有这三档。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰；+FS = 加抖动。' },
-  { key: 'dither', label: '抖动', kind: 'ring', options: ['不加', '加（误差扩散）'], unset: '自动（按画质判断）', value: '加（误差扩散）', preset: null,
+  { key: 'dither', label: '抖动', kind: 'ring', options: ['off', 'fs'], unset: '自动（画质分说了算）', value: 'fs', preset: null,
     desc: '用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。' },
   { key: 'envelope', label: '整卷统一灰阶', kind: 'ring', options: ['开', '关'], unset: '默认（关）', value: null,
     desc: '关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，和其他页差异特别大的页单独处理。' },
   { key: 'cache', label: '内存上限', kind: 'text', unset: '默认（512.0 MiB）', value: null, desc: '转换时最多占用多少内存，超出的部分临时写到硬盘上。它限制的是内存占用，不限制卷的大小。' },
-  { key: 'io', label: '读盘方式', kind: 'ring', options: ['自动', '逐个读（机械硬盘）', '同时读（固态硬盘）'], unset: '默认（自动）', value: null,
+  { key: 'io', label: '读盘方式', kind: 'ring', options: ['auto', 'serial', 'concurrent'], unset: '默认（auto）', value: null,
     desc: '自动：按硬盘类型自己选。逐个读：适合机械硬盘和网络盘。同时读：适合固态硬盘。' },
   { layer: '画质判定参数', note: '只读' },
   { key: 'p1', label: '设备配置', kind: 'info',
@@ -584,12 +615,13 @@ const cfgValue = (key) => (CONFIG.find((c) => c.key === key) || {}).value;
 const fmt3 = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(3) : String(v));
 // 画质门槛那一截（profile 的 Threshold）：设备设置里那一行与设备配置那一句印的是同一截
 function thresholdText(c) {
+  if (!cfgValue('model')) return '跟着型号走（先挑一个）';
   const v = c ? c.value : cfgValue('threshold');
-  return v != null ? `${fmt3(v)}（由你指定）` : '5.123（在 boox-poke6 上实测，其他屏幕未验证）';
+  return v != null ? `画质门槛 ${fmt3(v)}（由你指定）` : '画质门槛 5.123（在 boox-poke6 上实测，其他屏幕未验证）';
 }
 // 拆分开着、缩放方式却是整页放进屏幕：抬头上唯一会露面的那一条选项冲突（Interlock::SpreadsStayFlattened）
 function interlockText() {
-  if (cfgValue('fit') !== '整页放进屏幕' || cfgValue('split') === '保持一页') return null;
+  if (cfgValue('fit') !== 'inside' || cfgValue('split') === '不拆') return null;
   return '拆分开着，缩放方式却是 fit-inside：切得开的跨页切开了，没有中缝的连续跨页仍被长边压扁。要那几页也用满面板高，得换 --fit height，代价是它们的页面比屏幕宽、要横向平移着看。组合本身成立——拿到的是部分收益，不是白开';
 }
 function premiseText(key) {
@@ -600,7 +632,7 @@ function premiseText(key) {
       const levels = cfgValue('levels');
       let panel = (PANELS.find(([, ms]) => ms.includes(model)) || [''])[0];
       if (levels != null) panel = panel.replace(/\d+ 级灰阶/, `${levels} 级灰阶`);
-      return `${model}：${panel} ⋅ 画质门槛 ${thresholdText()}`;
+      return `${model}：${panel} ⋅ ${thresholdText()}`;
     }
     case 'p2': return '整体走样 ＋ 抖动颗粒（起伏不到相邻两级灰度差的 21.6% 不算；这个比例在 boox-poke6 上实测，其他屏幕未验证）';
     case 'p3': return '大片平涂处扣分不打折 ⋅ 细节越多扣分打折越多，但总保留 50% 以上 ⋅ 细节度 8.0 时折扣走到一半（两个数都是暂定值，还没用真机校准）';
@@ -611,7 +643,7 @@ function premiseText(key) {
 }
 const PRESETS = [
   { name: '漫画', says: { fit: null, dither: null } },
-  { name: '画集', says: { fit: '整页放进屏幕', crop: '保留', split: '保持一页', depth: '16 级（4bit）' } },
+  { name: '画集', says: { fit: 'inside', crop: '不裁', split: '不拆', depth: '4bit' } },
 ];
 
 // 全部按键只列此刻派得出的键：每一行第三格是派得出它的阶段——I 还没开始 · S 清点中 · R 转换中 · D 等待确认 · E 已结束，
@@ -835,7 +867,9 @@ const S = {
   from: { list: 0, pages: 0, cfg: 0 },
   lastRows: [], lastView: 0,
 };
-const FOCUS = 'c-green';       // 聚焦块的框色：LightGreen
+// 聚焦框与光标（亮绿，spec《颜色》）：与完成记号那个绿分开两个类名，导出的对照表才分得开；浏览器里同色
+const FOCUS = 'c-lgreen';
+const CURSOR = FOCUS + ' b';
 const modelName = () => (CONFIG.find((c) => c.key === 'model') || {}).value || '型号未选择';
 const key = (k) => [[k, 'c-fg b']];
 const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 'c-gray']];
@@ -902,7 +936,7 @@ function drawFooter(scr) {
     const inp = S.input;
     let x = scr.put(1, y, inp.prompt, 'c-green b');
     x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
-    scr.put(x, y, '▏', 'c-green');
+    scr.put(x, y, '▏', FOCUS);
     const right = inp.kind === 'search' ? [...hint('⏎', '跳到结果'), [' ', ''], ...hint('Esc', '取消')]
       : [...hint('Tab', '补全'), [' ', ''], ...hint('C-w', '删一段'), [' ', ''], ...hint('⏎', '确定'), [' ', ''], ...hint('Esc', '取消')];
     scr.line(W - 1 - segW(right), y, right);
@@ -1048,16 +1082,23 @@ function cols(iw) {
   const nameW = Math.max(12, Math.min(30, Math.floor(iw * 0.24)));
   return { nameW, countW: 9, tallyW: showTally ? 26 : 0, driverW: showDriver ? 15 : 0, timeW: showTime ? 7 : 0 };
 }
+// 出自报告的那几句，字只有一处出处（ADR 0016）：卷级那几行与目录那一行的措辞照 src/render.rs
+const SKIPPED = '跳过 之前转换过：工具版本、设备配置、选项和源文件都没变，上次的输出还在，这一卷一页都没重做';   // render::SKIPPED
+const isolatedOutput = (v) => `${S.outRoot}/_isolated/${v.dir.label}/${v.name}`;                                       // 隔离目录里这一卷的去处（假数据）
+const isolatedRow = (v, failed) => `隔离 ${failed} 页读不出：这一卷整卷写到隔离目录 ${isolatedOutput(v)}，读不出的页用空白页占位，页码顺序不变`; // render::isolated_row
+const isolatedNote = (count) => `隔离 ${count} 卷`;                                                                     // render::isolated_note（目录那一行）
+// 一卷为什么一页都没判，压成灰阶分布那一列摆得下的一个词（render::why_nothing_judged），连同它的语义色：没做成是出事，跳过是不要紧
+const whyNothingJudged = (state) => (state === 'skipped' ? [['跳过', 'c-gray d']] : state === 'failed' ? [['没做成', 'c-red']] : null);
 function problemsSegs(st) {
   const segs = [];
   const add = (t, s) => { if (segs.length) segs.push([' ⋅ ', 'c-gray']); segs.push([t, s]); };
-  if (st.failedPages) add(`坏页 ${st.failedPages} 页`, 'c-red');
+  if (st.isolated) add(isolatedNote(st.isolated), 'c-yellow');
   if (st.failedVols) add(`转换失败 ${st.failedVols}`, 'c-red');
   return segs;
 }
 function drawRow(scr, x, y, iw, row, isCur, focused) {
   const r = S.run, c = cols(iw);
-  const curSeg = isCur ? [focused ? '❯ ' : '› ', focused ? 'c-green b' : 'c-gray'] : ['  ', ''];
+  const curSeg = isCur ? [focused ? '❯ ' : '› ', focused ? CURSOR : 'c-gray'] : ['  ', ''];
   const ind = '  '.repeat(row.indent || 0);
   const match = S.search && S.search.q && row.key && rowText(row).includes(S.search.q);
   const nameSt = (base) => base + (isCur ? ' b' : '') + (match ? ' u' : '');
@@ -1108,7 +1149,9 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
     X += 2;
     if (c.tallyW) {
       const tally = isDir ? [...st.tally.entries()] : vs && vs.tally ? vs.tally : [];
-      const w = scr.line(X, y, tally.length ? tallySegs(tally, 2) : [['', '']], c.tallyW);
+      // 一页都没判的卷（跳过、没做成）这一列写的是为什么（render::tally_column），不空着
+      const why = !isDir && vs ? whyNothingJudged(vs.state) : null;
+      const w = scr.line(X, y, tally.length ? tallySegs(tally, 2) : why || [['', '']], c.tallyW);
       X += c.tallyW + 2; void w;
     }
     if (c.driverW) {
@@ -1131,7 +1174,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
         tail = [[st.running.name + ' ⋅ ', 'c-fg'], [PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(s.done)}/${st.running.pages}`, 'c-gray']];
       } else if (problemsSegs(st).length) tail = problemsSegs(st);
       else if (st.finished === 0) tail = [['等待中', 'c-gray d']];
-      else if (st.skipped === st.total) tail = [['已跳过：之前转换过，源文件和设置都没变', 'c-gray d']];
+      else if (st.skipped === st.total) tail = [[SKIPPED, 'c-gray d']];
     } else if (vs) {
       const pr = problemsOf(row.v);
       if (vs.state === 'running') {
@@ -1139,23 +1182,25 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
         const [bf, be] = bar(vs.done / row.v.pages, 10);
         tail = [[PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(vs.done)}/${row.v.pages}`, 'c-gray']];
       } else if (vs.state === 'deciding') tail = [['等待确认 ⋅ 已分析，还没写入任何文件', 'c-yellow']];
-      else if (vs.state === 'failed') tail = [['转换失败：' + row.v.plan.volFail, 'c-red']];
-      else if (vs.state === 'skipped') tail = [['已跳过：之前转换过，源文件和设置都没变', 'c-gray d']];
+      // 没做成的卷那一行只有路径与那一句原因（render::failed_volume）：原因原样，不另加前缀
+      else if (vs.state === 'failed') tail = [[row.v.plan.volFail, 'c-red']];
+      else if (vs.state === 'skipped') tail = [[SKIPPED, 'c-gray d']];
       else if (vs.state === 'aborted') tail = [['已中断，未保存', 'c-gray d']];
-      else if (vs.state === 'isolated') tail = [['有坏页', 'c-yellow'], [' ⋅ ', 'c-gray'], [`${pr.failed} 页读不出`, 'c-red']];
+      else if (vs.state === 'isolated') tail = [[isolatedRow(row.v, pr.failed), 'c-yellow']];
       else if (vs.state === 'done' || vs.state === 'trialed') {
+        // 需留意的那几样各报个数，词照 CONTEXT《语义色》与 session::draw::pages 的 says
         const bits = [];
-        if (pr.outlier) bits.push(`与其他页差异大 ${pr.outlier}`);
+        if (pr.outlier) bits.push(`差异大的页 ${pr.outlier}`);
         if (pr.wide) bits.push(`页面超宽 ${pr.wide}`);
         if (pr.gate) bits.push(`尺寸未贴合屏幕 ${pr.gate}`);
-        if (pr.salvage) bits.push(`图片部分损坏 ${pr.salvage}`);
+        if (pr.salvage) bits.push(`残缺 ${pr.salvage}`);
         tail = bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : [];
       } else tail = [['等待中', 'c-gray d']];
     }
     if (tailW > 4) scr.line(X, y, tail, tailW);
   } else if (row.kind === 'note') {
     const n = row.n, bad = n.kind === 'unreach';
-    scr.line(x, y, [curSeg, ['  '.repeat(row.indent), ''], ['  ', ''], [bad ? '✗ ' : '- ', bad ? 'c-red b' : 'c-gray'], [n.label + '  ', bad ? nameSt('c-red') : nameSt('c-fg')], [n.what, 'c-fg'], ['  ' + n.why, 'c-gray d']], iw);
+    scr.line(x, y, [curSeg, ['  '.repeat(row.indent), ''], ['  ', ''], [bad ? '✗ ' : '- ', bad ? 'c-red b' : 'c-gray'], [n.label + '  ', bad ? nameSt('c-red') : nameSt('c-fg')], [n.what, 'c-fg'], ['  ' + noteBrief(n), 'c-gray d']], iw);
   } else if (row.kind === 'foot') {
     scr.line(x, y, [['  ', ''], [row.text, 'c-gray d']], iw);
   }
@@ -1187,7 +1232,7 @@ function drawList(scr, x, y, w, h) {
   const right = r && r.stage !== 'ended' && r.stage !== 'surveying'
     ? (S.follow ? [['[自动滚动]', 'c-green b']] : [['[已暂停自动滚动 ⋅ F 恢复]', 'c-yellow']]) : null;
   const bottomLeft = S.search && S.search.q ? [[`/${S.search.q}`, 'c-yellow i'], [' ⋅ n N 跳到下一个 / 上一个', 'c-gray i']] : null;
-  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title, right, bottomRight: [[`${selPos} of ${sel.length}`, focused ? 'c-green' : 'c-gray']], bottomLeft, scroll: { total: rows.length, from, view: ih } });
+  scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title, right, bottomRight: [[`${selPos} of ${sel.length}`, focused ? FOCUS : 'c-gray']], bottomLeft, scroll: { total: rows.length, from, view: ih } });
   for (let i = 0; i < ih && from + i < rows.length; i++) {
     const row = rows[from + i];
     drawRow(scr, x + 2, y + 1 + i, iw, row, from + i === ci, focused);
@@ -1223,7 +1268,7 @@ function drawPages(scr, x, y, w, h) {
   const crumbs = [['任务', 'c-gray'], [' › ', 'c-gray'], ...(entry.type === 'section' ? [[entry.path, 'c-gray'], [' › ', 'c-gray']] : []), [v.dir.label, 'c-fg'], [' › ', 'c-gray'], [v.name, 'c-fg b']];
   const from = viewport('pages', P.cursor, list.length, ih);
   scr.box(x, y, w, h, { thick: !S.overlay, st: S.overlay ? 'c-gray' : FOCUS, title: crumbs, right: [[P.all ? '[全部页]' : '[需留意的页]', P.all ? 'c-fg b' : 'c-yellow b']],
-    bottomRight: [[list.length ? `${P.cursor + 1} of ${list.length}` : '0 of 0', 'c-green']], bottomLeft: [['a → ' + (P.all ? '只看需留意的页' : '全部页'), 'c-gray i']], scroll: { total: list.length, from, view: ih } });
+    bottomRight: [[list.length ? `${P.cursor + 1} of ${list.length}` : '0 of 0', S.overlay ? 'c-gray' : FOCUS]], bottomLeft: [['a → ' + (P.all ? '只看需留意的页' : '全部页'), 'c-gray i']], scroll: { total: list.length, from, view: ih } });
   if (!judged) {
     // 进得来却没有每页结果的只有跳过的卷（见 whyNotExpandable）：它这一趟一页都没重新分析
     scr.line(x + 2, y + 2, [['这一卷跳过了：', 'c-gray b'], ['之前转换过，源文件和设置都没变，这一趟没有重新分析，所以没有每页结果。', 'c-fg'], ['  h → 回卷列表', 'c-gray']], iw);
@@ -1243,7 +1288,7 @@ function drawPages(scr, x, y, w, h) {
     const yy = y + 3 + i;
     if (yy >= y + h - 1) break;
     const notesW = Math.max(4, iw + 1 - (2 + 2 + C.name + C.size + C.scale + C.verdict + C.reason + C.metric));
-    scr.line(x + 1, yy, [[cur ? '❯ ' : '  ', 'c-green b'], mark, [pad(p.name, C.name), cur ? 'c-fg b' : 'c-fg'], [C.size ? pad(p.size, C.size) : '', p.notes.includes('页面超宽') ? 'c-yellow' : 'c-gray'],
+    scr.line(x + 1, yy, [[cur ? '❯ ' : '  ', CURSOR], mark, [pad(p.name, C.name), cur ? 'c-fg b' : 'c-fg'], [C.size ? pad(p.size, C.size) : '', p.kinds.includes('wide') ? 'c-yellow' : 'c-gray'],
       [C.scale ? pad(p.scale, C.scale) : '', 'c-gray'], [pad(depth + (fs ? '+' + fs : ''), C.verdict), vc], [pad(elide(p.reason, C.reason - 1), C.reason), p.tone === 'bad' ? 'c-red' : 'c-fg'], [C.metric ? pad(p.metric, C.metric) : '', 'c-gray'],
       [elide(p.notes.join(' ⋅ '), notesW), p.tone === 'bad' ? 'c-red' : p.tone === 'warn' ? 'c-yellow' : 'c-fg']], iw + 1);
     scr.hit(x + 1, yy, w - 2, 1, { page: from + i });
@@ -1297,7 +1342,7 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
   const from = viewport('cfg', S.cfg.cursor, CONFIG.length, ih);
   const p = presetOf(S.cfg.applied);
   scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title: [['设置', 'c-fg b'], [' ⋅ 预设会保存这两组', 'c-gray']], right: ro ? [['[已锁定]', 'c-yellow b']] : null,
-    bottomRight: [[`${sel.indexOf(S.cfg.cursor) + 1} of ${sel.length}`, focused ? 'c-green' : 'c-gray']], scroll: { total: CONFIG.length, from, view: ih } });
+    bottomRight: [[`${sel.indexOf(S.cfg.cursor) + 1} of ${sel.length}`, focused ? FOCUS : 'c-gray']], scroll: { total: CONFIG.length, from, view: ih } });
   const labelW = Math.min(18, Math.max(10, iw - 24));
   for (let i = 0; i < ih && from + i < CONFIG.length; i++) {
     const c = CONFIG[from + i], yy = y + 1 + i, cur = from + i === S.cfg.cursor;
@@ -1308,7 +1353,7 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
     const set = c.kind === 'model' || c.kind === 'info' ? c.kind === 'model' : c.value != null;
     const changed = p && (c.kind === 'ring' || c.kind === 'text') && (c.value ?? null) !== (p.says[c.key] ?? null);
     const vst = (set ? 'c-fg' : 'c-gray') + (ro ? ' d' : '') + (cur && focused ? ' b' : '');
-    scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? 'c-green b' : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
+    scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
     scr.hit(x + 1, yy, w - 2, 1, { cfgRow: from + i });
   }
 }
@@ -1319,7 +1364,7 @@ function drawCfgRight(scr, x, y, w, h, ro) {
   if (S.cfg.presets) return drawPresets(scr, x, y, w, h, focused);
   const c = CONFIG[S.cfg.cursor];
   const lines = [];
-  const choice = (i, label, current, extra) => lines.push({ choice: i, segs: [[focused && S.cfg.right === i ? '❯ ' : '  ', 'c-green b'], [current ? '✓ ' : '  ', 'c-green b'], [label, (current ? 'c-fg b' : 'c-fg') + (ro ? ' d' : '')], ...(extra || [])] });
+  const choice = (i, label, current, extra) => lines.push({ choice: i, segs: [[focused && S.cfg.right === i ? '❯ ' : '  ', CURSOR], [current ? '✓ ' : '  ', 'c-green b'], [label, (current ? 'c-fg b' : 'c-fg') + (ro ? ' d' : '')], ...(extra || [])] });
   if (c.kind === 'ring') {
     choice(0, c.unset, c.value == null, [['  未设置：使用默认值，保存预设时不记录', 'c-gray d']]);
     c.options.forEach((o, i) => choice(i + 1, o, c.value === o));
@@ -1377,12 +1422,12 @@ function drawPresets(scr, x, y, w, h, focused) {
   PRESETS.forEach((p, i) => {
     const cur = S.cfg.pcursor === i, applied = S.cfg.applied === p.name;
     const said = Object.entries(p.says).filter(([, v]) => v != null).map(([k]) => CONFIG.find((c) => c.key === k).label);
-    scr.line(x + 2, yy, [[cur && focused ? '❯ ' : '  ', 'c-green b'], [applied ? '✓ ' : '  ', 'c-green b'], [pad(p.name, 8), cur ? 'c-fg b' : 'c-fg'], [said.length ? `包含 ${said.length} 项设置：${said.join('、')}` : '没有设置任何项（全部默认）', 'c-gray'], ...(applied ? [['   使用中', 'c-green']] : [])], iw);
+    scr.line(x + 2, yy, [[cur && focused ? '❯ ' : '  ', CURSOR], [applied ? '✓ ' : '  ', 'c-green b'], [pad(p.name, 8), cur ? 'c-fg b' : 'c-fg'], [said.length ? `包含 ${said.length} 项设置：${said.join('、')}` : '没有设置任何项（全部默认）', 'c-gray'], ...(applied ? [['   使用中', 'c-green']] : [])], iw);
     scr.hit(x + 1, yy, w - 2, 1, { preset: i });
     yy++;
   });
   const addCur = S.cfg.pcursor === PRESETS.length;
-  scr.line(x + 2, yy, [[addCur && focused ? '❯ ' : '  ', 'c-green b'], ['  ', ''], ['＋ 把当前设置保存为预设', addCur ? 'c-green b' : 'c-green']], iw);
+  scr.line(x + 2, yy, [[addCur && focused ? '❯ ' : '  ', CURSOR], ['  ', ''], ['＋ 把当前设置保存为预设', addCur ? 'c-green b' : 'c-green']], iw);
   yy += 2;
   for (const l of wrap('使用预设会替换全部设备和处理选项：预设里没设置的项恢复默认，路径不受影响。保存预设时只记录设置过的项。删除或覆盖预设需要按两次确认。', iw - 2)) scr.line(x + 2, yy++, [[l, 'c-white']], iw);
   if (S.cfg.armedDelete != null) {
@@ -1412,7 +1457,7 @@ function drawHelp(scr) {
   S.overlay.from = Math.max(0, Math.min(S.overlay.from, lines.length - ih));
   const from = S.overlay.from;
   scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['全部按键', 'c-fg b'], [' ⋅ vim 风格 ⋅ 只列当前可用的', 'c-gray']], right: [['? Esc → 关闭', 'c-gray']],
-    bottomRight: [[`${from + 1}–${Math.min(lines.length, from + ih)} of ${lines.length}`, 'c-green']], scroll: { total: lines.length, from, view: ih } });
+    bottomRight: [[`${from + 1}–${Math.min(lines.length, from + ih)} of ${lines.length}`, FOCUS]], scroll: { total: lines.length, from, view: ih } });
   const cw = twoCol ? Math.floor((w - 6) / 2) : w - 4;
   for (let i = 0; i < ih && from + i < lines.length; i++) {
     const [l, r] = lines[from + i];
@@ -1422,7 +1467,7 @@ function drawHelp(scr) {
 }
 function drawNote(scr) {
   const W = scr.c, H = scr.r, n = S.overlay.note;
-  const w = Math.min(W - 8, 76), body = wrap(n.why, w - 6);
+  const w = Math.min(W - 8, 76), body = wrap(noteText(n), w - 6);
   const h = Math.min(H - 4, body.length + 6), x = Math.floor((W - w) / 2), y = Math.floor((H - h) / 2);
   const bad = n.kind === 'unreach';
   scr.box(x, y, w, h, { thick: true, st: bad ? 'c-red' : FOCUS, title: [[n.label, bad ? 'c-red b' : 'c-fg b']], bottomRight: [['Esc → 关闭', 'c-gray']] });
@@ -1435,10 +1480,10 @@ function drawCompletions(scr) {
   const W = scr.c, H = scr.r;
   const n = inp.cands.length, vis = Math.min(n, 8), w = Math.min(56, W - 2), h = vis + 2, x = 1, y = H - 1 - h;
   const from = viewport('cands', inp.ci, n, vis);
-  scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['可选项', 'c-fg b'], [` ⋅ ${n} 项`, 'c-gray']], bottomRight: [[`${inp.ci + 1} of ${n}`, 'c-green']], scroll: { total: n, from, view: vis } });
+  scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['可选项', 'c-fg b'], [` ⋅ ${n} 项`, 'c-gray']], bottomRight: [[`${inp.ci + 1} of ${n}`, FOCUS]], scroll: { total: n, from, view: vis } });
   for (let i = 0; i < vis && from + i < n; i++) {
     const c = inp.cands[from + i], cur = from + i === inp.ci;
-    scr.line(x + 2, y + 1 + i, [[cur ? '❯ ' : '  ', 'c-green b'], [c.name + (c.dir ? '/' : ''), (c.dir ? 'c-blue' : 'c-fg') + (cur ? ' b' : '')], [c.dir ? '' : '  压缩包', 'c-gray d']], w - 4);
+    scr.line(x + 2, y + 1 + i, [[cur ? '❯ ' : '  ', CURSOR], [c.name + (c.dir ? '/' : ''), (c.dir ? 'c-blue' : 'c-fg') + (cur ? ' b' : '')], [c.dir ? '' : '  压缩包', 'c-gray d']], w - 4);
   }
 }
 function drawTooSmall(scr) {
@@ -1873,7 +1918,7 @@ function chips(groupId, items, onPick, isOn) {
 }
 function syncChips() { document.querySelectorAll('.chip').forEach((b) => b._isOn && b.setAttribute('aria-pressed', String(!!b._isOn()))); }
 chips('g-scene', SCENES, scene, (v) => S.scene === v);
-chips('g-size', [['120x36', '120×36'], ['80x24', '80×24'], ['56x14', '56×14 太小']], (v) => { S.size = v.split('x').map(Number); S.from = {}; fitFont(); }, (v) => S.size.join('x') === v);
+chips('g-size', [['120x36', '120×36'], ['80x24', '80×24'], ['56x14', '56×14 太小']], (v) => setSize(...v.split('x').map(Number)), (v) => S.size.join('x') === v);
 chips('g-pal', [['mocha', 'Catppuccin Mocha'], ['latte', 'Catppuccin Latte']], (v) => { S.pal = v; document.getElementById('win').dataset.pal = v; }, (v) => S.pal === v);
 chips('g-sim', [['play', '⏯ 播放 / 暂停'], ['1', '1×'], ['4', '4×'], ['16', '16×']], (v) => { if (v === 'play') S.playing = !S.playing; else S.speed = Number(v); }, (v) => (v === 'play' ? S.playing : S.speed === Number(v)));
 
@@ -1949,7 +1994,17 @@ function fitFont() {
 }
 window.addEventListener('resize', () => { fitFont(); });
 
-// ───── 主循环 ─────
+// ───── 切尺寸、画一帧、主循环 ─────
+// 切尺寸：尺寸那几枚 chip 与设计稿旁边的 render.js 都走这一处
+function setSize(cols, rows) { S.size = [cols, rows]; S.from = {}; fitFont(); }
+// 画一帧：整屏缓冲、DOM、侧栏三样。主循环按节拍调它，render.js 按需调它（那里主循环不跑）
+function render() {
+  const scr = drawAll();
+  paint(scr, term, CW);
+  S.lastScr = scr;
+  updateSide();
+  return scr;
+}
 let lastT = performance.now(), lastPaint = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
@@ -1959,12 +2014,7 @@ function frame(now) {
     if (before !== S.run.stage && S.run.stage === 'ended') toast([['已结束 ', 'c-green b'], ['按 ]d 在问题之间跳转，o 返回路径列表', 'c-fg']], 5000);
   }
   if (S.pending && now - S.pendingAt > 900) S.pending = '';
-  if (now - lastPaint > 45) {
-    const scr = drawAll();
-    paint(scr, term, CW);
-    S.lastScr = scr; lastPaint = now;
-    updateSide();
-  }
+  if (now - lastPaint > 45) { render(); lastPaint = now; }
   requestAnimationFrame(frame);
 }
 (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {

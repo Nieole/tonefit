@@ -15,3 +15,6 @@ __pycache__/
 
 # macOS Finder 写下的目录元数据：哪一层都不入库
 .DS_Store
+
+# 设计稿旁边那个 node 脚本装的伪 DOM：npm install 一次就生成，不入库
+node_modules/

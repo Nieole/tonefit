@@ -1,0 +1,12 @@
+{
+  "name": "session-redesign-design",
+  "private": true,
+  "description": "在伪 DOM 里跑设计稿自己的脚本：先画一遍看零不零报错，02 号票在它上面长出导出",
+  "type": "commonjs",
+  "scripts": {
+    "render": "node render.js"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}
