@@ -344,7 +344,18 @@ pub struct Live {
     walked: u64,
     /// 已经收摊的卷数（跑完的与没做成的都算）。总览块抬头那个「第几卷」用它。
     finished: usize,
-    /// 开工那一刻。剩余时间由它与 [`walked`](Self::walked) 算出。
+    /// **此刻**（`CONTEXT.md` 的《会话》）：会话层这一帧的时钟读数。
+    ///
+    /// 本模块**除造它那一刻外不问系统时钟**：开工那一刻、等人那一截的起止、已用与预计，
+    /// 读的都是它。真会话每帧把单调时钟读一次交进来（[`tick`](Self::tick)，
+    /// 见 `super::terminal::drive`），用例给定值——屏上那几个数因此是定值、不随机器快慢变，
+    /// 而一帧之内几处读到的是同一个时刻（停车场 Q118 那一格的差正是各读各的表读出来的）。
+    ///
+    /// 造它那一刻读的那一次是它的初值：下一帧到来之前计算线程就可能报到，
+    /// 那几条事件要有一个时刻可记（停车场 Q754）。
+    now: Instant,
+    /// 开工那一刻（[此刻](Self::now)在开工那一条上的读数）。剩余时间由它与
+    /// [`walked`](Self::walked) 算出。
     started: Instant,
     /// 当前卷。卷与卷之间是 `None`。
     volume: Option<Walking>,
@@ -385,7 +396,11 @@ pub struct Live {
 
 impl Live {
     /// 开一趟：抬头那几件事从 [`Request`] 上就答得出，因此报告当场就有一份。
+    ///
+    /// 系统时钟只在这里读一次，作头一个[此刻](Self::now)；此后每一帧由会话层给
+    /// （[`tick`](Self::tick)）。
     pub fn new(request: &Request, resumes: Resuming) -> Self {
+        let now = Instant::now();
         Self {
             ran_as: request.mode,
             resumes,
@@ -423,7 +438,8 @@ impl Live {
             unreachable_places: Vec::new(),
             walked: 0,
             finished: 0,
-            started: Instant::now(),
+            now,
+            started: now,
             volume: None,
             failed_pages: Vec::new(),
             in_flight_failures: 0,
@@ -476,7 +492,26 @@ impl Live {
         self.volumes = volumes;
         self.steps = steps;
         // 表从这里开始掐：开工之前那一段是清点与那几道检查，剩余时间算不进去。
-        self.started = Instant::now();
+        self.started = self.now;
+    }
+
+    /// **这一帧的此刻**（`session-redesign/04`，spec《时钟》）：会话层每帧读一次单调时钟
+    /// 交进来，此后到下一帧为止本模块记的、算的时刻都是它（见 [`Self::now`]）。
+    ///
+    /// 用例给定值——夹具要摆出「开工了 21 秒」，就在开工那一条之前给一个时刻、
+    /// 画之前再给那个时刻加 21 秒（`session-redesign/05`）。**开工那一条之前那一次不能省**：
+    /// 没给过的话开工那一刻记的是造它那一刻读的系统时钟，「已用」于是又差了造它到给时刻
+    /// 之间那几微秒——随机器快慢变、而且只在秒的进位上偶尔露面。用例因此一律从
+    /// `fixture::live_at` 起：造与头一次给合成一步，漏不掉。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(
+            dead_code,
+            reason = "屏外只有本模块的用例读它，而那条循环在 tui 特性后面"
+        )
+    )]
+    pub fn tick(&mut self, now: Instant) {
+        self.now = now;
     }
 
     /// 收下开工那一条带的**清点产出**（`session-redesign/03`）：卷清单整份留下、每一卷立成
@@ -565,7 +600,7 @@ impl Live {
             // （`super::run::Gate`），没有人在等。这一格照开的话它再也关不上——
             // 关它的只有确认点上的答话，而往下不会再有一次，屏上那两个数于是从此不动。
             if self.stops_to_ask() {
-                self.deliberating_since = Some(Instant::now());
+                self.deliberating_since = Some(self.now);
             }
         }
     }
@@ -818,20 +853,21 @@ impl Live {
     /// （停在确认点上被立即停止的那一趟走的是这一条，没有人会来答它）。
     fn stop_deliberating(&mut self) {
         if let Some(since) = self.deliberating_since.take() {
-            self.deliberated = self.deliberated.saturating_add(since.elapsed());
+            self.deliberated = self
+                .deliberated
+                .saturating_add(self.now.saturating_duration_since(since));
         }
     }
 
-    /// 至今为止等人等掉的那一截，**含正等着的这一次**。
+    /// 至今为止等人等掉的那一截，**含正等着的这一次**（到[此刻](Self::now)为止）。
     ///
-    /// **`now` 由调用方给**，本函数一次表都不读：减掉这一截的那一处
-    /// （[`overall`](Self::overall)）要拿同一个时刻算两个数，各读各的表就会
-    /// 让减出来的那个数小一格——两次读表之间被调度器抢走多久，就少多久
-    /// （停车场 Q118 实测到 299.9999981s < 300s）。
-    fn deliberated(&self, now: Instant) -> Duration {
-        let waiting = self
-            .deliberating_since
-            .map_or(Duration::ZERO, |since| now.saturating_duration_since(since));
+    /// 减掉这一截的那一处（[`overall`](Self::overall)）拿的是同一个此刻：从前这里各读各的表，
+    /// 减数读得晚一点、因而多算一点，减出来的那个数就小一格——两次读表之间被调度器
+    /// 抢走多久，就少多久（停车场 Q118 实测到 299.9999981s < 300s）。
+    fn deliberated(&self) -> Duration {
+        let waiting = self.deliberating_since.map_or(Duration::ZERO, |since| {
+            self.now.saturating_duration_since(since)
+        });
         self.deliberated.saturating_add(waiting)
     }
 
@@ -1085,11 +1121,11 @@ impl Live {
             // 算进来的话「剩多久」说的就成了「用户拿主意还要多久」。
             // 结束之后换成库交出来的那一个——它减的是同一件事，只是准到纳秒。
             //
-            // **一次读表算两个数**：被减数与减数都从这一个 `now` 起算。各读各的表时，
-            // 减数读得晚一点、因而多算一点，减出来的那个数就小一格（停车场 Q118）。
-            let now = Instant::now();
-            now.saturating_duration_since(self.started)
-                .saturating_sub(self.deliberated(now))
+            // 被减数与减数都从同一个[此刻](Self::now)起算（停车场 Q118 那一格的差
+            // 出自各读各的表，见 [`deliberated`](Self::deliberated)）。
+            self.now
+                .saturating_duration_since(self.started)
+                .saturating_sub(self.deliberated())
         };
         Overall {
             volume: self
@@ -1109,14 +1145,6 @@ impl Live {
     /// 当前卷那一条。卷与卷之间没有。
     pub fn walking(&self) -> Option<&Walking> {
         self.volume.as_ref()
-    }
-
-    /// 把开工那一刻往回拨一段。**只给用例用**：屏幕快照里有「已用」与「剩」两个数，
-    /// 不拨回去它们就随机器快慢而变，快照因此每跑一次都不一样
-    /// （与黄金快照同一条规矩，见 `tonefit::Report::elapsed`）。
-    #[cfg(test)]
-    pub fn rewind(&mut self, by: Duration) {
-        self.started = self.started.checked_sub(by).unwrap_or(self.started);
     }
 
     /// **出现的当场**收下的那些坏页。
@@ -1202,7 +1230,7 @@ pub(crate) mod fixture {
     //! （`super::super::run`、`super::super::terminal`）共用它。
 
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use tonefit::{
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
@@ -1211,6 +1239,8 @@ pub(crate) mod fixture {
         Scaling, Size, SurveyedVolume, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
         WhiteAlignment,
     };
+
+    use super::{Live, Resuming};
 
     /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
     /// 建出目录，返回卷根。
@@ -1264,6 +1294,17 @@ pub(crate) mod fixture {
             metadata: true,
             progress: None,
         }
+    }
+
+    /// 一趟**此刻在 `epoch`** 的会话状态：造出来当场给一次「此刻」（[`Live::tick`]）。
+    ///
+    /// 给定「此刻」的用例一律从它起。开工那一条之前那一次 `tick` 不能省（见 `Live::tick`），
+    /// 而漏掉它没有一张快照会红——只在秒的进位上偶尔差一格。这里把「造」与「给」
+    /// 合成一步，漏不掉。`epoch` 取什么都行，往后的时刻都从它往上加。
+    pub fn live_at(epoch: Instant, mode: RunMode, resumes: Resuming) -> Live {
+        let mut live = Live::new(&request(mode), resumes);
+        live.tick(epoch);
+        live
     }
 
     /// 一卷做了这么多秒。
@@ -2189,7 +2230,8 @@ mod tests {
     /// 跑完之后「已用」就定住了：那个数是库交出来的，不是会话接着读自己那块表。
     #[test]
     fn the_elapsed_time_stops_moving_once_the_run_is_over() {
-        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        let epoch = Instant::now();
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
         live.run_started(1, 10);
         let mut report = live.report().clone();
         report.elapsed = Duration::from_secs(42);
@@ -2197,7 +2239,8 @@ mod tests {
 
         assert_eq!(live.overall().elapsed, Duration::from_secs(42));
         assert_eq!(live.overall().left, None, "完了就没有「还剩多久」可说");
-        // 再问一次仍是同一个数——会话没有接着读自己那块表。
+        // 跑完坐着不动一小时再问，仍是同一个数——会话没有接着读自己那块表。
+        live.tick(epoch + Duration::from_secs(3600));
         assert_eq!(live.overall().elapsed, Duration::from_secs(42));
     }
 
@@ -2283,47 +2326,95 @@ mod tests {
         assert!(live.summarized().is_some(), "另一遍开工把它抹掉了");
     }
 
+    /// **给定「此刻」，已用与预计就是定值**（`session-redesign/04`，spec《时钟》）。
+    ///
+    /// 算这两个数的地方不再直接问系统时钟：真会话每帧把单调时钟读一次交进来
+    /// （[`Live::tick`]），用例给定值。同一份攒下的东西于是逐次算出**同一个数**，
+    /// 断言不带余量——从前靠把开工那一刻往回拨一段来近似，只断得出「不少于」。
+    ///
+    /// 表从开工那一条掐起：开工之前那一段（清点与那几道检查）不进已用。
+    #[test]
+    fn a_given_now_makes_elapsed_and_eta_the_same_every_time_they_are_asked() {
+        let epoch = Instant::now();
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
+        live.run_started(1, 1000);
+        live.volume_started(Path::new("库/卷一"), 1000);
+        for _ in 0..250 {
+            live.stepped();
+        }
+        live.tick(epoch + Duration::from_secs(300));
+
+        let first = live.overall();
+        assert_eq!(first.elapsed, Duration::from_secs(300));
+        assert_eq!(
+            first.left,
+            Some(Duration::from_secs(900)),
+            "250 步用了 300s，剩下 750 步该是 900s"
+        );
+        assert_eq!(live.overall(), first, "同一个「此刻」问两次，答案变了");
+    }
+
+    /// **表从开工那一条掐起**：开工之前那一段（清点与那几道检查）不进已用，
+    /// 而开工那一刻记的是那一条到达时的「此刻」。
+    #[test]
+    fn the_clock_starts_at_the_run_started_event_not_at_construction() {
+        let epoch = Instant::now();
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
+        live.tick(epoch + Duration::from_secs(60));
+        live.run_started(1, 1000);
+        live.tick(epoch + Duration::from_secs(90));
+        assert_eq!(live.overall().elapsed, Duration::from_secs(30));
+    }
+
     /// **等待确认的那几分钟谁都不算**（停车场 Q41，`CONTEXT.md` 的《会话》：
     /// 确认点上等人的那段时间不算进计时）。
     ///
     /// 不减的话，屏上那两个数会在人看着报告拿主意的那几分钟里一路往上涨，
     /// 而那几分钟里库一步都没走——「剩多久」说的就成了「用户拿主意还要多久」。
     ///
-    /// 断言不带余量：把开工那一刻往回拨一段，「已用」就该是那一段；等一小会儿再问，
-    /// 它**一格都不该多**（拨回去的那一段远大于这中间的调度抖动）。
+    /// 断言逐格相等：「此刻」是给定的（`session-redesign/04`），等人那一截从确认点那一条
+    /// 起算、到答话那一条止，两头读的都是给定的那个时刻，「已用」因此该是**恰好**那几段之和。
     ///
     /// **不等人的那一趟一格不减**：执行那一趟同样走到确认点，但观察者当场答字就返回——
     /// 那一段是库自己的开销，本来就该算进这一趟。
     #[test]
     fn the_minutes_spent_deciding_are_charged_to_nobody() {
-        /// 往回拨这么久。够长，调度抖动淹不掉它。
+        /// 确认点之前跑了这么久。
         const RAN_FOR: Duration = Duration::from_secs(300);
+        /// 人在确认点上看了这么久的报告。
+        const DECIDED_FOR: Duration = Duration::from_secs(120);
+        let epoch = Instant::now();
         let summarized = fixture::processed_volume("卷一", None);
 
-        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::Waits);
         live.run_started(1, 1000);
         live.volume_started(Path::new("库/卷一"), 1000);
         live.stepped();
-        live.rewind(RAN_FOR);
         // 确认点：等人那一截从这里起算。
+        live.tick(epoch + RAN_FOR);
         live.pass_started(Pass::Second, Some(&summarized));
-        let waiting = live.overall().elapsed;
-        assert!(waiting >= RAN_FOR, "等之前那一段被减掉了：{waiting:?}");
+        assert_eq!(live.overall().elapsed, RAN_FOR, "等之前那一段被减掉了");
 
         // 人在看报告：屏上那个数一格都不该多。
-        std::thread::yield_now();
-        let still = live.overall().elapsed;
-        assert!(
-            still.saturating_sub(waiting) < Duration::from_secs(1),
-            "等人的那一截算进了「已用」：{waiting:?} → {still:?}"
+        live.tick(epoch + RAN_FOR + DECIDED_FOR);
+        assert_eq!(
+            live.overall().elapsed,
+            RAN_FOR,
+            "等人的那一截算进了「已用」"
         );
 
         // 答完话接着跑：等掉的那一截留在账上，往后的时间照旧算。
         live.decide(Instruction::Continue, Reach::ThisVolume);
-        let resumed = live.overall().elapsed;
-        assert!(
-            resumed >= RAN_FOR && resumed.saturating_sub(waiting) < Duration::from_secs(1),
-            "答完话之后那一截又被算回来了：{resumed:?}"
+        assert_eq!(
+            live.overall().elapsed,
+            RAN_FOR,
+            "答话那一刻「已用」跳了一格"
+        );
+        live.tick(epoch + RAN_FOR + DECIDED_FOR + Duration::from_secs(30));
+        assert_eq!(
+            live.overall().elapsed,
+            RAN_FOR + Duration::from_secs(30),
+            "答完话之后那一截又被算回来了"
         );
 
         // 下一卷的确认点：照旧等人，那一格照旧开——一趟里每一卷各等一次
@@ -2334,10 +2425,10 @@ mod tests {
             live.deliberating_since.is_some(),
             "第二卷的确认点上没开始等人"
         );
-        let waiting = live.overall().elapsed;
-        std::thread::yield_now();
-        assert!(
-            live.overall().elapsed.saturating_sub(waiting) < Duration::from_secs(1),
+        live.tick(epoch + RAN_FOR + DECIDED_FOR + Duration::from_secs(90));
+        assert_eq!(
+            live.overall().elapsed,
+            RAN_FOR + Duration::from_secs(30),
             "第二卷的确认点上等人的那一截被算进了「已用」"
         );
 
@@ -2351,15 +2442,23 @@ mod tests {
             live.deliberating_since.is_none(),
             "答过「后面的卷都写出」，等人那一格又开了——没有人在等，而它再也关不上"
         );
+        live.tick(epoch + RAN_FOR + DECIDED_FOR + Duration::from_secs(100));
+        assert_eq!(
+            live.overall().elapsed,
+            RAN_FOR + Duration::from_secs(40),
+            "答过「后面的卷都写出」之后表停了"
+        );
 
         // 不等人的那一趟：确认点照样报，但那一格不开——观察者当场答字就返回。
-        let mut going = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        let mut going = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
         going.run_started(1, 1000);
         going.volume_started(Path::new("库/卷一"), 1000);
-        going.rewind(RAN_FOR);
+        going.tick(epoch + RAN_FOR);
         going.pass_started(Pass::Second, Some(&summarized));
-        assert!(
-            going.overall().elapsed >= RAN_FOR,
+        going.tick(epoch + RAN_FOR + DECIDED_FOR);
+        assert_eq!(
+            going.overall().elapsed,
+            RAN_FOR + DECIDED_FOR,
             "不等人的那一趟也开始减了"
         );
     }

@@ -506,12 +506,12 @@ pub(super) fn expandable(live: Option<&Live>) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
+    use std::time::Instant;
 
     use super::super::overview::OVERVIEW_HEIGHT;
     use super::super::probe::{
-        a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch, opened_snapshot,
-        reversed_row, same_screen, screen, snapshot_of, tight,
+        RAN_FOR, a_run_in_flight, every_kind_of_volume, main_snapshot, only_branch,
+        opened_snapshot, reversed_row, same_screen, screen, snapshot_of, tight,
     };
     use super::*;
     use crate::session::live::{Resuming, fixture};
@@ -548,7 +548,6 @@ mod tests {
         );
         let report = live.report().clone();
         live.returned(Ok(report));
-        live.rewind(Duration::from_secs(300));
         live
     }
 
@@ -580,7 +579,6 @@ mod tests {
             reason: "列出 库/权限没配好的作品 这一层: Permission denied (os error 13)".to_owned(),
         }];
         live.returned(Ok(report));
-        live.rewind(Duration::from_secs(300));
         live
     }
 
@@ -1527,13 +1525,14 @@ mod tests {
     #[test]
     fn the_volume_waiting_at_the_decision_point_gets_a_row_of_its_own() {
         let summarized = fixture::processed_volume("棋魂 08", None);
-        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        let epoch = Instant::now();
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::Waits);
         live.run_started(2, 2000);
         live.volume_started(Path::new("库/棋魂 07"), 1000);
         live.volume_finished(&fixture::skipped_volume("棋魂 07", 184));
         live.volume_started(Path::new("库/棋魂 08"), 1000);
+        live.tick(epoch + RAN_FOR);
         live.pass_started(tonefit::Pass::Second, Some(&summarized));
-        live.rewind(Duration::from_secs(300));
 
         same_screen(
             &opened_snapshot(&live, 96, 18),
