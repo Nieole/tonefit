@@ -964,7 +964,10 @@ fn non_volume_tail(report: &Report) -> String {
 ///
 /// 逐个变体都列出来、不留 `_`：[`NonVolumeReason`] 不是非穷尽的，
 /// 多一类该怎么说是个要当场拿的主意（同一条规矩见 [`outcome`]）。
-fn non_volume_reason(reason: &NonVolumeReason) -> String {
+///
+/// **会话那一侧的夹具也读它**（`crate::session::scene`）：设计稿的场景数据里非漫画文件的原因
+/// 是渲染后的整句，反查回哪一类靠的是把三类各说一遍再比——措辞因此仍只有这一处。
+pub(crate) fn non_volume_reason(reason: &NonVolumeReason) -> String {
     match reason {
         NonVolumeReason::NeitherPageNorArchive => {
             "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。\

@@ -29,9 +29,15 @@ impl Score {
         self.0
     }
 
-    /// 直接造一个画质分值。只给测试用——生产路径上画质分只能由 [`score`] 算出来。
-    #[cfg(test)]
-    pub(crate) fn from_value(value: f32) -> Self {
+    /// 直接造一个画质分值。**只给夹具用**——生产路径上画质分只能由 [`score`] 算出来，
+    /// 生产路径一处都不调它（库自己的用例也拿它拼判定与整卷统一灰阶的夹具）。
+    ///
+    /// 它公开，理由与 [`Salvage::from_share`](crate::Salvage::from_share) 同一条：报告上的东西
+    /// 要拼得出来。会话那一侧的夹具按设计稿的场景数据摆报告（`session-redesign/05`），
+    /// 逐页那一格印的正是判成那一档的画质分（`Field::VerdictScore`，停车场 Q725）——
+    /// 那个数只有从这里给得进去；从前它锁在 `#[cfg(test)]` 里，而二进制那一侧的用例
+    /// 编的是不带 `test` 的库。
+    pub fn from_value(value: f32) -> Self {
         Score(value)
     }
 }
