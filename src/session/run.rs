@@ -123,6 +123,20 @@ impl Running {
         self.thread = Some(std::thread::spawn(move || tonefit::run(&request)));
     }
 
+    /// 用例里**摆着一份攒好的那一趟、不起线程**：场景夹具回放出来的那一份（`super::scene`）
+    /// 就这么交给终端层那一支，按停止与答话落到空处（没有线程可收、没有闸可答），
+    /// 而「此刻有哪几卷、走到哪儿了」照样读得到（`session-redesign/06`）。
+    #[cfg(test)]
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有那条循环的用例读它，而它在 tui 特性后面")
+    )]
+    pub(super) fn holding(live: Live) -> Self {
+        let mut running = Self::default();
+        running.live = Some(Arc::new(Mutex::new(live)));
+        running
+    }
+
     /// **按停止**：把这一趟的闩推到 `level`（ADR 0013）。
     ///
     /// 按到哪一级由状态机记着（`super::state::Session::stopping`），这里只把那个字

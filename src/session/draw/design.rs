@@ -46,6 +46,15 @@ pub(in crate::session) struct Expected {
 }
 
 impl Expected {
+    /// 同一份快照在 `NO_COLOR` 下该是什么样：每一格的前景色退回终端默认色，字与修饰一格不动
+    /// （`CONTEXT.md` 的《语义色》）。新界面那条不上色的用例拿它比（`session-redesign/06`）。
+    pub(in crate::session) fn without_colour(mut self) -> Self {
+        for glyph in self.rows.iter_mut().flatten() {
+            glyph.fg = Color::Reset;
+        }
+        self
+    }
+
     /// **字网格**：一行一屏行，只有字、不带样式。场景夹具拿它核「报告那一处说出来的字
     /// 在设计快照上找得到」（`session-redesign/05`）——那一问只关字，不关颜色。
     pub(in crate::session) fn lines(&self) -> Vec<String> {
@@ -515,9 +524,24 @@ pub(super) fn same_cells(actual: &Buffer, expected: &Expected) -> Result<(), Mis
 }
 
 /// 逐格比，对不上就带着两张网格恐慌（用例用它）。
-pub(super) fn assert_same_cells(actual: &Buffer, expected: &Expected) {
+pub(in crate::session) fn assert_same_cells(actual: &Buffer, expected: &Expected) {
     if let Err(mismatch) = same_cells(actual, expected) {
         panic!("{mismatch}");
+    }
+}
+
+/// **一个背景色都不设**（停车场 Q737；spec《颜色》）：逐格比对比不到背景色——设计稿表达不了它，
+/// 快照上没有那一维——新画法的每一条快照与序列用例另问这一句：整屏每一格的背景都是终端默认色。
+pub(in crate::session) fn assert_no_background(buffer: &Buffer) {
+    let width = usize::from(buffer.area.width).max(1);
+    for (i, cell) in buffer.content().iter().enumerate() {
+        assert_eq!(
+            cell.bg,
+            Color::Reset,
+            "第 {} 行第 {} 格设了背景色",
+            i / width,
+            i % width
+        );
     }
 }
 

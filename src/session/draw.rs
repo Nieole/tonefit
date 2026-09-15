@@ -77,7 +77,8 @@ pub(super) mod keys;
 mod overlay;
 mod overview;
 mod pages;
-mod paint;
+/// `pub(super)`：新界面的画法（`super::shell`）也从这一处要颜色——本仓库唯一写得出颜色名的地方。
+pub(super) mod paint;
 mod picker;
 mod report;
 mod table;

@@ -724,6 +724,23 @@ impl Live {
         self.ended
     }
 
+    /// **清点中**：线程起了，开工那一条还没到（`CONTEXT.md` 的《总览》：清点中不报卷数）。
+    /// 开工那一条报的卷数不会是零——清点出零卷那一趟在它之前就拒绝了。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "只有新界面的按键表读它，切换在 session-redesign/15"
+        )
+    )]
+    #[cfg_attr(
+        all(test, not(feature = "tui")),
+        allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
+    )]
+    pub fn surveying(&self) -> bool {
+        self.volumes == 0 && !self.ended
+    }
+
     /// 这一趟**没做成**时那句话，做成了就是 `None`。
     pub fn undone(&self) -> Option<&str> {
         self.undone.as_deref()

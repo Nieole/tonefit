@@ -46,8 +46,10 @@ use tonefit::{
 };
 
 use super::complete;
+use super::home::Home;
 use super::live::{Branch, Live, Reach, Volume};
 use super::tone::Tone;
+use super::view::Views;
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -427,10 +429,11 @@ pub enum Field {
     IoMode,
     // 路径与输出
     Out,
-    /// 已经打进来的第 n 个卷。
-    Volume(usize),
-    /// 再打一个卷进来的那一行。
-    AddVolume,
+    /// 已经打进来的第 n 条**处理路径**（`CONTEXT.md` 的《处理路径》；停车场 Q711）。
+    Path(usize),
+    /// 再添一条处理路径的那一行。旧界面上的文案仍是「＋ 再打一个卷进来」，随那一副在
+    /// `session-redesign/15` 一起退场；新界面上是「＋ 添加路径」（`super::shell`）。
+    AddPath,
 }
 
 /// 设备设置的三项，次序就是屏上的次序（`p1-session/07` 的分法）。
@@ -468,8 +471,8 @@ pub enum Shape {
     Path,
     /// 左右键在取值环上转。
     Cycle,
-    /// 卷行：勾上／勾掉，另有一个删掉它的键。
-    Volume,
+    /// 处理路径那一行：勾上／勾掉，另有一个删掉它的键。
+    Named,
 }
 
 impl Field {
@@ -492,7 +495,7 @@ impl Field {
             | Field::Envelope
             | Field::CacheBudget
             | Field::IoMode => Layer::Taste,
-            Field::Out | Field::Volume(_) | Field::AddVolume => Layer::Scope,
+            Field::Out | Field::Path(_) | Field::AddPath => Layer::Scope,
         }
     }
 
@@ -515,8 +518,8 @@ impl Field {
             Field::CacheBudget => "内存上限",
             Field::IoMode => "读盘方式",
             Field::Out => "输出目录",
-            Field::Volume(_) => "卷",
-            Field::AddVolume => "＋ 再打一个卷进来",
+            Field::Path(_) => "卷",
+            Field::AddPath => "＋ 再打一个卷进来",
         }
     }
 
@@ -550,7 +553,7 @@ impl Field {
             | Field::SplitThreshold
             | Field::WhiteAlignLimit
             | Field::CacheBudget => Shape::Text,
-            Field::Out | Field::AddVolume => Shape::Path,
+            Field::Out | Field::AddPath => Shape::Path,
             Field::Profile
             | Field::Fit
             | Field::Crop
@@ -561,7 +564,7 @@ impl Field {
             | Field::Dither
             | Field::Envelope
             | Field::IoMode => Shape::Cycle,
-            Field::Volume(_) => Shape::Volume,
+            Field::Path(_) => Shape::Named,
         }
     }
 }
@@ -574,20 +577,50 @@ impl Field {
 pub struct ScopeLayer {
     /// 输出目录。每个卷在它下面得到一份同名副本。
     pub out: Option<PathBuf>,
-    /// 点名的那些卷，按打进来的次序。
-    pub volumes: Vec<Picked>,
+    /// 点名的那些**处理路径**，按打进来的次序。
+    pub paths: Vec<NamedPath>,
 }
 
-/// 路径与输出里点名的一个卷，连同它这一趟算不算数。
+/// 路径与输出里点名的一条**处理路径 (Named path)**，连同它这一趟算不算数
+/// （`CONTEXT.md` 的《处理路径》；停车场 Q711）。
 ///
-/// **不叫 `Volume`。** `CONTEXT.md` 的**卷**是一次处理调用的作用域（库里 `source::Volume`
-/// 是打开了的那一个，带着成员表与读取端）；这里装的是「用户点了它」这件事——
+/// **不叫「卷」。** 它不是卷：一个归档或一个目录，发现把它展开成一批卷（ADR 0014），
+/// 一条底下可以是几个系列、几百卷。这里装的是「用户点了它」这件事——
 /// 一条路径加一个勾，连点不点得开都还没问过。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Picked {
+pub struct NamedPath {
     pub path: PathBuf,
     /// 勾着的才进这一趟。**打错一条勾掉就是了，不必把整份重打一遍**（spec 的 story 16）。
     pub on: bool,
+}
+
+impl NamedPath {
+    /// 文件夹还是压缩包：**按扩展名认，不碰盘**，与发现认得的归档扩展名同一份
+    /// （`tonefit::is_archive`；spec《卷列表》开跑之前）。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
+    )]
+    pub fn is_archive(&self) -> bool {
+        tonefit::is_archive(&self.path)
+    }
+
+    /// 屏上怎么叫它那一种。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
+    )]
+    #[cfg_attr(
+        all(test, not(feature = "tui")),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn kind(&self) -> &'static str {
+        if self.is_archive() {
+            "压缩包"
+        } else {
+            "文件夹"
+        }
+    }
 }
 
 /// **这一趟走到哪个阶段了**——会话两维中的**第一维**（ADR 0017）。
@@ -1093,7 +1126,7 @@ impl Values {
 /// 列的是**进这一栏那一刻**盘上有的（`crate::session::terminal::press` 读的，见 [`Action::Pick`]）：
 /// 本模块碰不到盘。这与 [`Expansion::volumes`] 是同一种「进来那一刻记下的数」。
 ///
-/// 末尾那一行照路径与输出「＋ 再打一个卷进来」的样子（[`Field::AddVolume`]）：
+/// 末尾那一行照路径与输出「＋ 再打一个卷进来」的样子（[`Field::AddPath`]）：
 /// **列一份清单与往清单里添一条是同一栏上的两件事**，分成两个键就要多记一个键。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picker {
@@ -1403,6 +1436,13 @@ pub struct Session {
     follow: Follow,
     /// 上一个动作要说的[那句话](Notice)（多半是「这个值不对」）。下一次按键就抹掉。
     notice: Option<Notice>,
+    /// **新界面**的界面状态：视图、两个视图各自的光标与块、屏底那两样临时的东西
+    /// （[`super::view`]，ADR 0019）。旧界面读的是上面那几格，两副并存到
+    /// `session-redesign/15` 切换。
+    pub views: Views,
+    /// **家目录**：屏上的路径把它缩写成 `~`（[`super::home`]）。由会话入口问一次摆进来，
+    /// 问不出来就不缩写。
+    pub home: Home,
 }
 
 /// **屏底那一句**：一句话，连同**它有多重**。
@@ -1486,15 +1526,23 @@ impl Session {
             focus: Focus::Config,
             follow: Follow::Latest,
             notice: None,
+            views: Views::default(),
+            home: Home::unknown(),
         }
+    }
+
+    /// 用例把阶段直接摆到某一档上（新界面的按键表按阶段查，四档各问一遍）。
+    #[cfg(test)]
+    pub(super) fn set_stage(&mut self, stage: Stage) {
+        self.stage = stage;
     }
 
     /// 左栏自上而下的那些行。**卷有几个就有几行**，因此每次现算。
     pub fn rows(&self) -> Vec<Field> {
         let mut rows: Vec<Field> = DEVICE_FIELDS.into_iter().chain(TASTE_FIELDS).collect();
         rows.push(Field::Out);
-        rows.extend((0..self.scope.volumes.len()).map(Field::Volume));
-        rows.push(Field::AddVolume);
+        rows.extend((0..self.scope.paths.len()).map(Field::Path));
+        rows.push(Field::AddPath);
         rows
     }
 
@@ -1918,10 +1966,10 @@ impl Session {
         Ok(Request {
             inputs: self
                 .scope
-                .volumes
+                .paths
                 .iter()
-                .filter(|picked| picked.on)
-                .map(|picked| picked.path.clone())
+                .filter(|named| named.on)
+                .map(|named| named.path.clone())
                 .collect(),
             output_root,
             profile: crate::target_profile(device, self.device.gray_levels, self.device.threshold)?,
@@ -2234,10 +2282,10 @@ impl Session {
             Key::Space | Key::Enter => match shape {
                 Shape::Cycle => Action::Unfold,
                 Shape::Text | Shape::Path => Action::Edit,
-                Shape::Volume => Action::Toggle,
+                Shape::Named => Action::Toggle,
             },
             Key::Char('d') => match shape {
-                Shape::Volume => Action::Remove,
+                Shape::Named => Action::Remove,
                 _ => Action::Ignored,
             },
             // 预览与转换。两个键**在键盘上离得远**：按错一个会往盘上写东西，
@@ -2298,9 +2346,9 @@ impl Session {
             Action::Unfold => self.unfold(),
             Action::Drill => self.drill(),
             Action::Choose => self.choose(),
-            Action::Toggle => self.toggle_volume(),
+            Action::Toggle => self.toggle_path(),
             Action::Edit => self.begin_edit(),
-            Action::Remove => self.remove_volume(),
+            Action::Remove => self.remove_path(),
             Action::Insert(character) => self.edit_mut(|buffer| buffer.push(character)),
             Action::Backspace => self.edit_mut(|buffer| {
                 buffer.pop();
@@ -2638,7 +2686,7 @@ impl Session {
         }
         let field = self.field();
         let buffer = match field {
-            Field::AddVolume => String::new(),
+            Field::AddPath => String::new(),
             other => self.typed(other),
         };
         self.focus = Focus::Editing(Edit {
@@ -3482,8 +3530,8 @@ impl Session {
             | Field::WhiteAlignLimit
             | Field::CacheBudget
             | Field::Out
-            | Field::Volume(_)
-            | Field::AddVolume => {}
+            | Field::Path(_)
+            | Field::AddPath => {}
         }
     }
 
@@ -3516,7 +3564,7 @@ impl Session {
             Field::Out => self.scope.out.is_none(),
             // 卷那两行没有「没说」那一格：一条路径加一个勾，打进来了就是打进来了，
             // 而「＋ 再打一个卷进来」根本不是一个取值。
-            Field::Volume(_) | Field::AddVolume => false,
+            Field::Path(_) | Field::AddPath => false,
         }
     }
 
@@ -3735,20 +3783,20 @@ impl Session {
         self.device.threshold = None;
     }
 
-    fn toggle_volume(&mut self) {
-        if let Field::Volume(at) = self.field()
-            && let Some(volume) = self.scope.volumes.get_mut(at)
+    fn toggle_path(&mut self) {
+        if let Field::Path(at) = self.field()
+            && let Some(named) = self.scope.paths.get_mut(at)
         {
-            volume.on = !volume.on;
+            named.on = !named.on;
         }
     }
 
-    fn remove_volume(&mut self) {
-        if let Field::Volume(at) = self.field()
-            && at < self.scope.volumes.len()
+    fn remove_path(&mut self) {
+        if let Field::Path(at) = self.field()
+            && at < self.scope.paths.len()
         {
-            self.scope.volumes.remove(at);
-            // 删掉最后一个卷时光标掉到「再打一个」那一行上，那正是接着要做的事。
+            self.scope.paths.remove(at);
+            // 删掉最后一条处理路径时光标掉到「再打一个」那一行上，那正是接着要做的事。
             self.cursor = self.cursor.min(self.rows().len() - 1);
         }
     }
@@ -3776,8 +3824,8 @@ impl Session {
             | Field::Dither
             | Field::Envelope
             | Field::IoMode
-            | Field::Volume(_)
-            | Field::AddVolume => None,
+            | Field::Path(_)
+            | Field::AddPath => None,
         }
         .unwrap_or_default()
     }
@@ -3835,8 +3883,8 @@ impl Session {
                 };
             }
             // 一个字都没打就按了回车：那是「算了」，不是打进来一个空路径。
-            Field::AddVolume if !typed.is_empty() => {
-                self.scope.volumes.push(Picked {
+            Field::AddPath if !typed.is_empty() => {
+                self.scope.paths.push(NamedPath {
                     path: PathBuf::from(typed),
                     on: true,
                 });
@@ -3845,7 +3893,7 @@ impl Session {
             }
             // 转着改的行与卷行打不了字，按键表根本不会派 `Edit` 过来；
             // 「再打一个」落到这里的只有上面那个卫语句放过的空串。
-            Field::AddVolume
+            Field::AddPath
             | Field::Profile
             | Field::Fit
             | Field::Crop
@@ -3856,7 +3904,7 @@ impl Session {
             | Field::Dither
             | Field::Envelope
             | Field::IoMode
-            | Field::Volume(_) => {}
+            | Field::Path(_) => {}
         }
         Ok(())
     }
@@ -3961,9 +4009,9 @@ impl Session {
             Field::IoMode => spell_name(self.taste.io_mode, IoMode::name),
             Field::Out => match &self.scope.out {
                 Some(out) => out.display().to_string(),
-                None => "未填（跑起来之前必填）".to_owned(),
+                None => OUTPUT_UNSET.to_owned(),
             },
-            Field::Volume(at) => match self.scope.volumes.get(at) {
+            Field::Path(at) => match self.scope.paths.get(at) {
                 Some(volume) => format!(
                     "{} {}",
                     if volume.on { "[x]" } else { "[ ]" },
@@ -3971,10 +4019,13 @@ impl Session {
                 ),
                 None => String::new(),
             },
-            Field::AddVolume => String::new(),
+            Field::AddPath => String::new(),
         }
     }
 }
+
+/// 输出目录没填时屏上那一句。两副界面同一句（新界面在 `super::view` 的 `output_shown`）。
+pub(super) const OUTPUT_UNSET: &str = "未填（跑起来之前必填）";
 
 /// 三个布尔项转一格：没说 → 开 → 关 → 没说。
 fn turn_flag(flag: Option<bool>, step: Step) -> Option<bool> {
@@ -4126,11 +4177,11 @@ mod tests {
         assert_eq!(session.action(Key::Char('c')), Action::Ignored);
 
         // 三、浏览，光标停在一个卷行上：空格勾，d 删，左右转不动。
-        session.scope.volumes.push(Picked {
+        session.scope.paths.push(NamedPath {
             path: PathBuf::from("卷一"),
             on: true,
         });
-        session.go_to(Field::Volume(0));
+        session.go_to(Field::Path(0));
         assert_eq!(session.action(Key::Space), Action::Toggle);
         assert_eq!(session.action(Key::Enter), Action::Toggle);
         assert_eq!(session.action(Key::Char('d')), Action::Remove);
@@ -5300,7 +5351,7 @@ mod tests {
     fn taking_a_preset_swaps_both_layers_and_leaves_the_scope_alone() {
         let mut session = Session::new();
         session.scope.out = Some(PathBuf::from("出"));
-        session.scope.volumes.push(Picked {
+        session.scope.paths.push(NamedPath {
             path: PathBuf::from("库/卷一"),
             on: true,
         });
@@ -5376,11 +5427,11 @@ mod tests {
     #[test]
     fn collapsing_gives_back_everything_expanding_took_away() {
         let mut session = Session::new();
-        session.scope.volumes.push(Picked {
+        session.scope.paths.push(NamedPath {
             path: PathBuf::from("卷一"),
             on: true,
         });
-        session.go_to(Field::Volume(0));
+        session.go_to(Field::Path(0));
         session.taste.bit_depth = Some(BitDepth::Four);
         let before = session.clone();
 
@@ -5900,13 +5951,13 @@ mod tests {
         assert!(format!("{said:#}").contains("输出目录"), "{said:#}");
 
         session.scope.out = Some(PathBuf::from("出"));
-        session.scope.volumes = vec![
-            Picked {
+        session.scope.paths = vec![
+            NamedPath {
                 path: PathBuf::from("库/卷一"),
                 on: true,
             },
             // 勾掉的那一条不进这一趟：打错一条勾掉就是了（spec 的 story 16）。
-            Picked {
+            NamedPath {
                 path: PathBuf::from("库/卷二"),
                 on: false,
             },
@@ -5975,7 +6026,7 @@ mod tests {
         let mut session = Session::new();
         session.device.profile = Some("kobo-libra-2".to_owned());
         session.scope.out = Some(PathBuf::from("出"));
-        session.scope.volumes = vec![Picked {
+        session.scope.paths = vec![NamedPath {
             path: PathBuf::from("库/卷一"),
             on: true,
         }];
@@ -6038,7 +6089,7 @@ mod tests {
     #[test]
     fn the_left_column_is_three_layers_in_lifecycle_order() {
         let mut session = Session::new();
-        session.scope.volumes.push(Picked {
+        session.scope.paths.push(NamedPath {
             path: PathBuf::from("卷一"),
             on: true,
         });
@@ -6085,7 +6136,7 @@ mod tests {
         let session = Session::new();
         for field in session.rows() {
             assert!(!field.label().is_empty(), "{field:?} 没有名字");
-            if !matches!(field, Field::AddVolume) {
+            if !matches!(field, Field::AddPath) {
                 assert!(!session.shown(field).is_empty(), "{field:?} 印不出取值");
             }
         }
@@ -6907,7 +6958,7 @@ mod tests {
     #[test]
     fn a_volume_that_was_typed_in_can_be_ticked_off_and_removed() {
         let mut session = Session::new();
-        session.go_to(Field::AddVolume);
+        session.go_to(Field::AddPath);
 
         // 打两个卷进来。每打完一个，光标仍停在「再打一个」上。
         for name in ["卷一", "卷二"] {
@@ -6916,23 +6967,23 @@ mod tests {
                 session.press(Key::Char(character));
             }
             session.press(Key::Enter);
-            assert_eq!(session.field(), Field::AddVolume);
+            assert_eq!(session.field(), Field::AddPath);
         }
-        assert_eq!(session.scope.volumes.len(), 2);
-        assert!(session.scope.volumes.iter().all(|volume| volume.on));
+        assert_eq!(session.scope.paths.len(), 2);
+        assert!(session.scope.paths.iter().all(|volume| volume.on));
 
         // 勾掉第二个：它还在清单上，只是这一趟不算数。
-        session.go_to(Field::Volume(1));
+        session.go_to(Field::Path(1));
         session.press(Key::Space);
-        assert!(!session.scope.volumes[1].on);
-        assert!(session.shown(Field::Volume(1)).starts_with("[ ]"));
+        assert!(!session.scope.paths[1].on);
+        assert!(session.shown(Field::Path(1)).starts_with("[ ]"));
         session.press(Key::Space);
-        assert!(session.scope.volumes[1].on);
+        assert!(session.scope.paths[1].on);
 
         // 删掉第二个：清单上就没有它了，光标不会掉到外面去。
         session.press(Key::Char('d'));
-        assert_eq!(session.scope.volumes.len(), 1);
-        assert_eq!(session.scope.volumes[0].path, PathBuf::from("卷一"));
+        assert_eq!(session.scope.paths.len(), 1);
+        assert_eq!(session.scope.paths[0].path, PathBuf::from("卷一"));
         assert!(session.cursor < session.rows().len());
     }
 
@@ -6948,6 +6999,6 @@ mod tests {
         assert_eq!(session.field(), Field::Profile, "转一圈没回到第一行");
 
         session.press(Key::Up);
-        assert_eq!(session.field(), Field::AddVolume, "往上一格没绕到最后一行");
+        assert_eq!(session.field(), Field::AddPath, "往上一格没绕到最后一行");
     }
 }

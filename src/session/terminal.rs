@@ -27,9 +27,12 @@ use tonefit::{Mode as RunMode, Request};
 
 use super::draw;
 use super::draw::keys::Starters;
+use super::home::Home;
+use super::keymap::Phase;
 use super::live::{Branch, Live, Resuming, Volume};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
+use super::view::Input;
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -54,6 +57,8 @@ pub fn enter() -> Result<u8> {
     }
     let mut screen = Screen::open()?;
     let mut session = Session::new();
+    // 家目录问一次、摆在会话上往下传（`CONTEXT.md` 的《会话》：家目录）：新界面的屏上把它缩写成 `~`。
+    session.home = Home::found();
     // 跑着的那一趟**一定**要收手：`?` 提前返回、恐慌展开，走的都是 `Running` 的 `Drop`。
     // 终端同理，走 `Screen` 的 `Drop`。
     let mut running = Running::default();
@@ -227,6 +232,56 @@ fn press(
         }
         other => session.act(other),
     }
+}
+
+/// 把一个输入交给**新会话**（ADR 0019；spec《缝》）——与 [`press`] 并排，真会话仍走那一支，
+/// 切换在 `session-redesign/15`。收的是键或鼠标（[`Input`]），带着这一帧的「此刻」。
+///
+/// 分工与 [`press`] 同一条：先把输入认成按键表上的一件事（[`Session::deed_of`]，连击键在那里待着），
+/// **够得着那一趟与盘的那几件在这一层做**，其余交回状态机（[`Session::perform`]）。
+/// 眼下这一层还没有一件：起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
+/// 添改路径、预设那几支与灰阶测试图，随各票在这里各接一支——接上之前那几个键交下去落在
+/// [`Session::perform`] 的空处，原地不动。`running` 眼下只答一件事：那一趟清点完了没有。
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "真会话切到新界面（session-redesign/15）时接进那条循环"
+    )
+)]
+pub(super) fn input(
+    session: &mut Session,
+    running: &mut Running,
+    now: Instant,
+    input: Input,
+) -> Exit {
+    let phase = {
+        let live = running.live();
+        Phase::of(session.stage(), live.as_deref())
+    };
+    match session.deed_of(input, phase, now) {
+        Some(deed) => session.perform(deed, now),
+        None => Exit::Stay,
+    }
+}
+
+/// 终端那一侧的事件 → 新会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
+/// （`C-d`／`C-u`／`C-f`／`C-b`／`C-w`），认不出的返回 `None`。滚轮与单击随鼠标那一票接上。
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "真会话切到新界面（session-redesign/15）时接进那条循环"
+    )
+)]
+fn translate_input(pressed: &KeyEvent) -> Option<Input> {
+    if pressed.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(letter) = pressed.code
+        && letter != 'c'
+    {
+        return Some(Input::Ctrl(letter));
+    }
+    translate(pressed).map(Input::Key)
 }
 
 /// 这一趟**在确认点上等不等人**，以及它真正走的是哪一种模式（ADR 0012 决定第 3 条）。
@@ -661,6 +716,117 @@ fn no_terminal_error() -> anyhow::Error {
     )
 }
 
+/// 新会话那一支的用例：喂交互序列，走完对交互期望屏（spec《交互序列》；`session-redesign/06`）。
+#[cfg(test)]
+mod redesign {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    use super::super::draw::design::{self, assert_no_background, assert_same_cells};
+    use super::super::run::Running;
+    use super::super::scene::{self, Scene, Step};
+    use super::super::shell;
+    use super::super::state::{Exit, Key};
+    use super::super::view::Input;
+
+    /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
+    fn walked(name: &str) -> (Scene, Running, Exit) {
+        let sequence = scene::sequence(name);
+        let mut scene = Scene::named(&sequence.scene);
+        let mut running = match scene.live.take() {
+            Some(live) => Running::holding(live),
+            None => Running::default(),
+        };
+        let now = scene.now();
+        let mut exit = Exit::Stay;
+        for step in &sequence.steps {
+            assert!(
+                !matches!(step, Step::Advance(_) | Step::Resize(_, _)),
+                "「{name}」里推进与换尺寸那两种步随各票接上"
+            );
+            for input in step.inputs() {
+                exit = super::input(&mut scene.session, &mut running, now, input);
+            }
+        }
+        (scene, running, exit)
+    }
+
+    /// 走完那一刻画一屏。
+    fn painted(scene: &Scene, running: &Running, (width, height): (u16, u16)) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
+        let live = running.live();
+        terminal
+            .draw(|frame| shell::draw(frame, &scene.session, live.as_deref(), scene.now()))
+            .expect("画得出来");
+        terminal.backend().buffer().clone()
+    }
+
+    /// 走完一串，逐格对它的交互期望屏，顺带核一个背景色都没设（停车场 Q737）。
+    fn assert_sequence(name: &str) -> Scene {
+        let (scene, running, exit) = walked(name);
+        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
+        let size = scene::sequence(name).size;
+        let buffer = painted(&scene, &running, size);
+        assert_no_background(&buffer);
+        assert_same_cells(&buffer, &design::sequence(name));
+        scene
+    }
+
+    /// **`j`／`k` 挪光标**，走完与期望屏逐格相等（票面第二条）。
+    #[test]
+    fn j_and_k_move_the_cursor_over_the_paths() {
+        assert_sequence("fresh-j");
+        assert_sequence("fresh-k");
+    }
+
+    /// **空格勾选、再按一次取消**：勾掉外层那一条，里层那一句「已包含在」跟着没了。
+    #[test]
+    fn space_toggles_the_checkbox_and_back() {
+        let scene = assert_sequence("fresh-Space");
+        assert!(!scene.session.scope.paths[0].on);
+        let scene = assert_sequence("fresh-Space-Space");
+        assert!(scene.session.scope.paths[0].on);
+    }
+
+    /// **`d` 按了前半截右端留待续记号，`dd` 删一条**：光标停到下一条上，屏底说已删除。
+    #[test]
+    fn d_waits_for_its_second_half_and_dd_deletes_the_path() {
+        assert_sequence("fresh-d");
+        let scene = assert_sequence("fresh-dd");
+        assert_eq!(scene.session.scope.paths.len(), 12);
+    }
+
+    /// **还没开始时 `q` 交出退出**（票面第二条）：那一支回的是退出，屏上不再画下一帧——
+    /// 设计稿在这一串上画的那句「原型里不会真的退出」是原型自己的话，实现不画它（停车场 Q774）。
+    #[test]
+    fn q_before_the_run_hands_out_the_exit() {
+        let (_, _, exit) = walked("fresh-q");
+        assert_eq!(exit, Exit::Leave);
+    }
+
+    /// 终端那一侧的键码翻成新会话的输入：Ctrl 加一个字母另认，`C-c` 仍是那个中断键，别的照旧。
+    #[test]
+    fn control_letters_translate_to_ctrl_inputs_and_ctrl_c_stays_the_interrupt() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        assert_eq!(super::translate_input(&ctrl('d')), Some(Input::Ctrl('d')));
+        assert_eq!(super::translate_input(&ctrl('w')), Some(Input::Ctrl('w')));
+        assert_eq!(
+            super::translate_input(&ctrl('c')),
+            Some(Input::Key(Key::Interrupt))
+        );
+        assert_eq!(
+            super::translate_input(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            Some(Input::Key(Key::Char('j')))
+        );
+        assert_eq!(
+            super::translate_input(&KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
+            None
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -791,7 +957,7 @@ mod tests {
         let mut session = Session::new();
         session.device.profile = Some("kobo-libra-2".to_owned());
         session.scope.out = Some(out.clone());
-        session.scope.volumes.push(state::Picked {
+        session.scope.paths.push(state::NamedPath {
             path: volume,
             on: true,
         });
@@ -934,7 +1100,7 @@ mod tests {
         session.device.profile = Some("kobo-libra-2".to_owned());
         session.scope.out = Some(out.clone());
         for name in ["卷一", "卷二"] {
-            session.scope.volumes.push(state::Picked {
+            session.scope.paths.push(state::NamedPath {
                 path: crate::session::live::fixture::a_real_volume(space.path(), name),
                 on: true,
             });
@@ -1265,7 +1431,7 @@ mod tests {
         let mut session = Session::new();
         let mut running = Running::default();
         session.scope.out = Some(PathBuf::from("出"));
-        session.scope.volumes.push(state::Picked {
+        session.scope.paths.push(state::NamedPath {
             path: PathBuf::from("库/卷一"),
             on: true,
         });
@@ -1327,7 +1493,7 @@ mod tests {
         session.taste.filter = Some(tonefit::Filter::Hamming);
         session.taste.envelope = Some(true);
         session.scope.out = Some(PathBuf::from("出"));
-        session.scope.volumes.push(state::Picked {
+        session.scope.paths.push(state::NamedPath {
             path: PathBuf::from("库/卷一"),
             on: true,
         });

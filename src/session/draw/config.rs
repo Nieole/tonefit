@@ -213,8 +213,8 @@ fn choice(values: &Values, at: usize) -> Styled {
 fn row(session: &Session, field: Field) -> String {
     match field {
         // 卷那一行的取值里已经带着勾与路径，再挂一个「卷」字是废话。
-        Field::Volume(_) => format!("  {}", session.shown(field)),
-        Field::AddVolume => format!("  {}", field.label()),
+        Field::Path(_) => format!("  {}", session.shown(field)),
+        Field::AddPath => format!("  {}", field.label()),
         _ => format!("  {:　<8}{}", field.label(), session.shown(field)),
     }
 }
@@ -230,10 +230,10 @@ mod tests {
     /// 打进来几个卷的一个会话。走的是真会话那条路（停在「＋ 再打一个卷进来」上打字），
     /// 而不是往里塞一份状态：卷打进来之后光标停在哪一行是本票要问的事，
     /// 塞进去就把那一半跳过了。
-    fn with_volumes(count: usize) -> Session {
+    fn with_paths(count: usize) -> Session {
         let mut session = Session::new();
         for at in 1..=count {
-            session.go_to(Field::AddVolume);
+            session.go_to(Field::AddPath);
             session.press(Key::Enter);
             for glyph in format!("库/卷{at}").chars() {
                 session.press(Key::Char(glyph));
@@ -307,7 +307,7 @@ mod tests {
     /// （`p4-parking-lot/02` 收的 Q104／Q136）。
     #[test]
     fn a_config_column_taller_than_its_box_scrolls_with_the_cursor() {
-        let mut session = with_volumes(3);
+        let mut session = with_paths(3);
         assert_eq!(
             session.rows().len() + 5,
             25,
@@ -317,7 +317,7 @@ mod tests {
         // 光标停在末尾那一行上：它在屏上，而开头那几行让了出去。
         let bottom = tight(&config_pane(&session, 52, 24));
         assert!(
-            bottom.contains(&tight(Field::AddVolume.label())),
+            bottom.contains(&tight(Field::AddPath.label())),
             "光标那一行掉出屏外了：{bottom}"
         );
         assert!(
@@ -339,7 +339,7 @@ mod tests {
             "翻不回顶上：{top}"
         );
         assert!(
-            !top.contains(&tight(Field::AddVolume.label())),
+            !top.contains(&tight(Field::AddPath.label())),
             "开头那几行在屏上，末尾那一行也在：{top}"
         );
         assert!(
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn the_config_column_that_does_not_fit() {
         same_screen(
-            &config_pane(&with_volumes(3), 52, 24),
+            &config_pane(&with_paths(3), 52, 24),
             THE_CONFIG_COLUMN_THAT_DOES_NOT_FIT,
         );
 
@@ -472,10 +472,10 @@ mod tests {
 
         // **光标不掉出格子**：走到末尾那一行上，那一行连同它的反白都还在屏上。
         // 反白那一格非验不可——逐格拼回来的文字看不出光标停在哪一行。
-        session.go_to(Field::AddVolume);
+        session.go_to(Field::AddPath);
         let bottom = tight(&config_pane(&session, 34, 26));
         assert!(
-            bottom.contains(&tight(Field::AddVolume.label())),
+            bottom.contains(&tight(Field::AddPath.label())),
             "光标那一行掉出格子了：{bottom}"
         );
         assert!(
@@ -568,7 +568,7 @@ mod tests {
     /// （本票的验收第四条）画出来是什么样。
     #[test]
     fn the_unfolded_values_that_do_not_fit() {
-        let mut session = with_volumes(3);
+        let mut session = with_paths(3);
         unfolding(&mut session, Field::Filter);
         // 走到那一列的末一格上（`↑` 两头绕回去）：视口要跟到的是它。
         session.press(Key::Up);
@@ -610,7 +610,7 @@ mod tests {
     /// 同一条（停车场 Q136）。
     #[test]
     fn the_unfolded_values_keep_the_cursor_on_screen() {
-        let mut session = with_volumes(3);
+        let mut session = with_paths(3);
         unfolding(&mut session, Field::Filter);
         session.press(Key::Up);
 
@@ -639,7 +639,7 @@ mod tests {
             "翻不回去：{top}"
         );
         assert!(
-            !top.contains(&tight(Field::AddVolume.label())),
+            !top.contains(&tight(Field::AddPath.label())),
             "末尾那一行也在屏上：{top}"
         );
         assert!(cells(&session) > 0, "光标那一格不在屏上：{top}");
