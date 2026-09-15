@@ -50,6 +50,9 @@
 ///
 /// **往下只滚到光标那一行还在格子里为止，不多滚一行**：列表短于格子时
 /// [`Viewport::from`] 恒是零，那一格因此与没有这一段时逐格相同。
+/// 格子高过这么多行时留一行余量（`CONTEXT.md` 的《视口》；设计稿 `viewport` 的 `h > 8`）。
+const MARGIN_ABOVE: usize = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Viewport {
     /// 列表一共有多少行。
@@ -87,6 +90,21 @@ impl Viewport {
     /// `height` 是零时从头画起：那种格子一行都画不出来，滚到哪儿都一样，
     /// 而算出一个非零的起点只会让读代码的人以为它有意义。
     pub(super) fn new(rows: usize, height: usize, cursor: usize) -> Self {
+        Self::at(rows, height, cursor, 0)
+    }
+
+    /// [`new`](Self::new) 那一手**留一行余量**：格子高过 [`MARGIN_ABOVE`] 行时光标停在格子倒数第二行上、
+    /// 底下露着下一行，往下挪时看得见要去的地方（`CONTEXT.md` 的《视口》「格子高过 8 行时上下各留一行余量」）。
+    /// 与设计稿的 `viewport` 同一个式子（停车场 Q775）——新界面的格子走这一手；
+    /// 旧界面仍走 [`new`](Self::new)（它那几屏的快照不留余量，随那一副在 `session-redesign/15` 退场，停车场 Q789）。
+    pub(super) fn with_margin(rows: usize, height: usize, cursor: usize) -> Self {
+        Self::at(rows, height, cursor, usize::from(height > MARGIN_ABOVE))
+    }
+
+    /// 两手共用的那一个式子：光标落在格子最后一行（留 `margin` 行余量时再往上 `margin` 行）上就够了，
+    /// 再往下滚就是把已经看得见的东西滚掉——到了底停在 `rows - height`。
+    /// 光标本来就在格子里时这个减法归零（`saturating_sub`），从头画起。
+    fn at(rows: usize, height: usize, cursor: usize, margin: usize) -> Self {
         if height == 0 {
             return Self {
                 rows,
@@ -98,9 +116,9 @@ impl Viewport {
         Self {
             rows,
             height,
-            // 光标落在格子最后一行上就够了，再往下滚就是把已经看得见的东西滚掉。
-            // 光标本来就在格子里时这个减法归零（`saturating_sub`），从头画起。
-            from: cursor.saturating_add(1).saturating_sub(height),
+            from: (cursor + 1 + margin)
+                .saturating_sub(height)
+                .min(rows.saturating_sub(height)),
         }
     }
 
@@ -227,6 +245,36 @@ mod tests {
         assert_eq!(empty.from(), 0);
         assert_eq!(empty.shown(), 0);
         assert_eq!(empty.scrollbar(), None);
+    }
+
+    /// **留一行余量的那一手**：格子高过 8 行时光标停在倒数第二行上，到了底不多滚一行、
+    /// 短列表照旧从头画起；格子不高过 8 行时与不留余量那一手逐格相同。
+    #[test]
+    fn the_margined_viewport_keeps_one_row_below_the_cursor_in_a_tall_box() {
+        assert_eq!(Viewport::with_margin(30, 10, 0).from(), 0, "光标在头");
+        assert_eq!(
+            Viewport::with_margin(30, 10, 8).from(),
+            0,
+            "还在格子里（倒数第二行）"
+        );
+        assert_eq!(
+            Viewport::with_margin(30, 10, 9).from(),
+            1,
+            "走到最后一行就滚一行"
+        );
+        assert_eq!(
+            Viewport::with_margin(30, 10, 29).from(),
+            20,
+            "到了底不多滚一行"
+        );
+        assert_eq!(Viewport::with_margin(5, 10, 4).from(), 0, "短列表不滚");
+        for cursor in 0..30 {
+            assert_eq!(
+                Viewport::with_margin(30, 8, cursor).from(),
+                Viewport::new(30, 8, cursor).from(),
+                "不高过 8 行的格子不留余量"
+            );
+        }
     }
 
     /// **没有光标的那一处传零**：从第一条起，剩下几条说得出来（补全候选就是这一副）。

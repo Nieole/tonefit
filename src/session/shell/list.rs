@@ -34,7 +34,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, are
     let cursor = session.cursor_line();
     let shown = area.height.saturating_sub(2);
     let inner = area.width.saturating_sub(4);
-    let viewport = Viewport::new(lines.len(), usize::from(shown), cursor);
+    let viewport = Viewport::with_margin(lines.len(), usize::from(shown), cursor);
     canvas.frame(
         area,
         &Border {

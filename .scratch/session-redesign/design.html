@@ -158,12 +158,13 @@ function pad(s, w, align = 'l') {
   if (align === 'c') return ' '.repeat(gap >> 1) + s + ' '.repeat(gap - (gap >> 1));
   return s + ' '.repeat(gap);
 }
-// 从中间省略：书名与第几卷两头都要认得出
+// 从中间省略：书名与第几卷两头都要认得出。与实现 `session::columns::elide` 同一个截法（停车场 Q776）：
+// 省略号自己占一格，剩下的两头分、多出来的那一格给头上；头上没用完的那几格还给尾巴
 function elide(s, w) {
   if (strW(s) <= w) return s;
-  if (w <= 2) return clip(s, w);
-  const left = Math.ceil((w - 1) / 2), right = w - 1 - left;
-  const head = clip(s, left);
+  if (w === 0) return '';
+  const keep = w - 1;
+  const head = clip(s, Math.ceil(keep / 2)), right = keep - strW(head);
   const chars = [...s];
   let tail = '', used = 0;
   for (let i = chars.length - 1; i >= 0; i--) {
@@ -874,7 +875,6 @@ const S = {
   toast: null,                 // { segs, until }
   pending: '',
   size: [120, 36], pal: 'mocha', speed: 4, playing: true,
-  from: { list: 0, pages: 0, cfg: 0 },
   lastRows: [], lastView: 0,
 };
 // 聚焦框与光标（亮绿，spec《颜色》）：与完成记号那个绿分开两个类名，导出的对照表才分得开；浏览器里同色
@@ -889,15 +889,11 @@ const key = (k) => [[k, 'c-fg b']];
 const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 'c-gray']];
 function toast(segs, ms = 2600) { S.toast = { segs, until: performance.now() + ms }; }
 
-// 视口：光标越出格子才滚，留一行余量；滚动量仍由光标推出来
-function viewport(name, cursor, total, h) {
-  let from = S.from[name] || 0;
+// 视口：从光标算出来，不记着（CONTEXT《视口》「滚动量是算出来的，不是记着的」）：光标落在格子
+// 最后一行上，格子高过 8 行时再留一行余量。与实现 `session::viewport::Viewport::new` 同一个式子（停车场 Q775）
+function viewport(cursor, total, h) {
   const margin = h > 8 ? 1 : 0;
-  if (cursor < from + margin) from = cursor - margin;
-  if (cursor > from + h - 1 - margin) from = cursor - h + 1 + margin;
-  from = Math.max(0, Math.min(from, Math.max(0, total - h)));
-  S.from[name] = from;
-  return from;
+  return Math.max(0, Math.min(cursor + 1 + margin - h, Math.max(0, total - h)));
 }
 
 // ───── 顶栏与屏底 ─────
@@ -934,12 +930,15 @@ function footerHints() {
   }
   if (S.pages) return [...stageHints(), ...(r.stage === 'deciding' ? [] : [hint('a', S.pages.all ? '只看需留意的页' : '全部页')]), hint('h', '回卷列表'), hint('j/k', '选页'), help];
   if (!r) return [hint('t', '预览'), hint('x', '转换'), hint('o', '添加路径'), hint('空格', '勾选'), hint('dd', '删除'), hint('j/k', '选择'), hint('2', '配置'), help];
+  // 清点完之前树还没有，`]d`、`/` 与 `F` 都派不出（KEYMAP 自己就这么标的；停车场 Q783）
+  if (r.stage === 'surveying') return [...stageHints(), hint('j/k', '选择'), help];
   return [...stageHints(), hint(']d', '下一个问题'), ...(S.follow || r.stage === 'ended' ? [] : [hint('F', '自动滚动')]), ...openHint(curRow()), hint('/', '搜索'), hint('j/k', '选择'), help];
 }
 function stageHints() {
   const r = S.run;
   if (!r) return [];
-  if (r.stage === 'deciding') return [hint('x', '写出'), hint('a', '全部写出'), hint('s', '结束'), ...(S.pages ? [] : [hint('v', '每页结果')])];
+  // v 只在卷列表上派得出（KEYMAP「确认」那一组）：每页结果与配置视图的屏底不摆它（停车场 Q778）
+  if (r.stage === 'deciding') return [hint('x', '写出'), hint('a', '全部写出'), hint('s', '结束'), ...(S.pages || S.view === 'config' ? [] : [hint('v', '每页结果')])];
   if (r.stage === 'running' || r.stage === 'surveying') return [hint('s', r.latch ? '再按一次立即停' : '停止')];
   return S.view === 'config' ? [] : [hint('t', '再预览'), hint('x', '再转换')];
 }
@@ -1238,7 +1237,7 @@ function drawList(scr, x, y, w, h) {
   let ci = rows.findIndex((r) => r.key === S.curKey);
   if (ci < 0 && sel.length) { ci = sel[0]; S.curKey = rows[ci].key; }
   const ih = h - 2, iw = w - 4;
-  const from = viewport('list', Math.max(0, ci), rows.length, ih);
+  const from = viewport(Math.max(0, ci), rows.length, ih);
   const focused = !S.overlay && !S.input;
   const r = S.run;
   const selPos = sel.indexOf(ci) + 1;
@@ -1280,7 +1279,7 @@ function drawPages(scr, x, y, w, h) {
   const iw = w - 4, ih = h - 4;
   const entry = r.tree.entries.find((e) => (e.type === 'section' ? e.dirs.includes(v.dir) : e.dir === v.dir));
   const crumbs = [['任务', 'c-gray'], [' › ', 'c-gray'], ...(entry.type === 'section' ? [[entry.path, 'c-gray'], [' › ', 'c-gray']] : []), [v.dir.label, 'c-fg'], [' › ', 'c-gray'], [v.name, 'c-fg b']];
-  const from = viewport('pages', P.cursor, list.length, ih);
+  const from = viewport(P.cursor, list.length, ih);
   scr.box(x, y, w, h, { thick: !S.overlay, st: S.overlay ? 'c-gray' : FOCUS, title: crumbs, right: [[P.all ? '[全部页]' : '[需留意的页]', P.all ? 'c-fg b' : 'c-yellow b']],
     bottomRight: [[list.length ? `${P.cursor + 1} of ${list.length}` : '0 of 0', S.overlay ? 'c-gray' : FOCUS]], bottomLeft: [['a → ' + (P.all ? '只看需留意的页' : '全部页'), 'c-gray i']], scroll: { total: list.length, from, view: ih } });
   if (!judged) {
@@ -1353,7 +1352,7 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
   const sel = cfgSelectable();
   const focused = S.cfg.pane === 'left' && !S.overlay && !S.input;
   const ih = h - 2, iw = w - 4;
-  const from = viewport('cfg', S.cfg.cursor, CONFIG.length, ih);
+  const from = viewport(S.cfg.cursor, CONFIG.length, ih);
   const p = presetOf(S.cfg.applied);
   scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title: [['设置', 'c-fg b'], [' ⋅ 预设会保存这两组', 'c-gray']], right: ro ? [['[已锁定]', 'c-yellow b']] : null,
     bottomRight: [[`${sel.indexOf(S.cfg.cursor) + 1} of ${sel.length}`, focused ? FOCUS : 'c-gray']], scroll: { total: CONFIG.length, from, view: ih } });
@@ -1420,7 +1419,7 @@ function drawCfgRight(scr, x, y, w, h, ro) {
   scr.box(x, y, w, h, { thick: focused, st: focused ? FOCUS : 'c-gray', title, right, bottomLeft: W_NARROW(w) ? [['h → 返回', 'c-gray i']] : null });
   const ih = h - 2;
   const choiceLine = lines.findIndex((l) => l.choice === S.cfg.right);
-  const from = viewport('cfgR', Math.max(0, choiceLine), lines.length, ih);
+  const from = viewport(Math.max(0, choiceLine), lines.length, ih);
   for (let i = 0; i < ih && from + i < lines.length; i++) {
     const l = lines[from + i];
     scr.line(x + 2, y + 1 + i, l.segs, iw);
@@ -1493,7 +1492,7 @@ function drawCompletions(scr) {
   if (!inp || !inp.cands || !inp.cands.length) return;
   const W = scr.c, H = scr.r;
   const n = inp.cands.length, vis = Math.min(n, 8), w = Math.min(56, W - 2), h = vis + 2, x = 1, y = H - 1 - h;
-  const from = viewport('cands', inp.ci, n, vis);
+  const from = viewport(inp.ci, n, vis);
   scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['可选项', 'c-fg b'], [` ⋅ ${n} 项`, 'c-gray']], bottomRight: [[`${inp.ci + 1} of ${n}`, FOCUS]], scroll: { total: n, from, view: vis } });
   for (let i = 0; i < vis && from + i < n; i++) {
     const c = inp.cands[from + i], cur = from + i === inp.ci;
@@ -1508,7 +1507,8 @@ function drawTooSmall(scr) {
     [],
     r ? [['总体 ', 'c-gray'], [`${Math.floor((r.steps / r.total) * 100)}%`, 'c-fg b'], [r.stage === 'ended' ? ' ⋅ 已结束' : ` ⋅ 第 ${r.cur + 1}/${r.tree.vols.length} 卷`, 'c-gray']] : [['还没开始', 'c-gray']],
     [],
-    [...hint('q', '退出'), ['  放大窗口后自动恢复', 'c-gray']],
+    // 跑着与等待确认时 q 不退（CONTEXT《退出会话》），屏上不摆按不动的键（停车场 Q777）
+    [...hint(r && r.stage !== 'ended' ? 'C-c' : 'q', '退出'), ['  放大窗口后自动恢复', 'c-gray']],
   ];
   const top = Math.max(0, Math.floor((H - lines.length) / 2));
   lines.forEach((l, i) => scr.line(Math.max(0, Math.floor((W - segW(l)) / 2)), top + i, l, W));
@@ -1577,7 +1577,7 @@ function startRun(mode) {
   if (!S.named.some((n) => n.on)) return toast([['✗ ', 'c-red b'], ['没有勾选任何路径，无法开始', 'c-red']]);
   VOL_SEQ = 0; DIR_SEQ = 0; PAGE_CACHE.clear();
   S.run = newRun(mode, discover(S.named));
-  S.expanded = new Set(); S.pages = null; S.follow = true; S.from.list = 0; S.search = null;
+  S.expanded = new Set(); S.pages = null; S.follow = true; S.search = null;
   S.view = 'task';
   toast([[mode === 'trial' ? '预览：' : '转换：', mode === 'trial' ? 'c-magenta b' : 'c-cyan b'], [mode === 'trial' ? '只分析不写文件，每卷分析完会停下来问你' : '写到 ' + S.outRoot, 'c-fg']]);
 }
@@ -1686,7 +1686,7 @@ function onKey(k, raw = k) {
     if (combo === ']d' || combo === '[d') { if (S.view === 'task') jump({ trouble: true }, combo[0] === ']' ? 1 : -1); return true; }
     if (combo === 'dd') return deleteHere();
   }
-  if (k === 'g' || k === ']' || k === '[' || (k === 'd' && canDelete())) { S.pending = k; S.pendingAt = performance.now(); return true; }
+  if (startsCombo(k)) { S.pending = k; S.pendingAt = performance.now(); return true; }
   // 覆盖层
   if (S.overlay) {
     if (k === 'Escape' || k === '?' || k === 'q' || (S.overlay.kind === 'note' && k === 'Enter')) { S.overlay = null; return true; }
@@ -1722,7 +1722,15 @@ function stopKey() {
   if (lvl === 1) toast([['! 正在停止：', 'c-yellow b'], ['做完当前卷就停 ⋅ 再按一次 s 立即停止', 'c-fg']], 4000);
   if (lvl === 2) toast([['! 已立即停止：', 'c-yellow b'], ['当前卷未保存，输出目录里不会留下半成品', 'c-fg']], 4000);
 }
-function canDelete() { return (S.view === 'task' && !S.run && curRow() && curRow().kind === 'named') || (S.view === 'config' && S.cfg.presets && S.cfg.pcursor < PRESETS.length); }
+// 连击键的前半截按表待着，不问光标那一行是什么（停车场 Q779）：`g` 在哪一块上都待（gg／gt／gT）；
+// `d` 在 `dd` 派得出的块上待——开跑之前的卷列表、预设栏；`]`／`[` 只在清点完之后的卷列表上待（]d／[d）
+function startsCombo(k) {
+  if (k === 'g') return true;
+  if (S.overlay || S.pages) return false;
+  if (k === 'd') return (S.view === 'task' && !S.run) || (S.view === 'config' && S.cfg.presets);
+  if (k === ']' || k === '[') return S.view === 'task' && !!S.run && S.run.stage !== 'surveying';
+  return false;
+}
 function deleteHere() {
   if (S.view === 'config') {
     if (S.cfg.armedDelete !== S.cfg.pcursor) { S.cfg.armedDelete = S.cfg.pcursor; return true; }
@@ -1893,7 +1901,7 @@ const CONFIG0 = CONFIG.map((c) => c.value);
 const PRESETS0 = PRESETS.map((p) => ({ name: p.name, says: { ...p.says } }));
 // 跳场景 = 从同一份假数据重新开始：上一个场景里删掉的路径、换掉的型号、套用的预设都复原
 function resetView() {
-  Object.assign(S, { view: 'task', run: null, pages: null, overlay: null, input: null, search: null, expanded: new Set(), follow: true, curKey: 'out', pending: '', toast: null, from: {}, lastRows: [] });
+  Object.assign(S, { view: 'task', run: null, pages: null, overlay: null, input: null, search: null, expanded: new Set(), follow: true, curKey: 'out', pending: '', toast: null, lastRows: [] });
   Object.assign(S.cfg, { pane: 'left', presets: false, drill: null, armedDelete: null, applied: '漫画', pcursor: 0 });
   S.named = NAMED0.map((n) => ({ ...n }));
   S.outRoot = '~/转好的';
@@ -2021,7 +2029,7 @@ window.addEventListener('resize', () => { fitFont(); });
 
 // ───── 切尺寸、画一帧、主循环 ─────
 // 切尺寸：尺寸那几枚 chip 与设计稿旁边的 render.js 都走这一处
-function setSize(cols, rows) { S.size = [cols, rows]; S.from = {}; fitFont(); }
+function setSize(cols, rows) { S.size = [cols, rows]; fitFont(); }
 // 画一帧：整屏缓冲、DOM、侧栏三样。主循环按节拍调它，render.js 按需调它（那里主循环不跑）
 function render() {
   const scr = drawAll();
