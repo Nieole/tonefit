@@ -1,0 +1,35 @@
+# . = c-fg
+# a = c-fg d
+# b = c-green b d
+# c = c-fg b d u
+# d = c-gray d
+# e = c-blue d
+# f = c-lgreen
+# g = c-fg b
+# h = c-gray
+# i = c-green b
+# j = c-yellow
+"abbccdddddddaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea"
+"ddffgggghhhhhhhhhhhhhhhhhhhfffffffffffffffffffffffhhhhhhhhhhfffdd"
+"daf..ii.....................................................................ad"
+"daf..jjjjjjjjjj......................................................ad"
+"ddf..jjjjjjjjjj.......................................................dd"
+"ddf..jjjjjjjjjj......................................................dd"
+"daf..jjjjjjjjjj....................................................ad"
+"daf..jjjjjjjjjj....................................................ad"
+"daf..jjjjjjjjjj...............................................ad"
+"daf...........................................................................ad"
+"daf..ii....................................................................fad"
+"daf..jjjjjjjjjj..........................................................fad"
+"daf..jjjjjjjjjj............................................................fad"
+"daf..jjjjjjjjjj............................................................fad"
+"daf..jjjjjjjjjj..........................................................fad"
+"daf..jjjjjjjj..........................................................fad"
+"daf..jjjjjjjj.........................................................fad"
+"daf..........................................................................fad"
+"daf..iii..................................................................fad"
+"daf..jjjjjjjjjj...................................................fad"
+"daf..jjjjjjjjjj........................................................fad"
+"daf..jjjjjjjjjj...................................................fad"
+"ddffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffdd"
+"ah...hhhhhh.h...hhhhhhaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

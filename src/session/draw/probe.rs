@@ -37,14 +37,27 @@ use crate::session::state::Session;
 ///
 /// 一格宽度算出来是零的字形（组合符号）仍占一格往前走：跳零格会原地转圈。
 fn read(row: &[ratatui::buffer::Cell]) -> String {
-    let mut text = String::new();
+    visible(row).map(|(_, cell)| cell.symbol()).collect()
+}
+
+/// 一格的字往前跳几格：宽字符两格，其余一格；算出来是零的字形（组合符号）仍算一格
+/// ——跳零格会原地转圈。**跳格只有这一处**（[`read`] 的文档说的那条规矩）：
+/// 逐格读屏的两条路（这里的 [`read`]、`super::design` 的逐格比对）都按它往前跳。
+pub(super) fn cells_of(symbol: &str) -> usize {
+    usize::from(crate::wrap::width(symbol)).max(1)
+}
+
+/// 一行上**看得见的那几格**，连同各自在屏上是第几格：宽字符占住的第二格跳过去。
+pub(super) fn visible(
+    row: &[ratatui::buffer::Cell],
+) -> impl Iterator<Item = (usize, &ratatui::buffer::Cell)> {
     let mut at = 0;
-    while at < row.len() {
-        let symbol = row[at].symbol();
-        text.push_str(symbol);
-        at += usize::from(crate::wrap::width(symbol)).max(1);
-    }
-    text
+    std::iter::from_fn(move || {
+        let cell = row.get(at)?;
+        let here = at;
+        at += cells_of(cell.symbol());
+        Some((here, cell))
+    })
 }
 
 /// 屏上的文字，**空白全去掉**再比。

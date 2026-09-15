@@ -1,0 +1,3786 @@
+{
+  "exported_by": ".scratch/session-redesign/export.js（重新导出：cd .scratch/session-redesign && npm run export）",
+  "styles": "styles.json",
+  "version_placeholder": "#.#.#",
+  "snapshots": [
+    {
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/fresh.120x36.text.txt",
+      "style": "snapshots/fresh.120x36.style.txt",
+      "data": "scenes/fresh.json"
+    },
+    {
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/fresh.80x24.text.txt",
+      "style": "snapshots/fresh.80x24.style.txt"
+    },
+    {
+      "scene": "survey",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/survey.120x36.text.txt",
+      "style": "snapshots/survey.120x36.style.txt",
+      "data": "scenes/survey.json"
+    },
+    {
+      "scene": "survey",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/survey.80x24.text.txt",
+      "style": "snapshots/survey.80x24.style.txt"
+    },
+    {
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/running.120x36.text.txt",
+      "style": "snapshots/running.120x36.style.txt",
+      "data": "scenes/running.json"
+    },
+    {
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/running.80x24.text.txt",
+      "style": "snapshots/running.80x24.style.txt"
+    },
+    {
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/deciding.120x36.text.txt",
+      "style": "snapshots/deciding.120x36.style.txt",
+      "data": "scenes/deciding.json"
+    },
+    {
+      "scene": "deciding",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/deciding.80x24.text.txt",
+      "style": "snapshots/deciding.80x24.style.txt"
+    },
+    {
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/ended.120x36.text.txt",
+      "style": "snapshots/ended.120x36.style.txt",
+      "data": "scenes/ended.json"
+    },
+    {
+      "scene": "ended",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/ended.80x24.text.txt",
+      "style": "snapshots/ended.80x24.style.txt"
+    },
+    {
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/pages.120x36.text.txt",
+      "style": "snapshots/pages.120x36.style.txt",
+      "data": "scenes/pages.json"
+    },
+    {
+      "scene": "pages",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/pages.80x24.text.txt",
+      "style": "snapshots/pages.80x24.style.txt"
+    },
+    {
+      "scene": "envelope",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/envelope.120x36.text.txt",
+      "style": "snapshots/envelope.120x36.style.txt",
+      "data": "scenes/envelope.json"
+    },
+    {
+      "scene": "envelope",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/envelope.80x24.text.txt",
+      "style": "snapshots/envelope.80x24.style.txt"
+    },
+    {
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/config.120x36.text.txt",
+      "style": "snapshots/config.120x36.style.txt",
+      "data": "scenes/config.json"
+    },
+    {
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/config.80x24.text.txt",
+      "style": "snapshots/config.80x24.style.txt"
+    },
+    {
+      "scene": "help",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/help.120x36.text.txt",
+      "style": "snapshots/help.120x36.style.txt",
+      "data": "scenes/help.json"
+    },
+    {
+      "scene": "help",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/help.80x24.text.txt",
+      "style": "snapshots/help.80x24.style.txt"
+    },
+    {
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/add.120x36.text.txt",
+      "style": "snapshots/add.120x36.style.txt",
+      "data": "scenes/add.json"
+    },
+    {
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/add.80x24.text.txt",
+      "style": "snapshots/add.80x24.style.txt"
+    },
+    {
+      "scene": "search",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/search.120x36.text.txt",
+      "style": "snapshots/search.120x36.style.txt",
+      "data": "scenes/search.json"
+    },
+    {
+      "scene": "search",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/search.80x24.text.txt",
+      "style": "snapshots/search.80x24.style.txt"
+    },
+    {
+      "scene": "fresh",
+      "size": [
+        56,
+        14
+      ],
+      "text": "snapshots/fresh.56x14.text.txt",
+      "style": "snapshots/fresh.56x14.style.txt"
+    },
+    {
+      "scene": "running",
+      "size": [
+        56,
+        14
+      ],
+      "text": "snapshots/running.56x14.text.txt",
+      "style": "snapshots/running.56x14.style.txt"
+    }
+  ],
+  "sequences": [
+    {
+      "name": "running-2",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        }
+      ],
+      "says": "处理中",
+      "text": "sequences/running-2.text.txt",
+      "style": "sequences/running-2.style.txt",
+      "data": "sequences/running-2.scene.json"
+    },
+    {
+      "name": "running-2-1",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        },
+        {
+          "key": "1"
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/running-2-1.text.txt",
+      "style": "sequences/running-2-1.style.txt",
+      "data": "sequences/running-2-1.scene.json"
+    },
+    {
+      "name": "running-gt",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "g"
+        },
+        {
+          "key": "t"
+        }
+      ],
+      "says": "设置暂时锁定",
+      "text": "sequences/running-gt.text.txt",
+      "style": "sequences/running-gt.style.txt",
+      "data": "sequences/running-gt.scene.json"
+    },
+    {
+      "name": "running-gt-gT",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "g"
+        },
+        {
+          "key": "t"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "T"
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/running-gt-gT.text.txt",
+      "style": "sequences/running-gt-gT.style.txt",
+      "data": "sequences/running-gt-gT.scene.json"
+    },
+    {
+      "name": "running-click-config",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "click": [
+            10,
+            0
+          ]
+        }
+      ],
+      "says": "设置暂时锁定",
+      "text": "sequences/running-click-config.text.txt",
+      "style": "sequences/running-click-config.style.txt",
+      "data": "sequences/running-click-config.scene.json"
+    },
+    {
+      "name": "running-click-config-click-task",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "click": [
+            10,
+            0
+          ]
+        },
+        {
+          "click": [
+            2,
+            0
+          ]
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/running-click-config-click-task.text.txt",
+      "style": "sequences/running-click-config-click-task.style.txt",
+      "data": "sequences/running-click-config-click-task.scene.json"
+    },
+    {
+      "name": "fresh-j",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        }
+      ],
+      "says": "银河英雄传说",
+      "text": "sequences/fresh-j.text.txt",
+      "style": "sequences/fresh-j.style.txt",
+      "data": "sequences/fresh-j.scene.json"
+    },
+    {
+      "name": "fresh-k",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "k"
+        }
+      ],
+      "says": "输出目录",
+      "text": "sequences/fresh-k.text.txt",
+      "style": "sequences/fresh-k.style.txt",
+      "data": "sequences/fresh-k.scene.json"
+    },
+    {
+      "name": "ended-C-d",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        }
+      ],
+      "says": "21 of 28",
+      "text": "sequences/ended-C-d.text.txt",
+      "style": "sequences/ended-C-d.style.txt",
+      "data": "sequences/ended-C-d.scene.json"
+    },
+    {
+      "name": "ended-C-d-C-u",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        },
+        {
+          "key": "C-u"
+        }
+      ],
+      "says": "第07卷",
+      "text": "sequences/ended-C-d-C-u.text.txt",
+      "style": "sequences/ended-C-d-C-u.style.txt",
+      "data": "sequences/ended-C-d-C-u.scene.json"
+    },
+    {
+      "name": "ended-C-f",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-f"
+        }
+      ],
+      "says": "28 of 28",
+      "text": "sequences/ended-C-f.text.txt",
+      "style": "sequences/ended-C-f.style.txt",
+      "data": "sequences/ended-C-f.scene.json"
+    },
+    {
+      "name": "ended-C-f-C-b",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-f"
+        },
+        {
+          "key": "C-b"
+        }
+      ],
+      "says": "第07卷",
+      "text": "sequences/ended-C-f-C-b.text.txt",
+      "style": "sequences/ended-C-f-C-b.style.txt",
+      "data": "sequences/ended-C-f-C-b.scene.json"
+    },
+    {
+      "name": "ended-G",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "G"
+        }
+      ],
+      "says": "28 of 28",
+      "text": "sequences/ended-G.text.txt",
+      "style": "sequences/ended-G.style.txt",
+      "data": "sequences/ended-G.scene.json"
+    },
+    {
+      "name": "ended-G-gg",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": "1 of",
+      "text": "sequences/ended-G-gg.text.txt",
+      "style": "sequences/ended-G-gg.style.txt",
+      "data": "sequences/ended-G-gg.scene.json"
+    },
+    {
+      "name": "running-wheel-down",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "wheel": 1
+        }
+      ],
+      "says": "已暂停自动滚动",
+      "text": "sequences/running-wheel-down.text.txt",
+      "style": "sequences/running-wheel-down.style.txt",
+      "data": "sequences/running-wheel-down.scene.json"
+    },
+    {
+      "name": "running-wheel-down-3",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "wheel": 3
+        }
+      ],
+      "says": "已暂停自动滚动",
+      "text": "sequences/running-wheel-down-3.text.txt",
+      "style": "sequences/running-wheel-down-3.style.txt",
+      "data": "sequences/running-wheel-down-3.scene.json"
+    },
+    {
+      "name": "running-wheel-up",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "wheel": -1
+        }
+      ],
+      "says": "已暂停自动滚动",
+      "text": "sequences/running-wheel-up.text.txt",
+      "style": "sequences/running-wheel-up.style.txt",
+      "data": "sequences/running-wheel-up.scene.json"
+    },
+    {
+      "name": "running-click-row",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "click": [
+            10,
+            9
+          ]
+        }
+      ],
+      "says": "已暂停自动滚动 ⋅ F 恢复",
+      "text": "sequences/running-click-row.text.txt",
+      "style": "sequences/running-click-row.style.txt",
+      "data": "sequences/running-click-row.scene.json"
+    },
+    {
+      "name": "running-dblclick-dir",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "dblclick": [
+            10,
+            9
+          ]
+        }
+      ],
+      "says": "▾ ! 哆啦A梦",
+      "text": "sequences/running-dblclick-dir.text.txt",
+      "style": "sequences/running-dblclick-dir.style.txt",
+      "data": "sequences/running-dblclick-dir.scene.json"
+    },
+    {
+      "name": "ended-h",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        }
+      ],
+      "says": "❯   ▸ ✗ 集英社/海贼王",
+      "text": "sequences/ended-h.text.txt",
+      "style": "sequences/ended-h.style.txt",
+      "data": "sequences/ended-h.scene.json"
+    },
+    {
+      "name": "ended-h-l",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "❯   ▾ ✗ 集英社/海贼王",
+      "text": "sequences/ended-h-l.text.txt",
+      "style": "sequences/ended-h-l.style.txt",
+      "data": "sequences/ended-h-l.scene.json"
+    },
+    {
+      "name": "ended-h-Enter",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "❯   ▾ ✗ 集英社/海贼王",
+      "text": "sequences/ended-h-Enter.text.txt",
+      "style": "sequences/ended-h-Enter.style.txt",
+      "data": "sequences/ended-h-Enter.scene.json"
+    },
+    {
+      "name": "ended-h-Enter-Enter",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "❯   ▸ ✗ 集英社/海贼王",
+      "text": "sequences/ended-h-Enter-Enter.text.txt",
+      "style": "sequences/ended-h-Enter-Enter.style.txt",
+      "data": "sequences/ended-h-Enter-Enter.scene.json"
+    },
+    {
+      "name": "ended-l",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "l"
+        }
+      ],
+      "says": "[需留意的页]",
+      "text": "sequences/ended-l.text.txt",
+      "style": "sequences/ended-l.style.txt",
+      "data": "sequences/ended-l.scene.json"
+    },
+    {
+      "name": "ended-l-a",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "l"
+        },
+        {
+          "key": "a"
+        }
+      ],
+      "says": "[全部页]",
+      "text": "sequences/ended-l-a.text.txt",
+      "style": "sequences/ended-l-a.style.txt",
+      "data": "sequences/ended-l-a.scene.json"
+    },
+    {
+      "name": "ended-l-a-j",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "l"
+        },
+        {
+          "key": "a"
+        },
+        {
+          "key": "j"
+        }
+      ],
+      "says": "2 of 189",
+      "text": "sequences/ended-l-a-j.text.txt",
+      "style": "sequences/ended-l-a-j.style.txt",
+      "data": "sequences/ended-l-a-j.scene.json"
+    },
+    {
+      "name": "ended-l-a-j-h",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "l"
+        },
+        {
+          "key": "a"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": "❯ ",
+      "text": "sequences/ended-l-a-j-h.text.txt",
+      "style": "sequences/ended-l-a-j-h.style.txt",
+      "data": "sequences/ended-l-a-j-h.scene.json"
+    },
+    {
+      "name": "ended-Enter",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "[需留意的页]",
+      "text": "sequences/ended-Enter.text.txt",
+      "style": "sequences/ended-Enter.style.txt",
+      "data": "sequences/ended-Enter.scene.json"
+    },
+    {
+      "name": "pages-h",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        }
+      ],
+      "says": "第07卷",
+      "text": "sequences/pages-h.text.txt",
+      "style": "sequences/pages-h.style.txt",
+      "data": "sequences/pages-h.scene.json"
+    },
+    {
+      "name": "pages-Escape",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "第07卷",
+      "text": "sequences/pages-Escape.text.txt",
+      "style": "sequences/pages-Escape.style.txt",
+      "data": "sequences/pages-Escape.scene.json"
+    },
+    {
+      "name": "pages-a",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "says": "[全部页]",
+      "text": "sequences/pages-a.text.txt",
+      "style": "sequences/pages-a.style.txt",
+      "data": "sequences/pages-a.scene.json"
+    },
+    {
+      "name": "pages-j",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        }
+      ],
+      "says": "3 of 189",
+      "text": "sequences/pages-j.text.txt",
+      "style": "sequences/pages-j.style.txt",
+      "data": "sequences/pages-j.scene.json"
+    },
+    {
+      "name": "pages-click-page",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        },
+        {
+          "click": [
+            20,
+            14
+          ]
+        }
+      ],
+      "says": "5 of 189",
+      "text": "sequences/pages-click-page.text.txt",
+      "style": "sequences/pages-click-page.style.txt",
+      "data": "sequences/pages-click-page.scene.json"
+    },
+    {
+      "name": "ended-failed-l",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "✗ 转换失败：",
+      "text": "sequences/ended-failed-l.text.txt",
+      "style": "sequences/ended-failed-l.style.txt",
+      "data": "sequences/ended-failed-l.scene.json"
+    },
+    {
+      "name": "ended-skipped-l",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "这一卷跳过了：",
+      "text": "sequences/ended-skipped-l.text.txt",
+      "style": "sequences/ended-skipped-l.style.txt",
+      "data": "sequences/ended-skipped-l.scene.json"
+    },
+    {
+      "name": "running-vol-l",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "l"
+        }
+      ],
+      "says": "还在处理：",
+      "text": "sequences/running-vol-l.text.txt",
+      "style": "sequences/running-vol-l.style.txt",
+      "data": "sequences/running-vol-l.scene.json"
+    },
+    {
+      "name": "running-queued-l",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "还没轮到这一卷：",
+      "text": "sequences/running-queued-l.text.txt",
+      "style": "sequences/running-queued-l.style.txt",
+      "data": "sequences/running-queued-l.scene.json"
+    },
+    {
+      "name": "running-s-s-l",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "key": "s"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "已中断：",
+      "text": "sequences/running-s-s-l.text.txt",
+      "style": "sequences/running-s-s-l.style.txt",
+      "data": "sequences/running-s-s-l.scene.json"
+    },
+    {
+      "name": "running-j",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        }
+      ],
+      "says": "已暂停自动滚动",
+      "text": "sequences/running-j.text.txt",
+      "style": "sequences/running-j.style.txt",
+      "data": "sequences/running-j.scene.json"
+    },
+    {
+      "name": "running-j-advance",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        },
+        {
+          "advance": 3
+        }
+      ],
+      "says": "已暂停自动滚动 ⋅ F 恢复",
+      "text": "sequences/running-j-advance.text.txt",
+      "style": "sequences/running-j-advance.style.txt",
+      "data": "sequences/running-j-advance.scene.json"
+    },
+    {
+      "name": "running-j-advance-F",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        },
+        {
+          "advance": 3
+        },
+        {
+          "key": "F"
+        }
+      ],
+      "says": "自动滚动：",
+      "text": "sequences/running-j-advance-F.text.txt",
+      "style": "sequences/running-j-advance-F.style.txt",
+      "data": "sequences/running-j-advance-F.scene.json"
+    },
+    {
+      "name": "running-]d",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "问题 4/4",
+      "text": "sequences/running-]d.text.txt",
+      "style": "sequences/running-]d.style.txt",
+      "data": "sequences/running-]d.scene.json"
+    },
+    {
+      "name": "running-]d-]d",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "问题 1/4",
+      "text": "sequences/running-]d-]d.text.txt",
+      "style": "sequences/running-]d-]d.style.txt",
+      "data": "sequences/running-]d-]d.scene.json"
+    },
+    {
+      "name": "running-]d-]d-[d",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "["
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "问题 4/4",
+      "text": "sequences/running-]d-]d-[d.text.txt",
+      "style": "sequences/running-]d-]d-[d.style.txt",
+      "data": "sequences/running-]d-]d-[d.scene.json"
+    },
+    {
+      "name": "ended-]d",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "问题 3/7",
+      "text": "sequences/ended-]d.text.txt",
+      "style": "sequences/ended-]d.style.txt",
+      "data": "sequences/ended-]d.scene.json"
+    },
+    {
+      "name": "ended-[d",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "["
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "问题 1/",
+      "text": "sequences/ended-[d.text.txt",
+      "style": "sequences/ended-[d.style.txt",
+      "data": "sequences/ended-[d.scene.json"
+    },
+    {
+      "name": "running-slash",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        }
+      ],
+      "says": "[⏎ → 跳到结果]",
+      "text": "sequences/running-slash.text.txt",
+      "style": "sequences/running-slash.style.txt",
+      "data": "sequences/running-slash.scene.json"
+    },
+    {
+      "name": "running-search-typed",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "海贼"
+        }
+      ],
+      "says": "/海贼",
+      "text": "sequences/running-search-typed.text.txt",
+      "style": "sequences/running-search-typed.style.txt",
+      "data": "sequences/running-search-typed.scene.json"
+    },
+    {
+      "name": "running-search-Enter",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "海贼"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "搜索结果 1/1",
+      "text": "sequences/running-search-Enter.text.txt",
+      "style": "sequences/running-search-Enter.style.txt",
+      "data": "sequences/running-search-Enter.scene.json"
+    },
+    {
+      "name": "running-search-05-Enter",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "第05"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "搜索结果 3/7",
+      "text": "sequences/running-search-05-Enter.text.txt",
+      "style": "sequences/running-search-05-Enter.style.txt",
+      "data": "sequences/running-search-05-Enter.scene.json"
+    },
+    {
+      "name": "running-search-n",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "第05"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "n"
+        }
+      ],
+      "says": "搜索结果 4/7",
+      "text": "sequences/running-search-n.text.txt",
+      "style": "sequences/running-search-n.style.txt",
+      "data": "sequences/running-search-n.scene.json"
+    },
+    {
+      "name": "running-search-n-N",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "第05"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "n"
+        },
+        {
+          "key": "N"
+        }
+      ],
+      "says": "搜索结果 3/7",
+      "text": "sequences/running-search-n-N.text.txt",
+      "style": "sequences/running-search-n-N.style.txt",
+      "data": "sequences/running-search-n-N.scene.json"
+    },
+    {
+      "name": "ended-search-into-collapsed",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "棋魂/第15"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": {
+        "has": [
+          "▾ ! 棋魂",
+          "❯     ! 第15卷"
+        ]
+      },
+      "text": "sequences/ended-search-into-collapsed.text.txt",
+      "style": "sequences/ended-search-into-collapsed.style.txt",
+      "data": "sequences/ended-search-into-collapsed.scene.json"
+    },
+    {
+      "name": "ended-search-nothing",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "不存在"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "没有找到和「不存在」相关的卷或文件夹",
+      "text": "sequences/ended-search-nothing.text.txt",
+      "style": "sequences/ended-search-nothing.style.txt",
+      "data": "sequences/ended-search-nothing.scene.json"
+    },
+    {
+      "name": "search-Escape",
+      "scene": "search",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "[/ → 搜索]",
+      "text": "sequences/search-Escape.text.txt",
+      "style": "sequences/search-Escape.style.txt",
+      "data": "sequences/search-Escape.scene.json"
+    },
+    {
+      "name": "search-Enter-Escape",
+      "scene": "search",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": {
+        "has": [
+          "搜索结果 1/1"
+        ],
+        "lacks": [
+          "/海贼 ⋅ n N"
+        ]
+      },
+      "text": "sequences/search-Enter-Escape.text.txt",
+      "style": "sequences/search-Enter-Escape.style.txt",
+      "data": "sequences/search-Enter-Escape.scene.json"
+    },
+    {
+      "name": "deciding-v",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "v"
+        }
+      ],
+      "says": "等待确认：还没写入任何文件",
+      "text": "sequences/deciding-v.text.txt",
+      "style": "sequences/deciding-v.style.txt",
+      "data": "sequences/deciding-v.scene.json"
+    },
+    {
+      "name": "deciding-v-h",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "v"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": "需要确认",
+      "text": "sequences/deciding-v-h.text.txt",
+      "style": "sequences/deciding-v-h.style.txt",
+      "data": "sequences/deciding-v-h.scene.json"
+    },
+    {
+      "name": "deciding-x",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "x"
+        }
+      ],
+      "says": "写出这一卷",
+      "text": "sequences/deciding-x.text.txt",
+      "style": "sequences/deciding-x.style.txt",
+      "data": "sequences/deciding-x.scene.json"
+    },
+    {
+      "name": "deciding-x-advance",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "x"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": "需要确认",
+      "text": "sequences/deciding-x-advance.text.txt",
+      "style": "sequences/deciding-x-advance.style.txt",
+      "data": "sequences/deciding-x-advance.scene.json"
+    },
+    {
+      "name": "deciding-a",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "says": "全部写出：",
+      "text": "sequences/deciding-a.text.txt",
+      "style": "sequences/deciding-a.style.txt",
+      "data": "sequences/deciding-a.scene.json"
+    },
+    {
+      "name": "deciding-a-advance",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": "转换",
+      "text": "sequences/deciding-a-advance.text.txt",
+      "style": "sequences/deciding-a-advance.style.txt",
+      "data": "sequences/deciding-a-advance.scene.json"
+    },
+    {
+      "name": "deciding-s",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        }
+      ],
+      "says": "已结束预览：",
+      "text": "sequences/deciding-s.text.txt",
+      "style": "sequences/deciding-s.style.txt",
+      "data": "sequences/deciding-s.scene.json"
+    },
+    {
+      "name": "deciding-2",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        }
+      ],
+      "says": "? 等待确认 ⋅",
+      "text": "sequences/deciding-2.text.txt",
+      "style": "sequences/deciding-2.style.txt",
+      "data": "sequences/deciding-2.scene.json"
+    },
+    {
+      "name": "running-s",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        }
+      ],
+      "says": "正在停止：",
+      "text": "sequences/running-s.text.txt",
+      "style": "sequences/running-s.style.txt",
+      "data": "sequences/running-s.scene.json"
+    },
+    {
+      "name": "running-s-advance",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": "已停止 ",
+      "text": "sequences/running-s-advance.text.txt",
+      "style": "sequences/running-s-advance.style.txt",
+      "data": "sequences/running-s-advance.scene.json"
+    },
+    {
+      "name": "running-s-s",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "key": "s"
+        }
+      ],
+      "says": "已立即停止：",
+      "text": "sequences/running-s-s.text.txt",
+      "style": "sequences/running-s-s.style.txt",
+      "data": "sequences/running-s-s.scene.json"
+    },
+    {
+      "name": "running-q",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "q"
+        }
+      ],
+      "says": "q 不会退出",
+      "text": "sequences/running-q.text.txt",
+      "style": "sequences/running-q.style.txt",
+      "data": "sequences/running-q.scene.json"
+    },
+    {
+      "name": "survey-s",
+      "scene": "survey",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        }
+      ],
+      "says": "正在停止：",
+      "text": "sequences/survey-s.text.txt",
+      "style": "sequences/survey-s.style.txt",
+      "data": "sequences/survey-s.scene.json"
+    },
+    {
+      "name": "ended-q",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "q"
+        }
+      ],
+      "says": "退出",
+      "text": "sequences/ended-q.text.txt",
+      "style": "sequences/ended-q.style.txt",
+      "data": "sequences/ended-q.scene.json"
+    },
+    {
+      "name": "fresh-q",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "q"
+        }
+      ],
+      "says": "退出",
+      "text": "sequences/fresh-q.text.txt",
+      "style": "sequences/fresh-q.style.txt",
+      "data": "sequences/fresh-q.scene.json"
+    },
+    {
+      "name": "fresh-help",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        }
+      ],
+      "says": "全部按键 ⋅ vim 风格",
+      "text": "sequences/fresh-help.text.txt",
+      "style": "sequences/fresh-help.style.txt",
+      "data": "sequences/fresh-help.scene.json"
+    },
+    {
+      "name": "survey-help",
+      "scene": "survey",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        }
+      ],
+      "says": "全部按键 ⋅ vim 风格",
+      "text": "sequences/survey-help.text.txt",
+      "style": "sequences/survey-help.style.txt",
+      "data": "sequences/survey-help.scene.json"
+    },
+    {
+      "name": "deciding-help",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        }
+      ],
+      "says": "全部按键 ⋅ vim 风格",
+      "text": "sequences/deciding-help.text.txt",
+      "style": "sequences/deciding-help.style.txt",
+      "data": "sequences/deciding-help.scene.json"
+    },
+    {
+      "name": "ended-help",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        }
+      ],
+      "says": "全部按键 ⋅ vim 风格",
+      "text": "sequences/ended-help.text.txt",
+      "style": "sequences/ended-help.style.txt",
+      "data": "sequences/ended-help.scene.json"
+    },
+    {
+      "name": "help-j",
+      "scene": "help",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "j"
+        }
+      ],
+      "says": "1–27 of 27",
+      "text": "sequences/help-j.text.txt",
+      "style": "sequences/help-j.style.txt",
+      "data": "sequences/help-j.scene.json"
+    },
+    {
+      "name": "help-narrow-j-k",
+      "scene": "help",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "j"
+        },
+        {
+          "key": "k"
+        }
+      ],
+      "says": "1–",
+      "text": "sequences/help-narrow-j-k.text.txt",
+      "style": "sequences/help-narrow-j-k.style.txt",
+      "data": "sequences/help-narrow-j-k.scene.json"
+    },
+    {
+      "name": "help-narrow-G",
+      "scene": "help",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        }
+      ],
+      "says": "of",
+      "text": "sequences/help-narrow-G.text.txt",
+      "style": "sequences/help-narrow-G.style.txt",
+      "data": "sequences/help-narrow-G.scene.json"
+    },
+    {
+      "name": "help-Escape",
+      "scene": "help",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/help-Escape.text.txt",
+      "style": "sequences/help-Escape.style.txt",
+      "data": "sequences/help-Escape.scene.json"
+    },
+    {
+      "name": "help-question",
+      "scene": "help",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/help-question.text.txt",
+      "style": "sequences/help-question.style.txt",
+      "data": "sequences/help-question.scene.json"
+    },
+    {
+      "name": "help-narrow-j",
+      "scene": "help",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "j"
+        }
+      ],
+      "says": "2–",
+      "text": "sequences/help-narrow-j.text.txt",
+      "style": "sequences/help-narrow-j.style.txt",
+      "data": "sequences/help-narrow-j.scene.json"
+    },
+    {
+      "name": "add-F1",
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        }
+      ],
+      "says": "全部按键 ⋅ vim 风格",
+      "text": "sequences/add-F1.text.txt",
+      "style": "sequences/add-F1.style.txt",
+      "data": "sequences/add-F1.scene.json"
+    },
+    {
+      "name": "add-F1-j",
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "key": "j"
+        }
+      ],
+      "says": "1–26 of 26",
+      "text": "sequences/add-F1-j.text.txt",
+      "style": "sequences/add-F1-j.style.txt",
+      "data": "sequences/add-F1-j.scene.json"
+    },
+    {
+      "name": "add-narrow-F1-j",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "key": "j"
+        }
+      ],
+      "says": "2–",
+      "text": "sequences/add-narrow-F1-j.text.txt",
+      "style": "sequences/add-narrow-F1-j.style.txt",
+      "data": "sequences/add-narrow-F1-j.scene.json"
+    },
+    {
+      "name": "add-F1-j-k-Escape",
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "添加路径  ~/Comics/",
+      "text": "sequences/add-F1-j-k-Escape.text.txt",
+      "style": "sequences/add-F1-j-k-Escape.style.txt",
+      "data": "sequences/add-F1-j-k-Escape.scene.json"
+    },
+    {
+      "name": "add-narrow-F1-j-k",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "k"
+        }
+      ],
+      "says": "1–",
+      "text": "sequences/add-narrow-F1-j-k.text.txt",
+      "style": "sequences/add-narrow-F1-j-k.style.txt",
+      "data": "sequences/add-narrow-F1-j-k.scene.json"
+    },
+    {
+      "name": "add-narrow-F1-j-k-Escape",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "添加路径  ~/Comics/",
+      "text": "sequences/add-narrow-F1-j-k-Escape.text.txt",
+      "style": "sequences/add-narrow-F1-j-k-Escape.style.txt",
+      "data": "sequences/add-narrow-F1-j-k-Escape.scene.json"
+    },
+    {
+      "name": "fresh-o",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        }
+      ],
+      "says": "添加路径  ~/",
+      "text": "sequences/fresh-o.text.txt",
+      "style": "sequences/fresh-o.style.txt",
+      "data": "sequences/fresh-o.scene.json"
+    },
+    {
+      "name": "fresh-o-Tab",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": "可选项 ⋅ 4 项",
+      "text": "sequences/fresh-o-Tab.text.txt",
+      "style": "sequences/fresh-o-Tab.style.txt",
+      "data": "sequences/fresh-o-Tab.scene.json"
+    },
+    {
+      "name": "fresh-o-Tab-Tab",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": "2 of 4",
+      "text": "sequences/fresh-o-Tab-Tab.text.txt",
+      "style": "sequences/fresh-o-Tab-Tab.style.txt",
+      "data": "sequences/fresh-o-Tab-Tab.scene.json"
+    },
+    {
+      "name": "fresh-o-Tab-Tab-C-w",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "C-w"
+        }
+      ],
+      "says": "添加路径  ~/",
+      "text": "sequences/fresh-o-Tab-Tab-C-w.text.txt",
+      "style": "sequences/fresh-o-Tab-Tab-C-w.style.txt",
+      "data": "sequences/fresh-o-Tab-Tab-C-w.scene.json"
+    },
+    {
+      "name": "fresh-o-missing",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "没有这个"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "找不到「~/没有这个」",
+      "text": "sequences/fresh-o-missing.text.txt",
+      "style": "sequences/fresh-o-missing.style.txt",
+      "data": "sequences/fresh-o-missing.scene.json"
+    },
+    {
+      "name": "fresh-o-added",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/火之鸟"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "已添加 ~/Comics/火之鸟",
+      "text": "sequences/fresh-o-added.text.txt",
+      "style": "sequences/fresh-o-added.style.txt",
+      "data": "sequences/fresh-o-added.scene.json"
+    },
+    {
+      "name": "fresh-o-Escape",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "[o → 添加路径]",
+      "text": "sequences/fresh-o-Escape.text.txt",
+      "style": "sequences/fresh-o-Escape.style.txt",
+      "data": "sequences/fresh-o-Escape.scene.json"
+    },
+    {
+      "name": "fresh-i",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "i"
+        }
+      ],
+      "says": "修改路径  ~/漫画库",
+      "text": "sequences/fresh-i.text.txt",
+      "style": "sequences/fresh-i.style.txt",
+      "data": "sequences/fresh-i.scene.json"
+    },
+    {
+      "name": "fresh-k-i",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        }
+      ],
+      "says": "输出目录  ~/转好的/",
+      "text": "sequences/fresh-k-i.text.txt",
+      "style": "sequences/fresh-k-i.style.txt",
+      "data": "sequences/fresh-k-i.scene.json"
+    },
+    {
+      "name": "fresh-k-i-C-w-typed",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        },
+        {
+          "key": "C-w"
+        },
+        {
+          "type": "Comics"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "输出目录 → ~/Comics",
+      "text": "sequences/fresh-k-i-C-w-typed.text.txt",
+      "style": "sequences/fresh-k-i-C-w-typed.style.txt",
+      "data": "sequences/fresh-k-i-C-w-typed.scene.json"
+    },
+    {
+      "name": "fresh-Space",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Space"
+        }
+      ],
+      "says": "[ ] ~/漫画库",
+      "text": "sequences/fresh-Space.text.txt",
+      "style": "sequences/fresh-Space.style.txt",
+      "data": "sequences/fresh-Space.scene.json"
+    },
+    {
+      "name": "fresh-Space-Space",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Space"
+        },
+        {
+          "key": "Space"
+        }
+      ],
+      "says": "[x] ~/漫画库",
+      "text": "sequences/fresh-Space-Space.text.txt",
+      "style": "sequences/fresh-Space-Space.style.txt",
+      "data": "sequences/fresh-Space-Space.scene.json"
+    },
+    {
+      "name": "fresh-dd",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "已删除 ",
+      "text": "sequences/fresh-dd.text.txt",
+      "style": "sequences/fresh-dd.style.txt",
+      "data": "sequences/fresh-dd.scene.json"
+    },
+    {
+      "name": "fresh-d",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "d"
+        }
+      ],
+      "says": "d…",
+      "text": "sequences/fresh-d.text.txt",
+      "style": "sequences/fresh-d.style.txt",
+      "data": "sequences/fresh-d.scene.json"
+    },
+    {
+      "name": "fresh-t",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "t"
+        }
+      ],
+      "says": "预览：",
+      "text": "sequences/fresh-t.text.txt",
+      "style": "sequences/fresh-t.style.txt",
+      "data": "sequences/fresh-t.scene.json"
+    },
+    {
+      "name": "fresh-x",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "x"
+        }
+      ],
+      "says": "转换：",
+      "text": "sequences/fresh-x.text.txt",
+      "style": "sequences/fresh-x.style.txt",
+      "data": "sequences/fresh-x.scene.json"
+    },
+    {
+      "name": "ended-o",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        }
+      ],
+      "says": "返回路径列表",
+      "text": "sequences/ended-o.text.txt",
+      "style": "sequences/ended-o.style.txt",
+      "data": "sequences/ended-o.scene.json"
+    },
+    {
+      "name": "ended-note",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        }
+      ],
+      "says": "[⏎ → 查看]",
+      "text": "sequences/ended-note.text.txt",
+      "style": "sequences/ended-note.style.txt",
+      "data": "sequences/ended-note.scene.json"
+    },
+    {
+      "name": "ended-note-Enter",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "Esc → 关闭",
+      "text": "sequences/ended-note-Enter.text.txt",
+      "style": "sequences/ended-note-Enter.style.txt",
+      "data": "sequences/ended-note-Enter.scene.json"
+    },
+    {
+      "name": "ended-note-Enter-Escape",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "[⏎ → 查看]",
+      "text": "sequences/ended-note-Enter-Escape.text.txt",
+      "style": "sequences/ended-note-Enter-Escape.style.txt",
+      "data": "sequences/ended-note-Enter-Escape.scene.json"
+    },
+    {
+      "name": "ended-nonvolume-Enter",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "已忽略 3 个文件",
+      "text": "sequences/ended-nonvolume-Enter.text.txt",
+      "style": "sequences/ended-nonvolume-Enter.style.txt",
+      "data": "sequences/ended-nonvolume-Enter.scene.json"
+    },
+    {
+      "name": "config-h",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-h.text.txt",
+      "style": "sequences/config-h.style.txt",
+      "data": "sequences/config-h.scene.json"
+    },
+    {
+      "name": "config-h-l",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "[⏎ → 确定]",
+      "text": "sequences/config-h-l.text.txt",
+      "style": "sequences/config-h-l.style.txt",
+      "data": "sequences/config-h-l.scene.json"
+    },
+    {
+      "name": "config-h-l-k-l",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "缩放方式 → height",
+      "text": "sequences/config-h-l-k-l.text.txt",
+      "style": "sequences/config-h-l-k-l.style.txt",
+      "data": "sequences/config-h-l-k-l.scene.json"
+    },
+    {
+      "name": "config-h-l-k-h",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-h-l-k-h.text.txt",
+      "style": "sequences/config-h-l-k-h.style.txt",
+      "data": "sequences/config-h-l-k-h.scene.json"
+    },
+    {
+      "name": "config-Escape",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-Escape.text.txt",
+      "style": "sequences/config-Escape.style.txt",
+      "data": "sequences/config-Escape.scene.json"
+    },
+    {
+      "name": "config-Tab",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-Tab.text.txt",
+      "style": "sequences/config-Tab.style.txt",
+      "data": "sequences/config-Tab.scene.json"
+    },
+    {
+      "name": "config-model",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "先选屏幕规格，再选型号",
+      "text": "sequences/config-model.text.txt",
+      "style": "sequences/config-model.style.txt",
+      "data": "sequences/config-model.scene.json"
+    },
+    {
+      "name": "config-model-drill",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "屏幕规格 › ",
+      "text": "sequences/config-model-drill.text.txt",
+      "style": "sequences/config-model-drill.style.txt",
+      "data": "sequences/config-model-drill.scene.json"
+    },
+    {
+      "name": "config-model-drill-h",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": "先选屏幕规格，再选型号",
+      "text": "sequences/config-model-drill-h.text.txt",
+      "style": "sequences/config-model-drill-h.style.txt",
+      "data": "sequences/config-model-drill-h.scene.json"
+    },
+    {
+      "name": "config-model-drill-j-l",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "设备型号已改为 ",
+      "text": "sequences/config-model-drill-j-l.text.txt",
+      "style": "sequences/config-model-drill-j-l.style.txt",
+      "data": "sequences/config-model-drill-j-l.scene.json"
+    },
+    {
+      "name": "config-levels-i",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        }
+      ],
+      "says": "可见灰阶数  ",
+      "text": "sequences/config-levels-i.text.txt",
+      "style": "sequences/config-levels-i.style.txt",
+      "data": "sequences/config-levels-i.scene.json"
+    },
+    {
+      "name": "config-levels-i-typed",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        },
+        {
+          "type": "14"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "可见灰阶数 → 14",
+      "text": "sequences/config-levels-i-typed.text.txt",
+      "style": "sequences/config-levels-i-typed.style.txt",
+      "data": "sequences/config-levels-i-typed.scene.json"
+    },
+    {
+      "name": "config-narrow-h",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-narrow-h.text.txt",
+      "style": "sequences/config-narrow-h.style.txt",
+      "data": "sequences/config-narrow-h.scene.json"
+    },
+    {
+      "name": "config-narrow-h-l",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 inside"
+        ],
+        "lacks": [
+          "设置 ⋅ 预设会保存这两组"
+        ]
+      },
+      "text": "sequences/config-narrow-h-l.text.txt",
+      "style": "sequences/config-narrow-h-l.style.txt",
+      "data": "sequences/config-narrow-h-l.scene.json"
+    },
+    {
+      "name": "config-narrow-h-l-h",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": {
+        "has": [
+          "设置 ⋅ 预设会保存这两组"
+        ],
+        "lacks": [
+          "当前 inside"
+        ]
+      },
+      "text": "sequences/config-narrow-h-l-h.text.txt",
+      "style": "sequences/config-narrow-h-l-h.style.txt",
+      "data": "sequences/config-narrow-h-l-h.scene.json"
+    },
+    {
+      "name": "running-2-fit-l",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "[⏎ → 查看]",
+      "text": "sequences/running-2-fit-l.text.txt",
+      "style": "sequences/running-2-fit-l.style.txt",
+      "data": "sequences/running-2-fit-l.scene.json"
+    },
+    {
+      "name": "running-2-fit-l-l",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "设置已锁定，结束后才能修改",
+      "text": "sequences/running-2-fit-l-l.text.txt",
+      "style": "sequences/running-2-fit-l-l.style.txt",
+      "data": "sequences/running-2-fit-l-l.scene.json"
+    },
+    {
+      "name": "config-c",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "c"
+        }
+      ],
+      "says": "已生成灰阶测试图",
+      "text": "sequences/config-c.text.txt",
+      "style": "sequences/config-c.style.txt",
+      "data": "sequences/config-c.scene.json"
+    },
+    {
+      "name": "config-click-row",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "click": [
+            10,
+            7
+          ]
+        }
+      ],
+      "says": {
+        "has": [
+          "[l → 展开]",
+          "❯ 可见灰阶数"
+        ]
+      },
+      "text": "sequences/config-click-row.text.txt",
+      "style": "sequences/config-click-row.style.txt",
+      "data": "sequences/config-click-row.scene.json"
+    },
+    {
+      "name": "config-click-choice",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "click": [
+            70,
+            6
+          ]
+        }
+      ],
+      "says": "❯   height",
+      "text": "sequences/config-click-choice.text.txt",
+      "style": "sequences/config-click-choice.style.txt",
+      "data": "sequences/config-click-choice.scene.json"
+    },
+    {
+      "name": "config-p",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        }
+      ],
+      "says": "预设 ⋅ 2 个",
+      "text": "sequences/config-p.text.txt",
+      "style": "sequences/config-p.style.txt",
+      "data": "sequences/config-p.scene.json"
+    },
+    {
+      "name": "config-p-j-Enter",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "已使用预设「画集」",
+      "text": "sequences/config-p-j-Enter.text.txt",
+      "style": "sequences/config-p-j-Enter.style.txt",
+      "data": "sequences/config-p-j-Enter.scene.json"
+    },
+    {
+      "name": "config-p-dd",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "再按一次 dd 删除「漫画」",
+      "text": "sequences/config-p-dd.text.txt",
+      "style": "sequences/config-p-dd.style.txt",
+      "data": "sequences/config-p-dd.scene.json"
+    },
+    {
+      "name": "config-p-dd-dd",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": "已删除预设「漫画」",
+      "text": "sequences/config-p-dd-dd.text.txt",
+      "style": "sequences/config-p-dd-dd.style.txt",
+      "data": "sequences/config-p-dd-dd.scene.json"
+    },
+    {
+      "name": "config-p-save",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "保存为预设，名称  ",
+      "text": "sequences/config-p-save.text.txt",
+      "style": "sequences/config-p-save.style.txt",
+      "data": "sequences/config-p-save.scene.json"
+    },
+    {
+      "name": "config-p-save-named",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "插图"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "已保存预设「插图」",
+      "text": "sequences/config-p-save-named.text.txt",
+      "style": "sequences/config-p-save-named.style.txt",
+      "data": "sequences/config-p-save-named.scene.json"
+    },
+    {
+      "name": "config-p-p",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "p"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-p-p.text.txt",
+      "style": "sequences/config-p-p.style.txt",
+      "data": "sequences/config-p-p.scene.json"
+    },
+    {
+      "name": "config-p-h",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": "[l → 展开]",
+      "text": "sequences/config-p-h.text.txt",
+      "style": "sequences/config-p-h.style.txt",
+      "data": "sequences/config-p-h.scene.json"
+    },
+    {
+      "name": "config-p-click-preset",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "click": [
+            70,
+            6
+          ]
+        }
+      ],
+      "says": "❯   画集",
+      "text": "sequences/config-p-click-preset.text.txt",
+      "style": "sequences/config-p-click-preset.style.txt",
+      "data": "sequences/config-p-click-preset.scene.json"
+    },
+    {
+      "name": "running-2-p-Enter",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "2"
+        },
+        {
+          "key": "p"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "正在转换，设置已锁定",
+      "text": "sequences/running-2-p-Enter.text.txt",
+      "style": "sequences/running-2-p-Enter.style.txt",
+      "data": "sequences/running-2-p-Enter.scene.json"
+    },
+    {
+      "name": "running-shrink",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        56,
+        14
+      ],
+      "steps": [
+        {
+          "resize": [
+            56,
+            14
+          ]
+        }
+      ],
+      "says": "至少需要 60x16",
+      "text": "sequences/running-shrink.text.txt",
+      "style": "sequences/running-shrink.style.txt",
+      "data": "sequences/running-shrink.scene.json"
+    },
+    {
+      "name": "running-shrink-grow",
+      "scene": "running",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "resize": [
+            56,
+            14
+          ]
+        },
+        {
+          "resize": [
+            120,
+            36
+          ]
+        }
+      ],
+      "says": "[自动滚动]",
+      "text": "sequences/running-shrink-grow.text.txt",
+      "style": "sequences/running-shrink-grow.style.txt",
+      "data": "sequences/running-shrink-grow.scene.json"
+    }
+  ]
+}

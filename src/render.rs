@@ -50,9 +50,9 @@
 use std::path::{Path, PathBuf};
 
 use tonefit::{
-    CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport, Profile,
-    Report, Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit, WhiteAlignment,
-    aggregation, composition, masking,
+    Candidate, CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport,
+    Profile, Report, Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit,
+    WhiteAlignment, aggregation, composition, masking,
 };
 // 结束那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
 #[cfg(feature = "tui")]
@@ -308,6 +308,14 @@ pub enum Field {
     Reason,
     /// 各候选的画质分值排成一串。
     Scores,
+    /// **判成那一档在这一页上的画质分**（停车场 Q725）：整串（[`Scores`](Self::Scores)）里
+    /// 判定那个候选的那一项，单独一格。**判成的那一档不在各候选里就不在场**
+    /// （覆盖顶死那一趟、夹具里没打分的页）。
+    ///
+    /// 整串是命令行那一副的东西（六候选约 78 格），摆不进每页结果那张表；表上那一列要答的是
+    /// 「这一页把整卷拉下来的证据」，正是这一格。**只有会话读它**：纯文本那一副按名字取格，
+    /// 它不取，命令行报告因此一个字节不变。
+    VerdictScore,
     /// 这一趟怎么读的。
     Reading,
     /// 缓存用量。
@@ -1699,6 +1707,7 @@ fn page_row(page: &PageReport, mode: Mode) -> Row {
             cells.push(Cell::new(Field::Candidate, verdict.candidate.to_string()));
             cells.push(Cell::new(Field::Reason, verdict.reason.to_string()));
             cells.push(Cell::new(Field::Scores, score_line(scores)));
+            cells.extend(verdict_score(scores, verdict.candidate));
             // 纸白那一格**只在预览出**（纸色提白批 02 号票第 3 条）：全语料里离格量为 0
             // 的页占 57.0%、1–2 级的占 41.5%（measurements 的《全语料普查：四成三的页纸白
             // 不落在格点上》），绝大多数页的钳制宽度因此是 0 或 1，一页不落地恒印没有
@@ -1733,9 +1742,25 @@ fn failure_line(reason: &str) -> String {
 fn score_line(scores: &[CandidateScore]) -> String {
     scores
         .iter()
-        .map(|scored| format!("{} {}", scored.candidate, scored.score))
+        .map(scored_line)
         .collect::<Vec<_>>()
         .join(SEPARATOR)
+}
+
+/// 判成那一档在这一页上的画质分，单独一格（[`Field::VerdictScore`]）。
+///
+/// **写法与整串里的一项同一个**（[`score_line`] 串的就是这一句）：那一格是整串里的一项，
+/// 不是另一种说法。判成的那一档不在各候选里时不在场。
+fn verdict_score(scores: &[CandidateScore], candidate: Candidate) -> Option<Cell> {
+    scores
+        .iter()
+        .find(|scored| scored.candidate == candidate)
+        .map(|scored| Cell::new(Field::VerdictScore, scored_line(scored)))
+}
+
+/// 整串里的一项怎么写：`候选 分`。
+fn scored_line(scored: &CandidateScore) -> String {
+    format!("{} {}", scored.candidate, scored.score)
 }
 
 /// 这一趟**至今为止**失败的那些页，出现一条画一条（09 号票的会话主区）。
@@ -3727,6 +3752,51 @@ mod tests {
             "{:?}",
             rows[4]
         );
+    }
+
+    /// **一页那一行另带一格「判成那一档的画质分」**（停车场 Q725，`session-redesign/02`）：
+    /// 六候选整串（[`Field::Scores`]）是命令行那一副的东西，摆不进每页结果那张表；
+    /// 表上那一列要答的是「这一页把整卷拉下来的证据」，正是判成那一档在这一页上的分。
+    ///
+    /// 三件事：那一格的写法与整串里的一项同一个形状（`候选 分`）；判成的那一档
+    /// **不在**各候选里时那一格不在场（一格在不在场本身就是一句话）；
+    /// **命令行那一副一个字节不变**——纯文本那一副按名字取格，这一格它不取。
+    #[test]
+    fn a_page_row_carries_the_score_of_the_candidate_it_was_judged_as() {
+        let volume = a_volume_worth_a_row_of_each_kind();
+        let rows = pages(&volume, Mode::Process);
+        let verdict = rows
+            .iter()
+            .find(|row| row.kind == RowKind::PageVerdict)
+            .expect("头一页判了");
+
+        let scores = verdict.cell(Field::Scores).expect("整串在场");
+        // 夹具只给一个候选，整串就是那一项：新的那一格与它逐字相同。
+        assert_eq!(verdict.cell(Field::VerdictScore), Some(scores));
+        assert!(scores.starts_with("4bit "), "{scores}");
+
+        // 判成的那一档不在各候选里：那一格不在场，整串照旧。
+        let mut orphaned = volume.clone();
+        if let PageOutcome::Whole(processed) = &mut orphaned.pages[0].outcome
+            && let PageBranch::Gray { verdict, .. } = &mut processed.branch
+        {
+            verdict.candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
+        }
+        let rows = pages(&orphaned, Mode::Process);
+        let verdict = rows
+            .iter()
+            .find(|row| row.kind == RowKind::PageVerdict)
+            .expect("头一页判了");
+        assert_eq!(verdict.cell(Field::VerdictScore), None);
+        assert_eq!(verdict.cell(Field::Scores), Some(scores));
+
+        // 命令行那一副：那一行上分数只印一遍——新的那一格它不印。
+        let line = plain::line(
+            rows.iter()
+                .find(|row| row.kind == RowKind::PageVerdict)
+                .expect("头一页判了"),
+        );
+        assert_eq!(line.matches(scores).count(), 1, "{line}");
     }
 
     /// **跳过的卷少的是格，不是话**：它没算过的那几项一格都不在场。

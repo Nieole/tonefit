@@ -1,0 +1,1374 @@
+{
+  "scene": "fresh",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": {
+    "mode": "dry-run",
+    "stage": "surveying",
+    "outcome": null,
+    "envelope": false,
+    "elapsed_s": 0,
+    "steps": 0,
+    "total_steps": 46809,
+    "current": null,
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": false,
+    "survey": {
+      "entries": [
+        {
+          "kind": "section",
+          "path": "~/漫画库",
+          "directories": [
+            "~/漫画库/哆啦A梦",
+            "~/漫画库/集英社/海贼王",
+            "~/漫画库/攻壳机动队",
+            "~/漫画库/银河英雄传说"
+          ],
+          "notes": [
+            {
+              "kind": "unreachable",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏",
+                  "reason": "列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)"
+                }
+              ]
+            },
+            {
+              "kind": "non-volume",
+              "entries": [
+                {
+                  "path": "~/漫画库/字体包.zip",
+                  "reason": "压缩包里没有图片：不算一卷，输出里不会有空的压缩包"
+                },
+                {
+                  "path": "~/漫画库/答案.txt",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                },
+                {
+                  "path": "~/漫画库/README.md",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "directory",
+          "root": "~/下载/灰原哀",
+          "notes": []
+        },
+        {
+          "kind": "directory",
+          "root": "~/Comics/棋魂",
+          "notes": []
+        },
+        {
+          "kind": "section",
+          "path": "~/Comics/大友克洋",
+          "directories": [
+            "~/Comics/大友克洋/AKIRA",
+            "~/Comics/大友克洋/童梦"
+          ],
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第01卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第02卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第03卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第04卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第05卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第06卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第07卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第08卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第09卷",
+          "source_pages": 225,
+          "steps": 675
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第10卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第11卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第12卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第01卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第02卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第03卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第04卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第05卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第06卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第07卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第08卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第09卷",
+          "source_pages": 194,
+          "steps": 582
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第10卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第11卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第12卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第13卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第14卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第15卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第16卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第17卷",
+          "source_pages": 172,
+          "steps": 516
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第18卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第01卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第02卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第03卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第04卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第05卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第06卷",
+          "source_pages": 229,
+          "steps": 687
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第01卷",
+          "source_pages": 177,
+          "steps": 531
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第02卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第03卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第04卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第05卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第06卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第07卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第08卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第09卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/下载/灰原哀/第01卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第01卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第02卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第02卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第03卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第03卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第04卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第04卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第05卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第05卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第06卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第06卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第07卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第07卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/下载/灰原哀/第08卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第08卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/Comics/棋魂/第01卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第01卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第02卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第02卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第03卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第03卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第04卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第04卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第05卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第05卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第06卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第06卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第07卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第07卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第08卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第08卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第09卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第09卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第10卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第10卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第11卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第11卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第12卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第12卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第13卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第13卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第14卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第14卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第15卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第15卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第16卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第16卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第17卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第17卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第18卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第18卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第19卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第19卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第20卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第20卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第21卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第21卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第22卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第22卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第23卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第23卷",
+          "source_pages": 226,
+          "steps": 678
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第01卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第01卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第02卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第02卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第03卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第03卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第04卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第04卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第05卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第05卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第06卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第06卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/上",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "上",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/下",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "下",
+          "source_pages": 176,
+          "steps": 528
+        }
+      ],
+      "unchecked": 1
+    },
+    "volumes": [
+      {
+        "root": "~/漫画库/哆啦A梦/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第01卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第02卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第03卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第04卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第05卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第06卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第07卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第08卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第19卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第20卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第21卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第22卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第23卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/上",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/下",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "path",
+      "path": "~/漫画库"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "预览：只分析不写文件，每卷分析完会停下来问你",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

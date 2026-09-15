@@ -1,0 +1,42 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-cyan b
+# f = c-gray d
+# g = c-fg b
+# h = c-red b
+# i = c-red
+# j = c-yellow
+# k = c-yellow b
+# l = c-fg u
+# m = c-green
+# n = c-blue b
+# o = c-yellow i
+# p = c-gray i
+# q = c-lgreen
+".aabbccccccc....................ddddddddddddddddddddddddddddddddddddddd."
+"ccee.........................ccccccccccccccccccccccccccccccccccccccccc"
+"c.ccccddddddffffggggcccccccggggggggdddcccccccc....................c"
+"c.cccggccccccccccccccchhhhhhiiiiccciiiiiiccciiiiii...........c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"ccggccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccaaaaaaccc"
+"c.ccchhgggggcccccccccccccjjjjjjccciiiiiiccciiiiii.ccccccccccccc.c"
+"c.....cckk.................................................................c"
+"c.....cchhllllllllll...........jjjjjjccciiiiii...................c"
+"c.....cckk...............................................................c"
+"c.....ccmm..............................................................c"
+"c.......hhiiiiii...fffffffffffffffffffffffffffffffffffffffffff.c"
+"c.......cc...................................ffffffffffff..c"
+"c..............................................................................c"
+"c.ccccnnnnnnnnnnnnnnnnn.cccccccc.........dddddddddffcccccccc...........c"
+"c...cccc.................cccccccc..fff...................................c"
+"c..............................................................................c"
+"c.cccccgggggggggggggcccccccc.cccccccccccccccccccccccccccccccccccccccccccc.c"
+"c.....cccc.................cccccccc..fff...................................c"
+"c.....cccc...............cccccccc..fff...................................c"
+"c..............................................................................c"
+"c...fffffffffffffffff............................................c"
+"ccoooppppppppppppppppppccccccccccccccccccccccccccccccccccccccccccccccc"
+".a..q.............................................c.cccccccc.c...cccccc."

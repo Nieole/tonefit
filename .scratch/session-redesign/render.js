@@ -20,8 +20,15 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 /** 三种尺寸：主稿、验收线、「窗口太小」。 */
 const SIZES = [[120, 36], [80, 24], [56, 14]];
 
-/** 设计稿顶层那些 `const`／`function` 里，这里要用到的那几个。02 号票要什么再往里加。 */
-const HANDLES = ['S', 'SCENES', 'render', 'setSize', 'term'];
+/**
+ * 设计稿顶层那些 `const`／`function` 里，这里与 export.js 要用到的那几个：
+ * 画一帧与切尺寸、按键与鼠标的分派、推进模拟、以及导出场景数据要读的那几份假数据。
+ */
+const HANDLES = [
+  'S', 'SCENES', 'render', 'setSize', 'term',
+  'onMouse', 'onWheel', 'frame',
+  'VERSION', 'SHOW', 'TARGET_H', 'CONFIG', 'PRESETS', 'PANELS', 'pagesOf', 'stepsOf', 'isolatedOutput',
+];
 
 /**
  * 把设计稿装进一个伪 DOM 里，跑完它自己的脚本与初始化，交出一只把手。
@@ -64,10 +71,22 @@ async function load({ now = 1_000_000, file = path.join(__dirname, 'design.html'
   };
   /** 画一帧：设计稿自己的 `render`（整屏缓冲、DOM、侧栏），主循环不跑，画哪一帧由调用方定。 */
   const frame = () => design.render();
+  /**
+   * 让设计稿自己的主循环（`frame(now)`：推进模拟、连击键超时、画帧）跑 `ms` 毫秒，50 ms 一帧，
+   * 时钟跟着走。模拟走多快照 `S.speed`（尺寸条上那几枚「模拟」chip），播放没暂停才走。
+   */
+  const play = (ms) => {
+    for (let t = 0; t < ms; t += 50) { clockNow += Math.min(50, ms - t); design.frame(clockNow); }
+  };
   /** 切尺寸：设计稿自己的 `setSize`，与尺寸那几枚 chip 同一处。 */
   const resize = (cols, rows) => design.setSize(cols, rows);
-  /** 按一个键，走设计稿自己的 keydown 分派（`keyName` → `onKey`）。 */
+  /**
+   * 按一个键，走设计稿自己的 keydown 分派（`keyName` → `onKey`）。
+   * 键名照设计稿的写法：`C-w` 是 Ctrl 加 w，`Space` 是空格，其余（`j`、`Enter`、`Escape`、`Tab`、`F1`、一个汉字）原样。
+   */
   const press = (key, init = {}) => {
+    if (key.startsWith('C-') && key.length === 3) { init = { ctrlKey: true, ...init }; key = key.slice(2); }
+    if (key === 'Space') key = ' ';
     design.term.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   };
   /** 点一枚 chip（场景、尺寸、调色板、模拟）。 */
@@ -76,7 +95,7 @@ async function load({ now = 1_000_000, file = path.join(__dirname, 'design.html'
     if (!button) throw new Error(`没有这一枚 chip：${value}`);
     button.click();
   };
-  return { dom, window, design, errors, clock, frame, resize, press, chip };
+  return { dom, window, design, errors, clock, frame, play, resize, press, chip };
 }
 
 /** 一屏的字网格：一行一屏行，两侧加引号；宽字符后半格（`null`）跳过，与 TestBackend 的读法相同。 */

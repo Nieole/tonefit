@@ -1,0 +1,51 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": false,
+    "split": false,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": 4,
+    "dither": null,
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "画集",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "✓ 已使用预设「画集」",
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "fit",
+      "choice": "inside",
+      "choice_index": 2,
+      "drill": null,
+      "presets": true,
+      "preset_cursor": 1,
+      "armed_delete": null
+    }
+  }
+}

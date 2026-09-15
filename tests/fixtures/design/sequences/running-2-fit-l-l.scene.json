@@ -1,0 +1,38 @@
+{
+  "scene": "running",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "volume",
+      "root": "~/漫画库/集英社/海贼王/第15卷"
+    },
+    "expanded": [
+      "~/漫画库/集英社/海贼王"
+    ],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "正在转换，设置已锁定，结束后才能修改",
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "fit",
+      "choice": "inside",
+      "choice_index": 2,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

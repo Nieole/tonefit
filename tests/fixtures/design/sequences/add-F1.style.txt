@@ -1,0 +1,52 @@
+# . = c-fg
+# a = c-fg d
+# b = c-green b d
+# c = c-fg b d u
+# d = c-gray d
+# e = c-blue d
+# f = c-fg b d
+# g = c-lgreen
+# h = c-fg b
+# i = c-gray
+# j = c-green b
+# k = c-yellow
+# l = c-green d
+# m = c-lgreen d
+# n = c-lgreen b d
+# o = c-blue b d
+"abbccdddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea"
+"ddfffgghhhhiiiiiiiiiiiiiiiiiiigggggggggggggggggggggggggggggggggggggggggggggggggggiiiiiiiiiigggdddddddd"
+"dadddg..jj..............................................jj..............................................gaaaaaaad"
+"dadaddddg..kkkkkkkkkk...............................kkkkkkkkkk..................................gaaaaaaad"
+"ddddddddg..kkkkkkkkkk................................kkkkkkkkkk.................................gdddddddd"
+"ddffddg..kkkkkkkkkk...............................kkkkkkkkkk......................................gdddddddd"
+"daaaddg..kkkkkkkkkk.............................kkkkkkkkkk.................................gaaaaaaad"
+"daaaffg..kkkkkkkkkk........................................................................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk........................jj..............................................gaaaaaaad"
+"daaallllg....................................................kkkkkkkkkk....................................gaaaaaaad"
+"daaallllg..jj..............................................kkkkkkkkkk.....................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk....................................kkkkkkkkkk......................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk......................................kkkkkkkkkk......................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk......................................kkkkkkkkkk....................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk......................................................................................gaaaaaaad"
+"daaallllg..kkkkkkkk....................................jjjj..........................................gaaaaaaad"
+"daaallllg..kkkkkkkk...................................kkkkkkkkkk......................................gaaaaaaad"
+"daaallllg....................................................kkkkkkkkkk......................................gaaaaaaad"
+"daaaddddg..jj..............................................kkkkkkkkkk......................................gaaaaaaad"
+"daaallllg..kkkkkkkkkk....................................kkkkkkkkkk...............................gaaaaaaad"
+"daaallllg..kkkkkkkkkk.....................................................................................gaaaaaaad"
+"daddbbbg..kkkkkkkk....................................................................................gaaaaaaad"
+"daaaaaaag..kkkkkkkkkk.....................................................................................gaaaaaaad"
+"daaaaaaag......................................................................................................gaaaaaaad"
+"daaaaaaag..jj................................................................................................gaaaaaaad"
+"daaaaaaag..kkkkkkkkkk...............................................................................gaaaaaaad"
+"daaaaaaag..kkkkkkkkkk.................................................................................gaaaaaaad"
+"daaaaaaag......................................................................................................gaaaaaaad"
+"daaaaaaag......................................................................................................gaaaaaaad"
+"dmmfffg......................................................................................................gaaaaaaad"
+"dmannoog......................................................................................................gaaaaaaad"
+"dmanneeg......................................................................................................gaaaaaaad"
+"dmanneeg......................................................................................................gaaaaaaad"
+"dmanneeg......................................................................................................gaaaaaaad"
+"dmmmmmmmggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggdddddddd"
+"ai...iiiiii.i...iiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

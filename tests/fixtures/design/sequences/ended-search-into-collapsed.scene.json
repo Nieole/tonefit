@@ -1,0 +1,41 @@
+{
+  "scene": "ended",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "volume",
+      "root": "~/Comics/棋魂/第15卷"
+    },
+    "expanded": [
+      "~/漫画库/集英社/海贼王",
+      "~/Comics/棋魂"
+    ],
+    "follow": false,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": {
+      "query": "棋魂/第15"
+    },
+    "toast": "搜索结果 1/1",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}
