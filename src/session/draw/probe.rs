@@ -12,7 +12,7 @@
 //! 是两半，为什么、以及哪几种夹具非走它不可，写在它自己的文档里。
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
@@ -293,18 +293,27 @@ pub(super) fn snapshot_of(session: &mut Session, live: &Live, width: u16, height
 
 /// 一趟跑到一半：两卷跑完（一卷幂等命中、一卷带坏页），第三卷正走写出那一遍。
 ///
-/// 时钟往回拨一段固定的量，快照因此不随机器快慢而变——与黄金快照同一条规矩
+/// 「此刻」是给定的（开工那一条之后 [`RAN_FOR`]），快照因此不随机器快慢而变——与黄金快照同一条规矩
 /// （`tonefit::Report::elapsed`：计时只进结构，不进渲染出的文字）。
 pub(super) fn a_run_in_flight(failures: bool) -> Live {
     a_run_walking(failures, Some(Pass::Second))
 }
+
+/// 快照里那一趟**开工到「此刻」跑了多久**：五分钟。
+///
+/// 「已用」与「还剩」两个数从它算出来，而「此刻」是给定的（`Live::tick`，`session-redesign/04`）：
+/// 快照里那两个数因此是定值，不随机器快慢变——与黄金快照同一条规矩（`tonefit::Report::elapsed`）。
+/// 跨块的夹具与各块自己那几份用的是同一个数，快照上「已用 5m00s」在画法这一侧只有一个出处
+/// （`Live` 自己的用例不依赖画法，那边的数各是各的）。
+pub(super) const RAN_FOR: Duration = Duration::from_secs(300);
 
 /// 同一趟，第三卷正走**点名的那一遍**——`None` 是开卷之后、第一条 `PassStarted` 到达之前那一格。
 ///
 /// 横条上那个词（`super::overview`）与 `?` 表末尾三遍那一节（`super::overlay`）的用例都要它：
 /// 前者三遍加开卷各问一遍，后者问走哪一遍那一张是不是同一张。
 pub(super) fn a_run_walking(failures: bool, pass: Option<Pass>) -> Live {
-    let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+    let epoch = Instant::now();
+    let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
     live.run_started(3, 5000);
     live.volume_started(Path::new("库/卷一"), 1000);
     fixture::volume_finished_with_its_failures(&mut live, &fixture::skipped_volume("卷一", 180));
@@ -321,7 +330,7 @@ pub(super) fn a_run_walking(failures: bool, pass: Option<Pass>) -> Live {
     for _ in 0..1000 {
         live.stepped();
     }
-    live.rewind(Duration::from_secs(300));
+    live.tick(epoch + RAN_FOR);
     live
 }
 
@@ -340,7 +349,8 @@ pub(super) fn a_run_walking(failures: bool, pass: Option<Pass>) -> Live {
 /// 语义色那几条问「哪几行上了色、上的是哪一种」（[`super::paint`]）——
 /// 同一趟里六种卷恰好把四种语义占全。
 pub(super) fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
-    let mut live = Live::new(&fixture::request(mode), resumes);
+    let epoch = Instant::now();
+    let mut live = fixture::live_at(epoch, mode, resumes);
     live.run_started(6, 6000);
     live.volume_started(Path::new("库/棋魂 07"), 1000);
     fixture::volume_finished_with_its_failures(&mut live, &fixture::skipped_volume("棋魂 07", 184));
@@ -355,6 +365,8 @@ pub(super) fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
     fixture::volume_finished_with_its_failures(&mut live, &fixture::overridden_volume("浪客行 12"));
     live.volume_started(Path::new("库/消失的那卷"), 1000);
     live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
+    // 「此刻」在确认点之前给：等人那一截从确认点那一条起算，给在它之后就把跑过的那一段减光了。
+    live.tick(epoch + RAN_FOR);
     if live.resumes() {
         live.volume_started(Path::new("库/棋魂 08"), 1000);
         live.pass_started(
@@ -362,7 +374,6 @@ pub(super) fn every_kind_of_volume(mode: RunMode, resumes: Resuming) -> Live {
             Some(&fixture::processed_volume("棋魂 08", None)),
         );
     }
-    live.rewind(Duration::from_secs(300));
     live
 }
 

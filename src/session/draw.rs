@@ -271,9 +271,9 @@ pub fn main_pane(frame: &mut Frame, area: Rect, session: &mut Session, live: Opt
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::time::Duration;
+    use std::time::Instant;
 
-    use super::probe::{only_branch, screen, tight};
+    use super::probe::{RAN_FOR, only_branch, screen, tight};
     use super::*;
     use crate::session::live::{Resuming, fixture};
     use crate::session::state::Layer;
@@ -350,11 +350,12 @@ mod tests {
     #[test]
     fn waiting_at_the_decision_point_shows_the_report_and_the_three_ways_out() {
         let summarized = fixture::processed_volume("卷一", None);
-        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        let epoch = Instant::now();
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::Waits);
         live.run_started(1, 1000);
         live.volume_started(Path::new("库/卷一"), 1000);
+        live.tick(epoch + RAN_FOR);
         live.pass_started(tonefit::Pass::Second, Some(&summarized));
-        live.rewind(Duration::from_secs(300));
 
         let mut session = Session::new();
         session.run_started();

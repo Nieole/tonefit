@@ -11,7 +11,7 @@
 
 use std::io::{IsTerminal, Stderr, stderr};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
@@ -87,9 +87,16 @@ fn drive(
     here: &Path,
 ) -> Result<()> {
     loop {
+        // **这一帧的「此刻」**：单调时钟一帧读一次，会话里要时刻的地方都读它
+        // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）。眼下只有攒着的那一份
+        // 要它——已用、预计、确认点上等人的那一截——屏上那几个数因此出自同一个时刻。
+        let now = Instant::now();
         {
             // 借着锁画：画完当场还回去，计算线程最多等一帧的功夫（见 `Running::live`）。
-            let live = running.live();
+            let mut live = running.live();
+            if let Some(live) = live.as_deref_mut() {
+                live.tick(now);
+            }
             screen
                 .terminal
                 .draw(|frame| draw::shell(frame, session, live.as_deref()))?;
