@@ -13,7 +13,7 @@ mod fixtures;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use fixtures::Workspace;
+use fixtures::{Workspace, open_the_door, shut_the_door};
 
 /// 四种结局各有各的退出码：做完了、做完了但有卷被隔离、做完了但有卷没做成、
 /// 这一趟没做成（12 号票立的规矩，05 号票加的第四个数）。
@@ -339,41 +339,6 @@ fn a_tree_with_places_we_never_look_at_still_ends_the_run_with_zero() {
         "走进了自动跳过的目录，它底下的卷进了输出"
     );
 }
-
-/// 把一个目录弄成**列不出来**的样子，成了才回 `true`。
-///
-/// **真去列一遍**才算数：`set_permissions` 在 root 底下也回 `Ok`，而权限位拦不住 root。
-#[cfg(unix)]
-fn shut_the_door(dir: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    if std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).is_err() {
-        return false;
-    }
-    if std::fs::read_dir(dir).is_ok() {
-        // 这一手没作数（root 绕过权限位）。**门要打回去**：不然临时目录里留下一个
-        // `0o000` 的目录，而结束那一手删不掉它。
-        open_the_door(dir);
-        return false;
-    }
-    true
-}
-
-#[cfg(not(unix))]
-fn shut_the_door(_dir: &Path) -> bool {
-    false
-}
-
-/// 把门再打开，好让工作区收得掉。
-#[cfg(unix)]
-fn open_the_door(dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
-}
-
-#[cfg(not(unix))]
-fn open_the_door(_dir: &Path) {}
 
 /// 跑一趟 tonefit，返回它的退出码。进程被信号打断时是 `None`。
 fn tonefit(space: &Workspace, inputs: &[&Path]) -> Option<i32> {

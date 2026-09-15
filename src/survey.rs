@@ -65,8 +65,17 @@
 //!
 //! **要认的代价**：归档卷的归档头读两遍，目录卷走两遍目录。这一笔随**一个卷**长，
 //! 不随点名的卷数长，而且只在轮到那一卷时付、付完就还回去——正是上面那一笔换来的。
-//! 两遍之间源变了的话，做的与报的都是**重开的那一份**：清点这一遍只留下步数
-//! （见 [`Surveyed::steps`]），成员数在处理那一卷时按重开的卷重新数一遍。
+//! 两遍之间源变了的话，做的与报的都是**重开的那一份**：清点这一遍只留下步数与源页数
+//! （见 [`Surveyed::steps`] 与 [`Surveyed::source_pages`]），成员数在处理那一卷时按重开的卷
+//! 重新数一遍。
+//!
+//! # 开工那一条带着清点的产出
+//!
+//! 三份产出在开工那一条事件上**原样**带出去（`session-redesign/03`，收停车场 Q719）：
+//! 卷那一份摊成**卷清单**——每一卷的[清点摘要](SurveyedVolume)（卷根、步数上界、源页数），
+//! 照发现的次序（见 [`Survey::roster`]）——另两份就是报告上那两张表。
+//! 会话因此在第一卷开工之前就画得出整棵树。
+//! **库里不为它另算一个数**：三样在清点走完那一刻都已经在了，这里只是没把它们丢掉。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -128,6 +137,11 @@ pub(crate) struct Surveyed {
     /// 那时报的步数仍是这一个：它已经加进开工那条事件报出去的全局总步数里，
     /// 而预告的步数本来就是上界（见 `crate::volume_steps`）。
     pub(crate) steps: u64,
+    /// 这一卷的源页数：清点数成员时数出来的那个（见 `MemberCounts::source_pages`）。
+    ///
+    /// 它与 [`steps`](Self::steps) 同一遍数出来、同一条事件报出去（见 [`Survey::roster`]）。
+    /// 处理这一卷时报告上那一格按**重开的那一份**再数——两遍之间源变了，报告说的是真做的那个数。
+    pub(crate) source_pages: usize,
     /// **清点这一遍**枚举这一卷花了多久。
     ///
     /// 它进这一卷的 [`VolumeTiming::elapsed`](crate::VolumeTiming::elapsed)——那个数的定义是
@@ -150,6 +164,31 @@ impl Surveyed {
     pub(crate) fn output_path(&self, root: &Path) -> PathBuf {
         root.join(&self.output_relative)
     }
+}
+
+/// **清点摘要**：清点交出来的一卷——卷根、步数上界、源页数（`CONTEXT.md` 的《进度》）。
+/// 开工那一条事件照发现的次序带着全部卷的这一份，那一列就是**卷清单**
+/// （`session-redesign/03`，库内由 `Survey::roster` 摊出来）。
+///
+/// 它是库对外交出来的那一份，与库内的 `Surveyed` 分开：那一个还带着去处、借住的卷
+/// 与枚举耗时，全是处理这一卷时才用得着的东西，而且随卷被处理时**吃掉**；这一份只有画一棵树
+/// 要的三样，开工那一刻整份交出去，此后一格不变。
+///
+/// **三样都是清点数出来的，库里不为这一份另算**：卷根与步数就是开卷那一条会报的那两样，
+/// 源页数是数成员时本来就数出来的那个。步数与那一条同一个性质——**上界**，不是承诺
+/// （见 `crate::volume_steps`）。
+///
+/// 字段全公开、不非穷尽：会话那一侧的用例要按设计稿的场景数据**造**出一份来喂进去
+/// （与 [`VolumeReport`](crate::VolumeReport) 同一条理由）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurveyedVolume {
+    /// 卷根：目录路径，或归档文件路径。开卷那一条事件报的就是它，会话按它认回清单里的这一卷
+    /// （清点已按卷根收编过，清单里卷根不重）。
+    pub root: PathBuf,
+    /// 这一卷这一趟最多走多少步。**上界**，不是承诺。
+    pub steps: u64,
+    /// 这一卷的源页数：清点数成员时数出来的。
+    pub source_pages: usize,
 }
 
 impl Survey {
@@ -193,8 +232,11 @@ impl Survey {
                         continue;
                     }
                     let enumerating = started.elapsed();
+                    // 成员数只数这一遍：源页数从同一份里取，不另数（见 [`Surveyed::source_pages`]）。
+                    let members = MemberCounts::of(&volume, request);
                     volumes.push(Surveyed {
-                        steps: volume_steps(MemberCounts::of(&volume, request), request),
+                        steps: volume_steps(members, request),
+                        source_pages: members.source_pages,
                         root: volume.root,
                         output_relative: candidate.output_relative,
                         // 这一格要等这一批卷全在手上才填得了，见循环之后那一句 [`find_the_lodgers`]。
@@ -269,6 +311,33 @@ impl Survey {
     /// 这一趟最多走多少步。开工那条事件报的就是它。
     pub(crate) fn steps(&self) -> u64 {
         self.steps
+    }
+
+    /// 开工那一条事件要带的**卷清单**：每一卷的[清点摘要](SurveyedVolume)，照发现的次序。
+    ///
+    /// 摊成一份新的 `Vec` 而不是借出 [`volumes`](Self::volumes)：那一列随后要被逐卷**吃掉**
+    /// （见 [`into_volumes_and_the_rest`](Self::into_volumes_and_the_rest)），
+    /// 而那条事件带的是借用，观察者要留就得自己克隆。一卷一条路径，随卷数长——
+    /// 与发现走过的那一遍相比不值一提，而且开工那一刻付一次就完。
+    pub(crate) fn roster(&self) -> Vec<SurveyedVolume> {
+        self.volumes
+            .iter()
+            .map(|surveyed| SurveyedVolume {
+                root: surveyed.root.clone(),
+                steps: surveyed.steps,
+                source_pages: surveyed.source_pages,
+            })
+            .collect()
+    }
+
+    /// 发现走完之后没被任何卷收下的那些文件（开工那一条事件带的那张表，与报告上那张同一份）。
+    pub(crate) fn non_volume_files(&self) -> &[NonVolumeFile] {
+        &self.non_volume_files
+    }
+
+    /// 发现的时候无法访问的那些地方（开工那一条事件带的那张表，与报告上那张同一份）。
+    pub(crate) fn unreachable_places(&self) -> &[UnreachablePlace] {
+        &self.unreachable_places
     }
 
     /// 发现出来的那些卷。开工前那道撞名校验按它查

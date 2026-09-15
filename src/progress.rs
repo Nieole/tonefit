@@ -24,17 +24,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::report::{RunOutcome, VolumeReport};
+use crate::report::{NonVolumeFile, RunOutcome, UnreachablePlace, VolumeReport};
+use crate::survey::SurveyedVolume;
 
 /// 库向外报的一条消息（ADR 0011 决定第 1 条）。
 ///
 /// **非穷尽做了两层**：枚举自己，加**每一个**变体自己——包括眼下不带字段的
 /// [`Stepped`](Self::Stepped)。以后多报一件事，无论是多一个变体还是往已有的变体里多塞一个数，
 /// 都不该逼着现有的实现方跟着改。现在有三个实现方：CLI 的进度条、会话、用例里的记账本。
-/// 这条性质已经兑现过两次——
+/// 这条性质已经兑现过三次——
 /// 03 号票往 [`RunStarted`](Self::RunStarted) 里加了全局总步数，三个实现方一个都没被逼着改；
 /// 05 号票加了 [`VolumeFailed`](Self::VolumeFailed)、并往 [`RunFinished`](Self::RunFinished)
-/// 里塞进「这一趟是怎么收的场」，也只有真要用那件事的实现方动了手。
+/// 里塞进「这一趟是怎么收的场」，也只有真要用那件事的实现方动了手；
+/// `session-redesign/03` 往 [`RunStarted`](Self::RunStarted) 里带上清点的三份产出，
+/// 命令行那一路照旧只读它原来那两个数。
 /// 库外的 `match` 因此一律要带 `..` 与 `_`，那正是这条性质起作用的样子。
 ///
 /// 事件带的是**借用**：一卷跑完那条带着的 [`VolumeReport`] 还在库的手上，
@@ -49,9 +52,15 @@ pub enum Event<'a> {
     /// 都让 `run` 当场返回 `Err`，一条事件都不发——单子在 `CONTEXT.md` 的《失败》，
     /// 这里不抄。
     /// 「一卷点不开就整趟拒绝」因此天然发生在任何卷级事件之前（见 `crate::survey`）。
+    ///
+    /// **它带着清点的三份产出**（`session-redesign/03`，收停车场 Q719）：卷清单、非漫画文件、
+    /// 无法访问的地方。三样在发这一条的那一刻都已经齐了——清点走完就不再变——
+    /// 库里不为它另算一个数；按停止停在半路的那一趟，这三样照样是全的。
+    /// 会话拿它在第一卷开工之前就画出整棵树；命令行那一路不读它们，报告一个字节不变。
     #[non_exhaustive]
     RunStarted {
-        /// 这一趟点名了几个卷。
+        /// 这一趟点名了几个卷。恒等于 `roster` 的长度，留着是为了先前只读这两个数的
+        /// 实现方一格不动。
         volumes: usize,
         /// 这一趟最多走多少步——**各卷步数之和**（见 `crate::survey`）。
         ///
@@ -60,6 +69,19 @@ pub enum Event<'a> {
         /// 结清**那一卷预告剩下的步——这是这个字段对实现方的要求，不是一句建议。
         /// CLI 那一份见二进制侧的 `Bar::finish_volume`。
         steps: u64,
+        /// **卷清单**，照发现的次序：每一卷的[清点摘要](SurveyedVolume)——卷根、步数上界、
+        /// 源页数（`CONTEXT.md` 的《进度》：清点摘要）。
+        ///
+        /// 随后每一条 [`VolumeStarted`](Self::VolumeStarted) 报的卷根都在这里，
+        /// 而且**按这里的次序**开；那一条报的步数就是这里那一卷的步数。
+        /// 一卷在开工之前因此就有身份：清单里的第几卷。
+        roster: &'a [SurveyedVolume],
+        /// 非漫画文件那张表，与 [`Report::non_volume_files`](crate::Report::non_volume_files)
+        /// 同一份内容。
+        non_volume_files: &'a [NonVolumeFile],
+        /// 无法访问的地方那张表，与
+        /// [`Report::unreachable_places`](crate::Report::unreachable_places) 同一份内容。
+        unreachable_places: &'a [UnreachablePlace],
     },
     /// 一个卷开始了，这一卷这一趟最多走 `steps` 步。
     ///
@@ -618,9 +640,22 @@ impl<'a> Events<'a> {
         self.standing() == Instruction::Abort
     }
 
+    /// 开工：带着清点的三份产出（见 [`Event::RunStarted`]）。卷数就是清单的长度。
     #[cfg_attr(debug_assertions, track_caller)]
-    pub(crate) fn run_started(self, volumes: usize, steps: u64) {
-        self.report(Event::RunStarted { volumes, steps });
+    pub(crate) fn run_started(
+        self,
+        steps: u64,
+        roster: &[SurveyedVolume],
+        non_volume_files: &[NonVolumeFile],
+        unreachable_places: &[UnreachablePlace],
+    ) {
+        self.report(Event::RunStarted {
+            volumes: roster.len(),
+            steps,
+            roster,
+            non_volume_files,
+            unreachable_places,
+        });
     }
 
     #[cfg_attr(debug_assertions, track_caller)]
@@ -782,7 +817,28 @@ mod tests {
         let deliberation = Deliberation::default();
 
         let watched = Events::new(Some(&sink), &standing, &deliberation);
-        watched.run_started(2, 30);
+        // 清单上两卷、两张表各一条：开工那一条带的三样也要整份到得了观察者。
+        let roster = [
+            SurveyedVolume {
+                root: PathBuf::from("卷一"),
+                steps: 10,
+                source_pages: 2,
+            },
+            SurveyedVolume {
+                root: PathBuf::from("卷二"),
+                steps: 20,
+                source_pages: 4,
+            },
+        ];
+        let non_volume_files = [NonVolumeFile {
+            path: PathBuf::from("字体包.zip"),
+            reason: crate::NonVolumeReason::ArchiveWithoutAPage,
+        }];
+        let unreachable_places = [UnreachablePlace {
+            path: PathBuf::from("私藏"),
+            reason: "列不出这一层".to_owned(),
+        }];
+        watched.run_started(30, &roster, &non_volume_files, &unreachable_places);
         watched.volume_started(Path::new("卷一"), 10);
         watched.pass_started(Pass::First);
         watched.step();
@@ -796,7 +852,13 @@ mod tests {
         assert_eq!(
             tally.seen(),
             [
-                "RunStarted { volumes: 2, steps: 30 }",
+                concat!(
+                    "RunStarted { volumes: 2, steps: 30, roster: [",
+                    r#"SurveyedVolume { root: "卷一", steps: 10, source_pages: 2 }, "#,
+                    r#"SurveyedVolume { root: "卷二", steps: 20, source_pages: 4 }], "#,
+                    r#"non_volume_files: [NonVolumeFile { path: "字体包.zip", reason: ArchiveWithoutAPage }], "#,
+                    r#"unreachable_places: [UnreachablePlace { path: "私藏", reason: "列不出这一层" }] }"#,
+                ),
                 r#"VolumeStarted { volume: "卷一", steps: 10 }"#,
                 "PassStarted { pass: First, so_far: None }",
                 "Stepped",
@@ -811,7 +873,7 @@ mod tests {
         let elsewhere = Standing::default();
         let unhurried = Deliberation::default();
         let unwatched = Events::new(None, &elsewhere, &unhurried);
-        unwatched.run_started(2, 30);
+        unwatched.run_started(30, &roster, &non_volume_files, &unreachable_places);
         unwatched.volume_started(Path::new("卷二"), 10);
         unwatched.step();
         unwatched.run_finished(RunOutcome::Completed);
