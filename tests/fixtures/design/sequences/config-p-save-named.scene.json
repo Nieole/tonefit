@@ -1,0 +1,71 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "插图",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    },
+    {
+      "name": "插图",
+      "says": {
+        "gray-levels": null,
+        "threshold": null,
+        "fit": "inside",
+        "crop": null,
+        "split": null,
+        "split-threshold": null,
+        "reading-order": null,
+        "filter": null,
+        "white-align-limit": null,
+        "bit-depth": null,
+        "dither": "fs",
+        "envelope": null,
+        "cache-budget": null,
+        "io-mode": null
+      }
+    }
+  ],
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "✓ 已保存预设「插图」",
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "fit",
+      "choice": "inside",
+      "choice_index": 2,
+      "drill": null,
+      "presets": true,
+      "preset_cursor": 2,
+      "armed_delete": null
+    }
+  }
+}

@@ -1,0 +1,2621 @@
+{
+  "scene": "envelope",
+  "now_ms": 1000000,
+  "time_multiplier": 7,
+  "output": "~/转好的",
+  "paths": [
+    {
+      "path": "~/漫画库",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/漫画库/银河英雄传说",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第01卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第02卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第03卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第04卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第05卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第06卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第07卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第08卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/轻小说插图",
+      "kind": "directory",
+      "checked": false
+    },
+    {
+      "path": "~/Comics/棋魂",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/Comics/大友克洋",
+      "kind": "directory",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": true,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "漫画",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": {
+    "mode": "process",
+    "stage": "running",
+    "outcome": null,
+    "envelope": true,
+    "elapsed_s": 348.25,
+    "steps": 29026.554,
+    "total_steps": 46809,
+    "current": "~/下载/灰原哀/第05卷.cbz",
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": true,
+    "survey": {
+      "entries": [
+        {
+          "kind": "section",
+          "path": "~/漫画库",
+          "directories": [
+            "~/漫画库/哆啦A梦",
+            "~/漫画库/集英社/海贼王",
+            "~/漫画库/攻壳机动队",
+            "~/漫画库/银河英雄传说"
+          ],
+          "notes": [
+            {
+              "kind": "unreachable",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏",
+                  "reason": "列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)"
+                }
+              ]
+            },
+            {
+              "kind": "non-volume",
+              "entries": [
+                {
+                  "path": "~/漫画库/字体包.zip",
+                  "reason": "压缩包里没有图片：不算一卷，输出里不会有空的压缩包"
+                },
+                {
+                  "path": "~/漫画库/答案.txt",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                },
+                {
+                  "path": "~/漫画库/README.md",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "directory",
+          "root": "~/下载/灰原哀",
+          "notes": []
+        },
+        {
+          "kind": "directory",
+          "root": "~/Comics/棋魂",
+          "notes": []
+        },
+        {
+          "kind": "section",
+          "path": "~/Comics/大友克洋",
+          "directories": [
+            "~/Comics/大友克洋/AKIRA",
+            "~/Comics/大友克洋/童梦"
+          ],
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第01卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第02卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第03卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第04卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第05卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第06卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第07卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第08卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第09卷",
+          "source_pages": 225,
+          "steps": 675
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第10卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第11卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第12卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第01卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第02卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第03卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第04卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第05卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第06卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第07卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第08卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第09卷",
+          "source_pages": 194,
+          "steps": 582
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第10卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第11卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第12卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第13卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第14卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第15卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第16卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第17卷",
+          "source_pages": 172,
+          "steps": 516
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第18卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第01卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第02卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第03卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第04卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第05卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第06卷",
+          "source_pages": 229,
+          "steps": 687
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第01卷",
+          "source_pages": 177,
+          "steps": 531
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第02卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第03卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第04卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第05卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第06卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第07卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第08卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第09卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/下载/灰原哀/第01卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第01卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第02卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第02卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第03卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第03卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第04卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第04卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第05卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第05卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第06卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第06卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第07卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第07卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/下载/灰原哀/第08卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第08卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/Comics/棋魂/第01卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第01卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第02卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第02卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第03卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第03卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第04卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第04卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第05卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第05卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第06卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第06卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第07卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第07卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第08卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第08卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第09卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第09卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第10卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第10卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第11卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第11卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第12卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第12卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第13卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第13卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第14卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第14卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第15卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第15卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第16卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第16卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第17卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第17卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第18卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第18卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第19卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第19卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第20卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第20卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第21卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第21卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第22卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第22卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第23卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第23卷",
+          "source_pages": 226,
+          "steps": 678
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第01卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第01卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第02卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第02卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第03卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第03卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第04卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第04卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第05卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第05卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第06卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第06卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/上",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "上",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/下",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "下",
+          "source_pages": 176,
+          "steps": 528
+        }
+      ],
+      "unchecked": 1
+    },
+    "volumes": [
+      {
+        "root": "~/漫画库/哆啦A梦/第01卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第02卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第03卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 0.7,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第04卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第05卷",
+        "state": "done",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 8.663,
+        "tally": [
+          [
+            "4bit",
+            223
+          ],
+          [
+            "4bit+FS",
+            1
+          ]
+        ],
+        "page_count": 224,
+        "notable_pages": [
+          {
+            "name": "003.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2145,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.36,
+            "driver": true
+          },
+          {
+            "name": "046.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "outlier"
+            ],
+            "source_height": 2112,
+            "verdict": "4bit+FS",
+            "reason": "outlier",
+            "score": 4.457,
+            "driver": false
+          },
+          {
+            "name": "062.jpg",
+            "output_size": [
+              2364,
+              1680
+            ],
+            "kinds": [
+              "wide"
+            ],
+            "source_height": 1936,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.662,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第06卷",
+        "state": "done",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 8.663,
+        "tally": [
+          [
+            "4bit",
+            224
+          ]
+        ],
+        "page_count": 224,
+        "notable_pages": [
+          {
+            "name": "004.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2146,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.646,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第07卷",
+        "state": "done",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 8.663,
+        "tally": [
+          [
+            "4bit",
+            224
+          ]
+        ],
+        "page_count": 224,
+        "notable_pages": [
+          {
+            "name": "020.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2031,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.68,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第08卷",
+        "state": "done",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 8.663,
+        "tally": [
+          [
+            "4bit",
+            224
+          ]
+        ],
+        "page_count": 224,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2046,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.78,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第09卷",
+        "state": "done",
+        "pass": 3,
+        "done": 225,
+        "elapsed_s": 8.701,
+        "tally": [
+          [
+            "4bit",
+            225
+          ]
+        ],
+        "page_count": 225,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2173,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.658,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第10卷",
+        "state": "done",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 8.624,
+        "tally": [
+          [
+            "4bit",
+            223
+          ]
+        ],
+        "page_count": 223,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2118,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.089,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第11卷",
+        "state": "done",
+        "pass": 3,
+        "done": 217,
+        "elapsed_s": 8.392,
+        "tally": [
+          [
+            "4bit",
+            217
+          ]
+        ],
+        "page_count": 217,
+        "notable_pages": [
+          {
+            "name": "003.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1937,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.137,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第12卷",
+        "state": "done",
+        "pass": 3,
+        "done": 217,
+        "elapsed_s": 8.392,
+        "tally": [
+          [
+            "4bit",
+            217
+          ]
+        ],
+        "page_count": 217,
+        "notable_pages": [
+          {
+            "name": "015.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2093,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.738,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第01卷",
+        "state": "done",
+        "pass": 3,
+        "done": 190,
+        "elapsed_s": 7.348,
+        "tally": [
+          [
+            "4bit",
+            190
+          ]
+        ],
+        "page_count": 190,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1954,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.846,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第02卷",
+        "state": "done",
+        "pass": 3,
+        "done": 190,
+        "elapsed_s": 7.348,
+        "tally": [
+          [
+            "4bit",
+            190
+          ]
+        ],
+        "page_count": 190,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2164,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.825,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第03卷",
+        "state": "done",
+        "pass": 3,
+        "done": 190,
+        "elapsed_s": 7.348,
+        "tally": [
+          [
+            "4bit",
+            190
+          ]
+        ],
+        "page_count": 190,
+        "notable_pages": [
+          {
+            "name": "007.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2098,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.371,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第04卷",
+        "state": "done",
+        "pass": 3,
+        "done": 190,
+        "elapsed_s": 7.348,
+        "tally": [
+          [
+            "4bit",
+            190
+          ]
+        ],
+        "page_count": 190,
+        "notable_pages": [
+          {
+            "name": "004.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1973,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.836,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第05卷",
+        "state": "done",
+        "pass": 3,
+        "done": 189,
+        "elapsed_s": 7.309,
+        "tally": [
+          [
+            "4bit",
+            189
+          ]
+        ],
+        "page_count": 189,
+        "notable_pages": [
+          {
+            "name": "005.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1956,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.822,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第06卷",
+        "state": "done",
+        "pass": 3,
+        "done": 189,
+        "elapsed_s": 7.309,
+        "tally": [
+          [
+            "4bit",
+            189
+          ]
+        ],
+        "page_count": 189,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1948,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.839,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第07卷",
+        "state": "isolated",
+        "pass": 3,
+        "done": 189,
+        "elapsed_s": 7.309,
+        "tally": [
+          [
+            "4bit",
+            187
+          ],
+          [
+            "4bit+FS",
+            1
+          ]
+        ],
+        "isolated_output": "~/转好的/_isolated/集英社/海贼王/第07卷",
+        "page_count": 189,
+        "notable_pages": [
+          {
+            "name": "005.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2153,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.303,
+            "driver": true
+          },
+          {
+            "name": "017.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "failed"
+            ],
+            "failure": "JPEG 文件不完整"
+          },
+          {
+            "name": "039.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "outlier"
+            ],
+            "source_height": 2123,
+            "verdict": "4bit+FS",
+            "reason": "outlier",
+            "score": 4.906,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第08卷",
+        "state": "done",
+        "pass": 3,
+        "done": 189,
+        "elapsed_s": 7.309,
+        "tally": [
+          [
+            "4bit",
+            189
+          ]
+        ],
+        "page_count": 189,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2119,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.428,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第09卷",
+        "state": "done",
+        "pass": 3,
+        "done": 194,
+        "elapsed_s": 7.502,
+        "tally": [
+          [
+            "4bit",
+            194
+          ]
+        ],
+        "page_count": 194,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2089,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.394,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第10卷",
+        "state": "done",
+        "pass": 3,
+        "done": 174,
+        "elapsed_s": 6.729,
+        "tally": [
+          [
+            "4bit",
+            174
+          ]
+        ],
+        "page_count": 174,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1989,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.098,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第11卷",
+        "state": "failed",
+        "pass": 3,
+        "done": 174,
+        "elapsed_s": 0.544,
+        "tally": null,
+        "failure": "压缩包损坏"
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第12卷",
+        "state": "done",
+        "pass": 3,
+        "done": 174,
+        "elapsed_s": 6.729,
+        "tally": [
+          [
+            "4bit",
+            174
+          ]
+        ],
+        "page_count": 174,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2014,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.582,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第13卷",
+        "state": "done",
+        "pass": 3,
+        "done": 173,
+        "elapsed_s": 6.69,
+        "tally": [
+          [
+            "4bit",
+            173
+          ]
+        ],
+        "page_count": 173,
+        "notable_pages": [
+          {
+            "name": "008.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1902,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.719,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第14卷",
+        "state": "done",
+        "pass": 3,
+        "done": 173,
+        "elapsed_s": 6.69,
+        "tally": [
+          [
+            "4bit",
+            173
+          ]
+        ],
+        "page_count": 173,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2167,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.819,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第15卷",
+        "state": "done",
+        "pass": 3,
+        "done": 173,
+        "elapsed_s": 6.69,
+        "tally": [
+          [
+            "4bit",
+            173
+          ]
+        ],
+        "page_count": 173,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2075,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.868,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第16卷",
+        "state": "done",
+        "pass": 3,
+        "done": 173,
+        "elapsed_s": 6.69,
+        "tally": [
+          [
+            "4bit",
+            173
+          ]
+        ],
+        "page_count": 173,
+        "notable_pages": [
+          {
+            "name": "009.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1946,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.435,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第17卷",
+        "state": "done",
+        "pass": 3,
+        "done": 172,
+        "elapsed_s": 6.652,
+        "tally": [
+          [
+            "4bit",
+            172
+          ]
+        ],
+        "page_count": 172,
+        "notable_pages": [
+          {
+            "name": "006.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2093,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.994,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第18卷",
+        "state": "done",
+        "pass": 3,
+        "done": 173,
+        "elapsed_s": 6.69,
+        "tally": [
+          [
+            "4bit",
+            173
+          ]
+        ],
+        "page_count": 173,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2004,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.473,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第01卷",
+        "state": "done",
+        "pass": 3,
+        "done": 233,
+        "elapsed_s": 9.011,
+        "tally": [
+          [
+            "4bit",
+            233
+          ]
+        ],
+        "page_count": 233,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2150,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.05,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第02卷",
+        "state": "done",
+        "pass": 3,
+        "done": 233,
+        "elapsed_s": 9.011,
+        "tally": [
+          [
+            "4bit",
+            231
+          ],
+          [
+            "2bit",
+            2
+          ]
+        ],
+        "page_count": 233,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2184,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.579,
+            "driver": true
+          },
+          {
+            "name": "074.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "gate"
+            ],
+            "source_height": 2103,
+            "verdict": "2bit",
+            "reason": "outside-the-gate",
+            "score": 4.849,
+            "driver": false
+          },
+          {
+            "name": "140.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "gate"
+            ],
+            "source_height": 2037,
+            "verdict": "2bit",
+            "reason": "outside-the-gate",
+            "score": 3.193,
+            "driver": false
+          },
+          {
+            "name": "205.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "gate"
+            ],
+            "source_height": 1946,
+            "verdict": "4bit",
+            "reason": "outside-the-gate",
+            "score": 3.909,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第03卷",
+        "state": "done",
+        "pass": 3,
+        "done": 233,
+        "elapsed_s": 9.011,
+        "tally": [
+          [
+            "4bit",
+            233
+          ]
+        ],
+        "page_count": 233,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2068,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.386,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第04卷",
+        "state": "done",
+        "pass": 3,
+        "done": 233,
+        "elapsed_s": 9.011,
+        "tally": [
+          [
+            "4bit",
+            233
+          ]
+        ],
+        "page_count": 233,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1956,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.775,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第05卷",
+        "state": "done",
+        "pass": 3,
+        "done": 233,
+        "elapsed_s": 9.011,
+        "tally": [
+          [
+            "4bit",
+            233
+          ]
+        ],
+        "page_count": 233,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1914,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.004,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第06卷",
+        "state": "done",
+        "pass": 3,
+        "done": 229,
+        "elapsed_s": 8.856,
+        "tally": [
+          [
+            "4bit",
+            229
+          ]
+        ],
+        "page_count": 229,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1913,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.85,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第01卷",
+        "state": "done",
+        "pass": 3,
+        "done": 177,
+        "elapsed_s": 6.845,
+        "tally": [
+          [
+            "4bit",
+            177
+          ]
+        ],
+        "page_count": 177,
+        "notable_pages": [
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2174,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.795,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第02卷",
+        "state": "done",
+        "pass": 3,
+        "done": 176,
+        "elapsed_s": 6.806,
+        "tally": [
+          [
+            "4bit",
+            176
+          ]
+        ],
+        "page_count": 176,
+        "notable_pages": [
+          {
+            "name": "011.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2119,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.735,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第03卷",
+        "state": "done",
+        "pass": 3,
+        "done": 176,
+        "elapsed_s": 6.806,
+        "tally": [
+          [
+            "4bit",
+            176
+          ]
+        ],
+        "page_count": 176,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2175,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.973,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第04卷",
+        "state": "done",
+        "pass": 3,
+        "done": 176,
+        "elapsed_s": 6.806,
+        "tally": [
+          [
+            "4bit",
+            176
+          ]
+        ],
+        "page_count": 176,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1909,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.529,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第05卷",
+        "state": "done",
+        "pass": 3,
+        "done": 176,
+        "elapsed_s": 6.806,
+        "tally": [
+          [
+            "4bit",
+            176
+          ]
+        ],
+        "page_count": 176,
+        "notable_pages": [
+          {
+            "name": "010.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2156,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.396,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第06卷",
+        "state": "done",
+        "pass": 3,
+        "done": 175,
+        "elapsed_s": 6.768,
+        "tally": [
+          [
+            "4bit",
+            174
+          ],
+          [
+            "4bit+FS",
+            1
+          ]
+        ],
+        "page_count": 175,
+        "notable_pages": [
+          {
+            "name": "018.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1968,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.832,
+            "driver": true
+          },
+          {
+            "name": "036.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "outlier"
+            ],
+            "source_height": 2159,
+            "verdict": "4bit+FS",
+            "reason": "outlier",
+            "score": 3.482,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第07卷",
+        "state": "done",
+        "pass": 3,
+        "done": 175,
+        "elapsed_s": 6.768,
+        "tally": [
+          [
+            "4bit",
+            175
+          ]
+        ],
+        "page_count": 175,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1978,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.097,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第08卷",
+        "state": "done",
+        "pass": 3,
+        "done": 176,
+        "elapsed_s": 6.806,
+        "tally": [
+          [
+            "4bit",
+            176
+          ]
+        ],
+        "page_count": 176,
+        "notable_pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2098,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 2.743,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第09卷",
+        "state": "done",
+        "pass": 3,
+        "done": 175,
+        "elapsed_s": 6.768,
+        "tally": [
+          [
+            "4bit",
+            175
+          ]
+        ],
+        "page_count": 175,
+        "notable_pages": [
+          {
+            "name": "018.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1887,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.249,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/下载/灰原哀/第01卷.cbz",
+        "state": "done",
+        "pass": 3,
+        "done": 167,
+        "elapsed_s": 6.458,
+        "tally": [
+          [
+            "4bit",
+            167
+          ]
+        ],
+        "page_count": 167,
+        "notable_pages": [
+          {
+            "name": "001.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2112,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.705,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/下载/灰原哀/第02卷.cbz",
+        "state": "done",
+        "pass": 3,
+        "done": 167,
+        "elapsed_s": 6.458,
+        "tally": [
+          [
+            "4bit",
+            167
+          ]
+        ],
+        "page_count": 167,
+        "notable_pages": [
+          {
+            "name": "006.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 1938,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.798,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/下载/灰原哀/第03卷.cbz",
+        "state": "done",
+        "pass": 3,
+        "done": 166,
+        "elapsed_s": 6.42,
+        "tally": [
+          [
+            "4bit",
+            166
+          ]
+        ],
+        "page_count": 166,
+        "notable_pages": [
+          {
+            "name": "020.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2123,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 4.087,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/下载/灰原哀/第04卷.cbz",
+        "state": "done",
+        "pass": 3,
+        "done": 166,
+        "elapsed_s": 6.42,
+        "tally": [
+          [
+            "4bit",
+            166
+          ]
+        ],
+        "page_count": 166,
+        "notable_pages": [
+          {
+            "name": "019.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "driver"
+            ],
+            "source_height": 2072,
+            "verdict": "4bit",
+            "reason": "volume-envelope",
+            "score": 3.541,
+            "driver": true
+          }
+        ]
+      },
+      {
+        "root": "~/下载/灰原哀/第05卷.cbz",
+        "state": "running",
+        "pass": 1,
+        "done": 114.554,
+        "elapsed_s": 3.025,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第06卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第07卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第08卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第19卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第20卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第21卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第22卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第23卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/上",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/下",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "directory",
+      "root": "~/下载/灰原哀"
+    },
+    "expanded": [
+      "~/漫画库/哆啦A梦"
+    ],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

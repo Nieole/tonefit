@@ -466,7 +466,8 @@ function entryOrder(entries, v) {
   return 1e9;
 }
 
-// 假数据里每一页的目标高：尺寸那一格与缩放那一格都从它来（它与型号 kobo-clara-2e 的面板高 1448 对不上，是旧假数据，停车场 Q733）
+// 假数据里每一页的目标高：尺寸那一格与缩放那一格都从它来。它是型号 kobo-libra-2 那块面板（1264x1680）的高，
+// 与黄金快照同一块面板（停车场 Q733 拍板 ①：型号跟着页的数走，页那一列的数一个不动）
 const TARGET_H = 1680;
 const sizeText = (w) => `${w}x${TARGET_H}`;
 // 缩放那一格照 tonefit::Scaling 的 Display：总缩放比 ≥ 2 取整数部分预缩，残差比按预缩后的实际像素高（向上取整）算；
@@ -477,6 +478,8 @@ function scalingText(ratio) {
   const pre = Math.floor(total);
   return `缩放比 ${total.toFixed(3)} ⋅ 先整数缩小 ${pre}x ⋅ 再缩 ${(Math.ceil(srcH / pre) / TARGET_H).toFixed(3)}`;
 }
+// 理由那一格：种类在前、字在后（字是库 `Reason` 的 Display 原话；导出的场景数据只记种类）
+const REASON = { lowest: '达标的最省空间档位', envelope: '整卷统一灰阶', outlier: '差异大，单独判断', gate: '没贴合屏幕，不加抖动' };
 // 逐页：确定性生成，同一卷每次都一样
 const PAGE_CACHE = new Map();
 function pagesOf(v) {
@@ -502,22 +505,27 @@ function pagesOf(v) {
     const name = (flags.find((f) => f.name) || {}).name || `${String(i + 1).padStart(3, '0')}.${ext}`;
     const ratio = v.mixKey === 'akira' ? 2.31 + r() * 0.2 : 1.12 + r() * 0.18;
     // 画质分那一格：设计稿只印判成那一档的分（`候选 分`，三位小数）；库那一格是六个候选整串（停车场 Q725）
-    const score = (2.6 + r() * 2.4).toFixed(3);
+    const score = (2.6 + r() * 2.4).toFixed(3);   // 三位小数：Score 的 Display
     // kinds 是这一页要紧在哪几处（语义字段：outlier / wide / gate / salvage / failed，加上 envelopeOver 给的 driver），
     // 数它靠这一列，不回头认屏上的字；notes 是屏上提示那一列的词，由 kinds 派生
+    // 数在前、字在后：width／ratio／score／failure／salvaged 是这一页的语义字段（导出的场景数据读它们），
+    // size／scale／metric／notes 是屏上那几格的字，从数派生
     const page = {
-      name, size: sizeText(1182),
-      scale: scalingText(ratio),
-      verdict, reason: '达标的最省空间档位', metric: `${verdict} ${score}`, kinds: flags.map((f) => f.kind), notes: [], tone: '',
+      name, width: 1182, ratio, score: Number(score), failure: null, salvaged: null,
+      verdict, why: 'lowest', kinds: flags.map((f) => f.kind), notes: [], tone: '',
     };
     for (const f of flags) {
       // 坏页：判定、理由、画质分三格不在场；缩放那一格改说它的尺寸从哪来（render::geometry_cells），行尾那一句是 render::failure_line
-      if (f.kind === 'failed') Object.assign(page, { verdict: '', reason: '', metric: '', scale: '读不出 ⋅ 用空白页占位', tone: 'bad', notes: ['失败 ' + f.why] });
-      if (f.kind === 'outlier') { Object.assign(page, { verdict: '4bit+FS', reason: '差异大，单独判断', metric: `4bit+FS ${score}` }); page.notes.push('差异大的页'); page.tone ||= 'warn'; }
-      if (f.kind === 'wide') { page.size = sizeText(2364); page.notes.push('页面超宽'); page.tone ||= 'warn'; }
-      if (f.kind === 'gate') { const bare = verdict.replace('+FS', ''); Object.assign(page, { verdict: bare, reason: '没贴合屏幕，不加抖动', metric: `${bare} ${score}` }); page.notes.push('尺寸未贴合屏幕'); page.tone ||= 'warn'; }
-      if (f.kind === 'salvage') { page.notes.push('救回 62.0%'); page.tone ||= 'warn'; }
+      if (f.kind === 'failed') Object.assign(page, { verdict: '', why: null, failure: f.why, tone: 'bad', notes: ['失败 ' + f.why] });
+      if (f.kind === 'outlier') { Object.assign(page, { verdict: '4bit+FS', why: 'outlier' }); page.notes.push('差异大的页'); page.tone ||= 'warn'; }
+      if (f.kind === 'wide') { page.width = 2364; page.notes.push('页面超宽'); page.tone ||= 'warn'; }
+      if (f.kind === 'gate') { Object.assign(page, { verdict: verdict.replace('+FS', ''), why: 'gate' }); page.notes.push('尺寸未贴合屏幕'); page.tone ||= 'warn'; }
+      if (f.kind === 'salvage') { page.salvaged = 62.0; page.notes.push(`救回 ${page.salvaged.toFixed(1)}%`); page.tone ||= 'warn'; }
     }
+    page.reason = page.why ? REASON[page.why] : '';
+    page.size = sizeText(page.width);
+    page.scale = page.failure ? '读不出 ⋅ 用空白页占位' : scalingText(page.ratio);
+    page.metric = page.verdict ? `${page.verdict} ${page.score.toFixed(3)}` : '';
     list.push(page);
   }
   if (envelope) envelopeOver(list, mix);
@@ -533,11 +541,11 @@ function envelopeOver(list, mix) {
   for (const [c, w] of sorted) { acc += w; if (acc >= 0.95) { base = c; break; } }
   let driver = null;
   for (const pg of list) {
-    if (pg.reason !== '达标的最省空间档位') continue;
+    if (pg.why !== 'lowest') continue;
     if (!driver && pg.verdict === base) driver = pg;
-    Object.assign(pg, { verdict: base, reason: '整卷统一灰阶', metric: `${base} ${pg.metric.split(' ')[1]}` });
+    Object.assign(pg, { verdict: base, why: 'envelope', reason: REASON.envelope, metric: `${base} ${pg.score.toFixed(3)}` });
   }
-  const d = driver || list.find((pg) => pg.reason === '整卷统一灰阶');
+  const d = driver || list.find((pg) => pg.why === 'envelope');
   if (d) { d.driver = true; d.kinds.push('driver'); d.notes.push('代表页'); }
 }
 function tallyOf(v) {
@@ -567,7 +575,7 @@ const PANELS = [
 ];
 const CONFIG = [
   { layer: '设备设置', note: '换设备时才需要改' },
-  { key: 'model', label: '型号', kind: 'model', unset: '未挑（跑起来之前必填）', value: 'kobo-clara-2e',
+  { key: 'model', label: '型号', kind: 'model', unset: '未挑（跑起来之前必填）', value: 'kobo-libra-2',
     desc: '先选屏幕规格，再选型号：同一种屏幕的型号，转出来的效果完全一样。表里没有你的设备时，挑一个屏幕规格相同的型号，再按实际情况填可见灰阶数。换型号会清空之前填的可见灰阶数和画质门槛。' },
   { key: 'levels', label: '可见灰阶数', kind: 'text', unset: '默认（按屏幕规格）', value: null,
     desc: '你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。' },
@@ -668,12 +676,14 @@ const RATE = 320;          // 读图定档每模拟秒走的步
 const SHOW = 7;            // 屏上的时间是模拟时间的几倍，让数字像一趟真的跑
 const SURVEY_SEC = 1.8;
 
+// 一卷几步：三个环节各走一遍它的页数（总进度按步数算）
+const stepsOf = (v) => 3 * v.pages;
 function newRun(mode, tree) {
   return {
     mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
     // 开跑那一刻的快照：跑起来之后设置锁住，结束后再改也不影响这一趟的结果
     envelope: (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开',
-    wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + 3 * v.pages, 0),
+    wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + stepsOf(v), 0),
     vs: tree.vols.map(() => ({ state: 'queued', pass: -1, done: 0, elapsed: 0, tally: null })),
   };
 }
@@ -715,7 +725,7 @@ function passDone(run) {
 function finishVol(run, state) {
   const v = run.tree.vols[run.cur], s = run.vs[run.cur];
   const walked = Math.max(0, s.pass) * v.pages + (s.pass >= 0 && s.pass < 3 ? s.done : 0);
-  run.steps += Math.max(0, 3 * v.pages - walked);   // 一卷收摊时结清预告剩下的步
+  run.steps += Math.max(0, stepsOf(v) - walked);   // 一卷收摊时结清预告剩下的步
   s.state = state; s.pass = 3; s.done = v.pages;
   if (run.latch >= 1) return endRun(run, 'stopped');
   startNext(run);
@@ -871,6 +881,10 @@ const S = {
 const FOCUS = 'c-lgreen';
 const CURSOR = FOCUS + ' b';
 const modelName = () => (CONFIG.find((c) => c.key === 'model') || {}).value || '型号未选择';
+// 此刻型号那块面板的分辨率（灰阶测试图就是这么大一张）：从 PANELS 里查，不另抄一份
+const panelSize = () => ((PANELS.find(([, ms]) => ms.includes(modelName())) || [''])[0].split(' ⋅ ')[0]);
+// 顶栏上的版本号。导出的快照里它是占位，比对时代入 crate 的版本（spec《设计快照是验收标准》）
+const VERSION = '0.1.0';
 const key = (k) => [[k, 'c-fg b']];
 const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 'c-gray']];
 function toast(segs, ms = 2600) { S.toast = { segs, until: performance.now() + ms }; }
@@ -900,7 +914,7 @@ function drawHeader(scr) {
   });
   const r = S.run;
   const envOn = (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开';
-  const segs = [['[ ', 'c-blue'], ['tonefit 0.1.0', 'c-blue'], [` ⋅ ${modelName()} ⋅ ${envOn ? '整卷统一灰阶' : '逐页判断'}`, 'c-blue']];
+  const segs = [['[ ', 'c-blue'], [`tonefit ${VERSION}`, 'c-blue'], [` ⋅ ${modelName()} ⋅ ${envOn ? '整卷统一灰阶' : '逐页判断'}`, 'c-blue']];
   if (r && S.view !== 'task' && r.stage !== 'ended') {
     const pct = Math.floor((r.steps / r.total) * 100);
     segs.splice(1, 0, [r.stage === 'deciding' ? '? 等待确认 ⋅ ' : SPIN[Math.floor(performance.now() / 90) % 10] + ` 处理中 ${pct}% ⋅ `, r.stage === 'deciding' ? 'c-yellow b' : 'c-cyan']);
@@ -1778,7 +1792,7 @@ function taskKey(k) {
 function configKey(k) {
   const ro = readOnly(), c = CONFIG[S.cfg.cursor];
   if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
-  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], ['（1072x1448）：拷进设备，用原始尺寸打开（原型不写文件）', 'c-fg']], 3200); return true; }
+  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], [`（${panelSize()}）：拷进设备，用原始尺寸打开（原型不写文件）`, 'c-fg']], 3200); return true; }
   if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
   if (S.cfg.presets) {
     if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
@@ -1823,27 +1837,38 @@ function configKey(k) {
 }
 
 // ───── 鼠标 ─────
+// 滚轮：一格三行。`notches` 是滚了几格（往下为正）；浏览器的 wheel 事件按 50 像素折成一格，
+// 设计稿旁边的 render.js 按格回放
+function onWheel(notches) {
+  moveBy(3 * notches);
+}
+// 单击与双击：按**格坐标**分派——命中上一帧交出的点得中的区域（`Screen.hits`）。
+// `detail` 是浏览器数的连击次数：同一行上第二下算双击，等于 ⏎。render.js 按格坐标回放
+function onMouse(x, y, detail = 1) {
+  if (!S.lastScr) return false;
+  const hit = [...S.lastScr.hits].reverse().find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  if (!hit) return false;
+  const a = hit.act;
+  if (a.tab) S.view = a.tab;
+  if (a.rowKey) { if (S.curKey === a.rowKey && detail >= 2) onKey('Enter'); S.curKey = a.rowKey; if (S.run && S.run.stage !== 'ended') S.follow = false; }
+  if (a.page != null && S.pages) S.pages.cursor = a.page;
+  if (a.cfgRow != null) { S.cfg.cursor = a.cfgRow; S.cfg.pane = 'left'; S.cfg.drill = null; }
+  if (a.cfgChoice != null) { S.cfg.pane = 'right'; S.cfg.right = a.cfgChoice; }
+  if (a.preset != null) S.cfg.pcursor = a.preset;
+  return true;
+}
 let wheelAcc = 0;
 term.addEventListener('wheel', (e) => {
   e.preventDefault();
   wheelAcc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
-  while (Math.abs(wheelAcc) >= 50) { const d = Math.sign(wheelAcc); moveBy(3 * d); wheelAcc -= 50 * d; echo('滚轮 ' + (d > 0 ? '↓3' : '↑3')); }
+  while (Math.abs(wheelAcc) >= 50) { const d = Math.sign(wheelAcc); onWheel(d); wheelAcc -= 50 * d; echo('滚轮 ' + (d > 0 ? '↓3' : '↑3')); }
 }, { passive: false });
 term.addEventListener('mousedown', (e) => {
   term.focus();
   const first = term.firstElementChild; if (!first || !S.lastScr) return;
   const box = first.getBoundingClientRect();
   const lh = box.height, x = Math.floor((e.clientX - box.left) / CW), y = Math.floor((e.clientY - box.top) / lh);
-  const hit = [...S.lastScr.hits].reverse().find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
-  if (!hit) return;
-  const a = hit.act;
-  if (a.tab) S.view = a.tab;
-  if (a.rowKey) { if (S.curKey === a.rowKey && e.detail >= 2) onKey('Enter'); S.curKey = a.rowKey; if (S.run && S.run.stage !== 'ended') S.follow = false; }
-  if (a.page != null && S.pages) S.pages.cursor = a.page;
-  if (a.cfgRow != null) { S.cfg.cursor = a.cfgRow; S.cfg.pane = 'left'; S.cfg.drill = null; }
-  if (a.cfgChoice != null) { S.cfg.pane = 'right'; S.cfg.right = a.cfgChoice; }
-  if (a.preset != null) S.cfg.pcursor = a.preset;
-  echo('单击');
+  if (onMouse(x, y, e.detail)) echo('单击');
 });
 
 // ───── 键位回显 ─────

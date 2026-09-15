@@ -1,0 +1,4308 @@
+{
+  "scene": "deciding",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": {
+    "mode": "dry-run",
+    "stage": "deciding",
+    "outcome": null,
+    "envelope": false,
+    "elapsed_s": 21,
+    "steps": 3127,
+    "total_steps": 46809,
+    "current": "~/漫画库/哆啦A梦/第05卷",
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": false,
+    "survey": {
+      "entries": [
+        {
+          "kind": "section",
+          "path": "~/漫画库",
+          "directories": [
+            "~/漫画库/哆啦A梦",
+            "~/漫画库/集英社/海贼王",
+            "~/漫画库/攻壳机动队",
+            "~/漫画库/银河英雄传说"
+          ],
+          "notes": [
+            {
+              "kind": "unreachable",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏",
+                  "reason": "列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)"
+                }
+              ]
+            },
+            {
+              "kind": "non-volume",
+              "entries": [
+                {
+                  "path": "~/漫画库/字体包.zip",
+                  "reason": "压缩包里没有图片：不算一卷，输出里不会有空的压缩包"
+                },
+                {
+                  "path": "~/漫画库/答案.txt",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                },
+                {
+                  "path": "~/漫画库/README.md",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "directory",
+          "root": "~/下载/灰原哀",
+          "notes": []
+        },
+        {
+          "kind": "directory",
+          "root": "~/Comics/棋魂",
+          "notes": []
+        },
+        {
+          "kind": "section",
+          "path": "~/Comics/大友克洋",
+          "directories": [
+            "~/Comics/大友克洋/AKIRA",
+            "~/Comics/大友克洋/童梦"
+          ],
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第01卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第02卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第03卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第04卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第05卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第06卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第07卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第08卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第09卷",
+          "source_pages": 225,
+          "steps": 675
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第10卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第11卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第12卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第01卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第02卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第03卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第04卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第05卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第06卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第07卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第08卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第09卷",
+          "source_pages": 194,
+          "steps": 582
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第10卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第11卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第12卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第13卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第14卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第15卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第16卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第17卷",
+          "source_pages": 172,
+          "steps": 516
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第18卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第01卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第02卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第03卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第04卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第05卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第06卷",
+          "source_pages": 229,
+          "steps": 687
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第01卷",
+          "source_pages": 177,
+          "steps": 531
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第02卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第03卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第04卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第05卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第06卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第07卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第08卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第09卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/下载/灰原哀/第01卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第01卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第02卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第02卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第03卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第03卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第04卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第04卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第05卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第05卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第06卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第06卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第07卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第07卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/下载/灰原哀/第08卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第08卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/Comics/棋魂/第01卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第01卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第02卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第02卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第03卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第03卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第04卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第04卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第05卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第05卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第06卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第06卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第07卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第07卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第08卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第08卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第09卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第09卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第10卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第10卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第11卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第11卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第12卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第12卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第13卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第13卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第14卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第14卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第15卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第15卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第16卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第16卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第17卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第17卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第18卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第18卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第19卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第19卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第20卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第20卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第21卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第21卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第22卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第22卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第23卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第23卷",
+          "source_pages": 226,
+          "steps": 678
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第01卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第01卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第02卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第02卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第03卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第03卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第04卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第04卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第05卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第05卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第06卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第06卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/上",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "上",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/下",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "下",
+          "source_pages": 176,
+          "steps": 528
+        }
+      ],
+      "unchecked": 1
+    },
+    "volumes": [
+      {
+        "root": "~/漫画库/哆啦A梦/第01卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第02卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第03卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 0.7,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第04卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第05卷",
+        "state": "deciding",
+        "pass": 1,
+        "done": 224,
+        "elapsed_s": 5.6,
+        "tally": [
+          [
+            "2bit+FS",
+            187
+          ],
+          [
+            "4bit",
+            32
+          ],
+          [
+            "1bit",
+            5
+          ]
+        ],
+        "page_count": 224,
+        "pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2180,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.941,
+            "driver": false
+          },
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2024,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.333,
+            "driver": false
+          },
+          {
+            "name": "003.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2145,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.36,
+            "driver": false
+          },
+          {
+            "name": "004.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2113,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.323,
+            "driver": false
+          },
+          {
+            "name": "005.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1913,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.278,
+            "driver": false
+          },
+          {
+            "name": "006.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1974,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.405,
+            "driver": false
+          },
+          {
+            "name": "007.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2126,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.006,
+            "driver": false
+          },
+          {
+            "name": "008.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1997,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.645,
+            "driver": false
+          },
+          {
+            "name": "009.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2124,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.828,
+            "driver": false
+          },
+          {
+            "name": "010.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1919,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.209,
+            "driver": false
+          },
+          {
+            "name": "011.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1989,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.931,
+            "driver": false
+          },
+          {
+            "name": "012.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2076,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.832,
+            "driver": false
+          },
+          {
+            "name": "013.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1952,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.204,
+            "driver": false
+          },
+          {
+            "name": "014.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2072,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.408,
+            "driver": false
+          },
+          {
+            "name": "015.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2104,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.672,
+            "driver": false
+          },
+          {
+            "name": "016.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2012,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.637,
+            "driver": false
+          },
+          {
+            "name": "017.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2080,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.771,
+            "driver": false
+          },
+          {
+            "name": "018.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.346,
+            "driver": false
+          },
+          {
+            "name": "019.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2011,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.913,
+            "driver": false
+          },
+          {
+            "name": "020.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2112,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.392,
+            "driver": false
+          },
+          {
+            "name": "021.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2129,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.732,
+            "driver": false
+          },
+          {
+            "name": "022.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2013,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.402,
+            "driver": false
+          },
+          {
+            "name": "023.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1924,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.751,
+            "driver": false
+          },
+          {
+            "name": "024.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1908,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.859,
+            "driver": false
+          },
+          {
+            "name": "025.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2152,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.626,
+            "driver": false
+          },
+          {
+            "name": "026.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2120,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.756,
+            "driver": false
+          },
+          {
+            "name": "027.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1946,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.021,
+            "driver": false
+          },
+          {
+            "name": "028.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1950,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.328,
+            "driver": false
+          },
+          {
+            "name": "029.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1943,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.439,
+            "driver": false
+          },
+          {
+            "name": "030.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1950,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.911,
+            "driver": false
+          },
+          {
+            "name": "031.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2026,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.645,
+            "driver": false
+          },
+          {
+            "name": "032.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2036,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.925,
+            "driver": false
+          },
+          {
+            "name": "033.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2143,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.138,
+            "driver": false
+          },
+          {
+            "name": "034.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2043,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.186,
+            "driver": false
+          },
+          {
+            "name": "035.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2144,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.328,
+            "driver": false
+          },
+          {
+            "name": "036.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1953,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.938,
+            "driver": false
+          },
+          {
+            "name": "037.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2050,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.902,
+            "driver": false
+          },
+          {
+            "name": "038.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2124,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.639,
+            "driver": false
+          },
+          {
+            "name": "039.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2170,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.841,
+            "driver": false
+          },
+          {
+            "name": "040.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2063,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.819,
+            "driver": false
+          },
+          {
+            "name": "041.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1984,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.409,
+            "driver": false
+          },
+          {
+            "name": "042.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2026,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.281,
+            "driver": false
+          },
+          {
+            "name": "043.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1993,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.334,
+            "driver": false
+          },
+          {
+            "name": "044.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1975,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.583,
+            "driver": false
+          },
+          {
+            "name": "045.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.675,
+            "driver": false
+          },
+          {
+            "name": "046.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2112,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.457,
+            "driver": false
+          },
+          {
+            "name": "047.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2061,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.725,
+            "driver": false
+          },
+          {
+            "name": "048.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2031,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.136,
+            "driver": false
+          },
+          {
+            "name": "049.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2038,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.549,
+            "driver": false
+          },
+          {
+            "name": "050.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1990,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.407,
+            "driver": false
+          },
+          {
+            "name": "051.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2087,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.022,
+            "driver": false
+          },
+          {
+            "name": "052.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2007,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.272,
+            "driver": false
+          },
+          {
+            "name": "053.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2179,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.594,
+            "driver": false
+          },
+          {
+            "name": "054.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2001,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.33,
+            "driver": false
+          },
+          {
+            "name": "055.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2116,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.528,
+            "driver": false
+          },
+          {
+            "name": "056.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2091,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.702,
+            "driver": false
+          },
+          {
+            "name": "057.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2160,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.538,
+            "driver": false
+          },
+          {
+            "name": "058.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2173,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.243,
+            "driver": false
+          },
+          {
+            "name": "059.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1969,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.209,
+            "driver": false
+          },
+          {
+            "name": "060.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2131,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.733,
+            "driver": false
+          },
+          {
+            "name": "061.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2129,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.287,
+            "driver": false
+          },
+          {
+            "name": "062.jpg",
+            "output_size": [
+              2364,
+              1680
+            ],
+            "kinds": [
+              "wide"
+            ],
+            "source_height": 1936,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.662,
+            "driver": false
+          },
+          {
+            "name": "063.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2055,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.935,
+            "driver": false
+          },
+          {
+            "name": "064.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1921,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.578,
+            "driver": false
+          },
+          {
+            "name": "065.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1928,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.511,
+            "driver": false
+          },
+          {
+            "name": "066.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1999,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.889,
+            "driver": false
+          },
+          {
+            "name": "067.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1887,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.856,
+            "driver": false
+          },
+          {
+            "name": "068.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1926,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.607,
+            "driver": false
+          },
+          {
+            "name": "069.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2160,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.14,
+            "driver": false
+          },
+          {
+            "name": "070.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2070,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.336,
+            "driver": false
+          },
+          {
+            "name": "071.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2009,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.762,
+            "driver": false
+          },
+          {
+            "name": "072.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2028,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.45,
+            "driver": false
+          },
+          {
+            "name": "073.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2176,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.101,
+            "driver": false
+          },
+          {
+            "name": "074.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2168,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.862,
+            "driver": false
+          },
+          {
+            "name": "075.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1979,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.868,
+            "driver": false
+          },
+          {
+            "name": "076.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2005,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.493,
+            "driver": false
+          },
+          {
+            "name": "077.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2043,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.674,
+            "driver": false
+          },
+          {
+            "name": "078.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2004,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.869,
+            "driver": false
+          },
+          {
+            "name": "079.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1908,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.914,
+            "driver": false
+          },
+          {
+            "name": "080.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2022,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.773,
+            "driver": false
+          },
+          {
+            "name": "081.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2008,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.155,
+            "driver": false
+          },
+          {
+            "name": "082.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2067,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.326,
+            "driver": false
+          },
+          {
+            "name": "083.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1931,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.693,
+            "driver": false
+          },
+          {
+            "name": "084.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1907,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.539,
+            "driver": false
+          },
+          {
+            "name": "085.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2038,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.537,
+            "driver": false
+          },
+          {
+            "name": "086.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2081,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.225,
+            "driver": false
+          },
+          {
+            "name": "087.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1914,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.652,
+            "driver": false
+          },
+          {
+            "name": "088.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1895,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.561,
+            "driver": false
+          },
+          {
+            "name": "089.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2098,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.903,
+            "driver": false
+          },
+          {
+            "name": "090.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2068,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.84,
+            "driver": false
+          },
+          {
+            "name": "091.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2022,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.301,
+            "driver": false
+          },
+          {
+            "name": "092.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2169,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.423,
+            "driver": false
+          },
+          {
+            "name": "093.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2141,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.651,
+            "driver": false
+          },
+          {
+            "name": "094.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2036,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.258,
+            "driver": false
+          },
+          {
+            "name": "095.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.688,
+            "driver": false
+          },
+          {
+            "name": "096.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2064,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.755,
+            "driver": false
+          },
+          {
+            "name": "097.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1919,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.983,
+            "driver": false
+          },
+          {
+            "name": "098.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1963,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.045,
+            "driver": false
+          },
+          {
+            "name": "099.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2032,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.733,
+            "driver": false
+          },
+          {
+            "name": "100.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2006,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.724,
+            "driver": false
+          },
+          {
+            "name": "101.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2128,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.122,
+            "driver": false
+          },
+          {
+            "name": "102.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1903,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.749,
+            "driver": false
+          },
+          {
+            "name": "103.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2116,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.062,
+            "driver": false
+          },
+          {
+            "name": "104.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1960,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.855,
+            "driver": false
+          },
+          {
+            "name": "105.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1956,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.623,
+            "driver": false
+          },
+          {
+            "name": "106.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2003,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.777,
+            "driver": false
+          },
+          {
+            "name": "107.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2175,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.22,
+            "driver": false
+          },
+          {
+            "name": "108.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2041,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.505,
+            "driver": false
+          },
+          {
+            "name": "109.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2088,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.781,
+            "driver": false
+          },
+          {
+            "name": "110.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.371,
+            "driver": false
+          },
+          {
+            "name": "111.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2184,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.855,
+            "driver": false
+          },
+          {
+            "name": "112.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.257,
+            "driver": false
+          },
+          {
+            "name": "113.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2049,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.18,
+            "driver": false
+          },
+          {
+            "name": "114.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1985,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.013,
+            "driver": false
+          },
+          {
+            "name": "115.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2046,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.117,
+            "driver": false
+          },
+          {
+            "name": "116.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2013,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.708,
+            "driver": false
+          },
+          {
+            "name": "117.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1936,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.945,
+            "driver": false
+          },
+          {
+            "name": "118.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2022,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.672,
+            "driver": false
+          },
+          {
+            "name": "119.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2150,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.032,
+            "driver": false
+          },
+          {
+            "name": "120.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2137,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.949,
+            "driver": false
+          },
+          {
+            "name": "121.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1978,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.482,
+            "driver": false
+          },
+          {
+            "name": "122.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1984,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.826,
+            "driver": false
+          },
+          {
+            "name": "123.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1965,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.438,
+            "driver": false
+          },
+          {
+            "name": "124.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2065,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.663,
+            "driver": false
+          },
+          {
+            "name": "125.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1913,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.265,
+            "driver": false
+          },
+          {
+            "name": "126.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1898,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.09,
+            "driver": false
+          },
+          {
+            "name": "127.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1990,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.845,
+            "driver": false
+          },
+          {
+            "name": "128.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1936,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.653,
+            "driver": false
+          },
+          {
+            "name": "129.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2025,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.932,
+            "driver": false
+          },
+          {
+            "name": "130.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2048,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.975,
+            "driver": false
+          },
+          {
+            "name": "131.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1980,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.498,
+            "driver": false
+          },
+          {
+            "name": "132.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2024,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.995,
+            "driver": false
+          },
+          {
+            "name": "133.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2126,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.688,
+            "driver": false
+          },
+          {
+            "name": "134.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2059,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.774,
+            "driver": false
+          },
+          {
+            "name": "135.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1963,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.906,
+            "driver": false
+          },
+          {
+            "name": "136.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2034,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.822,
+            "driver": false
+          },
+          {
+            "name": "137.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2057,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.713,
+            "driver": false
+          },
+          {
+            "name": "138.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1901,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.364,
+            "driver": false
+          },
+          {
+            "name": "139.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2085,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.75,
+            "driver": false
+          },
+          {
+            "name": "140.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1933,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.883,
+            "driver": false
+          },
+          {
+            "name": "141.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2062,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.951,
+            "driver": false
+          },
+          {
+            "name": "142.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2089,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.481,
+            "driver": false
+          },
+          {
+            "name": "143.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2026,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.096,
+            "driver": false
+          },
+          {
+            "name": "144.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1922,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.49,
+            "driver": false
+          },
+          {
+            "name": "145.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1992,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.901,
+            "driver": false
+          },
+          {
+            "name": "146.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2039,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.355,
+            "driver": false
+          },
+          {
+            "name": "147.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2018,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.441,
+            "driver": false
+          },
+          {
+            "name": "148.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2182,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.893,
+            "driver": false
+          },
+          {
+            "name": "149.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2171,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.027,
+            "driver": false
+          },
+          {
+            "name": "150.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2103,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.418,
+            "driver": false
+          },
+          {
+            "name": "151.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2108,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.919,
+            "driver": false
+          },
+          {
+            "name": "152.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1905,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.642,
+            "driver": false
+          },
+          {
+            "name": "153.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1976,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.007,
+            "driver": false
+          },
+          {
+            "name": "154.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2171,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.188,
+            "driver": false
+          },
+          {
+            "name": "155.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2095,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.856,
+            "driver": false
+          },
+          {
+            "name": "156.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2013,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.546,
+            "driver": false
+          },
+          {
+            "name": "157.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1981,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.545,
+            "driver": false
+          },
+          {
+            "name": "158.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2145,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.017,
+            "driver": false
+          },
+          {
+            "name": "159.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2080,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.214,
+            "driver": false
+          },
+          {
+            "name": "160.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2070,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.004,
+            "driver": false
+          },
+          {
+            "name": "161.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1883,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.071,
+            "driver": false
+          },
+          {
+            "name": "162.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2080,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.335,
+            "driver": false
+          },
+          {
+            "name": "163.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2108,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.978,
+            "driver": false
+          },
+          {
+            "name": "164.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1991,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.843,
+            "driver": false
+          },
+          {
+            "name": "165.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1959,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.728,
+            "driver": false
+          },
+          {
+            "name": "166.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1921,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.625,
+            "driver": false
+          },
+          {
+            "name": "167.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2065,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.895,
+            "driver": false
+          },
+          {
+            "name": "168.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1967,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.869,
+            "driver": false
+          },
+          {
+            "name": "169.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2030,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.517,
+            "driver": false
+          },
+          {
+            "name": "170.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2124,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.315,
+            "driver": false
+          },
+          {
+            "name": "171.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1929,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.411,
+            "driver": false
+          },
+          {
+            "name": "172.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1932,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.8,
+            "driver": false
+          },
+          {
+            "name": "173.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1974,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.322,
+            "driver": false
+          },
+          {
+            "name": "174.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1899,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.26,
+            "driver": false
+          },
+          {
+            "name": "175.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2025,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.389,
+            "driver": false
+          },
+          {
+            "name": "176.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1973,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.676,
+            "driver": false
+          },
+          {
+            "name": "177.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2095,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.351,
+            "driver": false
+          },
+          {
+            "name": "178.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2173,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.929,
+            "driver": false
+          },
+          {
+            "name": "179.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1990,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.193,
+            "driver": false
+          },
+          {
+            "name": "180.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2014,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.884,
+            "driver": false
+          },
+          {
+            "name": "181.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1904,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.695,
+            "driver": false
+          },
+          {
+            "name": "182.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1989,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.085,
+            "driver": false
+          },
+          {
+            "name": "183.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2007,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.496,
+            "driver": false
+          },
+          {
+            "name": "184.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2084,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.74,
+            "driver": false
+          },
+          {
+            "name": "185.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2158,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.815,
+            "driver": false
+          },
+          {
+            "name": "186.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2020,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.806,
+            "driver": false
+          },
+          {
+            "name": "187.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2149,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.758,
+            "driver": false
+          },
+          {
+            "name": "188.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1899,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.043,
+            "driver": false
+          },
+          {
+            "name": "189.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1947,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.747,
+            "driver": false
+          },
+          {
+            "name": "190.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2019,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.127,
+            "driver": false
+          },
+          {
+            "name": "191.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1916,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.268,
+            "driver": false
+          },
+          {
+            "name": "192.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2123,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.121,
+            "driver": false
+          },
+          {
+            "name": "193.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2140,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.344,
+            "driver": false
+          },
+          {
+            "name": "194.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2150,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.68,
+            "driver": false
+          },
+          {
+            "name": "195.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2114,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.259,
+            "driver": false
+          },
+          {
+            "name": "196.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2067,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.916,
+            "driver": false
+          },
+          {
+            "name": "197.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1988,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.388,
+            "driver": false
+          },
+          {
+            "name": "198.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2114,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.647,
+            "driver": false
+          },
+          {
+            "name": "199.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1908,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.753,
+            "driver": false
+          },
+          {
+            "name": "200.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2024,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.055,
+            "driver": false
+          },
+          {
+            "name": "201.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2077,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.301,
+            "driver": false
+          },
+          {
+            "name": "202.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1978,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.952,
+            "driver": false
+          },
+          {
+            "name": "203.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2103,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.983,
+            "driver": false
+          },
+          {
+            "name": "204.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2056,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.696,
+            "driver": false
+          },
+          {
+            "name": "205.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2150,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.221,
+            "driver": false
+          },
+          {
+            "name": "206.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2047,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.441,
+            "driver": false
+          },
+          {
+            "name": "207.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2104,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.069,
+            "driver": false
+          },
+          {
+            "name": "208.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1980,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.831,
+            "driver": false
+          },
+          {
+            "name": "209.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2115,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.994,
+            "driver": false
+          },
+          {
+            "name": "210.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1982,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.071,
+            "driver": false
+          },
+          {
+            "name": "211.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1928,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.915,
+            "driver": false
+          },
+          {
+            "name": "212.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1901,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.94,
+            "driver": false
+          },
+          {
+            "name": "213.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2182,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.131,
+            "driver": false
+          },
+          {
+            "name": "214.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2055,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.925,
+            "driver": false
+          },
+          {
+            "name": "215.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2018,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.889,
+            "driver": false
+          },
+          {
+            "name": "216.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1914,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.121,
+            "driver": false
+          },
+          {
+            "name": "217.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1961,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.338,
+            "driver": false
+          },
+          {
+            "name": "218.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1987,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.074,
+            "driver": false
+          },
+          {
+            "name": "219.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2149,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.538,
+            "driver": false
+          },
+          {
+            "name": "220.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2155,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.997,
+            "driver": false
+          },
+          {
+            "name": "221.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1996,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.228,
+            "driver": false
+          },
+          {
+            "name": "222.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1954,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.801,
+            "driver": false
+          },
+          {
+            "name": "223.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1977,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.384,
+            "driver": false
+          },
+          {
+            "name": "224.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1954,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.554,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第01卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第02卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第03卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第04卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第05卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第06卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第07卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第08卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第19卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第20卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第21卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第22卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第23卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/上",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/下",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "directory",
+      "root": "~/漫画库/哆啦A梦"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": {
+      "volume": "~/漫画库/哆啦A梦/第05卷",
+      "cursor": 0,
+      "all": false
+    },
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

@@ -1,0 +1,50 @@
+# . = c-fg
+# a = c-gray
+# b = c-green b
+# c = c-fg b u
+# d = c-blue
+# e = c-fg b
+# f = c-gray d
+# g = c-yellow
+# h = c-lgreen
+# i = c-magenta b
+# j = c-lgreen b
+# k = c-white
+# l = c-yellow b
+# m = c-gray b
+".aaaaaaabbcc............................................................ddddddddddddddddddddddddddddddddddddddd."
+"aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaffffffffffffffffffffffffffffffaaa"
+"a.aaaaabbbbggggggggggg..........................................a.aaaaaa..a.aaaaaaaaa.a"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"hheeaaaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhaaeeeeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..aaa"
+"h.iiiifffffffffff........................ha.aaaaee.......................................................a"
+"hjjkkkkkkkkkkkkkkkk................................ha.a.aaaaaafffffffffffff.................................a"
+"hjjeeeeeeeeeeeeeeell............................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaaaaaaaaaaaaa..ha.kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk....a"
+"h.iiiifffffffffff........................ha.kkkkkkkkkkkkkkkkkkkkkkkkkkkkk.....a"
+"hjjkkkkkkkkkkkkkk......ll........................ha.kkkkkkkkkkkkkkkkkkkk.......................a"
+"hjjkkkkkkkkkkkkkkkaaaaa......................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaa......................ha.aaaaaaaa..........gggggggggg............a"
+"hjjkkkkkkkkkkkkaaaaaaa.....................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaa.....................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaa................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaa.......................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaa............ha................................................................a"
+"hjjkkkkkkkkkkkkkkkk..ll............................ha................................................................a"
+"hjjkkkkkkkkkkkkaaaaa......................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaa...............ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaa....................ha................................................................a"
+"h.mmmmmmfffff................................ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.ha................................................................a"
+"hjjkkkkkkkkkkkkkaaaaaaaaaaaaaaaa..ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaaaaaa.ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaaaaaaaaa..ha................................................................a"
+"hjjkkkkkkkkkkkkkkaaaaaaaaaaaaaaaaaaaa.ha................................................................a"
+"h....................................................ha................................................................a"
+"h....................................................ha................................................................a"
+"h....................................................ha................................................................a"
+"h....................................................ha................................................................a"
+"h....................................................ha................................................................a"
+"h....................................................ha................................................................a"
+"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+".bb................................................................................................................"

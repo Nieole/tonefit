@@ -27,7 +27,8 @@
 //!
 //! 分法按**屏上那几块**走，不按「工具函数 vs 业务」——后者一年后没人分得清一个函数
 //! 该归哪一边。整层连同这几个模块都在 `tui` 后面（分界见 `super` 的《终端库在哪一半》）。
-//! 那几块共用的测试探针在 `probe`（`#[cfg(test)]`，不进非 test 那一趟的文档）。
+//! 那几块共用的测试探针在 `probe`（`#[cfg(test)]`，不进非 test 那一趟的文档）；
+//! 设计快照的读法与逐格比对在 `design`（同样 `#[cfg(test)]`）。
 //!
 //! **这张表上只有屏上那几块，而颜色不是一块**：四种语义色在屏上各是什么样、以及 `NO_COLOR`，
 //! 在 [`paint`]；那四种本身在 [`crate::session::tone`]，`tui` 特性**前面**（状态机也要说得出
@@ -82,6 +83,8 @@ mod report;
 mod table;
 mod yielding;
 
+#[cfg(test)]
+mod design;
 #[cfg(test)]
 mod probe;
 

@@ -1,0 +1,51 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "height",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "✓ 缩放方式 → height",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "fit",
+      "choice": "height",
+      "choice_index": 1,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

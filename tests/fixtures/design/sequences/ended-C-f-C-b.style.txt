@@ -1,0 +1,54 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-green
+# f = c-fg b
+# g = c-gray d
+# h = c-red b
+# i = c-red
+# j = c-lgreen
+# k = c-white
+# l = c-cyan
+# m = c-cyan d
+# n = c-lgreen b
+# o = c-white b
+# p = c-yellow b
+# q = c-yellow
+".aabbccccccc............................................................ddddddddddddddddddddddddddddddddddddddd."
+"ccaaa...........ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"c.cccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffccccccccccccccc.................................................c"
+"c.ccccg.............................................................................................................c"
+"c.cccffffcccccc...ccccccccc...................................................................................c"
+"c.hhhiiiiiiccciiiiiiiiccciiiiiiii....c..ccccccccc..................................................c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"jjffcccccccjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc.....................................j"
+"j.nn....cceeooooooooooooooooooooo.cccccccc..llllmmm....cccdddd..........ccccccc.....................................j"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......ccppkkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc..qqqqqqqqqqqqqqqqqq..."
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cchhkkkkkkkkkkkkkkkkkkkkk.cccccccc..iii......................ccccccc..iiiii.........................."
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.......cceekkkkkkkkkkkkkkkkkkkkk.cccccccc..llllmmm....cccdddd..........ccccccc......................................"
+"j.....ccpp...............................dddd....cccllllmmm..........ccccccc......................................"
+"j.....ccee..............................llllmmm.....cccdddd.........ccccccc......................................"
+"j.......hhiiiiii...gggggggggggggggggggggggggggggggggggggggggggggggggg..................................."
+"j.......cc...................................gggggggggggggggggggggggggggggggg..."
+"j......................................................................................................................j"
+"j...ccpp...................................llllmmm.....cccdddd.........ccccccc.....................................j"
+"j...ccpp....................................llllmmm.....cccllll.........ccccccc.....................................j"
+"j......................................................................................................................j"
+"jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj"
+".c.ccccccc.c.ccccccc.c..ccccccccc.c.cccccccc.c.cccccc.c...cccccc.c.cccccccc......................"

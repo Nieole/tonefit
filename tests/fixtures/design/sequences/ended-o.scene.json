@@ -1,0 +1,35 @@
+{
+  "scene": "ended",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": null,
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": false,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "返回路径列表 ⋅ 上次的结果会在退出时打印",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

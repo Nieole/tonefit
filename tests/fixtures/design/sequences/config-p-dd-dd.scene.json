@@ -1,0 +1,45 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": null,
+  "presets": [
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "已删除预设「漫画」",
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "fit",
+      "choice": "inside",
+      "choice_index": 2,
+      "drill": null,
+      "presets": true,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

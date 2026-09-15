@@ -1,0 +1,31 @@
+{
+  "about": [
+    "样式对照表：设计稿的样式类名 → 终端 16 个具名色与修饰（spec《颜色》《设计快照是验收标准》）。",
+    "只有这一张：导出（.scratch/session-redesign/export.js）按它核每一格的类名都认得，测试侧（src/session/draw/design.rs）按它把样式网格译成前景色与修饰。",
+    "颜色名照 ratatui 的 Color 变体：reset 是终端默认色；gray 是 ANSI 7（设计稿 --t-white，Catppuccin 的 subtext1），dark-gray 是 ANSI 8（设计稿 --t-gray，次要文字与框线）。",
+    "不设背景色；NO_COLOR 在场时颜色退回 reset，修饰不退。"
+  ],
+  "colours": {
+    "c-fg": "reset",
+    "c-gray": "dark-gray",
+    "c-white": "gray",
+    "c-red": "red",
+    "c-green": "green",
+    "c-yellow": "yellow",
+    "c-blue": "blue",
+    "c-magenta": "magenta",
+    "c-cyan": "cyan",
+    "c-lred": "light-red",
+    "c-lgreen": "light-green",
+    "c-lyellow": "light-yellow",
+    "c-lblue": "light-blue",
+    "c-lmagenta": "light-magenta",
+    "c-lcyan": "light-cyan"
+  },
+  "modifiers": {
+    "b": "bold",
+    "d": "dim",
+    "u": "underlined",
+    "i": "italic"
+  }
+}

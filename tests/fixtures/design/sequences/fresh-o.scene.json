@@ -1,0 +1,42 @@
+{
+  "scene": "fresh",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "path",
+      "path": "~/漫画库"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": {
+      "kind": "add",
+      "prompt": "添加路径  ",
+      "buffer": "~/",
+      "candidates": null,
+      "candidate": null
+    },
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

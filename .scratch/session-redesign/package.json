@@ -1,10 +1,13 @@
 {
   "name": "session-redesign-design",
   "private": true,
-  "description": "在伪 DOM 里跑设计稿自己的脚本：先画一遍看零不零报错，02 号票在它上面长出导出",
+  "description": "在伪 DOM 里跑设计稿自己的脚本：render.js 画屏，export.js 从它导出设计快照、场景数据与交互期望屏到 tests/fixtures/design/",
   "type": "commonjs",
   "scripts": {
-    "render": "node render.js"
+    "render": "node render.js",
+    "export": "node export.js",
+    "check": "node export.js --check",
+    "test": "node --test export.test.js"
   },
   "devDependencies": {
     "jsdom": "30.0.1"

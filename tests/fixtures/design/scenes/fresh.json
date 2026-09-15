@@ -1,0 +1,135 @@
+{
+  "scene": "fresh",
+  "now_ms": 1000000,
+  "time_multiplier": 7,
+  "output": "~/转好的",
+  "paths": [
+    {
+      "path": "~/漫画库",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/漫画库/银河英雄传说",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第01卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第02卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第03卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第04卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第05卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第06卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第07卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/灰原哀/第08卷.cbz",
+      "kind": "archive",
+      "checked": true
+    },
+    {
+      "path": "~/下载/轻小说插图",
+      "kind": "directory",
+      "checked": false
+    },
+    {
+      "path": "~/Comics/棋魂",
+      "kind": "directory",
+      "checked": true
+    },
+    {
+      "path": "~/Comics/大友克洋",
+      "kind": "directory",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "漫画",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": null,
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "path",
+      "path": "~/漫画库"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}
