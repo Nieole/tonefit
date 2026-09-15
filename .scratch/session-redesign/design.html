@@ -890,7 +890,7 @@ const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 
 function toast(segs, ms = 2600) { S.toast = { segs, until: performance.now() + ms }; }
 
 // 视口：从光标算出来，不记着（CONTEXT《视口》「滚动量是算出来的，不是记着的」）：光标落在格子
-// 最后一行上，格子高过 8 行时再留一行余量。与实现 `session::viewport::Viewport::new` 同一个式子（停车场 Q775）
+// 最后一行上，格子高过 8 行时再留一行余量。与实现 `session::viewport::Viewport::with_margin` 同一个式子（停车场 Q775）
 function viewport(cursor, total, h) {
   const margin = h > 8 ? 1 : 0;
   return Math.max(0, Math.min(cursor + 1 + margin - h, Math.max(0, total - h)));

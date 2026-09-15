@@ -8,15 +8,23 @@
 //!
 //! # 宽字符
 //!
-//! 一个汉字占两格：写它的时候第二格清成空格（终端库自己就这么做）；**写到一个宽字符的
-//! 第二格上时，把那个宽字符换成空格**——不然整行多出或少掉一格，与设计稿的 `_split` 同一条。
+//! 一个汉字占两格：写它的时候第二格清成空格、**样子跟着第一格**（终端库自己是整格清掉；
+//! 设计稿那一格记着样式，被劈开时露出来的那半格带着它——补全框的右框线落在卷列表一个汉字
+//! 中间时那一格就露出来了）；**写到一个宽字符的第二格上时，把那个宽字符换成空格**——
+//! 不然整行多出或少掉一格，与设计稿的 `_split` 同一条。
 //! 读回来那一头（`super::super::draw::probe::visible`）按显示宽度跳过第二格，两边因此一格对一格。
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+use ratatui::widgets::{ScrollbarOrientation, ScrollbarState, StatefulWidget};
 
 use super::super::draw::paint;
 use super::super::look::{Look, Segment, width_of};
+use super::super::viewport::Scrollbar;
+
+/// 滚动条的滑块（设计稿 `box` 的 `scroll` 那一笔）：与粗框线同一个字，靠颜色分——滑块是默认色。
+const THUMB: &str = "┃";
 
 /// 借来的一屏缓冲。
 pub(super) struct Canvas<'a> {
@@ -88,7 +96,9 @@ impl<'a> Canvas<'a> {
             cell.set_symbol(&glyph.to_string());
             cell.set_style(style);
             if cells == 2 {
-                self.buffer[(x + 1, y)].reset();
+                let half = &mut self.buffer[(x + 1, y)];
+                half.reset();
+                half.set_style(style);
             }
             x += cells;
         }
@@ -118,6 +128,49 @@ impl<'a> Canvas<'a> {
             used = end - x;
         }
         used
+    }
+
+    /// **整屏压暗**（设计稿 `dimAll`）：掀覆盖层之前把底下每一格都加上压暗，那一张再画在上面。
+    pub(super) fn dim_all(&mut self) {
+        let area = self.buffer.area;
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                self.buffer[(x, y)].modifier.insert(Modifier::DIM);
+            }
+        }
+    }
+
+    /// 一个框右边那条框线上的**滚动条**：滑块画多长、画在哪一截归终端库自带的那个 widget
+    /// （`CONTEXT.md` 的《视口》），这里只把算出来的那几格用 [`put`](Self::put) 写上去。
+    ///
+    /// 交给 widget 的「内容有多长」是**起点能取几个值**（`rows - window + 1`）：它的式子把
+    /// 位置的上限当成内容长度减一，而视口滚到底停在 `rows - window`（[`Scrollbar`] 那三个数的含义）。
+    /// 这么交，滑块的长度正是设计稿的 `round(track × view ÷ total)`；位置两边各有一套取整，
+    /// 差在 `.5` 那一格上（停车场 Q780）。
+    pub(super) fn scrollbar(&mut self, area: Rect, bar: &Scrollbar) {
+        if area.width < 2 || area.height < 3 {
+            return;
+        }
+        let track = Rect::new(0, 0, 1, area.height - 2);
+        let mut scratch = Buffer::empty(track);
+        ratatui::widgets::Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(None)
+            .thumb_symbol(THUMB)
+            .render(
+                track,
+                &mut scratch,
+                &mut ScrollbarState::new(bar.rows.saturating_sub(bar.window).saturating_add(1))
+                    .position(bar.at)
+                    .viewport_content_length(bar.window),
+            );
+        let x = area.x + area.width - 1;
+        for row in 0..track.height {
+            if scratch[(0, row)].symbol() == THUMB {
+                self.put(x, area.y + 1 + row, THUMB, Look::PLAIN);
+            }
+        }
     }
 
     /// 一格格填上同一个字。
@@ -263,6 +316,20 @@ mod tests {
         assert_eq!(buffer[(1, 0)].symbol(), "x");
         assert_eq!(buffer[(2, 0)].symbol(), "备");
         assert_eq!(row(&buffer, 0).trim_end(), " x备");
+        // 劈开露出来的那半格带着那个字的样子（设计稿 `_split`）。
+        let mut buffer = canvas(6, 1);
+        {
+            let mut canvas = Canvas::new(&mut buffer);
+            canvas.put(0, 0, "设备", Look::FAINT.dim());
+            canvas.put(2, 0, "|", Look::PLAIN);
+        }
+        assert_eq!(buffer[(3, 0)].symbol(), " ");
+        assert_eq!(
+            buffer[(3, 0)].modifier,
+            Modifier::DIM,
+            "露出来的半格带着样子"
+        );
+        assert_eq!(buffer[(2, 0)].modifier, Modifier::empty());
     }
 
     /// 超出屏的右端就停：装不下的宽字符不写半个；`line` 截在给定的宽度上。
@@ -305,6 +372,67 @@ mod tests {
         let focus = paint::look(Look::kind(crate::session::look::Kind::Focus));
         assert_eq!(Some(buffer[(0, 0)].fg), focus.fg);
         assert_eq!(buffer[(2, 0)].fg, Color::Reset);
+    }
+
+    /// 整屏压暗给每一格都加上压暗、别的不动；之后再写的格从头算。
+    #[test]
+    fn dimming_the_whole_screen_adds_dim_to_every_cell_and_a_rewrite_starts_clean() {
+        let mut buffer = canvas(4, 2);
+        {
+            let mut canvas = Canvas::new(&mut buffer);
+            canvas.put(0, 0, "ab", Look::PLAIN.bold());
+            canvas.dim_all();
+            canvas.put(0, 1, "c", Look::PLAIN);
+        }
+        assert_eq!(buffer[(0, 0)].modifier, Modifier::BOLD | Modifier::DIM);
+        assert_eq!(buffer[(3, 1)].modifier, Modifier::DIM, "没写过的格也压暗");
+        assert_eq!(
+            buffer[(0, 1)].modifier,
+            Modifier::empty(),
+            "压暗之后再写的格从头算"
+        );
+    }
+
+    /// 滚动条：滑块的长度是 `round(track × view ÷ total)`、画在右框线上、默认色；
+    /// 45 行露 20 行、从头画起时滑块占头 9 格，滚到底时贴着底。装得下时根本拿不到它（视口那一头）。
+    #[test]
+    fn the_scrollbar_thumb_is_sized_like_the_design_and_sits_on_the_right_border() {
+        let area = Rect::new(0, 0, 10, 22);
+        let thumb_rows = |at: usize| -> Vec<u16> {
+            let mut buffer = canvas(10, 22);
+            {
+                let mut canvas = Canvas::new(&mut buffer);
+                canvas.frame(
+                    area,
+                    &Border {
+                        thick: true,
+                        look: Look::kind(crate::session::look::Kind::Focus),
+                        title: &[],
+                        right: &[],
+                        bottom_left: &[],
+                        bottom_right: &[],
+                    },
+                );
+                canvas.scrollbar(
+                    area,
+                    &Scrollbar {
+                        rows: 45,
+                        at,
+                        window: 20,
+                    },
+                );
+            }
+            (1..21)
+                .filter(|y| buffer[(9, *y)].fg == Color::Reset)
+                .collect()
+        };
+        assert_eq!(thumb_rows(0), (1..=9).collect::<Vec<u16>>());
+        assert_eq!(thumb_rows(1), (1..=9).collect::<Vec<u16>>());
+        assert_eq!(
+            thumb_rows(25),
+            (12..=20).collect::<Vec<u16>>(),
+            "滚到底贴着底"
+        );
     }
 
     /// 样子照 `paint::look` 译：颜色、加粗、压暗各落在格上；每一格先清再写，不沾上一次的样子。

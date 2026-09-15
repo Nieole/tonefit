@@ -14,15 +14,88 @@
 
 **Blocked by:** 06 — 新会话的骨架与开跑之前那一副
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 「添加路径」120×36、80×24 逐格相等
-- [ ] 序列：`o` → 补全框 → `Tab` 轮换 → `C-w` → 打一个找不到的路径；`i` 修改一条处理路径；改输出目录；走完与期望屏相等
-- [ ] 序列：打字时 `F1` → `j`／`k` → `Esc` 回到输入行；还没开始时 `?`；走完与期望屏相等
-- [ ] 用例：全部按键与屏底出自同一张按键表（表里加一个键，两处都跟着出现）
-- [ ] 真会话仍进旧界面，旧用例照绿；设计快照未改
+- [x] 「添加路径」120×36、80×24 逐格相等
+- [x] 序列：`o` → 补全框 → `Tab` 轮换 → `C-w` → 打一个找不到的路径；`i` 修改一条处理路径；改输出目录；走完与期望屏相等（`Tab` 轮换那两屏比的是候选与缓冲、不比屏——次序两边不同，Q790）
+- [x] 序列：打字时 `F1` → `j`／`k` → `Esc` 回到输入行；还没开始时 `?`；走完与期望屏相等
+- [x] 用例：全部按键与屏底出自同一张按键表（表里加一个键，两处都跟着出现）
+- [x] 真会话仍进旧界面，旧用例照绿；设计快照未改（第一步那六条拍板之外）
 
 ## 落地记录
+
+**第一步：拍板落地（提交 `32368c0`）。** 06 记的六条按用户 2026-09-15 的拍板改设计稿、重导、再改实现（ADR 0019 决定第 13 条的次序）：
+
+| 条目 | 设计稿改在哪 | 实现那一半 | 重导变了哪几屏 |
+|---|---|---|---|
+| Q775 ① | `viewport(cursor, total, h)` 从光标算、不记着，`S.from` 整个拿掉；格子高过 8 行留一行余量 | 余量做成 `Viewport::with_margin`（新界面的卷列表、补全框走它），`new` 照旧给旧界面——补进 `new` 会让旧界面五条用例红，记 Q789 | `ended-C-f-C-b`、`running-search-n-N` |
+| Q776 ① | `elide` 改成 `columns::elide` 的截法 | 不动 | 一格没变（没有一屏带省略） |
+| Q777 ① | `drawTooSmall` 跑着与等待确认时写 `C-c` | `shell::small` 按阶段从表上取：`Quit` 派不出就落到 `Interrupt`（那一行补上短的一句「退出」） | `running.56x14`、`running-shrink` |
+| Q778 ① | `stageHints` 配置视图不摆 `v` | 不动（表本来就只在卷列表上派 `v`） | `deciding-2` |
+| Q779 ① | `startsCombo`：`g` 哪一块都待；`d` 在 `dd` 派得出的块上待（开跑之前的卷列表、预设栏），不问光标那一行；`]`／`[` 只在清点完之后的卷列表上待 | 不动 | 一格没变 |
+| Q783 ① | `footerHints` 清点中只剩停止、`j/k` 与 `?`（连同 `F`） | 不动 | `survey.120x36`、`survey.80x24` |
+| Q774 ① | 照旧 | 照旧 | — |
+
+`git diff --stat tests/fixtures/design` 十四个文件（七屏各两张网格）；06 认领的 `fresh.*` 三份与 `fresh-*` 七串一格没变，`cargo test --lib session` 照绿。
+
+**本票做了什么。** 新界面上打字与看帮助，三处接缝各一条红→绿：
+
+- **画面**：`add.120x36`、`add.80x24` 逐格相等（`shell::tests::the_add_scene_matches_its_design_snapshot_wide_and_narrow`，连同 `assert_no_background`）。
+  输入行占屏底（`shell::footer`：提示词 · 缓冲 · `▏`，右端那四件从表上取）；补全框贴左下角盖在卷列表上、不把屏底撑高
+  （`shell::completions`）；覆盖层整屏压暗、全部按键那一张画在上面、右框线上滚动条（`shell::overlay`）。画布多两手：`dim_all`
+  与 `scrollbar`（终端库的 widget 算滑块，交给它的「内容有多长」是起点能取几个值——这么交滑块的长度正是设计稿的式子；位置差在 `.5`
+  那一格上，归 Q780）。宽字符的第二格带着第一格的样子：补全框的右框线落在卷列表一个汉字中间时露出来的那半格是暗灰的，与设计稿的 `_split` 同一条。
+- **交互**：经 `terminal::input` 喂序列，本票认领的二十二串里做了十四串——`fresh-o` `fresh-o-Escape` `fresh-o-Tab-Tab-C-w` `fresh-o-missing`
+  `fresh-o-added` `fresh-i` `fresh-k-i` `fresh-k-i-C-w-typed` `add-F1` `add-F1-j` `add-F1-j-k-Escape` `add-narrow-F1-j` `add-narrow-F1-j-k`
+  `add-narrow-F1-j-k-Escape` `fresh-help` 逐格相等；`fresh-o-Tab`、`fresh-o-Tab-Tab` 只比候选几条、轮到哪一条、缓冲（候选的次序两边不同，Q790）。
+  **留给 09 的**：`help-question` `help-j` `help-Escape` `help-narrow-j` `help-narrow-j-k` `help-narrow-G`——起点 `help` 是转换中那一副，底下的树归 08、
+  `G` 在覆盖层上到底那一下也留在那儿（`cover::Scroll::Bottom` 已接，`terminal::input` 那一支认得）。
+- **纯逻辑**（`tui` 外面，闸门 2 照编照测）：`session::typing`（输入行、补全项、`~/` 走 `Home::expand`、逐层补全走 `complete::level` 与 `name`——
+  设计稿补的是头一个候选、不补公共前缀，`common_prefix` 没用上；`⏎` 问一次盘、找不到当场说）；`session::cover`（覆盖层、全部按键那一张 `Sheet`：
+  从表上按组摆、同一句并成一行、一行不剩的组整组不出、宽时从中间劈成两栏、末尾接灰阶写法那一节——写法从 `BitDepth`／`Candidate` 的 `Display` 取；
+  滚动收在摆得下的那一段里）；`cover::tests::the_sheet_and_the_footer_both_come_from_the_key_table`：表上每一行长的那一句在它派得出的每一档都在那一张上、
+  短的那一句在它派得出的每一块上屏底摆得出来，反过来那一张上每一行都是表上的一行——加一行两处都跟着出现。
+
+**在 06 的骨架上改了什么**（阻塞边）：`Views` 上加 `input`／`cover` 两格，`focus()` 先看它们、另出 `block()`（总览与行上顺口提的键问底下那一块，
+输入行开着时照样写着）；`Deed` 加 `Typed(char)`（不在表上：焦点在输入行上、表派不出的字符落到它）与 `Erase`（`⌫` 那一行）；`Group::ALL`、
+`keymap::spelt`；`Interrupt` 那一行补上短的一句；`Kind` 加 `Caption`／`Key`／`Directory`（Q795）；`Views::say` 开成 `pub(super)`、另出 `say_for`（回话占多久由那一句定）；
+`Session::perform` 接了掀开／关掉、打字、添改路径那几件；`terminal::input` 多收一个 `Window`（覆盖层滚动要知道那一张有几行、露几行，只有终端层知道窗口多大）；
+`scene::views_of` 认得 `input`（`add`／`out`／`edit`，候选与轮到第几个）与 `overlay`（`help` 与 `from`）。06 的用例一条没改。
+
+**票面有没有说全根因。** 验收框全勾完之后，「打字与看帮助照设计稿」还漏三样：① 候选的次序（Q790）——设计稿手写的次序不是任何一种排法，实现只能按名字排，
+`Tab` 轮换那两屏因此比不了；② 覆盖层上的翻页与到底（`C-d`／`C-f`／`G`）——要窗口尺寸，本票把尺寸交进了 `terminal::input`、`Scroll::Top`／`Bottom` 接好，
+半屏与一屏那两对随 08／09；③ 打字时那句「没有以「…」开头的项」屏上看不见（Q792）——票面与设计稿都说「当场说」，说了也画不出来。
+
+**08／09／13 怎么接。** 08：`shell::small` 已按阶段取退出键，跑着那一份 `running.56x14` 只差总进度那一行；滚动条走 `Canvas::scrollbar`，取整对不上再动 Q780。
+09：`help-*` 六串——`Scene::named("help")` 已摆好 `cover`，缺的是树；覆盖层上 `C-d`／`C-f` 在 `cover::Scroll::of` 加两个取值、`Sheet::shown()` 就是一屏。
+13／14：输入行的种类在 `typing::Purpose` 上加（改一项设置的值、给预设起名），提示词随它；右端那几件按表——值与预设名不该摆 `Tab`，见 Q794。
+
+**review 之后改的。** 标准轴：`viewport.rs` 那个常量插进了 `Viewport` 的文档块与结构体之间（文档挂错处）——挪到块前、改名
+`MARGIN_WHEN_TALLER_THAN`；闸门 2 上「只有画法读得到」的四处（`CANDIDATES_SHOWN`、`Purpose::prompt`、`Sheet::column_width`、覆盖层滚动那一手）
+各挂一句 `allow`，`Scroll` 那个只是转写 `Deed` 的枚举删掉、并进 `Views::scroll_cover(deed, sheet) -> bool`；`NamedPath::kind` 上那句
+「只有画法读得到」已失实（`typing` 读它）——拿掉，措辞收成 `NamedPath::kind_of`，补全框旁边那一句从它取（`Completion::label`）；
+`keymap` 里指错的文档链接（`view::Session` → `state::Session`）；抬头「? Esc → 关闭」里的 `?` 不再在画法里写死，改问表上掀开它的那一行
+（`keymap::spelt_for(Deed::Help)`）；分隔符只认 `complete::SEPARATORS` 一份；`Completion::from_shown` 收掉夹具里那一份拆法；`Sheet` 的
+四个位置字段打成 `Placement`、边距有名字、`depths()` 不再拿 `match` 凑 `&'static str`；设计稿 `viewport` 注释指向 `with_margin`。
+规范轴：缓冲里一个分隔符都没有时设计稿在家目录底下补、补回来带 `~/`（`complete` 的 `base = '~'`）——照它改，用例补一条；
+`⏎` 收下一个不是归档的文件时两边都说错——并进 Q791。
+
+### 数
+
+review 收完、改完、`cargo fmt --check` 过之后跑的那一趟就是最终状态：`cargo xtask gate` 三条全绿（`.tmp/gate.log`，`EXIT=0`，
+一条告警都没有）：
+
+| | 命令 | 末行 |
+|---|---|---|
+| 1 | `cargo test`（目录 `target`） | 合计 1051 通过 0 失败；lib 238 / bin 472；`test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s` |
+| 2 | `cargo test --no-default-features`（目录 `target/gate/no-default-features`） | 合计 872 通过 0 失败；lib 238 / bin 293；`test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s` |
+| 3 | `cargo check --features profiling`（目录 `target/gate/profiling`） | `Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 1.10s` |
+
+上一趟（06 收尾）是 1030 / 860：闸门 1 多 21 条（`cover` 6、`typing` 6、`viewport` 1、`canvas` 2、`shell` 1、`terminal::redesign` 6
+减去改名的一条），闸门 2 多 12 条（特性外面那几个模块自带的：`cover` 6、`typing` 6、`viewport` 1，减去 `cover` 里改名的一条）。
+黄金快照 `tests/golden-snapshot.txt` 原样过；设计快照只变了第一步那七屏（`32368c0`），本票之后 `git diff --stat -- tests/fixtures/design` 为空。
+`cargo xtask polish` 四条全绿（`.tmp/polish.log`，`EXIT=0`）：fmt 过；clippy 两趟零告警；`cargo doc --no-deps` 仍是
+**15 条告警**（`warning: \`tonefit\` (lib doc) generated 15 warnings`，与 06 同数）。
 
 ### 停车场结转
 
@@ -108,4 +181,16 @@
 - **Options:** ① 设计稿的清点中屏底不摆这两件，重导 `survey.*`；② 表上把 `/` 与 `]d`／`[d` 放宽到清点中——按下去没有树可搜、没有问题可跳，屏底摆着按不动的键
 - **Recommend:** ①（设计稿的 `KEYMAP` 自己也是这么标的，`footerHints` 只是漏分了一档）
 - **Whose call:** 拍板的人（动设计稿）
+- **处置：** 待处理。
+
+### Q764 — 设计稿的假盘没有导出：夹具建的那棵树是 11 个场景的场景数据提到的每一处的并集
+
+- **From:** 票 `session-redesign/05`
+- **Kind:** 票面没想到的第三种情形（票面说「照设计稿的假盘建出那棵树」，而 02 导出的场景数据里没有假盘）
+- **Where:** `.scratch/session-redesign/design.html` 的 `FS`（假盘）；`export.js` 的 `sceneData`（不导它）；`src/session/scene.rs` 的 `disk`／`build_disk`
+- **Why it did not block:** 屏上看得见的每一处都从场景数据认得出来：处理路径（文件夹还是压缩包）、清点清单上的分区、目录与卷根、备注里的路径（无法访问的地方是目录，非漫画文件是文件）、输出目录、输入行补全框列出的候选。认不出来的只有没人清点也没人补全到的几处：`~/下载/轻小说插图` 底下的三卷（没勾）、`~/Comics/火之鸟` 与 `寄生兽` 底下的卷（只在补全候选里露过名字，建成空目录）
+- **What this ticket actually did:** 取 11 个场景的并集，一趟只算一次（`OnceLock`），每个场景各自在临时目录里建一棵；文件都是空的（夹具不碰盘上的内容，只问形状）。序列的场景数据没并进来：它们补全到的只有 `~/`，那几项本来就在。票面「照设计稿的假盘建出那棵树」因此只做到了场景数据认得出的那一部分
+- **Options:** ① 照现状；② `export.js` 多导一份 `tests/fixtures/design/disk.json`（设计稿的 `FS` 原样），夹具照它建；③ 在 Rust 里抄一份 `FS`——第二个出处
+- **Recommend:** ①，直到哪一票要补全进一个场景数据没提到的目录（`~/下载/轻小说插图/` 之类）再走 ②——那时并集就缺东西了
+- **Whose call:** 07 号票的实现者（输入行补全那一票）
 - **处置：** 待处理。

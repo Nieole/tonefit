@@ -17,9 +17,9 @@
 //! | 卷列表 | [`list`] | 本票：开跑之前那一副；清点之后那棵树随树那一票 |
 //! | 每页结果 | — | 每页结果那一票 |
 //! | 设置栏 · 详情栏 · 预设栏 | — | 配置视图那几票 |
-//! | 覆盖层 | — | 全部按键那一票 |
-//! | 屏底与输入行 | [`footer`] | 本票：屏底；输入行随添加路径那一票 |
-//! | 补全框 | — | 添加路径那一票 |
+//! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张（内容出自 [`super::cover`]） |
+//! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
+//! | 补全框 | [`completions`] | 07 |
 //! | 窗口太小 | [`small`] | 本票 |
 //!
 //! 颜色一处在 [`super::draw::paint`]（`look`），键的写法一处在按键表（[`super::keymap`]）。
@@ -30,8 +30,10 @@
 //! 连击键的待续记号还在不在，都读它；用例给定值。
 
 mod canvas;
+mod completions;
 mod footer;
 mod list;
+mod overlay;
 mod overview;
 mod small;
 mod topbar;
@@ -52,17 +54,21 @@ use canvas::Canvas;
 pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Instant) {
     let screen = frame.area();
     let mut canvas = Canvas::new(frame.buffer_mut());
+    let phase = Phase::of(session.stage(), live);
     if yielding::too_small(screen) {
-        small::draw(&mut canvas, live);
+        small::draw(&mut canvas, live, phase);
         return;
     }
-    let phase = Phase::of(session.stage(), live);
     topbar::draw(&mut canvas, session);
     match session.views.view {
         View::Task => task(&mut canvas, session, phase, screen),
         // 配置视图随它那几票接进来。
         View::Config => {}
     }
+    // 补全框盖在卷列表上；覆盖层掀着时连它一起压暗（设计稿 `drawAll` 的次序）；屏底最后画，
+    // 掀着覆盖层时它摆的是覆盖层自己的那两件。
+    completions::draw(&mut canvas, session);
+    overlay::draw(&mut canvas, session, phase);
     footer::draw(&mut canvas, session, phase, now);
 }
 
@@ -118,6 +124,14 @@ mod tests {
     #[test]
     fn the_too_small_screen_matches_its_design_snapshot() {
         assert_scene("fresh", 56, 14);
+    }
+
+    /// **「添加路径」120×36 与 80×24 逐格相等**（`session-redesign/07` 票面第一条）：输入行占着屏底、
+    /// 补全框弹在它上方盖住卷列表、卷列表的框细了、光标行首是暗的 `›`。
+    #[test]
+    fn the_add_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("add", 120, 36);
+        assert_scene("add", 80, 24);
     }
 
     /// **`NO_COLOR` 在场时颜色退回默认，加粗、下划线、粗框、压暗照旧**（票面第四条）：

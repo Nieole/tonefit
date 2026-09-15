@@ -610,12 +610,17 @@ impl NamedPath {
         not(test),
         expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
     )]
-    #[cfg_attr(
-        all(test, not(feature = "tui")),
-        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
-    )]
     pub fn kind(&self) -> &'static str {
-        if self.is_archive() {
+        Self::kind_of(&self.path)
+    }
+
+    /// 盘上这一处屏上怎么叫：压缩包还是文件夹——**措辞只在这里**，补全框旁边那一句也从这里取。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "只有新界面读它，切换在 session-redesign/15")
+    )]
+    pub fn kind_of(path: &Path) -> &'static str {
+        if tonefit::is_archive(path) {
             "压缩包"
         } else {
             "文件夹"

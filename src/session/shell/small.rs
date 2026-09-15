@@ -1,4 +1,4 @@
-//! **窗口太小**：不到 60×16 时整屏只剩一句「窗口太小」、当前尺寸、总进度百分比与 `q` 退出，
+//! **窗口太小**：不到 60×16 时整屏只剩一句「窗口太小」、当前尺寸、总进度百分比与怎么退出，
 //! 放大之后原样回来（`CONTEXT.md` 的《会话》：让位）。
 
 use super::super::keymap::{self, Deed, Phase};
@@ -10,16 +10,16 @@ use super::canvas::{Canvas, hint};
 use super::yielding::LEAST;
 
 /// 画窗口太小那几行，整屏居中。
-pub(super) fn draw(canvas: &mut Canvas<'_>, live: Option<&Live>) {
+pub(super) fn draw(canvas: &mut Canvas<'_>, live: Option<&Live>, phase: Phase) {
     let (width, height) = (canvas.width(), canvas.height());
-    // `q` 那一件的写法与那一句取自按键表还没开始那一档：设计稿在哪一档上都写「退出」。
-    let quit = keymap::hints(
-        Phase::Fresh,
-        Focus::VolumeList,
-        &[keymap::Want::of(Deed::Quit)],
-    );
+    // 退出那一件按阶段从表上取：还没开始与结束了是 `q`，跑着与等待确认时 `q` 不退、摆 `C-c`
+    // （屏上不摆按不动的键，停车场 Q777）。
+    let quit = [Deed::Quit, Deed::Interrupt].into_iter().find_map(|deed| {
+        keymap::hints(phase, Focus::VolumeList, &[keymap::Want::of(deed)])
+            .into_iter()
+            .next()
+    });
     let mut last = quit
-        .first()
         .map(|said| hint(&said.spelt(), said.what))
         .unwrap_or_default();
     last.push(Segment::faint("  放大窗口后自动恢复"));

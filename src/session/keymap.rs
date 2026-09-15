@@ -155,9 +155,15 @@ pub enum Deed {
     // 输入
     Complete,
     DeleteWord,
+    /// 退一个字（`⌫`）。
+    Erase,
     Confirm,
     Cancel,
     HelpWhileTyping,
+    /// **打字**：输入行上每一个字符都是一个字（`CONTEXT.md` 的《覆盖层》「那儿每一个字符都是一个字」）。
+    /// 表上没有它那一行——表上派的是键，字不是键：焦点在输入行上、表上派不出的字符落到它
+    /// （[`super::state::Session::deed_of`]）。
+    Typed(char),
     // 覆盖层
     CloseOverlay,
 }
@@ -177,6 +183,19 @@ pub enum Group {
 }
 
 impl Group {
+    /// 全部按键那一张上的次序（设计稿的 `KEYMAP`）。
+    pub const ALL: [Self; 9] = [
+        Self::Global,
+        Self::Motion,
+        Self::VolumeList,
+        Self::Paths,
+        Self::Run,
+        Self::Confirm,
+        Self::Pages,
+        Self::Config,
+        Self::Input,
+    ];
+
     /// 这一组在屏上叫什么。
     pub fn title(self) -> &'static str {
         match self {
@@ -406,12 +425,14 @@ pub const TABLE: &[Row] = &[
         ANY_PHASE,
         OVERLAY,
     ),
+    // 短的那一句只有窗口太小那一屏要（跑着与等待确认时 `q` 不退，那一屏摆它，停车场 Q777）；
+    // 屏底那一行从不要它。
     row(
         Group::Global,
         Deed::Interrupt,
         Chord::Key(Key::Interrupt),
         "C-c",
-        "",
+        "退出",
         "退出（当前卷不保存，不留半成品）",
         ANY_PHASE,
         ANY_BLOCK,
@@ -1087,6 +1108,16 @@ pub const TABLE: &[Row] = &[
     ),
     row(
         Group::Input,
+        Deed::Erase,
+        Chord::Key(Key::Backspace),
+        "⌫",
+        "",
+        "",
+        NOT_SURVEYING,
+        INPUT,
+    ),
+    row(
+        Group::Input,
         Deed::Confirm,
         Chord::Key(Key::Enter),
         "⏎",
@@ -1146,6 +1177,17 @@ pub fn deed(phase: Phase, focus: Focus, chord: Chord) -> Option<Deed> {
         .iter()
         .find(|row| row.chord == chord && row.applies(phase, focus))
         .map(|row| row.deed)
+}
+
+/// 派这件事的头一个键在屏上怎么写（`?`、`Esc`、`空格`）。表上没有这件事是 `None`。
+///
+/// 屏上顺口提一个键而不是摆一件事的地方要它——全部按键那一张的抬头「? Esc → 关闭」里的 `?`
+/// 是掀开它的那个键（[`Deed::Help`]），再按一次关掉它；哪个键、怎么写都只从表上取。
+pub fn spelt_for(deed: Deed) -> Option<&'static str> {
+    TABLE
+        .iter()
+        .find(|row| row.deed == deed)
+        .map(|row| row.spelt)
 }
 
 /// 这个字符在这一档、这一块上是不是某个连击键的前半截。是的话它先待着，屏底右端留待续记号。
@@ -1359,18 +1401,7 @@ mod tests {
     /// 全部按键那一张的组照设计稿的次序与名字，每一组至少有一行上得了那一张。
     #[test]
     fn every_group_has_a_title_and_at_least_one_row_for_the_overlay() {
-        const GROUPS: [Group; 9] = [
-            Group::Global,
-            Group::Motion,
-            Group::VolumeList,
-            Group::Paths,
-            Group::Run,
-            Group::Confirm,
-            Group::Pages,
-            Group::Config,
-            Group::Input,
-        ];
-        let titles: Vec<&str> = GROUPS.iter().map(|group| group.title()).collect();
+        let titles: Vec<&str> = Group::ALL.iter().map(|group| group.title()).collect();
         assert_eq!(
             titles,
             [
@@ -1385,7 +1416,7 @@ mod tests {
                 "输入"
             ]
         );
-        for group in GROUPS {
+        for group in Group::ALL {
             assert!(
                 TABLE
                     .iter()

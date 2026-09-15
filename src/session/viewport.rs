@@ -16,6 +16,10 @@
 //! **滚动条真画出来是画法那一层的事**（`super::draw::scrolling`），
 //! 本模块只出「画成什么样」那三个数。
 
+/// 格子高过这么多行时 [`Viewport::with_margin`] 才留那一行余量（`CONTEXT.md` 的《视口》；
+/// 设计稿 `viewport` 的 `h > 8`）——矮格子里留一行就少露一行，不值。
+const MARGIN_WHEN_TALLER_THAN: usize = 8;
+
 /// 一个列表在一个格子里露出来的那一段：**从第几行画起**、露出几行、还剩几行没露面。
 ///
 /// **屏上哪几处共用它，只有这一张表说了算**（别处引这一节，不再抄一遍名单）：
@@ -50,9 +54,6 @@
 ///
 /// **往下只滚到光标那一行还在格子里为止，不多滚一行**：列表短于格子时
 /// [`Viewport::from`] 恒是零，那一格因此与没有这一段时逐格相同。
-/// 格子高过这么多行时留一行余量（`CONTEXT.md` 的《视口》；设计稿 `viewport` 的 `h > 8`）。
-const MARGIN_ABOVE: usize = 8;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Viewport {
     /// 列表一共有多少行。
@@ -93,12 +94,17 @@ impl Viewport {
         Self::at(rows, height, cursor, 0)
     }
 
-    /// [`new`](Self::new) 那一手**留一行余量**：格子高过 [`MARGIN_ABOVE`] 行时光标停在格子倒数第二行上、
+    /// [`new`](Self::new) 那一手**留一行余量**：格子高过 [`MARGIN_WHEN_TALLER_THAN`] 行时光标停在格子倒数第二行上、
     /// 底下露着下一行，往下挪时看得见要去的地方（`CONTEXT.md` 的《视口》「格子高过 8 行时上下各留一行余量」）。
     /// 与设计稿的 `viewport` 同一个式子（停车场 Q775）——新界面的格子走这一手；
     /// 旧界面仍走 [`new`](Self::new)（它那几屏的快照不留余量，随那一副在 `session-redesign/15` 退场，停车场 Q789）。
     pub(super) fn with_margin(rows: usize, height: usize, cursor: usize) -> Self {
-        Self::at(rows, height, cursor, usize::from(height > MARGIN_ABOVE))
+        Self::at(
+            rows,
+            height,
+            cursor,
+            usize::from(height > MARGIN_WHEN_TALLER_THAN),
+        )
     }
 
     /// 两手共用的那一个式子：光标落在格子最后一行（留 `margin` 行余量时再往上 `margin` 行）上就够了，

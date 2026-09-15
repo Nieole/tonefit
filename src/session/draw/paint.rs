@@ -103,6 +103,9 @@ pub(super) fn style(tone: Tone) -> Style {
 /// | 完成 · 处理中 | 绿 · 蓝 |
 /// | 聚焦框与光标 | 亮绿 |
 /// | 顶栏右端那一块 | 蓝 |
+/// | 抬头（全部按键的组名、输入行的提示词） | 绿 |
+/// | 键的写法（全部按键那一张上） | 黄 |
+/// | 补全框里的文件夹 | 蓝 |
 ///
 /// **`NO_COLOR` 在场时颜色一律退回终端默认色，修饰不退**（`CONTEXT.md` 的《语义色》）：
 /// 加粗、下划线、斜体、压暗都不靠颜色说话，抹掉了屏上没有一个字补得回来；「不要紧」那一档
@@ -156,9 +159,10 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Pass(Pass::Second)) => Some(Color::Cyan),
         // 环节那个枚举是 `non_exhaustive`：库添第四遍时这一色再定。
         Hue::Kind(Kind::Pass(_)) => None,
-        Hue::Kind(Kind::Done) => Some(Color::Green),
-        Hue::Kind(Kind::Working | Kind::Banner) => Some(Color::Blue),
+        Hue::Kind(Kind::Done | Kind::Caption) => Some(Color::Green),
+        Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),
         Hue::Kind(Kind::Focus) => Some(Color::LightGreen),
+        Hue::Kind(Kind::Key) => Some(Color::Yellow),
     }
 }
 
@@ -296,6 +300,9 @@ mod tests {
             (Kind::Working, Color::Blue),
             (Kind::Focus, Color::LightGreen),
             (Kind::Banner, Color::Blue),
+            (Kind::Caption, Color::Green),
+            (Kind::Key, Color::Yellow),
+            (Kind::Directory, Color::Blue),
         ];
         for (kind, colour) in kinds {
             let coloured = forcing(true, || look(Look::kind(kind).bold().underlined()));

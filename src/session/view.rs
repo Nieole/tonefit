@@ -32,12 +32,14 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
 use super::look::{Look, Segment};
 use super::state::{
     DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, TASTE_FIELDS,
 };
 use super::tone::Tone;
+use super::typing::InputLine;
 use crate::preset::Preset;
 
 /// 回话在屏底占几秒（设计稿 `toast` 的默认时长）。
@@ -206,19 +208,44 @@ pub struct Reply {
     pub until: Instant,
 }
 
-/// 新界面的状态：此刻在哪个视图、两个视图各自记着的、屏底那两样临时的东西。
+/// **窗口**有多大：列 × 行。终端层每一帧问一次交进来（覆盖层滚到哪儿为止从它算；半屏与一屏那四个
+/// 随各票也读它），用例给序列清单上的尺寸。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// 新界面的状态：此刻在哪个视图、两个视图各自记着的、盖在上面的两样、屏底那两样临时的东西。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Views {
     pub view: View,
     pub task: TaskView,
     pub config: ConfigView,
+    /// 打字时占住屏底的那一行（[`super::typing`]）。
+    pub input: Option<InputLine>,
+    /// 掀开着的那一张（[`super::cover`]）。盖住输入行，不替掉它。
+    pub cover: Option<Overlay>,
     pending: Option<Pending>,
     reply: Option<Reply>,
 }
 
 impl Views {
-    /// 焦点落在哪一块：此刻那个视图记着的块。盖在上面的输入行与覆盖层随后面的票添。
+    /// 焦点落在哪一块：盖在上面的先算——掀着覆盖层就是它，打着字就是输入行——都没有才是
+    /// 此刻那个视图记着的块（[`block`](Self::block)）。
     pub fn focus(&self) -> Focus {
+        if self.cover.is_some() {
+            return Focus::Overlay;
+        }
+        if self.input.is_some() {
+            return Focus::Input;
+        }
+        self.block()
+    }
+
+    /// 此刻那个视图记着的块——盖在上面的两样不算。屏上写在一块里的那几句顺口提的键
+    /// （总览的 `t`／`x`、行上的 `i`／`o`）问的是这一块派什么，输入行开着时照样写着。
+    pub fn block(&self) -> Focus {
         match self.view {
             View::Task => self.task.focus,
             View::Config => self.config.focus,
@@ -241,10 +268,15 @@ impl Views {
     }
 
     /// 说一句回话，占屏底 [`REPLY_LINGERS`]。
-    fn say(&mut self, segments: Vec<Segment>, now: Instant) {
+    pub(super) fn say(&mut self, segments: Vec<Segment>, now: Instant) {
+        self.say_for(segments, REPLY_LINGERS, now);
+    }
+
+    /// 说一句回话，占屏底多久由这一句自己定（设计稿 `toast` 的第二个参数）。
+    pub(super) fn say_for(&mut self, segments: Vec<Segment>, lingers: Duration, now: Instant) {
         self.reply = Some(Reply {
             segments,
-            until: now + REPLY_LINGERS,
+            until: now + lingers,
         });
     }
 
@@ -412,17 +444,58 @@ impl Session {
             });
             return None;
         }
-        keymap::deed(phase, focus, chord)
+        if let Some(deed) = keymap::deed(phase, focus, chord) {
+            return Some(deed);
+        }
+        // 打字：输入行上表派不出的每一个字符都是一个字（`?`、`q`、`j` 也是）。
+        if focus == Focus::Input {
+            return match chord {
+                Chord::Key(Key::Char(glyph)) => Some(Deed::Typed(glyph)),
+                Chord::Key(Key::Space) => Some(Deed::Typed(' ')),
+                _ => None,
+            };
+        }
+        None
     }
 
-    /// 把一件事做掉——**状态机够得着的那几件**：挪光标、勾选、删一条、换视图、退出。
+    /// 把一件事做掉——**状态机够得着的那几件**：挪光标、勾选、删一条、换视图、退出、
+    /// 掀开与关掉全部按键、打字与添改路径（[`super::typing`]：补全与确定那两下问一次盘）。
     ///
-    /// 起一趟、按停止、答话、添改路径（要盘）、预设那几支、灰阶测试图，都要够着那一趟或盘，
-    /// 归终端层那一支（`super::terminal`）；交到这里的那几件当作没有意义，原地不动。
-    /// 半屏与一屏那四个要知道格子有多高，随每页结果与树那几票接上；眼下同样原地不动。
+    /// 起一趟、按停止、答话、预设那几支、灰阶测试图，都要够着那一趟，归终端层那一支
+    /// （`super::terminal`）；交到这里的那几件当作没有意义，原地不动。
+    /// 覆盖层上滚动要知道窗口有多大，同样在终端层那一支（[`super::cover::Sheet`] 与 `Views::scroll_cover`）；
+    /// 半屏与一屏那四个随每页结果与树那几票接上，眼下原地不动。
     pub fn perform(&mut self, deed: Deed, now: Instant) -> Exit {
+        let focus = self.views.focus();
         match deed {
             Deed::Quit | Deed::Interrupt => return Exit::Leave,
+            Deed::Help | Deed::HelpWhileTyping => self.views.lift_keys(),
+            Deed::CloseOverlay => self.views.drop_cover(),
+            Deed::AddPath => self.open_adding(),
+            Deed::EditPath => self.open_editing(),
+            Deed::Typed(glyph) => {
+                if let Some(line) = &mut self.views.input {
+                    line.type_in(glyph);
+                }
+            }
+            Deed::Erase => {
+                if let Some(line) = &mut self.views.input {
+                    line.erase();
+                }
+            }
+            Deed::DeleteWord => {
+                if let Some(line) = &mut self.views.input {
+                    line.delete_word();
+                }
+            }
+            Deed::Complete => self.complete_typed(now),
+            Deed::Confirm => self.confirm_typed(now),
+            Deed::Cancel => self.cancel_typed(),
+            Deed::Down | Deed::Up if focus == Focus::Input => {
+                if let Some(line) = &mut self.views.input {
+                    line.step(if deed == Deed::Down { 1 } else { -1 });
+                }
+            }
             Deed::QuitRefused => self.views.say(
                 vec![
                     Segment::new("正在转换：", Look::tone(Tone::Caution).bold()),
@@ -511,6 +584,31 @@ impl Session {
         let focus = self.views.focus();
         let mut wants: Vec<Want> = Vec::new();
         match (self.views.view, focus) {
+            // 覆盖层掀着时屏底让给它自己的两件（设计稿 `footerHints` 头一支）：`?` 不另摆——它在抬头上。
+            (_, Focus::Overlay) => {
+                return keymap::hints(
+                    phase,
+                    focus,
+                    &[
+                        Want::of(Deed::Down),
+                        Want::of(Deed::Up),
+                        Want::of(Deed::CloseOverlay),
+                    ],
+                );
+            }
+            // 输入行右端那几件（设计稿 `drawFooter` 打字那一支）。
+            (_, Focus::Input) => {
+                return keymap::hints(
+                    phase,
+                    focus,
+                    &[
+                        Want::of(Deed::Complete),
+                        Want::of(Deed::DeleteWord),
+                        Want::of(Deed::Confirm),
+                        Want::of(Deed::Cancel),
+                    ],
+                );
+            }
             (View::Config, Focus::Picker) => wants.extend([
                 Want::of(Deed::UsePreset),
                 Want::of(Deed::DeletePreset),
