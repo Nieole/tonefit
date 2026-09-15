@@ -13,14 +13,14 @@
 
 mod fixtures;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use fixtures::{TINY, Workspace};
+use fixtures::{TINY, Workspace, open_the_door, shut_the_door};
 use tonefit::{
-    Dither, Event, FitMode, Instruction, Mode, Pass, Progress, ProgressSink, Request, RunOutcome,
-    VolumeReport,
+    Dither, Event, FitMode, Instruction, Mode, NonVolumeFile, Pass, Progress, ProgressSink,
+    Request, RunOutcome, SurveyedVolume, UnreachablePlace, VolumeReport,
 };
 
 /// 记录型观察者：事件收下来，一条不落。
@@ -53,6 +53,15 @@ struct Recorded {
     named: AtomicUsize,
     /// 这一趟最多走多少步（`RunStarted` 带的那个数，清点算出来的全局总步数）。
     global_steps: AtomicU64,
+    /// 开工那一条带的**卷清单**（`session-redesign/03`），整份留下。没收到那一条就是 `None`
+    /// ——「清点失败时一条事件都不发」要分得开「清单是空的」与「压根没报」。
+    roster: Mutex<Option<Vec<SurveyedVolume>>>,
+    /// 开工那一条带的非漫画文件那张表。
+    non_volume_files: Mutex<Vec<NonVolumeFile>>,
+    /// 开工那一条带的无法访问的地方那张表。
+    unreachable_places: Mutex<Vec<UnreachablePlace>>,
+    /// 每个卷开始时报的卷根，按开始顺序。
+    started: Mutex<Vec<PathBuf>>,
     /// 每个卷开始时预告的步数，按开始顺序。
     volume_steps: Mutex<Vec<u64>>,
     /// 收下第几卷之后改口。`None` 即一直继续。
@@ -62,12 +71,28 @@ struct Recorded {
 impl Progress for Recorder {
     fn observe(&self, event: Event<'_>) -> Instruction {
         let name = match event {
-            Event::RunStarted { volumes, steps, .. } => {
+            Event::RunStarted {
+                volumes,
+                steps,
+                roster,
+                non_volume_files,
+                unreachable_places,
+                ..
+            } => {
                 self.0.named.store(volumes, Ordering::Relaxed);
                 self.0.global_steps.store(steps, Ordering::Relaxed);
+                *self.0.roster.lock().expect("记账没有中毒") = Some(roster.to_vec());
+                *self.0.non_volume_files.lock().expect("记账没有中毒") = non_volume_files.to_vec();
+                *self.0.unreachable_places.lock().expect("记账没有中毒") =
+                    unreachable_places.to_vec();
                 "RunStarted"
             }
-            Event::VolumeStarted { steps, .. } => {
+            Event::VolumeStarted { volume, steps, .. } => {
+                self.0
+                    .started
+                    .lock()
+                    .expect("记账没有中毒")
+                    .push(volume.to_path_buf());
                 self.0
                     .volume_steps
                     .lock()
@@ -169,6 +194,31 @@ impl Recorder {
 
     fn volume_steps(&self) -> Vec<u64> {
         self.0.volume_steps.lock().expect("记账没有中毒").clone()
+    }
+
+    fn started(&self) -> Vec<PathBuf> {
+        self.0.started.lock().expect("记账没有中毒").clone()
+    }
+
+    /// 开工那一条带的卷清单。没收到那一条就是 `None`。
+    fn roster(&self) -> Option<Vec<SurveyedVolume>> {
+        self.0.roster.lock().expect("记账没有中毒").clone()
+    }
+
+    fn non_volume_files(&self) -> Vec<NonVolumeFile> {
+        self.0
+            .non_volume_files
+            .lock()
+            .expect("记账没有中毒")
+            .clone()
+    }
+
+    fn unreachable_places(&self) -> Vec<UnreachablePlace> {
+        self.0
+            .unreachable_places
+            .lock()
+            .expect("记账没有中毒")
+            .clone()
     }
 }
 
@@ -1111,6 +1161,208 @@ fn the_global_step_count_is_the_sum_of_what_each_volume_announces() {
     );
 }
 
+/// 一个 `pages` 页的小卷。清单那几条要三个卷**页数各不相同**，不然「按卷对得上」
+/// 与「碰巧相等」分不开。
+fn volume_with_pages(space: &Workspace, name: &str, pages: usize) -> fixtures::Volume {
+    let volume = space.volume(name);
+    let page = fixtures::full_bleed_gradient(TINY);
+    for index in 1..=pages {
+        volume.page(&format!("{index:03}.png"), &page);
+    }
+    volume
+}
+
+/// 开工那一条带着**卷清单**：照发现的次序，每一卷的卷根、步数上界、源页数
+/// （`session-redesign/03`，收停车场 Q719）。
+///
+/// 三样各与随后的事件、返回的报告对一遍：卷根按随后各卷**开卷的次序**一一对得上；
+/// 步数与开卷那一条报的是同一个数；源页数与那一卷报告上的 `source_pages` 相同。
+/// 三个卷页数各不相同（1、3、2 页），不然「对得上」看不出是按卷对的还是碰巧相等。
+///
+/// 它钉的是**接线**：三样在清点走完那一刻就都在了（`survey`），这一条把它们原样带出来，
+/// 库里不另算——卷数那个数因此也恒等于清单的长度。会话要在第一卷开工之前就画出整棵树，
+/// 靠的正是这份清单。
+#[test]
+fn the_run_started_event_carries_the_survey_in_the_order_the_volumes_open() {
+    let space = Workspace::new();
+    let volumes: Vec<fixtures::Volume> = [("volume-a", 1), ("volume-b", 3), ("volume-c", 2)]
+        .into_iter()
+        .map(|(name, pages)| volume_with_pages(&space, name, pages))
+        .collect();
+    let recorder = Recorder::default();
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, volumes.iter().map(fixtures::Volume::path))
+    })
+    .expect("处理应当成功");
+
+    let roster = recorder.roster().expect("开工那一条没到");
+    assert_eq!(recorder.named(), roster.len(), "卷数与清单长度不是一个数");
+
+    let roots: Vec<&Path> = roster.iter().map(|one| one.root.as_path()).collect();
+    assert_eq!(roots, recorder.started(), "清单的次序与开卷的次序对不上");
+
+    let steps: Vec<u64> = roster.iter().map(|one| one.steps).collect();
+    assert_eq!(
+        steps,
+        recorder.volume_steps(),
+        "清单上的步数与开卷报的不是一个数"
+    );
+    assert_eq!(
+        recorder.global_steps(),
+        steps.iter().sum::<u64>(),
+        "全局总步数不等于清单上各卷之和"
+    );
+
+    let source_pages: Vec<usize> = roster.iter().map(|one| one.source_pages).collect();
+    assert_eq!(
+        source_pages,
+        [1, 3, 2],
+        "清单上的源页数不是盘上那几卷的页数"
+    );
+    assert_eq!(
+        source_pages,
+        report
+            .volumes
+            .iter()
+            .map(|volume| volume.source_pages)
+            .collect::<Vec<_>>(),
+        "清单上的源页数与各卷报告说的不是一个数"
+    );
+}
+
+/// 开工那一条带的**两张表**——非漫画文件、无法访问的地方——与返回的报告上那两张**逐条相同**
+/// （`session-redesign/03`）。
+///
+/// 一棵树把三类非漫画文件与一个读不动的目录一次摆全：卷架上的 txt、一页都没有的 zip、
+/// 点不开的 cbz，加一个门关上了的目录。比的是整份 `Debug`，不是几个挑出来的字段——
+/// 漏掉一格就等于给「开工时画的」与「跑完印的」开了漂移的口子。
+///
+/// 关不上门的机器上（Windows 没有这一手，root 底下权限位不作数）无法访问那张表两边都空，
+/// 「逐条相同」照旧成立，只是那一半没问到；关得上的机器上它得真有一条。
+#[test]
+fn the_two_tables_on_the_run_started_event_are_the_ones_the_report_returns() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    std::fs::write(space.dir("库/答案.txt"), b"a note the owner left here").expect("摆一份 txt");
+    let mut fonts = space.archive("库/字体包.zip");
+    fonts.file("readme.txt", b"no pages in here");
+    fonts.write();
+    let mut broken = space.archive("库/坏的.cbz");
+    broken.page("001.png", &fixtures::cheap_page());
+    broken.write_truncated();
+    small_volume(&space, "库/好的");
+    let closed = library.join("权限没配好的作品");
+    std::fs::create_dir(&closed).expect("建读不动的那一层");
+    let door_shut = shut_the_door(&closed);
+    let recorder = Recorder::default();
+
+    let outcome = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [library.as_path()])
+    });
+    // 断言之前先把门打开：断言红了也不至于留下一个删不掉的临时目录。
+    open_the_door(&closed);
+    let report = outcome.expect("非漫画文件与无法访问的地方都不是失败");
+
+    assert_eq!(
+        report.non_volume_files.len(),
+        3,
+        "三类非漫画文件没摆全：{:?}",
+        report.non_volume_files
+    );
+    assert_same_table(
+        &recorder.non_volume_files(),
+        &report.non_volume_files,
+        "非漫画文件",
+    );
+    if door_shut {
+        assert_eq!(
+            report.unreachable_places.len(),
+            1,
+            "关上门的那一层没上无法访问那张表：{:?}",
+            report.unreachable_places
+        );
+    }
+    assert_same_table(
+        &recorder.unreachable_places(),
+        &report.unreachable_places,
+        "无法访问的地方",
+    );
+}
+
+/// 开工那一条带的一张表与报告上那一张**逐条相同**。
+///
+/// 比的是整份 `Debug`：`NonVolumeFile` 与 `UnreachablePlace` 没有 `PartialEq`，
+/// 而这里要的正是「一格不差」——漏掉一格就等于给「开工时画的」与「跑完印的」开了漂移的口子。
+fn assert_same_table<T: std::fmt::Debug>(announced: &[T], reported: &[T], what: &str) {
+    assert_eq!(
+        format!("{announced:?}"),
+        format!("{reported:?}"),
+        "开工那一条带的{what}与报告上那张表不是同一份"
+    );
+}
+
+/// **按停止停在半路的那一趟，开工那一条带的三样照样是全的**（`session-redesign/03`）。
+///
+/// 三样在清点走完那一刻就齐了，发现走完就不再变——停在第一卷之后，清单上仍是全部三卷，
+/// 那张表仍与报告上那一张逐条相同，而开卷只开了一条。两级停止各问一遍：
+/// 做完再停停在卷边界上，立即停止连当前那一卷都丢掉，两种现场下那三样都一格不少。
+#[test]
+fn a_run_stopped_halfway_still_announced_the_whole_survey_when_it_started() {
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir_all(&library).expect("建库目录");
+    for name in ["库/卷一", "库/卷二", "库/卷三"] {
+        small_volume(&space, name);
+    }
+    std::fs::write(space.dir("库/答案.txt"), b"a note the owner left here").expect("摆一份 txt");
+
+    for (level, out) in [
+        (Instruction::Finish, space.out_named("做完再停")),
+        (Instruction::Abort, space.out_named("立即停止")),
+    ] {
+        let recorder = Recorder::stopping_after(1, level);
+
+        let report = tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            output_root: out,
+            ..fixtures::request(&space, [library.as_path()])
+        })
+        .expect("按停止不是失败");
+
+        assert_eq!(
+            report.outcome,
+            RunOutcome::Stopped(level),
+            "这一趟没停在半路"
+        );
+        assert!(
+            recorder.started().len() < 3,
+            "{level:?}：停在半路的那一趟把三卷都开了"
+        );
+        let roster = recorder.roster().expect("开工那一条没到");
+        assert_eq!(roster.len(), 3, "{level:?}：清单不是全部三卷：{roster:?}");
+        assert_eq!(recorder.named(), 3, "{level:?}：卷数不是清单的长度");
+        assert_eq!(
+            report.non_volume_files.len(),
+            1,
+            "{level:?}：那一份 txt 没上报告"
+        );
+        assert_same_table(
+            &recorder.non_volume_files(),
+            &report.non_volume_files,
+            "非漫画文件",
+        );
+        assert_same_table(
+            &recorder.unreachable_places(),
+            &report.unreachable_places,
+            "无法访问的地方",
+        );
+    }
+}
+
 /// 一条点不开的路径让**整趟**当场被拒，且发生在任何卷级事件之前（会话批 03 号票）。
 ///
 /// 三件事一起断言：`run` 回的是 `Err`、一条事件都没报到、输出目录下一个文件都没有。
@@ -1141,6 +1393,7 @@ fn a_path_that_cannot_be_opened_refuses_the_whole_run_before_any_volume_event() 
     .expect_err("有卷点不开，整趟该被拒");
 
     assert_eq!(recorder.shape(), Vec::<&str>::new(), "被拒的一趟报了事件");
+    assert_eq!(recorder.roster(), None, "被拒的一趟把清单报出去了");
     assert!(!space.out().exists(), "被拒的一趟在输出目录下留了东西");
 
     let said = format!("{error:#}");

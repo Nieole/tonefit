@@ -1272,6 +1272,44 @@ pub fn png_field(text: &[(String, String)], keyword: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
+/// 把一个目录弄成**列不出来**的样子，成了才回 `true`——「无法访问的地方」那一栏的夹具。
+///
+/// **真去列一遍**才算数：`set_permissions` 在 root 底下也回 `Ok`，而权限位拦不住 root。
+/// 弄不出的机器上（Windows 没有这一手，root 底下权限位不作数）回 `false`，
+/// 用例自己决定是收工还是只问另一半。断言之前先 [`open_the_door`]：
+/// 断言红了也不至于留下一个删不掉的临时目录。
+#[cfg(unix)]
+pub fn shut_the_door(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    if fs::set_permissions(dir, fs::Permissions::from_mode(0o000)).is_err() {
+        return false;
+    }
+    if fs::read_dir(dir).is_ok() {
+        // 这一手没作数（root 绕过权限位）。**门要打回去**：不然临时目录里留下一个
+        // `0o000` 的目录，而结束那一手删不掉它。
+        open_the_door(dir);
+        return false;
+    }
+    true
+}
+
+#[cfg(not(unix))]
+pub fn shut_the_door(_dir: &Path) -> bool {
+    false
+}
+
+/// 把门再打开，好让工作区收得掉。
+#[cfg(unix)]
+pub fn open_the_door(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o755));
+}
+
+#[cfg(not(unix))]
+pub fn open_the_door(_dir: &Path) {}
+
 /// 一个成员相对某个容器根的名字，分隔符归一成 `/`。
 ///
 /// 归一是因为**这个名字要被断言**：路径分隔符随平台而变，而黄金回归的快照要在哪台机器上

@@ -17,6 +17,7 @@
 //! | 屏上那一行 | 来源 |
 //! |---|---|
 //! | 总览块的抬头与全局那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的清点），加 [`Live::walked`] |
+//! | 卷清单与每一卷此刻怎么样 | `RunStarted` 带的清点产出（`session-redesign/03`），此后逐条事件推出[卷状态](VolumeState) |
 //! | 总览块的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
 //! | 总览块的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成执行那一副 |
 //! | 总览块的出事行 | 同上，而坏页那一样连当前这一卷已经报过的那几条一起数（[`Live::failures_so_far`]） |
@@ -31,8 +32,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tonefit::{
-    Event, Instruction, Mode as RunMode, Pass, Report, Request, RunOutcome, VolumeFailure,
-    VolumeReport,
+    Event, Instruction, Mode as RunMode, NonVolumeFile, Pass, Report, Request, RunOutcome,
+    SurveyedVolume, UnreachablePlace, VolumeFailure, VolumeReport,
 };
 
 use crate::render::{self, Listed, Row};
@@ -190,6 +191,47 @@ fn only_expandable(volumes: &[Volume]) -> Vec<Volume> {
         .collect()
 }
 
+/// **卷状态**：卷清单上的一卷此刻怎么样（`CONTEXT.md` 的《会话》：卷状态）。
+///
+/// 卷的身份是**清单里的第几卷**（`session-redesign/03`）：一卷在开工之前就有身份，
+/// 它此刻怎么样由随后的事件推出来——开卷翻成处理中，某一遍开工记下走到哪个环节，
+/// 确认点上等人是等待确认，收摊按那一卷的报告分成完成、跳过、进了隔离，
+/// 没做成是那一条事件，这一趟结束时还开着的那一卷是被立即停止掉的。
+/// **它与今天那份身份并排记着**（[`Volume`]：收摊之后排第几条）；换过去在切换那一票。
+///
+/// 三种收摊分开而不是各带一份报告：报告在 [`Live::report`] 上，这一格只答「怎么样」——
+/// 行首记号问的正是这一件（`CONTEXT.md` 的《会话》：行首记号）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeState {
+    /// **等待中**：还没轮到。这一趟结束之后仍是它的那几卷，就是被停止拿走的那几卷。
+    Queued,
+    /// **处理中**，带着走到哪个环节。开卷之后、第一条 `PassStarted` 到达之前是 `None`。
+    Running { pass: Option<Pass> },
+    /// **等待确认**：停在确认点上等用户拿主意（`CONTEXT.md` 的《会话》：等待确认）。
+    ///
+    /// 只有真停下来问的那一次才是它：不等人的那一趟、答过「后面的卷都写出」之后的那几卷，
+    /// 走到写出那一遍仍是[处理中](Self::Running)——判据是 [`Live::stops_to_ask`]。
+    /// 它不看确认点那一条带没带那份报告：闸停不停与那一格是两件事（`tonefit::Progress` 的
+    /// `reads_the_report_at_the_decision_point`）。闩已经是立即停止时那道闸一句话都不问
+    /// （`super::run::Watch`），这一格会短暂是它，紧接着结束那一条把它翻成
+    /// [被立即停止掉](Self::Aborted)。
+    Deciding,
+    /// **完成**：收摊了，做过事、没进隔离。
+    Done,
+    /// **进了隔离**：收摊了，而它有坏页（`VolumeReport::isolated`）。
+    Isolated,
+    /// **跳过**：幂等命中，一页都没重做。
+    Skipped,
+    /// **没做成**：整卷没做成，报告上只有一句原因（`VolumeFailure`）。
+    Failed,
+    /// **被立即停止掉**：开了卷，这一趟就被立即停止了——既没收摊也没报没做成，那一卷等于没做
+    /// （`tonefit::Event::VolumeFinished` 的文档：流上一条开卷、后面两条一条都没有）。
+    ///
+    /// 拒绝开始的那一趟撞在半路（互锁 ③，`RunOutcome::Refused`）留下的也是这一副形状，
+    /// 那一卷同样等于没做，这里不另分一种（停车场 Q746）。
+    Aborted,
+}
+
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍、这一遍写不写盘。
 #[derive(Debug, Clone)]
 pub struct Walking {
@@ -281,6 +323,23 @@ pub struct Live {
     volumes: usize,
     /// 这一趟最多走多少步（`RunStarted`，各卷之和）。
     steps: u64,
+    /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
+    /// 开工那一刻整份收下，此后一格不变。
+    roster: Vec<SurveyedVolume>,
+    /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序同长**——两列在
+    /// [`surveyed`](Self::surveyed) 里一起立起来，此后只改值、不增删。
+    states: Vec<VolumeState>,
+    /// 当前卷在清单上排第几。卷与卷之间是 `None`；开卷那一条报的卷根
+    /// 不在清单上时也是 `None`（那时谁的状态都不动）。
+    current: Option<usize>,
+    /// 开工那一条带的非漫画文件那张表（`session-redesign/03`）。
+    ///
+    /// **摆在报告旁边，不当场进报告**：报告上那张表跟着 [`returned`](Self::returned) 换上的
+    /// 那一份到（逐条相同）——旧界面的出事行读的是报告上那一张，当场进报告会让它从清点起
+    /// 就多一句，而旧界面在切换那一票之前一格不动（停车场 Q745）。
+    non_volume_files: Vec<NonVolumeFile>,
+    /// 开工那一条带的无法访问的地方那张表，与上一格同一个待遇。
+    unreachable_places: Vec<UnreachablePlace>,
     /// 全局走过的步数，含各卷收摊时结清的那一截。
     walked: u64,
     /// 已经收摊的卷数（跑完的与没做成的都算）。总览块抬头那个「第几卷」用它。
@@ -344,9 +403,10 @@ impl Live {
                 white_align_limit: request.white_align_limit,
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
-                // 非漫画文件整份在清点走完就齐了，而事件流不报它——攒到一半的这一份因此
-                // 恒是空的，跑完换成库交出来的那一份（见 [`returned`](Self::returned)）。
-                // 末尾那几小结本来也只在结束之后画（见 `crate::session::draw`）。
+                // 这两张表整份在清点走完就齐了，开工那一条事件带着它们（`session-redesign/03`），
+                // 而攒到一半的这一份**仍旧空着**，跑完换成库交出来的那一份
+                // （见 [`returned`](Self::returned)）：清点那一刻收下的那两张摆在报告旁边
+                // （[`Self::non_volume_files`]），理由写在那一格上。
                 non_volume_files: Vec::new(),
                 unreachable_places: Vec::new(),
                 outcome: RunOutcome::Completed,
@@ -356,6 +416,11 @@ impl Live {
             },
             volumes: 0,
             steps: 0,
+            roster: Vec::new(),
+            states: Vec::new(),
+            current: None,
+            non_volume_files: Vec::new(),
+            unreachable_places: Vec::new(),
             walked: 0,
             finished: 0,
             started: Instant::now(),
@@ -375,9 +440,23 @@ impl Live {
     /// 用例因此只问得动那几个方法，这一层的对照表反倒是最不容易写错的一段。
     ///
     /// `_` 那一支不是遗漏：多一个变体不该逼着这里跟着改（ADR 0011 的《后果》）。
+    ///
+    /// **开工那一条转给两个方法**：总览块那两个数走 [`run_started`](Self::run_started)，
+    /// 清点的三份产出走 [`surveyed`](Self::surveyed)。分成两半是因为旧界面只读前一半，
+    /// 它那几十条用例照旧只喂前一半；新界面（`session-redesign/05` 起）两半都喂。
     pub fn observe(&mut self, event: &Event<'_>) {
         match event {
-            Event::RunStarted { volumes, steps, .. } => self.run_started(*volumes, *steps),
+            Event::RunStarted {
+                volumes,
+                steps,
+                roster,
+                non_volume_files,
+                unreachable_places,
+                ..
+            } => {
+                self.run_started(*volumes, *steps);
+                self.surveyed(roster, non_volume_files, unreachable_places);
+            }
             Event::VolumeStarted { volume, steps, .. } => self.volume_started(volume, *steps),
             Event::PassStarted { pass, so_far, .. } => self.pass_started(*pass, *so_far),
             Event::Stepped { .. } => self.stepped(),
@@ -390,6 +469,9 @@ impl Live {
     }
 
     /// 清点完了，开工：总览块那两个数就是 `RunStarted` 报的这两个（03 号票）。
+    ///
+    /// 同一条事件带的清点产出走 [`surveyed`](Self::surveyed)——见 [`observe`](Self::observe)
+    /// 那一支为什么分成两半。
     pub fn run_started(&mut self, volumes: usize, steps: u64) {
         self.volumes = volumes;
         self.steps = steps;
@@ -397,7 +479,26 @@ impl Live {
         self.started = Instant::now();
     }
 
-    /// 开一卷。
+    /// 收下开工那一条带的**清点产出**（`session-redesign/03`）：卷清单整份留下、每一卷立成
+    /// [等待中](VolumeState::Queued)，两张表摆在报告旁边。
+    ///
+    /// 三样在开工那一条上就齐了、此后不再变，分区末尾的备注行因此在第一卷开工之前
+    /// 就画得出来。两张表**不当场进报告**，理由见 [`Self::non_volume_files`]。
+    pub fn surveyed(
+        &mut self,
+        roster: &[SurveyedVolume],
+        non_volume_files: &[NonVolumeFile],
+        unreachable_places: &[UnreachablePlace],
+    ) {
+        self.roster = roster.to_vec();
+        self.states = vec![VolumeState::Queued; roster.len()];
+        self.current = None;
+        self.non_volume_files = non_volume_files.to_vec();
+        self.unreachable_places = unreachable_places.to_vec();
+    }
+
+    /// 开一卷。**按卷根认回清单里的那一卷**（清点已按卷根收编过，清单里卷根不重），
+    /// 它从此是[处理中](VolumeState::Running)。
     pub fn volume_started(&mut self, volume: &Path, steps: u64) {
         self.volume = Some(Walking {
             volume: volume.to_path_buf(),
@@ -406,6 +507,25 @@ impl Live {
             pass: None,
             writes: false,
         });
+        // 逐条找而不是建一张表：一趟里每一卷只认一次，而清单是几千的量级、
+        // 路径比较的是分量——与这一卷接下来要做的事相比不值一提。
+        self.current = self.roster.iter().position(|listed| listed.root == volume);
+        self.set_state(VolumeState::Running { pass: None });
+    }
+
+    /// 把当前卷改成 `state`。没有当前卷（或它不在清单上）就什么都不做。
+    fn set_state(&mut self, state: VolumeState) {
+        if let Some(current) = self.current
+            && let Some(slot) = self.states.get_mut(current)
+        {
+            *slot = state;
+        }
+    }
+
+    /// **确认点上这一趟停不停下来问**：等人的那一趟，而且还没摆下「后面的卷都写出」
+    /// 那个默认答案（`super::run::Gate`）。等待确认那一档与等人那一截那格都按它判。
+    fn stops_to_ask(&self) -> bool {
+        self.resumes.waits() && self.for_the_rest.is_none()
     }
 
     /// 当前卷开始走某一遍。「进度条现在在走哪一遍」只有它答得出来。
@@ -429,6 +549,13 @@ impl Live {
                 };
             }
         }
+        // 清单上这一卷走到哪个环节；**真停下来问的那一次**是等待确认
+        // （见 [`VolumeState::Deciding`]）——与下面等人那一截那格差在它不看 `so_far` 带没带。
+        self.set_state(if pass == Pass::Second && self.stops_to_ask() {
+            VolumeState::Deciding
+        } else {
+            VolumeState::Running { pass: Some(pass) }
+        });
         if let Some(so_far) = so_far {
             self.summarized = Some(so_far.clone());
             // 确认点那一条报出来的下一刻，观察者就停在闸上了（见 `super::run::Watch`）。
@@ -437,7 +564,7 @@ impl Live {
             // **答过「后面的卷都写出」之后就不再等**：那一刻起观察者当场照默认答案答字
             // （`super::run::Gate`），没有人在等。这一格照开的话它再也关不上——
             // 关它的只有确认点上的答话，而往下不会再有一次，屏上那两个数于是从此不动。
-            if self.resumes.waits() && self.for_the_rest.is_none() {
+            if self.stops_to_ask() {
                 self.deliberating_since = Some(Instant::now());
             }
         }
@@ -473,6 +600,14 @@ impl Live {
         if self.volume.as_ref().is_some_and(|walking| walking.writes) {
             self.written = true;
         }
+        // 三种收摊：跳过（幂等命中）、进了隔离（有坏页）、完成。
+        self.set_state(if report.skipped() {
+            VolumeState::Skipped
+        } else if report.isolated() {
+            VolumeState::Isolated
+        } else {
+            VolumeState::Done
+        });
         self.report.volumes.push(report.clone());
         self.finish_volume();
     }
@@ -492,6 +627,7 @@ impl Live {
     /// 屏上那个「此刻坏了几页」会在这一刻自己往回走。
     pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
         self.lost_failures = self.lost_failures.saturating_add(self.in_flight_failures);
+        self.set_state(VolumeState::Failed);
         self.report.failed_volumes.push(VolumeFailure {
             volume: volume.to_path_buf(),
             reason: reason.to_owned(),
@@ -502,6 +638,10 @@ impl Live {
     /// 这一趟完了，带着它是怎么收的场。
     pub fn run_finished(&mut self, outcome: RunOutcome) {
         self.report.outcome = outcome;
+        // 这一趟结束时还开着的那一卷既没收摊也没报没做成：它被立即停止掉了
+        // （见 [`VolumeState::Aborted`]）。
+        self.set_state(VolumeState::Aborted);
+        self.current = None;
         self.volume = None;
         // 停在确认点上被立即停止的那一趟从这里出去：那一等到此为止，没有人会来答它。
         self.stop_deliberating();
@@ -522,6 +662,7 @@ impl Live {
         self.summary_is_stale();
         self.in_flight_failures = 0;
         self.finished += 1;
+        self.current = None;
         if let Some(walking) = self.volume.take() {
             self.walked = self
                 .walked
@@ -655,6 +796,18 @@ impl Live {
             && let Some(walking) = &mut self.volume
         {
             walking.writes = true;
+        }
+        // 答的是继续，停在确认点上的那一卷从此在走写出那一遍。**答做完再停不在这里换档**：
+        // 那一卷写出环节一步不走、一卷跑完那一条紧跟着到（`tonefit::Pass::Second` 的文档），
+        // 收摊那一条把它翻成完成；标成「写出」是假话。
+        if said == Instruction::Continue
+            && self
+                .current
+                .is_some_and(|current| self.states.get(current) == Some(&VolumeState::Deciding))
+        {
+            self.set_state(VolumeState::Running {
+                pass: Some(Pass::Second),
+            });
         }
         self.stop_deliberating();
     }
@@ -879,6 +1032,46 @@ impl Live {
         &self.report
     }
 
+    /// **卷清单**：开工那一条带的那一列，照发现的次序（`session-redesign/03`）。
+    /// 开工之前、或那一条没带清单时是空的。
+    ///
+    /// 下面四个访问器眼下只有本模块的用例读：画卷列表那棵树那一票接上读者时把那一行
+    /// `expect` 拆掉——留着它会当场报「这个 `expect` 没用上」。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
+    )]
+    pub fn roster(&self) -> &[SurveyedVolume] {
+        &self.roster
+    }
+
+    /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序**。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
+    )]
+    pub fn states(&self) -> &[VolumeState] {
+        &self.states
+    }
+
+    /// 开工那一条带的非漫画文件那张表。与这一趟跑完之后报告上那一张逐条相同。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
+    )]
+    pub fn non_volume_files(&self) -> &[NonVolumeFile] {
+        &self.non_volume_files
+    }
+
+    /// 开工那一条带的无法访问的地方那张表。与这一趟跑完之后报告上那一张逐条相同。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
+    )]
+    pub fn unreachable_places(&self) -> &[UnreachablePlace] {
+        &self.unreachable_places
+    }
+
     /// 总览块要的那几个数：第几卷 / 共几卷、走了几步 / 共几步、已用多久、还剩多久。
     ///
     /// **结束之后「已用」就定住了**：那时用的是库交出来的 [`Report::elapsed`]——
@@ -1015,7 +1208,8 @@ pub(crate) mod fixture {
         BitDepth, CacheBudget, CacheUsage, Candidate, CandidateScore, ChosenBy, Crop, Dither,
         Envelope, GeometryGate, GrayImage, IoPlan, Medium, Mode as RunMode, PageBranch, PageColor,
         PageOutcome, PageReport, Processed, Profile, Readers, Reason, Reference, Request, Salvage,
-        Scaling, Size, Verdict, VolumeReport, VolumeTiming, VolumeVerdict, WhiteAlignment,
+        Scaling, Size, SurveyedVolume, Verdict, VolumeReport, VolumeTiming, VolumeVerdict,
+        WhiteAlignment,
     };
 
     /// 在 `root` 底下摆一个叫 `name` 的、真跑得动的卷：**一页加一个透传文件**。
@@ -1117,6 +1311,20 @@ pub(crate) mod fixture {
             }
         }
         live.volume_finished(report);
+    }
+
+    /// 一份**卷清单**：`names` 那几卷，卷根在 `库/` 底下——与 [`skipped_volume`]、
+    /// [`processed_volume`] 那几份卷报告的卷路径同一个写法，开卷那一条按卷根认回清单里
+    /// 的那一卷靠的正是这一点。步数与源页数各一个固定的数：状态那几条用例不问它们。
+    pub fn roster<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<SurveyedVolume> {
+        names
+            .into_iter()
+            .map(|name| SurveyedVolume {
+                root: PathBuf::from(format!("库/{name}")),
+                steps: 1000,
+                source_pages: 20,
+            })
+            .collect()
     }
 
     /// 一份**幂等命中**的卷报告：一页都没重做，逐页结果因此一条都没有。
@@ -1571,6 +1779,143 @@ pub(crate) mod fixture {
 mod tests {
     use super::*;
     use tonefit::{Instruction, Mode as RunMode};
+
+    /// **卷清单上每一卷的状态跟着事件走**（`session-redesign/03`）：一趟里跳过、完成、
+    /// 进了隔离、没做成、等待确认、被立即停止掉各至少一卷，还没轮到的仍是等待中，
+    /// 逐卷对得上。
+    ///
+    /// 清单上的身份从开工那一刻就有（清单里的第几卷），此后每一条事件只改**它此刻怎么样**：
+    /// 开卷翻成处理中、某一遍开工记下走到哪个环节、确认点上等人是等待确认、答了话回到处理中、
+    /// 收摊按那一卷报告分成完成／跳过／进了隔离、没做成是那一条、这一趟结束时还开着的那一卷
+    /// 是被立即停止掉的。
+    #[test]
+    fn every_volume_on_the_roster_has_a_state_that_follows_the_events() {
+        use VolumeState::{Aborted, Deciding, Done, Failed, Isolated, Queued, Running, Skipped};
+
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        let roster = fixture::roster(["卷一", "卷二", "卷三", "卷四", "卷五", "卷六"]);
+        live.run_started(6, 6000);
+        live.surveyed(&roster, &[], &[]);
+        assert_eq!(live.roster(), roster, "清单没原样留下");
+        assert_eq!(live.states(), [Queued; 6], "开工那一刻每一卷都该是等待中");
+
+        // 卷一：幂等命中，跳过。
+        live.volume_started(Path::new("库/卷一"), 1000);
+        assert_eq!(live.states()[0], Running { pass: None });
+        live.pass_started(Pass::Fingerprint, None);
+        assert_eq!(
+            live.states()[0],
+            Running {
+                pass: Some(Pass::Fingerprint)
+            }
+        );
+        live.volume_finished(&fixture::skipped_volume("卷一", 20));
+        assert_eq!(live.states()[0], Skipped);
+
+        // 卷二：走到确认点等人，答继续，写完。
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.pass_started(Pass::First, None);
+        let so_far = fixture::processed_volume("卷二", None);
+        live.pass_started(Pass::Second, Some(&so_far));
+        assert_eq!(
+            live.states()[1],
+            Deciding,
+            "停在确认点上的那一卷该是等待确认"
+        );
+        live.decide(Instruction::Continue, Reach::ThisVolume);
+        assert_eq!(
+            live.states()[1],
+            Running {
+                pass: Some(Pass::Second)
+            },
+            "答了话就不再是等待确认"
+        );
+        live.volume_finished(&so_far);
+        assert_eq!(live.states()[1], Done);
+
+        // 卷三：有坏页，进了隔离。
+        live.volume_started(Path::new("库/卷三"), 1000);
+        live.volume_finished(&fixture::processed_volume("卷三", Some("解不出完整尺寸")));
+        assert_eq!(live.states()[2], Isolated);
+
+        // 卷四：整卷没做成。
+        live.volume_started(Path::new("库/卷四"), 1000);
+        live.volume_failed(Path::new("库/卷四"), "盘拔了");
+        assert_eq!(live.states()[3], Failed);
+
+        // 卷五：停在确认点上时被立即停止；卷六还没轮到。
+        live.volume_started(Path::new("库/卷五"), 1000);
+        let so_far = fixture::processed_volume("卷五", None);
+        live.pass_started(Pass::Second, Some(&so_far));
+        assert_eq!(
+            live.states(),
+            [Skipped, Done, Isolated, Failed, Deciding, Queued]
+        );
+        live.run_finished(RunOutcome::Stopped(Instruction::Abort));
+        assert_eq!(
+            live.states(),
+            [Skipped, Done, Isolated, Failed, Aborted, Queued],
+            "这一趟结束时还开着的那一卷是被立即停止掉的，没轮到的仍是等待中"
+        );
+    }
+
+    /// **开卷那一条按卷根认回清单里的那一卷**，不是按「轮到第几个」——清点已按卷根收编过，
+    /// 清单里卷根不重（`session-redesign/03`）。
+    ///
+    /// 「后面的卷都写出」之后的确认点**不是**等待确认：那一刻观察者当场照默认答案答字，
+    /// 没有人在等——与等人那一截那格同一个判据。
+    #[test]
+    fn a_volume_is_recognised_on_the_roster_by_its_root() {
+        use VolumeState::{Queued, Running};
+
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(3, 3000);
+        live.surveyed(&fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
+
+        live.volume_started(Path::new("库/卷三"), 1000);
+        assert_eq!(live.states(), [Queued, Queued, Running { pass: None }]);
+
+        // 答过「后面的卷都写出·继续」：往下的确认点不停，那一卷仍是处理中。
+        live.decide(Instruction::Continue, Reach::ForTheRest);
+        let so_far = fixture::processed_volume("卷三", None);
+        live.pass_started(Pass::Second, Some(&so_far));
+        assert_eq!(
+            live.states()[2],
+            Running {
+                pass: Some(Pass::Second)
+            },
+            "不再停下来问的确认点不该是等待确认"
+        );
+    }
+
+    /// **两张表在清点一到就拿得到**（`session-redesign/03`）：非漫画文件与无法访问的地方
+    /// 不必等这一趟跑完。**报告上那两张照旧要等跑完**（停车场 Q745）：旧界面的出事行读的是
+    /// 报告上那一张，在切换那一票之前它一格不动。
+    #[test]
+    fn the_two_tables_are_at_hand_the_moment_the_survey_arrives() {
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        live.run_started(1, 1000);
+        live.surveyed(
+            &fixture::roster(["卷一"]),
+            &[tonefit::NonVolumeFile {
+                path: PathBuf::from("库/字体包.zip"),
+                reason: tonefit::NonVolumeReason::ArchiveWithoutAPage,
+            }],
+            &[tonefit::UnreachablePlace {
+                path: PathBuf::from("库/私藏"),
+                reason: "列出 库/私藏 这一层: Permission denied (os error 13)".to_owned(),
+            }],
+        );
+
+        assert_eq!(live.non_volume_files().len(), 1, "非漫画文件没收下");
+        assert_eq!(live.unreachable_places().len(), 1, "无法访问的地方没收下");
+        assert!(
+            live.report().non_volume_files.is_empty()
+                && live.report().unreachable_places.is_empty(),
+            "报告上那两张表在跑完之前就填上了：旧界面的出事行会提前一句（Q745）"
+        );
+        assert!(live.report().volumes.is_empty(), "一卷都还没收摊");
+    }
 
     /// 一趟走完：全局那几个数、当前卷那一条、报告区那一份，逐条对得上。
     #[test]

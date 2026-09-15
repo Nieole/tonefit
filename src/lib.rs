@@ -92,6 +92,7 @@ pub use report::{
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
 pub use spread::{Cut, Gutter, ReadingOrder, Side, SplitRule, SplitThreshold};
+pub use survey::SurveyedVolume;
 // 认得的归档扩展名那一串：命令行的 `--help` 也要说它，而格式集只有一个出处
 // （`source::ARCHIVE_FORMATS`）。见二进制侧的 `inputs_help`。
 pub use source::listed_archive_extensions;
@@ -192,8 +193,14 @@ pub fn run(request: &Request) -> Result<Report> {
     // 开工那条事件之前。
     ensure_no_two_volumes_share_an_output(survey.volumes(), &request.output_root)?;
     // 开工前那几道检查与清点都排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
-    // 报的是**发现出来的卷数**，不是点名了几个路径：进度条上那个分母得是真要做的那些。
-    events.run_started(survey.volumes().len(), survey.steps());
+    // 报的是**发现出来的卷**，不是点名了几个路径：进度条上那个分母得是真要做的那些。
+    // 清点的三份产出一起带出去（`session-redesign/03`）——它们此刻已经齐了，这里不另算。
+    events.run_started(
+        survey.steps(),
+        &survey.roster(),
+        survey.non_volume_files(),
+        survey.unreachable_places(),
+    );
     let mut volumes = Vec::with_capacity(survey.volumes().len());
     let mut failed_volumes = Vec::new();
     let mut outcome = RunOutcome::Completed;
