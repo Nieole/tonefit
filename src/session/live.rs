@@ -1302,18 +1302,27 @@ pub(crate) mod fixture {
     /// 而漏掉它没有一张快照会红——只在秒的进位上偶尔差一格。这里把「造」与「给」
     /// 合成一步，漏不掉。`epoch` 取什么都行，往后的时刻都从它往上加。
     pub fn live_at(epoch: Instant, mode: RunMode, resumes: Resuming) -> Live {
-        let mut live = Live::new(&request(mode), resumes);
+        live_for(epoch, &request(mode), resumes)
+    }
+
+    /// 同 [`live_at`]，抬头那几件事照**给定的那份参数**印：场景夹具（`super::super::scene`）
+    /// 把三组设置拼成的 `Request` 交进来，报告抬头因此说的是场景数据里的型号与选项。
+    /// [`Live::new`] 读一次系统时钟作初值（停车场 Q754），紧跟着的那一次 `tick` 把它盖掉——
+    /// **给定「此刻」的夹具**一律走这两个函数之一（不问时钟的那几条用例照旧直接 `Live::new`）。
+    pub fn live_for(epoch: Instant, request: &Request, resumes: Resuming) -> Live {
+        let mut live = Live::new(request, resumes);
         live.tick(epoch);
         live
     }
 
-    /// 一卷做了这么多秒。
+    /// 一卷做了这么久。
     ///
     /// 夹具里给一个**非零**的数：卷表耗时那一列问的正是它，而「跳过一卷为什么也要等这么久」
-    /// 只有这个数答得出来（`VolumeTiming::elapsed`）。三份夹具各给各的，快照上分得开。
-    fn took(seconds: u64) -> VolumeTiming {
+    /// 只有这个数答得出来（`VolumeTiming::elapsed`）。三份夹具各给各的，快照上分得开；
+    /// 场景夹具（`super::super::scene`）给的是场景数据里那一卷的秒数。
+    pub(crate) fn took(elapsed: Duration) -> VolumeTiming {
         VolumeTiming {
-            elapsed: Duration::from_secs(seconds),
+            elapsed,
             ..VolumeTiming::default()
         }
     }
@@ -1338,13 +1347,8 @@ pub(crate) mod fixture {
     ///
     /// **「此刻坏了几页」不会因此变大**：那一卷收摊时在途那几页只是换手进报告
     /// （见 [`Live::failures_so_far`](super::Live::failures_so_far)），和一格不动。
-    #[cfg_attr(
-        not(feature = "tui"),
-        allow(
-            dead_code,
-            reason = "只有画法那一侧的用例用得着，而画法在 tui 特性后面"
-        )
-    )]
+    ///
+    /// 场景夹具（`super::super::scene`）收摊每一卷也走它，两趟闸门因此都有读者。
     pub fn volume_finished_with_its_failures(live: &mut super::Live, report: &VolumeReport) {
         for page in report.failures() {
             if let PageOutcome::Failed { reason } = &page.outcome {
@@ -1387,7 +1391,7 @@ pub(crate) mod fixture {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
-            timing: took(3),
+            timing: took(Duration::from_secs(3)),
         }
     }
 
@@ -1460,7 +1464,7 @@ pub(crate) mod fixture {
             decodes: 1,
             resizes: 1,
             cached_references: 1,
-            timing: took(72),
+            timing: took(Duration::from_secs(72)),
         }
     }
 
@@ -1667,7 +1671,7 @@ pub(crate) mod fixture {
             decodes: 8,
             resizes: 7,
             cached_references: 6,
-            timing: took(96),
+            timing: took(Duration::from_secs(96)),
         }
     }
 
@@ -1745,7 +1749,7 @@ pub(crate) mod fixture {
             decodes: 2,
             resizes: 1,
             cached_references: 1,
-            timing: took(12),
+            timing: took(Duration::from_secs(12)),
         }
     }
 
@@ -1792,7 +1796,8 @@ pub(crate) mod fixture {
     }
 
     /// 一份读取计划：探到固态盘、并发读八条。「这一趟怎么读的」那一行印的就是它。
-    fn io_plan() -> IoPlan {
+    /// 场景夹具造的每一份卷报告也用它——场景数据里没有这一格，屏上也没有一处画它。
+    pub(crate) fn io_plan() -> IoPlan {
         let readers = Readers {
             count: 8,
             chosen_by: ChosenBy::Probe,
@@ -1804,7 +1809,8 @@ pub(crate) mod fixture {
         }
     }
 
-    fn cache_usage() -> CacheUsage {
+    /// 一份缓存用量，与 [`io_plan`] 同一个待遇：场景数据里没有、屏上不画。
+    pub(crate) fn cache_usage() -> CacheUsage {
         CacheUsage {
             budget: CacheBudget::default(),
             pages: 1,

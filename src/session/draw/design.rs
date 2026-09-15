@@ -39,10 +39,21 @@ pub(super) struct Painted {
 
 /// 一屏的期望：一行一行，每行若干格（[`Painted`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Expected {
+pub(in crate::session) struct Expected {
     /// 哪一份（文件名去掉后缀），对不上时报出来。
     pub(super) name: String,
     rows: Vec<Vec<Painted>>,
+}
+
+impl Expected {
+    /// **字网格**：一行一屏行，只有字、不带样式。场景夹具拿它核「报告那一处说出来的字
+    /// 在设计快照上找得到」（`session-redesign/05`）——那一问只关字，不关颜色。
+    pub(in crate::session) fn lines(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .map(|row| row.iter().map(|glyph| glyph.symbol.as_str()).collect())
+            .collect()
+    }
 }
 
 /// 读快照要的两样：样式对照表（设计稿类名 → 颜色，修饰记号 → 修饰）与顶栏版本号的占位。
@@ -295,12 +306,12 @@ fn load(dir: &str, name: &str) -> Expected {
 }
 
 /// 某个场景某个尺寸的设计快照（`snapshots/<场景>.<宽x高>`）。
-pub(super) fn snapshot(scene: &str, cols: u16, rows: u16) -> Expected {
+pub(in crate::session) fn snapshot(scene: &str, cols: u16, rows: u16) -> Expected {
     load("snapshots", &format!("{scene}.{cols}x{rows}"))
 }
 
 /// 某一串交互走完那一屏的期望（`sequences/<名字>`）。
-pub(super) fn sequence(name: &str) -> Expected {
+pub(in crate::session) fn sequence(name: &str) -> Expected {
     load("sequences", name)
 }
 

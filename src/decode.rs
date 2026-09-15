@@ -75,8 +75,9 @@ impl Salvage {
     /// （[`Envelope`](crate::Envelope)、[`PageReport`](crate::PageReport) 全是公开字段），
     /// 渲染那一层与它的用例在另一个 crate 里（二进制那一侧的 `render`），
     /// 要拼得出一份带残缺页的报告。
-    /// 这与画质分那一侧的 [`Score`](crate::Score) 恰好相反——那是个算出来的量，
-    /// 它的 `from_value` 因此锁在 `#[cfg(test)]` 里。
+    /// 画质分那一侧的 [`Score`](crate::Score) 是个算出来的量，它的 `from_value` 从前因此锁在
+    /// `#[cfg(test)]` 里；会话那一侧要按场景数据摆出逐页的画质分之后（`session-redesign/05`），
+    /// 它也走上了这一条路。
     ///
     /// 拼出来的比例可以是 0，而报告里读到的恒大于 0（见 [`share`](Self::share)）：
     /// 两句话不冲突，后者说的是**管线产出的**报告。

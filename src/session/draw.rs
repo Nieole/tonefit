@@ -83,8 +83,10 @@ mod report;
 mod table;
 mod yielding;
 
+// 设计快照的读法与逐格比对。**敞开到会话这一层**：场景夹具（`super::scene`）要拿设计快照的
+// 字网格核报告那一处说出来的字（`session-redesign/05`）。
 #[cfg(test)]
-mod design;
+pub(super) mod design;
 #[cfg(test)]
 mod probe;
 
