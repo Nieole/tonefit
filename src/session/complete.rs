@@ -25,8 +25,9 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-/// 路径分隔符，两种都认——Windows 上用户敲哪一个的都有。
-const SEPARATORS: [char; 2] = ['/', '\\'];
+/// 路径分隔符，两种都认——Windows 上用户敲哪一个的都有。输入行拆「哪一层」与「打到一半的那一截」、
+/// 删一段、认一条候选是不是文件夹，都读这一份（`super::typing`），不另抄。
+pub(super) const SEPARATORS: [char; 2] = ['/', '\\'];
 
 /// 这一层所在的文件系统**认不认大小写**。
 ///

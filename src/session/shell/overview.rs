@@ -65,7 +65,7 @@ fn before_the_run(session: &Session, compact: bool) -> Vec<Vec<Segment>> {
         .map(|applied| &applied.name);
     // 起一趟那两个键与它们那一句都从按键表取（屏底摆的正是同一份）。
     let mentioned = |deed: Deed| {
-        keymap::hints(Phase::Fresh, session.views.focus(), &[Want::of(deed)])
+        keymap::hints(Phase::Fresh, session.views.block(), &[Want::of(deed)])
             .first()
             .map(|said| hint(&said.spelt(), said.what))
             .unwrap_or_default()

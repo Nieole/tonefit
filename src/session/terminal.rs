@@ -25,6 +25,7 @@ use ratatui::crossterm::terminal::{
 
 use tonefit::{Mode as RunMode, Request};
 
+use super::cover;
 use super::draw;
 use super::draw::keys::Starters;
 use super::home::Home;
@@ -32,7 +33,7 @@ use super::keymap::Phase;
 use super::live::{Branch, Live, Resuming, Volume};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
-use super::view::Input;
+use super::view::{Input, Window};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -235,12 +236,13 @@ fn press(
 }
 
 /// 把一个输入交给**新会话**（ADR 0019；spec《缝》）——与 [`press`] 并排，真会话仍走那一支，
-/// 切换在 `session-redesign/15`。收的是键或鼠标（[`Input`]），带着这一帧的「此刻」。
+/// 切换在 `session-redesign/15`。收的是键或鼠标（[`Input`]），带着这一帧的「此刻」与窗口的尺寸。
 ///
 /// 分工与 [`press`] 同一条：先把输入认成按键表上的一件事（[`Session::deed_of`]，连击键在那里待着），
-/// **够得着那一趟与盘的那几件在这一层做**，其余交回状态机（[`Session::perform`]）。
-/// 眼下这一层还没有一件：起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
-/// 添改路径、预设那几支与灰阶测试图，随各票在这里各接一支——接上之前那几个键交下去落在
+/// **够得着那一趟与屏的那几件在这一层做**，其余交回状态机（[`Session::perform`]）。
+/// 这一层眼下只有一件：覆盖层上滚动——那一张有几行、露几行都从窗口的尺寸算（[`cover::Sheet`]），
+/// 而窗口有多大只有这一层知道。起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
+/// 预设那几支与灰阶测试图，随各票在这里各接一支——接上之前那几个键交下去落在
 /// [`Session::perform`] 的空处，原地不动。`running` 眼下只答一件事：那一趟清点完了没有。
 #[cfg_attr(
     not(test),
@@ -253,16 +255,24 @@ pub(super) fn input(
     session: &mut Session,
     running: &mut Running,
     now: Instant,
+    window: Window,
     input: Input,
 ) -> Exit {
     let phase = {
         let live = running.live();
         Phase::of(session.stage(), live.as_deref())
     };
-    match session.deed_of(input, phase, now) {
-        Some(deed) => session.perform(deed, now),
-        None => Exit::Stay,
+    let Some(deed) = session.deed_of(input, phase, now) else {
+        return Exit::Stay;
+    };
+    if session.views.cover.is_some()
+        && session
+            .views
+            .scroll_cover(deed, &cover::Sheet::of(phase, window))
+    {
+        return Exit::Stay;
     }
+    session.perform(deed, now)
 }
 
 /// 终端那一侧的事件 → 新会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
@@ -728,7 +738,7 @@ mod redesign {
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
     use super::super::state::{Exit, Key};
-    use super::super::view::Input;
+    use super::super::view::{Input, Window};
 
     /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
     fn walked(name: &str) -> (Scene, Running, Exit) {
@@ -739,6 +749,10 @@ mod redesign {
             None => Running::default(),
         };
         let now = scene.now();
+        let window = Window {
+            cols: sequence.size.0,
+            rows: sequence.size.1,
+        };
         let mut exit = Exit::Stay;
         for step in &sequence.steps {
             assert!(
@@ -746,7 +760,7 @@ mod redesign {
                 "「{name}」里推进与换尺寸那两种步随各票接上"
             );
             for input in step.inputs() {
-                exit = super::input(&mut scene.session, &mut running, now, input);
+                exit = super::input(&mut scene.session, &mut running, now, window, input);
             }
         }
         (scene, running, exit)
@@ -803,6 +817,81 @@ mod redesign {
     fn q_before_the_run_hands_out_the_exit() {
         let (_, _, exit) = walked("fresh-q");
         assert_eq!(exit, Exit::Leave);
+    }
+
+    /// **`o` 打开输入行**（`session-redesign/07` 票面第二条）：屏底换成「添加路径  ~/▏」与右端那四件，
+    /// 卷列表的框细了；`Esc` 丢掉这一步，屏底原样回来。
+    #[test]
+    fn o_opens_the_input_line_and_escape_closes_it() {
+        assert_sequence("fresh-o");
+        assert_sequence("fresh-o-Escape");
+    }
+
+    /// **`Tab` 列出这一层、再按轮到下一个、`C-w` 删一段**：`~/` 底下四项——轮换那两屏不比屏，
+    /// 设计稿的候选按它假盘的写法次序摆、实现按名字排（停车场 Q790），比的是候选有几条、轮到哪一条、
+    /// 缓冲跟着换；`C-w` 之后候选没了、缓冲回到 `~/`，那一屏逐格相等。
+    #[test]
+    fn tab_lists_the_level_cycles_through_it_and_ctrl_w_deletes_a_segment() {
+        let (scene, _, _) = walked("fresh-o-Tab");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.candidates.len(), 4, "`~/` 底下四项");
+        assert!(line.candidates.iter().all(|listed| listed.directory));
+        assert_eq!(line.at, 0);
+        assert_eq!(line.buffer, format!("~/{}", line.candidates[0].shown()));
+        let (scene, _, _) = walked("fresh-o-Tab-Tab");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.at, 1);
+        assert_eq!(line.buffer, format!("~/{}", line.candidates[1].shown()));
+        let scene = assert_sequence("fresh-o-Tab-Tab-C-w");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!((line.buffer.as_str(), line.candidates.len()), ("~/", 0));
+    }
+
+    /// **打一个找不到的路径**：`⏎` 之后输入行关了、屏底说「找不到」、列表一条没多；
+    /// **打一个找得到的**：添上、勾着、光标停到它上面、屏底说「已添加」。
+    #[test]
+    fn enter_says_when_the_path_is_missing_and_adds_it_when_it_is_there() {
+        let scene = assert_sequence("fresh-o-missing");
+        assert_eq!(scene.session.scope.paths.len(), 13);
+        let scene = assert_sequence("fresh-o-added");
+        assert_eq!(scene.session.scope.paths.len(), 14);
+        assert_eq!(
+            scene.session.scope.paths[13].path,
+            scene.path("~/Comics/火之鸟")
+        );
+    }
+
+    /// **`i` 修改一条处理路径、输出目录那一行上改输出目录**：缓冲先摆着那一条；
+    /// `C-w` 删掉末一段、打上新的、`⏎` 定下，总览与卷列表都换了。
+    #[test]
+    fn i_edits_the_path_or_the_output_directory_under_the_cursor() {
+        assert_sequence("fresh-i");
+        assert_sequence("fresh-k-i");
+        let scene = assert_sequence("fresh-k-i-C-w-typed");
+        assert_eq!(scene.session.scope.out, Some(scene.path("~/Comics")));
+    }
+
+    /// **打字时 `F1` 掀开全部按键**（票面第三条）：底下整屏压暗、输入行让给覆盖层自己的两件；
+    /// `j`／`k` 滚（宽时装得下、一动不动；窄时滚一行）；`Esc` 关掉之后输入行、缓冲与补全框原样回来。
+    #[test]
+    fn f1_while_typing_lifts_the_key_sheet_and_escape_brings_the_input_line_back() {
+        assert_sequence("add-F1");
+        assert_sequence("add-F1-j");
+        assert_sequence("add-F1-j-k-Escape");
+        assert_sequence("add-narrow-F1-j");
+        assert_sequence("add-narrow-F1-j-k");
+        let scene = assert_sequence("add-narrow-F1-j-k-Escape");
+        let line = scene.session.views.input.as_ref().expect("输入行回来了");
+        assert_eq!(
+            (line.buffer.as_str(), line.candidates.len()),
+            ("~/Comics/", 4)
+        );
+    }
+
+    /// **还没开始时 `?` 掀开全部按键**：只列这一档派得出的键、两栏。
+    #[test]
+    fn question_mark_before_the_run_lifts_the_key_sheet() {
+        assert_sequence("fresh-help");
     }
 
     /// 终端那一侧的键码翻成新会话的输入：Ctrl 加一个字母另认，`C-c` 仍是那个中断键，别的照旧。

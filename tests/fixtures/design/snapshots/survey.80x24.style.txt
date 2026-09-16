@@ -34,4 +34,4 @@
 "h...kkkk......................cccc......................................h"
 "h..............................................................................h"
 "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
-".c.cccccc.c..ccccccccc.c.cccccc.c...cccccc.c.cccccccc............"
+".c.cccccc.c...cccccc.c.cccccccc........................................."

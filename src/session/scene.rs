@@ -33,9 +33,11 @@ use tonefit::{
     UnreachablePlace, Verdict, VolumeReport, VolumeVerdict, WhiteAlignment,
 };
 
+use super::cover::Overlay;
 use super::home::Home;
 use super::live::{Live, Reach, Resuming, fixture};
 use super::state::{Key, NamedPath, Session};
+use super::typing::{Completion, InputLine, Purpose};
 use super::view::{Applied, Cursor, Input, View, Views};
 use crate::preset::{self, Preset, Presets};
 use crate::render;
@@ -509,8 +511,10 @@ impl Scene {
     }
 }
 
-/// 场景数据 `session` 那一段里本票认得的几格：视图、开跑之前卷列表的光标、套着的预设。
-/// 树上的光标（目录、卷、备注）随树那一票认；认不得的先停在输出目录那一行上。
+/// 场景数据 `session` 那一段里认得的几格：视图、开跑之前卷列表的光标、套着的预设（06）；
+/// 输入行连同它列着的候选、全部按键那一张与它从第几行画起（07）。
+/// 树上的光标（目录、卷、备注）随树那一票认；认不得的先停在输出目录那一行上；
+/// 搜索、改一项设置、给预设起名那几种输入行随各自的票认。
 fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     let mut views = Views::default();
     views.view = match data.session["view"].as_str() {
@@ -533,6 +537,41 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .read(name)
             .unwrap_or_else(|error| panic!("套着的预设「{name}」读不出：{error:#}")),
     });
+    let input = &data.session["input"];
+    let purpose = match input["kind"].as_str() {
+        Some("add") => Some(Purpose::AddPath),
+        Some("out") => Some(Purpose::Output),
+        // 改哪一条设计稿没导出：光标停在的那一条就是（改着的时候光标不挪）。
+        Some("edit") => match &views.task.cursor {
+            Cursor::Path(path) => Some(Purpose::EditPath(path.clone())),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(purpose) = purpose {
+        let buffer = input["buffer"].as_str().expect("输入行的缓冲").to_owned();
+        let mut line = InputLine::new(purpose, buffer.clone());
+        if let Some(candidates) = input["candidates"].as_array() {
+            let listed: Vec<Completion> = candidates
+                .iter()
+                .filter_map(Value::as_str)
+                .map(Completion::from_shown)
+                .collect();
+            let head = line.split().0.to_owned();
+            line.offer(&head, listed);
+            let at = input["candidate"].as_u64().unwrap_or(0) as usize;
+            line.step(at as isize);
+            // 设计稿的「添加路径」那一景把候选直接摆上去、缓冲没跟着换：照它的缓冲。
+            line.buffer = buffer;
+        }
+        views.input = Some(line);
+    }
+    let overlay = &data.session["overlay"];
+    if overlay["kind"].as_str() == Some("help") {
+        views.cover = Some(Overlay::Keys {
+            from: overlay["from"].as_u64().unwrap_or(0) as usize,
+        });
+    }
     views
 }
 
