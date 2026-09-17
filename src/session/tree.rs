@@ -70,6 +70,12 @@ pub struct Note {
     pub what: String,
     /// 行尾那一句。
     pub brief: String,
+    /// **这一条装着的那几处**：一处一条，**那条路径，与那一句为什么**
+    /// （报告那一处渲染出来的整句）。`⏎` 掀开的那张[说明卡](super::cover::Card)
+    /// 的全文从它拼——摆法仍是报告末尾那一小结那一副
+    /// （[`crate::render::unreachable_stack`] 与 [`crate::render::non_volume_stack`]），
+    /// 这一层一个字都不重写。
+    pub said: Vec<(PathBuf, String)>,
 }
 
 /// 树顶层的一项是哪一种（`CONTEXT.md` 的《分区》：顶层只有分区与顶格目录行两种）。
@@ -271,6 +277,29 @@ impl Tree {
         self.nodes.get(node)?.notes.get(at)
     }
 
+    /// 头一条**答得上这一问**的备注在树上是**第几个节点的第几条**。
+    ///
+    /// 走一遍全部备注这一手只有这一处：[`locate_note`](Self::locate_note) 按
+    /// [那一条的身份](Note::at)问，场景夹具按它的[「是哪几处」](Note::what)问
+    /// （`super::scene` 的 `stand_on_a_note`：那一头记的是屏上那一截字）。
+    pub fn locate(&self, mut is_it: impl FnMut(&Note) -> bool) -> Option<(usize, usize)> {
+        self.nodes.iter().enumerate().find_map(|(node, one)| {
+            one.notes
+                .iter()
+                .position(&mut is_it)
+                .map(|which| (node, which))
+        })
+    }
+
+    /// 光标记着的那条备注在树上是第几个节点的第几条。
+    ///
+    /// 掀说明卡那一下要它：光标记的是[那一条备注的身份](Note::at)（`CONTEXT.md` 的
+    /// 《卷列表》：光标记的是行的身份），而那张卡记的是树上的位置——树一趟只拼一次，
+    /// 掀着的这一会儿它一格不动。
+    pub fn locate_note(&self, at: &Path) -> Option<(usize, usize)> {
+        self.locate(|note| note.at == at)
+    }
+
     /// 清单里第几卷的卷根。
     pub fn root(&self, volume: usize) -> Option<&Path> {
         self.roots.get(volume).map(PathBuf::as_path)
@@ -379,6 +408,7 @@ fn attach_notes(
                 label: "无法访问".to_owned(),
                 what: format!("{}/", trimmed(&place.path, &bases[node])),
                 brief: place.reason.clone(),
+                said: vec![(place.path.clone(), place.reason.clone())],
             },
         ));
     }
@@ -400,6 +430,15 @@ fn attach_notes(
                 label: format!("已忽略 {} 个文件", mine.len()),
                 what: names.join("、"),
                 brief: crate::render::non_volume_heading(mine.len()),
+                said: mine
+                    .iter()
+                    .map(|file| {
+                        (
+                            file.path.clone(),
+                            crate::render::non_volume_reason(&file.reason),
+                        )
+                    })
+                    .collect(),
             },
         ));
     }
@@ -612,6 +651,23 @@ mod tests {
             ("私藏/", "答案.txt")
         );
         assert_eq!(notes[1].brief, crate::render::non_volume_heading(1));
+        // **这一条装着的那几处**：说明卡的全文从它拼（`super::cover::Card`），
+        // 路径原样带、原因走报告那一处（[`crate::render::non_volume_reason`]）。
+        assert_eq!(
+            notes[0].said,
+            [(PathBuf::from("/库/私藏"), "打不开".to_owned())]
+        );
+        assert_eq!(
+            notes[1].said,
+            [(
+                PathBuf::from("/库/答案.txt"),
+                crate::render::non_volume_reason(&tonefit::NonVolumeReason::NeitherPageNorArchive)
+            )]
+        );
+        // 光标记着的身份换回树上的位置：掀说明卡那一下问它。
+        assert_eq!(tree.locate_note(&notes[0].at), Some((0, 0)));
+        assert_eq!(tree.locate_note(&notes[1].at), Some((0, 1)));
+        assert_eq!(tree.locate_note(Path::new("/库/没这一条")), None);
     }
 
     /// **次序照发现，不因状态重排**：顶层按处理路径的先后，目录按它头一卷在清单上的先后。

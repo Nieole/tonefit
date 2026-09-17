@@ -1,8 +1,13 @@
 //! **覆盖层**与它上面那一张**全部按键**（`CONTEXT.md` 的《会话》：覆盖层；spec《按键表、屏底与覆盖层》）。
 //!
-//! 一个键掀开、盖在视图上的那一张：`?` 是全部按键，打字时是 `F1`；掀着的时候底下整屏压暗，
-//! 关掉之后底下原样回来（它盖住一块焦点，不替掉它——输入行、缓冲与补全框都还在）。
-//! 说明卡随备注行那一票添进 [`Overlay`]。
+//! 一个键掀开、盖在视图上的那一张：`?` 是全部按键，打字时是 `F1`，**备注行上 `⏎` 是说明卡**；
+//! 掀着的时候底下整屏压暗，关掉之后底下原样回来（它盖住一块焦点，不替掉它——
+//! 输入行、缓冲与补全框都还在）。
+//!
+//! # 两张各自的内容都在这里
+//!
+//! [`Sheet`] 是全部按键那一张（出自按键表），[`Card`] 是**说明卡**（出自报告末尾那一小结）。
+//! 两张都只出「摆好的字与框摆在哪儿」，画它们的是 `super::shell::overlay`。
 //!
 //! # 全部按键那一张出自按键表
 //!
@@ -21,10 +26,14 @@
 //!
 //! 因此摆在 `tui` 特性**外面**（见 `super` 的《终端库在哪一半》）；画它的是 `super::shell::overlay`。
 
+use std::path::Path;
+
 use tonefit::{BitDepth, Candidate, Dither};
 
+use super::home::Home;
 use super::keymap::{Deed, Group, Phase, Row, TABLE};
 use super::look::{Kind, Look, Segment};
+use super::tree::{Note, NoteKind};
 use super::view::{Views, Window};
 
 /// 盖在视图上的那一张。
@@ -32,10 +41,27 @@ use super::view::{Views, Window};
 pub enum Overlay {
     /// 全部按键；`from` 是从第几行画起（模块文档《它记的是从第几行画起》）。
     Keys { from: usize },
+    /// **说明卡**：备注行上 `⏎` 掀开、`Esc` 关的那一张（`CONTEXT.md` 的《说明卡》；
+    /// spec《按键表、屏底与覆盖层》）。
+    ///
+    /// 记的是**树上第几个节点的第几条备注**，不是那一条备注本身：树一趟只拼一次
+    /// （[`super::tree`]），掀着的这一会儿它一格不动，而这么记本模块就不必克隆一份备注。
+    /// 它**不滚**——一条备注装得下的那几处，卡自己就那么高（见 [`Card::of`]）。
+    Note { node: usize, at: usize },
 }
 
 /// 全部按键那一张至多多宽（设计稿 `drawHelp` 的 `104`）。
 const WIDEST: u16 = 104;
+/// **说明卡**至多多宽，以及它离窗口左右两边各留几列（设计稿 `drawNote` 的 `76` 与 `8`）。
+const CARD_WIDEST: u16 = 76;
+const CARD_SIDE_MARGIN: u16 = 4;
+/// 说明卡上下两边各留几行，以及框里除了正文还占几行（上下框线 · 「是哪几处」那一行 ·
+/// 它上下各一个空行 · 正文前那一个空行，设计稿 `drawNote` 的 `4` 与 `6`）。
+const CARD_TOP_MARGIN: u16 = 2;
+const CARD_CHROME: u16 = 6;
+/// 正文从框的左边第几格起写，以及左右各让出几格（设计稿 `drawNote` 的 `x + 3` 与 `w - 6`）。
+const CARD_TEXT_INDENT: u16 = 3;
+const CARD_TEXT_GUTTER: u16 = 6;
 /// 框离窗口左右两边各留几列、离上下两边各留几行。
 const SIDE_MARGIN: u16 = 2;
 const TOP_MARGIN: u16 = 1;
@@ -145,6 +171,80 @@ impl Sheet {
     }
 }
 
+/// **说明卡**：一条[备注](super::tree::Note)的全文，连同它在窗口里的位置
+/// （`CONTEXT.md` 的《说明卡》；设计稿 `drawNote`）。
+///
+/// 框**居中**，宽是「窗口宽减八，至多 76」，高随正文的行数走（至多窗口高减四）——
+/// 装得下就装得下，**它不滚**：一条备注顶多装[列得出的那几处](crate::FirstFew)。
+///
+/// 正文的字**出自报告末尾那一小结**（[`crate::render::unreachable_stack`] 与
+/// [`crate::render::non_volume_stack`]，ADR 0016：一格的字只有一处出处）——
+/// 一条备注只装它自己那几处，因此喂的是它自己那一份 `said`。
+/// 屏上那几条路径把家目录缩成 `~`（[`Home::abbreviate`]），命令行那一份原样印，
+/// 两处差的只有「一条路径怎么写」。折行走屏上唯一那一套（[`crate::wrap::fold`]）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Card {
+    /// 名头，也是框的抬头（`无法访问`／`已忽略 3 个文件`）。
+    pub label: String,
+    /// 是哪几处——框里头一行。
+    pub what: String,
+    /// 全文，按框里那一截的宽度折好的那几行。
+    pub body: Vec<String>,
+    /// 这一条备注是哪一种——**无法访问那一种**框线与抬头上出事那一色
+    /// （设计稿 `drawNote` 的 `bad`）。带着它那一格、不折成一个 `bool`：
+    /// 「是哪一种」在树上已经有一个名字（[`NoteKind`]），折一次画法那一头就得再认回来。
+    pub kind: NoteKind,
+    /// 框摆在哪儿。
+    pub placement: Placement,
+}
+
+impl Card {
+    /// 这一条备注在这么大的窗口里摆出来的那张卡。
+    pub fn of(note: &Note, window: Window, home: &Home) -> Self {
+        let width = window
+            .cols
+            .saturating_sub(2 * CARD_SIDE_MARGIN)
+            .min(CARD_WIDEST);
+        let room = width.saturating_sub(CARD_TEXT_GUTTER);
+        let shown = |path: &Path| home.abbreviate(path);
+        let said = if note.kind == NoteKind::Unreachable {
+            crate::render::unreachable_stack(&note.said, shown)
+        } else {
+            crate::render::non_volume_stack(&note.said, shown)
+        };
+        // 那一小结每一条都以换行收尾（命令行印的就是那一段），末尾那个换行折出来是一个空行
+        // ——卡上不留它。
+        let body = crate::wrap::fold(said.trim_end_matches('\n'), room);
+        let height = window.rows.saturating_sub(2 * CARD_TOP_MARGIN).min(
+            u16::try_from(body.len())
+                .unwrap_or(u16::MAX)
+                .saturating_add(CARD_CHROME),
+        );
+        Self {
+            label: note.label.clone(),
+            what: note.what.clone(),
+            body,
+            kind: note.kind,
+            placement: Placement {
+                x: (window.cols.saturating_sub(width)) / 2,
+                y: (window.rows.saturating_sub(height)) / 2,
+                width,
+                height,
+            },
+        }
+    }
+
+    /// 正文与「是哪几处」那两行从框的左边第几格起写。
+    pub fn text_x(&self) -> u16 {
+        self.placement.x + CARD_TEXT_INDENT
+    }
+
+    /// 框里那一截字有多宽。
+    pub fn text_width(&self) -> u16 {
+        self.placement.width.saturating_sub(CARD_TEXT_GUTTER)
+    }
+}
+
 /// 表上此刻派得出的行按组摆开：每组一行组名、一键一行、末尾一个空行；末尾再接灰阶写法那一节。
 fn groups(phase: Phase) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
@@ -225,21 +325,33 @@ impl Views {
         self.cover = Some(Overlay::Keys { from: 0 });
     }
 
+    /// 掀开**说明卡**：树上第几个节点的第几条备注（[`Overlay::Note`]）。
+    pub fn lift_note(&mut self, node: usize, at: usize) {
+        self.cover = Some(Overlay::Note { node, at });
+    }
+
     /// 关掉盖着的那一张；底下原样回来。
     pub fn drop_cover(&mut self) {
         self.cover = None;
     }
 
-    /// 覆盖层上滚一步：`j`／`k` 一行、`gg`／`G` 到顶到底，起点收在那一张真摆得下的那一段里
-    /// （到顶为止、到底为止）。这件事不是滚动、或者没掀着那一张，什么都不做、交回 `false`。
-    /// 半屏与一屏那四个随每页结果那一票接上。
-    pub fn scroll_cover(&mut self, deed: Deed, sheet: &Sheet) -> bool {
+    /// 覆盖层上滚一步：`j`／`k` 一行、`C-d`／`C-u`／`C-f`／`C-b` [一屏](Window::page)、
+    /// `gg`／`G` 到顶到底，起点收在那一张真摆得下的那一段里（到顶为止、到底为止）。
+    /// 这件事不是滚动、或者掀着的不是那一张，什么都不做、交回 `false`。
+    ///
+    /// **那四个在这一张上挪的都是一整屏**（设计稿 `taskKey` 的覆盖层那一支：
+    /// `C-d` 与 `C-f` 同挪 `pageH()`）——这一张是读物，半屏与一屏的分别在它身上没有意义。
+    pub fn scroll_cover(&mut self, deed: Deed, sheet: &Sheet, window: Window) -> bool {
+        // 说明卡不滚：一条备注装得下的那几处，卡自己就那么高（[`Card::of`]）。
         let Some(Overlay::Keys { from }) = &mut self.cover else {
             return false;
         };
+        let page = window.page();
         *from = match deed {
             Deed::Down => sheet.from(*from + 1),
             Deed::Up => sheet.from(from.saturating_sub(1)),
+            Deed::HalfDown | Deed::PageDown => sheet.from(*from + page),
+            Deed::HalfUp | Deed::PageUp => sheet.from(from.saturating_sub(page)),
             Deed::Top => 0,
             Deed::Bottom => sheet.last_from(),
             _ => return false,
@@ -353,20 +465,23 @@ mod tests {
         views.lift_keys();
         let sheet = Sheet::of(Phase::Fresh, narrow());
         assert!(sheet.last_from() > 0, "80×24 上那一张装不下");
-        assert!(views.scroll_cover(Deed::Up, &sheet));
+        assert!(views.scroll_cover(Deed::Up, &sheet, narrow()));
         assert_eq!(views.cover, Some(Overlay::Keys { from: 0 }));
-        views.scroll_cover(Deed::Down, &sheet);
+        views.scroll_cover(Deed::Down, &sheet, narrow());
         assert_eq!(views.cover, Some(Overlay::Keys { from: 1 }));
-        assert!(!views.scroll_cover(Deed::Help, &sheet), "不是滚动的事不管");
+        assert!(
+            !views.scroll_cover(Deed::Help, &sheet, narrow()),
+            "不是滚动的事不管"
+        );
         assert_eq!(views.cover, Some(Overlay::Keys { from: 1 }));
-        views.scroll_cover(Deed::Bottom, &sheet);
+        views.scroll_cover(Deed::Bottom, &sheet, narrow());
         assert_eq!(
             views.cover,
             Some(Overlay::Keys {
                 from: sheet.last_from()
             })
         );
-        views.scroll_cover(Deed::Down, &sheet);
+        views.scroll_cover(Deed::Down, &sheet, narrow());
         assert_eq!(
             views.cover,
             Some(Overlay::Keys {
@@ -374,14 +489,137 @@ mod tests {
             }),
             "到底为止"
         );
-        views.scroll_cover(Deed::Top, &sheet);
+        views.scroll_cover(Deed::Top, &sheet, narrow());
         assert_eq!(views.cover, Some(Overlay::Keys { from: 0 }));
         let roomy = Sheet::of(Phase::Fresh, wide());
-        views.scroll_cover(Deed::Down, &roomy);
+        views.scroll_cover(Deed::Down, &roomy, wide());
         assert_eq!(views.cover, Some(Overlay::Keys { from: 0 }), "装得下就不滚");
+        // **半屏与一屏那四个在这一张上挪一整屏**（设计稿覆盖层那一支）。
+        views.scroll_cover(Deed::HalfDown, &sheet, narrow());
+        assert_eq!(
+            views.cover,
+            Some(Overlay::Keys {
+                from: sheet.from(narrow().page())
+            }),
+            "`C-d` 在这一张上挪一整屏"
+        );
+        views.scroll_cover(Deed::PageUp, &sheet, narrow());
+        assert_eq!(views.cover, Some(Overlay::Keys { from: 0 }));
+        // **说明卡不滚**：它没有第二屏，滚动那几件在它身上一件都不派。
+        views.lift_note(0, 0);
+        assert!(!views.scroll_cover(Deed::Down, &sheet, narrow()));
+        assert_eq!(views.cover, Some(Overlay::Note { node: 0, at: 0 }));
         views.drop_cover();
         assert_eq!(views.cover, None);
-        assert!(!views.scroll_cover(Deed::Down, &sheet), "没掀着就不管");
+        assert!(
+            !views.scroll_cover(Deed::Down, &sheet, narrow()),
+            "没掀着就不管"
+        );
+    }
+
+    /// 一条备注：两种各造一条，路径落在家目录底下。
+    fn a_note(kind: NoteKind) -> Note {
+        let home = std::path::PathBuf::from("/home/me");
+        match kind {
+            NoteKind::Unreachable => Note {
+                kind,
+                at: home.join("漫画库/私藏"),
+                label: "无法访问".to_owned(),
+                what: "私藏/".to_owned(),
+                brief: "列出 …: Permission denied".to_owned(),
+                said: vec![(
+                    home.join("漫画库/私藏"),
+                    "列出 …: Permission denied".to_owned(),
+                )],
+            },
+            NoteKind::NonVolume => Note {
+                kind,
+                at: home.join("漫画库"),
+                label: "已忽略 2 个文件".to_owned(),
+                what: "字体包.zip、答案.txt".to_owned(),
+                brief: crate::render::non_volume_heading(2),
+                said: vec![
+                    (
+                        home.join("漫画库/字体包.zip"),
+                        "压缩包里没有图片".to_owned(),
+                    ),
+                    (home.join("漫画库/答案.txt"), "不属于任何一卷".to_owned()),
+                ],
+            },
+        }
+    }
+
+    /// **说明卡的全文出自报告末尾那一小结**（ADR 0016：一格的字只有一处出处），
+    /// 屏上那几条路径把家目录缩成 `~`，折行走屏上唯一那一套（`crate::wrap`）。
+    ///
+    /// 抬头那一句、逐条「路径一行、原因一行」都不在本模块里写第二遍：
+    /// 这一条拿[非漫画文件那一小结](crate::render::non_volume_stack)的头一句去比。
+    #[test]
+    fn the_card_says_what_the_report_says_with_the_home_written_as_a_tilde() {
+        let home = Home::at("/home/me");
+        let card = Card::of(&a_note(NoteKind::NonVolume), wide(), &home);
+        assert_eq!(card.label, "已忽略 2 个文件");
+        assert_eq!(card.what, "字体包.zip、答案.txt");
+        assert_eq!(card.kind, NoteKind::NonVolume);
+        // 抬头那一句就是报告那一小结的抬头（折行之后是头一行的那一截）。
+        let heading = crate::render::non_volume_heading(2);
+        assert!(
+            heading.starts_with(card.body.first().expect("正文不空").as_str()),
+            "正文头一行不是那一小结的抬头：{:?}",
+            card.body.first()
+        );
+        // 逐条：路径一行（缩成 `~`）、原因一行。
+        assert!(
+            card.body.iter().any(|line| line == "  ~/漫画库/字体包.zip"),
+            "{:?}",
+            card.body
+        );
+        assert!(
+            card.body.iter().any(|line| line == "    压缩包里没有图片"),
+            "{:?}",
+            card.body
+        );
+        assert!(
+            card.body.iter().all(|line| !line.contains("/home/me")),
+            "屏上还写着家目录的全名：{:?}",
+            card.body
+        );
+        // 末尾那个换行不折出一个空行来。
+        assert!(!card.body.last().expect("正文不空").is_empty());
+        // 无法访问那一种是出事那一色，抬头是它自己的名头。
+        let bad = Card::of(&a_note(NoteKind::Unreachable), wide(), &home);
+        assert_eq!(
+            (bad.kind, bad.label.as_str()),
+            (NoteKind::Unreachable, "无法访问")
+        );
+    }
+
+    /// **卡居中，宽至多 76、离两边各留四列，高随正文走**（设计稿 `drawNote`）：
+    /// 正文之外还占六行（上下框线 · 「是哪几处」那一行与它上下的空行 · 正文前那一行）。
+    #[test]
+    fn the_card_is_centred_and_as_tall_as_its_text() {
+        let home = Home::at("/home/me");
+        let note = a_note(NoteKind::NonVolume);
+        let card = Card::of(&note, wide(), &home);
+        let at = card.placement;
+        assert_eq!(at.width, 76, "120 列上是那个上限");
+        assert_eq!(at.x, (120 - 76) / 2, "居中");
+        assert_eq!(
+            at.height,
+            card.body.len() as u16 + 6,
+            "高随正文走（还没到窗口那个上限）"
+        );
+        assert_eq!(at.y, (36 - at.height) / 2, "居中");
+        assert_eq!(card.text_x(), at.x + 3);
+        assert_eq!(card.text_width(), at.width - 6);
+        // 窄窗口上让给两边各四列，正文跟着折得更碎、卡更高。
+        let narrow = Card::of(&note, Window { cols: 60, rows: 24 }, &home);
+        assert_eq!(narrow.placement.width, 60 - 8);
+        assert!(narrow.body.len() > card.body.len(), "窄了折出更多行");
+        assert!(
+            narrow.placement.height <= 24 - 4,
+            "再高也不越过窗口那个上限"
+        );
     }
 
     /// **全部按键与屏底出自同一张表**（`session-redesign/07` 票面第四条）：表上每一行，长的那一句不空的

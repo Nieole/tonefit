@@ -248,6 +248,22 @@ impl VolumeState {
             Self::Done | Self::Isolated | Self::Skipped | Self::Failed
         )
     }
+
+    /// 这一卷的卷行**展得开**吗（`CONTEXT.md` 的《停得住 / 展得开》：收摊了的那几卷
+    /// 连同确认点上那一份进得去每页结果）。
+    ///
+    /// **一处出处**：屏底摆不摆 `l → 每页结果`（[`super::view::Session::hints`]）
+    /// 与按下去换不换屏（`super::terminal` 的 `open_a_volume`）问的是同一件事——
+    /// 「屏上不摆按不动的键」那句话，只有这两处读同一份判据才成立。
+    ///
+    /// 与[收摊了](Self::settled)差两格：**没做成的那一卷收摊了、却没有每页结果**
+    /// （报告上只有一句原因），而**等待确认**那一份还没收摊、每页结果已经算出来了。
+    pub fn opens_the_pages(self) -> bool {
+        matches!(
+            self,
+            Self::Done | Self::Isolated | Self::Skipped | Self::Deciding
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

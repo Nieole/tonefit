@@ -86,6 +86,104 @@ impl Expected {
         self
     }
 
+    /// 期望屏上**把一段往右推几格**：设计稿摆在那儿的字与实现照一条仍然成立的规矩写下的
+    /// 差的只有**行首那一截缩进**（折下来的那几行跟不跟着缩，`crate::wrap`）。
+    ///
+    /// 推开的是 `from` 起 `width` 格那一段：前面补 `by` 格空白，那一段的末 `by` 格
+    /// **必须本来就是空白**（当场断言）——因此这一手**一个字都没丢**，
+    /// 推开之后仍是一条断言，实现在那儿写别的照样红。
+    ///
+    /// **补上的那几格空白，样子跟着被推开那一段的头一格**：那一截是一行的**缩进**，
+    /// 而屏上一行的缩进与它后面的字是同一截（画法一句 `line` 写下去的），
+    /// 样子本来就相同。
+    ///
+    /// **每一处用它的地方都得在用例上写清是哪一条停车场条目**，理由与
+    /// [`blanked`](Self::blanked) 同一条（ADR 0019 决定第 13 条）。
+    pub(in crate::session) fn shifted(
+        mut self,
+        row: usize,
+        from: u16,
+        width: u16,
+        by: u16,
+    ) -> Self {
+        let name = self.name.clone();
+        let Some(line) = self.rows.get_mut(row) else {
+            return self;
+        };
+        let mut before: Vec<Painted> = Vec::new();
+        let mut inside: Vec<Painted> = Vec::new();
+        let mut after: Vec<Painted> = Vec::new();
+        let mut column = 0u16;
+        for glyph in line.iter() {
+            let cells = crate::wrap::width(&glyph.symbol);
+            if column + cells <= from {
+                before.push(glyph.clone());
+            } else if column < from + width {
+                inside.push(glyph.clone());
+            } else {
+                after.push(glyph.clone());
+            }
+            column += cells;
+        }
+        let mut eaten = 0u16;
+        while eaten < by {
+            let last = inside.pop().unwrap_or_else(|| {
+                panic!("{name} 第 {row} 行第 {from} 格那一段短过要推开的 {by} 格")
+            });
+            assert_eq!(
+                last.symbol, " ",
+                "{name} 第 {row} 行往右推 {by} 格会挤掉一个字"
+            );
+            eaten += crate::wrap::width(&last.symbol);
+        }
+        let indent = Painted {
+            symbol: " ".to_owned(),
+            fg: inside.first().map_or(Color::Reset, |glyph| glyph.fg),
+            modifiers: inside
+                .first()
+                .map_or_else(Modifier::empty, |glyph| glyph.modifiers),
+        };
+        let blanks = (0..by).map(|_| indent.clone());
+        *line = before
+            .into_iter()
+            .chain(blanks)
+            .chain(inside)
+            .chain(after)
+            .collect();
+        self
+    }
+
+    /// 期望屏上**一格换成同一行另一格的样子**（字、前景色、修饰一起换）：
+    /// 设计稿在那儿摆的是它自己那套模拟算出来的一格，而实现照一条仍然成立的规矩
+    /// 写下的是另一个——而那个「另一个」在同一行上就摆着。
+    ///
+    /// **换完之后仍是一条断言**，与 [`blanked`](Self::blanked) 同一条：实现在那一格上
+    /// 写别的照样红。`at` 与 `like` 是**第几列**（不是第几个字）。
+    ///
+    /// **每一处用它的地方都得在用例上写清是哪一条停车场条目**，理由与 `blanked` 同一条
+    /// （ADR 0019 决定第 13 条：先改设计稿、重新导出，那是拍板的人的事）。
+    pub(in crate::session) fn cell_like(mut self, row: usize, at: u16, like: u16) -> Self {
+        let Some(line) = self.rows.get_mut(row) else {
+            return self;
+        };
+        let mut column = 0u16;
+        let mut here: Option<usize> = None;
+        let mut there: Option<usize> = None;
+        for (index, glyph) in line.iter().enumerate() {
+            if column == at {
+                here = Some(index);
+            }
+            if column == like {
+                there = Some(index);
+            }
+            column += crate::wrap::width(&glyph.symbol);
+        }
+        if let (Some(here), Some(there)) = (here, there) {
+            line[here] = line[there].clone();
+        }
+        self
+    }
+
     /// **字网格**：一行一屏行，只有字、不带样式。场景夹具拿它核「报告那一处说出来的字
     /// 在设计快照上找得到」（`session-redesign/05`）——那一问只关字，不关颜色。
     pub(in crate::session) fn lines(&self) -> Vec<String> {

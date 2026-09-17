@@ -8,20 +8,92 @@
 
 use ratatui::layout::Rect;
 
-use super::super::cover::{Overlay, Sheet};
+use super::super::cover::{Card, Overlay, Sheet};
 use super::super::keymap::{self, Deed, Phase, Want};
 use super::super::look::{Kind, Look, Segment};
 use super::super::state::Session;
+use super::super::tone::Tone;
+use super::super::tree::NoteKind;
 use super::super::view::{Focus, Window};
 use super::super::viewport::Scrollbar;
 use super::canvas::{Border, Canvas};
 
-/// 画覆盖层：没掀着什么都不画。
+/// 画覆盖层：没掀着什么都不画。**底下整屏先压暗**（设计稿 `drawAll` 的次序），再画那一张。
 pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase) {
-    let Some(Overlay::Keys { from }) = session.views.cover else {
+    let Some(cover) = session.views.cover else {
         return;
     };
     canvas.dim_all();
+    match cover {
+        Overlay::Keys { from } => keys(canvas, phase, from),
+        Overlay::Note { node, at } => note(canvas, session, phase, node, at),
+    }
+}
+
+/// **说明卡**：一条备注的全文（设计稿 `drawNote`）。备注不在树上（树刚换过）就不画。
+fn note(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, node: usize, at: usize) {
+    let window = Window {
+        cols: canvas.width(),
+        rows: canvas.height(),
+    };
+    let Some(said) = session.views.task.tree.note(node, at) else {
+        return;
+    };
+    let card = Card::of(said, window, &session.home);
+    let box_of_it = card.placement;
+    // 无法访问那一种整张卡是出事色（框线与抬头），非漫画文件那一种是聚焦色加终端默认色
+    // ——两处都问同一格（设计稿 `drawNote` 的 `bad`）。
+    let bad = card.kind == NoteKind::Unreachable;
+    let look = if bad {
+        Look::tone(Tone::Trouble)
+    } else {
+        Look::kind(Kind::Focus)
+    };
+    canvas.frame(
+        Rect::new(box_of_it.x, box_of_it.y, box_of_it.width, box_of_it.height),
+        &Border {
+            thick: true,
+            look,
+            title: &[Segment::new(
+                &card.label,
+                if bad {
+                    Look::tone(Tone::Trouble).bold()
+                } else {
+                    Look::PLAIN.bold()
+                },
+            )],
+            right: &[],
+            bottom_left: &[],
+            bottom_right: &[Segment::faint(closing(phase))],
+        },
+    );
+    let room = Some(card.text_width());
+    canvas.line(
+        card.text_x(),
+        box_of_it.y + 2,
+        &[Segment::new(&card.what, Look::PLAIN.bold())],
+        room,
+    );
+    for (i, line) in card.body.iter().enumerate() {
+        canvas.line(
+            card.text_x(),
+            box_of_it.y + 4 + i as u16,
+            &[Segment::new(line.as_str(), Look::kind(Kind::Prose))],
+            room,
+        );
+    }
+}
+
+/// 覆盖层上**关掉它**那一件在屏上怎么写（`Esc → 关闭`），键与那一句都从按键表取。
+fn closing(phase: Phase) -> String {
+    keymap::hints(phase, Focus::Overlay, &[Want::of(Deed::CloseOverlay)])
+        .first()
+        .map(|said| format!("{} → {}", said.spelt(), said.what))
+        .unwrap_or_default()
+}
+
+/// **全部按键那一张**（设计稿 `drawHelp`）。
+fn keys(canvas: &mut Canvas<'_>, phase: Phase, from: usize) {
     let sheet = Sheet::of(
         phase,
         Window {
@@ -35,10 +107,9 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase) {
     let at = sheet.placement;
     let area = Rect::new(at.x, at.y, at.width, at.height);
     let look = Look::kind(Kind::Focus);
-    let closing = keymap::hints(phase, Focus::Overlay, &[Want::of(Deed::CloseOverlay)]);
-    let caption = match (keymap::spelt_for(Deed::Help), closing.first()) {
-        (Some(again), Some(close)) => format!("{again} {} → {}", close.spelt(), close.what),
-        _ => String::new(),
+    let caption = match keymap::spelt_for(Deed::Help) {
+        Some(again) => format!("{again} {}", closing(phase)),
+        None => String::new(),
     };
     canvas.frame(
         area,

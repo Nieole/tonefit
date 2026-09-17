@@ -17,7 +17,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::widgets::{ScrollbarOrientation, ScrollbarState, StatefulWidget};
 
 use super::super::draw::paint;
 use super::super::look::{Look, Segment, width_of};
@@ -140,36 +139,43 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// 一个框右边那条框线上的**滚动条**：滑块画多长、画在哪一截归终端库自带的那个 widget
-    /// （`CONTEXT.md` 的《视口》），这里只把算出来的那几格用 [`put`](Self::put) 写上去。
+    /// 一个框右边那条框线上的**滚动条**：滑块画多长、画在哪一截，照设计稿 `box` 的
+    /// `scroll` 那一笔算（`CONTEXT.md` 的《视口》）——一道守卫加两条式子：
     ///
-    /// 交给 widget 的「内容有多长」是**起点能取几个值**（`rows - window + 1`）：它的式子把
-    /// 位置的上限当成内容长度减一，而视口滚到底停在 `rows - window`（[`Scrollbar`] 那三个数的含义）。
-    /// 这么交，滑块的长度正是设计稿的 `round(track × view ÷ total)`；位置两边各有一套取整，
-    /// 差在 `.5` 那一格上（停车场 Q780）。
+    /// ```text
+    /// 共几行 ≤ 露出几行，或者框内高 ≤ 1 → 一格都不画
+    /// 滑块长 = round(框内高 × 露出几行 ÷ 共几行)，至少一格
+    /// 滑块位 = round((框内高 − 滑块长) × 从第几行画起 ÷ (共几行 − 露出几行))
+    /// ```
+    ///
+    /// 头一行那道守卫也是设计稿那一笔自己的（`if (total > view && track > 1)`）：
+    /// 没有可滚的东西时不画（`CONTEXT.md` 的《视口》末一句）。
+    ///
+    /// **自己算，不交给终端库自带的那个 widget**：这一屏要**逐格**照设计稿（ADR 0019
+    /// 决定第 13 条），而那个 widget 的位置取整与设计稿差在 `.5` 那一格上——
+    /// 从前交给它，滑块的长度对得上、位置在半格上偏一行（停车场 Q780 记的就是它；
+    /// 「整卷统一灰阶」80×24 那一屏正落在半格上）。式子只有这三行，摆在这里比隔着
+    /// 一层参数去凑它的取整读得清。
+    ///
+    /// **旧界面那一副仍走那个 widget**（`super::super::draw::scrollbar`）：「滑块画多长、
+    /// 画在哪一截」因此在过渡期有两处，与两个砍列次序（停车场 Q804）是同一笔代价，
+    /// 15 号票让旧那一副退场时合回一处。`CONTEXT.md` 的《视口》末一句仍写着「走终端库
+    /// 自带的那个 widget」——**词汇表与实现对不上，记在停车场 Q850，没有顺手改**。
     pub(super) fn scrollbar(&mut self, area: Rect, bar: &Scrollbar) {
-        if area.width < 2 || area.height < 3 {
+        if area.width < 2 || area.height < 3 || bar.rows <= bar.window {
             return;
         }
-        let track = Rect::new(0, 0, 1, area.height - 2);
-        let mut scratch = Buffer::empty(track);
-        ratatui::widgets::Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_symbol(None)
-            .thumb_symbol(THUMB)
-            .render(
-                track,
-                &mut scratch,
-                &mut ScrollbarState::new(bar.rows.saturating_sub(bar.window).saturating_add(1))
-                    .position(bar.at)
-                    .viewport_content_length(bar.window),
-            );
+        let track = f64::from(area.height - 2);
+        let (rows, window, at) = (bar.rows as f64, bar.window as f64, bar.at as f64);
+        if track <= 1.0 {
+            return;
+        }
+        let thumb = (track * window / rows).round().max(1.0);
+        let pos = ((track - thumb) * at / (rows - window).max(1.0)).round();
         let x = area.x + area.width - 1;
-        for row in 0..track.height {
-            if scratch[(0, row)].symbol() == THUMB {
-                self.put(x, area.y + 1 + row, THUMB, Look::PLAIN);
-            }
+        let first = pos.clamp(0.0, track - thumb) as u16;
+        for row in 0..(thumb as u16) {
+            self.put(x, area.y + 1 + first + row, THUMB, Look::PLAIN);
         }
     }
 

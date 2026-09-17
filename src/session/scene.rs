@@ -505,6 +505,8 @@ impl Scene {
         if let Some(live) = &live {
             session.watch_the_run(live);
         }
+        // **树拼出来之后才认得出备注行**：光标与说明卡都按那一条备注的「是哪几处」认。
+        stand_on_a_note(&mut session, &data);
         Self {
             label: label.to_owned(),
             data,
@@ -533,6 +535,33 @@ impl Scene {
     pub(crate) fn now(&self) -> Instant {
         self.epoch + elapsed(self.data.run.as_ref())
     }
+
+    /// **序列里「推进几秒」那一步**：把手上那一趟换成 `data` 说的那一趟，「此刻」跟着走
+    /// （[`Scene::now`] 之后答的就是新的那一刻），新的那一份 [`Live`] 摆回 [`Scene::live`]
+    /// ——与[摆一个场景](Scene::from_data)交出来的形状相同，调用方照旧 `take` 它。
+    ///
+    /// **夹具没有线程**（停车场 Q805 记的是同一条）：推进那几秒里那条线程做了什么，
+    /// 只有**这一串自己的场景数据**说得出——`s` 按一次之后再推进 30 秒，当前那一卷做完、
+    /// 那一趟收了场，而这一头没有东西去把那一卷跑完。照它在**同一个家目录**上重放一遍，
+    /// 盘、预设、三组设置都不动。
+    ///
+    /// **界面状态一格不动**：视图、光标、展开、掀着的那一张都是前面那几步输入摆出来的，
+    /// 而那正是这一串要看的东西——[`replay`] 起手要走一遍「起一趟」
+    /// （[`Session::run_started`]，那一下会把它们扳回开跑那一刻），因此前后各存回一次。
+    pub(crate) fn advance_to(&mut self, data: Data) {
+        let run = data.run.as_ref().expect("推进之后那一串仍在一趟里");
+        let views = self.session.views.clone();
+        let live = replay(run, &self.home, &data.output, self.epoch, &mut self.session);
+        self.session.views = views;
+        // 会话打开那一刻：往回推设计稿那一头的钟（与 [`Scene::from_data`] 同一条式子）。
+        self.session.opened_at =
+            self.epoch + elapsed(data.run.as_ref()) - Duration::from_millis(data.now_ms);
+        self.data = data;
+        // 与真会话里那一层每一下做的是同一件事：清点的产出已经在了，树不必重拼；
+        // 结束了的那一趟自动滚动不再跟（`Session::watch_the_run`）。
+        self.session.watch_the_run(&live);
+        self.live = Some(live);
+    }
 }
 
 /// 场景数据 `session` 那一段里认得的几格：视图、开跑之前卷列表的光标、套着的预设（06）；
@@ -559,9 +588,11 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
         Some("out") => Cursor::Output,
         Some("add") => Cursor::Add,
         Some("path") => Cursor::Path(at("path")),
-        Some("dir") => Cursor::Directory(at("dir")),
+        Some("directory") => Cursor::Directory(at("root")),
         Some("volume") => Cursor::Volume(at("root")),
-        Some("note") => Cursor::Note(at("path")),
+        // **备注行那一种在这里认不出**：场景数据记的是那一条备注的「是哪几处」，
+        // 而认它要树，树在这一步之后才拼出来（见 [`stand_on_a_note`]）。
+        Some("note") => Cursor::Output,
         _ => Cursor::Output,
     };
     // 展开着的那几个目录，与自动滚动开着没有。
@@ -681,6 +712,29 @@ fn item_named(key: &str) -> Option<Item> {
         "设计稿的 {key} 认成了配置视图外面的一项"
     );
     Some(Item::Setting(field))
+
+/// 场景数据里**光标停在一条备注行上**、或者**说明卡掀着**的那两种，摆在树拼出来之后：
+/// 认一条备注靠的是它的「是哪几处」（场景数据的 `cursor.what` 与那张卡自己的 `entries`），
+/// 而树上那一条的身份是一条路径（[`super::tree::Note::at`]）——两头对得上要先有树。
+///
+/// 卡掀着的时候光标就停在那一条上（设计稿掀开它的那一下不挪光标），因此两样认同一条。
+fn stand_on_a_note(session: &mut Session, data: &Data) {
+    let wanted = data.session["cursor"]["what"].as_str();
+    let lifted = data.session["overlay"]["kind"].as_str() == Some("note");
+    if data.session["cursor"]["kind"].as_str() != Some("note") {
+        assert!(!lifted, "掀着说明卡而光标不在那一条备注上");
+        return;
+    }
+    let what = wanted.expect("光标停在备注行上时记着它是哪几处");
+    let tree = &session.views.task.tree;
+    let (node, at) = tree
+        .locate(|note| note.what == what)
+        .unwrap_or_else(|| panic!("树上没有「{what}」那一条备注"));
+    session.views.task.cursor =
+        Cursor::Note(tree.note(node, at).expect("刚找到的那一条").at.clone());
+    if lifted {
+        session.views.lift_note(node, at);
+    }
 }
 
 /// `~/` 换成家目录。
@@ -1907,6 +1961,30 @@ mod tests {
         assert_eq!(live.failures_so_far(), 1, "坏页 1 页");
         assert_eq!(live.report().failed_volumes.len(), 1, "转换失败 1 卷");
         assert_eq!(live.unreachable_places().len(), 1, "无法访问 1 处");
+    }
+
+    /// **「推进几秒」那一步换掉的是那一趟，不是界面状态**（`session-redesign/10`）：
+    /// `running-s-advance` 从「转换中」起，推进之后那一趟收了场，而视图、光标、
+    /// 展开着的那几个目录一格不动——那是前面那几步输入摆出来的，正是那一串要看的东西。
+    /// 家目录也不换：换进来的那一趟报回来的卷根与树上的仍对得上。
+    ///
+    /// 换进来的那一趟**与那一串自己的场景数据逐项相同**（走的是同一条 `agrees_with_its_data`）。
+    #[test]
+    fn advancing_swaps_the_run_and_leaves_the_interface_alone() {
+        let mut scene = Scene::named("running");
+        let before = scene.session.views.clone();
+        let home = scene.home.clone();
+        assert!(!scene.live().ended(), "起点那一趟还在跑");
+        scene.advance_to(sequence_data("running-s-advance"));
+        assert!(scene.live().ended(), "推进之后那一趟收了场");
+        assert_eq!(scene.session.views, before, "界面状态一格都没动");
+        assert_eq!(scene.home, home, "家目录没换");
+        assert_eq!(
+            scene.live().roster().len(),
+            scene.session.views.task.tree.roots.len(),
+            "清单与树上的卷根仍对得上"
+        );
+        agrees_with_its_data(&scene);
     }
 
     /// **清单上每一串交互序列都读得成步**，每一步都翻得成输入（`session-redesign/06`）：
