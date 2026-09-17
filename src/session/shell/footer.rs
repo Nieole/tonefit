@@ -33,7 +33,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, now
         let mut x = canvas.put(
             1,
             y,
-            line.purpose.prompt(),
+            &line.purpose.prompt(),
             Look::kind(Kind::Caption).bold(),
         );
         x = canvas.put(

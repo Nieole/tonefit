@@ -147,7 +147,13 @@ pub enum Deed {
     BackToList,
     // 配置
     ConfigOpen,
+    /// 设置栏上的 `⏎`：与 `l` 同，**自由填的那几项另外直接开输入行**（设计稿 `configKey`）。
+    /// 它与 [`ConfigOpen`](Self::ConfigOpen) 长的那一句相同，全部按键那一张因此并成一行。
+    ConfigEnter,
     ConfigBack,
+    /// 自由填的那几项上的 `i`：经输入行改这一项的值。**不上全部按键那一张**——
+    /// 设计稿的表上没有这一行；它只在详情栏里顺口提一次（`[i → 修改]`）。
+    EditValue,
     Presets,
     Chart,
     UsePreset,
@@ -280,6 +286,10 @@ const PAGES: &[Focus] = &[Focus::Pages];
 const CONFIG: &[Focus] = &[Focus::Settings, Focus::Details, Focus::Picker];
 /// 配置视图的两栏：预设栏掀着时那一栏替换详情栏，键归它自己那几行。
 const PANES: &[Focus] = &[Focus::Settings, Focus::Details];
+/// 只在设置栏上：`l` 在这一栏上说「展开」，`⏎` 在这一栏上另有一支（[`Deed::ConfigEnter`]）。
+const SETTINGS: &[Focus] = &[Focus::Settings];
+/// 只在详情栏上：`⏎` 在这一栏上说「确定」。
+const DETAILS: &[Focus] = &[Focus::Details];
 const PICKER: &[Focus] = &[Focus::Picker];
 const INPUT: &[Focus] = &[Focus::Input];
 const OVERLAY: &[Focus] = &[Focus::Overlay];
@@ -945,6 +955,10 @@ pub const TABLE: &[Row] = &[
         PAGES,
     ),
     // ───── 配置 ─────
+    // 屏底那一件**随此刻在哪一栏、改不改得动而变**（设计稿 `footerHints` 配置那一支）：
+    // 设置栏是 `l → 展开`，详情栏是 `⏎ → 确定`，只读那三档两边都是「查看」。
+    // 短的那一句为空的两行只管派键——`l` 在详情栏上、`⏎` 在设置栏上照样按得动，
+    // 只是屏底那一行不同时摆两个键。长的那一句四行相同，全部按键那一张因此并成 `l ⏎`。
     row(
         Group::Config,
         Deed::ConfigOpen,
@@ -952,8 +966,8 @@ pub const TABLE: &[Row] = &[
         "l",
         "展开",
         "展开选项 / 确定",
-        ANY_PHASE,
-        PANES,
+        NOT_RUNNING,
+        SETTINGS,
     ),
     row(
         Group::Config,
@@ -962,8 +976,28 @@ pub const TABLE: &[Row] = &[
         "l",
         "查看",
         "展开选项 / 确定",
+        IN_A_RUN,
+        SETTINGS,
+    ),
+    row(
+        Group::Config,
+        Deed::ConfigEnter,
+        Chord::Key(Key::Enter),
+        "⏎",
+        "",
+        "展开选项 / 确定",
         ANY_PHASE,
-        PANES,
+        SETTINGS,
+    ),
+    row(
+        Group::Config,
+        Deed::ConfigOpen,
+        key('l'),
+        "l",
+        "",
+        "展开选项 / 确定",
+        ANY_PHASE,
+        DETAILS,
     ),
     row(
         Group::Config,
@@ -972,8 +1006,8 @@ pub const TABLE: &[Row] = &[
         "⏎",
         "确定",
         "展开选项 / 确定",
-        ANY_PHASE,
-        PANES,
+        NOT_RUNNING,
+        DETAILS,
     ),
     row(
         Group::Config,
@@ -982,7 +1016,19 @@ pub const TABLE: &[Row] = &[
         "⏎",
         "查看",
         "展开选项 / 确定",
-        ANY_PHASE,
+        IN_A_RUN,
+        DETAILS,
+    ),
+    // 自由填的那几项上的 `i`：长的那一句为空——设计稿的全部按键上没有这一行，
+    // 它只在详情栏里顺口提一次。改不动的那三档根本不派它（屏上不摆按不动的键）。
+    row(
+        Group::Config,
+        Deed::EditValue,
+        key('i'),
+        "i",
+        "修改",
+        "",
+        NOT_RUNNING,
         PANES,
     ),
     row(
@@ -1075,12 +1121,14 @@ pub const TABLE: &[Row] = &[
         ANY_PHASE,
         PICKER,
     ),
+    // 短的那一句只有顶上那一条预设摆它（`[c → 灰阶测试图]`）——屏底那一行不摆它
+    // （设计稿 `footerHints` 配置那一支没有它），而屏底摆哪几件由调用方点名。
     row(
         Group::Config,
         Deed::Chart,
         key('c'),
         "c",
-        "",
+        "灰阶测试图",
         "生成灰阶测试图",
         ANY_PHASE,
         CONFIG,

@@ -96,7 +96,8 @@ pub(super) fn style(tone: Tone) -> Style {
 /// | 要的是 | 屏上 |
 /// |---|---|
 /// | 默认 | 终端默认色 |
-/// | 次要 | 暗灰（ANSI 8）——框线、标签、说明 |
+/// | 次要 | 暗灰（ANSI 8）——框线、标签 |
+/// | 说明正文 | 灰（ANSI 7）——详情栏与说明卡里那几段解释文字 |
 /// | 语义色 | 平常默认色 · 注意黄 · 出事红 · 不要紧暗灰**并压暗** |
 /// | 灰阶档位 | 1bit 品红 · 2bit 青 · 4bit 蓝 |
 /// | 环节 | 查重品红 · 分析蓝 · 写出青 |
@@ -106,6 +107,8 @@ pub(super) fn style(tone: Tone) -> Style {
 /// | 抬头（全部按键的组名、输入行的提示词） | 绿 |
 /// | 键的写法（全部按键那一张上） | 黄 |
 /// | 补全框里的文件夹 | 蓝 |
+/// | 一组的组名（设置栏） | 品红 |
+/// | 这一趟的进度（顶栏右端） | 青 |
 ///
 /// **`NO_COLOR` 在场时颜色一律退回终端默认色，修饰不退**（`CONTEXT.md` 的《语义色》）：
 /// 加粗、下划线、斜体、压暗都不靠颜色说话，抹掉了屏上没有一个字补得回来；「不要紧」那一档
@@ -148,6 +151,7 @@ fn colour_of(hue: Hue) -> Option<Color> {
     match hue {
         Hue::Plain | Hue::Tone(Tone::Plain) => None,
         Hue::Faint | Hue::Tone(Tone::Muted) => Some(Color::DarkGray),
+        Hue::Prose => Some(Color::Gray),
         Hue::Tone(Tone::Caution) => Some(Color::Yellow),
         Hue::Tone(Tone::Trouble) => Some(Color::Red),
         Hue::Kind(Kind::Depth(BitDepth::One)) => Some(Color::Magenta),
@@ -163,6 +167,8 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),
         Hue::Kind(Kind::Focus) => Some(Color::LightGreen),
         Hue::Kind(Kind::Key) => Some(Color::Yellow),
+        Hue::Kind(Kind::Band) => Some(Color::Magenta),
+        Hue::Kind(Kind::Progress) => Some(Color::Cyan),
     }
 }
 

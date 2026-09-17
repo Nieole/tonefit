@@ -32,21 +32,59 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::config::{self, Choices, Item};
 use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
-use super::look::{Look, Segment};
-use super::state::{
-    DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, TASTE_FIELDS,
-};
+use super::look::{Kind, Look, Segment};
+use super::state::{Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Shape};
 use super::tone::Tone;
 use super::typing::InputLine;
 use crate::preset::Preset;
+use tonefit::Panel;
 
 /// 回话在屏底占几秒（设计稿 `toast` 的默认时长）。
 pub const REPLY_LINGERS: Duration = Duration::from_millis(2600);
 
 /// 连击键按了前半截之后等后半截等多久（设计稿 `frame` 里那 900 毫秒）。
 pub const COMBO_WAITS: Duration = Duration::from_millis(900);
+
+/// **转轮**转一格要多久（设计稿 `SPIN` 那一处的 90 毫秒）。
+#[cfg_attr(
+    not(feature = "tui"),
+    expect(
+        dead_code,
+        reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
+    )
+)]
+const SPINS_EVERY: Duration = Duration::from_millis(90);
+
+/// **转轮**的十格字形（设计稿的 `SPIN`）：顶栏右端那一截、行首记号的「处理中」、
+/// 总览上清点那一条，三处同一份。转到第几格由会话的[「此刻」](CONTEXT.md)算
+/// （[`Views::spinning`]）。
+#[cfg_attr(
+    not(feature = "tui"),
+    expect(
+        dead_code,
+        reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
+    )
+)]
+pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// 跑着与等待确认时定不下来那一刻屏底说的**短的那一句**（换型号那一下；设计稿 `configKey`）。
+fn locked_short() -> Vec<Segment> {
+    vec![Segment::new(
+        "正在转换，设置已锁定",
+        Look::tone(Tone::Caution),
+    )]
+}
+
+/// **长的那一句**（取值环上定那一下）：前半截重、后半截说清什么时候才改得动。
+fn locked_long() -> Vec<Segment> {
+    vec![
+        Segment::new("正在转换，", Look::tone(Tone::Caution).bold()),
+        Segment::plain("设置已锁定，结束后才能修改"),
+    ]
+}
 
 /// 会话的顶层：两个视图，各占整屏（`CONTEXT.md` 的《会话》：视图）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -173,13 +211,20 @@ pub struct Applied {
     pub preset: Preset,
 }
 
-/// 配置视图记着的：所在的块、设置栏的光标、套着的预设。详情栏与预设栏的光标随那几票添。
+/// 配置视图记着的：所在的块、两栏各自的光标、下钻进了哪一层、套着的预设。预设栏的光标随那一票添。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigView {
     /// 设置栏、详情栏还是预设栏。
     pub focus: Focus,
-    /// 设置栏的光标停在哪一项。
-    pub cursor: Field,
+    /// **设置栏**的光标停在哪一项——记的是那一项的身份，不是第几行（组抬头停不住）。
+    pub cursor: Item,
+    /// **详情栏**的光标停在第几格（取值环的第几格、屏幕规格的第几块、下钻之后的第几个型号）。
+    /// 一格都停不住的那两种（自由填、画质判定参数）上它恒是 0。
+    pub choice: usize,
+    /// **下钻**进了**哪一块屏幕规格**；`None` 是第一层（`CONTEXT.md` 的《下钻》）。
+    /// 记的是那一块本身、不是它排第几——与旧界面取值栏那一格同一副（[`super::state::Values`]）。
+    /// 设置栏上一挪光标它就作废：那一层是上一项的第二层。
+    pub drill: Option<Panel>,
     /// 当前套的是哪一份预设。
     pub applied: Option<Applied>,
 }
@@ -188,7 +233,9 @@ impl Default for ConfigView {
     fn default() -> Self {
         Self {
             focus: Focus::Settings,
-            cursor: Field::Profile,
+            cursor: Item::Setting(Field::Profile),
+            choice: 0,
+            drill: None,
             applied: None,
         }
     }
@@ -226,6 +273,15 @@ pub struct Views {
     pub input: Option<InputLine>,
     /// 掀开着的那一张（[`super::cover`]）。盖住输入行，不替掉它。
     pub cover: Option<Overlay>,
+    /// **会话的时钟起点**：转轮转到第几格从「此刻」减它算。由会话入口摆下这一刻
+    /// （`CONTEXT.md` 的《会话》：此刻），用例给定值——设计稿把它那只表冻在场景数据的
+    /// `now_ms` 上，夹具照它往回推。**还没起过表时转轮停在第一格**：真会话里到不了，
+    /// 入口第一件事就是摆下它。
+    pub clock: Option<Instant>,
+    /// **预设文件在哪**：配置视图顶上那一条右端写它（家目录缩写成 `~`），预设栏也要它
+    /// （`session-redesign/14`）。由会话入口问一次摆进来（`Presets::path`），
+    /// 问不出来就是 `None`——那一格空着，与家目录问不出来时不缩写同一条。
+    pub presets: Option<PathBuf>,
     pending: Option<Pending>,
     reply: Option<Reply>,
 }
@@ -250,6 +306,22 @@ impl Views {
             View::Task => self.task.focus,
             View::Config => self.config.focus,
         }
+    }
+
+    /// 屏上那个**转轮**此刻转到哪一格（模块文档《它一个终端都不碰》：两个时长照设计稿）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        expect(
+            dead_code,
+            reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
+        )
+    )]
+    pub fn spinning(&self, now: Instant) -> &'static str {
+        let since = self.clock.map_or(Duration::ZERO, |started| {
+            now.saturating_duration_since(started)
+        });
+        let step = (since.as_millis() / SPINS_EVERY.as_millis()) as usize;
+        SPINNER[step % SPINNER.len()]
     }
 
     /// 屏底右端此刻要不要待续记号：连击键的前半截还没过期。
@@ -385,21 +457,14 @@ impl Session {
         (on, self.scope.paths.len() - on)
     }
 
-    /// 与套着的预设不同的有几项（型号不算：设计稿只数取值环与自由填的那几项）。没套预设就是零。
+    /// 与套着的预设不同的有几项。是哪几项、为什么型号不算，都在 [`config::changed`]
+    /// ——总览与顶上那一条预设读的是同一份。
     pub fn changed_from_preset(&self) -> usize {
-        let Some(applied) = &self.views.config.applied else {
-            return 0;
-        };
-        DEVICE_FIELDS
-            .into_iter()
-            .chain(TASTE_FIELDS)
-            .filter(|field| *field != Field::Profile)
-            .filter(|field| self.differs_from(*field, &applied.preset))
-            .count()
+        config::changed(self).len()
     }
 
     /// 这一项此刻的值与那份预设说的不同吗。
-    fn differs_from(&self, field: Field, preset: &Preset) -> bool {
+    pub(super) fn differs_from(&self, field: Field, preset: &Preset) -> bool {
         match field {
             Field::Profile => self.device.profile != preset.device.profile,
             Field::GrayLevels => self.device.gray_levels != preset.device.gray_levels,
@@ -505,6 +570,12 @@ impl Session {
             ),
             Deed::TaskView => self.views.view = View::Task,
             Deed::ConfigView => self.views.view = View::Config,
+            Deed::NextBlock => self.switch_pane(),
+            Deed::ConfigOpen if self.views.config.focus == Focus::Settings => self.enter_details(),
+            Deed::ConfigOpen => self.settle_choice(now),
+            Deed::ConfigEnter => self.config_enter(),
+            Deed::ConfigBack => self.config_back(),
+            Deed::EditValue => self.open_valuing(),
             Deed::NextView | Deed::PrevView => self.views.view = self.views.view.other(),
             Deed::Down => self.place_cursor(|here, last| (here + 1).min(last)),
             Deed::Up => self.place_cursor(|here, _| here.saturating_sub(1)),
@@ -522,8 +593,13 @@ impl Session {
     }
 
     /// 光标挪到停得住的行里的哪一条：`to` 收「此刻在第几条、最后一条是第几条」，答挪到第几条。
-    /// 只在任务视图的卷列表上挪；别的块随各票接上。
+    /// 任务视图只在卷列表上挪，配置视图两栏各挪各的（[`Self::place_config_cursor`]）；
+    /// 每页结果随它那一票接上。
     fn place_cursor(&mut self, to: impl Fn(usize, usize) -> usize) {
+        if self.views.view == View::Config {
+            self.place_config_cursor(to);
+            return;
+        }
         if self.views.view != View::Task || self.views.task.focus != Focus::VolumeList {
             return;
         }
@@ -540,6 +616,207 @@ impl Session {
             .position(|stop| *stop == self.views.task.cursor)
             .unwrap_or(0);
         self.views.task.cursor = stops[to(here, last).min(last)].clone();
+    }
+
+    /// 配置视图上挪光标：**两栏各挪各的**——设置栏挪的是停得住的那 20 项，
+    /// 详情栏挪的是此刻列得出的那几格（[`Choices::stops`]）。预设栏归 `session-redesign/14`。
+    ///
+    /// **设置栏上一挪就退出下钻**：下钻那一层是**上一项**的第二层，光标换了项它就说不通了
+    /// （设计稿 `moveBy` 配置那一支）。
+    fn place_config_cursor(&mut self, to: impl Fn(usize, usize) -> usize) {
+        match self.views.config.focus {
+            Focus::Settings => {
+                let items = config::items();
+                let Some(last) = items.len().checked_sub(1) else {
+                    return;
+                };
+                let here = items
+                    .iter()
+                    .position(|item| *item == self.views.config.cursor)
+                    .unwrap_or(0);
+                self.views.config.cursor = items[to(here, last).min(last)];
+                self.views.config.drill = None;
+            }
+            Focus::Details => {
+                let last = self.config_choices().stops().saturating_sub(1);
+                let here = self.views.config.choice.min(last);
+                self.views.config.choice = to(here, last).min(last);
+            }
+            _ => {}
+        }
+    }
+
+    /// 配置视图此刻**三组设置改不改得动**（ADR 0017 决定第 3 条）。
+    ///
+    /// **它问的是阶段那一维，与焦点无关**：跑着与等待确认时详情栏、预设栏照样进得去、看得见，
+    /// 一个改动都定不下（`CONTEXT.md` 的《焦点》最后那一句）。
+    pub fn settings_locked(&self) -> bool {
+        self.stage().read_only()
+    }
+
+    /// 设置栏上光标停在**第几项、共几项**（框底边那句 `4 of 20`）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        expect(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn config_position(&self) -> (usize, usize) {
+        let items = config::items();
+        let at = items
+            .iter()
+            .position(|item| *item == self.views.config.cursor)
+            .map_or(0, |at| at + 1);
+        (at, items.len())
+    }
+
+    /// 设置栏上光标停在**第几行**（组抬头也占一行）——视口按它算。
+    #[cfg_attr(
+        not(feature = "tui"),
+        expect(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn config_line(&self) -> usize {
+        config::lines()
+            .iter()
+            .position(|line| *line == config::Line::Item(self.views.config.cursor))
+            .unwrap_or(0)
+    }
+
+    /// 详情栏此刻列得出的那几格：光标停在设置栏哪一项、下钻进了哪一块屏幕规格说了算。
+    pub fn config_choices(&self) -> Choices {
+        config::choices(self, self.views.config.cursor, self.views.config.drill)
+    }
+
+    /// 光标那一项是**自由填**的那几项之一吗（`i` 经输入行改的正是它们）。
+    /// **开输入行与 `⏎` 那一支问的是这一处**，不各自认一遍。
+    pub(super) fn filled_item(&self) -> Option<Field> {
+        match self.views.config.cursor {
+            Item::Setting(field) if field.shape() == Shape::Text => Some(field),
+            _ => None,
+        }
+    }
+
+    /// `⇥`：在设置栏与详情栏之间切（设计稿 `configKey` 的 `Tab` 那一支）。
+    /// **两栏各自的光标都不动**——切走再切回原样。
+    ///
+    /// **预设栏掀着时它一个字不动**：设计稿那一刻切的是「掀着预设栏」之外的那一维（`pane`），
+    /// 切回来右边那一栏仍是预设栏——那要预设栏自己一格状态，随 `session-redesign/14` 接上
+    /// （本票掀不开它，停车场 Q828）。
+    fn switch_pane(&mut self) {
+        if self.views.view != View::Config {
+            return;
+        }
+        self.views.config.focus = match self.views.config.focus {
+            Focus::Settings => Focus::Details,
+            Focus::Details => Focus::Settings,
+            other => other,
+        };
+    }
+
+    /// 设置栏上 `l`：进详情栏，光标停在**此刻生效的那一格**上
+    /// （型号那一项停在当前型号所在的那块屏幕规格上；生效的那一格答不出来就停在头一格）。
+    fn enter_details(&mut self) {
+        self.views.config.drill = None;
+        self.views.config.choice = self.config_choices().lands_on();
+        self.views.config.focus = Focus::Details;
+    }
+
+    /// 设置栏上 `⏎`：与 `l` 同，**自由填的那几项另外直接开输入行**——少按一下
+    /// （设计稿 `configKey` 左栏那一支的 `k === 'Enter'`）。改不动的时候照旧只是进去看。
+    fn config_enter(&mut self) {
+        match self.filled_item() {
+            Some(_) if !self.settings_locked() => self.open_valuing(),
+            _ => self.enter_details(),
+        }
+    }
+
+    /// 详情栏上 `h`／`Esc`：下钻着就**退回屏幕规格那一层**（停回进去时那一块），
+    /// 否则回设置栏——两样都**一格不改**（`CONTEXT.md` 的《详情栏》）。
+    fn config_back(&mut self) {
+        if self.views.config.focus != Focus::Details {
+            return;
+        }
+        let Some(panel) = self.views.config.drill.take() else {
+            self.views.config.focus = Focus::Settings;
+            return;
+        };
+        // 退回屏幕规格那一层，光标停回进去时那一块上。
+        self.views.config.choice = config::panels()
+            .iter()
+            .position(|(block, _)| *block == panel)
+            .unwrap_or(0);
+    }
+
+    /// 详情栏上 `l`／`⏎`：**定下停着的那一格**。
+    ///
+    /// 屏幕规格那一层定不下来——按下去是[下钻](CONTEXT.md)进去看它底下有哪几个型号；
+    /// 自由填的那几项按下去开输入行；画质判定参数那一组一格都定不下。
+    /// **跑着与等待确认时一个都定不下**（[`Self::settings_locked`]），屏底说设置已锁定。
+    fn settle_choice(&mut self, now: Instant) {
+        let Item::Setting(field) = self.views.config.cursor else {
+            return;
+        };
+        match self.config_choices() {
+            Choices::Panels { .. } => {
+                let Some((panel, _)) = config::panels().into_iter().nth(self.views.config.choice)
+                else {
+                    return;
+                };
+                self.views.config.drill = Some(panel);
+                self.views.config.choice = self.config_choices().lands_on();
+            }
+            Choices::Models { cells, .. } => {
+                if self.refuse_locked(locked_short, now) {
+                    return;
+                }
+                let Some(device) = cells.get(self.views.config.choice) else {
+                    return;
+                };
+                let device = (*device).to_owned();
+                self.set_device(Some(device.clone()));
+                self.views.config.drill = None;
+                self.views.config.focus = Focus::Settings;
+                self.views.say(
+                    vec![
+                        Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                        Segment::plain(format!("设备型号已改为 {device}")),
+                        Segment::faint("（之前填的可见灰阶数和画质门槛已清空）"),
+                    ],
+                    now,
+                );
+            }
+            Choices::Ring { .. } => {
+                if self.refuse_locked(locked_long, now) {
+                    return;
+                }
+                self.settle(field, self.views.config.choice);
+                self.views.config.focus = Focus::Settings;
+                self.views.say(
+                    vec![
+                        Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                        Segment::plain(format!("{} → {}", field.label(), self.shown(field))),
+                    ],
+                    now,
+                );
+            }
+            // 自由填的那几项按下去开输入行；改不动的时候一个字都不说——屏上那一句
+            // 「[i → 修改]」本来就没摆出来（按键表在只读那几档上不派 `i`）。
+            Choices::Filled(_) => {
+                if !self.settings_locked() {
+                    self.open_valuing();
+                }
+            }
+            Choices::Premise => {}
+        }
+    }
+
+    /// 改不动的时候屏底说一句、那一下不生效；答「拦下了没有」。
+    ///
+    /// **拦它的是阶段那一维**（[`Self::settings_locked`]），不是焦点——详情栏照样进得来。
+    fn refuse_locked(&mut self, said: impl FnOnce() -> Vec<Segment>, now: Instant) -> bool {
+        if !self.settings_locked() {
+            return false;
+        }
+        self.views.say(said(), now);
+        true
     }
 
     /// 删掉光标那一条处理路径；光标停到它下一条上，没有下一条就停到「＋ 添加路径」；屏底说一句。
@@ -619,7 +896,9 @@ impl Session {
             (View::Config, _) => {
                 wants.extend(self.stage_wants(phase, focus));
                 wants.extend([
-                    Want::saying(Deed::ConfigOpen, "展开"),
+                    // 那一句与那个键都随此刻在哪一栏、改不改得动而变，**分在表上**：
+                    // 设置栏是 `l → 展开`，详情栏是 `⏎ → 确定`，只读那几档两边都是「查看」。
+                    Want::of(Deed::ConfigOpen),
                     Want::saying(Deed::ConfigBack, "返回"),
                     Want::saying(Deed::Presets, "预设"),
                     Want::of(Deed::TaskView),
@@ -669,7 +948,9 @@ impl Session {
                     Want::of(Deed::WriteAll),
                     Want::of(Deed::End),
                 ];
-                if focus != Focus::Pages {
+                // `v` 只在卷列表上派得出：每页结果已经在那一卷里了，配置视图不是它的去处
+                // （停车场 Q778）。
+                if focus != Focus::Pages && self.views.view != View::Config {
                     wants.push(Want::of(Deed::ViewPages));
                 }
                 wants

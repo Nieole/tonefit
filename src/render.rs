@@ -342,7 +342,8 @@ pub enum Field {
 /// 一趟只出一次。它吃的是整份报告而不是单独一个 profile——报告是**逐卷攒出来的**
 /// （ADR 0011），攒到一半的那一份同样答得出这几件事。
 pub fn header(report: &Report, mode: Mode) -> String {
-    let mut text = format!("设备配置 {}\n", report.profile);
+    let switches = Switches::of(report);
+    let mut text = judging_line(Judging::Device, &report.profile, switches);
     // 这一趟的页尺寸是照哪条规矩算出来的（页几何批 01 号票）。它自成一行、不接在 profile
     // 后面：缩放方式是**读法偏好**，不是这块面板的物理事实（`CONTEXT.md` 的《几何》）。
     // 非说不可，是因为两种方式在普通漫画页上产出同一个尺寸——光看页尺寸分不出走的是哪一条。
@@ -361,19 +362,27 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // 逐页那一行的每个数由两项合成，其中抖动颗粒项那道地板与画质门槛同一批盲测标定
     // （ADR 0002 决定第 5 条）。画质分不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
-    text.push_str(&format!("画质分构成 {}\n", composition()));
+    text.push_str(&judging_line(
+        Judging::Composition,
+        &report.profile,
+        switches,
+    ));
     // 那个读数落在有结构的块上还要打一道折，而打折的两个数**一个都没标定**
     // （ADR 0002 决定第 4 条）。它与下面那一行的 K 同一个待遇：数摆出来，
     // 没标定这件事跟着摆出来——逐页那一行的每个数都经过这道折扣，不说，
     // 读的人以为画质分只欠 K 那一笔账。
     // 它夹在构成与聚合之间，照的是**一块读数走过的次序**：由什么组成 → 怎么加权 →
     // 怎么收成一个数。三行说的是一条流水线，次序一散读的人就得自己拼。
-    text.push_str(&format!("细节放宽 {}\n", masking()));
+    text.push_str(&judging_line(Judging::Masking, &report.profile, switches));
     // 逐页那些「画质分 …」的数都是这套取法收出来的，而取法里的 K 还没标定。
     // 它与画质门槛同一个待遇：数摆出来，没标定这件事跟着摆出来（ADR 0002 决定第 3 条）。
     // 它自成一行、不接在 profile 后面——分块取分眼下对所有 profile 都一样，不是这台设备的事。
     // 行首是「分块取分」而不是「画质分」：逐页那一行的「画质分」说的是**量**，两者不许同名。
-    text.push_str(&format!("分块取分 {}\n", aggregation()));
+    text.push_str(&judging_line(
+        Judging::Aggregation,
+        &report.profile,
+        switches,
+    ));
     if mode == Mode::DryRun {
         text.push_str("预览：只分析，不写文件，下面列出的输出路径都还没有写入\n");
         // 预览只记账、不留页，缓存那一行报的是**参照**那一摊；照做时默认路径缓存里装的是
@@ -397,11 +406,127 @@ pub fn header(report: &Report, mode: Mode) -> String {
 /// 咬上了也不在这里露面，它只进 `--help` 与文档。措辞同理不在这里——同一句话还要从
 /// `--help` 与那条拒绝的错误里出来（见 `tonefit::Interlock`），这里只管挂标签与换行。
 fn interlock_lines(report: &Report) -> String {
-    report
-        .interlocks()
-        .filter(|interlock| interlock.voice() == Voice::Header)
-        .map(|interlock| format!("选项冲突 {interlock}\n"))
+    interlocking(Switches::of(report))
+        .map(|said| format!("{} {said}\n", Judging::Interlock.label()))
         .collect()
+}
+
+/// 抬头里**画质判定参数**那一组的五项（`CONTEXT.md` 的《画质判定参数》）。
+///
+/// **这一组是会话的设置栏最末那一组**，而它行内那一句**就是抬头里的那一行**——项名与数
+/// 一个字都不另写（ADR 0016）。摆在这里而不在会话那一侧，正是为了让两处读的是同一句：
+/// [`header`] 按抬头自己的次序把它们接起来，会话一项一行地问 [`judging`]。
+///
+/// **[`ALL`](Self::ALL) 的次序是设置栏的次序，不是抬头的次序。** 抬头把选项冲突夹在四个开关
+/// 之后（它说的正是那四项凑在一起之后的事），设置栏把它摆在末尾——两处各按各的读法排，
+/// 而句子是同一句。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Judging {
+    /// 这一趟照哪份设备配置判定：型号、屏幕规格、画质门槛连同它是在哪块屏上实测的。
+    Device,
+    /// 画质分由哪两项相加。
+    Composition,
+    /// 细节多的地方扣分打几折。
+    Masking,
+    /// 一页的分数怎么从小块收成一个数。
+    Aggregation,
+    /// 这一趟的开关里有没有两项凑在一起互相削弱。**咬上了才有那句话。**
+    Interlock,
+}
+
+impl Judging {
+    /// 五项，次序照**设置栏**（模块文档说的那条：抬头自己另有次序）。
+    ///
+    /// **只有会话读它**（设置栏最末那一组按它排那五行），而会话整个挂在
+    /// `any(feature = "tui", test)` 上——两样都没有的那一趟里它因此没有读者。
+    /// 挂 `expect` 而不是 `allow`：哪天命令行那一路也按它排，这一行自己就报「没用上」。
+    #[cfg_attr(
+        not(any(feature = "tui", test)),
+        expect(
+            dead_code,
+            reason = "只有会话的设置栏按它排那五行，而会话挂在 tui 特性或 test 后面"
+        )
+    )]
+    pub const ALL: [Self; 5] = [
+        Self::Device,
+        Self::Composition,
+        Self::Masking,
+        Self::Aggregation,
+        Self::Interlock,
+    ];
+
+    /// 项名：设置栏上那一行的名字，也是抬头里那一行的行首。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Device => "设备配置",
+            Self::Composition => "画质分构成",
+            Self::Masking => "细节放宽",
+            Self::Aggregation => "分块取分",
+            Self::Interlock => "选项冲突",
+        }
+    }
+}
+
+/// 抬头那几行要问的**这一趟那三个开关**（[`judging`] 的选项冲突那一项的输入）。
+///
+/// 报告那一头从 [`Report`] 上取（[`Switches::of`]），会话那一头从处理选项那一组取
+/// ——两处交进来的是同一三样，因此答得出同一句。
+#[derive(Debug, Clone, Copy)]
+pub struct Switches {
+    pub fit: tonefit::FitMode,
+    pub crop: bool,
+    pub split: tonefit::SplitRule,
+}
+
+impl Switches {
+    /// 一份报告里的那三个开关。
+    pub fn of(report: &Report) -> Self {
+        Self {
+            fit: report.fit,
+            crop: report.crop,
+            split: report.split,
+        }
+    }
+}
+
+/// 这一项在抬头里那一行的**行内那一句**（项名之后的全部，不带换行）。
+///
+/// 会话的设置栏把项名摆进自己那一列、把这一句摆进取值那一列，详情栏再把两截接回一整行
+/// ——**同一行拆成两截，不是另写一份**（`CONTEXT.md` 的《画质判定参数》）。
+///
+/// **选项冲突那一项答的是这一趟头一条咬上的**（[`interlocking`] 列得出全部）；
+/// 一条都没咬上时是 `None`——抬头那一刻一个字都不说，设置栏那一行因此写「无」。
+///
+/// **设备配置那一项在还没挑型号时同样是 `None`**：那一句的界挂在 profile 上，
+/// 没有它就一个字都说不出来（会话那一侧改说自己的一句，见 `crate::session::config::premise`）。
+/// 报告那一头恒交得出一个 profile——报告存在本身就是它挑过了的证据。
+pub fn judging(which: Judging, profile: Option<&Profile>, switches: Switches) -> Option<String> {
+    match which {
+        Judging::Device => profile.map(Profile::to_string),
+        Judging::Composition => Some(composition().to_string()),
+        Judging::Masking => Some(masking().to_string()),
+        Judging::Aggregation => Some(aggregation().to_string()),
+        Judging::Interlock => interlocking(switches).next(),
+    }
+}
+
+/// 抬头里**选项冲突**那几句（一条一句，行内那一句，不带项名也不带换行）。
+/// 一条都没咬上就一句都没有。
+///
+/// **筛的是 [`Voice::Header`]，不是「咬上的全部」**（[`interlock_lines`] 说的那条）。
+pub fn interlocking(switches: Switches) -> impl Iterator<Item = String> {
+    tonefit::Interlock::engaged(switches.fit, switches.crop, switches.split)
+        .filter(|interlock| interlock.voice() == Voice::Header)
+        .map(|interlock| interlock.to_string())
+}
+
+/// 抬头里的那**一整行**（项名 · 空格 · 行内那一句），末尾接上换行——抬头那一段拿它往下攒。
+///
+/// 会话的详情栏接的是同一副（`crate::session::config` 的 `premise_line`），
+/// 只是不带换行：**「与报告抬头里的这一行逐字相同」**由此成立。
+fn judging_line(which: Judging, profile: &Profile, switches: Switches) -> String {
+    let said = judging(which, Some(profile), switches).unwrap_or_default();
+    format!("{} {said}\n", which.label())
 }
 
 /// 一个卷的**卷级**那几[行](Row)：去处与页数、过期副本、判定、这一趟怎么读的、缓存用量。

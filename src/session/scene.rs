@@ -33,12 +33,13 @@ use tonefit::{
     UnreachablePlace, Verdict, VolumeReport, VolumeVerdict, WhiteAlignment,
 };
 
+use super::config::Item;
 use super::cover::Overlay;
 use super::home::Home;
 use super::live::{Live, Reach, Resuming, fixture};
-use super::state::{Key, NamedPath, Session};
+use super::state::{DEVICE_FIELDS, Field, Key, NamedPath, Session, TASTE_FIELDS};
 use super::typing::{Completion, InputLine, Purpose};
-use super::view::{Applied, Cursor, Input, View, Views};
+use super::view::{Applied, Cursor, Focus, Input, View, Views};
 use crate::preset::{self, Preset, Presets};
 use crate::render;
 
@@ -63,6 +64,9 @@ const PASSES: [Pass; 3] = [Pass::Fingerprint, Pass::First, Pass::Second];
 pub(crate) struct Data {
     /// 场景名。
     pub(crate) scene: String,
+    /// 设计稿那只表冻在第几毫秒（`render.js` 把 `performance.now` 冻在它上）：
+    /// 屏上那个转轮转到第几格按它算，夹具照它往回推出会话的时钟起点。
+    pub(crate) now_ms: u64,
     /// 输出目录（`~/` 写法）。
     pub(crate) output: String,
     /// 处理路径与勾选。
@@ -477,6 +481,10 @@ impl Scene {
         session.home = Home::at(&home);
         session.views = views_of(&data, &home, &presets);
         let epoch = Instant::now();
+        // 会话的时钟起点：设计稿那只表冻在 `now_ms` 上，这里照它往回推——屏上那个转轮
+        // 因此停在设计稿导出那一刻的那一格（`super::view::Views::spinning`）。
+        session.views.clock =
+            (epoch + elapsed(data.run.as_ref())).checked_sub(Duration::from_millis(data.now_ms));
         let live = data
             .run
             .as_ref()
@@ -512,9 +520,10 @@ impl Scene {
 }
 
 /// 场景数据 `session` 那一段里认得的几格：视图、开跑之前卷列表的光标、套着的预设（06）；
-/// 输入行连同它列着的候选、全部按键那一张与它从第几行画起（07）。
+/// 输入行连同它列着的候选、全部按键那一张与它从第几行画起（07）；配置视图那几格
+/// （在哪一栏、两栏各自的光标、下钻进了哪一块，加上改一项设置的值那种输入行，13）。
 /// 树上的光标（目录、卷、备注）随树那一票认；认不得的先停在输出目录那一行上；
-/// 搜索、改一项设置、给预设起名那几种输入行随各自的票认。
+/// 搜索与给预设起名那两种输入行随各自的票认。
 fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     let mut views = Views::default();
     views.view = match data.session["view"].as_str() {
@@ -537,6 +546,11 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .read(name)
             .unwrap_or_else(|error| panic!("套着的预设「{name}」读不出：{error:#}")),
     });
+    config_of(&data.session["config"], &mut views);
+    // **预设文件那一条路径设计稿是写死的**（`drawConfig`），它不是场景数据——夹具因此照它
+    // 摆一条家目录底下的路径。真文件仍在临时目录里（[`write_presets`]）：家目录底下只有
+    // 假盘那几样，补全那几串数的正是它（停车场 Q824）。
+    views.presets = Some(home.join(".config").join("tonefit").join("presets.toml"));
     let input = &data.session["input"];
     let purpose = match input["kind"].as_str() {
         Some("add") => Some(Purpose::AddPath),
@@ -545,6 +559,11 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
         Some("edit") => match &views.task.cursor {
             Cursor::Path(path) => Some(Purpose::EditPath(path.clone())),
             _ => None,
+        },
+        // 改的是配置视图光标停着的那一项（改着的时候光标不挪）。
+        Some("value") => match views.config.cursor {
+            Item::Setting(field) => Some(Purpose::Setting(field)),
+            Item::Premise(_) => None,
         },
         _ => None,
     };
@@ -573,6 +592,62 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
         });
     }
     views
+}
+
+/// 场景数据 `session.config` 那一段：在哪一栏、两栏各自的光标、下钻进了哪一块屏幕规格。
+///
+/// 预设栏那三格（`presets`、`preset_cursor`、`armed_delete`）随 `session-redesign/14` 认。
+fn config_of(said: &Value, views: &mut Views) {
+    views.config.focus = match said["pane"].as_str() {
+        Some("right") => Focus::Details,
+        _ => Focus::Settings,
+    };
+    if let Some(item) = said["cursor"].as_str().and_then(item_named) {
+        views.config.cursor = item;
+    }
+    views.config.choice = said["choice_index"].as_u64().unwrap_or(0) as usize;
+    // 下钻那一格导出的是**那一块屏幕规格的写法**（它自己的 `Display`），照它认回那一块。
+    views.config.drill = said["drill"].as_str().and_then(|shown| {
+        crate::session::config::panels()
+            .into_iter()
+            .find(|(panel, _)| panel.to_string() == shown)
+            .map(|(panel, _)| panel)
+    });
+}
+
+/// 设计稿给设置栏每一行起的名字认回一项（`design.html` 的 `CONFIG` 的 `key`）。
+///
+/// **这张对照表只在夹具这一侧**：那几个名字是设计稿自己的，实现那一头的名字取自
+/// `CONTEXT.md`（[`Field`] 与 [`crate::render::Judging`]）。
+fn item_named(key: &str) -> Option<Item> {
+    let field = match key {
+        "model" => Field::Profile,
+        "levels" => Field::GrayLevels,
+        "threshold" => Field::Threshold,
+        "fit" => Field::Fit,
+        "crop" => Field::Crop,
+        "split" => Field::Split,
+        "splitAt" => Field::SplitThreshold,
+        "order" => Field::ReadingOrder,
+        "filter" => Field::Filter,
+        "white" => Field::WhiteAlignLimit,
+        "depth" => Field::BitDepth,
+        "dither" => Field::Dither,
+        "envelope" => Field::Envelope,
+        "cache" => Field::CacheBudget,
+        "io" => Field::IoMode,
+        premise => {
+            let at = ["p1", "p2", "p3", "p4", "p5"]
+                .iter()
+                .position(|named| *named == premise)?;
+            return Some(Item::Premise(render::Judging::ALL[at]));
+        }
+    };
+    debug_assert!(
+        DEVICE_FIELDS.contains(&field) || TASTE_FIELDS.contains(&field),
+        "设计稿的 {key} 认成了配置视图外面的一项"
+    );
+    Some(Item::Setting(field))
 }
 
 /// `~/` 换成家目录。

@@ -60,12 +60,17 @@ pub fn enter() -> Result<u8> {
     let mut session = Session::new();
     // 家目录问一次、摆在会话上往下传（`CONTEXT.md` 的《会话》：家目录）：新界面的屏上把它缩写成 `~`。
     session.home = Home::found();
+    // 会话的时钟起点：屏上那个转轮转到第几格从它算起（`CONTEXT.md` 的《会话》：此刻）。
+    session.views.clock = Some(Instant::now());
     // 跑着的那一趟**一定**要收手：`?` 提前返回、恐慌展开，走的都是 `Running` 的 `Drop`。
     // 终端同理，走 `Screen` 的 `Drop`。
     let mut running = Running::default();
     // 预设文件那一份。**找不到用户配置目录不在这里拦**：那台机器上会话照进，
     // 只是按下 `p` 那一刻它说得出为什么（见 `preset::Presets`）。
     let presets = Presets::found();
+    // 它在哪也摆在会话上往下传：配置视图顶上那一条右端写着它（家目录缩写成 `~`）。
+    // **问不出来就不写**——那台机器上会话照进，只是按下 `p` 那一刻它说得出为什么。
+    session.views.presets = presets.path().ok().map(Path::to_path_buf);
     // 灰阶测试图落在会话是从哪儿敲起来的那个目录里（见 [`chart_file`]）。**一次问出来**：
     // 一趟会话里当前目录不会变，而按一次 `c` 问一次只会让两张图落在两个地方。
     // 问不出来（那个目录被删了）时退回空路径，`chart_file` join 出来的于是是个**裸文件名**：
@@ -738,7 +743,8 @@ mod redesign {
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
     use super::super::state::{Exit, Key};
-    use super::super::view::{Input, Window};
+    use super::super::view::{Focus, Input, Window};
+    use tonefit::FitMode;
 
     /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
     fn walked(name: &str) -> (Scene, Running, Exit) {
@@ -892,6 +898,101 @@ mod redesign {
     #[test]
     fn question_mark_before_the_run_lifts_the_key_sheet() {
         assert_sequence("fresh-help");
+    }
+
+    // ───────────────────────── 配置视图（`session-redesign/13`）─────────────────────────
+
+    /// **两栏之间来回**（票面第二条）：`h`（详情栏上）、`⇥`、`Esc` 三条路都回到设置栏，
+    /// 三屏因此相等——回来那一下**一格不改**。
+    #[test]
+    fn three_ways_lead_back_to_the_settings_pane_and_change_not_one_cell() {
+        for name in ["config-h", "config-Tab", "config-Escape"] {
+            let scene = assert_sequence(name);
+            assert_eq!(scene.session.views.config.focus, Focus::Settings);
+            assert_eq!(scene.session.taste.fit, Some(FitMode::Inside), "一格没改");
+        }
+    }
+
+    /// **设置栏 `l` 进详情栏，光标停在此刻生效的那一格上**（票面第二条）：
+    /// `l` → `h` 回来一格不改，`l` → `k` → `l` 定下上一格。
+    #[test]
+    fn l_opens_the_details_pane_and_only_the_second_l_settles_a_choice() {
+        let scene = assert_sequence("config-h-l");
+        assert_eq!(scene.session.views.config.focus, Focus::Details);
+        assert_eq!(scene.session.views.config.choice, 2, "停在生效的那一格上");
+
+        let scene = assert_sequence("config-h-l-k-h");
+        assert_eq!(scene.session.taste.fit, Some(FitMode::Inside), "一格没改");
+
+        let scene = assert_sequence("config-h-l-k-l");
+        assert_eq!(scene.session.taste.fit, Some(FitMode::Height));
+        assert_eq!(
+            scene.session.views.config.focus,
+            Focus::Settings,
+            "定完回来"
+        );
+    }
+
+    /// **型号那一项两层下钻**（票面第二条）：第一层是屏幕规格，`l` 进去才是型号，
+    /// `h` 退回屏幕规格那一层；挑了一个型号，先前填的可见灰阶数与画质门槛一并清空。
+    #[test]
+    fn the_model_drills_through_the_panels_and_picking_one_clears_the_numbers() {
+        assert_sequence("config-model");
+        let scene = assert_sequence("config-model-drill");
+        assert!(scene.session.views.config.drill.is_some());
+
+        let scene = assert_sequence("config-model-drill-h");
+        assert_eq!(scene.session.views.config.drill, None, "退回屏幕规格那一层");
+        assert_eq!(
+            scene.session.device.profile.as_deref(),
+            Some("kobo-libra-2"),
+            "退一步一格不改"
+        );
+
+        let scene = assert_sequence("config-model-drill-j-l");
+        assert_eq!(scene.session.device.profile.as_deref(), Some("boox-leaf2"));
+        assert_eq!(scene.session.device.gray_levels, None);
+        assert_eq!(scene.session.device.threshold, None);
+    }
+
+    /// **自由填的那一项 `i` 经输入行改**（票面第二条）：屏底换成「可见灰阶数  ▏」，
+    /// 打完 `⏎` 收下，设置栏那一行跟着变、行尾多一个 `*`。
+    #[test]
+    fn i_edits_a_filled_in_setting_through_the_input_line() {
+        let scene = assert_sequence("config-levels-i");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.purpose.prompt(), "可见灰阶数  ");
+
+        let scene = assert_sequence("config-levels-i-typed");
+        assert_eq!(scene.session.device.gray_levels, Some(14));
+        assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+    }
+
+    /// **不到 90 列退成单栏**（票面第二条）：`l` 进详情，`h` 回来，两栏从不同时在场。
+    #[test]
+    fn under_ninety_columns_the_two_panes_take_turns() {
+        assert_sequence("config-narrow-h");
+        assert_sequence("config-narrow-h-l");
+        assert_sequence("config-narrow-h-l-h");
+    }
+
+    /// **跑着时 `2` 进得去、看得见、定不下**（票面第二条与第四条）：顶栏右端带着这一趟的进度，
+    /// 设置栏抬头写 `[已锁定]`，详情栏照样进得去——定的那一下屏底说设置已锁定，一格没改。
+    #[test]
+    fn during_a_run_the_config_view_is_readable_and_settles_nothing() {
+        assert_sequence("running-2");
+        assert_sequence("running-2-fit-l");
+        let scene = assert_sequence("running-2-fit-l-l");
+        assert_eq!(
+            scene.session.taste.fit,
+            Some(FitMode::Inside),
+            "定那一下一格没改"
+        );
+        assert_eq!(
+            scene.session.views.config.focus,
+            Focus::Details,
+            "拦下了就留在原处"
+        );
     }
 
     /// 终端那一侧的键码翻成新会话的输入：Ctrl 加一个字母另认，`C-c` 仍是那个中断键，别的照旧。
