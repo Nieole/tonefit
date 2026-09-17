@@ -80,7 +80,8 @@ pub(crate) enum Provenance {
     /// 字形宽度**必须稳**（[`tonefit::width_is_stable`]），而查它的是**造字面的那一层**——
     /// 带着的正是「查哪一格」：`Some(field)` 是 [`crate::render`] 出的那一格，
     /// 那一层那条用例从 `wording_cells` 拿走全部要查的格；`None` 是画法这一层
-    /// 自己造的字，眼下只有[耗时](VolumeColumn::Elapsed)一列，它在自己那一头查。
+    /// 自己造的字（[耗时](VolumeColumn::Elapsed)、[树上那一列卷数](TreeColumn::Count)），
+    /// 它们在自己那一头查。
     Wording(Option<Field>),
     /// **原样 (Verbatim)**：用户的字节原封带过来（目录名、卷名、页名、去处路径、代表页名）。
     ///
@@ -415,7 +416,165 @@ impl Column for PageColumn {
     }
 }
 
-/// **三张表摆进列里、由[措辞](Provenance::Wording)那一层写下的那几格。**
+/// **卷列表那棵树**上的一列（`session-redesign/08`）：新界面清点之后那一副，
+/// 目录行与卷行**共用同一套列**——两种行只差左边的缩进与记号，右边那几列对齐在同一处。
+///
+/// 与[卷表](VolumeColumn)是**两张表，不是一张**：那一张是旧界面报告区里的卷表，
+/// 这一张是新界面的卷列表。两张的砍列次序**不一样**——旧那一张页数排在灰阶分布**前面**让掉，
+/// 这一张页数**恒在**（`CONTEXT.md` 的《目录行 / 卷行》：做完几卷／共几卷，或几页，
+/// 与名字一起就是一行的身份）。两个次序各在自己那一格上，一个都不许被画法那一层抄走；
+/// 合回一个是 15 号票让旧那一副退场时的事（停车场 Q804）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TreeColumn {
+    /// 行首记号：这一行此刻怎么样，一个字符说完。**恒在。**
+    Mark,
+    /// 目录名或卷名。**恒在**，摆不下时从中间省略（见 [`elide`]）。
+    Name,
+    /// 做完几卷／共几卷（目录行），或者几页（卷行）。**恒在。**
+    Count,
+    /// 灰阶分布（前两档），或者这一卷为什么一页都没判（跳过、没做成）。
+    Tally,
+    /// 代表页。**只在整卷统一灰阶那一趟在场**（停车场 Q712）。
+    Driver,
+    /// 这一行做了多久。
+    Elapsed,
+}
+
+impl Column for TreeColumn {
+    const ALL: &'static [Self] = &[
+        Self::Mark,
+        Self::Name,
+        Self::Count,
+        Self::Tally,
+        Self::Driver,
+        Self::Elapsed,
+    ];
+
+    /// **砍列的次序：耗时 → 代表页 → 灰阶分布**（spec《卷列表》；`CONTEXT.md` 的《砍列》）。
+    ///
+    /// 记号、名字与卷数不在这里边——它们**恒在**：一行上先要认得出这是哪一行、它出没出事、
+    /// 它有多厚。次序按「摆不下时先舍谁」排：耗时最先——它是这一行做完之后的一个旁证；
+    /// 代表页次之，而它本来就只在整卷统一灰阶那一趟在场；**灰阶分布压后**——
+    /// 它是这张表要答的那件事，让掉它之后跳过与没做成那两个词跟着丢，
+    /// 而行首记号说的是同一件事：靠得住的载体是记号，不是这一格。
+    const DROPPED_IN_TURN: &'static [Self] = &[Self::Elapsed, Self::Driver, Self::Tally];
+
+    const NARROWED: Self = Self::Name;
+
+    /// **这张表不画列头**：树上一行一个身份，屏上没有那一行标题（见设计稿的卷列表）。
+    /// 列头留在这里只为[量宽度那一手](Widths::new)与另两张表同形。
+    fn head(self) -> &'static str {
+        match self {
+            Self::Mark => "记号",
+            Self::Name => "名字",
+            Self::Count => "卷数",
+            Self::Tally => "灰阶分布",
+            Self::Driver => "代表页",
+            Self::Elapsed => "耗时",
+        }
+    }
+
+    /// 卷数与耗时靠右：两个都是数，一位数与三位数靠左摆就对不齐。
+    fn to_the_right(self) -> bool {
+        matches!(self, Self::Count | Self::Elapsed)
+    }
+
+    fn provenance(self) -> Provenance {
+        match self {
+            Self::Mark => Provenance::Mark,
+            Self::Name => Provenance::Verbatim,
+            // **这一列的字是画法那一层拼出来的**：一个数出自措辞那一层
+            // （目录行是 [`Field::VolumeCount`]，卷行是 [`Field::PageCount`]），
+            // 后面那个单位（`卷`／`页`）由画法接上——两种行共用一列，指不到单独一格上。
+            Self::Count => Provenance::Wording(None),
+            Self::Tally => Provenance::Wording(Some(Field::Tally)),
+            Self::Driver => Provenance::Verbatim,
+            // **这一列的字是画法那一层自己造的**（`super::draw::overview::spell`），
+            // 与[卷表那一列](VolumeColumn::Elapsed)同一处出处。
+            Self::Elapsed => Provenance::Wording(None),
+        }
+    }
+}
+
+/// 树上各列**此刻有多宽**：一列一个数，零就是这一列不在场。
+///
+/// **摆法与另三张表不同，而次序仍是 [`TreeColumn::DROPPED_IN_TURN`]**：那三张是先量出
+/// 每一列最长的一格、再按次序砍到摆得下（[`plan`]），这一张的列宽是**定死的**
+/// （屏上目录行与卷行要对齐在同一处，一行一行地量宽度会让上下两行的列错开），
+/// 砍列因此变成「框里有这么宽才摆得下它」的一道门槛。
+/// 三道门槛从宽到窄正是那个次序：耗时先让、代表页次之、灰阶分布压后。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TreeWidths {
+    /// 名字那一列（顶格那一行的宽度；缩进一级的行在它上面各减两格）。
+    pub(super) name: u16,
+    pub(super) count: u16,
+    pub(super) tally: u16,
+    pub(super) driver: u16,
+    pub(super) elapsed: u16,
+}
+
+/// 名字那一列最窄与最宽各占几格，以及它占框内宽度的几成。
+const NAME_LEAST: u16 = 12;
+const NAME_MOST: u16 = 30;
+const NAME_SHARE: u16 = 24;
+
+impl TreeWidths {
+    /// 框里内容那一截有 `inner` 格宽时各列有多宽。`envelope` 是整卷统一灰阶那一趟——
+    /// 代表页那一列只在它在场（停车场 Q712）。
+    pub(super) fn of(inner: u16, envelope: bool) -> Self {
+        let keeps = |column: TreeColumn| inner >= least_width(column, envelope);
+        Self {
+            name: u16::try_from(u32::from(inner) * u32::from(NAME_SHARE) / 100)
+                .unwrap_or(NAME_MOST)
+                .clamp(NAME_LEAST, NAME_MOST),
+            count: 9,
+            tally: if keeps(TreeColumn::Tally) { 26 } else { 0 },
+            driver: if envelope && keeps(TreeColumn::Driver) {
+                15
+            } else {
+                0
+            },
+            elapsed: if keeps(TreeColumn::Elapsed) { 7 } else { 0 },
+        }
+    }
+
+    /// 此刻还在场的那几列，从左到右——[`fit`] 对那三张表答的是同一个问题。
+    pub(super) fn kept(&self) -> Vec<TreeColumn> {
+        TreeColumn::ALL
+            .iter()
+            .copied()
+            .filter(|column| match column {
+                TreeColumn::Mark | TreeColumn::Name | TreeColumn::Count => true,
+                TreeColumn::Tally => self.tally > 0,
+                TreeColumn::Driver => self.driver > 0,
+                TreeColumn::Elapsed => self.elapsed > 0,
+            })
+            .collect()
+    }
+}
+
+/// 一列要框内多宽才摆得下——**砍列次序就是这三个数从大到小**，
+/// 而恒在的那三列一格都不要。
+fn least_width(column: TreeColumn, envelope: bool) -> u16 {
+    match column {
+        TreeColumn::Mark | TreeColumn::Name | TreeColumn::Count => 0,
+        TreeColumn::Tally => 92,
+        TreeColumn::Driver => 100,
+        TreeColumn::Elapsed => {
+            if envelope {
+                124
+            } else {
+                108
+            }
+        }
+    }
+}
+
+/// **摆进列里、由[措辞](Provenance::Wording)那一层写下的那几格。**
+///
+/// **[树那一张](TreeColumn)不在里面**：它装的是[卷表](VolumeColumn)同一批格
+/// （页数与灰阶分布），换的只是一行的样子——同一格报两遍，那一关反而分不清
+/// 问的是哪一列（见下面「一格只进一列」那条用例）。
 ///
 /// 「摆进列里的字形一个都不许是歧义宽度」那一关问的就是这几格，
 /// 而**那一关跑在造字面的那一层**（`crate::render` 那条
@@ -710,6 +869,14 @@ mod tests {
         let mut wording = walk::<DirectoryColumn>("目录表");
         wording.extend(walk::<VolumeColumn>("卷表"));
         wording.extend(walk::<PageColumn>("逐页表"));
+        // **树那一张照样要过 `walk` 那两条**（记号是行首那一列、收窄的那一列是原样那一档），
+        // 但它报的格不并进下面那几条：它装的是卷表同一批格（见 [`wording_cells`]）。
+        let tree = walk::<TreeColumn>("树");
+        assert_eq!(
+            tree.iter().filter(|(_, field)| field.is_none()).count(),
+            2,
+            "树那一张自己造的字只有卷数与耗时两列"
+        );
 
         // **一格只进一列**：两列报出同一格，那一关就把其中一列真正装的东西漏问了。
         let cells: Vec<Field> = wording.iter().filter_map(|(_, field)| *field).collect();
@@ -733,6 +900,49 @@ mod tests {
 
         // 导出去给那一关的就是这几格，一格不多一格不少。
         assert_eq!(wording_cells(), cells);
+    }
+
+    /// **树上砍列的次序：耗时 → 代表页 → 灰阶分布**（`session-redesign/08` 票面第五条）。
+    ///
+    /// 这一条钉的是[那个次序](TreeColumn::DROPPED_IN_TURN)真管着屏上砍成什么样：
+    /// 宽度一格格收窄，让掉的先后就是它，而记号、名字与卷数**一格都不让**。
+    /// 画法那一层不许再写第二份——它问的是 [`TreeWidths`]（`super::shell::list`）。
+    #[test]
+    fn the_tree_drops_its_columns_in_the_one_order_it_declares() {
+        let gone = |inner: u16, envelope: bool| -> Vec<TreeColumn> {
+            let kept = TreeWidths::of(inner, envelope).kept();
+            // 按**那个次序**排出来：这一条要的正是「让掉的先后」。
+            TreeColumn::DROPPED_IN_TURN
+                .iter()
+                .copied()
+                .filter(|column| !kept.contains(column))
+                .collect()
+        };
+        // 整卷统一灰阶那一趟：一格格收窄，让掉的先后就是那个次序。
+        assert_eq!(gone(130, true), []);
+        assert_eq!(gone(120, true), [TreeColumn::Elapsed]);
+        assert_eq!(gone(95, true), [TreeColumn::Elapsed, TreeColumn::Driver]);
+        assert_eq!(
+            gone(80, true),
+            [TreeColumn::Elapsed, TreeColumn::Driver, TreeColumn::Tally]
+        );
+        assert_eq!(
+            gone(80, true),
+            TreeColumn::DROPPED_IN_TURN,
+            "让到最后，让掉的正是声明的那一串"
+        );
+        // 默认逐页那一趟**代表页整列不在场**（停车场 Q712），连列头都不占。
+        assert!(gone(130, false).contains(&TreeColumn::Driver));
+        // 记号、名字与卷数一格都不让。
+        for inner in [200, 116, 76, 40, 12] {
+            let kept = TreeWidths::of(inner, false).kept();
+            assert!(
+                kept.contains(&TreeColumn::Mark)
+                    && kept.contains(&TreeColumn::Name)
+                    && kept.contains(&TreeColumn::Count),
+                "{inner} 列宽上让掉了恒在的那几列"
+            );
+        }
     }
 
     /// 一份够宽的量：各列都比列头宽一点。

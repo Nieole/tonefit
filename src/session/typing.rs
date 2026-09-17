@@ -235,6 +235,9 @@ impl Session {
                 }
             }
             Cursor::Add => self.open_adding(),
+            // 清点之后那棵树上的行改不动：处理路径那张单子这一刻不在屏上
+            // （结束之后按 `o`／`i` 回到开跑之前那一副，归 10 号票）。
+            Cursor::Directory(_) | Cursor::Volume(_) | Cursor::Note(_) => {}
         }
     }
 

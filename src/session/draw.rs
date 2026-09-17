@@ -75,13 +75,17 @@ mod footer;
 /// [起一趟的那两个键](keys::starters)——它是画法之外唯一一处读这一份的地方。
 pub(super) mod keys;
 mod overlay;
-mod overview;
+/// 总览块。**时长与环节那两个词新界面也读得到**（`super::shell::list`／`super::shell::overview`）：
+/// 同一屏上两种写法读的人就得先分辨一遍，那两处因此摆在 `session` 名下、不各写一份。
+pub(in crate::session) mod overview;
 mod pages;
 /// `pub(super)`：新界面的画法（`super::shell`）也从这一处要颜色——本仓库唯一写得出颜色名的地方。
 pub(super) mod paint;
 mod picker;
 mod report;
-mod table;
+/// 卷表。**代表页那一列新界面那棵树也读得到**（`super::shell::list`）：
+/// 「这一卷的档是哪一页定的」三处说的是同一件事。
+pub(in crate::session) mod table;
 mod yielding;
 
 // 设计快照的读法与逐格比对。**敞开到会话这一层**：场景夹具（`super::scene`）要拿设计快照的

@@ -55,6 +55,37 @@ impl Expected {
         self
     }
 
+    /// 期望屏上**抹掉一段**：设计稿在那儿写着一句话，而实现照一条仍然成立的规矩**不写它**。
+    ///
+    /// **抹掉之后那几格要求是空白**——它仍旧是一条断言，不是放过：实现在那儿多写一个字
+    /// 照样红。`from` 与 `width` 是**第几列、几列**（不是第几个字：抹掉的那一段与补上的
+    /// 空白占的列数相同，字数不同）。
+    ///
+    /// **每一处用它的地方都得在用例上写清是哪一条停车场条目**：它抹掉的是设计稿与实现
+    /// 对不上的那一格，而那是要拍板的人先改设计稿、重新导出的（ADR 0019 决定第 13 条）。
+    pub(in crate::session) fn blanked(mut self, row: usize, from: u16, width: u16) -> Self {
+        let Some(line) = self.rows.get_mut(row) else {
+            return self;
+        };
+        let mut kept: Vec<Painted> = Vec::with_capacity(line.len());
+        let mut column = 0u16;
+        for glyph in line.iter() {
+            let cells = crate::wrap::width(&glyph.symbol);
+            if column + cells <= from || column >= from + width {
+                kept.push(glyph.clone());
+            } else if column == from {
+                kept.extend((0..width).map(|_| Painted {
+                    symbol: " ".to_owned(),
+                    fg: Color::Reset,
+                    modifiers: Modifier::empty(),
+                }));
+            }
+            column += cells;
+        }
+        *line = kept;
+        self
+    }
+
     /// **字网格**：一行一屏行，只有字、不带样式。场景夹具拿它核「报告那一处说出来的字
     /// 在设计快照上找得到」（`session-redesign/05`）——那一问只关字，不关颜色。
     pub(in crate::session) fn lines(&self) -> Vec<String> {

@@ -29,16 +29,19 @@
 //! （[`Reply`]）与连击键的待续记号（[`Pending`]）都读会话的[「此刻」](CONTEXT.md)——
 //! 几秒后退回、多久算过期，两个时长照设计稿。
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
+use super::live::Live;
 use super::look::{Look, Segment};
 use super::state::{
-    DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, TASTE_FIELDS,
+    DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Stage, TASTE_FIELDS,
 };
 use super::tone::Tone;
+use super::tree;
 use super::typing::InputLine;
 use crate::preset::Preset;
 
@@ -47,6 +50,10 @@ pub const REPLY_LINGERS: Duration = Duration::from_millis(2600);
 
 /// 连击键按了前半截之后等后半截等多久（设计稿 `frame` 里那 900 毫秒）。
 pub const COMBO_WAITS: Duration = Duration::from_millis(900);
+
+/// 按停止之后屏底那一句占几秒（设计稿 `stopKey` 的 4000 毫秒）：它比寻常那一句久，
+/// 因为它要人读完「再按一次 s 立即停止」。
+pub const STOP_LINGERS: Duration = Duration::from_millis(4000);
 
 /// 会话的顶层：两个视图，各占整屏（`CONTEXT.md` 的《会话》：视图）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -113,7 +120,9 @@ pub enum Focus {
 }
 
 /// 卷列表的光标停在哪一行——记的是**行的身份**（模块文档《卷列表的光标记的是行的身份》）。
-/// 清点之后的目录、卷与备注行随树那一票添进来。
+///
+/// 前三个是**开跑之前**那一副的行，后三个是**清点之后**那棵树上的行：展开收起、
+/// 列表从处理路径换成树时光标都不乱跳。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cursor {
     /// 输出目录那一行。
@@ -122,9 +131,17 @@ pub enum Cursor {
     Path(PathBuf),
     /// 「＋ 添加路径」那一行。
     Add,
+    /// 树上哪一个目录行（按那个目录记）。
+    Directory(PathBuf),
+    /// 树上哪一卷（按卷根记）。
+    Volume(PathBuf),
+    /// 树上哪一条备注行（无法访问的地方按那一处记，非漫画文件按它挂着的节点记）。
+    Note(PathBuf),
 }
 
-/// 开跑之前卷列表上的一行（`CONTEXT.md` 的《卷列表》：开跑之前）。
+/// 卷列表上的一行。**形状随阶段换**（`CONTEXT.md` 的《卷列表》）：清点完之前是开跑之前
+/// 那一副（输出目录 · 「处理路径 (N)」· 一条条处理路径 · 「＋ 添加路径」），
+/// 清点完之后同一张列表重排成[那棵树](super::tree)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
     /// 输出目录那一行。
@@ -135,26 +152,44 @@ pub enum Line {
     Path(usize),
     /// 「＋ 添加路径」。
     Add,
+    /// 树上的一行。
+    Tree(tree::Row),
 }
 
 impl Line {
     /// 这一行停得住的话，它的身份。
-    pub fn stop(&self, paths: &[NamedPath]) -> Option<Cursor> {
+    pub fn stop(&self, paths: &[NamedPath], tree: &tree::Tree) -> Option<Cursor> {
         match self {
             Self::Output => Some(Cursor::Output),
             Self::Heading => None,
             Self::Path(at) => paths.get(*at).map(|named| Cursor::Path(named.path.clone())),
             Self::Add => Some(Cursor::Add),
+            Self::Tree(row) => row.stop(tree),
         }
     }
 }
 
-/// 任务视图记着的：所在的块与卷列表的光标。展开着的目录、每页结果、自动滚动随后面的票添。
+/// 任务视图记着的：所在的块、卷列表的光标、清点之后那棵树连同展开着的目录与自动滚动。
+/// 每页结果随它那一票添。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskView {
     /// 卷列表还是每页结果。
     pub focus: Focus,
     pub cursor: Cursor,
+    /// **清点之后那棵树**：开工那一条带回来的清点清单拼出来的形状（[`super::tree`]）。
+    /// 清点完之前是空的——卷列表那时列的是处理路径本身。
+    pub tree: tree::Tree,
+    /// **展开着的目录**是一个集合（`CONTEXT.md` 的《展开》），按目录的路径记；每次开跑清空。
+    pub expanded: BTreeSet<PathBuf>,
+    /// **自动滚动**开着没有（`CONTEXT.md` 的《自动滚动》）：开着时光标跟到正在处理的那一卷，
+    /// 只滚不展。每次开跑扳回开着。
+    pub follow: bool,
+    /// **清点完了没有**：开工那一条到了、树拼过一次就是真。
+    ///
+    /// 记一格而不是拿「树上几卷」与「清单上几卷」比：**一卷都没清点出来的那一趟也清点完了**
+    /// ——点名的地方全都无法访问时，屏上有的正是那几条**备注行**，而两个零比出来的是
+    /// 「还没清点」。卷列表换不换形状问的也是它。
+    pub surveyed: bool,
 }
 
 impl Default for TaskView {
@@ -162,7 +197,23 @@ impl Default for TaskView {
         Self {
             focus: Focus::VolumeList,
             cursor: Cursor::Output,
+            tree: tree::Tree::default(),
+            expanded: BTreeSet::new(),
+            follow: true,
+            surveyed: false,
         }
+    }
+}
+
+impl TaskView {
+    /// **每次开跑重来一遍**：树还没拼出来、一个目录都不展开、自动滚动扳回开着，
+    /// 光标退回列表头一行（这一刻列表刚从树换回处理路径，或者反过来）。
+    pub fn start_a_run(&mut self) {
+        self.tree = tree::Tree::default();
+        self.expanded.clear();
+        self.follow = true;
+        self.surveyed = false;
+        self.focus = Focus::VolumeList;
     }
 }
 
@@ -315,36 +366,55 @@ impl Input {
 }
 
 impl Session {
-    /// 开跑之前卷列表上的行：输出目录 · 「处理路径 (N)」· 每条处理路径 · 「＋ 添加路径」。
+    /// 卷列表此刻那几行。**清点完之前**是开跑之前那一副（输出目录 · 「处理路径 (N)」·
+    /// 每条处理路径 · 「＋ 添加路径」）；**清点完之后**是[那棵树](super::tree)。
+    ///
+    /// 分界是[**清点完了没有**](TaskView::surveyed)：清点途中库一条事件都不报
+    /// （`CONTEXT.md` 的《清点》），开工那一条到了树才拼得出来——屏上正是这么换的
+    /// （清点中那一副仍列着处理路径，只把勾选框换成转轮）。
     pub fn lines(&self) -> Vec<Line> {
+        let tree = &self.views.task.tree;
+        if self.views.task.surveyed {
+            return tree
+                .rows(&self.views.task.expanded)
+                .into_iter()
+                .map(Line::Tree)
+                .collect();
+        }
         let mut lines = vec![Line::Output, Line::Heading];
         lines.extend((0..self.scope.paths.len()).map(Line::Path));
-        lines.push(Line::Add);
+        // 开跑之后「＋ 添加路径」那一行不在：跑着的时候加不进路径（设计稿 `taskRows`）。
+        if self.stage() == Stage::Fresh {
+            lines.push(Line::Add);
+        }
         lines
     }
 
-    /// 光标此刻停在开跑之前那一副的第几行。记着的身份找不到了（那一条删掉了）就停到头一行停得住的。
+    /// 光标此刻停在第几行。记着的身份找不到了（那一条删掉了、列表刚换了形状）就停到
+    /// 头一行停得住的。
     pub fn cursor_line(&self) -> usize {
         let lines = self.lines();
         let wanted = &self.views.task.cursor;
+        let tree = &self.views.task.tree;
         lines
             .iter()
-            .position(|line| line.stop(&self.scope.paths).as_ref() == Some(wanted))
+            .position(|line| line.stop(&self.scope.paths, tree).as_ref() == Some(wanted))
             .or_else(|| {
                 lines
                     .iter()
-                    .position(|line| line.stop(&self.scope.paths).is_some())
+                    .position(|line| line.stop(&self.scope.paths, tree).is_some())
             })
             .unwrap_or(0)
     }
 
     /// 光标停在第几条停得住的行上（从 1 起），与停得住的行共几条——框底边那句 `2 of 15`。
     pub fn cursor_position(&self) -> (usize, usize) {
+        let tree = &self.views.task.tree;
         let stops: Vec<usize> = self
             .lines()
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.stop(&self.scope.paths).is_some())
+            .filter(|(_, line)| line.stop(&self.scope.paths, tree).is_some())
             .map(|(at, _)| at)
             .collect();
         let here = self.cursor_line();
@@ -510,6 +580,15 @@ impl Session {
             Deed::Up => self.place_cursor(|here, _| here.saturating_sub(1)),
             Deed::Bottom => self.place_cursor(|_, last| last),
             Deed::Top => self.place_cursor(|_, _| 0),
+            // **展开只管目录行**：卷行按下去要问那一趟「这一卷展不展得开」，
+            // 而状态机读不到它——那一支在终端层（`super::terminal::input`）。
+            // **按停止升一级**（ADR 0013 的两级停止）：把升到的那一级交给跑着的那一趟
+            // 是终端层那一支（`super::terminal::input`）——两处记的是同一个字，
+            // 出处只有这一份。
+            Deed::Stop => self.stop_a_notch(now),
+            Deed::Open => self.expand_directory(),
+            Deed::Close => self.collapse_directory(),
+            Deed::Follow => self.views.task.follow = true,
             Deed::TogglePath => {
                 if let Some(at) = self.path_under_cursor() {
                     self.scope.paths[at].on = !self.scope.paths[at].on;
@@ -530,7 +609,7 @@ impl Session {
         let stops: Vec<Cursor> = self
             .lines()
             .iter()
-            .filter_map(|line| line.stop(&self.scope.paths))
+            .filter_map(|line| line.stop(&self.scope.paths, &self.views.task.tree))
             .collect();
         let Some(last) = stops.len().checked_sub(1) else {
             return;
@@ -539,7 +618,107 @@ impl Session {
             .iter()
             .position(|stop| *stop == self.views.task.cursor)
             .unwrap_or(0);
-        self.views.task.cursor = stops[to(here, last).min(last)].clone();
+        let there = stops[to(here, last).min(last)].clone();
+        if there != self.views.task.cursor {
+            self.pause_follow();
+        }
+        self.views.task.cursor = there;
+    }
+
+    /// 按停止升一级，屏底说一句：按一次做完当前卷再停，再按一次立即停止。
+    fn stop_a_notch(&mut self, now: Instant) {
+        self.raise_stop();
+        let (head, rest) = if self.stopping() == tonefit::Instruction::Abort {
+            ("! 已立即停止：", "当前卷未保存，输出目录里不会留下半成品")
+        } else {
+            ("! 正在停止：", "做完当前卷就停 ⋅ 再按一次 s 立即停止")
+        };
+        self.views.say_for(
+            vec![
+                Segment::new(head, Look::tone(Tone::Caution).bold()),
+                Segment::plain(rest),
+            ],
+            STOP_LINGERS,
+            now,
+        );
+    }
+
+    /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：按键、滚轮、单击、
+    /// `]d`、搜索跳过去都算，`F` 交回。这一处管的是按键那几个，其余随各自那一票接上。
+    fn pause_follow(&mut self) {
+        self.views.task.follow = false;
+    }
+
+    /// `l`／`⏎`：光标停在目录行上就把它展开（`CONTEXT.md` 的《展开》：目录→卷就地展开）。
+    fn expand_directory(&mut self) {
+        if let Cursor::Directory(path) = &self.views.task.cursor {
+            let path = path.clone();
+            self.views.task.expanded.insert(path);
+        }
+    }
+
+    /// `h`：目录行上收起它；卷行上收起它那个目录，光标跟着停到目录行上
+    /// （收起之后那一卷的行没了，光标得有地方落）。
+    fn collapse_directory(&mut self) {
+        let directory = match &self.views.task.cursor {
+            Cursor::Directory(path) => Some(path.clone()),
+            Cursor::Volume(root) => {
+                let root = root.clone();
+                let at = self
+                    .views
+                    .task
+                    .tree
+                    .roots
+                    .iter()
+                    .position(|one| *one == root);
+                at.and_then(|at| self.views.task.tree.directory_of(at))
+                    .map(|directory| directory.path.clone())
+            }
+            _ => None,
+        };
+        let Some(directory) = directory else {
+            return;
+        };
+        self.views.task.expanded.remove(&directory);
+        self.views.task.cursor = Cursor::Directory(directory);
+    }
+
+    /// **盯着跑着的那一趟**：清点的产出一到就把树拼出来，自动滚动开着时光标跟到
+    /// 正在处理的那一卷（`CONTEXT.md` 的《自动滚动》：它的目录展开着就停在卷行上，
+    /// 收着就停在目录行上，**只滚不展**）。
+    ///
+    /// 由够得着那一趟的那一层每一下调一次（`super::terminal::input`，真会话切过来之后
+    /// 是那条循环每一帧）：树的拼法要清点清单，而状态机读不到它。
+    /// **树一趟只拼一次**——清单在开工那一条之后一格不变。
+    pub fn watch_the_run(&mut self, live: &Live) {
+        if !live.surveying() && !self.views.task.surveyed {
+            self.views.task.tree = tree::Tree::of(
+                &self.scope.paths,
+                live.roster(),
+                live.non_volume_files(),
+                live.unreachable_places(),
+            );
+            self.views.task.surveyed = true;
+        }
+        if !self.views.task.follow || live.ended() {
+            return;
+        }
+        let Some(walking) = live.walking() else {
+            return;
+        };
+        let task = &self.views.task;
+        let Some(at) = task.tree.index_of(&walking.volume) else {
+            return;
+        };
+        let Some(directory) = task.tree.directory_of(at) else {
+            return;
+        };
+        let cursor = if task.expanded.contains(&directory.path) {
+            Cursor::Volume(task.tree.roots[at].clone())
+        } else {
+            Cursor::Directory(directory.path.clone())
+        };
+        self.views.task.cursor = cursor;
     }
 
     /// 删掉光标那一条处理路径；光标停到它下一条上，没有下一条就停到「＋ 添加路径」；屏底说一句。

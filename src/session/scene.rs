@@ -63,6 +63,11 @@ const PASSES: [Pass; 3] = [Pass::Fingerprint, Pass::First, Pass::Second];
 pub(crate) struct Data {
     /// 场景名。
     pub(crate) scene: String,
+    /// 设计稿那一头的钟走到第几毫秒。**转轮转到第几格从它算**
+    /// （`super::state::Session::opened_at`：会话打开那一刻）——转轮与这一趟跑了多久无关，
+    /// 清点中那一段一步都没走，它照样得转。
+    #[serde(default)]
+    pub(crate) now_ms: u64,
     /// 输出目录（`~/` 写法）。
     pub(crate) output: String,
     /// 处理路径与勾选。
@@ -475,12 +480,21 @@ impl Scene {
             })
             .collect();
         session.home = Home::at(&home);
-        session.views = views_of(&data, &home, &presets);
         let epoch = Instant::now();
         let live = data
             .run
             .as_ref()
             .map(|run| replay(run, &home, &data.output, epoch, &mut session));
+        // **界面状态摆在回放之后**：起一趟那一下会把树、展开与自动滚动扳回开跑那一刻的样子
+        // （`Session::run_started`），场景数据说的那几格要压在它上面。
+        session.views = views_of(&data, &home, &presets);
+        // 会话打开那一刻：往回推设计稿那一头的钟，屏上那个转轮因此转到同一格。
+        session.opened_at = epoch + elapsed(data.run.as_ref()) - Duration::from_millis(data.now_ms);
+        // 清点的产出到了就把树拼出来，自动滚动开着时光标跟到正在处理的那一卷——
+        // 与真会话里那一层做的是同一件事（`super::terminal::input`）。
+        if let Some(live) = &live {
+            session.watch_the_run(live);
+        }
         Self {
             label: label.to_owned(),
             data,
@@ -522,15 +536,32 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
         _ => View::Task,
     };
     let cursor = &data.session["cursor"];
+    let at = |key: &str| {
+        expand(
+            home,
+            cursor[key]
+                .as_str()
+                .unwrap_or_else(|| panic!("光标那一{key}")),
+        )
+    };
     views.task.cursor = match cursor["kind"].as_str() {
         Some("out") => Cursor::Output,
         Some("add") => Cursor::Add,
-        Some("path") => Cursor::Path(expand(
-            home,
-            cursor["path"].as_str().expect("光标那一条路径"),
-        )),
+        Some("path") => Cursor::Path(at("path")),
+        Some("dir") => Cursor::Directory(at("dir")),
+        Some("volume") => Cursor::Volume(at("root")),
+        Some("note") => Cursor::Note(at("path")),
         _ => Cursor::Output,
     };
+    // 展开着的那几个目录，与自动滚动开着没有。
+    if let Some(expanded) = data.session["expanded"].as_array() {
+        views.task.expanded = expanded
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|path| expand(home, path))
+            .collect();
+    }
+    views.task.follow = data.session["follow"].as_bool().unwrap_or(true);
     views.config.applied = data.applied_preset.as_ref().map(|name| Applied {
         name: name.clone(),
         preset: presets
@@ -794,6 +825,10 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
     let out = expand(home, output);
     let disk = Disk { home, out: &out };
     let typical = typical_size();
+    // **没有报告的那几卷，耗时只有会话这一头记得住**（`Live::elapsed_at`）：把「此刻」
+    // 推到它开卷与收手那两刻，量出来的就是场景数据说的那个数。收摊了的卷不必——
+    // 它们那个数在自己那份报告的 `VolumeTiming` 上。
+    let mut clock = epoch;
     for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
         assert_eq!(listed.root, volume.root, "每卷状态那一列与清单同序");
         let root = expand(home, &listed.root);
@@ -812,9 +847,12 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 live.volume_finished(&skipped_report(listed, volume, disk, run));
             }
             "failed" => {
+                live.tick(clock);
                 live.volume_started(&root, listed.steps);
                 live.pass_started(Pass::Fingerprint, None);
                 step(&mut live, pages);
+                clock += Duration::from_secs_f64(volume.elapsed_s);
+                live.tick(clock);
                 live.volume_failed(
                     &root,
                     volume.failure.as_deref().expect("没做成的卷带着原因"),
@@ -839,6 +877,13 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 fixture::volume_finished_with_its_failures(&mut live, &report);
             }
             "running" | "deciding" | "aborted" => {
+                // 还没收摊的那一卷：把「此刻」退回它开卷那一刻，末尾那一次 `tick` 因此
+                // 正好量出它做了多久（等待确认那一卷有攒着的那一份报告，不必退）。
+                if volume.state != "deciding" {
+                    clock = epoch
+                        + Duration::from_secs_f64((run.elapsed_s - volume.elapsed_s).max(0.0));
+                    live.tick(clock);
+                }
                 // 分析环节走完的卷才有到此刻为止的报告（灰阶分布）；还在前两遍上的卷没有。
                 let so_far = volume
                     .tally

@@ -98,6 +98,9 @@ pub(super) fn style(tone: Tone) -> Style {
 /// | 默认 | 终端默认色 |
 /// | 次要 | 暗灰（ANSI 8）——框线、标签、说明 |
 /// | 语义色 | 平常默认色 · 注意黄 · 出事红 · 不要紧暗灰**并压暗** |
+/// | 预览 · 清点中 | 品红 |
+/// | 转换 | 青 |
+/// | 卷名 | 灰（ANSI 7） |
 /// | 灰阶档位 | 1bit 品红 · 2bit 青 · 4bit 蓝 |
 /// | 环节 | 查重品红 · 分析蓝 · 写出青 |
 /// | 完成 · 处理中 | 绿 · 蓝 |
@@ -150,6 +153,8 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Faint | Hue::Tone(Tone::Muted) => Some(Color::DarkGray),
         Hue::Tone(Tone::Caution) => Some(Color::Yellow),
         Hue::Tone(Tone::Trouble) => Some(Color::Red),
+        Hue::Kind(Kind::Preview | Kind::Surveying) => Some(Color::Magenta),
+        Hue::Kind(Kind::Convert) => Some(Color::Cyan),
         Hue::Kind(Kind::Depth(BitDepth::One)) => Some(Color::Magenta),
         Hue::Kind(Kind::Depth(BitDepth::Two)) => Some(Color::Cyan),
         Hue::Kind(Kind::Depth(BitDepth::Four)) => Some(Color::Blue),
@@ -161,6 +166,7 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Pass(_)) => None,
         Hue::Kind(Kind::Done | Kind::Caption) => Some(Color::Green),
         Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),
+        Hue::Kind(Kind::Volume) => Some(Color::Gray),
         Hue::Kind(Kind::Focus) => Some(Color::LightGreen),
         Hue::Kind(Kind::Key) => Some(Color::Yellow),
     }
@@ -290,6 +296,10 @@ mod tests {
     #[test]
     fn every_kind_has_its_colour_and_no_colour_strips_only_the_hue() {
         let kinds = [
+            (Kind::Surveying, Color::Magenta),
+            (Kind::Preview, Color::Magenta),
+            (Kind::Convert, Color::Cyan),
+            (Kind::Volume, Color::Gray),
             (Kind::Depth(BitDepth::One), Color::Magenta),
             (Kind::Depth(BitDepth::Two), Color::Cyan),
             (Kind::Depth(BitDepth::Four), Color::Blue),

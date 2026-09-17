@@ -364,9 +364,9 @@ fn under(rows: &[Row]) -> Vec<Painted> {
 /// 只印最后一段，与卷名同一条规矩（[`crate::render::volume_name`]）：
 /// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
 ///
-/// **逐页那张表的抬头也读它**（[`super::pages`]）：展开一卷之后钉在顶上的那一行要说
-/// 「这一卷的档是哪一页定的」，而那与这一列说的是同一件事，不许各取各的。
-pub(super) fn driver(rows: &[Row]) -> Option<String> {
+/// **逐页那张表的抬头也读它**（[`super::pages`]），**新界面那棵树上的代表页那一列**
+/// 同样读它（`super::super::shell::list`）：三处说的是同一件事，不许各取各的。
+pub(in crate::session) fn driver(rows: &[Row]) -> Option<String> {
     rows.iter()
         .find(|row| row.kind == RowKind::Driver)
         .and_then(|row| row.cell(Field::Source))
