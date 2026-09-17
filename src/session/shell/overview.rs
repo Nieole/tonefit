@@ -60,7 +60,9 @@ pub(super) fn draw(
 
 /// 框的抬头：**答的是「此刻在做什么」**（`CONTEXT.md` 的《总览》）。
 fn title(session: &Session, live: Option<&Live>, phase: Phase) -> Vec<Segment> {
-    let Some(live) = live else {
+    // **问的是阶段，不是「有没有那一趟」**：结束之后按 `o` 回到开跑之前那一副时，
+    // 那一趟还攒在手上（退出时仍要印它的报告），而屏上这一条该说「还没开始」。
+    let (Some(live), false) = (live, phase == Phase::Fresh) else {
         return vec![Segment::new("还没开始", Look::PLAIN.bold())];
     };
     if phase == Phase::Ended {
@@ -160,7 +162,8 @@ fn aborted_at(live: &Live) -> usize {
 
 /// 框右端那一段：跑着时是已用多久，结束之后换成输出目录。
 fn right(session: &Session, live: Option<&Live>, phase: Phase) -> Vec<Segment> {
-    let Some(live) = live else {
+    // 同上：开跑之前那一副右端一个字都不写（见 [`title`]）。
+    let (Some(live), false) = (live, phase == Phase::Fresh) else {
         return Vec::new();
     };
     if phase == Phase::Ended {

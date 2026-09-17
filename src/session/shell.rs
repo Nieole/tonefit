@@ -12,12 +12,12 @@
 //! | 往格子里写字、画框 | [`canvas`] | 本票 |
 //! | 摆不下时谁让位 | [`yielding`] | 本票（最小尺寸、总览两行那一档、路径那一列） |
 //! | 顶栏 | [`topbar`] | 本票 |
-//! | 总览 | [`overview`] | 本票：还没开始那一副宽窄两档 |
+//! | 总览 | [`overview`] | 06：还没开始那一副宽窄两档；08：清点中与跑起来；10：结束之后 |
 //! | 确认条 | — | 等待确认那一票 |
 //! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
 //! | 每页结果 | — | 每页结果那一票 |
 //! | 设置栏 · 详情栏 · 预设栏 | — | 配置视图那几票 |
-//! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张（内容出自 [`super::cover`]） |
+//! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张；10：备注行上那张**说明卡**（内容出自 [`super::cover`]） |
 //! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
 //! | 补全框 | [`completions`] | 07 |
 //! | 窗口太小 | [`small`] | 06；08 补上跑着那一行总进度 |
@@ -71,7 +71,7 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
     // 掀着覆盖层时它摆的是覆盖层自己的那两件。
     completions::draw(&mut canvas, session);
     overlay::draw(&mut canvas, session, phase);
-    footer::draw(&mut canvas, session, phase, now);
+    footer::draw(&mut canvas, session, live, phase, now);
 }
 
 /// 任务视图：顶栏底下总览钉住，剩下的高度给卷列表（每页结果与确认条随各票接进来），屏底一行。
@@ -162,6 +162,42 @@ mod tests {
     fn the_running_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("running", 120, 36);
         assert_scene("running", 80, 24);
+    }
+
+    /// **「已结束」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：
+    /// 总览抬头换成结束那句话加用时、右端写输出目录，结论行是转换那一副；转换失败的卷是
+    /// 它目录里的 `✗` 卷行、行尾是那句原因；备注行挂在分区末尾。**代表页那一列整个不在场**
+    /// ——这一趟走的是默认逐页判断（停车场 Q712）。
+    #[test]
+    fn the_ended_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("ended", 120, 36);
+        assert_scene("ended", 80, 24);
+    }
+
+    /// **「整卷统一灰阶」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：
+    /// 卷行在灰阶分布之后多一列**代表页**，砍列时排在耗时之后（80 列那一档耗时与代表页都让掉了）。
+    ///
+    /// **那条环节横条换掉三格**（各换成它右边那一格）：设计稿那一头的模拟走的是**连续时间**
+    /// ——`灰原哀/第05卷` 的 `done` 是 114.554，半页也占一格；而这一趟**一页一步**，
+    /// 走到的是 114/166，同一条横条因此少满一格（24 格的满 16 不满 17，8 格的满 5 不满 6）。
+    /// 换掉之后仍是一条断言，停车场 **Q844**。
+    #[test]
+    fn the_envelope_scene_matches_its_design_snapshot_wide_and_narrow() {
+        let scene = Scene::named("envelope");
+        // 换掉的那几格：120×36 上总览当前卷那一行（第 46 格）与树上 `灰原哀` 那一行
+        // 行尾（第 111 格）各一格，80×24 上那一行（第 57 格）一格——三处都是同一条横条。
+        for (width, height, cells) in [
+            (120u16, 36u16, &[(3usize, 46u16), (28, 111)][..]),
+            (80, 24, &[(20, 57)][..]),
+        ] {
+            let buffer = painted(&scene, width, height);
+            assert_no_background(&buffer);
+            let mut expected = design::snapshot("envelope", width, height);
+            for (row, at) in cells {
+                expected = expected.cell_like(*row, *at, at + 1);
+            }
+            assert_same_cells(&buffer, &expected);
+        }
     }
 
     /// **「窗口太小」转换中那一份逐格相等**（票面第一条）：中间那一行是总进度。

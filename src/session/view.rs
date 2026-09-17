@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
-use super::live::Live;
+use super::live::{Live, VolumeState};
 use super::look::{Look, Segment};
 use super::state::{
     DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Stage, TASTE_FIELDS,
@@ -259,12 +259,23 @@ pub struct Reply {
     pub until: Instant,
 }
 
-/// **窗口**有多大：列 × 行。终端层每一帧问一次交进来（覆盖层滚到哪儿为止从它算；半屏与一屏那四个
-/// 随各票也读它），用例给序列清单上的尺寸。
+/// **窗口**有多大：列 × 行。终端层每一帧问一次交进来（覆盖层滚到哪儿为止从它算，
+/// 半屏与一屏那四个挪几行也从它算），用例给序列清单上的尺寸。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     pub cols: u16,
     pub rows: u16,
+}
+
+impl Window {
+    /// **一屏挪几行**（设计稿的 `pageH`）：窗口高**减十二**，至少四行。
+    ///
+    /// 那十二行是屏上不归列表的那几行（顶栏、总览那个框、屏底）——它是一个**定数**，
+    /// 不是当场量出来的列表高度：总览正文那一档一换，列表就高矮不同，而「按一次 `C-f`
+    /// 挪多少」不该跟着变。`C-f`／`C-b` 挪这么多，`C-d`／`C-u` 挪它的一半。
+    pub fn page(self) -> usize {
+        usize::from(self.rows.saturating_sub(12).max(4))
+    }
 }
 
 /// 新界面的状态：此刻在哪个视图、两个视图各自记着的、盖在上面的两样、屏底那两样临时的东西。
@@ -586,7 +597,7 @@ impl Session {
             // 是终端层那一支（`super::terminal::input`）——两处记的是同一个字，
             // 出处只有这一份。
             Deed::Stop => self.stop_a_notch(now),
-            Deed::Open => self.expand_directory(),
+            Deed::Open => self.open_under_cursor(),
             Deed::Close => self.collapse_directory(),
             Deed::Follow => self.views.task.follow = true,
             Deed::TogglePath => {
@@ -595,15 +606,49 @@ impl Session {
                 }
             }
             Deed::DeletePath => self.delete_path(now),
+            // 结束之后 `o`／`i` 回到开跑之前那一副；上一趟的报告留到退出时印。
+            Deed::BackToPaths => {
+                self.back_to_paths();
+                self.views.say(
+                    vec![
+                        Segment::new("返回路径列表", Look::PLAIN.bold()),
+                        Segment::faint(" ⋅ 上次的结果会在退出时打印"),
+                    ],
+                    now,
+                );
+            }
             _ => {}
         }
         Exit::Stay
     }
 
+    /// **半屏与一屏那四个**（`C-d`／`C-u`／`C-f`／`C-b`）：光标挪[一屏](Window::page)
+    /// 或半屏那么多行。**挪几行要窗口有多高**，而那件事只有终端层知道——与
+    /// [`Views::scroll_cover`] 同一条分工，因此这一支也在那一层调
+    /// （`super::terminal` 的 `input`）。不是这四件就交回 `false`，让状态机接着认。
+    pub fn scroll_list(&mut self, deed: Deed, window: Window) -> bool {
+        // **不在卷列表上就一件都不认**：这四个键在表上派给**没被盖着的每一块**
+        // （`UNCOVERED_OR_OVERLAY`），而这一支只挪得动卷列表的光标——认下来却什么都不做，
+        // 每页结果与配置视图接上之后按下去会是一片静默（那两块自己的滚动随各自那一票接）。
+        if !self.on_the_volume_list() {
+            return false;
+        }
+        let page = window.page();
+        let by: isize = match deed {
+            Deed::HalfDown => (page / 2) as isize,
+            Deed::HalfUp => -((page / 2) as isize),
+            Deed::PageDown => page as isize,
+            Deed::PageUp => -(page as isize),
+            _ => return false,
+        };
+        self.place_cursor(|here, last| here.saturating_add_signed(by).min(last));
+        true
+    }
+
     /// 光标挪到停得住的行里的哪一条：`to` 收「此刻在第几条、最后一条是第几条」，答挪到第几条。
     /// 只在任务视图的卷列表上挪；别的块随各票接上。
     fn place_cursor(&mut self, to: impl Fn(usize, usize) -> usize) {
-        if self.views.view != View::Task || self.views.task.focus != Focus::VolumeList {
+        if !self.on_the_volume_list() {
             return;
         }
         let stops: Vec<Cursor> = self
@@ -623,6 +668,15 @@ impl Session {
             self.pause_follow();
         }
         self.views.task.cursor = there;
+    }
+
+    /// **光标此刻挪得动吗**：人在任务视图，而那个视图记着的块是卷列表。
+    ///
+    /// 问的是[视图记着的那一块](Views::block)、不是[此刻的焦点](Views::focus)：
+    /// 掀着说明卡时 `j`／`k` 挪的仍是底下那张列表的光标（设计稿 `moveBy` 那一支；
+    /// 全部按键那一张自己会先把滚动那几件收走，见 [`Views::scroll_cover`]）。
+    fn on_the_volume_list(&self) -> bool {
+        self.views.view == View::Task && self.views.task.focus == Focus::VolumeList
     }
 
     /// 按停止升一级，屏底说一句：按一次做完当前卷再停，再按一次立即停止。
@@ -649,11 +703,24 @@ impl Session {
         self.views.task.follow = false;
     }
 
-    /// `l`／`⏎`：光标停在目录行上就把它展开（`CONTEXT.md` 的《展开》：目录→卷就地展开）。
-    fn expand_directory(&mut self) {
-        if let Cursor::Directory(path) = &self.views.task.cursor {
-            let path = path.clone();
-            self.views.task.expanded.insert(path);
+    /// `l`／`⏎` 按在光标那一行上：**目录行展开**（`CONTEXT.md` 的《展开》：目录→卷
+    /// 就地展开），**备注行掀开说明卡**（`Esc` 关）。
+    ///
+    /// 卷行不在这里——那一下要问那一趟「这一卷展不展得开」，而状态机读不到它
+    /// （那一支在 `super::terminal` 的 `input`）。
+    fn open_under_cursor(&mut self) {
+        match &self.views.task.cursor {
+            Cursor::Directory(path) => {
+                let path = path.clone();
+                self.views.task.expanded.insert(path);
+            }
+            // 光标记的是那一条备注的身份，卡记的是它在树上的位置（[`Overlay::Note`]）。
+            Cursor::Note(at) => {
+                if let Some((node, which)) = self.views.task.tree.locate_note(at) {
+                    self.views.lift_note(node, which);
+                }
+            }
+            Cursor::Output | Cursor::Path(_) | Cursor::Add | Cursor::Volume(_) => {}
         }
     }
 
@@ -759,7 +826,11 @@ impl Session {
 
     /// 屏底此刻按轻重要摆哪几件（设计稿 `footerHints` 的次序），`?` 恒在末尾。
     /// 每一件的键怎么写、那一句怎么说从按键表取（[`keymap::hints`]），派不出的不摆。
-    pub fn hints(&self, phase: Phase) -> Vec<Hint> {
+    ///
+    /// **收那一趟**：树上光标那一行摆的是 `l → 展开` 还是 `l → 每页结果`、
+    /// 还是一件都不摆，末一问要问那一卷此刻怎么样（[`Session::open_want`]），
+    /// 而那件事只有那一趟答得出。没有那一趟时（还没开跑）树也不在，一件都不摆。
+    pub fn hints(&self, phase: Phase, live: Option<&Live>) -> Vec<Hint> {
         let focus = self.views.focus();
         let mut wants: Vec<Want> = Vec::new();
         match (self.views.view, focus) {
@@ -827,8 +898,11 @@ impl Session {
             ]),
             (View::Task, _) => {
                 wants.extend(self.stage_wants(phase, focus));
+                wants.push(Want::of(Deed::NextProblem));
+                // 光标那一行展得开什么摆在 `]d` 之后、`/` 之前（设计稿 `footerHints`
+                // 那一支的次序，`openHint` 就摆在这一格）。
+                wants.extend(self.open_want(live));
                 wants.extend([
-                    Want::of(Deed::NextProblem),
                     Want::of(Deed::Search),
                     Want::of(Deed::Down),
                     Want::of(Deed::Up),
@@ -837,6 +911,38 @@ impl Session {
         }
         wants.push(Want::of(Deed::Help));
         keymap::hints(phase, focus, &wants)
+    }
+
+    /// 屏底那一件「展开／每页结果／查看」——**光标那一行展得开什么**
+    /// （设计稿 `openHint`；`CONTEXT.md` 的《停得住 / 展得开》）：
+    /// 目录行是 `l → 展开`，卷行是 `l → 每页结果`，备注行是 `⏎ → 查看`。
+    ///
+    /// **卷行展不开就一件都不摆**（屏上不摆按不动的键）：展不展得开只有那一趟答得出，
+    /// 判据在 [`VolumeState::opens_the_pages`] 一处——按下去换不换屏读的是同一份。
+    fn open_want(&self, live: Option<&Live>) -> Option<Want> {
+        match &self.views.task.cursor {
+            Cursor::Directory(_) => Some(Want::saying(Deed::Open, "展开")),
+            Cursor::Volume(root) => self
+                .volume_state(live, root)
+                .opens_the_pages()
+                .then(|| Want::saying(Deed::Open, "每页结果")),
+            Cursor::Note(_) => Some(Want::saying(Deed::Open, "查看")),
+            Cursor::Output | Cursor::Path(_) | Cursor::Add => None,
+        }
+    }
+
+    /// 这个卷根在那一趟上此刻怎么样。清单上找不到它、或者那一趟还没起来，就是**等待中**
+    /// ——那时它一页结果都没有，与还没轮到一个待遇。
+    ///
+    /// **卷根换回清单序号只有一处**（[`tree::Tree::index_of`]）：状态按序号记
+    /// （[`Live::states`]），而屏上与光标记着的都是卷根。
+    pub fn volume_state(&self, live: Option<&Live>, root: &Path) -> VolumeState {
+        self.views
+            .task
+            .tree
+            .index_of(root)
+            .and_then(|at| live?.states().get(at).copied())
+            .unwrap_or(VolumeState::Queued)
     }
 
     /// 阶段那一维派的几件：等待确认时答话那三个与 `v`，跑着时停止，结束了再来一趟。
@@ -920,7 +1026,7 @@ mod tests {
             for view in [View::Task, View::Config] {
                 session.views.view = view;
                 let focus = session.views.focus();
-                let hints = session.hints(phase);
+                let hints = session.hints(phase, None);
                 assert!(!hints.is_empty(), "{phase:?} 的 {view:?} 上屏底空着");
                 for hint in &hints {
                     for spelt in &hint.keys {
@@ -942,12 +1048,47 @@ mod tests {
         }
     }
 
+    /// **半屏与一屏那四个键各挪几行**（`session-redesign/10` 票面滚动那几串）：
+    /// 一屏是[窗口高减十二](Window::page)、半屏是它的一半，到顶到底为止；
+    /// 不是这四件就一件都不做、交回 `false`。
+    ///
+    /// 这一条在 `tui` 特性**外面**跑：挪几行是纯算术，与画不画得出来无关。
+    #[test]
+    fn half_a_screen_is_half_of_the_window_minus_twelve() {
+        let sized = |cols, rows| Window { cols, rows };
+        assert_eq!(sized(120, 36).page(), 24);
+        assert_eq!(sized(80, 24).page(), 12);
+        assert_eq!(sized(60, 14).page(), 4, "再矮也是四行");
+
+        let mut session = three_paths();
+        session.scope.paths.extend((0..60).map(|at| NamedPath {
+            path: PathBuf::from(format!("/home/me/卷{at}")),
+            on: true,
+        }));
+        session.views.task.cursor = Cursor::Output;
+        let window = sized(120, 36);
+        // 停得住的共 65 行（输出目录 · 63 条处理路径 · 「＋ 添加路径」），光标停在头一行。
+        assert_eq!(session.cursor_position(), (1, 65));
+        let walk = |session: &mut Session, deed| {
+            assert!(session.scroll_list(deed, window), "{deed:?} 该归它管");
+            session.cursor_position().0
+        };
+        assert_eq!(walk(&mut session, Deed::HalfDown), 1 + 12);
+        assert_eq!(walk(&mut session, Deed::PageDown), 1 + 12 + 24);
+        assert_eq!(walk(&mut session, Deed::HalfUp), 1 + 24);
+        assert_eq!(walk(&mut session, Deed::PageUp), 1, "到顶为止");
+        assert!(
+            !session.scroll_list(Deed::Down, window),
+            "上下一行不归它（那一件状态机自己认）"
+        );
+    }
+
     /// 还没开始时屏底那几件照设计稿的轻重次序。
     #[test]
     fn before_the_run_the_footer_lists_the_eight_things_in_order() {
         let session = three_paths();
         let said: Vec<String> = session
-            .hints(Phase::Fresh)
+            .hints(Phase::Fresh, None)
             .iter()
             .map(|hint| format!("{} → {}", hint.spelt(), hint.what))
             .collect();
@@ -1134,7 +1275,7 @@ mod tests {
         let now = Instant::now();
         let footer = |session: &Session| -> Vec<String> {
             session
-                .hints(Phase::Fresh)
+                .hints(Phase::Fresh, None)
                 .iter()
                 .map(|hint| format!("{} → {}", hint.spelt(), hint.what))
                 .collect()

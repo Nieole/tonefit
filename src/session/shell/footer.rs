@@ -7,6 +7,7 @@
 //! 关掉之后原样回来）、连击键按了前半截时右端那个待续记号。
 
 use super::super::keymap::Phase;
+use super::super::live::Live;
 use super::super::look::{Kind, Look, Segment, width_of};
 use super::super::state::Session;
 use super::super::tone::Tone;
@@ -24,7 +25,13 @@ const BUFFER_KEEPS_CLEAR: u16 = 40;
 const CARET: &str = "▏";
 
 /// 画屏底。
-pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, now: Instant) {
+pub(super) fn draw(
+    canvas: &mut Canvas<'_>,
+    session: &Session,
+    live: Option<&Live>,
+    phase: Phase,
+    now: Instant,
+) {
     let y = canvas.height().saturating_sub(1);
     let width = canvas.width();
     if session.views.focus() == Focus::Input
@@ -44,7 +51,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, now
         );
         canvas.put(x, y, CARET, Look::kind(Kind::Focus));
         let right: Vec<Segment> = session
-            .hints(phase)
+            .hints(phase, live)
             .iter()
             .enumerate()
             .flat_map(|(i, said)| {
@@ -68,7 +75,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, now
         Some(reply) => reply.to_vec(),
         None => {
             let mut groups: Vec<Vec<Segment>> = session
-                .hints(phase)
+                .hints(phase, live)
                 .iter()
                 .map(|said| hint(&said.spelt(), said.what))
                 .collect();

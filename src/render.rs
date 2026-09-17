@@ -979,18 +979,32 @@ pub fn tail(report: &Report) -> Vec<Row> {
 /// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]
 /// （见 `crate::session::draw` 的报告区），而数据只有 `Report` 上那一列。
 fn non_volume_tail(report: &Report) -> String {
-    if report.non_volume_files.is_empty() {
+    let said: Vec<(PathBuf, String)> = report
+        .non_volume_files
+        .iter()
+        .map(|file| (file.path.clone(), non_volume_reason(&file.reason)))
+        .collect();
+    non_volume_stack(&said, |path| path.display().to_string())
+}
+
+/// 非漫画文件那一小结**摞成一块**：抬头一句，然后一处一行、原因一行；
+/// **列几条、剩下的怎么说**走[那一处出处](FirstFew)。一处都没有就一个字都不说。
+///
+/// `said` 逐条是**那条路径，与那一句为什么**（原因已经渲染成一句话）。
+/// 不给这一对起一个类型名：它不是一个领域概念，是这两小结逐条的**渲染形状**——
+/// 那两族东西自己的类型是 [`tonefit::NonVolumeFile`] 与 [`tonefit::UnreachablePlace`]。
+///
+/// `shown` 说的是**一条路径在屏上怎么写**：命令行原样印，会话把家目录缩成 `~`
+/// （`crate::session::home::Home::abbreviate`）。抬头与条目的形状只有这一处——
+/// 报告末尾那一小结（[`non_volume_tail`]）与会话那张**说明卡**
+/// （`crate::session::cover::Card`，一条备注只装它自己那几处）印的是同一副字。
+pub fn non_volume_stack(said: &[(PathBuf, String)], shown: impl Fn(&Path) -> String) -> String {
+    if said.is_empty() {
         return String::new();
     }
-    let mut text = format!("{}\n", non_volume_heading(report.non_volume_files.len()));
-    text.push_str(&FirstFew::of(&report.non_volume_files).stacked(
-        |file| {
-            format!(
-                "  {}\n    {}\n",
-                file.path.display(),
-                non_volume_reason(&file.reason)
-            )
-        },
+    let mut text = format!("{}\n", non_volume_heading(said.len()));
+    text.push_str(&FirstFew::of(said).stacked(
+        |(path, why)| format!("  {}\n    {why}\n", shown(path)),
         "个",
     ));
     text
@@ -1169,17 +1183,32 @@ fn failed_volume_tail(report: &Report) -> String {
 /// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]，
 /// 而数据只有 `Report` 上那一列。
 fn unreachable_tail(report: &Report) -> String {
-    if report.unreachable_places.is_empty() {
+    let said: Vec<(PathBuf, String)> = report
+        .unreachable_places
+        .iter()
+        .map(|place| (place.path.clone(), place.reason.clone()))
+        .collect();
+    unreachable_stack(&said, |path| path.display().to_string())
+}
+
+/// 无法访问那一小结**摞成一块**，形状与[非漫画文件那一小结](non_volume_stack)同形
+/// （抬头一句，然后一处一行、原因一行；`shown` 说一条路径在屏上怎么写）。
+/// 一处都没有就一个字都不说。
+///
+/// **抬头那一句在这里**（与非漫画文件那一小结不同：那一句另有一处出处，因为备注行的
+/// 行尾也印它）——无法访问那条备注行的行尾印的是**那条错误链**，不是这一句。
+pub fn unreachable_stack(said: &[(PathBuf, String)], shown: impl Fn(&Path) -> String) -> String {
+    if said.is_empty() {
         return String::new();
     }
     let mut text = format!(
         "无法访问 {} 处：打不开这些文件夹，里面有没有卷无从知道，全部跳过。\
          这一趟因此**不是「全都做成了」**，退出码跟着变；别的卷该做的照做，上面那些就是\
          做出来的。要那底下的东西，先把下面这几处修好再重跑\n",
-        report.unreachable_places.len()
+        said.len()
     );
-    text.push_str(&FirstFew::of(&report.unreachable_places).stacked(
-        |place| format!("  {}\n    {}\n", place.path.display(), place.reason),
+    text.push_str(&FirstFew::of(said).stacked(
+        |(path, why)| format!("  {}\n    {why}\n", shown(path)),
         "处",
     ));
     text
@@ -1893,13 +1922,28 @@ pub fn undone(said: &str) -> String {
     format!("这次没能完成：{said}")
 }
 
-/// 一个卷在屏上叫什么：路径的最后一段，取不出就整条路径。
+/// 一个卷在屏上叫什么：路径的最后一段，**归档卷不带扩展名**，取不出就整条路径。
 ///
 /// 命令行的进度条（`crate::Bar::start`）与会话的当前卷条（会话批的 09 号票）
 /// 印的是同一个名字，因此只有这一处。会话的**卷表**（卷名那一列与代表页那一列）走的
 /// 也是它——「屏上叫什么」在这个仓库里只有这一条规矩，一页与一卷同样只印最后那一段。
+///
+/// **归档卷让掉扩展名**：`CONTEXT.md` 的《分卷序列》把卷名定成「序列的名字」，
+/// 而库那一头认卷名的地方（`crate::source::name_of`）对归档取的正是 `file_stem`
+/// ——去处因此是 `<卷名>.cbz`。屏上叫 `第01卷.cbz` 是把**输入的扩展名**当成了卷名的一截。
+/// 认「是不是归档」只看扩展名（[`tonefit::is_archive`]，不碰盘），
+/// 而认得的那几个扩展名里**没有一个是图片格式**：一页的名字（`003.jpg`、`087.png`）
+/// 因此一格不动，两种东西共用这一条规矩仍然成立。
+///
+/// **分卷序列头一份在这里仍带着 `.partN`**：去掉那一截要读一次归档头
+/// （`crate::source::name_in_sequence`），而屏上这一问不碰盘。
 pub fn volume_name(volume: &Path) -> String {
-    volume.file_name().map_or_else(
+    let named = if tonefit::is_archive(volume) {
+        volume.file_stem()
+    } else {
+        volume.file_name()
+    };
+    named.map_or_else(
         || volume.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
@@ -2983,6 +3027,30 @@ mod tests {
 
         assert!(text.contains("逐个读"), "{text}");
         assert!(text.contains("是网络路径"), "{text}");
+    }
+
+    /// **一个卷在屏上叫什么**（[`volume_name`]）：目录卷是路径的末一级，
+    /// **归档卷不带扩展名**——`CONTEXT.md` 的《分卷序列》把卷名定成「序列的名字」，
+    /// 去处也是 `<卷名>.cbz`，屏上带着**输入的**扩展名是把它当成了卷名的一截。
+    ///
+    /// **一页的名字一格不动**：认得的归档扩展名里没有一个是图片格式，
+    /// 「屏上叫什么」因此仍是一条规矩、一页与一卷共用。
+    ///
+    /// **分卷序列头一份在这里仍带着 `.partN`**：去掉那一截要读一次归档头，
+    /// 而屏上这一问不碰盘（停车场 Q849）。
+    #[test]
+    fn a_volume_loses_its_archive_extension_and_a_page_keeps_its_own() {
+        let named = |path: &str| volume_name(Path::new(path));
+        assert_eq!(named("/库/棋魂/第01卷"), "第01卷", "目录卷是末一级");
+        assert_eq!(named("/库/第01卷.cbz"), "第01卷");
+        assert_eq!(named("/库/第01卷.ZIP"), "第01卷", "扩展名大小写不敏感");
+        assert_eq!(named("003.jpg"), "003.jpg", "一页仍带着它自己的扩展名");
+        assert_eq!(named("087.png"), "087.png");
+        assert_eq!(
+            named("/库/第01卷.part1.rar"),
+            "第01卷.part1",
+            "分卷序列头一份那一截要读归档头才去得掉（Q849）"
+        );
     }
 
     /// 被隔离的卷要说清三件事：几页失败、整卷去了哪儿、每一页各是为什么

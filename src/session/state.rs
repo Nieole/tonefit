@@ -50,7 +50,7 @@ use super::complete;
 use super::home::Home;
 use super::live::{Branch, Live, Reach, Volume};
 use super::tone::Tone;
-use super::view::Views;
+use super::view::{Cursor, Views};
 use crate::preset::{DeviceLayer, Preset, TasteLayer};
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在 [`super::translate`]。
@@ -1682,6 +1682,26 @@ impl Session {
         if self.stage.read_only() {
             self.stage = Stage::Ended;
         }
+    }
+
+    /// **结束之后 `o`／`i` 回到开跑之前那一副**（`CONTEXT.md` 的《卷列表》末一句；
+    /// spec《卷列表》；设计稿 `taskKey` 的 `S.run = null`）：阶段退回[没跑过](Stage::Fresh)，
+    /// 卷列表因此从那棵树换回处理路径，总览换回「还没开始」，屏底换回开跑之前那几件。
+    ///
+    /// **那一趟本身不丢**：退出会话时 stdout 上仍印得出上一趟的报告
+    /// （`super::run::Running::report` 读的是那一趟攒下来的那一份）——屏底那一句说的就是它。
+    /// 屏上「还没开始」因此由**阶段**说了算，不由「有没有那一趟」说了算
+    /// （画法那几处问的是 [`super::keymap::Phase`]）。
+    ///
+    /// **只在结束了那一档按得动**（按键表上那两行标的是 `ENDED`）：跑着的时候
+    /// `o`／`i` 一件事都不派。
+    pub fn back_to_paths(&mut self) {
+        if self.stage != Stage::Ended {
+            return;
+        }
+        self.stage = Stage::Fresh;
+        self.views.task.start_a_run();
+        self.views.task.cursor = Cursor::Output;
     }
 
     /// **切焦点**：左栏 ⇄ 报告区（`CONTEXT.md` 的《会话》：焦点）。

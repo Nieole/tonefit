@@ -66,9 +66,12 @@ pub(super) struct Viewport {
 
 /// 一条滚动条画成什么样：**列表有多长、此刻停在第几行、格子里露出几行**。
 ///
-/// 滑块画多长、画在哪一截，由这三个数定——**那一步归终端库自带的那个 widget**
-/// （`ratatui::widgets::Scrollbar`），本仓库不自己画一条。没有可滚的东西时
-/// 根本拿不到它（[`Viewport::scrollbar`] 给 `None`）。
+/// 滑块画多长、画在哪一截，由这三个数定；**怎么画两副界面各一处**——旧那一副交给
+/// 终端库自带的那个 widget（`ratatui::widgets::Scrollbar`，见 `super::draw::scrollbar`），
+/// 新那一副照设计稿那两条式子自己算（见 `super::shell::canvas` 的 `scrollbar`：
+/// 那个 widget 的位置取整与设计稿差在 `.5` 那一格上，而新界面要逐格相等）。
+/// 过渡期两处，与两个砍列次序（停车场 Q804）是同一笔代价，合回一处是 15 号票的事
+/// （停车场 Q850）。没有可滚的东西时根本拿不到这三个数（[`Viewport::scrollbar`] 给 `None`）。
 ///
 /// 名字里的「条」是**滚动**条，与总览块那两条进度条（`super::draw::overview`）不是一回事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

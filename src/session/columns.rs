@@ -945,6 +945,29 @@ mod tests {
         }
     }
 
+    /// **默认逐页那一趟代表页那一列连列头都不在场**（`session-redesign/10` 票面第三个
+    /// 验收框；停车场 Q712）。
+    ///
+    /// 问的是**两件事**：它不在[此刻在场的那几列](TreeWidths::kept)里，而且**宽度是零**
+    /// ——画法那一层照这个数往右走笔（`super::shell::list` 的 `lined_row`），
+    /// 只问 `kept()` 的话，一列「在场但宽零」与「不在场」分不开，而屏上差的是十七格。
+    /// 再宽都不在场：它不是让位让掉的，是这一趟没有这件事。
+    #[test]
+    fn without_the_envelope_the_driver_column_is_not_there_at_all() {
+        for inner in [200, 130, 116, 100, 92, 80, 40] {
+            let widths = TreeWidths::of(inner, false);
+            assert_eq!(widths.driver, 0, "{inner} 列宽上代表页那一列占了格");
+            assert!(
+                !widths.kept().contains(&TreeColumn::Driver),
+                "{inner} 列宽上代表页那一列在场"
+            );
+        }
+        // 整卷统一灰阶那一趟够宽就在场，而它仍要让在耗时之后（上一条钉的是那个次序）。
+        let envelope = TreeWidths::of(130, true);
+        assert!(envelope.driver > 0);
+        assert!(envelope.kept().contains(&TreeColumn::Driver));
+    }
+
     /// 一份够宽的量：各列都比列头宽一点。
     ///
     /// 灰阶分布那一格照真实那一副的量级给（两档，`two-pass-rework/02`）：

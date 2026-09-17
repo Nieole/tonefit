@@ -166,7 +166,7 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Pass(_)) => None,
         Hue::Kind(Kind::Done | Kind::Caption) => Some(Color::Green),
         Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),
-        Hue::Kind(Kind::Volume) => Some(Color::Gray),
+        Hue::Kind(Kind::Volume | Kind::Prose) => Some(Color::Gray),
         Hue::Kind(Kind::Focus) => Some(Color::LightGreen),
         Hue::Kind(Kind::Key) => Some(Color::Yellow),
     }
@@ -300,6 +300,7 @@ mod tests {
             (Kind::Preview, Color::Magenta),
             (Kind::Convert, Color::Cyan),
             (Kind::Volume, Color::Gray),
+            (Kind::Prose, Color::Gray),
             (Kind::Depth(BitDepth::One), Color::Magenta),
             (Kind::Depth(BitDepth::Two), Color::Cyan),
             (Kind::Depth(BitDepth::Four), Color::Blue),

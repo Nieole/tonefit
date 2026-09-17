@@ -276,8 +276,12 @@ pub(super) fn input(
     if session.views.cover.is_some()
         && session
             .views
-            .scroll_cover(deed, &cover::Sheet::of(phase, window))
+            .scroll_cover(deed, &cover::Sheet::of(phase, window), window)
     {
+        return Exit::Stay;
+    }
+    // **半屏与一屏那四个**：光标挪几行要窗口有多高（`Session::scroll_list`）。
+    if session.scroll_list(deed, window) {
         return Exit::Stay;
     }
     match deed {
@@ -357,27 +361,24 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
         return;
     };
     let at = session.views.task.tree.index_of(&root);
-    let state = at
-        .and_then(|at| {
-            running
-                .live()
-                .and_then(|live| live.states().get(at).copied())
-        })
-        .unwrap_or(VolumeState::Queued);
+    let state = session.volume_state(running.live().as_deref(), &root);
+    // 展得开的那几卷换屏进每页结果，归 `session-redesign/11`：那一屏还没有，
+    // 这一下因此原地不动、一句话都不说（说「做不到」是句假话）。展不展得开的判据
+    // 在 [`VolumeState::opens_the_pages`] 一处——屏底摆不摆 `l` 读的是同一份。
+    if state.opens_the_pages() {
+        return;
+    }
     let undone = at.and_then(|at| {
         running
             .live()
             .and_then(|live| live.undone_at(at).map(str::to_owned))
     });
     let said = match state {
-        // 展得开的那几卷换屏进每页结果，归 `session-redesign/11`：那一屏还没有，
-        // 这一下因此原地不动、一句话都不说（说「做不到」是句假话）。
+        // 上面那道守卫已经把展得开的那几卷挡回去了。
         VolumeState::Done
         | VolumeState::Isolated
         | VolumeState::Skipped
-        | VolumeState::Deciding => {
-            return;
-        }
+        | VolumeState::Deciding => return,
         VolumeState::Failed => vec![
             Segment::new("✗ 转换失败：", Look::tone(Tone::Trouble).bold()),
             Segment::plain(format!(
@@ -859,11 +860,13 @@ mod redesign {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
+    use super::super::cover::Overlay;
     use super::super::draw::design::{self, assert_no_background, assert_same_cells};
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
     use super::super::state::{Exit, Key};
+    use super::super::view::Cursor;
     use super::super::view::{Input, Window};
 
     /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
@@ -874,7 +877,7 @@ mod redesign {
             Some(live) => Running::holding(live),
             None => Running::default(),
         };
-        let now = scene.now();
+        let mut now = scene.now();
         let window = Window {
             cols: sequence.size.0,
             rows: sequence.size.1,
@@ -882,9 +885,25 @@ mod redesign {
         let mut exit = Exit::Stay;
         for step in &sequence.steps {
             assert!(
-                !matches!(step, Step::Advance(_) | Step::Resize(_, _)),
-                "「{name}」里推进与换尺寸那两种步随各票接上"
+                !matches!(step, Step::Resize(_, _)),
+                "「{name}」里换尺寸那一种步随它那一票接上"
             );
+            // **推进几秒**：夹具没有线程，推进之后那一趟走到哪儿由这一串自己的场景数据说
+            // （`Scene::advance_to`，停车场 Q805 的同一条）。界面状态一格不动。
+            //
+            // **只认最后一步上的推进**：场景数据说的是这一串**走完那一刻**，推进之后还有
+            // 输入的那几串（`running-j-advance-F`、`deciding-x-advance`）拿它当中间态是错的
+            // ——那几串归 09／12，到时候得给夹具一份中间态（停车场 Q852）。
+            if matches!(step, Step::Advance(_)) {
+                assert!(
+                    std::ptr::eq(step, sequence.steps.last().expect("这一串有步")),
+                    "「{name}」的推进不在最后一步上：夹具只摆得出走完那一刻（Q852）"
+                );
+                scene.advance_to(scene::sequence_data(name));
+                running = Running::holding(scene.live.take().expect("推进之后那一趟"));
+                now = scene.now();
+                continue;
+            }
             for input in step.inputs() {
                 exit = super::input(&mut scene.session, &mut running, now, window, input);
             }
@@ -921,6 +940,23 @@ mod redesign {
     /// 走完一串，逐格对它的交互期望屏，顺带核一个背景色都没设（停车场 Q737）。
     fn assert_sequence(name: &str) -> Scene {
         assert_sequence_blanking(name, None)
+    }
+
+    /// 同上，另外**把期望屏上几段往右推几格**：设计稿在那儿摆的字与实现照规矩写下的
+    /// 差的只有一截缩进（见 [`super::super::draw::design::Expected::shifted`]，
+    /// 每一处都写清是哪一条停车场条目）。
+    fn assert_sequence_shifting(name: &str, shifts: &[(usize, u16, u16, u16)]) -> Scene {
+        let (scene, running, exit) = walked(name);
+        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
+        let size = scene::sequence(name).size;
+        let buffer = painted(&scene, &running, size);
+        assert_no_background(&buffer);
+        let mut expected = design::sequence(name);
+        for (row, from, width, by) in shifts {
+            expected = expected.shifted(*row, *from, *width, *by);
+        }
+        assert_same_cells(&buffer, &expected);
+        scene
     }
 
     /// 同上，另外**抹掉期望屏上一段**：设计稿在那儿写着一句话而实现照规矩不写它
@@ -1053,6 +1089,23 @@ mod redesign {
         assert_eq!(scene.session.stopping(), tonefit::Instruction::Continue);
     }
 
+    /// **`s` 按一次、做完当前卷就停**（票面第二条、第二个验收框的「两种结束抬头」之一）：
+    /// 再推进 30 秒，那一趟收了场——总览抬头换成「已停止 ⋅ 处理到第 27 卷 ⋅ 用时 …」、
+    /// 右端换成输出目录，框右端那一枚自动滚动不在了，屏底换成 `t`／`x` 再开一趟
+    /// 与 `l → 每页结果`。另一种抬头（「已中断」）走 `running-s-s`。
+    ///
+    /// **推进那几秒由这一串自己的场景数据接上**（`Scene::advance_to`）：夹具没有线程，
+    /// 那一卷不会自己做完（停车场 Q805 的同一条）。
+    #[test]
+    fn stopping_once_and_letting_it_finish_says_it_stopped() {
+        let scene = assert_sequence("running-s-advance");
+        assert_eq!(
+            scene.session.stage(),
+            super::super::state::Stage::Ended,
+            "那一趟收了场"
+        );
+    }
+
     /// **立即停止之后那一卷展不开**：屏底说它没有保存，也没有每页结果。
     #[test]
     fn an_aborted_volume_says_why_it_cannot_be_opened() {
@@ -1065,6 +1118,155 @@ mod redesign {
         let (_, _, exit) = walked("running-q");
         assert_eq!(exit, Exit::Stay, "跑着时 `q` 不退出");
         assert_sequence("running-q");
+    }
+
+    /// **半屏与一屏那四个键挪光标**（`session-redesign/10` 票面第二条的滚动那几串）：
+    /// `C-d`／`C-u` 挪[半屏](super::super::view::Window::page)、`C-f`／`C-b` 挪一屏，
+    /// `G`／`gg` 到底到顶；走完与期望屏逐格相等。36 行的窗口上一屏是 24 行、半屏 12 行。
+    #[test]
+    fn half_a_screen_and_a_whole_screen_move_the_cursor_that_many_rows() {
+        for name in [
+            "ended-C-d",
+            "ended-C-d-C-u",
+            "ended-C-f",
+            "ended-C-f-C-b",
+            "ended-G",
+            "ended-G-gg",
+        ] {
+            assert_sequence(name);
+        }
+    }
+
+    /// **`h` 在卷行上收起它那个目录、光标跟着停到目录行上，`l`／`⏎` 再展开**
+    /// （`CONTEXT.md` 的《展开》）：三串走完与期望屏逐格相等，屏底那一件跟着光标那一行
+    /// 从 `l → 每页结果` 换成 `l → 展开`。
+    ///
+    /// **`ended-h-Enter-Enter` 这一票没接**：那一串要 `⏎` 在**展开着的**目录行上收起它，
+    /// 而表上 `l` 与 `⏎` 派的是同一件事（一律展开）——停车场 **Q806** 记着那一条，
+    /// 收法归鼠标那一票（双击等于 `⏎`）。
+    #[test]
+    fn h_collapses_the_directory_of_the_volume_and_l_opens_it_again() {
+        let scene = assert_sequence("ended-h");
+        assert!(
+            matches!(scene.session.views.task.cursor, Cursor::Directory(_)),
+            "光标跟着停到目录行上"
+        );
+        assert_sequence("ended-h-l");
+        assert_sequence("ended-h-Enter");
+    }
+
+    /// **没做成的那一卷停得住、展不开**：屏底说的是**它行尾那句原因**
+    /// （票面第二条那一句「转换失败的卷…行尾是那句原因」；`CONTEXT.md` 的
+    /// 《停得住 / 展得开》：「没做成的那一句就是它行尾的原因」）。
+    #[test]
+    fn a_failed_volume_says_the_reason_from_its_own_row() {
+        assert_sequence("ended-failed-l");
+    }
+
+    /// **备注行上 `⏎` 掀开说明卡、`Esc` 关**（票面第二条、第二个验收框）：
+    /// 卡居中、底下整屏压暗、卷列表的框跟着细下来，关掉之后底下一格不差地回来。
+    ///
+    /// 两种备注各掀一张：**无法访问**那一张框与抬头是出事色（`ended-note-Enter`），
+    /// **非漫画文件**那一张是聚焦色、正文里三个文件各一段（`ended-nonvolume-Enter`）。
+    #[test]
+    fn enter_on_a_note_row_lifts_the_card_and_escape_closes_it() {
+        let scene = assert_sequence("ended-note");
+        assert!(scene.session.views.cover.is_none(), "还没掀开");
+        let scene = assert_sequence("ended-note-Enter");
+        assert!(
+            matches!(scene.session.views.cover, Some(Overlay::Note { .. })),
+            "`⏎` 掀开的是说明卡"
+        );
+        let scene = assert_sequence("ended-note-Enter-Escape");
+        assert!(scene.session.views.cover.is_none(), "`Esc` 关掉了它");
+    }
+
+    /// **非漫画文件那一条备注的说明卡**：正文那几行**出自报告末尾那一小结**
+    /// （`render::non_volume_stack`，ADR 0016），路径把家目录缩成 `~`。
+    ///
+    /// **正文折下来的那两行往右推四格**：设计稿那一头的折行**不带悬挂缩进**，
+    /// 而屏上折行只有一套规矩（`crate::wrap`：行首那一截缩进跟着折下来的每一行走，
+    /// 停车场 Q32／Q114）——那一条仍然成立，因此这一串照它缩。推开之后仍是一条断言，
+    /// 停车场 **Q845**。
+    #[test]
+    fn the_card_of_the_ignored_files_says_what_the_report_says() {
+        let scene =
+            assert_sequence_shifting("ended-nonvolume-Enter", &[(20, 25, 70, 4), (23, 25, 70, 4)]);
+        assert!(matches!(
+            scene.session.views.cover,
+            Some(Overlay::Note { .. })
+        ));
+    }
+
+    /// **结束之后 `o` 回到开跑之前那一副**（票面第二条、第二个验收框）：卷列表从那棵树
+    /// 换回处理路径（末行「＋ 添加路径」跟着回来）、总览换回「还没开始」、屏底换回开跑之前
+    /// 那几件，屏底那一句说上次的结果会在退出时打印。**那一趟仍攒在手上**——
+    /// 退出时 stdout 上印得出它。
+    #[test]
+    fn o_after_the_run_goes_back_to_the_path_list() {
+        let (scene, running, _) = walked("ended-o");
+        assert_eq!(
+            scene.session.stage(),
+            super::super::state::Stage::Fresh,
+            "回到了开跑之前那一档"
+        );
+        assert!(!scene.session.views.task.surveyed, "树不在了");
+        assert!(
+            running.report().is_some(),
+            "上一趟那一份报告还在，退出时印得出"
+        );
+        assert_sequence("ended-o");
+    }
+
+    /// **结束了那一档上 `o`／`i`／`t`／`x` 各派什么**（票面第四条那一句「`o`／`i` 回到
+    /// 开跑之前那一副，`t`／`x` 再开一趟」）：两个键回路径列表、两个键再开一趟。
+    ///
+    /// `i` 与 `o` 派的是**同一件事**（表上那两行），而 `i` 在还没开始那一档派的是「修改这一条」
+    /// ——同一个键在两档上两件事，问的因此得是「这一档上派什么」。
+    #[test]
+    fn at_the_end_o_and_i_go_back_and_t_and_x_start_another_run() {
+        let mut scene = Scene::named("ended");
+        let now = scene.now();
+        let phase = super::super::keymap::Phase::Ended;
+        let deed = |scene: &mut Scene, letter: char| {
+            scene
+                .session
+                .deed_of(Input::Key(Key::Char(letter)), phase, now)
+        };
+        for letter in ['o', 'i'] {
+            assert_eq!(
+                deed(&mut scene, letter),
+                Some(super::super::keymap::Deed::BackToPaths),
+                "结束了那一档上 `{letter}` 该回路径列表"
+            );
+        }
+        assert_eq!(
+            deed(&mut scene, 't'),
+            Some(super::super::keymap::Deed::Preview)
+        );
+        assert_eq!(
+            deed(&mut scene, 'x'),
+            Some(super::super::keymap::Deed::Convert)
+        );
+    }
+
+    /// **结束之后 `?` 掀开的那一张只列这一档派得出的键**（票面预告的 `ended-help`）：
+    /// `t`／`x` 写的是「再预览」「再转换」那两行长句，`s` 停止整个不在，
+    /// 「路径」那一组只剩 `o i → 返回路径列表`。
+    #[test]
+    fn the_key_sheet_at_the_end_lists_what_this_phase_deals() {
+        assert_sequence("ended-help");
+    }
+
+    /// **结束了 `q` 交出退出**（spec《退出会话》：`q` 只在还没开始与结束了时退出）。
+    ///
+    /// 与 `fresh-q` 那一条同一个判法（停车场 **Q774**）：设计稿在这一串上画的那句
+    /// 「退出（原型里不会真的退出）」是原型自己的话——它自己就这么写着——实现不画它，
+    /// 这一条断的是**那一支交出退出**，不比屏。
+    #[test]
+    fn q_after_the_run_hands_out_the_exit() {
+        let (_, _, exit) = walked("ended-q");
+        assert_eq!(exit, Exit::Leave);
     }
 
     /// **还在处理与还没轮到的卷停得住、展不开**：按下去不换屏，屏底说为什么
