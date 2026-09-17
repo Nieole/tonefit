@@ -712,6 +712,7 @@ fn item_named(key: &str) -> Option<Item> {
         "设计稿的 {key} 认成了配置视图外面的一项"
     );
     Some(Item::Setting(field))
+}
 
 /// 场景数据里**光标停在一条备注行上**、或者**说明卡掀着**的那两种，摆在树拼出来之后：
 /// 认一条备注靠的是它的「是哪几处」（场景数据的 `cursor.what` 与那张卡自己的 `entries`），
