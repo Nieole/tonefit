@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use super::complete::{self, SEPARATORS};
 use super::look::{Kind, Look, Segment};
-use super::state::{NamedPath, Session};
+use super::state::{Field, NamedPath, Session};
 use super::tone::Tone;
 use super::view::Cursor;
 
@@ -42,11 +42,14 @@ const NO_MATCH_LINGERS: Duration = Duration::from_millis(1600);
 )]
 pub const CANDIDATES_SHOWN: usize = 8;
 
+/// 一项设置**打了个空串**进来时屏底那一句里写什么（设计稿 `submitInput` 的 `'未设置'`）。
+const VALUE_UNSET: &str = "未设置";
+
 /// 屏上路径的写法用 `/`：与 [`Home::abbreviate`](super::home::Home::abbreviate) 同一条、与设计稿一致。
 /// 认用户敲的分隔符时两种都认（[`SEPARATORS`]）。
 const SHOWN_SEPARATOR: char = '/';
 
-/// 输入行用在哪一件事上；提示词随它。改一项设置的值、给预设起名、搜索随各自的票添。
+/// 输入行用在哪一件事上；提示词随它。给预设起名、搜索随各自的票添。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     /// 添加一条处理路径。
@@ -55,21 +58,35 @@ pub enum Purpose {
     EditPath(PathBuf),
     /// 改输出目录。
     Output,
+    /// **改一项设置的值**：配置视图里自由填的那几项（`CONTEXT.md` 的《详情栏》：
+    /// 「自由填的那几项列当前值与 `i` 修改」）。
+    Setting(Field),
 }
 
 impl Purpose {
     /// 提示词（设计稿 `startInput`）。**末尾那两格空算在提示词里**：设计稿按种类定它，
-    /// 搜索那一种是 `/`、后面不空（随搜索那一票添）。
+    /// 搜索那一种是 `/`、后面不空（随搜索那一票添）。改一项设置的值那一种的提示词
+    /// **就是那一项的名字**，不另写一份。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
     )]
-    pub fn prompt(&self) -> &'static str {
+    pub fn prompt(&self) -> String {
         match self {
-            Self::AddPath => "添加路径  ",
-            Self::EditPath(_) => "修改路径  ",
-            Self::Output => "输出目录  ",
+            Self::AddPath => "添加路径  ".to_owned(),
+            Self::EditPath(_) => "修改路径  ".to_owned(),
+            Self::Output => "输出目录  ".to_owned(),
+            Self::Setting(field) => format!("{}  ", field.label()),
         }
+    }
+
+    /// `Tab` 在这一种输入行上补得出东西吗——**只有路径那几种补得出**
+    /// （设计稿 `complete`：别的种类直接返回）。
+    ///
+    /// 屏底右端那一件照旧按表摆（`Complete` 只在还没开始那一档派得出）：表上没有
+    /// 「输入行用在哪件事上」那一维，停车场 Q794 记着这一处两边对不上的由来。
+    fn completes(&self) -> bool {
+        matches!(self, Self::AddPath | Self::EditPath(_) | Self::Output)
     }
 }
 
@@ -246,6 +263,10 @@ impl Session {
         let Some(line) = &mut self.views.input else {
             return;
         };
+        // 补全只对路径那几种有意义（[`Purpose::completes`]）：改一项设置的值按下去一个字都不动。
+        if !line.purpose.completes() {
+            return;
+        }
         if line.candidates.len() > 1 {
             line.cycle();
             return;
@@ -292,6 +313,14 @@ impl Session {
 
     /// 按 `⏎`：关掉输入行、收下打的那条路径（模块文档《确定与取消》）。
     pub fn confirm_typed(&mut self, now: Instant) {
+        // 改一项设置的值不问盘：它收的是一个数、一个界、一个字节数，不是一条路径。
+        if let Some(line) = &self.views.input
+            && let Purpose::Setting(field) = line.purpose
+        {
+            let typed = line.buffer.trim().to_owned();
+            self.settle_typed(field, &typed, now);
+            return;
+        }
         let Some(line) = self.views.input.take() else {
             return;
         };
@@ -313,6 +342,8 @@ impl Session {
         let shown = self.home_shown(&on_disk);
         let done = || Segment::new("✓ ", Look::kind(Kind::Done).bold());
         match line.purpose {
+            // 改一项设置的值上面那道岔路已经收走了，走不到这里。
+            Purpose::Setting(_) => {}
             Purpose::Output => {
                 self.scope.out = Some(on_disk);
                 self.views.say(
@@ -358,6 +389,49 @@ impl Session {
                     now,
                 );
             }
+        }
+    }
+
+    /// 打开输入行**改配置视图里光标那一项的值**：缓冲里先摆着它此刻的可编辑写法
+    /// （空串代表「没说」）。光标停在别的项上、或者这一趟已经锁住设置时什么都不做。
+    pub fn open_valuing(&mut self) {
+        if self.settings_locked() {
+            return;
+        }
+        let Some(field) = self.filled_item() else {
+            return;
+        };
+        let start = self.typed(field);
+        self.views.input = Some(InputLine::new(Purpose::Setting(field), start));
+    }
+
+    /// 收下改一项设置打出来的东西：空串是「没说」，落回默认值。
+    ///
+    /// **验的是那一项自己的界**（[`Session::take`]，与命令行、预设那两头同一处）；
+    /// **解析不过就留在输入行上**——把用户打的东西丢掉再让他重打一遍是最差的那一种处置。
+    fn settle_typed(&mut self, field: Field, typed: &str, now: Instant) {
+        match self.take(field, typed) {
+            Ok(()) => {
+                self.views.input = None;
+                let said = match typed.is_empty() {
+                    true => VALUE_UNSET.to_owned(),
+                    false => typed.to_owned(),
+                };
+                self.views.say(
+                    vec![
+                        Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                        Segment::plain(format!("{} → {said}", field.label())),
+                    ],
+                    now,
+                );
+            }
+            Err(error) => self.views.say(
+                vec![
+                    Segment::new("✗ ", Look::tone(Tone::Trouble).bold()),
+                    Segment::new(format!("{error}"), Look::tone(Tone::Trouble)),
+                ],
+                now,
+            ),
         }
     }
 

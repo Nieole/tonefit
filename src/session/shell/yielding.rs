@@ -13,6 +13,13 @@ pub(super) const LEAST: (u16, u16) = (60, 16);
 /// 不到这么多行时总览正文收成两行。
 const COMPACT_BELOW: u16 = 30;
 
+/// 不到这么多列时配置视图退成单栏（`CONTEXT.md` 的《让位》）。
+const SINGLE_COLUMN_BELOW: u16 = 90;
+
+/// 设置栏至多多宽，以及两栏摆得下时它占整屏的几成（设计稿 `drawConfig` 的 `LW`）。
+const SETTINGS_WIDEST: u16 = 56;
+const SETTINGS_SHARE: u32 = 45;
+
 /// 窗口太小：只剩「窗口太小」那几行（`CONTEXT.md` 的《让位》）。
 pub(super) fn too_small(screen: Rect) -> bool {
     screen.width < LEAST.0 || screen.height < LEAST.1
@@ -21,6 +28,20 @@ pub(super) fn too_small(screen: Rect) -> bool {
 /// 总览正文收不收成两行。
 pub(super) fn compact(screen: Rect) -> bool {
     screen.height < COMPACT_BELOW
+}
+
+/// 配置视图退不退成单栏。
+pub(super) fn single_column(screen: Rect) -> bool {
+    screen.width < SINGLE_COLUMN_BELOW
+}
+
+/// 设置栏有多宽：整屏的四成半，至多 56 列；退成单栏那一刻它占整屏。
+pub(super) fn settings_width(screen: Rect) -> u16 {
+    if single_column(screen) {
+        return screen.width;
+    }
+    let share = (u32::from(screen.width) * SETTINGS_SHARE / 100) as u16;
+    share.min(SETTINGS_WIDEST)
 }
 
 /// 开跑之前路径那一列有多宽：最长那条路径加两格，至少 20 格、至多让行尾那一句留 40 格
@@ -44,6 +65,16 @@ mod tests {
         assert!(too_small(Rect::new(0, 0, 60, 15)));
         assert!(compact(Rect::new(0, 0, 80, 24)));
         assert!(!compact(Rect::new(0, 0, 120, 36)));
+    }
+
+    /// 配置视图：90 列起两栏，设置栏占四成半、至多 56 列；退成单栏时它占整屏。
+    #[test]
+    fn the_config_view_falls_back_to_one_column_below_ninety_columns() {
+        assert!(!single_column(Rect::new(0, 0, 90, 36)));
+        assert!(single_column(Rect::new(0, 0, 89, 36)));
+        assert_eq!(settings_width(Rect::new(0, 0, 120, 36)), 54);
+        assert_eq!(settings_width(Rect::new(0, 0, 160, 36)), 56);
+        assert_eq!(settings_width(Rect::new(0, 0, 80, 24)), 80);
     }
 
     /// 路径那一列：最长的加两格，夹在 20 与「留 40 格给行尾」之间。

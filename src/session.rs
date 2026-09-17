@@ -33,6 +33,7 @@
 //! 家目录缩写在 [`home`]，屏上一格要什么样子（语义色之外的种类色）在 [`look`]，
 //! 输入行与补全在 [`typing`]，覆盖层与全部按键那一张在 [`cover`]，
 //! 清点之后卷列表那棵树（分区 · 目录行 · 卷行 · 备注行）的拼法在 [`tree`]；
+//! 配置视图那一副的内容（设置栏那几行、详情栏那几格、画质判定参数那五行）在 [`config`]；
 //! 整屏画法与屏上那几块在 [`shell`]（一块一个模块，名单在它的模块文档里），
 //! 终端层把一个输入交给新会话的那一支是 [`terminal`] 的 `input`（与旧的 `press` 并排）。
 //!
@@ -40,7 +41,7 @@
 //!
 //! **分界就是这几行 `mod`。**上面十四个模块（[`columns`]、[`state`]、[`live`]、[`run`]、
 //! [`complete`]、[`viewport`]、[`tone`]、[`look`]、[`home`]、[`keymap`]、[`view`]、[`cover`]、
-//! [`typing`]、[`tree`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
+//! [`typing`]、[`tree`]、[`config`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
 //! 那一趟照编、照跑它们自带的用例（`p2-loose-ends/01`，闸门的第二条）；只在 `test` 里的
 //! [`scene`] 也在外面，那一趟照跑它不经画法的那几条。真要终端库的那三个
 //! （[`draw`] 画旧界面，[`shell`] 画新界面，[`terminal`] 进出终端并翻译 crossterm 键码）
@@ -85,6 +86,11 @@ mod viewport;
 // 切到新界面（`session-redesign/15`）时这一句自己报「没用上」（`unfulfilled_lint_expectations`），
 // 那时拆掉，此后真死代码照报。闸门 2 那一趟里「只有画法读得到」的那几处**各挂各的一句**
 // （`docs/agents/gate.md`《读结果》），不在模块上放开。
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")
+)]
+mod config;
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "真会话仍进旧界面，切换在 session-redesign/15")

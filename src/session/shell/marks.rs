@@ -3,6 +3,10 @@
 //!
 //! 三样各只有一处出处：总览、卷列表那棵树、窗口太小那一屏画的是同一个转轮、同一种横条、
 //! 同一套记号——**颜色不是唯一载体**，每一处上色的地方旁边都靠这几个字形说话。
+//!
+//! 转轮那一样的**出处在 [`super::super::view`]**（`SPINNER` 与 `SPINS_EVERY`）：顶栏右端那一截
+//! 读的是同一份，而那一份摆在 `tui` 特性外面——反过来摆不成，本模块整个在特性后面。
+//! 本模块只多做一件它管不着的事：一行自己的**错相**（`offset`）。
 
 use std::time::{Duration, Instant};
 
@@ -11,12 +15,7 @@ use tonefit::{Candidate, Dither, Pass};
 use super::super::live::VolumeState;
 use super::super::look::{Kind, Look, Segment};
 use super::super::tone::Tone;
-
-/// 转轮的十格（盲文点阵：东亚宽度窄，一格一个字符，宽度稳）。
-const SPIN: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// 转轮一格转多久。十格一圈，九百毫秒。
-const A_FRAME: Duration = Duration::from_millis(90);
+use super::super::view::{SPINNER, SPINS_EVERY};
 
 /// 横条的两个字形：走过的那一截与没走的那一截（盲文点阵，宽度稳）。
 const FULL: &str = "⣿";
@@ -28,9 +27,9 @@ const EMPTY: &str = "⣀";
 /// `offset` 是这一行自己的错相：清点中那一副的处理路径**一行一格地错开**（设计稿），
 /// 让一串路径看着像在依次扫过去；别处一律传零，屏上那几个转轮同相。
 pub(super) fn spinner(now: Instant, opened_at: Instant, offset: usize) -> &'static str {
-    let frames = now.saturating_duration_since(opened_at).as_millis() / A_FRAME.as_millis();
-    let at = (frames as usize).wrapping_add(offset) % SPIN.len();
-    SPIN[at]
+    let frames = now.saturating_duration_since(opened_at).as_millis() / SPINS_EVERY.as_millis();
+    let at = (frames as usize).wrapping_add(offset) % SPINNER.len();
+    SPINNER[at]
 }
 
 /// 一条横条画成什么样：走过的那一截与没走的那一截，合起来恰好 `width` 格。

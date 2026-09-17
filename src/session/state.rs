@@ -3561,7 +3561,7 @@ impl Session {
     /// 取值栏靠它认路：那一列从这一格起摊、走一圈落回它为止
     /// （见 [`Self::unfold`] 与 [`Self::choose`]）。逐个变体都列出来，
     /// 理由与 [`Field::layer`] 同一条。
-    fn unsaid(&self, field: Field) -> bool {
+    pub(super) fn unsaid(&self, field: Field) -> bool {
         match field {
             Field::Profile => self.device.profile.is_none(),
             Field::GrayLevels => self.device.gray_levels.is_none(),
@@ -3623,6 +3623,29 @@ impl Session {
             self.focus = Focus::Valuing(self.panels(None));
             return;
         }
+        let (cells, chosen) = self.ring(field);
+        self.focus = Focus::Valuing(Values {
+            field,
+            panel: None,
+            cells,
+            at: chosen,
+            chosen: Some(chosen),
+        });
+    }
+
+    /// **某一项的取值环在屏上的那几格**，连同此刻生效的是第几格。
+    ///
+    /// 那一列**就是那一行的取值环**，从「没说」那一格起走一圈落回它为止——一步一步走的就是
+    /// [`Self::turn_field`]，因此这里没有第二份清单：环上加一个取值，摊开那一列当场跟着多一格。
+    /// 每一格印成什么走 [`Self::shown`]，与那一行自己印的是同一份。
+    ///
+    /// **此刻生效的是第几格，是数出来的、不是认字认出来的**：从这一行此刻停的那一格起走
+    /// `back` 步到得了「没说」，它就在环上倒数第 `back` 格。前提是「那一行的取值在环上」，
+    /// 守门的是 [`Field::drills`]——型号那一行走的是另一路（[`Self::panels`]）。
+    ///
+    /// **两副界面读的是这一处**：旧界面的取值栏（[`Self::unfold`]）与新界面的详情栏
+    /// （`super::config::choices`）问的是同一个环。
+    pub(super) fn ring(&self, field: Field) -> (Vec<String>, usize) {
         let mut probe = self.clone();
         let back = probe.turn_to_unsaid(field);
         let mut cells = Vec::new();
@@ -3634,13 +3657,19 @@ impl Session {
             }
         }
         let chosen = (cells.len() - back) % cells.len();
-        self.focus = Focus::Valuing(Values {
-            field,
-            panel: None,
-            cells,
-            at: chosen,
-            chosen: Some(chosen),
-        });
+        (cells, chosen)
+    }
+
+    /// **把某一项定到取值环上第几格**（新界面的详情栏定下来那一下）。
+    ///
+    /// 做法与旧界面的[定](Self::choose)一字不差：先转到「没说」那一格，再往前走 `at` 格——
+    /// 走的每一步都是 [`Self::turn_field`]。**摊开这一路因此没有自己的写入路径**，
+    /// 两副界面、三条入口（`←→` 就地转、旧取值栏、新详情栏）改的是同一格。
+    pub(super) fn settle(&mut self, field: Field, at: usize) {
+        self.turn_to_unsaid(field);
+        for _ in 0..at {
+            self.turn_field(field, Step::Next);
+        }
     }
 
     /// 型号那一行摊开的**第一层：面板**（`p3-session-legibility/06` 票面第一条）。
@@ -3794,7 +3823,7 @@ impl Session {
     /// （[`Self::choose`]）走的都是它：**换掉型号仍旧把标定出来的屏幕灰阶数与画质门槛清空**
     /// （ADR 0002：画质分与画质门槛跟着面板走、不可跨面板比较），而那件事分成两份写就会有
     /// 一处忘了跟着做。
-    fn set_device(&mut self, device: Option<String>) {
+    pub(super) fn set_device(&mut self, device: Option<String>) {
         self.device.profile = device;
         self.device.gray_levels = None;
         self.device.threshold = None;
@@ -3819,7 +3848,7 @@ impl Session {
     }
 
     /// 这一行当前取值的**可编辑写法**：进编辑时缓冲里摆的就是它，空串代表「没说」。
-    fn typed(&self, field: Field) -> String {
+    pub(super) fn typed(&self, field: Field) -> String {
         match field {
             Field::GrayLevels => self.device.gray_levels.map(|n| n.to_string()),
             Field::Threshold => self.device.threshold.map(|value| value.to_string()),
@@ -3861,7 +3890,7 @@ impl Session {
     }
 
     /// 把一行打出来的文本验成取值收下。空串是「没说」，落回默认值。
-    fn take(&mut self, field: Field, typed: &str) -> anyhow::Result<()> {
+    pub(super) fn take(&mut self, field: Field, typed: &str) -> anyhow::Result<()> {
         match field {
             Field::GrayLevels => {
                 let levels = self.calibrated(typed, |profile, levels: u32| {
@@ -3977,7 +4006,7 @@ impl Session {
     /// 合法性在收下那一刻就验过了（见 [`Session::calibrated`]），失败只可能是
     /// 型号被换掉而覆盖项没跟着清，而那条路由 [`Session::cycle`] 堵着；
     /// 真落到 `ok()` 上等于「这一行印不出来」，不是错误。
-    fn calibrated_profile(&self) -> Option<Profile> {
+    pub(super) fn calibrated_profile(&self) -> Option<Profile> {
         crate::target_profile(
             self.device.profile.as_deref()?,
             self.device.gray_levels,

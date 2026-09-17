@@ -16,7 +16,10 @@
 //! | 确认条 | — | 等待确认那一票 |
 //! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
 //! | 每页结果 | — | 每页结果那一票 |
-//! | 设置栏 · 详情栏 · 预设栏 | — | 配置视图那几票 |
+//! | 顶上一条预设 | [`preset`] | 13 |
+//! | 设置栏 | [`settings`] | 13 |
+//! | 详情栏 | [`details`] | 13 |
+//! | 预设栏 | — | 14 |
 //! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张（内容出自 [`super::cover`]） |
 //! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
 //! | 补全框 | [`completions`] | 07 |
@@ -32,11 +35,14 @@
 
 mod canvas;
 mod completions;
+mod details;
 mod footer;
 mod list;
 mod marks;
 mod overlay;
 mod overview;
+mod preset;
+mod settings;
 mod small;
 mod topbar;
 mod yielding;
@@ -49,7 +55,7 @@ use ratatui::layout::Rect;
 use super::keymap::Phase;
 use super::live::Live;
 use super::state::Session;
-use super::view::View;
+use super::view::{Focus, View};
 use canvas::Canvas;
 
 /// 把一屏画出来。
@@ -61,11 +67,10 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
         small::draw(&mut canvas, live, phase);
         return;
     }
-    topbar::draw(&mut canvas, session);
+    topbar::draw(&mut canvas, session, live, phase, now);
     match session.views.view {
         View::Task => task(&mut canvas, session, live, phase, now, screen),
-        // 配置视图随它那几票接进来。
-        View::Config => {}
+        View::Config => config(&mut canvas, session, phase, screen),
     }
     // 补全框盖在卷列表上；覆盖层掀着时连它一起压暗（设计稿 `drawAll` 的次序）；屏底最后画，
     // 掀着覆盖层时它摆的是覆盖层自己的那两件。
@@ -94,6 +99,36 @@ fn task(
         now,
         Rect::new(0, y, screen.width, height),
     );
+}
+
+/// 配置视图：顶栏底下一条预设钉住，剩下的高度给设置栏与详情栏两栏，屏底一行。
+/// **不到 90 列退成单栏**——那一刻屏上只画此刻聚焦的那一栏（`CONTEXT.md` 的《让位》）。
+fn config(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, screen: Rect) {
+    let strip = Rect::new(0, 1, screen.width, preset::ROWS);
+    preset::draw(canvas, session, phase, strip);
+    let y = 1 + preset::ROWS;
+    let height = screen.height.saturating_sub(1 + y);
+    let narrow = yielding::single_column(screen);
+    let left = yielding::settings_width(screen);
+    let on_details = session.views.block() != Focus::Settings;
+    if !narrow || !on_details {
+        settings::draw(canvas, session, Rect::new(0, y, left, height));
+    }
+    if !narrow {
+        details::draw(
+            canvas,
+            session,
+            Rect::new(left, y, screen.width - left, height),
+            narrow,
+        );
+    } else if on_details {
+        details::draw(
+            canvas,
+            session,
+            Rect::new(0, y, screen.width, height),
+            narrow,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +211,14 @@ mod tests {
     fn the_add_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("add", 120, 36);
         assert_scene("add", 80, 24);
+    }
+
+    /// **「配置」120×36 与 80×24 逐格相等**（`session-redesign/13` 票面第一条）：
+    /// 顶上一条预设、设置栏三组、详情栏的取值环连同说明；窄那一屏退成单栏，只剩详情栏。
+    #[test]
+    fn the_config_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("config", 120, 36);
+        assert_scene("config", 80, 24);
     }
 
     /// **`NO_COLOR` 在场时颜色退回默认，加粗、下划线、粗框、压暗照旧**（票面第四条）：
