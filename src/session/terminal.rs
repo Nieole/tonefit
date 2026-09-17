@@ -247,8 +247,10 @@ fn press(
 ///
 /// 分工与 [`press`] 同一条：先把输入认成按键表上的一件事（[`Session::deed_of`]，连击键在那里待着），
 /// **够得着那一趟与屏的那几件在这一层做**，其余交回状态机（[`Session::perform`]）。
-/// 这一层眼下只有一件：覆盖层上滚动——那一张有几行、露几行都从窗口的尺寸算（[`cover::Sheet`]），
-/// 而窗口有多大只有这一层知道。起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
+/// 这一层眼下有这几件：覆盖层上滚动（那一张有几行、露几行都从窗口的尺寸算，
+/// [`cover::Sheet`]，而窗口有多大只有这一层知道）、`F` 之后光标跟上正在处理的那一卷、
+/// 搜索与跳转的落点（哪几卷出了事只有那一趟答得出）。
+/// 起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
 /// 预设那几支与灰阶测试图，随各票在这里各接一支——接上之前那几个键交下去落在
 /// [`Session::perform`] 的空处，原地不动。`running` 眼下只答一件事：那一趟清点完了没有。
 #[cfg_attr(
@@ -286,7 +288,7 @@ pub(super) fn input(
         return Exit::Stay;
     }
     // **半屏与一屏那四个**：光标挪几行要窗口有多高（`Session::scroll_list`）。
-    if session.scroll_list(deed, window) {
+    if session.scroll_list(deed, window, now) {
         return Exit::Stay;
     }
     match deed {
@@ -308,6 +310,32 @@ pub(super) fn input(
             let exit = session.perform(deed, now);
             running.stop(session.stopping());
             exit
+        }
+        // **`F` 交回自动滚动**：扳回那一格与屏底那一句是状态机的事（`Session::perform`），
+        // 而**光标当场跟到正在处理的那一卷**要读那一趟——按下去这一帧就得跟上，
+        // 因此这一层紧接着再盯一眼。与按停止那一件同一条分工。
+        Deed::Follow => {
+            let exit = session.perform(deed, now);
+            let live = running.live();
+            if let Some(live) = live.as_deref() {
+                session.watch_the_run(live);
+            }
+            exit
+        }
+        // **搜索那一行上的 `⏎`**：收下这一句、跳到第一个结果。落点要问那一趟，
+        // 而状态机读不到它（`super::typing::Session::confirm_typed` 把这一种让了出来）。
+        // 别的输入行照旧交给状态机。
+        Deed::Confirm if session.searching_line() => {
+            let live = running.live();
+            session.confirm_search(live.as_deref(), now);
+            Exit::Stay
+        }
+        // **`]d`／`[d`／`n`／`N` 跳到下一处**：落点是「哪几卷出了事」与「哪一行装着
+        // 这一句」，前者只有那一趟答得出（`Session::jump`）。
+        Deed::NextProblem | Deed::PrevProblem | Deed::SearchNext | Deed::SearchPrev => {
+            let live = running.live();
+            session.jump(deed, live.as_deref(), now);
+            Exit::Stay
         }
         // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
         // （`CONTEXT.md` 的《停得住 / 展得开》）。展得开的那几卷换屏进每页结果，
@@ -866,7 +894,7 @@ mod redesign {
     use ratatui::buffer::Buffer;
 
     use super::super::cover::Overlay;
-    use super::super::draw::design::{self, assert_no_background, assert_same_cells};
+    use super::super::draw::design::{self, Expected, assert_no_background, assert_same_cells};
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
@@ -888,6 +916,7 @@ mod redesign {
             rows: sequence.size.1,
         };
         let mut exit = Exit::Stay;
+        let mut advanced = false;
         for step in &sequence.steps {
             assert!(
                 !matches!(step, Step::Resize(_, _)),
@@ -896,14 +925,19 @@ mod redesign {
             // **推进几秒**：夹具没有线程，推进之后那一趟走到哪儿由这一串自己的场景数据说
             // （`Scene::advance_to`，停车场 Q805 的同一条）。界面状态一格不动。
             //
-            // **只认最后一步上的推进**：场景数据说的是这一串**走完那一刻**，推进之后还有
-            // 输入的那几串（`running-j-advance-F`、`deciding-x-advance`）拿它当中间态是错的
-            // ——那几串归 09／12，到时候得给夹具一份中间态（停车场 Q852）。
+            // **一串只推得动一次**：场景数据说的是这一串**走完那一刻**，一串只有一份
+            // ——推第二次拿的还是同一份，那是假的（停车场 Q852）。
+            //
+            // **推进之后还有输入照样摆得对**，前提是后面那几步一格都不动那一趟：
+            // `running-j-advance-F` 的 `F` 只扳自动滚动那一格与屏底那一句。
+            // 按住这一条的是**屏本身**——总览那三行印着第几卷、已用多久、走了几步，
+            // 后面那几步真动了那一趟，走完那一屏当场对不上。
             if matches!(step, Step::Advance(_)) {
                 assert!(
-                    std::ptr::eq(step, sequence.steps.last().expect("这一串有步")),
-                    "「{name}」的推进不在最后一步上：夹具只摆得出走完那一刻（Q852）"
+                    !advanced,
+                    "「{name}」推进了两次：夹具只摆得出走完那一刻（Q852）"
                 );
+                advanced = true;
                 scene.advance_to(scene::sequence_data(name));
                 running = Running::holding(scene.live.take().expect("推进之后那一趟"));
                 now = scene.now();
@@ -944,41 +978,50 @@ mod redesign {
 
     /// 走完一串，逐格对它的交互期望屏，顺带核一个背景色都没设（停车场 Q737）。
     fn assert_sequence(name: &str) -> Scene {
-        assert_sequence_blanking(name, None)
+        assert_sequence_with(name, |expected| expected)
     }
 
-    /// 同上，另外**把期望屏上几段往右推几格**：设计稿在那儿摆的字与实现照规矩写下的
-    /// 差的只有一截缩进（见 [`super::super::draw::design::Expected::shifted`]，
-    /// 每一处都写清是哪一条停车场条目）。
+    /// **走完一串再比一次屏，那一套只有这一处**：喂完、核会话还开着、画一屏、
+    /// 核一个背景色都没设、逐格对期望屏。
+    ///
+    /// `adjust` 是调用方**动一动期望屏**的机会：设计稿在那儿摆的字与实现照规矩写下的
+    /// 差一截缩进（[`Expected::shifted`]）、设计稿写着一句而实现照规矩不写它
+    /// （[`Expected::blanked`]）、或者差的只有它自己那套模拟算出来的一格
+    /// （[`Expected::cell_like`]）。**动完仍是一条断言**，而**每一处用它的地方都得在
+    /// 用例上写清是哪一条停车场条目**。
+    fn assert_sequence_with(name: &str, adjust: impl FnOnce(Expected) -> Expected) -> Scene {
+        let (scene, running, exit) = walked(name);
+        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
+        let size = scene::sequence(name).size;
+        let buffer = painted(&scene, &running, size);
+        assert_no_background(&buffer);
+        assert_same_cells(&buffer, &adjust(design::sequence(name)));
+        scene
+    }
+
+    /// 同上，另外**把期望屏上几段往右推几格**（[`Expected::shifted`]）。
     fn assert_sequence_shifting(name: &str, shifts: &[(usize, u16, u16, u16)]) -> Scene {
-        let (scene, running, exit) = walked(name);
-        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
-        let size = scene::sequence(name).size;
-        let buffer = painted(&scene, &running, size);
-        assert_no_background(&buffer);
-        let mut expected = design::sequence(name);
-        for (row, from, width, by) in shifts {
-            expected = expected.shifted(*row, *from, *width, *by);
-        }
-        assert_same_cells(&buffer, &expected);
-        scene
+        assert_sequence_with(name, |expected| {
+            shifts
+                .iter()
+                .fold(expected, |expected, (row, from, width, by)| {
+                    expected.shifted(*row, *from, *width, *by)
+                })
+        })
     }
 
-    /// 同上，另外**抹掉期望屏上一段**：设计稿在那儿写着一句话而实现照规矩不写它
-    /// （见 [`super::super::draw::design::Expected::blanked`]，每一处都写清是哪一条停车场条目）。
-    fn assert_sequence_blanking(name: &str, blank: Option<(usize, u16, u16)>) -> Scene {
-        let (scene, running, exit) = walked(name);
-        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
-        let size = scene::sequence(name).size;
-        let buffer = painted(&scene, &running, size);
-        assert_no_background(&buffer);
-        let expected = design::sequence(name);
-        let expected = match blank {
-            Some((row, from, width)) => expected.blanked(row, from, width),
-            None => expected,
-        };
-        assert_same_cells(&buffer, &expected);
-        scene
+    /// 同上，另外**把期望屏上几格各换成它右边那一格**（[`Expected::cell_like`]）。
+    fn assert_sequence_like(name: &str, cells: &[(usize, u16)]) -> Scene {
+        assert_sequence_with(name, |expected| {
+            cells.iter().fold(expected, |expected, (row, at)| {
+                expected.cell_like(*row, *at, at + 1)
+            })
+        })
+    }
+
+    /// 同上，另外**抹掉期望屏上一段**（[`Expected::blanked`]）。
+    fn assert_sequence_blanking(name: &str, (row, from, width): (usize, u16, u16)) -> Scene {
+        assert_sequence_with(name, |expected| expected.blanked(row, from, width))
     }
 
     /// **`j`／`k` 挪光标**，走完与期望屏逐格相等（票面第二条）。
@@ -1061,7 +1104,7 @@ mod redesign {
     fn t_and_x_start_a_run_and_come_back_to_the_task_view() {
         for name in ["fresh-t", "fresh-x"] {
             // 按下去那一刻起就是清点中：输出目录那一行行尾那十格照 Q807 抹掉。
-            let scene = assert_sequence_blanking(name, Some((6, 26, 10)));
+            let scene = assert_sequence_blanking(name, (6, 26, 10));
             assert_eq!(
                 scene.session.views.view,
                 super::super::view::View::Task,
@@ -1081,7 +1124,7 @@ mod redesign {
     #[test]
     fn stopping_while_surveying_says_so_on_the_title_and_the_footer() {
         // 输出目录那一行行尾那十格照 `shell` 那条清点中的用例抹掉：停车场 **Q807**。
-        assert_sequence_blanking("survey-s", Some((6, 26, 10)));
+        assert_sequence_blanking("survey-s", (6, 26, 10));
     }
 
     /// **`s` 按一次、再按一次**（票面第三条）：一次是做完当前卷就停，两次立即停止——
@@ -1272,6 +1315,168 @@ mod redesign {
     fn q_after_the_run_hands_out_the_exit() {
         let (_, _, exit) = walked("ended-q");
         assert_eq!(exit, Exit::Leave);
+    }
+
+    // ───────────────────────── 自动滚动、跳转与搜索（09） ─────────────────────────
+
+    /// **按键挪光标就暂停自动滚动**（票面第一条那一档「暂停」，加第二条那一串）：
+    /// 框右端从 `[自动滚动]` 换成 `[已暂停自动滚动 ⋅ F 恢复]`，屏底说一句
+    /// 「已暂停自动滚动 ⋅ 按 F 恢复」，光标真挪了一行。
+    ///
+    /// **不暂停的话下一帧就被拽回去**：`watch_the_run` 每一下把光标带回正在处理的那一卷
+    /// （08 号票因此提前做了暂停那一格本身），这一条钉的是它的两句外显。
+    #[test]
+    fn moving_the_cursor_pauses_following_and_says_so() {
+        let scene = assert_sequence("running-j");
+        assert!(!scene.session.views.task.follow, "挪过光标之后不再跟");
+    }
+
+    /// **暂停之后推进几秒光标一格不动**（票面第二条那一串）：那一趟往前走了三秒、
+    /// 当前卷换了一卷，而光标仍停在 `j` 挪到的那一行上；屏底那一句到点退回按键提示，
+    /// **`[F → 自动滚动]` 这时摆出来了**（跟着的时候不摆按不动的键）。
+    #[test]
+    fn while_paused_the_cursor_stays_where_it_was_put() {
+        let scene = assert_sequence("running-j-advance");
+        assert!(!scene.session.views.task.follow);
+    }
+
+    /// **`F` 交回自动滚动**（票面第一条「`F` 交回」）：那一格扳回开着、光标当场跟到
+    /// 正在处理的那一卷（推进之后那一卷换了，光标跟着换），屏底说
+    /// 「自动滚动：跟到正在处理的卷」。
+    ///
+    /// **这一串的推进不在最后一步上**：夹具只摆得出这一串**走完那一刻**（停车场 Q852），
+    /// 而 `F` 只扳自动滚动那一格与屏底那一句、一个字节都不碰那一趟——推进之后那一份
+    /// 因此就是 `F` 之后那一份。按住这一条的是屏本身：总览那三行印着第几卷、已用多久、
+    /// 走了几步。
+    #[test]
+    fn f_hands_following_back_and_the_cursor_catches_up() {
+        let scene = assert_sequence("running-j-advance-F");
+        assert!(scene.session.views.task.follow, "`F` 之后又跟上了");
+    }
+
+    /// **`]d` 连跳两次、`[d` 回跳**（票面第二条那三串）：落点是转换失败的卷、
+    /// 进了隔离的卷、有需留意的页的卷与无法访问的地方；屏底报「问题 第几个/共几个」，
+    /// 跳过去即暂停自动滚动。
+    ///
+    /// 这一景共四处问题：`哆啦A梦/第05卷`（页面超宽）· `海贼王/第07卷`（进了隔离）·
+    /// `海贼王/第11卷`（转换失败）· 那一条无法访问的备注。光标开跑时跟在第 15 卷上
+    /// （前三处之后），头一下因此跳到第四处；再一下**绕回头一个**，而那一卷在收着的
+    /// 目录里——跳过去把它那个目录展开了。
+    #[test]
+    fn bracket_d_jumps_between_problems_both_ways() {
+        let scene = assert_sequence("running-]d");
+        assert!(!scene.session.views.task.follow, "跳过去之后不再跟");
+        let scene = assert_sequence("running-]d-]d");
+        assert!(
+            matches!(
+                scene.session.views.task.cursor,
+                super::super::view::Cursor::Volume(_)
+            ),
+            "绕回头一个问题，它是一卷"
+        );
+        assert_sequence("running-]d-]d-[d");
+    }
+
+    /// **结束之后 `]d`／`[d` 照样跳**（票面第二条那两串）：这一趟七处问题，
+    /// 光标正停在第二处上——`]d` 到第三处，`[d` 到第一处（**光标那一行本身不算
+    /// 「下一个」**，两个方向都不算）。
+    #[test]
+    fn bracket_d_jumps_between_problems_after_the_run() {
+        assert_sequence("ended-]d");
+        assert_sequence("ended-[d");
+    }
+
+    /// **`/` 开搜索那一行**（票面第三条）：屏底换成 `/` 加缓冲加光标，右端只剩
+    /// `⏎ → 跳到结果` 与 `Esc → 取消`（这一种输入行不补全）；底下那张列表框细了、
+    /// 光标行首换成暗的 `›`。打上字之后**匹配处加下划线**、框底边左起写着这一句与 `n`／`N`。
+    #[test]
+    fn slash_opens_the_search_line_and_underlines_what_matches() {
+        let scene = assert_sequence("running-slash");
+        assert_eq!(
+            scene.session.views.searching(),
+            None,
+            "刚开那一行还没打字：空串不算在搜，框底边因此不摆那一截"
+        );
+        assert!(scene.session.searching_line(), "而那一行确实开着");
+        let scene = assert_sequence("running-search-typed");
+        assert_eq!(scene.session.views.searching(), Some("海贼"));
+        assert!(scene.session.views.task.follow, "打字不挪光标，照旧跟着");
+    }
+
+    /// **`⏎` 跳到第一个，`n`／`N` 在结果之间跳**（票面第二条那五串、第三条）：
+    /// `⏎` 之后暂停自动滚动、屏底报「搜索结果 第几个/共几个」；`n` 往下、`N` 往上，
+    /// **收着的目录自动展开到那一卷**。
+    ///
+    /// 「海贼」只有一个结果：那个目录行——**目录名自己就装着这一句时它底下那十八卷
+    /// 不再各算一个落点**（屏上那十八行照旧加下划线）。「第05」有七个，一卷一个。
+    #[test]
+    fn enter_jumps_to_the_first_match_and_n_cycles_through_them() {
+        let scene = assert_sequence("running-search-Enter");
+        assert!(!scene.session.views.task.follow, "跳过去之后不再跟");
+        assert_eq!(scene.session.views.searching(), Some("海贼"));
+        assert_sequence("running-search-05-Enter");
+        assert_sequence("running-search-n");
+        assert_sequence("running-search-n-N");
+    }
+
+    /// **搜索那一行上 `Esc` 连那一句一起丢**（票面第三条）：屏底换回按键提示、
+    /// 框底边左起那一截没了、一条下划线都不剩。
+    ///
+    /// **`⏎` 之后再 `Esc` 丢的只有那一句**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）：
+    /// 光标停在刚跳到的那一行上不动，屏底那句「搜索结果 1/1」还在。
+    ///
+    /// 两串都从「搜索」那一景起手，因此都带着那一景那**两格已知的一格差**
+    /// （停车场 **Q844**，理由与 `the_search_scene_…` 那一条逐字相同）。
+    #[test]
+    fn escape_drops_the_search_and_its_underlines() {
+        const BAR: &[(usize, u16)] = &[(3, 46), (16, 103)];
+        let scene = assert_sequence_like("search-Escape", BAR);
+        assert_eq!(scene.session.views.searching(), None);
+        let scene = assert_sequence_like("search-Enter-Escape", BAR);
+        assert_eq!(scene.session.views.searching(), None);
+        assert!(scene.session.views.input.is_none(), "那一行已经关了");
+    }
+
+    /// **搜进收着的目录里那一卷**（票面第二条那一串）：`棋魂/第15` 命中的是一卷，
+    /// 而它那个目录收着——跳过去把目录展开、光标停在那一卷上。
+    #[test]
+    fn searching_into_a_collapsed_directory_expands_it() {
+        let scene = assert_sequence("ended-search-into-collapsed");
+        assert!(
+            matches!(
+                scene.session.views.task.cursor,
+                super::super::view::Cursor::Volume(_)
+            ),
+            "停在那一卷上"
+        );
+    }
+
+    /// **一个都没找到时说一句**（票面第三条）：屏底写「没有找到和「…」相关的卷或文件夹」，
+    /// 光标一格不动；**那一句仍留着**（框底边左起照旧写着它）——`n`／`N` 跳的就是它。
+    #[test]
+    fn a_search_that_matches_nothing_says_so() {
+        let scene = assert_sequence("ended-search-nothing");
+        assert_eq!(scene.session.views.searching(), Some("不存在"));
+    }
+
+    /// **全部按键那一张掀在转换中那一副上**（07 号票留给本票的那六串）：`?` 与 `Esc`
+    /// 各关得掉它（关掉之后底下原样回来，框右端那一枚 `[自动滚动]` 露出来），
+    /// `j` 滚一行、`k` 滚回来、`G` 到底；底边说看到第几行。
+    ///
+    /// 宽那一屏 27 行一屏装得下（`j` 滚不动，底边仍写 `1–27 of 27`），
+    /// 窄那一屏装不下、滚得动。
+    #[test]
+    fn the_key_sheet_over_the_running_tree_closes_and_scrolls() {
+        for name in [
+            "help-question",
+            "help-Escape",
+            "help-j",
+            "help-narrow-j",
+            "help-narrow-j-k",
+            "help-narrow-G",
+        ] {
+            assert_sequence(name);
+        }
     }
 
     /// **还在处理与还没轮到的卷停得住、展不开**：按下去不换屏，屏底说为什么

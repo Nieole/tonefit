@@ -19,13 +19,13 @@
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
-use tonefit::{Candidate, FirstFew, Panel, VolumeReport};
+use tonefit::{Candidate, FirstFew, VolumeReport};
 
 use super::super::columns::{self, TreeColumn, TreeWidths};
 use super::super::draw::overview::spell;
 use super::super::draw::table::driver;
 use super::super::keymap::{self, Deed, Phase, Want};
-use super::super::live::{Live, VolumeState};
+use super::super::live::{Live, NotableTally, VolumeState};
 use super::super::look::{Kind, Look, Segment};
 use super::super::state::{NamedPath, Session};
 use super::super::tone::Tone;
@@ -35,7 +35,7 @@ use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint, padded};
 use super::marks::{self, BranchTally, Mark};
 use super::yielding;
-use crate::render::{self, Field, Notable, RowKind};
+use crate::render::{self, Field, RowKind};
 
 /// 缩进一级占几格。
 const A_LEVEL: u16 = 2;
@@ -79,7 +79,7 @@ pub(super) fn draw(
             look,
             title: &title(session, phase),
             right: &follow_chip(session, phase),
-            bottom_left: &[],
+            bottom_left: &searching_chip(session),
             bottom_right: &[Segment::new(format!("{position} of {stops}"), look)],
         },
     );
@@ -92,7 +92,6 @@ pub(super) fn draw(
         phase,
         now,
         widths: TreeWidths::of(inner, session.taste.envelope.unwrap_or(false)),
-        panel: live.map(|live| live.report().profile.panel()),
     };
     let from = usize::from(viewport.from());
     for (at, line) in lines.iter().enumerate().skip(from).take(usize::from(shown)) {
@@ -131,6 +130,47 @@ fn follow_chip(session: &Session, phase: Phase) -> Vec<Segment> {
     }
 }
 
+/// 框**底边左起**那一截：**此刻搜的那一句**连同 `n`／`N`（`CONTEXT.md` 的《卷列表》：
+/// `n`／`N` 在结果之间跳）。
+///
+/// 一个字都还没打（刚按下 `/`）时**它自己就不在**——「空串不算在搜」判在
+/// [`super::super::view::Views::searching`] 一处，匹配处那一道下划线读的是同一份。
+fn searching_chip(session: &Session) -> Vec<Segment> {
+    let Some(query) = session.views.searching() else {
+        return Vec::new();
+    };
+    vec![
+        Segment::new(format!("/{query}"), Look::tone(Tone::Caution).italic()),
+        Segment::new(" ⋅ n N 跳到下一个 / 上一个", Look::FAINT.italic()),
+    ]
+}
+
+/// 一行**此刻被怎么点出来**：行首那两格光标记号、它是不是光标那一行、
+/// 它匹配着搜索那一句吗。
+///
+/// 三样一路走到名字那一列（[`name_look`]），拆成三个参数传下去每一层都得再拼一遍
+/// ——与 [`Spot`] 同一条理由。
+#[derive(Debug, Clone)]
+struct Pointed {
+    /// 行首那两格：`❯ `（这一块聚焦着）· `› `（焦点在别处）· 两格空。
+    cursor: Segment,
+    at_cursor: bool,
+    matched: bool,
+}
+
+/// 名字那一列的样子：**光标那一行加粗，匹配着搜索那一句的加下划线**
+/// （`CONTEXT.md` 的《语义色》：光标行加粗与搜索匹配加下划线两样都不归 `NO_COLOR` 管）。
+///
+/// 树上的目录行与卷行、备注行的名头、开跑之前那一副的每一行，**四处共用这一份**。
+fn name_look(look: Look, pointed: &Pointed) -> Look {
+    let look = if pointed.at_cursor { look.bold() } else { look };
+    if pointed.matched {
+        look.underlined()
+    } else {
+        look
+    }
+}
+
 /// 画一行要的那几样：会话、那一趟、此刻，加上这一屏的列宽。
 struct Painter<'a> {
     session: &'a Session,
@@ -138,7 +178,6 @@ struct Painter<'a> {
     phase: Phase,
     now: Instant,
     widths: TreeWidths,
-    panel: Option<Panel>,
 }
 
 impl Painter<'_> {
@@ -151,15 +190,21 @@ impl Painter<'_> {
         at_cursor: bool,
         focused: bool,
     ) {
-        let cursor = match (at_cursor, focused) {
-            (true, true) => Segment::new("❯ ", Look::kind(Kind::Focus).bold()),
-            (true, false) => Segment::faint("› "),
-            (false, _) => Segment::plain("  "),
+        let pointed = Pointed {
+            cursor: match (at_cursor, focused) {
+                (true, true) => Segment::new("❯ ", Look::kind(Kind::Focus).bold()),
+                (true, false) => Segment::faint("› "),
+                (false, _) => Segment::plain("  "),
+            },
+            at_cursor,
+            // **匹配上没有一处算出来**：名字那一列的下划线（树上那三种行与开跑之前
+            // 那一副）读的是同一份。
+            matched: self.matched(line),
         };
         match line {
-            Line::Tree(row) => self.tree_row(canvas, spot, *row, cursor, at_cursor),
+            Line::Tree(row) => self.tree_row(canvas, spot, *row, pointed),
             _ => {
-                let segments = self.before_the_run(line, spot.inner, cursor, at_cursor);
+                let segments = self.before_the_run(line, spot.inner, &pointed);
                 canvas.line(spot.x, spot.y, &segments, Some(spot.inner));
             }
         }
@@ -170,16 +215,35 @@ impl Painter<'_> {
         marks::spinner(self.now, self.session.opened_at, offset)
     }
 
+    /// **这一行匹配着搜索那一句吗**——匹配的那一行**名字那一列加下划线**
+    /// （`CONTEXT.md` 的《卷列表》：匹配处加下划线；《语义色》：搜索匹配加下划线，
+    /// 不归 `NO_COLOR` 管）。
+    ///
+    /// 比的是哪一截字：清点之后那棵树上的行由树答（[`tree::Tree::searched_text`]），
+    /// 开跑之前那一副比的是**屏上那条路径**（家目录已缩写成 `~`，与屏上写的一样）。
+    /// 输出目录那一行与「＋ 添加路径」不参与——那两行上没有名字可搜。
+    /// 没在搜（空串也算）时一行都不匹配，判在 [`Views::searching`] 一处。
+    fn matched(&self, line: &Line) -> bool {
+        let Some(query) = self.session.views.searching() else {
+            return false;
+        };
+        let text = match line {
+            Line::Tree(row) => self.session.views.task.tree.searched_text(*row),
+            Line::Path(at) => self
+                .session
+                .scope
+                .paths
+                .get(*at)
+                .map(|named| self.session.home_shown(&named.path)),
+            Line::Output | Line::Heading | Line::Add => None,
+        };
+        text.is_some_and(|text| text.contains(query))
+    }
+
     // ───────────────────────── 开跑之前与清点中 ─────────────────────────
 
     /// 开跑之前那一副的一行：输出目录 · 「处理路径 (N)」· 一条处理路径 · 「＋ 添加路径」。
-    fn before_the_run(
-        &self,
-        line: &Line,
-        inner: u16,
-        cursor: Segment,
-        at_cursor: bool,
-    ) -> Vec<Segment> {
+    fn before_the_run(&self, line: &Line, inner: u16, pointed: &Pointed) -> Vec<Segment> {
         let session = self.session;
         // 行上顺口提的那两个键（`[i → 修改]`、`[o → 添加]`）连同那一句都从按键表取；派不出就不提。
         let mentioned = |want: Want| {
@@ -188,12 +252,12 @@ impl Painter<'_> {
                 .map(|said| hint(&said.spelt(), said.what))
                 .unwrap_or_default()
         };
-        // 光标那一行的名字加粗。
-        let named = |look: Look| if at_cursor { look.bold() } else { look };
+        let named = |look: Look| name_look(look, pointed);
+        let cursor = || pointed.cursor.clone();
         match line {
             Line::Output => {
                 let mut segments = vec![
-                    cursor,
+                    cursor(),
                     Segment::faint("输出目录   "),
                     Segment::new(session.output_shown(), named(Look::PLAIN)),
                     Segment::plain("   "),
@@ -209,14 +273,14 @@ impl Painter<'_> {
             ],
             Line::Add => {
                 let mut segments = vec![
-                    cursor,
+                    cursor(),
                     Segment::new("＋ 添加路径", named(Look::kind(Kind::Done))),
                     Segment::plain("   "),
                 ];
                 segments.extend(mentioned(Want::saying(Deed::AddPath, "添加")));
                 segments
             }
-            Line::Path(at) => self.path_row(*at, inner, cursor, &named),
+            Line::Path(at) => self.path_row(*at, inner, cursor(), &named),
             Line::Tree(_) => Vec::new(),
         }
     }
@@ -289,14 +353,7 @@ impl Painter<'_> {
     // ───────────────────────── 清点之后那棵树 ─────────────────────────
 
     /// 树上的一行：分区标题 · 目录行 · 卷行 · 备注行 · 空行 · 末行那一句。
-    fn tree_row(
-        &self,
-        canvas: &mut Canvas<'_>,
-        spot: Spot,
-        row: tree::Row,
-        cursor: Segment,
-        at_cursor: bool,
-    ) {
+    fn tree_row(&self, canvas: &mut Canvas<'_>, spot: Spot, row: tree::Row, pointed: Pointed) {
         let Spot { x, y, inner } = spot;
         let tree = &self.session.views.task.tree;
         match row {
@@ -325,7 +382,7 @@ impl Painter<'_> {
             }
             tree::Row::Section { node } => self.section_row(canvas, spot, node),
             tree::Row::Note { node, at, indent } => {
-                self.note_row(canvas, spot, (node, at, indent), cursor, at_cursor);
+                self.note_row(canvas, spot, (node, at, indent), &pointed);
             }
             tree::Row::Directory { node, at, indent } => {
                 let Some(directory) = tree.directory(node, at) else {
@@ -338,7 +395,7 @@ impl Painter<'_> {
                     canvas,
                     spot,
                     LinedRow {
-                        cursor,
+                        pointed,
                         indent,
                         chevron: if expanded { "▾ " } else { "▸ " },
                         mark: marks::branch_mark(&tally, self.spin(0)),
@@ -348,7 +405,6 @@ impl Painter<'_> {
                         } else {
                             Look::PLAIN
                         },
-                        at_cursor,
                         count: format!("{}/{} 卷", tally.finished, tally.total),
                         count_look: if tally.total > 0 && tally.finished == tally.total {
                             Look::PLAIN
@@ -364,7 +420,7 @@ impl Painter<'_> {
                 );
             }
             tree::Row::Volume { at, indent } => {
-                self.volume_row(canvas, spot, (at, indent), cursor, at_cursor);
+                self.volume_row(canvas, spot, (at, indent), pointed);
             }
         }
     }
@@ -418,8 +474,7 @@ impl Painter<'_> {
         canvas: &mut Canvas<'_>,
         spot: Spot,
         (node, at, indent): (usize, usize, u16),
-        cursor: Segment,
-        at_cursor: bool,
+        pointed: &Pointed,
     ) {
         let Some(note) = self.session.views.task.tree.note(node, at) else {
             return;
@@ -436,18 +491,11 @@ impl Painter<'_> {
             Look::PLAIN
         };
         let segments = vec![
-            cursor,
+            pointed.cursor.clone(),
             Segment::plain(" ".repeat(usize::from(indent * A_LEVEL))),
             Segment::plain("  "),
             Segment::new(glyph, look),
-            Segment::new(
-                format!("{}  ", note.label),
-                if at_cursor {
-                    label_look.bold()
-                } else {
-                    label_look
-                },
-            ),
+            Segment::new(format!("{}  ", note.label), name_look(label_look, pointed)),
             Segment::plain(note.what.clone()),
             Segment::new(format!("  {}", note.brief), Look::tone(Tone::Muted)),
         ];
@@ -502,10 +550,10 @@ impl Painter<'_> {
         tally
     }
 
-    /// 清单里第几卷那一份报告（收摊了的、确认点上攒着的那一份；没做成与还没收摊的没有）。
+    /// 清单里第几卷那一份报告。**出处在那一趟上**（[`Live::report_at`]）：
+    /// 跳转的落点读的是同一份。
     fn report_of(&self, at: usize) -> Option<&VolumeReport> {
-        let live = self.live?;
-        live.listed_at(at).and_then(|which| live.volume(which))
+        self.live?.report_at(at)
     }
 
     /// 这一卷做了多久：**收摊了的那几卷走报告那一份**（`CONTEXT.md` 的《卷级计时》：
@@ -523,33 +571,30 @@ impl Painter<'_> {
 
     /// 这一卷有几页**需留意**（`CONTEXT.md` 的《需留意的页》）。
     fn notable(&self, at: usize) -> usize {
-        self.notable_bits(at).iter().map(|(_, count)| count).sum()
+        self.notable_tally(at).pages()
     }
 
-    /// 需留意那几样各几页，照屏上写的次序。**判在 [`render::notable`] 一处**，
-    /// 与每页结果、与命令行印出去的那一份同一份判定。
+    /// 这一卷需留意的页按种类各几页。**数出自那一趟一处**（[`Live::notable_at`]）：
+    /// 行首那个 `!` 与 `]d` 的落点读的是同一份。
+    fn notable_tally(&self, at: usize) -> NotableTally {
+        self.live
+            .map(|live| live.notable_at(at))
+            .unwrap_or_default()
+    }
+
+    /// 需留意那几样**在屏上各怎么写**，照屏上的次序（`CONTEXT.md` 的《语义色》在页
+    /// 那一级分出的那几样）。**措辞只有这一处**——数由那一趟折出来，词是界面层自己的。
     fn notable_bits(&self, at: usize) -> Vec<(&'static str, usize)> {
-        let (Some(report), Some(panel)) = (self.report_of(at), self.panel) else {
-            return Vec::new();
-        };
-        let mut counts = [0usize; 4];
-        for page in render::notable(report, panel) {
-            for why in page {
-                match why {
-                    Notable::Outlier => counts[0] += 1,
-                    Notable::Overflowed => counts[1] += 1,
-                    Notable::OutsideTheGate => counts[2] += 1,
-                    Notable::Salvaged => counts[3] += 1,
-                    // 坏页由行首记号与隔离那一句说，代表页与兜底不是「出了事」。
-                    Notable::Failed | Notable::Backstopped | Notable::Driver => {}
-                }
-            }
-        }
-        ["差异大的页", "页面超宽", "尺寸未贴合屏幕", "残缺"]
-            .into_iter()
-            .zip(counts)
-            .filter(|(_, count)| *count > 0)
-            .collect()
+        let tally = self.notable_tally(at);
+        [
+            ("差异大的页", tally.outlier),
+            ("页面超宽", tally.overflowed),
+            ("尺寸未贴合屏幕", tally.outside_the_gate),
+            ("残缺", tally.salvaged),
+        ]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .collect()
     }
 
     /// 目录行行尾那一句：在跑的带着当前那一卷与它的进度，出事的报个数，
@@ -621,8 +666,7 @@ impl Painter<'_> {
         canvas: &mut Canvas<'_>,
         spot: Spot,
         (at, indent): (usize, u16),
-        cursor: Segment,
-        at_cursor: bool,
+        pointed: Pointed,
     ) {
         let state = self
             .live
@@ -653,7 +697,7 @@ impl Painter<'_> {
             canvas,
             spot,
             LinedRow {
-                cursor,
+                pointed,
                 indent,
                 chevron: "  ",
                 mark: marks::volume_mark(state, notable > 0, self.spin(0)),
@@ -663,7 +707,6 @@ impl Painter<'_> {
                 } else {
                     Look::kind(Kind::Volume)
                 },
-                at_cursor,
                 count: format!("{pages} 页"),
                 count_look: Look::FAINT,
                 tally,
@@ -726,7 +769,7 @@ impl Painter<'_> {
     fn lined_row(&self, canvas: &mut Canvas<'_>, spot: Spot, row: LinedRow) {
         let Spot { x: left, y, inner } = spot;
         let widths = &self.widths;
-        let mut pen = canvas.put(left, y, &row.cursor.text, row.cursor.look);
+        let mut pen = canvas.put(left, y, &row.pointed.cursor.text, row.pointed.cursor.look);
         pen = canvas.put(
             pen,
             y,
@@ -736,11 +779,7 @@ impl Painter<'_> {
         pen = canvas.put(pen, y, row.chevron, Look::FAINT);
         pen = canvas.put(pen, y, &format!("{} ", row.mark.glyph), row.mark.look);
         let name_width = widths.name.saturating_sub(row.indent * A_LEVEL);
-        let name_look = if row.at_cursor {
-            row.name_look.bold()
-        } else {
-            row.name_look
-        };
+        let name_look = name_look(row.name_look, &row.pointed);
         pen = canvas.put(
             pen,
             y,
@@ -800,13 +839,13 @@ impl Painter<'_> {
 
 /// 一行要画的那几格。
 struct LinedRow {
-    cursor: Segment,
+    pointed: Pointed,
     indent: u16,
     chevron: &'static str,
     mark: Mark,
     name: String,
+    /// 名字那一列的**底色**：加粗与下划线由 [`name_look`] 按 [`Pointed`] 叠上去。
     name_look: Look,
-    at_cursor: bool,
     count: String,
     count_look: Look,
     tally: Vec<(Candidate, usize)>,

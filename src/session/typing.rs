@@ -49,7 +49,7 @@ const VALUE_UNSET: &str = "未设置";
 /// 认用户敲的分隔符时两种都认（[`SEPARATORS`]）。
 const SHOWN_SEPARATOR: char = '/';
 
-/// 输入行用在哪一件事上；提示词随它。给预设起名、搜索随各自的票添。
+/// 输入行用在哪一件事上；提示词随它。给预设起名随那一票添。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     /// 添加一条处理路径。
@@ -61,12 +61,19 @@ pub enum Purpose {
     /// **改一项设置的值**：配置视图里自由填的那几项（`CONTEXT.md` 的《详情栏》：
     /// 「自由填的那几项列当前值与 `i` 修改」）。
     Setting(Field),
+    /// **搜索**卷名或目录名（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）。
+    ///
+    /// 它收的不是一条路径：`⏎` 不问盘、不添也不改任何东西，只把这一句定下来、
+    /// 跳到第一个结果（`super::view::Session::confirm_search`）。**打着的时候
+    /// 缓冲本身就是此刻搜的那一句**（[`super::view::Views::searching`]）——
+    /// 打一个字下划线当场跟着动，中间不存第二份。
+    Search,
 }
 
 impl Purpose {
     /// 提示词（设计稿 `startInput`）。**末尾那两格空算在提示词里**：设计稿按种类定它，
-    /// 搜索那一种是 `/`、后面不空（随搜索那一票添）。改一项设置的值那一种的提示词
-    /// **就是那一项的名字**，不另写一份。
+    /// 搜索那一种是 `/`、后面不空。改一项设置的值那一种的提示词**就是那一项的名字**，
+    /// 不另写一份。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
@@ -77,6 +84,7 @@ impl Purpose {
             Self::EditPath(_) => "修改路径  ".to_owned(),
             Self::Output => "输出目录  ".to_owned(),
             Self::Setting(field) => format!("{}  ", field.label()),
+            Self::Search => "/".to_owned(),
         }
     }
 
@@ -312,7 +320,16 @@ impl Session {
     }
 
     /// 按 `⏎`：关掉输入行、收下打的那条路径（模块文档《确定与取消》）。
+    ///
+    /// **搜索那一行不在这里收**：它收下之后要跳到第一个结果，而落点要问那一趟
+    /// （哪几卷在哪个目录里、此刻怎么样），状态机读不到它——那一支是
+    /// [`Session::confirm_search`]（住在 `super::view` 里），由终端层那一支调
+    /// （`super::terminal::input`，与 `Deed::Open` 落在卷行上时同一条分工）。
+    /// 交到这里来当作没有意义，原地不动。
     pub fn confirm_typed(&mut self, now: Instant) {
+        if self.searching_line() {
+            return;
+        }
         // 改一项设置的值不问盘：它收的是一个数、一个界、一个字节数，不是一条路径。
         if let Some(line) = &self.views.input
             && let Purpose::Setting(field) = line.purpose
@@ -342,8 +359,9 @@ impl Session {
         let shown = self.home_shown(&on_disk);
         let done = || Segment::new("✓ ", Look::kind(Kind::Done).bold());
         match line.purpose {
-            // 改一项设置的值上面那道岔路已经收走了，走不到这里。
-            Purpose::Setting(_) => {}
+            // 改一项设置的值与搜索那两种上面那两道岔路已经收走了，走不到这里
+            // （搜索那一种归 [`Session::confirm_search`]，见本函数的文档）。
+            Purpose::Setting(_) | Purpose::Search => {}
             Purpose::Output => {
                 self.scope.out = Some(on_disk);
                 self.views.say(
@@ -436,8 +454,15 @@ impl Session {
     }
 
     /// 按 `Esc`：丢掉这一步，底下的块原样回来。
+    ///
+    /// **搜索那一行连它搜的那一句一起丢**（设计稿 `onKey` 打字那一支的 `S.search = null`）：
+    /// 取消的是整件事，不只是那一行——匹配处的下划线与框底边那一截当场跟着没了。
     pub fn cancel_typed(&mut self) {
-        self.views.input = None;
+        if let Some(line) = self.views.input.take()
+            && line.purpose == Purpose::Search
+        {
+            self.views.task.search = None;
+        }
     }
 }
 

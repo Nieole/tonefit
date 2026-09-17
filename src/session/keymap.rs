@@ -125,6 +125,9 @@ pub enum Deed {
     Search,
     SearchNext,
     SearchPrev,
+    /// 卷列表上的 `Esc`：**只丢掉搜索那一句**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）。
+    /// **不上全部按键那一张**——设计稿的表上没有这一行；`Esc` 那一句在覆盖层与输入行上说。
+    ClearSearch,
     NextProblem,
     PrevProblem,
     // 路径
@@ -718,6 +721,18 @@ pub const TABLE: &[Row] = &[
         "[d",
         "",
         "下一个 / 上一个问题",
+        AFTER_SURVEY,
+        LIST,
+    ),
+    // 卷列表上的 `Esc`：只丢掉搜索那一句。两句都空——屏底不摆它（没在搜的时候它
+    // 一件事都不做），全部按键那一张上也没有它（设计稿的表上没有这一行）。
+    row(
+        Group::VolumeList,
+        Deed::ClearSearch,
+        Chord::Key(Key::Esc),
+        "Esc",
+        "",
+        "",
         AFTER_SURVEY,
         LIST,
     ),

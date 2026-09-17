@@ -566,9 +566,9 @@ impl Scene {
 
 /// 场景数据 `session` 那一段里认得的几格：视图、开跑之前卷列表的光标、套着的预设（06）；
 /// 输入行连同它列着的候选、全部按键那一张与它从第几行画起（07）；配置视图那几格
-/// （在哪一栏、两栏各自的光标、下钻进了哪一块，加上改一项设置的值那种输入行，13）。
-/// 树上的光标（目录、卷、备注）随树那一票认；认不得的先停在输出目录那一行上；
-/// 搜索与给预设起名那两种输入行随各自的票认。
+/// （在哪一栏、两栏各自的光标、下钻进了哪一块，加上改一项设置的值那种输入行，13）；
+/// 树上的光标、展开与自动滚动（08）；搜索那一句连同搜索那一种输入行（09）。
+/// 认不得的先停在输出目录那一行上；给预设起名那一种输入行随那一票认。
 fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     let mut views = Views::default();
     views.view = match data.session["view"].as_str() {
@@ -604,6 +604,9 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .collect();
     }
     views.task.follow = data.session["follow"].as_bool().unwrap_or(true);
+    // **搜索那一句**：`⏎` 定下来的那一份。搜索那一行开着时缓冲本身就是此刻搜的那一句
+    // （`Views::searching`），两头对得上（设计稿那一景 `S.input.buf` 与 `S.search.q` 同值）。
+    views.task.search = data.session["search"]["query"].as_str().map(str::to_owned);
     views.config.applied = data.applied_preset.as_ref().map(|name| Applied {
         name: name.clone(),
         preset: presets
@@ -629,6 +632,7 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             Item::Setting(field) => Some(Purpose::Setting(field)),
             Item::Premise(_) => None,
         },
+        Some("search") => Some(Purpose::Search),
         _ => None,
     };
     if let Some(purpose) = purpose {

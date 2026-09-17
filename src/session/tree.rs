@@ -305,6 +305,48 @@ impl Tree {
         self.roots.get(volume).map(PathBuf::as_path)
     }
 
+    /// 树上**每一个目录**的路径。只有[全部摊开那一副](Self::every_row)要它。
+    fn every_directory(&self) -> BTreeSet<PathBuf> {
+        self.nodes
+            .iter()
+            .flat_map(Node::directories)
+            .map(|directory| directory.path.clone())
+            .collect()
+    }
+
+    /// **全部目录都摊开**那一副的行：**跳转按这一副数次序**
+    /// （`CONTEXT.md` 的《卷列表》：收着的目录自动展开到那一卷）。
+    ///
+    /// 收着的目录里那几卷照样是落点——跳过去才把那个目录展开，
+    /// 而「下一个」指的是**树上**的下一个，不是「屏上此刻摆着的那几行里的下一个」：
+    /// 不然把一个目录收起来就能让它底下的问题跳不到。
+    pub fn every_row(&self) -> Vec<Row> {
+        self.rows(&self.every_directory())
+    }
+
+    /// 这一行**拿哪一截字给搜索比**（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）：
+    /// 目录行是它的名字，卷行是「目录名/卷名」，备注行是名头加「是哪几处」。
+    /// 分区标题、空行与末行那一句不参与，答 `None`。
+    ///
+    /// **匹配与落点分开**：这一处答的是「屏上这一行要不要加下划线」；哪几行是
+    /// `⏎`／`n`／`N` 的落点另有一条（目录名自己就命中时它底下那几卷不再各算一个落点，
+    /// 见 `super::view::Session::jump`）。
+    pub fn searched_text(&self, row: Row) -> Option<String> {
+        match row {
+            Row::Directory { node, at, .. } => Some(self.directory(node, at)?.label.clone()),
+            Row::Volume { at, .. } => Some(format!(
+                "{}/{}",
+                self.directory_of(at)?.label,
+                crate::render::volume_name(self.root(at)?)
+            )),
+            Row::Note { node, at, .. } => {
+                let note = self.note(node, at)?;
+                Some(format!("{}{}", note.label, note.what))
+            }
+            Row::Section { .. } | Row::Gap | Row::Foot => None,
+        }
+    }
+
     /// 这个卷根是清单里第几卷。**按卷根认**（清点已按卷根收编过，清单里卷根不重）——
     /// 那一趟报回来的卷根（[`super::live::Walking::volume`]）与光标记着的身份
     /// （[`Cursor::Volume`]）都得从这一处换回序号。

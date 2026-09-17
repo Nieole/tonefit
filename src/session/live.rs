@@ -266,6 +266,40 @@ impl VolumeState {
     }
 }
 
+/// 一卷**需留意的页按种类各几页**（`CONTEXT.md` 的《需留意的页》）。
+///
+/// **只有数，没有屏上的词。** 这一份要同时答两个问题——卷行行尾写哪几样
+/// （画法那一层，在 `tui` 特性后面）与 `]d`／`[d` 跳不跳到这一卷
+/// （[`Live::troubled_at`]，在特性**外面**）——而措辞只有界面层说得算。
+/// 数出自 [`Live::notable_at`]，词在 `super::shell::list` 一处。
+///
+/// **坏页、代表页与兜底上界三种不在这里**：坏页由**行首记号**与隔离那一句说，
+/// 另两种不是「出了事」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NotableTally {
+    /// 差异大的页。
+    pub outlier: usize,
+    /// 页面超宽的页。
+    pub overflowed: usize,
+    /// 尺寸未贴合屏幕的页。
+    pub outside_the_gate: usize,
+    /// 残缺页。
+    pub salvaged: usize,
+}
+
+impl NotableTally {
+    /// 一共几页需留意。**一页要紧在好几处就数好几回**——屏上那几个数各报各的
+    /// （`CONTEXT.md` 的《需留意的页》：一页可以同时要紧在好几处）。
+    pub fn pages(self) -> usize {
+        self.outlier + self.overflowed + self.outside_the_gate + self.salvaged
+    }
+
+    /// 有没有需留意的页——卷行行首那个 `!` 与 `]d` 的落点问的都是它。
+    pub fn any(self) -> bool {
+        self.pages() > 0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Walking {
     /// 卷标识：源目录路径，或源归档的文件路径。
@@ -1189,6 +1223,63 @@ impl Live {
                 .get(at)
                 .map(|one| one.reason.as_str()),
             Volume::Settled(_) | Volume::Summarized { .. } => None,
+        }
+    }
+
+    /// 清点清单里第几卷**那一份报告**：收摊了的、确认点上攒着的那一份；没做成的与
+    /// 还没收摊的那几卷没有。
+    ///
+    /// [`listed_at`](Self::listed_at) 答「它那一份在哪儿」，这一处顺手取回来——
+    /// 卷列表每一行、跳转的落点、逐页那几行都要它，两步并一处只此一份。
+    pub fn report_at(&self, at: usize) -> Option<&VolumeReport> {
+        self.listed_at(at).and_then(|which| self.volume(which))
+    }
+
+    /// 清点清单里第几卷**需留意的页按种类各几页**（`CONTEXT.md` 的《需留意的页》）。
+    ///
+    /// **判在 [`render::notable`] 一处**，与每页结果、与命令行印出去的那一份同一份判定；
+    /// 这里只按种类归堆。**屏上那几个词不在这儿**——措辞是界面层自己的
+    /// （`super::shell::list`），本模块照旧只折出几个数（见模块文档头一句）。
+    ///
+    /// **一处出处**：卷行行尾写哪几样按它（画法那一层，在 `tui` 后面）、`]d`／`[d`
+    /// 跳不跳到这一卷也按它（[`Self::troubled_at`]，在特性外面）——两处读的是同一份，
+    /// 「行首挂 `!` 的卷跳得到」那句话才成立。
+    pub fn notable_at(&self, at: usize) -> NotableTally {
+        let Some(report) = self.report_at(at) else {
+            return NotableTally::default();
+        };
+        let mut tally = NotableTally::default();
+        for page in render::notable(report, self.report.profile.panel()) {
+            for why in page {
+                match why {
+                    render::Notable::Outlier => tally.outlier += 1,
+                    render::Notable::Overflowed => tally.overflowed += 1,
+                    render::Notable::OutsideTheGate => tally.outside_the_gate += 1,
+                    render::Notable::Salvaged => tally.salvaged += 1,
+                    // 坏页由**行首记号**与隔离那一句说，代表页与兜底上界不是「出了事」。
+                    render::Notable::Failed
+                    | render::Notable::Backstopped
+                    | render::Notable::Driver => {}
+                }
+            }
+        }
+        tally
+    }
+
+    /// 清点清单里第几卷**是 `]d`／`[d` 的一个落点**吗（`CONTEXT.md` 的《卷列表》：
+    /// 转换失败的卷 · 进了隔离的卷 · 有需留意的页的卷）。
+    ///
+    /// 它与**行首记号**那两个（`✗`／`!`）是同一批卷：`]d` 跳的正是屏上跳出来的那几行。
+    /// 还没轮到、正在处理、被立即停止掉的那几卷一份报告都没有，判不出需留意几页，
+    /// 因此一个都不是落点——那几行屏上也没有记号可跳。
+    ///
+    /// 第四种落点（**无法访问的地方**）不是卷，它是[备注行](super::tree::Note)，
+    /// 由跳转那一支在树上认（`super::view::Session::jump`）。
+    pub fn troubled_at(&self, at: usize) -> bool {
+        match self.states.get(at) {
+            Some(VolumeState::Failed | VolumeState::Isolated) => true,
+            Some(VolumeState::Done) => self.notable_at(at).any(),
+            _ => false,
         }
     }
 
