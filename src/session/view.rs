@@ -41,12 +41,20 @@ use super::look::{Kind, Look, Segment};
 use super::state::{Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Shape, Stage};
 use super::tone::Tone;
 use super::tree;
-use super::typing::InputLine;
+use super::typing::{InputLine, Purpose};
 use crate::preset::Preset;
 use tonefit::Panel;
 
 /// 回话在屏底占几秒（设计稿 `toast` 的默认时长）。
 pub const REPLY_LINGERS: Duration = Duration::from_millis(2600);
+
+/// **跳一次之后那一句**在屏底占几秒（设计稿 `jump` 里那 1400 毫秒）：
+/// 「问题 4/4」「搜索结果 1/1」都是它。比[寻常那一句](REPLY_LINGERS)短——
+/// 它报的是一个数，看一眼就够。
+const JUMP_LINGERS: Duration = Duration::from_millis(1400);
+
+/// **`F` 交回自动滚动**那一句在屏底占几秒（设计稿 `taskKey` 里那 1600 毫秒）。
+const FOLLOW_LINGERS: Duration = Duration::from_millis(1600);
 
 /// 连击键按了前半截之后等后半截等多久（设计稿 `frame` 里那 900 毫秒）。
 pub const COMBO_WAITS: Duration = Duration::from_millis(900);
@@ -221,6 +229,16 @@ pub struct TaskView {
     /// **自动滚动**开着没有（`CONTEXT.md` 的《自动滚动》）：开着时光标跟到正在处理的那一卷，
     /// 只滚不展。每次开跑扳回开着。
     pub follow: bool,
+    /// **搜索此刻搜的是那一句**（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）：
+    /// `⏎` 定下来的那一句，`Esc` 丢掉它。`n`／`N` 跳的就是它，屏上匹配处的下划线
+    /// 与框底边那一截也按它画。**一个字都没打就不存**（那时它是 `None`，
+    /// 不是一个空串）。
+    ///
+    /// **搜索那一行开着的时候不读它**：那一刻搜的是缓冲本身（[`Views::searching`]
+    /// 一处答完）——打一个字下划线当场跟着动，而定下来之前这一格还是上一句。
+    ///
+    /// **每次开跑清掉**（设计稿 `startRun`）：上一趟搜的那一句在新的一趟上说不通。
+    pub search: Option<String>,
     /// **清点完了没有**：开工那一条到了、树拼过一次就是真。
     ///
     /// 记一格而不是拿「树上几卷」与「清单上几卷」比：**一卷都没清点出来的那一趟也清点完了**
@@ -237,18 +255,21 @@ impl Default for TaskView {
             tree: tree::Tree::default(),
             expanded: BTreeSet::new(),
             follow: true,
+            search: None,
             surveyed: false,
         }
     }
 }
 
 impl TaskView {
-    /// **每次开跑重来一遍**：树还没拼出来、一个目录都不展开、自动滚动扳回开着，
-    /// 光标退回列表头一行（这一刻列表刚从树换回处理路径，或者反过来）。
+    /// **每次开跑重来一遍**：树还没拼出来、一个目录都不展开、自动滚动扳回开着、
+    /// 上一趟搜的那一句清掉，光标退回列表头一行（这一刻列表刚从树换回处理路径，
+    /// 或者反过来）。
     pub fn start_a_run(&mut self) {
         self.tree = tree::Tree::default();
         self.expanded.clear();
         self.follow = true;
+        self.search = None;
         self.surveyed = false;
         self.focus = Focus::VolumeList;
     }
@@ -385,6 +406,24 @@ impl Views {
         SPINNER[step % SPINNER.len()]
     }
 
+    /// **此刻搜的是哪一句**（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）——
+    /// 一处答完，屏上匹配处的下划线、框底边那一截与 `n`／`N` 的落点读的都是它。
+    ///
+    /// **搜索那一行开着时就是它的缓冲**：打一个字、退一个字，屏上当场跟着动，
+    /// 中间不存第二份；关掉之后是 `⏎` [定下来的那一句](TaskView::search)。
+    ///
+    /// **空串不算在搜，这一处一次判掉**：刚按下 `/` 还没打字时一条下划线都不画、
+    /// 框底边也不摆那一截、`n`／`N` 没有可跳的——设计稿那几处问的都是
+    /// `S.search && S.search.q`（两件事一个条件），这一处因此把它收成一件。
+    /// 「那一行开着吗」是另一问，问 [`Session::searching_line`]。
+    pub fn searching(&self) -> Option<&str> {
+        let query = match &self.input {
+            Some(line) if line.purpose == Purpose::Search => line.buffer.as_str(),
+            _ => self.task.search.as_deref()?,
+        };
+        (!query.is_empty()).then_some(query)
+    }
+
     /// 屏底右端此刻要不要待续记号：连击键的前半截还没过期。
     pub fn pending(&self, now: Instant) -> Option<char> {
         self.pending
@@ -443,6 +482,73 @@ impl Input {
             Self::Ctrl(letter) => Chord::Ctrl(letter),
             Self::Wheel(_) => Chord::Wheel,
             Self::Click { .. } => Chord::Click,
+        }
+    }
+}
+
+/// **跳转找的是哪一种落点**（设计稿 `jump` 的 `kind`；`CONTEXT.md` 的《卷列表》）。
+///
+/// 两种共用一套挑法（[`Session::hunt`]）：树上全部目录都摊开那一副里，光标之后的头一个，
+/// 没有就绕回头一个。差的只有「哪几行算落点」与屏底那一句。
+enum Hunt {
+    /// `]d`／`[d`：**问题**——转换失败的卷 · 进了隔离的卷 · 有需留意的页的卷 ·
+    /// 无法访问的地方。前三种问那一趟（[`Live::troubled_at`]），末一种是树上的备注行。
+    Problems,
+    /// `⏎`／`n`／`N`：**搜索命中**——目录名装着这一句的目录行，与「目录名/卷名」装着它的卷行。
+    Matching(String),
+}
+
+impl Hunt {
+    /// 这一行是一个落点吗。
+    fn lands_on(&self, row: tree::Row, tree: &tree::Tree, live: Option<&Live>) -> bool {
+        match self {
+            Self::Problems => match row {
+                tree::Row::Volume { at, .. } => live.is_some_and(|live| live.troubled_at(at)),
+                tree::Row::Note { node, at, .. } => tree
+                    .note(node, at)
+                    .is_some_and(|note| note.kind == tree::NoteKind::Unreachable),
+                _ => false,
+            },
+            // **目录名自己就装着这一句时，它底下那几卷不再各算一个落点**
+            // （设计稿 `targets` 那一条）：搜「海贼」跳到的是那个目录行一次，
+            // 不是它底下十八卷各一次。屏上那十八行照旧加下划线——
+            // 匹配与落点是两件事（[`tree::Tree::searched_text`]）。
+            Self::Matching(query) => match row {
+                tree::Row::Directory { node, at, .. } => tree
+                    .directory(node, at)
+                    .is_some_and(|directory| directory.label.contains(query.as_str())),
+                tree::Row::Volume { at, .. } => {
+                    tree.directory_of(at)
+                        .is_some_and(|directory| !directory.label.contains(query.as_str()))
+                        && tree
+                            .searched_text(row)
+                            .is_some_and(|text| text.contains(query.as_str()))
+                }
+                _ => false,
+            },
+        }
+    }
+
+    /// 跳到了：屏底报这是第几个、共几个。
+    fn landed(&self, which: usize, total: usize) -> Vec<Segment> {
+        let head = match self {
+            Self::Problems => Segment::new("问题 ", Look::tone(Tone::Trouble).bold()),
+            Self::Matching(_) => Segment::new("搜索结果 ", Look::tone(Tone::Caution).bold()),
+        };
+        vec![head, Segment::plain(format!("{which}/{total}"))]
+    }
+
+    /// 一个都没有：问题那一路说的是好消息，搜索那一路报的是这一句没命中。
+    fn found_nothing(&self) -> Vec<Segment> {
+        match self {
+            Self::Problems => vec![
+                Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                Segment::plain("目前没有问题"),
+            ],
+            Self::Matching(query) => vec![Segment::new(
+                format!("没有找到和「{query}」相关的卷或文件夹"),
+                Look::tone(Tone::Caution),
+            )],
         }
     }
 }
@@ -608,6 +714,8 @@ impl Session {
     ///
     /// 起一趟、按停止、答话、预设那几支、灰阶测试图，都要够着那一趟，归终端层那一支
     /// （`super::terminal`）；交到这里的那几件当作没有意义，原地不动。
+    /// **跳转那几件同样**（`]d`／`[d`、`n`／`N`、搜索那一行上的 `⏎`）：落点要问那一趟，
+    /// 那一支是 [`Session::jump`] 与 [`Session::confirm_search`]。
     /// 覆盖层上滚动要知道窗口有多大，同样在终端层那一支（[`super::cover::Sheet`] 与 `Views::scroll_cover`）；
     /// 半屏与一屏那四个随每页结果与树那几票接上，眼下原地不动。
     pub fn perform(&mut self, deed: Deed, now: Instant) -> Exit {
@@ -657,10 +765,10 @@ impl Session {
             Deed::ConfigBack => self.config_back(),
             Deed::EditValue => self.open_valuing(),
             Deed::NextView | Deed::PrevView => self.views.view = self.views.view.other(),
-            Deed::Down => self.place_cursor(|here, last| (here + 1).min(last)),
-            Deed::Up => self.place_cursor(|here, _| here.saturating_sub(1)),
-            Deed::Bottom => self.place_cursor(|_, last| last),
-            Deed::Top => self.place_cursor(|_, _| 0),
+            Deed::Down => self.place_cursor(now, |here, last| (here + 1).min(last)),
+            Deed::Up => self.place_cursor(now, |here, _| here.saturating_sub(1)),
+            Deed::Bottom => self.place_cursor(now, |_, last| last),
+            Deed::Top => self.place_cursor(now, |_, _| 0),
             // **展开只管目录行**：卷行按下去要问那一趟「这一卷展不展得开」，
             // 而状态机读不到它——那一支在终端层（`super::terminal::input`）。
             // **按停止升一级**（ADR 0013 的两级停止）：把升到的那一级交给跑着的那一趟
@@ -669,7 +777,28 @@ impl Session {
             Deed::Stop => self.stop_a_notch(now),
             Deed::Open => self.open_under_cursor(),
             Deed::Close => self.collapse_directory(),
-            Deed::Follow => self.views.task.follow = true,
+            // **`F` 交回自动滚动**：扳回那一格、屏底说一句是这里的事；而**光标当场
+            // 跟到正在处理的那一卷**要读那一趟，那一步在终端层那一支上
+            // （`super::terminal::input` 按下这一件之后再盯一眼 [`Session::watch_the_run`]）
+            // ——与按停止那一件同一条分工，记着那一格的仍只有这一处。
+            Deed::Follow => {
+                self.views.task.follow = true;
+                self.views.say_for(
+                    vec![
+                        Segment::new("自动滚动：", Look::kind(Kind::Done).bold()),
+                        Segment::plain("跟到正在处理的卷"),
+                    ],
+                    FOLLOW_LINGERS,
+                    now,
+                );
+            }
+            // **`/` 开搜索那一行**：屏底换成 `/` 加缓冲，底下那张列表照旧（框细一档）。
+            Deed::Search => {
+                self.views.input = Some(InputLine::new(Purpose::Search, ""));
+            }
+            // **卷列表上的 `Esc` 只丢掉搜索**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）
+            // ——没在搜的时候它一件事都不做。每页结果与说明卡各自那一级在各自那一票。
+            Deed::ClearSearch => self.views.task.search = None,
             Deed::TogglePath => {
                 if let Some(at) = self.path_under_cursor() {
                     self.scope.paths[at].on = !self.scope.paths[at].on;
@@ -696,7 +825,7 @@ impl Session {
     /// 或半屏那么多行。**挪几行要窗口有多高**，而那件事只有终端层知道——与
     /// [`Views::scroll_cover`] 同一条分工，因此这一支也在那一层调
     /// （`super::terminal` 的 `input`）。不是这四件就交回 `false`，让状态机接着认。
-    pub fn scroll_list(&mut self, deed: Deed, window: Window) -> bool {
+    pub fn scroll_list(&mut self, deed: Deed, window: Window, now: Instant) -> bool {
         // **不在卷列表上就一件都不认**：这四个键在表上派给**没被盖着的每一块**
         // （`UNCOVERED_OR_OVERLAY`），而这一支只挪得动卷列表的光标——认下来却什么都不做，
         // 每页结果与配置视图接上之后按下去会是一片静默（那两块自己的滚动随各自那一票接）。
@@ -711,14 +840,14 @@ impl Session {
             Deed::PageUp => -(page as isize),
             _ => return false,
         };
-        self.place_cursor(|here, last| here.saturating_add_signed(by).min(last));
+        self.place_cursor(now, |here, last| here.saturating_add_signed(by).min(last));
         true
     }
 
     /// 光标挪到停得住的行里的哪一条：`to` 收「此刻在第几条、最后一条是第几条」，答挪到第几条。
     /// 任务视图只在卷列表上挪，配置视图两栏各挪各的（[`Self::place_config_cursor`]）；
     /// 每页结果随它那一票接上。
-    fn place_cursor(&mut self, to: impl Fn(usize, usize) -> usize) {
+    fn place_cursor(&mut self, now: Instant, to: impl Fn(usize, usize) -> usize) {
         if self.views.view == View::Config {
             self.place_config_cursor(to);
             return;
@@ -738,11 +867,12 @@ impl Session {
             .iter()
             .position(|stop| *stop == self.views.task.cursor)
             .unwrap_or(0);
-        let there = stops[to(here, last).min(last)].clone();
-        if there != self.views.task.cursor {
-            self.pause_follow();
-        }
-        self.views.task.cursor = there;
+        // **按了挪光标那几个键就暂停自动滚动，挪得动挪不动都算**（设计稿 `listGo`
+        // 那一支不问光标有没有真挪）：已经到底了再按一下 `j` 同样是「这一下起我自己看」
+        // ——不暂停的话下一帧 [`Self::watch_the_run`] 就把光标拽回正在处理的那一卷，
+        // 而躲开那一下正是按这个键的用意。跟着的那一卷正停在列表两头时踩得到。
+        self.pause_follow(now);
+        self.views.task.cursor = stops[to(here, last).min(last)].clone();
     }
 
     /// **光标此刻挪得动吗**：人在任务视图，而那个视图记着的块是卷列表。
@@ -772,10 +902,40 @@ impl Session {
         );
     }
 
-    /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：按键、滚轮、单击、
-    /// `]d`、搜索跳过去都算，`F` 交回。这一处管的是按键那几个，其余随各自那一票接上。
-    fn pause_follow(&mut self) {
+    /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：挪光标那几个键、
+    /// 滚轮、单击都算，屏底跟着说一句「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回。
+    /// 滚轮与单击那一路随鼠标那一票（16）接到这一处上。
+    ///
+    /// **跳转不走这一处**：`]d`／`[d` 与搜索跳过去同样暂停，但屏底说的是它们自己那一句
+    /// （「问题 4/4」「搜索结果 1/1」），不是这一句——两句抢同一行，
+    /// 说出口的只能是人刚按下那件事（[`Self::hunt`] 因此自己扳那一格）。
+    ///
+    /// **跟不上东西的那几档一声不响**：还没开跑、清点中、已结束时本来就没有
+    /// 「正在处理的那一卷」可跟（[`Self::following_matters`]），挪光标不算离开它。
+    fn pause_follow(&mut self, now: Instant) {
+        if !self.following_matters() || !self.views.task.follow {
+            return;
+        }
         self.views.task.follow = false;
+        self.views.say(
+            vec![
+                Segment::new("已暂停自动滚动", Look::tone(Tone::Caution).bold()),
+                Segment::faint(" ⋅ 按 "),
+                Segment::new("F", Look::PLAIN.bold()),
+                Segment::faint(" 恢复"),
+            ],
+            now,
+        );
+    }
+
+    /// **自动滚动此刻跟得上东西吗**：一趟正在跑（转换中或等待确认）而且**清点完了**。
+    ///
+    /// 清点那一段树还没有、列表列的仍是处理路径，屏上一个「正在处理的那一卷」都指不出来
+    /// ——那一档挪光标不该说「已暂停」。问的正是[清点完了没有](TaskView::surveyed)
+    /// 那一格，与框右端那一枚（`super::shell::list` 读 [`Phase::Running`]／
+    /// [`Phase::Deciding`]）分的是同一条界。
+    fn following_matters(&self) -> bool {
+        matches!(self.stage(), Stage::Running(_) | Stage::Deciding(_)) && self.views.task.surveyed
     }
 
     /// `l`／`⏎` 按在光标那一行上：**目录行展开**（`CONTEXT.md` 的《展开》：目录→卷
@@ -861,6 +1021,124 @@ impl Session {
             Cursor::Directory(directory.path.clone())
         };
         self.views.task.cursor = cursor;
+    }
+
+    // ───────────────────────── 跳转与搜索 ─────────────────────────
+
+    /// **搜索那一行此刻开着吗**：终端层按它把 `⏎` 分给
+    /// [`confirm_search`](Self::confirm_search)，别的输入行照旧交给状态机。
+    pub fn searching_line(&self) -> bool {
+        self.views.input.as_ref().map(|line| &line.purpose) == Some(&Purpose::Search)
+    }
+
+    /// **搜索那一行上的 `⏎`**：把这一句定下来、跳到第一个结果
+    /// （`CONTEXT.md` 的《卷列表》：`⏎` 跳到第一个）。
+    ///
+    /// **一个字都没打就只关掉那一行**：没有那一句，跳无处可跳（设计稿 `submitInput`
+    /// 那一支同样不跳），屏底也不该报「没有找到和「」相关的卷或文件夹」。
+    /// 空串在 [`Views::searching`] 一处判掉，这里只管把打出来的那一句收下。
+    ///
+    /// **定下来的那一句留着**（哪怕一个都没找到）——`n`／`N` 跳的是它，
+    /// 框底边那一截写的也是它。
+    pub fn confirm_search(&mut self, live: Option<&Live>, now: Instant) {
+        let Some(line) = self.views.input.take() else {
+            return;
+        };
+        self.views.task.search = Some(line.buffer);
+        let Some(query) = self.views.searching().map(str::to_owned) else {
+            return;
+        };
+        self.hunt(&Hunt::Matching(query), live, true, now);
+    }
+
+    /// **`]d`／`[d`／`n`／`N`**：跳到下一处／上一处。不是这四件就交回 `false`，
+    /// 让状态机接着认。
+    ///
+    /// **落点要问那一趟**（哪几卷出了事、哪几卷在哪个目录里），而状态机读不到它
+    /// ——与 [`Deed::Open`] 落在卷行上时同一条分工，因此这一支也在终端层那一层调
+    /// （`super::terminal::input`）。
+    ///
+    /// `n`／`N` 在**没搜过**（或者搜的是空串）时一件事都不做：设计稿 `taskKey`
+    /// 那一支就是这么拦的——那两个键在表上派得出，而没有那一句可跳。
+    pub fn jump(&mut self, deed: Deed, live: Option<&Live>, now: Instant) -> bool {
+        let (hunt, forward) = match deed {
+            Deed::NextProblem => (Hunt::Problems, true),
+            Deed::PrevProblem => (Hunt::Problems, false),
+            Deed::SearchNext | Deed::SearchPrev => {
+                // **没搜过就一件事都不做**（空串也算没搜，判在 [`Views::searching`] 一处）：
+                // 那两个键在表上派得出，而没有那一句可跳——设计稿 `taskKey` 那一支
+                // 就是这么拦的。
+                let Some(query) = self.views.searching().map(str::to_owned) else {
+                    return true;
+                };
+                (Hunt::Matching(query), deed == Deed::SearchNext)
+            }
+            _ => return false,
+        };
+        self.hunt(&hunt, live, forward, now);
+        true
+    }
+
+    /// 跳一次：**树上全部目录都摊开那一副**（[`tree::Tree::every_row`]）里挑一个落点，
+    /// 光标落上去，屏底报第几个（设计稿 `jump`）。
+    ///
+    /// **次序按树，不按屏上此刻摆着的那几行**：收着的目录里那几卷照样跳得到，
+    /// 跳过去把那个目录**展开**（`CONTEXT.md` 的《卷列表》：收着的目录自动展开到那一卷）。
+    /// 光标此刻那一行之后的头一个是「下一个」；一个都没有就**绕回头一个**
+    /// （往上是绕回最后一个）。
+    ///
+    /// **跳过去即暂停自动滚动**（`CONTEXT.md` 的《自动滚动》）：不暂停的话下一帧
+    /// 就被拽回正在处理的那一卷。屏底说的是这一次跳的第几个，
+    /// 不是[挪光标那一句](Self::pause_follow)。
+    fn hunt(&mut self, hunt: &Hunt, live: Option<&Live>, forward: bool, now: Instant) {
+        let (landings, here) = {
+            let tree = &self.views.task.tree;
+            let rows = tree.every_row();
+            let stops: Vec<Option<Cursor>> = rows.iter().map(|row| row.stop(tree)).collect();
+            let landings: Vec<(usize, Cursor)> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| hunt.lands_on(**row, tree, live))
+                .filter_map(|(at, _)| stops[at].clone().map(|stop| (at, stop)))
+                .collect();
+            let here = stops
+                .iter()
+                .position(|stop| stop.as_ref() == Some(&self.views.task.cursor));
+            (landings, here)
+        };
+        if landings.is_empty() {
+            self.views.say(hunt.found_nothing(), now);
+            return;
+        }
+        let which = if forward {
+            landings
+                .iter()
+                .position(|(at, _)| here.is_none_or(|here| *at > here))
+                .unwrap_or(0)
+        } else {
+            landings
+                .iter()
+                .rposition(|(at, _)| here.is_some_and(|here| *at < here))
+                .unwrap_or(landings.len() - 1)
+        };
+        let (_, stop) = landings[which].clone();
+        // 停在一卷上就把它那个目录展开——光标记的是那一卷，而它的行收着的时候不在屏上。
+        let opened = match &stop {
+            Cursor::Volume(root) => {
+                let tree = &self.views.task.tree;
+                tree.index_of(root)
+                    .and_then(|at| tree.directory_of(at))
+                    .map(|directory| directory.path.clone())
+            }
+            _ => None,
+        };
+        if let Some(path) = opened {
+            self.views.task.expanded.insert(path);
+        }
+        self.views.task.cursor = stop;
+        self.views.task.follow = false;
+        self.views
+            .say_for(hunt.landed(which + 1, landings.len()), JUMP_LINGERS, now);
     }
 
     /// 配置视图上挪光标：**两栏各挪各的**——设置栏挪的是停得住的那 20 项，
@@ -1122,7 +1400,19 @@ impl Session {
                     ],
                 );
             }
-            // 输入行右端那几件（设计稿 `drawFooter` 打字那一支）。
+            // 输入行右端那几件（设计稿 `drawFooter` 打字那一支）。**搜索那一行只有两件**：
+            // 它不补全（[`Purpose::completes`]），`C-w` 按得动而不摆——右端只摆这一行
+            // 此刻最要紧的两件（同一处 `⏎` 换成「跳到结果」）。
+            (_, Focus::Input) if self.searching_line() => {
+                return keymap::hints(
+                    phase,
+                    focus,
+                    &[
+                        Want::saying(Deed::Confirm, "跳到结果"),
+                        Want::of(Deed::Cancel),
+                    ],
+                );
+            }
             (_, Focus::Input) => {
                 return keymap::hints(
                     phase,
@@ -1177,7 +1467,13 @@ impl Session {
             (View::Task, _) => {
                 wants.extend(self.stage_wants(phase, focus));
                 wants.push(Want::of(Deed::NextProblem));
-                // 光标那一行展得开什么摆在 `]d` 之后、`/` 之前（设计稿 `footerHints`
+                // **`F` 只在自动滚动暂停着的时候摆**（设计稿 `footerHints` 那一条）：
+                // 跟着的时候它一件事都不做，屏上不摆按不动的键。已结束那一档表上
+                // 本来就派不出它（[`keymap::TABLE`] 只给转换中与等待确认）。
+                if !self.views.task.follow {
+                    wants.push(Want::of(Deed::Follow));
+                }
+                // 光标那一行展得开什么摆在 `]d`／`F` 之后、`/` 之前（设计稿 `footerHints`
                 // 那一支的次序，`openHint` 就摆在这一格）。
                 wants.extend(self.open_want(live));
                 wants.extend([
@@ -1261,6 +1557,7 @@ mod tests {
     use crate::session::home::Home;
     use crate::session::keymap::TABLE;
     use crate::session::state::Stage;
+    use crate::session::viewport::Viewport;
 
     fn key(letter: char) -> Input {
         Input::Key(Key::Char(letter))
@@ -1283,6 +1580,259 @@ mod tests {
         }
         session.views.task.cursor = Cursor::Path(PathBuf::from("/home/me/漫画库"));
         session
+    }
+
+    /// 清点清单上的一卷（步数与源页数这一层不看）。
+    fn listed(root: &str) -> tonefit::SurveyedVolume {
+        tonefit::SurveyedVolume {
+            root: PathBuf::from(root),
+            steps: 3,
+            source_pages: 1,
+        }
+    }
+
+    /// 一趟跑着、清点完了的会话：一条处理路径 `/库` 摊成两个目录（分区），
+    /// 甲底下两卷、乙底下一卷。**没有那一趟**——本组用例问的都是特性外面那几件
+    /// （光标、暂停、搜索的落点），一卷此刻怎么样不在里面。
+    fn a_running_tree() -> Session {
+        let mut session = Session::new();
+        session.home = Home::at("/home/me");
+        session.scope.paths.push(NamedPath {
+            path: PathBuf::from("/库"),
+            on: true,
+        });
+        session.run_started();
+        session.views.task.tree = tree::Tree::of(
+            &session.scope.paths,
+            &[
+                listed("/库/甲/第01卷"),
+                listed("/库/甲/第02卷"),
+                listed("/库/乙/第01卷"),
+            ],
+            &[],
+            &[],
+        );
+        session.views.task.surveyed = true;
+        session
+    }
+
+    /// 屏底此刻那一句连起来。
+    fn said(session: &Session, now: Instant) -> String {
+        session
+            .views
+            .reply(now)
+            .expect("屏底说了一句")
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect()
+    }
+
+    /// **自动滚动暂停时只记光标，视口照旧由光标算**（票面第三条验收）。
+    ///
+    /// 两问。① 挪一下光标就暂停，屏底说「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回、
+    /// 屏底换成那一句。② **暂停这件事一个滚动量都不记**：把另一份会话的光标直接摆到
+    /// 同一行、自动滚动也扳掉，两份任务视图**一个字节都不差**——中间没有第二个数
+    /// 躲在别处。屏上从第几行画起因此只是光标的函数（`CONTEXT.md` 的《视口》）。
+    #[test]
+    fn pausing_follow_only_records_the_cursor_and_the_viewport_comes_from_it() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        assert!(session.views.task.follow, "开跑那一刻跟着");
+        let head = session.cursor_line();
+        session.perform(Deed::Down, now);
+        assert!(!session.views.task.follow, "挪一下光标就暂停");
+        assert_eq!(said(&session, now), "已暂停自动滚动 ⋅ 按 F 恢复");
+        assert!(session.cursor_line() > head, "光标真挪了一行");
+
+        let mut twin = a_running_tree();
+        twin.views.task.follow = false;
+        twin.views.task.cursor = session.views.task.cursor.clone();
+        assert_eq!(
+            twin.views.task, session.views.task,
+            "暂停记下来的只有光标，没有第二个数"
+        );
+        let rows = session.lines().len();
+        let from = |session: &Session| Viewport::with_margin(rows, 2, session.cursor_line()).from();
+        assert_eq!(from(&twin), from(&session), "视口是光标算出来的");
+
+        session.perform(Deed::Follow, now);
+        assert!(session.views.task.follow, "`F` 交回");
+        assert_eq!(said(&session, now), "自动滚动：跟到正在处理的卷");
+    }
+
+    /// **挪不动的那一下照样暂停自动滚动**（设计稿 `listGo` 不问光标有没有真挪）：
+    /// 跟着的那一卷正停在列表最后一行上时按 `j`——光标挪不动，而**自动滚动必须停**，
+    /// 不然下一帧 [`Session::watch_the_run`] 就把人拽回去，而躲开那一下正是按这个键的用意。
+    #[test]
+    fn a_keypress_that_cannot_move_the_cursor_still_pauses_following() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        // 光标停在最后一条停得住的行上（这一景两条：两个目录行）。
+        session.perform(Deed::Bottom, now);
+        session.views.task.follow = true;
+        let last = session.views.task.cursor.clone();
+        session.perform(Deed::Down, now);
+        assert_eq!(session.views.task.cursor, last, "到底了，光标挪不动");
+        assert!(!session.views.task.follow, "挪不动也暂停");
+        assert_eq!(said(&session, now), "已暂停自动滚动 ⋅ 按 F 恢复");
+    }
+
+    /// **每次开跑扳回跟着、上一趟搜的那一句清掉**（票面第一条末一句；设计稿 `startRun`）。
+    #[test]
+    fn starting_a_run_follows_again_and_forgets_the_last_query() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        session.views.task.search = Some("甲".to_owned());
+        session.perform(Deed::Down, now);
+        assert!(!session.views.task.follow);
+        assert_eq!(session.views.searching(), Some("甲"));
+
+        session.run_started();
+        assert!(session.views.task.follow, "开跑扳回跟着");
+        assert_eq!(session.views.searching(), None, "上一趟搜的那一句清掉了");
+    }
+
+    /// **清点中挪光标不说「已暂停」**：那一档树还没有、列表列的仍是处理路径，
+    /// 屏上一个「正在处理的那一卷」都指不出来（[`Session::following_matters`]）。
+    #[test]
+    fn moving_the_cursor_while_surveying_says_nothing_about_following() {
+        let mut session = three_paths();
+        session.run_started();
+        let now = Instant::now();
+        assert!(!session.views.task.surveyed, "清点中：开工那一条还没到");
+        session.perform(Deed::Down, now);
+        assert!(
+            session.views.reply(now).is_none(),
+            "清点中挪光标一句话都不说"
+        );
+    }
+
+    /// **`/` 搜卷名或目录名，`⏎` 跳到第一个，`n`／`N` 在结果之间跳**（票面第三条）。
+    ///
+    /// 四问：① 打着字的时候搜的就是缓冲（`searching` 一处答完）；② 目录名自己装着这一句时
+    /// **它底下那几卷不再各算一个落点**（搜「甲」只有一个结果，那个目录行）；
+    /// ③ 跳到一卷上会把它那个目录**展开**；④ `Esc` 连那一句一起丢，之后 `n`／`N`
+    /// 一件事都不做。
+    #[test]
+    fn search_lands_on_directories_and_volumes_and_opens_what_it_needs_to() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        session.perform(Deed::Search, now);
+        assert_eq!(
+            session.views.searching(),
+            None,
+            "刚开那一行还没打字：空串不算在搜"
+        );
+        assert!(session.searching_line(), "而那一行确实开着");
+        for glyph in "甲".chars() {
+            session.perform(Deed::Typed(glyph), now);
+        }
+        assert_eq!(session.views.searching(), Some("甲"), "搜的就是缓冲");
+
+        session.confirm_search(None, now);
+        assert_eq!(
+            session.views.task.cursor,
+            Cursor::Directory(PathBuf::from("/库/甲"))
+        );
+        assert_eq!(said(&session, now), "搜索结果 1/1", "两卷不各算一个落点");
+        assert!(!session.views.task.follow, "跳过去之后不再跟");
+        assert!(
+            session.views.task.expanded.is_empty(),
+            "停在目录行上不展开它"
+        );
+
+        // 卷名那一路：`甲/第02卷` 命中一卷，跳过去把它那个目录展开。
+        session.views.task.search = Some("第02".to_owned());
+        assert!(
+            session.jump(Deed::SearchNext, None, now),
+            "`n` 归跳转那一支"
+        );
+        assert_eq!(
+            session.views.task.cursor,
+            Cursor::Volume(PathBuf::from("/库/甲/第02卷"))
+        );
+        assert!(
+            session
+                .views
+                .task
+                .expanded
+                .contains(&PathBuf::from("/库/甲")),
+            "收着的目录自动展开到那一卷"
+        );
+
+        // `Esc` 丢掉那一句：之后 `n`／`N` 一件事都不做（没有那一句可跳）。
+        session.perform(Deed::ClearSearch, now);
+        assert_eq!(session.views.searching(), None);
+        let before = session.views.task.cursor.clone();
+        assert!(session.jump(Deed::SearchPrev, None, now));
+        assert_eq!(session.views.task.cursor, before, "没搜过就不跳");
+    }
+
+    /// **一个都没找到时各说一句**（票面第三条）：搜索那一路报这一句没命中，
+    /// `]d` 那一路报的是好消息。两句都不挪光标、不碰自动滚动。
+    #[test]
+    fn a_hunt_that_lands_nowhere_says_so_and_leaves_the_cursor_alone() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        let before = session.views.task.cursor.clone();
+
+        session.views.task.search = Some("不存在".to_owned());
+        session.jump(Deed::SearchNext, None, now);
+        assert_eq!(said(&session, now), "没有找到和「不存在」相关的卷或文件夹");
+
+        // 没有那一趟就问不出哪几卷出了事：这一景因此一处问题都没有。
+        session.jump(Deed::NextProblem, None, now);
+        assert_eq!(said(&session, now), "✓ 目前没有问题");
+        assert_eq!(session.views.task.cursor, before, "一句话，光标不动");
+        assert!(session.views.task.follow, "没跳成就不暂停");
+    }
+
+    /// **搜索那一行右端只有两件**（票面第三条）：它不补全，`C-w` 按得动而不摆；
+    /// `⏎` 那一句换成「跳到结果」。别的输入行照旧四件。
+    #[test]
+    fn the_search_line_offers_only_jump_and_cancel() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        session.perform(Deed::Search, now);
+        let spelt = |session: &Session, phase| {
+            session
+                .hints(phase, None)
+                .iter()
+                .map(|hint| format!("{} → {}", hint.spelt(), hint.what))
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(
+            spelt(&session, Phase::Running),
+            ["⏎ → 跳到结果", "Esc → 取消"]
+        );
+        // 对照：添加路径那一行上仍是四件（`Tab` 只在还没开始那一档派得出）。
+        session.perform(Deed::Cancel, now);
+        let mut fresh = three_paths();
+        fresh.open_adding();
+        assert_eq!(
+            spelt(&fresh, Phase::Fresh),
+            ["Tab → 补全", "C-w → 删一段", "⏎ → 确定", "Esc → 取消"]
+        );
+    }
+
+    /// **`F` 只在自动滚动暂停着的时候摆上屏底**（票面第一条那一句「屏底提 `F`」）：
+    /// 跟着的时候它一件事都不做，屏上不摆按不动的键。
+    #[test]
+    fn the_footer_offers_f_only_while_following_is_paused() {
+        let mut session = a_running_tree();
+        let listed = |session: &Session| {
+            session
+                .hints(Phase::Running, None)
+                .iter()
+                .map(|hint| hint.spelt())
+                .collect::<Vec<String>>()
+        };
+        assert!(
+            !listed(&session).contains(&"F".to_owned()),
+            "跟着的时候不摆它"
+        );
+        session.views.task.follow = false;
+        assert!(listed(&session).contains(&"F".to_owned()), "暂停了才摆");
     }
 
     /// **屏底每一件都出自那张按键表**（票面第三条）：键的写法与那一句合起来是表上的一行，
@@ -1349,8 +1899,9 @@ mod tests {
         let window = sized(120, 36);
         // 停得住的共 65 行（输出目录 · 63 条处理路径 · 「＋ 添加路径」），光标停在头一行。
         assert_eq!(session.cursor_position(), (1, 65));
+        let now = Instant::now();
         let walk = |session: &mut Session, deed| {
-            assert!(session.scroll_list(deed, window), "{deed:?} 该归它管");
+            assert!(session.scroll_list(deed, window, now), "{deed:?} 该归它管");
             session.cursor_position().0
         };
         assert_eq!(walk(&mut session, Deed::HalfDown), 1 + 12);
@@ -1358,7 +1909,7 @@ mod tests {
         assert_eq!(walk(&mut session, Deed::HalfUp), 1 + 24);
         assert_eq!(walk(&mut session, Deed::PageUp), 1, "到顶为止");
         assert!(
-            !session.scroll_list(Deed::Down, window),
+            !session.scroll_list(Deed::Down, window, now),
             "上下一行不归它（那一件状态机自己认）"
         );
     }

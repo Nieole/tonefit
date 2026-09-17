@@ -257,6 +257,46 @@ mod tests {
         assert_scene("config", 80, 24);
     }
 
+    /// **「搜索」120×36 与 80×24 逐格相等**（`session-redesign/09` 票面第一条）：
+    /// 输入行占着屏底、提示词是 `/`、右端只有 `⏎ → 跳到结果` 与 `Esc → 取消`；
+    /// 卷列表的框细了、光标行首是暗的 `›`；**匹配上的那几行名字那一列加下划线**
+    /// （目录名装着这一句时它底下那几卷一起加）；框底边左起写着这一句与 `n`／`N`。
+    ///
+    /// **那条环节横条换掉两格**（各换成它右边那一格）：这一景与「整卷统一灰阶」同在
+    /// 62% 上、当前卷同是 `灰原哀/第05卷`，踩的是同一条**已知的一格差**——设计稿那一头
+    /// 的模拟走的是**连续时间**（`done` 是 114.554，半页也占一格），而这一趟**一页一步**、
+    /// 走到的是 114/166。24 格那一条满 16 不满 17，8 格那一条满 5 不满 6。
+    /// 换掉之后仍是一条断言（实现在那一格上写别的照样红），停车场 **Q844**。
+    #[test]
+    fn the_search_scene_matches_its_design_snapshot_wide_and_narrow() {
+        let scene = Scene::named("search");
+        // 换掉的那几格：120×36 上总览当前卷那一行（第 46 格）与树上 `灰原哀` 那一行
+        // 行尾（第 103 格）各一格，80×24 上那一行（第 57 格）一格——三处都是同一条横条。
+        for (width, height, cells) in [
+            (120u16, 36u16, &[(3usize, 46u16), (16, 103)][..]),
+            (80, 24, &[(14, 57)][..]),
+        ] {
+            let buffer = painted(&scene, width, height);
+            assert_no_background(&buffer);
+            let mut expected = design::snapshot("search", width, height);
+            for (row, at) in cells {
+                expected = expected.cell_like(*row, *at, at + 1);
+            }
+            assert_same_cells(&buffer, &expected);
+        }
+    }
+
+    /// **「全部按键」120×36 与 80×24 逐格相等**（`session-redesign/09` 票面第一条）：
+    /// 覆盖层掀在**转换中**那一副上——底下整屏压暗，那一张只列此刻这一档派得出的键，
+    /// 宽那一屏两栏、窄那一屏一栏，底边说看到第几行。
+    ///
+    /// 这一景 07 摆不出来（底下那棵树归 08）：那一票因此把它连同它那六串留给了本票。
+    #[test]
+    fn the_help_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("help", 120, 36);
+        assert_scene("help", 80, 24);
+    }
+
     /// **`NO_COLOR` 在场时颜色退回默认，加粗、下划线、粗框、压暗照旧**（票面第四条）：
     /// 不上色那一屏与设计快照逐格比，只差每一格的前景色都是终端默认色。
     #[test]
