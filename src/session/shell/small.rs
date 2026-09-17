@@ -41,10 +41,23 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, live: Option<&Live>, phase: Phase) {
     }
 }
 
-/// 中间那一行：还没开始，或者总进度（随总览那一票接上跑着的那几副）。
+/// 中间那一行：还没开始，或者**总进度**——百分比加第几卷（`CONTEXT.md` 的《让位》：
+/// 不到 60×16 整屏只剩一句「窗口太小」、当前尺寸、总进度百分比与怎么退出）。
+///
+/// 这一屏**只给百分比，不画横条**：横条在这个宽度上一眼看不出比例，而它旁边就是那个数。
 fn progress(live: Option<&Live>) -> Vec<Segment> {
-    match live {
-        None => vec![Segment::faint("还没开始")],
-        Some(_) => Vec::new(),
-    }
+    let Some(live) = live else {
+        return vec![Segment::faint("还没开始")];
+    };
+    let overall = live.overall();
+    let percent = super::marks::percent(overall.walked, overall.steps);
+    vec![
+        Segment::faint("总体 "),
+        Segment::new(format!("{percent}%"), Look::PLAIN.bold()),
+        Segment::faint(if live.ended() {
+            " ⋅ 已结束".to_owned()
+        } else {
+            format!(" ⋅ 第 {}/{} 卷", overall.volume, overall.volumes)
+        }),
+    ]
 }

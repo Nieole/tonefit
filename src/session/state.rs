@@ -39,6 +39,7 @@
 //! 而那正是存成预设时两者的差别。
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Panel,
@@ -1448,6 +1449,13 @@ pub struct Session {
     /// **家目录**：屏上的路径把它缩写成 `~`（[`super::home`]）。由会话入口问一次摆进来，
     /// 问不出来就不缩写。
     pub home: Home,
+    /// **会话打开那一刻**：屏上那个**转轮**转到第几格从它算
+    /// （一格 90 毫秒、十格一圈，见 `super::shell::marks`）。
+    ///
+    /// 转轮说的是「还在动」，与这一趟跑了多久、这一卷走到第几页都无关——
+    /// 清点中那一段一步都没走，转轮照样得转。它因此从**会话**那一头的钟算，
+    /// 不从那一趟的计时算。用例给定它（`super::scene`）。
+    pub opened_at: Instant,
 }
 
 /// **屏底那一句**：一句话，连同**它有多重**。
@@ -1533,6 +1541,7 @@ impl Session {
             notice: None,
             views: Views::default(),
             home: Home::unknown(),
+            opened_at: Instant::now(),
         }
     }
 
@@ -1657,6 +1666,9 @@ impl Session {
         self.says(None);
         self.stage = Stage::Running(Instruction::Continue);
         self.follow = Follow::Latest;
+        // 新界面那一副也从头来一遍：树还没拼出来、一个目录都不展开、自动滚动扳回开着
+        // （`CONTEXT.md` 的《自动滚动》：每次开跑扳回开着）。旧界面那几格在上面三行里。
+        self.views.task.start_a_run();
     }
 
     /// 那一趟结束了：配置又改得动。
@@ -2596,7 +2608,7 @@ impl Session {
     /// **只升不降**是这个函数的形状本身：升到立即停止之后它就是个不动点，
     /// 而键盘上没有第二个键能往回按——两级停止是同一个键按两次（见 [`Action::Stop`]）。
     /// 库那一侧的闩用 `fetch_max` 说同一件事（`tonefit::Instruction` 的序即力度）。
-    fn raise_stop(&mut self) {
+    pub(super) fn raise_stop(&mut self) {
         if let Stage::Running(pressed) = &mut self.stage {
             *pressed = match *pressed {
                 Instruction::Continue => Instruction::Finish,

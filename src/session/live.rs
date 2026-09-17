@@ -233,6 +233,23 @@ pub enum VolumeState {
 }
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍、这一遍写不写盘。
+impl VolumeState {
+    /// 这一卷**收摊了**吗：做完 · 进了隔离 · 跳过 · 没做成都算（`CONTEXT.md` 的《卷状态》）。
+    ///
+    /// **一处出处**：目录行的「做完几卷／共几卷」、总览结论行的「等待几卷」问的是同一件事。
+    /// 被立即停止掉的那一卷**不算**——它既没收摊也没报没做成。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn settled(self) -> bool {
+        matches!(
+            self,
+            Self::Done | Self::Isolated | Self::Skipped | Self::Failed
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Walking {
     /// 卷标识：源目录路径，或源归档的文件路径。
@@ -247,6 +264,10 @@ pub struct Walking {
     pub walked: u64,
     /// 在走哪一遍。开卷之后、第一条 `PassStarted` 到达之前是 `None`。
     pub pass: Option<Pass>,
+    /// **这一环节开工那一刻已经走过几步**：屏上「这一环节走到第几页」是
+    /// [`walked`](Self::walked) 减它（`CONTEXT.md` 的《目录行 / 卷行》：
+    /// 行尾那一句带的是**这一环节**的进度，不是这一卷累计的步数）。
+    pub pass_from: u64,
     /// **这一卷在往盘上写吗**：走到写出那一遍，而且这一遍真写盘。
     ///
     /// 执行那一趟走到那一遍就在写；接着写出那一趟那一遍前头是确认点，**答了继续才写**
@@ -326,6 +347,15 @@ pub struct Live {
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
     /// 开工那一刻整份收下，此后一格不变。
     roster: Vec<SurveyedVolume>,
+    /// 清单上每一卷**做了多久**，与 [`roster`](Self::roster) 同序同长。
+    ///
+    /// **只给没有报告的那几卷用**（没做成、被立即停止掉、还在跑的那一卷）：收摊了的卷
+    /// 那个数在它自己那份报告的 `VolumeTiming::elapsed` 上，而只有库那一侧减得掉在
+    /// 确认点上等人的那一截（与 [`deliberated`](Self::deliberated) 同一条理由）。
+    /// 屏上那一列因此**有报告就走报告**，没有的才落到这一份上（`super::shell::list`）。
+    timings: Vec<Duration>,
+    /// 当前这一卷是什么时候开的。卷与卷之间是 `None`。
+    began: Option<Instant>,
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序同长**——两列在
     /// [`surveyed`](Self::surveyed) 里一起立起来，此后只改值、不增删。
     states: Vec<VolumeState>,
@@ -433,6 +463,8 @@ impl Live {
             steps: 0,
             roster: Vec::new(),
             states: Vec::new(),
+            timings: Vec::new(),
+            began: None,
             current: None,
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -527,6 +559,8 @@ impl Live {
     ) {
         self.roster = roster.to_vec();
         self.states = vec![VolumeState::Queued; roster.len()];
+        self.timings = vec![Duration::ZERO; roster.len()];
+        self.began = None;
         self.current = None;
         self.non_volume_files = non_volume_files.to_vec();
         self.unreachable_places = unreachable_places.to_vec();
@@ -540,11 +574,13 @@ impl Live {
             steps,
             walked: 0,
             pass: None,
+            pass_from: 0,
             writes: false,
         });
         // 逐条找而不是建一张表：一趟里每一卷只认一次，而清单是几千的量级、
         // 路径比较的是分量——与这一卷接下来要做的事相比不值一提。
         self.current = self.roster.iter().position(|listed| listed.root == volume);
+        self.began = Some(self.now);
         self.set_state(VolumeState::Running { pass: None });
     }
 
@@ -575,6 +611,7 @@ impl Live {
     pub fn pass_started(&mut self, pass: Pass, so_far: Option<&VolumeReport>) {
         if let Some(walking) = &mut self.volume {
             walking.pass = Some(pass);
+            walking.pass_from = walking.walked;
             if pass == Pass::Second {
                 walking.writes = match self.resumes {
                     // 预览走的也是 `Mode::Process`（参照要留着），因此认的是库真收到的那个字：
@@ -674,8 +711,15 @@ impl Live {
     pub fn run_finished(&mut self, outcome: RunOutcome) {
         self.report.outcome = outcome;
         // 这一趟结束时还开着的那一卷既没收摊也没报没做成：它被立即停止掉了
-        // （见 [`VolumeState::Aborted`]）。
+        // （见 [`VolumeState::Aborted`]）。**它做了多久照样留下**：它没有报告，
+        // 屏上那一列只有这一份（见 [`timings`](Self::timings)）。
         self.set_state(VolumeState::Aborted);
+        if let (Some(at), Some(began)) = (self.current, self.began)
+            && let Some(slot) = self.timings.get_mut(at)
+        {
+            *slot = self.now.saturating_duration_since(began);
+        }
+        self.began = None;
         self.current = None;
         self.volume = None;
         // 停在确认点上被立即停止的那一趟从这里出去：那一等到此为止，没有人会来答它。
@@ -697,6 +741,12 @@ impl Live {
         self.summary_is_stale();
         self.in_flight_failures = 0;
         self.finished += 1;
+        if let (Some(at), Some(began)) = (self.current, self.began)
+            && let Some(slot) = self.timings.get_mut(at)
+        {
+            *slot = self.now.saturating_duration_since(began);
+        }
+        self.began = None;
         self.current = None;
         if let Some(walking) = self.volume.take() {
             self.walked = self
@@ -1051,6 +1101,81 @@ impl Live {
         }
     }
 
+    /// **清点清单里第几卷的那一份**：收摊了的、没做成的，或者确认点上攒着的那一份。
+    ///
+    /// 按**卷根**认——清点已按卷根收编过，清单里卷根不重
+    /// （spec《库：开工那一条事件带上清点的产出》）。还没轮到、正在处理、
+    /// 被立即停止掉的那几卷一份都没有，答 `None`：那正是它们
+    /// [展不开](Volume::expandable)的原因。
+    ///
+    /// 与 [`states`](Self::states) 分工：那一格答「此刻怎么样」，这一处答「它那一份在哪儿」。
+    /// 卷列表那棵树按清单序号画每一行，两处各问一次。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn listed_at(&self, at: usize) -> Option<Volume> {
+        let root = &self.roster.get(at)?.root;
+        if let Some(at) = self
+            .report
+            .volumes
+            .iter()
+            .position(|one| one.volume == *root)
+        {
+            return Some(Volume::Settled(at));
+        }
+        if let Some(at) = self
+            .report
+            .failed_volumes
+            .iter()
+            .position(|one| one.volume == *root)
+        {
+            return Some(Volume::Failed(at));
+        }
+        self.summarized
+            .as_ref()
+            .filter(|one| one.volume == *root)
+            .map(|_| Volume::Summarized {
+                after: self.report.volumes.len(),
+            })
+    }
+
+    /// 清点清单里第几卷**做了多久**，由会话这一头量的那一份。
+    ///
+    /// **只在那一卷没有报告时才该问它**：收摊了的卷那个数在它自己那份报告上
+    /// （`VolumeTiming::elapsed`，`CONTEXT.md` 的《卷级计时》——只有库那一侧减得掉
+    /// 在确认点上等人的那一截）。没做成的卷连一份报告都没有，被立即停止掉的与
+    /// 还在跑的那一卷也还没有，而屏上那一列照样要写得出（`CONTEXT.md` 的
+    /// 《目录行 / 卷行》：跳过的卷耗时照给）。一步都还没开的卷是 `None`。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn elapsed_at(&self, at: usize) -> Option<Duration> {
+        if self.current == Some(at)
+            && let Some(began) = self.began
+        {
+            return Some(self.now.saturating_duration_since(began));
+        }
+        self.timings.get(at).copied().filter(|one| !one.is_zero())
+    }
+
+    /// 清点清单里第几卷**没做成的那一句原因**。没做成之外的卷答 `None`。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn undone_at(&self, at: usize) -> Option<&str> {
+        match self.listed_at(at)? {
+            Volume::Failed(at) => self
+                .report
+                .failed_volumes
+                .get(at)
+                .map(|one| one.reason.as_str()),
+            Volume::Settled(_) | Volume::Summarized { .. } => None,
+        }
+    }
+
     /// 把一卷**收进此刻真停得住的那几卷**里。**指着旧位置的那几种在这里一次收齐**，
     /// 光标与展开因此都只问这一处。
     ///
@@ -1090,37 +1215,21 @@ impl Live {
     ///
     /// 下面四个访问器眼下只有本模块的用例读：画卷列表那棵树那一票接上读者时把那一行
     /// `expect` 拆掉——留着它会当场报「这个 `expect` 没用上」。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
-    )]
     pub fn roster(&self) -> &[SurveyedVolume] {
         &self.roster
     }
 
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序**。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
-    )]
     pub fn states(&self) -> &[VolumeState] {
         &self.states
     }
 
     /// 开工那一条带的非漫画文件那张表。与这一趟跑完之后报告上那一张逐条相同。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
-    )]
     pub fn non_volume_files(&self) -> &[NonVolumeFile] {
         &self.non_volume_files
     }
 
     /// 开工那一条带的无法访问的地方那张表。与这一趟跑完之后报告上那一张逐条相同。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "画卷列表那棵树那一票接上读者时拆掉这一行")
-    )]
     pub fn unreachable_places(&self) -> &[UnreachablePlace] {
         &self.unreachable_places
     }

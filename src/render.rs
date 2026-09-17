@@ -768,9 +768,19 @@ pub struct Group {
 /// 同一枝底下那几卷因此**不一定在报告上挨着**（中间夹着子目录那几卷）——
 /// 分组把它们收到一处，而收进来的次序仍是报告上的次序。
 pub fn grouped(listed: &[Listed<'_>]) -> Vec<Group> {
+    grouped_roots(listed.iter().map(Listed::root))
+}
+
+/// 按**卷根**分组的那一手本身：[`grouped`] 与会话清点之后那棵树
+/// （`crate::session::tree`）共用，两边不许各算各的。
+///
+/// 喂给它的是一列卷根——报告那一侧是收摊了的与没做成的那几卷，会话那一侧是**清点清单**
+/// （开跑之前就有身份的那一份；spec《卷列表》清点之后：「分组仍是报告那一份，喂的是清点清单」）。
+/// 分组的规矩一个字不改：目录取卷根的父目录，**不重排**。
+pub fn grouped_roots<'a>(roots: impl IntoIterator<Item = &'a Path>) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
-    for (at, one) in listed.iter().enumerate() {
-        let directory = directory_of(one.root());
+    for (at, root) in roots.into_iter().enumerate() {
+        let directory = directory_of(root);
         match groups.iter_mut().find(|group| group.directory == directory) {
             Some(group) => group.at.push(at),
             None => groups.push(Group {
@@ -853,6 +863,24 @@ fn base_spread(inside: &[Listed<'_>]) -> String {
 /// [卷那一行的灰阶分布](tally_row)数的是页。「一串东西怎么说」是措辞
 /// （ADR 0016 决定第 2 条），两处各写一遍排法就会各排各的。
 fn tallied<T: PartialEq + std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
+    strung(&counted(items))
+}
+
+/// 数出来的那几笔串成一串字：`2bit+FS 1650 ⋅ 4bit 681`。
+fn strung<T: std::fmt::Display>(counted: &[(T, usize)]) -> String {
+    counted
+        .iter()
+        .map(|(item, count)| format!("{item} {count}"))
+        .collect::<Vec<_>>()
+        .join(SEPARATOR)
+}
+
+/// [`tallied`] 串成一串字**之前**的那几笔：一样东西一条，数多的在前。
+///
+/// 会话那棵树按档位给分布上色（种类色，`CONTEXT.md` 的《语义色》），
+/// 而一串字上不了色——它要的是这几笔，连同它们**本来的类型**（ADR 0016 的《后果》：
+/// 表不许回头去认字符串）。**数出来与排法只有这一处**：那一串字也是从它串出来的。
+fn counted<T: PartialEq>(items: impl IntoIterator<Item = T>) -> Vec<(T, usize)> {
     let mut counted: Vec<(T, usize)> = Vec::new();
     for item in items {
         match counted.iter_mut().find(|(seen, _)| *seen == item) {
@@ -862,10 +890,26 @@ fn tallied<T: PartialEq + std::fmt::Display>(items: impl IntoIterator<Item = T>)
     }
     counted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     counted
-        .iter()
-        .map(|(item, count)| format!("{item} {count}"))
-        .collect::<Vec<_>>()
-        .join(SEPARATOR)
+}
+
+/// 一卷的**灰阶分布**拆成一笔一条：**候选**与页数，页多的在前。
+///
+/// 与[分布那一格](tally_row)**同一处计算**——那一格是把这几笔串成一串字，
+/// 而会话那棵树要按灰阶档位上色，一串字上不了色（ADR 0016：措辞一处出处，上色不是措辞）。
+/// 交出去的是 [`Candidate`] 本身、不是印好的那一串：**表不许回头去认字符串**
+/// （ADR 0016 的《后果》）。目录行那一级把底下几卷的这几笔加起来。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
+)]
+pub fn tally_pairs(volume: &VolumeReport) -> Vec<(Candidate, usize)> {
+    counted(
+        volume
+            .pages
+            .iter()
+            .filter_map(PageReport::verdict)
+            .map(|verdict| verdict.candidate),
+    )
 }
 
 /// 末尾那七小结：非漫画文件、输出宽超过面板、兜底上界退回、残缺、隔离、卷转换失败、
@@ -938,11 +982,7 @@ fn non_volume_tail(report: &Report) -> String {
     if report.non_volume_files.is_empty() {
         return String::new();
     }
-    let mut text = format!(
-        "非漫画文件 {} 个：不属于任何一卷，没有转换也没有复制，输出里没有它们。\
-         这**不算出错**，退出码不变；源文件没动，需要的话去原位置取\n",
-        report.non_volume_files.len()
-    );
+    let mut text = format!("{}\n", non_volume_heading(report.non_volume_files.len()));
     text.push_str(&FirstFew::of(&report.non_volume_files).stacked(
         |file| {
             format!(
@@ -954,6 +994,18 @@ fn non_volume_tail(report: &Report) -> String {
         "个",
     ));
     text
+}
+
+/// 非漫画文件那一小结**抬头那一句**。
+///
+/// **一处出处**：报告末尾那一小结（[`non_volume_tail`]）与会话树上那一条**备注行**
+/// （`crate::session::tree`，行尾那一句）印的是同一串字——ADR 0016 那条规矩
+/// 「一格的字只有一个出处」在备注行上同样成立。数的是这一处装着的那几个文件。
+pub fn non_volume_heading(count: usize) -> String {
+    format!(
+        "非漫画文件 {count} 个：不属于任何一卷，没有转换也没有复制，输出里没有它们。\
+         这**不算出错**，退出码不变；源文件没动，需要的话去原位置取"
+    )
 }
 
 /// 一个非漫画文件**为什么**没被任何卷收下，那一句话。
@@ -1386,13 +1438,7 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
 /// 排法见 [`tallied`]：**页多的档在前**——扫一眼要看出来的是「这一卷多半写成哪一档」，
 /// 而整卷统一灰阶那一路上排在头一位的多半就是统一档位，差异大的页与尺寸未贴合屏幕的页跟在后面。
 fn tally_row(volume: &VolumeReport) -> Option<Row> {
-    let tally = tallied(
-        volume
-            .pages
-            .iter()
-            .filter_map(PageReport::verdict)
-            .map(|verdict| verdict.candidate),
-    );
+    let tally = strung(&tally_pairs(volume));
     (!tally.is_empty()).then(|| Row::one(RowKind::Tally, Cell::new(Field::Tally, tally)))
 }
 

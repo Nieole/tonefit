@@ -14,13 +14,14 @@
 //! | 顶栏 | [`topbar`] | 本票 |
 //! | 总览 | [`overview`] | 本票：还没开始那一副宽窄两档 |
 //! | 确认条 | — | 等待确认那一票 |
-//! | 卷列表 | [`list`] | 本票：开跑之前那一副；清点之后那棵树随树那一票 |
+//! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
 //! | 每页结果 | — | 每页结果那一票 |
 //! | 设置栏 · 详情栏 · 预设栏 | — | 配置视图那几票 |
 //! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张（内容出自 [`super::cover`]） |
 //! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
 //! | 补全框 | [`completions`] | 07 |
-//! | 窗口太小 | [`small`] | 本票 |
+//! | 窗口太小 | [`small`] | 06；08 补上跑着那一行总进度 |
+//! | 转轮 · 横条 · 行首记号 | [`marks`] | 08：总览、树、窗口太小三处共用 |
 //!
 //! 颜色一处在 [`super::draw::paint`]（`look`），键的写法一处在按键表（[`super::keymap`]）。
 //!
@@ -33,6 +34,7 @@ mod canvas;
 mod completions;
 mod footer;
 mod list;
+mod marks;
 mod overlay;
 mod overview;
 mod small;
@@ -61,7 +63,7 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
     }
     topbar::draw(&mut canvas, session);
     match session.views.view {
-        View::Task => task(&mut canvas, session, phase, screen),
+        View::Task => task(&mut canvas, session, live, phase, now, screen),
         // 配置视图随它那几票接进来。
         View::Config => {}
     }
@@ -73,14 +75,23 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
 }
 
 /// 任务视图：顶栏底下总览钉住，剩下的高度给卷列表（每页结果与确认条随各票接进来），屏底一行。
-fn task(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, screen: Rect) {
+fn task(
+    canvas: &mut Canvas<'_>,
+    session: &Session,
+    live: Option<&Live>,
+    phase: Phase,
+    now: Instant,
+    screen: Rect,
+) {
     let mut y = 1;
-    y += overview::draw(canvas, session, phase, y);
+    y += overview::draw(canvas, session, live, phase, now, y);
     let height = screen.height.saturating_sub(1 + y);
     list::draw(
         canvas,
         session,
+        live,
         phase,
+        now,
         Rect::new(0, y, screen.width, height),
     );
 }
@@ -124,6 +135,39 @@ mod tests {
     #[test]
     fn the_too_small_screen_matches_its_design_snapshot() {
         assert_scene("fresh", 56, 14);
+    }
+
+    /// **「清点中」120×36 与 80×24 逐格相等**（票面第一条）：总览只说正在清点、不报卷数，
+    /// 处理路径那几行带转轮（一行错开一格），卷列表抬头说马上显示卷列表。
+    ///
+    /// **输出目录那一行行尾抹掉十格**：设计稿在那儿仍写着 `[i → 修改]`，而这一档 `i`
+    /// 派不出去（它自己的 `taskKey` 在跑着时就返回 false），实现照「屏上不摆按不动的键」
+    /// 不写它——停车场 **Q807**。抹掉的那十格仍要求是空白。
+    #[test]
+    fn the_survey_scene_matches_its_design_snapshot_wide_and_narrow() {
+        for (width, height) in [(120, 36), (80, 24)] {
+            let scene = Scene::named("survey");
+            let buffer = painted(&scene, width, height);
+            assert_no_background(&buffer);
+            assert_same_cells(
+                &buffer,
+                &design::snapshot("survey", width, height).blanked(6, 26, 10),
+            );
+        }
+    }
+
+    /// **「转换中」120×36 与 80×24 逐格相等**（票面第一条）：总览给总进度、当前卷、
+    /// 结论行与问题行，卷列表是那棵树。
+    #[test]
+    fn the_running_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("running", 120, 36);
+        assert_scene("running", 80, 24);
+    }
+
+    /// **「窗口太小」转换中那一份逐格相等**（票面第一条）：中间那一行是总进度。
+    #[test]
+    fn the_too_small_screen_while_running_matches_its_design_snapshot() {
+        assert_scene("running", 56, 14);
     }
 
     /// **「添加路径」120×36 与 80×24 逐格相等**（`session-redesign/07` 票面第一条）：输入行占着屏底、

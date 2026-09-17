@@ -359,7 +359,7 @@ fn walking_line(walking: &Walking, room: u16) -> String {
 /// 那一张从这里取词，不另抄一份。
 ///
 /// `_` 那一支不是遗漏：[`Pass`] 非穷尽，多一遍不该逼着这里跟着改。
-pub(super) fn pass_name(pass: Option<Pass>) -> &'static str {
+pub(in crate::session) fn pass_name(pass: Option<Pass>) -> &'static str {
     match pass {
         // 开卷之后、第一条 `PassStarted` 到达之前：打开容器、列成员，还没走进任何一遍。
         //
@@ -630,8 +630,10 @@ fn bar(done: u64, total: u64, width: u64) -> String {
 ///
 /// **卷表耗时那一列走的也是它**（`super::table`）：同一屏上两个时长长得不一样，
 /// 读的人就得先分辨一遍这是哪一种写法。
-pub(super) fn spell(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
+pub(in crate::session) fn spell(elapsed: Duration) -> String {
+    // **四舍五入到秒**，不截断：178.5 秒截出来是 `2m58s`，而它离 `2m59s` 更近——
+    // 屏上那几个数与设计稿因此是同一种写法（`session-redesign/08`）。
+    let seconds = elapsed.as_secs_f64().round() as u64;
     match (seconds / 3600, (seconds % 3600) / 60, seconds % 60) {
         (0, 0, second) => format!("{second}s"),
         (0, minute, second) => format!("{minute}m{second:02}s"),

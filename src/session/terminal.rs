@@ -29,11 +29,13 @@ use super::cover;
 use super::draw;
 use super::draw::keys::Starters;
 use super::home::Home;
-use super::keymap::Phase;
-use super::live::{Branch, Live, Resuming, Volume};
+use super::keymap::{Deed, Phase};
+use super::live::{Branch, Live, Resuming, Volume, VolumeState};
+use super::look::{Kind, Look, Segment};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
-use super::view::{Input, Window};
+use super::tone::Tone;
+use super::view::{Cursor, Input, View, Window};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -258,8 +260,14 @@ pub(super) fn input(
     window: Window,
     input: Input,
 ) -> Exit {
+    // **先盯一眼那一趟**：清点的产出到了就把树拼出来，自动滚动开着时光标跟到正在处理的
+    // 那一卷（`Session::watch_the_run`）——两件事都要读那一趟攒下来的东西，而状态机读不到。
+    // 真会话切过来之后那条循环每一帧也调它一次。
     let phase = {
         let live = running.live();
+        if let Some(live) = live.as_deref() {
+            session.watch_the_run(live);
+        }
         Phase::of(session.stage(), live.as_deref())
     };
     let Some(deed) = session.deed_of(input, phase, now) else {
@@ -272,7 +280,125 @@ pub(super) fn input(
     {
         return Exit::Stay;
     }
-    session.perform(deed, now)
+    match deed {
+        // **起一趟**：走 [`press`] 的 `Action::Start` 那条路——起线程、拼 `Request`、
+        // 把观察者接上去，一件都不在状态机里。`t`／`x` 开跑**总回到任务视图**
+        // （ADR 0019 决定第 1 条）。
+        Deed::Preview | Deed::Convert => {
+            let mode = if deed == Deed::Preview {
+                RunMode::DryRun
+            } else {
+                RunMode::Process
+            };
+            begin(session, running, mode, now);
+            Exit::Stay
+        }
+        // **按停止**：状态机把闩升一级（`Session::perform`），这一层把升到的那一级交给
+        // 跑着的那一趟。两处记的是同一个字，出处只有状态机那一份——与 [`press`] 同一条分工。
+        Deed::Stop => {
+            let exit = session.perform(deed, now);
+            running.stop(session.stopping());
+            exit
+        }
+        // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
+        // （`CONTEXT.md` 的《停得住 / 展得开》）。展得开的那几卷换屏进每页结果，
+        // 归 `session-redesign/11`；这一层眼下只把展不开的那几种说出口。
+        Deed::Open if matches!(session.views.task.cursor, Cursor::Volume(_)) => {
+            open_a_volume(session, running, now);
+            Exit::Stay
+        }
+        _ => session.perform(deed, now),
+    }
+}
+
+/// 起一趟：拼得出 `Request` 就起线程，拼不出（型号没挑、输出目录没填、一条路径都没勾）
+/// 当场说一句，会话原地不动。**开跑总回到任务视图。**
+fn begin(session: &mut Session, running: &mut Running, mode: RunMode, now: Instant) {
+    match session.request(mode) {
+        Ok(request) => {
+            let (request, resumes) = resuming(request);
+            running.start(request, resumes);
+            session.run_started();
+            session.views.view = View::Task;
+            let (head, rest, kind) = match mode {
+                RunMode::DryRun => (
+                    "预览：",
+                    "只分析不写文件，每卷分析完会停下来问你".to_owned(),
+                    Kind::Preview,
+                ),
+                _ => (
+                    "转换：",
+                    format!("写到 {}", session.output_shown()),
+                    Kind::Convert,
+                ),
+            };
+            session.views.say(
+                vec![
+                    Segment::new(head, Look::kind(kind).bold()),
+                    Segment::plain(rest),
+                ],
+                now,
+            );
+        }
+        Err(error) => session.views.say(
+            vec![
+                Segment::new("✗ ", Look::tone(Tone::Trouble).bold()),
+                Segment::new(format!("{error:#}"), Look::tone(Tone::Trouble)),
+            ],
+            now,
+        ),
+    }
+}
+
+/// 卷行上按下展开：**展得开的只有收摊了的那几卷（跳过的也算）与确认点上那一份**；
+/// 其余停得住、展不开，屏底说一句为什么（`CONTEXT.md` 的《停得住 / 展得开》）。
+fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
+    let Cursor::Volume(root) = session.views.task.cursor.clone() else {
+        return;
+    };
+    let at = session.views.task.tree.index_of(&root);
+    let state = at
+        .and_then(|at| {
+            running
+                .live()
+                .and_then(|live| live.states().get(at).copied())
+        })
+        .unwrap_or(VolumeState::Queued);
+    let undone = at.and_then(|at| {
+        running
+            .live()
+            .and_then(|live| live.undone_at(at).map(str::to_owned))
+    });
+    let said = match state {
+        // 展得开的那几卷换屏进每页结果，归 `session-redesign/11`：那一屏还没有，
+        // 这一下因此原地不动、一句话都不说（说「做不到」是句假话）。
+        VolumeState::Done
+        | VolumeState::Isolated
+        | VolumeState::Skipped
+        | VolumeState::Deciding => {
+            return;
+        }
+        VolumeState::Failed => vec![
+            Segment::new("✗ 转换失败：", Look::tone(Tone::Trouble).bold()),
+            Segment::plain(format!(
+                "{}，这一卷没有每页结果",
+                undone.unwrap_or_default()
+            )),
+        ],
+        VolumeState::Aborted => vec![
+            Segment::new("已中断：", Look::tone(Tone::Caution).bold()),
+            Segment::plain("这一卷没有保存，也没有每页结果"),
+        ],
+        VolumeState::Running { .. } => vec![
+            Segment::new("还在处理：", Look::tone(Tone::Caution).bold()),
+            Segment::plain("这一卷做完才有每页结果"),
+        ],
+        VolumeState::Queued => vec![
+            Segment::new("还没轮到这一卷：", Look::FAINT.bold()),
+            Segment::plain("做完才有每页结果"),
+        ],
+    };
+    session.views.say(said, now);
 }
 
 /// 终端那一侧的事件 → 新会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
@@ -762,6 +888,22 @@ mod redesign {
             for input in step.inputs() {
                 exit = super::input(&mut scene.session, &mut running, now, window, input);
             }
+            // **夹具没有线程**：按到立即停止之后替那条线程收手。真会话里那条线程收到这个字
+            // 就停在页边界上，主循环随后 `reap` 到它、会话回到结束了（`super::drive`）——
+            // 这一步走的是同一条路，只是当场走完。
+            if running.pressed() == tonefit::Instruction::Abort
+                && let Some(mut live) = running.live()
+                && !live.ended()
+            {
+                // 库交出来的那一份与攒着的只差计时（与 `scene::replay` 收场那一段同形）。
+                let elapsed = live.overall().elapsed;
+                live.run_finished(tonefit::RunOutcome::Stopped(tonefit::Instruction::Abort));
+                let mut report = live.report().clone();
+                report.elapsed = elapsed;
+                live.returned(Ok(report));
+                drop(live);
+                scene.session.run_finished();
+            }
         }
         (scene, running, exit)
     }
@@ -778,12 +920,23 @@ mod redesign {
 
     /// 走完一串，逐格对它的交互期望屏，顺带核一个背景色都没设（停车场 Q737）。
     fn assert_sequence(name: &str) -> Scene {
+        assert_sequence_blanking(name, None)
+    }
+
+    /// 同上，另外**抹掉期望屏上一段**：设计稿在那儿写着一句话而实现照规矩不写它
+    /// （见 [`super::super::draw::design::Expected::blanked`]，每一处都写清是哪一条停车场条目）。
+    fn assert_sequence_blanking(name: &str, blank: Option<(usize, u16, u16)>) -> Scene {
         let (scene, running, exit) = walked(name);
         assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
         let size = scene::sequence(name).size;
         let buffer = painted(&scene, &running, size);
         assert_no_background(&buffer);
-        assert_same_cells(&buffer, &design::sequence(name));
+        let expected = design::sequence(name);
+        let expected = match blank {
+            Some((row, from, width)) => expected.blanked(row, from, width),
+            None => expected,
+        };
+        assert_same_cells(&buffer, &expected);
         scene
     }
 
@@ -817,6 +970,145 @@ mod redesign {
     fn q_before_the_run_hands_out_the_exit() {
         let (_, _, exit) = walked("fresh-q");
         assert_eq!(exit, Exit::Leave);
+    }
+
+    /// **按停止那个键真的走到了跑着的那一趟身上**（票面第四条），**两级各自到达**。
+    ///
+    /// 与旧那一支那条用例（`pressing_stop_reaches_the_run_that_is_going`）同一条接头：
+    /// 状态机把闩升一级，本层把升到的那一级交给 [`Running::stop`]。**两头记的是同一个字**。
+    /// 一个终端都不碰——[`super::input`] 收的是 `&mut Session` 与 `&mut Running`。
+    #[test]
+    fn pressing_stop_through_the_new_input_reaches_the_run_at_both_levels() {
+        let mut session = crate::session::state::Session::new();
+        let mut running = Running::default();
+        let now = std::time::Instant::now();
+        let window = Window {
+            cols: 120,
+            rows: 36,
+        };
+        session.run_started();
+        let press = |session: &mut _, running: &mut _| {
+            super::input(session, running, now, window, Input::Key(Key::Char('s')))
+        };
+
+        // 一次：做完再停。
+        assert_eq!(press(&mut session, &mut running), Exit::Stay);
+        assert_eq!(session.stopping(), tonefit::Instruction::Finish);
+        assert_eq!(running.pressed(), tonefit::Instruction::Finish);
+
+        // 再一次：立即停止。
+        assert_eq!(press(&mut session, &mut running), Exit::Stay);
+        assert_eq!(session.stopping(), tonefit::Instruction::Abort);
+        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
+
+        // 第三次起那个键不再动它：闩只升不降。
+        assert_eq!(press(&mut session, &mut running), Exit::Stay);
+        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
+
+        // 还没开跑时按它什么都不发生：那一档表上根本没有这个键。
+        let mut idle = crate::session::state::Session::new();
+        let mut nothing = Running::default();
+        assert_eq!(press(&mut idle, &mut nothing), Exit::Stay);
+        assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
+    }
+
+    /// **`t`／`x` 开跑**（票面第一条）：起一趟走的是 [`press`] 那条路（拼 `Request`、
+    /// 起线程、把观察者接上去），会话回到任务视图、卷列表换成清点中那一副，屏底说这一趟做什么。
+    ///
+    /// 走完那一屏与设计稿逐格相等——两串各按一个键，`t` 是预览、`x` 是转换。
+    #[test]
+    fn t_and_x_start_a_run_and_come_back_to_the_task_view() {
+        for name in ["fresh-t", "fresh-x"] {
+            // 按下去那一刻起就是清点中：输出目录那一行行尾那十格照 Q807 抹掉。
+            let scene = assert_sequence_blanking(name, Some((6, 26, 10)));
+            assert_eq!(
+                scene.session.views.view,
+                super::super::view::View::Task,
+                "「{name}」开跑总回到任务视图"
+            );
+            assert!(
+                !matches!(
+                    scene.session.stage(),
+                    super::super::state::Stage::Fresh | super::super::state::Stage::Ended
+                ),
+                "「{name}」那一趟真起来了"
+            );
+        }
+    }
+
+    /// **清点中按停止**（票面第三条）：抬头接一句「正在停止」，屏底说再按一次立即停。
+    #[test]
+    fn stopping_while_surveying_says_so_on_the_title_and_the_footer() {
+        // 输出目录那一行行尾那十格照 `shell` 那条清点中的用例抹掉：停车场 **Q807**。
+        assert_sequence_blanking("survey-s", Some((6, 26, 10)));
+    }
+
+    /// **`s` 按一次、再按一次**（票面第三条）：一次是做完当前卷就停，两次立即停止——
+    /// 那一趟当场结束，当前卷标成已中断、未保存。
+    #[test]
+    fn s_once_finishes_the_volume_and_twice_stops_at_once() {
+        let scene = assert_sequence("running-s");
+        assert_eq!(scene.session.stopping(), tonefit::Instruction::Finish);
+        let scene = assert_sequence("running-s-s");
+        assert_eq!(scene.session.stopping(), tonefit::Instruction::Continue);
+    }
+
+    /// **立即停止之后那一卷展不开**：屏底说它没有保存，也没有每页结果。
+    #[test]
+    fn an_aborted_volume_says_why_it_cannot_be_opened() {
+        assert_sequence("running-s-s-l");
+    }
+
+    /// **跑着时按 `q` 不退出**（票面第三条）：屏底说先按 `s` 停止，或按 `C-c` 立即退出。
+    #[test]
+    fn q_while_running_refuses_and_says_what_to_press() {
+        let (_, _, exit) = walked("running-q");
+        assert_eq!(exit, Exit::Stay, "跑着时 `q` 不退出");
+        assert_sequence("running-q");
+    }
+
+    /// **还在处理与还没轮到的卷停得住、展不开**：按下去不换屏，屏底说为什么
+    /// （`CONTEXT.md` 的《停得住 / 展得开》）。
+    #[test]
+    fn a_volume_still_in_flight_or_still_queued_says_why_it_cannot_be_opened() {
+        assert_sequence("running-vol-l");
+        assert_sequence("running-queued-l");
+    }
+
+    /// **目录行 `l` 展开、`h` 收起**（票面第三条）：展开之后它那几卷缩进挂在底下，
+    /// 收起之后行数回到原样；`h` 停在卷行上时收的是它那个目录，光标跟着停到目录行上。
+    #[test]
+    fn l_expands_a_directory_row_and_h_collapses_it_again() {
+        let mut scene = Scene::named("running");
+        let mut running = Running::holding(scene.live.take().expect("跑着的那一趟"));
+        let now = scene.now();
+        let window = Window {
+            cols: 120,
+            rows: 36,
+        };
+        let press = |scene: &mut Scene, running: &mut Running, letter: char| {
+            super::input(
+                &mut scene.session,
+                running,
+                now,
+                window,
+                Input::Key(Key::Char(letter)),
+            );
+        };
+        // 光标停在展开着的那个目录里的一卷上：`h` 收起它，光标停到目录行上。
+        let before = scene.session.lines().len();
+        press(&mut scene, &mut running, 'h');
+        let collapsed = scene.session.lines().len();
+        assert!(collapsed < before, "收起之后行少了");
+        assert!(matches!(
+            scene.session.views.task.cursor,
+            super::super::view::Cursor::Directory(_)
+        ));
+        // 再 `l` 展开回来，行数与一开始相同。
+        press(&mut scene, &mut running, 'l');
+        assert_eq!(scene.session.lines().len(), before, "展开回来行数照旧");
+        press(&mut scene, &mut running, 'h');
+        assert_eq!(scene.session.lines().len(), collapsed);
     }
 
     /// **`o` 打开输入行**（`session-redesign/07` 票面第二条）：屏底换成「添加路径  ~/▏」与右端那四件，

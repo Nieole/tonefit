@@ -689,6 +689,18 @@ pub const TABLE: &[Row] = &[
         AFTER_SURVEY,
         LIST,
     ),
+    // 同一个键在总览的**问题行**行尾另有一句写法（`session-redesign/08`）：那一行已经
+    // 说了「问题」，跟在后面的那一句因此说「跳到下一个」。屏底摆的仍是上面那一行。
+    row(
+        Group::VolumeList,
+        Deed::NextProblem,
+        Chord::Combo(']', 'd'),
+        "]d",
+        "跳到下一个",
+        "下一个 / 上一个问题",
+        AFTER_SURVEY,
+        LIST,
+    ),
     row(
         Group::VolumeList,
         Deed::PrevProblem,
