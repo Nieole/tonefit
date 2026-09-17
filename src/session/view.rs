@@ -38,9 +38,7 @@ use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
 use super::live::Live;
 use super::look::{Kind, Look, Segment};
-use super::state::{
-    DEVICE_FIELDS, Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Shape, Stage, TASTE_FIELDS,
-};
+use super::state::{Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Shape, Stage};
 use super::tone::Tone;
 use super::tree;
 use super::typing::InputLine;

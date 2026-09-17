@@ -483,10 +483,6 @@ impl Scene {
             .collect();
         session.home = Home::at(&home);
         let epoch = Instant::now();
-        // 会话的时钟起点：设计稿那只表冻在 `now_ms` 上，这里照它往回推——屏上那个转轮
-        // 因此停在设计稿导出那一刻的那一格（`super::view::Views::spinning`）。
-        session.views.clock =
-            (epoch + elapsed(data.run.as_ref())).checked_sub(Duration::from_millis(data.now_ms));
         let live = data
             .run
             .as_ref()
@@ -494,8 +490,16 @@ impl Scene {
         // **界面状态摆在回放之后**：起一趟那一下会把树、展开与自动滚动扳回开跑那一刻的样子
         // （`Session::run_started`），场景数据说的那几格要压在它上面。
         session.views = views_of(&data, &home, &presets);
-        // 会话打开那一刻：往回推设计稿那一头的钟，屏上那个转轮因此转到同一格。
-        session.opened_at = epoch + elapsed(data.run.as_ref()) - Duration::from_millis(data.now_ms);
+        // **会话的时钟起点，两格都摆在这一句之后**：设计稿那只表冻在 `now_ms` 上，照它往回推,
+        // 屏上那几个转轮因此都停在设计稿导出那一刻的那一格（顶栏那一截读
+        // [`super::view::Views::spinning`]，行首记号与总览读 `shell::marks::spinner`）。
+        //
+        // 摆在上面那一句**之前**会被它抹掉——`views_of` 整份换掉 `session.views`，
+        // 而这正是 08 与 13 两张票各设一格、合起来差了一格转轮的那道坑（停车场 Q864）。
+        let back = Duration::from_millis(data.now_ms);
+        let origin = epoch + elapsed(data.run.as_ref());
+        session.views.clock = origin.checked_sub(back);
+        session.opened_at = origin - back;
         // 清点的产出到了就把树拼出来，自动滚动开着时光标跟到正在处理的那一卷——
         // 与真会话里那一层做的是同一件事（`super::terminal::input`）。
         if let Some(live) = &live {
