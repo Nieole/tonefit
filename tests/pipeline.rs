@@ -118,33 +118,445 @@ const BANDING_BLOCK: usize = 8;
 /// 「消没消掉」因此量得出来。4bit 的格距只有 17，两侧的差别缩在噪声里。
 const BANDING_DEPTH: BitDepth = BitDepth::Two;
 
+/// 一份写出去的东西在《落格》那条不变量里站在哪一侧（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+///
+/// 站在**里面**的只有一种——有判定的页。另外三种各有各的理由站在外面，而那几条理由由词条给，
+/// 这里只照着问，不在用例里另写一份（`CLAUDE.md`《文档写作》第 4 条：单一出处）。
+///
+/// **「哪些页在这条不变量里」不另列名单**，断的是一条双向对应：有判定的页落格必须成立，
+/// 没有判定的页必须说得出自己是这三种里的哪一种。将来多一类没有判定的页，[`classify`]
+/// 认不出它、当场变红——**例外因此是被测出来的，不是被跳过的**。
+#[derive(Debug, PartialEq, Eq)]
+enum OnGridSide {
+    /// 有判定的页：落格必须成立，按这一档灰阶档位问。
+    Judged(Candidate),
+    /// 彩色分支上的页。
+    Color,
+    /// 坏页的那张空白占位页。
+    Placeholder,
+    /// 透传文件。
+    PassedThrough,
+}
+
+/// 输出容器里这一份东西是上面四种里的哪一种。
+///
+/// 依据是**这一份东西自己带着的那条记录**（`tonefit:verdict`，见 `metadata`），不是报告：
+/// 《留下的页》不在 `VolumeReport::pages` 里（它这一趟没解、没判、没编），而它照样在这条
+/// 不变量里——读文件因此问得比读报告全。
+///
+/// 记录读不出来的只能是透传文件：它原样拷进来，本来就不是这个工具编出去的。
+/// 调用方拿源里同名的那一份逐字节比一遍，比不上就是输出里多了一样没人说得清的东西。
+fn classify(path: &std::path::Path) -> OnGridSide {
+    let Some(recorded) = recorded_verdict(path) else {
+        return OnGridSide::PassedThrough;
+    };
+    if let Some(candidate) = candidate_named(&recorded) {
+        return OnGridSide::Judged(candidate);
+    }
+    match recorded.as_str() {
+        "color" => OnGridSide::Color,
+        "failed" => OnGridSide::Placeholder,
+        other => panic!(
+            "{} 的记录写着「{other}」：这是一类《落格》还没说过的页。\
+             先去 `CONTEXT.md` 的《量化》把它为什么不在这条不变量里说清楚，再回来",
+            path.display()
+        ),
+    }
+}
+
+/// 这一份东西的记录里 `tonefit:verdict` 那一项写着什么。透传文件不是 PNG，也就没有记录。
+///
+/// **一页写出去的东西读不回 PNG，正是这条闸变红的形态之一**：换了编码器，
+/// 下面那几条断言连解都解不开它。那是《落格》给编码器立下的那道闸的机械形式
+/// （见 `CONTEXT.md` 的《量化》）。
+fn recorded_verdict(path: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(path).expect("读输出里的这一份");
+    png::Decoder::new(std::io::Cursor::new(bytes.as_slice()))
+        .read_header_info()
+        .ok()?;
+    fixtures::png_field(&fixtures::png_text(&bytes), "tonefit:verdict")
+}
+
+/// 记录里那串字是哪一个候选，都不是就是 `None`。
+///
+/// **不自己解析那串字**：拿 `Candidate` 自己的写法逐个比过去，记录那一侧的写法因此
+/// 仍然只有 `Candidate` 一个出处。
+fn candidate_named(recorded: &str) -> Option<Candidate> {
+    BitDepth::ALL
+        .into_iter()
+        .flat_map(|depth| {
+            [Dither::Off, Dither::FloydSteinberg].map(|dither| Candidate::new(depth, dither))
+        })
+        .find(|candidate| candidate.to_string() == recorded)
+}
+
+/// 《落格》那条不变量在一张写出去的页上问一遍（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+///
+/// 画质分比的就是这些格点与参照的差，文件里出现格点之外的取值，等于画质分算的不是最终输出。
+///
+/// **格点不在这里现算**：拿被测的 `quantize` 把 0..=255 打一遍，落下来的那一份就是格点集。
+/// 按公式自己列一遍，等于在用例里给格点开第二个出处。
+///
+/// **两问的后一问由前一问推得出来**，这不是疏忽：格点集恰有 `2^灰阶档位` 个取值，
+/// 取值都在格点上，级数自然不超过它——词条里那个「**因此**」说的就是这件事。
+/// 照样两问都问，因为验收写的是后一问的形状，而前一问将来若松成「逐页各有各的格点」，
+/// 后一问就是仅剩的那道底。
+fn assert_on_grid(path: &std::path::Path, depth: BitDepth) {
+    let written = fixtures::read_png(path);
+    let grid = tonefit::quantize(
+        &tonefit::GrayImage::new(Size::new(256, 1), (0..=255u8).collect()),
+        Candidate::new(depth, Dither::Off),
+    );
+    for &level in &written.pixels {
+        assert!(
+            grid.pixels().contains(&level),
+            "{} 判定 {depth}，却写出了格点外的 {level}",
+            path.display()
+        );
+    }
+    let distinct = distinct_levels(&written.pixels);
+    assert!(
+        distinct <= depth.levels() as usize,
+        "{} 判定 {depth}，写出去的却有 {distinct} 级灰",
+        path.display()
+    );
+}
+
+/// 一卷写出去的**每一份东西**各问一遍，按名字排好回给调用方。
+///
+/// 问的是输出容器，不是报告里那几页：《留下的页》只在容器里（见 [`classify`]）。
+///
+/// 三种在外面的**各问一句自己凭什么在外面**，一句都不是跳过；问的那一句照着词条问，
+/// 词条见 [`OnGridSide`]。少了这一句，那一支就只是「认出来然后放过去」——
+/// 而放过去正是这张票要拦的东西。
+fn everything_written(
+    output: &std::path::Path,
+    source: &std::path::Path,
+) -> Vec<(String, OnGridSide)> {
+    fixtures::directory_members(output)
+        .into_iter()
+        .map(|name| {
+            let path = output.join(&name);
+            let what = classify(&path);
+            match what {
+                OnGridSide::Judged(candidate) => assert_on_grid(&path, candidate.bit_depth),
+                OnGridSide::Color => assert_ne!(
+                    fixtures::read_png(&path).color_type,
+                    png::ColorType::Grayscale,
+                    "{name} 的记录说它走了彩色分支，写出去的却是一张灰度图"
+                ),
+                OnGridSide::Placeholder => assert_eq!(
+                    distinct_levels(&fixtures::read_png(&path).pixels),
+                    1,
+                    "{name} 是空白占位页，写出去的却不止一个取值"
+                ),
+                OnGridSide::PassedThrough => assert_eq!(
+                    std::fs::read(&path).expect("读输出里的透传文件"),
+                    std::fs::read(source.join(&name)).unwrap_or_else(|why| panic!(
+                        "{name} 既没有记录，源里也没有同名的那一份（{why}）：\
+                         输出里多了一样《落格》说不出它是什么的东西"
+                    )),
+                    "{name} 当透传文件搬过来，字节却与源里那一份不同"
+                ),
+            }
+            (name, what)
+        })
+        .collect()
+}
+
+/// 报告与文件对得上吗——这就是那条**双向对应**（`CONTEXT.md` 的《量化》与《灰阶分布》）。
+///
+/// 有判定的页：文件里写着的候选与报告说的是同一个，落格由 [`everything_written`] 问。
+/// 没有判定的页：它只能是彩色分支上的页或坏页，两者都在那一条词条里各有一句理由。
+/// 冒出第三种，这里当场变红。
+fn assert_the_report_and_the_files_agree(volume: &tonefit::VolumeReport) {
+    for page in &volume.pages {
+        let source = page.source.display();
+        let expected = match (page.verdict(), page.branch(), page.failure()) {
+            (Some(verdict), _, _) => OnGridSide::Judged(verdict.candidate),
+            (None, Some(tonefit::PageBranch::Color), _) => OnGridSide::Color,
+            (None, None, Some(_)) => OnGridSide::Placeholder,
+            _ => panic!(
+                "{source} 没有判定，而它既不是彩色分支上的页，也不是坏页——\
+                 先去 `CONTEXT.md` 的《量化》说清这一类为什么不在《落格》里，再回来"
+            ),
+        };
+        assert_eq!(
+            classify(&page.output),
+            expected,
+            "{source} 报告说的与文件里写着的不是同一件事"
+        );
+    }
+}
+
+/// 顶死一个候选跑一趟：两维都点名，《覆盖顶死》因此成立（ADR 0005）。
+fn pinned_at(candidate: Candidate) -> impl Fn(&Workspace, &fixtures::Volume) -> tonefit::Report {
+    move |space, volume| {
+        tonefit::run(&Request {
+            bit_depth: Some(candidate.bit_depth),
+            dither: Some(candidate.dither),
+            ..fixtures::request(space, [volume.path()])
+        })
+        .expect("处理应当成功")
+    }
+}
+
+/// 把屏幕灰阶数那道硬上界抬到全集跑一趟（`--gray-levels 256`，ADR 0003），
+/// **两维一个都不点名**：8bit 因此是判据自己挑得到的一档，不是顶死出来的。
+fn with_the_whole_set(space: &Workspace, volume: &fixtures::Volume) -> tonefit::Report {
+    tonefit::run(&Request {
+        profile: fixtures::baseline_profile()
+            .with_gray_levels(256)
+            .expect("全集可用"),
+        ..fixtures::request(space, [volume.path()])
+    })
+    .expect("处理应当成功")
+}
+
+/// **六个候选各走到一次，8bit 也在里面，灰度与调色板两支各走到一次**——每一格写出去的页
+/// 都落格（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+///
+/// 这一条是**编码器那道闸**：判定说的是量化格点，落格问的是那些格点有没有真的进到文件里。
+/// 一个把页还原成连续调的编码器接进来，这一条当场红——理由因此不再只是一段文字。
+///
+/// **顶死的那几格照样要落格。**判据自己挑得到五格；抖过的低档灰阶档位它一格都不挑
+/// （颗粒可见下限跟着格点间距走，ADR 0002 决定第 5 条），`1bit+FS` 与 `2bit+FS` 因此由
+/// `--bit-depth`／`--dither` 顶死走到。**哪几格是顶死的由判定的理由自己说出来**：
+/// 顶死那两趟的理由恒是《覆盖顶死》，判据自己挑的那几趟恒不是——这一位因此是断出来的，
+/// 不是写在注释里的。
+///
+/// **`8bit` 是判据自己挑的**：`--gray-levels` 把硬上界抬到全集之后它才在候选里（ADR 0003），
+/// 而纯色 96 在它上面读 0.000、是界内最低的一档。验收要的「开到**走得到** 8bit 的那一档」
+/// 说的正是这件事——抬开上界，不点名档位。
+///
+/// **两支各点名一格，不靠碰巧**：`encode` 的 `png` 在灰度与调色板之间按字节取小者，
+/// 两种写出的像素完全相同（见 `encode` 的模块文档与 ADR 0004）。抖过的 `1bit` 渐变页把
+/// 两个格点铺满，调色板买不到更窄的位宽、还要多背一个 PLTE，灰度胜出；单取值的页在 `8bit` 上
+/// 调色板只要 1 位而灰度要 8 位，调色板胜出。两格各断各的颜色类型，末尾再断两支都在场。
+///
+/// **`8bit` 那一档上落格恒成立**（格点就是全部 256 个取值），它照样在这里：
+/// 词条说的是每一档判定，不是「除了 8bit 的每一档」（停车场 Q938）。
 #[test]
-fn the_written_levels_all_sit_on_the_grid_of_the_decided_bit_depth() {
-    // 写出去的取值只能落在判定那一档的格点上——画质分比的就是这些格点与参照的差，
-    // 文件里出现格点之外的取值，等于画质分算的不是最终输出。
+fn every_candidate_the_pipeline_writes_comes_out_on_grid() {
+    let mut covered: Vec<Candidate> = Vec::new();
+    let mut written_as: Vec<png::ColorType> = Vec::new();
+
+    let mut case =
+        |what: &str,
+         page: image::DynamicImage,
+         want: Candidate,
+         pinned: bool,
+         want_type: Option<png::ColorType>,
+         run: &dyn Fn(&Workspace, &fixtures::Volume) -> tonefit::Report| {
+            let space = Workspace::new();
+            let volume = space.volume("volume-a");
+            volume.page("001.png", &page);
+
+            let report = run(&space, &volume);
+
+            let reported = &report.volumes[0].pages[0];
+            let verdict = fixtures::verdict(reported);
+            assert_eq!(
+                verdict.candidate, want,
+                "{what} 判成了 {}",
+                verdict.candidate
+            );
+            assert_eq!(
+                verdict.reason == Reason::Override,
+                pinned,
+                "{what} 这一格是不是顶死走到的，与写在这里的说法对不上（理由是「{}」）",
+                verdict.reason
+            );
+            assert_eq!(
+                classify(&reported.output),
+                OnGridSide::Judged(want),
+                "{what} 文件里写着的判定与报告说的不是同一个"
+            );
+            assert_on_grid(&reported.output, want.bit_depth);
+            let color_type = fixtures::read_png(&reported.output).color_type;
+            if let Some(want_type) = want_type {
+                assert_eq!(color_type, want_type, "{what} 没走到点名的那一支编法");
+            }
+            covered.push(want);
+            written_as.push(color_type);
+        };
+
+    let narrow = fixtures::NARROW_PASSES_THROUGH;
+
+    // 判据自己挑得到的五格。
+    case(
+        "纯墨页",
+        fixtures::solid(narrow, 0),
+        fixtures::plain(BitDepth::One),
+        false,
+        None,
+        &run_volume,
+    );
+    case(
+        "正落在 2bit 格点上的纯色页",
+        fixtures::solid(narrow, fixtures::NEEDS_TWO_BITS),
+        fixtures::plain(BitDepth::Two),
+        false,
+        None,
+        &run_volume,
+    );
+    case(
+        "尺寸未贴合屏幕、一档都不在界内的纯色页",
+        fixtures::solid(fixtures::TINY, fixtures::ONE_STEP_ABOVE_TWO_BITS),
+        fixtures::plain(BitDepth::Four),
+        false,
+        None,
+        &fixtures::run_volume_fitted_inside,
+    );
+    case(
+        "门成立、一档都不在界内的同一个纯色页",
+        fixtures::solid(narrow, fixtures::ONE_STEP_ABOVE_TWO_BITS),
+        fixtures::dithered(BitDepth::Four),
+        false,
+        None,
+        &run_volume,
+    );
+    // 抬开硬上界之后，同一个纯色页在 8bit 上读 0.000——判据自己挑得到它。
+    // 单取值的页在这一档上调色板只要 1 位、灰度要 8 位：**调色板那一支**。
+    case(
+        "抬开硬上界之后的纯色页",
+        fixtures::solid(narrow, fixtures::ONE_STEP_ABOVE_TWO_BITS),
+        fixtures::plain(BitDepth::Eight),
+        false,
+        Some(png::ColorType::Indexed),
+        &with_the_whole_set,
+    );
+
+    // 判据自己挑不到的两格：顶死。抖过的 1bit 渐变页把两个格点铺满——**灰度那一支**。
+    for depth in [BitDepth::One, BitDepth::Two] {
+        let candidate = fixtures::dithered(depth);
+        case(
+            &format!("顶死 {candidate} 的渐变页"),
+            fixtures::full_bleed_gradient(narrow),
+            candidate,
+            true,
+            (depth == BitDepth::One).then_some(png::ColorType::Grayscale),
+            &pinned_at(candidate),
+        );
+    }
+
+    covered.sort();
+    assert_eq!(
+        covered,
+        [
+            fixtures::plain(BitDepth::One),
+            fixtures::dithered(BitDepth::One),
+            fixtures::plain(BitDepth::Two),
+            fixtures::dithered(BitDepth::Two),
+            fixtures::plain(BitDepth::Four),
+            fixtures::dithered(BitDepth::Four),
+            fixtures::plain(BitDepth::Eight),
+        ],
+        "六个候选加 8bit 那一格没有各走到一次"
+    );
+    assert!(
+        written_as.contains(&png::ColorType::Grayscale),
+        "灰度那一支一格都没走到：{written_as:?}"
+    );
+    assert!(
+        written_as.contains(&png::ColorType::Indexed),
+        "调色板那一支一格都没走到：{written_as:?}"
+    );
+}
+
+/// **一个混排卷一次盖住那条双向对应**：有判定的页落格成立，没有判定的三种各说得出
+/// 自己是什么（`CONTEXT.md` 的《量化》与《灰阶分布》）。
+///
+/// 卷里四样各一：灰度页、彩页、坏页、透传文件。**同一卷跑两台面板**：
+///
+/// - **彩色面板**上彩页真的走彩色分支，没有判定——「没有判定的页」这一侧只在这里问得出来；
+/// - **黑白面板**上同一张彩页转灰之后**有了判定**（ADR 0005 决定第 4 条），于是从外面走进里面，
+///   照样要落格。这一格接的是本票并掉的那条旧用例问过的那条路（停车场 Q936）。
+///
+/// **写成「跳过彩页和坏页」是做错了**：那样将来多一类页会被静静跳过去。这里问的是
+/// 输出容器里的每一份东西，四种之外的第五种在 [`classify`] 上当场变红。
+#[test]
+fn a_mixed_volume_puts_every_page_on_one_side_of_the_invariant_or_the_other() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
-    volume.page("01.png", &fixtures::gradient(fixtures::TYPICAL));
-    volume.page("02.png", &fixtures::color_page(fixtures::PASSES_THROUGH));
-    volume.page("03.png", &fixtures::solid(fixtures::DOUBLE_PANEL, 200));
+    let size = fixtures::PASSES_THROUGH;
+    // 四边顶着墨：这个尺寸只管缩放，裁白边照跑（页几何批 09 号票）。
+    volume.page("001.png", &fixtures::full_bleed_gradient(size));
+    volume.page("002.png", &fixtures::color_page(size));
+    // 字节读不出来的那一张：坏页，输出里是一张按卷内统一尺寸留白的空白占位页。
+    volume.file("003.png", b"not a png at all");
+    volume.file("ComicInfo.xml", b"<ComicInfo/>");
 
-    let report = run_volume(&space, &volume);
+    let report = fixtures::run_volume_with(&space, &volume, fixtures::profile(COLOR_DEVICE));
 
-    for page in &report.volumes[0].pages {
-        let depth = fixtures::verdict(page).candidate.bit_depth;
-        let grid = tonefit::quantize(
-            &tonefit::GrayImage::new(Size::new(256, 1), (0..=255u8).collect()),
-            Candidate::new(depth, Dither::Off),
-        );
-        let written = fixtures::read_png(&page.output);
-        for &level in &written.pixels {
-            assert!(
-                grid.pixels().contains(&level),
-                "{} 判定 {depth}，却写出了格点外的 {level}",
-                page.source.display()
-            );
-        }
-    }
+    let reported = &report.volumes[0];
+    assert!(reported.isolated(), "夹具不对：有坏页的卷没进隔离目录");
+    assert_the_report_and_the_files_agree(reported);
+
+    let written = everything_written(&reported.output, volume.path());
+    let names: Vec<&str> = written.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["001.png", "002.png", "003.png", "ComicInfo.xml"]);
+    assert!(
+        matches!(&written[0].1, OnGridSide::Judged(_)),
+        "灰度页该在这条不变量里：{:?}",
+        written[0].1
+    );
+    assert_eq!(written[1].1, OnGridSide::Color);
+    assert_eq!(written[2].1, OnGridSide::Placeholder);
+    assert_eq!(written[3].1, OnGridSide::PassedThrough);
+
+    // 换黑白面板再跑一趟：彩页转灰之后有了判定，这一卷里**没有判定的页只剩坏页那一张**。
+    let on_mono = fixtures::run_volume(&space, &volume);
+    let mono_reported = &on_mono.volumes[0];
+    assert_the_report_and_the_files_agree(mono_reported);
+
+    let grayed = everything_written(&mono_reported.output, volume.path());
+    assert!(
+        matches!(&grayed[1].1, OnGridSide::Judged(_)),
+        "黑白面板上那张彩页转灰之后该有判定、该落格：{:?}",
+        grayed[1].1
+    );
+    assert_eq!(grayed[2].1, OnGridSide::Placeholder);
+    assert_eq!(grayed[3].1, OnGridSide::PassedThrough);
+}
+
+/// **《留下的页》照旧落格**（two-pass-rework/14：按页跳过）。
+///
+/// 它这一趟没解、没判、没编，从上一趟的输出里原样搬过来——判定随字节一起搬来，
+/// 落格跟着成立（**《落格》，见 `CONTEXT.md` 的《量化》**）。它**不在报告的逐页结果里**，
+/// 这一条因此只问得动文件：[`everything_written`] 问的正是输出容器里的每一份东西。
+///
+/// 顺带把「按页跳过省的是工、不是结果」又验了一次：搬过来的那一页仍在这条不变量里。
+#[test]
+fn a_retained_page_is_still_on_grid() {
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    let narrow = fixtures::NARROW_PASSES_THROUGH;
+    volume.page(
+        "001.png",
+        &fixtures::solid(narrow, fixtures::NEEDS_TWO_BITS),
+    );
+    volume.page("002.png", &fixtures::solid(narrow, 0));
+
+    run_volume(&space, &volume);
+    // 只改头一页：第二页的页级依据一项没变，这一趟原样搬过来。
+    volume.page("001.png", &fixtures::solid(narrow, fixtures::FAR_OUTSIDE));
+    let second = run_volume(&space, &volume);
+
+    let redone = &second.volumes[0];
+    assert_eq!(redone.retained_pages, 1, "夹具不对：这一趟没有按页跳过");
+    assert_eq!(redone.pages.len(), 1, "重做的不止那一页");
+    assert_the_report_and_the_files_agree(redone);
+
+    let written = everything_written(&redone.output, volume.path());
+    assert_eq!(written.len(), 2, "输出里不是整本书");
+    // 留下的那一页不在报告里，落格却照旧由文件自己答得出来。
+    assert_eq!(written[1].0, "002.png");
+    assert_eq!(
+        written[1].1,
+        OnGridSide::Judged(fixtures::plain(BitDepth::One)),
+        "搬过来的那一页丢了它的判定"
+    );
 }
 
 #[test]

@@ -169,6 +169,53 @@ const KEY_READERS: [(&str, &str, usize); 7] = [
     ("src/session/draw/footer.rs", "stage_keys(", 1),
 ];
 
+/// **《落格》那条不变量**的字样（`encoder-gate/01`，收停车场 Q936）。
+///
+/// 记号挑的是那一条词条里**只有它说得出**的三句：这条不变量本身、它给出的那个上界、
+/// 以及它对编码器立下的那道闸。三句各挑一句，抄件少抄哪一句都还剩另外两句。
+///
+/// **「落格」那两个字当不了记号**：`tests/pipeline.rs` 那道闸、`docs/adr/0009` 那句路标，
+/// 说的都是**指着它**，不是又写了一份。拿那两个字当记号会把真话也判成抄。
+const ON_GRID_MARKS: [&str; 3] = [
+    "把写出去的字节解回来，每一个取值都还落在它那一档判定的格点上",
+    "灰调级数因此不超过 `2^灰阶档位`",
+    "一个编码器进不了这个项目，除非它保得住这一条",
+];
+
+/// 那条不变量的家，相对仓库根。
+const ON_GRID_HOME: &str = "CONTEXT.md";
+
+/// 家里真住着的那三句：**哪几种页不在这条不变量里，各自凭什么**。
+///
+/// `tests/pipeline.rs` 那道闸断的是一条双向对应——没有判定的页必须说得出自己是这三种里的
+/// 哪一种——而「是哪三种」这句话只在词条里。把这三句从词条里删掉，那道闸就成了一份
+/// 没有依据的名单，**这一条因此要拦住那一手**。
+const ON_GRID_HOME_MARKS: [&str; 3] = [
+    "彩页不量化",
+    "透传文件原样拷",
+    "坏页的空白占位页只有一个取值",
+];
+
+/// 指回来的那句路标——**term 与它的家一并写着**，因此换了小节标题会变红，
+/// 而词条在文件里挪位置不会（`CLAUDE.md`《文档写作》第 5 条：稳定引用）。
+const ON_GRID_SIGNPOST: &str = "《落格》，见 `CONTEXT.md` 的《量化》";
+
+/// 指回来的那句路标在哪几个文件里，跟着的是**至少出现几次**（下界取实数，
+/// 与 [`TRUNCATION_USED`] 同一条：多一句指路不该变红，少一句必须变红）。
+///
+/// 两处：ADR 0009 的《不要做的「简化」》把《落格》列成第二个编码器要过的另一道闸；
+/// `tests/pipeline.rs` 那道闸自己**只指过去、不复述词条**，四句路标各在一处
+/// （枚举、逐页那一问，加两条用例的抬头）。`encoder-gate/04` 处置 ADR 0004 之后
+/// 那一篇也会指回来，届时这张表跟着加一行。
+///
+/// **`tests/` 在这张表里，而不在[被扫的那几处](delivered)**：那一批扫的是
+/// 「别处有没有抄第二份」，用例不在其中（这一支自己就攥着记号）；这张表问的是
+/// 「指回来的那句话还在不在」，按文件路径问得着任何一个文件。
+const ON_GRID_SIGNPOSTED: [(&str, usize); 2] = [
+    ("docs/adr/0009-scope-is-a-named-subset.md", 1),
+    ("tests/pipeline.rs", 4),
+];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -441,6 +488,58 @@ fn the_keys_the_screen_mentions_come_from_the_key_table() {
         assert!(
             found >= least,
             "{file} 里问按键表的那一手「{signpost}」从 {least} 处掉到了 {found} 处"
+        );
+    }
+}
+
+/// 《落格》那条不变量只有一处出处，抄出第二份就当场变红（`encoder-gate/01`，收停车场 Q936）。
+///
+/// 这一条钉的是**那道闸的依据**：`tests/pipeline.rs` 那几条问的是「写出去的页落不落格」，
+/// 而**落格是什么**它们一个字都不说、只指过去。说法一旦长出第二份，改了其中一处的人
+/// 不会知道另一处也该改——下一个想接编码器的人于是各按各的说法过关，
+/// 而这条不变量存在的全部意义就是拦住那一手。
+///
+/// **三件事一起问**，与前四条同一个形状：别处没有第二份、
+/// [家里那三句例外](ON_GRID_HOME_MARKS)真住着、[指回来的那句路标](ON_GRID_SIGNPOST)还在。
+/// 只问头一件的话，把词条整个删掉这一条也是绿的。
+#[test]
+fn the_on_grid_invariant_lives_in_one_place() {
+    let home = root().join(ON_GRID_HOME);
+    let marks: Vec<String> = ON_GRID_MARKS.iter().map(|mark| squashed(mark)).collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(
+        carrying,
+        vec![home.clone()],
+        "《落格》那条不变量长出了第二份"
+    );
+
+    let entry = squashed(&read(&home));
+    for mark in ON_GRID_HOME_MARKS {
+        assert!(
+            entry.contains(&squashed(mark)),
+            "《落格》里少了「{mark}」那一句——不在这条不变量里的页从此说不出自己凭什么不在"
+        );
+    }
+
+    let signpost = squashed(ON_GRID_SIGNPOST);
+    for (file, least) in ON_GRID_SIGNPOSTED {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：指回《落格》的那几处按文件路径记在 ON_GRID_SIGNPOSTED 上，\
+             文件挪了位置就把那张表跟着改"
+        );
+        let found = squashed(&read(&path)).matches(&signpost).count();
+        assert!(
+            found >= least,
+            "{file} 里指回《落格》的路标从 {least} 句掉到了 {found} 句"
         );
     }
 }
