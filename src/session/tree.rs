@@ -354,6 +354,24 @@ impl Tree {
         self.roots.iter().position(|one| one == root)
     }
 
+    /// 这一卷归哪一条**分区**——每页结果的面包屑上那一截（`CONTEXT.md` 的《分区》）。
+    ///
+    /// **顶格目录行底下的卷没有分区**：那一行本身就是顶层，面包屑上因此少一截
+    /// （设计稿 `drawPages` 的 `crumbs` 那一支）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn section_of(&self, volume: usize) -> Option<&Path> {
+        self.nodes.iter().find_map(|node| match &node.shape {
+            Shape::Section { path, directories } => directories
+                .iter()
+                .any(|directory| directory.volumes.contains(&volume))
+                .then_some(path.as_path()),
+            Shape::Directory(_) => None,
+        })
+    }
+
     /// 这一卷归哪一个目录（`h` 收起回到父目录、每页结果的面包屑都问它）。
     pub fn directory_of(&self, volume: usize) -> Option<&Directory> {
         self.nodes

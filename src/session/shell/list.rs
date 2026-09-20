@@ -35,7 +35,7 @@ use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint, padded};
 use super::marks::{self, BranchTally, Mark};
 use super::yielding;
-use crate::render::{self, Field, RowKind};
+use crate::render::{self, Field, Notable, RowKind};
 
 /// 缩进一级占几格。
 const A_LEVEL: u16 = 2;
@@ -583,17 +583,19 @@ impl Painter<'_> {
     }
 
     /// 需留意那几样**在屏上各怎么写**，照屏上的次序（`CONTEXT.md` 的《语义色》在页
-    /// 那一级分出的那几样）。**措辞只有这一处**——数由那一趟折出来，词是界面层自己的。
+    /// 那一级分出的那几样）。数由那一趟折出来，**词在 [`marks::notable_word`] 一处**
+    /// ——每页结果提示那一列读的是同一份。
     fn notable_bits(&self, at: usize) -> Vec<(&'static str, usize)> {
         let tally = self.notable_tally(at);
         [
-            ("差异大的页", tally.outlier),
-            ("页面超宽", tally.overflowed),
-            ("尺寸未贴合屏幕", tally.outside_the_gate),
-            ("残缺", tally.salvaged),
+            (Notable::Outlier, tally.outlier),
+            (Notable::Overflowed, tally.overflowed),
+            (Notable::OutsideTheGate, tally.outside_the_gate),
+            (Notable::Salvaged, tally.salvaged),
         ]
         .into_iter()
         .filter(|(_, count)| *count > 0)
+        .filter_map(|(what, count)| Some((marks::notable_word(what)?, count)))
         .collect()
     }
 

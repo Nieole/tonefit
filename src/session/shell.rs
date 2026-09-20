@@ -15,7 +15,7 @@
 //! | 总览 | [`overview`] | 06：还没开始那一副宽窄两档；08：清点中与跑起来；10：结束之后 |
 //! | 确认条 | — | 等待确认那一票 |
 //! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
-//! | 每页结果 | — | 每页结果那一票 |
+//! | 每页结果 | [`pages`] | 11 |
 //! | 顶上一条预设 | [`preset`] | 13 |
 //! | 设置栏 | [`settings`] | 13 |
 //! | 详情栏 | [`details`] | 13 |
@@ -41,6 +41,7 @@ mod list;
 mod marks;
 mod overlay;
 mod overview;
+mod pages;
 mod preset;
 mod settings;
 mod small;
@@ -79,7 +80,12 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
     footer::draw(&mut canvas, session, live, phase, now);
 }
 
-/// 任务视图：顶栏底下总览钉住，剩下的高度给卷列表（每页结果与确认条随各票接进来），屏底一行。
+/// 任务视图：顶栏底下总览钉住，剩下的高度给卷列表**或者**每页结果（确认条随它那一票
+/// 接进来），屏底一行。
+///
+/// **进了一卷就换掉整张卷列表**（`CONTEXT.md` 的《每页结果》：换掉卷列表、占整宽）：
+/// 那一格里两块只画得出一块，判据是[进了哪一卷](super::view::TaskView::pages)那一格，
+/// 与按键表查的那一块（[`super::view::TaskView::focus`]）读的是同一份。
 fn task(
     canvas: &mut Canvas<'_>,
     session: &Session,
@@ -91,14 +97,12 @@ fn task(
     let mut y = 1;
     y += overview::draw(canvas, session, live, phase, now, y);
     let height = screen.height.saturating_sub(1 + y);
-    list::draw(
-        canvas,
-        session,
-        live,
-        phase,
-        now,
-        Rect::new(0, y, screen.width, height),
-    );
+    let area = Rect::new(0, y, screen.width, height);
+    if session.views.task.pages.is_some() {
+        pages::draw(canvas, session, live, area);
+        return;
+    }
+    list::draw(canvas, session, live, phase, now, area);
 }
 
 /// 配置视图：顶栏底下一条预设钉住，剩下的高度给设置栏与详情栏两栏，屏底一行。
@@ -207,6 +211,19 @@ mod tests {
     fn the_ended_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("ended", 120, 36);
         assert_scene("ended", 80, 24);
+    }
+
+    /// **「每页结果」120×36 与 80×24 逐格相等**（`session-redesign/11` 票面第一条）：
+    /// 抬头是面包屑（任务 › 分区的路径 › 目录 › 卷）、右端写着此刻的列法，
+    /// 头一行是这一卷的灰阶分布与需留意几页，此后一页一行；框底边左起是 `a` 那一件、
+    /// 右端说光标停在第几页。
+    ///
+    /// **80 列那一档缩放、画质分与尺寸三列都让掉**，只剩页面 · 灰阶 · 原因 · 提示
+    /// ——砍列的次序在 `session::columns` 一处。
+    #[test]
+    fn the_pages_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("pages", 120, 36);
+        assert_scene("pages", 80, 24);
     }
 
     /// **「整卷统一灰阶」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：

@@ -570,11 +570,221 @@ fn least_width(column: TreeColumn, envelope: bool) -> u16 {
     }
 }
 
+/// **每页结果那一张表**上的一列（`session-redesign/11`）：新界面从卷行进到页的那一副。
+///
+/// 与[旧界面那张逐页表](PageColumn)是**两张表，不是一张**：那一张十一列、列宽按内容量
+/// （报告区里的一格），这一张七列、列宽**定死**（占整宽，一页一行要对齐在同一处）。
+/// 砍列的次序也不一样——那一张先让去处与几何那几列，这一张
+/// **先让缩放、再让画质分、再让尺寸**，而**灰阶恒在**
+/// （`CONTEXT.md` 的《砍列》；spec 的《每页结果》）。
+/// 两个次序各在自己那一格上，合回一个是 15 号票让旧那一副退场时的事（停车场 Q804）。
+///
+/// 列的选法答的是**从卷进到页要问的那件事**：哪一页判成了哪一档、凭什么。
+/// 从左到右四段：**这一页是谁**（记号 · 页面）、**它这个样子是怎么来的**（尺寸 · 缩放）、
+/// **它判成哪一档、凭什么**（灰阶 · 原因 · 画质分），末一列是**提示**——
+/// 这一页要紧在哪几处那几个词，连同成句的那一句（坏页那一句原因）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PagesColumn {
+    /// 行首记号：这一页要不要紧，一个字符说完。**恒在。**
+    Mark,
+    /// 页面（成员名，只印最后那一段）。**恒在**，摆不下时从中间省略。
+    Name,
+    /// 这一页的输出尺寸。
+    Size,
+    /// 缩放怎么算的；**坏页说的是它的尺寸从哪来**（`p1-session/11` 的验收）。
+    Scaling,
+    /// 这一页判成的那一档。**恒在**——它就是这一副要答的那件事。
+    Verdict,
+    /// 判成这一档的理由。**恒在。**
+    Reason,
+    /// **判成那一档在这一页上的那个分**（`2bit+FS 3.515`）——不是六个候选那一整串
+    /// （那是命令行与[旧界面那一张](PageColumn::Scores)的 [`Field::Scores`]，
+    /// 停车场 Q725）。
+    Scores,
+    /// 提示：这一页要紧在哪几处那几个词，加上成句的那一句。**恒在**，吃剩下的宽度。
+    Notes,
+}
+
+impl Column for PagesColumn {
+    const ALL: &'static [Self] = &[
+        Self::Mark,
+        Self::Name,
+        Self::Size,
+        Self::Scaling,
+        Self::Verdict,
+        Self::Reason,
+        Self::Scores,
+        Self::Notes,
+    ];
+
+    /// **砍列的次序：缩放 → 画质分 → 尺寸**（spec 的《每页结果》：先让缩放、再让画质分、
+    /// 再让尺寸；灰阶恒在）。
+    ///
+    /// 记号、页面、灰阶、原因与提示不在这里边——它们**恒在**：先要认得出这是哪一页、
+    /// 它判成哪一档、凭什么、出没出事。次序按「摆不下时先舍谁」排：
+    ///
+    /// 1. **缩放**最先——它是这张表上最宽的一格（整整二十四格），而「这一页怎么缩的」
+    ///    比「它判成哪一档」隔着一层。旧那一张把它压到最后，为的是坏页那一行靠它说出
+    ///    「它的尺寸是卷内统一尺寸」；**这一张不必**——坏页那一句原因在提示那一列上，
+    ///    而提示恒在。
+    /// 2. **画质分**次之——它是证据，比结论深一层。
+    /// 3. **尺寸**压后——页面超宽那件事提示那一列已经说了。
+    ///
+    /// **80×24 那一档上三列都让掉**：记号、页面、灰阶、原因、提示五列还在
+    /// （见 [`PagesWidths::of`] 那三道门槛与本模块的
+    /// `the_pages_pane_drops_its_columns_in_the_one_order_it_declares`）。
+    const DROPPED_IN_TURN: &'static [Self] = &[Self::Scaling, Self::Scores, Self::Size];
+
+    const NARROWED: Self = Self::Name;
+
+    fn head(self) -> &'static str {
+        match self {
+            // **记号那一列不画列头**：它不是一格字（见 [`Provenance::Mark`]），
+            // 屏上那一行在它的位置上留着两格空。
+            Self::Mark => "记号",
+            Self::Name => "页面",
+            Self::Size => "尺寸",
+            Self::Scaling => "缩放",
+            Self::Verdict => "灰阶",
+            Self::Reason => "原因",
+            Self::Scores => "画质分",
+            Self::Notes => "提示",
+        }
+    }
+
+    /// 一列都不靠右：尺寸是一对数中间夹着 `x`，靠右摆反而让 `x` 对不齐；
+    /// 其余各列都是词或名字。
+    fn to_the_right(self) -> bool {
+        false
+    }
+
+    fn provenance(self) -> Provenance {
+        match self {
+            Self::Mark => Provenance::Mark,
+            Self::Name => Provenance::Verbatim,
+            Self::Size => Provenance::Wording(Some(Field::Size)),
+            Self::Scaling => Provenance::Wording(Some(Field::Scaling)),
+            // **对的是另一个名字的格**：屏上这一列叫「灰阶」，措辞那一层那一格叫候选。
+            Self::Verdict => Provenance::Wording(Some(Field::Candidate)),
+            Self::Reason => Provenance::Wording(Some(Field::Reason)),
+            Self::Scores => Provenance::Wording(Some(Field::VerdictScore)),
+            // **这一列的字是画法那一层拼出来的**：要紧在哪几处那几个词是界面层自己的
+            // （`super::shell::marks` 的 `notable_word` 一处），成句的那几格出自措辞那一层
+            // （残缺救回了多少、纸白与钳制、坏页那一句原因）——几样并成一列，
+            // 指不到单独一格上。
+            Self::Notes => Provenance::Wording(None),
+        }
+    }
+}
+
+/// 每页结果那几列**此刻有多宽**：一列一个数，零就是这一列不在场。
+///
+/// **摆法与另三张表不同，而次序仍是 [`PagesColumn::DROPPED_IN_TURN`]**：与
+/// [树那一张](TreeWidths)同一条理由——屏上一页一行要对齐在同一处，一行一行地量宽度
+/// 会让上下两行的列错开。砍列因此是「框里有这么宽才摆得下它」的三道门槛。
+///
+/// **一列占几格连它与下一列之间那两格一起算**：各列挨着补空到这个数摆下去
+/// （[`super::shell::pages`] 照它画），因此这里没有 [`GAP`] 那一笔。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PagesWidths {
+    /// 页面那一列。**恒在。**
+    pub(super) name: u16,
+    pub(super) size: u16,
+    pub(super) scaling: u16,
+    /// 灰阶那一列。**恒在。**
+    pub(super) verdict: u16,
+    /// 原因那一列。**恒在。**
+    pub(super) reason: u16,
+    pub(super) scores: u16,
+}
+
+/// 行首那两截各占几格：光标记号（`❯ `）与这一页要不要紧那个记号（`✗ `）。
+/// 两截都恒在，提示那一列吃剩下的宽度时要减掉它们。
+pub(super) const PAGES_MARKS: u16 = 4;
+
+/// 提示那一列至少留几格：剩不下这么多就不再往下缩——半句话比没有话更坏。
+const NOTES_LEAST: u16 = 4;
+
+impl PagesWidths {
+    /// 框里内容那一截有 `inner` 格宽时各列有多宽。
+    pub(super) fn of(inner: u16) -> Self {
+        let keeps = |column: PagesColumn| inner >= least_pages_width(column);
+        Self {
+            name: 10,
+            size: if keeps(PagesColumn::Size) { 11 } else { 0 },
+            scaling: if keeps(PagesColumn::Scaling) { 24 } else { 0 },
+            verdict: 9,
+            reason: 22,
+            scores: if keeps(PagesColumn::Scores) { 15 } else { 0 },
+        }
+    }
+
+    /// 这一列占几格。提示那一列不在里边——它吃剩下的（[`notes`](Self::notes)）。
+    pub(super) fn of_column(&self, column: PagesColumn) -> u16 {
+        match column {
+            PagesColumn::Mark | PagesColumn::Notes => 0,
+            PagesColumn::Name => self.name,
+            PagesColumn::Size => self.size,
+            PagesColumn::Scaling => self.scaling,
+            PagesColumn::Verdict => self.verdict,
+            PagesColumn::Reason => self.reason,
+            PagesColumn::Scores => self.scores,
+        }
+    }
+
+    /// **提示那一列吃剩下的**：一行那么宽，减掉行首那两截与前面几列，至少 [`NOTES_LEAST`] 格。
+    ///
+    /// `row` 是一行摆得下几格（框里那一截再加一格：行从光标记号那一格起笔，
+    /// 比抬头那一行靠左一格）。
+    pub(super) fn notes(&self, row: u16) -> u16 {
+        let used = PAGES_MARKS
+            + PagesColumn::ALL
+                .iter()
+                .map(|column| self.of_column(*column))
+                .sum::<u16>();
+        row.saturating_sub(used).max(NOTES_LEAST)
+    }
+
+    /// 此刻还在场的那几列，从左到右——与[树那一张](TreeWidths::kept)答的是同一个问题。
+    pub(super) fn kept(&self) -> Vec<PagesColumn> {
+        PagesColumn::ALL
+            .iter()
+            .copied()
+            .filter(|column| match column {
+                PagesColumn::Mark
+                | PagesColumn::Name
+                | PagesColumn::Verdict
+                | PagesColumn::Reason
+                | PagesColumn::Notes => true,
+                PagesColumn::Size => self.size > 0,
+                PagesColumn::Scaling => self.scaling > 0,
+                PagesColumn::Scores => self.scores > 0,
+            })
+            .collect()
+    }
+}
+
+/// 一列要框内多宽才摆得下——**砍列次序就是这三个数从大到小**，
+/// 而恒在的那五列一格都不要。
+fn least_pages_width(column: PagesColumn) -> u16 {
+    match column {
+        PagesColumn::Mark
+        | PagesColumn::Name
+        | PagesColumn::Verdict
+        | PagesColumn::Reason
+        | PagesColumn::Notes => 0,
+        PagesColumn::Scaling => 112,
+        PagesColumn::Scores => 98,
+        PagesColumn::Size => 84,
+    }
+}
+
 /// **摆进列里、由[措辞](Provenance::Wording)那一层写下的那几格。**
 ///
-/// **[树那一张](TreeColumn)不在里面**：它装的是[卷表](VolumeColumn)同一批格
-/// （页数与灰阶分布），换的只是一行的样子——同一格报两遍，那一关反而分不清
-/// 问的是哪一列（见下面「一格只进一列」那条用例）。
+/// **新界面那两张不在里面**（[树](TreeColumn)与[每页结果](PagesColumn)）：它们装的是
+/// 旧那两张同一批格（树是[卷表](VolumeColumn)的页数与灰阶分布，每页结果是
+/// [逐页表](PageColumn)的尺寸、缩放、判定、理由与画质分），换的只是一行的样子——
+/// 同一格报两遍，那一关反而分不清问的是哪一列（见下面「一格只进一列」那条用例）。
 ///
 /// 「摆进列里的字形一个都不许是歧义宽度」那一关问的就是这几格，
 /// 而**那一关跑在造字面的那一层**（`crate::render` 那条
@@ -877,6 +1087,14 @@ mod tests {
             2,
             "树那一张自己造的字只有卷数与耗时两列"
         );
+        // **每页结果那一张同样要过 `walk` 那两条**，报的格也不并进下面那几条：
+        // 它装的是逐页表同一批格（见 [`wording_cells`]）。
+        let pages = walk::<PagesColumn>("每页结果");
+        assert_eq!(
+            pages.iter().filter(|(_, field)| field.is_none()).count(),
+            1,
+            "每页结果那一张自己拼出来的字只有提示那一列"
+        );
 
         // **一格只进一列**：两列报出同一格，那一关就把其中一列真正装的东西漏问了。
         let cells: Vec<Field> = wording.iter().filter_map(|(_, field)| *field).collect();
@@ -943,6 +1161,56 @@ mod tests {
                 "{inner} 列宽上让掉了恒在的那几列"
             );
         }
+    }
+
+    /// **每页结果上砍列的次序：缩放 → 画质分 → 尺寸**（`session-redesign/11` 票面第二条）。
+    ///
+    /// 与[树那一条](the_tree_drops_its_columns_in_the_one_order_it_declares)同一个形状：
+    /// 宽度一格格收窄，让掉的先后就是[那个次序](PagesColumn::DROPPED_IN_TURN)，
+    /// 而记号、页面、**灰阶**、原因与提示一格都不让。
+    /// 画法那一层不许再写第二份——它问的是 [`PagesWidths`]（`super::shell::pages`）。
+    ///
+    /// 主稿 120×36 那一屏框内 116 格，七列全在；验收线 80×24 那一屏框内 76 格，
+    /// 三列一个不剩。
+    #[test]
+    fn the_pages_pane_drops_its_columns_in_the_one_order_it_declares() {
+        let gone = |inner: u16| -> Vec<PagesColumn> {
+            let kept = PagesWidths::of(inner).kept();
+            PagesColumn::DROPPED_IN_TURN
+                .iter()
+                .copied()
+                .filter(|column| !kept.contains(column))
+                .collect()
+        };
+        assert_eq!(gone(116), [], "主稿那一屏七列全在");
+        assert_eq!(gone(111), [PagesColumn::Scaling]);
+        assert_eq!(gone(97), [PagesColumn::Scaling, PagesColumn::Scores]);
+        assert_eq!(
+            gone(76),
+            [PagesColumn::Scaling, PagesColumn::Scores, PagesColumn::Size],
+            "验收线那一屏三列都让掉了"
+        );
+        for inner in [200, 116, 76, 40, 12] {
+            let kept = PagesWidths::of(inner).kept();
+            for column in [
+                PagesColumn::Mark,
+                PagesColumn::Name,
+                PagesColumn::Verdict,
+                PagesColumn::Reason,
+                PagesColumn::Notes,
+            ] {
+                assert!(kept.contains(&column), "{inner} 列宽上让掉了 {column:?}");
+            }
+        }
+    }
+
+    /// **提示那一列吃剩下的，至少留四格**：一行那么宽减掉行首那两截与前面几列。
+    /// 主稿那一屏上正是设计稿那个数（`notesW`）。
+    #[test]
+    fn the_notes_column_takes_what_is_left_of_the_row() {
+        assert_eq!(PagesWidths::of(116).notes(117), 22);
+        assert_eq!(PagesWidths::of(76).notes(77), 32);
+        assert_eq!(PagesWidths::of(76).notes(10), NOTES_LEAST, "剩不下就不再缩");
     }
 
     /// **默认逐页那一趟代表页那一列连列头都不在场**（`session-redesign/10` 票面第三个

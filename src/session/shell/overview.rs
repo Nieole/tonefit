@@ -22,6 +22,7 @@ use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
 use super::super::state::Session;
 use super::super::tone::Tone;
+use super::super::view::Focus;
 use super::canvas::{Border, Canvas, hint};
 use super::marks;
 use super::topbar::model;
@@ -268,10 +269,17 @@ fn in_a_run(
         let mut line = vec![Segment::new("问题 ", Look::tone(Tone::Trouble).bold())];
         line.extend(trouble);
         line.push(Segment::plain("    "));
+        // **这一件问的是卷列表，不是底下此刻那一块**（设计稿 `overviewLines` 那一行
+        // 压根不问）：总览钉在屏上、不随底下换——`]d` 那个键归卷列表，这一行是**指路**
+        // （「出了事，去那儿跳」），而「此刻按得动哪几个键」的家是屏底
+        // （`CONTEXT.md` 的《屏底》：出自同一处）。进了[每页结果](super::pages)时
+        // 屏底照旧不摆 `]d`，这一行照旧指着它——停车场 **Q875**。
+        //
+        // 键与那一句仍从表上取：写法变了这一行跟着变。
         line.extend(
             keymap::hints(
                 phase,
-                session.views.block(),
+                Focus::VolumeList,
                 &[Want::saying(Deed::NextProblem, "跳到下一个")],
             )
             .first()

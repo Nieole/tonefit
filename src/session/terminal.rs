@@ -35,7 +35,7 @@ use super::look::{Kind, Look, Segment};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
 use super::tone::Tone;
-use super::view::{Cursor, Input, View, Window};
+use super::view::{Cursor, Input, Pages, View, Window};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -338,8 +338,8 @@ pub(super) fn input(
             Exit::Stay
         }
         // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
-        // （`CONTEXT.md` 的《停得住 / 展得开》）。展得开的那几卷换屏进每页结果，
-        // 归 `session-redesign/11`；这一层眼下只把展不开的那几种说出口。
+        // （`CONTEXT.md` 的《停得住 / 展得开》）——展得开的换屏进每页结果，
+        // 展不开的屏底说一句为什么。
         Deed::Open if matches!(session.views.task.cursor, Cursor::Volume(_)) => {
             open_a_volume(session, running, now);
             Exit::Stay
@@ -395,10 +395,14 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
     };
     let at = session.views.task.tree.index_of(&root);
     let state = session.volume_state(running.live().as_deref(), &root);
-    // 展得开的那几卷换屏进每页结果，归 `session-redesign/11`：那一屏还没有，
-    // 这一下因此原地不动、一句话都不说（说「做不到」是句假话）。展不展得开的判据
-    // 在 [`VolumeState::opens_the_pages`] 一处——屏底摆不摆 `l` 读的是同一份。
+    // **展得开的那几卷换屏进每页结果**：屏底一句话都不说——换了一整屏，
+    // 屏上自己就说清了这一下做成了什么。展不展得开的判据在
+    // [`VolumeState::opens_the_pages`] 一处，屏底摆不摆 `l` 读的是同一份。
+    //
+    // **跳过的卷也进得来**（`CONTEXT.md` 的《停得住 / 展得开》），只是它一页结果都没有
+    // ——那一屏里说一句它跳过了（`super::shell::pages`）。
     if state.opens_the_pages() {
+        session.views.task.pages = Some(Pages::of(root));
         return;
     }
     let undone = at.and_then(|at| {
@@ -1209,6 +1213,98 @@ mod redesign {
     #[test]
     fn a_failed_volume_says_the_reason_from_its_own_row() {
         assert_sequence("ended-failed-l");
+    }
+
+    /// 走完一串，**画之前把开着那一卷的逐页详略补齐**，再逐格对它的期望屏。
+    ///
+    /// **逐页结果只有屏上开着的那一卷有整份**（[`scene`] 的模块文档，停车场 Q736）：
+    /// 起点那一景（`ended`）里那一卷还没开着，它那一份因此只有需留意的那一页，
+    /// 别的页由夹具照灰阶分布补出来——补出来的那几页缩放比与画质分都是占位的数。
+    /// 而**这一串自己的场景数据带着它那 189 页**（`l` 按下去之后它就是开着的那一卷）。
+    ///
+    /// **键一个都不碰那一趟**（这一串没有推进、没有答话、没有开跑），两份说的是**同一趟**、
+    /// 只是详略不同，照这一串那一份重放一遍即可；界面状态由 [`Scene::advance_to`] 自己保住，
+    /// 走完那一屏仍是**逐格断言**。重放前后核一遍那一趟真没动（各卷此刻怎么样、收摊了几卷），
+    /// 补的只是详略。
+    ///
+    /// **停车场 Q876**：真要收干净是让导出给每一景都带上整份逐页
+    /// （ADR 0019 决定第 13 条：先改设计稿、重导）。
+    fn assert_sequence_with_every_page_of_the_open_volume(name: &str) -> Scene {
+        let (mut scene, running, exit) = walked(name);
+        assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
+        let (states, settled) = {
+            let live = running.live().expect("这一串在一趟里");
+            (live.states().to_vec(), live.report().volumes.len())
+        };
+        drop(running);
+        scene.advance_to(scene::sequence_data(name));
+        let running = Running::holding(scene.live.take().expect("重放之后那一趟"));
+        {
+            let live = running.live().expect("重放之后那一趟");
+            assert_eq!(live.states(), states, "「{name}」补详略那一下动了那一趟");
+            assert_eq!(live.report().volumes.len(), settled, "{name}");
+        }
+        let size = scene::sequence(name).size;
+        let buffer = painted(&scene, &running, size);
+        assert_no_background(&buffer);
+        assert_same_cells(&buffer, &design::sequence(name));
+        scene
+    }
+
+    /// **卷行上 `l`／`⏎` 换屏进每页结果，`a` 切列法，`j` 挪一页，`h` 回卷列表原处**
+    /// （`session-redesign/11` 票面第二条那一串）。
+    ///
+    /// 五串一路走完：`l` 进去（默认只列需留意的页）、`a` 换成全部页、`j` 挪一页、
+    /// `h` 回卷列表；`⏎` 与 `l` 派的是同一件事。**回去那一下卷列表的光标一格没动**
+    /// ——那一行本来就停在光标底下。
+    ///
+    /// 列着全部页的那两串走[补齐详略那一手](assert_sequence_with_every_page_of_the_open_volume)。
+    /// 只列需留意的页那三串**不必补**：屏上那一行就是需留意的那一页，
+    /// 而它在起点那一景的场景数据里本来就是整份的。
+    #[test]
+    fn l_on_a_volume_row_opens_the_pages_and_h_comes_back_to_the_same_row() {
+        let scene = assert_sequence("ended-l");
+        assert!(
+            scene.session.views.task.pages.is_some(),
+            "`l` 换屏进了每页结果"
+        );
+        assert_eq!(scene.session.views.block(), Focus::Pages);
+        assert_sequence("ended-Enter");
+        assert_sequence_with_every_page_of_the_open_volume("ended-l-a");
+        assert_sequence_with_every_page_of_the_open_volume("ended-l-a-j");
+        let scene = assert_sequence("ended-l-a-j-h");
+        assert!(scene.session.views.task.pages.is_none(), "`h` 回了卷列表");
+        assert!(
+            matches!(scene.session.views.task.cursor, Cursor::Volume(_)),
+            "回到原处：光标仍停在那一卷的行上"
+        );
+    }
+
+    /// **跳过的卷进得来，只说一句它跳过了**（票面第五条末一句；`CONTEXT.md` 的
+    /// 《停得住 / 展得开》：跳过的也算）：它这一趟一页都没重新分析，那一屏里
+    /// 连灰阶分布与列头都没有——给的是一句话，不是一张空表。
+    #[test]
+    fn a_skipped_volume_opens_and_only_says_that_it_was_skipped() {
+        let scene = assert_sequence("ended-skipped-l");
+        assert!(
+            scene.session.views.task.pages.is_some(),
+            "跳过的卷照样进得来"
+        );
+    }
+
+    /// **每页结果上 `a`／`j`／`h`／`Esc`**（票面第二条那一串、第四条）：
+    /// `a` 换列法（屏底那一件跟着换口）、`j` 挪一页、`h` 与 `Esc` 都回卷列表。
+    #[test]
+    fn the_pages_pane_switches_its_listing_moves_a_row_and_closes() {
+        assert_sequence("pages-a");
+        assert_sequence("pages-j");
+        for name in ["pages-h", "pages-Escape"] {
+            let scene = assert_sequence(name);
+            assert!(
+                scene.session.views.task.pages.is_none(),
+                "「{name}」走完回到了卷列表"
+            );
+        }
     }
 
     /// **备注行上 `⏎` 掀开说明卡、`Esc` 关**（票面第二条、第二个验收框）：
