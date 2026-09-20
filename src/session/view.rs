@@ -63,6 +63,17 @@ pub const COMBO_WAITS: Duration = Duration::from_millis(900);
 /// 按停止之后屏底那一句占几秒（设计稿 `stopKey` 的 4000 毫秒）：它比寻常那一句久，
 /// 因为它要人读完「再按一次 s 立即停止」。
 pub const STOP_LINGERS: Duration = Duration::from_millis(4000);
+
+/// **灰阶测试图那一句**在屏底占几秒（设计稿 `configKey` 的 `c` 那一支给的 3200 毫秒）：
+/// 它比寻常那一句久——那一句里有一条路径要读。
+#[cfg_attr(
+    not(feature = "tui"),
+    expect(
+        dead_code,
+        reason = "出图那一件要碰盘，落在终端层那一支上，而它在 tui 特性后面"
+    )
+)]
+pub const CHART_LINGERS: Duration = Duration::from_millis(3200);
 /// **转轮**转一格要多久（设计稿 `SPIN` 那一处的 90 毫秒）。
 #[cfg_attr(
     not(feature = "tui"),
@@ -359,11 +370,41 @@ pub struct Applied {
     pub preset: Preset,
 }
 
-/// 配置视图记着的：所在的块、两栏各自的光标、下钻进了哪一层、套着的预设。预设栏的光标随那一票添。
+/// 配置视图**左右那两栏**（`CONTEXT.md` 的《配置视图》：下面左右两栏）。
+///
+/// **它与[掀着预设栏没有](ConfigView::picker)是两维**（停车场 Q828 的 ②）：`⇥` 切的是这一维，
+/// 切走再切回来右边那一栏仍是预设栏；[焦点](ConfigView::focus)由两维合起来推出来，
+/// 屏上「焦点在哪」因此仍只有一处答案。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pane {
+    /// 左边那一栏：**设置栏**。
+    #[default]
+    Settings,
+    /// 右边那一栏：**详情栏**，或者预设栏掀着时的**预设栏**。
+    Details,
+}
+
+/// **一份点了名的预设**：名字与它说的那两组（`CONTEXT.md` 的《预设栏》：每份说了哪几项）。
+/// 预设栏列的就是它们——与[一条点了名的处理路径](super::state::NamedPath)同一副写法。
+///
+/// **读不懂的那一份只有名字**：一份字段过时的预设不该让别的几份列不出来
+/// （与 [`crate::preset::Presets::names`] 同一条），屏上那一行因此说一句它读不懂。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedPreset {
+    pub name: String,
+    /// 这一份的内容；读不懂就是 `None`。
+    pub preset: Option<Preset>,
+}
+
+/// 配置视图记着的：在哪一栏、掀着预设栏没有、三块各自的光标、下钻进了哪一层、套着的预设，
+/// 加上预设栏那几格（列的是哪几份、光标停在第几行、两处「再按一次」等着的是哪一份）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigView {
-    /// 设置栏、详情栏还是预设栏。
-    pub focus: Focus,
+    /// 光标在左边那一栏还是右边那一栏（[`Pane`]）。
+    pub pane: Pane,
+    /// **掀着预设栏没有**（`CONTEXT.md` 的《预设栏》：`p` 掀开、替换详情栏）。
+    /// 与[在哪一栏](Self::pane)是两维，见 [`Pane`]。
+    pub picker: bool,
     /// **设置栏**的光标停在哪一项——记的是那一项的身份，不是第几行（组抬头停不住）。
     pub cursor: Item,
     /// **详情栏**的光标停在第几格（取值环的第几格、屏幕规格的第几块、下钻之后的第几个型号）。
@@ -375,17 +416,61 @@ pub struct ConfigView {
     pub drill: Option<Panel>,
     /// 当前套的是哪一份预设。
     pub applied: Option<Applied>,
+    /// 预设栏列的那几份——**进这一栏那一刻**盘上有的（`CONTEXT.md` 的《预设栏》）。
+    /// 掀开那一下问一次盘（`super::terminal` 的 `toggle_picker`），掀着的时候不再问。
+    pub listed: Vec<NamedPreset>,
+    /// 预设栏的光标停在第几行：`0..listed.len()` 是那几份，`listed.len()` 是末行
+    /// 「把当前设置保存为预设」。
+    pub preset_cursor: usize,
+    /// `dd` 按过第一下、等着第二下的是**哪一份**（按名字记，不按第几行）：
+    /// 光标一挪它就作废，屏上那一句问的也是它。
+    pub armed_delete: Option<String>,
+    /// 起名那一行上 `⏎` 按过第一下、**撞上了同名的那一份**、等着第二下的那个名字
+    /// （`CONTEXT.md` 的《预设》：盖掉一份同名的要按两下）。
+    ///
+    /// **与 `dd` 那一格分开**：屏上预设栏里那一句问的是删，而这一问在**屏底**、输入行还开着
+    /// ——合成一格的话，起名那一刻那一栏里会冒出一句「再按一次 dd 删除」。
+    /// 重开一次起名那一行就作废（[`Session::use_preset`]）：那一下起问的是新打的名字。
+    pub armed_save: Option<String>,
 }
 
 impl Default for ConfigView {
     fn default() -> Self {
         Self {
-            focus: Focus::Settings,
+            pane: Pane::Settings,
+            picker: false,
             cursor: Item::Setting(Field::Profile),
             choice: 0,
             drill: None,
             applied: None,
+            listed: Vec::new(),
+            preset_cursor: 0,
+            armed_delete: None,
+            armed_save: None,
         }
+    }
+}
+
+impl ConfigView {
+    /// 焦点落在配置视图哪一块：左边是设置栏，右边看**掀着预设栏没有**
+    /// ——掀着就是预设栏，否则是详情栏（停车场 Q828 的 ②：一维不够用，
+    /// 而「焦点在哪」仍只有这一处答得出）。
+    pub fn focus(&self) -> Focus {
+        match (self.pane, self.picker) {
+            (Pane::Settings, _) => Focus::Settings,
+            (Pane::Details, true) => Focus::Picker,
+            (Pane::Details, false) => Focus::Details,
+        }
+    }
+
+    /// 预设栏上光标停着的是**哪一份**；停在末行那一件（保存）上是 `None`。
+    pub fn picked(&self) -> Option<&NamedPreset> {
+        self.listed.get(self.preset_cursor)
+    }
+
+    /// 预设栏上停得住几行：那几份加末行那一件。
+    pub fn preset_stops(&self) -> usize {
+        self.listed.len() + 1
     }
 }
 
@@ -437,8 +522,8 @@ pub struct Views {
     /// `now_ms` 上，夹具照它往回推。**还没起过表时转轮停在第一格**：真会话里到不了，
     /// 入口第一件事就是摆下它。
     pub clock: Option<Instant>,
-    /// **预设文件在哪**：配置视图顶上那一条右端写它（家目录缩写成 `~`），预设栏也要它
-    /// （`session-redesign/14`）。由会话入口问一次摆进来（`Presets::path`），
+    /// **预设文件在哪**：配置视图顶上那一条右端写它（家目录缩写成 `~`）。
+    /// 由会话入口问一次摆进来（`Presets::path`），
     /// 问不出来就是 `None`——那一格空着，与家目录问不出来时不缩写同一条。
     pub presets: Option<PathBuf>,
     pending: Option<Pending>,
@@ -463,7 +548,7 @@ impl Views {
     pub fn block(&self) -> Focus {
         match self.view {
             View::Task => self.task.focus(),
-            View::Config => self.config.focus,
+            View::Config => self.config.focus(),
         }
     }
 
@@ -481,6 +566,20 @@ impl Views {
         });
         let step = (since.as_millis() / SPINS_EVERY.as_millis()) as usize;
         SPINNER[step % SPINNER.len()]
+    }
+
+    /// **说一句没做成**：屏底那一句的「出事」那一副（行首一个 `✗`，整句出事红）。
+    ///
+    /// 库那一侧回的话原样端上来、不另编一份（与旧界面的 `Session::complain` 同一条）。
+    /// 屏上凡是报「没做成」的地方走这一处——行首那个记号与那一档语义因此只有这一份。
+    pub(super) fn complain(&mut self, said: impl std::fmt::Display, now: Instant) {
+        self.say(
+            vec![
+                Segment::new("✗ ", Look::tone(Tone::Trouble).bold()),
+                Segment::new(said.to_string(), Look::tone(Tone::Trouble)),
+            ],
+            now,
+        );
     }
 
     /// **此刻搜的是哪一句**（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）——
@@ -789,8 +888,10 @@ impl Session {
     /// 把一件事做掉——**状态机够得着的那几件**：挪光标、勾选、删一条、换视图、退出、
     /// 掀开与关掉全部按键、打字与添改路径（[`super::typing`]：补全与确定那两下问一次盘）。
     ///
-    /// 起一趟、按停止、答话、预设那几支、灰阶测试图，都要够着那一趟，归终端层那一支
+    /// 起一趟、按停止、答话、灰阶测试图，加上预设那几支里**碰盘的那三件**（掀开那一栏、
+    /// `dd` 的第二下、起好名那一下），都要够着那一趟或者盘，归终端层那一支
     /// （`super::terminal`）；交到这里的那几件当作没有意义，原地不动。
+    /// **套用一份在这里**（[`Deed::UsePreset`]）：列的那几份掀开那一刻已经读进来了。
     /// **跳转那几件同样**（`]d`／`[d`、`n`／`N`、搜索那一行上的 `⏎`）：落点要问那一趟，
     /// 那一支是 [`Session::jump`] 与 [`Session::confirm_search`]。
     /// 覆盖层上滚动要知道窗口有多大，同样在终端层那一支（[`super::cover::Sheet`] 与
@@ -836,11 +937,16 @@ impl Session {
             Deed::TaskView => self.views.view = View::Task,
             Deed::ConfigView => self.views.view = View::Config,
             Deed::NextBlock => self.switch_pane(),
-            Deed::ConfigOpen if self.views.config.focus == Focus::Settings => self.enter_details(),
+            Deed::ConfigOpen if self.views.config.pane == Pane::Settings => self.enter_details(),
             Deed::ConfigOpen => self.settle_choice(now),
             Deed::ConfigEnter => self.config_enter(),
             Deed::ConfigBack => self.config_back(),
             Deed::EditValue => self.open_valuing(),
+            // **预设栏上 `⏎`／`l`**：套用光标停着的那一份、或者停在末行时开输入行起名。
+            // 两件都够不着盘——列的那几份是掀开那一刻读进来的（[`Self::lift_picker`]）。
+            // 掀开与收起（`p`）、`dd` 删一份、存一份、灰阶测试图那四件要读写盘，
+            // 归终端层那一支（`super::terminal::input`）。
+            Deed::UsePreset => self.use_preset(now),
             Deed::NextView | Deed::PrevView => self.views.view = self.views.view.other(),
             Deed::Down => self.place_cursor(now, |here, last| (here + 1).min(last)),
             Deed::Up => self.place_cursor(now, |here, _| here.saturating_sub(1)),
@@ -1168,6 +1274,13 @@ impl Session {
         self.views.input.as_ref().map(|line| &line.purpose) == Some(&Purpose::Search)
     }
 
+    /// **给预设起名那一行此刻开着吗**：终端层按它把 `⏎` 分给存一份那一支
+    /// （`super::terminal` 的 `store_a_preset`——写盘状态机够不着），
+    /// 别的输入行照旧交给状态机。与[搜索那一行](Self::searching_line)同一条分工。
+    pub fn naming_a_preset(&self) -> bool {
+        self.views.input.as_ref().map(|line| &line.purpose) == Some(&Purpose::Preset)
+    }
+
     /// **搜索那一行上的 `⏎`**：把这一句定下来、跳到第一个结果
     /// （`CONTEXT.md` 的《卷列表》：`⏎` 跳到第一个）。
     ///
@@ -1278,13 +1391,13 @@ impl Session {
             .say_for(hunt.landed(which + 1, landings.len()), JUMP_LINGERS, now);
     }
 
-    /// 配置视图上挪光标：**两栏各挪各的**——设置栏挪的是停得住的那 20 项，
-    /// 详情栏挪的是此刻列得出的那几格（[`Choices::stops`]）。预设栏归 `session-redesign/14`。
+    /// 配置视图上挪光标：**三块各挪各的**——设置栏挪的是停得住的那 20 项，
+    /// 详情栏挪的是此刻列得出的那几格（[`Choices::stops`]），预设栏挪的是那几份加末行那一件。
     ///
     /// **设置栏上一挪就退出下钻**：下钻那一层是**上一项**的第二层，光标换了项它就说不通了
     /// （设计稿 `moveBy` 配置那一支）。
     fn place_config_cursor(&mut self, to: impl Fn(usize, usize) -> usize) {
-        match self.views.config.focus {
+        match self.views.config.focus() {
             Focus::Settings => {
                 let items = config::items();
                 let Some(last) = items.len().checked_sub(1) else {
@@ -1301,6 +1414,15 @@ impl Session {
                 let last = self.config_choices().stops().saturating_sub(1);
                 let here = self.views.config.choice.min(last);
                 self.views.config.choice = to(here, last).min(last);
+            }
+            // **预设栏**：那几份加末行那一件，末行停得住（`⏎` 在它上面开输入行）。
+            // **挪一格就把 `dd` 等着的那一下作废**（设计稿 `moveBy` 预设那一支）：
+            // 「再按一次」问的是光标停着的那一份，光标挪走了那一问就不成立了。
+            Focus::Picker => {
+                let last = self.views.config.preset_stops().saturating_sub(1);
+                let here = self.views.config.preset_cursor.min(last);
+                self.views.config.preset_cursor = to(here, last).min(last);
+                self.views.config.armed_delete = None;
             }
             _ => {}
         }
@@ -1354,20 +1476,19 @@ impl Session {
         }
     }
 
-    /// `⇥`：在设置栏与详情栏之间切（设计稿 `configKey` 的 `Tab` 那一支）。
+    /// `⇥`：在左右那两栏之间切（设计稿 `configKey` 的 `Tab` 那一支）。
     /// **两栏各自的光标都不动**——切走再切回原样。
     ///
-    /// **预设栏掀着时它一个字不动**：设计稿那一刻切的是「掀着预设栏」之外的那一维（`pane`），
-    /// 切回来右边那一栏仍是预设栏——那要预设栏自己一格状态，随 `session-redesign/14` 接上
-    /// （本票掀不开它，停车场 Q828）。
+    /// **切的是[在哪一栏](Pane)那一维，不问预设栏掀着没有**：设计稿那一支摆在
+    /// `S.cfg.presets` 那个分支之前，切回来右边那一栏仍是预设栏（停车场 Q828 的 ②，
+    /// 13 那时并成一维、只好让它一个字不动）。
     fn switch_pane(&mut self) {
         if self.views.view != View::Config {
             return;
         }
-        self.views.config.focus = match self.views.config.focus {
-            Focus::Settings => Focus::Details,
-            Focus::Details => Focus::Settings,
-            other => other,
+        self.views.config.pane = match self.views.config.pane {
+            Pane::Settings => Pane::Details,
+            Pane::Details => Pane::Settings,
         };
     }
 
@@ -1376,7 +1497,7 @@ impl Session {
     fn enter_details(&mut self) {
         self.views.config.drill = None;
         self.views.config.choice = self.config_choices().lands_on();
-        self.views.config.focus = Focus::Details;
+        self.views.config.pane = Pane::Details;
     }
 
     /// 设置栏上 `⏎`：与 `l` 同，**自由填的那几项另外直接开输入行**——少按一下
@@ -1390,12 +1511,19 @@ impl Session {
 
     /// 详情栏上 `h`／`Esc`：下钻着就**退回屏幕规格那一层**（停回进去时那一块），
     /// 否则回设置栏——两样都**一格不改**（`CONTEXT.md` 的《详情栏》）。
+    ///
+    /// **预设栏上它把那一栏收起来**（设计稿 `configKey` 预设那一支的 `h`／`Escape`）：
+    /// 与再按一次 `p` 同一件事，收完落回设置栏。
     fn config_back(&mut self) {
-        if self.views.config.focus != Focus::Details {
+        if self.views.config.focus() == Focus::Picker {
+            self.shut_picker();
+            return;
+        }
+        if self.views.config.focus() != Focus::Details {
             return;
         }
         let Some(panel) = self.views.config.drill.take() else {
-            self.views.config.focus = Focus::Settings;
+            self.views.config.pane = Pane::Settings;
             return;
         };
         // 退回屏幕规格那一层，光标停回进去时那一块上。
@@ -1433,7 +1561,7 @@ impl Session {
                 let device = (*device).to_owned();
                 self.set_device(Some(device.clone()));
                 self.views.config.drill = None;
-                self.views.config.focus = Focus::Settings;
+                self.views.config.pane = Pane::Settings;
                 self.views.say(
                     vec![
                         Segment::new("✓ ", Look::kind(Kind::Done).bold()),
@@ -1448,7 +1576,7 @@ impl Session {
                     return;
                 }
                 self.settle(field, self.views.config.choice);
-                self.views.config.focus = Focus::Settings;
+                self.views.config.pane = Pane::Settings;
                 self.views.say(
                     vec![
                         Segment::new("✓ ", Look::kind(Kind::Done).bold()),
@@ -1477,6 +1605,166 @@ impl Session {
         }
         self.views.say(said(), now);
         true
+    }
+
+    /// `p`：**掀开预设栏**（`CONTEXT.md` 的《预设栏》）——替换详情栏，设置栏仍在屏上。
+    ///
+    /// 列的是**进这一栏那一刻**盘上有的那几份，而盘只有终端层碰得到：那一层读好了交进来
+    /// （`super::terminal` 的 `toggle_picker`）。**光标停在原处**（设计稿 `configKey` 的
+    /// `p` 那一支不动 `pcursor`），那几份少了就夹回末行那一件上。
+    pub(super) fn lift_picker(&mut self, listed: Vec<NamedPreset>) {
+        self.views.config.preset_cursor = self.views.config.preset_cursor.min(listed.len());
+        self.views.config.listed = listed;
+        self.views.config.picker = true;
+        self.views.config.pane = Pane::Details;
+        self.views.config.armed_delete = None;
+    }
+
+    /// 再按一次 `p`（或预设栏上的 `h`／`Esc`）：**收起预设栏**，落回设置栏。
+    pub(super) fn shut_picker(&mut self) {
+        self.views.config.picker = false;
+        self.views.config.pane = Pane::Settings;
+        self.views.config.armed_delete = None;
+    }
+
+    /// 预设栏上 `⏎`／`l`：**套用光标停着的那一份**；停在末行那一件上时经输入行起名。
+    ///
+    /// **改不改得动先问**（设计稿 `configKey` 预设那一支：`ro` 那一问摆在最前面）——
+    /// 跑着与等待确认时套不下也存不了，屏底说一句设置已锁定。
+    fn use_preset(&mut self, now: Instant) {
+        if self.refuse_locked(locked_short, now) {
+            return;
+        }
+        let Some(listed) = self.views.config.picked().cloned() else {
+            // 末行那一件：**把当前设置保存为预设**，名字经输入行打。
+            // 重开一次就把上一次撞名等着的那一下作废：那一问问的是上一次打的名字。
+            self.views.config.armed_save = None;
+            self.views.input = Some(InputLine::new(Purpose::Preset, ""));
+            return;
+        };
+        let Some(preset) = listed.preset else {
+            // 读不懂的那一份套不下来：屏上那一行已经说了它读不懂，这里不另编一句。
+            self.views
+                .complain(format!("预设「{}」读不懂，套不下来", listed.name), now);
+            return;
+        };
+        self.apply_preset(&listed.name, preset);
+        self.views.say(
+            vec![
+                Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                Segment::plain(format!("已使用预设「{}」", listed.name)),
+            ],
+            now,
+        );
+    }
+
+    /// 把设备设置与处理选项**整个换成这一份**（`CONTEXT.md` 的《预设栏》）：
+    /// 它没说的那几项回到「没说」，**路径与输出一格不动**。
+    ///
+    /// **型号也一格不动**：设计稿存与套都跳过它（`configKey` 那一支只收取值环与自由填的
+    /// 那几项），与设置栏上行尾那个 `*` 不数型号是同一条（[`config::starred`]）。
+    /// 换了型号要走[它自己那一路](Self::set_device)——那一下还要清掉两个标定数。
+    pub(super) fn apply_preset(&mut self, name: &str, preset: Preset) {
+        self.device.gray_levels = preset.device.gray_levels;
+        self.device.threshold = preset.device.threshold;
+        self.taste = preset.taste.clone();
+        self.views.config.applied = Some(Applied {
+            name: name.to_owned(),
+            preset,
+        });
+    }
+
+    /// **存出去的是哪一份**：设备设置与处理选项两组里[预设记得下的那几项](config::stored_fields)。
+    ///
+    /// 与[套用](Self::apply_preset)对着来：型号不写进去，因此存完再读回来仍是同一份
+    /// ——顶上那一条当场就说「与预设一致」。
+    pub(super) fn preset_to_store(&self) -> Preset {
+        Preset {
+            device: crate::preset::DeviceLayer {
+                profile: None,
+                ..self.device.clone()
+            },
+            taste: self.taste.clone(),
+        }
+    }
+
+    /// `dd` 按下去那一下（`CONTEXT.md` 的《预设栏》：删一份按两下）。
+    ///
+    /// **第一下只把光标停着的那一份闩上**、答 `None`——盘一个字节都不碰，屏上那一栏里问一句；
+    /// **第二下**（问的与眼下停着的是同一份时）**答出要删的那一份**，真把它从盘上拿走
+    /// 是终端层的事（`super::terminal` 的 `erase_a_preset`）。**两下记在一处**，
+    /// 调用方不必再判一遍「这是第几下」——与按停止那两级（[`Self::stop_a_notch`]）同一条分工。
+    ///
+    /// 停在末行那一件上时两下都答 `None`：那一行不是一份预设，删不掉。
+    pub(super) fn ask_then_erase(&mut self) -> Option<String> {
+        let name = self.views.config.picked().map(|one| one.name.clone())?;
+        if self.views.config.armed_delete.as_deref() == Some(name.as_str()) {
+            return Some(name);
+        }
+        self.views.config.armed_delete = Some(name);
+        None
+    }
+
+    /// 存那一下撞上了一份**同名的**：把那个名字闩上，屏上那一栏里问一句
+    /// （`CONTEXT.md` 的《预设》：盖掉一份同名的要按两下），再按一次 `⏎` 才覆盖。
+    ///
+    /// **那一问摆在预设栏里、不摆在屏底**：这一刻输入行占着屏底（名字还留在缓冲里等着改），
+    /// 而屏底同一刻只摆得下一样——说给屏底就等于一个字都没说。`dd` 那一问摆在同一处。
+    pub(super) fn preset_name_is_taken(&mut self, name: &str) {
+        self.views.config.armed_save = Some(name.to_owned());
+    }
+
+    /// 删掉了一份：从列的那几份里拿走它，**正在用的那一份也删得掉**
+    /// （删完就是「未使用预设」）。屏底说一句——那一句只说**无条件成立的那两半**
+    /// （`CONTEXT.md` 的《预设》）：那一份的内容没了、撤不回来，文件里其余几份照旧留着。
+    pub(super) fn preset_erased(&mut self, name: &str, now: Instant) {
+        self.views.config.listed.retain(|one| one.name != name);
+        let last = self.views.config.listed.len();
+        self.views.config.preset_cursor = self.views.config.preset_cursor.min(last);
+        self.views.config.armed_delete = None;
+        if self
+            .views
+            .config
+            .applied
+            .as_ref()
+            .is_some_and(|applied| applied.name == name)
+        {
+            self.views.config.applied = None;
+        }
+        self.views.say(
+            vec![Segment::new(
+                format!("已删除预设「{name}」"),
+                Look::tone(Tone::Caution),
+            )],
+            now,
+        );
+    }
+
+    /// 存下了一份：**列的那几份跟着多一条**（同名的换掉原处那一条），套着的换成它，屏底说一句。
+    pub(super) fn preset_saved(&mut self, name: &str, preset: Preset, now: Instant) {
+        let listed = NamedPreset {
+            name: name.to_owned(),
+            preset: Some(preset.clone()),
+        };
+        let at = self
+            .views
+            .config
+            .listed
+            .iter()
+            .position(|one| one.name == name);
+        match at {
+            Some(at) => self.views.config.listed[at] = listed,
+            None => self.views.config.listed.push(listed),
+        }
+        self.views.config.armed_save = None;
+        self.apply_preset(name, preset);
+        self.views.say(
+            vec![
+                Segment::new("✓ ", Look::kind(Kind::Done).bold()),
+                Segment::plain(format!("已保存预设「{name}」")),
+            ],
+            now,
+        );
     }
 
     /// 删掉光标那一条处理路径；光标停到它下一条上，没有下一条就停到「＋ 添加路径」；屏底说一句。
@@ -2458,5 +2746,211 @@ mod tests {
         assert!(!opens(VolumeState::Aborted), "被立即停止掉的没有保存");
         assert!(!opens(VolumeState::Running { pass: None }), "还在处理");
         assert!(!opens(VolumeState::Queued), "还没轮到");
+    }
+
+    /// 摆一份掀着预设栏的会话：列的是两份，光标停在头一份上。
+    fn with_a_picker() -> Session {
+        let mut session = three_paths();
+        session.views.view = View::Config;
+        session.lift_picker(vec![
+            NamedPreset {
+                name: "漫画".to_owned(),
+                preset: Some(Preset::default()),
+            },
+            NamedPreset {
+                name: "画集".to_owned(),
+                preset: Some(Preset {
+                    device: crate::preset::DeviceLayer::default(),
+                    taste: crate::preset::TasteLayer {
+                        fit: Some(tonefit::FitMode::Inside),
+                        crop: Some(false),
+                        ..crate::preset::TasteLayer::default()
+                    },
+                }),
+            },
+        ]);
+        session
+    }
+
+    /// **「掀着预设栏」与「在哪一栏」是两维**（停车场 Q828 的 ②）：`⇥` 切的是底下那一维
+    /// ——切到设置栏再切回来，右边那一栏**仍是预设栏**；焦点从两维推出来，只有一处答案。
+    #[test]
+    fn the_picker_and_the_pane_are_two_dimensions_that_do_not_replace_each_other() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        assert_eq!(session.views.focus(), Focus::Picker);
+        session.perform(Deed::NextBlock, now);
+        assert_eq!(session.views.focus(), Focus::Settings, "切到底下那一维");
+        assert!(session.views.config.picker, "预设栏没被切没");
+        session.perform(Deed::NextBlock, now);
+        assert_eq!(session.views.focus(), Focus::Picker, "切回来仍是预设栏");
+        // `h` 把这一栏收起来，落回设置栏；收起来之后 `⇥` 才在设置栏与详情栏之间切。
+        session.perform(Deed::ConfigBack, now);
+        assert_eq!(session.views.focus(), Focus::Settings);
+        assert!(!session.views.config.picker);
+        session.perform(Deed::NextBlock, now);
+        assert_eq!(session.views.focus(), Focus::Details);
+    }
+
+    /// **预设栏上挪光标**：那几份加末行那一件；`G` 到末行、`gg` 回头一份，
+    /// **挪一格就把 `dd` 等着的那一下作废**。
+    #[test]
+    fn the_picker_cursor_runs_over_the_presets_and_the_save_row() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        assert_eq!(session.views.config.preset_stops(), 3);
+        session.views.config.armed_delete = Some("漫画".to_owned());
+        session.perform(Deed::Down, now);
+        assert_eq!(session.views.config.preset_cursor, 1);
+        assert_eq!(session.views.config.armed_delete, None, "挪一格就作废");
+        session.perform(Deed::Bottom, now);
+        assert_eq!(session.views.config.preset_cursor, 2, "末行那一件停得住");
+        assert!(
+            session.views.config.picked().is_none(),
+            "那一行不是一份预设"
+        );
+        session.perform(Deed::Down, now);
+        assert_eq!(session.views.config.preset_cursor, 2, "末行之后停下来");
+        session.perform(Deed::Top, now);
+        assert_eq!(session.views.config.preset_cursor, 0);
+    }
+
+    /// **末行那一件按下去开输入行**，而**重开一次就把上一次撞名等着的那一下作废**
+    /// （`ConfigView::armed_save`）：那一问问的是上一次打的名字。
+    #[test]
+    fn the_save_row_opens_the_input_line_and_forgets_the_name_it_asked_about() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        session.views.config.armed_save = Some("漫画".to_owned());
+        session.perform(Deed::Bottom, now);
+        session.perform(Deed::UsePreset, now);
+        let line = session.views.input.as_ref().expect("输入行开起来了");
+        assert_eq!(line.purpose.prompt(), "保存为预设，名称  ");
+        assert_eq!(session.views.config.armed_save, None, "重开一次就作废");
+        assert!(session.naming_a_preset(), "⏎ 归存那一支");
+        // 打的这个名字盘上已经有了：闩上、输入行留着，屏上那一栏里问一句
+        // （那一句画在哪儿见 `shell::picker::asked`；真去盘上问的是终端层那一支）。
+        session.preset_name_is_taken("漫画");
+        assert_eq!(session.views.config.armed_save.as_deref(), Some("漫画"));
+        assert!(session.views.input.is_some(), "输入行留着等第二下");
+    }
+
+    /// **套用一份就是把两组整个换成它**（`CONTEXT.md` 的《预设栏》）：它没说的那几项回到
+    /// 「没说」，**型号与路径、输出一格不动**，顶上那一条当场说「与预设一致」。
+    #[test]
+    fn using_a_preset_replaces_both_bands_and_leaves_the_model_and_the_paths_alone() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.device.gray_levels = Some(12);
+        session.taste.dither = Some(tonefit::Dither::FloydSteinberg);
+        let paths = session.scope.paths.clone();
+        session.perform(Deed::Down, now);
+        session.perform(Deed::UsePreset, now);
+        assert_eq!(session.taste.fit, Some(tonefit::FitMode::Inside));
+        assert_eq!(session.taste.crop, Some(false));
+        assert_eq!(session.taste.dither, None, "它没说的回到「没说」");
+        assert_eq!(session.device.gray_levels, None, "它没说的回到「没说」");
+        assert_eq!(
+            session.device.profile.as_deref(),
+            Some("kobo-libra-2"),
+            "型号一格不动"
+        );
+        assert_eq!(session.scope.paths, paths, "路径一格不动");
+        assert_eq!(session.changed_from_preset(), 0, "与预设一致");
+    }
+
+    /// **存出去的那一份不记型号**，因此存完就是「与预设一致」（[`config::stored_fields`]）。
+    #[test]
+    fn the_preset_a_save_would_store_leaves_the_model_out() {
+        let mut session = three_paths();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.taste.fit = Some(tonefit::FitMode::Inside);
+        let stored = session.preset_to_store();
+        assert_eq!(stored.device.profile, None, "型号不写进去");
+        assert_eq!(stored.taste.fit, Some(tonefit::FitMode::Inside));
+        session.preset_saved("插图", stored, Instant::now());
+        assert_eq!(
+            session
+                .views
+                .config
+                .applied
+                .as_ref()
+                .map(|one| one.name.as_str()),
+            Some("插图"),
+            "存下的那一份当场成了套着的那一份"
+        );
+        assert_eq!(session.changed_from_preset(), 0, "存完就是与预设一致");
+        assert_eq!(session.views.config.listed.len(), 1, "列的那几份多一条");
+    }
+
+    /// **跑着与等待确认时套用定不下**（票面末一条）：预设栏照样掀得开、看得见，
+    /// `⏎` 那一下屏底说设置已锁定，两组一格不改——拦它的是**阶段那一维**。
+    #[test]
+    fn during_a_run_the_picker_opens_but_uses_nothing() {
+        for stage in [
+            Stage::Running(tonefit::Instruction::Continue),
+            Stage::Deciding(tonefit::Instruction::Continue),
+        ] {
+            let mut session = with_a_picker();
+            session.set_stage(stage);
+            let now = Instant::now();
+            let before = (session.device.clone(), session.taste.clone());
+            session.perform(Deed::Down, now);
+            session.perform(Deed::UsePreset, now);
+            assert_eq!((session.device.clone(), session.taste.clone()), before);
+            assert!(session.views.config.applied.is_none(), "套不下来");
+            // **末行那一件也开不起来**：光标先挪到它上面再按，不然这一问压根走不到那一支。
+            session.perform(Deed::Bottom, now);
+            assert!(session.views.config.picked().is_none(), "光标真在末行上");
+            session.perform(Deed::UsePreset, now);
+            assert!(session.views.input.is_none(), "末行那一件也开不起来");
+        }
+    }
+
+    /// **读不懂的那一份套不下来**：屏底说一句，两组一格不改、套着的那一份不换
+    /// （一份字段过时的预设不该让别的几份列不出来，`Presets::names` 同一条）。
+    #[test]
+    fn a_preset_that_cannot_be_read_says_so_and_changes_nothing() {
+        let mut session = three_paths();
+        session.views.view = View::Config;
+        session.lift_picker(vec![NamedPreset {
+            name: "旧版".to_owned(),
+            preset: None,
+        }]);
+        let now = Instant::now();
+        let before = (session.device.clone(), session.taste.clone());
+        session.perform(Deed::UsePreset, now);
+        assert_eq!((session.device.clone(), session.taste.clone()), before);
+        assert!(session.views.config.applied.is_none(), "套不下来");
+        let said: String = session
+            .views
+            .reply(now)
+            .expect("屏底说了一句")
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect();
+        assert!(said.contains("旧版") && said.contains("读不懂"), "{said}");
+    }
+
+    /// **删掉正在用的那一份**：列的那几份少一条，套着的换成「未使用预设」，
+    /// 光标夹回列表里（`CONTEXT.md` 的《预设栏》：正在用的那一份也删得掉）。
+    #[test]
+    fn erasing_the_preset_in_use_leaves_the_session_using_none() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        session.perform(Deed::UsePreset, now);
+        assert!(session.views.config.applied.is_some());
+        assert_eq!(session.ask_then_erase(), None, "第一下只闩上");
+        assert_eq!(session.views.config.armed_delete.as_deref(), Some("漫画"));
+        assert_eq!(
+            session.ask_then_erase().as_deref(),
+            Some("漫画"),
+            "第二下才答出要删的那一份"
+        );
+        session.preset_erased("漫画", now);
+        assert_eq!(session.views.config.listed.len(), 1);
+        assert!(session.views.config.applied.is_none());
+        assert_eq!(session.views.config.armed_delete, None);
     }
 }

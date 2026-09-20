@@ -244,29 +244,62 @@ fn switches(session: &Session) -> Switches {
     }
 }
 
-/// 与套着的那份预设**不同**的那几项，次序照设置栏（顶上一条预设写「改动了 N 项：…」，
-/// 设置栏上这几项行尾带 `*`）。没套预设就一项都没有。
+/// 这一项**记得进一份预设**吗——**型号不算，这一处一次判掉**。
 ///
-/// **型号不算**：预设那两组存的是设备设置与处理选项，而型号那一行的取值是一块面板的名字
-/// ——设计稿的那张单子（`changedKeys`）只数取值环与自由填的那几项。
-pub fn changed(session: &Session) -> Vec<Field> {
+/// 设计稿的存、套与那张单子（`configKey` 与 `changedKeys`）三处都只收取值环与自由填的那几项，
+/// 型号那一行的取值是一块面板的名字，走的是它自己那一路（换型号还要清掉两个标定数）。
+/// 屏上行尾那个 `*`、顶上那句「改动了 N 项」、预设栏那句「包含 N 项设置」、存出去的那一份，
+/// 问的都是这一句。
+///
+/// （它与 `CONTEXT.md` 的《预设》对不上——那条词条说预设装设备设置与处理选项两组，
+/// 而型号在设备设置里。照设计稿走，记在停车场。）
+pub fn stored(field: Field) -> bool {
+    field != Field::Profile
+}
+
+/// **一份预设记得下的那几项**，次序照设置栏：设备设置与处理选项两组里[记得进去](stored)
+/// 的那十四项。
+pub fn stored_fields() -> Vec<Field> {
     DEVICE_FIELDS
         .into_iter()
         .chain(TASTE_FIELDS)
+        .filter(|field| stored(*field))
+        .collect()
+}
+
+/// 与套着的那份预设**不同**的那几项，次序照设置栏（顶上一条预设写「改动了 N 项：…」，
+/// 设置栏上这几项行尾带 `*`）。没套预设就一项都没有。
+pub fn changed(session: &Session) -> Vec<Field> {
+    stored_fields()
+        .into_iter()
         .filter(|field| starred(session, *field))
         .collect()
 }
 
 /// 这一项**与套着的预设不同**吗——设置栏上行尾那个 `*` 就是它。没套预设时一项都不带。
-/// 型号不算，理由与 [`changed`] 那一条相同。
+/// 型号不算，理由在 [`stored`]。
 pub fn starred(session: &Session, field: Field) -> bool {
-    field != Field::Profile
+    stored(field)
         && session
             .views
             .config
             .applied
             .as_ref()
             .is_some_and(|applied| session.differs_from(field, &applied.preset))
+}
+
+/// 这一份预设**说了哪几项**，次序照设置栏（预设栏上那一行写「包含 N 项设置：…」）。
+///
+/// 「没说」与「说了一个恰好等于默认值的值」是两件事（`CONTEXT.md` 的《预设》那一段），
+/// 判它的是 [`Session::unsaid`] 一处：把这一份摆进一个探针会话里问一遍。
+pub fn said_fields(session: &Session, preset: &Preset) -> Vec<Field> {
+    let mut probe = session.clone();
+    probe.device = preset.device.clone();
+    probe.taste = preset.taste.clone();
+    stored_fields()
+        .into_iter()
+        .filter(|field| !probe.unsaid(*field))
+        .collect()
 }
 
 /// 套着的那份预设里这一项怎么设：**没设**就是 `None`（屏上写「未设置（使用默认值）」），
@@ -520,7 +553,7 @@ mod tests {
             session.set_stage(stage);
             let before = (session.device.clone(), session.taste.clone());
             session.views.config.cursor = item;
-            session.views.config.focus = super::super::view::Focus::Settings;
+            session.views.config.pane = super::super::view::Pane::Settings;
             let now = scene.now();
             // 进详情栏、挪一格、定下来（型号那一项多一层下钻，因此按两下）；
             // 自由填的那几项另按一次 `i` 试着改。
@@ -566,5 +599,47 @@ mod tests {
             Stage::Deciding(_) => Phase::Deciding,
             Stage::Ended => Phase::Ended,
         }
+    }
+
+    /// **一份预设记得下的是设置栏那两组里除型号之外的那十四项**
+    /// （`session-redesign/14`）：屏上行尾那个 `*`、顶上那句「改动了 N 项」、
+    /// 预设栏那句「包含 N 项设置」、存出去的那一份，读的都是这一份单子。
+    ///
+    /// 断的**不是** `stored_fields().len() == 14`（那个数从两张单子上现数出来，
+    /// 写死它等于抄第二份）：断的是**型号不在里面，而另外两组一项不落都在**，
+    /// 以及那份单子与[那一句](stored)对得上（一份单子、一句判据，不许各说各的）。
+    #[test]
+    fn a_preset_records_every_setting_of_the_two_bands_but_the_model() {
+        let said = stored_fields();
+        assert!(!said.contains(&Field::Profile), "型号不在里面");
+        for field in DEVICE_FIELDS.into_iter().chain(TASTE_FIELDS) {
+            assert_eq!(
+                said.contains(&field),
+                field != Field::Profile,
+                "{} 在不在这份单子上错了",
+                field.label()
+            );
+            assert_eq!(said.contains(&field), stored(field), "单子与那一句对不上");
+        }
+        // 屏上行尾那个 `*` 与这份单子同一处出处：型号一辈子不带 `*`。
+        let scene = Scene::named("config");
+        assert!(!starred(&scene.session, Field::Profile));
+    }
+
+    /// **一份预设说了哪几项**（预设栏那一行写的「包含 N 项设置：…」）：
+    /// 「没说」与「说了一个恰好等于默认值的值」是两件事，判它的是 `Session::unsaid` 一处。
+    ///
+    /// 拿的是 `config` 那一景盘上真有的那两份：「漫画」一项都没说，「画集」说了四项。
+    #[test]
+    fn a_preset_says_only_the_settings_it_was_saved_with() {
+        let scene = Scene::named("config");
+        let nothing = scene.presets.read("漫画").expect("读得出「漫画」");
+        assert!(said_fields(&scene.session, &nothing).is_empty());
+        let four = scene.presets.read("画集").expect("读得出「画集」");
+        let names: Vec<&str> = said_fields(&scene.session, &four)
+            .iter()
+            .map(|field| field.label())
+            .collect();
+        assert_eq!(names, ["缩放方式", "裁白边", "拆分跨页", "灰阶档位"]);
     }
 }

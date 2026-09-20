@@ -19,7 +19,7 @@
 //! | 顶上一条预设 | [`preset`] | 13 |
 //! | 设置栏 | [`settings`] | 13 |
 //! | 详情栏 | [`details`] | 13 |
-//! | 预设栏 | — | 14 |
+//! | 预设栏 | [`picker`] | 14 |
 //! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张；10：备注行上那张**说明卡**（内容出自 [`super::cover`]） |
 //! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
 //! | 补全框 | [`completions`] | 07 |
@@ -42,6 +42,7 @@ mod marks;
 mod overlay;
 mod overview;
 mod pages;
+mod picker;
 mod preset;
 mod settings;
 mod small;
@@ -105,8 +106,11 @@ fn task(
     list::draw(canvas, session, live, phase, now, area);
 }
 
-/// 配置视图：顶栏底下一条预设钉住，剩下的高度给设置栏与详情栏两栏，屏底一行。
+/// 配置视图：顶栏底下一条预设钉住，剩下的高度给设置栏与右边那一栏，屏底一行。
 /// **不到 90 列退成单栏**——那一刻屏上只画此刻聚焦的那一栏（`CONTEXT.md` 的《让位》）。
+///
+/// **右边那一栏是详情栏还是预设栏**由「掀着预设栏没有」说（`CONTEXT.md` 的《预设栏》：
+/// 它替换详情栏，设置栏仍在屏上）——两者画的是同一块地方，只有一个在场。
 fn config(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, screen: Rect) {
     let strip = Rect::new(0, 1, screen.width, preset::ROWS);
     preset::draw(canvas, session, phase, strip);
@@ -118,20 +122,17 @@ fn config(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, screen: Rect
     if !narrow || !on_details {
         settings::draw(canvas, session, Rect::new(0, y, left, height));
     }
-    if !narrow {
-        details::draw(
-            canvas,
-            session,
-            Rect::new(left, y, screen.width - left, height),
-            narrow,
-        );
-    } else if on_details {
-        details::draw(
-            canvas,
-            session,
-            Rect::new(0, y, screen.width, height),
-            narrow,
-        );
+    let right = if narrow {
+        on_details.then(|| Rect::new(0, y, screen.width, height))
+    } else {
+        Some(Rect::new(left, y, screen.width - left, height))
+    };
+    if let Some(area) = right {
+        if session.views.config.picker {
+            picker::draw(canvas, session, area);
+        } else {
+            details::draw(canvas, session, area, narrow);
+        }
     }
 }
 

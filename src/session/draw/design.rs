@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 
+use super::super::look::Segment;
 use super::probe::{cells_of, visible};
 
 /// 导出的产物住在哪儿（相对仓库根）。
@@ -181,6 +182,58 @@ impl Expected {
         if let (Some(here), Some(there)) = (here, there) {
             line[here] = line[there].clone();
         }
+        self
+    }
+
+    /// 期望屏上**一行整个换成另一句**：设计稿那一行说的是**原型自己的话**
+    /// （灰阶测试图那一句的「原型不写文件」），而实现那一刻做的是真事、说的是真话，
+    /// 两句连一段共用的前缀都拼不出来——[抹掉一段](Self::blanked)、[往右推几格](Self::shifted)
+    /// 与[换一格](Self::cell_like)在这一处都不够用。
+    ///
+    /// （它是本类型上「打折但仍是断言」的**第四副**手法。四副各管一格、一段、一段位移、
+    /// 一整行，而它们眼下是四个各自独立的口子——要不要收成一副记在停车场 Q890。）
+    ///
+    /// **换完之后仍是一条断言**：新的那一行连同它每一格的字、前景色与修饰由用例自己写出来，
+    /// 实现说别的照样红；行尾补到与原来那一行**同宽**，多写一个字也红。
+    ///
+    /// **每一处用它的地方都得在用例上写清是哪一条停车场条目**，理由与
+    /// [`blanked`](Self::blanked) 同一条（ADR 0019 决定第 13 条：先改设计稿、重新导出，
+    /// 那是拍板的人的事）。
+    pub(in crate::session) fn instead(mut self, row: usize, segments: &[Segment]) -> Self {
+        let Some(line) = self.rows.get_mut(row) else {
+            return self;
+        };
+        let width: u16 = line
+            .iter()
+            .map(|glyph| crate::wrap::width(&glyph.symbol))
+            .sum();
+        let mut said: Vec<Painted> = Vec::new();
+        let mut column = 0u16;
+        for segment in segments {
+            let style = super::paint::look(segment.look);
+            for glyph in segment.text.chars() {
+                let symbol = glyph.to_string();
+                let cells = crate::wrap::width(&symbol);
+                if column + cells > width {
+                    break;
+                }
+                said.push(Painted {
+                    symbol,
+                    fg: style.fg.unwrap_or(Color::Reset),
+                    modifiers: style.add_modifier,
+                });
+                column += cells;
+            }
+        }
+        while column < width {
+            said.push(Painted {
+                symbol: " ".to_owned(),
+                fg: Color::Reset,
+                modifiers: Modifier::empty(),
+            });
+            column += 1;
+        }
+        *line = said;
         self
     }
 

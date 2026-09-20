@@ -40,7 +40,7 @@ use super::home::Home;
 use super::live::{Live, Reach, Resuming, fixture};
 use super::state::{DEVICE_FIELDS, Field, Key, Listing, NamedPath, Session, TASTE_FIELDS};
 use super::typing::{Completion, InputLine, Purpose};
-use super::view::{Applied, Cursor, Focus, Input, Pages, View, Views};
+use super::view::{Applied, Cursor, Input, NamedPreset, Pages, Pane, View, Views};
 use crate::preset::{self, Preset, Presets};
 use crate::render;
 
@@ -628,7 +628,7 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .read(name)
             .unwrap_or_else(|error| panic!("套着的预设「{name}」读不出：{error:#}")),
     });
-    config_of(&data.session["config"], &mut views);
+    config_of(&data.session["config"], &mut views, presets);
     // **预设文件那一条路径设计稿是写死的**（`drawConfig`），它不是场景数据——夹具因此照它
     // 摆一条家目录底下的路径。真文件仍在临时目录里（[`write_presets`]）：家目录底下只有
     // 假盘那几样，补全那几串数的正是它（停车场 Q824）。
@@ -647,6 +647,8 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             Item::Setting(field) => Some(Purpose::Setting(field)),
             Item::Premise(_) => None,
         },
+        // 给预设起名：末行那一件按下去开的那一行。
+        Some("preset") => Some(Purpose::Preset),
         Some("search") => Some(Purpose::Search),
         _ => None,
     };
@@ -677,14 +679,34 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     views
 }
 
-/// 场景数据 `session.config` 那一段：在哪一栏、两栏各自的光标、下钻进了哪一块屏幕规格。
+/// 场景数据 `session.config` 那一段：在哪一栏、掀着预设栏没有、三块各自的光标、
+/// 下钻进了哪一块屏幕规格，加上 `dd` 等着第二下的是哪一份。
 ///
-/// 预设栏那三格（`presets`、`preset_cursor`、`armed_delete`）随 `session-redesign/14` 认。
-fn config_of(said: &Value, views: &mut Views) {
-    views.config.focus = match said["pane"].as_str() {
-        Some("right") => Focus::Details,
-        _ => Focus::Settings,
+/// **在哪一栏与掀着预设栏没有是两维**（[`Pane`] 与 `ConfigView::picker`）：场景数据那两格
+/// （`pane` 与 `presets`）本来就是分开导出的，13 那时并成一维、认不下 `presets` 那一格
+/// （停车场 Q828）。
+///
+/// 预设栏列的那几份不在场景数据里——它是**进这一栏那一刻**从盘上读出来的，
+/// 因此照真会话那一步现读（`terminal::toggle_picker` 读的是同一份文件）。
+fn config_of(said: &Value, views: &mut Views, presets: &Presets) {
+    views.config.pane = match said["pane"].as_str() {
+        Some("right") => Pane::Details,
+        _ => Pane::Settings,
     };
+    views.config.picker = said["presets"].as_bool().unwrap_or(false);
+    if views.config.picker {
+        views.config.listed = presets
+            .names()
+            .expect("预设文件列得出名字")
+            .into_iter()
+            .map(|name| {
+                let preset = presets.read(&name).ok();
+                NamedPreset { name, preset }
+            })
+            .collect();
+    }
+    views.config.preset_cursor = said["preset_cursor"].as_u64().unwrap_or(0) as usize;
+    views.config.armed_delete = said["armed_delete"].as_str().map(str::to_owned);
     if let Some(item) = said["cursor"].as_str().and_then(item_named) {
         views.config.cursor = item;
     }

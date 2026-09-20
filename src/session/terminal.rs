@@ -35,7 +35,7 @@ use super::look::{Kind, Look, Segment};
 use super::run::Running;
 use super::state::{Action, Exit, Expansion, Key, Picker, Session};
 use super::tone::Tone;
-use super::view::{Cursor, Input, Pages, View, Window};
+use super::view::{CHART_LINGERS, Cursor, Input, NamedPreset, Pages, View, Window};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -263,6 +263,8 @@ fn press(
 pub(super) fn input(
     session: &mut Session,
     running: &mut Running,
+    presets: &Presets,
+    here: &Path,
     now: Instant,
     window: Window,
     input: Input,
@@ -335,6 +337,26 @@ pub(super) fn input(
         Deed::NextProblem | Deed::PrevProblem | Deed::SearchNext | Deed::SearchPrev => {
             let live = running.live();
             session.jump(deed, live.as_deref(), now);
+            Exit::Stay
+        }
+        // **预设那几支与灰阶测试图**：掀开预设栏要列出盘上那几份、`dd` 的第二下要删掉一份、
+        // 起好名那一下要存一份、`c` 要写出一张图——四件都碰盘，而状态机碰不到盘。
+        // 与[旧界面那一支](press)同一条分法；套用一份不在这里，掀开那一刻已经读进来了
+        // （`Session::lift_picker`），那一下因此是纯状态（`Session::use_preset`）。
+        Deed::Presets => {
+            toggle_picker(session, presets, now);
+            Exit::Stay
+        }
+        Deed::DeletePreset => {
+            erase_a_preset(session, presets, now);
+            Exit::Stay
+        }
+        Deed::Confirm if session.naming_a_preset() => {
+            store_a_preset(session, presets, now);
+            Exit::Stay
+        }
+        Deed::Chart => {
+            draw_a_chart(session, here, now);
             Exit::Stay
         }
         // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
@@ -437,6 +459,124 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
         ],
     };
     session.views.say(said, now);
+}
+
+// ───────────────────────── 新界面的预设那几支与灰阶测试图 ─────────────────────────
+//
+// 与[旧界面那四支](list_presets)同一条分工：**碰盘的在这一层**，认键与屏上那几格在状态机。
+// 四支各走各的函数，不合成一个分派——理由与旧界面那四支相同（停车场 Q74）。
+
+/// **`p`：掀开或收起预设栏。** 掀开那一下把盘上有的那几份连同它们的内容读进来
+/// （`CONTEXT.md` 的《预设栏》：列的是**进这一栏那一刻**盘上有的几份），
+/// 收起那一下一个字节都不碰盘。
+///
+/// **读得出名字就够开这一栏**：一份字段过时的预设不该让别的几份列不出来
+/// （[`Presets::names`]），读不懂的那一份只列名字、屏上那一行说一句它读不懂。
+/// 整份文件读不懂、或者配置目录答不出来，那一栏才开不了——屏底说库那一侧的原话。
+fn toggle_picker(session: &mut Session, presets: &Presets, now: Instant) {
+    if session.views.config.picker {
+        session.shut_picker();
+        return;
+    }
+    let names = match presets.names() {
+        Ok(names) => names,
+        Err(error) => {
+            session.views.complain(format!("{error:#}"), now);
+            return;
+        }
+    };
+    let listed = names
+        .into_iter()
+        .map(|name| {
+            let preset = presets.read(&name).ok();
+            NamedPreset { name, preset }
+        })
+        .collect();
+    session.lift_picker(listed);
+}
+
+/// **`dd`：删一份。** 第一下只把光标停着的那一份闩上（盘一个字节都不碰），
+/// 第二下——问的与眼下停着的是**同一份**时——才走 [`Presets::remove`]。
+///
+/// 两下不是防手滑的礼节：删的是盘上长期存着的东西，按错一下没有撤销
+/// （与旧界面那一支同一条，停车场 Q74 把这条约束说死了）。
+/// **跑着与等待确认时照样删得掉**：只读的是三组设置，预设文件不是设置（ADR 0017）。
+fn erase_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
+    // **是第几下由状态机一处判**（`Session::ask_then_erase`）：第一下只闩上、答 `None`，
+    // 第二下才答出那个名字。这一层不再自己数一遍。
+    let Some(name) = session.ask_then_erase() else {
+        return;
+    };
+    match presets.remove(&name) {
+        Ok(()) => session.preset_erased(&name, now),
+        Err(error) => session.views.complain(format!("{error:#}"), now),
+    }
+}
+
+/// **起好名那一下 `⏎`：存一份。**
+///
+/// **第一下盖不掉同名的那一份**：[`Presets::save`] 撞上就是 [`Saved::Taken`]，
+/// **预设栏里问一句**、输入行留着（名字还在缓冲里等着改），再按一次 `⏎` 才走
+/// [`Presets::replace`]（`CONTEXT.md` 的《预设》那一段：盖掉一份同名的要按两下）。
+/// **那一问摆在栏里、不摆在屏底**：这一刻屏底整个让给了输入行（`shell::footer`），
+/// 说给屏底等于一个字都没说。
+/// **撞名的判断落在盘那一侧**，不落在掀开这一栏时列的那份名单上：名单是进来那一刻的快照。
+///
+/// 一个字都没打就只关掉那一行（设计稿 `submitInput` 那一支同样不存）。
+fn store_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
+    let Some(line) = session.views.input.as_ref() else {
+        return;
+    };
+    let name = line.buffer.trim().to_owned();
+    if name.is_empty() {
+        session.views.input = None;
+        return;
+    }
+    let asked = session.views.config.armed_save.as_deref() == Some(name.as_str());
+    let stored = session.preset_to_store();
+    let written = if asked {
+        presets.replace(&name, &stored).map(|()| Saved::Written)
+    } else {
+        presets.save(&name, &stored)
+    };
+    match written {
+        Ok(Saved::Written) => {
+            session.views.input = None;
+            session.preset_saved(&name, stored, now);
+        }
+        // **同名那一下**：闩在起名那一格上（与 `dd` 那一格分开，见 `ConfigView::armed_save`），
+        // 输入行留着、名字照旧在缓冲里，再按一次 `⏎` 就覆盖。**那一问摆在预设栏里**——
+        // 这一刻屏底让给了输入行（`shell::footer`），说给屏底等于一个字都没说。
+        Ok(Saved::Taken) => session.preset_name_is_taken(&name),
+        Err(error) => {
+            session.views.input = None;
+            session.views.complain(format!("{error:#}"), now);
+        }
+    }
+}
+
+/// **`c`：出灰阶测试图。** 画图与落盘整件事在库里（[`tonefit::write_calibration_chart`]），
+/// 这一层只点了个名——与[旧界面那一支](write_chart)同一条分法，`here` 也是同一个。
+///
+/// **屏底那一句与设计稿不同**：设计稿那一句末尾写的是「（原型不写文件）」，
+/// 而这一副真写得出文件，票面第五条要的正是**回话说写到了哪里**。
+/// 前半截照设计稿一字不差，末尾那一截换成图落在哪儿（停车场 Q890）。
+fn draw_a_chart(session: &mut Session, here: &Path, now: Instant) {
+    let drawn = session.chart_profile().and_then(|profile| {
+        let out = chart_file(here, &profile);
+        tonefit::write_calibration_chart(&profile, &out).map(|()| (profile.panel().resolution, out))
+    });
+    match drawn {
+        Ok((size, out)) => session.views.say_for(
+            vec![
+                Segment::new("✓ 已生成灰阶测试图", Look::kind(Kind::Done).bold()),
+                Segment::plain(format!("（{size}）：写到 {}", session.home_shown(&out))),
+            ],
+            CHART_LINGERS,
+            now,
+        ),
+        Err(error) => session.views.complain(format!("{error:#}"), now),
+    }
 }
 
 /// 终端那一侧的事件 → 新会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
@@ -899,12 +1039,35 @@ mod redesign {
 
     use super::super::cover::Overlay;
     use super::super::draw::design::{self, Expected, assert_no_background, assert_same_cells};
+    use super::super::look::{Kind, Look, Segment};
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
     use super::super::state::{Exit, Key};
-    use super::super::view::{Cursor, Focus, Input, Window};
+    use super::super::view::{Cursor, Focus, Input, Pane, Window};
+    use crate::preset::Presets;
+    use std::path::PathBuf;
     use tonefit::FitMode;
+
+    /// 用例里那份预设文件：位置点在**临时目录**里（[`Presets::at`]），
+    /// 因此不必去改进程的环境变量（`tests/preset.rs` 说过为什么不改）。
+    /// 一个用户的东西都不碰——与旧那一支的 `tests::presets` 同一招。
+    fn presets(space: &tempfile::TempDir) -> Presets {
+        Presets::at(space.path().join("tonefit").join("presets.toml"))
+    }
+
+    /// 灰阶测试图在用例里落到哪儿：**那份预设文件的上一层**——场景夹具的临时目录里
+    /// （真会话里是会话从哪儿敲起来的那个目录）。**不点在家目录里**：家目录底下只有
+    /// 假盘那几样，`~/` 底下多一项会让补全那几串红（与预设文件摆在那里同一条，停车场 Q824）。
+    fn charts_land_in(scene: &Scene) -> PathBuf {
+        scene
+            .presets
+            .path()
+            .expect("用例里那份预设文件的位置是定死的")
+            .parent()
+            .expect("它上一层")
+            .to_path_buf()
+    }
 
     /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
     fn walked(name: &str) -> (Scene, Running, Exit) {
@@ -919,6 +1082,9 @@ mod redesign {
             cols: sequence.size.0,
             rows: sequence.size.1,
         };
+        // 预设那几支要读写盘，灰阶测试图要一个落点：两样都点在**临时目录**里
+        // （`Scene::presets` 与 [`charts_land_in`]），一个用户的东西都不碰。
+        let here = charts_land_in(&scene);
         let mut exit = Exit::Stay;
         let mut advanced = false;
         for step in &sequence.steps {
@@ -948,7 +1114,15 @@ mod redesign {
                 continue;
             }
             for input in step.inputs() {
-                exit = super::input(&mut scene.session, &mut running, now, window, input);
+                exit = super::input(
+                    &mut scene.session,
+                    &mut running,
+                    &scene.presets,
+                    &here,
+                    now,
+                    window,
+                    input,
+                );
             }
             // **夹具没有线程**：按到立即停止之后替那条线程收手。真会话里那条线程收到这个字
             // 就停在页边界上，主循环随后 `reap` 到它、会话回到结束了（`super::drive`）——
@@ -1075,8 +1249,19 @@ mod redesign {
             rows: 36,
         };
         session.run_started();
+        // 这一条一个预设键都不按，灰阶测试图也不出（见 [`presets`]）。
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let nowhere = presets(&space);
         let press = |session: &mut _, running: &mut _| {
-            super::input(session, running, now, window, Input::Key(Key::Char('s')))
+            super::input(
+                session,
+                running,
+                &nowhere,
+                space.path(),
+                now,
+                window,
+                Input::Key(Key::Char('s')),
+            )
         };
 
         // 一次：做完再停。
@@ -1594,10 +1779,15 @@ mod redesign {
             cols: 120,
             rows: 36,
         };
+        // 这一条一个预设键都不按，灰阶测试图也不出（见 [`presets`]）。
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let nowhere = presets(&space);
         let press = |scene: &mut Scene, running: &mut Running, letter: char| {
             super::input(
                 &mut scene.session,
                 running,
+                &nowhere,
+                space.path(),
                 now,
                 window,
                 Input::Key(Key::Char(letter)),
@@ -1702,7 +1892,7 @@ mod redesign {
     fn three_ways_lead_back_to_the_settings_pane_and_change_not_one_cell() {
         for name in ["config-h", "config-Tab", "config-Escape"] {
             let scene = assert_sequence(name);
-            assert_eq!(scene.session.views.config.focus, Focus::Settings);
+            assert_eq!(scene.session.views.config.focus(), Focus::Settings);
             assert_eq!(scene.session.taste.fit, Some(FitMode::Inside), "一格没改");
         }
     }
@@ -1712,7 +1902,7 @@ mod redesign {
     #[test]
     fn l_opens_the_details_pane_and_only_the_second_l_settles_a_choice() {
         let scene = assert_sequence("config-h-l");
-        assert_eq!(scene.session.views.config.focus, Focus::Details);
+        assert_eq!(scene.session.views.config.focus(), Focus::Details);
         assert_eq!(scene.session.views.config.choice, 2, "停在生效的那一格上");
 
         let scene = assert_sequence("config-h-l-k-h");
@@ -1721,7 +1911,7 @@ mod redesign {
         let scene = assert_sequence("config-h-l-k-l");
         assert_eq!(scene.session.taste.fit, Some(FitMode::Height));
         assert_eq!(
-            scene.session.views.config.focus,
+            scene.session.views.config.focus(),
             Focus::Settings,
             "定完回来"
         );
@@ -1783,9 +1973,321 @@ mod redesign {
             "定那一下一格没改"
         );
         assert_eq!(
-            scene.session.views.config.focus,
+            scene.session.views.config.focus(),
             Focus::Details,
             "拦下了就留在原处"
+        );
+    }
+
+    // ───────────────────────── 预设栏（`session-redesign/14`）─────────────────────────
+
+    /// **`p` 掀开预设栏**（票面第一条）：它**替换详情栏**、设置栏仍在屏上（框细了、
+    /// 光标行首换成暗的 `›`），列的是进这一栏那一刻盘上有的那两份、每份说了哪几项、
+    /// 哪一份在用，末行是「把当前设置保存为预设」。再按一次 `p`、或者 `h`，都回设置栏。
+    #[test]
+    fn p_lifts_the_picker_over_the_details_pane_and_p_or_h_puts_it_back() {
+        let scene = assert_sequence("config-p");
+        assert_eq!(scene.session.views.config.focus(), Focus::Picker);
+        assert_eq!(scene.session.views.config.pane, Pane::Details);
+        let listed: Vec<&str> = scene
+            .session
+            .views
+            .config
+            .listed
+            .iter()
+            .map(|one| one.name.as_str())
+            .collect();
+        assert_eq!(listed, ["漫画", "画集"], "列的是盘上那两份");
+        for name in ["config-p-p", "config-p-h"] {
+            let scene = assert_sequence(name);
+            assert!(!scene.session.views.config.picker, "「{name}」收起来了");
+            assert_eq!(scene.session.views.config.focus(), Focus::Settings);
+        }
+    }
+
+    /// **套用一份**（票面第一条）：`j` 挪到「画集」、`⏎` 套下来——设备设置与处理选项
+    /// **整个换成它**（它没说的那几项回到「没说」），路径与输出一格不动，
+    /// 顶上那一条换成它、设置栏上一个 `*` 都不剩。
+    #[test]
+    fn enter_uses_the_preset_under_the_cursor_and_replaces_both_bands() {
+        let scene = assert_sequence("config-p-j-Enter");
+        let session = &scene.session;
+        assert_eq!(
+            session
+                .views
+                .config
+                .applied
+                .as_ref()
+                .map(|one| one.name.as_str()),
+            Some("画集")
+        );
+        assert_eq!(session.taste.fit, Some(FitMode::Inside));
+        assert_eq!(session.taste.crop, Some(false));
+        assert_eq!(session.taste.dither, None, "它没说的回到「没说」");
+        assert_eq!(session.changed_from_preset(), 0, "与预设一致");
+        assert_eq!(
+            session.device.profile.as_deref(),
+            Some("kobo-libra-2"),
+            "型号一格不动"
+        );
+        // **路径与输出一格不动**：与没按过那几下的同一景比。两份夹具各有各的临时目录，
+        // 因此比的是**屏上那几条**（家目录缩写成 `~` 之后），不是绝对路径。
+        let untouched = Scene::named("config");
+        let listed = |scene: &Scene| -> Vec<(String, bool)> {
+            scene
+                .session
+                .scope
+                .paths
+                .iter()
+                .map(|named| (scene.session.home_shown(&named.path), named.on))
+                .collect()
+        };
+        assert_eq!(listed(&scene), listed(&untouched), "路径一格不动");
+        assert_eq!(
+            session.output_shown(),
+            untouched.session.output_shown(),
+            "输出目录一格不动"
+        );
+    }
+
+    /// **`dd` 按两下删一份**（票面第一条与第二条）：第一下只在那一栏里问一句、
+    /// **盘一个字节都不动**；第二下才删——正在用的那一份也删得掉，删完顶上那一条是
+    /// 「（未使用预设）」。**文件里别的预设原样留着**。
+    #[test]
+    fn dd_twice_erases_the_preset_and_the_other_one_stays_as_it_was() {
+        let scene = assert_sequence("config-p-dd");
+        assert_eq!(
+            scene.session.views.config.armed_delete.as_deref(),
+            Some("漫画")
+        );
+        assert_eq!(
+            scene.presets.names().expect("读得出名字"),
+            ["漫画", "画集"],
+            "第一下盘一个字节都没动"
+        );
+        let untouched = scene.presets.read("画集").expect("另一份读得出");
+
+        let scene = assert_sequence("config-p-dd-dd");
+        assert_eq!(scene.presets.names().expect("读得出名字"), ["画集"]);
+        assert_eq!(
+            scene.presets.read("画集").expect("另一份原样留着"),
+            untouched
+        );
+        assert!(
+            scene.session.views.config.applied.is_none(),
+            "正在用的也删得掉"
+        );
+        assert_eq!(scene.session.views.config.armed_delete, None);
+    }
+
+    /// **保存并起名**（票面第一条与第二条）：`G` 停到末行、`⏎` 开输入行
+    /// （提示词是「保存为预设，名称  」），打完 `⏎` 存进**临时目录那份预设文件**——
+    /// 文件里原来那两份原样留着，存下的那一份当场成了套着的那一份、**不记型号**。
+    #[test]
+    fn saving_a_named_preset_writes_it_into_the_preset_file_on_disk() {
+        let scene = assert_sequence("config-p-save");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.purpose.prompt(), "保存为预设，名称  ");
+        assert_eq!(
+            scene.presets.names().expect("读得出名字"),
+            ["漫画", "画集"],
+            "还没打名字，盘一个字节都没动"
+        );
+        let before = scene.presets.read("画集").expect("另一份读得出");
+
+        let scene = assert_sequence("config-p-save-named");
+        let mut names = scene.presets.names().expect("读得出名字");
+        names.sort();
+        assert_eq!(names, ["插图", "漫画", "画集"]);
+        assert_eq!(scene.presets.read("画集").expect("原样留着"), before);
+        let stored = scene.presets.read("插图").expect("存下来了");
+        assert_eq!(stored, scene.session.preset_to_store());
+        assert_eq!(stored.device.profile, None, "存出去的那一份不记型号");
+        assert_eq!(
+            scene
+                .session
+                .views
+                .config
+                .applied
+                .as_ref()
+                .map(|one| one.name.as_str()),
+            Some("插图")
+        );
+        assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+    }
+
+    /// **同名覆盖要按两下**（票面第一条）：第一下**在预设栏里**问一句、盘一个字节都不动、
+    /// 输入行留着，第二下才盖掉；盖掉的只有那一份，文件里另一份原样留着。
+    ///
+    /// 设计稿没有这一串（`submitInput` 那一支直接 push），因此**没有一份期望屏可对**；
+    /// 这一条比的是盘上那份文件、输入行还在不在，以及**屏上真画出了那一问**
+    /// ——屏底这一刻让给了输入行，那一句只有画出来才算说了（停车场 Q894）。
+    #[test]
+    fn an_existing_name_takes_two_presses_before_it_overwrites() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let now = scene.now();
+        let here = charts_land_in(&scene);
+        let window = Window {
+            cols: 120,
+            rows: 36,
+        };
+        let before = scene.presets.read("画集").expect("另一份读得出");
+        let tap = |scene: &mut Scene, running: &mut Running, key: Key| {
+            super::input(
+                &mut scene.session,
+                running,
+                &scene.presets,
+                &here,
+                now,
+                window,
+                Input::Key(key),
+            );
+        };
+        // 掀开预设栏、停到末行、开输入行，打上一个**已经有了**的名字。
+        for key in [Key::Char('p'), Key::Char('G'), Key::Enter] {
+            tap(&mut scene, &mut running, key);
+        }
+        for character in "漫画".chars() {
+            tap(&mut scene, &mut running, Key::Char(character));
+        }
+        tap(&mut scene, &mut running, Key::Enter);
+        assert!(scene.session.views.input.is_some(), "第一下输入行留着");
+        assert_eq!(
+            scene.presets.read("漫画").expect("读得出"),
+            crate::preset::Preset::default(),
+            "第一下盘一个字节都没动"
+        );
+        // **那一问真在屏上**：预设栏里、说明底下那一行——屏底这一刻让给了输入行，
+        // 说给屏底等于一个字都没说（停车场 Q894）。比的是**去掉空白之后**屏上有没有这几个字
+        // （宽字符占住的第二格画布清成空格，与 `draw::probe::tight` 同一条读法）。
+        let screen: String = painted(&scene, &running, (120, 36))
+            .content()
+            .iter()
+            .flat_map(|cell| cell.symbol().chars())
+            .filter(|glyph| !glyph.is_whitespace())
+            .collect();
+        assert!(
+            screen.contains("再按一次⏎覆盖「漫画」："),
+            "屏上没画出那一问"
+        );
+        assert!(
+            !screen.contains("再按一次dd删除"),
+            "那一问不该串成删除那一句"
+        );
+        // 第二下才盖。
+        tap(&mut scene, &mut running, Key::Enter);
+        assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        assert_eq!(
+            scene.presets.read("漫画").expect("读得出"),
+            scene.session.preset_to_store(),
+            "第二下才盖掉"
+        );
+        assert_eq!(scene.presets.read("画集").expect("原样留着"), before);
+        assert_eq!(
+            scene.presets.names().expect("读得出名字"),
+            ["漫画", "画集"],
+            "覆盖不添第三份"
+        );
+    }
+
+    /// **`c` 出灰阶测试图**（票面第一条）：图按此刻那块面板画出来、写到盘上，
+    /// 屏底那一句**说它写到了哪里**。
+    ///
+    /// **屏底那一行整个换掉**（[`Expected::instead`]，停车场 **Q890**）：设计稿那一句
+    /// 末尾写的是「（原型不写文件）」——原型不写，而这一副真写得出文件，票面第五条要的
+    /// 正是回话说写到了哪里。换掉之后仍是一条断言：那一行连同每一格的样子由这条用例写出来，
+    /// 实现说别的照样红。屏上别的 35 行一格不差。
+    #[test]
+    fn c_draws_a_calibration_chart_and_says_where_it_landed() {
+        let (scene, running, exit) = walked("config-c");
+        assert_eq!(exit, Exit::Stay, "走完会话还开着");
+        // 图真落在了临时目录里（一个用户的东西都不碰）。
+        let landed: Vec<PathBuf> = std::fs::read_dir(charts_land_in(&scene))
+            .expect("临时目录读得出")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|kind| kind == "png"))
+            .collect();
+        assert_eq!(landed.len(), 1, "只写出一张：{landed:?}");
+        let said = [
+            Segment::plain(" "),
+            Segment::new("✓ 已生成灰阶测试图", Look::kind(Kind::Done).bold()),
+            Segment::plain(format!(
+                "（1264x1680）：写到 {}",
+                scene.session.home_shown(&landed[0])
+            )),
+        ];
+        let buffer = painted(&scene, &running, scene::sequence("config-c").size);
+        assert_no_background(&buffer);
+        assert_same_cells(&buffer, &design::sequence("config-c").instead(35, &said));
+    }
+
+    /// **跑着时 `dd` 照样删得掉盘上那一份**（照设计稿 `deleteHere`：那一支没有只读那一问）。
+    ///
+    /// 只读的是**三组设置**（ADR 0017 决定第 3 条），而预设文件不是设置：删掉一份
+    /// 不改这一趟的任何一项，正在用的那一份删掉也只是「未使用预设」。
+    /// 它与 spec《配置视图》那句「跑着与等待确认时**整个视图只读**」读起来有张力，
+    /// 收法归拍板的人——停车场 **Q895**。这一条把眼下是哪一副钉下来。
+    #[test]
+    fn during_a_run_dd_still_erases_a_preset_from_the_file() {
+        let mut scene = Scene::named("running");
+        let mut running = match scene.live.take() {
+            Some(live) => Running::holding(live),
+            None => Running::default(),
+        };
+        let now = scene.now();
+        let here = charts_land_in(&scene);
+        let window = Window {
+            cols: 120,
+            rows: 36,
+        };
+        let tap = |scene: &mut Scene, running: &mut Running, key: Key| {
+            super::input(
+                &mut scene.session,
+                running,
+                &scene.presets,
+                &here,
+                now,
+                window,
+                Input::Key(key),
+            );
+        };
+        for key in [Key::Char('2'), Key::Char('p')] {
+            tap(&mut scene, &mut running, key);
+        }
+        assert_eq!(scene.session.views.config.focus(), Focus::Picker);
+        // 头两下只问一句，盘一个字节都不动。
+        tap(&mut scene, &mut running, Key::Char('d'));
+        tap(&mut scene, &mut running, Key::Char('d'));
+        assert_eq!(
+            scene.presets.names().expect("读得出名字"),
+            ["漫画", "画集"],
+            "第一下盘一个字节都没动"
+        );
+        tap(&mut scene, &mut running, Key::Char('d'));
+        tap(&mut scene, &mut running, Key::Char('d'));
+        assert_eq!(scene.presets.names().expect("读得出名字"), ["画集"]);
+    }
+
+    /// **跑着时预设栏进得去、套用定不下**（票面末一条）：`2` 进配置视图、`p` 掀开那一栏
+    /// （顶上一条写着设置暂时锁定、设置栏抬头写 `[已锁定]`），`⏎` 那一下屏底说设置已锁定，
+    /// 两组一格不改——拦它的是**阶段那一维**（ADR 0017）。
+    #[test]
+    fn during_a_run_the_picker_opens_but_uses_no_preset() {
+        let scene = assert_sequence("running-2-p-Enter");
+        assert_eq!(scene.session.views.config.focus(), Focus::Picker);
+        assert_eq!(scene.session.taste.fit, Some(FitMode::Inside), "一格没改");
+        assert_eq!(
+            scene
+                .session
+                .views
+                .config
+                .applied
+                .as_ref()
+                .map(|one| one.name.as_str()),
+            Some("漫画"),
+            "套着的那一份没换"
         );
     }
 
