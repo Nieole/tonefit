@@ -649,6 +649,22 @@ impl Live {
         self.resumes.waits() && self.for_the_rest.is_none()
     }
 
+    /// **当前卷此刻正停在确认点上等人吗**（`CONTEXT.md` 的《卷状态》：等待确认）。
+    ///
+    /// 问的是清单上那一格，**不是 [`Walking::pass`]**：库那一侧的确认点就是写出那一遍
+    /// 那一条事件（`crate::progress` 的 `ask_before_the_second_pass`），走到这一刻
+    /// 「在走哪一遍」已经是写出了，而那一遍还一步没走、也可能永远不走
+    /// （答「不写出」的那一卷）。两者分两档，[`pass_started`](Self::pass_started) 那一支
+    /// 立的就是这一条。
+    ///
+    /// 与另外两处「停在确认点上」各答各的：`super::run::Running::deciding` 问的是闸上
+    /// 此刻有没有人在等，`super::state::Session::deciding` 问的是会话这一副样子换了没有。
+    /// 这一处问的是**那一卷**。
+    pub fn deciding(&self) -> bool {
+        self.current
+            .is_some_and(|at| self.states.get(at) == Some(&VolumeState::Deciding))
+    }
+
     /// 当前卷开始走某一遍。「进度条现在在走哪一遍」只有它答得出来。
     ///
     /// **确认点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
@@ -952,11 +968,7 @@ impl Live {
         // 答的是继续，停在确认点上的那一卷从此在走写出那一遍。**答做完再停不在这里换档**：
         // 那一卷写出环节一步不走、一卷跑完那一条紧跟着到（`tonefit::Pass::Second` 的文档），
         // 收摊那一条把它翻成完成；标成「写出」是假话。
-        if said == Instruction::Continue
-            && self
-                .current
-                .is_some_and(|current| self.states.get(current) == Some(&VolumeState::Deciding))
-        {
+        if said == Instruction::Continue && self.deciding() {
             self.set_state(VolumeState::Running {
                 pass: Some(Pass::Second),
             });

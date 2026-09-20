@@ -288,7 +288,17 @@ pub(super) fn pass_segments(
 ///
 /// 走的步数减掉这一环节开工那一刻的读数（[`super::super::live::Walking::pass_from`]）：
 /// 屏上问的是这一环节的进度，不是这一卷累计的步数。
+///
+/// **停在确认点上的那一卷报的是分析环节走完了**（设计稿 `overviewLines` 那一支，
+/// 与场景数据记的 `pass` 逐格相同）：库那一侧的确认点就是写出那一遍那一条事件，
+/// [`Walking::pass`](super::super::live::Walking::pass) 因此已经是写出——而屏上报成
+/// 「写出 0/224」说的是一件**还没定下来、可能永远不做**的事（`CONTEXT.md` 的《等待确认》：
+/// 确认点问的是「这一卷的写出环节还做不做」）。判据是[那一卷此刻怎么样](
+/// super::super::live::Live::deciding) 一处，与卷行那一格分两档走的是同一份。
 pub(super) fn at_this_pass(live: &super::super::live::Live, pages: usize) -> (Option<Pass>, usize) {
+    if live.deciding() {
+        return (Some(Pass::First), pages);
+    }
     let Some(walking) = live.walking() else {
         return (None, 0);
     };

@@ -344,7 +344,10 @@ fn compact_lines(
 }
 
 /// 当前卷屏上怎么写：它那个目录加卷名（`集英社/海贼王/第15卷`）。
-fn current_name(session: &Session, live: &Live) -> String {
+///
+/// **总览与确认条说的是同一卷，名字因此同一处**（[`super::decision`]）：
+/// 两处各写一遍的话，等待确认那一屏上下两行会把同一卷叫成两个名字。
+pub(super) fn current_name(session: &Session, live: &Live) -> String {
     let Some(walking) = live.walking() else {
         return String::new();
     };

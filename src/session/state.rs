@@ -48,6 +48,7 @@ use tonefit::{
 
 use super::complete;
 use super::home::Home;
+use super::keymap::Deed;
 use super::live::{Branch, Live, Reach, Volume};
 use super::tone::Tone;
 use super::view::{Cursor, Views};
@@ -1878,7 +1879,11 @@ impl Session {
     ///
     /// **当场就转，不等下一帧**：那条线程收到那个字就接着跑，而屏底那两行要跟着换——
     /// 慢一帧的话，答完之后那两个答话键还在屏上摆着，按下去却已经没有人收了。
-    fn answered(&mut self) {
+    ///
+    /// **闩一格不动**（`CONTEXT.md` 的《会话》：等待确认时按的 `s` 不是按停止）：
+    /// 这里换的只是阶段那一维，按停止按到的那一级原样带过去。两副界面都到这里——
+    /// 旧那一副走 [`Action::Answer`]，新那一副走 `super::view::Session::perform`。
+    pub(super) fn answered(&mut self) {
         if let Stage::Deciding(pressed) = self.stage {
             self.stage = Stage::Running(pressed);
         }
@@ -3118,11 +3123,13 @@ fn running_action(key: Key, pressed: Instruction) -> Action {
 /// **三组设置仍旧只读**：一个改动键都不派，与 [`running_action`] 同一条。
 /// 这一趟还没结束，`Request` 也早在起线程那一刻就是一份快照了。
 fn deciding_action(key: Key) -> Action {
-    match key {
+    // **答的是哪个字、管几卷不在这里**：那一份在 [`Deed::answer`] 一处，两副界面同读
+    // （新那一副按 [`Deed`] 查，这一副先把键认成这三件之一）。这一层只认键。
+    let deed = match key {
         // `Ctrl-C` 到不了这里，理由与 [`running_action`] 那一句同。
-        Key::Char('x') => Action::Answer(Instruction::Continue, Reach::ThisVolume),
-        Key::Char('a') => Action::Answer(Instruction::Continue, Reach::ForTheRest),
-        Key::Char('s') => Action::Answer(Instruction::Finish, Reach::ThisVolume),
+        Key::Char('x') => Deed::Write,
+        Key::Char('a') => Deed::WriteAll,
+        Key::Char('s') => Deed::End,
         Key::Up
         | Key::Down
         | Key::Left
@@ -3135,7 +3142,12 @@ fn deciding_action(key: Key) -> Action {
         | Key::Esc
         | Key::Interrupt
         | Key::Char(_)
-        | Key::F1 => Action::Ignored,
+        | Key::F1 => return Action::Ignored,
+    };
+    // 三件各答一个字，一件都不会落空——真落空了也只是这一下没答话，不是错。
+    match deed.answer() {
+        Some((said, reach)) => Action::Answer(said, reach),
+        None => Action::Ignored,
     }
 }
 

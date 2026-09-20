@@ -32,7 +32,7 @@
 
 use tonefit::Instruction;
 
-use super::live::Live;
+use super::live::{Live, Reach};
 use super::state::{Key, Stage};
 use super::view::Focus;
 
@@ -175,6 +175,32 @@ pub enum Deed {
     Typed(char),
     // 覆盖层
     CloseOverlay,
+}
+
+impl Deed {
+    /// **这一件是在确认点上答话吗；是的话答的是哪个字、[管几卷](Reach)**
+    /// （`CONTEXT.md` 的《会话》：确认点）。
+    ///
+    /// **「哪个键答哪个字」只有这一处**：新输入入口按 [`Deed`] 查它
+    /// （`super::terminal::input` 把答出来的字交给停在确认点上的那条线程），
+    /// 旧那一副按键查它（`super::state::deciding_action` 先把键认成这三件之一，再问这里）
+    /// ——两副界面各有一张键表，而**字与管几卷只有这一份**。
+    ///
+    /// 三件各答什么，理由写在 `super::state::deciding_action` 的文档上（为什么借 `x` 与 `s`、
+    /// 为什么 `a` 是这个阶段自己的键）。
+    ///
+    /// - `x`：接着做写出环节，**只管这一卷**；
+    /// - `a`：同一个字，**后面的卷都写出**（不再停下来问）；
+    /// - `s`：这一卷的写出环节不做了，**只管这一卷**——往下每一个确认点仍旧要问，
+    ///   而这一趟因为它进了闩，剩下的卷也不必开工（那一格在库那一侧）。
+    pub fn answer(self) -> Option<(Instruction, Reach)> {
+        match self {
+            Self::Write => Some((Instruction::Continue, Reach::ThisVolume)),
+            Self::WriteAll => Some((Instruction::Continue, Reach::ForTheRest)),
+            Self::End => Some((Instruction::Finish, Reach::ThisVolume)),
+            _ => None,
+        }
+    }
 }
 
 /// 全部按键那一张按用途分的组，次序就是屏上的次序（设计稿的 `KEYMAP`）。
