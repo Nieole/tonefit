@@ -1940,6 +1940,10 @@ impl Compute<'_> {
     /// 灰度路径上的一张：几何与尺寸贴合检查 → 缩放 → 画质分曲线 → 进缓存。
     /// 进来的东西同 [`color_page`](Self::color_page)。
     ///
+    /// **走到参照与画质分曲线那一截不在这里**，它在 [`examine_gray_page`]——样张那条路
+    /// 与转换这一条共用它，两条路因此走的是同一批函数。留在这里的是**只有转换这一趟才有**
+    /// 的那几件：缓存那一格、这一卷的指纹、[`Settles`]。
+    ///
     /// **那一格装参照还是装编好的字节，由 [`Settles`] 一处说了算。**顶死的那一趟
     /// 判定在碰卷之前就定死，量化与编码当场做完（06 号票）；另外两条路存的是参照。
     fn gray_page(
@@ -1952,58 +1956,20 @@ impl Compute<'_> {
         salvage: Option<Salvage>,
     ) -> Result<OutputPage> {
         let request = self.request;
-        let panel = request.profile.panel();
-        let fit = request.fit.target(image.size(), panel.resolution);
-        let size = fit.size();
-        // 门在这里判，也只在这里判：这一页的候选集当场定下，画质分只在那一套上求。
-        // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
-        let gate = GeometryGate::of(size, panel.resolution);
-        let allowed = self
-            .candidates
-            .for_gate(gate, image.size(), panel.resolution)
-            .with_context(|| format!("{} 这一页关上了尺寸贴合检查", source.display()))?;
-        let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
-            self.counters.resampler.resize(&image, size, request.filter)
-        })?;
-        // 纸色提白落在这里，**缩放之后、构造参照之前**（纸色提白批 01 号票）：
-        // 参照与其后一切量化用的都是对齐过的像素，画质分两侧因此同源，
-        // 量化仍然是唯一被隔离出来的变量（ADR 0002 决定第 1 条）。
-        //
-        // **不要把它读成「对齐过的图就是进缓存的那一份」**：另外两条路上那一格装的是编好的
-        // 字节——默认那条路与顶死的那一趟一页判完当场就编（见 [`Settles`]）。
-        // 对齐在两副之前，因此两副都吃得到。
-        //
-        // 上限取 0 时它连纸白都不量——量了也没有一页满足得了条件。
-        // **默认值从 05 号票起是 4**（默认开着），走到这里的绝大多数页因此是真去量的。
-        let (scaled, alignment) = white::align_white(scaled, request.white_align_limit);
-        // **预览把守卫另判一遍**（纸色提白批 02 号票第 3 条）。逐页那一层是给**点名关掉、
-        // 又想知道抬上去会钳掉多少**的用户看的——他上限就是 0，上面那道短路让他每一页
-        // 都读到「没开」，一个数都拿不到，票面那句话就成了只在 `--white-align-limit 255`
-        // 这个他不会想到去传的咒语下才成立。
-        //
-        // `judge` 只判不改（三条守卫在它那一处），像素一个都不碰：这里判的正是
-        // `align_white` 短路时原样交回来的那一张。判一遍的代价是每页一遍平坦掩码，
-        // 摆在同一页那六档画质分旁边不算什么，而 `--dry-run` 一个字节都不写。
-        //
-        // **照做那一趟不判**：那一趟的报告说的是「做过什么」，上限取 0 时它什么都没做，
-        // 连量都不该量——短路挡的正是这份白花的工夫。
-        //
-        // **它不进剖面那几段**：剖面的段是照做那一趟的成本模型（见 `cost`），
-        // 而这一笔只在预览上花，记进任何一段都会让那一段在两种模式下不是同一个东西。
-        let alignment = match alignment {
-            WhiteAlignment::Off if request.mode == Mode::DryRun => {
-                white::judge(&scaled, request.white_align_limit)
-            }
-            settled => settled,
-        };
-        // 建参照与六个候选合在同一格里：参照那一侧的低通、细节放宽加权与高频起伏
-        // 也是画质分的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，
-        // 「画质分占多少」就少算了一截，而剖面存在的理由正是这个数。
-        let (reference, scores) = cost::stage(cost::Stage::Metric, || {
-            let reference = Reference::new(panel, scaled);
-            let scores = candidate_scores(&reference, allowed);
-            (reference, scores)
-        });
+        let Examined {
+            reference,
+            scores,
+            gate,
+            fit,
+            scaling,
+            white,
+        } = examine_gray_page(
+            source,
+            &image,
+            request,
+            self.candidates,
+            &self.counters.resampler,
+        )?;
         let slot = match self.settles {
             // 这一页的档分析环节就定得下——默认那条路上画质分一出来就定了，顶死的那一趟碰卷之前
             // 就定死了——量化与编码当场做完，那一格从头装的就是编好的字节，
@@ -2040,7 +2006,7 @@ impl Compute<'_> {
         Ok(placement.into_page(
             source,
             Outcome::Processed {
-                size,
+                size: fit.size(),
                 crop: piece.crop,
                 backstopped: fit.backstopped(),
                 cut: piece.cut,
@@ -2051,12 +2017,126 @@ impl Compute<'_> {
                     scores,
                     gate,
                     slot,
-                    white: alignment,
+                    white,
                 },
                 salvage,
             },
         ))
     }
+}
+
+/// 一张灰度页**量过之后**手上的那几样：参照、这一页每个候选的画质分，
+/// 连同这一路上顺带算出的几何事实与纸色提白的结果。
+///
+/// 装成一个结构体而不是一串返回值：六样由 [`examine_gray_page`] 同一段一起算出、
+/// 一起交给下一步——转换那一趟拿去装 [`Outcome::Processed`]，样张那一趟拿去逐候选编一张。
+/// 摊成一个六元组之后，两个同型的字段换了位置编译器一句话都不会说，
+/// 而报告里会静默地把一张页说成另一张的形状（与 [`Piece`] 同一条理由）。
+struct Examined {
+    /// 缩放到目标尺寸、提过白、未经量化的那一张（`CONTEXT.md` 的《参照》）。
+    reference: Reference,
+    /// 这一页那套候选各与参照比一遍的结果，由小到大。哪一套由 `gate` 定。
+    scores: Vec<CandidateScore>,
+    /// 这一页的尺寸贴合检查。它只决定这一页（ADR 0007 决定第 1 条）。
+    gate: GeometryGate,
+    /// 目标尺寸，连同它是不是被兜底上界退回 fit-inside 的（ADR 0007 决定第 7 条）。
+    fit: geometry::Fit,
+    /// 源尺寸到目标尺寸这一趟怎么走的（ADR 0001 的两段）。
+    scaling: Scaling,
+    /// 纸色提白对这一页做了什么（`CONTEXT.md` 的《纸色提白》）。
+    white: WhiteAlignment,
+}
+
+/// 一张解好的灰度页走到**参照与画质分曲线**：
+/// 几何与尺寸贴合检查 → 缩放 → 纸色提白 → 建参照 → 求候选画质分。
+///
+/// **两条路共用这一处。** 转换那一趟 [`Compute::gray_page`] 在分析环节调它；
+/// 样张那一趟在它自己那个 seam 上调它，为这一页的**每一个**候选各编一张。
+/// 样张要回答的是「写出去会是什么样」，因此它走的必须是**同一批函数**——
+/// 另写一条平行的管线，两条路迟早各自漂移，而那正是这一段被提出来的全部理由。
+///
+/// **[`Compute`] 那一摊，它一格都不收**：缓存、指纹、[`Settles`] 一个字都不提，
+/// [`ComputeCounters`] 那个结构体也不进来。三格问的都是**一卷这一趟**的事——
+/// 缓存是分析与写出两个环节之间的东西（`CONTEXT.md` 的《缓存》），
+/// 指纹是这一卷的幂等依据，[`Settles`] 说的是「这一卷的档什么时候定得下来」。
+/// 而样张认的是**一张图**：不进缓存、不写《记录》、没有第二遍可等。
+/// 收进来任何一格，样张那条路都得为它造一份假的，而造出来的那份假货就是漂移的入口。
+///
+/// **缩放器是唯一从那一摊旁边进来的东西，而它不是那一摊的一格。**签名上收的是
+/// `&`[`resample::Resampler`]，不是 [`ComputeCounters`]：《窄计数器》要的是
+/// 「记在动作本身上，不记在调用方的循环里」（`CONTEXT.md`），
+/// [`resample::Resampler::resize`] 就是那个动作，而**账本是谁的由调用方说了算**——
+/// 转换那一趟交的是这一卷的那一个（数要进报告），样张那一趟
+/// `Resampler::default()` 现开一个、一眼都不看。
+///
+/// `source` 只进**那一句拒绝**的措辞：撞上门的页要指得出是哪一张
+/// （见 [`Candidates::for_gate`]），而每一张听见的不是同一句。
+fn examine_gray_page(
+    source: &Path,
+    image: &GrayImage,
+    request: &Request,
+    candidates: &Candidates,
+    resampler: &resample::Resampler,
+) -> Result<Examined> {
+    let panel = request.profile.panel();
+    let fit = request.fit.target(image.size(), panel.resolution);
+    let size = fit.size();
+    // 门在这里判，也只在这里判：这一页的候选集当场定下，画质分只在那一套上求。
+    // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
+    let gate = GeometryGate::of(size, panel.resolution);
+    let allowed = candidates
+        .for_gate(gate, image.size(), panel.resolution)
+        .with_context(|| format!("{} 这一页关上了尺寸贴合检查", source.display()))?;
+    let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
+        resampler.resize(image, size, request.filter)
+    })?;
+    // 纸色提白落在这里，**缩放之后、构造参照之前**（纸色提白批 01 号票）：
+    // 参照与其后一切量化用的都是对齐过的像素，画质分两侧因此同源，
+    // 量化仍然是唯一被隔离出来的变量（ADR 0002 决定第 1 条）。
+    //
+    // **不要把它读成「对齐过的图就是进缓存的那一份」**：另外两条路上那一格装的是编好的
+    // 字节——默认那条路与顶死的那一趟一页判完当场就编（见 [`Settles`]）。
+    // 对齐在两副之前，因此两副都吃得到。
+    //
+    // 上限取 0 时它连纸白都不量——量了也没有一页满足得了条件。
+    // **默认值从 05 号票起是 4**（默认开着），走到这里的绝大多数页因此是真去量的。
+    let (scaled, alignment) = white::align_white(scaled, request.white_align_limit);
+    // **预览把守卫另判一遍**（纸色提白批 02 号票第 3 条）。逐页那一层是给**点名关掉、
+    // 又想知道抬上去会钳掉多少**的用户看的——他上限就是 0，上面那道短路让他每一页
+    // 都读到「没开」，一个数都拿不到，票面那句话就成了只在 `--white-align-limit 255`
+    // 这个他不会想到去传的咒语下才成立。
+    //
+    // `judge` 只判不改（三条守卫在它那一处），像素一个都不碰：这里判的正是
+    // `align_white` 短路时原样交回来的那一张。判一遍的代价是每页一遍平坦掩码，
+    // 摆在同一页那六档画质分旁边不算什么，而 `--dry-run` 一个字节都不写。
+    //
+    // **照做那一趟不判**：那一趟的报告说的是「做过什么」，上限取 0 时它什么都没做，
+    // 连量都不该量——短路挡的正是这份白花的工夫。
+    //
+    // **它不进剖面那几段**：剖面的段是照做那一趟的成本模型（见 `cost`），
+    // 而这一笔只在预览上花，记进任何一段都会让那一段在两种模式下不是同一个东西。
+    let alignment = match alignment {
+        WhiteAlignment::Off if request.mode == Mode::DryRun => {
+            white::judge(&scaled, request.white_align_limit)
+        }
+        settled => settled,
+    };
+    // 建参照与六个候选合在同一格里：参照那一侧的低通、细节放宽加权与高频起伏
+    // 也是画质分的工夫，只是一页只算一次（见 `metric::Reference`）。摊到格外，
+    // 「画质分占多少」就少算了一截，而剖面存在的理由正是这个数。
+    let (reference, scores) = cost::stage(cost::Stage::Metric, || {
+        let reference = Reference::new(panel, scaled);
+        let scores = candidate_scores(&reference, allowed);
+        (reference, scores)
+    });
+    Ok(Examined {
+        reference,
+        scores,
+        gate,
+        fit,
+        scaling,
+        white: alignment,
+    })
 }
 
 /// 覆盖项裁到只剩一个候选的那一档，在碰卷之前答得出来吗——答得出就是 `Some`。
@@ -2465,13 +2545,15 @@ impl Encode<'_> {
     }
 }
 
-/// 一张灰度页从参照走到写得出去的那串字节：量化 → 盖记录 → 编码。
+/// 一张灰度页按它的**判定**走到写得出去的那串字节：盖记录 → 量化 → 编码。
 ///
 /// **两遍共用这一处。** 默认那条路与顶死的那一趟 [`Compute::gray_page`] 在分析环节调它
 /// （12、06 号票），整卷统一灰阶那条路上 [`Encode::page`] 在写出环节调它。写出的字节因此不因为
 /// 在哪一遍编的而不同——「输出字节与本票之前逐字节相同」靠的正是这一句只有一处。
 ///
-/// 掐表也在这里：`Quantize` 与 `Encode` 两格因此两条路上量的是同一件事。
+/// 它自己只做**盖记录**这一件事：量化与编码两步在 [`candidate_bytes`]，与样张共用那一处——
+/// 那两步样张也要，而样张手上没有判定（理由见那一处）。掐表因此也在那里，
+/// `Quantize` 与 `Encode` 两格三条路上量的都是同一件事。
 fn gray_bytes(
     reference: &GrayImage,
     verdict: Verdict,
@@ -2480,9 +2562,6 @@ fn gray_bytes(
     salvage: Option<Salvage>,
     recorder: Option<&Recorder>,
 ) -> Result<Vec<u8>> {
-    let quantized = cost::stage(cost::Stage::Quantize, || {
-        quantize::quantize(reference, verdict.candidate)
-    });
     // 两个调用处传进来的记录器与来路**恒是一起在、一起不在**：两处的记录器都由同一份指纹派生
     // （[`Encode`] 那一份在 `crate::process_volume`，分析环节那一份在 [`Compute::gray_page`]），
     // 而来路的在场与否问的正是那份指纹（见 [`Placement::new`]）。`zip` 因此不是在防一个
@@ -2492,8 +2571,34 @@ fn gray_bytes(
     let record = recorder
         .zip(origin)
         .map(|(recorder, origin)| recorder.gray(origin, page, verdict, salvage));
+    candidate_bytes(reference, verdict.candidate, record.as_ref())
+}
+
+/// 按**一个候选**把一张参照量化并编码成一页 PNG 的字节。
+///
+/// **两条路共用这一处。** 转换那一趟经 [`gray_bytes`] 调它——那边手上有《判定》，
+/// 编的只是判定那一档；样张那一趟在它自己那个 seam 上直接调它，为这一页的
+/// **每一个**候选各编一张，并排看。
+///
+/// **吃候选而不吃 [`Verdict`]，正是提出来的理由**：判定是「这一页定下了哪一档，
+/// 连同定它的理由」（`CONTEXT.md` 的《判定》），而这一段问的只有「这一档写出去是什么样」。
+/// 样张手上一个判定都没有——它要的恰恰是判定之前那一整条曲线。
+///
+/// **它一格 [`Compute`] 的状态都不认识**：记录由调用方备好交进来，指纹、缓存与
+/// [`Settles`] 一样都不进来。样张**不写《记录》**（写了它，下一趟幂等会把样张读回来
+/// 当上一趟的输出），因此它交的恒是 `None`；`--no-metadata` 那一趟同样。
+///
+/// 掐表在这里，不在调用方：`Quantize` 与 `Encode` 两格因此三条路上量的都是同一件事。
+fn candidate_bytes(
+    reference: &GrayImage,
+    candidate: Candidate,
+    record: Option<&Record>,
+) -> Result<Vec<u8>> {
+    let quantized = cost::stage(cost::Stage::Quantize, || {
+        quantize::quantize(reference, candidate)
+    });
     cost::stage(cost::Stage::Encode, || {
-        encode::png(&quantized, verdict.candidate.bit_depth, record.as_ref())
+        encode::png(&quantized, candidate.bit_depth, record)
     })
 }
 
@@ -3467,6 +3572,10 @@ mod tests {
     //! 与集成用例分工不同：`tests/` 那一批经 `run` 这个 seam，走的是拆分跨页真判出来的 N
     //! （页几何批 04 号票落地后命令行造得出 N=2）；这里绕开那套判定直接给形状，
     //! 因此拆分的规则怎么变，这几条问的东西都不变。
+    //!
+    //! 另有几条落在这里，不是因为它们也问 N=2，而是因为**它们要的东西库内私有**：
+    //! `tests/` 那一批经 `run` 这个 seam 进来，一个私有符号都碰不到。
+    //! 判据是这一句，不是一张名单。
 
     use std::fs;
     use std::sync::Arc;
@@ -4059,6 +4168,82 @@ mod tests {
         *payload
             .downcast::<String>()
             .expect("哨兵恐慌时带的是一句话")
+    }
+
+    /// 提出来的那两段，**手上没有 [`Compute`] 也调得动**（`proof-sheet` 的 01 号票）。
+    ///
+    /// 这一条**不断任何数值**——数值那一半由黄金回归与 `tests/counters.rs` 钉着，
+    /// 这张票一格都不该动它们。它断的是**形状**：一张解好的灰度页、一份处理选项、
+    /// 一套候选、一个现开的缩放器，就够走到参照与画质分曲线；再拿曲线上的**每一个**
+    /// 候选各编一张。全程不碰缓存、不碰指纹、不碰 [`Settles`]——样张那一趟
+    /// （02 号票）走的正是这条路，而它手上一个《判定》都没有。
+    ///
+    /// **编译得过本身就是这一条的一半**：这几个参数里再混进一格 [`Compute`] 的状态，
+    /// 样张那张票就得为它造一份假的（见 [`examine_gray_page`]）。
+    #[test]
+    fn a_page_reaches_its_reference_and_every_candidate_without_a_compute() {
+        let mut request = request();
+        // fit-inside 上一张比面板小的页原样出：目标尺寸因此小，这一条跑得快。
+        // 门跟着不成立，候选回到不抖那三档（ADR 0007 决定第 2 条）——
+        // 这一条问的是形状，哪一套都问得出。
+        request.fit = FitMode::Inside;
+        let panel = request.profile.panel();
+        let candidates = Candidates::new(&request).expect("一个覆盖项都没点，两套都在");
+        let resampler = resample::Resampler::default();
+        let size = Size::new(64, 64);
+        let image = GrayImage::new(
+            size,
+            (0..size.width * size.height)
+                .map(|index| (index % 251) as u8)
+                .collect(),
+        );
+
+        let examined = examine_gray_page(
+            Path::new("一张图.png"),
+            &image,
+            &request,
+            &candidates,
+            &resampler,
+        )
+        .expect("这一页走得完");
+
+        assert_eq!(examined.gate, GeometryGate::Broken);
+        assert_eq!(examined.fit.size(), size, "fit-inside 不放大");
+        assert_eq!(
+            examined.reference.size(),
+            size,
+            "参照就是缩放到目标尺寸那一张"
+        );
+        assert_eq!(
+            examined
+                .scores
+                .iter()
+                .map(|score| score.candidate)
+                .collect::<Vec<_>>(),
+            Candidate::all(panel.gray_levels, examined.gate),
+            "曲线求在这一页自己那套候选上"
+        );
+        assert_eq!(
+            resampler.resizes(),
+            1,
+            "缩放记在调用方交进来的那个账本上，不是这一段自己攥着一个"
+        );
+
+        // 样张要的就是这一步：曲线上每一个候选各编一张，一个判定都不必有；
+        // 记录交的是 `None`，因此一个 tEXt 块都不写。
+        let sheets: Vec<Vec<u8>> = examined
+            .scores
+            .iter()
+            .map(|score| {
+                candidate_bytes(examined.reference.image(), score.candidate, None)
+                    .expect("每一个候选都编得出来")
+            })
+            .collect();
+        assert_eq!(sheets.len(), examined.scores.len(), "一个候选一张");
+        assert!(
+            sheets.iter().all(|bytes| !bytes.is_empty()),
+            "编出来的是空的"
+        );
     }
 
     /// 数写出环节报到了几步。观察者那一端只关心「走完一步」这一种事件，
