@@ -49,7 +49,7 @@ const VALUE_UNSET: &str = "未设置";
 /// 认用户敲的分隔符时两种都认（[`SEPARATORS`]）。
 const SHOWN_SEPARATOR: char = '/';
 
-/// 输入行用在哪一件事上；提示词随它。给预设起名随那一票添。
+/// 输入行用在哪一件事上；提示词随它。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     /// 添加一条处理路径。
@@ -61,6 +61,13 @@ pub enum Purpose {
     /// **改一项设置的值**：配置视图里自由填的那几项（`CONTEXT.md` 的《详情栏》：
     /// 「自由填的那几项列当前值与 `i` 修改」）。
     Setting(Field),
+    /// **给预设起名**（`CONTEXT.md` 的《预设栏》：末行「把当前设置保存为预设」）。
+    ///
+    /// 它收的也不是一条路径：`⏎` 不问盘上有没有这一条，而是把当前那两组存进**预设文件**
+    /// （`super::terminal` 的 `store_a_preset`——写盘那一件状态机够不着）。
+    /// **同名要按两下**：第一下只说一句，第二下才覆盖（[`crate::preset::Presets::save`]
+    /// 与 `replace` 是两个动作，理由在它们各自身上）。
+    Preset,
     /// **搜索**卷名或目录名（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）。
     ///
     /// 它收的不是一条路径：`⏎` 不问盘、不添也不改任何东西，只把这一句定下来、
@@ -84,6 +91,7 @@ impl Purpose {
             Self::EditPath(_) => "修改路径  ".to_owned(),
             Self::Output => "输出目录  ".to_owned(),
             Self::Setting(field) => format!("{}  ", field.label()),
+            Self::Preset => "保存为预设，名称  ".to_owned(),
             Self::Search => "/".to_owned(),
         }
     }
@@ -325,9 +333,12 @@ impl Session {
     /// （哪几卷在哪个目录里、此刻怎么样），状态机读不到它——那一支是
     /// [`Session::confirm_search`]（住在 `super::view` 里），由终端层那一支调
     /// （`super::terminal::input`，与 `Deed::Open` 落在卷行上时同一条分工）。
+    /// **给预设起名那一行同样不在这里收**：它收下之后要写盘（`Presets::save` 与 `replace`
+    /// 是两个动作，同名要按两下），而状态机碰不到盘——那一支在终端层
+    /// （`super::terminal` 的 `store_a_preset`），与搜索那一行同一条分工。
     /// 交到这里来当作没有意义，原地不动。
     pub fn confirm_typed(&mut self, now: Instant) {
-        if self.searching_line() {
+        if self.searching_line() || self.naming_a_preset() {
             return;
         }
         // 改一项设置的值不问盘：它收的是一个数、一个界、一个字节数，不是一条路径。
@@ -361,7 +372,7 @@ impl Session {
         match line.purpose {
             // 改一项设置的值与搜索那两种上面那两道岔路已经收走了，走不到这里
             // （搜索那一种归 [`Session::confirm_search`]，见本函数的文档）。
-            Purpose::Setting(_) | Purpose::Search => {}
+            Purpose::Setting(_) | Purpose::Search | Purpose::Preset => {}
             Purpose::Output => {
                 self.scope.out = Some(on_disk);
                 self.views.say(
