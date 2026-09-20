@@ -11,7 +11,8 @@
 //! 会话的**界面状态**（视图、光标、展开、覆盖层、输入行……）按 [`Data::session`] 摆进
 //! [`Session::views`]，**各票接上自己那一块**：本票（`session-redesign/06`）摆的是视图、
 //! 开跑之前卷列表的光标与套着的预设（[`views_of`]）；树上的光标、展开、每页结果、覆盖层、
-//! 输入行随各票补。这里另摆那一趟（[`Scene::live`]）、三组设置
+//! 输入行随各票补（都在 [`views_of`] 那一处，认一条备注行要树，那一步在
+//! [`stand_on_a_note`]）。这里另摆那一趟（[`Scene::live`]）、三组设置
 //! （[`Scene::session`] 上的 `device`／`taste`／`scope`，加上阶段）、家目录与预设文件。
 //!
 //! 夹具**不读写用户配置目录、不改进程的环境变量**：家目录与预设文件都在临时目录里，
@@ -37,9 +38,9 @@ use super::config::Item;
 use super::cover::Overlay;
 use super::home::Home;
 use super::live::{Live, Reach, Resuming, fixture};
-use super::state::{DEVICE_FIELDS, Field, Key, NamedPath, Session, TASTE_FIELDS};
+use super::state::{DEVICE_FIELDS, Field, Key, Listing, NamedPath, Session, TASTE_FIELDS};
 use super::typing::{Completion, InputLine, Purpose};
-use super::view::{Applied, Cursor, Focus, Input, View, Views};
+use super::view::{Applied, Cursor, Focus, Input, Pages, View, Views};
 use crate::preset::{self, Preset, Presets};
 use crate::render;
 
@@ -567,7 +568,8 @@ impl Scene {
 /// 场景数据 `session` 那一段里认得的几格：视图、开跑之前卷列表的光标、套着的预设（06）；
 /// 输入行连同它列着的候选、全部按键那一张与它从第几行画起（07）；配置视图那几格
 /// （在哪一栏、两栏各自的光标、下钻进了哪一块，加上改一项设置的值那种输入行，13）；
-/// 树上的光标、展开与自动滚动（08）；搜索那一句连同搜索那一种输入行（09）。
+/// 树上的光标、展开与自动滚动（08）；搜索那一句连同搜索那一种输入行（09）；
+/// 每页结果开着哪一卷、光标停在第几页、列的是哪几页（11）。
 /// 认不得的先停在输出目录那一行上；给预设起名那一种输入行随那一票认。
 fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     let mut views = Views::default();
@@ -604,6 +606,19 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .collect();
     }
     views.task.follow = data.session["follow"].as_bool().unwrap_or(true);
+    // **每页结果**：`pages` 那一段在场就是进了一卷（场景数据的 `S.pages`）。
+    // 它只记卷根、第几页与列哪几页——列出来的是哪几页由那一趟的报告现算
+    // （[`super::view::Pages::listed`]），夹具这一头不存第二份。
+    let pages = &data.session["pages"];
+    views.task.pages = pages["volume"].as_str().map(|root| Pages {
+        volume: expand(home, root),
+        at: pages["cursor"].as_u64().unwrap_or(0) as usize,
+        listing: if pages["all"].as_bool().unwrap_or(false) {
+            Listing::All
+        } else {
+            Listing::Notable
+        },
+    });
     // **搜索那一句**：`⏎` 定下来的那一份。搜索那一行开着时缓冲本身就是此刻搜的那一句
     // （`Views::searching`），两头对得上（设计稿那一景 `S.input.buf` 与 `S.search.q` 同值）。
     views.task.search = data.session["search"]["query"].as_str().map(str::to_owned);

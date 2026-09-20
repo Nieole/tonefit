@@ -117,7 +117,10 @@ pub enum Listing {
 impl Listing {
     /// 按一下 `a` 之后是哪一档。**两档来回**，与两级停止那个只升不降的闩正相反：
     /// 这一下是看法，不是决定，按错了再按一次就回来了。
-    fn flipped(self) -> Self {
+    ///
+    /// **两副界面共用这一份**：旧界面报告区展开的那一卷与新界面的
+    /// [每页结果](super::view::Pages)按的是同一个 `a`。
+    pub(super) fn flipped(self) -> Self {
         match self {
             Self::Notable => Self::All,
             Self::All => Self::Notable,

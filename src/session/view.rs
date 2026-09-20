@@ -38,12 +38,13 @@ use super::cover::Overlay;
 use super::keymap::{self, Chord, Deed, Hint, Phase, Want};
 use super::live::{Live, VolumeState};
 use super::look::{Kind, Look, Segment};
-use super::state::{Exit, Field, Key, NamedPath, OUTPUT_UNSET, Session, Shape, Stage};
+use super::state::{Exit, Field, Key, Listing, NamedPath, OUTPUT_UNSET, Session, Shape, Stage};
 use super::tone::Tone;
 use super::tree;
 use super::typing::{InputLine, Purpose};
 use crate::preset::Preset;
-use tonefit::Panel;
+use crate::render;
+use tonefit::{Panel, VolumeReport};
 
 /// 回话在屏底占几秒（设计稿 `toast` 的默认时长）。
 pub const REPLY_LINGERS: Duration = Duration::from_millis(2600);
@@ -214,12 +215,77 @@ impl Line {
     }
 }
 
+/// **每页结果**开着的那一副（`CONTEXT.md` 的《会话》：每页结果）：进了哪一卷、
+/// 光标停在第几页、这一副列的是哪几页。
+///
+/// **一卷的身份是卷根**，与[卷列表的光标](Cursor::Volume)记的是同一样：回卷列表那一下
+/// 光标一格都不必挪——它本来就停在那一卷上。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pages {
+    /// 进了哪一卷（卷根）。
+    pub volume: PathBuf,
+    /// 光标停在**这一副列出来的第几页**上。
+    ///
+    /// **越界不算错，就近收到最后一页上**（[`settled`](Self::settled)）：
+    /// 这一副列着几页要那一卷的报告，而报告只有那一趟给得出——
+    /// 挪光标那一下（[`Session::place_cursor`]）因此不收上界，
+    /// 每一下再由 [`Session::watch_the_run`] 收回来，屏上也照同一条画。
+    pub at: usize,
+    /// 这一副列的是[需留意的页](Listing::Notable)还是[全部页](Listing::All)。
+    pub listing: Listing,
+}
+
+impl Pages {
+    /// 刚进一卷那一刻：光标在头一页，只列需留意的页（设计稿 `taskKey` 那一支）。
+    pub fn of(volume: PathBuf) -> Self {
+        Self {
+            volume,
+            at: 0,
+            listing: Listing::default(),
+        }
+    }
+
+    /// **这一副此刻列着哪几页**（答的是「整卷那几页里的第几页」）——**判据只有这一处**：
+    /// 屏上列哪几行、框底边那个 `n of m`、光标收到哪儿读的都是它。
+    ///
+    /// 「这一页要留意吗」判在 [`render::notable`] 一处，与卷行行尾那几个数
+    /// （[`Live::notable_at`]）、与命令行印出去的那一份同一份判定——
+    /// **代表页也算要留意**（它是这一卷的答案，非在不可）。
+    ///
+    /// **跳过的卷这一份是空的**：它这一趟一页都没重新分析，报告里一页都没有。
+    pub fn listed(&self, report: &VolumeReport, panel: Panel) -> Vec<usize> {
+        let all = self.listing == Listing::All;
+        render::notable(report, panel)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, why)| all || !why.is_empty())
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// 这一卷**要留意的有几页**：抬头那一格 `需留意 1/189 页` 的头一个数。
+    /// 与[列哪几页](Self::listed)同一份判定，只是不管此刻是哪一档。
+    pub fn notable_count(report: &VolumeReport, panel: Panel) -> usize {
+        render::notable(report, panel)
+            .into_iter()
+            .filter(|why| !why.is_empty())
+            .count()
+    }
+
+    /// 光标停在**列出来的第几页**上：越界就近收到最后一页，一页都没列出来时是 0。
+    pub fn settled(&self, listed: usize) -> usize {
+        self.at.min(listed.saturating_sub(1))
+    }
+}
+
 /// 任务视图记着的：所在的块、卷列表的光标、清点之后那棵树连同展开着的目录与自动滚动。
-/// 每页结果随它那一票添。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskView {
-    /// 卷列表还是每页结果。
-    pub focus: Focus,
+    /// **每页结果**进了哪一卷；`None` 就是卷列表在屏上。
+    ///
+    /// **「此刻在哪一块」只有这一格**：[`focus`](Self::focus) 从它算，不另存一格——
+    /// 两格记同一件事，迟早有一格忘了跟着换（那时屏上画着卷列表、按键表却按每页结果派）。
+    pub pages: Option<Pages>,
     pub cursor: Cursor,
     /// **清点之后那棵树**：开工那一条带回来的清点清单拼出来的形状（[`super::tree`]）。
     /// 清点完之前是空的——卷列表那时列的是处理路径本身。
@@ -250,7 +316,7 @@ pub struct TaskView {
 impl Default for TaskView {
     fn default() -> Self {
         Self {
-            focus: Focus::VolumeList,
+            pages: None,
             cursor: Cursor::Output,
             tree: tree::Tree::default(),
             expanded: BTreeSet::new(),
@@ -264,14 +330,25 @@ impl Default for TaskView {
 impl TaskView {
     /// **每次开跑重来一遍**：树还没拼出来、一个目录都不展开、自动滚动扳回开着、
     /// 上一趟搜的那一句清掉，光标退回列表头一行（这一刻列表刚从树换回处理路径，
-    /// 或者反过来）。
+    /// 或者反过来）。**每页结果也收掉**（设计稿 `startRun`）：上一趟那一卷的逐页结果
+    /// 在新的一趟上说不通。
     pub fn start_a_run(&mut self) {
         self.tree = tree::Tree::default();
         self.expanded.clear();
         self.follow = true;
         self.search = None;
         self.surveyed = false;
-        self.focus = Focus::VolumeList;
+        self.pages = None;
+    }
+
+    /// 任务视图此刻在哪一块：进了一卷就是[每页结果](Focus::Pages)，否则是卷列表。
+    /// **从[进了哪一卷](Self::pages)那一格算**，不另存一格。
+    pub fn focus(&self) -> Focus {
+        if self.pages.is_some() {
+            Focus::Pages
+        } else {
+            Focus::VolumeList
+        }
     }
 }
 
@@ -385,7 +462,7 @@ impl Views {
     /// （总览的 `t`／`x`、行上的 `i`／`o`）问的是这一块派什么，输入行开着时照样写着。
     pub fn block(&self) -> Focus {
         match self.view {
-            View::Task => self.task.focus,
+            View::Task => self.task.focus(),
             View::Config => self.config.focus,
         }
     }
@@ -716,8 +793,8 @@ impl Session {
     /// （`super::terminal`）；交到这里的那几件当作没有意义，原地不动。
     /// **跳转那几件同样**（`]d`／`[d`、`n`／`N`、搜索那一行上的 `⏎`）：落点要问那一趟，
     /// 那一支是 [`Session::jump`] 与 [`Session::confirm_search`]。
-    /// 覆盖层上滚动要知道窗口有多大，同样在终端层那一支（[`super::cover::Sheet`] 与 `Views::scroll_cover`）；
-    /// 半屏与一屏那四个随每页结果与树那几票接上，眼下原地不动。
+    /// 覆盖层上滚动要知道窗口有多大，同样在终端层那一支（[`super::cover::Sheet`] 与
+    /// `Views::scroll_cover`）；半屏与一屏那四个同样（[`Self::scroll_list`]）。
     pub fn perform(&mut self, deed: Deed, now: Instant) -> Exit {
         let focus = self.views.focus();
         match deed {
@@ -797,8 +874,20 @@ impl Session {
                 self.views.input = Some(InputLine::new(Purpose::Search, ""));
             }
             // **卷列表上的 `Esc` 只丢掉搜索**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）
-            // ——没在搜的时候它一件事都不做。每页结果与说明卡各自那一级在各自那一票。
+            // ——没在搜的时候它一件事都不做。说明卡那一级在 [`Deed::CloseOverlay`]。
             Deed::ClearSearch => self.views.task.search = None,
+            // **`a` 换列法**（spec 的《每页结果》：默认只列需留意的页，`a` 切换）：
+            // **换过之后光标退回头一页**——换的是列哪几页，上一副的第几页在新的一副上
+            // 不是同一页（设计稿 `taskKey` 那一支同样把它扳回 0）。
+            Deed::ListAll => {
+                if let Some(pages) = &mut self.views.task.pages {
+                    pages.listing = pages.listing.flipped();
+                    pages.at = 0;
+                }
+            }
+            // **`h`／`Esc`／`⌫` 回卷列表原处**：那一卷的行本来就在光标底下
+            // （[`Pages::volume`] 与 [`Cursor::Volume`] 记的是同一样），收掉这一副就回到原处。
+            Deed::BackToList => self.views.task.pages = None,
             Deed::TogglePath => {
                 if let Some(at) = self.path_under_cursor() {
                     self.scope.paths[at].on = !self.scope.paths[at].on;
@@ -825,11 +914,14 @@ impl Session {
     /// 或半屏那么多行。**挪几行要窗口有多高**，而那件事只有终端层知道——与
     /// [`Views::scroll_cover`] 同一条分工，因此这一支也在那一层调
     /// （`super::terminal` 的 `input`）。不是这四件就交回 `false`，让状态机接着认。
+    ///
+    /// **卷列表与每页结果挪的行数是同一个**（[`Window::page`]）：两块都占着屏上那一整格。
     pub fn scroll_list(&mut self, deed: Deed, window: Window, now: Instant) -> bool {
-        // **不在卷列表上就一件都不认**：这四个键在表上派给**没被盖着的每一块**
-        // （`UNCOVERED_OR_OVERLAY`），而这一支只挪得动卷列表的光标——认下来却什么都不做，
-        // 每页结果与配置视图接上之后按下去会是一片静默（那两块自己的滚动随各自那一票接）。
-        if !self.on_the_volume_list() {
+        // **不在任务视图上就一件都不认**：这四个键在表上派给**没被盖着的每一块**
+        // （`UNCOVERED_OR_OVERLAY`），而这一支只挪得动任务视图那两块的光标
+        // （卷列表与每页结果，两块共用 [`Self::place_cursor`]）——认下来却什么都不做，
+        // 配置视图按下去会是一片静默（那两栏自己的滚动随它那一票接）。
+        if self.views.view != View::Task {
             return false;
         }
         let page = window.page();
@@ -845,11 +937,23 @@ impl Session {
     }
 
     /// 光标挪到停得住的行里的哪一条：`to` 收「此刻在第几条、最后一条是第几条」，答挪到第几条。
-    /// 任务视图只在卷列表上挪，配置视图两栏各挪各的（[`Self::place_config_cursor`]）；
-    /// 每页结果随它那一票接上。
+    /// 任务视图在卷列表或[每页结果](Pages)上挪，配置视图两栏各挪各的
+    /// （[`Self::place_config_cursor`]）。
     fn place_cursor(&mut self, now: Instant, to: impl Fn(usize, usize) -> usize) {
         if self.views.view == View::Config {
             self.place_config_cursor(to);
+            return;
+        }
+        // **每页结果挪的是「第几页」**：这一副列着几页要那一卷的报告，而状态机读不到
+        // 那一趟——因此这一处不收上界（拿 `usize::MAX` 当「最后一页」），光标每一下由
+        // [`Self::watch_the_run`] 收进真列出来的那几页里，屏上照同一条画
+        // （[`Pages::settled`]）。设计稿也是这一副：`moveBy` 只往上收到 0，
+        // 往下那一头由 `drawPages` 每一帧收。
+        //
+        // **这一下不暂停自动滚动**：进了一卷就不在跟着的那张列表上了
+        // （设计稿 `moveBy` 那一支在 `listGo` 之前返回）。
+        if let Some(pages) = &mut self.views.task.pages {
+            pages.at = to(pages.at, usize::MAX);
             return;
         }
         if !self.on_the_volume_list() {
@@ -881,7 +985,7 @@ impl Session {
     /// 掀着说明卡时 `j`／`k` 挪的仍是底下那张列表的光标（设计稿 `moveBy` 那一支；
     /// 全部按键那一张自己会先把滚动那几件收走，见 [`Views::scroll_cover`]）。
     fn on_the_volume_list(&self) -> bool {
-        self.views.view == View::Task && self.views.task.focus == Focus::VolumeList
+        self.views.view == View::Task && self.views.task.focus() == Focus::VolumeList
     }
 
     /// 按停止升一级，屏底说一句：按一次做完当前卷再停，再按一次立即停止。
@@ -993,6 +1097,10 @@ impl Session {
     /// 是那条循环每一帧）：树的拼法要清点清单，而状态机读不到它。
     /// **树一趟只拼一次**——清单在开工那一条之后一格不变。
     pub fn watch_the_run(&mut self, live: &Live) {
+        // **每页结果的光标收进它此刻列着的那几页里**：`a` 刚换过一副列法、那一卷刚做完，
+        // 「列着几页」就换了一个数。收在这一处是因为那个数要那一卷的报告，而状态机读不到
+        // 那一趟——与底下把树拼出来、把光标带到正在处理那一卷同一条分工。
+        self.settle_the_pages(live);
         if !live.surveying() && !self.views.task.surveyed {
             self.views.task.tree = tree::Tree::of(
                 &self.scope.paths,
@@ -1021,6 +1129,35 @@ impl Session {
             Cursor::Directory(directory.path.clone())
         };
         self.views.task.cursor = cursor;
+    }
+
+    /// 光标收进[每页结果](Pages)此刻真列出来的那几页里（见 [`Pages::at`]）。
+    fn settle_the_pages(&mut self, live: &Live) {
+        let Some(listed) = self.listed_pages(Some(live)) else {
+            return;
+        };
+        if let Some(pages) = &mut self.views.task.pages {
+            pages.at = pages.settled(listed.len());
+        }
+    }
+
+    /// **每页结果开着的那一卷那一份报告**：没进哪一卷、那一趟还没起来、
+    /// 或者那一卷没有报告（没做成、还没轮到）时都是 `None`。
+    ///
+    /// **卷根换回清单序号只有一处**（[`tree::Tree::index_of`]），与
+    /// [`Self::volume_state`] 走的是同一条。
+    pub fn pages_report<'a>(&self, live: Option<&'a Live>) -> Option<&'a VolumeReport> {
+        let pages = self.views.task.pages.as_ref()?;
+        let at = self.views.task.tree.index_of(&pages.volume)?;
+        live?.report_at(at)
+    }
+
+    /// **每页结果此刻列着哪几页**（整卷那几页里的第几页）——屏上列哪几行、
+    /// 框底边那个数、光标收到哪儿，读的都是这一份（[`Pages::listed`]）。
+    pub fn listed_pages(&self, live: Option<&Live>) -> Option<Vec<usize>> {
+        let pages = self.views.task.pages.as_ref()?;
+        let report = self.pages_report(live)?;
+        Some(pages.listed(report, live?.report().profile.panel()))
     }
 
     // ───────────────────────── 跳转与搜索 ─────────────────────────
@@ -1448,7 +1585,11 @@ impl Session {
             (View::Task, Focus::Pages) => {
                 wants.extend(self.stage_wants(phase, focus));
                 wants.extend([
-                    Want::saying(Deed::ListAll, "全部页"),
+                    // **那一句随此刻列的是哪几页换**（表上两行，屏底摆的是**按下去会到的
+                    // 那一副**）：只列需留意的页时写「全部页」，反过来写「只看需留意的页」。
+                    // **等待确认时这一件根本派不出**（`a` 让给答话，表上那两行只给
+                    // 转换中与已结束），屏底因此一个字都不摆——不必在这里另设一道门。
+                    Want::saying(Deed::ListAll, self.listing_key_says()),
                     Want::of(Deed::BackToList),
                     Want::of(Deed::Down),
                     Want::of(Deed::Up),
@@ -1485,6 +1626,22 @@ impl Session {
         }
         wants.push(Want::of(Deed::Help));
         keymap::hints(phase, focus, &wants)
+    }
+
+    /// 屏底那一件 `a` 此刻写的是哪一句：**按下去会到的那一副**。
+    /// 两句都在按键表上（[`keymap::TABLE`] 的 `Group::Pages`），这一处只挑哪一句。
+    pub(super) fn listing_key_says(&self) -> &'static str {
+        let all = self
+            .views
+            .task
+            .pages
+            .as_ref()
+            .is_some_and(|pages| pages.listing == Listing::All);
+        if all {
+            "只看需留意的页"
+        } else {
+            "全部页"
+        }
     }
 
     /// 屏底那一件「展开／每页结果／查看」——**光标那一行展得开什么**
@@ -2141,5 +2298,165 @@ mod tests {
         session.taste.dither = Some(tonefit::Dither::FloydSteinberg);
         session.device.gray_levels = Some(12);
         assert_eq!(session.changed_from_preset(), 3);
+    }
+
+    // ───────────────────────── 每页结果（11） ─────────────────────────
+
+    /// 那一卷此刻在每页结果里：光标停在第几页由调用方给。
+    fn opened(session: &mut Session, at: usize) {
+        session.views.task.cursor = Cursor::Volume(PathBuf::from("/库/甲/第01卷"));
+        session.views.task.pages = Some(Pages {
+            volume: PathBuf::from("/库/甲/第01卷"),
+            at,
+            listing: Listing::Notable,
+        });
+    }
+
+    /// 夹具那一卷与这一趟那块面板：八页，要留意的六页（另两页跟着卷级档位走）。
+    fn a_volume_of_every_kind() -> (VolumeReport, Panel) {
+        let report = super::super::live::fixture::a_page_of_every_kind("卷二");
+        let panel = super::super::live::fixture::request(tonefit::Mode::DryRun)
+            .profile
+            .panel();
+        (report, panel)
+    }
+
+    /// **进了一卷，屏上那一块就换了**（`CONTEXT.md` 的《每页结果》：换掉卷列表）：
+    /// 按键表查的那一块跟着换，而**「此刻在哪一块」只有[进了哪一卷](TaskView::pages)
+    /// 那一格**——两格记同一件事就会有一格忘了跟着换。
+    ///
+    /// `h` 回去时**卷列表的光标一格没动**：那一行本来就停在光标底下，
+    /// 「回到原处」因此不必记第二个位置。
+    #[test]
+    fn entering_a_volume_switches_the_block_and_h_comes_back_to_the_same_row() {
+        let mut session = a_running_tree();
+        session.views.task.cursor = Cursor::Volume(PathBuf::from("/库/甲/第02卷"));
+        assert_eq!(session.views.block(), Focus::VolumeList);
+        let row = session.views.task.cursor.clone();
+
+        session.views.task.pages = Some(Pages::of(PathBuf::from("/库/甲/第02卷")));
+        assert_eq!(session.views.block(), Focus::Pages, "换到了每页结果那一块");
+        assert_eq!(session.views.task.focus(), session.views.block());
+
+        session.perform(Deed::BackToList, Instant::now());
+        assert!(session.views.task.pages.is_none(), "这一副收掉了");
+        assert_eq!(session.views.block(), Focus::VolumeList);
+        assert_eq!(session.views.task.cursor, row, "回到原处：那一行一格没动");
+    }
+
+    /// **`a` 两档来回，换过之后光标退回头一页**（spec 的《每页结果》：默认只列需留意的页，
+    /// `a` 切换）——换的是列哪几页，上一副的第几页在新的一副上不是同一页。
+    ///
+    /// 屏底那一件跟着换口：它写的是**按下去会到的那一副**。
+    #[test]
+    fn a_flips_the_listing_and_puts_the_cursor_back_on_the_first_page() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        opened(&mut session, 5);
+        assert_eq!(session.listing_key_says(), "全部页");
+
+        session.perform(Deed::ListAll, now);
+        let pages = session.views.task.pages.as_ref().expect("还在每页结果里");
+        assert_eq!(pages.listing, Listing::All);
+        assert_eq!(pages.at, 0, "换过列法，光标退回头一页");
+        assert_eq!(session.listing_key_says(), "只看需留意的页");
+
+        session.perform(Deed::ListAll, now);
+        let pages = session.views.task.pages.as_ref().expect("还在每页结果里");
+        assert_eq!(pages.listing, Listing::Notable, "两档来回");
+    }
+
+    /// **默认只列需留意的页，`a` 列全部页**（票面第三条）：判在
+    /// [`render::notable`] 一处，与卷行行尾那几个数、与命令行印出去的那一份同一份判定。
+    /// 夹具那一卷八页，要留意的六页。
+    #[test]
+    fn the_pages_pane_lists_the_pages_that_matter_until_a_shows_them_all() {
+        let (report, panel) = a_volume_of_every_kind();
+        let mut pages = Pages::of(report.volume.clone());
+        assert_eq!(Pages::notable_count(&report, panel), 6);
+        assert_eq!(pages.listed(&report, panel).len(), 6, "默认只列需留意的页");
+        pages.listing = Listing::All;
+        assert_eq!(pages.listed(&report, panel), (0..8).collect::<Vec<_>>());
+    }
+
+    /// **跳过的卷进得来，一页结果都没有**（`CONTEXT.md` 的《停得住 / 展得开》：
+    /// 跳过的也算展得开）：它这一趟一页都没重新分析，两档列出来都是空的——
+    /// 屏上那时给的是一句话，不是一张空表（`super::super::shell::pages`）。
+    #[test]
+    fn a_skipped_volume_opens_with_no_pages_at_all() {
+        let panel = a_volume_of_every_kind().1;
+        let report = super::super::live::fixture::skipped_volume("卷三", 190);
+        let mut pages = Pages::of(report.volume.clone());
+        assert!(pages.listed(&report, panel).is_empty());
+        pages.listing = Listing::All;
+        assert!(pages.listed(&report, panel).is_empty(), "全部页那一档也空");
+        assert_eq!(pages.settled(0), 0, "一页都没有时光标停在 0");
+    }
+
+    /// **光标越界就近收到最后一页上**（[`Pages::at`]）：这一副列着几页要那一卷的报告，
+    /// 挪光标那一下收不到上界，因此这一处每一下把它收回来。
+    #[test]
+    fn the_page_cursor_never_points_past_the_last_page() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        opened(&mut session, 0);
+        session.perform(Deed::Bottom, now);
+        let pages = session.views.task.pages.as_ref().expect("还在每页结果里");
+        assert_eq!(pages.settled(6), 5, "`G` 落在最后一页上");
+        assert_eq!(pages.settled(1), 0);
+        assert_eq!(Pages::of(PathBuf::new()).settled(6), 0);
+    }
+
+    /// **每页结果上挪光标不碰卷列表那一头**：卷列表的光标一格不动
+    /// （`h` 要回到那一行上），自动滚动那一格也不扳——进了一卷就不在跟着的那张列表上了。
+    #[test]
+    fn moving_in_the_pages_leaves_the_volume_list_and_following_alone() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        opened(&mut session, 0);
+        let row = session.views.task.cursor.clone();
+        for _ in 0..3 {
+            session.perform(Deed::Down, now);
+        }
+        session.perform(Deed::Up, now);
+        let pages = session.views.task.pages.as_ref().expect("还在每页结果里");
+        assert_eq!(pages.at, 2);
+        assert_eq!(session.views.task.cursor, row, "卷列表的光标一格没动");
+        assert!(
+            session.views.task.follow,
+            "不在那张列表上，自动滚动照旧跟着"
+        );
+        assert!(session.views.reply(now).is_none(), "屏底一句话都没说");
+    }
+
+    /// **停得住与展得开是两件事**（`CONTEXT.md` 的《停得住 / 展得开》；停车场 Q713）。
+    ///
+    /// 卷行**一律停得住**——光标停得上去，与那一卷此刻怎么样无关（树上那一行
+    /// 压根不问那一趟）；**展得开的只有四种**：收摊了的三种（做完 · 进了隔离 · 跳过）
+    /// 与确认点上攒着的那一份。没做成的、被立即停止掉的、还在处理的、还没轮到的
+    /// 四种停得住、展不开——屏底那一件 `l` 因此一件都不摆。
+    #[test]
+    fn every_volume_row_stops_but_only_four_kinds_open_the_pages() {
+        let session = a_running_tree();
+        let tree = &session.views.task.tree;
+        for row in tree.every_row() {
+            let tree::Row::Volume { at, .. } = row else {
+                continue;
+            };
+            assert_eq!(
+                row.stop(tree),
+                Some(Cursor::Volume(tree.roots[at].clone())),
+                "卷行停不住了"
+            );
+        }
+        let opens = |state: VolumeState| state.opens_the_pages();
+        assert!(opens(VolumeState::Done));
+        assert!(opens(VolumeState::Isolated));
+        assert!(opens(VolumeState::Skipped));
+        assert!(opens(VolumeState::Deciding));
+        assert!(!opens(VolumeState::Failed), "没做成的没有每页结果");
+        assert!(!opens(VolumeState::Aborted), "被立即停止掉的没有保存");
+        assert!(!opens(VolumeState::Running { pass: None }), "还在处理");
+        assert!(!opens(VolumeState::Queued), "还没轮到");
     }
 }

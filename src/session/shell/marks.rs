@@ -16,6 +16,7 @@ use super::super::live::VolumeState;
 use super::super::look::{Kind, Look, Segment};
 use super::super::tone::Tone;
 use super::super::view::{SPINNER, SPINS_EVERY};
+use crate::render::Notable;
 
 /// 横条的两个字形：走过的那一截与没走的那一截（盲文点阵，宽度稳）。
 const FULL: &str = "⣿";
@@ -30,6 +31,29 @@ pub(super) fn spinner(now: Instant, opened_at: Instant, offset: usize) -> &'stat
     let frames = now.saturating_duration_since(opened_at).as_millis() / SPINS_EVERY.as_millis();
     let at = (frames as usize).wrapping_add(offset) % SPINNER.len();
     SPINNER[at]
+}
+
+/// 一页**要紧在哪一处，屏上那个词**（`CONTEXT.md` 的《语义色》在页那一级分出的那几样）。
+///
+/// **新界面的措辞只有这一处**：卷行行尾按种类报几页（[`super::list`]，数出自
+/// [`Live::notable_at`](super::super::live::Live::notable_at)）与每页结果提示那一列写
+/// 这一页要紧在哪几处（[`super::pages`]，判出自
+/// [`render::notable`](crate::render::notable)）——两处读同一份，
+/// 同一件事在屏上不会有两个叫法。
+///
+/// **[坏页](Notable::Failed)不给词**：它行尾跟着那一句原因，而那一句以「失败」开头——
+/// 多加一个词是同一件事说两遍。哪几种在某一处**不写词**由那一处自己答
+/// （每页结果另把[残缺](Notable::Salvaged)让给 `救回 62.0%` 那一格）。
+pub(super) fn notable_word(what: Notable) -> Option<&'static str> {
+    match what {
+        Notable::Failed => None,
+        Notable::Salvaged => Some("残缺"),
+        Notable::Outlier => Some("差异大的页"),
+        Notable::OutsideTheGate => Some("尺寸未贴合屏幕"),
+        Notable::Overflowed => Some("页面超宽"),
+        Notable::Backstopped => Some("兜底上界"),
+        Notable::Driver => Some("代表页"),
+    }
 }
 
 /// 一条横条画成什么样：走过的那一截与没走的那一截，合起来恰好 `width` 格。
