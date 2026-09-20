@@ -476,6 +476,15 @@ fn row_segments(
     row_width: u16,
 ) -> Vec<Segment> {
     let tone = entry.mark.tone();
+    // **原因那一列只在坏页上变色**（设计稿 `drawPages` 的 `p.tone === 'bad' ? 'c-red' : 'c-fg'`）：
+    // 那一格写的是**判定给的理由**，一句平常话；「这一页要留神」由行首记号与提示那一列说。
+    // 两列一起上注意色的话，屏上就分不出这一格说的是哪件事——页面超宽那一页的原因仍是
+    // 「达标的最省空间档位」，一句好消息。**坏页另当别论**：它那一格写的正是没解出来那一句本身。
+    let reason = if entry.mark == Mark::Failed {
+        tone
+    } else {
+        Tone::Plain
+    };
     let mut segments = vec![
         Segment::new(
             if at_cursor { "❯ " } else { "  " },
@@ -494,7 +503,8 @@ fn row_segments(
             PagesColumn::Size if entry.overflowed => Look::tone(Tone::Caution),
             PagesColumn::Size | PagesColumn::Scaling | PagesColumn::Scores => Look::FAINT,
             PagesColumn::Verdict => depth_look(entry.depth),
-            PagesColumn::Reason | PagesColumn::Notes => Look::tone(tone),
+            PagesColumn::Reason => Look::tone(reason),
+            PagesColumn::Notes => Look::tone(tone),
             // 记号那两格上面已经摆过了。
             PagesColumn::Mark => continue,
         };

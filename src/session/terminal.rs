@@ -313,6 +313,28 @@ pub(super) fn input(
             running.stop(session.stopping());
             exit
         }
+        // **确认点上答话那三件**：状态机把会话放回「跑着」那一副、屏底说一句
+        // （`Session::perform`），这一层把那个字**连同它管几卷**交给停在确认点上的那条线程。
+        // 与按停止同一条分工——认键在那边，碰线程在这边；而「哪个键答哪个字」在
+        // [`Deed::answer`] 一处，两处不各算一遍（旧那一副读的是同一份，
+        // 见 `super::state::deciding_action`）。
+        //
+        // **它不进闩**：按停止按到的那一级一格不动（`CONTEXT.md` 的《等待确认》），
+        // 因此这里不调 `running.stop`。「后面的卷都写出」进的是观察者那一侧的
+        // 「确认点的默认答案」，那一格在 [`Running::decide`] 里。
+        Deed::Write | Deed::WriteAll | Deed::End => {
+            let exit = session.perform(deed, now);
+            if let Some((said, reach)) = deed.answer() {
+                running.decide(said, reach);
+            }
+            exit
+        }
+        // **等待确认时 `v` 进这一卷的每页结果**：要问那一趟「此刻停在哪一卷」，
+        // 而状态机读不到它——与卷行上按展开同一条分工。
+        Deed::ViewPages => {
+            view_the_pages(session, running);
+            Exit::Stay
+        }
         // **`F` 交回自动滚动**：扳回那一格与屏底那一句是状态机的事（`Session::perform`），
         // 而**光标当场跟到正在处理的那一卷**要读那一趟——按下去这一帧就得跟上，
         // 因此这一层紧接着再盯一眼。与按停止那一件同一条分工。
@@ -407,6 +429,24 @@ fn begin(session: &mut Session, running: &mut Running, mode: RunMode, now: Insta
             now,
         ),
     }
+}
+
+/// **等待确认时 `v` 换屏进每页结果**（`CONTEXT.md` 的《等待确认》：`v` 进这一卷的每页结果，
+/// `h` 回来再答）。
+///
+/// 进的是**确认点上那一卷**——不是光标停着的那一行（那一下是 `l`，走 [`open_a_volume`]）：
+/// 屏上这一刻问的就是这一卷，而卷列表照样滚得动，光标早挪到别处去了也不影响这一问。
+/// 「此刻停在哪一卷」只有那一趟答得出（[`Live::walking`]），状态机读不到它。
+///
+/// **一卷的身份是卷根**，与[卷列表的光标](Cursor::Volume)记的是同一样（[`Pages::of`]）：
+/// `h` 回去时那一行本来就在光标底下。**屏底一句话都不说**——换了一整屏，
+/// 那一屏自己就是回话（与 [`open_a_volume`] 展得开那一支同一条）。
+fn view_the_pages(session: &mut Session, running: &Running) {
+    let live = running.live();
+    let Some(walking) = live.as_deref().and_then(Live::walking) else {
+        return;
+    };
+    session.views.task.pages = Some(Pages::of(walking.volume.clone()));
 }
 
 /// 卷行上按下展开：**展得开的只有收摊了的那几卷（跳过的也算）与确认点上那一份**；
@@ -1124,6 +1164,31 @@ mod redesign {
                     input,
                 );
             }
+            // **夹具没有线程**：确认点上答了「不写出，结束预览」之后，那条线程把这一卷
+            // 收了摊（写出环节一步不走，`tonefit::Pass::Second` 的文档）、这一趟就此收场，
+            // 主循环随后 `reap` 到它、会话回到结束了——这一步走的是同一条路，只是当场走完。
+            // 与底下按到立即停止那一段同形。
+            //
+            // **收摊用的就是确认点上攒着的那一份**：那一卷写出环节一步都没走，
+            // 库交出来的与攒着的逐格相同（`scene::replay` 的 `trialed` 那一支同样这么摆）。
+            let trialed = running.live().as_deref().and_then(|live| {
+                if live.ended() || live.decided() != Some(tonefit::Instruction::Finish) {
+                    return None;
+                }
+                live.summarized().cloned()
+            });
+            if let Some(report) = trialed
+                && let Some(mut live) = running.live()
+            {
+                let elapsed = live.overall().elapsed;
+                live.volume_finished(&report);
+                live.run_finished(tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish));
+                let mut whole = live.report().clone();
+                whole.elapsed = elapsed;
+                live.returned(Ok(whole));
+                drop(live);
+                scene.session.run_finished();
+            }
             // **夹具没有线程**：按到立即停止之后替那条线程收手。真会话里那条线程收到这个字
             // 就停在页边界上，主循环随后 `reap` 到它、会话回到结束了（`super::drive`）——
             // 这一步走的是同一条路，只是当场走完。
@@ -1490,6 +1555,330 @@ mod redesign {
                 "「{name}」走完回到了卷列表"
             );
         }
+    }
+
+    /// 把一个字符经**新输入入口**（[`super::input`]）交给会话。
+    fn feed(
+        session: &mut crate::session::state::Session,
+        running: &mut Running,
+        presets: &Presets,
+        here: &std::path::Path,
+        glyph: char,
+    ) -> Exit {
+        super::input(
+            session,
+            running,
+            presets,
+            here,
+            std::time::Instant::now(),
+            Window {
+                cols: 120,
+                rows: 36,
+            },
+            Input::Key(Key::Char(glyph)),
+        )
+    }
+
+    /// 等那条线程走到确认点上，会话跟着换一副样子——真会话里这一问每帧一次
+    /// （见 [`super::drive`]）。**转到条件成立为止**，不 sleep 撞运气。
+    fn settle_at_the_decision_point(
+        session: &mut crate::session::state::Session,
+        running: &mut Running,
+    ) {
+        while !running.deciding() {
+            assert!(!running.reap(), "那一趟一句话都没问就跑完了");
+            std::thread::yield_now();
+        }
+        session.at_the_decision_point(true);
+    }
+
+    /// 起一趟预览（两个卷各一页），跑到**头一个确认点**上停住：回会话与那一趟。
+    fn waiting_at_the_first_decision_point(
+        space: &tempfile::TempDir,
+        out: &std::path::Path,
+        names: [&str; 2],
+    ) -> (crate::session::state::Session, Running) {
+        let mut session = crate::session::state::Session::new();
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.scope.out = Some(out.to_path_buf());
+        for name in names {
+            session.scope.paths.push(crate::session::state::NamedPath {
+                path: crate::session::live::fixture::a_real_volume(space.path(), name),
+                on: true,
+            });
+        }
+        let mut running = Running::default();
+        // 这一条一个预设键都不按（见 [`presets`]）。
+        let nowhere = presets(space);
+        // 按 `t`：预览，因此这一趟改走 `Mode::Process` 并在每个确认点上等人
+        // （[`super::resuming`]）。
+        assert_eq!(
+            feed(&mut session, &mut running, &nowhere, space.path(), 't'),
+            Exit::Stay
+        );
+        settle_at_the_decision_point(&mut session, &mut running);
+        (session, running)
+    }
+
+    /// **三种答法经新输入入口到达等在确认点上的那条线程**（票面第三条）。
+    ///
+    /// 接头处与按停止那一条同一个位置
+    /// （[`pressing_stop_through_the_new_input_reaches_the_run_at_both_levels`]）：
+    /// 状态机把会话放回「跑着」那一副，本层把那个字**连同它管几卷**交给
+    /// [`Running::decide`]。**两副界面读的是同一份**（[`Deed::answer`]），
+    /// 旧那一副那两条用例在另一个用例模块里，这一条走的是新那一副这条路。
+    ///
+    /// 走的是整条路，**两趟**：
+    ///
+    /// - 头一趟：头一卷按 `x`（只写这一卷）→ **第二卷照旧停下来问** → 按 `s`
+    ///   （这一卷不写、就此收场）。盘上因此只有头一卷。
+    /// - 第二趟：头一卷按 `a` → 一路做完，**一次都不再问**。盘上两卷都有。
+    ///
+    /// **按停止按到的那一级自始至终一格不动**（票面第三条末一句；
+    /// `CONTEXT.md` 的《等待确认》：这里的 `s` 不是按停止）。
+    ///
+    /// 不开终端：[`super::input`] 收的是 `&mut Session` 与 `&mut Running`。
+    #[test]
+    fn the_three_answers_through_the_new_input_reach_the_thread_waiting_at_the_point() {
+        let space = tempfile::tempdir().expect("建得出临时目录");
+        let nowhere = presets(&space);
+
+        // ── 头一趟：`x` 只管这一卷，`s` 让它就此收场 ──
+        let out = space.path().join("出一");
+        let (mut session, mut running) =
+            waiting_at_the_first_decision_point(&space, &out, ["卷一", "卷二"]);
+        assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
+        assert_eq!(
+            feed(&mut session, &mut running, &nowhere, space.path(), 'x'),
+            Exit::Stay
+        );
+        assert!(!session.deciding(), "答完话会话还停在确认点上");
+
+        // 第二卷照旧问——`x` 没有替它答话。
+        settle_at_the_decision_point(&mut session, &mut running);
+        assert_eq!(
+            feed(&mut session, &mut running, &nowhere, space.path(), 's'),
+            Exit::Stay
+        );
+        while !running.reap() {
+            session.at_the_decision_point(running.deciding());
+            std::thread::yield_now();
+        }
+        session.run_finished();
+        assert!(out.join("卷一").is_dir(), "答了 `x` 的那一卷没写出来");
+        assert!(!out.join("卷二").exists(), "答了 `s` 的那一卷不该写出来");
+        assert_eq!(
+            session.stopping(),
+            tonefit::Instruction::Continue,
+            "确认点上答话不动按停止按到的那一级"
+        );
+
+        // ── 第二趟：`a` 之后一次都不再问 ──
+        let out = space.path().join("出二");
+        let (mut session, mut running) =
+            waiting_at_the_first_decision_point(&space, &out, ["卷三", "卷四"]);
+        assert_eq!(
+            feed(&mut session, &mut running, &nowhere, space.path(), 'a'),
+            Exit::Stay
+        );
+        while !running.reap() {
+            // 真停下来的话当场红，而不是挂在那儿等一个不会来的人。
+            assert!(
+                !running.deciding(),
+                "答过「后面的卷都写出」，它却又停下来问了"
+            );
+            session.at_the_decision_point(running.deciding());
+            std::thread::yield_now();
+        }
+        session.run_finished();
+        assert!(out.join("卷三").is_dir(), "头一卷没写出来");
+        assert!(out.join("卷四").is_dir(), "剩下的那一卷没写出来");
+        assert_eq!(
+            session.stopping(),
+            tonefit::Instruction::Continue,
+            "`a` 同样不动那一级"
+        );
+        assert_eq!(running.pressed(), tonefit::Instruction::Continue);
+        let live = running.live().expect("跑过一趟");
+        assert_eq!(live.for_the_rest(), Some(tonefit::Instruction::Continue));
+        assert_eq!(live.report().volumes.len(), 2);
+    }
+
+    /// **等待确认时 `v` 进这一卷的每页结果、`h` 回来再答**（票面第三条）：
+    /// 进的是**确认点上那一卷**，不是光标停着的那一行（那一刻光标停在它那个目录行上）；
+    /// 确认条照旧钉在总览底下，每页结果那一屏在这一档上照样画得出——灰阶分布那一行末尾
+    /// 写着「等待确认：还没写入任何文件」，框底边那一件 `a → 全部页` 照旧写着
+    /// （它不随阶段改口），而**屏底那一行 `a` 让给答话**、不摆它（停车场 Q778）。
+    #[test]
+    fn v_while_deciding_opens_the_pages_of_that_volume_and_h_comes_back() {
+        let scene = assert_sequence("deciding-v");
+        let pages = scene
+            .session
+            .views
+            .task
+            .pages
+            .as_ref()
+            .expect("`v` 换屏进了每页结果");
+        assert_eq!(
+            crate::render::volume_name(&pages.volume),
+            "第05卷",
+            "进的是确认点上那一卷"
+        );
+        assert_eq!(scene.session.views.block(), Focus::Pages);
+        assert!(
+            matches!(scene.session.views.task.cursor, Cursor::Directory(_)),
+            "卷列表的光标一格没挪：它本来就停在这一卷那个目录行上"
+        );
+        assert!(scene.session.deciding(), "看一眼不算答话");
+
+        let scene = assert_sequence("deciding-v-h");
+        assert!(scene.session.views.task.pages.is_none(), "`h` 回了卷列表");
+        assert!(scene.session.deciding(), "回来还在确认点上，照旧答得出");
+    }
+
+    /// **`x` 写出这一卷**（票面第二条、第三条）：那个字**连同它管几卷**交到了停在确认点上的
+    /// 那条线程手里（[`Running::decide`]），确认条收起来，**抬头当场翻成「转换」**
+    /// ——这一卷从此在写。**结论行仍是预览那一副**：盘上这一刻还什么都没有
+    /// （`Live::has_written` 要等这一卷收摊才翻，票面第四条）。
+    #[test]
+    fn x_writes_this_volume_and_the_title_turns_before_the_conclusion_line() {
+        let (scene, running, _) = walked("deciding-x");
+        assert!(!scene.session.deciding(), "答完话不再停在确认点上");
+        let live = running.live().expect("那一趟还在");
+        assert_eq!(
+            live.decided(),
+            Some(tonefit::Instruction::Continue),
+            "答的那个字没记下来"
+        );
+        assert_eq!(live.for_the_rest(), None, "`x` 只答这一卷");
+        assert!(
+            live.walking().is_some_and(|walking| walking.writes),
+            "这一卷从此在写：抬头照它翻成转换"
+        );
+        assert!(!live.has_written(), "它还没收摊，结论行这一刻不该翻");
+        drop(live);
+        assert_sequence("deciding-x");
+    }
+
+    /// **`a` 写出、后面的卷不再询问**（票面第二条、第三条）：同一个字，管的是后面每一卷
+    /// （[`Reach::ForTheRest`]）。**按停止按到的那一级一格不动**——那一格答的是另一问
+    /// （`CONTEXT.md` 的《等待确认》：这里的 `s` 不是按停止），会话与那一趟两头都没动它。
+    #[test]
+    fn a_answers_for_the_rest_and_leaves_the_stop_latch_alone() {
+        let (scene, running, _) = walked("deciding-a");
+        assert!(!scene.session.deciding(), "答完话不再停在确认点上");
+        assert_eq!(
+            scene.session.stopping(),
+            tonefit::Instruction::Continue,
+            "`a` 不该动按停止按到的那一级"
+        );
+        assert_eq!(
+            running.pressed(),
+            tonefit::Instruction::Continue,
+            "那一趟记着的那一格也没动"
+        );
+        let live = running.live().expect("那一趟还在");
+        assert_eq!(
+            live.for_the_rest(),
+            Some(tonefit::Instruction::Continue),
+            "「后面的卷都写出」没记下来"
+        );
+        drop(live);
+        assert_sequence("deciding-a");
+    }
+
+    /// **`s` 不写出、结束预览**（票面第二条）：这一卷的写出环节不做了，这一趟就此收场
+    /// ——总览抬头换成「已停止 ⋅ 处理到第 5 卷 ⋅ 用时 21s」、右端换成输出目录，
+    /// 卷列表上那一卷收了摊（目录行从 4/12 卷走到 5/12 卷）。
+    ///
+    /// **夹具那一头替那条线程收了手**（见 [`walked`]）：真会话里收手的是它，
+    /// 主循环随后 `reap` 到它。
+    #[test]
+    fn s_at_the_decision_point_ends_the_preview() {
+        let (scene, running, _) = walked("deciding-s");
+        assert_eq!(
+            scene.session.stage(),
+            super::super::state::Stage::Ended,
+            "那一趟收了场"
+        );
+        let live = running.live().expect("那一趟还在");
+        assert_eq!(live.decided(), Some(tonefit::Instruction::Finish));
+        assert!(!live.has_written(), "这一卷一个字节都没写，结论行不翻");
+        drop(live);
+        assert_sequence("deciding-s");
+    }
+
+    /// **答完一卷再推进**（票面第二条那两串）：`x` 之后 30 秒，第 5 卷写完了、
+    /// **第 6 卷又停下来问**——确认条回来了，而**抬头与结论行都成了转换那一副**
+    /// （这一趟真写出过一卷了，票面第四条）；`a` 之后 30 秒，
+    /// 一路做到第 33 卷，**一次都没再停**：屏底只剩 `s → 停止`。
+    ///
+    /// **「翻过不翻回」由这两串前后两屏夹住**：`deciding-x` 那一屏上第 5 卷还没收摊，
+    /// 结论行仍是预览那一副（`已分析 1 卷`）；这一串推进之后它收了摊，结论行成了
+    /// `完成 1 卷 ⋅ 跳过 4 卷 ⋅ 等待 79 卷`；`deciding-a-advance` 走到第 33 卷仍是那一副。
+    /// **那一格本身只升不降**由 `super::super::live` 那条用例钉着
+    /// （`the_run_has_written_once_the_first_volume_it_wrote_is_finished`，
+    /// 连「结束把写出过的那一格抹掉了」一起问）。
+    ///
+    /// **推进那几秒由这一串自己的场景数据接上**（`Scene::advance_to`，停车场 Q805）；
+    /// 两串的推进都摆在末一步上，「一串只推得动一次」那条断言踩不到（停车场 Q865）。
+    ///
+    /// **`deciding-x-advance` 总进度那一行的末一位数换一格**（换成同一行上
+    /// `46809` 里那个 `9`，同色同修饰）：设计稿那一头攒出来的 `r.steps` 是个
+    /// **差一丝不到 3799 的浮点数**，导出那一步 `num()` 四舍五入写成了 `3799`，
+    /// 而屏上那一格走的是 `Math.floor`、印出来是 `3798`——**同一个量，夹具与期望屏
+    /// 各印了一副**。这一趟一页一步，走出来的是整数 3799（场景数据自己的那一格也这么说，
+    /// `Scene` 的自检按它核过）。换完仍是一条断言：实现在那一格上写别的照样红。
+    /// 停车场 **Q899**，与 Q844 那一格（连续时间对一页一步）是同一类、不同根。
+    #[test]
+    fn answering_once_still_asks_the_next_volume_and_for_the_rest_does_not() {
+        let (scene, running, _) = walked("deciding-x-advance");
+        assert!(scene.session.deciding(), "下一卷照旧停下来问");
+        let live = running.live().expect("那一趟还在");
+        assert!(live.has_written(), "第一卷真写完了：结论行从此是转换那一副");
+        assert_eq!(live.for_the_rest(), None, "`x` 没有替后面的卷答话");
+        drop(live);
+        assert_sequence_with("deciding-x-advance", |expected| {
+            expected.cell_like(2, 57, 63)
+        });
+
+        let (scene, running, _) = walked("deciding-a-advance");
+        assert!(
+            !scene.session.deciding(),
+            "答过「后面的卷都写出」，它不再停下来问"
+        );
+        let live = running.live().expect("那一趟还在");
+        assert!(live.has_written());
+        assert_eq!(
+            live.for_the_rest(),
+            Some(tonefit::Instruction::Continue),
+            "那一格一路带着"
+        );
+        drop(live);
+        assert_sequence("deciding-a-advance");
+    }
+
+    /// **等待确认时 `2` 切到配置视图**（`CONTEXT.md` 的《视图》：人在配置视图时顶栏右端
+    /// 另带着「等待确认」）：确认条不跟过去——它是任务视图那一屏上的一块，
+    /// 而那一问由顶栏右端那一枚说。三组设置此刻仍旧只读、看得见、进得去。
+    #[test]
+    fn two_while_deciding_shows_the_config_view_with_the_waiting_badge() {
+        let scene = assert_sequence("deciding-2");
+        assert_eq!(scene.session.views.view, super::super::view::View::Config);
+        assert!(scene.session.deciding(), "切一次视图不算答话");
+    }
+
+    /// **等待确认时 `?` 掀开全部按键**：那一张**只列这一档派得出的键**——
+    /// 「确认」那一组四行（`x`／`a`／`s`／`v`，每一行那一句出自按键表）在场，
+    /// 底下整屏压暗、卷列表的框跟着细下来，而**确认条照旧是粗黄框**（它不随焦点改）。
+    #[test]
+    fn help_while_deciding_lists_the_keys_of_this_stage() {
+        let scene = assert_sequence("deciding-help");
+        assert!(matches!(
+            scene.session.views.cover,
+            Some(Overlay::Keys { .. })
+        ));
+        assert!(scene.session.deciding(), "掀一张覆盖层不算答话");
     }
 
     /// **备注行上 `⏎` 掀开说明卡、`Esc` 关**（票面第二条、第二个验收框）：

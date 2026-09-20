@@ -13,7 +13,7 @@
 //! | 摆不下时谁让位 | [`yielding`] | 本票（最小尺寸、总览两行那一档、路径那一列） |
 //! | 顶栏 | [`topbar`] | 本票 |
 //! | 总览 | [`overview`] | 06：还没开始那一副宽窄两档；08：清点中与跑起来；10：结束之后 |
-//! | 确认条 | — | 等待确认那一票 |
+//! | 确认条 | [`decision`] | 12 |
 //! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
 //! | 每页结果 | [`pages`] | 11 |
 //! | 顶上一条预设 | [`preset`] | 13 |
@@ -35,6 +35,7 @@
 
 mod canvas;
 mod completions;
+mod decision;
 mod details;
 mod footer;
 mod list;
@@ -81,8 +82,8 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
     footer::draw(&mut canvas, session, live, phase, now);
 }
 
-/// 任务视图：顶栏底下总览钉住，剩下的高度给卷列表**或者**每页结果（确认条随它那一票
-/// 接进来），屏底一行。
+/// 任务视图：顶栏底下总览钉住，等待确认时接一条**确认条**，剩下的高度给卷列表**或者**
+/// 每页结果，屏底一行。
 ///
 /// **进了一卷就换掉整张卷列表**（`CONTEXT.md` 的《每页结果》：换掉卷列表、占整宽）：
 /// 那一格里两块只画得出一块，判据是[进了哪一卷](super::view::TaskView::pages)那一格，
@@ -97,6 +98,11 @@ fn task(
 ) {
     let mut y = 1;
     y += overview::draw(canvas, session, live, phase, now, y);
+    // **确认条钉在总览正下方**（`CONTEXT.md` 的《确认条》：不弹窗、不盖住卷列表）：
+    // 它只在等待确认那一档在场，底下那一块跟着矮几行。
+    if phase == Phase::Deciding {
+        y += decision::draw(canvas, session, live, y);
+    }
     let height = screen.height.saturating_sub(1 + y);
     let area = Rect::new(0, y, screen.width, height);
     if session.views.task.pages.is_some() {
@@ -225,6 +231,19 @@ mod tests {
     fn the_pages_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("pages", 120, 36);
         assert_scene("pages", 80, 24);
+    }
+
+    /// **「等待确认」120×36 与 80×24 逐格相等**（`session-redesign/12` 票面第一条）：
+    /// 总览抬头是「预览 ⋅ 第 5/84 卷 ⋅ **等待确认**」、**不画预计**（那一刻横条一动不动），
+    /// 底下钉着**确认条**——这一卷 · 灰阶分布 · 需留意几页一行，三种答法与 `v` 一行，
+    /// 底边说目前还没有写入任何文件；卷列表照旧在屏上，那一卷标 `?`、自动滚动停在它那一行。
+    ///
+    /// **80 列那一档确认条收成短句**（`CONTEXT.md` 的《让位》：不到 110 列）：
+    /// 卷名从中间省略、灰阶分布只报前两档、四句各收短一截。
+    #[test]
+    fn the_deciding_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("deciding", 120, 36);
+        assert_scene("deciding", 80, 24);
     }
 
     /// **「整卷统一灰阶」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：

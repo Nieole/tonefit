@@ -3,7 +3,7 @@
 //! 宽度：卷列表砍列（随树那一票接进 `super::super::columns`）、配置视图不到 90 列单栏、
 //! 确认条不到 110 列短句、横条先收窄后让掉；高度：屏底恒一行，不到 30 行总览正文两行，
 //! 卷列表吃剩下的高度。**不到 60×16 整屏只剩窗口太小**（[`too_small`]）。
-//! 本票落地的是最小尺寸、总览那一档与开跑之前路径那一列的宽度；其余各档随各票接进来。
+//! 砍列那一档在 `super::super::columns`；其余各档都在本模块。
 
 use ratatui::layout::Rect;
 
@@ -15,6 +15,9 @@ const COMPACT_BELOW: u16 = 30;
 
 /// 不到这么多列时配置视图退成单栏（`CONTEXT.md` 的《让位》）。
 const SINGLE_COLUMN_BELOW: u16 = 90;
+
+/// 不到这么多列时确认条收成短句（`CONTEXT.md` 的《让位》）。
+const SHORT_DECISION_BELOW: u16 = 110;
 
 /// 设置栏至多多宽，以及两栏摆得下时它占整屏的几成（设计稿 `drawConfig` 的 `LW`）。
 const SETTINGS_WIDEST: u16 = 56;
@@ -33,6 +36,11 @@ pub(super) fn compact(screen: Rect) -> bool {
 /// 配置视图退不退成单栏。
 pub(super) fn single_column(screen: Rect) -> bool {
     screen.width < SINGLE_COLUMN_BELOW
+}
+
+/// 确认条收不收成短句（`CONTEXT.md` 的《确认条》：宽度不到 110 列收成短句）。
+pub(super) fn short_decision(screen: Rect) -> bool {
+    screen.width < SHORT_DECISION_BELOW
 }
 
 /// 设置栏有多宽：整屏的四成半，至多 56 列；退成单栏那一刻它占整屏。
@@ -65,6 +73,14 @@ mod tests {
         assert!(too_small(Rect::new(0, 0, 60, 15)));
         assert!(compact(Rect::new(0, 0, 80, 24)));
         assert!(!compact(Rect::new(0, 0, 120, 36)));
+    }
+
+    /// 确认条：110 列起摆整句，差一列就收成短句（`CONTEXT.md` 的《确认条》）。
+    #[test]
+    fn the_decision_bar_falls_back_to_short_sentences_below_one_hundred_and_ten_columns() {
+        assert!(!short_decision(Rect::new(0, 0, 110, 36)));
+        assert!(short_decision(Rect::new(0, 0, 109, 36)));
+        assert!(short_decision(Rect::new(0, 0, 80, 24)));
     }
 
     /// 配置视图：90 列起两栏，设置栏占四成半、至多 56 列；退成单栏时它占整屏。

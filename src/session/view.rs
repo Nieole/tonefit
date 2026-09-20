@@ -958,6 +958,11 @@ impl Session {
             // 是终端层那一支（`super::terminal::input`）——两处记的是同一个字，
             // 出处只有这一份。
             Deed::Stop => self.stop_a_notch(now),
+            // **确认点上答话那三件**：把会话放回「跑着」那一副、屏底说一句。
+            // **把那个字交给停在确认点上的那条线程**是终端层那一支
+            // （`super::terminal::input`）——与按停止那一件同一条分工，
+            // 而「哪个键答哪个字」在 [`Deed::answer`] 一处，两处不各算一遍。
+            Deed::Write | Deed::WriteAll | Deed::End => self.answer_the_point(deed, now),
             Deed::Open => self.open_under_cursor(),
             Deed::Close => self.collapse_directory(),
             // **`F` 交回自动滚动**：扳回那一格、屏底说一句是这里的事；而**光标当场
@@ -1092,6 +1097,36 @@ impl Session {
     /// 全部按键那一张自己会先把滚动那几件收走，见 [`Views::scroll_cover`]）。
     fn on_the_volume_list(&self) -> bool {
         self.views.view == View::Task && self.views.task.focus() == Focus::VolumeList
+    }
+
+    /// **确认点上答完那一个字**：阶段放回[跑着](Stage::Running)、屏底说一句这一下做了什么
+    /// （`CONTEXT.md` 的《等待确认》）。
+    ///
+    /// **按停止按到的那一级一格不动**（[`Session::answered`]）：这里答的是「这一卷的写出环节
+    /// 还做不做」，不是「这一趟还走不走」——`a` 尤其不改它（票面第三条）。
+    ///
+    /// 屏底那三句**各说各的落点**：`x` 与 `a` 都是绿的「要写了」，差别在管几卷；
+    /// `s` 是黄的「这一趟到此为止」。三句照设计稿 `taskKey` 那一支逐字。
+    fn answer_the_point(&mut self, deed: Deed, now: Instant) {
+        let said = match deed {
+            Deed::Write => vec![
+                Segment::new("写出这一卷", Look::kind(Kind::Done).bold()),
+                Segment::faint("（不用重新分析）"),
+            ],
+            Deed::WriteAll => vec![
+                Segment::new("全部写出：", Look::kind(Kind::Done).bold()),
+                Segment::plain("后面的卷不再询问"),
+            ],
+            Deed::End => vec![
+                Segment::new("已结束预览：", Look::tone(Tone::Caution).bold()),
+                Segment::plain("这一卷不写出，后面的卷也不处理"),
+            ],
+            // **答得出话的只有那三件**（[`Deed::answer`] 一处），别的到不了这里；
+            // 真到了也只是这一下没答话，不是错——不让它顺着落到某一句上。
+            _ => return,
+        };
+        self.answered();
+        self.views.say(said, now);
     }
 
     /// 按停止升一级，屏底说一句：按一次做完当前卷再停，再按一次立即停止。
