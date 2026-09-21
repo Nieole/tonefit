@@ -47,6 +47,8 @@
 //! （[`tonefit::HARD_SPACE`]，规矩在那一处），以及**挑摆得进列里的字形**
 //! （[`SEPARATOR`]，判定依据是 `tonefit::width_is_stable`）。
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
 
 use tonefit::{
@@ -902,16 +904,27 @@ pub fn grouped(listed: &[Listed<'_>]) -> Vec<Group> {
 /// 喂给它的是一列卷根——报告那一侧是收摊了的与没做成的那几卷，会话那一侧是**清点清单**
 /// （开跑之前就有身份的那一份；spec《卷列表》清点之后：「分组仍是报告那一份，喂的是清点清单」）。
 /// 分组的规矩一个字不改：目录取卷根的父目录，**不重排**。
+///
+/// **每一卷按目录查一张表认回它那一组，不逐组比**：会话每画一帧都要分组
+/// （目录表那一副一帧两遍：分出那几枝、再各拼一行），而且是**握着那一趟攒着的那份东西的锁**
+/// 画的——计算线程每走一步都要拿同一把锁（`crate::session::run`）。逐组比是「卷数 × 目录数」，
+/// 一个几千卷、几百个系列目录的库跑到一半，画一帧就长过了帧与帧之间那一段空档，
+/// 计算线程大半时间等在锁上，读盘与 CPU 一起掉下去。
 pub fn grouped_roots<'a>(roots: impl IntoIterator<Item = &'a Path>) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
+    // 目录 → 它是 `groups` 里的第几组。组的先后仍是 `groups` 那一列定的（头一条出现的先后）。
+    let mut known: HashMap<&'a Path, usize> = HashMap::new();
     for (at, root) in roots.into_iter().enumerate() {
         let directory = directory_of(root);
-        match groups.iter_mut().find(|group| group.directory == directory) {
-            Some(group) => group.at.push(at),
-            None => groups.push(Group {
-                directory: directory.to_path_buf(),
-                at: vec![at],
-            }),
+        match known.entry(directory) {
+            Entry::Occupied(group) => groups[*group.get()].at.push(at),
+            Entry::Vacant(group) => {
+                group.insert(groups.len());
+                groups.push(Group {
+                    directory: directory.to_path_buf(),
+                    at: vec![at],
+                });
+            }
         }
     }
     groups
