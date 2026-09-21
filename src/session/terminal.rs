@@ -9,14 +9,14 @@
 //! 起一趟、按停止、答话、进一卷的每页结果、读写盘上那份预设、把灰阶测试图交给库里第三个 seam。
 //! 那几支要的是那一趟、那块盘与那个库，而状态机三样都不碰。
 
-use std::io::{IsTerminal, Stderr, stderr};
+use std::io::{BufWriter, IsTerminal, Stderr, stderr};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEventKind,
@@ -33,11 +33,13 @@ use super::home::Home;
 use super::keymap::{Deed, Phase};
 use super::live::{Live, Resuming, VolumeState};
 use super::look::{Kind, Look, Segment};
-use super::run::Running;
+use super::run::{Glimpse, Running};
 use super::shell;
 use super::state::{Exit, Key, Session};
 use super::tone::Tone;
-use super::view::{CHART_LINGERS, Clicked, Cursor, Input, NamedPreset, Pages, View, Window};
+use super::view::{
+    CHART_LINGERS, Clicked, Cursor, Input, NamedPreset, Pages, Step, View, Window, turn,
+};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -93,7 +95,7 @@ pub fn enter() -> Result<u8> {
     Ok(running.exit_code())
 }
 
-/// 画一屏、等一个输入（最多等 [`TICK`]）、做掉它，直到用户退出。
+/// 转一圈又一圈，直到用户退出：做掉积压的那一批输入、画**一帧**、等下一批（最多等 [`TICK`]）。
 fn drive(
     screen: &mut Screen,
     session: &mut Session,
@@ -101,49 +103,96 @@ fn drive(
     presets: &Presets,
     here: &Path,
 ) -> Result<()> {
+    let mut glimpse = Glimpse::default();
+    let mut pending = Vec::new();
     loop {
-        // **这一帧的「此刻」**：单调时钟一帧读一次，会话里要时刻的地方都读它
-        // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）——屏上那几个数、
-        // 屏底那句回话到没到点、连击键的待续记号，出自同一个时刻。
-        let now = Instant::now();
-        {
-            // 借着锁画：画完当场还回去，计算线程最多等一帧的功夫（见 `Running::live`）。
-            let mut live = running.live();
-            if let Some(live) = live.as_deref_mut() {
-                live.tick(now);
-                // **每一帧盯一眼那一趟**：清点的产出到了就把树拼出来，自动滚动开着时
-                // 光标跟到正在处理的那一卷（`Session::watch_the_run`）。
-                session.watch_the_run(live);
-            }
-            // **画完这一帧，记下它交出的点得中的区域**：下一下单击按它落（`Session::click`）。
-            let mut hits = Vec::new();
-            screen
-                .terminal
-                .draw(|frame| hits = shell::draw(frame, session, live.as_deref(), now))?;
-            session.views.hits = hits;
+        let turned = one_turn(
+            &mut screen.terminal,
+            session,
+            running,
+            presets,
+            here,
+            &mut glimpse,
+            std::mem::take(&mut pending),
+        )?;
+        if turned == Exit::Leave {
+            running.leave();
+            return Ok(());
         }
-        if event::poll(TICK)? {
-            let Some(typed) = translate_input(&event::read()?) else {
-                continue;
-            };
-            let size = screen.terminal.size()?;
-            let window = Window {
-                cols: size.width,
-                rows: size.height,
-            };
-            if input(session, running, presets, here, now, window, typed) == Exit::Leave {
-                running.leave();
-                return Ok(());
-            }
-        }
-        // 那一趟停在确认点上了：会话跟着停下来等人答话（`p1-session/14`）。
-        // 停在那儿的是计算线程，而状态机碰不到线程——这一层问得到，把答案交进去。
-        session.at_the_decision_point(running.deciding());
-        // 那一趟跑完了：配置又改得动。
-        if running.reap() {
-            session.run_finished();
+        pending = waited()?;
+    }
+}
+
+/// **等下一批输入**：最多等 [`TICK`]；等到一个就把终端里**已经积压**的全部读空
+/// （`session-redesign/17`，spec《卡顿的根因》）。没等到交回空的一批——照样画一帧。
+fn waited() -> Result<Vec<Input>> {
+    let mut pending = Vec::new();
+    if !event::poll(TICK)? {
+        return Ok(pending);
+    }
+    loop {
+        pending.extend(translate_input(&event::read()?));
+        if !event::poll(Duration::ZERO)? {
+            return Ok(pending);
         }
     }
+}
+
+/// **那条循环的一转**（[`turn`] 排的那几步）：积压的那一批按序交给会话
+/// （连滚几格已经合成一次挪动），然后**只画一帧**。
+///
+/// 画那一帧**不借那把锁**：锁里只给「此刻」、那一趟攒下的东西变了才拷一份
+/// （[`Running::glimpse`]），画法读的是拷出来的那一份。
+///
+/// **点得中的区域**跟着这一帧换（`session.views.hits`）：一转只画一帧、每一转都画，
+/// 下一批里的单击落到的因此恒是屏上此刻那一帧。
+fn one_turn<B: Backend<Error = std::io::Error>>(
+    terminal: &mut Terminal<B>,
+    session: &mut Session,
+    running: &mut Running,
+    presets: &Presets,
+    here: &Path,
+    glimpse: &mut Glimpse,
+    pending: Vec<Input>,
+) -> Result<Exit> {
+    // **这一转的「此刻」**：单调时钟一转读一次，会话里要时刻的地方都读它
+    // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）——屏上那几个数、
+    // 屏底那句回话到没到点、连击键的待续记号，出自同一个时刻。
+    let now = Instant::now();
+    for step in turn(pending) {
+        match step {
+            Step::Take(typed) => {
+                let size = terminal.size()?;
+                let window = Window {
+                    cols: size.width,
+                    rows: size.height,
+                };
+                if input(session, running, presets, here, now, window, typed) == Exit::Leave {
+                    return Ok(Exit::Leave);
+                }
+            }
+            Step::Draw => {
+                // 那一趟停在确认点上了：会话跟着停下来等人答话（`p1-session/14`）。
+                // 停在那儿的是计算线程，而状态机碰不到线程——这一层问得到，把答案交进去。
+                session.at_the_decision_point(running.deciding());
+                // 那一趟跑完了：配置又改得动。
+                if running.reap() {
+                    session.run_finished();
+                }
+                running.glimpse(now, glimpse);
+                let live = glimpse.live();
+                if let Some(live) = live {
+                    // **每一帧盯一眼那一趟**：清点的产出到了就把树拼出来，自动滚动开着时
+                    // 光标跟到正在处理的那一卷（`Session::watch_the_run`）。
+                    session.watch_the_run(live);
+                }
+                let mut hits = Vec::new();
+                terminal.draw(|frame| hits = shell::draw(frame, session, live, now))?;
+                session.views.hits = hits;
+            }
+        }
+    }
+    Ok(Exit::Stay)
 }
 
 /// 把一个输入交给会话（ADR 0019；spec《缝》）。收的是键或鼠标（[`Input`]），
@@ -660,8 +709,13 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
 /// 恐慌那一条还多一道：[`hook_the_panic`] 让恐慌信息印在**还原之后**的屏幕上。
 /// 只靠 `Drop` 的话那几行会印进 alternate screen，然后随着它一起消失。
 struct Screen {
-    terminal: Terminal<CrosstermBackend<Stderr>>,
+    terminal: Terminal<CrosstermBackend<BufWriter<Stderr>>>,
 }
+
+/// 画到 stderr 那一路的缓冲有多大（`session-redesign/17`）：**一帧写完冲一次**——
+/// ratatui 画完一帧冲一次后端，而缓冲装得下整整一帧才真是一次。
+/// 取 256 KiB：一屏每一格都换了颜色也装得下。
+const FRAME_BUFFER: usize = 256 * 1024;
 
 impl Screen {
     fn open() -> Result<Self> {
@@ -671,9 +725,12 @@ impl Screen {
         // `Screen` 还没造出来，`Drop` 顶不上，只能在这里自己收。
         // **鼠标捕获与 alternate screen 一起进**（spec《鼠标》）：还回去在 [`restore`] 同一处。
         // 捕获之后选屏上的字要按住 Shift 拖——ADR 0019《后果》认下的代价，不另设开关。
-        match execute!(stderr(), EnterAlternateScreen, EnableMouseCapture)
-            .and_then(|()| Terminal::new(CrosstermBackend::new(stderr())))
-        {
+        match execute!(stderr(), EnterAlternateScreen, EnableMouseCapture).and_then(|()| {
+            Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(
+                FRAME_BUFFER,
+                stderr(),
+            )))
+        }) {
             Ok(terminal) => Ok(Self { terminal }),
             Err(error) => {
                 let _ = restore();
@@ -857,7 +914,7 @@ mod redesign {
                 let elapsed = live.overall().elapsed;
                 live.volume_finished(&report);
                 live.run_finished(tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish));
-                let mut whole = live.report().clone();
+                let mut whole = live.report();
                 whole.elapsed = elapsed;
                 live.returned(Ok(whole));
                 drop(live);
@@ -873,7 +930,7 @@ mod redesign {
                 // 库交出来的那一份与攒着的只差计时（与 `scene::replay` 收场那一段同形）。
                 let elapsed = live.overall().elapsed;
                 live.run_finished(tonefit::RunOutcome::Stopped(tonefit::Instruction::Abort));
-                let mut report = live.report().clone();
+                let mut report = live.report();
                 report.elapsed = elapsed;
                 live.returned(Ok(report));
                 drop(live);
@@ -2752,3 +2809,7 @@ mod tests {
         assert_eq!(translate(&press(KeyCode::BackTab)), None);
     }
 }
+
+// 卡顿的替代量法（`session-redesign/17`）：`#[ignore]` 的量具，不进闸门。
+#[cfg(test)]
+mod measure;

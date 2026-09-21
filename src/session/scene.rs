@@ -1871,11 +1871,11 @@ mod tests {
         }
 
         // 灰阶分布与需留意的页：收摊了的卷在报告上，等待确认的那一卷在攒着的那一份上。
+        let whole = live.report();
         for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
             let Some(tally) = &volume.tally else { continue };
             let root = scene.path(&listed.root);
-            let report = live
-                .report()
+            let report = whole
                 .volumes
                 .iter()
                 .find(|report| report.volume == root)
@@ -1913,8 +1913,7 @@ mod tests {
         // 没做成的卷：那句原因。
         for volume in run.volumes.iter().filter(|volume| volume.state == "failed") {
             let root = scene.path(&volume.root);
-            let failure = live
-                .report()
+            let failure = whole
                 .failed_volumes
                 .iter()
                 .find(|failure| failure.volume == root)
@@ -2131,10 +2130,10 @@ mod on_the_grid {
     fn report_of<'a>(scene: &'a Scene, root: &str) -> &'a VolumeReport {
         let live = scene.live();
         let root = scene.path(root);
-        live.report()
-            .volumes
+        live.roster()
             .iter()
-            .find(|report| report.volume == root)
+            .position(|listed| listed.root == root)
+            .and_then(|at| live.report_at(at))
             .unwrap_or_else(|| panic!("报告上没有 {}", root.display()))
     }
 

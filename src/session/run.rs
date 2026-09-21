@@ -36,9 +36,11 @@
 //! 而立即停止停在**页边界**上（ADR 0013 决定第 2 条），当前卷那格 `partial` 丢掉、
 //! 最终位置一个字节都没动过——退出会话不该在盘上留下半卷。
 
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use tonefit::{Event, Instruction, Pass, Progress, ProgressSink, Report, Request};
@@ -53,7 +55,7 @@ use crate::render::plain::ReportFold;
 #[derive(Default)]
 pub struct Running {
     /// 边跑边攒的那一份。还没跑过就是 `None`。
-    live: Option<Arc<Mutex<Live>>>,
+    live: Option<Shared>,
     /// 那条线程。收掉之后（或者还没起过）是 `None`。
     thread: Option<JoinHandle<Result<Report>>>,
     /// **先前那一趟做成了的报告**，照命令行那一路的原格式。一趟都没做成过是 `None`。
@@ -107,7 +109,7 @@ impl Running {
         // 而不是把一条还在往盘上写字节的线程悄悄甩掉。
         debug_assert!(self.thread.is_none(), "上一趟还没收掉就起了第二趟");
         self.collect();
-        let live = Arc::new(Mutex::new(Live::new(&request, resumes)));
+        let live = Stamped::shared(Live::new(&request, resumes));
         // 闩换一个新的：上一趟按下的停到此为止（见 [`Self::latch`]）。
         // 会话那一侧同一刻也把它那一份归零（`super::state::Session::run_started`）。
         let latch = Arc::new(Latch::default());
@@ -133,7 +135,7 @@ impl Running {
     )]
     pub(super) fn holding(live: Live) -> Self {
         let mut running = Self::default();
-        running.live = Some(Arc::new(Mutex::new(live)));
+        running.live = Some(Stamped::shared(live));
         running
     }
 
@@ -237,7 +239,7 @@ impl Running {
             // 取得到的恒是**先前**那一份（见 [`earlier`](Self::earlier)）。
             if live.undone().is_none() {
                 self.earlier = Some(crate::render::plain::report(
-                    live.report(),
+                    &live.report(),
                     live.mode(),
                     ReportFold::Off,
                 ));
@@ -254,18 +256,71 @@ impl Running {
         self.latch.get()
     }
 
+    /// **扮计算线程报一步**：另一条线程上拿一次锁、折一步，交回等锁等了多久
+    /// （卡顿的替代量法，`super::terminal` 的 `measure`）。
+    #[cfg(all(test, feature = "tui"))]
+    pub(super) fn a_step_from_another_thread(
+        &self,
+    ) -> impl Fn() -> std::time::Duration + Send + Sync + 'static {
+        let shared = Arc::clone(self.live.as_ref().expect("有一趟"));
+        move || {
+            let asked = Instant::now();
+            let mut held = Self::held(&shared);
+            let waited = asked.elapsed();
+            held.stepped();
+            waited
+        }
+    }
+
     /// 攒着的那一份。还没跑过就是 `None`。
     ///
-    /// 借的是锁：画一帧的工夫里计算线程报到会等在这里。那是这一处**唯一**的代价，
-    /// 而它有界——画一帧不等任何人。
-    pub fn live(&self) -> Option<MutexGuard<'_, Live>> {
+    /// 借的是锁：借着的工夫里计算线程报到会等在这里。**画一帧不借它**——画的是
+    /// [锁里拷出来的那一份](Self::glimpse)；借它的只剩认一个键、盯一眼那一趟那几处。
+    pub fn live(&self) -> Option<Held<'_>> {
         self.live.as_ref().map(Self::held)
+    }
+
+    /// **画一帧要的那一份**（`session-redesign/17`，spec《卡顿的根因》）：锁里只做两件——
+    /// 给那一趟这一帧的「此刻」（[`Live::tick`]），以及**那一趟攒下的东西变了**时拷一份；
+    /// 没变就不拷，接着用上一帧那一份。锁一还，画法读的是拷出来的这一份，
+    /// 计算线程报到不再等一整帧。
+    ///
+    /// 拷一份不贵：收摊了的卷一卷一个 `Arc`（`Live` 的 `settled`），拷的是指针。
+    /// **宁可多拷一次**：借着锁改过一回（[`Held`] 的 `DerefMut`）就算变了，
+    /// 换了一趟（[`start`](Self::start)）也算。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有那条循环读得到，而它在 tui 特性后面")
+    )]
+    pub fn glimpse(&self, now: Instant, glimpse: &mut Glimpse) {
+        let Some(shared) = &self.live else {
+            glimpse.taken = None;
+            return;
+        };
+        {
+            let mut held = Self::held(shared);
+            held.tick(now);
+            let fresh = glimpse.taken.as_ref().is_some_and(|taken| {
+                taken.changes == held.0.changes
+                    && Weak::ptr_eq(&taken.from, &Arc::downgrade(shared))
+            });
+            if !fresh {
+                glimpse.taken = Some(Taken {
+                    from: Arc::downgrade(shared),
+                    changes: held.0.changes,
+                    live: held.0.live.clone(),
+                });
+            }
+        }
+        if let Some(taken) = &mut glimpse.taken {
+            taken.live.tick(now);
+        }
     }
 
     /// 中毒了照样用：里面是一份攒着的报告，一条线程恐慌不该让主区从此哑掉
     /// （与命令行那一侧的 `Bar::held` 同一条规矩）。
-    fn held(live: &Arc<Mutex<Live>>) -> MutexGuard<'_, Live> {
-        live.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn held(live: &Shared) -> Held<'_> {
+        Held(live.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
     }
 
     /// 退出会话时交出去的那个数，**与命令行那一路一致**（见 [`Live::exit_code`]）。
@@ -294,7 +349,7 @@ impl Running {
     /// **退出码一格没动**（[`exit_code`](Self::exit_code)）：它仍取最后那一趟。
     pub fn report(&self) -> Option<String> {
         let live = self.live()?;
-        let attempt = crate::render::plain::report(live.report(), live.mode(), ReportFold::Off);
+        let attempt = crate::render::plain::report(&live.report(), live.mode(), ReportFold::Off);
         let Some(said) = live.undone() else {
             // 做成了：这一趟那一份，与本票落地之前逐字相同。
             return Some(attempt);
@@ -315,12 +370,96 @@ impl Drop for Running {
     }
 }
 
+/// 攒着的那一份连同那把锁：会话这一头与计算线程共用。
+type Shared = Arc<Mutex<Stamped>>;
+
+/// 攒着的那一份，连同它**借着锁被改过几回**（`session-redesign/17`）：
+/// [`Running::glimpse`] 按它判「那一趟攒下的东西变没变」。
+#[derive(Debug)]
+struct Stamped {
+    live: Live,
+    changes: u64,
+}
+
+impl Stamped {
+    fn shared(live: Live) -> Shared {
+        Arc::new(Mutex::new(Self { live, changes: 0 }))
+    }
+}
+
+/// **借着锁的那一份**（[`Running::live`]）。读它是 [`Live`]；**改它一次记一回**
+/// （`DerefMut`）——改没改、改了什么不必逐处去认，画一帧的那一份因此不会漏拷。
+pub struct Held<'a>(MutexGuard<'a, Stamped>);
+
+impl Held<'_> {
+    /// 给这一帧的「此刻」。**不记一回**：此刻每一帧都换，而它不是那一趟攒下的东西——
+    /// 画一帧的那一份另给同一个时刻（[`Running::glimpse`]）。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有那条循环读得到，而它在 tui 特性后面")
+    )]
+    fn tick(&mut self, now: Instant) {
+        self.0.live.tick(now);
+    }
+}
+
+impl Deref for Held<'_> {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.0.live
+    }
+}
+
+impl DerefMut for Held<'_> {
+    fn deref_mut(&mut self) -> &mut Live {
+        self.0.changes = self.0.changes.wrapping_add(1);
+        &mut self.0.live
+    }
+}
+
+/// **画一帧的那一份**：[`Running::glimpse`] 锁里拷出来、锁外画的 [`Live`]。
+/// 画法拿到的是它，**不是那把锁的守卫**。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有那条循环读得到，而它在 tui 特性后面")
+)]
+#[derive(Debug, Default)]
+pub struct Glimpse {
+    taken: Option<Taken>,
+}
+
+impl Glimpse {
+    /// 拷出来的那一份。还没跑过就是 `None`。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有那条循环读得到，而它在 tui 特性后面")
+    )]
+    pub fn live(&self) -> Option<&Live> {
+        self.taken.as_ref().map(|taken| &taken.live)
+    }
+}
+
+/// 拷出来的那一份，连同它拷自哪一趟、拷时改过几回。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有那条循环读得到，而它在 tui 特性后面")
+)]
+#[derive(Debug)]
+struct Taken {
+    /// 拷自哪一趟的那把锁：换了一趟，改过几回从头数，单比那个数会认错。
+    /// 留弱引用：那一趟的那块地方因此不会被下一趟重用，比地址不会撞上。
+    from: Weak<Mutex<Stamped>>,
+    changes: u64,
+    live: Live,
+}
+
 /// 会话这一侧的观察者：**把事件折进 [`Live`]，回一个指令。**
 ///
 /// 它从计算线程上被调到，因此拿的是一把锁；锁里做的事只有「折一条事件」，
 /// 不画、不等人——画是 UI 那条线程的事。回的那个字读的是[闩](Latch)，**不进那把锁**。
 struct Watch {
-    live: Arc<Mutex<Live>>,
+    live: Shared,
     latch: Arc<Latch>,
     /// 确认点上等人的那一趟才有这道闸（见 [`Running::gate`]）。
     gate: Option<Arc<Gate>>,
@@ -644,7 +783,7 @@ mod tests {
         // 攒下来的那一份：抬头那几件事从 `Request` 上就答得出，因此它一定有内容。
         // **非空这一句非问不可**：空串上 `starts_with` 与下面那个切片恒成立，
         // 少了它，下面两条就成了「印了那句话就行」，第一段丢掉也红不了。
-        let worked_out = crate::render::plain::report(live.report(), live.mode(), ReportFold::Off);
+        let worked_out = crate::render::plain::report(&live.report(), live.mode(), ReportFold::Off);
         assert!(worked_out.starts_with("设备配置 "), "{worked_out}");
         drop(live);
 
@@ -798,7 +937,7 @@ mod tests {
         let request = a_one_volume_run(&workspace);
         let out = request.output_root.clone();
         let latch = Arc::new(Latch::default());
-        let live = Arc::new(Mutex::new(Live::new(&request, Resuming::GoesOn)));
+        let live = Stamped::shared(Live::new(&request, Resuming::GoesOn));
         let report = tonefit::run(&Request {
             progress: Some(ProgressSink::new(FinishOnceTheVolumeStarts {
                 watch: Watch {

@@ -664,6 +664,39 @@ impl Input {
     }
 }
 
+/// 那条循环**一转**里的一步（`session-redesign/17`，spec《卡顿的根因》；[`turn`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// 把一个输入交给会话。
+    Take(Input),
+    /// 画一帧。
+    Draw,
+}
+
+/// **一转做什么**：终端里积压的输入（已经读空了的那一批，按到达的先后）按序交出去，
+/// 末尾**只画一帧**；**同向连着滚的几格合成一次挪动**（[`Input::Wheel`] 的格数相加）。
+///
+/// 触控板一阵甩出几十格，从前一格画一帧、一帧整屏重写一遍——卡的正是这一截。
+/// **只合同向、连着的**：键隔开的、掉了头的各算各的。同向的几格挪到头都停在头上，
+/// 合成之后的落点于是与一格一格挪完全相同；掉头的几格一合，撞过头的那一截就量不出来了。
+///
+/// 没有积压也画一帧：跑着的那一趟靠它动起来（`super::terminal::TICK`）。
+pub fn turn(pending: impl IntoIterator<Item = Input>) -> Vec<Step> {
+    let mut steps: Vec<Step> = Vec::new();
+    for input in pending {
+        if let (Input::Wheel(more), Some(Step::Take(Input::Wheel(so_far)))) =
+            (input, steps.last_mut())
+            && more.signum() == so_far.signum()
+        {
+            *so_far = so_far.saturating_add(more);
+            continue;
+        }
+        steps.push(Step::Take(input));
+    }
+    steps.push(Step::Draw);
+    steps
+}
+
 /// **滚轮一格挪几行**（spec《鼠标》；设计稿 `onWheel`）。
 const WHEEL_ROWS: isize = 3;
 
@@ -1436,7 +1469,7 @@ impl Session {
     pub fn listed_pages(&self, live: Option<&Live>) -> Option<Vec<usize>> {
         let pages = self.views.task.pages.as_ref()?;
         let report = self.pages_report(live)?;
-        Some(pages.listed(report, live?.report().profile.panel()))
+        Some(pages.listed(report, live?.panel()))
     }
 
     // ───────────────────────── 跳转与搜索 ─────────────────────────
@@ -2271,6 +2304,64 @@ mod tests {
         );
         session.wheel(-1, now);
         assert_eq!(session.views.task.cursor, Cursor::Output, "挪到头停在头上");
+    }
+
+    /// **积压的输入读空、按序交出去、只画一帧；连滚几格合成一次挪动**
+    /// （`session-redesign/17`，spec《卡顿》）：触控板一阵甩出几十格，从前一格一帧。
+    #[test]
+    fn a_backlog_is_one_move_per_run_of_the_wheel_and_at_most_one_frame() {
+        let pending = [
+            Input::Wheel(1),
+            Input::Wheel(1),
+            Input::Wheel(1),
+            Input::Wheel(1),
+            Input::Key(Key::Char('j')),
+            Input::Wheel(-1),
+            Input::Wheel(-1),
+            Input::Wheel(1),
+        ];
+        assert_eq!(
+            turn(pending),
+            vec![
+                Step::Take(Input::Wheel(4)),
+                Step::Take(Input::Key(Key::Char('j'))),
+                Step::Take(Input::Wheel(-2)),
+                Step::Take(Input::Wheel(1)),
+                Step::Draw,
+            ],
+            "同向连着的几格合成一次；键隔开的、掉了头的各算各的；末尾画一帧"
+        );
+
+        // 一阵六十格只挪一次、只画一帧。
+        let steps = turn(std::iter::repeat_n(Input::Wheel(1), 60));
+        assert_eq!(steps, vec![Step::Take(Input::Wheel(60)), Step::Draw]);
+
+        // 没有积压也画一帧：跑着的那一趟靠它动起来。
+        assert_eq!(turn([]), vec![Step::Draw]);
+    }
+
+    /// **合成之后落点与一格一格挪完全相同**：同向的几格挪到头都停在头上。
+    #[test]
+    fn a_run_of_the_wheel_lands_where_its_notches_one_by_one_land() {
+        let now = Instant::now();
+        for notches in [1_i16, 2, 5, 40] {
+            for sign in [1_i16, -1] {
+                let mut one_by_one = a_running_tree();
+                one_by_one.wheel(sign * 3, now);
+                for _ in 0..notches {
+                    one_by_one.wheel(sign, now);
+                }
+                let mut at_once = a_running_tree();
+                at_once.wheel(sign * 3, now);
+                at_once.wheel(sign * notches, now);
+                assert_eq!(
+                    at_once.views.task.cursor,
+                    one_by_one.views.task.cursor,
+                    "{} 格",
+                    sign * notches
+                );
+            }
+        }
     }
 
     /// **滚轮挪了就暂停自动滚动**，屏底照挪光标那几个键说那一句（设计稿 `onWheel` 走 `listGo`）。

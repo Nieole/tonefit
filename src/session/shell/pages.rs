@@ -333,7 +333,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
         );
         return;
     }
-    let panel = live.report().profile.panel();
+    let panel = live.panel();
     canvas.line(
         area.x + 2,
         area.y + 1,

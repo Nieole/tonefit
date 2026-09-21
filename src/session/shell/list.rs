@@ -539,14 +539,15 @@ impl Painter<'_> {
             if state == VolumeState::Aborted {
                 continue;
             }
-            let Some(report) = self.report_of(*at) else {
+            // 那一卷报告折出来的几个数（`Digest`）：收摊那一刻折好，这里只加。
+            let Some(digest) = live.digest_at(*at) else {
                 continue;
             };
-            for (candidate, pages) in render::tally_pairs(report) {
-                marks::add_to(&mut tally.tally, candidate, pages);
+            for (candidate, pages) in &digest.tally {
+                marks::add_to(&mut tally.tally, *candidate, *pages);
             }
-            tally.failed_pages += report.failures().count();
-            if state != VolumeState::Isolated && self.notable(*at) > 0 {
+            tally.failed_pages += digest.failed_pages;
+            if state != VolumeState::Isolated && digest.notable.any() {
                 tally.warn += 1;
             }
         }

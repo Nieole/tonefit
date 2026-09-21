@@ -25,7 +25,7 @@
 //! 照编照测。**这一层一个状态都不读**——一卷此刻怎么样（[`super::live::VolumeState`]）
 //! 由画法那一层按清单序号去问那一趟，树只说「哪一行是什么、排在哪儿」。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use tonefit::{NonVolumeFile, SurveyedVolume, UnreachablePlace};
@@ -132,6 +132,12 @@ pub struct Tree {
     pub roots: Vec<PathBuf>,
     /// 没勾的处理路径有几条——末行那一句说的就是它，零就没有那一行。
     pub unchecked: usize,
+    /// **卷根换回清单序号**（[`index_of`](Self::index_of)）。拼树那一刻立起来：
+    /// 卷列表每画一帧都要为每一卷问一次，逐条比卷根是「卷数 × 卷数」（`session-redesign/17`）。
+    index: HashMap<PathBuf, usize>,
+    /// 清单上第几卷挂在哪个节点的第几个目录底下（[`directory_of`](Self::directory_of)），
+    /// 与 [`roots`](Self::roots) 同序同长；哪个目录都没收下它是 `None`。
+    homes: Vec<Option<(usize, usize)>>,
 }
 
 /// 树上的一行（`CONTEXT.md` 的《目录行 / 卷行》《备注行》）。
@@ -225,10 +231,28 @@ impl Tree {
             directory.volumes.sort_unstable();
         }
         attach_notes(&mut nodes, non_volume_files, unreachable_places);
+        let mut homes = vec![None; roster.len()];
+        for (node, one) in nodes.iter().enumerate() {
+            for (at, directory) in one.directories().iter().enumerate() {
+                for volume in &directory.volumes {
+                    // 先到先得，与从前逐个目录找第一个收下它的那一条同一个答案。
+                    if let Some(slot @ None) = homes.get_mut(*volume) {
+                        *slot = Some((node, at));
+                    }
+                }
+            }
+        }
         Self {
             nodes,
             roots: roster.iter().map(|listed| listed.root.clone()).collect(),
             unchecked: paths.iter().filter(|named| !named.on).count(),
+            index: roster
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(at, listed)| (listed.root.clone(), at))
+                .collect(),
+            homes,
         }
     }
 
@@ -351,7 +375,7 @@ impl Tree {
     /// 那一趟报回来的卷根（[`super::live::Walking::volume`]）与光标记着的身份
     /// （[`Cursor::Volume`]）都得从这一处换回序号。
     pub fn index_of(&self, root: &Path) -> Option<usize> {
-        self.roots.iter().position(|one| one == root)
+        self.index.get(root).copied()
     }
 
     /// 这一卷归哪一条**分区**——每页结果的面包屑上那一截（`CONTEXT.md` 的《分区》）。
@@ -363,21 +387,17 @@ impl Tree {
         allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
     )]
     pub fn section_of(&self, volume: usize) -> Option<&Path> {
-        self.nodes.iter().find_map(|node| match &node.shape {
-            Shape::Section { path, directories } => directories
-                .iter()
-                .any(|directory| directory.volumes.contains(&volume))
-                .then_some(path.as_path()),
+        let (node, _) = (*self.homes.get(volume)?)?;
+        match &self.nodes.get(node)?.shape {
+            Shape::Section { path, .. } => Some(path.as_path()),
             Shape::Directory(_) => None,
-        })
+        }
     }
 
     /// 这一卷归哪一个目录（`h` 收起回到父目录、每页结果的面包屑都问它）。
     pub fn directory_of(&self, volume: usize) -> Option<&Directory> {
-        self.nodes
-            .iter()
-            .flat_map(Node::directories)
-            .find(|directory| directory.volumes.contains(&volume))
+        let (node, at) = (*self.homes.get(volume)?)?;
+        self.directory(node, at)
     }
 }
 
