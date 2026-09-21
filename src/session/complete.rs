@@ -103,16 +103,6 @@ pub fn name(hit: &str) -> &str {
     }
 }
 
-/// 若干项共同的那一段。补到分岔口为止是补全该做的事，替用户从几项里挑一项不是。
-pub fn common_prefix(listed: &[String]) -> Option<String> {
-    let first = listed.first()?;
-    let mut end = first.len();
-    for other in &listed[1..] {
-        end = end.min(shared(first, other));
-    }
-    Some(first[..end].to_owned())
-}
-
 /// 把打到一半的路径拆成「哪一层」与「这一层里的前缀」。
 ///
 /// 分界是最后一个分隔符：`D:/库/哆啦` 拆成 `D:/库/` 与 `哆啦`，
@@ -262,16 +252,6 @@ fn separator(head: &str) -> &'static str {
     }
 }
 
-/// 两段文本从头共有多少个**字节**，且落在字符边界上。
-fn shared(one: &str, other: &str) -> usize {
-    one.char_indices()
-        .zip(other.chars())
-        .take_while(|((_, here), there)| here == there)
-        .map(|((at, here), _)| at + here.len_utf8())
-        .last()
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,19 +298,19 @@ mod tests {
         );
     }
 
-    /// 前缀筛得动，而且补出来的是「共同的那一段」，不替用户挑。
+    /// 前缀筛得动：只列这一层里以它打头的那几项。
     #[test]
     fn a_prefix_narrows_the_level_down_to_what_it_shares() {
         let root = tree();
         let typed = format!("{}/哆啦", root.path().display());
 
         let listed = level(&typed);
-        let common = common_prefix(&listed).expect("有共同的那一段");
 
         assert_eq!(listed.len(), 2, "{listed:?}");
-        assert!(common.ends_with("哆啦A梦 0"), "{common}");
-        // 补到分岔口为止：两卷各自的号没有被替用户挑一个。
-        assert!(!common.ends_with('1') && !common.ends_with('2'), "{common}");
+        assert!(
+            listed.iter().all(|hit| name(hit).starts_with("哆啦A梦 0")),
+            "{listed:?}"
+        );
     }
 
     /// **不缓存**：两次补全之间新建的东西，第二次就列得到（ADR 0009：不建索引）。
@@ -363,7 +343,6 @@ mod tests {
         let missing = format!("{}/根本没这个目录/", root.path().display());
 
         assert!(level(&missing).is_empty());
-        assert_eq!(common_prefix(&[]), None);
     }
 
     /// 分隔符照用户敲的那一个，前缀原样留着——补全不重写用户打的路径。

@@ -56,9 +56,6 @@ use tonefit::{
     Profile, Report, Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit,
     WhiteAlignment, aggregation, composition, masking,
 };
-// 结束那一句只有会话读得到（见 [`outcome`]），这两个类型因此跟着它一起挂在特性后面。
-#[cfg(feature = "tui")]
-use tonefit::{Instruction, RunOutcome};
 // 「哪几页要紧」同理（见 [`Notable`]），只是它连 `--no-default-features` 那一趟的用例
 // 一起要，因此挂的是 `any(feature = "tui", test)`。
 #[cfg(any(feature = "tui", test))]
@@ -611,8 +608,8 @@ pub fn pages(volume: &VolumeReport, mode: Mode) -> Vec<Row> {
 ///
 /// 展开一卷的目的通常只有一个——**哪一页把整卷拉下来**——而两百页的卷里那几页不该由
 /// 用户自己在四百行里找（`p3-session-legibility/11`）。这个枚举就是「哪几页」那一问的
-/// **画质分**，[`notable`] 是问它的唯一入口：屏上默认列的就是要紧在某一处的那些页
-/// （`crate::session::draw::pages`）。
+/// **画质分**，[`notable`] 是问它的唯一入口：会话的每页结果默认列的就是要紧在某一处的那些页
+/// （`crate::session::shell::pages`）。
 ///
 /// **七种，不多不少。** 前六种逐条对上 `CONTEXT.md` 的《语义色》在**页**这一级上列出的
 /// 那几样——[坏页](Self::Failed)归「出事」，另外五样归「注意」；末一种
@@ -628,11 +625,11 @@ pub fn pages(volume: &VolumeReport, mode: Mode) -> Vec<Row> {
 /// [差异大的页](Self::Outlier)与[代表页](Self::Driver)也碰不到面（代表页站在其余页那一组上，
 /// 而差异大的页不在那一组里）。
 ///
-/// 屏上那个词与那个行首记号在画法那一层配（`crate::session::draw::pages`）：
+/// 屏上那个词与那个行首记号在画法那一层配（`crate::session::shell::marks`）：
 /// 这里只答「要不要紧」，不答「屏上写哪两个字」。
 ///
 /// **读它的只有会话**（默认那一副只列需留意的页；命令行那一路一页不落地全印），
-/// 它因此与 [`failing_pages`] 同一副写法挂在特性后面。挂的是 `any(feature = "tui", test)`
+/// 它因此挂在特性后面。挂的是 `any(feature = "tui", test)`
 /// 而不是光 `feature = "tui"`：画质分摆在**终端库外面**，`--no-default-features`
 /// 那一趟照跑它自带的用例（闸门的第二条）——而 `tui` 关掉的非测试那一趟没人读它。
 /// 同一副写法见 `src/main.rs` 那一句 `mod session`。
@@ -744,12 +741,12 @@ pub fn failed_volume(failure: &VolumeFailure) -> Row {
 /// **「跳过」与「没做成」只有 [`why_nothing_judged`] 一处**：目录那一行的[统一档位分布](directory)
 /// 对这两种卷说的是同一个词（[`base_of`]），两处不各写一遍。
 ///
-/// **读它的只有会话**（卷表那一列与逐页表钉住的抬头），而会话整个挂在 `tui` 后面：
-/// 关掉那个特性的**非测试**构建里它一个读者都没有——**那不是死代码，是那一趟的前提**
-/// （同一副写法见 [`undone`]）。分布那一格本身两副排版都读，它在 [`tally_row`]。
+/// **此刻读它的只有用例**（这里与会话的场景夹具）：卷列表那棵树上那一格的两个词
+/// （跳过、没做成）在画法那一层另写了一份，还没接回这一处——停车场 **Q961**。
+/// 分布那一格本身两副排版都读，它在 [`tally_row`]。
 #[cfg_attr(
-    not(feature = "tui"),
-    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
+    not(test),
+    expect(dead_code, reason = "卷列表那一格还没接回这一处，停车场 Q961")
 )]
 pub fn tally_column(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
@@ -1069,8 +1066,7 @@ pub fn tally_pairs(volume: &VolumeReport) -> Vec<(Candidate, usize)> {
 /// 会话那一头只上得了一种色——从前给的是「平常」，末尾那几小结因此一个颜色都没有。
 ///
 /// **哪一小结挂哪一档不在这一层**：这一层一个颜色概念都没有（spec 的《Out of Scope》：
-/// 命令行那一份不加颜色），那张表只有 `crate::session::draw` 的 `report::tail_row` 一处。
-/// 这里出的只是「它是哪一小结」。
+/// 命令行那一份不加颜色）。这里出的只是「它是哪一小结」。
 ///
 /// 拆的是**粒度**，不是出处：措辞照旧只在这一层出，各小结那一段一个字都没动，
 /// 这里只是把它们各装进一[行](Row)、挂上[它是哪一小结](RowKind)——与[卷那几行](volume)
@@ -1114,8 +1110,8 @@ pub fn tail(report: &Report) -> Vec<Row> {
 /// 走的是[那一处出处](tonefit::FirstFew)。截断只发生在**这一层**，
 /// `Report::non_volume_files` 一条不少。
 ///
-/// **命令行与会话印的是这一段**，不是两套：报告末尾那几小结两边都走 [`tail`]
-/// （见 `crate::session::draw` 的报告区），而数据只有 `Report` 上那一列。
+/// **命令行与会话退出时印到 stdout 的是这一段**，不是两套：报告末尾那几小结都走 [`tail`]，
+/// 而数据只有 `Report` 上那一列。
 fn non_volume_tail(report: &Report) -> String {
     let said: Vec<(PathBuf, String)> = report
         .non_volume_files
@@ -1167,7 +1163,7 @@ pub fn non_volume_heading(count: usize) -> String {
 /// 那一条还带着由内到外的错误链。
 ///
 /// 逐个变体都列出来、不留 `_`：[`NonVolumeReason`] 不是非穷尽的，
-/// 多一类该怎么说是个要当场拿的主意（同一条规矩见 [`outcome`]）。
+/// 多一类该怎么说是个要当场拿的主意。
 ///
 /// **会话那一侧的夹具也读它**（`crate::session::scene`）：设计稿的场景数据里非漫画文件的原因
 /// 是渲染后的整句，反查回哪一类靠的是把三类各说一遍再比——措辞因此仍只有这一处。
@@ -1945,8 +1941,7 @@ fn page_row(page: &PageReport, mode: Mode) -> Row {
 
 /// 坏页那一句：**原因原样带上**（spec 的 story 26）。
 ///
-/// 逐页那一行（[`pages`]）与会话「出现的当场」那一段（[`failing_pages`]）说的是
-/// 同一句话——一份是结果，一份是增量，而措辞只有这一处。
+/// 逐页那一行（[`pages`]）说的就是它，措辞只有这一处。
 fn failure_line(reason: &str) -> String {
     format!("失败 {reason}")
 }
@@ -1979,77 +1974,15 @@ fn scored_line(scored: &CandidateScore) -> String {
     format!("{} {}", scored.candidate, scored.score)
 }
 
-/// 这一趟**至今为止**失败的那些页，出现一条画一条（09 号票的会话主区）。
-///
-/// 一页都没有就一个字都不说，与末尾那几小结同一条规矩。
-///
-/// 它与逐页那一行（[`pages`] 里坏页那一支）说的是同一件事、同一份原因——
-/// 那一份是结果，这一段是**增量**（见 `tonefit::Event::PageFailed`）。
-/// 会话非要它不可，是因为报告区默认只给卷级，而卷级那几行只说得出「几页失败」、
-/// 说不出为什么（见 [`isolated_row`]），何况那一行要等整卷跑完才有。
-///
-/// 命令行不画它：那一路攒完才印，那时逐页那几行已经把话说全了。
-/// 措辞仍然只有这一处——会话画的是它，不是自己另编的一句。
-///
-/// 它因此挂着特性开关：关掉 `tui` 就没有会话，也就没有人读它
-/// （[`outcome`] 与 [`calibration_notice`] 同理）。措辞留在这里而不是搬进会话，
-/// 是为了让它与 [`pages`] 里那一句挨着——两句说的是同一件事，走散了没人发现。
-#[cfg(feature = "tui")]
-pub fn failing_pages<'a>(pages: impl Iterator<Item = (&'a Path, &'a str)>) -> String {
-    let mut text = String::new();
-    for (page, reason) in pages {
-        if text.is_empty() {
-            text.push_str("坏页（出现的当场，逐页那几行在整卷跑完后才有）\n");
-        }
-        // 页名一行、原因一行，缩进与那一句都与逐页那两行一样（见 [`pages`] 与
-        // [`failure_line`]）：同一件事在屏上不该长成两个样子。
-        text.push_str(&format!(
-            "  {}\n    {}\n",
-            page.display(),
-            failure_line(reason)
-        ));
-    }
-    text
-}
-
-/// 这一趟是怎么**收的场**（`CONTEXT.md` 的《进度》：结束）。
-///
-/// 与 [`failing_pages`] 同一条：会话是它眼下唯一的读者（命令行那一路不印结束），
-/// 措辞却仍旧留在这里——它说的是报告上的一格（`Report::outcome`），
-/// 而报告的措辞只有本模块一处。会话直接印 `{:?}` 的话，中文界面上会冒出
-/// `Stopped(Abort)` 这种 Rust 标识符。
-///
-/// 逐个变体都列出来、不留 `_`：[`RunOutcome`] 与 [`Instruction`] 都**不是**非穷尽的
-/// （后者的文档写着为什么：它是库外要造出来的东西），多一种结束该怎么说，
-/// 是个要当场拿的主意。
-#[cfg(feature = "tui")]
-pub fn outcome(outcome: RunOutcome) -> String {
-    match outcome {
-        RunOutcome::Completed => "全部处理完".to_owned(),
-        RunOutcome::Stopped(Instruction::Finish) => {
-            "已停止：做完当前卷后停下，后面的卷没有开始".to_owned()
-        }
-        RunOutcome::Stopped(Instruction::Abort) => {
-            "已中断：当前卷没有保存，后面的卷没有开始".to_owned()
-        }
-        // `Stopped` 里恒不是「继续」（见 `RunOutcome::of`）。真到了这里说明库那一侧
-        // 改了那条性质，而这一句至少不撒谎。
-        RunOutcome::Stopped(Instruction::Continue) => "中途停止".to_owned(),
-        // 报告上出不来（那一趟返回的是错误本身），事件流上到得了。
-        RunOutcome::Refused => "拒绝开始".to_owned(),
-    }
-}
-
 /// **这一趟没做成**时说的那一句（`CONTEXT.md` 的《失败》：退出码 `1` 那一种）。
 ///
 /// `said` 是库那一侧的原话——拒绝开始是一种，那条线程恐慌了是另一种；分得开它们的
 /// 就是这一句里带着的那一段（见 `crate::session::live::Live::undone`）。
 ///
-/// 措辞只有这一处：会话主区结束之后的抬头印它（`crate::session::draw::overview`），
-/// 退出会话时 stdout 上跟在报告后面的那一段也印它（`plain::undone`，21 号票）。
-/// 摆法各按各的——抬头是一行，stdout 那一份前后各空一行。
+/// 措辞只有这一处：退出会话时 stdout 上跟在报告后面的那一段印它（`plain::undone`，21 号票），
+/// 前后各空一行。
 ///
-/// **两个读者都在会话里**，而会话整个挂在 `tui` 后面：关掉那个特性的**非测试**构建里
+/// **读者在会话里**，而会话整个挂在 `tui` 后面：关掉那个特性的**非测试**构建里
 /// 它因此一个读者都没有——**那不是死代码，是那一趟的前提**（同一副写法见
 /// `crate::session` 的模块文档，那里的规矩是逐处挂、不整块放开）。
 #[cfg_attr(
@@ -2089,8 +2022,7 @@ pub fn volume_name(volume: &Path) -> String {
 
 /// 灰阶测试图写出去之后**此刻**要做对的那一件事：以原尺寸打开它。
 ///
-/// 命令行印的那几行与会话屏底那两行**共用这一句**（[`calibration_note`] 与
-/// [`calibration_notice`]）：同一件事从两张嘴里出来，措辞只能有一处出处。
+/// 命令行印的那几行（[`calibration_note`]）说这一句。
 ///
 /// 只说这一件。判读顺序、怎么数、数出来的数是什么意思，图内中英两份都印着，
 /// `--help` 里也写着——同一套说法在终端上再抄一遍，改的时候就得记着改三处。
@@ -2118,35 +2050,13 @@ fn chart_landed_at(out: &Path) -> String {
 
 /// 灰阶测试图写出去之后**命令行**印的那几行：图在哪儿，此刻要做对的那一件事，以及去哪儿看全套说法。
 ///
-/// 它不从报告来，却与报告同属界面文案。会话屏底那两行是 [`calibration_notice`]——
-/// 同一件事，格子不同。
-///
+/// 它不从报告来，却与报告同属界面文案。
 /// 面板规格不重复——头一行的 `profile` 里已经有了。
 pub fn calibration_note(profile: &Profile, out: &Path) -> String {
     format!(
         "profile {profile}\n{}\n  {OPEN_IT_AT_NATIVE_SIZE}\n  {WHERE_THE_FULL_STORY_IS}\n",
         chart_landed_at(out),
     )
-}
-
-/// 灰阶测试图写出去之后**会话屏底**那两行（会话批的 13 号票）。
-///
-/// 与命令行那几行共用要紧的那一句（[`OPEN_IT_AT_NATIVE_SIZE`]），少的是两样：
-///
-/// - **`profile` 那一行**——左栏上正摆着设备设置，屏上已经有了。
-/// - **[指路那一行](WHERE_THE_FULL_STORY_IS)**——屏底那一格总共三行，
-///   说的话多占一行，按键提示就少一行。
-///
-/// 两行而不是一行：屏底那一格不折行，一条绝对路径接上那句话必被切掉，
-/// 而路径就是「图在哪儿」的全部内容。存预设那一句避得开路径（`Session::saved`），
-/// 靠的是预设那一栏自己摆着文件位置；灰阶测试图没有那样一个去处。
-///
-/// 关掉 `tui` 就没有会话，也就没有人读它——与 [`outcome`] 同一条。**只多一格 `test`**：
-/// 读它的是状态机（`session::state`），而状态机摆在特性外面，关掉终端库那一趟仍要跑它的用例
-/// （`docs/agents/gate.md` 的第二条闸门）。
-#[cfg(any(feature = "tui", test))]
-pub fn calibration_notice(out: &Path) -> String {
-    format!("{}\n{OPEN_IT_AT_NATIVE_SIZE}", chart_landed_at(out))
 }
 
 #[cfg(test)]
@@ -3799,7 +3709,7 @@ mod tests {
     /// 而**跳过的卷一页都不要紧**（它连逐页结果都没有）。
     ///
     /// 屏上那个词与那个记号不在这里问（那是画法那一层的事，
-    /// 见 `crate::session::draw::pages`）：这一条问的是「要不要紧」本身。
+    /// 见 `crate::session::shell::pages`）：这一条问的是「要不要紧」本身。
     #[test]
     fn which_pages_matter_is_judged_in_exactly_one_place() {
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -5414,25 +5324,25 @@ mod tests {
     /// 它右边每一列就整体错开一格。**尺寸那一列夹在页名与判定中间**，
     /// 从前有 `×` 的行（正常页）与那一格空着的行（坏页）因此整行错开一格。
     ///
-    /// **问哪几格不再手抄。** 那份名单从三张表的[字面出处](crate::session::columns::Provenance)
-    /// 导出（`crate::session::columns::wording_cells`）——从前它在这里另写一份，
-    /// 往表里添一列不跟着添**也不会红**：逐页表添了五格几何列之后，
-    /// 裁白边与缩放两格就是那么漏出去的（停车场 Q188）。
+    /// **问哪几格不再手抄。** 那份名单从屏上那两张表（卷列表那棵树、每页结果）的
+    /// [字面出处](crate::session::columns::Provenance)导出（`crate::session::columns::wording_cells`）
+    /// ——从前它在这里另写一份，往表里添一列不跟着添**也不会红**（停车场 Q188）。
+    /// 裁白边、彩页转灰、跨页、画质分那一串、页数、卷数、统一档位分布几格不在屏上成列，
+    /// 因此不进这一关——停车场 **Q962**。
     ///
     /// **添一个不稳的字形，这一条当场变红。** 装**路径**的那几列（目录名、卷名、页名、
     /// 代表页、去处）不在里面——那是用户的字节，不是这一层挑的字形，它们归**原样**那一档，
     /// 摆不下时从中间省略（`CONTEXT.md`《格》）。行首记号、省略号与耗时那一列是画法那一层
-    /// 自己造的，在 `crate::session::columns`、`draw::table`、`draw::pages`、`draw::overview`
-    /// 那几头问。
+    /// 自己造的，在 `crate::session::columns` 与 `crate::session::shell::marks` 那两头问。
     #[test]
     fn every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal() {
-        // 屏上那三张表把哪几格摆成列，**由那三张表自己说**（`crate::session::columns` 的
-        // `DirectoryColumn`、`VolumeColumn`、`PageColumn` 各列逐个报出自己的字面出处）。
+        // 屏上那两张表把哪几格摆成列，**由那两张表自己说**（`crate::session::columns` 的
+        // `TreeColumn`、`PagesColumn` 各列逐个报出自己的字面出处）。
         // 其余各格成句、跟在行尾或整段折行印出来，错一格不牵连别人。
         let lined_up = crate::session::columns::wording_cells();
-        // **逐页表的裁白边与缩放两列此刻真在这一关里**：这两格的字面出自库的 `Crop` 与
-        // `Scaling`，从前漏在名单外面，而 CJK 终端上整张表因此逐行错位（停车场 Q188）。
-        for field in [Field::Crop, Field::Scaling] {
+        // **每页结果的尺寸与缩放两列此刻真在这一关里**：这两格的字面出自库的 `Size` 与
+        // `Scaling`，缩放那一格从前漏在名单外面，CJK 终端上整张表因此逐行错位（停车场 Q188）。
+        for field in [Field::Size, Field::Scaling] {
             assert!(lined_up.contains(&field), "{field:?} 不在那一关里");
         }
 
@@ -5486,9 +5396,13 @@ mod tests {
         volumes[0].pages[0].source = PathBuf::from("库/第1话·上/序·卷首.jpg");
         volumes[0].pages[0].output = PathBuf::from("out/第1话·上/序·卷首.png");
         if let PageOutcome::Whole(processed) = &mut volumes[0].pages[0].outcome
-            && let PageBranch::Gray { scores, .. } = &mut processed.branch
+            && let PageBranch::Gray {
+                scores, verdict, ..
+            } = &mut processed.branch
         {
             *scores = scored;
+            // **判成的那一档在各候选里**，每页结果那一列（[`Field::VerdictScore`]）才摆得出来。
+            verdict.candidate = Candidate::new(BitDepth::Two, Dither::Off);
         }
         // **裁白边与彩页转灰那两格得真在场**，不然那两列进了名单也没人问：
         // 一个像素都没裁的页不占裁白边那一格，不是彩页的页不占彩页那一格。

@@ -44,7 +44,7 @@ use super::view::{Applied, Cursor, Input, NamedPreset, Pages, Pane, View, Views}
 use crate::preset::{self, Preset, Presets};
 use crate::render;
 
-/// 导出的产物住在哪儿（相对仓库根）。与 `super::draw::design::FIXTURES` 同一个目录，
+/// 导出的产物住在哪儿（相对仓库根）。与 `super::shell::design::FIXTURES` 同一个目录，
 /// 各写各的：那一份在 `tui` 后面，这一份两趟都编。
 const FIXTURES: &str = "tests/fixtures/design";
 
@@ -1087,8 +1087,8 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                         && let Some(so_far) = &so_far
                     {
                         for page in so_far.failures() {
-                            if let PageOutcome::Failed { reason } = &page.outcome {
-                                live.page_failed(&page.source, reason);
+                            if let PageOutcome::Failed { .. } = &page.outcome {
+                                live.page_failed();
                             }
                         }
                     }
@@ -1194,7 +1194,7 @@ fn second_pass(
 /// 真会话里那个字由 `Running::stop` 交给线程，而夹具没有线程。
 fn press_stop(session: &mut Session, run: &Run) {
     for _ in 0..run.stop_level {
-        session.press(Key::Char('s'));
+        session.raise_stop();
     }
 }
 
@@ -1669,7 +1669,10 @@ mod tests {
 
         // 三组设置：设备设置与处理选项照场景数据说到的那几项，路径与输出照处理路径与勾选。
         assert_eq!(
-            said_by(&scene.session.preset()),
+            said_by(&crate::preset::Preset {
+                device: scene.session.device.clone(),
+                taste: scene.session.taste.clone(),
+            }),
             said_in(&data.settings),
             "{name}"
         );
@@ -2089,13 +2092,13 @@ mod tests {
 /// **报告那一处对场景数据说出来的字，在设计快照的字网格里找得到**（票面第三条）。
 ///
 /// 屏上的字由库照语义字段说出来，再与设计快照逐字比——Q718 要保住的「一处出处」就是在这里被验的
-/// （spec《夹具》）。这几条要读设计快照，因此挂在 `tui` 后面（读法在 `super::draw::design`）；
+/// （spec《夹具》）。这几条要读设计快照，因此挂在 `tui` 后面（读法在 `super::shell::design`）；
 /// 夹具本身两趟都编。
 #[cfg(all(test, feature = "tui"))]
 mod on_the_grid {
     use super::*;
     use crate::render::{Field, RowKind};
-    use crate::session::draw::design;
+    use crate::session::shell::design;
 
     /// 一句话核它头几个字：行尾那一句常被屏宽截掉（`…这一卷整卷写到隔`），整句不在屏上。
     const HEAD: usize = 12;

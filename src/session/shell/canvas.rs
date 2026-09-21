@@ -12,15 +12,15 @@
 //! 设计稿那一格记着样式，被劈开时露出来的那半格带着它——补全框的右框线落在卷列表一个汉字
 //! 中间时那一格就露出来了）；**写到一个宽字符的第二格上时，把那个宽字符换成空格**——
 //! 不然整行多出或少掉一格，与设计稿的 `_split` 同一条。
-//! 读回来那一头（`super::super::draw::probe::visible`）按显示宽度跳过第二格，两边因此一格对一格。
+//! 读回来那一头（`super::design::visible`）按显示宽度跳过第二格，两边因此一格对一格。
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
-use super::super::draw::paint;
 use super::super::look::{Look, Segment, width_of};
 use super::super::viewport::Scrollbar;
+use super::paint;
 
 /// 滚动条的滑块（设计稿 `box` 的 `scroll` 那一笔）：与粗框线同一个字，靠颜色分——滑块是默认色。
 const THUMB: &str = "┃";
@@ -157,9 +157,7 @@ impl<'a> Canvas<'a> {
     /// 「整卷统一灰阶」80×24 那一屏正落在半格上）。式子只有这三行，摆在这里比隔着
     /// 一层参数去凑它的取整读得清。
     ///
-    /// **旧界面那一副仍走那个 widget**（`super::super::draw::scrollbar`）：「滑块画多长、
-    /// 画在哪一截」因此在过渡期有两处，与两个砍列次序（停车场 Q804）是同一笔代价，
-    /// 15 号票让旧那一副退场时合回一处。`CONTEXT.md` 的《视口》末一句仍写着「走终端库
+    /// **画滚动条的地方只有这一处**。`CONTEXT.md` 的《视口》末一句仍写着「走终端库
     /// 自带的那个 widget」——**词汇表与实现对不上，记在停车场 Q850，没有顺手改**。
     pub(super) fn scrollbar(&mut self, area: Rect, bar: &Scrollbar) {
         if area.width < 2 || area.height < 3 || bar.rows <= bar.window {

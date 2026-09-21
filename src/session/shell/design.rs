@@ -5,11 +5,10 @@
 //! **样式对照表**（`tests/fixtures/design/styles.json`，只有这一张）译成前景色与修饰。
 //! 顶栏的版本号导出成占位（占位是什么写在 `manifest.json` 上），读进来时代入 crate 的版本。
 //!
-//! 比的是**每一格的字、前景色、修饰**三样。现成的探针不够：[`super::probe::same_screen`]
-//! 只比字，`OnScreen::colours` 是每行去重后的颜色集合。对不上时把实际那一屏的两张网格
+//! 比的是**每一格的字、前景色、修饰**三样。对不上时把实际那一屏的两张网格
 //! 整个印出来——改的人照着它逐格看差在哪。
 //!
-//! **读屏的跳格规矩与探针是同一处**（[`super::probe::visible`]）：宽字符占两格，第二格
+//! **读屏的跳格规矩只有一处**（[`visible`]）：宽字符占两格，第二格
 //! 被终端库 `reset` 成空格，按显示宽度跳过去；导出那一头按 `TestBackend` 的读法跳的是同一格，
 //! 两张网格因此一格对一格。
 //!
@@ -25,10 +24,27 @@ use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 
 use super::super::look::Segment;
-use super::probe::{cells_of, visible};
 
 /// 导出的产物住在哪儿（相对仓库根）。
 const FIXTURES: &str = "tests/fixtures/design";
+
+/// 一格字在屏上占几格：宽字符两格，空的那一格（被 `reset` 掉的第二格）也算一格。
+pub(super) fn cells_of(symbol: &str) -> usize {
+    usize::from(crate::wrap::width(symbol)).max(1)
+}
+
+/// 一行上**看得见的那几格**，连同各自在屏上是第几格：宽字符占住的第二格跳过去。
+pub(super) fn visible(
+    row: &[ratatui::buffer::Cell],
+) -> impl Iterator<Item = (usize, &ratatui::buffer::Cell)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let cell = row.get(at)?;
+        let here = at;
+        at += cells_of(cell.symbol());
+        Some((here, cell))
+    })
+}
 
 /// 屏上**画出来的一格**：字、前景色、修饰。宽字符是一格（它占住的第二格已经跳过了）。
 #[derive(Debug, Clone, PartialEq, Eq)]

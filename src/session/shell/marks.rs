@@ -7,6 +7,10 @@
 //! 转轮那一样的**出处在 [`super::super::view`]**（`SPINNER` 与 `SPINS_EVERY`）：顶栏右端那一截
 //! 读的是同一份，而那一份摆在 `tui` 特性外面——反过来摆不成，本模块整个在特性后面。
 //! 本模块只多做一件它管不着的事：一行自己的**错相**（`offset`）。
+//!
+//! 同住在这里的还有屏上几处共用的两个**词**：环节叫什么（[`pass_name`]）与一段时长怎么写
+//! （[`spell`]）——总览、卷列表那棵树与环节横条说的是同一个词，同一屏上两种写法读的人就得
+//! 先分辨一遍。
 
 use std::time::{Duration, Instant};
 
@@ -276,7 +280,7 @@ pub(super) fn pass_segments(
         0.0
     };
     let mut segments = vec![Segment::new(
-        format!("{} ", super::super::draw::overview::pass_name(pass)),
+        format!("{} ", pass_name(pass)),
         pass_look(pass),
     )];
     segments.extend(pass_bar(pass, fraction, width));
@@ -317,11 +321,85 @@ pub(super) fn percent(walked: u64, steps: u64) -> u64 {
     (walked as f64 / steps as f64 * 100.0).floor() as u64
 }
 
+/// 在走哪一个环节——**屏上那个词的唯一出处**。三个词与词汇表《环节》那一条逐字相同
+/// （`CONTEXT.md` 的《进度》：遍）。
+///
+/// **叫的是它在做什么，不是第几遍**（`two-pass-rework/01`）：「第一遍 / 第二遍」看得见
+/// 进度在走，看不出在做什么、为什么非做两遍不可。
+///
+/// `_` 那一支不是遗漏：[`Pass`] 非穷尽，多一遍不该逼着这里跟着改。
+pub(super) fn pass_name(pass: Option<Pass>) -> &'static str {
+    match pass {
+        // 开卷之后、第一条 `PassStarted` 到达之前：打开容器、列成员，还没走进任何一遍。
+        // **固实归档在这一段里摊开一整卷**（`p4-parking-lot/13`）——摊开不是一遍，
+        // `Pass` 上没有它（停车场 Q283）。
+        None => "开卷",
+        // 算出本卷指纹，与上一趟写在输出里的比（`CONTEXT.md` 的《管线》：幂等这一道）。
+        Some(Pass::Fingerprint) => "查重",
+        // 解码、缩放、算画质分，定下每一页要哪一档（《管线》：分析环节）。
+        Some(Pass::First) => "分析",
+        // 按定下的档量化、编码、写进输出（《管线》：写出环节）。
+        Some(Pass::Second) => "写出",
+        Some(_) => "这一遍",
+    }
+}
+
+/// 一段时长：`42s`、`6m40s`、`1h06m`。
+///
+/// 只留两级：秒以下在一趟几十分钟的任务里没有意义，而三级读起来要数位数。
+/// **四舍五入到秒**，不截断：178.5 秒截出来是 `2m58s`，而它离 `2m59s` 更近——
+/// 屏上那几个数与设计稿因此是同一种写法（`session-redesign/08`）。
+pub(super) fn spell(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs_f64().round() as u64;
+    match (seconds / 3600, (seconds % 3600) / 60, seconds % 60) {
+        (0, 0, second) => format!("{second}s"),
+        (0, minute, second) => format!("{minute}m{second:02}s"),
+        (hour, minute, _) => format!("{hour}h{minute:02}m"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    /// 时长两级就够：秒、分秒、时分。
+    #[test]
+    fn a_duration_is_spelled_with_two_units() {
+        assert_eq!(spell(Duration::from_secs(0)), "0s");
+        assert_eq!(spell(Duration::from_secs(42)), "42s");
+        assert_eq!(spell(Duration::from_secs(400)), "6m40s");
+        assert_eq!(spell(Duration::from_secs(3960)), "1h06m");
+    }
+
+    /// **一段时长在哪种终端上都占同一格**（画质分见 [`tonefit::width_is_stable`]）：
+    /// 画法这一层自己造的字形一个都不许是歧义宽度。三种写法各问一遍。
+    #[test]
+    fn a_duration_is_the_same_width_on_any_terminal() {
+        for seconds in [0, 9, 59, 60, 400, 3599, 3600, 5 * 3600 + 120] {
+            let said = spell(Duration::from_secs(seconds));
+            for glyph in said.chars() {
+                assert!(
+                    tonefit::width_is_stable(glyph),
+                    "{glyph} 是东亚歧义宽度：{seconds}s 写成「{said}」"
+                );
+            }
+        }
+    }
+
+    /// 环节那个词说它在做什么；开卷之后、第一条 `PassStarted` 到达之前那一格不是一遍。
+    #[test]
+    fn the_pass_says_what_it_does() {
+        for (pass, said) in [
+            (Some(Pass::Fingerprint), "查重"),
+            (Some(Pass::First), "分析"),
+            (Some(Pass::Second), "写出"),
+            (None, "开卷"),
+        ] {
+            assert_eq!(pass_name(pass), said, "{pass:?}");
+        }
+    }
 
     /// **转轮十格一圈、一格 90 毫秒**，从会话打开那一刻算；一行自己的错相往后挪一格。
     #[test]

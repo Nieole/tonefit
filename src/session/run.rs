@@ -69,7 +69,7 @@ pub struct Running {
     ///
     /// **装的是渲染好的那一段字，不是一份 [`tonefit::Report`]。**它只有一个读者
     /// （[`report`](Self::report)，把它原样接出去），而留结构要把整份报告连同每一卷
-    /// 每一页克隆下来——会话的报告区画的是**当前**那一趟（[`Live`]），
+    /// 每一页克隆下来——会话屏上画的是**当前**那一趟（[`Live`]），
     /// 先前那一趟没有第二个人问它要格。
     ///
     /// **不叫 `settled`**：那个词在 `crate::render::Listed::Settled` 上占着，
@@ -102,7 +102,7 @@ impl Running {
     /// 本层只照它说的办：等人的那一趟多一道[闸](Gate)，不等人的那一趟一格不多。
     pub fn start(&mut self, mut request: Request, resumes: Resuming) {
         // 上一趟的线程一定已经收掉了：跑着的时候按键表根本不派「起一趟」
-        // （见 `super::state::running_action`）。这里不靠那条远处的不变量——
+        // （`super::keymap` 上 `t`／`x` 那两行只在还没开始与已结束两档）。这里不靠那条远处的不变量——
         // 真漏了的话调试构建当场断掉，发布构建也是先 join 再起，
         // 而不是把一条还在往盘上写字节的线程悄悄甩掉。
         debug_assert!(self.thread.is_none(), "上一趟还没收掉就起了第二趟");
@@ -175,7 +175,7 @@ impl Running {
     /// **把用户当场答的那个字送到确认点上**，并记进 [`Live`]。
     /// `reach` 说的是这个字[管几卷](Reach)——只管这一卷，还是后面的卷都写出。
     ///
-    /// 与 [`stop`](Self::stop) 同一条分工：认键在状态机（`super::state::deciding_action`），
+    /// 与 [`stop`](Self::stop) 同一条分工：认键在按键表（`super::keymap::Deed::answer`），
     /// 本层只把那个字送到计算线程上。记进 [`Live`] 是因为屏上与报告抬头都要它——
     /// 答了做完再停的那一趟就等于一次 dry-run（见 `Live::mode`）。
     ///
@@ -329,7 +329,7 @@ struct Watch {
 impl Progress for Watch {
     fn observe(&self, event: Event<'_>) -> Instruction {
         // 借出去的锁到这一句末尾就还回去了：下一句等人或者读闩时手上一把锁都没有。
-        // **等人那一支尤其非还不可**：会话那一头每帧都要借同一把锁画报告区，
+        // **等人那一支尤其非还不可**：会话那一头每帧都要借同一把锁画一屏，
         // 而这一等可能是几分钟（`progress` 那条硬规矩的同一个理由）。
         Running::held(&self.live).observe(&event);
         // **两支都先过一遍 [`answer`]**：那条规矩（确认点上做完再停要让、立即停止不让）
@@ -701,7 +701,7 @@ mod tests {
     /// **闩只升不降**，而**推进去的那个字读回来一格不变**。
     ///
     /// 「按了立即停止之后再按做完再停仍然是立即停止」这条性质在会话里有两道保险：键盘上没有那个键
-    /// （`super::state::running_action` 在立即停止那一级派的是「没有意义」），
+    /// （按到立即停止之后，状态机那一头的闩已是不动点），
     /// 而就算有，`fetch_max` 也不让它降回去。这一条问的是第二道。
     ///
     /// **编码本身这里不验**：那个数与 [`Instruction`] 派生的 `Ord` 对不对得上、越界的数
@@ -1064,7 +1064,7 @@ mod tests {
         );
         assert!(
             live.summarized().is_none(),
-            "那一卷已经作废，报告区还摆着它"
+            "那一卷已经作废，确认点上那一份还摆着它"
         );
         drop(live);
         assert_eq!(landed(&out), Vec::<String>::new(), "盘上留下了东西");
@@ -1085,7 +1085,7 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::Waits);
-        // 真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）：做完再停 → 立即停止。
+        // 真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::input`）：做完再停 → 立即停止。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);
@@ -1188,7 +1188,7 @@ mod tests {
 
         let mut running = Running::default();
         running.start(request, Resuming::GoesOn);
-        // 按两次：做完再停 → 立即停止。真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::press`）。
+        // 按两次：做完再停 → 立即停止。真会话里这两下由 `s` 那个键派下来（见 `crate::session::terminal::input`）。
         running.stop(Instruction::Finish);
         running.stop(Instruction::Abort);
         until_done(&mut running);

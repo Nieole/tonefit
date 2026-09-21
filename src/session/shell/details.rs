@@ -85,7 +85,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect, narro
         .position(|row| row.choice == Some(session.views.config.choice))
         .unwrap_or(0);
     let viewport = Viewport::with_margin(rows.len(), usize::from(shown), at);
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (i, row) in rows.iter().enumerate().skip(from).take(usize::from(shown)) {
         canvas.line(
             area.x + 2,

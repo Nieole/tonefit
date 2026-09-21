@@ -77,7 +77,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
     // 视口跟着**光标那一行**走（`CONTEXT.md` 的《视口》：滚动量是算出来的，不是记着的）
     // ——那几份多过这一栏装得下的行数时，光标照旧在屏上。滚动条不画，与详情栏同一档。
     let viewport = Viewport::with_margin(lines.len(), usize::from(shown), config.preset_cursor);
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (at, row) in lines.iter().enumerate().skip(from).take(usize::from(shown)) {
         canvas.line(
             area.x + 2,

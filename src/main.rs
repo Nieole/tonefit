@@ -1142,8 +1142,7 @@ fn bar_style() -> ProgressStyle {
     .progress_chars("=> ")
 }
 
-/// 一条横条画多宽。**命令行与会话共用这一个数**：两处的横条长得一样，
-/// 读的人不必重新认一遍（会话那一份见 `session::draw`）。
+/// 命令行那条横条画多宽。
 const BAR_WIDTH: usize = 30;
 
 impl Bar {

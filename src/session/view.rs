@@ -1,4 +1,4 @@
-//! **视图 × 阶段 × 焦点**：新会话的界面状态（ADR 0019；spec《状态：视图 × 阶段 × 焦点》；
+//! **视图 × 阶段 × 焦点**：会话的界面状态（ADR 0019；spec《状态：视图 × 阶段 × 焦点》；
 //! `CONTEXT.md` 的《会话》：视图、任务视图、配置视图、焦点、卷列表、屏底、退出会话）。
 //!
 //! 会话此刻在做什么由三样说：**视图**（任务 · 配置，[`View`]）、**阶段**（这一趟走到哪儿了，
@@ -6,10 +6,8 @@
 //! 光标与所在的块（[`TaskView`]、[`ConfigView`]），切走再切回原样；盖在上面的输入行与覆盖层
 //! 是焦点的另两个取值，掀掉之后底下原样回来。
 //!
-//! **旧界面那一维（[`super::state::Focus`]）原样留着**，与本模块并存：真会话仍进旧界面，
-//! 切换在 `session-redesign/15`。本模块挂在 [`Session`] 上一格（[`Session::views`]），
-//! 新界面的状态机是本模块里那几个 `impl Session`——三组设置与阶段仍在 [`Session`] 自己身上，
-//! 两副界面读的是同一份。
+//! 本模块挂在 [`Session`] 上一格（[`Session::views`]），界面的状态机是本模块里那几个
+//! `impl Session`——三组设置与阶段仍在 [`Session`] 自己身上。
 //!
 //! # 按键表在别处
 //!
@@ -411,7 +409,7 @@ pub struct ConfigView {
     /// 一格都停不住的那两种（自由填、画质判定参数）上它恒是 0。
     pub choice: usize,
     /// **下钻**进了**哪一块屏幕规格**；`None` 是第一层（`CONTEXT.md` 的《下钻》）。
-    /// 记的是那一块本身、不是它排第几——与旧界面取值栏那一格同一副（[`super::state::Values`]）。
+    /// 记的是那一块本身、不是它排第几：屏上那一行要印它。
     /// 设置栏上一挪光标它就作废：那一层是上一项的第二层。
     pub drill: Option<Panel>,
     /// 当前套的是哪一份预设。
@@ -570,7 +568,7 @@ impl Views {
 
     /// **说一句没做成**：屏底那一句的「出事」那一副（行首一个 `✗`，整句出事红）。
     ///
-    /// 库那一侧回的话原样端上来、不另编一份（与旧界面的 `Session::complain` 同一条）。
+    /// 库那一侧回的话原样端上来、不另编一份。
     /// 屏上凡是报「没做成」的地方走这一处——行首那个记号与那一档语义因此只有这一份。
     pub(super) fn complain(&mut self, said: impl std::fmt::Display, now: Instant) {
         self.say(
@@ -643,8 +641,16 @@ pub enum Input {
     /// Ctrl 加一个字母（`C-c` 不在这里，它是 [`Key::Interrupt`]）。
     Ctrl(char),
     /// 滚轮：往下几格（负数往上）。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "终端层接鼠标在 session-redesign/16")
+    )]
     Wheel(i16),
     /// 单击屏上第几列第几行。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "终端层接鼠标在 session-redesign/16")
+    )]
     Click {
         x: u16,
         y: u16,
@@ -845,7 +851,6 @@ impl Session {
             Field::Envelope => self.taste.envelope != preset.taste.envelope,
             Field::CacheBudget => self.taste.cache_budget != preset.taste.cache_budget,
             Field::IoMode => self.taste.io_mode != preset.taste.io_mode,
-            Field::Out | Field::Path(_) | Field::AddPath => false,
         }
     }
 
