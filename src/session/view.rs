@@ -524,6 +524,9 @@ pub struct Views {
     /// 由会话入口问一次摆进来（`Presets::path`），
     /// 问不出来就是 `None`——那一格空着，与家目录问不出来时不缩写同一条。
     pub presets: Option<PathBuf>,
+    /// **上一帧交出的点得中的区域**（[`Hit`]）：终端层每画一帧换一份，单击按它落。
+    pub hits: Vec<Hit>,
+    last_click: Option<LastClick>,
     pending: Option<Pending>,
     reply: Option<Reply>,
 }
@@ -641,16 +644,9 @@ pub enum Input {
     /// Ctrl 加一个字母（`C-c` 不在这里，它是 [`Key::Interrupt`]）。
     Ctrl(char),
     /// 滚轮：往下几格（负数往上）。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "终端层接鼠标在 session-redesign/16")
-    )]
     Wheel(i16),
-    /// 单击屏上第几列第几行。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "终端层接鼠标在 session-redesign/16")
-    )]
+    /// 单击屏上第几列第几行。双击不是一种输入：同一处在阈值内的第二下由会话认出来
+    /// （[`Session::click`]）。
     Click {
         x: u16,
         y: u16,
@@ -666,6 +662,64 @@ impl Input {
             Self::Click { .. } => Chord::Click,
         }
     }
+}
+
+/// **滚轮一格挪几行**（spec《鼠标》；设计稿 `onWheel`）。
+const WHEEL_ROWS: isize = 3;
+
+/// **双击的阈值**：同一处的第二下离第一下不超过这么久，算双击（等于 `⏎`）。
+/// 读的是会话的「此刻」（`CONTEXT.md` 的《会话》：此刻），不问系统时钟。
+pub const DOUBLE_CLICK_WITHIN: Duration = Duration::from_millis(500);
+
+/// **点得中的区域**点中的是什么（`CONTEXT.md` 的《会话》：点得中的区域；设计稿 `scr.hit` 的 `act`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// 顶栏上一个视图名。
+    View(View),
+    /// 卷列表上一行（按行的身份记，与[光标](Cursor)同一副）。
+    Row(Cursor),
+    /// 每页结果上第几行（列着的那几页里的第几页）。
+    Page(usize),
+    /// 设置栏上一项。
+    Item(Item),
+    /// 详情栏上第几格。
+    Choice(usize),
+    /// 预设栏上第几份。
+    Preset(usize),
+}
+
+/// **点得中的区域**：画法每画一帧顺带交出来的一格一行的一段（spec《鼠标》）。
+/// 终端层把它们记在 [`Views::hits`] 上，下一下单击按格坐标落到其中一段。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub target: Target,
+}
+
+impl Hit {
+    fn covers(&self, x: u16, y: u16) -> bool {
+        y == self.y && x >= self.x && x - self.x < self.width
+    }
+}
+
+/// 一下单击落成了什么。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clicked {
+    /// 没点中任何一段。
+    Nothing,
+    /// 选中了那一行（或切了视图）。
+    Selected,
+    /// 同一处在阈值内的第二下：**等于 `⏎`**，由终端层当一个 `⏎` 再交一次。
+    Double,
+}
+
+/// 上一下单击点中的是什么、在哪一刻——认双击用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LastClick {
+    target: Target,
+    at: Instant,
 }
 
 /// **跳转找的是哪一种落点**（设计稿 `jump` 的 `kind`；`CONTEXT.md` 的《卷列表》）。
@@ -1052,6 +1106,85 @@ impl Session {
         true
     }
 
+    /// **滚轮**：光标挪[三行](WHEEL_ROWS)一格（往下为正），挪法与 `j`／`k` 同一处
+    /// （[`Self::place_cursor`]）——卷列表上因此同样暂停自动滚动、屏底说那一句。
+    /// **滚轮不直接动视口**（`CONTEXT.md` 的《视口》）：视口照旧跟着光标算。
+    pub fn wheel(&mut self, notches: i16, now: Instant) {
+        let by = WHEEL_ROWS * isize::from(notches);
+        self.place_cursor(now, |here, last| here.saturating_add_signed(by).min(last));
+    }
+
+    /// **单击屏上第几列第几行**：落到[上一帧交出的点得中的区域](Views::hits)里的那一段
+    /// （后交出的盖着先交出的，与设计稿 `onMouse` 倒着找同一条），选中它。
+    ///
+    /// **同一处在[阈值](DOUBLE_CLICK_WITHIN)内再点一次算双击**，交回 [`Clicked::Double`]
+    /// ——等于 `⏎`，那一下由终端层当一个键再交一次（卷行上按展开要问那一趟）。
+    /// 双击用掉之后第三下从头算；**顶栏视图名上点两下不算双击**：那一处没有 `⏎` 可按。
+    pub fn click(&mut self, x: u16, y: u16, now: Instant) -> Clicked {
+        let Some(target) = self
+            .views
+            .hits
+            .iter()
+            .rev()
+            .find(|hit| hit.covers(x, y))
+            .map(|hit| hit.target.clone())
+        else {
+            return Clicked::Nothing;
+        };
+        let double = !matches!(target, Target::View(_))
+            && self.views.last_click.take().is_some_and(|last| {
+                last.target == target
+                    && now.saturating_duration_since(last.at) <= DOUBLE_CLICK_WITHIN
+            });
+        if !double {
+            self.views.last_click = Some(LastClick {
+                target: target.clone(),
+                at: now,
+            });
+        }
+        self.select(target);
+        if double {
+            Clicked::Double
+        } else {
+            Clicked::Selected
+        }
+    }
+
+    /// 单击点中的那一段：选中它（设计稿 `onMouse` 逐支照搬）。
+    ///
+    /// **卷列表上一行选中了就暂停自动滚动，但一声不响**：设计稿那一支只扳那一格，
+    /// 屏底不说「已暂停」（`running-click-row` 那一屏）——与挪光标那几个键不同
+    /// （[`Self::pause_follow`]）。
+    fn select(&mut self, target: Target) {
+        match target {
+            Target::View(view) => self.views.view = view,
+            Target::Row(cursor) => {
+                self.views.task.cursor = cursor;
+                if matches!(self.stage(), Stage::Running(_) | Stage::Deciding(_)) {
+                    self.views.task.follow = false;
+                }
+            }
+            Target::Page(at) => {
+                if let Some(pages) = &mut self.views.task.pages {
+                    pages.at = at;
+                }
+            }
+            Target::Item(item) => {
+                self.views.config.cursor = item;
+                self.views.config.pane = Pane::Settings;
+                self.views.config.drill = None;
+            }
+            Target::Choice(at) => {
+                self.views.config.pane = Pane::Details;
+                self.views.config.choice = at;
+            }
+            Target::Preset(at) => {
+                self.views.config.preset_cursor = at;
+                self.views.config.armed_delete = None;
+            }
+        }
+    }
+
     /// 光标挪到停得住的行里的哪一条：`to` 收「此刻在第几条、最后一条是第几条」，答挪到第几条。
     /// 任务视图在卷列表或[每页结果](Pages)上挪，配置视图两栏各挪各的
     /// （[`Self::place_config_cursor`]）。
@@ -1152,9 +1285,9 @@ impl Session {
         );
     }
 
-    /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：挪光标那几个键、
-    /// 滚轮、单击都算，屏底跟着说一句「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回。
-    /// 滚轮与单击那一路随鼠标那一票（16）接到这一处上。
+    /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：挪光标那几个键与
+    /// 滚轮（[`Self::wheel`]）走这一处，屏底跟着说一句「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回。
+    /// **单击一行同样暂停，但不走这一处、不说这一句**（设计稿那一屏如此，见 [`Self::select`]）。
     ///
     /// **跳转不走这一处**：`]d`／`[d` 与搜索跳过去同样暂停，但屏底说的是它们自己那一句
     /// （「问题 4/4」「搜索结果 1/1」），不是这一句——两句抢同一行，
@@ -2110,6 +2243,158 @@ mod tests {
             .iter()
             .map(|segment| segment.text.as_str())
             .collect()
+    }
+
+    /// 一行宽二十格的点得中的区域，摆在第 `y` 行。
+    fn hit_row(y: u16, target: Target) -> Hit {
+        Hit {
+            x: 0,
+            y,
+            width: 20,
+            target,
+        }
+    }
+
+    /// **滚轮一格挪三行**（spec《鼠标》）：往下为正，挪到头就停在头上，与 `j`／`k` 同一套停得住的行。
+    #[test]
+    fn a_wheel_notch_moves_the_cursor_three_rows() {
+        let mut session = three_paths();
+        let now = Instant::now();
+        // 停得住的五行：输出目录 · 三条处理路径 · 「＋ 添加路径」；光标在头一条处理路径上。
+        session.wheel(1, now);
+        assert_eq!(session.views.task.cursor, Cursor::Add, "往下三行");
+        session.wheel(-1, now);
+        assert_eq!(
+            session.views.task.cursor,
+            Cursor::Path(PathBuf::from("/home/me/漫画库")),
+            "往上三行回到原处"
+        );
+        session.wheel(-1, now);
+        assert_eq!(session.views.task.cursor, Cursor::Output, "挪到头停在头上");
+    }
+
+    /// **滚轮挪了就暂停自动滚动**，屏底照挪光标那几个键说那一句（设计稿 `onWheel` 走 `listGo`）。
+    #[test]
+    fn a_wheel_notch_pauses_following_and_says_so() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        session.wheel(1, now);
+        assert!(!session.views.task.follow);
+        assert_eq!(said(&session, now), "已暂停自动滚动 ⋅ 按 F 恢复");
+    }
+
+    /// **单击落到上一帧交出的点得中的区域上**：选中那一行；点空了什么都不做。
+    #[test]
+    fn a_click_selects_the_row_it_lands_on_and_a_miss_does_nothing() {
+        let mut session = three_paths();
+        let now = Instant::now();
+        session.views.hits = vec![
+            hit_row(5, Target::Row(Cursor::Output)),
+            hit_row(6, Target::Row(Cursor::Add)),
+        ];
+        assert_eq!(session.click(3, 6, now), Clicked::Selected);
+        assert_eq!(session.views.task.cursor, Cursor::Add);
+        assert_eq!(
+            session.click(25, 6, now),
+            Clicked::Nothing,
+            "右边出了那一行"
+        );
+        assert_eq!(session.click(3, 7, now), Clicked::Nothing, "下面没有行");
+        assert_eq!(session.views.task.cursor, Cursor::Add, "点空了光标不动");
+    }
+
+    /// **单击一行暂停自动滚动，但一声不响**：设计稿 `onMouse` 只扳那一格、不说那一句
+    /// （`running-click-row` 那一屏的屏底是按键提示）。
+    #[test]
+    fn a_click_on_a_row_pauses_following_without_a_word() {
+        let mut session = a_running_tree();
+        let now = Instant::now();
+        let first = session
+            .lines()
+            .iter()
+            .find_map(|line| line.stop(&session.scope.paths, &session.views.task.tree));
+        session.views.hits = vec![hit_row(9, Target::Row(first.expect("树上有一行停得住")))];
+        session.click(10, 9, now);
+        assert!(!session.views.task.follow, "暂停了");
+        assert!(session.views.reply(now).is_none(), "屏底不说话");
+    }
+
+    /// **同一处在阈值内再点一次算双击**；阈值读会话的「此刻」——过了阈值、
+    /// 或者第二下落在别处，都只是又一次单击；双击用掉之后第三下从头算。
+    #[test]
+    fn a_second_click_on_the_same_spot_within_the_threshold_is_a_double_click() {
+        let mut session = three_paths();
+        let now = Instant::now();
+        session.views.hits = vec![
+            hit_row(5, Target::Row(Cursor::Output)),
+            hit_row(6, Target::Row(Cursor::Add)),
+        ];
+        assert_eq!(session.click(3, 6, now), Clicked::Selected);
+        assert_eq!(
+            session.click(9, 6, now + DOUBLE_CLICK_WITHIN),
+            Clicked::Double
+        );
+        assert_eq!(
+            session.click(9, 6, now + DOUBLE_CLICK_WITHIN),
+            Clicked::Selected,
+            "第三下从头算"
+        );
+
+        let later = now + DOUBLE_CLICK_WITHIN * 3;
+        assert_eq!(session.click(3, 6, later), Clicked::Selected);
+        let too_late = later + DOUBLE_CLICK_WITHIN + Duration::from_millis(1);
+        assert_eq!(session.click(3, 6, too_late), Clicked::Selected, "过了阈值");
+        assert_eq!(
+            session.click(3, 5, too_late),
+            Clicked::Selected,
+            "落在别的行上"
+        );
+    }
+
+    /// **配置视图那三栏与每页结果上的单击**（设计稿 `onMouse` 那四支）：设置栏上一项
+    /// ——光标停过去、回到设置栏、下钻作废；详情栏上一格——进详情栏、停在那一格；
+    /// 预设栏上一份——光标停过去、`dd` 等着的那一下作废；每页结果上一页——光标停过去。
+    #[test]
+    fn clicks_in_the_config_panes_and_the_pages_put_their_cursors_there() {
+        let mut session = three_paths();
+        let now = Instant::now();
+        session.views.view = View::Config;
+        let item = config::items()[3];
+        session.views.config.pane = Pane::Details;
+        session.views.hits = vec![
+            hit_row(7, Target::Item(item)),
+            hit_row(8, Target::Choice(2)),
+            hit_row(9, Target::Preset(1)),
+            hit_row(10, Target::Page(4)),
+        ];
+        session.click(1, 7, now);
+        assert_eq!(session.views.config.cursor, item);
+        assert_eq!(session.views.config.pane, Pane::Settings);
+        assert_eq!(session.views.config.drill, None);
+        session.click(1, 8, now);
+        assert_eq!(session.views.config.pane, Pane::Details);
+        assert_eq!(session.views.config.choice, 2);
+        session.views.config.armed_delete = Some("漫画".to_owned());
+        session.click(1, 9, now);
+        assert_eq!(session.views.config.preset_cursor, 1);
+        assert_eq!(session.views.config.armed_delete, None);
+        session.views.task.pages = Some(Pages::of(PathBuf::from("/库/甲/第01卷")));
+        session.click(1, 10, now);
+        assert_eq!(
+            session.views.task.pages.as_ref().map(|pages| pages.at),
+            Some(4)
+        );
+    }
+
+    /// **单击顶栏上的视图名切视图**；那一处点两下不是双击（等于 `⏎` 会在视图里做事）。
+    #[test]
+    fn a_click_on_a_view_name_switches_the_view_and_is_never_a_double_click() {
+        let mut session = three_paths();
+        let now = Instant::now();
+        session.views.hits = vec![hit_row(0, Target::View(View::Config))];
+        assert_eq!(session.click(1, 0, now), Clicked::Selected);
+        assert_eq!(session.views.view, View::Config);
+        assert_eq!(session.click(1, 0, now), Clicked::Selected);
     }
 
     /// **自动滚动暂停时只记光标，视口照旧由光标算**（票面第三条验收）。

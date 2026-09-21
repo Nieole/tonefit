@@ -28,7 +28,7 @@ use super::super::look::{Kind, Look, Segment};
 use super::super::state::{NamedPath, Session};
 use super::super::tone::Tone;
 use super::super::tree::{self, Directory, NoteKind, Shape};
-use super::super::view::{Focus, Line};
+use super::super::view::{Focus, Line, Target};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint, padded};
 use super::marks::{self, BranchTally, Mark, spell};
@@ -99,6 +99,11 @@ pub(super) fn draw(
             inner,
         };
         painter.row(canvas, spot, line, at == cursor, focused);
+        // 停得住的那几行点得中（设计稿 `row.key` 那一笔）：框里整宽一行。
+        if let Some(stop) = line.stop(&session.scope.paths, &session.views.task.tree) {
+            let y = area.y + 1 + (at - from) as u16;
+            canvas.hit_row(area, y, Target::Row(stop));
+        }
     }
 }
 

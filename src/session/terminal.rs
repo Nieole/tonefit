@@ -17,7 +17,10 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -34,7 +37,7 @@ use super::run::Running;
 use super::shell;
 use super::state::{Exit, Key, Session};
 use super::tone::Tone;
-use super::view::{CHART_LINGERS, Cursor, Input, NamedPreset, Pages, View, Window};
+use super::view::{CHART_LINGERS, Clicked, Cursor, Input, NamedPreset, Pages, View, Window};
 use crate::preset::{Presets, Saved};
 
 /// 没等到按键时隔多久重画一帧。
@@ -112,13 +115,15 @@ fn drive(
                 // 光标跟到正在处理的那一卷（`Session::watch_the_run`）。
                 session.watch_the_run(live);
             }
+            // **画完这一帧，记下它交出的点得中的区域**：下一下单击按它落（`Session::click`）。
+            let mut hits = Vec::new();
             screen
                 .terminal
-                .draw(|frame| shell::draw(frame, session, live.as_deref(), now))?;
+                .draw(|frame| hits = shell::draw(frame, session, live.as_deref(), now))?;
+            session.views.hits = hits;
         }
         if event::poll(TICK)? {
-            // 只认按下去那一下：Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍。
-            let Event::Key(pressed) = event::read()? else {
+            let Some(typed) = translate_input(&event::read()?) else {
                 continue;
             };
             let size = screen.terminal.size()?;
@@ -126,10 +131,7 @@ fn drive(
                 cols: size.width,
                 rows: size.height,
             };
-            if pressed.kind == KeyEventKind::Press
-                && let Some(typed) = translate_input(&pressed)
-                && input(session, running, presets, here, now, window, typed) == Exit::Leave
-            {
+            if input(session, running, presets, here, now, window, typed) == Exit::Leave {
                 running.leave();
                 return Ok(());
             }
@@ -185,6 +187,30 @@ pub(super) fn input(
     // **半屏与一屏那四个**：光标挪几行要窗口有多高（`Session::scroll_list`）。
     if session.scroll_list(deed, window, now) {
         return Exit::Stay;
+    }
+    match (deed, input) {
+        // **滚轮一格挪三行**：几格从输入上取（按键表只说这一块认不认滚轮）。
+        (Deed::Wheel, Input::Wheel(notches)) => {
+            session.wheel(notches, now);
+            return Exit::Stay;
+        }
+        // **单击**落到上一帧交出的点得中的区域上；**双击等于 `⏎`**——当一个 `⏎` 再交一次，
+        // 卷行上按展开那一支（要问那一趟）因此一格不差地走到。
+        (Deed::Click, Input::Click { x, y }) => {
+            if session.click(x, y, now) == Clicked::Double {
+                return self::input(
+                    session,
+                    running,
+                    presets,
+                    here,
+                    now,
+                    window,
+                    Input::Key(Key::Enter),
+                );
+            }
+            return Exit::Stay;
+        }
+        _ => {}
     }
     match deed {
         // **起一趟**（[`begin`]）：起线程、拼 `Request`、把观察者接上去，一件都不在状态机里。`t`／`x` 开跑**总回到任务视图**
@@ -512,16 +538,38 @@ fn draw_a_chart(session: &mut Session, here: &Path, now: Instant) {
     }
 }
 
-/// 终端那一侧的事件 → 会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
-/// （`C-d`／`C-u`／`C-f`／`C-b`／`C-w`），认不出的返回 `None`。滚轮与单击随鼠标那一票接上。
-fn translate_input(pressed: &KeyEvent) -> Option<Input> {
-    if pressed.modifiers.contains(KeyModifiers::CONTROL)
-        && let KeyCode::Char(letter) = pressed.code
-        && letter != 'c'
-    {
-        return Some(Input::Ctrl(letter));
+/// 终端那一侧的事件 → 会话认得的[输入](Input)。**一个纯函数**（spec《键码与鼠标翻译》）：
+///
+/// - 键**只认按下去那一下**（Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍）：
+///   照 [`translate`]，Ctrl 加一个字母另认（`C-d`／`C-u`／`C-f`／`C-b`／`C-w`）；
+/// - 滚轮一格一个 [`Input::Wheel`]（往下为正）——**连着滚的几格合成一帧不在这里**，
+///   这一层一次只翻一条事件；
+/// - 左键按下去那一下是 [`Input::Click`]，带着格坐标。双击不在这里认：那要会话的「此刻」
+///   （[`super::view::DOUBLE_CLICK_WITHIN`]）。
+///
+/// 认不出的（抬起、拖动、右键、横着滚、焦点与粘贴）返回 `None`。
+fn translate_input(event: &Event) -> Option<Input> {
+    match event {
+        Event::Key(pressed) if pressed.kind == KeyEventKind::Press => {
+            if pressed.modifiers.contains(KeyModifiers::CONTROL)
+                && let KeyCode::Char(letter) = pressed.code
+                && letter != 'c'
+            {
+                return Some(Input::Ctrl(letter));
+            }
+            translate(pressed).map(Input::Key)
+        }
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollDown => Some(Input::Wheel(1)),
+            MouseEventKind::ScrollUp => Some(Input::Wheel(-1)),
+            MouseEventKind::Down(MouseButton::Left) => Some(Input::Click {
+                x: mouse.column,
+                y: mouse.row,
+            }),
+            _ => None,
+        },
+        _ => None,
     }
-    translate(pressed).map(Input::Key)
 }
 
 /// 这一趟**在确认点上等不等人**，以及它真正走的是哪一种模式（ADR 0012 决定第 3 条）。
@@ -605,7 +653,8 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
     })
 }
 
-/// 借来的终端。**它的 [`Drop`] 是「退出时终端恢复原状」这条验收唯一的实现**——
+/// 借来的终端（raw mode、alternate screen、鼠标捕获）。
+/// **它的 [`Drop`] 是「退出时终端恢复原状」这条验收唯一的实现**——
 /// 正常退出、`?` 半路返回、恐慌展开，三条路都经过它。
 ///
 /// 恐慌那一条还多一道：[`hook_the_panic`] 让恐慌信息印在**还原之后**的屏幕上。
@@ -620,7 +669,9 @@ impl Screen {
         enable_raw_mode()?;
         // 进了 raw mode 之后每一步都可能失败，而失败也得把终端还回去——
         // `Screen` 还没造出来，`Drop` 顶不上，只能在这里自己收。
-        match execute!(stderr(), EnterAlternateScreen)
+        // **鼠标捕获与 alternate screen 一起进**（spec《鼠标》）：还回去在 [`restore`] 同一处。
+        // 捕获之后选屏上的字要按住 Shift 拖——ADR 0019《后果》认下的代价，不另设开关。
+        match execute!(stderr(), EnterAlternateScreen, EnableMouseCapture)
             .and_then(|()| Terminal::new(CrosstermBackend::new(stderr())))
         {
             Ok(terminal) => Ok(Self { terminal }),
@@ -639,15 +690,20 @@ impl Drop for Screen {
     }
 }
 
-/// 把终端还原：退出 alternate screen、关掉 raw mode。
+/// 把终端还原：还回鼠标捕获、退出 alternate screen、关掉 raw mode。
 ///
-/// **两件事各收各的，中间不放 `?`。** 验收要的是「不留在 raw mode **或** alternate screen 里」，
-/// 而 `?` 会让前一件的失败把后一件整个吃掉——退不出 alternate screen 的那一次，
-/// 终端就连 raw mode 一起留着了。两件都做完，再把先出的那个错误交出去。
+/// **三件事各收各的，中间不放 `?`。** 验收要的是「不留在 raw mode **或** alternate screen 里、
+/// 鼠标也还回去」，而 `?` 会让前一件的失败把后面的整个吃掉——退不出 alternate screen 的那一次，
+/// 终端就连 raw mode 一起留着了。三件都做完，再把先出的那个错误交出去。
+///
+/// **进出终端的三条路都经过这一处**：正常退出与 `?` 半路返回走 [`Screen`] 的 `Drop`，
+/// 进到一半失败走 [`Screen::open`] 自己那一收，恐慌走 [`hook_the_panic`]——
+/// 鼠标捕获因此与 raw mode 在同一处收尾，不另开第二条路。
 fn restore() -> std::io::Result<()> {
+    let mouse = execute!(stderr(), DisableMouseCapture);
     let left = execute!(stderr(), LeaveAlternateScreen);
     let raw = disable_raw_mode();
-    left.and(raw)
+    mouse.and(left).and(raw)
 }
 
 /// 恐慌之前先把终端还原，再让原来那个钩子把信息印出来。
@@ -766,6 +822,12 @@ mod redesign {
                 continue;
             }
             for input in step.inputs() {
+                // **单击落在上一帧交出的点得中的区域上**：真会话里每一下之前都画过一帧
+                // （`super::drive`），这里在单击之前照样画一帧、记下它交出的那一份。
+                if matches!(input, Input::Click { .. }) {
+                    let hits = frame_hits(&scene, &running, sequence.size, now);
+                    scene.session.views.hits = hits;
+                }
                 exit = super::input(
                     &mut scene.session,
                     &mut running,
@@ -821,12 +883,30 @@ mod redesign {
         (scene, running, exit)
     }
 
+    /// 此刻画一帧，交出它的点得中的区域。
+    fn frame_hits(
+        scene: &Scene,
+        running: &Running,
+        (width, height): (u16, u16),
+        now: std::time::Instant,
+    ) -> Vec<super::super::view::Hit> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
+        let live = running.live();
+        let mut hits = Vec::new();
+        terminal
+            .draw(|frame| hits = shell::draw(frame, &scene.session, live.as_deref(), now))
+            .expect("画得出来");
+        hits
+    }
+
     /// 走完那一刻画一屏。
     fn painted(scene: &Scene, running: &Running, (width, height): (u16, u16)) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
         let live = running.live();
         terminal
-            .draw(|frame| shell::draw(frame, &scene.session, live.as_deref(), scene.now()))
+            .draw(|frame| {
+                shell::draw(frame, &scene.session, live.as_deref(), scene.now());
+            })
             .expect("画得出来");
         terminal.backend().buffer().clone()
     }
@@ -2462,25 +2542,103 @@ mod redesign {
         );
     }
 
+    /// **鼠标那几串**（`session-redesign/16` 票面第一条）：滚轮一格挪三行（挪了就暂停自动滚动，
+    /// 屏底说那一句）、往回滚、连滚三格；单击一行选中它（自动滚动暂停、屏底不说话）；
+    /// 单击顶栏视图名切过去再切回来；双击目录行展开它；每页结果里单击一页；
+    /// 配置视图里单击一项、单击一个值、掀着预设栏单击一份。走完逐格对设计稿回放同一串那一屏。
+    #[test]
+    fn the_wheel_the_click_and_the_double_click_walk_to_the_designed_screens() {
+        for name in [
+            "running-wheel-down",
+            "running-wheel-down-3",
+            "running-wheel-up",
+            "running-click-row",
+            "running-click-config",
+            "running-click-config-click-task",
+            "running-dblclick-dir",
+            "config-click-row",
+            "config-click-choice",
+            "config-p-click-preset",
+        ] {
+            assert_sequence(name);
+        }
+    }
+
+    /// 每页结果里单击一页：光标停到那一页上（`a` 先把列法换成全部页）。
+    #[test]
+    fn a_click_in_the_pages_pane_puts_the_cursor_on_that_page() {
+        assert_sequence_with_every_page_of_the_open_volume("pages-click-page");
+    }
+
     /// 终端那一侧的键码翻成新会话的输入：Ctrl 加一个字母另认，`C-c` 仍是那个中断键，别的照旧。
     #[test]
     fn control_letters_translate_to_ctrl_inputs_and_ctrl_c_stays_the_interrupt() {
-        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        assert_eq!(super::translate_input(&ctrl('d')), Some(Input::Ctrl('d')));
-        assert_eq!(super::translate_input(&ctrl('w')), Some(Input::Ctrl('w')));
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let pressed =
+            |code, modifiers| super::translate_input(&Event::Key(KeyEvent::new(code, modifiers)));
+        let ctrl = |c: char| pressed(KeyCode::Char(c), KeyModifiers::CONTROL);
+        assert_eq!(ctrl('d'), Some(Input::Ctrl('d')));
+        assert_eq!(ctrl('w'), Some(Input::Ctrl('w')));
+        assert_eq!(ctrl('c'), Some(Input::Key(Key::Interrupt)));
         assert_eq!(
-            super::translate_input(&ctrl('c')),
-            Some(Input::Key(Key::Interrupt))
-        );
-        assert_eq!(
-            super::translate_input(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            pressed(KeyCode::Char('j'), KeyModifiers::NONE),
             Some(Input::Key(Key::Char('j')))
         );
         assert_eq!(
-            super::translate_input(&KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
-            None
+            pressed(KeyCode::F(1), KeyModifiers::NONE),
+            Some(Input::Key(Key::F1))
         );
+        assert_eq!(pressed(KeyCode::F(5), KeyModifiers::NONE), None);
+    }
+
+    /// **只认按下去那一下**：Windows 上抬起也报一条，不滤掉的话每个键都走两遍。
+    #[test]
+    fn a_key_released_translates_to_nothing() {
+        use ratatui::crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
+        };
+        let released = KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        };
+        assert_eq!(super::translate_input(&Event::Key(released)), None);
+    }
+
+    /// **鼠标事件翻成会话的输入**（spec《鼠标》）：滚轮一格一个 `Wheel`（往下为正），
+    /// 左键按下去那一下是单击、带着格坐标；抬起、拖动、移动、右键与横着滚一律放过。
+    #[test]
+    fn the_wheel_and_the_left_button_translate_to_mouse_inputs() {
+        use ratatui::crossterm::event::{
+            Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let mouse = |kind, column, row| {
+            super::translate_input(&Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        assert_eq!(
+            mouse(MouseEventKind::ScrollDown, 5, 9),
+            Some(Input::Wheel(1))
+        );
+        assert_eq!(
+            mouse(MouseEventKind::ScrollUp, 5, 9),
+            Some(Input::Wheel(-1))
+        );
+        assert_eq!(
+            mouse(MouseEventKind::Down(MouseButton::Left), 10, 9),
+            Some(Input::Click { x: 10, y: 9 })
+        );
+        assert_eq!(mouse(MouseEventKind::Up(MouseButton::Left), 10, 9), None);
+        assert_eq!(mouse(MouseEventKind::Drag(MouseButton::Left), 10, 9), None);
+        assert_eq!(mouse(MouseEventKind::Down(MouseButton::Right), 10, 9), None);
+        assert_eq!(mouse(MouseEventKind::Moved, 10, 9), None);
+        assert_eq!(mouse(MouseEventKind::ScrollLeft, 10, 9), None);
+        assert_eq!(super::translate_input(&Event::FocusGained), None);
     }
 }
 

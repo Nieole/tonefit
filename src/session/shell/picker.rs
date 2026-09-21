@@ -18,7 +18,7 @@ use super::super::keymap::{self, Deed};
 use super::super::look::{Hue, Kind, Look, Segment};
 use super::super::state::Session;
 use super::super::tone::Tone;
-use super::super::view::{ConfigView, Focus, NamedPreset};
+use super::super::view::{ConfigView, Focus, NamedPreset, Target};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, padded};
 
@@ -85,6 +85,10 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
             row,
             Some(inner),
         );
+        // 那几份点得中（设计稿 `preset: i` 那一笔）；末行那一件与说明不在内。
+        if at < config.listed.len() {
+            canvas.hit_row(area, area.y + 1 + (at - from) as u16, Target::Preset(at));
+        }
     }
 }
 
