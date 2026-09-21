@@ -124,6 +124,7 @@ impl Completion {
     }
 
     /// 从屏上的写法认回来（[`shown`](Self::shown) 的反面）：带 `/` 的是文件夹。场景数据里的候选就是这副写法。
+    #[cfg(test)]
     pub fn from_shown(shown: &str) -> Self {
         Self {
             name: shown.trim_end_matches(SEPARATORS).to_owned(),

@@ -32,8 +32,6 @@
 //!   （`crate::session::run` 的 `Running::report`），走的也是 [`report`]。
 //!   最后那一趟没做成时它后面还跟着一段 [`undone`]——那一句为什么没做成，
 //!   与报告正文分得开（21 号票）。
-//! - **会话的报告区**：眼下画的就是这一副（`crate::session::draw::report`）。
-//!   它会换成表——换的是排版，措辞一个字都不会跟着动，那正是 ADR 0016 买到的东西。
 //!
 //! # 一行摆成什么样，只有这里说得出
 //!
@@ -134,9 +132,7 @@ pub fn undone(earlier: Option<&str>, attempt: &str, said: &str) -> String {
 /// 每一小结那一段本来就以换行收尾，一行一行接下去，中间不加任何东西
 /// （与 [`text`] 同一条）。
 ///
-/// 会话那一副读的是同一批行，只是逐小结上色（`crate::session::draw` 的报告区）——
-/// 同样的行、同样的格，摆法两副。**这一副一个颜色都不加**（spec 的《Out of Scope》），
-/// 哪一小结挂哪一档因此不在这一层，也不在措辞那一层。
+/// **这一副一个颜色都不加**（spec 的《Out of Scope》）。
 pub fn tail(report: &Report) -> String {
     text(&super::tail(report))
 }

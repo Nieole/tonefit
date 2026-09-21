@@ -22,8 +22,6 @@ use ratatui::layout::Rect;
 use tonefit::{Candidate, FirstFew, VolumeReport};
 
 use super::super::columns::{self, TreeColumn, TreeWidths};
-use super::super::draw::overview::spell;
-use super::super::draw::table::driver;
 use super::super::keymap::{self, Deed, Phase, Want};
 use super::super::live::{Live, NotableTally, VolumeState};
 use super::super::look::{Kind, Look, Segment};
@@ -33,7 +31,7 @@ use super::super::tree::{self, Directory, NoteKind, Shape};
 use super::super::view::{Focus, Line};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint, padded};
-use super::marks::{self, BranchTally, Mark};
+use super::marks::{self, BranchTally, Mark, spell};
 use super::yielding;
 use crate::render::{self, Field, Notable, RowKind};
 
@@ -93,7 +91,7 @@ pub(super) fn draw(
         now,
         widths: TreeWidths::of(inner, session.taste.envelope.unwrap_or(false)),
     };
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (at, line) in lines.iter().enumerate().skip(from).take(usize::from(shown)) {
         let spot = Spot {
             x: area.x + 2,
@@ -721,8 +719,7 @@ impl Painter<'_> {
     }
 
     /// **代表页那一列**：这一卷的档位是哪一页定出来的。只有整卷统一灰阶判出来的卷有
-    /// （默认逐页那一趟这一列整个不在场，停车场 Q712）。字与逐页表抬头、与旧卷表那一列
-    /// 出自同一处（`draw::table::driver`）。
+    /// （默认逐页那一趟这一列整个不在场，停车场 Q712）。字出自 [`driver`]。
     fn driver_of(&self, at: usize) -> Option<String> {
         let report = self.report_of(at)?;
         driver(&render::volume(
@@ -895,4 +892,15 @@ fn problem_parts(tally: &BranchTally, unreachable: usize) -> Vec<Segment> {
         ));
     }
     marks::dotted(parts)
+}
+
+/// 代表页那一列的字：[那一行](RowKind::Driver)上的路径，只印最后那一段。
+///
+/// 只印最后一段，与卷名同一条规矩（[`crate::render::volume_name`]）：
+/// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
+fn driver(rows: &[render::Row]) -> Option<String> {
+    rows.iter()
+        .find(|row| row.kind == RowKind::Driver)
+        .and_then(|row| row.cell(Field::Source))
+        .map(|path| render::volume_name(std::path::Path::new(path)))
 }

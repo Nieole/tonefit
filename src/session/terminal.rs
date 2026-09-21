@@ -1,12 +1,12 @@
 //! 终端那一侧：进出终端、把键码翻译成会话认得的键、在两者之间转一个循环。
 //!
-//! **本仓库唯一一处认得 crossterm 键码的地方**（见 [`translate`]），也是唯一一处
-//! 握着终端的地方（见 [`Screen`]）。状态机、边跑边攒的那一份、起线程与逐层补全
-//! 都在 [`super`] 的另外四个模块里，摆在 `tui` 特性**外面**——分界与理由见
+//! **本仓库唯一一处认得 crossterm 键码的地方**（见 [`translate`] 与 [`translate_input`]），
+//! 也是唯一一处握着终端的地方（见 [`Screen`]）。状态机、边跑边攒的那一份、起线程与逐层补全
+//! 都在 [`super`] 的别的模块里，摆在 `tui` 特性**外面**——分界与理由见
 //! `super` 的模块文档《终端库在哪一半》。
 //!
-//! 除了那三件事，这一层还担着**状态机够不着的那几支**（见 [`press`]）：
-//! 起一趟、按停止、展开、读写盘上那份预设、把灰阶测试图交给库里第三个 seam。
+//! 除了那三件事，这一层还担着**状态机够不着的那几支**（见 [`input`]）：
+//! 起一趟、按停止、答话、进一卷的每页结果、读写盘上那份预设、把灰阶测试图交给库里第三个 seam。
 //! 那几支要的是那一趟、那块盘与那个库，而状态机三样都不碰。
 
 use std::io::{IsTerminal, Stderr, stderr};
@@ -26,14 +26,13 @@ use ratatui::crossterm::terminal::{
 use tonefit::{Mode as RunMode, Request};
 
 use super::cover;
-use super::draw;
-use super::draw::keys::Starters;
 use super::home::Home;
 use super::keymap::{Deed, Phase};
-use super::live::{Branch, Live, Resuming, Volume, VolumeState};
+use super::live::{Live, Resuming, VolumeState};
 use super::look::{Kind, Look, Segment};
 use super::run::Running;
-use super::state::{Action, Exit, Expansion, Key, Picker, Session};
+use super::shell;
+use super::state::{Exit, Key, Session};
 use super::tone::Tone;
 use super::view::{CHART_LINGERS, Cursor, Input, NamedPreset, Pages, View, Window};
 use crate::preset::{Presets, Saved};
@@ -60,7 +59,7 @@ pub fn enter() -> Result<u8> {
     }
     let mut screen = Screen::open()?;
     let mut session = Session::new();
-    // 家目录问一次、摆在会话上往下传（`CONTEXT.md` 的《会话》：家目录）：新界面的屏上把它缩写成 `~`。
+    // 家目录问一次、摆在会话上往下传（`CONTEXT.md` 的《会话》：家目录）：屏上把它缩写成 `~`。
     session.home = Home::found();
     // 会话的时钟起点：屏上那个转轮转到第几格从它算起（`CONTEXT.md` 的《会话》：此刻）。
     session.views.clock = Some(Instant::now());
@@ -91,7 +90,7 @@ pub fn enter() -> Result<u8> {
     Ok(running.exit_code())
 }
 
-/// 画一屏、等一个键（最多等 [`TICK`]）、做掉它，直到用户退出。
+/// 画一屏、等一个输入（最多等 [`TICK`]）、做掉它，直到用户退出。
 fn drive(
     screen: &mut Screen,
     session: &mut Session,
@@ -101,27 +100,35 @@ fn drive(
 ) -> Result<()> {
     loop {
         // **这一帧的「此刻」**：单调时钟一帧读一次，会话里要时刻的地方都读它
-        // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）。眼下只有攒着的那一份
-        // 要它——已用、预计、确认点上等人的那一截——屏上那几个数因此出自同一个时刻。
+        // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）——屏上那几个数、
+        // 屏底那句回话到没到点、连击键的待续记号，出自同一个时刻。
         let now = Instant::now();
         {
             // 借着锁画：画完当场还回去，计算线程最多等一帧的功夫（见 `Running::live`）。
             let mut live = running.live();
             if let Some(live) = live.as_deref_mut() {
                 live.tick(now);
+                // **每一帧盯一眼那一趟**：清点的产出到了就把树拼出来，自动滚动开着时
+                // 光标跟到正在处理的那一卷（`Session::watch_the_run`）。
+                session.watch_the_run(live);
             }
             screen
                 .terminal
-                .draw(|frame| draw::shell(frame, session, live.as_deref()))?;
+                .draw(|frame| shell::draw(frame, session, live.as_deref(), now))?;
         }
         if event::poll(TICK)? {
             // 只认按下去那一下：Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍。
             let Event::Key(pressed) = event::read()? else {
                 continue;
             };
+            let size = screen.terminal.size()?;
+            let window = Window {
+                cols: size.width,
+                rows: size.height,
+            };
             if pressed.kind == KeyEventKind::Press
-                && let Some(key) = translate(&pressed)
-                && press(session, running, presets, here, key) == Exit::Leave
+                && let Some(typed) = translate_input(&pressed)
+                && input(session, running, presets, here, now, window, typed) == Exit::Leave
             {
                 running.leave();
                 return Ok(());
@@ -137,129 +144,15 @@ fn drive(
     }
 }
 
-/// 把一个键交给会话。
+/// 把一个输入交给会话（ADR 0019；spec《缝》）。收的是键或鼠标（[`Input`]），
+/// 带着这一帧的「此刻」与窗口的尺寸；那条循环每收到一个输入调它一次（[`drive`]）。
 ///
-/// **只有够得着那一趟、或者够得着盘的那几支不走 [`Session::press`]**：
-/// [起一趟](Action::Start)、[按停止](Action::Stop)、[展开](Action::Expand)与
-/// [换一卷](Action::Turn)，加上预设那四支（[列出来](Action::Pick)、
-/// [套用](Action::Take)、[存下来](Action::Store)、[删掉](Action::Erase)）
-/// 与[出灰阶测试图](Action::Chart)。
-/// 起线程、拼 `Request`、把观察者接上去、把按到的那一级送到计算线程上、
-/// 从攒着的那份报告上数出此刻有哪几卷、读写用户配置目录下那份 TOML、
-/// 把灰阶测试图交给库里那第三个 seam，
-/// 都在这一层——状态机一个终端都不碰、不起线程，也读不到那一趟攒下来的东西与盘上的东西。
-/// 拼不出 `Request` 的那两种（型号没挑、输出目录没填）当场说一句，会话原地不动。
-///
-/// `here` 是灰阶测试图落在哪个目录下（见 [`chart_file`]）：真会话里是进程的当前目录，
-/// 由 [`enter`] 一次问出来。
-fn press(
-    session: &mut Session,
-    running: &mut Running,
-    presets: &Presets,
-    here: &Path,
-    key: Key,
-) -> Exit {
-    // 问一次就够：这几支之外的原样交回状态机，不让它再问一遍。
-    let action = session.action(key);
-    match action {
-        Action::Start(mode) => {
-            match session.request(mode) {
-                Ok(request) => {
-                    let (request, resumes) = resuming(request);
-                    running.start(request, resumes);
-                    session.run_started();
-                }
-                Err(error) => session.complain(format!("{error:#}")),
-            }
-            Exit::Stay
-        }
-        // 按停止：状态机把闩升一级（做完再停 → 立即停止，ADR 0013），这一层把升到的那一级
-        // 交给跑着的那一趟。两处记的是同一个字，出处只有状态机那一份——
-        // 这里读的就是它刚升完的结果，不自己再算一次。
-        Action::Stop => {
-            let exit = session.act(action);
-            running.stop(session.stopping());
-            exit
-        }
-        // 确认点上答话：状态机把会话放回「跑着」那一副，这一层把那个字交给停在
-        // 确认点上的那条线程。与按停止同一条分工——认键在那边，碰线程在这边。
-        // **两处记的是同一个字**，而它就在这个动作里带着：确认点回的是当场那个字、
-        // 不是闩（ADR 0012 决定第 2 条），因此这里不去问状态机再算一次。
-        // 它管几卷（「后面的卷都写出」）同样带在动作里，摆到那道闸的默认答案上去
-        // （`Running::decide`）——那一格也不是闩。
-        Action::Answer(said, reach) => {
-            let exit = session.act(action);
-            running.decide(said, reach);
-            exit
-        }
-        // 展开与换一卷：要读那一趟攒下来的报告（此刻有哪几卷），而状态机读不到它。
-        // 收起（`Action::Collapse`）不在这里——它不必读报告。
-        Action::Expand | Action::Turn(_) => {
-            expand(session, running, action);
-            Exit::Stay
-        }
-        // 展开一枝：同样要读那一趟攒下来的报告（此刻有哪几枝），
-        // 与[展开一卷](Action::Expand)同一条分法。
-        Action::Open => {
-            open(session, running);
-            Exit::Stay
-        }
-        // 卷表上挪一卷：同样要读那一趟攒下来的报告（此刻有哪几卷）。
-        // **一趟都没跑过时一格不动**——那时报告区里连一卷都没有，屏上也不摆这两个键。
-        Action::Select(step) => {
-            if let Some(live) = running.live() {
-                session.select(&live, step);
-            }
-            Exit::Stay
-        }
-        // 预设那四支：列出来、套一份、存一份、删一份，四件都要碰盘，而状态机碰不到盘。
-        // 四支各走各的函数，不合成一个收 `Action` 的分派——合起来就要留一支
-        // 「到不了」的 `_`，而那正是新添一支动作（删一份就是这么添进来的，停车场 Q74）
-        // 会被静默吃掉的地方。
-        Action::Pick => {
-            list_presets(session, presets);
-            Exit::Stay
-        }
-        Action::Take => {
-            take_preset(session, presets);
-            Exit::Stay
-        }
-        Action::Store => {
-            store_preset(session, presets);
-            Exit::Stay
-        }
-        Action::Erase => {
-            erase_preset(session, presets);
-            Exit::Stay
-        }
-        // 出灰阶测试图：画图与落盘整件事在库里那第三个 seam 上，而状态机碰不到盘。
-        // 与预设那三支同一条分法。
-        Action::Chart => {
-            write_chart(session, here);
-            Exit::Stay
-        }
-        other => session.act(other),
-    }
-}
-
-/// 把一个输入交给**新会话**（ADR 0019；spec《缝》）——与 [`press`] 并排，真会话仍走那一支，
-/// 切换在 `session-redesign/15`。收的是键或鼠标（[`Input`]），带着这一帧的「此刻」与窗口的尺寸。
-///
-/// 分工与 [`press`] 同一条：先把输入认成按键表上的一件事（[`Session::deed_of`]，连击键在那里待着），
-/// **够得着那一趟与屏的那几件在这一层做**，其余交回状态机（[`Session::perform`]）。
-/// 这一层眼下有这几件：覆盖层上滚动（那一张有几行、露几行都从窗口的尺寸算，
-/// [`cover::Sheet`]，而窗口有多大只有这一层知道）、`F` 之后光标跟上正在处理的那一卷、
-/// 搜索与跳转的落点（哪几卷出了事只有那一趟答得出）。
-/// 起一趟（走 [`press`] 的 `Action::Start` 起线程那条路）、按停止、答话、
-/// 预设那几支与灰阶测试图，随各票在这里各接一支——接上之前那几个键交下去落在
-/// [`Session::perform`] 的空处，原地不动。`running` 眼下只答一件事：那一趟清点完了没有。
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "真会话切到新界面（session-redesign/15）时接进那条循环"
-    )
-)]
+/// 先把输入认成按键表上的一件事（[`Session::deed_of`]，连击键在那里待着），
+/// **够得着那一趟、那块盘与屏的那几件在这一层做**，其余交回状态机（[`Session::perform`]）：
+/// 覆盖层上滚动（那一张有几行、露几行都从窗口的尺寸算，[`cover::Sheet`]，而窗口有多大
+/// 只有这一层知道）、半屏与一屏、起一趟、按停止、答话、`F` 之后光标跟上正在处理的那一卷、
+/// 搜索与跳转的落点（哪几卷出了事只有那一趟答得出）、进一卷的每页结果、
+/// 预设那几支与灰阶测试图。
 pub(super) fn input(
     session: &mut Session,
     running: &mut Running,
@@ -294,8 +187,7 @@ pub(super) fn input(
         return Exit::Stay;
     }
     match deed {
-        // **起一趟**：走 [`press`] 的 `Action::Start` 那条路——起线程、拼 `Request`、
-        // 把观察者接上去，一件都不在状态机里。`t`／`x` 开跑**总回到任务视图**
+        // **起一趟**（[`begin`]）：起线程、拼 `Request`、把观察者接上去，一件都不在状态机里。`t`／`x` 开跑**总回到任务视图**
         // （ADR 0019 决定第 1 条）。
         Deed::Preview | Deed::Convert => {
             let mode = if deed == Deed::Preview {
@@ -307,7 +199,7 @@ pub(super) fn input(
             Exit::Stay
         }
         // **按停止**：状态机把闩升一级（`Session::perform`），这一层把升到的那一级交给
-        // 跑着的那一趟。两处记的是同一个字，出处只有状态机那一份——与 [`press`] 同一条分工。
+        // 跑着的那一趟。两处记的是同一个字，出处只有状态机那一份。
         Deed::Stop => {
             let exit = session.perform(deed, now);
             running.stop(session.stopping());
@@ -315,9 +207,8 @@ pub(super) fn input(
         }
         // **确认点上答话那三件**：状态机把会话放回「跑着」那一副、屏底说一句
         // （`Session::perform`），这一层把那个字**连同它管几卷**交给停在确认点上的那条线程。
-        // 与按停止同一条分工——认键在那边，碰线程在这边；而「哪个键答哪个字」在
-        // [`Deed::answer`] 一处，两处不各算一遍（旧那一副读的是同一份，
-        // 见 `super::state::deciding_action`）。
+        // 与按停止同一条分工——认键在那边，碰线程在这边；而「哪一件答哪个字」在
+        // [`Deed::answer`] 一处。
         //
         // **它不进闩**：按停止按到的那一级一格不动（`CONTEXT.md` 的《等待确认》），
         // 因此这里不调 `running.stop`。「后面的卷都写出」进的是观察者那一侧的
@@ -363,7 +254,7 @@ pub(super) fn input(
         }
         // **预设那几支与灰阶测试图**：掀开预设栏要列出盘上那几份、`dd` 的第二下要删掉一份、
         // 起好名那一下要存一份、`c` 要写出一张图——四件都碰盘，而状态机碰不到盘。
-        // 与[旧界面那一支](press)同一条分法；套用一份不在这里，掀开那一刻已经读进来了
+        // 套用一份不在这里，掀开那一刻已经读进来了
         // （`Session::lift_picker`），那一下因此是纯状态（`Session::use_preset`）。
         Deed::Presets => {
             toggle_picker(session, presets, now);
@@ -501,10 +392,11 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
     session.views.say(said, now);
 }
 
-// ───────────────────────── 新界面的预设那几支与灰阶测试图 ─────────────────────────
+// ───────────────────────── 预设那几支与灰阶测试图 ─────────────────────────
 //
-// 与[旧界面那四支](list_presets)同一条分工：**碰盘的在这一层**，认键与屏上那几格在状态机。
-// 四支各走各的函数，不合成一个分派——理由与旧界面那四支相同（停车场 Q74）。
+// **碰盘的在这一层**，认键与屏上那几格在状态机。四支各走各的函数，不合成一个收 `Deed`
+// 的分派——合起来就要留一支「到不了」的 `_`，而那正是新添一支会被静默吃掉的地方
+// （停车场 Q74）。
 
 /// **`p`：掀开或收起预设栏。** 掀开那一下把盘上有的那几份连同它们的内容读进来
 /// （`CONTEXT.md` 的《预设栏》：列的是**进这一栏那一刻**盘上有的几份），
@@ -539,7 +431,7 @@ fn toggle_picker(session: &mut Session, presets: &Presets, now: Instant) {
 /// 第二下——问的与眼下停着的是**同一份**时——才走 [`Presets::remove`]。
 ///
 /// 两下不是防手滑的礼节：删的是盘上长期存着的东西，按错一下没有撤销
-/// （与旧界面那一支同一条，停车场 Q74 把这条约束说死了）。
+/// （停车场 Q74 把这条约束说死了）。
 /// **跑着与等待确认时照样删得掉**：只读的是三组设置，预设文件不是设置（ADR 0017）。
 fn erase_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
     // **是第几下由状态机一处判**（`Session::ask_then_erase`）：第一下只闩上、答 `None`，
@@ -596,7 +488,8 @@ fn store_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
 }
 
 /// **`c`：出灰阶测试图。** 画图与落盘整件事在库里（[`tonefit::write_calibration_chart`]），
-/// 这一层只点了个名——与[旧界面那一支](write_chart)同一条分法，`here` 也是同一个。
+/// 这一层只点了个名：建的不是目录、写的不是文件，父目录不在就建出来也是那一头的事；
+/// 写不出去时库那一侧回的 `Err` 原样端到屏底，会话原地不动。图落在哪儿见 [`chart_file`]。
 ///
 /// **屏底那一句与设计稿不同**：设计稿那一句末尾写的是「（原型不写文件）」，
 /// 而这一副真写得出文件，票面第五条要的正是**回话说写到了哪里**。
@@ -619,15 +512,8 @@ fn draw_a_chart(session: &mut Session, here: &Path, now: Instant) {
     }
 }
 
-/// 终端那一侧的事件 → 新会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
+/// 终端那一侧的事件 → 会话认得的[输入](Input)：键照 [`translate`]，Ctrl 加一个字母另认
 /// （`C-d`／`C-u`／`C-f`／`C-b`／`C-w`），认不出的返回 `None`。滚轮与单击随鼠标那一票接上。
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "真会话切到新界面（session-redesign/15）时接进那条循环"
-    )
-)]
 fn translate_input(pressed: &KeyEvent) -> Option<Input> {
     if pressed.modifiers.contains(KeyModifiers::CONTROL)
         && let KeyCode::Char(letter) = pressed.code
@@ -671,120 +557,6 @@ fn resuming(request: Request) -> (Request, Resuming) {
     }
 }
 
-/// **列出来**：盘上那份文件里有的那几份，摆成预设那一栏。
-///
-/// 这三件事（列出来、套一份、存一份）都落在这一层，与[展开](Action::Expand)同一条分法——
-/// 那一支要读那一趟攒的报告，这三支要读写用户配置目录下那份 TOML（[`Presets`]）。
-///
-/// 读得出名字就够：**一份字段过时的预设不该让别的几份列不出来**
-/// （见 [`Presets::names`]）。整份文件都读不懂才说一句，而那时那一栏开不了——
-/// 开一栏空的比说清为什么更坏。
-///
-/// 那一栏连**它是哪一份文件列出来的**一起收下（[`Presets::path`]）：存出去的东西落在
-/// 用户自己的配置目录里，而屏上得说得出那是哪儿（见 `Picker::file`）。
-fn list_presets(session: &mut Session, presets: &Presets) {
-    match presets.path().and_then(|file| {
-        let file = file.to_path_buf();
-        presets.names().map(|names| (names, file))
-    }) {
-        Ok((names, file)) => session.pick(names, file),
-        Err(error) => session.complain(format!("{error:#}")),
-    }
-}
-
-/// **套一份**：把光标停着的那一份读出来，两层整个换成它。
-///
-/// **读不懂的预设当场报出库那一侧的原话**（spec 的 story 39）：会话不静默套默认值，
-/// 也不另编一句——那句话里已经说清是哪一份、哪一项读不懂。说完仍留在这一栏上，
-/// 用户接着挑别的一份。
-fn take_preset(session: &mut Session, presets: &Presets) {
-    let Some(name) = session
-        .picking()
-        .and_then(Picker::picked)
-        .map(str::to_owned)
-    else {
-        return;
-    };
-    match presets.read(&name) {
-        Ok(taken) => session.took(&name, taken),
-        Err(error) => session.complain(format!("{error:#}")),
-    }
-}
-
-/// **存一份**：把当前两层写成缓冲里打的那个名字。
-///
-/// **第一下盖不掉同名的那一份**：[`Presets::save`] 撞上就是 [`Saved::Taken`]，
-/// 屏上说一句、闩上「再按一次」（[`Session::name_is_taken`]），第二下才走
-/// [`Presets::replace`]。两下不是防手滑的礼节——盖掉的可能是别人手写的一份预设，
-/// 而那一份原来的内容换掉之后撤不回来（文件里别的字节动不着，见 `preset::insert`）。
-///
-/// 撞名的判断**落在盘那一侧**，不落在这一栏进来时列的那份名单上：名单是进来那一刻的
-/// 快照，而这中间别处可能刚添了一份同名的。
-fn store_preset(session: &mut Session, presets: &Presets) {
-    let Some(naming) = session.picking().and_then(Picker::naming).cloned() else {
-        return;
-    };
-    let name = naming.name();
-    let stored = session.preset();
-    let written = if naming.asked() {
-        presets.replace(name, &stored).map(|()| Saved::Written)
-    } else {
-        presets.save(name, &stored)
-    };
-    match written {
-        Ok(Saved::Written) => session.saved(name),
-        Ok(Saved::Taken) => session.name_is_taken(name),
-        Err(error) => session.complain(format!("{error:#}")),
-    }
-}
-
-/// **删一份**：把光标停着的那一份从盘上删掉。
-///
-/// **第一下只问一句**（[`Session::ask_before_erasing`]），盘一个字节都不碰；
-/// 第二下——问的与眼下停着的是**同一份**时——才走 [`Presets::remove`]。
-/// 两下不是防手滑的礼节：删的是盘上长期存着的东西，而按错一下没有撤销
-/// （停车场 Q74 把这条约束说死了）。
-///
-/// 那一份在这中间被别处删掉了、或者那份文件整个读不懂了，回的都是库那一侧的原话
-/// （已经说清是哪一份、有的是哪几份），这一层原样端到屏底——与套一份读不懂的预设同一条待遇。
-fn erase_preset(session: &mut Session, presets: &Presets) {
-    let Some(picker) = session.picking() else {
-        return;
-    };
-    let Some(name) = picker.picked().map(str::to_owned) else {
-        return;
-    };
-    if picker.asked() != Some(name.as_str()) {
-        session.ask_before_erasing(&name);
-        return;
-    }
-    match presets.remove(&name) {
-        Ok(()) => session.erased(&name),
-        Err(error) => session.complain(format!("{error:#}")),
-    }
-}
-
-/// **出灰阶测试图**：按设备设置那块面板画一张，写到 [`chart_file`] 点的那个文件上。
-///
-/// 落盘整件事在库里（[`tonefit::write_calibration_chart`]）：这一层建的不是目录、
-/// 写的不是文件，只是**点了个名**——父目录不在就建出来也是那一头的事
-/// （加固批 12 号票把它移进库正是为了这个）。会话因此不必知道 PNG 长什么样，
-/// 也不可能在这里给量具掺进一条管线。
-///
-/// **写不出去就说一句，会话原地不动**（票面第五条）：父目录建不了、盘满，
-/// 库那一侧回的都是 `Err`，措辞里已经带着是哪一步、在哪条路径上出的事，
-/// 这一层原样端到屏底、不另编一份——与套一份读不懂的预设同一条待遇。
-fn write_chart(session: &mut Session, here: &Path) {
-    let written = session.chart_profile().and_then(|profile| {
-        let out = chart_file(here, &profile);
-        tonefit::write_calibration_chart(&profile, &out).map(|()| out)
-    });
-    match written {
-        Ok(out) => session.charted(&out),
-        Err(error) => session.complain(format!("{error:#}")),
-    }
-}
-
 /// 灰阶测试图落在哪个文件上：`here` 下面一个**照 profile 取名**的 PNG。
 ///
 /// **不落在输出目录下面。** 那是被处理的页的去处，而灰阶测试图是量具——
@@ -807,162 +579,6 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
     ))
 }
 
-/// 一趟都没跑过时[展开一卷](expand)与[展开一枝](open)那两支说的那一句。
-///
-/// 起一趟的两个键出自按键表（[`Starters::named`]，`draw::keys` 模块文档
-/// 《屏上顺口提到一个键的那几句散文》），措辞是这一层自己的；两个都派不出来时只说要等报告。
-fn not_run_yet(starters: &Starters) -> String {
-    let keys = starters.named();
-    match keys.is_empty() {
-        true => "还没跑过：报告出来了才展得开".to_owned(),
-        false => format!("还没跑过：先按 {}，报告出来了才展得开", keys.join("或 ")),
-    }
-}
-
-/// 展开**光标停着的那一卷**的逐页，或者换到下一卷。
-///
-/// **展开的是报告区那个光标停着的那一卷**（`p3-session-legibility/10`）：
-/// 自动滚动着的时候就是最新收摊的那一卷，自动滚动停了就是停着的那一卷——包括**确认点上
-/// 那一卷**（`p2-loose-ends/08`：不许摊开上一卷冒充它）。从前它恒是第一卷，
-/// 因为那时报告区还没有光标。
-///
-/// **视口对到那一卷的抬头上**（票面第七条）：这一副只画**这一卷**，抬头就钉在它顶上
-/// （见 `super::draw::pages`），光标回到头一页——换一卷之后屏上第一眼看到的因此恒是
-/// 那一卷的抬头。从前它要在整份报告里数出那一卷落在第几行（停车场 Q64 那一头），
-/// 而那个数连同「报告区展开之后是一整份报告」一起没了。
-///
-/// **换一卷时列的是哪几页跟着走**（[`Expansion::turned_to`]）：`a` 按下去不该只管一卷。
-///
-/// 一卷都没有就说一句、不进展开态：展开的是**报告上的一卷**，
-/// 而这一趟还没跑过或者第一卷还没跑完时，那样东西根本不在。
-///
-/// **光标停在没做成的那一卷上时说 [`CANNOT_EXPAND`]、不进展开态**
-/// （`p4-parking-lot/10` 收停车场 Q159）：那一行在屏上占着一格，光标此刻停得上去，
-/// 而它连一份卷报告都没有——**明说这一卷展不开**，比让 `⏎` 悄悄什么都不做好。
-/// 与型号没挑时按 `t`／`x` 是同一条待遇：键照旧摆在屏上，按下去当场说清为什么没有第二步。
-fn expand(session: &mut Session, running: &Running, action: Action) {
-    let Some(live) = running.live() else {
-        // **这一支到不了**：一趟都没跑过时按键表根本不派展开
-        // （`super::state::Session::browsing_action` 那一道，停车场 Q167），
-        // 而攒着的那一份没有恰恰只有那一种情形。留着是因为 `Running::live` 的取值域上
-        // 它在，而悄悄什么都不做比说一句更坏。
-        session.complain(not_run_yet(&draw::keys::starters(session)));
-        return;
-    };
-    expanding(session, &live, action);
-}
-
-/// [展开](expand)那件事**除掉「找哪一趟要报告」那一步**剩下的全部。
-///
-/// 分出来是为了**测得动**：本层唯一起线程的地方在 [`Running::start`]，而用例造得出一份
-/// [`Live`]（`super::live::fixture` 那几个夹具），造不出一趟真跑着的。挡在前面那一句
-/// 「还没跑过」留在 [`expand`] 上——它问的正是「有没有那一趟」。
-///
-/// **那把锁握到这一支做完**：[`Running::live`] 给的是一把 `MutexGuard`，而拆成两个函数
-/// 之后 [`expand`] 还不回去（从前它在 `session.expand` 那两下之前先 `drop`）。
-/// 代价有界，而且没有变大多少——贵的那一步（[`Live::branches`]，那是一遍分组）
-/// 本来就在锁里，多握的只是一次路径克隆与一次结构体赋值。
-/// [`open`] 那一头照旧 `drop` 得掉：它不必把 `live` 借进第二个函数。
-fn expanding(session: &mut Session, live: &Live, action: Action) {
-    let volumes = live.volumes();
-    let Some(first) = volumes.first().copied() else {
-        session.complain("报告里还没有卷：一卷跑完才有它的逐页那几行".to_owned());
-        return;
-    };
-    let branches = live.branches();
-    let opened = match (action, session.expansion()) {
-        // 换一卷：在**这一枝**底下那几卷上挪一格，两头都转一圈（`Expansion::next`）。
-        // 只在这一枝里转：层次与发现出来的那棵树一致，一个 `⇥` 不该把人甩到另一枝上去
-        // （`volume-discovery/08`）。
-        // **先把展开着的那一卷解析一道**（`Live::nearest`）：它可能已经收摊，
-        // 而收摊之后「攒着的那一份」那个位置归的是下一卷，不是它。
-        (Action::Turn(step), Some(expansion)) => {
-            let at = live.nearest(expansion.volume).unwrap_or(first);
-            // 那一枝找不着这一步到不了（`at` 恒来自 `live.volumes()`，而每一卷都挂在
-            // 某一枝上）；真到了就原地不动，与展开那一支同一条。
-            let Some(branch) = branch_of(&branches, at) else {
-                return;
-            };
-            // **只在展得开的那几卷之间转**（[`Branch::expandable`]）：`⇥` 转到没做成的
-            // 那一卷上，这一格里就只剩一句话——那不是「换一卷」要给的东西。
-            // 一卷都展不开时原地不动（展开态本来就进不来，这一支到不了）。
-            let turnable = branch.expandable();
-            if turnable.is_empty() {
-                return;
-            }
-            let turned = expansion.turned_to(
-                branch.directory.clone(),
-                Expansion::next(&turnable, at, step),
-            );
-            session.expand(turned);
-            return;
-        }
-        // 展开：光标停着的那一卷。它此刻指不着谁（那一卷收摊了）时由
-        // `Session::standing` 就近收一收，仍收不着就从头一卷起。
-        _ => session.standing(live).unwrap_or(first),
-    };
-    // **没做成的那一卷展不开**：明说一句，不进展开态（见本函数的文档）。
-    if !opened.expandable() {
-        session.complain(CANNOT_EXPAND.to_owned());
-        return;
-    }
-    // **哪一枝答不出来就不进展开态**：`opened` 恒来自 `live.volumes()`，而每一卷都挂在
-    // 某一枝上（[`crate::render::grouped`] 收的就是那一列），这一支到不了。
-    // 拿一个空路径兜底更坏：那是一枝**不存在**的目录，收起之后屏上摆的是目录表、
-    // 屏底说的却是卷表（Q170 那一类自相矛盾正是这么来的）。
-    let Some(branch) = branch_of(&branches, opened) else {
-        session.complain("这一卷不在这一趟的哪一枝上：报告换了一趟，Esc 回目录表".to_owned());
-        return;
-    };
-    let directory = branch.directory.clone();
-    session.expand(Expansion::new(directory, opened));
-}
-
-/// 光标停在**没做成的那一卷**上按展开时说的那一句（停车场 Q159）。
-///
-/// **它不重说那一卷为什么没做成**：那句原因跟在卷表上那一行的行尾，出自
-/// [`crate::render::failed_volume`]——措辞只有那一处（ADR 0016）。这一句只答
-/// 「按下去为什么没有第二层」，并指回屏上已经写着答案的那个地方。
-const CANNOT_EXPAND: &str = "这一卷展不开：它一整卷没做成，连一份卷报告都没有，逐页那几行无从谈起——行尾那一句说的就是为什么";
-
-/// **展开光标停着的那一枝**：它底下那几卷摊成卷表（`volume-discovery/08` 票面第二条）。
-///
-/// 与[展开一卷](expand)同一条分法落在这一层：哪一枝要数那一趟攒下来的报告，
-/// 而状态机读不到它。挡在前面的那两句也与那一头同一副形状——一卷都没有就说一句、
-/// 不进那一级：展开的是**报告上的一枝**，而这一趟还没跑过或者第一卷还没跑完时，
-/// 那样东西根本不在。
-///
-/// 光标停着的那一卷在哪一枝上就展哪一枝；它此刻指不着谁时从**头一枝**起。
-fn open(session: &mut Session, running: &Running) {
-    let Some(live) = running.live() else {
-        // 与[展开一卷](expand)那一支同一条：一趟都没跑过时这个键不派动作，
-        // 焦点也进不到报告区上去——这一支到不了。
-        session.complain(not_run_yet(&draw::keys::starters(session)));
-        return;
-    };
-    let branches = live.branches();
-    let standing = session.standing(&live);
-    let Some(branch) = standing
-        .and_then(|at| branch_of(&branches, at))
-        .or_else(|| branches.first())
-    else {
-        session.complain("报告里还没有卷：一卷跑完才有它那一枝".to_owned());
-        return;
-    };
-    let directory = branch.directory.clone();
-    drop(live);
-    session.open(directory);
-}
-
-/// 这一卷挂在**哪一枝**上。**分组只有一处出处**（`crate::render::grouped`），
-/// 这里只在算好的那几枝里找它。
-///
-/// 出的是整一枝而不是它的某一格：这一层要的两样（那一枝叫什么、它底下有哪几卷）
-/// 同出一次查找，各查一遍就是把 `branches` 扫两趟。
-fn branch_of(branches: &[Branch], at: Volume) -> Option<&Branch> {
-    branches.iter().find(|branch| branch.volumes.contains(&at))
-}
-
 /// 终端那一侧的键码 → 会话认得的 [`Key`]。
 ///
 /// **这是本仓库唯一一处认得 crossterm 键码的地方**，也是状态机能脱离终端受测的原因：
@@ -975,12 +591,8 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
     Some(match pressed.code {
         KeyCode::Up => Key::Up,
         KeyCode::Down => Key::Down,
-        KeyCode::Left => Key::Left,
-        KeyCode::Right => Key::Right,
         KeyCode::Enter => Key::Enter,
         KeyCode::Tab => Key::Tab,
-        // `⇧⇥` 是一个**单独的**键码，不是 Tab 加一个修饰键。
-        KeyCode::BackTab => Key::BackTab,
         KeyCode::Backspace => Key::Backspace,
         KeyCode::Esc => Key::Esc,
         KeyCode::Char(' ') => Key::Space,
@@ -1070,7 +682,7 @@ fn no_terminal_error() -> anyhow::Error {
     )
 }
 
-/// 新会话那一支的用例：喂交互序列，走完对交互期望屏（spec《交互序列》；`session-redesign/06`）。
+/// 经输入入口（[`input`]）的用例：喂交互序列，走完对交互期望屏（spec《交互序列》；`session-redesign/06`）。
 #[cfg(test)]
 mod redesign {
     use ratatui::Terminal;
@@ -1078,11 +690,11 @@ mod redesign {
     use ratatui::buffer::Buffer;
 
     use super::super::cover::Overlay;
-    use super::super::draw::design::{self, Expected, assert_no_background, assert_same_cells};
     use super::super::look::{Kind, Look, Segment};
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
+    use super::super::shell::design::{self, Expected, assert_no_background, assert_same_cells};
     use super::super::state::{Exit, Key};
     use super::super::view::{Cursor, Focus, Input, Pane, Window};
     use crate::preset::Presets;
@@ -1091,7 +703,7 @@ mod redesign {
 
     /// 用例里那份预设文件：位置点在**临时目录**里（[`Presets::at`]），
     /// 因此不必去改进程的环境变量（`tests/preset.rs` 说过为什么不改）。
-    /// 一个用户的东西都不碰——与旧那一支的 `tests::presets` 同一招。
+    /// 一个用户的东西都不碰。
     fn presets(space: &tempfile::TempDir) -> Presets {
         Presets::at(space.path().join("tonefit").join("presets.toml"))
     }
@@ -1109,7 +721,7 @@ mod redesign {
             .to_path_buf()
     }
 
-    /// 从这一串的起点场景起，逐步喂给新会话那一支；回走完那一刻的场景、那一趟与最后一步的去留。
+    /// 从这一串的起点场景起，逐步喂给输入入口；回走完那一刻的场景、那一趟与最后一步的去留。
     fn walked(name: &str) -> (Scene, Running, Exit) {
         let sequence = scene::sequence(name);
         let mut scene = Scene::named(&sequence.scene);
@@ -1301,11 +913,10 @@ mod redesign {
 
     /// **按停止那个键真的走到了跑着的那一趟身上**（票面第四条），**两级各自到达**。
     ///
-    /// 与旧那一支那条用例（`pressing_stop_reaches_the_run_that_is_going`）同一条接头：
-    /// 状态机把闩升一级，本层把升到的那一级交给 [`Running::stop`]。**两头记的是同一个字**。
+    /// 接头处是本层唯一做的事：状态机把闩升一级，本层把升到的那一级交给 [`Running::stop`]。**两头记的是同一个字**。
     /// 一个终端都不碰——[`super::input`] 收的是 `&mut Session` 与 `&mut Running`。
     #[test]
-    fn pressing_stop_through_the_new_input_reaches_the_run_at_both_levels() {
+    fn pressing_stop_through_the_input_reaches_the_run_at_both_levels() {
         let mut session = crate::session::state::Session::new();
         let mut running = Running::default();
         let now = std::time::Instant::now();
@@ -1350,7 +961,7 @@ mod redesign {
         assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
     }
 
-    /// **`t`／`x` 开跑**（票面第一条）：起一趟走的是 [`press`] 那条路（拼 `Request`、
+    /// **`t`／`x` 开跑**（票面第一条）：起一趟走的是 [`super::begin`]（拼 `Request`、
     /// 起线程、把观察者接上去），会话回到任务视图、卷列表换成清点中那一副，屏底说这一趟做什么。
     ///
     /// 走完那一屏与设计稿逐格相等——两串各按一个键，`t` 是预览、`x` 是转换。
@@ -1623,10 +1234,9 @@ mod redesign {
     /// **三种答法经新输入入口到达等在确认点上的那条线程**（票面第三条）。
     ///
     /// 接头处与按停止那一条同一个位置
-    /// （[`pressing_stop_through_the_new_input_reaches_the_run_at_both_levels`]）：
+    /// （[`pressing_stop_through_the_input_reaches_the_run_at_both_levels`]）：
     /// 状态机把会话放回「跑着」那一副，本层把那个字**连同它管几卷**交给
-    /// [`Running::decide`]。**两副界面读的是同一份**（[`Deed::answer`]），
-    /// 旧那一副那两条用例在另一个用例模块里，这一条走的是新那一副这条路。
+    /// [`Running::decide`]。「哪一件答哪个字」只有 [`Deed::answer`] 一处。
     ///
     /// 走的是整条路，**两趟**：
     ///
@@ -1639,7 +1249,7 @@ mod redesign {
     ///
     /// 不开终端：[`super::input`] 收的是 `&mut Session` 与 `&mut Running`。
     #[test]
-    fn the_three_answers_through_the_new_input_reach_the_thread_waiting_at_the_point() {
+    fn the_three_answers_through_the_input_reach_the_thread_waiting_at_the_point() {
         let space = tempfile::tempdir().expect("建得出临时目录");
         let nowhere = presets(&space);
 
@@ -2549,7 +2159,7 @@ mod redesign {
         );
         // **那一问真在屏上**：预设栏里、说明底下那一行——屏底这一刻让给了输入行，
         // 说给屏底等于一个字都没说（停车场 Q894）。比的是**去掉空白之后**屏上有没有这几个字
-        // （宽字符占住的第二格画布清成空格，与 `draw::probe::tight` 同一条读法）。
+        // （宽字符占住的第二格画布清成空格）。
         let screen: String = painted(&scene, &running, (120, 36))
             .content()
             .iter()
@@ -2599,17 +2209,189 @@ mod redesign {
             .filter(|path| path.extension().is_some_and(|kind| kind == "png"))
             .collect();
         assert_eq!(landed.len(), 1, "只写出一张：{landed:?}");
+        // **屏底那一句摆到倒数第三列为止**（`shell::footer` 的 `room`：从第 1 列起、占宽减三列）：
+        // 图落在临时目录里，那条路径长短随机器而变，长了就在那儿截住——期望屏照同一条截。
+        let (width, _) = scene::sequence("config-c").size;
+        let head = "✓ 已生成灰阶测试图";
+        let mut room = usize::from(width - 3) - usize::from(crate::wrap::width(head));
+        let tail: String = format!(
+            "（1264x1680）：写到 {}",
+            scene.session.home_shown(&landed[0])
+        )
+        .chars()
+        .take_while(|glyph| {
+            let cells = usize::from(crate::wrap::width(&glyph.to_string()));
+            let fits = cells <= room;
+            room = room.saturating_sub(cells);
+            fits
+        })
+        .collect();
         let said = [
             Segment::plain(" "),
-            Segment::new("✓ 已生成灰阶测试图", Look::kind(Kind::Done).bold()),
-            Segment::plain(format!(
-                "（1264x1680）：写到 {}",
-                scene.session.home_shown(&landed[0])
-            )),
+            Segment::new(head, Look::kind(Kind::Done).bold()),
+            Segment::plain(tail),
         ];
         let buffer = painted(&scene, &running, scene::sequence("config-c").size);
         assert_no_background(&buffer);
         assert_same_cells(&buffer, &design::sequence("config-c").instead(35, &said));
+    }
+
+    /// 在配置视图那一景上逐个喂键（`here` 是灰阶测试图的落点），回最后一下的去留。
+    fn tap_all(
+        scene: &mut Scene,
+        running: &mut Running,
+        here: &std::path::Path,
+        keys: impl IntoIterator<Item = Key>,
+    ) -> Exit {
+        let now = scene.now();
+        let mut exit = Exit::Stay;
+        for key in keys {
+            exit = super::input(
+                &mut scene.session,
+                running,
+                &scene.presets,
+                here,
+                now,
+                Window {
+                    cols: 120,
+                    rows: 36,
+                },
+                Input::Key(key),
+            );
+        }
+        exit
+    }
+
+    /// 屏底此刻那一句回话的字（没有就是空串）。
+    fn replied(scene: &Scene) -> String {
+        scene
+            .session
+            .views
+            .reply(scene.now())
+            .map(|segments| segments.iter().map(|one| one.text.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// **灰阶测试图写不出去时说得清，会话照开着**（会话批 13 号票第五条，经新输入入口）。
+    ///
+    /// 逼出来的是「父目录建不了」那一种：图该落的那个目录的位置摆一个**文件**，
+    /// 库那一侧 `create_dir_all` 当场失败。说的是库那一侧的原话（哪一步、哪条路径），
+    /// 这一层不另编一份；三组设置一格没动，下一个键照按。
+    #[test]
+    fn a_chart_that_cannot_be_written_says_so_and_the_session_stays_open() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let here = charts_land_in(&scene).join("这是个文件");
+        std::fs::write(&here, "不是目录").expect("写得出那个文件");
+        let before = (scene.session.device.clone(), scene.session.taste.clone());
+
+        let exit = tap_all(&mut scene, &mut running, &here, [Key::Char('c')]);
+
+        assert_eq!(exit, Exit::Stay, "写不出去把会话带走了");
+        let said = replied(&scene);
+        assert!(said.contains("灰阶测试图"), "{said}");
+        assert!(said.contains("这是个文件"), "{said}");
+        assert_eq!(
+            (scene.session.device.clone(), scene.session.taste.clone()),
+            before,
+            "写不出去却动了设置"
+        );
+        assert_eq!(
+            tap_all(&mut scene, &mut running, &here, [Key::Char('j')]),
+            Exit::Stay
+        );
+    }
+
+    /// **命令行上 `--preset` 拿到的，与会话里存出去的是同一份**（会话批 12 号票第五条，
+    /// 经新输入入口）：问的是**接头**——会话写出去的那份文件，`Cli` 那一路读得懂，
+    /// 而且合出来的 `Request` 与会话拼的一样（型号不进预设，命令行那一头照样点名）。
+    #[test]
+    fn a_preset_saved_in_the_session_is_the_one_the_command_line_takes() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let here = charts_land_in(&scene);
+        scene.session.taste.filter = Some(tonefit::Filter::Hamming);
+        scene.session.taste.envelope = Some(true);
+
+        tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('p'), Key::Char('G'), Key::Enter]
+                .into_iter()
+                .chain("插图".chars().map(Key::Char))
+                .chain([Key::Enter]),
+        );
+
+        let file = scene.presets.path().expect("说得出位置").to_path_buf();
+        let text = std::fs::read_to_string(&file).expect("读得出来");
+        let read_back = crate::preset::read(&text, "插图").expect("命令行这一路读得懂");
+        assert_eq!(read_back, scene.session.preset_to_store());
+
+        let device = scene
+            .session
+            .device
+            .profile
+            .clone()
+            .expect("这一景挑了型号");
+        let asked = scene
+            .session
+            .request(tonefit::Mode::Process)
+            .expect("会话拼得出来");
+        let out = asked.output_root.display().to_string();
+        let mut line = vec![
+            "tonefit".to_owned(),
+            "--profile".to_owned(),
+            device,
+            "--out".to_owned(),
+            out,
+            "--preset".to_owned(),
+            "插图".to_owned(),
+        ];
+        line.extend(asked.inputs.iter().map(|path| path.display().to_string()));
+        let command_line = <crate::Cli as clap::Parser>::try_parse_from(line)
+            .expect("命令行读得懂")
+            .request(&read_back)
+            .expect("拼得出来");
+        assert_eq!(asked.profile, command_line.profile);
+        assert_eq!(asked.filter, command_line.filter);
+        assert_eq!(asked.envelope, command_line.envelope);
+        assert_eq!(asked.inputs, command_line.inputs);
+    }
+
+    /// **那一份在两下 `dd` 之间被别处删掉了：说得清，不崩，那一栏还开着**
+    /// （会话批 12 号票第六条，经新输入入口）。报的是库那一侧的原话：哪一份不在、有的是哪几份。
+    #[test]
+    fn erasing_a_preset_that_is_no_longer_on_disk_says_so_and_stays_open() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let here = charts_land_in(&scene);
+        let file = scene.presets.path().expect("说得出位置").to_path_buf();
+
+        tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('p'), Key::Char('d'), Key::Char('d')],
+        );
+        assert_eq!(
+            scene.session.views.config.armed_delete.as_deref(),
+            Some("漫画")
+        );
+        // 两下之间，别处把那份文件换成了只剩另一份。
+        std::fs::write(&file, "[preset.\"画集\".taste]\nenvelope = true\n").expect("写得出来");
+        let exit = tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('d'), Key::Char('d')],
+        );
+
+        assert_eq!(exit, Exit::Stay);
+        let said = replied(&scene);
+        assert!(said.contains("漫画"), "没说清点的是哪一份：{said}");
+        assert!(said.contains("画集"), "没说有的是哪几份：{said}");
+        assert!(scene.session.views.config.picker, "说完把那一栏关掉了");
     }
 
     /// **跑着时 `dd` 照样删得掉盘上那一份**（照设计稿 `deleteHere`：那一支没有只读那一问）。
@@ -2707,40 +2489,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::session::state::Listing;
-    // 两个兄弟模块的**名字**（`super::*` 带进来的是它们里面的东西，不是模块本身）：
-    // 用例要按名字点它们里面的取值与夹具。
-    use crate::session::live::Volume;
-    use crate::session::{live, state};
-
-    /// 一份**指向临时目录**的预设文件。
-    ///
-    /// 用例一律用它：真会话读写的是用户配置目录下那一份，而那是用户自己的东西——
-    /// 用例不该读它，更不该写它。位置由 [`Presets::at`] 点名，因此不必去改进程的环境变量
-    /// （`tests/preset.rs` 说过为什么不改）。
-    fn presets(space: &tempfile::TempDir) -> Presets {
-        Presets::at(space.path().join("tonefit").join("presets.toml"))
-    }
-
-    /// 按一个**不出灰阶测试图**的键。
-    ///
-    /// [`press`] 收的那个「图落在哪个目录下」只有 `c` 那一个键用得到，而这几条用例
-    /// 一个都不按它。去处仍旧点在**临时目录**里（那份预设文件的上一层，见 [`presets`]）：
-    /// 万一往后有人往这几条里加一下 `c`，写出去的东西也落在那儿，
-    /// 不会掉进跑用例的那个目录——相对路径会。
-    ///
-    /// 出灰阶测试图那两条不走这里：它们要说的正是「写到哪儿了、写不出去时怎么办」，
-    /// 因此自己直接调 [`press`]，把去处摆在明面上。
-    fn tap(session: &mut Session, running: &mut Running, presets: &Presets, key: Key) -> Exit {
-        let file = presets.path().expect("用例里那份预设文件的位置是定死的");
-        press(
-            session,
-            running,
-            presets,
-            file.parent().unwrap_or(file),
-            key,
-        )
-    }
+    use crate::session::live;
 
     /// 「这里没有终端」那条错误里，**clap 那条必填项提示一个字都没被吃掉**。
     #[test]
@@ -2754,144 +2503,6 @@ mod tests {
         assert!(
             message.contains("Usage") || message.contains("用法"),
             "{message}"
-        );
-    }
-
-    /// **按停止那个键真的走到了跑着的那一趟身上。**
-    ///
-    /// 两头各自有用例（状态机那边 `one_key_pressed_twice_is_the_two_stage_stop`、
-    /// 闩那边 `the_latch_only_ever_goes_up`），接头处只有这一条——而接头处正是本层
-    /// 唯一做的事：把状态机升到的那一级交给 [`Running::stop`]。
-    ///
-    /// 不开终端：[`press`] 收的是 `&mut Session` 与 `&mut Running`，一个终端都不碰
-    /// （碰终端的是 [`drive`] 那条循环）。
-    #[test]
-    fn pressing_stop_reaches_the_run_that_is_going() {
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        // 这一条一个预设键都不按：那一份摆在临时目录下，一个字节都不会被读到。
-        let nowhere = presets(&space);
-        session.run_started();
-
-        // 一次：做完再停。两头记的是同一个字。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
-            Exit::Stay
-        );
-        assert_eq!(session.stopping(), tonefit::Instruction::Finish);
-        assert_eq!(running.pressed(), tonefit::Instruction::Finish);
-
-        // 再一次：立即停止。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
-            Exit::Stay
-        );
-        assert_eq!(session.stopping(), tonefit::Instruction::Abort);
-        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
-
-        // 第三次起那个键没有意义，闩两头都不再动。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
-            Exit::Stay
-        );
-        assert_eq!(running.pressed(), tonefit::Instruction::Abort);
-
-        // 浏览时按它什么都不发生：还没有东西可停。
-        let mut idle = Session::new();
-        let mut nothing = Running::default();
-        let nowhere = presets(&space);
-        assert_eq!(
-            tap(&mut idle, &mut nothing, &nowhere, Key::Char('s')),
-            Exit::Stay
-        );
-        assert_eq!(nothing.pressed(), tonefit::Instruction::Continue);
-    }
-
-    /// **答话那个键真的走到了停在确认点上的那条线程身上**（`p1-session/14`）。
-    ///
-    /// 这一条走的是整条路：按 `t` 起一趟（预览，因此 [`resuming`] 把它改成接着写出的那一趟）→
-    /// 那条线程停在确认点上 → 会话跟着换一副样子 → 按 `s` 答做完再停 → 那条线程接着跑完。
-    /// 两头各自有用例（状态机那边 `deciding_action`，闸那边
-    /// `answering_finish_at_the_decision_point_writes_nothing_and_still_reports_the_volume`），
-    /// **接头处只有这一条**——而接头处正是本层唯一做的事。
-    ///
-    /// **等待确认时会话不冻屏**由它的形状说出来：那条线程停在闸上，而这一头照旧收键、
-    /// 照旧问得动 [`Session::mode`]。等的那一步走的是「转到条件成立为止」，
-    /// 不是 sleep 撞运气（见 `Running::deciding`）。
-    ///
-    /// 不开终端：[`press`] 收的是 `&mut Session` 与 `&mut Running`。
-    #[test]
-    fn answering_at_the_decision_point_reaches_the_thread_waiting_there() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        // 一页加一个透传文件（见 [`super::live::fixture::a_real_volume`]）：页非有不可，
-        // 一页都没有的东西不是卷，那条线程根本走不到确认点。
-        let volume = crate::session::live::fixture::a_real_volume(space.path(), "卷一");
-        let out = space.path().join("出");
-
-        let mut session = Session::new();
-        session.device.profile = Some("kobo-libra-2".to_owned());
-        session.scope.out = Some(out.clone());
-        session.scope.paths.push(state::NamedPath {
-            path: volume,
-            on: true,
-        });
-        let mut running = Running::default();
-        // 这一条一个预设键都不按（见 [`presets`]）。
-        let nowhere = presets(&space);
-
-        // 按 `t`：预览，因此这一趟改走 `Mode::Process` 并在确认点上等人。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('t')),
-            Exit::Stay
-        );
-        assert!(matches!(session.stage(), state::Stage::Running(_)));
-
-        // 那条线程走到确认点上停住；会话每帧问一次，跟着换一副样子（见 [`drive`]）。
-        while !running.deciding() {
-            std::thread::yield_now();
-        }
-        session.at_the_decision_point(running.deciding());
-        assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
-        assert!(
-            running.live().expect("跑过一趟").summarized().is_some(),
-            "确认点上没有报告可画"
-        );
-
-        // 等待确认时会话仍旧收键：按一个没有意义的键，它照旧原地不动、不退出。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('e')),
-            Exit::Stay
-        );
-        assert!(session.deciding(), "按了一个没有意义的键就走掉了");
-
-        // 按 `s` 答做完再停：这一卷一个字节都不写，那条线程接着跑完。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('s')),
-            Exit::Stay
-        );
-        assert!(!session.deciding(), "答完话会话还停在确认点上");
-        while !running.reap() {
-            std::thread::yield_now();
-        }
-        session.run_finished();
-
-        assert_eq!(
-            session.focus(),
-            &state::Focus::Config,
-            "结束之后配置还改不动"
-        );
-        assert!(!out.exists(), "答了做完再停，输出目录却被建了出来");
-        let live = running.live().expect("跑过一趟");
-        assert_eq!(
-            live.report().volumes.len(),
-            1,
-            "答做完再停把报告也一起停掉了"
-        );
-        assert_eq!(
-            live.decided(),
-            Some(tonefit::Instruction::Finish),
-            "答的那个字没记下来"
         );
     }
 
@@ -2956,716 +2567,6 @@ mod tests {
         assert_eq!(request.mode, RunMode::Process);
     }
 
-    /// **「后面的卷都写出」那个键真的走到了停在确认点上的那条线程身上**
-    /// （`volume-discovery/07`，spec 的 story 13）。
-    ///
-    /// 与答话那一条同一个位置：接头处是本层唯一做的事——把状态机认出来的那个字
-    /// **连同它管几卷**交给 [`Running::decide`]。两头各自有用例（状态机那边
-    /// `which_keys_do_what_in_which_state`，闸那边
-    /// `answering_for_the_rest_once_stops_the_asking_and_leaves_the_latch_alone`）。
-    ///
-    /// 走的是整条路：按 `t` 起一趟**两个卷**的预览 → 停在头一卷的确认点上 →
-    /// 按 `a` → 那条线程一路把两卷都做完，一次都不再停。
-    #[test]
-    fn pressing_the_rest_too_reaches_the_thread_waiting_at_the_decision_point() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let out = space.path().join("出");
-
-        let mut session = Session::new();
-        session.device.profile = Some("kobo-libra-2".to_owned());
-        session.scope.out = Some(out.clone());
-        for name in ["卷一", "卷二"] {
-            session.scope.paths.push(state::NamedPath {
-                path: crate::session::live::fixture::a_real_volume(space.path(), name),
-                on: true,
-            });
-        }
-        let mut running = Running::default();
-        // 这一条一个预设键都不按（见 [`presets`]）。
-        let nowhere = presets(&space);
-
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('t')),
-            Exit::Stay
-        );
-        while !running.deciding() {
-            std::thread::yield_now();
-        }
-        session.at_the_decision_point(running.deciding());
-        assert!(session.deciding(), "那一趟停住了，会话却没跟着换一副样子");
-
-        // 按 `a`：这一卷接着做，后面的卷都写出。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('a')),
-            Exit::Stay
-        );
-        assert!(!session.deciding(), "答完话会话还停在确认点上");
-        while !running.reap() {
-            // 真停下来的话当场红，而不是挂在那儿等一个不会来的人。
-            assert!(
-                !running.deciding(),
-                "答过「后面的卷都写出」，它却又停下来问了"
-            );
-            session.at_the_decision_point(running.deciding());
-            std::thread::yield_now();
-        }
-        session.run_finished();
-
-        assert!(out.join("卷一").is_dir(), "头一卷没写出来");
-        assert!(out.join("卷二").is_dir(), "剩下的那一卷没写出来");
-        let live = running.live().expect("跑过一趟");
-        assert_eq!(live.for_the_rest(), Some(tonefit::Instruction::Continue));
-        assert_eq!(live.report().volumes.len(), 2);
-    }
-
-    /// **一趟都没跑过时展开那个键根本不派动作，跑过之后它找那一趟要报告。**
-    ///
-    /// 前一半是停车场 Q167 收的那一笔：从前它派得出动作，而这一层挡在前面说一句
-    /// 「还没跑过」——`?` 那张表因此列着它，按下去只换来一句话，
-    /// 与「按得动」在屏上长得一模一样。眼下按键表在那个阶段上就不派它
-    /// （`super::state::Session::browsing_action`），屏上因此一处都不摆。
-    ///
-    /// 后一半的接头处与按停止那一条同一个位置：状态机读不到那一趟攒下来的东西，
-    /// 「有几卷」「那一卷落在第几行」两个数都由本层从 [`Running::live`] 上数出来。
-    /// 不开终端——[`press`] 收的是 `&mut Session` 与 `&mut Running`。
-    #[test]
-    fn expanding_asks_the_run_for_its_report_and_says_so_when_there_is_none() {
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let workspace = tempfile::tempdir().expect("建得出临时目录");
-        // 这一条一个预设键都不按（见 [`presets`]）。
-        let nowhere = presets(&workspace);
-
-        // 一趟都没跑过：那个键一个动作都不派，会话原地不动、一句话都不说
-        //（停车场 Q167：屏上不摆按不动的键，而「按了有话说」与「按得动」长得一样）。
-        assert_eq!(session.action(Key::Char('e')), Action::Ignored);
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Char('e')),
-            Exit::Stay
-        );
-        assert!(session.expansion().is_none(), "没有报告却展开了");
-        assert_eq!(session.notice(), None, "按不动的键还说了一句");
-
-        // 跑过一趟、报告里有两卷：展开落在**光标停着的那一卷**上，光标停在它的头一页。
-        // 两个真跑得动的卷（见 [`live::fixture::a_real_volume`]）：这一条要问的
-        // （哪一卷、落在第几行、转不转得回去）一件都不少。
-        let inputs: Vec<PathBuf> = ["卷一", "卷二"]
-            .iter()
-            .map(|name| live::fixture::a_real_volume(workspace.path(), name))
-            .collect();
-        running.start(
-            tonefit::Request {
-                inputs,
-                output_root: workspace.path().join("出"),
-                ..live::fixture::request(tonefit::Mode::DryRun)
-            },
-            // 两卷，因此不接着写出：这一条问的是展开，与确认点无关（见 [`resuming`]）。
-            Resuming::GoesOn,
-        );
-        // 状态机那一头也跟着走一步——真会话里 [`press`] 起完线程就调它
-        // （两处记的是同一趟）。展开那个键**要等这一趟结束**才派得出动作，
-        // 而「结束了」是从「跑着」回来的（见 [`Session::run_finished`]）。
-        session.run_started();
-        while !running.reap() {
-            std::thread::yield_now();
-        }
-        session.run_finished();
-        tap(&mut session, &mut running, &nowhere, Key::Char('e'));
-        let expansion = session.expansion().cloned().expect("该展开了");
-        // **展开的是光标停着的那一卷**（`p3-session-legibility/10`）：自动滚动着的时候
-        // 那是**最新收摊的那一卷**，也就是第二卷。从前它恒是第一卷——那时报告区还没有光标。
-        assert_eq!(expansion.volume, Volume::Settled(1));
-        assert_eq!(expansion.at, 0, "没落在那一卷的头一页上");
-        assert_eq!(
-            expansion.listing,
-            Listing::Notable,
-            "展开那一下该只列需留意的页"
-        );
-        assert!(session.notice().is_none(), "展开之后上一句话没抹掉");
-
-        // `⇥` 往后一卷，两头都转一圈：第二卷之后回到第一卷。
-        tap(&mut session, &mut running, &nowhere, Key::Tab);
-        let first = session.expansion().cloned().expect("还展开着");
-        assert_eq!(first.volume, Volume::Settled(0), "⇥ 没转到第一卷上");
-        assert_eq!(first.at, 0, "换一卷之后光标没回到头一页");
-        tap(&mut session, &mut running, &nowhere, Key::Tab);
-        assert_eq!(
-            session.expansion().expect("还展开着").volume,
-            Volume::Settled(1),
-            "没转回去"
-        );
-
-        // `⇧⇥` 是另一头：往前一卷，同样转得回去。**两头都有**，
-        // 因为几十卷的一趟里往回看一卷不该按二十九下（票面：选中一卷）。
-        tap(&mut session, &mut running, &nowhere, Key::BackTab);
-        let back = session.expansion().cloned().expect("还展开着");
-        assert_eq!(back.volume, Volume::Settled(0), "⇧⇥ 没往前转");
-        assert_eq!(back.at, first.at, "两头转到同一卷，落位却不一样");
-        tap(&mut session, &mut running, &nowhere, Key::BackTab);
-        assert_eq!(
-            session.expansion().expect("还展开着").volume,
-            Volume::Settled(1)
-        );
-
-        // **换一卷时列的是哪几页跟着走**：`a` 按下去不该只管一卷（票面第二条）。
-        tap(&mut session, &mut running, &nowhere, Key::Char('a'));
-        assert_eq!(session.expansion().expect("还展开着").listing, Listing::All);
-        tap(&mut session, &mut running, &nowhere, Key::Tab);
-        assert_eq!(
-            session.expansion().expect("还展开着").listing,
-            Listing::All,
-            "换一卷把「列全部页」扳回去了"
-        );
-
-        // 收起：一个键回到报告区，展开态没了。
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Esc),
-            Exit::Stay
-        );
-        assert!(session.expansion().is_none());
-    }
-
-    /// **光标停得上没做成的那一卷，而在它上面按展开时明说这一卷展不开**
-    /// （`p4-parking-lot/10`，收停车场 Q159）。
-    ///
-    /// 两半各钉一句：
-    ///
-    /// - **停得上**——`↑↓` 走的那一列（[`Live::volumes`]）此刻收着它
-    ///   （[`Volume::Failed`]），光标因此落得上那一行；
-    /// - **按下去有话说**——不进展开态、也不悄悄什么都不做，屏上当场多一句
-    ///   [`CANNOT_EXPAND`]。这与型号没挑时按 `t`／`x` 是同一条待遇。
-    ///
-    /// **`⇥` 不转到它身上**：换一卷只在[展得开的那几卷](Branch::expandable)之间转——
-    /// 转过去那一格里就只剩一句话，而那不是「换一卷」要给的东西。
-    ///
-    /// 走的是 [`expanding`] 而不是 [`press`]：造得出一份攒着的报告，造不出一趟
-    /// 真跑着的（起线程那一处在 `super::run`）。
-    #[test]
-    fn a_volume_that_never_got_made_can_be_selected_and_says_it_cannot_be_expanded() {
-        let mut live = live::Live::new(&live::fixture::request(RunMode::DryRun), Resuming::GoesOn);
-        live.run_started(2, 2000);
-        live.volume_started(Path::new("库/棋魂 07"), 1000);
-        live.volume_finished(&live::fixture::skipped_volume("棋魂 07", 184));
-        live.volume_failed(Path::new("库/消失的那卷"), "卷根不在了");
-        let mut session = Session::new();
-        session.run_started();
-
-        // 表上两行，两行都停得住——从前没做成的那一卷不在这一列里。
-        assert_eq!(
-            live.volumes(),
-            [Volume::Settled(0), Volume::Failed(0)],
-            "没做成的那一卷停不上去"
-        );
-        // 自动滚动着的时候光标停在最新**收摊**的那一卷上：没做成的那一卷不抢自动滚动。
-        assert_eq!(session.standing(&live), Some(Volume::Settled(0)));
-
-        // 光标挪到没做成的那一卷上（这一趟只有一枝，`↑↓` 在这一枝底下挪）。
-        session.open(PathBuf::from("库"));
-        session.select(&live, state::Step::Next);
-        assert_eq!(session.standing(&live), Some(Volume::Failed(0)));
-
-        // 在它上面按展开：不进展开态，屏上当场说清为什么没有第二步。
-        expanding(&mut session, &live, Action::Expand);
-        assert!(session.expansion().is_none(), "没做成的那一卷展开了");
-        let said = session.notice().expect("该说一句").said().to_owned();
-        assert_eq!(said, CANNOT_EXPAND, "说的不是那一句：{said}");
-
-        // 展开收摊了的那一卷照旧进得去，而 `⇥` 转一圈仍旧落回它自己：
-        // 这一枝底下展得开的只有它一卷，没做成的那一条不在那个圈里。
-        session.select(&live, state::Step::Next);
-        expanding(&mut session, &live, Action::Expand);
-        assert_eq!(
-            session.expansion().expect("该展开了").volume,
-            Volume::Settled(0)
-        );
-        expanding(&mut session, &live, Action::Turn(state::Step::Next));
-        assert_eq!(
-            session.expansion().expect("还展开着").volume,
-            Volume::Settled(0),
-            "`⇥` 转到了展不开的那一卷上"
-        );
-    }
-
-    /// **停在设备设置上按一个键，灰阶测试图就落在盘上**（13 号票第一、二、三条）。
-    ///
-    /// 接头处在这一层：状态机派得出[出灰阶测试图](Action::Chart)那个动作，落盘整件事在库里
-    /// （[`tonefit::write_calibration_chart`]）。写出来的字节**与库直接写的逐字节相同**——
-    /// 这一条就是「会话只是调那个接口」的说法：会话若自己拼过一格像素，两份就分得开。
-    /// 图仍是量具（不判定、不量化、无损写出、不带记录）由库那一侧的用例钉着。
-    ///
-    /// 型号没挑那一下也在这里：说一句，盘上一个字节都不多。
-    #[test]
-    fn the_chart_key_hands_the_device_layer_to_the_library_seam() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let here = space.path().join("会话是从这儿敲起来的");
-        std::fs::create_dir_all(&here).expect("建得出那个目录");
-        let mut session = Session::new();
-        let mut running = Running::default();
-        // 这一条一个预设键都不按（见 [`presets`]）。
-        let nowhere = presets(&space);
-        session.go_to(state::Field::Profile);
-
-        // 型号还没挑：说一句，会话原地不动，那个目录里一个文件都没多。
-        assert_eq!(
-            press(&mut session, &mut running, &nowhere, &here, Key::Char('c')),
-            Exit::Stay
-        );
-        let said = session.notice().expect("该说一句").said().to_owned();
-        assert!(said.contains("先挑型号"), "{said}");
-        assert_eq!(
-            std::fs::read_dir(&here).expect("读得出那个目录").count(),
-            0,
-            "型号没挑却写出了东西"
-        );
-
-        // 挑一个型号、覆盖一次屏幕灰阶数，再按一次：图落在那个目录下。
-        session.device.profile = Some("boox-poke6".to_owned());
-        session.device.gray_levels = Some(8);
-        press(&mut session, &mut running, &nowhere, &here, Key::Char('c'));
-
-        let written: Vec<PathBuf> = std::fs::read_dir(&here)
-            .expect("读得出那个目录")
-            .map(|entry| entry.expect("读得出那一条").path())
-            .collect();
-        assert_eq!(written.len(), 1, "{written:?}");
-        let chart = &written[0];
-        // 名字里带着型号与屏幕灰阶数：换一台设备出的是另一张图，不该盖掉上一张。
-        let name = chart.file_name().expect("有名字").to_string_lossy();
-        assert!(name.contains("boox-poke6") && name.contains("8"), "{name}");
-        assert!(name.ends_with(".png"), "{name}");
-        // 与库直接写出来的逐字节相同——会话一格像素都没自己拼。
-        let straight = space.path().join("库自己写的.png");
-        tonefit::write_calibration_chart(
-            &session.chart_profile().expect("设备设置填齐了"),
-            &straight,
-        )
-        .expect("库写得出来");
-        assert_eq!(
-            std::fs::read(chart).expect("读得出图"),
-            std::fs::read(&straight).expect("读得出库写的那张"),
-            "会话写出来的图与库直接写的不一样"
-        );
-        // 屏上说清图在哪儿，以及此刻要做对的那一件事。
-        let said = session.notice().expect("出完图要说一句").said().to_owned();
-        assert!(said.contains(&*name), "{said}");
-        assert!(said.contains("原尺寸"), "{said}");
-        // 会话还在浏览：出图不改变它此刻在做什么。
-        assert_eq!(session.focus(), &state::Focus::Config);
-    }
-
-    /// **写不出去时会话说得清，而且不崩**（13 号票第五条）。
-    ///
-    /// 逼出来的是「父目录建不了」那一种：把图该落的那个目录的位置摆一个**文件**，
-    /// 库那一侧 `create_dir_all` 当场失败。盘满那一种走的是同一条回路
-    /// （都是库交回一个 `Err`，见 `crate::calibrate::write_chart`），
-    /// 在用例里造不出来，也不必造第二遍。
-    #[test]
-    fn a_chart_that_cannot_be_written_says_so_and_the_session_stays_open() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        // 这儿本该是个目录，摆的却是个文件——图落不进去，父目录也建不出来。
-        let here = space.path().join("这是个文件");
-        std::fs::write(&here, "不是目录").expect("写得出那个文件");
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let nowhere = presets(&space);
-        session.device.profile = Some("boox-poke6".to_owned());
-
-        assert_eq!(
-            press(&mut session, &mut running, &nowhere, &here, Key::Char('c')),
-            Exit::Stay,
-            "写不出去把会话带走了"
-        );
-
-        // 说得清是哪一步、在哪条路径上出的事——库那一侧的原话，这一层不另编一份。
-        let said = session
-            .notice()
-            .expect("写不出去要说一句")
-            .said()
-            .to_owned();
-        assert!(said.contains("灰阶测试图"), "{said}");
-        assert!(said.contains("这是个文件"), "{said}");
-        // 三组设置一格没动，会话还在浏览：下一个键照按。
-        assert_eq!(session.focus(), &state::Focus::Config);
-        assert_eq!(
-            tap(&mut session, &mut running, &nowhere, Key::Down),
-            Exit::Stay
-        );
-    }
-
-    /// **存出去再套回来，两层逐格相同，而路径与输出一格没动**（本票的四条验收）。
-    ///
-    /// 走的是真文件：`p` 列出来、末行 `⏎` 打一个名字存下去、改乱两层、再 `p` 套回来。
-    /// 盘在临时目录下（见 [`presets`]），一个用户的东西都不碰。
-    ///
-    /// 「没说」与「说了默认值」的差别一并钉在这里：存之前把缩放方式转到**恰好等于默认值**
-    /// 的那一档上，套回来之后它仍是「说了」而不是「没说」（停车场 Q58）。
-    #[test]
-    fn what_the_session_stores_is_what_it_takes_back() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        session.scope.out = Some(PathBuf::from("出"));
-        session.scope.paths.push(state::NamedPath {
-            path: PathBuf::from("库/卷一"),
-            on: true,
-        });
-        // 设备设置挑一个型号，处理选项点两项：一项与默认值不同，一项**恰好等于**默认值。
-        session.device.profile = Some("boox-poke6".to_owned());
-        session.taste.filter = Some(tonefit::Filter::Hamming);
-        session.taste.fit = Some(tonefit::FitMode::default());
-        let stored = session.preset();
-        let scope = session.scope.clone();
-
-        // 存：`p` 开那一栏，光标落在唯一那一行（＋ 存成一份新的）上，打个名字按 ⏎。
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        let picker = session.picking().expect("那一栏该开着");
-        assert!(picker.names().is_empty(), "临时目录下还不该有预设");
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        for character in "漫画".chars() {
-            tap(&mut session, &mut running, &presets, Key::Char(character));
-        }
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("存完要说一句").said().to_owned();
-        assert!(said.contains("漫画") && said.contains("--preset"), "{said}");
-        // 存好的那一份就摆在眼前的列表上，光标停在它上面。
-        let picker = session.picking().expect("存完仍在那一栏上");
-        assert_eq!(picker.names(), ["漫画"]);
-        assert_eq!(picker.picked(), Some("漫画"));
-
-        // 改乱两层，再把那一份套回来。
-        tap(&mut session, &mut running, &presets, Key::Esc);
-        session.taste.filter = Some(tonefit::Filter::Area);
-        session.taste.fit = None;
-        session.device.profile = Some("kobo-libra-2".to_owned());
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        tap(&mut session, &mut running, &presets, Key::Enter);
-
-        assert_eq!(session.preset(), stored, "套回来的两层与存出去的不一样");
-        assert_eq!(session.scope, scope, "套用预设动了路径与输出");
-        assert_eq!(
-            session.taste.fit,
-            Some(tonefit::FitMode::default()),
-            "「说了一个恰好等于默认值的值」套回来变成了「没说」"
-        );
-        // 套完回到浏览，说的那句话里带着「路径与输出没动」。
-        let said = session.notice().expect("套完要说一句").said().to_owned();
-        assert!(said.contains("路径与输出"), "{said}");
-    }
-
-    /// **命令行上 `--preset` 拿到的，与会话里存出去的是同一份**（本票的第五条验收）。
-    ///
-    /// 两侧同一份格式这件事在 `preset` 那一层就成立（往返用例），这里问的是**接头**：
-    /// 会话写出去的那份文件，`Cli` 那一路读得懂，而且合出来的 `Request` 与会话拼的一样。
-    #[test]
-    fn a_preset_saved_in_the_session_is_the_one_the_command_line_takes() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        session.device.profile = Some("boox-poke6".to_owned());
-        session.device.gray_levels = Some(12);
-        session.taste.filter = Some(tonefit::Filter::Hamming);
-        session.taste.envelope = Some(true);
-        session.scope.out = Some(PathBuf::from("出"));
-        session.scope.paths.push(state::NamedPath {
-            path: PathBuf::from("库/卷一"),
-            on: true,
-        });
-
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        for character in "漫画".chars() {
-            tap(&mut session, &mut running, &presets, Key::Char(character));
-        }
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.said().contains("存好了")),
-            "{:?}",
-            session.notice()
-        );
-        tap(&mut session, &mut running, &presets, Key::Esc);
-
-        // 命令行那一路读盘上那份文件的正文，拿到的是同一份预设。
-        let text = std::fs::read_to_string(presets.path().expect("说得出位置")).expect("读得出来");
-        let read_back = crate::preset::read(&text, "漫画").expect("命令行这一路读得懂");
-        assert_eq!(read_back, session.preset());
-
-        // 合出来的这一趟也一样：会话拼的与 `--preset 漫画` 拼的逐项相同。
-        let asked = session
-            .request(tonefit::Mode::Process)
-            .expect("会话拼得出来");
-        let command_line =
-            crate::Cli::try_parse_from(["tonefit", "--out", "出", "--preset", "漫画", "库/卷一"])
-                .expect("命令行读得懂")
-                .request(&read_back)
-                .expect("拼得出来");
-        assert_eq!(asked.profile, command_line.profile);
-        assert_eq!(asked.filter, command_line.filter);
-        assert_eq!(asked.envelope, command_line.envelope);
-        assert_eq!(asked.inputs, command_line.inputs);
-    }
-
-    /// **撞上同名的那一份：先说一句，再按一次才覆盖**——不静默盖掉别人手写的东西。
-    ///
-    /// 三件事一条钉住：第一下一个字节都不写；**名字一改那一问就作废**（不然改成另一个
-    /// 已有的名字就被上一次的确认捎带着盖掉了）；覆盖之后**别的那几份预设与手写的注释仍在**。
-    /// 换掉的恰好是那一份自己那几节，逐字节那一条在 `preset::insert` 那一侧钉着。
-    #[test]
-    fn overwriting_a_preset_takes_a_second_press() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        session.taste.filter = Some(tonefit::Filter::Hamming);
-        // 盘上先摆两份手写的预设，连注释一起。
-        let file = presets.path().expect("说得出位置").to_path_buf();
-        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
-        let by_hand = "# 手写的\n[preset.\"漫画\".taste]\nfilter = \"box\"\n\n\
-                       [preset.\"画集\".taste]\nenvelope = true\n";
-        std::fs::write(&file, by_hand).expect("写得出来");
-
-        // `p` 开那一栏，`↑` 绕到末尾那一行上，`⏎` 打一个名字。
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        tap(&mut session, &mut running, &presets, Key::Up);
-        assert_eq!(
-            session.picking().expect("那一栏该开着").picked(),
-            None,
-            "↑ 没绕到末尾那一行上"
-        );
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        for character in "漫画".chars() {
-            tap(&mut session, &mut running, &presets, Key::Char(character));
-        }
-
-        // 打的是已经有的那个名字：说一句，盘上一个字节都没动。
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("要说一句").said().to_owned();
-        assert!(said.contains("再按一次"), "{said}");
-        assert!(said.contains("撤不回来"), "覆盖的代价没说出口：{said}");
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            by_hand,
-            "第一下就把手写的那份盖掉了"
-        );
-
-        // 名字改成另一个**也已经有的**：上一次那一问不作数，这一下仍是先问一句。
-        for _ in 0..2 {
-            tap(&mut session, &mut running, &presets, Key::Backspace);
-        }
-        for character in "画集".chars() {
-            tap(&mut session, &mut running, &presets, Key::Char(character));
-        }
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        assert!(
-            session.notice().is_some_and(
-                |said| said.said().contains("画集") && said.said().contains("再按一次")
-            ),
-            "改过名字之后那一问该重新来一遍：{:?}",
-            session.notice()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            by_hand,
-            "改了个名字就被上一次的确认捎带着盖掉了"
-        );
-
-        // 再按一次：这一下才覆盖，而另一份一个字都没丢。
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.said().contains("存好了")),
-            "{:?}",
-            session.notice()
-        );
-        assert_eq!(
-            presets.read("画集").expect("读得回来"),
-            session.preset(),
-            "覆盖之后盘上那一份不是刚存的"
-        );
-        assert_eq!(
-            presets.read("漫画").expect("读得回来").taste.filter,
-            Some(tonefit::Filter::Area),
-            "覆盖一份把另一份也改了"
-        );
-        // 换掉的只有那一份自己那几节：手写的那行注释还在盘上（本票第三条）。
-        let after = std::fs::read_to_string(&file).expect("读得出来");
-        assert!(after.starts_with("# 手写的\n"), "手写的注释没了：\n{after}");
-    }
-
-    /// **删一份要按两下，而按错一下没有撤销**（停车场 Q74，本票第一、二条）。
-    ///
-    /// 三件事一条钉住：第一下盘上一个字节都不动；**光标一挪那一问就作废**
-    /// （不然挪到另一份上再按一下，就被上一次的确认捎带着删了）；
-    /// 删掉之后那份文件里其余的字节逐个在原处，手写的注释与本版本读不懂的那一份都在。
-    #[test]
-    fn erasing_a_preset_takes_a_second_press() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let file = presets.path().expect("说得出位置").to_path_buf();
-        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
-        // 盘上两份手写的预设，连注释一起；后一份本版本读不懂。
-        let head = "# 我手写的\n";
-        let mine = "[preset.\"漫画\".taste]\nfilter = \"box\"\n\n";
-        let tail = "# 这一项本模块读不懂\n[preset.\"画集\".taste]\nsharpen = true\n";
-        let by_hand = format!("{head}{mine}{tail}");
-        std::fs::write(&file, &by_hand).expect("写得出来");
-
-        // `p` 开那一栏，光标停在第一份上。`d` 第一下只问一句，盘上一个字节都没动。
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        assert_eq!(
-            session.picking().expect("那一栏该开着").picked(),
-            Some("漫画")
-        );
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        let said = session.notice().expect("要说一句").said().to_owned();
-        assert!(said.contains("漫画") && said.contains("再按一次"), "{said}");
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            by_hand,
-            "第一下就把那一份删了"
-        );
-
-        // 挪到另一份上：上一次那一问不作数，这一下仍是先问一句。
-        tap(&mut session, &mut running, &presets, Key::Down);
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        assert!(
-            session.notice().is_some_and(
-                |said| said.said().contains("画集") && said.said().contains("再按一次")
-            ),
-            "挪过一行之后那一问该重新来一遍：{:?}",
-            session.notice()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            by_hand,
-            "挪了一行就被上一次的确认捎带着删了"
-        );
-
-        // 挪回来按两下：这一下才真删，而删掉的恰好是那一份自己写下的那几节。
-        tap(&mut session, &mut running, &presets, Key::Up);
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.said().contains("删掉了")),
-            "{:?}",
-            session.notice()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            format!("{head}\n{tail}"),
-            "删掉的不止那一份自己"
-        );
-        assert!(presets.read("漫画").is_err(), "删完还读得回来");
-        assert_eq!(
-            session.picking().expect("删完还在这一栏上").names(),
-            ["画集"]
-        );
-    }
-
-    /// **屏底换了一句别的话，那一问就不作数了**——不然下一下 `d` 成了不问自删。
-    ///
-    /// 中间那一句由**套用一份读不懂的预设**顶上来（`complain` 那一条路，留在这一栏上）：
-    /// 「再按一次 d」四个字被顶掉之后，用户看见的是一条错误，而不是一问——
-    /// 闩不该比说出它的那句话活得长（见 `Session::says`）。
-    #[test]
-    fn a_question_that_scrolled_off_the_screen_is_no_longer_a_question() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let file = presets.path().expect("说得出位置").to_path_buf();
-        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
-        // 这一份本版本读不懂：套用它是一条错误，而会话留在这一栏上。
-        let by_hand = "[preset.\"漫画\".taste]\nsharpen = true\n";
-        std::fs::write(&file, by_hand).expect("写得出来");
-
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        // 套用失败：屏底改说那条错误，「再按一次 d」没了。
-        tap(&mut session, &mut running, &presets, Key::Enter);
-        let said = session.notice().expect("要说一句").said().to_owned();
-        assert!(!said.contains("再按一次"), "那一问还摆在屏上：{said}");
-
-        // 这一下 `d` 是**重新问一句**，不是删。
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        assert!(
-            session
-                .notice()
-                .is_some_and(|said| said.said().contains("再按一次")),
-            "{:?}",
-            session.notice()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&file).expect("读得出来"),
-            by_hand,
-            "那一问被一句别的话顶掉之后，下一下 d 不问自删了"
-        );
-    }
-
-    /// **那一份在这中间没了：说得清，不崩，那一栏还开着**（本票第六条）。
-    ///
-    /// 这一栏列的是**进来那一刻**盘上有的（`Picker`），而删是盘那一侧的事——
-    /// 两下之间别处把它删掉了，这一下报的是库那一侧的原话（哪一份不在、有的是哪几份）。
-    #[test]
-    fn erasing_a_preset_that_is_no_longer_on_disk_says_so_and_stays_open() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let mut session = Session::new();
-        let mut running = Running::default();
-        let file = presets.path().expect("说得出位置").to_path_buf();
-        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
-        std::fs::write(&file, "[preset.\"漫画\".taste]\nfilter = \"box\"\n").expect("写得出来");
-
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        // 开了那一栏之后，别处把它换成了另一份内容。
-        std::fs::write(&file, "[preset.\"画集\".taste]\nenvelope = true\n").expect("写得出来");
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-        tap(&mut session, &mut running, &presets, Key::Char('d'));
-
-        let said = session.notice().expect("要说一句").said().to_owned();
-        assert!(said.contains("漫画"), "没说清点的是哪一份：{said}");
-        assert!(said.contains("画集"), "没说有的是哪几份：{said}");
-        assert!(session.picking().is_some(), "说完把那一栏关掉了");
-    }
-
-    /// **读不懂的预设在会话里当场报错，不静默套默认值**（本票的第四条验收，spec 的 story 39）。
-    ///
-    /// 报出来的是库那一侧的原话（会话不另编一句），而两层一格都没动——
-    /// 套用失败不该留下一份「套了一半」的配置。
-    #[test]
-    fn a_preset_the_session_cannot_read_says_so_and_changes_nothing() {
-        let space = tempfile::tempdir().expect("建得出临时目录");
-        let presets = presets(&space);
-        let file = presets.path().expect("说得出位置").to_path_buf();
-        std::fs::create_dir_all(file.parent().expect("有上一层")).expect("建得出配置目录");
-        std::fs::write(&file, "[preset.\"旧的\".taste]\nsharpen = true\n").expect("写得出来");
-        let mut session = Session::new();
-        let mut running = Running::default();
-        session.taste.filter = Some(tonefit::Filter::Hamming);
-        let before = session.preset();
-
-        tap(&mut session, &mut running, &presets, Key::Char('p'));
-        // 列出来这一步只读名字：那一份读不懂，仍列得出来。
-        assert_eq!(
-            session.picking().expect("那一栏该开着").names(),
-            ["旧的".to_owned()]
-        );
-        tap(&mut session, &mut running, &presets, Key::Enter);
-
-        let said = session.notice().expect("要说一句").said().to_owned();
-        assert!(said.contains("旧的"), "{said}");
-        assert_eq!(session.preset(), before, "套不成却把两层改了");
-        assert!(session.picking().is_some(), "读不懂就把那一栏也关掉了");
-    }
-
     /// 键码翻译认得会话要的那几个，别的原地放过。
     ///
     /// 这一层薄到只剩一张对照表，规矩在 [`super::state`]——那边的用例问的是
@@ -3677,8 +2578,6 @@ mod tests {
         assert_eq!(translate(&press(KeyCode::Up)), Some(Key::Up));
         assert_eq!(translate(&press(KeyCode::Enter)), Some(Key::Enter));
         assert_eq!(translate(&press(KeyCode::Tab)), Some(Key::Tab));
-        // `⇧⇥` 报的是一个单独的键码，不是 Tab 加一个修饰键。
-        assert_eq!(translate(&press(KeyCode::BackTab)), Some(Key::BackTab));
         assert_eq!(translate(&press(KeyCode::Esc)), Some(Key::Esc));
         assert_eq!(translate(&press(KeyCode::Char(' '))), Some(Key::Space));
         assert_eq!(translate(&press(KeyCode::Char('q'))), Some(Key::Char('q')));
@@ -3690,34 +2589,8 @@ mod tests {
         // 认不出的键原地放过，不必在状态机那边各占一个取值。
         assert_eq!(translate(&press(KeyCode::F(5))), None);
         assert_eq!(translate(&press(KeyCode::PageDown)), None);
-    }
-
-    /// **「还没跑过」那一句里的两个键出自交给它的那张表**（`no-false-line/06`，
-    /// 收停车场 Q190）：喂一副假键（[`Starters::faked`]），句子里得是这一副。
-    /// 那两支按键本来到不了（见 [`expand`]），直接调它问那一句。
-    #[test]
-    fn the_not_run_yet_complaint_names_the_keys_the_table_hands_it() {
-        assert_eq!(
-            not_run_yet(&Starters::faked(Some("r"), Some("w"))),
-            "还没跑过：先按 r 预览或 w 转换，报告出来了才展得开"
-        );
-        assert_eq!(
-            not_run_yet(&Starters::faked(None, None)),
-            "还没跑过：报告出来了才展得开"
-        );
-
-        // 真会话里那一句：问的是真按键表。
-        let mut session = Session::new();
-        expand(&mut session, &Running::default(), Action::Expand);
-        let said = session.notice().expect("说一句").said().to_owned();
-        let starters = draw::keys::starters(&session);
-        assert!(
-            said.contains(&format!("{} 预览", starters.dry.expect("预览那个键"))),
-            "{said}"
-        );
-        assert!(
-            said.contains(&format!("{} 转换", starters.run.expect("转换那个键"))),
-            "{said}"
-        );
+        // 左右方向键在按键表上没有主（左右是 `h`／`l`），同样原地放过。
+        assert_eq!(translate(&press(KeyCode::Left)), None);
+        assert_eq!(translate(&press(KeyCode::BackTab)), None);
     }
 }

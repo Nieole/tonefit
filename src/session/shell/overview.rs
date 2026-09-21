@@ -16,7 +16,6 @@ use std::time::Instant;
 use ratatui::layout::Rect;
 use tonefit::{Candidate, Instruction, RunOutcome};
 
-use super::super::draw::overview::{pass_name, spell};
 use super::super::keymap::{self, Deed, Phase, Want};
 use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
@@ -24,7 +23,7 @@ use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::Focus;
 use super::canvas::{Border, Canvas, hint};
-use super::marks;
+use super::marks::{self, pass_name, spell};
 use super::topbar::model;
 use super::yielding;
 use crate::render;
@@ -424,7 +423,7 @@ impl Counted {
             if *state == VolumeState::Aborted {
                 continue;
             }
-            let Some(report) = live.listed_at(at).and_then(|which| live.volume(which)) else {
+            let Some(report) = live.report_at(at) else {
                 continue;
             };
             let pairs = render::tally_pairs(report);

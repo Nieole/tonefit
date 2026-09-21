@@ -460,8 +460,6 @@ fn about_setting(field: Field) -> &'static str {
         Field::IoMode => {
             "自动：按硬盘类型自己选。逐个读：适合机械硬盘和网络盘。同时读：适合固态硬盘。"
         }
-        // 路径与输出那三行不在配置视图里（模块文档《设置栏上的一组》），到不了这里。
-        Field::Out | Field::Path(_) | Field::AddPath => "",
     }
 }
 

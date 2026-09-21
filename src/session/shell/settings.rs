@@ -55,7 +55,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
         canvas.scrollbar(area, &bar);
     }
     let column = label_column(inner);
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (at, line) in lines.iter().enumerate().skip(from).take(usize::from(shown)) {
         let y = area.y + 1 + (at - from) as u16;
         match line {

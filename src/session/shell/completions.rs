@@ -47,7 +47,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session) {
     if let Some(bar) = viewport.scrollbar() {
         canvas.scrollbar(area, &bar);
     }
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (i, candidate) in line.candidates.iter().enumerate().skip(from).take(shown) {
         let current = i == line.at;
         let name = if candidate.directory {

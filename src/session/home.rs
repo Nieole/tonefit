@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 pub struct Home(Option<PathBuf>);
 
 impl Home {
-    /// 认这一个目录作家目录。
+    /// 认这一个目录作家目录。用例用它摆一个定死的家目录。
+    #[cfg(test)]
     pub fn at(home: impl Into<PathBuf>) -> Self {
         Self(Some(home.into()))
     }

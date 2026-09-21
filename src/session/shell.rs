@@ -1,32 +1,32 @@
-//! 新会话的**整屏画法**：任务 / 配置两个视图，逐格照设计稿（ADR 0019；spec《画法按新的块分模块》）。
+//! 会话的**整屏画法**：任务 / 配置两个视图，逐格照设计稿（ADR 0019；spec《画法按新的块分模块》）。
 //!
-//! **在测试里长出来**：真会话仍进旧界面（[`super::draw::shell`]），切换在 `session-redesign/15`。
-//! 这一副画在 `TestBackend` 上、逐格对设计快照（`super::draw::design`），一块一块画绿。
+//! 验收是**设计快照**：每一景画在 `TestBackend` 上、逐格对设计稿导出的那一份（[`design`]）。
 //!
 //! # 屏上那几块各住在哪儿
 //!
 //! 一块一个模块；本模块只把屏切成几块、按视图挑画哪几块。
 //!
-//! | 屏上那一块 | 住在 | 落地 |
-//! |---|---|---|
-//! | 往格子里写字、画框 | [`canvas`] | 本票 |
-//! | 摆不下时谁让位 | [`yielding`] | 本票（最小尺寸、总览两行那一档、路径那一列） |
-//! | 顶栏 | [`topbar`] | 本票 |
-//! | 总览 | [`overview`] | 06：还没开始那一副宽窄两档；08：清点中与跑起来；10：结束之后 |
-//! | 确认条 | [`decision`] | 12 |
-//! | 卷列表 | [`list`] | 06：开跑之前那一副；08：清点中那一副与清点之后那棵树 |
-//! | 每页结果 | [`pages`] | 11 |
-//! | 顶上一条预设 | [`preset`] | 13 |
-//! | 设置栏 | [`settings`] | 13 |
-//! | 详情栏 | [`details`] | 13 |
-//! | 预设栏 | [`picker`] | 14 |
-//! | 覆盖层 | [`overlay`] | 07：整屏压暗、全部按键那一张；10：备注行上那张**说明卡**（内容出自 [`super::cover`]） |
-//! | 屏底与输入行 | [`footer`] | 06：屏底；07：输入行 |
-//! | 补全框 | [`completions`] | 07 |
-//! | 窗口太小 | [`small`] | 06；08 补上跑着那一行总进度 |
-//! | 转轮 · 横条 · 行首记号 | [`marks`] | 08：总览、树、窗口太小三处共用 |
+//! | 屏上那一块 | 住在 |
+//! |---|---|
+//! | 往格子里写字、画框、画滚动条 | [`canvas`] |
+//! | 摆不下时谁让位（最小尺寸、总览两行那一档、路径那一列、单栏） | [`yielding`] |
+//! | 顶栏 | [`topbar`] |
+//! | 总览 | [`overview`] |
+//! | 确认条 | [`decision`] |
+//! | 卷列表 | [`list`] |
+//! | 每页结果 | [`pages`] |
+//! | 顶上一条预设 | [`preset`] |
+//! | 设置栏 | [`settings`] |
+//! | 详情栏 | [`details`] |
+//! | 预设栏 | [`picker`] |
+//! | 覆盖层：整屏压暗、全部按键那一张、备注行上那张说明卡（内容出自 [`super::cover`]） | [`overlay`] |
+//! | 屏底与输入行 | [`footer`] |
+//! | 补全框 | [`completions`] |
+//! | 窗口太小 | [`small`] |
+//! | 转轮 · 横条 · 行首记号，与环节名、时长的写法 | [`marks`] |
 //!
-//! 颜色一处在 [`super::draw::paint`]（`look`），键的写法一处在按键表（[`super::keymap`]）。
+//! 颜色一处在 [`paint`]（本仓库唯一写得出颜色名的地方），键的写法一处在按键表（[`super::keymap`]）。
+//! 设计快照的读法与逐格比对在 [`design`]（只在 `test` 里）。
 //!
 //! # 此刻
 //!
@@ -43,12 +43,19 @@ mod marks;
 mod overlay;
 mod overview;
 mod pages;
+/// `pub(super)`：颜色一处（本仓库唯一写得出颜色名的地方）；读回屏上一格的用例也拿它的答案比。
+pub(super) mod paint;
 mod picker;
 mod preset;
 mod settings;
 mod small;
 mod topbar;
 mod yielding;
+
+// 设计快照的读法与逐格比对。**敞开到会话这一层**：场景夹具（`super::scene`）要拿设计快照的
+// 字网格核它自己那几处数（`session-redesign/05`），终端层那几串交互序列也对它比。
+#[cfg(test)]
+pub(super) mod design;
 
 use std::time::Instant;
 
@@ -148,10 +155,10 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
-    use super::super::draw::design::{self, Expected, assert_no_background, assert_same_cells};
-    use super::super::draw::paint::forcing;
     use super::super::scene::Scene;
+    use super::design::{self, Expected, assert_no_background, assert_same_cells};
     use super::draw;
+    use super::paint::forcing;
 
     /// 在测试后端上画一屏，取回缓冲。
     fn painted(scene: &Scene, width: u16, height: u16) -> Buffer {

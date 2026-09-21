@@ -54,8 +54,7 @@ use crate::render::{self, Field, Notable, Row, RowKind};
 /// 行首记号：**这一页要不要紧，一个字符说完**（`CONTEXT.md` 的《语义色》：
 /// 颜色不是唯一载体）。
 ///
-/// 三档，比旧界面那一套（`super::super::draw::pages` 的 `Mark`）少两格：新界面**不给不要紧的页
-/// 一个记号**（一屏 `✓` 说不出哪一页要紧），**代表页也不给**——它不是出了事，
+/// 三档：**不给不要紧的页一个记号**（一屏 `✓` 说不出哪一页要紧），**代表页也不给**——它不是出了事，
 /// 屏上说它的是提示那一列里的「代表页」那个词。
 ///
 /// **一页可以同时要紧在好几处，而一行只有一种语义**：取最重的那一个
@@ -121,7 +120,7 @@ fn mark_of(what: Notable) -> Mark {
 ///
 /// **这一副只让掉一种**：[残缺](Notable::Salvaged)跟着 `Field::Salvage` 那一格
 /// （`救回 62.0%`），而它比一个词多说了**救回了多少**——救回 5% 与救回 95% 是两回事，
-/// 一个「残缺」把那个数抹平了。多加一个词是同一件事说两遍（与旧那一副同一条）。
+/// 一个「残缺」把那个数抹平了。多加一个词是同一件事说两遍。
 ///
 /// **[坏页](Notable::Failed)不在这里让**：出处那一份上它本来就没有词
 /// （行尾跟着那一句以「失败」开头的原因），照它答就是了——在这里再写一次 `None`
@@ -233,7 +232,7 @@ fn entries(report: &VolumeReport, panel: Panel, mode: Mode) -> Vec<Entry> {
         take_cell(&mut entry.verdict, &row, Field::Candidate);
         take_cell(&mut entry.reason, &row, Field::Reason);
         // **画质分那一格是「判成那一档在这一页上的分」**（`2bit+FS 3.515`），
-        // 不是六个候选那一整串（`Field::Scores`，那是命令行与旧界面那一副，停车场 Q725）。
+        // 不是六个候选那一整串（`Field::Scores`，那是命令行那一副，停车场 Q725）。
         take_cell(&mut entry.scores, &row, Field::VerdictScore);
         // 成句或成格、**不塞进列**的那几样跟在提示那一列上：救回了多少、
         // 这一页的纸白与钳制（只在预览那一副出）、成句的那一行（坏页、彩色分支）。
@@ -359,7 +358,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
         return;
     }
     let all = entries(report, panel, live.mode());
-    let from = usize::from(viewport.from());
+    let from = viewport.from();
     for (row, index) in listed
         .iter()
         .enumerate()
