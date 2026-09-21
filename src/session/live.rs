@@ -28,7 +28,10 @@
 //! 对实现方的要求，命令行那一份见 `crate::Bar::finish_volume`，本模块那一份见
 //! [`Live::finish_volume`]。
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tonefit::{
@@ -274,15 +277,38 @@ pub struct Live {
     /// 只有**接着写出那一趟**记它：别的趟在确认点上不等人（观察者当场答字就返回），
     /// 那一格开了就再也关不上。
     deliberating_since: Option<Instant>,
-    /// 攒到此刻的报告。开工那一刻它是「零卷的一份」——抬头那几件事已经答得出。
+    /// 攒到此刻的报告，**除了收摊了的那几卷**：那一列在 [`settled`](Self::settled)，
+    /// 这一份的 `volumes` 恒空。开工那一刻它是「零卷的一份」——抬头那几件事已经答得出。
+    /// 要整份的那几处（退出时印的报告、退出码）走 [`report`](Self::report)，当场拼一份。
     report: Report,
+    /// **收摊了的那几卷的报告**，照收摊的先后——整份报告的 `volumes` 那一列。
+    ///
+    /// **一卷一个 `Arc`**（`session-redesign/17`）：画一帧之前在锁里拷一份 `Live`
+    /// （`super::run::Running::glimpse`），拷的于是是几千个指针，不是逐页结果。
+    /// 一卷收摊之后它那一份再也不变，共用不会看见半截。
+    settled: Vec<Arc<VolumeReport>>,
+    /// 清单上第几卷的报告是 [`settled`](Self::settled) 里第几份，与
+    /// [`roster`](Self::roster) 同序同长。卷列表每画一行都要问它，逐条比卷根是
+    /// 「卷数 × 卷数」（`session-redesign/17`，《卡顿的根因》）。
+    settled_at: Vec<Option<usize>>,
+    /// [`settled`](Self::settled) 每一份**折出来的那几个数**，同序同长。
+    /// 收摊那一刻折一次（[`digest_at`](Self::digest_at)）：那一份此后不变，
+    /// 而每画一帧逐页重判一遍几千卷，正是大库上卡的那一截。
+    digests: Vec<Digest>,
+    /// [`settled`](Self::settled) 里一共坏了几页（`Report::failures` 那个数），收摊时加上。
+    settled_failures: usize,
+    /// 清单上第几卷**没做成**的那一句在报告的 `failed_volumes` 里第几条，
+    /// 与 [`roster`](Self::roster) 同序同长。
+    failed_at: Vec<Option<usize>>,
+    /// **卷根换回清单序号**：清点已按卷根收编过，清单里卷根不重。开工那一刻立起来，此后不变。
+    index: Arc<HashMap<PathBuf, usize>>,
     /// 这一趟点名了几个卷（`RunStarted`）。
     volumes: usize,
     /// 这一趟最多走多少步（`RunStarted`，各卷之和）。
     steps: u64,
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
     /// 开工那一刻整份收下，此后一格不变。
-    roster: Vec<SurveyedVolume>,
+    roster: Arc<Vec<SurveyedVolume>>,
     /// 清单上每一卷**做了多久**，与 [`roster`](Self::roster) 同序同长。
     ///
     /// **只给没有报告的那几卷用**（没做成、被立即停止掉、还在跑的那一卷）：收摊了的卷
@@ -303,9 +329,9 @@ pub struct Live {
     /// **摆在报告旁边，不当场进报告**：报告上那张表跟着 [`returned`](Self::returned) 换上的
     /// 那一份到（逐条相同，停车场 Q745、Q964）。
     /// 屏上读的是这一张。
-    non_volume_files: Vec<NonVolumeFile>,
+    non_volume_files: Arc<Vec<NonVolumeFile>>,
     /// 开工那一条带的无法访问的地方那张表，与上一格同一个待遇。
-    unreachable_places: Vec<UnreachablePlace>,
+    unreachable_places: Arc<Vec<UnreachablePlace>>,
     /// 全局走过的步数，含各卷收摊时结清的那一截。
     walked: u64,
     /// 已经收摊的卷数（跑完的与没做成的都算）。总览块抬头那个「第几卷」用它。
@@ -314,7 +340,7 @@ pub struct Live {
     ///
     /// 本模块**除造它那一刻外不问系统时钟**：开工那一刻、等人那一截的起止、已用与预计，
     /// 读的都是它。真会话每帧把单调时钟读一次交进来（[`tick`](Self::tick)，
-    /// 见 `super::terminal::drive`），用例给定值——屏上那几个数因此是定值、不随机器快慢变，
+    /// 见 `super::run::Running::glimpse`），用例给定值——屏上那几个数因此是定值、不随机器快慢变，
     /// 而一帧之内几处读到的是同一个时刻（停车场 Q118 那一格的差正是各读各的表读出来的）。
     ///
     /// 造它那一刻读的那一次是它的初值：下一帧到来之前计算线程就可能报到，
@@ -389,15 +415,21 @@ impl Live {
                 // 攒到一半的这一份因此填零就够——跑完会换成库交出来的那一份。
                 elapsed: Duration::ZERO,
             },
+            settled: Vec::new(),
+            settled_at: Vec::new(),
+            digests: Vec::new(),
+            settled_failures: 0,
+            failed_at: Vec::new(),
+            index: Arc::default(),
             volumes: 0,
             steps: 0,
-            roster: Vec::new(),
+            roster: Arc::default(),
             states: Vec::new(),
             timings: Vec::new(),
             began: None,
             current: None,
-            non_volume_files: Vec::new(),
-            unreachable_places: Vec::new(),
+            non_volume_files: Arc::default(),
+            unreachable_places: Arc::default(),
             walked: 0,
             finished: 0,
             now,
@@ -486,13 +518,21 @@ impl Live {
         non_volume_files: &[NonVolumeFile],
         unreachable_places: &[UnreachablePlace],
     ) {
-        self.roster = roster.to_vec();
+        self.roster = Arc::new(roster.to_vec());
+        self.index = Arc::new(
+            roster
+                .iter()
+                .enumerate()
+                .map(|(at, listed)| (listed.root.clone(), at))
+                .collect(),
+        );
         self.states = vec![VolumeState::Queued; roster.len()];
         self.timings = vec![Duration::ZERO; roster.len()];
         self.began = None;
         self.current = None;
-        self.non_volume_files = non_volume_files.to_vec();
-        self.unreachable_places = unreachable_places.to_vec();
+        self.non_volume_files = Arc::new(non_volume_files.to_vec());
+        self.unreachable_places = Arc::new(unreachable_places.to_vec());
+        self.index_the_settled();
     }
 
     /// 开一卷。**按卷根认回清单里的那一卷**（清点已按卷根收编过，清单里卷根不重），
@@ -506,9 +546,7 @@ impl Live {
             pass_from: 0,
             writes: false,
         });
-        // 逐条找而不是建一张表：一趟里每一卷只认一次，而清单是几千的量级、
-        // 路径比较的是分量——与这一卷接下来要做的事相比不值一提。
-        self.current = self.roster.iter().position(|listed| listed.root == volume);
+        self.current = self.index.get(volume).copied();
         self.began = Some(self.now);
         self.set_state(VolumeState::Running { pass: None });
     }
@@ -624,7 +662,7 @@ impl Live {
         } else {
             VolumeState::Done
         });
-        self.report.volumes.push(report.clone());
+        self.settle(Arc::new(report.clone()));
         self.finish_volume();
     }
 
@@ -644,6 +682,11 @@ impl Live {
     pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
         self.lost_failures = self.lost_failures.saturating_add(self.in_flight_failures);
         self.set_state(VolumeState::Failed);
+        if let Some(at) = self.index.get(volume)
+            && let Some(slot) = self.failed_at.get_mut(*at)
+        {
+            *slot = Some(self.report.failed_volumes.len());
+        }
         self.report.failed_volumes.push(VolumeFailure {
             volume: volume.to_path_buf(),
             reason: reason.to_owned(),
@@ -707,9 +750,50 @@ impl Live {
         self.volume = None;
         self.ended = true;
         match done {
-            Ok(report) => self.report = report,
+            Ok(mut report) => {
+                self.settled = std::mem::take(&mut report.volumes)
+                    .into_iter()
+                    .map(Arc::new)
+                    .collect();
+                self.report = report;
+                self.index_the_settled();
+            }
             // 没做成那一趟没有报告：攒到一半的那一份留着，它说得出已经做完的卷。
             Err(error) => self.undone = Some(format!("{error:#}")),
+        }
+    }
+
+    /// 一卷的报告接到[收摊了的那一列](Self::settled)上，连同查它要的那三格。
+    fn settle(&mut self, report: Arc<VolumeReport>) {
+        if let Some(at) = self.index.get(&report.volume)
+            && let Some(slot) = self.settled_at.get_mut(*at)
+        {
+            *slot = Some(self.settled.len());
+        }
+        self.digests
+            .push(Digest::of(&report, self.report.profile.panel()));
+        self.settled_failures = self
+            .settled_failures
+            .saturating_add(report.failures().count());
+        self.settled.push(report);
+    }
+
+    /// 查报告要的那几格从头立一遍：开工那一刻（清单换了）与库交回整份报告那一刻。
+    fn index_the_settled(&mut self) {
+        let settled = std::mem::take(&mut self.settled);
+        self.settled_at = vec![None; self.roster.len()];
+        self.digests.clear();
+        self.settled_failures = 0;
+        for report in settled {
+            self.settle(report);
+        }
+        self.failed_at = vec![None; self.roster.len()];
+        for (at, failed) in self.report.failed_volumes.iter().enumerate() {
+            if let Some(listed) = self.index.get(&failed.volume)
+                && let Some(slot) = self.failed_at.get_mut(*listed)
+            {
+                *slot = Some(at);
+            }
         }
     }
 
@@ -903,12 +987,8 @@ impl Live {
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
     )]
     pub fn undone_at(&self, at: usize) -> Option<&str> {
-        let root = &self.roster.get(at)?.root;
-        self.report
-            .failed_volumes
-            .iter()
-            .find(|one| one.volume == *root)
-            .map(|one| one.reason.as_str())
+        let failed = (*self.failed_at.get(at)?)?;
+        Some(self.report.failed_volumes.get(failed)?.reason.as_str())
     }
 
     /// 清点清单里第几卷**那一份报告**：收摊了的、或者确认点上攒着的那一份；没做成的、
@@ -918,12 +998,11 @@ impl Live {
     /// 按**卷根**认，与 [`undone_at`](Self::undone_at) 同一条。卷列表每一行、跳转的落点、
     /// 逐页那几行、总览的判定分布都要它——只此一份。
     pub fn report_at(&self, at: usize) -> Option<&VolumeReport> {
+        if let Some(settled) = self.settled_at.get(at).copied().flatten() {
+            return self.settled.get(settled).map(|one| &**one);
+        }
         let root = &self.roster.get(at)?.root;
-        self.report
-            .volumes
-            .iter()
-            .find(|one| one.volume == *root)
-            .or_else(|| self.summarized.as_ref().filter(|one| one.volume == *root))
+        self.summarized.as_ref().filter(|one| one.volume == *root)
     }
 
     /// 清点清单里第几卷**需留意的页按种类各几页**（`CONTEXT.md` 的《需留意的页》）。
@@ -935,26 +1014,23 @@ impl Live {
     /// **一处出处**：卷行行尾写哪几样按它（画法那一层，在 `tui` 后面）、`]d`／`[d`
     /// 跳不跳到这一卷也按它（[`Self::troubled_at`]，在特性外面）——两处读的是同一份，
     /// 「行首挂 `!` 的卷跳得到」那句话才成立。
+    ///
+    /// **收摊了的卷读收摊那一刻判好的那一份**（[`notables`](Self::notables)）；
+    /// 确认点上攒着的那一份还会换，当场判。
     pub fn notable_at(&self, at: usize) -> NotableTally {
-        let Some(report) = self.report_at(at) else {
-            return NotableTally::default();
-        };
-        let mut tally = NotableTally::default();
-        for page in render::notable(report, self.report.profile.panel()) {
-            for why in page {
-                match why {
-                    render::Notable::Outlier => tally.outlier += 1,
-                    render::Notable::Overflowed => tally.overflowed += 1,
-                    render::Notable::OutsideTheGate => tally.outside_the_gate += 1,
-                    render::Notable::Salvaged => tally.salvaged += 1,
-                    // 坏页由**行首记号**与隔离那一句说，代表页与兜底上界不是「出了事」。
-                    render::Notable::Failed
-                    | render::Notable::Backstopped
-                    | render::Notable::Driver => {}
-                }
-            }
+        self.digest_at(at)
+            .map_or_else(NotableTally::default, |digest| digest.notable)
+    }
+
+    /// 清点清单里第几卷那一份报告**折出来的那几个数**（[`Digest`]）；没有报告是 `None`。
+    ///
+    /// **收摊了的卷读收摊那一刻折好的那一份**；确认点上攒着的那一份还会换，当场折。
+    pub fn digest_at(&self, at: usize) -> Option<Cow<'_, Digest>> {
+        if let Some(settled) = self.settled_at.get(at).copied().flatten() {
+            return self.digests.get(settled).map(Cow::Borrowed);
         }
-        tally
+        let report = self.report_at(at)?;
+        Some(Cow::Owned(Digest::of(report, self.report.profile.panel())))
     }
 
     /// 清点清单里第几卷**是 `]d`／`[d` 的一个落点**吗（`CONTEXT.md` 的《卷列表》：
@@ -974,9 +1050,28 @@ impl Live {
         }
     }
 
-    /// 攒到此刻的报告。
-    pub fn report(&self) -> &Report {
-        &self.report
+    /// 攒到此刻的报告，**整份**：收摊了的那几卷当场拼回去（见 [`settled`](Self::settled)）。
+    ///
+    /// 拼一份要把每一卷每一页拷一遍——只给退出时印报告、算退出码那几处用，画一帧不走它。
+    pub fn report(&self) -> Report {
+        Report {
+            volumes: self.settled.iter().map(|one| (**one).clone()).collect(),
+            ..self.report.clone()
+        }
+    }
+
+    /// 这一趟的阅读器面板（报告抬头上那个型号的）。画法判需留意的页要它，不必拼整份报告。
+    pub fn panel(&self) -> tonefit::Panel {
+        self.report.profile.panel()
+    }
+
+    /// 这一趟是怎么收的场（报告上那一格）。还没收场时是开工那一刻填的初值。
+    #[cfg_attr(
+        not(feature = "tui"),
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+    )]
+    pub fn outcome(&self) -> RunOutcome {
+        self.report.outcome
     }
 
     /// **卷清单**：开工那一条带的那一列，照发现的次序（`session-redesign/03`）。
@@ -1052,9 +1147,7 @@ impl Live {
     /// （报告末尾那几小结数的正是它），这一条答「**此刻**坏了几页」——总览块的出事行要的
     /// 是后一个（停车场 Q148）。**这个数只涨不落**：一卷收摊时那几截只是换手。
     pub fn failures_so_far(&self) -> usize {
-        self.report
-            .failures()
-            .count()
+        self.settled_failures
             .saturating_add(self.lost_failures)
             .saturating_add(self.in_flight_failures)
     }
@@ -1068,7 +1161,7 @@ impl Live {
     pub fn exit_code(&self) -> u8 {
         match self.undone {
             Some(_) => crate::REFUSED_EXIT,
-            None => crate::exit_code(&self.report),
+            None => crate::exit_code(&self.report()),
         }
     }
 }
@@ -1107,6 +1200,53 @@ fn eta(elapsed: Duration, walked: u64, steps: u64) -> Option<Duration> {
     Some(Duration::from_nanos(
         u64::try_from(nanos).unwrap_or(u64::MAX),
     ))
+}
+
+/// 一卷报告**折出来的那几个数**（[`Live::digest_at`]）：卷行行尾、目录行的汇总、`]d` 的落点与总览那两行
+/// 每一帧都要，而折一次要逐页走一遍——收摊了的卷折一次存着（`session-redesign/17`）。
+///
+/// **判在 [`render::notable`] 一处**，与每页结果、与命令行印出去的那一份同一份判定；
+/// 灰阶分布取自 [`render::tally_pairs`]。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Digest {
+    /// 需留意的页按种类各几页（[`Live::notable_at`]）。
+    pub notable: NotableTally,
+    /// 灰阶分布：每个档位几页（总览的结论行）。
+    pub tally: Vec<(tonefit::Candidate, usize)>,
+    /// 带着差异大的那几页（总览的问题行，预览那一副），按页数。
+    pub outlier_pages: usize,
+    /// 带着页面超宽的那几页，同上。
+    pub wide_pages: usize,
+    /// 坏了几页（`VolumeReport::failures`；目录行的汇总）。
+    pub failed_pages: usize,
+}
+
+impl Digest {
+    fn of(report: &VolumeReport, panel: tonefit::Panel) -> Self {
+        let mut digest = Self {
+            tally: render::tally_pairs(report),
+            failed_pages: report.failures().count(),
+            ..Self::default()
+        };
+        for page in render::notable(report, panel) {
+            digest.outlier_pages += usize::from(page.contains(&render::Notable::Outlier));
+            digest.wide_pages += usize::from(page.contains(&render::Notable::Overflowed));
+            for why in page {
+                let tally = &mut digest.notable;
+                match why {
+                    render::Notable::Outlier => tally.outlier += 1,
+                    render::Notable::Overflowed => tally.overflowed += 1,
+                    render::Notable::OutsideTheGate => tally.outside_the_gate += 1,
+                    render::Notable::Salvaged => tally.salvaged += 1,
+                    // 坏页由**行首记号**与隔离那一句说，代表页与兜底上界不是「出了事」。
+                    render::Notable::Failed
+                    | render::Notable::Backstopped
+                    | render::Notable::Driver => {}
+                }
+            }
+        }
+        digest
+    }
 }
 
 #[cfg(test)]

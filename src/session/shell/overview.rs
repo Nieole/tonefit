@@ -126,7 +126,7 @@ fn writing(live: &Live) -> bool {
 /// 结束之后那一条：完成 · 已停止 · 已中断，加用时。
 fn ended_title(live: &Live) -> Vec<Segment> {
     let overall = live.overall();
-    let (word, look, why) = match live.report().outcome {
+    let (word, look, why) = match live.outcome() {
         RunOutcome::Stopped(Instruction::Abort) => (
             "已中断 ",
             Look::tone(Tone::Caution).bold(),
@@ -409,7 +409,6 @@ impl Counted {
             outlier: 0,
             wide: 0,
         };
-        let panel = live.report().profile.panel();
         for (at, state) in live.states().iter().enumerate() {
             match state {
                 VolumeState::Done | VolumeState::Isolated => counted.done += 1,
@@ -423,23 +422,20 @@ impl Counted {
             if *state == VolumeState::Aborted {
                 continue;
             }
-            let Some(report) = live.report_at(at) else {
+            let Some(digest) = live.digest_at(at) else {
                 continue;
             };
-            let pairs = render::tally_pairs(report);
-            if pairs.is_empty() {
+            if digest.tally.is_empty() {
                 continue;
             }
             counted.judged += 1;
-            for (candidate, pages) in pairs {
-                marks::add_to(&mut counted.tally, candidate, pages);
+            for (candidate, pages) in &digest.tally {
+                marks::add_to(&mut counted.tally, *candidate, *pages);
             }
-            // 判定上要留意的那两样**判在一处**（`render::notable`），与每页结果、
-            // 与命令行印出去的那一份同一份判定。
-            for page in render::notable(report, panel) {
-                counted.outlier += usize::from(page.contains(&render::Notable::Outlier));
-                counted.wide += usize::from(page.contains(&render::Notable::Overflowed));
-            }
+            // 判定上要留意的那两样**判在一处**（`render::notable`，折在 `Digest` 里），
+            // 与每页结果、与命令行印出去的那一份同一份判定。
+            counted.outlier += digest.outlier_pages;
+            counted.wide += digest.wide_pages;
         }
         counted
     }

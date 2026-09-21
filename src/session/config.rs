@@ -506,7 +506,7 @@ mod tests {
     fn every_judging_row_is_a_line_of_the_report_header() {
         let scene = Scene::named("running");
         let live = scene.live();
-        let header = crate::render::header(live.report(), live.mode());
+        let header = crate::render::header(&live.report(), live.mode());
         let lines: Vec<&str> = header.lines().collect();
         for which in Judging::ALL {
             let line = premise_line(&scene.session, which);

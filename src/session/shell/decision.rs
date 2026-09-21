@@ -101,7 +101,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
 /// 头一行：这一卷 · 灰阶分布 · 需留意几页（宽那一副另报差异大的页）。
 fn this_volume(session: &Session, live: &Live, report: &VolumeReport, short: bool) -> Vec<Segment> {
     let name = current_name(session, live);
-    let notable = Pages::notable_count(report, live.report().profile.panel());
+    let notable = Pages::notable_count(report, live.panel());
     // 有需留意的页就上注意色——**一个都没有的那一卷这一格是默认色**，
     // 「0」不该长得像一件要留神的事（设计稿 `drawDecision` 那一格同样分两档）。
     let count = Segment::new(
