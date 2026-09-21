@@ -65,17 +65,18 @@ use ratatui::layout::Rect;
 use super::keymap::Phase;
 use super::live::Live;
 use super::state::Session;
-use super::view::{Focus, View};
+use super::view::{Focus, Hit, View};
 use canvas::Canvas;
 
-/// 把一屏画出来。
-pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Instant) {
+/// 把一屏画出来，交出这一帧**点得中的区域**（spec《鼠标》：顶栏视图名、卷列表每一行、
+/// 每页结果每一页、设置栏每一项、详情栏每一个值、预设栏每一行）。窗口太小那一屏一段都没有。
+pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Instant) -> Vec<Hit> {
     let screen = frame.area();
     let mut canvas = Canvas::new(frame.buffer_mut());
     let phase = Phase::of(session.stage(), live);
     if yielding::too_small(screen) {
         small::draw(&mut canvas, live, phase);
-        return;
+        return Vec::new();
     }
     topbar::draw(&mut canvas, session, live, phase, now);
     match session.views.view {
@@ -87,6 +88,7 @@ pub fn draw(frame: &mut Frame, session: &Session, live: Option<&Live>, now: Inst
     completions::draw(&mut canvas, session);
     overlay::draw(&mut canvas, session, phase);
     footer::draw(&mut canvas, session, live, phase, now);
+    canvas.into_hits()
 }
 
 /// 任务视图：顶栏底下总览钉住，等待确认时接一条**确认条**，剩下的高度给卷列表**或者**
@@ -164,7 +166,9 @@ mod tests {
     fn painted(scene: &Scene, width: u16, height: u16) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
         terminal
-            .draw(|frame| draw(frame, &scene.session, scene.live.as_ref(), scene.now()))
+            .draw(|frame| {
+                draw(frame, &scene.session, scene.live.as_ref(), scene.now());
+            })
             .expect("画得出来");
         terminal.backend().buffer().clone()
     }

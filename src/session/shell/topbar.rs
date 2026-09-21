@@ -11,7 +11,7 @@ use super::super::live::Live;
 use super::super::look::{Kind, Look, Segment, width_of};
 use super::super::state::Session;
 use super::super::tone::Tone;
-use super::super::view::View;
+use super::super::view::{Target, View};
 use super::canvas::Canvas;
 
 /// 画顶栏。
@@ -38,8 +38,10 @@ pub(super) fn draw(
         } else {
             Look::FAINT
         };
+        let start = x;
         x = canvas.put(x, 0, &format!("{} ", view.number()), number);
         x = canvas.put(x, 0, view.name(), name);
+        canvas.hit(start, 0, x - start, Target::View(view));
     }
     let banner = Look::kind(Kind::Banner);
     let mut segments = vec![Segment::new("[ ", banner)];

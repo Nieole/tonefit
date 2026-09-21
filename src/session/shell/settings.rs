@@ -12,7 +12,7 @@ use super::super::config::{self, Band, Item};
 use super::super::look::{Hue, Kind, Look, Segment};
 use super::super::state::Session;
 use super::super::tone::Tone;
-use super::super::view::Focus;
+use super::super::view::{Focus, Target};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, padded};
 
@@ -66,6 +66,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
             config::Line::Item(item) => {
                 let segments = item_row(session, *item, at == cursor, focused, locked, column);
                 canvas.line(area.x + 1, y, &segments, Some(inner + 1));
+                canvas.hit_row(area, y, Target::Item(*item));
             }
         }
     }

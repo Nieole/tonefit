@@ -16,7 +16,7 @@ use super::super::keymap::{self, Deed};
 use super::super::look::{Hue, Kind, Look, Segment};
 use super::super::state::{Field, Session};
 use super::super::tone::Tone;
-use super::super::view::Focus;
+use super::super::view::{Focus, Target};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint};
 use crate::session::columns::elide;
@@ -93,6 +93,10 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect, narro
             &row.segments,
             Some(inner),
         );
+        // 停得住的那几格点得中（设计稿 `l.choice` 那一笔）。
+        if let Some(choice) = row.choice {
+            canvas.hit_row(area, area.y + 1 + (i - from) as u16, Target::Choice(choice));
+        }
     }
 }
 

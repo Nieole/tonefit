@@ -310,7 +310,8 @@ impl Step {
             Self::Key(name) => vec![key_named(name)],
             Self::Type(text) => text.chars().map(|c| Input::Key(Key::Char(c))).collect(),
             Self::Click(x, y) => vec![Input::Click { x: *x, y: *y }],
-            // 双击等于 `⏎`：终端层按阈值内的第二下认出来（随鼠标那一票），这里先给两下。
+            // 双击就是同一处的两下：会话按阈值内的第二下认出来（`Session::click`），
+            // 两下落在同一个「此刻」上，因此总在阈值内。
             Self::DoubleClick(x, y) => vec![Input::Click { x: *x, y: *y }; 2],
             Self::Wheel(notches) => vec![Input::Wheel(*notches)],
             Self::Advance(_) | Self::Resize(_, _) => Vec::new(),

@@ -45,7 +45,7 @@ use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
 use super::super::state::{Listing, Session};
 use super::super::tone::Tone;
-use super::super::view::{Focus, Pages};
+use super::super::view::{Focus, Pages, Target};
 use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, padded};
 use super::marks;
@@ -374,6 +374,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
             &row_segments(entry, &kept, &widths, row == at, row_width),
             Some(row_width),
         );
+        canvas.hit_row(area, area.y + 3 + (row - from) as u16, Target::Page(row));
     }
 }
 

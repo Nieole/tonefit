@@ -19,6 +19,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
 use super::super::look::{Look, Segment, width_of};
+use super::super::view::{Hit, Target};
 use super::super::viewport::Scrollbar;
 use super::paint;
 
@@ -26,8 +27,12 @@ use super::paint;
 const THUMB: &str = "┃";
 
 /// 借来的一屏缓冲。
+///
+/// 画的时候顺带收下**点得中的区域**（[`Hit`]；spec《鼠标》）：屏上哪一段点得中、点中的是什么，
+/// 由摆那一段的那一块当场说（设计稿 `scr.hit`），画完一并交出去。
 pub(super) struct Canvas<'a> {
     buffer: &'a mut Buffer,
+    hits: Vec<Hit>,
 }
 
 /// 一个框的四条边与它上面摆的字（不叫 `Frame`：终端库的一帧也叫那个名字，整屏画法里两个一起在场）。
@@ -48,7 +53,31 @@ pub(super) struct Border<'a> {
 
 impl<'a> Canvas<'a> {
     pub(super) fn new(buffer: &'a mut Buffer) -> Self {
-        Self { buffer }
+        Self {
+            buffer,
+            hits: Vec::new(),
+        }
+    }
+
+    /// 记下一段点得中的区域：第 `y` 行从第 `x` 格起 `width` 格。
+    pub(super) fn hit(&mut self, x: u16, y: u16, width: u16, target: Target) {
+        self.hits.push(Hit {
+            x,
+            y,
+            width,
+            target,
+        });
+    }
+
+    /// 记下框 `area` 里第 `y` 行整宽那一段（框线两边各让一格）——一行一段的那几块都这么摆
+    /// （设计稿 `scr.hit(x + 1, …, w - 2, 1, …)`）。
+    pub(super) fn hit_row(&mut self, area: Rect, y: u16, target: Target) {
+        self.hit(area.x + 1, y, area.width.saturating_sub(2), target);
+    }
+
+    /// 画完这一帧：交出收下的点得中的区域。
+    pub(super) fn into_hits(self) -> Vec<Hit> {
+        self.hits
     }
 
     /// 屏有几列。
