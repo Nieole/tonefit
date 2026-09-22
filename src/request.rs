@@ -20,7 +20,7 @@ pub enum Mode {
     /// 照常处理并写出。
     #[default]
     Process,
-    /// 只算不写：画质分照求、报告照出，一个文件都不落盘（spec 的 story 6）。
+    /// 只算不写：画质分照求、报告照出，一个输出都不落盘（`CONTEXT.md` 的《模式》；spec 的 story 6）。
     DryRun,
 }
 

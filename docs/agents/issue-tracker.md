@@ -10,6 +10,9 @@ Issues and specs (you may know a spec as a PRD) for this repo live as markdown f
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 - What actually shipped goes under a `## 落地记录` heading at the bottom — the delivery record of a `resolved` ticket. It states what was built and what it cost; **it is a historical record and is not rewritten when later work supersedes it** (the superseding ticket's own record is where that belongs). Correcting a claim that was already false when written is not a rewrite — that is a defect in the record.
+- That exemption covers delivery records only. ADRs, `docs/` and `CONTEXT.md` state what holds now (`CLAUDE.md`《文档写作》rule 1): when later work makes them false, correct them — history is git's job.
+- Acceptance checkboxes hold **actions** only. Why the ticket exists — what goes wrong if it is not done — goes in its own `## 不做会怎样` section outside the checkboxes: a consequence written as a checkbox lies whether it is ticked or not.
+- Do not write a count that later work moves (「十来处」, 「今天是七条」) into a ticket or a record — write the command that counts it. When a number must be quoted, pin its date or commit into the sentence (「`04` 当时是七条」).
 
 ## When a skill says "publish to the issue tracker"
 

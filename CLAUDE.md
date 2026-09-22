@@ -37,6 +37,8 @@ cargo xtask gate
 
 需要实测数字时，来源只有 `docs/measurements.md`。
 
+写用例照 `docs/agents/testing.md` 那三条手法。
+
 ## 改 CONTEXT.md 的规矩
 
 **新词可以当场加**：实现引入了一个新概念（新类型、新开关、新状态），加进词汇表是落地的一部分——

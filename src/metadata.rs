@@ -1041,7 +1041,8 @@ mod tests {
         );
     }
 
-    /// 字段一律 ASCII：tEXt 只装得下 Latin-1，中文写进去会被编码器当场拒绝。
+    /// 字段一律 ASCII：tEXt 只装得下 Latin-1，中文写进去会被编码器拒绝——不在加记录那一刻，
+    /// 要到写文件头那一步，那时的报错说不出是哪个字段。
     #[test]
     fn every_field_is_writable_as_latin1() {
         let fingerprint =

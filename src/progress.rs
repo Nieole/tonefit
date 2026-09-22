@@ -159,8 +159,8 @@ pub enum Event<'a> {
     /// 一整卷**没做成**，附上给人读的那句原因（05 号票：卷转换失败）。
     ///
     /// 它与 [`VolumeFinished`](Self::VolumeFinished) 二选一：一条开卷之后到得了的只有其中
-    /// 一条——那一卷要么交出一份报告，要么交出这一句原因。两条都没有的只剩一种情形，
-    /// 就是[立即停止](Instruction::Abort)。
+    /// 一条——那一卷要么交出一份报告，要么交出这一句原因。两条都没有的只剩两种情形：
+    /// [立即停止](Instruction::Abort)，或拒绝开始撞在半路（互锁 ③ 那一页，`RunOutcome::Refused`）。
     ///
     /// 同一句原因随后也会在 `Report::failed_volumes` 里出现一次——那一份是结果，
     /// 这一条是增量，与 [`PageFailed`](Self::PageFailed) 同一个待遇。

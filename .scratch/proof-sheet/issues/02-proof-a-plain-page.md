@@ -32,3 +32,101 @@
 - [ ] `CONTEXT.md`《量化》加《样张 (Proof)》，紧挨《灰阶测试图》；两条各自点明分工与那一处相反（一个不走管线，一个必须走满），并写明样张眼下只在命令行上
 - [ ] `lib.rs` 的模块文档从「对外是三个 seam」改成四个，第四条写清它为什么不并进 `run`
 - [ ] `cargo xtask gate` 三条全绿；黄金回归一格没动（产物字节一个都没变）
+
+## 停车场结转
+
+下面四条由停车场转来（`/settle` Q206–Q994），归这张票收。**Q922 已拍板（2026-09-20）**：本票连前半截（解码到判跨页那几步）一起提，不另插票——票面要照它重写，动手之前先读。
+
+#### Q916 — 提出来那一段吃的是整份 `Request`，而样张手上只有「一份处理选项」
+
+- **From:** 票 `proof-sheet/01`
+- **Kind:** 票面没说到的第三种情形（形状由 02 号票定，而 02 还没落地）
+- **Where:** `src/lib.rs` 的 `examine_gray_page` 那个 `request: &Request` 参数；
+  `src/request.rs` 的 `Request`；spec《Implementation Decisions》第八条（样张吃哪十项、不吃哪六项）
+- **Why it did not block:** 票面写的是「进去的是一张解好的灰度页加**这一趟的处理选项**与面板」，
+  而 `Request` 的文档头一句就是「一次处理调用的全部输入」——它就是这一趟的处理选项那一份。
+  收窄成一个只装五项的新类型也走得通，但那是**替 02 号票拍板**：
+  样张那条路上「处理选项」到底是个什么类型，要等它把解码、裁白边、判跨页那前半截也走通才看得清
+  （那几段同样读 `request.crop` 与 `request.split`）。
+- **What this ticket actually did:** 收 `&Request`。它**不是** `Compute` 的状态——
+  `Compute` 只是借着它，而票面点名的四格（`counters`、`cache`、`fingerprint`、`settles`）一格都没进来。
+  代价写在那一段的文档里：样张那一趟要造一份 `Request`，其中卷级的那七格
+  （`inputs`、`output_root`、`progress`、`cache_budget`、`io_mode`、`metadata`、`envelope`）
+  对它无从谈起。
+- **Options:** ① 照旧收 `&Request`（已落地），02 造一份、卷级那几格填默认；
+  ② 02 落地时提一个只装那十项处理选项的类型，`Request` 与样张两边都装它
+  （`Request` 因此变成「那十项 + 卷级那几项」）；③ 把五个用得到的字段摊成五个裸参数
+- **Recommend:** ② 留给 02 号票去判，但**别急着在 01 上做**：②的价值要等 02 把前半截走通才看得出来，
+  而 ③ 是往回走——五个同型可空的裸参数正是 `Piece` 与 `SplitRule` 两处文档反复说不要的形状。
+- **Whose call:** 02 号票的实现者（它是第一个调用方，形状合不合用由它说了算）
+- **处置：** 待处理。
+
+#### Q918 — 纸白那道 `judge` 认的是 `Mode::DryRun`，而样张既不是预览也不是照做
+
+- **From:** 票 `proof-sheet/01`
+- **Kind:** 票面没想到的第三种情形
+- **Where:** `src/lib.rs` 的 `examine_gray_page` 里 `WhiteAlignment::Off if request.mode == Mode::DryRun`
+  那一支（原样从 `Compute::gray_page` 搬来）；`src/request.rs` 的 `Mode`（只有两个取值）；
+  spec 的 story 12「我想知道这一页的《纸白》量出来是多少、提白钳掉了多宽」
+- **Why it did not block:** 这张票是零行为改变的搬家，那一支**原样跟着搬**，
+  两条既有路径上的读数因此一格没动。样张撞得上它只有一种情形——用户点了
+  `--white-align-limit 0` 又想看纸白读数——而样张那条路这张票上还不存在。
+- **What this ticket actually did:** 原样搬，一个字没改。`Mode` 也没加第三个取值
+  （spec《Implementation Decisions》第一条写死了样张**不并进** `Mode`：加取值是改写
+  《模式》与《预览》两条词条的含义，按 `CLAUDE.md` 那要先拍板）。
+- **Options:** ① 02 落地时样张传 `Mode::DryRun`（它确实一个字节都不写出去，语义对得上，
+  但那个名字在报告里另有含义）；② 02 传 `Mode::Process`，上限取 0 的样张就读不到纸白，
+  story 12 在那一角落空；③ 把那一支的条件从 `mode` 换成一个显式的入参
+  （「上限取 0 时还判不判一遍」），三条路各自说得出自己要哪一种
+- **Recommend:** ③，但**归 02 号票**：它是唯一知道样张要不要那个读数的人，
+  而在 01 上换条件就是拿零行为改变去赌一件还没有调用方的事。
+- **Whose call:** 02 号票的实现者
+- **处置：** 待处理。
+
+#### Q921 — `Examined` 没进 `CONTEXT.md` 的词汇表
+
+- **From:** 票 `proof-sheet/01`
+- **Kind:** 我确实拿不准的单项
+- **Where:** `src/lib.rs` 新添的 `struct Examined`；`CLAUDE.md`《改 CONTEXT.md 的规矩》
+  头一条「新词可以当场加：实现引入了一个新概念（新类型、新开关、新状态），加进词汇表是落地的一部分」
+- **Why it did not block:** `Examined` **不引入新概念**：六个字段全是既有词条
+  （《参照》《画质分》《尺寸贴合检查》《纸色提白》，加目标尺寸与缩放两样几何事实），
+  它只是把「同一段一起算出来的那几样」捆成一个搬运用的形状。
+  同类的搬运结构在这个仓库里一个都没进词汇表——`Piece`、`Placement`、`Candidates`、
+  `ComputeCounters`、`Branch` 全都不在（`Settles` 在词汇表里只以《缓存》那条的转述出现，
+  类型名本身也不是词条）。
+- **What this ticket actually did:** 不加词条，在类型自己的文档里把六个字段各指回它的出处。
+  这张票一个字都没动 `CONTEXT.md`——它是零行为改变的搬家。
+- **Options:** ① 不加（已落地）；② 加进《管线》，与《缓存》《汇总》并列；
+  ③ 等 02 号票落地时连《样张 (Proof)》一起判（那一条是**真**新词，spec 第十条点名要加）
+- **Recommend:** ①，理由是上面那条「同类一个都不在」。要改这条惯例的话该整批改，
+  而那不是这张票的地界。
+- **Whose call:** 记下即可；02 号票加《样张》那一条时可以顺手再看一眼
+- **处置：** 待处理。
+
+#### Q922 — 票面说「样张要走的那几段今天全在 `gray_page` 前半截与 `gray_bytes` 里」，而前半截还有一截没提出来
+
+- **From:** 票 `proof-sheet/01`
+- **Kind:** 票面写错了
+- **Where:** `src/lib.rs` 的 `Compute::page`／`split_and_branch`／`gray_pages`
+  （解码 → 切开 → 逐张彩页识别 → 裁白边 → 分流）；
+  票 `proof-sheet/01` 的《What to build》头一句；
+  spec《Implementation Decisions》第二条列的那一串
+  （「解码、转灰、裁白边、判跨页与切开、几何与尺寸贴合检查、缩放、纸色提白、构造参照、求画质分、量化、编码」）
+- **Why it did not block:** 票面点名要提的是**两段**，两段都提了（`examine_gray_page` 与 `candidate_bytes`），
+  五条验收一条不少。错的是那句**前提**，不是那两条指令：
+  spec 第二条列的十一步里，这张票只够得着后六步——前五步（解码、转灰、裁白边、判跨页与切开）
+  仍在 `Compute` 上，而且真的缠着它：解码那一次记在 `self.counters.decoder` 上、
+  `Placement::new` 要 `self.fingerprint`、坏页报到要 `self.events`。
+- **What this ticket actually did:** 照票面提那两段，**前五步一个字没动**——
+  把它们一起提出来是第二张票的量，而且那几段缠的是另外两格（`decoder` 与 `events`），
+  与这张票点名的四格不是同一批。这一条记下来，是因为 02 号票会**当场撞上它**：
+  它要走满管线，就得自己把那五步再走一遍，或者先把它们也提出来。
+- **Options:** ① 02 号票自己判（已把事实记在这里）；
+  ② 在 02 之前再插一张「把解码到切开那一截也提成共用」的票；
+  ③ 02 只走「一张图、不拆跨页」那一条最窄的路，前五步手写几行绕过去
+  （但 spec 第六条要跨页出两叠，那条路 04 号票就要还回来）
+- **Recommend:** ①，并让 02 在动手前先读这一条。真要插票的话是 ②，但那会把
+  「tracer bullet」这张票的价值推后一轮——而 02 的验收里只有普通页，撞不撞得上要它自己量。
+- **Whose call:** 02 号票的实现者；要插票的话是拍板的人
+- **处置：** **拍板（2026-09-20）：`02` 自己连前半截一起提，不另插票。** 解码、转灰、裁白边、判跨页那前四五步（缠着 `Compute` 的 `decoder` 与 `events` 两格）由 `02` 一并提出来。`02` 的票面因此要重写：它从一张 tracer bullet 变成「搬家 + tracer bullet」，验收要把前半截那一次搬家的两道钉子（黄金回归、窄计数器）也写进去——照本票（`proof-sheet/01`）的办法，比文件不比一次运行。
