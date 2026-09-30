@@ -557,15 +557,12 @@ impl Session {
 
     /// 把闩往上升一级：继续 → 做完再停 → 立即停止 → 立即停止（ADR 0013）。
     ///
-    /// **只升不降**是这个函数的形状本身：升到立即停止之后它就是个不动点，
-    /// 而键盘上没有第二个键能往回按——两级停止是同一个键按两次。
-    /// 库那一侧的闩用 `fetch_max` 说同一件事（`tonefit::Instruction` 的序即力度）。
+    /// 那张表是 [`crate::stop::next`]，命令行的 `Ctrl-C` 走的是同一张：两级的语义不该因为
+    /// 按的地方不同而不同。**只升不降**是那张表的形状本身，而键盘上没有第二个键能往回按——
+    /// 两级停止是同一个键按两次。本函数只管「没跑着时不作数」。
     pub(super) fn raise_stop(&mut self) {
         if let Stage::Running(pressed) = &mut self.stage {
-            *pressed = match *pressed {
-                Instruction::Continue => Instruction::Finish,
-                Instruction::Finish | Instruction::Abort => Instruction::Abort,
-            };
+            *pressed = crate::stop::next(*pressed);
         }
     }
 }
@@ -1483,6 +1480,10 @@ mod tests {
 
     /// **两级停止：闩只升不降**（ADR 0013）。一次做完再停，再一次立即停止，第三次没有
     /// 更强的一级可去；没跑着时闩不动；那一趟结束之后闩跟着这一趟一起走。
+    ///
+    /// 这是会话这一路**按一下调的是 [`crate::stop::next`]** 的那一条：问的是 `s` 那个键的契约
+    /// （ADR 0013 决定第 3 条），逐级的字面值因此照写，不从那张表推出来——推出来的话，表改错了它跟着绿。
+    /// 表本身逐级的用例在 `crate::stop`；回那个字那一半在 `super::run`。
     #[test]
     fn the_stop_latch_only_goes_up_and_leaves_with_its_run() {
         let mut session = Session::new();

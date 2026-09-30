@@ -87,6 +87,11 @@ mod view;
 #[cfg(test)]
 mod scene;
 
+// 落到盘上的那个真卷，命令行那一路「调的是 `crate::stop`」那条用例也要（`crate::tests`）：
+// 各搓一份就会在改动时走散，因此只把夹具那一格敞给 crate 根，`live` 本身一格不敞。
+#[cfg(test)]
+pub(crate) use live::fixture;
+
 #[cfg(feature = "tui")]
 mod shell;
 #[cfg(feature = "tui")]
