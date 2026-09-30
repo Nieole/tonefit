@@ -19,9 +19,9 @@ use crate::decide::{self, CandidateScore, Verdict};
 use crate::quantize::{BitDepth, Candidate};
 use crate::report::{PageBranch, PageOutcome, PageReport, Processed};
 use crate::{
-    Candidates, Examined, GrayImage, Opened, PageColor, Piece, Pieces, Request, Salvage,
-    WhiteWhenOff, candidate_bytes, decode, encode, examine_gray_page, open_source_page,
-    output_name, pinned, resample,
+    Candidates, Examined, GateGroups, GeometryGate, GrayImage, Opened, PageColor, Piece, Pieces,
+    Request, Salvage, WhiteWhenOff, candidate_bytes, decode, encode, examine_gray_page,
+    open_source_page, output_name, resample,
 };
 
 /// 一张图出的样张：**一张输出页一叠**，按阅读顺序（spec《Implementation Decisions》第六条）。
@@ -117,10 +117,14 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
     let shown = Candidates::without_overrides(&request.profile);
     let resampler = resample::Resampler::default();
     let count = pieces.len();
-    let drafted = pieces
+    // **切出来的每一块各出一叠**，按阅读顺序：样张按输出页出，不按源页（spec 第六条；
+    // 停车场 Q996 判的是这一条）。名字照 `run` 给那一块的输出页名（`output_name`）。
+    //
+    // 每一块先量完，判定等整张图量完才下：「覆盖项顶死没有」问的是这张图的**其余页那一组**
+    // （见 [`verdicts`]），一块一块判答不出来（停车场 Q1014）。
+    let measured = pieces
         .into_iter()
-        .enumerate()
-        .map(|(ordinal, (image, piece))| {
+        .map(|(image, piece)| {
             let examined = examine_gray_page(
                 source,
                 &image,
@@ -129,7 +133,22 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
                 &resampler,
                 WhiteWhenOff::Foresee,
             )?;
-            let verdict = verdict(source, &image, request, &judged, &examined)?;
+            let scores = judged_scores(source, &image, request, &judged, &examined)?;
+            Ok((examined, piece, scores))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let verdicts = verdicts(
+        request,
+        &measured
+            .iter()
+            .map(|(examined, _, scores)| (examined.gate, scores.as_slice()))
+            .collect::<Vec<_>>(),
+    );
+    let drafted = measured
+        .into_iter()
+        .zip(verdicts)
+        .enumerate()
+        .map(|(ordinal, ((examined, piece, _), verdict))| {
             let reference = encode::png(examined.reference.image(), BitDepth::Eight, None)?;
             let sheets = examined
                 .scores
@@ -159,35 +178,50 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
     Ok(Proof { pages })
 }
 
-/// 这一页的《判定》：画质分是整套求的，判定**只在转换那一趟会留下的那几个里挑**。
+/// 这一块上**判定从哪几格里挑**：画质分是整套求的，挑出转换那一趟在这一块上会留下的那几格。
 ///
-/// 那几个是 `judged` 按这一页的门给的一套（见 [`Candidates::for_gate`]）：覆盖项没点时就是整套，
-/// 点了就是它们留下的那几个；裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
-/// 每一档的画质分各求各的，从整套里挑出那几格与转换那一趟当场只求那几格**逐格相同**——
-/// 判定因此是转换那一趟在一页的卷上会走的那一句，神谕那一条比的正是它写出去的那一张。
+/// 那几个是 `judged` 按这一块的门给的一套（见 [`Candidates::for_gate`]）：覆盖项没点时就是整套，
+/// 点了就是它们留下的那几个。每一档的画质分各求各的，从整套里挑出那几格与转换那一趟当场只求那几格
+/// **逐格相同**。
 ///
-/// `--dither fs` 撞上一页没贴合屏幕（互锁 ③）时这里回的是转换那一趟的那句拒绝：
+/// `--dither fs` 撞上一块没贴合屏幕（互锁 ③）时这里回的是转换那一趟的那句拒绝：
 /// 那一趟一个字节都不写，样张就没有「判定那一张」可给。
-fn verdict(
+fn judged_scores(
     source: &Path,
     image: &GrayImage,
     request: &Request,
     judged: &Candidates,
     examined: &Examined,
-) -> Result<Verdict> {
+) -> Result<Vec<CandidateScore>> {
     let panel = request.profile.panel().resolution;
     let allowed = judged.for_gate(source, examined.gate, image.size(), panel)?;
-    let scores: Vec<CandidateScore> = examined
+    Ok(examined
         .scores
         .iter()
         .filter(|score| allowed.contains(&score.candidate))
         .copied()
-        .collect();
-    Ok(decide::decide(
-        &scores,
-        request.profile.threshold(),
-        pinned(request, &scores),
-    ))
+        .collect())
+}
+
+/// 这张图每一块的《判定》，按阅读顺序：与转换那一趟把这张图摆成一卷时**逐格相同**，
+/// 神谕那几条比的正是判定那一档写出去的那一张。
+///
+/// 进来的是每一块的门，连同判定从中挑的那几格画质分（[`judged_scores`]）。默认那条路上灰阶档位
+/// 逐页各判各的（ADR 0018 决定第 2 条），每一块拿自己那几格判；**只有「覆盖项顶死没有」是整张图一起问的**——
+/// 问的是其余页那一组（[`GateGroups`]），与转换那一趟汇总一卷时同一问、同一处。
+/// 裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
+///
+/// 一块一块问会在门分了家的跨页上答错：只点一维覆盖项时，门不成立那一半只剩一个候选，
+/// 被说成顶死，而转换那一趟那一半的档是它自己那条曲线判出来的——字节相同，理由不同（停车场 Q1014）。
+///
+/// 整卷统一灰阶那条路不在这里：那一格样张不读（见 [`crate::write_proof`]）。
+fn verdicts(request: &Request, pieces: &[(GeometryGate, &[CandidateScore])]) -> Vec<Verdict> {
+    let pinned = GateGroups::of(pieces.iter().map(|&(gate, _)| gate).enumerate())
+        .pinned(request, |index| pieces[index].1);
+    pieces
+        .iter()
+        .map(|&(_, scores)| decide::decide(scores, request.profile.threshold(), pinned))
+        .collect()
 }
 
 /// 一叠编好、还没落盘的样张。

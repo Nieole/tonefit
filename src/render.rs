@@ -2097,6 +2097,10 @@ pub fn calibration_note(profile: &Profile, out: &Path) -> String {
 /// 次序：画质门槛那一行打头（它对整叠只有一个）；然后每一叠一段——几何、判定、尺寸贴合检查，
 /// 再逐候选一行（候选 · 画质分 · 字节数 · 落到哪个文件），参照那一张收尾。
 ///
+/// **跨页切开的两半各是一叠、各占一段**（`proof-sheet/04`），靠每一段打头的几何那一行分得开：
+/// 跨页那一格说它是哪一半，行尾判定那一张的文件名带着那一族的第几张（`001-1`，与 `run`
+/// 给的输出页名同一套）。两样都是那一行的既有格子，这里不为跨页另添一句。
+///
 /// **措辞一处都不新写**，每一句都从它既有的出处取：
 ///
 /// - 画质门槛那一行就是报告抬头里的[那一行](judging_line)——数值连同**标定来源**；
@@ -5767,5 +5771,132 @@ mod tests {
             page.reference.file.display()
         );
         assert!(note.contains(&reference), "少了「{reference}」：\n{note}");
+    }
+
+    /// **一张跨页的两叠在 stdout 上分得开**（`proof-sheet/04`）：每一叠由它那一行几何打头，
+    /// 那一行说得出它是**哪一半**（跨页那一格）、判定那一张落在哪个文件上（名字带着那一族的第几张）；
+    /// 这一叠逐张那几行全排在它自己的抬头之后、下一叠的抬头之前。
+    ///
+    /// 措辞一句都不新写（spec 第九条）：跨页那一格是逐页几何那一行的既有一格（`Cut` 的 `Display`）。
+    #[test]
+    fn the_proof_note_tells_the_two_halves_of_a_spread_apart() {
+        /// 每一半多宽。
+        const HALF: u32 = 1000;
+        /// 中缝多宽。
+        const GUTTER: u32 = 40;
+        /// 页高，恰是 kobo-libra-2 的面板高：以高为准一步都不缩。
+        const HEIGHT: u32 = 1680;
+        /// 每一半四边那一圈墨多宽：裁白边在两半上因此只收走贴着中缝那一侧的纸白。
+        const RIM: u32 = 16;
+        const WIDTH: u32 = 2 * HALF + GUTTER;
+
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let image = workspace.path().join("001.png");
+        // 两半各是一块四边顶着墨的灰调，中间一条贯穿全高的纸白：拆得开（宽高比 1.21，
+        // 面板宽高比 0.75 乘上下面点名的判定宽度 1.5 是 1.13）。
+        image::DynamicImage::ImageLuma8(image::ImageBuffer::from_fn(WIDTH, HEIGHT, |x, y| {
+            if (HALF..HALF + GUTTER).contains(&x) {
+                return image::Luma([255]);
+            }
+            let (from, to) = if x < HALF {
+                (0, HALF)
+            } else {
+                (HALF + GUTTER, WIDTH)
+            };
+            let rim = x < from + RIM || x + RIM >= to || y < RIM || y + RIM >= HEIGHT;
+            image::Luma([if rim { 0 } else { (y * 200 / HEIGHT) as u8 }])
+        }))
+        .save(&image)
+        .expect("写一张图");
+        let sheets = workspace.path().join("样张");
+        // 处理选项逐格点名，不借默认值（`docs/agents/testing.md`）。拆分那三格都点名：
+        // 这一条问的就是切开的两半，判定宽度定它是不是跨页候选，阅读方向定两半谁在先。
+        // 卷级那几格（内存上限、读盘方式、观察者）样张一格都不读，照 `run` 要的填。
+        let request = Request {
+            inputs: vec![image.clone()],
+            output_root: sheets.clone(),
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::Height,
+            crop: true,
+            split: SplitRule {
+                on: true,
+                threshold: tonefit::SplitThreshold::parse("1.5").expect("判定宽度"),
+                order: tonefit::ReadingOrder::RightToLeft,
+            },
+            filter: tonefit::Filter::Lanczos3,
+            white_align_limit: WhiteAlignLimit::new(4),
+            bit_depth: None,
+            dither: None,
+            envelope: false,
+            cache_budget: CacheBudget::default(),
+            mode: Mode::Process,
+            io_mode: tonefit::IoMode::Auto,
+            progress: None,
+            metadata: false,
+        };
+
+        let proof = tonefit::write_proof(&image, &request, &sheets).expect("出样张");
+        let note = proof_note(&proof, &request);
+
+        let lines: Vec<&str> = note.lines().collect();
+        let [first, second] = proof.pages.as_slice() else {
+            panic!("夹具的前提：一张跨页出两叠，出了 {} 叠", proof.pages.len());
+        };
+        // 这一叠的抬头在第几行：说得出它是哪一半、判定那一张落在哪个文件上的那一行，恰有一行。
+        let head = |stack: &tonefit::ProofPage| {
+            let half = stack
+                .page
+                .cut()
+                .expect("夹具的前提：这一叠是切出来的一半")
+                .to_string();
+            let output = stack.page.output.display().to_string();
+            let heads: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| line.contains(&half) && line.contains(&output))
+                .map(|(at, _)| at)
+                .collect();
+            let [at] = heads.as_slice() else {
+                panic!("说「{half} → {output}」的该恰有一行，有 {heads:?}：\n{note}");
+            };
+            (*at, half)
+        };
+        let ((first_head, first_half), (second_head, second_half)) = (head(first), head(second));
+        assert_ne!(first_half, second_half, "两叠的抬头说的是同一半：\n{note}");
+        assert!(first_head < second_head, "两叠的抬头次序反了：\n{note}");
+        // 这一叠逐张那几行各在第几行。抬头那一行也以判定那一张的路径收尾，不算在里面。
+        let heads = [first_head, second_head];
+        let rows = |stack: &tonefit::ProofPage| -> Vec<usize> {
+            stack
+                .candidates
+                .iter()
+                .chain([&stack.reference])
+                .map(|sheet| {
+                    let file = sheet.file.display().to_string();
+                    let found: Vec<usize> = lines
+                        .iter()
+                        .enumerate()
+                        .filter(|(at, line)| !heads.contains(at) && line.ends_with(&file))
+                        .map(|(at, _)| at)
+                        .collect();
+                    let [at] = found.as_slice() else {
+                        panic!("落在 {file} 上的那一行该恰有一行，有 {found:?}：\n{note}");
+                    };
+                    *at
+                })
+                .collect()
+        };
+        for at in rows(first) {
+            assert!(
+                first_head < at && at < second_head,
+                "头一叠的第 {at} 行没落在它自己的抬头（第 {first_head} 行）与下一叠的抬头（第 {second_head} 行）之间：\n{note}"
+            );
+        }
+        for at in rows(second) {
+            assert!(
+                second_head < at,
+                "第二叠的第 {at} 行排到了它自己的抬头（第 {second_head} 行）之前：\n{note}"
+            );
+        }
     }
 }

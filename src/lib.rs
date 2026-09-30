@@ -153,10 +153,14 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// 第三条）：它们裁掉的是「这一趟不要」，不是「这一页不可能」，而样张存在的理由正是并排看。
 /// 出的是两道界（屏幕灰阶数、尺寸贴合检查）裁剩的那一整套；覆盖项只管判定从哪几个里挑——
 /// 与转换那一趟逐格相同，裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
+/// 一张图切成几块时，「裁到只剩一个没有」照转换那一趟把这张图摆成一卷时那样问：问的是
+/// 这张图的**其余页那一组**（见库内的 `GateGroups`），不是一块一块地问（停车场 Q1014）。
 /// 覆盖项与面板对不上时（越界的灰阶档位、互锁 ③）回的是转换那一趟的同一句拒绝。
 ///
-/// 交回这张图每一张输出页的那一叠（[`Proof`]）：每一张落在哪儿、多大，连同这一页的判定、
-/// 几何事实与纸色提白。**先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
+/// 交回这张图每一张输出页的那一叠（[`Proof`]）：拆开的跨页两半各一叠，关掉拆分、或是找不到中缝的
+/// 连续跨页，整页一叠；每一叠的文件名，页那一截就是 `run` 给那一张的输出页名（库内的 `output_name`）。
+/// 每一张落在哪儿、多大，连同这一页的判定、几何事实与纸色提白。
+/// **先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
 /// 那时去处里一个文件都没有。写不出去回 `Err`，调用方接住它照自己的方式说。
 ///
 /// 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`）。
@@ -1067,30 +1071,21 @@ fn summarize_volume(
         .filter(|(_, page)| page.scores().is_some())
         .map(|(index, _)| index)
         .collect();
-    // 门先分组。两组的候选集不是同一套，混不得（见 [`Candidates`]）。
-    let (holding, broken): (Vec<usize>, Vec<usize>) = gray
-        .iter()
-        .copied()
-        .partition(|&index| pages[index].gate() == Some(GeometryGate::Holds));
-    // 一页门成立的灰度页都没有时，不成立的那些页就当这一卷的其余页，统一档位由它们定出
-    // ——那一档必然不抖（ADR 0007 决定第 5 条）。
-    let (inside, outside) = if holding.is_empty() {
-        (broken, Vec::new())
-    } else {
-        (holding, broken)
-    };
+    // 门先分组（见 [`GateGroups`]）：其余页那一组，与未贴合屏幕、摘出去的那一组。
+    let groups = GateGroups::of(
+        gray.iter()
+            .map(|&index| (index, pages[index].gate().expect("灰度路径上必有门"))),
+    );
 
     let mut verdicts: Vec<Option<Verdict>> = vec![None; pages.len()];
     // 一张灰度页都没有的卷没有候选可判：只装着彩页的、整卷全失败的，都是这一支。
-    let Some(&first) = inside.first() else {
+    if groups.rest.is_empty() {
         return (verdicts, None);
-    };
+    }
     let scores = |index: usize| pages[index].scores().expect("灰度路径上必有画质分曲线");
 
     let threshold = request.profile.threshold();
-    // 「覆盖项裁到只剩一个候选」问的是**其余页那一组**的候选集：门那两组不一样长，
-    // 拿未贴合屏幕的页去问，答案会随卷里第一张灰度页碰巧是哪一种而变。
-    let pinned = pinned(request, scores(first));
+    let pinned = groups.pinned(request, scores);
     // 逐页先各判各的。摘出去的两组都还用得上自己这一档：残缺页直接用它，
     // 未贴合屏幕的页拿它跟统一档位比出更严的那个（ADR 0007 决定第 3 条）。
     for &index in &gray {
@@ -1110,7 +1105,8 @@ fn summarize_volume(
     // 整卷统一灰阶只在其余页那一组的完好页上取（04 号票）。两条出口上不分这一刀：覆盖项顶掉了判定、
     // 默认那条路上卷级那一层根本不在场，两种情形下都没有一个「卷级的档」可供谁去污染。
     // 摘出去的残缺页留着逐页判定：`verdicts` 里已经是它了，不必再写一遍。
-    let (body, salvaged): (Vec<usize>, Vec<usize>) = inside
+    let (body, salvaged): (Vec<usize>, Vec<usize>) = groups
+        .rest
         .iter()
         .copied()
         .partition(|&index| !pages[index].salvaged());
@@ -1133,7 +1129,7 @@ fn summarize_volume(
     }
     // 未贴合屏幕的页：跟着统一档位的灰阶档位走、不低于它，抖动关掉（ADR 0007 决定第 3 条）。
     // 它们与 `body` 不相交，逐页那一档因此还在原处等着被读。
-    for &index in &outside {
+    for &index in &groups.outside {
         let own = verdicts[index].expect("灰度页都判过了").candidate.bit_depth;
         verdicts[index] = Some(Verdict {
             candidate: Candidate::new(envelope.base.bit_depth.max(own), Dither::Off),
@@ -1158,7 +1154,7 @@ fn summarize_volume(
 /// 反过来，只点了一维的覆盖项裁不到只剩一个：`--bit-depth 4` 而其余页那一组的门开着时，
 /// 抖动那一维还有得判，画质分照旧说了算。
 ///
-/// `scores` 取的是**其余页那一组**里的一页（见 [`summarize_volume`]）。裁到只剩一个的
+/// `scores` 取的是**其余页那一组**里的一页（问法见 [`GateGroups::pinned`]）。裁到只剩一个的
 /// 覆盖项落在未贴合屏幕那一组上时，那一组的候选集必然也只剩同一个——门只拿走抖动，
 /// 而剩下的那一个既然过得了门，它本来就不抖。
 fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
@@ -1166,6 +1162,60 @@ fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     match scores {
         [only] if overridden => Some(only.candidate),
         _ => None,
+    }
+}
+
+/// 灰度页按门分出的两组：**其余页**那一组，与摘出去的那一组（未贴合屏幕的页）。
+/// 两组装的都是序号，指进调用方自己那个序列。
+///
+/// 两组的候选集不是同一套，混不得（见 [`Candidates`]）。一页门成立的都没有时，
+/// 门不成立的那些页就当其余页，摘出去的那一组是空的——统一档位由它们定出，
+/// 那一档必然不抖（ADR 0007 决定第 5 条）。
+///
+/// **分组与分完之后那一问只写这一处**：转换那一趟拿它分一卷的输出页（[`summarize_volume`]），
+/// 样张拿它分一张图切出来的那几块（`proof::verdicts`）。「覆盖项顶死没有」问的是其余页那一组
+/// （[`GateGroups::pinned`]），而样张的判定要与转换那一趟把这张图摆成一卷时逐格相同——
+/// 两边各写一份，迟早各问各的组、各挑各的页（停车场 Q1014）。
+struct GateGroups {
+    /// 其余页那一组，按进来的次序。
+    rest: Vec<usize>,
+    /// 摘出去的那一组：未贴合屏幕的页，按进来的次序。其余页就是它们时这一组是空的。
+    outside: Vec<usize>,
+}
+
+impl GateGroups {
+    /// 按门分组。进来的是一串 (序号, 门)。
+    fn of(gray: impl IntoIterator<Item = (usize, GeometryGate)>) -> Self {
+        let (holding, broken): (Vec<_>, Vec<_>) =
+            gray.into_iter().partition(|&(_, gate)| gate.holds());
+        let indices =
+            |group: Vec<(usize, GeometryGate)>| group.into_iter().map(|(index, _)| index).collect();
+        if holding.is_empty() {
+            Self {
+                rest: indices(broken),
+                outside: Vec::new(),
+            }
+        } else {
+            Self {
+                rest: indices(holding),
+                outside: indices(broken),
+            }
+        }
+    }
+
+    /// 覆盖项把判定顶死了吗（见 [`pinned`]）：问的是**其余页那一组**的候选集，拿组里头一页去问——
+    /// 一组之内候选集是同一套，问哪一页答案都一样。`scores` 按序号交出那一页判定从中挑的那几格画质分。
+    ///
+    /// 不拿未贴合屏幕的页去问：门那两组不一样长，答案会随卷里第一张灰度页碰巧是哪一种而变。
+    /// 其余页一页都没有（一张灰度页都没有）时答 `None`。
+    fn pinned<'a>(
+        &self,
+        request: &Request,
+        scores: impl Fn(usize) -> &'a [CandidateScore],
+    ) -> Option<Candidate> {
+        self.rest
+            .first()
+            .and_then(|&first| pinned(request, scores(first)))
     }
 }
 

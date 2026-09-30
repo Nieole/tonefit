@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use fixtures::Workspace;
 use tonefit::{BitDepth, Candidate, Dither, Proof, ProofPage, Reason, Request, Verdict};
 
-/// 一张**普通页**：单页、不拆、灰度路径、门成立——本票的对象。
+/// 一张**普通页**：单页、不拆、灰度路径、门成立——`proof-sheet/02` 的对象。
 ///
 /// **每一步都得真在做事**，神谕那一条比的才不是一张「什么都没发生」的页：
 ///
@@ -19,7 +19,7 @@ use tonefit::{BitDepth, Candidate, Dither, Proof, ProofPage, Reason, Request, Ve
 /// - **缩放**：内容高 [`CONTENT`] 要缩到面板高，而页上有**硬边**（一竖条墨）——
 ///   换一个缩放算法，硬边两侧的振铃就不一样。只有一张线性渐变的页做不到这一条：
 ///   对称的核把线性斜坡原样复现，换算法一个字节都不变（本票落地时按反跑过一次，亲眼看见它照绿）；
-/// - **纸色提白**：纸白是离格 2 级的 [`fixtures::OFF_GRID_PAPER_WHITE`]，[`Plain`] 点名的上限钳得动它；
+/// - **纸色提白**：纸白是离格 2 级的 [`fixtures::OFF_GRID_PAPER_WHITE`]，[`Staged`] 点名的上限钳得动它；
 /// - **画质分、量化、编码**：那一竖条从纯黑爬到纸白之下的灰调，六档各有各的样子。
 ///
 /// 内容本身是 [`fixtures::page_with_paper_white`]（四边顶着墨，裁白边正好停在它的边上），
@@ -48,7 +48,7 @@ const WIDE: tonefit::Size = tonefit::Size::new(1600, 1800);
 /// 内容四周那一圈纯白边有多宽。
 const MARGIN: u32 = 96;
 
-/// 一张普通页摆在一个卷里（`卷/001.png`），外加一份**不写记录**的请求。
+/// 一张图摆在一个卷里（`卷/001.png`），外加一份**不写记录**的请求。
 ///
 /// 卷级那几格（点名的卷、输出根）样张一格都不读（见 [`tonefit::write_proof`]），
 /// 这里照 `run` 要的填：同一份交给 `run`，写出去的就是神谕那一条要比的那一张。
@@ -56,28 +56,36 @@ const MARGIN: u32 = 96;
 /// **处理选项那几格点名取值**，不借默认值（`docs/agents/testing.md`）：夹具让每一步都真在做事，
 /// 靠的是这几个数——默认值哪天挪了（比如提白上限降到 2 以下），神谕那一条就会在一张
 /// 什么都没提白的页上照绿。这几个数恰好是默认那一套；走非默认选项的用例各自改掉它点名的那几格。
-struct Plain {
+struct Staged {
     space: Workspace,
     source: PathBuf,
     request: Request,
 }
 
-impl Plain {
-    fn new() -> Self {
-        Self::of(CONTENT)
+impl Staged {
+    /// 一张普通页，内容那一块是 [`CONTENT`]。
+    fn plain() -> Self {
+        Self::plain_of(CONTENT)
     }
 
     /// 内容那一块是 `content` 那么大的一张普通页。
-    fn of(content: tonefit::Size) -> Self {
+    fn plain_of(content: tonefit::Size) -> Self {
+        Self::of(&plain_page(content))
+    }
+
+    /// 摆上 `image` 这一张。
+    fn of(image: &image::DynamicImage) -> Self {
         let space = Workspace::new();
         let volume = space.volume("卷");
-        let source = volume.page("001.png", &plain_page(content));
+        let source = volume.page("001.png", image);
         let request = Request {
             fit: tonefit::FitMode::Height,
             crop: true,
+            // 拆分那三格也点名：跨页那几条靠判定宽度把夹具认成跨页候选，靠阅读方向排两半的先后。
             split: tonefit::SplitRule {
                 on: true,
-                ..tonefit::SplitRule::default()
+                threshold: tonefit::SplitThreshold::parse("1.5").expect("判定宽度"),
+                order: tonefit::ReadingOrder::RightToLeft,
             },
             filter: tonefit::Filter::Lanczos3,
             white_align_limit: fixtures::ALIGNING_LIMIT,
@@ -103,11 +111,11 @@ impl Plain {
     }
 }
 
-/// 这一张图的那一叠。普通页不拆，一张图就是一叠。
+/// 这一张图的那一叠。没切开的一张图就是一叠：普通页、关掉拆分的跨页、连续跨页。
 fn only_page(proof: &Proof) -> &ProofPage {
     match proof.pages.as_slice() {
         [only] => only,
-        pages => panic!("一张普通页该出一叠，出了 {} 叠", pages.len()),
+        pages => panic!("没切开的一张图该出一叠，出了 {} 叠", pages.len()),
     }
 }
 
@@ -116,7 +124,7 @@ fn only_page(proof: &Proof) -> &ProofPage {
 /// 每个文件名说得出它是哪一页、哪一个候选。
 #[test]
 fn a_plain_page_gets_one_sheet_for_every_candidate_and_one_reference() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     assert!(!plain.sheets().exists(), "夹具的前提：去处此刻还不在");
 
     let proof = plain.proof();
@@ -186,7 +194,7 @@ fn a_plain_page_gets_one_sheet_for_every_candidate_and_one_reference() {
 /// 两边定下的是同一档、同一个理由。
 #[test]
 fn the_verdict_sheet_is_byte_for_byte_what_run_writes_without_metadata() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
 
     let report = tonefit::run(&plain.request).expect("转换那一趟");
     let proof = plain.proof();
@@ -241,7 +249,7 @@ fn the_verdict_sheet_is_byte_for_byte_what_run_writes_without_metadata() {
 /// 红在下面那个等号上，不红在前提上。
 #[test]
 fn the_verdict_sheet_follows_a_non_default_fit_and_filter_byte_for_byte() {
-    let wide = Plain::of(WIDE);
+    let wide = Staged::plain_of(WIDE);
     let request = Request {
         fit: tonefit::FitMode::Inside,
         filter: tonefit::Filter::Hamming,
@@ -299,7 +307,7 @@ fn the_verdict_sheet_follows_a_non_default_fit_and_filter_byte_for_byte() {
 /// 不是画质分恰好判到了同一档（夹具的前提，先断言）。
 #[test]
 fn an_override_pins_the_verdict_and_leaves_every_candidate_on_the_sheets() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let pinned = Candidate::new(BitDepth::One, Dither::Off);
     let request = Request {
         bit_depth: Some(pinned.bit_depth),
@@ -369,7 +377,7 @@ fn an_override_pins_the_verdict_and_leaves_every_candidate_on_the_sheets() {
 /// 不然覆盖项有没有被读进判定，这一条分不出来。
 #[test]
 fn a_single_override_narrows_the_verdict_but_not_the_sheets() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let named = BitDepth::Two;
     let request = Request {
         bit_depth: Some(named),
@@ -430,7 +438,7 @@ fn a_single_override_narrows_the_verdict_but_not_the_sheets() {
 /// 页比面板小、fit-inside 不放大：目标尺寸哪条边都贴不住面板，门不成立。
 #[test]
 fn a_dither_override_the_geometry_gate_shuts_is_refused_as_run_refuses_it() {
-    let small = Plain::of(SMALL);
+    let small = Staged::plain_of(SMALL);
     let request = Request {
         fit: tonefit::FitMode::Inside,
         dither: Some(Dither::FloydSteinberg),
@@ -470,7 +478,7 @@ const SMALL: tonefit::Size = tonefit::Size::new(600, 900);
 /// 压住了——8 位的容器装一张 16 级的图，头一问照样答得出「8 位」。
 #[test]
 fn the_reference_sheet_is_eight_bit_gray_and_was_never_quantized() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let proof = plain.proof();
     let page = only_page(&proof);
 
@@ -502,7 +510,7 @@ fn the_reference_sheet_is_eight_bit_gray_and_was_never_quantized() {
 /// 拿被测的 `quantize` 把 0..=255 打一遍，落下来的那一份就是格点集。
 #[test]
 fn every_candidate_sheet_is_on_the_grid_of_its_bit_depth() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let proof = plain.proof();
 
     for (scored, sheet) in only_page(&proof).scored() {
@@ -529,7 +537,7 @@ fn every_candidate_sheet_is_on_the_grid_of_its_bit_depth() {
 /// 少了它，读法哪天失灵（换了个读不到文本块的解法），这一条照样一片安静。
 #[test]
 fn no_sheet_carries_a_text_chunk() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let recorded = tonefit::run(&Request {
         metadata: true,
         ..plain.request.clone()
@@ -555,7 +563,7 @@ fn no_sheet_carries_a_text_chunk() {
 /// 跑完之后**源文件的字节与 mtime 一格没动**：样张是量具，源库只读（spec 的 story 28）。
 #[test]
 fn proofing_leaves_the_source_bytes_and_mtime_as_they_were() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let bytes = fs::read(&plain.source).expect("读源");
     let mtime = modified(&plain.source);
 
@@ -593,7 +601,7 @@ fn distinct_levels(pixels: &[u8]) -> usize {
 /// 样张那一张读到的是真的纸白——少了前一问，这一条在「谁都量」的实现上也照绿。
 #[test]
 fn with_the_limit_at_zero_a_proof_still_reads_the_paper_white() {
-    let plain = Plain::new();
+    let plain = Staged::plain();
     let off = Request {
         white_align_limit: tonefit::WhiteAlignLimit::new(0),
         ..plain.request.clone()
@@ -614,4 +622,348 @@ fn with_the_limit_at_zero_a_proof_still_reads_the_paper_white() {
         }),
         "样张上限取 0 也读得出纸白，而且说得出它超过了这一趟的上限"
     );
+}
+
+// ── 跨页（`proof-sheet/04`）────────────────────────────────────────────────
+//
+// 样张按**输出页**出，不按源页（样张 spec《Implementation Decisions》第六条）：拆开的跨页
+// 真会被写出去的是那两半。这一段的每一条都拿**同一份请求交给 `run`** 当对照——
+// 名字、次序、裁切窗口、判定、字节，问的都是「与转换那一趟切出来的那一张是不是同一张」。
+
+/// 一张**两半不一样的跨页**：中缝一条，两半各是一块纸白离格的内容（[`framed`]），
+/// 而**只有左半上下还留着白边**——右半顶天立地，左半矮一截、竖着摆在正中。
+///
+/// 这样摆买三件事：
+///
+/// - **拆得开**：中缝是一条贯穿全高的纯白，落在页宽正中；整页宽高比 1.24，
+///   够得上跨页候选（基准面板 0.75 乘上 [`Staged`] 点名的判定宽度 1.5，是 1.13）。
+/// - **每半各裁各的看得出来**：整页那一道裁白边一行都拿不走（右半顶天立地，每一行都有墨），
+///   左半上下那两截白边要切开之后「每半再裁」才收得走——两半的裁切窗口因此不一样高，
+///   拿一个两半共用的裁切框就对不上（`crate::crop` 的模块文档：不取卷级裁切框）。
+/// - **门可以一半成立一半不成立**：左半裁完 [`LEFT`] 比面板小，fit-inside 不放大、
+///   哪条边都贴不住；右半 [`RIGHT`] 比面板高，缩下来贴住面板高。以高为准时两半都贴得住。
+fn lopsided_spread() -> image::DynamicImage {
+    let mut page = image::GrayImage::from_pixel(
+        LEFT.width + GUTTER + RIGHT.width,
+        RIGHT.height,
+        image::Luma([255]),
+    );
+    let top = (RIGHT.height - LEFT.height) / 2;
+    image::imageops::replace(&mut page, &framed(LEFT), 0, i64::from(top));
+    image::imageops::replace(&mut page, &framed(RIGHT), i64::from(LEFT.width + GUTTER), 0);
+    image::DynamicImage::ImageLuma8(page)
+}
+
+/// 跨页左半那块内容：比面板（1264×1680）两条边都小，高又留得住左半窗口高的一半以上
+/// （裁白边留不到一半就整块原样通过，见 `crate::crop` 的 `MIN_KEPT`）。
+const LEFT: tonefit::Size = tonefit::Size::new(1100, 1000);
+
+/// 跨页右半那块内容：顶天立地，比面板高。与左半一样宽，中缝因此落在页宽正中。
+const RIGHT: tonefit::Size = tonefit::Size::new(1100, 1800);
+
+/// 中缝多宽，单位是列。占页宽 1.8%，落在实测的 0.17%–12.47% 之间（measurements 的《跨页拆分》）。
+const GUTTER: u32 = 40;
+
+/// 一半的内容：纸白离格的那一页（[`fixtures::page_with_paper_white`]），外面再压一圈 [`FRAME`] 宽的墨。
+///
+/// 那一圈是给**中缝检测**看的：那一页纸白那两条竖条上，每一列只有上下边框那 8 行是墨，
+/// 而一列要有页高 0.5% 的墨（1800 高的页上是 9 行）才不算空白列。不压这一圈，
+/// 贴着中缝的那两条纸白会被量进中缝里——沟宽越过上限，整页判成连续跨页。
+fn framed(content: tonefit::Size) -> image::GrayImage {
+    let mut half =
+        fixtures::page_with_paper_white(content, fixtures::OFF_GRID_PAPER_WHITE).to_luma8();
+    for (x, y, pixel) in half.enumerate_pixels_mut() {
+        if x < FRAME || y < FRAME || x + FRAME >= content.width || y + FRAME >= content.height {
+            *pixel = image::Luma([0]);
+        }
+    }
+    half
+}
+
+/// [`framed`] 那一圈墨多宽。
+const FRAME: u32 = 16;
+
+/// 一卷输出页的成员名，按阅读顺序——这就是 `run` 给的输出页名。
+fn run_names(volume: &tonefit::VolumeReport) -> Vec<String> {
+    volume
+        .pages
+        .iter()
+        .map(|page| fixtures::relative_name(&volume.output, &page.output))
+        .collect()
+}
+
+/// 一叠样张里每一张的文件名，候选那几张在前、参照收尾。
+fn sheet_names(stack: &ProofPage) -> Vec<String> {
+    stack
+        .candidates
+        .iter()
+        .chain([&stack.reference])
+        .map(|sheet| {
+            sheet
+                .file
+                .file_name()
+                .expect("有文件名")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+/// `run` 写出的那一页（`001-1.png`）配上这一叠，每一张**该叫**什么：页那一截照搬那个成员名，
+/// 接上是哪一个候选，参照那一张接词条名。
+fn expected_sheet_names(ran: &tonefit::PageReport, stack: &ProofPage) -> Vec<String> {
+    let page = ran.output.file_stem().expect("有文件名").to_string_lossy();
+    stack
+        .scored()
+        .map(|(scored, _)| format!("{page}.{}.png", scored.candidate))
+        .chain([format!("{page}.参照.png")])
+        .collect()
+}
+
+/// **一张跨页出两叠，各自的输出页名与 `run` 给的同一套**：带着那一族的第几张，次序是阅读顺序
+/// （样张 spec 的 story 17、《Implementation Decisions》第六条）。
+///
+/// 名字不在这里手写第二份：每一叠该叫什么从 `run` 写出的那个成员名推（[`expected_sheet_names`]）。
+/// 手写的只有前提那一句——转换那一趟真把它切成了 `001-1`、`001-2` 两张。
+#[test]
+fn a_spread_gets_one_proof_page_per_half_under_the_names_run_gives_them() {
+    let spread = Staged::of(&lopsided_spread());
+
+    let report = tonefit::run(&spread.request).expect("转换那一趟");
+    let proof = spread.proof();
+
+    let ran = &report.volumes[0];
+    assert_eq!(
+        run_names(ran),
+        ["001-1.png", "001-2.png"],
+        "夹具的前提：转换那一趟把它切成两张"
+    );
+    assert_eq!(proof.pages.len(), 2, "一张跨页该出两叠");
+    for (stack, ran) in proof.pages.iter().zip(&ran.pages) {
+        assert_eq!(
+            sheet_names(stack),
+            expected_sheet_names(ran, stack),
+            "这一叠的名字不是 `run` 给这一半的那一个"
+        );
+        assert_eq!(
+            stack.page.cut(),
+            ran.cut(),
+            "这一叠不是转换那一趟排在同一位上的那一半"
+        );
+    }
+    let on_disk = fixtures::directory_members(&spread.sheets());
+    let mut named: Vec<String> = proof.pages.iter().flat_map(sheet_names).collect();
+    named.sort();
+    assert_eq!(named, on_disk, "交出来的那两叠就是盘上那几张");
+}
+
+/// **关掉拆分，同一张跨页出一叠**：整页那一张，名字就是 `run` 给整页的那一个
+/// （样张 spec 的 story 18：它仍旧和我那一趟的产物对得上）。判定那一张也一并比字节。
+#[test]
+fn with_splitting_off_a_spread_gets_one_proof_page() {
+    let spread = Staged::of(&lopsided_spread());
+    let request = Request {
+        split: tonefit::SplitRule {
+            on: false,
+            ..spread.request.split
+        },
+        ..spread.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&spread.source, &request, &spread.sheets()).expect("出样张");
+
+    let ran = &report.volumes[0];
+    assert_eq!(
+        run_names(ran),
+        ["001.png"],
+        "夹具的前提：关掉拆分，整页一张"
+    );
+    let stack = only_page(&proof);
+    assert_eq!(stack.page.cut(), None, "关掉拆分还切开了");
+    assert_eq!(
+        sheet_names(stack),
+        expected_sheet_names(&ran.pages[0], stack),
+        "整页那一叠的名字不是 `run` 给整页的那一个"
+    );
+    assert!(
+        fs::read(&ran.pages[0].output).expect("读转换那一趟写出的那一张")
+            == fs::read(&stack.page.output).expect("读样张里判定那一档的那一张"),
+        "判定那一张与转换那一趟写出的不是同一串字节"
+    );
+}
+
+/// **找不到中缝的连续跨页出一叠**，而交出来的数据说得出它**没被切开**：它够得上跨页候选
+/// （不是没判成候选），挡下它的是「没有沟」那一关（`CONTEXT.md` 的《连续跨页》）。
+///
+/// 两格一起问：候选那一格为真、切口那一格为空。只问后一格，一张够不上候选的普通页也答得一样。
+#[test]
+fn a_continuous_spread_gets_one_proof_page_that_says_it_was_not_cut() {
+    // 竖直渐变、四边顶着墨：每一列长得一样，一条空白列都挑不出来；裁白边不改它的宽高比。
+    let spread = Staged::of(&fixtures::full_bleed_gradient(CONTINUOUS));
+
+    let report = tonefit::run(&spread.request).expect("转换那一趟");
+    let proof = spread.proof();
+
+    let ran = &report.volumes[0];
+    assert_eq!(run_names(ran), ["001.png"], "夹具的前提：转换那一趟没切它");
+    let stack = only_page(&proof);
+    assert!(
+        stack.page.spread_candidate(),
+        "交出来的数据说不出它是跨页候选：一张连续跨页被说成了没判成候选的普通页"
+    );
+    assert_eq!(stack.page.cut(), None, "连续跨页被切开了");
+    assert_eq!(
+        (stack.page.spread_candidate(), stack.page.cut()),
+        (ran.pages[0].spread_candidate(), ran.pages[0].cut()),
+        "拆分那两级与转换那一趟答得不一样"
+    );
+    assert_eq!(
+        sheet_names(stack),
+        expected_sheet_names(&ran.pages[0], stack),
+        "这一叠的名字不是 `run` 给整页的那一个"
+    );
+}
+
+/// 连续跨页：宽高比 1.43，够得上跨页候选（[`Staged`] 点名的判定宽度下是 1.13）；
+/// 高恰是面板高，以高为准一步都不缩。
+const CONTINUOUS: tonefit::Size = tonefit::Size::new(2400, 1680);
+
+/// **每一半各自裁过白边**：两半的裁切窗口各是各的，与 `run` 给那一半的窗口逐格相同
+/// （样张 spec 的 story 19；`crate::crop` 的模块文档：逐页各裁各的，不取卷级裁切框）。
+///
+/// 左半上下那两截白边只有「每半再裁」收得走（见 [`lopsided_spread`]）：两半窗口不一样高，
+/// 各自恰好是自己那块内容的高。拿一个两半共用的框去裁，两半就一样高。
+#[test]
+fn each_half_of_a_spread_is_cropped_on_its_own() {
+    let spread = Staged::of(&lopsided_spread());
+
+    let report = tonefit::run(&spread.request).expect("转换那一趟");
+    let proof = spread.proof();
+
+    let window = |page: &tonefit::PageReport| page.crop().expect("处理成了的页有裁白边那一格");
+    // 右开：右半在先（[`Staged`] 点名的阅读方向）。
+    let [right, left] = proof.pages.as_slice() else {
+        panic!("一张跨页该出两叠，出了 {} 叠", proof.pages.len());
+    };
+    assert_eq!(
+        (window(&right.page).after(), window(&left.page).after()),
+        (RIGHT, LEFT),
+        "两半没各自裁到自己那块内容"
+    );
+    for (stack, ran) in proof.pages.iter().zip(&report.volumes[0].pages) {
+        assert_eq!(
+            window(&stack.page),
+            window(ran),
+            "这一半的裁切窗口与转换那一趟的不一样"
+        );
+    }
+}
+
+/// **神谕在跨页上跑一遍**：两半各比一次，各自与 `run --no-metadata` 写出的那一半**逐字节相同**，
+/// 判定也是同一档、同一个理由（spec《Testing Decisions》第一条：「跨页那一张再来一遍，两半各比一次」）。
+///
+/// 前提照普通页那一条的规矩先问：两半都真的各自裁到了自己那块内容、缩放过、提过白——
+/// 任何一条不成立，下面那个等号就是在一张「什么都没发生」的半页上成立的。
+/// 裁白边那一问比的是裁完的尺寸，不问「裁没裁」：半页的窗口叠在整张源页上，
+/// 光是切开那一刀就让「裁没裁」答是（`Crop::then`）。
+#[test]
+fn both_halves_of_a_spread_are_byte_for_byte_what_run_writes_without_metadata() {
+    let spread = Staged::of(&lopsided_spread());
+
+    let report = tonefit::run(&spread.request).expect("转换那一趟");
+    let proof = spread.proof();
+
+    let halves = &report.volumes[0].pages;
+    assert_eq!(halves.len(), 2, "夹具的前提：转换那一趟把它切成两张");
+    assert_eq!(proof.pages.len(), 2, "一张跨页该出两叠");
+    // 右开：右半在先（[`Staged`] 点名的阅读方向）。
+    for ((stack, ran), content) in proof.pages.iter().zip(halves).zip([RIGHT, LEFT]) {
+        let page = &stack.page;
+        let crop = page.crop().expect("处理成了的页有裁白边那一格");
+        assert_eq!(
+            crop.after(),
+            content,
+            "夹具的前提：这一半裁到了自己那块内容"
+        );
+        assert_ne!(page.size, crop.after(), "夹具的前提：这一半真的被缩放过");
+        assert!(
+            matches!(
+                page.white_alignment(),
+                Some(tonefit::WhiteAlignment::Aligned { paper_white }) if paper_white == fixtures::OFF_GRID_PAPER_WHITE
+            ),
+            "夹具的前提：这一半的纸白真的被提过：{:?}",
+            page.white_alignment()
+        );
+        assert_eq!(
+            page.verdict(),
+            ran.verdict(),
+            "{:?} 那一半：样张与转换那一趟定下的不是同一档、同一个理由",
+            page.cut()
+        );
+        let written = fs::read(&ran.output).expect("读转换那一趟写出的那一半");
+        let proofed = fs::read(&page.output).expect("读样张里判定那一档的那一张");
+        assert!(
+            written == proofed,
+            "{:?} 那一半：判定那一张与转换那一趟写出的不是同一串字节（样张 {} 字节，转换 {} 字节）",
+            page.cut(),
+            proofed.len(),
+            written.len()
+        );
+    }
+}
+
+/// **两半的门分了家、只点一维覆盖项时，「顶死没有」照转换那一趟问——问这张图的其余页那一组**
+/// （停车场 Q1014；`CONTEXT.md` 的《覆盖顶死》）。
+///
+/// `--fit inside` 上 [`lopsided_spread`] 的左半贴不住面板（门不成立，候选里没有抖动那一维），
+/// 右半贴得住。只点 `--bit-depth` 一维：左半那一套只剩一个候选，右半那一套还剩抖与不抖两个。
+/// 转换那一趟把这张图摆成一卷：有一页门成立，其余页就是右半那一组，那一组还有得挑——
+/// 判定没被顶死，左半那一档是它自己那条曲线判出来的。一块一块问的话，左半那一块只剩一个候选，
+/// 会被说成顶死：**字节相同，理由不同**。所以这一条比的是整个判定，不只是字节。
+///
+/// 前提问的是转换那一趟：两半的门真的分了家，左半的理由真的不是覆盖。
+#[test]
+fn a_single_override_on_a_spread_whose_halves_part_at_the_gate_is_judged_as_run_judges_it() {
+    let spread = Staged::of(&lopsided_spread());
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        bit_depth: Some(BitDepth::Two),
+        dither: None,
+        ..spread.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let halves = &report.volumes[0].pages;
+    let holds: Vec<bool> = halves
+        .iter()
+        .map(|page| page.gate().expect("灰度路径上有门").holds())
+        .collect();
+    assert_eq!(
+        holds,
+        [true, false],
+        "夹具的前提：右半贴得住面板、左半贴不住"
+    );
+    assert_ne!(
+        halves[1].verdict().expect("灰度页有判定").reason,
+        Reason::Override,
+        "夹具的前提：转换那一趟没把左半说成被顶死"
+    );
+
+    let proof = tonefit::write_proof(&spread.source, &request, &spread.sheets()).expect("出样张");
+    assert_eq!(proof.pages.len(), 2, "一张跨页该出两叠");
+    for (stack, ran) in proof.pages.iter().zip(halves) {
+        assert_eq!(
+            stack.page.verdict(),
+            ran.verdict(),
+            "{:?} 那一半：样张与转换那一趟定下的不是同一档、同一个理由",
+            stack.page.cut()
+        );
+        assert!(
+            fs::read(&ran.output).expect("读转换那一趟写出的那一半")
+                == fs::read(&stack.page.output).expect("读样张里判定那一档的那一张"),
+            "{:?} 那一半：判定那一张与转换那一趟写出的不是同一串字节",
+            stack.page.cut()
+        );
+    }
 }
