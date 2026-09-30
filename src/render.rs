@@ -53,8 +53,8 @@ use std::path::{Path, PathBuf};
 
 use tonefit::{
     Candidate, CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport,
-    Profile, Report, Voice, VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit,
-    WhiteAlignment, aggregation, composition, masking,
+    Profile, Proof, ProofPage, Report, Request, Sheet, Voice, VolumeFailure, VolumeReport,
+    VolumeVerdict, WhiteAlignLimit, WhiteAlignment, aggregation, composition, masking,
 };
 // 「哪几页要紧」同理（见 [`Notable`]），只是它连 `--no-default-features` 那一趟的用例
 // 一起要，因此挂的是 `any(feature = "tui", test)`。
@@ -238,6 +238,9 @@ pub enum RowKind {
     /// 压在最后一小结，因为它是这一趟里**说不清少了多少**的那一种：卷转换失败点得出
     /// 是哪几卷，而这一种连「那底下有没有卷」都答不出来（`p4-parking-lot/11`）。
     UnreachableTail,
+    /// **样张里的一张**那一行（`proof-sheet/02`）：哪一张 · 字节数 · 落到哪个文件。
+    /// 出处只有 [`proof_note`]——它不在报告里，报告不出样张。
+    ProofSheet,
 }
 
 /// 一格是**哪一格**。
@@ -333,6 +336,11 @@ pub enum Field {
     Salvage,
     /// 这一页是彩页转灰。**不是就不在场。**
     ColorToGray,
+    /// **样张里的一张是哪一张**：候选连同它的画质分（写法同[画质分那一串](Self::Scores)里的一项），
+    /// 或「参照」。
+    Sheet,
+    /// 样张里一张写出去多少字节，走库那一份进位（[`tonefit::format_bytes`]）。
+    Bytes,
 }
 
 /// 抬头：这批输出给哪台设备、页尺寸照哪种缩放方式算出、画质分是什么形状
@@ -599,7 +607,7 @@ pub fn pages(volume: &VolumeReport, mode: Mode) -> Vec<Row> {
     let mut rows = Vec::new();
     for page in &volume.pages {
         rows.push(Row::new(RowKind::PageGeometry, geometry_cells(page)));
-        rows.push(page_row(page, mode));
+        rows.push(page_row(page, PaperWhite::of(mode)));
     }
     rows
 }
@@ -1892,7 +1900,9 @@ fn first_few_names(pages: &[&PageReport]) -> String {
 ///
 /// 坏页那一行说的是**原因**（spec 的 story 26）：报告要让用户知道该去修哪几张。
 /// 原因是由内到外的整条错误链，最外一环指得出是哪一页、卡在哪一步。
-fn page_row(page: &PageReport, mode: Mode) -> Row {
+///
+/// 纸白那一格出不出由 `paper_white` 说（见 [`PaperWhite`]）。
+fn page_row(page: &PageReport, paper_white: PaperWhite) -> Row {
     let Some(branch) = page.branch() else {
         return sentence_row(
             RowKind::PageFailure,
@@ -1920,11 +1930,7 @@ fn page_row(page: &PageReport, mode: Mode) -> Row {
             cells.push(Cell::new(Field::Reason, verdict.reason.to_string()));
             cells.push(Cell::new(Field::Scores, score_line(scores)));
             cells.extend(verdict_score(scores, verdict.candidate));
-            // 纸白那一格**只在预览出**（纸色提白批 02 号票第 3 条）：全语料里离格量为 0
-            // 的页占 57.0%、1–2 级的占 41.5%（measurements 的《全语料普查：四成三的页纸白
-            // 不落在格点上》），绝大多数页的钳制宽度因此是 0 或 1，一页不落地恒印没有
-            // 信息量。要它的是**还没决定上限取多少**的那个用户，而他手上正是 `--dry-run`。
-            if mode == Mode::DryRun {
+            if paper_white == PaperWhite::Shown {
                 cells.extend(paper_white_cell(*white));
             }
             Row::new(RowKind::PageVerdict, cells)
@@ -1935,6 +1941,33 @@ fn page_row(page: &PageReport, mode: Mode) -> Row {
                 "彩页 · 彩色分支：只缩放，不量化，不进灰度缓存也不进整卷统一灰阶",
             ));
             Row::new(RowKind::PageColor, cells)
+        }
+    }
+}
+
+/// 逐页判定那一行里**纸白那一格出不出**（纸色提白批 02 号票第 3 条）。
+///
+/// 照做那一趟的报告不出：全语料里离格量为 0 的页占 57.0%、1–2 级的占 41.5%
+/// （measurements 的《全语料普查：四成三的页纸白不落在格点上》），绝大多数页的钳制宽度
+/// 因此是 0 或 1，一页不落地恒印没有信息量。要它的是**还没决定上限取多少**的那个用户——
+/// 他手上是 `--dry-run`，或者一叠样张（样张 spec 的 story 12）。
+///
+/// 它不是 [`Mode`]：样张既不是预览也不是照做，拿 `Mode::DryRun` 冒充它，
+/// 预览那一副将来多出来的任何一句都会跟着漏进样张。库那一侧同一个理由立了 `WhiteWhenOff`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaperWhite {
+    /// 出：预览与样张。
+    Shown,
+    /// 不出：照做那一趟的报告。
+    Left,
+}
+
+impl PaperWhite {
+    /// 报告那一副按这一趟的模式定。样张不走这里，它恒是 [`PaperWhite::Shown`]。
+    fn of(mode: Mode) -> Self {
+        match mode {
+            Mode::DryRun => PaperWhite::Shown,
+            Mode::Process => PaperWhite::Left,
         }
     }
 }
@@ -2057,6 +2090,89 @@ pub fn calibration_note(profile: &Profile, out: &Path) -> String {
         "profile {profile}\n{}\n  {OPEN_IT_AT_NATIVE_SIZE}\n  {WHERE_THE_FULL_STORY_IS}\n",
         chart_landed_at(out),
     )
+}
+
+/// 样张写出去之后**命令行**印的那几行（样张 spec《Implementation Decisions》第九条）。
+///
+/// 次序：画质门槛那一行打头（它对整叠只有一个）；然后每一叠一段——几何、判定、尺寸贴合检查，
+/// 再逐候选一行（候选 · 画质分 · 字节数 · 落到哪个文件），参照那一张收尾。
+///
+/// **措辞一处都不新写**，每一句都从它既有的出处取：
+///
+/// - 画质门槛那一行就是报告抬头里的[那一行](judging_line)——数值连同**标定来源**；
+/// - 判定与理由（`Reason` 的 `Display`）、画质分那一串、纸白与钳制宽度，是逐页判定那一行
+///   （[`page_row`]，纸白那一格[出](PaperWhite::Shown)：spec 的 story 12 要它）；
+/// - 裁前 → 裁后、缩放、跨页哪一侧、兜底退回，是逐页几何那一行（[`geometry_cells`]）；
+/// - 门成不成立是卷级尺寸贴合检查那一行（[`proof_gate_row`]）——一叠就是一页，
+///   判定范围就是它自己；
+/// - 逐张那一行（[`proof_sheet_rows`]）的「候选 分」是画质分那一串里的一项（[`scored_line`]），
+///   字节数走库那一份进位（[`tonefit::format_bytes`]）。
+///
+/// 照搬得动，是因为样张的每一页与报告里的一页**同一个形状**（[`tonefit::ProofPage::page`]）。
+///
+/// 这里出的是[行](Row)，摆法在纯文本那一副（[`plain::line`]，ADR 0016），与报告同一条规矩。
+/// 它不从报告来，却同属界面文案——与[灰阶测试图那几行](calibration_note)同一个待遇。
+/// 会话眼下不接样张（spec 第十一条），这一副只有命令行一个读者。
+pub fn proof_note(proof: &Proof, request: &Request) -> String {
+    let switches = Switches {
+        fit: request.fit,
+        crop: request.crop,
+        split: request.split,
+    };
+    let mut text = judging_line(Judging::Device, &request.profile, switches);
+    for sheets in &proof.pages {
+        let page = &sheets.page;
+        let mut rows = vec![
+            Row::new(RowKind::PageGeometry, geometry_cells(page)),
+            page_row(page, PaperWhite::Shown),
+        ];
+        rows.extend(proof_gate_row(page));
+        rows.extend(proof_sheet_rows(sheets));
+        text.extend(rows.iter().map(plain::line));
+    }
+    text
+}
+
+/// 一叠样张里逐张那几行：每一个候选一行（它的「候选 分」），参照那一张收尾。
+fn proof_sheet_rows(sheets: &ProofPage) -> Vec<Row> {
+    let sheet_row = |which: String, sheet: &Sheet| {
+        Row::new(
+            RowKind::ProofSheet,
+            vec![
+                Cell::new(Field::Sheet, which),
+                Cell::new(Field::Bytes, tonefit::format_bytes(sheet.bytes)),
+                Cell::new(Field::Output, sheet.file.display().to_string()),
+            ],
+        )
+    };
+    sheets
+        .scored()
+        .map(|(scored, sheet)| sheet_row(scored_line(scored), sheet))
+        .chain([sheet_row(PROOF_REFERENCE.to_owned(), &sheets.reference)])
+        .collect()
+}
+
+/// 样张里《参照》那一张在逐张那几行上叫什么：取词条名。
+///
+/// 与库那一侧给那一张起文件名用的那一截（`proof::REFERENCE`）是同一个词、**不是同一个出处**：
+/// 一个是屏上怎么说，一个是文件叫什么——哪天文件名为了设备改成 ASCII，屏上照旧说「参照」。
+const PROOF_REFERENCE: &str = "参照";
+
+/// 一叠样张的**尺寸贴合检查**那一行：借的是卷级那一行（[`RowKind::Gate`]），
+/// 一叠就是一页，判定范围就是它自己——检查了 1 页、没贴合 0 或 1 页、这一页抖不抖。
+///
+/// 彩色分支与坏页上没有这一行：它们不在判定范围里（与 [`gate_rows`] 同一条界）。
+fn proof_gate_row(page: &PageReport) -> Option<Row> {
+    let gate = page.gate()?;
+    let verdict = page.verdict()?;
+    Some(Row::new(
+        RowKind::Gate,
+        vec![
+            Cell::new(Field::GateScope, "1"),
+            Cell::new(Field::GateBroken, usize::from(!gate.holds()).to_string()),
+            Cell::new(Field::Dither, verdict.candidate.dither.to_string()),
+        ],
+    ))
 }
 
 #[cfg(test)]
@@ -5538,5 +5654,105 @@ mod tests {
             }
             stable(&reason.to_string(), "理由那一列");
         }
+    }
+
+    /// 样张印出来的那几行，**每一句都从既有出处取**（`proof-sheet/02`；spec 第九条）。
+    ///
+    /// 走的是真的那一趟：一张带白边、纸白离格的页交给 `tonefit::write_proof`，
+    /// 再把同一张页摆进一个卷交给 `tonefit::run`。**画质门槛那一行拿报告抬头里的那一行比**——
+    /// 不是拿这里现拼的一句比：现拼的那一句与被测代码走的是同一个函数，等号恒成立，钉不住任何东西。
+    #[test]
+    fn the_proof_note_says_each_thing_the_way_the_report_already_says_it() {
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let volume = workspace.path().join("卷");
+        std::fs::create_dir_all(&volume).expect("建卷目录");
+        let image = volume.join("001.png");
+        // 四周一圈纯白边，里面是纸白 253 的一页，压一竖条墨、一竖条灰调，四边顶着一圈墨：
+        // 裁白边正好停在那一圈上，纸白是离格 2 级的 253——两件事都真的发生，那两格才在场。
+        image::DynamicImage::ImageLuma8(image::ImageBuffer::from_fn(640, 960, |x, y| {
+            let inside = (40..600).contains(&x) && (40..920).contains(&y);
+            let rim = !((44..596).contains(&x) && (44..916).contains(&y));
+            image::Luma([match (inside, rim, x * 4 / 640) {
+                (false, _, _) => 255,
+                (true, true, _) | (true, false, 1) => 0,
+                (true, false, 2) => (y * 240 / 960) as u8,
+                (true, false, _) => 253,
+            }])
+        }))
+        .save(&image)
+        .expect("写一张图");
+        let sheets = workspace.path().join("样张");
+        // 提白上限点名 4：那一页的纸白离格 2 级，钳得动——「提了 2 级」那一句靠的是它，
+        // 不借默认值（`docs/agents/testing.md`）。
+        let request = Request {
+            white_align_limit: WhiteAlignLimit::new(4),
+            ..crate::proof_request(
+                Profile::resolve("kobo-libra-2").expect("内置型号"),
+                &image,
+                &sheets,
+            )
+        };
+
+        let proof = tonefit::write_proof(&image, &request, &sheets).expect("出样张");
+        let note = proof_note(&proof, &request);
+
+        let report = tonefit::run(&Request {
+            inputs: vec![volume],
+            output_root: workspace.path().join("out"),
+            ..request.clone()
+        })
+        .expect("转换那一趟");
+        let threshold = header(&report, Mode::Process)
+            .lines()
+            .find(|line| line.starts_with(Judging::Device.label()))
+            .expect("报告抬头里有设备配置那一行")
+            .to_owned();
+        assert!(
+            threshold.contains("（在 boox-poke6 上实测，其他屏幕未验证）"),
+            "夹具的前提：抬头那一行带着标定来源：{threshold}"
+        );
+        assert!(
+            note.lines().any(|line| line == threshold),
+            "画质门槛那一行不是报告抬头里的那一行：\n{note}"
+        );
+
+        let [page] = proof.pages.as_slice() else {
+            panic!("一张普通页出一叠");
+        };
+        let verdict = page.page.verdict().expect("灰度路径上有判定");
+        assert!(
+            note.contains(&format!("判定 {}（{}）", verdict.candidate, verdict.reason)),
+            "判定那一行说的不是候选与 `Reason` 的那一句：\n{note}"
+        );
+        let crop = page.page.crop().expect("处理成了的页有裁白边那一格");
+        assert!(crop.trimmed(), "夹具的前提：白边裁得动");
+        assert!(
+            note.contains(&crop.to_string()),
+            "裁前 → 裁后那一格不在：\n{note}"
+        );
+        assert!(
+            note.contains("纸色 253 ⋅ 提了 2 级"),
+            "纸白与钳制宽度不在：\n{note}"
+        );
+        assert!(
+            note.contains("尺寸贴合 检查了 1 页灰度页 · 没贴合 0 页"),
+            "门成不成立那一句不在：\n{note}"
+        );
+        for (scored, sheet) in page.scored() {
+            let line = format!(
+                "{} {} · {} · {}",
+                scored.candidate,
+                scored.score,
+                tonefit::format_bytes(sheet.bytes),
+                sheet.file.display()
+            );
+            assert!(note.contains(&line), "少了「{line}」：\n{note}");
+        }
+        let reference = format!(
+            "参照 · {} · {}",
+            tonefit::format_bytes(page.reference.bytes),
+            page.reference.file.display()
+        );
+        assert!(note.contains(&reference), "少了「{reference}」：\n{note}");
     }
 }
