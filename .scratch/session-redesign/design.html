@@ -951,7 +951,8 @@ function footerHints() {
   const r = S.run, help = hint('?', '全部按键');
   if (S.overlay) return [hint('j/k', '滚动'), hint('Esc', '关闭')];
   if (S.view === 'config') {
-    if (S.cfg.presets) return [hint('⏎', '使用'), hint('dd', '删除'), hint('p', '返回'), hint('j/k', '选择'), help];
+    // 末行「＋ 把当前设置保存为预设」不是一份预设，删不掉：光标停在那一行上不摆 `dd`
+    if (S.cfg.presets) return [hint('⏎', '使用'), ...(S.cfg.pcursor < PRESETS.length ? [hint('dd', '删除')] : []), hint('p', '返回'), hint('j/k', '选择'), help];
     const ro = readOnly();
     return [...stageHints(), hint(S.cfg.pane === 'left' ? 'l' : '⏎', ro ? '查看' : S.cfg.pane === 'left' ? '展开' : '确定'), hint('h', '返回'), hint('p', '预设'), hint('1', '任务'), hint('j/k', '选择'), help];
   }
@@ -977,8 +978,10 @@ function drawFooter(scr) {
     let x = scr.put(1, y, inp.prompt, 'c-green b');
     x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
     scr.put(x, y, '▏', FOCUS);
-    const right = inp.kind === 'search' ? [...hint('⏎', '跳到结果'), [' ', ''], ...hint('Esc', '取消')]
-      : [...hint('Tab', '补全'), [' ', ''], ...hint('C-w', '删一段'), [' ', ''], ...hint('⏎', '确定'), [' ', ''], ...hint('Esc', '取消')];
+    // 右端那几件按输入行的用途摆（屏上不摆按不动的键，按得动的都摆）：`Tab` 只在补得出路径的那几种上，
+    // `C-w` 每一种都有，`⏎` 在搜索那一行上说「跳到结果」
+    const right = [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')]
+      .flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
     scr.line(W - 1 - segW(right), y, right);
     return;
   }
@@ -1656,8 +1659,10 @@ function startInput(kind, buf = '') {
   S.input = { kind, prompt, buf, cands: null, ci: 0 };
   if (kind === 'search') S.search = { q: '' };
 }
+// 补得出路径的那几种输入行：`Tab` 只在它们上面做事，屏底右端也只在它们上面摆 `Tab`
+const COMPLETES = ['add', 'edit', 'out'];
 function complete() {
-  const inp = S.input; if (!['add', 'edit', 'out'].includes(inp.kind)) return;
+  const inp = S.input; if (!COMPLETES.includes(inp.kind)) return;
   if (inp.cands && inp.cands.length > 1) { inp.ci = (inp.ci + 1) % inp.cands.length; fillCand(); return; }
   const cut = inp.buf.lastIndexOf('/');
   const base = cut >= 0 ? inp.buf.slice(0, cut) : '~', prefix = cut >= 0 ? inp.buf.slice(cut + 1) : inp.buf;
@@ -1764,6 +1769,8 @@ function startsCombo(k) {
 }
 function deleteHere() {
   if (S.view === 'config') {
+    // 末行那一件不是一份预设：`dd` 在它上面一件事都不做（不闩、不删、不说话）
+    if (S.cfg.pcursor === PRESETS.length) return true;
     if (S.cfg.armedDelete !== S.cfg.pcursor) { S.cfg.armedDelete = S.cfg.pcursor; return true; }
     const [gone] = PRESETS.splice(S.cfg.pcursor, 1); S.cfg.armedDelete = null;
     if (S.cfg.applied === gone.name) S.cfg.applied = null;

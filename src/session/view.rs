@@ -39,7 +39,7 @@ use super::look::{Kind, Look, Segment};
 use super::state::{Exit, Field, Key, Listing, NamedPath, OUTPUT_UNSET, Session, Shape, Stage};
 use super::tone::Tone;
 use super::tree;
-use super::typing::{InputLine, Purpose};
+use super::typing::{InputLine, Purpose, Use};
 use crate::preset::Preset;
 use crate::render;
 use tonefit::{Panel, VolumeReport};
@@ -168,10 +168,28 @@ pub enum Focus {
     Details,
     /// **预设栏 (Picker)**：`p` 掀开、替换详情栏的那一栏。
     Picker,
-    /// **输入行 (Input line)**：打字时占住屏底的那一行。
-    Input,
+    /// **输入行 (Input line)**：打字时占住屏底的那一行，带着这一行的用途——按键表按它分派
+    /// （[`super::keymap`] 的《输入行的用途》）。
+    Input(Use),
     /// **覆盖层 (Overlay)**：全部按键或说明卡。
     Overlay,
+}
+
+impl Focus {
+    /// 焦点的每一个取值：五块、每一种用途上的输入行、覆盖层。按表逐处核的用例从这里取。
+    #[cfg(test)]
+    pub fn every() -> impl Iterator<Item = Self> {
+        [
+            Self::VolumeList,
+            Self::Pages,
+            Self::Settings,
+            Self::Details,
+            Self::Picker,
+        ]
+        .into_iter()
+        .chain(Use::ALL.map(Self::Input))
+        .chain([Self::Overlay])
+    }
 }
 
 /// 卷列表的光标停在哪一行——记的是**行的身份**（模块文档《卷列表的光标记的是行的身份》）。
@@ -538,8 +556,8 @@ impl Views {
         if self.cover.is_some() {
             return Focus::Overlay;
         }
-        if self.input.is_some() {
-            return Focus::Input;
+        if let Some(line) = &self.input {
+            return Focus::Input(Use::from(&line.purpose));
         }
         self.block()
     }
@@ -967,7 +985,7 @@ impl Session {
             return Some(deed);
         }
         // 打字：输入行上表派不出的每一个字符都是一个字（`?`、`q`、`j` 也是）。
-        if focus == Focus::Input {
+        if matches!(focus, Focus::Input(_)) {
             return match chord {
                 Chord::Key(Key::Char(glyph)) => Some(Deed::Typed(glyph)),
                 Chord::Key(Key::Space) => Some(Deed::Typed(' ')),
@@ -1014,7 +1032,7 @@ impl Session {
             Deed::Complete => self.complete_typed(now),
             Deed::Confirm => self.confirm_typed(now),
             Deed::Cancel => self.cancel_typed(),
-            Deed::Down | Deed::Up if focus == Focus::Input => {
+            Deed::Down | Deed::Up if matches!(focus, Focus::Input(_)) => {
                 if let Some(line) = &mut self.views.input {
                     line.step(if deed == Deed::Down { 1 } else { -1 });
                 }
@@ -2031,20 +2049,10 @@ impl Session {
                     ],
                 );
             }
-            // 输入行右端那几件（设计稿 `drawFooter` 打字那一支）。**搜索那一行只有两件**：
-            // 它不补全（[`Purpose::completes`]），`C-w` 按得动而不摆——右端只摆这一行
-            // 此刻最要紧的两件（同一处 `⏎` 换成「跳到结果」）。
-            (_, Focus::Input) if self.searching_line() => {
-                return keymap::hints(
-                    phase,
-                    focus,
-                    &[
-                        Want::saying(Deed::Confirm, "跳到结果"),
-                        Want::of(Deed::Cancel),
-                    ],
-                );
-            }
-            (_, Focus::Input) => {
+            // 输入行右端那几件（设计稿 `drawFooter` 打字那一支）。**摆哪几件、`⏎` 说哪一句
+            // 都随这一行的用途，分在表上**（焦点带着用途，[`keymap`] 的《输入行的用途》）
+            // ——这里一种用途都不问。
+            (_, Focus::Input(_)) => {
                 return keymap::hints(
                     phase,
                     focus,
@@ -2056,13 +2064,20 @@ impl Session {
                     ],
                 );
             }
-            (View::Config, Focus::Picker) => wants.extend([
-                Want::of(Deed::UsePreset),
-                Want::of(Deed::DeletePreset),
-                Want::saying(Deed::Presets, "返回"),
-                Want::of(Deed::Down),
-                Want::of(Deed::Up),
-            ]),
+            (View::Config, Focus::Picker) => {
+                wants.push(Want::of(Deed::UsePreset));
+                // **`dd` 只在光标停在一份预设上时摆**：末行「＋ 把当前设置保存为预设」不是一份
+                // 预设，按下去一件事都不做（[`Session::ask_then_erase`]）——屏上不摆按不动的键，
+                // 与卷列表上的 [`Session::open_want`] 同一条形状。
+                if self.views.config.picked().is_some() {
+                    wants.push(Want::of(Deed::DeletePreset));
+                }
+                wants.extend([
+                    Want::saying(Deed::Presets, "返回"),
+                    Want::of(Deed::Down),
+                    Want::of(Deed::Up),
+                ]);
+            }
             (View::Config, _) => {
                 wants.extend(self.stage_wants(phase, focus));
                 wants.extend([
@@ -2206,7 +2221,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::session::home::Home;
-    use crate::session::keymap::TABLE;
+    use crate::session::keymap::{Group, TABLE};
     use crate::session::state::Stage;
     use crate::session::viewport::Viewport;
 
@@ -2648,13 +2663,11 @@ mod tests {
         assert!(session.views.task.follow, "没跳成就不暂停");
     }
 
-    /// **搜索那一行右端只有两件**（票面第三条）：它不补全，`C-w` 按得动而不摆；
-    /// `⏎` 那一句换成「跳到结果」。别的输入行照旧四件。
+    /// **输入行右端那几件按用途摆，从表上一路派下来**（`design-parity/02` 票面第二、三条）：
+    /// 路径那三种摆 `Tab`；改一项设置的值、给预设起名不摆——那两种上 `Tab` 一件事都不做；
+    /// 搜索那一行摆 `C-w`（它在那一行上按得动），`⏎` 说「跳到结果」。
     #[test]
-    fn the_search_line_offers_only_jump_and_cancel() {
-        let mut session = a_running_tree();
-        let now = Instant::now();
-        session.perform(Deed::Search, now);
+    fn the_input_line_offers_what_its_purpose_deals() {
         let spelt = |session: &Session, phase| {
             session
                 .hints(phase, None)
@@ -2662,17 +2675,37 @@ mod tests {
                 .map(|hint| format!("{} → {}", hint.spelt(), hint.what))
                 .collect::<Vec<String>>()
         };
+        let typing = |purpose: &Purpose| {
+            let mut session = three_paths();
+            session.views.input = Some(InputLine::new(purpose.clone(), ""));
+            session
+        };
+        for purpose in [
+            Purpose::AddPath,
+            Purpose::EditPath(PathBuf::from("/home/me/漫画库")),
+            Purpose::Output,
+        ] {
+            assert_eq!(
+                spelt(&typing(&purpose), Phase::Fresh),
+                ["Tab → 补全", "C-w → 删一段", "⏎ → 确定", "Esc → 取消"],
+                "{purpose:?}"
+            );
+        }
+        for purpose in [Purpose::Setting(Field::GrayLevels), Purpose::Preset] {
+            for phase in [Phase::Fresh, Phase::Ended] {
+                assert_eq!(
+                    spelt(&typing(&purpose), phase),
+                    ["C-w → 删一段", "⏎ → 确定", "Esc → 取消"],
+                    "{phase:?} 的 {purpose:?}"
+                );
+            }
+        }
+        let mut session = a_running_tree();
+        session.perform(Deed::Search, Instant::now());
+        assert!(session.searching_line());
         assert_eq!(
             spelt(&session, Phase::Running),
-            ["⏎ → 跳到结果", "Esc → 取消"]
-        );
-        // 对照：添加路径那一行上仍是四件（`Tab` 只在还没开始那一档派得出）。
-        session.perform(Deed::Cancel, now);
-        let mut fresh = three_paths();
-        fresh.open_adding();
-        assert_eq!(
-            spelt(&fresh, Phase::Fresh),
-            ["Tab → 补全", "C-w → 删一段", "⏎ → 确定", "Esc → 取消"]
+            ["C-w → 删一段", "⏎ → 跳到结果", "Esc → 取消"]
         );
     }
 
@@ -2698,8 +2731,24 @@ mod tests {
 
     /// **屏底每一件都出自那张按键表**（票面第三条）：键的写法与那一句合起来是表上的一行，
     /// 而且那一行在此刻的阶段与块上派得出。还没开始、跑着、等待确认、已结束各问一遍。
+    ///
+    /// **输入行按用途再问一遍**（`design-parity/02`）：每一种用途上，右端摆的**恰好**是
+    /// 「输入」那一组在那一种上派得出、上得了屏底的那几行——派得出的一件不漏，派不出的一件不摆。
     #[test]
     fn every_hint_on_the_footer_is_a_row_of_the_key_table() {
+        let every_purpose = [
+            Purpose::AddPath,
+            Purpose::EditPath(PathBuf::from("/home/me/漫画库")),
+            Purpose::Output,
+            Purpose::Setting(Field::GrayLevels),
+            Purpose::Preset,
+            Purpose::Search,
+        ];
+        assert_eq!(
+            every_purpose.iter().map(Use::from).collect::<Vec<_>>(),
+            Use::ALL,
+            "六种用途一种不漏"
+        );
         let mut session = three_paths();
         for (phase, stage) in [
             (Phase::Fresh, Stage::Fresh),
@@ -2736,6 +2785,30 @@ mod tests {
                     "`?` 恒在末尾"
                 );
             }
+            for purpose in &every_purpose {
+                session.views.input = Some(InputLine::new(purpose.clone(), ""));
+                let focus = session.views.focus();
+                assert_eq!(focus, Focus::Input(Use::from(purpose)));
+                let offered: Vec<(&str, &str)> = session
+                    .hints(phase, None)
+                    .iter()
+                    .flat_map(|hint| hint.keys.iter().map(|spelt| (*spelt, hint.what)))
+                    .collect();
+                let dealt: Vec<(&str, &str)> = TABLE
+                    .iter()
+                    .filter(|row| {
+                        row.group == Group::Input
+                            && !row.short.is_empty()
+                            && row.applies(phase, focus)
+                    })
+                    .map(|row| (row.spelt, row.short))
+                    .collect();
+                assert_eq!(
+                    offered, dealt,
+                    "{phase:?} 的 {purpose:?} 上右端那几件不恰好是表上派得出的那几行"
+                );
+            }
+            session.views.input = None;
         }
     }
 
@@ -3206,6 +3279,38 @@ mod tests {
         assert!(!session.views.config.picker);
         session.perform(Deed::NextBlock, now);
         assert_eq!(session.views.focus(), Focus::Details);
+    }
+
+    /// **预设栏的屏底按光标停在哪一行摆**（`design-parity/02` 票面第四条）：停在一份预设上摆
+    /// `dd → 删除`；停在末行「＋ 把当前设置保存为预设」上不摆——那一行不是一份预设，删不掉，
+    /// 按下去一件事都不做。别的几件两处一样。
+    #[test]
+    fn the_picker_offers_dd_only_on_a_preset() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        let spelt = |session: &Session| {
+            session
+                .hints(Phase::Fresh, None)
+                .iter()
+                .map(|hint| format!("{} → {}", hint.spelt(), hint.what))
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(
+            spelt(&session),
+            [
+                "⏎ → 使用",
+                "dd → 删除",
+                "p → 返回",
+                "j/k → 选择",
+                "? → 全部按键"
+            ]
+        );
+        session.perform(Deed::Bottom, now);
+        assert!(session.views.config.picked().is_none(), "光标真在末行上");
+        assert_eq!(
+            spelt(&session),
+            ["⏎ → 使用", "p → 返回", "j/k → 选择", "? → 全部按键"]
+        );
     }
 
     /// **预设栏上挪光标**：那几份加末行那一件；`G` 到末行、`gg` 回头一份，

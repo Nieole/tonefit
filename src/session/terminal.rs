@@ -1742,8 +1742,9 @@ mod redesign {
         assert_sequence("ended-[d");
     }
 
-    /// **`/` 开搜索那一行**（票面第三条）：屏底换成 `/` 加缓冲加光标，右端只剩
-    /// `⏎ → 跳到结果` 与 `Esc → 取消`（这一种输入行不补全）；底下那张列表框细了、
+    /// **`/` 开搜索那一行**（票面第三条）：屏底换成 `/` 加缓冲加光标，右端是
+    /// `C-w → 删一段`、`⏎ → 跳到结果` 与 `Esc → 取消`（这一种输入行不补全，
+    /// `design-parity/02`）；底下那张列表框细了、
     /// 光标行首换成暗的 `›`。打上字之后**匹配处加下划线**、框底边左起写着这一句与 `n`／`N`。
     #[test]
     fn slash_opens_the_search_line_and_underlines_what_matches() {
@@ -2148,6 +2149,22 @@ mod redesign {
             "正在用的也删得掉"
         );
         assert_eq!(scene.session.views.config.armed_delete, None);
+    }
+
+    /// **末行那一件上不摆 `dd`，按下去一件事都不做**（`design-parity/02` 票面第四条）：
+    /// `G` 停到「＋ 把当前设置保存为预设」上，屏底没有 `[dd → 删除]`；在那一行上按 `dd`
+    /// 不闩、不删、不说话——走完那一屏与只按了 `G` 那一屏逐格相同，盘一个字节都不动。
+    #[test]
+    fn dd_on_the_save_row_is_not_offered_and_does_nothing() {
+        let scene = assert_sequence("config-p-G");
+        assert!(scene.session.views.config.picked().is_none(), "停在末行上");
+        let scene = assert_sequence("config-p-G-dd");
+        assert_eq!(scene.session.views.config.armed_delete, None, "没闩上");
+        assert_eq!(
+            scene.presets.names().expect("读得出名字"),
+            ["漫画", "画集"],
+            "盘一个字节都没动"
+        );
     }
 
     /// **保存并起名**（票面第一条与第二条）：`G` 停到末行、`⏎` 开输入行

@@ -624,8 +624,13 @@ mod tests {
 
     /// **全部按键与屏底出自同一张表**（`session-redesign/07` 票面第四条）：表上每一行，长的那一句不空的
     /// 在它派得出的每一档上都在那一张上（键的写法在那一行头上、那一句在后面），短的那一句不空的在它派得出的
-    /// 那一块上屏底问它就摆得出来；反过来那一张上每一行都是表上的一行（组名与灰阶写法那一节除外）。
-    /// 表里加一个键——加一行——两处都跟着出现，不必改第二处。
+    /// 那一块上屏底问它就摆得出来、派不出的那一块上问它摆不出来；反过来那一张上每一行都是表上的一行
+    /// （组名与灰阶写法那一节除外）。表里加一个键——加一行——两处都跟着出现，不必改第二处。
+    ///
+    /// **块那一维把输入行按用途逐种算**（[`Focus::every`](super::super::view::Focus::every)，
+    /// `design-parity/02`）：`Tab → 补全` 只在路径那三种上摆得出，`⏎ → 跳到结果` 只在搜索那一行上。
+    /// 这一条问的是表与 [`hints`](super::super::keymap::hints) 那一层；屏底此刻**点名要哪几件**、
+    /// 每一种用途上右端恰好摆哪几件，在 `view` 的 `every_hint_on_the_footer_is_a_row_of_the_key_table`。
     #[test]
     fn the_sheet_and_the_footer_both_come_from_the_key_table() {
         use super::super::keymap::{Want, hints};
@@ -636,15 +641,6 @@ mod tests {
             Phase::Running,
             Phase::Deciding,
             Phase::Ended,
-        ];
-        const BLOCKS: [Focus; 7] = [
-            Focus::VolumeList,
-            Focus::Pages,
-            Focus::Settings,
-            Focus::Details,
-            Focus::Picker,
-            Focus::Input,
-            Focus::Overlay,
         ];
         let titles: Vec<&str> = Group::ALL
             .iter()
@@ -676,18 +672,32 @@ mod tests {
                     );
                 }
                 if !row.short.is_empty() {
-                    for focus in BLOCKS
-                        .into_iter()
-                        .filter(|focus| row.applies(phase, *focus))
-                    {
+                    for focus in Focus::every() {
                         let said = hints(phase, focus, &[Want::saying(row.deed, row.short)]);
-                        assert!(
-                            said.iter()
-                                .any(|hint| hint.what == row.short && !hint.keys.is_empty()),
-                            "{phase:?} 的 {focus:?} 上屏底摆不出「{} → {}」",
-                            row.spelt,
-                            row.short
-                        );
+                        if row.applies(phase, focus) {
+                            assert!(
+                                said.iter()
+                                    .any(|hint| hint.what == row.short && !hint.keys.is_empty()),
+                                "{phase:?} 的 {focus:?} 上屏底摆不出「{} → {}」",
+                                row.spelt,
+                                row.short
+                            );
+                        }
+                        // 反过来：这一句在这一处一行都派不出，屏底问它也摆不出来
+                        // （输入行按用途分：`Tab → 补全` 在起名那一行上问不出来）。
+                        let dealt_here = TABLE.iter().any(|other| {
+                            other.deed == row.deed
+                                && other.short == row.short
+                                && other.applies(phase, focus)
+                        });
+                        if !dealt_here {
+                            assert!(
+                                said.is_empty(),
+                                "{phase:?} 的 {focus:?} 上派不出的「{} → {}」摆上了屏底",
+                                row.spelt,
+                                row.short
+                            );
+                        }
                     }
                 }
             }
