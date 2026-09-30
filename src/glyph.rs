@@ -319,7 +319,7 @@ mod tests {
     /// [`SENTENCES`] 那几份成句的。
     ///
     /// **扫描面就是 `impl Display`，不含库里那几条成句的错误消息**
-    /// （`crate::dither_outside_the_gate_error` 的破折号、撞车那一句的 `←`、
+    /// （`crate::pipeline::dither_outside_the_gate_error` 的破折号、撞车那一句的 `←`、
     /// 清点那一句的 `……`）。那几句与 [`SENTENCES`] 同一个理由——整段文字折行，
     /// 错一格不牵连别人；扫描面要不要连它们一起罩，记在停车场 Q337。
     ///

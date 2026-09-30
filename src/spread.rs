@@ -342,7 +342,7 @@ impl std::fmt::Display for Cut {
 /// 一张源页切成的那几块。
 ///
 /// 没切开时 [`halves`](Self::halves) 是 `None`，而**不是**一个「整页」窗口：
-/// 一对一那条老路一个像素都不该多搬（见 `crate::Compute`）。
+/// 一对一那条老路一个像素都不该多搬（见 `crate::pipeline::Compute`）。
 ///
 /// 「不是候选」与「是候选但没有中缝」两种没切开分得开，靠的是
 /// [`candidate`](Self::candidate)——后者就是**连续跨页**，而冒烟按这两项数误报率。

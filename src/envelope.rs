@@ -70,7 +70,7 @@ pub struct Envelope {
     pub driver: usize,
     /// 参与整卷统一灰阶的其余页数。差异大的页不在内。
     ///
-    /// 进这一层之前还摘过两刀（都在 `crate::summarize_volume`）：尺寸未贴合屏幕的页
+    /// 进这一层之前还摘过两刀（都在 `crate::pipeline::summarize_volume`）：尺寸未贴合屏幕的页
     /// （ADR 0007 决定第 2 条）与残缺页（04 号票）。两者各有一条兜底——
     /// 一页不剩地落在那一侧时那一侧就当其余页。
     ///

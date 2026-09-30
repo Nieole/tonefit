@@ -3,9 +3,9 @@
 //! 彩色面板上的彩页例外：它走彩色分支、不量化，那一叠只有 `run` 会写出的那一张。
 //!
 //! 库的第四个 seam（[`crate::write_proof`]）落在这里，**它不另写一条管线**：
-//! 打开一张源页（[`crate::open_source_page`]）、量一张灰度页（[`crate::examine_gray_page`]）、
-//! 按一个候选编一张（[`crate::candidate_bytes`]）、编彩色分支上那一张（[`crate::color_bytes`]），
-//! 走的都是转换那一趟的同一批函数，只是不经过卷、缓存与汇总那一层
+//! 打开一张源页（[`open_source_page`]）、量一张灰度页（[`examine_gray_page`]）、
+//! 按一个候选编一张（[`candidate_bytes`]）、编彩色分支上那一张（[`color_bytes`]），
+//! 走的都是转换那一趟的同一批函数（都住在 `crate::pipeline`），只是不经过卷、缓存与汇总那一层
 //! （spec《Implementation Decisions》第二条）。
 //! 另写一条平行的路，两条路迟早各自漂移——而样张要回答的正是「写出去会是什么样」。
 //! 钉住这一句的是 `tests/proof.rs` 里拿 `run` 当神谕的那几条。
@@ -17,15 +17,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::color::ColorImage;
 use crate::decide::{self, CandidateScore, Verdict};
 use crate::geometry::Fit;
+use crate::pipeline::{
+    Candidates, Examined, GateGroups, Opened, Piece, Pieces, WhiteWhenOff, candidate_bytes,
+    color_bytes, examine_gray_page, open_source_page, output_name,
+};
 use crate::quantize::{BitDepth, Candidate};
 use crate::report::{PageBranch, PageOutcome, PageReport, Processed};
 use crate::{
-    Candidates, ColorImage, Examined, GateGroups, GeometryGate, GrayImage, Opened, PageColor,
-    Piece, Pieces, Request, Salvage, Scaling, WhiteAlignment, WhiteWhenOff, candidate_bytes,
-    color_bytes, decode, encode, examine_gray_page, is_archive, open_source_page, output_name,
-    resample,
+    GeometryGate, GrayImage, PageColor, Request, Salvage, Scaling, WhiteAlignment, decode, encode,
+    is_archive, resample,
 };
 
 /// 一张图出的样张：**一张输出页一叠**，按阅读顺序（spec《Implementation Decisions》第六条）。
@@ -154,7 +157,7 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         pieces,
     } = open_source_page(&bytes, request, &decode::Decoder::default())
         .with_context(|| format!("{} 解不开，是一张坏页：样张一张都没出", source.display()))?;
-    // 这一页在 `run` 那一侧的成员名从它推出（见 `crate::output_name`）。
+    // 这一页在 `run` 那一侧的成员名从它推出（见 `crate::pipeline::output_name`）。
     let name = source
         .file_name()
         .map(Path::new)

@@ -118,7 +118,7 @@ impl FitMode {
 
 /// **换成[以高为准](FitMode::Height)之后，这一页的[尺寸贴合检查](GeometryGate)成不成立。**
 ///
-/// 互锁 ③ 那条拒绝按页分岔靠的就是这一问（见 `crate::Candidates::for_gate`，
+/// 互锁 ③ 那条拒绝按页分岔靠的就是这一问（见 `crate::pipeline::Candidates::for_gate`，
 /// `p4-parking-lot/21`）：成立的页指得出 `--fit height` 那条出路，不成立的只有一种页——
 /// 以高为准算出的目标尺寸越过[兜底上界](MAX_TARGET_PIXELS)、被退回 fit-inside 的那种
 /// （07 号票）。对后一种劝人换缩放方式是假话，那一句因此改说剩下的两条路。
