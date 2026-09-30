@@ -238,9 +238,16 @@ pub(super) fn input(
         return Exit::Stay;
     }
     match (deed, input) {
-        // **滚轮一格挪三行**：几格从输入上取（按键表只说这一块认不认滚轮）。
+        // **滚轮**：几格从输入上取（按键表只说这一块认不认滚轮）。全部按键那一张掀着时滚它
+        // ——那一张有几行要窗口的尺寸，与上面 `scroll_cover` 同一条分工；其余交给状态机。
+        // 在哪一块上做哪一件见 `Session::wheel` 的《滚轮在哪一块上做哪一件》。
         (Deed::Wheel, Input::Wheel(notches)) => {
-            session.wheel(notches, now);
+            if !session
+                .views
+                .wheel_cover(notches, &cover::Sheet::of(phase, window))
+            {
+                session.wheel(notches, now);
+            }
             return Exit::Stay;
         }
         // **单击**落到上一帧交出的点得中的区域上；**双击等于 `⏎`**——当一个 `⏎` 再交一次，
@@ -590,7 +597,8 @@ fn draw_a_chart(session: &mut Session, here: &Path, now: Instant) {
 /// 终端那一侧的事件 → 会话认得的[输入](Input)。**一个纯函数**（spec《键码与鼠标翻译》）：
 ///
 /// - 键**只认按下去那一下**（Windows 上按键抬起也报一条，不滤掉的话每个键都走两遍）：
-///   照 [`translate`]，Ctrl 加一个字母另认（`C-d`／`C-u`／`C-f`／`C-b`／`C-w`）；
+///   照 [`translate`]（左右方向键翻成 `h`／`l` 也在那里），Ctrl 加一个字母另认
+///   （`C-d`／`C-u`／`C-f`／`C-b`／`C-w`）；
 /// - 滚轮一格一个 [`Input::Wheel`]（往下为正）——**连着滚的几格合成一帧不在这里**，
 ///   这一层一次只翻一条事件；
 /// - 左键按下去那一下是 [`Input::Click`]，带着格坐标。双击不在这里认：那要会话的「此刻」
@@ -606,7 +614,7 @@ fn translate_input(event: &Event) -> Option<Input> {
             {
                 return Some(Input::Ctrl(letter));
             }
-            translate(pressed).map(Input::Key)
+            translate(pressed)
         }
         Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::ScrollDown => Some(Input::Wheel(1)),
@@ -676,16 +684,20 @@ fn chart_file(here: &Path, profile: &tonefit::Profile) -> PathBuf {
     ))
 }
 
-/// 终端那一侧的键码 → 会话认得的 [`Key`]。
+/// 终端那一侧的键码 → 会话认得的输入：一个 [`Key`]，或者翻成 `h`／`l` 的左右方向键。
 ///
 /// **这是本仓库唯一一处认得 crossterm 键码的地方**，也是状态机能脱离终端受测的原因：
-/// 翻译在这里，规矩在那边。认不出的键（功能键、翻页键）返回 `None`，
+/// 翻译在这里，规矩在那边。认不出的键（功能键、翻页键、`⇧⇥`）返回 `None`，
 /// 由调用方原地忽略——状态机不必为它们各留一个「没有意义」的取值。
-fn translate(pressed: &KeyEvent) -> Option<Key> {
+///
+/// **`←`／`→` 翻成 `h`／`l`**，交出去是 [`Input::Arrow`]、不是那个字母本身——规矩在那一处。
+fn translate(pressed: &KeyEvent) -> Option<Input> {
     if pressed.modifiers.contains(KeyModifiers::CONTROL) && pressed.code == KeyCode::Char('c') {
-        return Some(Key::Interrupt);
+        return Some(Input::Key(Key::Interrupt));
     }
-    Some(match pressed.code {
+    let key = match pressed.code {
+        KeyCode::Left => return Some(Input::Arrow('h')),
+        KeyCode::Right => return Some(Input::Arrow('l')),
         KeyCode::Up => Key::Up,
         KeyCode::Down => Key::Down,
         KeyCode::Enter => Key::Enter,
@@ -699,7 +711,8 @@ fn translate(pressed: &KeyEvent) -> Option<Key> {
         // 原地忽略，状态机不必为它们各留一个「没有意义」的取值。
         KeyCode::F(1) => Key::F1,
         _ => return None,
-    })
+    };
+    Some(Input::Key(key))
 }
 
 /// 借来的终端（raw mode、alternate screen、鼠标捕获）。
@@ -2547,6 +2560,41 @@ mod redesign {
         }
     }
 
+    /// **滚轮在全部按键那一张上滚它、补全框开着时挪候选**（`design-parity/06`）；打字时 `F1` 掀开的
+    /// 那一张盖在补全框上，滚的是那一张，底下的候选一格不动。走完逐格对设计稿回放同一串那一屏。
+    #[test]
+    fn the_wheel_scrolls_the_key_sheet_and_steps_through_the_completion_box() {
+        assert_sequence("help-narrow-wheel-down");
+        let scene = assert_sequence("add-narrow-F1-wheel-down");
+        let line = scene.session.views.input.as_ref().expect("输入行还在底下");
+        assert_eq!(line.at, 0, "盖着的那一张先收，底下的补全框不动");
+        assert_sequence("add-wheel-down");
+    }
+
+    /// **`←`／`→` 做 `h`／`l` 做的事**（`design-parity/06`；规矩在 `Input::Arrow`）：卷列表上收起再展开、
+    /// 每页结果上回卷列表，走完那一屏与按 `h`／`l` 的那几串逐格相同；输入行上缓冲一格不动。
+    ///
+    /// 清单上的 `ArrowLeft`／`ArrowRight` 交给会话的，就是本层把终端那两个键码翻出来的那一个——
+    /// 先钉住这一条，那几串走的才是真会话里那条路。
+    #[test]
+    fn the_left_and_right_arrows_do_what_h_and_l_do_and_type_nothing() {
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        for (name, code) in [("ArrowLeft", KeyCode::Left), ("ArrowRight", KeyCode::Right)] {
+            let translated =
+                super::translate_input(&Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+            assert_eq!(
+                Step::Key(name.to_owned()).inputs(),
+                Vec::from_iter(translated),
+                "清单上的 {name}"
+            );
+        }
+        assert_sequence("ended-ArrowLeft-ArrowRight");
+        assert_sequence("pages-ArrowLeft");
+        let scene = assert_sequence("fresh-o-ArrowLeft-ArrowRight");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.buffer, "~/", "方向键不进缓冲");
+    }
+
     /// 每页结果里单击一页：光标停到那一页上（`a` 先把列法换成全部页）。
     #[test]
     fn a_click_in_the_pages_pane_puts_the_cursor_on_that_page() {
@@ -2715,23 +2763,26 @@ mod tests {
     #[test]
     fn the_key_codes_the_session_answers_to() {
         let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let key = |key| Some(Input::Key(key));
 
-        assert_eq!(translate(&press(KeyCode::Up)), Some(Key::Up));
-        assert_eq!(translate(&press(KeyCode::Enter)), Some(Key::Enter));
-        assert_eq!(translate(&press(KeyCode::Tab)), Some(Key::Tab));
-        assert_eq!(translate(&press(KeyCode::Esc)), Some(Key::Esc));
-        assert_eq!(translate(&press(KeyCode::Char(' '))), Some(Key::Space));
-        assert_eq!(translate(&press(KeyCode::Char('q'))), Some(Key::Char('q')));
+        assert_eq!(translate(&press(KeyCode::Up)), key(Key::Up));
+        assert_eq!(translate(&press(KeyCode::Enter)), key(Key::Enter));
+        assert_eq!(translate(&press(KeyCode::Tab)), key(Key::Tab));
+        assert_eq!(translate(&press(KeyCode::Esc)), key(Key::Esc));
+        assert_eq!(translate(&press(KeyCode::Char(' '))), key(Key::Space));
+        assert_eq!(translate(&press(KeyCode::Char('q'))), key(Key::Char('q')));
         // Ctrl-C 在**每一个**状态下都是退出，因此先于普通字符认出来。
         assert_eq!(
             translate(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(Key::Interrupt)
+            key(Key::Interrupt)
         );
-        // 认不出的键原地放过，不必在状态机那边各占一个取值。
+        // 左右方向键翻成 `h`／`l`（[`Input::Arrow`]）。
+        assert_eq!(translate(&press(KeyCode::Left)), Some(Input::Arrow('h')));
+        assert_eq!(translate(&press(KeyCode::Right)), Some(Input::Arrow('l')));
+        // 认不出的键原地放过，不必在状态机那边各占一个取值。`⇧⇥` 照旧不翻（票面定的，停车场 Q967）：
+        // 按键表上没有它（设计稿的 `keyName` 不看 Shift，那边它就是 `Tab`）。
         assert_eq!(translate(&press(KeyCode::F(5))), None);
         assert_eq!(translate(&press(KeyCode::PageDown)), None);
-        // 左右方向键在按键表上没有主（左右是 `h`／`l`），同样原地放过。
-        assert_eq!(translate(&press(KeyCode::Left)), None);
         assert_eq!(translate(&press(KeyCode::BackTab)), None);
     }
 }

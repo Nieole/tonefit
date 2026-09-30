@@ -783,6 +783,47 @@ mod tests {
             assert_eq!(session.views.pending(now), None, "打字时没有连击键");
         }
         assert_eq!(session.deed_of(Input::Ctrl('d'), Phase::Fresh, now), None);
+        // **左右方向键不是字**（`Input::Arrow`）：这一下什么都不做，按下那个字母照旧是字。
+        for arrow in [Input::Arrow('h'), Input::Arrow('l')] {
+            assert_eq!(session.deed_of(arrow, Phase::Fresh, now), None, "{arrow:?}");
+        }
+        assert_eq!(
+            session.deed_of(key('h'), Phase::Fresh, now),
+            Some(Deed::Typed('h'))
+        );
+    }
+
+    /// **补全框开着时滚轮挪的是候选**（`design-parity/06`）：一格三个、两头到底为止，缓冲跟着换；
+    /// 底下那张列表的光标一格不动。候选摆八个，一格三个与到底为止才分得开。
+    #[test]
+    fn the_wheel_steps_through_the_completion_box() {
+        let (_space, mut session) = at_home();
+        let now = Instant::now();
+        session.open_adding();
+        let volumes: Vec<Completion> = (1..=8)
+            .map(|n| Completion::from_shown(&format!("第0{n}卷/")))
+            .collect();
+        let line = session.views.input.as_mut().expect("输入行开着");
+        assert!(line.offer("~/Comics/", volumes));
+        let at = |session: &Session| session.views.input.as_ref().map(|line| line.at);
+        let under = session.views.task.cursor.clone();
+        session.wheel(1, now);
+        assert_eq!(at(&session), Some(3));
+        assert_eq!(typed(&session), "~/Comics/第04卷/", "缓冲跟着换");
+        session.wheel(1, now);
+        assert_eq!(at(&session), Some(6));
+        session.wheel(1, now);
+        assert_eq!(at(&session), Some(7), "到底为止");
+        session.wheel(-2, now);
+        assert_eq!(at(&session), Some(1), "连滚两格挪六个");
+        session.wheel(-1, now);
+        assert_eq!(at(&session), Some(0), "到头为止");
+        assert_eq!(session.views.task.cursor, under, "底下那张列表不动");
+        // 补全框没开时这一格落到底下那一块上（`Session::wheel` 的《滚轮在哪一块上做哪一件》；停车场 Q1107）。
+        session.perform(Deed::Typed('x'), now);
+        session.wheel(-1, now);
+        assert_eq!(session.views.task.cursor, Cursor::Output);
+        assert_eq!(typed(&session), "~/Comics/第01卷/x", "缓冲一格不动");
     }
 
     /// **不是路径的那几种输入行上 `Tab` 派不出**（`design-parity/02`）：改一项设置的值、

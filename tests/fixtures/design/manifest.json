@@ -722,6 +722,30 @@
       "data": "sequences/ended-h-l.scene.json"
     },
     {
+      "name": "ended-ArrowLeft-ArrowRight",
+      "scene": "ended",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "ArrowLeft"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ],
+      "says": "❯   ▾ ✗ 集英社/海贼王",
+      "text": "sequences/ended-ArrowLeft-ArrowRight.text.txt",
+      "style": "sequences/ended-ArrowLeft-ArrowRight.style.txt",
+      "data": "sequences/ended-ArrowLeft-ArrowRight.scene.json"
+    },
+    {
       "name": "ended-h-Enter",
       "scene": "ended",
       "size": [
@@ -915,6 +939,27 @@
       "text": "sequences/pages-h.text.txt",
       "style": "sequences/pages-h.style.txt",
       "data": "sequences/pages-h.scene.json"
+    },
+    {
+      "name": "pages-ArrowLeft",
+      "scene": "pages",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "ArrowLeft"
+        }
+      ],
+      "says": "第07卷",
+      "text": "sequences/pages-ArrowLeft.text.txt",
+      "style": "sequences/pages-ArrowLeft.style.txt",
+      "data": "sequences/pages-ArrowLeft.scene.json"
     },
     {
       "name": "pages-Escape",
@@ -2177,6 +2222,27 @@
       "data": "sequences/help-narrow-j.scene.json"
     },
     {
+      "name": "help-narrow-wheel-down",
+      "scene": "help",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "wheel": 1
+        }
+      ],
+      "says": "4–",
+      "text": "sequences/help-narrow-wheel-down.text.txt",
+      "style": "sequences/help-narrow-wheel-down.style.txt",
+      "data": "sequences/help-narrow-wheel-down.scene.json"
+    },
+    {
       "name": "add-F1",
       "scene": "add",
       "size": [
@@ -2333,6 +2399,30 @@
       "data": "sequences/add-narrow-F1-j-k-Escape.scene.json"
     },
     {
+      "name": "add-narrow-F1-wheel-down",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "F1"
+        },
+        {
+          "wheel": 1
+        }
+      ],
+      "says": "4–",
+      "text": "sequences/add-narrow-F1-wheel-down.text.txt",
+      "style": "sequences/add-narrow-F1-wheel-down.style.txt",
+      "data": "sequences/add-narrow-F1-wheel-down.scene.json"
+    },
+    {
       "name": "fresh-o",
       "scene": "fresh",
       "size": [
@@ -2433,6 +2523,67 @@
       "text": "sequences/fresh-o-Tab-Tab-C-w.text.txt",
       "style": "sequences/fresh-o-Tab-Tab-C-w.style.txt",
       "data": "sequences/fresh-o-Tab-Tab-C-w.scene.json"
+    },
+    {
+      "name": "add-wheel-down",
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "wheel": 1
+        }
+      ],
+      "says": {
+        "has": [
+          "4 of 4",
+          "添加路径  ~/Comics/火之鸟/"
+        ]
+      },
+      "text": "sequences/add-wheel-down.text.txt",
+      "style": "sequences/add-wheel-down.style.txt",
+      "data": "sequences/add-wheel-down.scene.json"
+    },
+    {
+      "name": "fresh-o-ArrowLeft-ArrowRight",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "key": "ArrowLeft"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ],
+      "says": {
+        "has": [
+          "添加路径  ~/▏"
+        ],
+        "lacks": [
+          "~/h",
+          "~/l"
+        ]
+      },
+      "text": "sequences/fresh-o-ArrowLeft-ArrowRight.text.txt",
+      "style": "sequences/fresh-o-ArrowLeft-ArrowRight.style.txt",
+      "data": "sequences/fresh-o-ArrowLeft-ArrowRight.scene.json"
     },
     {
       "name": "fresh-o-missing",

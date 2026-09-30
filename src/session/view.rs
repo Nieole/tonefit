@@ -659,6 +659,12 @@ impl Views {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
     Key(Key),
+    /// **左右方向键**，终端层已经把它翻成了 vim 的那个字母（`←` 是 `h`、`→` 是 `l`；
+    /// 设计稿 `keyName`，停车场 Q967）。按键表上它们没有自己的行、屏底与全部按键不多一种写法：
+    /// 表上按那个字母派。与按下那个字母**只差一处**——输入行上它不是字，原地放过
+    /// （设计稿 `onKey` 打字那一支认的是原来那个键：`raw.startsWith('Arrow')`）。
+    /// `↑`／`↓` 不走这一支：它们在表上有自己的行（输入行上挪补全框里的候选，那儿 `j`／`k` 是字）。
+    Arrow(char),
     /// Ctrl 加一个字母（`C-c` 不在这里，它是 [`Key::Interrupt`]）。
     Ctrl(char),
     /// 滚轮：往下几格（负数往上）。
@@ -675,6 +681,7 @@ impl Input {
     fn chord(self) -> Chord {
         match self {
             Self::Key(key) => Chord::Key(key),
+            Self::Arrow(letter) => Chord::Key(Key::Char(letter)),
             Self::Ctrl(letter) => Chord::Ctrl(letter),
             Self::Wheel(_) => Chord::Wheel,
             Self::Click { .. } => Chord::Click,
@@ -717,6 +724,12 @@ pub fn turn(pending: impl IntoIterator<Item = Input>) -> Vec<Step> {
 
 /// **滚轮一格挪几行**（spec《鼠标》；设计稿 `onWheel`）。
 const WHEEL_ROWS: isize = 3;
+
+/// 滚轮滚了几格（往下为正）挪几行：一格[三行](WHEEL_ROWS)。卷列表、补全框与全部按键那一张
+/// 挪的都是这个数（[`Session::wheel`] 与 `Views::wheel_cover`）。
+pub fn wheel_rows(notches: i16) -> isize {
+    WHEEL_ROWS * isize::from(notches)
+}
 
 /// **双击的阈值**：同一处的第二下离第一下不超过这么久，算双击（等于 `⏎`）。
 /// 读的是会话的「此刻」（`CONTEXT.md` 的《会话》：此刻），不问系统时钟。
@@ -985,10 +998,11 @@ impl Session {
             return Some(deed);
         }
         // 打字：输入行上表派不出的每一个字符都是一个字（`?`、`q`、`j` 也是）。
+        // 方向键翻成的那个字母不是字（[`Input::Arrow`]），因此问的是输入本身、不是翻出来的键。
         if matches!(focus, Focus::Input(_)) {
-            return match chord {
-                Chord::Key(Key::Char(glyph)) => Some(Deed::Typed(glyph)),
-                Chord::Key(Key::Space) => Some(Deed::Typed(' ')),
+            return match input {
+                Input::Key(Key::Char(glyph)) => Some(Deed::Typed(glyph)),
+                Input::Key(Key::Space) => Some(Deed::Typed(' ')),
                 _ => None,
             };
         }
@@ -1157,11 +1171,28 @@ impl Session {
         true
     }
 
-    /// **滚轮**：光标挪[三行](WHEEL_ROWS)一格（往下为正），挪法与 `j`／`k` 同一处
+    /// **滚轮**：光标挪[三行](wheel_rows)一格（往下为正），挪法与 `j`／`k` 同一处
     /// （[`Self::place_cursor`]）——卷列表上因此同样暂停自动滚动、屏底说那一句。
     /// **滚轮不直接动视口**（`CONTEXT.md` 的《视口》）：视口照旧跟着光标算。
+    ///
+    /// # 滚轮在哪一块上做哪一件
+    ///
+    /// 按键表在每一块上都派滚轮（停车场 Q979），做哪一件照设计稿 `moveBy` 的次序分，
+    /// 这是这条规矩在代码里的唯一出处：
+    ///
+    /// 1. **全部按键那一张掀着时滚它**——那一支在终端层（`Views::wheel_cover`：那一张有几行要窗口的尺寸），
+    ///    滚掉了就不再交到这里；
+    /// 2. **补全框开着时挪候选**，一格同样三个（[`InputLine::step`]，与 `↓`／`↑` 同一处）；
+    /// 3. 其余一律落到底下那一块的光标上：卷列表、每页结果、配置视图那几栏——
+    ///    说明卡掀着（停车场 Q1109）与输入行开着而补全框没开（停车场 Q1107）也落到这里。
     pub fn wheel(&mut self, notches: i16, now: Instant) {
-        let by = WHEEL_ROWS * isize::from(notches);
+        let by = wheel_rows(notches);
+        if let Some(line) = &mut self.views.input
+            && !line.candidates.is_empty()
+        {
+            line.step(by);
+            return;
+        }
         self.place_cursor(now, |here, last| here.saturating_add_signed(by).min(last));
     }
 
