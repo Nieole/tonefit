@@ -1,6 +1,6 @@
 //! tonefit：把漫画页适配到电子墨水阅读设备。
 //!
-//! 对外是三个 seam，其余全部是内部实现。
+//! 对外是四个 seam，其余全部是内部实现。
 //!
 //! [`run`] 是主 seam：所有模式走同一个入口，CLI 是它之上的薄层，只负责把命令行参数拼成
 //! [`Request`]、把 [`Report`] 渲染成文字。
@@ -13,7 +13,13 @@
 //! 不判定，只按一个 [`Profile`] 画出一张图并**无损写到点名的那个文件上**。
 //! 量具与被处理的页走的不是同一条路。
 //!
-//! 三个 seam 之外另有两样对外的东西，而它们不是缝，是**两条规矩**。
+//! [`write_proof`] 是第四个：样张。它同样不并进主入口，**理由却与第三个恰好相反**——
+//! 它走的正是同一条路：一张图走满管线，每一个候选各编一张，判定那一档的那一张与 [`run`]
+//! 不写记录时写出的逐字节相同。不并进去，是因为它**不是一次处理**：认的是一张图而不是卷，
+//! 不判定别人、不写《记录》、不进幂等；而 [`Mode`] 的两个取值一个写出去、一个一个输出都不落盘，
+//! 样张两样都不是——加第三个取值就是改写《模式》与《预览》两条词条的含义。
+//!
+//! 四个 seam 之外另有两样对外的东西，而它们不是缝，是**两条规矩**。
 //! 两条都让库担了一点界面层的事，而**理由各是各的**——不要并成一条说，
 //! 各自的理由写在各自那个模块上：
 //!
@@ -46,6 +52,7 @@ mod metadata;
 mod metric;
 mod profile;
 mod progress;
+mod proof;
 mod quantize;
 mod read;
 mod report;
@@ -84,6 +91,7 @@ pub use metric::{
 };
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
+pub use proof::{Proof, ProofPage, Sheet};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
     NonVolumeFile, NonVolumeReason, PageBranch, PageOutcome, PageReport, Processed, Report,
@@ -123,6 +131,35 @@ use spread::Split;
 /// 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`）。
 pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
     calibrate::write_chart(profile, out)
+}
+
+/// 出一张图的**样张**：走满管线，把这块面板上这一页派得出的**每一个**候选各编一张，
+/// 连同《参照》一张写进 `out`，去处不在就建出来（`CONTEXT.md` 的《样张》）。
+///
+/// 它是第四个 seam，为什么不并进 [`run`]、为什么又必须走同一批函数，见本模块文档。
+/// 钉住后一句的是神谕那一条用例：**同一份 `request` 交给 [`run`]**（不写记录），
+/// 写出去的那一张与这里判定那一档的那一张逐字节相同（`tests/proof.rs`）。
+///
+/// # `request` 读哪几格
+///
+/// 读的是**处理选项**那几格：型号、缩放方式、裁白边、拆分、缩放算法、提白上限。
+/// 卷级那几格——点名的卷、输出根、观察者、内存上限、读盘方式、写不写记录、做到哪一步——
+/// **一格都不读**，一张图上它们无从谈起：样张恒不写《记录》，纸白恒读一遍
+/// （上限取 0 时也读，见库内的 `WhiteWhenOff`）。整卷统一灰阶那一格也不读：那条路上的档要看完整卷
+/// 才定得下，一张图给的是它自己那一档。
+///
+/// **两道覆盖项（`bit_depth`、`dither`）眼下照转换那一趟裁候选集**，而那不是样张该有的样子：
+/// 它们裁掉的是「这一趟不要」，不是「这一页不可能」，样张该照出整套、只把判定顶死
+/// （样张 spec《Implementation Decisions》第三条）。那一条归 `proof-sheet/03`；
+/// 在它落地之前，覆盖项交进来样张就少几张。
+///
+/// 交回这张图每一张输出页的那一叠（[`Proof`]）：每一张落在哪儿、多大，连同这一页的判定、
+/// 几何事实与纸色提白。**先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
+/// 那时去处里一个文件都没有。写不出去回 `Err`，调用方接住它照自己的方式说。
+///
+/// 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`）。
+pub fn write_proof(source: &Path, request: &Request, out: &Path) -> Result<Proof> {
+    proof::write(source, request, out)
 }
 
 /// 在点名的若干路径底下**发现**卷，逐卷处理，产出设备优化副本。源库只读。
@@ -1332,14 +1369,7 @@ impl OutputPage {
                         Branch::Color { .. } => PageBranch::Color,
                     },
                 };
-                let outcome = match salvage {
-                    Some(salvage) => PageOutcome::Salvaged {
-                        page: processed,
-                        salvage: *salvage,
-                    },
-                    None => PageOutcome::Whole(processed),
-                };
-                (*size, outcome)
+                (*size, PageOutcome::of(processed, *salvage))
             }
             Outcome::Failed { reason } => (
                 uniform,
@@ -1702,11 +1732,11 @@ impl Compute<'_> {
         Ok(pages)
     }
 
-    /// 解一张源页，**分流**，再按裁白边 → 判跨页 → 拆分 → 每半再裁 → 适配走下去。
+    /// 打开一张源页（[`open_source_page`]），切出来的每一块各走各的分支。
     ///
-    /// 分流排在切开**之前**，也只问一次（ADR 0005 决定第 1 条：读 → 解码 → 彩页识别 →
-    /// 拆分/裁白边）：彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
-    /// 走哪条分支由**面板与页**共同决定——只有彩色面板上的彩页走彩色分支。
+    /// **走到切好裁好的那几块那一截不在这里**，它在 [`open_source_page`]——样张那条路与转换这一条
+    /// 共用它。留在这里的是**只有转换这一趟才有**的那两件：解不开的一张占一格白页
+    /// （它要这一卷的指纹才造得出来路），以及每一块的去处与来路（[`Placement`]，同样问指纹）。
     ///
     /// `index` 是这一张在卷里的源页序号：盖记录时页级那一份源哈希按它从指纹里取
     /// （two-pass-rework/15，了结停车场 Q686——幂等那一道趁字节在手上已经给每个源页算过一份，
@@ -1718,12 +1748,15 @@ impl Compute<'_> {
         relative: &Path,
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
-        let read = bytes.and_then(|bytes| {
-            cost::stage(cost::Stage::Decode, || self.counters.decoder.decode(&bytes))
-                .with_context(|| format!("解 {} 这一页", source.display()))
+        let opened = bytes.and_then(|bytes| {
+            open_source_page(source, &bytes, self.request, &self.counters.decoder)
         });
-        let (decoded, salvage) = match read {
-            Ok(decoded) => (decoded.image, decoded.salvage),
+        let Opened {
+            color,
+            salvage,
+            pieces,
+        } = match opened {
+            Ok(opened) => opened,
             // 一张坏图不毁掉整卷（spec 的 story 24）：记下原因就走，
             // 写出环节拿卷内统一尺寸给它留一张白页，整卷进隔离目录。
             //
@@ -1744,130 +1777,24 @@ impl Compute<'_> {
                 )]);
             }
         };
-        let color = cost::stage(cost::Stage::Identify, || color::identify(&decoded));
-        let panel = self.request.profile.panel();
-        if panel.color && color.is_color() {
-            let image = cost::stage(cost::Stage::ToColor, || color::to_color(&decoded));
-            self.color_pages(index, source, relative, image, color, salvage)
-        } else {
-            let image = cost::stage(cost::Stage::ToGray, || gray::to_gray(&decoded));
-            self.gray_pages(index, source, relative, image, color, salvage)
+        let count = pieces.len();
+        let placement = |ordinal| Placement::new(relative, ordinal, count, self.fingerprint, index);
+        match pieces {
+            Pieces::Gray(pieces) => pieces
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, (image, piece))| {
+                    self.gray_page(source, placement(ordinal), image, piece, color, salvage)
+                })
+                .collect(),
+            Pieces::Color(pieces) => pieces
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, (image, piece))| {
+                    self.color_page(source, placement(ordinal), &image, piece, color, salvage)
+                })
+                .collect(),
         }
-    }
-
-    /// 灰度路径上一张源页产出的那几张输出页。
-    ///
-    /// 次序是**裁白边 → 判跨页 → 拆分 → 每半再裁**（`crate::spread` 的模块文档）：
-    /// 先裁再判，因为白边过宽的单页在裁之前宽高比会像跨页；每半再裁，因为中缝那一侧的
-    /// 白边是切开之后才露出来的。三段窗口叠成源页上的一块，报告只印那一个
-    /// （见 [`Crop::then`]）。
-    ///
-    /// **没切开的那一支一个像素都不多搬**：整页那一张原样往下走，既不复制一遍，
-    /// 也不白裁第二遍——一对一那条老路因此与本票落地之前逐字节相同。
-    fn gray_pages(
-        &self,
-        index: usize,
-        source: &Path,
-        relative: &Path,
-        image: GrayImage,
-        color: PageColor,
-        salvage: Option<Salvage>,
-    ) -> Result<Vec<OutputPage>> {
-        let request = self.request;
-        let panel = request.profile.panel().resolution;
-        let (crop, image) = cost::stage(cost::Stage::Crop, || {
-            let crop = Crop::of_gray(&image, request.crop, salvage);
-            let image = crop.apply_gray(image);
-            (crop, image)
-        });
-        let split = cost::stage(cost::Stage::Split, || {
-            Split::of_gray(&image, panel, request.split, salvage)
-        });
-        let pieces: Vec<(GrayImage, Piece)> = match split.halves() {
-            None => vec![(image, Piece::whole(crop, split))],
-            Some(halves) => halves
-                .iter()
-                .map(|half| {
-                    let piece = cost::stage(cost::Stage::Split, || half.window().take_gray(&image));
-                    cost::stage(cost::Stage::Crop, || {
-                        let inner = Crop::of_gray(&piece, request.crop, salvage);
-                        (inner.apply_gray(piece), Piece::half(crop, *half, inner))
-                    })
-                })
-                .collect(),
-        };
-        let count = pieces.len();
-        pieces
-            .into_iter()
-            .enumerate()
-            .map(|(ordinal, (image, piece))| {
-                self.gray_page(
-                    source,
-                    Placement::new(relative, ordinal, count, self.fingerprint, index),
-                    image,
-                    piece,
-                    color,
-                    salvage,
-                )
-            })
-            .collect()
-    }
-
-    /// 彩色分支上一张源页产出的那几张输出页。次序与灰度那一侧逐字相同，
-    /// 见 [`gray_pages`](Self::gray_pages)。
-    ///
-    /// 两条路各写一遍而不是收成一个泛型：收起来要给「一张页的像素」立一个 trait，
-    /// 而两条路真正共用的只有那五行次序——次序本身的出处在 `crate::spread` 的模块文档里，
-    /// 那是文字，不是代码。多一层抽象换回来的是同一句话说三遍。
-    /// 裁白边那一侧早已是这个形状（`Crop::of_gray` 与 `Crop::of_color` 两支）。
-    fn color_pages(
-        &self,
-        index: usize,
-        source: &Path,
-        relative: &Path,
-        image: ColorImage,
-        color: PageColor,
-        salvage: Option<Salvage>,
-    ) -> Result<Vec<OutputPage>> {
-        let request = self.request;
-        let panel = request.profile.panel().resolution;
-        let (crop, image) = cost::stage(cost::Stage::Crop, || {
-            let crop = Crop::of_color(&image, request.crop, salvage);
-            let image = crop.apply_color(image);
-            (crop, image)
-        });
-        let split = cost::stage(cost::Stage::Split, || {
-            Split::of_color(&image, panel, request.split, salvage)
-        });
-        let pieces: Vec<(ColorImage, Piece)> = match split.halves() {
-            None => vec![(image, Piece::whole(crop, split))],
-            Some(halves) => halves
-                .iter()
-                .map(|half| {
-                    let piece =
-                        cost::stage(cost::Stage::Split, || half.window().take_color(&image));
-                    cost::stage(cost::Stage::Crop, || {
-                        let inner = Crop::of_color(&piece, request.crop, salvage);
-                        (inner.apply_color(piece), Piece::half(crop, *half, inner))
-                    })
-                })
-                .collect(),
-        };
-        let count = pieces.len();
-        pieces
-            .into_iter()
-            .enumerate()
-            .map(|(ordinal, (image, piece))| {
-                self.color_page(
-                    source,
-                    Placement::new(relative, ordinal, count, self.fingerprint, index),
-                    &image,
-                    piece,
-                    color,
-                    salvage,
-                )
-            })
-            .collect()
     }
 
     /// 彩色分支上的一张：几何 → 缩放 → 编码，不进缓存、不求画质分（ADR 0005 决定第 4 条）。
@@ -1875,7 +1802,7 @@ impl Compute<'_> {
     /// **预览只走几何**：编码是缩放结果唯一的消费者（见 `resample::Resampler::resize_color`），
     /// 编出来的字节没人要时，缩放跟着不做（05 号票）。
     ///
-    /// 进来的 `image` 已经裁过、可能切过（见 [`color_pages`](Self::color_pages)），
+    /// 进来的 `image` 已经裁过、可能切过（见 [`color_pieces`]），
     /// `crop` 是那几段窗口叠起来的**源页上的一块**，报告印的就是它。
     fn color_page(
         &self,
@@ -1969,6 +1896,7 @@ impl Compute<'_> {
             request,
             self.candidates,
             &self.counters.resampler,
+            WhiteWhenOff::of(request.mode),
         )?;
         let slot = match self.settles {
             // 这一页的档分析环节就定得下——默认那条路上画质分一出来就定了，顶死的那一趟碰卷之前
@@ -2025,6 +1953,188 @@ impl Compute<'_> {
     }
 }
 
+/// 一张源页**打开之后**手上的那几样：切好裁好的那几块，连同这一页认出来的彩不彩与救回了多少。
+///
+/// 装成一个结构体而不是一串返回值，与 [`Examined`] 同一条理由：三样由 [`open_source_page`]
+/// 同一段一起算出、一起交给下一步——转换那一趟拿去逐块装输出页，样张那一趟拿去逐块量。
+/// 后两样对切出来的每一块都一样：彩不彩、救回多少是**源页**的事实。
+struct Opened {
+    /// 这一页认出来是彩页还是灰度页。黑白面板上的彩页照样是彩页，只是转了灰。
+    color: PageColor,
+    /// 这一页救回了多少。整解出来的完好页是 `None`（04 号票，见 `decode`）。
+    salvage: Option<Salvage>,
+    /// 切好裁好的那几块，按阅读顺序。
+    pieces: Pieces,
+}
+
+/// 一张源页切出来的那几块（一到多块，见 [`split`]），按阅读顺序，连同每一块在源页上是哪一块。
+///
+/// 两种而不是一种：走哪条分支在切开**之前**就定了（见 [`open_source_page`]），
+/// 两条路上一块的像素也不是同一种东西。
+enum Pieces {
+    /// 灰度路径：转过灰的那几块。
+    Gray(Vec<(GrayImage, Piece)>),
+    /// 彩色分支：留着颜色的那几块。
+    Color(Vec<(ColorImage, Piece)>),
+}
+
+impl Pieces {
+    /// 切出了几块，也就是这一张源页产出几张输出页。
+    fn len(&self) -> usize {
+        match self {
+            Pieces::Gray(pieces) => pieces.len(),
+            Pieces::Color(pieces) => pieces.len(),
+        }
+    }
+}
+
+/// 一张源页的字节走到**切好裁好的那几块**：
+/// 解码 → 彩页识别 → 分流 → 裁白边 → 判跨页 → 拆分 → 每半再裁。
+///
+/// **两条路共用这一处。** 转换那一趟 [`Compute`] 在分析环节调它，样张那一趟在它自己那个
+/// seam 上调它——样张要回答「写出去会是什么样」，走的就必须是**同一批函数**
+/// （与 [`examine_gray_page`] 同一条理由，spec《Implementation Decisions》第二条）。
+///
+/// **[`Compute`] 那一摊，它一格都不收**：事件流、指纹、缓存一个字都不提。
+/// 解不开的一页在转换那一趟要占一格白页、报一句坏页——那一格的来路要这一卷的指纹，
+/// 那一句要这一趟的事件流，两样都是**一卷这一趟**的事；而样张认的是一张图，解不开就是解不开，
+/// 当场回 `Err`。两件事因此都留在调用方：这一段只把解不开原样交出去。
+///
+/// **解码器是唯一从那一摊旁边进来的东西**，与 [`examine_gray_page`] 收缩放器同一条理由：
+/// 《窄计数器》记在动作本身上，而账本是谁的由调用方说了算——转换那一趟交这一卷的那一个
+/// （解码次数要进报告），样张那一趟现开一个、一眼都不看。
+///
+/// 分流排在切开**之前**，也只问一次（ADR 0005 决定第 1 条：读 → 解码 → 彩页识别 →
+/// 拆分/裁白边）：彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
+/// 走哪条分支由**面板与页**共同决定——只有彩色面板上的彩页走彩色分支。
+///
+/// `source` 只进解不开那一句的措辞：要指得出是哪一页。
+fn open_source_page(
+    source: &Path,
+    bytes: &[u8],
+    request: &Request,
+    decoder: &decode::Decoder,
+) -> Result<Opened> {
+    let decoded = cost::stage(cost::Stage::Decode, || decoder.decode(bytes))
+        .with_context(|| format!("解 {} 这一页", source.display()))?;
+    let (decoded, salvage) = (decoded.image, decoded.salvage);
+    let color = cost::stage(cost::Stage::Identify, || color::identify(&decoded));
+    let panel = request.profile.panel();
+    let pieces = if panel.color && color.is_color() {
+        let image = cost::stage(cost::Stage::ToColor, || color::to_color(&decoded));
+        Pieces::Color(color_pieces(image, request, salvage))
+    } else {
+        let image = cost::stage(cost::Stage::ToGray, || gray::to_gray(&decoded));
+        Pieces::Gray(gray_pieces(image, request, salvage))
+    };
+    Ok(Opened {
+        color,
+        salvage,
+        pieces,
+    })
+}
+
+/// 灰度路径上一张源页切出来的那几块。
+///
+/// 次序是**裁白边 → 判跨页 → 拆分 → 每半再裁**（`crate::spread` 的模块文档）：
+/// 先裁再判，因为白边过宽的单页在裁之前宽高比会像跨页；每半再裁，因为中缝那一侧的
+/// 白边是切开之后才露出来的。三段窗口叠成源页上的一块，报告只印那一个
+/// （见 [`Crop::then`]）。
+///
+/// **没切开的那一支一个像素都不多搬**：整页那一张原样往下走，既不复制一遍，
+/// 也不白裁第二遍——一对一那条老路因此与本票落地之前逐字节相同。
+fn gray_pieces(
+    image: GrayImage,
+    request: &Request,
+    salvage: Option<Salvage>,
+) -> Vec<(GrayImage, Piece)> {
+    let panel = request.profile.panel().resolution;
+    let (crop, image) = cost::stage(cost::Stage::Crop, || {
+        let crop = Crop::of_gray(&image, request.crop, salvage);
+        let image = crop.apply_gray(image);
+        (crop, image)
+    });
+    let split = cost::stage(cost::Stage::Split, || {
+        Split::of_gray(&image, panel, request.split, salvage)
+    });
+    match split.halves() {
+        None => vec![(image, Piece::whole(crop, split))],
+        Some(halves) => halves
+            .iter()
+            .map(|half| {
+                let piece = cost::stage(cost::Stage::Split, || half.window().take_gray(&image));
+                cost::stage(cost::Stage::Crop, || {
+                    let inner = Crop::of_gray(&piece, request.crop, salvage);
+                    (inner.apply_gray(piece), Piece::half(crop, *half, inner))
+                })
+            })
+            .collect(),
+    }
+}
+
+/// 彩色分支上一张源页切出来的那几块。次序与灰度那一侧逐字相同，见 [`gray_pieces`]。
+///
+/// 两条路各写一遍而不是收成一个泛型：收起来要给「一张页的像素」立一个 trait，
+/// 而两条路真正共用的只有那五行次序——次序本身的出处在 `crate::spread` 的模块文档里，
+/// 那是文字，不是代码。多一层抽象换回来的是同一句话说三遍。
+/// 裁白边那一侧早已是这个形状（`Crop::of_gray` 与 `Crop::of_color` 两支）。
+fn color_pieces(
+    image: ColorImage,
+    request: &Request,
+    salvage: Option<Salvage>,
+) -> Vec<(ColorImage, Piece)> {
+    let panel = request.profile.panel().resolution;
+    let (crop, image) = cost::stage(cost::Stage::Crop, || {
+        let crop = Crop::of_color(&image, request.crop, salvage);
+        let image = crop.apply_color(image);
+        (crop, image)
+    });
+    let split = cost::stage(cost::Stage::Split, || {
+        Split::of_color(&image, panel, request.split, salvage)
+    });
+    match split.halves() {
+        None => vec![(image, Piece::whole(crop, split))],
+        Some(halves) => halves
+            .iter()
+            .map(|half| {
+                let piece = cost::stage(cost::Stage::Split, || half.window().take_color(&image));
+                cost::stage(cost::Stage::Crop, || {
+                    let inner = Crop::of_color(&piece, request.crop, salvage);
+                    (inner.apply_color(piece), Piece::half(crop, *half, inner))
+                })
+            })
+            .collect(),
+    }
+}
+
+/// 提白上限取 0（**没开**）时，这一页的纸白还量不量一遍（纸色提白批 02 号票第 3 条；
+/// 停车场 Q918 的处置）。
+///
+/// 上限取 0 时 [`align_white`] 连纸白都不量。**点名关掉、又想知道抬上去会钳掉多少**的人
+/// 因此一个数都拿不到——那句话就成了只在 `--white-align-limit 255` 这个他不会想到去传的
+/// 咒语下才成立。三条路各说得出自己要哪一种，这一格因此由调用方交进 [`examine_gray_page`]，
+/// 不由 [`Mode`] 推：样张既不是预览也不是照做，而 `Mode` 不加第三个取值
+/// （样张的 spec《Implementation Decisions》第一条）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhiteWhenOff {
+    /// **不量**：照做那一趟。那一趟的报告说的是「做过什么」，上限取 0 时它什么都没做，
+    /// 连量都不该量——短路挡的正是这份白花的工夫。
+    LeaveIt,
+    /// **另判一遍**，报「开了会怎样」：预览（它一个字节都不写，说的本来就是「会怎样」），
+    /// 与样张（story 12：纸白量出来是多少、提白钳掉了多宽，要在判读时说得出口）。
+    Foresee,
+}
+
+impl WhiteWhenOff {
+    /// 转换那一条路上的两种模式各要哪一种。样张不走这里，它恒交 [`WhiteWhenOff::Foresee`]。
+    fn of(mode: Mode) -> Self {
+        match mode {
+            Mode::Process => WhiteWhenOff::LeaveIt,
+            Mode::DryRun => WhiteWhenOff::Foresee,
+        }
+    }
+}
+
 /// 一张灰度页**量过之后**手上的那几样：参照、这一页每个候选的画质分，
 /// 连同这一路上顺带算出的几何事实与纸色提白的结果。
 ///
@@ -2071,12 +2181,16 @@ struct Examined {
 ///
 /// `source` 只进**那一句拒绝**的措辞：撞上门的页要指得出是哪一张
 /// （见 [`Candidates::for_gate`]），而每一张听见的不是同一句。
+///
+/// `when_off` 说的是提白上限取 0 时纸白还量不量一遍（见 [`WhiteWhenOff`]）。它由调用方交进来，
+/// **不由 `request.mode` 推**：样张既不是预览也不是照做，这一段因此一格 [`Mode`] 都不读。
 fn examine_gray_page(
     source: &Path,
     image: &GrayImage,
     request: &Request,
     candidates: &Candidates,
     resampler: &resample::Resampler,
+    when_off: WhiteWhenOff,
 ) -> Result<Examined> {
     let panel = request.profile.panel();
     let fit = request.fit.target(image.size(), panel.resolution);
@@ -2101,22 +2215,16 @@ fn examine_gray_page(
     // 上限取 0 时它连纸白都不量——量了也没有一页满足得了条件。
     // **默认值从 05 号票起是 4**（默认开着），走到这里的绝大多数页因此是真去量的。
     let (scaled, alignment) = white::align_white(scaled, request.white_align_limit);
-    // **预览把守卫另判一遍**（纸色提白批 02 号票第 3 条）。逐页那一层是给**点名关掉、
-    // 又想知道抬上去会钳掉多少**的用户看的——他上限就是 0，上面那道短路让他每一页
-    // 都读到「没开」，一个数都拿不到，票面那句话就成了只在 `--white-align-limit 255`
-    // 这个他不会想到去传的咒语下才成立。
+    // **没开时要不要另判一遍，由调用方说**（见 [`WhiteWhenOff`]）。
     //
     // `judge` 只判不改（三条守卫在它那一处），像素一个都不碰：这里判的正是
     // `align_white` 短路时原样交回来的那一张。判一遍的代价是每页一遍平坦掩码，
-    // 摆在同一页那六档画质分旁边不算什么，而 `--dry-run` 一个字节都不写。
-    //
-    // **照做那一趟不判**：那一趟的报告说的是「做过什么」，上限取 0 时它什么都没做，
-    // 连量都不该量——短路挡的正是这份白花的工夫。
+    // 摆在同一页那六档画质分旁边不算什么。
     //
     // **它不进剖面那几段**：剖面的段是照做那一趟的成本模型（见 `cost`），
-    // 而这一笔只在预览上花，记进任何一段都会让那一段在两种模式下不是同一个东西。
+    // 而这一笔只在预览与样张上花，记进任何一段都会让那一段在两种模式下不是同一个东西。
     let alignment = match alignment {
-        WhiteAlignment::Off if request.mode == Mode::DryRun => {
+        WhiteAlignment::Off if when_off == WhiteWhenOff::Foresee => {
             white::judge(&scaled, request.white_align_limit)
         }
         settled => settled,
@@ -4204,6 +4312,8 @@ mod tests {
             &request,
             &candidates,
             &resampler,
+            // 样张那一趟交的就是这一格（见 [`WhiteWhenOff`]）。
+            WhiteWhenOff::Foresee,
         )
         .expect("这一页走得完");
 

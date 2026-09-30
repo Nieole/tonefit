@@ -1,4 +1,5 @@
-//! CLI：把命令行参数拼成 `Request`，分派到库那两件事上，把进度画出来。此外不做别的事。
+//! CLI：把命令行参数拼成 `Request`，分派到库那三件事上（处理卷、灰阶测试图、样张），
+//! 把进度画出来。此外不做别的事。
 //!
 //! 出来的文字长什么样不在这里，在 [`render`]——命令行与会话共用同一套措辞，
 //! 那一套因此不该长在任何一个入口里面。
@@ -731,6 +732,26 @@ enum Command {
         #[arg(short, long, value_name = "文件")]
         out: PathBuf,
     },
+    /// 出样张：拿一张图走满管线，这块面板上这一页的每一个候选各编一张，连同参照一张，写进点名的目录。
+    ///
+    /// 判定那一档的那一张与转换那一趟（不写记录时）写出的逐字节相同：样张答的是
+    /// 「写出去会是什么样」。每一张的画质分与字节数、这一页的判定与理由、
+    /// 画质门槛连同它在哪块屏上实测，一并印出来。
+    ///
+    /// 样张不写自描述元数据，不碰源文件。处理选项眼下只走默认那一套。
+    Proof {
+        /// 一张图。
+        #[arg(value_name = "图")]
+        image: PathBuf,
+
+        /// 目标设备型号。与处理卷时同一张内置表，型号名不区分大小写与分隔符。
+        #[arg(short, long, value_name = "型号")]
+        profile: String,
+
+        /// 样张写进哪个目录。不在就建出来。
+        #[arg(short, long, value_name = "目录")]
+        out: PathBuf,
+    },
 }
 
 /// 把型号名与各覆盖项合成一个 profile。
@@ -878,6 +899,14 @@ fn execute() -> Result<u8> {
     {
         return calibrate(profile, *gray_levels, out);
     }
+    if let Some(Command::Proof {
+        image,
+        profile,
+        out,
+    }) = &cli.command
+    {
+        return proof(image, profile, out, terminal);
+    }
     // 退场的开关先拦：那一句「改用 `--envelope`」要在读预设之前说——预设读不懂时
     // 用户该先听见的是这一句，不是那一份文件的错。
     cli.refuse_retired_switches()?;
@@ -918,6 +947,52 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
     tonefit::write_calibration_chart(&profile, out)?;
     print!("{}", render::calibration_note(&profile, out));
     Ok(SUCCESS_EXIT)
+}
+
+/// 把命令行点名的那一张图、那台设备与去处交给库里出样张的入口（`proof-sheet/02`）。
+///
+/// 样张是量具（`CONTEXT.md` 的《样张》）：不判定别人、不写输出目录、不碰源。
+/// 与灰阶测试图那一路同形——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
+///
+/// 出样张整件事在 [`tonefit::write_proof`] 里。这一层剩下两件命令行自己的事：
+/// 拼出这一趟的 [`Request`]（[`proof_request`]），以及印出[那几行文案](render::proof_note)——
+/// 折到 `terminal` 那么宽，与报告同一条规矩（见 [`wrap`]）。
+fn proof(image: &Path, device: &str, out: &Path, terminal: u16) -> Result<u8> {
+    let request = proof_request(target_profile(device, None, None)?, image, out);
+    let proof = tonefit::write_proof(image, &request, out)?;
+    print!(
+        "{}",
+        wrap::folded_text(&render::proof_note(&proof, &request), terminal)
+    );
+    Ok(SUCCESS_EXIT)
+}
+
+/// 样张那一趟的 [`Request`]：型号是命令行点的那一台，**处理选项一项都没点**——
+/// 每一项落到默认值上，而默认值的去处只有 [`preset::TasteLayer`] 那一处
+/// （与会话拼 `Request` 同一条路，见 `session::state::Session::request`）。
+///
+/// 卷级那几格样张一格都不读（见 [`tonefit::write_proof`]），这里照实填：
+/// 点名的是那一张图、去处是样张的目录、不写记录（样张本来就不写）。
+fn proof_request(profile: Profile, image: &Path, out: &Path) -> Request {
+    let taste = preset::TasteLayer::default();
+    Request {
+        inputs: vec![image.to_path_buf()],
+        output_root: out.to_path_buf(),
+        profile,
+        fit: taste.fit(),
+        crop: taste.crop(),
+        split: taste.split_rule(),
+        filter: taste.filter(),
+        white_align_limit: taste.white_align_limit(),
+        bit_depth: taste.bit_depth,
+        dither: taste.dither,
+        envelope: taste.envelope(),
+        cache_budget: taste.cache_budget(),
+        mode: Mode::Process,
+        io_mode: taste.io_mode(),
+        progress: None,
+        metadata: false,
+    }
 }
 
 /// 命令行这一趟按停止时按到过的那一级（ADR 0013）。
@@ -1882,6 +1957,107 @@ io-mode = \"concurrent\"
             Cli::try_parse_from(["tonefit", "--out", "out", "--profile", "kobo-libra-2", "卷"])
                 .expect("参数应当可解析");
         assert!(plain.command.is_none());
+    }
+
+    /// `proof` 点名**一张图**、一台设备与一个去处（`proof-sheet/02`）。
+    ///
+    /// 解析出的面板与转换那条路是同一块：两边走的是同一个 [`target_profile`]。
+    #[test]
+    fn the_proof_subcommand_names_one_image_a_device_and_where_the_sheets_go() {
+        let cli = Cli::try_parse_from([
+            "tonefit",
+            "proof",
+            "卷/001.png",
+            "--profile",
+            "Kobo Libra 2",
+            "--out",
+            "样张",
+        ])
+        .expect("参数应当可解析");
+
+        let Some(Command::Proof {
+            image,
+            profile,
+            out,
+        }) = &cli.command
+        else {
+            panic!("没解析成 proof 子命令");
+        };
+        assert_eq!(image, &PathBuf::from("卷/001.png"));
+        assert_eq!(out, &PathBuf::from("样张"));
+        // 同一个型号名在转换那条路上解出来的那一块：比整份 `Profile`（面板四项、画质门槛连同来源），
+        // 不只比型号名。
+        let run = parse(&["--profile", "Kobo Libra 2"])
+            .request(&no_preset())
+            .expect("合得出 Request");
+        assert_eq!(
+            format!(
+                "{:?}",
+                target_profile(profile, None, None).expect("内置型号")
+            ),
+            format!("{:?}", run.profile),
+            "样张与转换那条路解出来的不是同一块面板"
+        );
+    }
+
+    /// 样张那一趟吃的处理选项，与**一个 flag 都不点的转换那一趟**逐项相同（`proof-sheet/02`）。
+    ///
+    /// 「样张等于产物」只在两边吃同一套选项时成立（spec《Implementation Decisions》第八条）。
+    /// 这张票只走默认那一套，因此比的是「都落到默认值上」——而默认值的去处只有一处
+    /// （`preset::TasteLayer`），两边各写一份就会在无人察觉时分家。
+    ///
+    /// 比的是 `Debug`，挑的是**样张读的那几格**（见 `tonefit::write_proof`）：
+    /// 卷级那几格两边本来就不同（点名的是一张图还是一个卷、去处是样张目录还是输出根）。
+    #[test]
+    fn the_proof_takes_the_processing_options_a_plain_run_takes() {
+        let processing = |request: &Request| {
+            format!(
+                "{:?}",
+                (
+                    &request.profile,
+                    request.fit,
+                    request.crop,
+                    request.split,
+                    request.filter,
+                    request.white_align_limit,
+                    request.bit_depth,
+                    request.dither,
+                )
+            )
+        };
+        let run = parse(&["--profile", "kobo-libra-2"])
+            .request(&no_preset())
+            .expect("合得出 Request");
+        let proof = proof_request(
+            target_profile("kobo-libra-2", None, None).expect("内置型号"),
+            Path::new("卷/001.png"),
+            Path::new("样张"),
+        );
+
+        assert_eq!(processing(&proof), processing(&run));
+        assert!(!proof.metadata, "样张不写记录");
+    }
+
+    /// `proof` 这一层只剩三件事：拼出这一趟的 `Request`、交给库出样张、写成了给出
+    /// [`SUCCESS_EXIT`]。出样张整件事在库里，断言因此只问**这条路真的走通了**：
+    /// 去处不在时建出来，里面一个候选一张、外加参照一张。那几张各是什么在 `tests/proof.rs` 上测。
+    #[test]
+    fn proof_writes_the_sheets_into_a_place_that_did_not_exist_and_says_it_succeeded() {
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let image = workspace.path().join("001.png");
+        image::DynamicImage::ImageLuma8(image::ImageBuffer::from_fn(600, 900, |x, y| {
+            image::Luma([((x + y) % 256) as u8])
+        }))
+        .save(&image)
+        .expect("写一张图");
+        let out = workspace.path().join("还不存在的目录").join("样张");
+
+        let code = proof(&image, "Kobo Libra 2", &out, 100).expect("出样张");
+
+        assert_eq!(code, SUCCESS_EXIT, "写成了就该是全部成功那个数");
+        let written = std::fs::read_dir(&out).expect("去处建出来了").count();
+        // 基准面板是 e-ink、这一页缩到面板高，门成立：六个候选，外加参照一张。
+        assert_eq!(written, 6 + 1);
     }
 
     /// 处理卷那一路的必填项一项都没松：`--out`、`--profile`、卷，缺一样都不许往下走。

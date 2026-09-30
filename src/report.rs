@@ -790,6 +790,17 @@ pub struct Processed {
 }
 
 impl PageOutcome {
+    /// 处理成了的一页，按**救回没救回**装成完好页或残缺页。
+    ///
+    /// 转换那一趟拼报告（`crate::OutputPage::to_report`）与样张（`crate::proof`）两处都拼这一格，
+    /// 「`salvage` 在就是残缺页」这一句因此只写在这里。
+    pub(crate) fn of(page: Processed, salvage: Option<Salvage>) -> Self {
+        match salvage {
+            Some(salvage) => PageOutcome::Salvaged { page, salvage },
+            None => PageOutcome::Whole(page),
+        }
+    }
+
     /// 处理成了的那一页留下的东西。坏页没有。
     ///
     /// 完好页与残缺页在这里合流：读的那一端只有在**问的正是那点差别**时才该分辨两者，

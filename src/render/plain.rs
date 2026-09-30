@@ -32,6 +32,7 @@
 //!   （`crate::session::run` 的 `Running::report`），走的也是 [`report`]。
 //!   最后那一趟没做成时它后面还跟着一段 [`undone`]——那一句为什么没做成，
 //!   与报告正文分得开（21 号票）。
+//! - **样张**：命令行出完样张印的那几行（[`super::proof_note`]），一行一行走 [`line`]。
 //!
 //! # 一行摆成什么样，只有这里说得出
 //!
@@ -292,6 +293,14 @@ pub(super) fn line(row: &Row) -> String {
         | RowKind::IsolationTail
         | RowKind::FailedVolumeTail
         | RowKind::UnreachableTail => cell(row, Field::Sentence).to_owned(),
+        // 样张里的一张（`proof-sheet/02`）：缩到与判定那一行同一级，它们说的是同一页。
+        // 几格之间的 `·` 与逐页几何那一行里的同一个摆法。
+        RowKind::ProofSheet => format!(
+            "    {} · {} · {}\n",
+            cell(row, Field::Sheet),
+            cell(row, Field::Bytes),
+            cell(row, Field::Output),
+        ),
     }
 }
 
