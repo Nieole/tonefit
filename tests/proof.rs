@@ -923,14 +923,14 @@ fn both_halves_of_a_spread_are_byte_for_byte_what_run_writes_without_metadata() 
     }
 }
 
-/// **两半的门分了家、只点一维覆盖项时，「顶死没有」照转换那一趟问——问这张图的其余页那一组**
+/// **两半的门分了家、只点灰阶档位时，「顶死没有」照转换那一趟问——不拿某一块剩下几个候选去问**
 /// （停车场 Q1014；`CONTEXT.md` 的《覆盖顶死》）。
 ///
 /// `--fit inside` 上 [`lopsided_spread`] 的左半贴不住面板（门不成立，候选里没有抖动那一维），
 /// 右半贴得住。只点 `--bit-depth` 一维：左半那一套只剩一个候选，右半那一套还剩抖与不抖两个。
-/// 转换那一趟把这张图摆成一卷：有一页门成立，其余页就是右半那一组，那一组还有得挑——
-/// 判定没被顶死，左半那一档是它自己那条曲线判出来的。一块一块问的话，左半那一块只剩一个候选，
+/// 转换那一趟判定没被顶死，左半那一档是它自己那条曲线判出来的。一块一块问的话，左半那一块只剩一个候选，
 /// 会被说成顶死：**字节相同，理由不同**。所以这一条比的是整个判定，不只是字节。
+/// 门处处不成立的那一种见 `a_single_override_on_a_page_the_geometry_gate_shuts_is_judged_as_run_judges_it`。
 ///
 /// 前提问的是转换那一趟：两半的门真的分了家，左半的理由真的不是覆盖。
 #[test]
@@ -976,6 +976,59 @@ fn a_single_override_on_a_spread_whose_halves_part_at_the_gate_is_judged_as_run_
             stack.page.cut()
         );
     }
+}
+
+/// **一张门不成立的图只点灰阶档位：候选只剩一个，判定照转换那一趟逐页判，不说被顶死**
+/// （one-source/02；`CONTEXT.md` 的《覆盖顶死》）。
+///
+/// 页比面板小、fit-inside 不放大（[`SMALL`]）：门不成立，候选里没有抖动那一维，`--bit-depth 2`
+/// 一点名就只剩 `2bit` 一个。默认那条路上顶死只认开卷之前答得出的那一种，这一角答不出——
+/// 门成立的页若在卷里，它们还剩抖与不抖两个——转换那一趟因此逐页判。样张问的是同一句：
+/// 按「这张图的其余页那一组只剩一个」去问的话，它会说被顶死，**字节相同，理由不同**。
+#[test]
+fn a_single_override_on_a_page_the_geometry_gate_shuts_is_judged_as_run_judges_it() {
+    let small = Staged::plain_of(SMALL);
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        bit_depth: Some(BitDepth::Two),
+        dither: None,
+        envelope: false,
+        ..small.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&small.source, &request, &small.sheets()).expect("出样张");
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert_eq!(
+        ran.gate(),
+        Some(tonefit::GeometryGate::Broken),
+        "夹具的前提：转换那一趟在这一页上门不成立"
+    );
+    assert_eq!(
+        ran.scores().len(),
+        1,
+        "夹具的前提：转换那一趟在这一页上只剩一个候选"
+    );
+    let page = only_page(&proof);
+    let verdict = page.page.verdict().expect("灰度页有判定");
+    assert_ne!(
+        verdict.reason,
+        Reason::Override,
+        "开卷之前答不出的那一角，样张说成了被顶死"
+    );
+    assert_eq!(
+        Some(verdict),
+        ran.verdict(),
+        "样张与转换那一趟定下的不是同一档、同一个理由"
+    );
+    assert!(
+        fs::read(&ran.output).expect("读转换那一趟写出的那一张")
+            == fs::read(&page.page.output).expect("读样张里判定那一档的那一张"),
+        "判定那一张与转换那一趟写出的不是同一串字节"
+    );
 }
 
 // ── 彩页与尺寸未贴合屏幕（`proof-sheet/05`）──────────────────────────────────

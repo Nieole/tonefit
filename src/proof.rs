@@ -21,7 +21,7 @@ use crate::color::ColorImage;
 use crate::decide::{self, CandidateScore, Verdict};
 use crate::geometry::Fit;
 use crate::pipeline::{
-    Candidates, Examined, GateGroups, Opened, Piece, Pieces, WhiteWhenOff, candidate_bytes,
+    Candidates, Examined, Opened, Piece, Pieces, Settles, WhiteWhenOff, candidate_bytes,
     color_bytes, examine_gray_page, open_source_page, output_name,
 };
 use crate::quantize::{BitDepth, Candidate};
@@ -244,8 +244,8 @@ const VOLUME_INSTEAD_OF_PAGE: &str = "点名里面要看的那一页（归档要
 /// 尺寸未贴合屏幕的那一块候选里没有抖动那一维（ADR 0007 决定第 2 条）：`shown` 按这一块的门给
 /// （[`Candidates::for_gate`]），与转换那一趟在同一页上用的是同一套。
 ///
-/// 每一块先量完，判定等整张图量完才下：「覆盖项顶死没有」问的是这张图的**其余页那一组**
-/// （见 [`verdicts`]），一块一块判答不出来（停车场 Q1014）。
+/// 每一块先量完，判定一起下（见 [`verdicts`]）：「覆盖项顶死没有」是开卷之前那一问，整张图问一次，
+/// 不拿某一块剩下几个候选去问——那样问会答错（停车场 Q1014；one-source/02）。
 fn draft_gray(
     source: &Path,
     request: &Request,
@@ -271,9 +271,10 @@ fn draft_gray(
         .collect::<Result<Vec<_>>>()?;
     let verdicts = verdicts(
         request,
+        judged,
         &measured
             .iter()
-            .map(|(examined, _, scores)| (examined.gate, scores.as_slice()))
+            .map(|(_, _, scores)| scores.as_slice())
             .collect::<Vec<_>>(),
     );
     measured
@@ -374,21 +375,22 @@ fn judged_scores(
 /// 这张图每一块的《判定》，按阅读顺序：与转换那一趟把这张图摆成一卷时**逐格相同**，
 /// 神谕那几条比的正是判定那一档写出去的那一张。
 ///
-/// 进来的是每一块的门，连同判定从中挑的那几格画质分（[`judged_scores`]）。默认那条路上灰阶档位
-/// 逐页各判各的（ADR 0018 决定第 2 条），每一块拿自己那几格判；**只有「覆盖项顶死没有」是整张图一起问的**——
-/// 问的是其余页那一组（[`GateGroups`]），与转换那一趟汇总一卷时同一问、同一处。
-/// 裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
+/// 进来的是每一块判定从中挑的那几格画质分（[`judged_scores`]）。默认那条路上灰阶档位
+/// 逐页各判各的（ADR 0018 决定第 2 条），每一块拿自己那几格判；**「覆盖项顶死没有」是开卷之前那一问**，
+/// 与转换那一趟分析环节、汇总问的是同一句（`Settles::if_processing`），顶死时理由是覆盖
+/// （哪一种算顶死，见 `CONTEXT.md` 的《覆盖顶死》）。
 ///
-/// 一块一块问会在门分了家的跨页上答错：只点一维覆盖项时，门不成立那一半只剩一个候选，
-/// 被说成顶死，而转换那一趟那一半的档是它自己那条曲线判出来的——字节相同，理由不同（停车场 Q1014）。
+/// 按块的候选集去问会答错：只点灰阶档位时，门不成立的那一块只剩一个候选，被说成顶死，
+/// 而转换那一趟那一页的档是它自己那条曲线判出来的——字节相同，理由不同（停车场 Q1014）。
 ///
-/// 整卷统一灰阶那条路不在这里：那一格样张不读（见 [`crate::write_proof`]）。
-fn verdicts(request: &Request, pieces: &[(GeometryGate, &[CandidateScore])]) -> Vec<Verdict> {
-    let pinned = GateGroups::of(pieces.iter().map(|&(gate, _)| gate).enumerate())
-        .pinned(request, |index| pieces[index].1);
+/// 整卷统一灰阶那条路不在这里：那一格样张不读（见 [`crate::write_proof`]）。那一问也不看它——
+/// 顶死的那一档只有顶死那一趟有，没顶死时开着落在等整卷、不开落在这一页自己，两处都是 `None`
+/// （见 `Settles::pinned`）。
+fn verdicts(request: &Request, judged: &Candidates, pieces: &[&[CandidateScore]]) -> Vec<Verdict> {
+    let pinned = Settles::if_processing(request, judged).pinned();
     pieces
         .iter()
-        .map(|&(_, scores)| decide::decide(scores, request.profile.threshold(), pinned))
+        .map(|scores| decide::decide(scores, request.profile.threshold(), pinned))
         .collect()
 }
 
