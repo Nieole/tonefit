@@ -173,6 +173,22 @@ const ON_GRID_SIGNPOSTED: [(&str, usize); 2] = [
     ("tests/pipeline.rs", 4),
 ];
 
+/// **型号认不出来时那一句拒绝**的字样（`proof-sheet/06`，spec 的 story 26）。
+///
+/// 三截各挑一截：抬头（带着那个占位符——**把这一句现拼出来**才写得出它，与
+/// [`TRUNCATION_MARKS`] 同一条道理）、分组那一截、兜底办法那一截。抄件少抄哪一截都还剩另外两截。
+///
+/// **「未知型号」那四个字当不了记号**：`preset.rs`、会话那几处、`CONTEXT.md` 的《下钻》说的都是
+/// 「与未知型号那条错误同一份」——那是**指着它**，不是又写了一份。
+const DEVICE_REFUSAL_MARKS: [&str; 3] = [
+    "未知型号「{",
+    "内置型号按面板分组",
+    "设备不在表里：挑一个面板相同的型号",
+];
+
+/// 那一句的家，相对仓库根。
+const DEVICE_REFUSAL_HOME: &str = "src/profile.rs";
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -424,6 +440,47 @@ fn the_on_grid_invariant_lives_in_one_place() {
         assert!(
             found >= least,
             "{file} 里指回《落格》的路标从 {least} 句掉到了 {found} 句"
+        );
+    }
+}
+
+/// **型号认不出来时那一句拒绝只有一处出处**，抄出第二份就当场变红（`proof-sheet/06`）。
+///
+/// 转换那一趟、灰阶测试图那一趟、样张那一趟、预设里点的型号，四处认不出型号时说的都是它——
+/// 样张 spec 的 story 26 要的正是「两条路上的说法不分家」。给样张另写一句，
+/// 改了其中一句的人不会知道另一句也该改。
+///
+/// **问两件事**：别处没有第二份、家里真住着那一句（只问头一件的话，把那一句整个删掉这一条也是绿的）。
+/// 前几条问的第三件——「指回来的路标还在不在」——在这里换成了一件运行时的事实：
+/// 三条路**真都走到了它**，而不是哪一条自己另说了一句（那一句换了措辞，这里的记号一个都不命中）。
+/// 那一件只有真进程答得出，在 `tests/exit_code.rs` 的
+/// `an_unknown_device_is_refused_on_a_proof_in_the_words_run_and_calibrate_use`：三条路印到 stderr 上的字节逐个比。
+#[test]
+fn the_unknown_device_refusal_lives_in_one_place() {
+    let home = root().join(DEVICE_REFUSAL_HOME);
+    let marks: Vec<String> = DEVICE_REFUSAL_MARKS
+        .iter()
+        .map(|mark| squashed(mark))
+        .collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(
+        carrying,
+        vec![home.clone()],
+        "型号认不出来时那一句拒绝长出了第二份"
+    );
+
+    let entry = squashed(&read(&home));
+    for mark in DEVICE_REFUSAL_MARKS {
+        assert!(
+            entry.contains(&squashed(mark)),
+            "{DEVICE_REFUSAL_HOME} 里少了「{mark}」那一截"
         );
     }
 }

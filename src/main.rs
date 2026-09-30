@@ -878,7 +878,9 @@ impl VolumeOnly {
 /// 把型号名与各覆盖项合成一个 profile。
 ///
 /// 处理卷与 `calibrate` 共用它：两边解析出的必须是同一块面板，
-/// 不然灰阶测试图量的是一块、判定用的是另一块。
+/// 不然灰阶测试图量的是一块、判定用的是另一块。`proof` 经 [`PageOptions::target_profile`]
+/// 走的也是它——型号认不出来时三条路因此说同一句，那一句只在 `Profile::resolve` 里
+/// （`proof-sheet/06`，钉在 `tests/single_source.rs` 与 `tests/exit_code.rs`）。
 ///
 /// 画质门槛是这里唯一一项 `calibrate` 用不上的：灰阶测试图是量具，不经判定（它恒传 `None`）。
 fn target_profile(
@@ -1075,6 +1077,9 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
 ///
 /// 样张是量具（`CONTEXT.md` 的《样张》）：不判定别人、不写输出目录、不碰源。
 /// 与灰阶测试图那一路同形——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
+/// 说不出话的时候（有哪几种，见 [`tonefit::write_proof`] 的《说不出话的那几种》；
+/// 型号认不出来那一种见 [`target_profile`]）都走后一条：退出码 [`REFUSED_EXIT`]、
+/// stdout 上一个字都没有、stderr 上一句（`proof-sheet/06`，钉在 `tests/exit_code.rs`）。
 ///
 /// 出样张整件事在 [`tonefit::write_proof`] 里。这一层剩下命令行自己的几件事：
 /// 挡下与卷有关的那几项（[`VolumeOnly::refuse`]，排在读预设之前——与退场开关那一句同一条理由：

@@ -157,7 +157,8 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// 一张图切成几块时，「裁到只剩一个没有」照转换那一趟把这张图摆成一卷时那样问：问的是
 /// 这张图的**其余页那一组**（见库内的 `GateGroups`），不是一块一块地问（停车场 Q1014）。
 /// 覆盖项与面板对不上时（越界的灰阶档位、互锁 ③）回的是转换那一趟的同一句拒绝——
-/// 越界的灰阶档位那一句彩色分支上的页也躲不过：转换那一趟碰卷之前就说它。
+/// 越界的灰阶档位那一句彩色分支上的页也躲不过：转换那一趟碰卷之前就说它，样张也排在读图之前
+/// （见下面《说不出话的那几种》）。
 ///
 /// # 两种页拿不到整叠（`proof-sheet/05`）
 ///
@@ -174,8 +175,25 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// 交回这张图每一张输出页的那一叠（[`Proof`]）：拆开的跨页两半各一叠，关掉拆分、或是找不到中缝的
 /// 连续跨页，整页一叠；每一叠的文件名，页那一截就是 `run` 给那一张的输出页名（库内的 `output_name`）。
 /// 每一张落在哪儿、多大，连同这一页的分支、判定、几何事实与纸色提白。
-/// **先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
-/// 那时去处里一个文件都没有。写不出去回 `Err`，调用方接住它照自己的方式说。
+///
+/// # 说不出话的那几种（`proof-sheet/06`）
+///
+/// 答不出来时回 `Err`，一句话说清是哪一种，调用方接住它照自己的方式说：
+///
+/// - **点成别的东西**：一个目录、一个归档（转换那一趟的卷），或一个透传文件（扩展名不是页的成员）
+///   ——一句「样张只认一张图」，一个字节都不读（停车场 Q1055）。路径根本不在的不算这一种，
+///   由读盘那一步说它读不到。
+/// - **解不开的图**：转换那一趟的**坏页**里解码那三种（`CONTEXT.md` 的《失败》：完整尺寸解不出来、
+///   缓冲分配不下、一个像素都救不回），一句话说它解不开。残缺页不在里面，照出；
+///   坏页的第四种（字节读不出来）在样张上就是读盘那一句。
+/// - **写不出去**：去处建不出来、某一张写不进去（盘满、名字被占），一句话说样张写不出去、卡在哪个路径上。
+///
+/// **先全部编好再落盘**：覆盖项的拒绝排在最前（停车场 Q1042），前两种、撞上门、编不出来
+/// 都发生在第一个字节写出去之前——去处里一个文件都没有，去处本来不在的话连目录都不建。
+/// 写到一半才写不进去的，已经落下的那几张留在去处里（停车场 Q1056）。
+///
+/// 型号认不出来那一种不在这里：`request` 里的 [`Profile`] 由调用方解好，那一句只有一处出处
+/// （[`Profile::resolve`]），命令行上转换、灰阶测试图、样张三条路说的是同一句。
 ///
 /// 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`）。
 pub fn write_proof(source: &Path, request: &Request, out: &Path) -> Result<Proof> {
@@ -1838,8 +1856,10 @@ impl Compute<'_> {
         relative: &Path,
         bytes: Result<Vec<u8>>,
     ) -> Result<Vec<OutputPage>> {
+        // 解不开那一句由这里说——它就是坏页那一格的原因（见 [`open_source_page`]）。
         let opened = bytes.and_then(|bytes| {
-            open_source_page(source, &bytes, self.request, &self.counters.decoder)
+            open_source_page(&bytes, self.request, &self.counters.decoder)
+                .with_context(|| format!("解 {} 这一页", source.display()))
         });
         let Opened {
             color,
@@ -2091,6 +2111,8 @@ impl Pieces {
 /// 解不开的一页在转换那一趟要占一格白页、报一句坏页——那一格的来路要这一卷的指纹，
 /// 那一句要这一趟的事件流，两样都是**一卷这一趟**的事；而样张认的是一张图，解不开就是解不开，
 /// 当场回 `Err`。两件事因此都留在调用方：这一段只把解不开原样交出去。
+/// **解不开那一句怎么说也归调用方**：转换那一趟说成坏页那一格的原因，样张那一趟说成一句拒绝
+/// （`proof-sheet/06`）——两种说法各带自己那一截路径，这一段因此不收路径。
 ///
 /// **解码器是唯一从那一摊旁边进来的东西**，与 [`examine_gray_page`] 收缩放器同一条理由：
 /// 《窄计数器》记在动作本身上，而账本是谁的由调用方说了算——转换那一趟交这一卷的那一个
@@ -2099,16 +2121,8 @@ impl Pieces {
 /// 分流排在切开**之前**，也只问一次（ADR 0005 决定第 1 条：读 → 解码 → 彩页识别 →
 /// 拆分/裁白边）：彩不彩是**源页**的事实，一幅跨页画不会因为从中间切开就有一半不再是彩页。
 /// 走哪条分支由**面板与页**共同决定——只有彩色面板上的彩页走彩色分支。
-///
-/// `source` 只进解不开那一句的措辞：要指得出是哪一页。
-fn open_source_page(
-    source: &Path,
-    bytes: &[u8],
-    request: &Request,
-    decoder: &decode::Decoder,
-) -> Result<Opened> {
-    let decoded = cost::stage(cost::Stage::Decode, || decoder.decode(bytes))
-        .with_context(|| format!("解 {} 这一页", source.display()))?;
+fn open_source_page(bytes: &[u8], request: &Request, decoder: &decode::Decoder) -> Result<Opened> {
+    let decoded = cost::stage(cost::Stage::Decode, || decoder.decode(bytes))?;
     let (decoded, salvage) = (decoded.image, decoded.salvage);
     let color = cost::stage(cost::Stage::Identify, || color::identify(&decoded));
     let panel = request.profile.panel();

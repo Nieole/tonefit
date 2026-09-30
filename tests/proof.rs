@@ -78,9 +78,15 @@ impl Staged {
 
     /// 摆上 `image` 这一张。
     fn of(image: &image::DynamicImage) -> Self {
+        Self::placing(|volume| volume.page("001.png", image))
+    }
+
+    /// 卷里摆上 `put` 放进去的东西，样张要出的就是它交回的那个路径——
+    /// 一张解不开的图、一个转换那一趟不当页的文件，都得先摆进卷里，神谕那一侧的 `run` 才问得着。
+    fn placing(put: impl FnOnce(&fixtures::Volume) -> PathBuf) -> Self {
         let space = Workspace::new();
         let volume = space.volume("卷");
-        let source = volume.page("001.png", image);
+        let source = put(&volume);
         let request = Request {
             fit: tonefit::FitMode::Height,
             crop: true,
@@ -1239,4 +1245,277 @@ fn an_override_the_panel_cannot_write_is_refused_on_a_color_page_as_run_refuses_
         "拒绝了还在去处里留了东西：{:?}",
         fixtures::directory_members(&staged.sheets())
     );
+}
+
+// ---- 说不出话的那几种（`proof-sheet/06`） ----
+
+/// **点成一个目录或一个归档，当场一句话说样张只认一张图**（spec 的 story 25），去处一个都不建。
+///
+/// 五个都是**真卷**：目录里躺着一页，四种归档里各装着一页——转换那一趟拿它们当卷照做，
+/// 样张不认的是「一卷」这个形状，不是它们打不开。归档认哪几个扩展名与转换那一趟同一把尺子
+/// （`tonefit::is_archive`）。句子里点得出是哪一个、是目录还是归档，用户才知道该怎么改。
+#[test]
+fn a_directory_or_an_archive_is_refused_with_one_sentence_that_a_proof_takes_one_image() {
+    let staged = Staged::plain();
+    let page = plain_page(fixtures::TINY);
+    let directory = staged
+        .source
+        .parent()
+        .expect("那一页躺在卷里")
+        .to_path_buf();
+    let cbz = staged.space.cbz("合集").page("001.png", &page).write();
+    let zip = staged
+        .space
+        .archive("合集.zip")
+        .page("001.png", &page)
+        .write();
+    let rar = staged.space.rar("合集", fixtures::rar::STORED);
+    let sevenz = staged.space.sevenz("合集").page("001.png", &page).write();
+
+    for (named, kind) in [
+        (&directory, "目录"),
+        (&cbz, "归档"),
+        (&zip, "归档"),
+        (&rar, "归档"),
+        (&sevenz, "归档"),
+    ] {
+        let said = format!(
+            "{:#}",
+            tonefit::write_proof(named, &staged.request, &staged.sheets())
+                .expect_err("样张该拒绝不是一张图的东西")
+        );
+
+        assert!(
+            said.contains("样张只认一张图"),
+            "没说样张只认一张图：{said}"
+        );
+        assert!(
+            said.contains(&named.display().to_string()),
+            "没指出点的是哪一个：{said}"
+        );
+        assert!(said.contains(kind), "没说它是{kind}：{said}");
+        assert!(
+            !staged.sheets().exists(),
+            "拒绝了还建出了去处：{:?}",
+            fixtures::directory_members(&staged.sheets())
+        );
+    }
+}
+
+/// **点了一个不存在的路径，说的是它不在——不是「样张只认一张图」**。
+///
+/// 那一问只看路径的形状（目录、归档扩展名、页扩展名），对一个根本不在的路径它会说错话：
+/// 敲错了的 `卷1` 被说成透传文件、不在的 `合集.cbz` 被说成归档，用户照着那句去改只会越改越远。
+/// 这条反着钉那一句不许再出现；不在的那一种交给读盘那一步说，它说得出是哪个路径、为什么读不到。
+#[test]
+fn a_path_that_does_not_exist_is_not_called_something_other_than_an_image() {
+    let staged = Staged::plain();
+    for missing in [
+        staged.space.dir("卷1"),
+        staged.space.dir("合集.cbz"),
+        staged.space.dir("002.png"),
+    ] {
+        let said = format!(
+            "{:#}",
+            tonefit::write_proof(&missing, &staged.request, &staged.sheets())
+                .expect_err("不存在的路径出不了样张")
+        );
+
+        assert!(
+            !said.contains("样张只认一张图"),
+            "把一个不存在的路径说成了别的东西：{said}"
+        );
+        assert!(
+            said.contains(&missing.display().to_string()),
+            "没指出是哪个路径：{said}"
+        );
+        assert!(
+            !staged.sheets().exists(),
+            "出不了还建出了去处：{:?}",
+            fixtures::directory_members(&staged.sheets())
+        );
+    }
+}
+
+/// **透传文件，样张也不认**：它在卷里是转换那一趟原样拷过去的成员，一张都不会被编出去，
+/// 样张出一叠就是在回答一个转换那一趟从来不问的问题。
+///
+/// 夹具挑的是最刁的那一种：**字节是一张好好的 PNG**，扩展名却不是页（`002.dat`）——
+/// 解码器解得开它，拦它的只能是「转换那一趟认不认它是一页」那一问。
+/// 神谕那一侧先问实：`run` 把它原样搬了过去。
+#[test]
+fn a_file_run_passes_through_is_refused_with_the_sentence_that_a_proof_takes_one_image() {
+    let staged = Staged::placing(|volume| {
+        volume.page("001.png", &plain_page(fixtures::TINY));
+        volume.file(
+            "002.dat",
+            &fixtures::encode_image(&plain_page(fixtures::TINY), "png"),
+        )
+    });
+
+    let ran = tonefit::run(&staged.request).expect("转换那一趟照做");
+    let [volume] = ran.volumes.as_slice() else {
+        panic!("该是一卷");
+    };
+    assert_eq!(
+        fs::read(
+            volume
+                .output
+                .join(staged.source.file_name().expect("透传文件有名字"))
+        )
+        .expect("读转换那一趟搬过去的那一份"),
+        fs::read(&staged.source).expect("读源"),
+        "夹具的前提：转换那一趟把它原样透传"
+    );
+
+    let said = format!(
+        "{:#}",
+        tonefit::write_proof(&staged.source, &staged.request, &staged.sheets())
+            .expect_err("样张该拒绝透传文件")
+    );
+    assert!(
+        said.contains("样张只认一张图"),
+        "没说样张只认一张图：{said}"
+    );
+    assert!(
+        said.contains(&staged.source.display().to_string()),
+        "没指出点的是哪一个：{said}"
+    );
+    assert!(said.contains("透传"), "没说转换那一趟拿它怎么办：{said}");
+    assert!(
+        !staged.sheets().exists(),
+        "拒绝了还建出了去处：{:?}",
+        fixtures::directory_members(&staged.sheets())
+    );
+}
+
+/// **点了一张解不开的图，当场一句话说它解不开，去处里一个文件都没有**（spec 的 story 24）——
+/// 去处本来不在的话，连一个空目录都不留：用户不必去翻一个空目录猜。
+///
+/// 「解不开」照转换那一趟认：就是那一趟的**坏页**（`CONTEXT.md` 的《失败》）。神谕那一侧先问实：
+/// 三种夹具在 `run` 里都是坏页——尺寸都解不出来的、尺寸解得出来而缓冲分配不下的、
+/// 救回却一个像素都没解出来的。**残缺页不在里面**：它救回到了像素，那一趟照常写出，
+/// 样张也照出（界画宽了，残缺页就被说成解不开）。
+#[test]
+fn an_image_that_cannot_be_decoded_is_refused_in_one_sentence_and_leaves_nothing_behind() {
+    for (what, bytes) in [
+        ("不是图的字节", b"not a page".to_vec()),
+        ("缓冲分配不下", fixtures::oversized_page()),
+        (
+            "一个像素都救不回",
+            fixtures::salvages_nothing_page(fixtures::TINY),
+        ),
+    ] {
+        let staged = Staged::placing(|volume| volume.file("001.png", &bytes));
+        let ran = tonefit::run(&staged.request).expect("转换那一趟照做");
+        assert!(
+            ran.volumes[0].pages[0].failure().is_some(),
+            "夹具的前提：{what} 在转换那一趟是坏页"
+        );
+
+        let said = format!(
+            "{:#}",
+            tonefit::write_proof(&staged.source, &staged.request, &staged.sheets())
+                .expect_err("样张该拒绝一张解不开的图")
+        );
+
+        assert!(said.contains("解不开"), "{what}：没说它解不开：{said}");
+        assert!(
+            said.contains(&staged.source.display().to_string()),
+            "{what}：没指出是哪一张：{said}"
+        );
+        assert!(
+            !staged.sheets().exists(),
+            "{what}：解不开还建出了去处：{:?}",
+            fixtures::directory_members(&staged.sheets())
+        );
+    }
+
+    let salvaged = Staged::placing(|volume| {
+        volume.file("001.png", &fixtures::truncated(&plain_page(fixtures::TINY)))
+    });
+    let page = salvaged.proof();
+    assert!(
+        only_page(&page).page.salvage().is_some(),
+        "夹具的前提：截断的那一张是残缺页"
+    );
+    assert!(salvaged.sheets().exists(), "残缺页照出样张，不是解不开");
+}
+
+/// **覆盖项越界又点了一张解不开的图，样张先说越界——与转换那一趟同一个次序、同一句**
+/// （停车场 Q1042）。
+///
+/// 转换那一趟碰卷之前就问覆盖项，那一问排在读任何一页之前；样张先解码的话，
+/// 同一份两处都错的请求上，转换那一趟说越界、样张说解不开。
+#[test]
+fn an_override_the_panel_cannot_write_is_refused_before_the_image_is_decoded_as_run_refuses_it() {
+    let staged = Staged::placing(|volume| volume.file("001.png", b"not a page"));
+    let request = Request {
+        bit_depth: Some(BitDepth::Eight),
+        ..staged.request.clone()
+    };
+    assert!(
+        BitDepth::Eight.levels() > request.profile.panel().gray_levels,
+        "夹具的前提：这块面板写不出 8bit"
+    );
+
+    let ran = tonefit::run(&request).expect_err("转换那一趟该拒绝");
+    let proofed = tonefit::write_proof(&staged.source, &request, &staged.sheets())
+        .expect_err("样张该照转换那一趟拒绝");
+
+    assert_eq!(
+        format!("{proofed:#}"),
+        format!("{ran:#}"),
+        "样张与转换那一趟说的不是同一句"
+    );
+    assert!(
+        !staged.sheets().exists(),
+        "拒绝了还建出了去处：{:?}",
+        fixtures::directory_members(&staged.sheets())
+    );
+}
+
+/// **去处写不进去时回 `Err`，说得出是写不出去、卡在哪个路径上**——不恐慌，调用方接得住
+/// （与灰阶测试图那一路同一条：`write_calibration_chart`）。
+///
+/// 两种各造一个，都不靠哪一个平台才有的权限语义：
+///
+/// - **去处建不出来**：拿一个文件挡在它的父目录上；
+/// - **去处建得出、一张写不进**（盘满那一类）：去处先在，参照那一张的名字上先摆一个目录——
+///   落盘时头一张就撞上它。
+#[test]
+fn a_destination_that_cannot_take_the_sheets_comes_back_as_an_error_that_says_so() {
+    let staged = Staged::plain_of(SMALL);
+    // 比面板小的页配 fit-inside：一步都不放大，门不成立，三个候选——这两条只问落盘那一步，编得快些。
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        ..staged.request.clone()
+    };
+
+    let blocker = staged.space.stray_file("挡路的文件", b"");
+    let unmakeable = blocker.join("样张");
+    let occupied = staged.sheets();
+    // 参照那一张的名字：这一页在 `run` 那一侧的成员名（`001.png`）接上词条名。
+    let taken = occupied.join(
+        staged
+            .source
+            .with_extension("参照.png")
+            .file_name()
+            .expect("有名字"),
+    );
+    fs::create_dir_all(&taken).expect("在参照那一张的名字上摆一个目录");
+
+    for (out, stuck) in [(&unmakeable, &unmakeable), (&occupied, &taken)] {
+        let said = format!(
+            "{:#}",
+            tonefit::write_proof(&staged.source, &request, out).expect_err("写不进去该回 Err")
+        );
+
+        assert!(said.contains("写不出去"), "没说是写不出去：{said}");
+        assert!(
+            said.contains(&stuck.display().to_string()),
+            "没说卡在哪儿（{}）：{said}",
+            stuck.display()
+        );
+    }
 }
