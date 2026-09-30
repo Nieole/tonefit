@@ -7,6 +7,9 @@
 //! **印出去的那几个字节同样只有真进程看得见**，两条也在这一份里：拒绝那句话落到 stderr
 //! 上时记号中间是不是一个普通空格，以及 `--help` 重定向出去之后折到多宽。
 //! 两者都是「`main` 交出去的到底是什么」，纯函数那一层问不出来。
+//!
+//! 样张那一路说不出话时怎么收场（`proof-sheet/06`）也在这里：退出码、stdout 与 stderr
+//! 三样一起才是「收场的形状」，而型号那一句三条路说得一不一样，比的是印出去的字节。
 
 mod fixtures;
 
@@ -551,4 +554,181 @@ fn brief_folds_the_report_down_to_one_row_per_directory() {
         whole.last(),
         "末尾那几小结跟着折没了——折起那一副因此说不出这一趟出了什么事"
     );
+}
+
+/// **样张说不出话的那四种，收场与灰阶测试图写不出去时同一个形状**（`proof-sheet/06`）：
+/// 退出码 `1`、stdout 上一个字都没有、stderr 上一句 `Error: …` 说清是哪一种。
+///
+/// 两条路都是量具，结局只有两种——写成了，或这一趟没做成（二进制侧的 `calibrate` 与 `proof`
+/// 两处文档）。形状拿灰阶测试图写不出去的那一趟**当场量出来**再比，不在这里抄一份：
+/// 那一路的形状哪天变了，这一条跟着问的是新形状。
+///
+/// 非在真进程上问不可，理由与本文件其余几条同一个：退出码与 stderr 只在进程那一层观察得到。
+#[test]
+fn every_way_a_proof_cannot_answer_ends_as_a_calibration_that_cannot_write_does() {
+    let space = Workspace::new();
+    let volume = space.volume("卷");
+    // 比面板小、配 fit-inside：一步都不放大，写不出去那一趟编得快些。
+    let page = volume.page(
+        "001.png",
+        &fixtures::full_bleed_gradient(fixtures::SMALLER_THAN_TARGET),
+    );
+    let broken = volume.file("002.png", b"not a page");
+    let mut cbz = space.cbz("合集");
+    cbz.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let cbz = cbz.write();
+    let blocker = space.stray_file("挡路的文件", b"");
+    let unmakeable = blocker.join("样张");
+    let sheets = space.dir("样张");
+
+    let calibration = ending(
+        Command::new(env!("CARGO_BIN_EXE_tonefit"))
+            .arg("calibrate")
+            .args(["--profile", fixtures::BASELINE_DEVICE, "--out"])
+            .arg(unmakeable.join("灰阶测试图.png")),
+    );
+    assert_eq!(
+        calibration.code,
+        Some(1),
+        "前提：灰阶测试图写不出去是这一趟没做成：{}",
+        calibration.stderr
+    );
+
+    for (what, image, device, out, said) in [
+        (
+            "点了一个目录",
+            volume.path(),
+            fixtures::BASELINE_DEVICE,
+            &sheets,
+            "样张只认一张图",
+        ),
+        (
+            "点了一个归档",
+            cbz.as_path(),
+            fixtures::BASELINE_DEVICE,
+            &sheets,
+            "样张只认一张图",
+        ),
+        (
+            "点了解不开的图",
+            broken.as_path(),
+            fixtures::BASELINE_DEVICE,
+            &sheets,
+            "解不开",
+        ),
+        (
+            "点了表里没有的型号",
+            page.as_path(),
+            "没这个型号",
+            &sheets,
+            "未知型号",
+        ),
+        (
+            "去处写不进去",
+            page.as_path(),
+            fixtures::BASELINE_DEVICE,
+            &unmakeable,
+            "写不出去",
+        ),
+    ] {
+        let proof = ending(
+            Command::new(env!("CARGO_BIN_EXE_tonefit"))
+                .arg("proof")
+                .arg(image)
+                .args(["--profile", device, "--fit", "inside", "--out"])
+                .arg(out),
+        );
+
+        assert_eq!(
+            proof.shape(),
+            calibration.shape(),
+            "{what}：收场与灰阶测试图写不出去时不同形：{}",
+            proof.stderr
+        );
+        assert!(
+            proof.stderr.contains(said),
+            "{what}：没说{said}：{}",
+            proof.stderr
+        );
+    }
+}
+
+/// **点了表里没有的型号，样张那一趟的拒绝与转换那一趟、灰阶测试图那一趟一个字节都不差**
+/// （`proof-sheet/06`，spec 的 story 26）。
+///
+/// 那一句只有一处出处（`tests/single_source.rs` 盯着抄件）；这一条问的是**三条路真都走到它**，
+/// 而不是哪一条自己另说了一句。比的是印到 stderr 上的字节——两条路说法分了家，用户看见的就是这里。
+#[test]
+fn an_unknown_device_is_refused_on_a_proof_in_the_words_run_and_calibrate_use() {
+    let space = Workspace::new();
+    let volume = space.volume("卷");
+    let page = volume.page("001.png", &fixtures::gradient(fixtures::TINY));
+    let device = "没这个型号";
+
+    let proof = ending(
+        Command::new(env!("CARGO_BIN_EXE_tonefit"))
+            .arg("proof")
+            .arg(&page)
+            .args(["--profile", device, "--out"])
+            .arg(space.dir("样张")),
+    );
+    let run = ending(
+        Command::new(env!("CARGO_BIN_EXE_tonefit"))
+            .args(["--profile", device, "--out"])
+            .arg(space.out())
+            .arg(volume.path()),
+    );
+    let calibration = ending(
+        Command::new(env!("CARGO_BIN_EXE_tonefit"))
+            .args(["calibrate", "--profile", device, "--out"])
+            .arg(space.dir("灰阶测试图.png")),
+    );
+
+    assert!(
+        proof.stderr.contains(&format!("未知型号「{device}」")),
+        "样张那一趟没说是哪个型号认不出来：{}",
+        proof.stderr
+    );
+    assert_eq!(proof.stderr, run.stderr, "样张与转换那一趟说的不是同一句");
+    assert_eq!(
+        proof.stderr, calibration.stderr,
+        "样张与灰阶测试图那一趟说的不是同一句"
+    );
+}
+
+/// 一趟 tonefit 怎么收场：退出码、stdout 与 stderr 上印了什么。
+struct Ending {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Ending {
+    /// 收场的**形状**（见 [`Shape`]）。句子本身各说各的，不在形状里。
+    fn shape(&self) -> Shape {
+        Shape {
+            code: self.code,
+            stdout_is_silent: self.stdout.is_empty(),
+            stderr_opens_with_error: self.stderr.starts_with("Error: "),
+        }
+    }
+}
+
+/// 一趟收场的形状：退出码、stdout 上有没有字、stderr 是不是以 `main` 那一行 `Error: ` 打头。
+/// 各格带着名字，比不上时印出来看得出是哪一格。
+#[derive(Debug, PartialEq)]
+struct Shape {
+    code: Option<i32>,
+    stdout_is_silent: bool,
+    stderr_opens_with_error: bool,
+}
+
+/// 跑一趟，收下它怎么收场。
+fn ending(command: &mut Command) -> Ending {
+    let output = command.output().expect("启动 tonefit");
+    Ending {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
 }

@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::decide::{self, CandidateScore, Verdict};
 use crate::geometry::Fit;
@@ -24,7 +24,8 @@ use crate::report::{PageBranch, PageOutcome, PageReport, Processed};
 use crate::{
     Candidates, ColorImage, Examined, GateGroups, GeometryGate, GrayImage, Opened, PageColor,
     Piece, Pieces, Request, Salvage, Scaling, WhiteAlignment, WhiteWhenOff, candidate_bytes,
-    color_bytes, decode, encode, examine_gray_page, open_source_page, output_name, resample,
+    color_bytes, decode, encode, examine_gray_page, is_archive, open_source_page, output_name,
+    resample,
 };
 
 /// 一张图出的样张：**一张输出页一叠**，按阅读顺序（spec《Implementation Decisions》第六条）。
@@ -131,26 +132,33 @@ const COLOR_BRANCH: &str = "彩色分支";
 
 /// 出一张图的样张，见 [`crate::write_proof`]。
 ///
-/// **先全部编好，再落盘**：解不开、撞上门的拒绝、编不出来，都发生在第一个字节写出去之前，
-/// 半路出错时去处里一个文件都没有——不留一叠半成品让人对着猜。
+/// 答不出来的那几种各在哪一步说、各说什么，见那一处的《说不出话的那几种》；
+/// 这里只守次序：**先全部编好，再落盘**——落盘之前的每一种拒绝都发生在第一个字节写出去之前，
+/// 去处本来不在的话连目录都不建，不留一叠半成品让人对着猜。
 pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proof> {
+    // 判定从哪几个里挑，照转换那一趟裁（见 [`draft_gray`]）。覆盖项越界（点名一档面板写不出）
+    // 的那句拒绝也在这里说，而它排在**头一行**、读图之前：转换那一趟碰卷之前就说它
+    // （`ensure_the_overrides_leave_a_candidate`），同一份两处都错的请求上两条路因此先说同一句
+    // （停车场 Q1042）；彩色分支上的页也逃不过——那一趟里它是这一卷的一页。
+    let judged = Candidates::new(request)?;
+    ensure_one_image(source)?;
     let bytes = std::fs::read(source).with_context(|| format!("读 {}", source.display()))?;
     // 解码器与缩放器现开一个、一眼都不看：窄计数器要的是「记在动作本身上」，
     // 而账本是谁的由调用方说了算（与 `examine_gray_page` 那一段同一条）。
+    //
+    // 解码解不开的那几种就是转换那一趟的**坏页**（`CONTEXT.md` 的《失败》）：那一趟占一格白页，
+    // 样张一张都不出（spec 的 story 24）。
     let Opened {
         color,
         salvage,
         pieces,
-    } = open_source_page(source, &bytes, request, &decode::Decoder::default())?;
+    } = open_source_page(&bytes, request, &decode::Decoder::default())
+        .with_context(|| format!("{} 解不开，是一张坏页：样张一张都没出", source.display()))?;
     // 这一页在 `run` 那一侧的成员名从它推出（见 `crate::output_name`）。
     let name = source
         .file_name()
         .map(Path::new)
         .with_context(|| format!("{} 不是一张图", source.display()))?;
-    // 判定从哪几个里挑，照转换那一趟裁（见 [`draft_gray`]）。覆盖项越界（点名一档面板写不出）
-    // 的那句拒绝也在这里说，而它排在分流**之前**：转换那一趟碰卷之前就说它
-    // （`ensure_the_overrides_leave_a_candidate`），彩色分支上的页也逃不过——那一趟里它是这一卷的一页。
-    let judged = Candidates::new(request)?;
     let resampler = resample::Resampler::default();
     let count = pieces.len();
     // 走哪条分支由**面板与页**共同决定，那一问在 `open_source_page` 里、只问一次：
@@ -162,7 +170,8 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         Pieces::Gray(pieces) => draft_gray(source, request, &judged, &resampler, pieces)?,
         Pieces::Color(pieces) => draft_color(source, request, &resampler, pieces)?,
     };
-    std::fs::create_dir_all(out).with_context(|| format!("建样张的去处 {}", out.display()))?;
+    std::fs::create_dir_all(out)
+        .with_context(|| format!("{CANNOT_WRITE}：去处 {} 建不出来", out.display()))?;
     let pages = drafted
         .into_iter()
         .enumerate()
@@ -178,6 +187,49 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         .collect::<Result<Vec<_>>>()?;
     Ok(Proof { pages })
 }
+
+/// 样张只认**一张图**（`proof-sheet/06`，spec 的 story 25）：点成别的东西，
+/// 当场一句话说清，一个字节都不读。「一张图」照转换那一趟认：**卷里的一页**。
+///
+/// - **一个目录、一个归档**：那两样在转换那一趟是**卷**（`CONTEXT.md` 的《卷》），
+///   归档认哪几个扩展名与那一趟同一把尺子（[`is_archive`]）。句子后半截说该怎么改——
+///   要看一卷，spec 的《Out of Scope》给过路：先跑一趟预览看读数，挑出可疑的那几页再逐页出样张。
+/// - **透传文件**：扩展名不是页的成员，转换那一趟原样拷它（`CONTEXT.md` 的《成员》）；
+///   认不认它是一页只看扩展名，与那一趟同一把尺子（[`decode::is_page`]）。
+///   字节恰好解得开也不出——那一趟一张都不会编出去，样张没有「写出去会是什么样」可答
+///   （停车场 Q1055）。
+///
+/// **只问盘上真在的东西**：三问都只看路径的形状，对一个不存在的路径会说错话——
+/// 敲错的 `卷1` 会被说成透传文件，不在的 `合集.cbz` 会被说成归档。不在的那一种放过去，
+/// 由读盘那一步说它读不到。
+fn ensure_one_image(source: &Path) -> Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+    let (what, instead) = if source.is_dir() {
+        ("一个目录", VOLUME_INSTEAD_OF_PAGE)
+    } else if is_archive(source) {
+        ("一个归档", VOLUME_INSTEAD_OF_PAGE)
+    } else if !decode::is_page(source) {
+        (
+            "透传文件",
+            "转换那一趟原样拷它、一张都不编，样张没有东西可比",
+        )
+    } else {
+        return Ok(());
+    };
+    bail!(
+        "{TAKES_ONE_IMAGE}，{} 是{what}：{instead}。",
+        source.display()
+    )
+}
+
+/// 点成别的东西时那几句拒绝打头的那半句。
+const TAKES_ONE_IMAGE: &str = "样张只认一张图";
+
+/// 点成一卷（目录或归档）时那句拒绝的后半截：该怎么改。
+const VOLUME_INSTEAD_OF_PAGE: &str = "点名里面要看的那一页（归档要先把它取出来）。\
+     要看一整卷，先跑一趟 --dry-run 看读数，挑出可疑的那几页再逐页出样张";
 
 /// 灰度路径上切出来的那几块，每一块编好一叠：每一个候选一张，外加《参照》一张。
 ///
@@ -451,11 +503,20 @@ fn sheet_name(page: &Path, what: &str) -> PathBuf {
     page.with_extension(format!("{what}.png"))
 }
 
-/// 写出一张，交回它落在哪儿、多大。
+/// 写出一张，交回它落在哪儿、多大。写不进去（盘满、名字被占）回的是 [`CANNOT_WRITE`] 那一句，
+/// 指着写不进的那一张。
+///
+/// 写到一半撞上的话，**已经落下的那几张留在去处里**，不回头收：与灰阶测试图那一路同一种朴素写法
+/// （见 `calibrate::write_chart`），那句拒绝点得出卡在哪一张（停车场 Q1056）。
 fn written(file: PathBuf, bytes: &[u8]) -> Result<Sheet> {
-    std::fs::write(&file, bytes).with_context(|| format!("写样张 {}", file.display()))?;
+    std::fs::write(&file, bytes)
+        .with_context(|| format!("{CANNOT_WRITE}：{} 写不进去", file.display()))?;
     Ok(Sheet {
         file,
         bytes: bytes.len() as u64,
     })
 }
+
+/// 落盘那一步出错时那两句打头的那半句：说得出是**写不出去**，不是图有毛病
+/// （`proof-sheet/06`：解不开的图与写不进的去处，用户要改的是两样东西）。
+const CANNOT_WRITE: &str = "样张写不出去";
