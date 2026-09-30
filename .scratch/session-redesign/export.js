@@ -281,25 +281,6 @@ function withVersionPlaceholder(scr, version) {
 /** 设计稿的理由种类（`page.why`）→ 库 `Reason` 的变体名。 */
 const REASONS = { lowest: 'lowest-within-threshold', envelope: 'volume-envelope', outlier: 'outlier', gate: 'outside-the-gate' };
 
-/**
- * 目录与卷在盘上的路径。分区底下的目录在那条处理路径底下；顶格目录行要么就是那条处理路径
- * （它只展开成一个目录），要么是几个点名的压缩包按父目录合成的那一行；卷根是目录加卷名，
- * 点名的压缩包带回 `.cbz`。设计稿自己不记这些（`parentHint` 对分区底下的目录记的是处理路径的父目录），
- * 这里按树的结构算出来。
- */
-function roots(design) {
-  const { S } = design;
-  const dirs = new Map();
-  for (const e of S.run.tree.entries) {
-    if (e.type === 'section') for (const d of e.dirs) dirs.set(d.id, `${e.path}/${d.label}`);
-    else dirs.set(e.dir.id, `${e.dir.parentHint}${e.dir.label}`);
-  }
-  const archives = new Set(S.named.filter((n) => n.kind === '压缩包').map((n) => n.path));
-  const dirRoot = (d) => dirs.get(d.id);
-  const rootOf = (v) => { const root = `${dirRoot(v.dir)}/${v.name}`; return archives.has(`${root}.cbz`) ? `${root}.cbz` : root; };
-  return { dirRoot, rootOf };
-}
-
 /** 数四舍五入到千分位：模拟推进的浮点尾数不进产物。 */
 const num = (x) => Math.round(x * 1000) / 1000;
 
@@ -364,11 +345,12 @@ function cursorData(design, key, { dirRoot, rootOf }) {
 /** 这一刻的场景数据（spec《导出》：语义字段，不是屏上的字）。 */
 function sceneData(page) {
   const { design, clock } = page;
-  const { S, CONFIG, PRESETS, PANELS, SHOW, pagesOf, stepsOf, isolatedOutput } = design;
+  const { S, CONFIG, PRESETS, PANELS, SHOW, CWD, PRESETS_FILE, pagesOf, stepsOf, isolatedOutput, dirRoot } = design;
   const r = S.run;
   const cfgIndex = (i) => (CONFIG[i] && CONFIG[i].key) || null;
   const settings = settingsOf(CONFIG.filter((c) => c.key && c.kind !== 'info').map((c) => [c.key, c.value ?? null]));
-  const { dirRoot, rootOf } = r ? roots(design) : { dirRoot: () => null, rootOf: () => null };
+  // 目录与卷在盘上的路径：设计稿自己记着（`dirRoot`、卷的 `root`），这里只读
+  const rootOf = (v) => v.root;
   const rightOf = () => {
     const c = CONFIG[S.cfg.cursor];
     if (!c) return null;
@@ -381,6 +363,8 @@ function sceneData(page) {
     now_ms: clock.now(),
     time_multiplier: SHOW,
     output: S.outRoot,
+    cwd: CWD,
+    presets_file: PRESETS_FILE,
     paths: S.named.map((n) => ({ path: n.path, kind: n.kind === '压缩包' ? 'archive' : 'directory', checked: n.on })),
     settings,
     applied_preset: S.cfg.applied,
@@ -407,7 +391,7 @@ function sceneData(page) {
     outcome: r.outcome,
     envelope: r.envelope,
     elapsed_s: num(r.elapsed * SHOW),
-    steps: num(r.steps),
+    steps: Math.floor(r.steps),   // 与屏上总进度那个数同一种取整：走完的整步
     total_steps: r.total,
     current: r.cur >= 0 && r.cur < r.tree.vols.length ? rootOf(r.tree.vols[r.cur]) : null,
     stop_level: r.latch,

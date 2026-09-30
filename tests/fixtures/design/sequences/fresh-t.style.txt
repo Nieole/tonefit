@@ -16,7 +16,7 @@
 "c.ccccffff......................................................................................................c"
 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 "gghhcccccccccccccccggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
-"g...ccccccc........c.cccccc...................................................................................g"
+"g...ccccccc.....................................................................................................g"
 "g...hhhhcccccfffffffffffffffff.........................................................................g"
 "g.iijjjjhhhhhhhhhhhhhhhhhhhhhhhcccc..............................................................................g"
 "g...jjjj.................cccckkkkkkkkkkkkkkkkkkkkkk.........................................g"

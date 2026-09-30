@@ -3,6 +3,8 @@
   "now_ms": "unchanged",
   "time_multiplier": "unchanged",
   "output": "~/Comics",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",

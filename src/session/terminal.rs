@@ -803,11 +803,10 @@ mod redesign {
     use ratatui::buffer::Buffer;
 
     use super::super::cover::Overlay;
-    use super::super::look::{Kind, Look, Segment};
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
-    use super::super::shell::design::{self, Expected, assert_no_background, assert_same_cells};
+    use super::super::shell::design::{self, assert_no_background, assert_same_cells};
     use super::super::state::{Exit, Key};
     use super::super::view::{Cursor, Focus, Input, Pane, Window};
     use crate::preset::Presets;
@@ -821,17 +820,10 @@ mod redesign {
         Presets::at(space.path().join("tonefit").join("presets.toml"))
     }
 
-    /// 灰阶测试图在用例里落到哪儿：**那份预设文件的上一层**——场景夹具的临时目录里
-    /// （真会话里是会话从哪儿敲起来的那个目录）。**不点在家目录里**：家目录底下只有
-    /// 假盘那几样，`~/` 底下多一项会让补全那几串红（与预设文件摆在那里同一条，停车场 Q824）。
+    /// 灰阶测试图在用例里落到哪儿：会话是从哪儿敲起来的那个目录——场景数据的 `cwd`，
+    /// 假盘上的一处（真会话里是进程的当前目录）。假盘在临时目录里，一个用户的东西都不碰。
     fn charts_land_in(scene: &Scene) -> PathBuf {
-        scene
-            .presets
-            .path()
-            .expect("用例里那份预设文件的位置是定死的")
-            .parent()
-            .expect("它上一层")
-            .to_path_buf()
+        scene.path(&scene.data.cwd)
     }
 
     /// 从这一串的起点场景起，逐步喂给输入入口；回走完那一刻的场景、那一趟与最后一步的去留。
@@ -968,52 +960,16 @@ mod redesign {
         terminal.backend().buffer().clone()
     }
 
-    /// 走完一串，逐格对它的交互期望屏，顺带核一个背景色都没设（停车场 Q737）。
+    /// **走完一串再比一次屏**：喂完、核会话还开着、画一屏、
+    /// 核一个背景色都没设（停车场 Q737）、逐格对它的交互期望屏——整屏，一格不让。
     fn assert_sequence(name: &str) -> Scene {
-        assert_sequence_with(name, |expected| expected)
-    }
-
-    /// **走完一串再比一次屏，那一套只有这一处**：喂完、核会话还开着、画一屏、
-    /// 核一个背景色都没设、逐格对期望屏。
-    ///
-    /// `adjust` 是调用方**动一动期望屏**的机会：设计稿在那儿摆的字与实现照规矩写下的
-    /// 差一截缩进（[`Expected::shifted`]）、设计稿写着一句而实现照规矩不写它
-    /// （[`Expected::blanked`]）、或者差的只有它自己那套模拟算出来的一格
-    /// （[`Expected::cell_like`]）。**动完仍是一条断言**，而**每一处用它的地方都得在
-    /// 用例上写清是哪一条停车场条目**。
-    fn assert_sequence_with(name: &str, adjust: impl FnOnce(Expected) -> Expected) -> Scene {
         let (scene, running, exit) = walked(name);
         assert_eq!(exit, Exit::Stay, "「{name}」走完会话还开着");
         let size = scene::sequence(name).size;
         let buffer = painted(&scene, &running, size);
         assert_no_background(&buffer);
-        assert_same_cells(&buffer, &adjust(design::sequence(name)));
+        assert_same_cells(&buffer, &design::sequence(name));
         scene
-    }
-
-    /// 同上，另外**把期望屏上几段往右推几格**（[`Expected::shifted`]）。
-    fn assert_sequence_shifting(name: &str, shifts: &[(usize, u16, u16, u16)]) -> Scene {
-        assert_sequence_with(name, |expected| {
-            shifts
-                .iter()
-                .fold(expected, |expected, (row, from, width, by)| {
-                    expected.shifted(*row, *from, *width, *by)
-                })
-        })
-    }
-
-    /// 同上，另外**把期望屏上几格各换成它右边那一格**（[`Expected::cell_like`]）。
-    fn assert_sequence_like(name: &str, cells: &[(usize, u16)]) -> Scene {
-        assert_sequence_with(name, |expected| {
-            cells.iter().fold(expected, |expected, (row, at)| {
-                expected.cell_like(*row, *at, at + 1)
-            })
-        })
-    }
-
-    /// 同上，另外**抹掉期望屏上一段**（[`Expected::blanked`]）。
-    fn assert_sequence_blanking(name: &str, (row, from, width): (usize, u16, u16)) -> Scene {
-        assert_sequence_with(name, |expected| expected.blanked(row, from, width))
     }
 
     /// **`j`／`k` 挪光标**，走完与期望屏逐格相等（票面第二条）。
@@ -1105,8 +1061,7 @@ mod redesign {
     #[test]
     fn t_and_x_start_a_run_and_come_back_to_the_task_view() {
         for name in ["fresh-t", "fresh-x"] {
-            // 按下去那一刻起就是清点中：输出目录那一行行尾那十格照 Q807 抹掉。
-            let scene = assert_sequence_blanking(name, (6, 26, 10));
+            let scene = assert_sequence(name);
             assert_eq!(
                 scene.session.views.view,
                 super::super::view::View::Task,
@@ -1125,8 +1080,7 @@ mod redesign {
     /// **清点中按停止**（票面第三条）：抬头接一句「正在停止」，屏底说再按一次立即停。
     #[test]
     fn stopping_while_surveying_says_so_on_the_title_and_the_footer() {
-        // 输出目录那一行行尾那十格照 `shell` 那条清点中的用例抹掉：停车场 **Q807**。
-        assert_sequence_blanking("survey-s", (6, 26, 10));
+        assert_sequence("survey-s");
     }
 
     /// **`s` 按一次、再按一次**（票面第三条）：一次是做完当前卷就停，两次立即停止——
@@ -1569,14 +1523,6 @@ mod redesign {
     ///
     /// **推进那几秒由这一串自己的场景数据接上**（`Scene::advance_to`，停车场 Q805）；
     /// 两串的推进都摆在末一步上，「一串只推得动一次」那条断言踩不到（停车场 Q865）。
-    ///
-    /// **`deciding-x-advance` 总进度那一行的末一位数换一格**（换成同一行上
-    /// `46809` 里那个 `9`，同色同修饰）：设计稿那一头攒出来的 `r.steps` 是个
-    /// **差一丝不到 3799 的浮点数**，导出那一步 `num()` 四舍五入写成了 `3799`，
-    /// 而屏上那一格走的是 `Math.floor`、印出来是 `3798`——**同一个量，夹具与期望屏
-    /// 各印了一副**。这一趟一页一步，走出来的是整数 3799（场景数据自己的那一格也这么说，
-    /// `Scene` 的自检按它核过）。换完仍是一条断言：实现在那一格上写别的照样红。
-    /// 停车场 **Q899**，与 Q844 那一格（连续时间对一页一步）是同一类、不同根。
     #[test]
     fn answering_once_still_asks_the_next_volume_and_for_the_rest_does_not() {
         let (scene, running, _) = walked("deciding-x-advance");
@@ -1585,9 +1531,7 @@ mod redesign {
         assert!(live.has_written(), "第一卷真写完了：结论行从此是转换那一副");
         assert_eq!(live.for_the_rest(), None, "`x` 没有替后面的卷答话");
         drop(live);
-        assert_sequence_with("deciding-x-advance", |expected| {
-            expected.cell_like(2, 57, 63)
-        });
+        assert_sequence("deciding-x-advance");
 
         let (scene, running, _) = walked("deciding-a-advance");
         assert!(
@@ -1647,16 +1591,11 @@ mod redesign {
     }
 
     /// **非漫画文件那一条备注的说明卡**：正文那几行**出自报告末尾那一小结**
-    /// （`render::non_volume_stack`，ADR 0016），路径把家目录缩成 `~`。
-    ///
-    /// **正文折下来的那两行往右推四格**：设计稿那一头的折行**不带悬挂缩进**，
-    /// 而屏上折行只有一套规矩（`crate::wrap`：行首那一截缩进跟着折下来的每一行走，
-    /// 停车场 Q32／Q114）——那一条仍然成立，因此这一串照它缩。推开之后仍是一条断言，
-    /// 停车场 **Q845**。
+    /// （`render::non_volume_stack`，ADR 0016），路径把家目录缩成 `~`；
+    /// 原因那一行折下来的那一截跟着它的缩进走（《折行》：悬挂缩进）。
     #[test]
     fn the_card_of_the_ignored_files_says_what_the_report_says() {
-        let scene =
-            assert_sequence_shifting("ended-nonvolume-Enter", &[(20, 25, 70, 4), (23, 25, 70, 4)]);
+        let scene = assert_sequence("ended-nonvolume-Enter");
         assert!(matches!(
             scene.session.views.cover,
             Some(Overlay::Note { .. })
@@ -1841,15 +1780,11 @@ mod redesign {
     ///
     /// **`⏎` 之后再 `Esc` 丢的只有那一句**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）：
     /// 光标停在刚跳到的那一行上不动，屏底那句「搜索结果 1/1」还在。
-    ///
-    /// 两串都从「搜索」那一景起手，因此都带着那一景那**两格已知的一格差**
-    /// （停车场 **Q844**，理由与 `the_search_scene_…` 那一条逐字相同）。
     #[test]
     fn escape_drops_the_search_and_its_underlines() {
-        const BAR: &[(usize, u16)] = &[(3, 46), (16, 103)];
-        let scene = assert_sequence_like("search-Escape", BAR);
+        let scene = assert_sequence("search-Escape");
         assert_eq!(scene.session.views.searching(), None);
-        let scene = assert_sequence_like("search-Enter-Escape", BAR);
+        let scene = assert_sequence("search-Enter-Escape");
         assert_eq!(scene.session.views.searching(), None);
         assert!(scene.session.views.input.is_none(), "那一行已经关了");
     }
@@ -1953,18 +1888,17 @@ mod redesign {
         assert_sequence("fresh-o-Escape");
     }
 
-    /// **`Tab` 列出这一层、再按轮到下一个、`C-w` 删一段**：`~/` 底下四项——轮换那两屏不比屏，
-    /// 设计稿的候选按它假盘的写法次序摆、实现按名字排（停车场 Q790），比的是候选有几条、轮到哪一条、
-    /// 缓冲跟着换；`C-w` 之后候选没了、缓冲回到 `~/`，那一屏逐格相等。
+    /// **`Tab` 列出这一层、再按轮到下一个、`C-w` 删一段**：`~/` 底下四项按名字排，
+    /// 轮到哪一条缓冲跟着换；`C-w` 之后候选没了、缓冲回到 `~/`。三屏都逐格相等。
     #[test]
     fn tab_lists_the_level_cycles_through_it_and_ctrl_w_deletes_a_segment() {
-        let (scene, _, _) = walked("fresh-o-Tab");
+        let scene = assert_sequence("fresh-o-Tab");
         let line = scene.session.views.input.as_ref().expect("输入行开着");
         assert_eq!(line.candidates.len(), 4, "`~/` 底下四项");
         assert!(line.candidates.iter().all(|listed| listed.directory));
         assert_eq!(line.at, 0);
         assert_eq!(line.buffer, format!("~/{}", line.candidates[0].shown()));
-        let (scene, _, _) = walked("fresh-o-Tab-Tab");
+        let scene = assert_sequence("fresh-o-Tab-Tab");
         let line = scene.session.views.input.as_ref().expect("输入行开着");
         assert_eq!(line.at, 1);
         assert_eq!(line.buffer, format!("~/{}", line.candidates[1].shown()));
@@ -2010,7 +1944,7 @@ mod redesign {
         let line = scene.session.views.input.as_ref().expect("输入行回来了");
         assert_eq!(
             (line.buffer.as_str(), line.candidates.len()),
-            ("~/Comics/", 4)
+            ("~/Comics/大友克洋/", 4)
         );
     }
 
@@ -2328,49 +2262,24 @@ mod redesign {
     }
 
     /// **`c` 出灰阶测试图**（票面第一条）：图按此刻那块面板画出来、写到盘上，
-    /// 屏底那一句**说它写到了哪里**。
-    ///
-    /// **屏底那一行整个换掉**（[`Expected::instead`]，停车场 **Q890**）：设计稿那一句
-    /// 末尾写的是「（原型不写文件）」——原型不写，而这一副真写得出文件，票面第五条要的
-    /// 正是回话说写到了哪里。换掉之后仍是一条断言：那一行连同每一格的样子由这条用例写出来，
-    /// 实现说别的照样红。屏上别的 35 行一格不差。
+    /// 屏底那一句**说它写到了哪里**：会话是从哪儿敲起来的那个目录底下（场景数据的 `cwd`），
+    /// 名字照型号与屏幕灰阶数取。走完那一屏与设计稿逐格相等。
     #[test]
     fn c_draws_a_calibration_chart_and_says_where_it_landed() {
-        let (scene, running, exit) = walked("config-c");
-        assert_eq!(exit, Exit::Stay, "走完会话还开着");
-        // 图真落在了临时目录里（一个用户的东西都不碰）。
+        let scene = assert_sequence("config-c");
+        // 屏上说的那条路径上真有这张图，而且只写出这一张（假盘在临时目录里，一个用户的东西都不碰）。
+        let said = scene::sequence_data("config-c").session["toast"]
+            .as_str()
+            .expect("走完那一刻屏底有一句回话")
+            .to_owned();
+        let (_, there) = said.split_once("写到 ").expect("回话说写到了哪里");
         let landed: Vec<PathBuf> = std::fs::read_dir(charts_land_in(&scene))
-            .expect("临时目录读得出")
+            .expect("落点读得出")
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_some_and(|kind| kind == "png"))
             .collect();
-        assert_eq!(landed.len(), 1, "只写出一张：{landed:?}");
-        // **屏底那一句摆到倒数第三列为止**（`shell::footer` 的 `room`：从第 1 列起、占宽减三列）：
-        // 图落在临时目录里，那条路径长短随机器而变，长了就在那儿截住——期望屏照同一条截。
-        let (width, _) = scene::sequence("config-c").size;
-        let head = "✓ 已生成灰阶测试图";
-        let mut room = usize::from(width - 3) - usize::from(crate::wrap::width(head));
-        let tail: String = format!(
-            "（1264x1680）：写到 {}",
-            scene.session.home_shown(&landed[0])
-        )
-        .chars()
-        .take_while(|glyph| {
-            let cells = usize::from(crate::wrap::width(&glyph.to_string()));
-            let fits = cells <= room;
-            room = room.saturating_sub(cells);
-            fits
-        })
-        .collect();
-        let said = [
-            Segment::plain(" "),
-            Segment::new(head, Look::kind(Kind::Done).bold()),
-            Segment::plain(tail),
-        ];
-        let buffer = painted(&scene, &running, scene::sequence("config-c").size);
-        assert_no_background(&buffer);
-        assert_same_cells(&buffer, &design::sequence("config-c").instead(35, &said));
+        assert_eq!(landed, [scene.path(there)], "只写出一张，就在屏上说的那儿");
     }
 
     /// 在配置视图那一景上逐个喂键（`here` 是灰阶测试图的落点），回最后一下的去留。

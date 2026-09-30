@@ -3,6 +3,8 @@
   "now_ms": 1030000,
   "time_multiplier": "unchanged",
   "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",
@@ -1062,7 +1064,7 @@
             8
           ]
         ],
-        "isolated_output": "~/转好的/_isolated/集英社/海贼王/第07卷",
+        "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "notable_pages": [
           {

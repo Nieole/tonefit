@@ -195,22 +195,12 @@ mod tests {
     }
 
     /// **「清点中」120×36 与 80×24 逐格相等**（票面第一条）：总览只说正在清点、不报卷数，
-    /// 处理路径那几行带转轮（一行错开一格），卷列表抬头说马上显示卷列表。
-    ///
-    /// **输出目录那一行行尾抹掉十格**：设计稿在那儿仍写着 `[i → 修改]`，而这一档 `i`
-    /// 派不出去（它自己的 `taskKey` 在跑着时就返回 false），实现照「屏上不摆按不动的键」
-    /// 不写它——停车场 **Q807**。抹掉的那十格仍要求是空白。
+    /// 处理路径那几行带转轮（一行错开一格），卷列表抬头说马上显示卷列表；
+    /// 输出目录那一行不摆 `i → 修改`——这一档 `i` 派不出去。
     #[test]
     fn the_survey_scene_matches_its_design_snapshot_wide_and_narrow() {
-        for (width, height) in [(120, 36), (80, 24)] {
-            let scene = Scene::named("survey");
-            let buffer = painted(&scene, width, height);
-            assert_no_background(&buffer);
-            assert_same_cells(
-                &buffer,
-                &design::snapshot("survey", width, height).blanked(6, 26, 10),
-            );
-        }
+        assert_scene("survey", 120, 36);
+        assert_scene("survey", 80, 24);
     }
 
     /// **「转换中」120×36 与 80×24 逐格相等**（票面第一条）：总览给总进度、当前卷、
@@ -260,27 +250,11 @@ mod tests {
     /// **「整卷统一灰阶」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：
     /// 卷行在灰阶分布之后多一列**代表页**，砍列时排在耗时之后（80 列那一档耗时与代表页都让掉了）。
     ///
-    /// **那条环节横条换掉三格**（各换成它右边那一格）：设计稿那一头的模拟走的是**连续时间**
-    /// ——`灰原哀/第05卷` 的 `done` 是 114.554，半页也占一格；而这一趟**一页一步**，
-    /// 走到的是 114/166，同一条横条因此少满一格（24 格的满 16 不满 17，8 格的满 5 不满 6）。
-    /// 换掉之后仍是一条断言，停车场 **Q844**。
+    /// 当前卷走到半页上（设计稿的模拟走连续时间），环节横条与它旁边那个数一样只数走完的整页。
     #[test]
     fn the_envelope_scene_matches_its_design_snapshot_wide_and_narrow() {
-        let scene = Scene::named("envelope");
-        // 换掉的那几格：120×36 上总览当前卷那一行（第 46 格）与树上 `灰原哀` 那一行
-        // 行尾（第 111 格）各一格，80×24 上那一行（第 57 格）一格——三处都是同一条横条。
-        for (width, height, cells) in [
-            (120u16, 36u16, &[(3usize, 46u16), (28, 111)][..]),
-            (80, 24, &[(20, 57)][..]),
-        ] {
-            let buffer = painted(&scene, width, height);
-            assert_no_background(&buffer);
-            let mut expected = design::snapshot("envelope", width, height);
-            for (row, at) in cells {
-                expected = expected.cell_like(*row, *at, at + 1);
-            }
-            assert_same_cells(&buffer, &expected);
-        }
+        assert_scene("envelope", 120, 36);
+        assert_scene("envelope", 80, 24);
     }
 
     /// **「窗口太小」转换中那一份逐格相等**（票面第一条）：中间那一行是总进度。
@@ -309,29 +283,10 @@ mod tests {
     /// 输入行占着屏底、提示词是 `/`、右端只有 `⏎ → 跳到结果` 与 `Esc → 取消`；
     /// 卷列表的框细了、光标行首是暗的 `›`；**匹配上的那几行名字那一列加下划线**
     /// （目录名装着这一句时它底下那几卷一起加）；框底边左起写着这一句与 `n`／`N`。
-    ///
-    /// **那条环节横条换掉两格**（各换成它右边那一格）：这一景与「整卷统一灰阶」同在
-    /// 62% 上、当前卷同是 `灰原哀/第05卷`，踩的是同一条**已知的一格差**——设计稿那一头
-    /// 的模拟走的是**连续时间**（`done` 是 114.554，半页也占一格），而这一趟**一页一步**、
-    /// 走到的是 114/166。24 格那一条满 16 不满 17，8 格那一条满 5 不满 6。
-    /// 换掉之后仍是一条断言（实现在那一格上写别的照样红），停车场 **Q844**。
     #[test]
     fn the_search_scene_matches_its_design_snapshot_wide_and_narrow() {
-        let scene = Scene::named("search");
-        // 换掉的那几格：120×36 上总览当前卷那一行（第 46 格）与树上 `灰原哀` 那一行
-        // 行尾（第 103 格）各一格，80×24 上那一行（第 57 格）一格——三处都是同一条横条。
-        for (width, height, cells) in [
-            (120u16, 36u16, &[(3usize, 46u16), (16, 103)][..]),
-            (80, 24, &[(14, 57)][..]),
-        ] {
-            let buffer = painted(&scene, width, height);
-            assert_no_background(&buffer);
-            let mut expected = design::snapshot("search", width, height);
-            for (row, at) in cells {
-                expected = expected.cell_like(*row, *at, at + 1);
-            }
-            assert_same_cells(&buffer, &expected);
-        }
+        assert_scene("search", 120, 36);
+        assert_scene("search", 80, 24);
     }
 
     /// **「全部按键」120×36 与 80×24 逐格相等**（`session-redesign/09` 票面第一条）：

@@ -3,6 +3,8 @@
   "now_ms": 1000000,
   "time_multiplier": 7,
   "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
   "paths": [
     {
       "path": "~/漫画库",

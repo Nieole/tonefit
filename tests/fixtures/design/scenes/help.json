@@ -3,6 +3,8 @@
   "now_ms": 1000000,
   "time_multiplier": 7,
   "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
   "paths": [
     {
       "path": "~/漫画库",
@@ -112,7 +114,7 @@
     "outcome": null,
     "envelope": false,
     "elapsed_s": 89.6,
-    "steps": 8444.257,
+    "steps": 8444,
     "total_steps": 46809,
     "current": "~/漫画库/集英社/海贼王/第01卷",
     "stop_level": 0,
