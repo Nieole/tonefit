@@ -136,7 +136,7 @@ impl TasteLayer {
     /// 这一层每一项**落到默认值之后**的取值。
     ///
     /// 它是「没说」这一格的唯一去处：命令行拿它做「命令行没点、预设也没说」那一档
-    /// （见 [`crate::Cli`] 各项那几个方法），会话直接拿它拼 [`Request`](tonefit::Request)
+    /// （见 [`crate::PageOptions`] 与 [`crate::Cli`] 各项那几个方法），会话直接拿它拼 [`Request`](tonefit::Request)
     /// （见 `session::state::Session::request`）。两处因此不会各写一份默认值——
     /// 写第二份，同一条命令与同一次会话就会在无人察觉时分家。
     ///
@@ -190,7 +190,7 @@ impl TasteLayer {
     }
 }
 
-/// 按名字读一份预设。命令行那一路只用得到这一件事（`Cli::preset`）。
+/// 按名字读一份预设。命令行那一路只用得到这一件事（`PageOptions::preset`，转换与样张共用）。
 pub fn load(name: &str) -> Result<Preset> {
     Presets::found().read(name)
 }

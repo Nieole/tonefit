@@ -142,16 +142,18 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 ///
 /// # `request` 读哪几格
 ///
-/// 读的是**处理选项**那几格：型号、缩放方式、裁白边、拆分、缩放算法、提白上限。
+/// 读的是**处理选项**那几格：型号、缩放方式、裁白边、拆分、缩放算法、提白上限，
+/// 外加两道覆盖项（下一段）。
 /// 卷级那几格——点名的卷、输出根、观察者、内存上限、读盘方式、写不写记录、做到哪一步——
 /// **一格都不读**，一张图上它们无从谈起：样张恒不写《记录》，纸白恒读一遍
 /// （上限取 0 时也读，见库内的 `WhiteWhenOff`）。整卷统一灰阶那一格也不读：那条路上的档要看完整卷
 /// 才定得下，一张图给的是它自己那一档。
 ///
-/// **两道覆盖项（`bit_depth`、`dither`）眼下照转换那一趟裁候选集**，而那不是样张该有的样子：
-/// 它们裁掉的是「这一趟不要」，不是「这一页不可能」，样张该照出整套、只把判定顶死
-/// （样张 spec《Implementation Decisions》第三条）。那一条归 `proof-sheet/03`；
-/// 在它落地之前，覆盖项交进来样张就少几张。
+/// **两道覆盖项（`bit_depth`、`dither`）不裁样张的候选集**（样张 spec《Implementation Decisions》
+/// 第三条）：它们裁掉的是「这一趟不要」，不是「这一页不可能」，而样张存在的理由正是并排看。
+/// 出的是两道界（屏幕灰阶数、尺寸贴合检查）裁剩的那一整套；覆盖项只管判定从哪几个里挑——
+/// 与转换那一趟逐格相同，裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
+/// 覆盖项与面板对不上时（越界的灰阶档位、互锁 ③）回的是转换那一趟的同一句拒绝。
 ///
 /// 交回这张图每一张输出页的那一叠（[`Proof`]）：每一张落在哪儿、多大，连同这一页的判定、
 /// 几何事实与纸色提白。**先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
@@ -1420,7 +1422,23 @@ impl Candidates {
         })
     }
 
-    /// 门是这个结果的页该拿哪一套。
+    /// **只照两道界裁**的两套：屏幕灰阶数（ADR 0003）与尺寸贴合检查（ADR 0007）照裁，
+    /// 两道覆盖项一道都不裁——样张要出的就是这一整套（样张 spec《Implementation Decisions》第三条）。
+    ///
+    /// 被两道界裁掉的候选**本来就永远不会被写出去**，出出来是噪声；覆盖项裁掉的却是
+    /// 「这一趟不要」，不是「这一页不可能」，而样张存在的理由正是并排看。覆盖项在样张上
+    /// 管的只有判定从哪几个里挑——那一套仍是 [`Candidates::new`] 给的（见 `proof::write`）。
+    ///
+    /// 两套都非空、谁都不必拒绝：没有覆盖项，裁空只能来自覆盖项（见 [`candidates`]）。
+    fn without_overrides(profile: &Profile) -> Self {
+        let gray_levels = profile.panel().gray_levels;
+        Self {
+            holds: Candidate::all(gray_levels, GeometryGate::Holds),
+            broken: Some(Candidate::all(gray_levels, GeometryGate::Broken)),
+        }
+    }
+
+    /// 门是这个结果的页（`page`）该拿哪一套。
     ///
     /// 裁空那一支上**当场造那句拒绝**，而不是重说一遍备好的那一份：撞上门的页可能有
     /// 好几张，而**每一张听见的不是同一句**——出路由这一页的几何定（21 号票）。
@@ -1435,8 +1453,15 @@ impl Candidates {
     ///
     /// 造出来的那一份戴着 [`Refusal`]：这一支的处置是「维持拒绝」（互锁 ③），
     /// 摘掉标记它就降级成了「这一卷没做成」，而 `--dither fs` 对每一卷都错。
-    fn for_gate(&self, gate: GeometryGate, source: Size, panel: Size) -> Result<&[Candidate]> {
-        match gate {
+    /// 撞上的是哪一页由 `page` 带在错误链外层——转换那一趟与样张听见的是同一句。
+    fn for_gate(
+        &self,
+        page: &Path,
+        gate: GeometryGate,
+        source: Size,
+        panel: Size,
+    ) -> Result<&[Candidate]> {
+        let allowed: Result<&[Candidate]> = match gate {
             GeometryGate::Holds => Ok(&self.holds),
             GeometryGate::Broken => self.broken.as_deref().ok_or_else(|| {
                 Refusal(dither_outside_the_gate_error(geometry::holds_by_height(
@@ -1444,7 +1469,8 @@ impl Candidates {
                 )))
                 .into()
             }),
-        }
+        };
+        allowed.with_context(|| format!("{} 这一页关上了尺寸贴合检查", page.display()))
     }
 }
 
@@ -2198,9 +2224,7 @@ fn examine_gray_page(
     // 门在这里判，也只在这里判：这一页的候选集当场定下，画质分只在那一套上求。
     // 门只决定这一页——同一卷里贴住面板的页照旧拿得到抖动那一维（ADR 0007 决定第 1 条）。
     let gate = GeometryGate::of(size, panel.resolution);
-    let allowed = candidates
-        .for_gate(gate, image.size(), panel.resolution)
-        .with_context(|| format!("{} 这一页关上了尺寸贴合检查", source.display()))?;
+    let allowed = candidates.for_gate(source, gate, image.size(), panel.resolution)?;
     let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
         resampler.resize(image, size, request.filter)
     })?;
@@ -3183,7 +3207,7 @@ fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> 
 ///
 /// 规则那一句由 [`Interlock`] 自己说——同一句还要从 `--help` 里出来，措辞只有那一份。
 /// 这里补的是**这一页**才知道的那件事：缩放方式那一侧还有没有出路。撞上的是哪一页
-/// 由错误链外层带着（见 [`Compute::gray_page`]）。
+/// 由错误链外层带着（见 [`Candidates::for_gate`]）。
 ///
 /// **按页分岔**（21 号票，收停车场 Q102）：`by_height_holds` 答的是
 /// 「换成以高为准之后，**这一页**的门成不成立」，判定在 [`Candidates::for_gate`]。

@@ -19,9 +19,9 @@ use crate::decide::{self, CandidateScore, Verdict};
 use crate::quantize::{BitDepth, Candidate};
 use crate::report::{PageBranch, PageOutcome, PageReport, Processed};
 use crate::{
-    Candidates, Examined, Opened, PageColor, Piece, Pieces, Request, Salvage, WhiteWhenOff,
-    candidate_bytes, decode, encode, examine_gray_page, open_source_page, output_name, pinned,
-    resample,
+    Candidates, Examined, GrayImage, Opened, PageColor, Piece, Pieces, Request, Salvage,
+    WhiteWhenOff, candidate_bytes, decode, encode, examine_gray_page, open_source_page,
+    output_name, pinned, resample,
 };
 
 /// 一张图出的样张：**一张输出页一叠**，按阅读顺序（spec《Implementation Decisions》第六条）。
@@ -109,7 +109,12 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         .file_name()
         .map(Path::new)
         .with_context(|| format!("{} 不是一张图", source.display()))?;
-    let candidates = Candidates::new(request)?;
+    // 两套候选各管一件事（样张 spec《Implementation Decisions》第三条）：
+    // 出哪几张照**两道界**裁（`shown`），判定从哪几个里挑照转换那一趟裁（`judged`）——
+    // 覆盖项裁掉的是「这一趟不要」，不是「这一页不可能」。覆盖项越界的那句拒绝
+    // 也由后者照转换那一趟说，一个字不另写。
+    let judged = Candidates::new(request)?;
+    let shown = Candidates::without_overrides(&request.profile);
     let resampler = resample::Resampler::default();
     let count = pieces.len();
     let drafted = pieces
@@ -120,17 +125,11 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
                 source,
                 &image,
                 request,
-                &candidates,
+                &shown,
                 &resampler,
                 WhiteWhenOff::Foresee,
             )?;
-            // 判定走的是转换那一趟在一页的卷上会走的那一句：逐页那条路上 `pinned` 答 `None`，
-            // 覆盖项把候选裁到只剩一个时答那一档、理由是覆盖（见 `crate::pinned`）。
-            let verdict = decide::decide(
-                &examined.scores,
-                request.profile.threshold(),
-                pinned(request, &examined.scores),
-            );
+            let verdict = verdict(source, &image, request, &judged, &examined)?;
             let reference = encode::png(examined.reference.image(), BitDepth::Eight, None)?;
             let sheets = examined
                 .scores
@@ -158,6 +157,37 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         .map(|drafted| drafted.land(source, out, color, salvage))
         .collect::<Result<Vec<_>>>()?;
     Ok(Proof { pages })
+}
+
+/// 这一页的《判定》：画质分是整套求的，判定**只在转换那一趟会留下的那几个里挑**。
+///
+/// 那几个是 `judged` 按这一页的门给的一套（见 [`Candidates::for_gate`]）：覆盖项没点时就是整套，
+/// 点了就是它们留下的那几个；裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
+/// 每一档的画质分各求各的，从整套里挑出那几格与转换那一趟当场只求那几格**逐格相同**——
+/// 判定因此是转换那一趟在一页的卷上会走的那一句，神谕那一条比的正是它写出去的那一张。
+///
+/// `--dither fs` 撞上一页没贴合屏幕（互锁 ③）时这里回的是转换那一趟的那句拒绝：
+/// 那一趟一个字节都不写，样张就没有「判定那一张」可给。
+fn verdict(
+    source: &Path,
+    image: &GrayImage,
+    request: &Request,
+    judged: &Candidates,
+    examined: &Examined,
+) -> Result<Verdict> {
+    let panel = request.profile.panel().resolution;
+    let allowed = judged.for_gate(source, examined.gate, image.size(), panel)?;
+    let scores: Vec<CandidateScore> = examined
+        .scores
+        .iter()
+        .filter(|score| allowed.contains(&score.candidate))
+        .copied()
+        .collect();
+    Ok(decide::decide(
+        &scores,
+        request.profile.threshold(),
+        pinned(request, &scores),
+    ))
 }
 
 /// 一叠编好、还没落盘的样张。
