@@ -3955,6 +3955,10 @@ fn an_isolated_page_keeps_the_depth_the_metric_gave_it_on_the_default_path() {
 #[test]
 fn an_override_leaves_no_volume_envelope_to_speak_of() {
     // `--bit-depth` 顶掉的是判定本身，卷级统一档位因此无从谈起——理由仍分得清是覆盖。
+    //
+    // 开着整卷统一灰阶问：那条路整卷判完门才问顶没顶死，门处处不成立的这一卷只剩一个候选、
+    // 就是顶死。默认那条路上同一卷逐页判（one-source/02），
+    // 见 `a_single_override_on_a_volume_the_gate_shuts_everywhere_is_judged_page_by_page`。
     let space = Workspace::new();
     let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 4]);
 
@@ -3963,6 +3967,7 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
         // 未贴合屏幕时候选集里没有抖动那一维，`--bit-depth` 一点名就只剩一个候选，
         // 判定整个被顶掉——这一条要的正是那个局面（页几何批 01 号票）。
         fit: FitMode::Inside,
+        envelope: true,
         ..fixtures::request(&space, [volume.path()])
     })
     .expect("处理应当成功");
@@ -3976,6 +3981,66 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
     for page in &report.volumes[0].pages {
         assert_eq!(fixtures::verdict(page).reason, Reason::Override);
     }
+}
+
+/// **默认那条路上只点灰阶档位，一卷的门处处不成立：照样逐页判，不说「覆盖」**
+/// （one-source/02；`CONTEXT.md` 的《覆盖顶死》；ADR 0005 的《覆盖项那一档答不出来时让位》）。
+///
+/// 未贴合屏幕的页候选里没有抖动那一维，`--bit-depth 4` 一点名，每一页都只剩 `4bit` 一个候选——
+/// 字节与顶死无异。可这一趟开卷之前答不出顶没顶死：门成立的页若在卷里，它们还剩抖与不抖两个。
+/// 默认那条路上答不出的那一角一律逐页判：每一页的理由是它自己那条曲线判出来的那一种，
+/// 卷级那一行是「逐页」。这一卷的纯色取值（`fixtures::NEEDS_TWO_BITS`）正落在 4bit 的格点上，
+/// 读数是零，判出来的理由因此是「达标的最省空间档位」。
+///
+/// 预览预告的是照做那一趟的那一档（spec 的 story 6）：它排在照做之前跑，同一句卷级判定。
+#[test]
+fn a_single_override_on_a_volume_the_gate_shuts_everywhere_is_judged_page_by_page() {
+    let space = Workspace::new();
+    let volume = volume_of_solids(&space, &[fixtures::NEEDS_TWO_BITS; 4]);
+    let request = Request {
+        bit_depth: Some(BitDepth::Four),
+        dither: None,
+        // [`volume_of_solids`] 的小页在 fit-inside 上不放大，哪条边都贴不住面板：门处处不成立。
+        fit: FitMode::Inside,
+        envelope: false,
+        ..fixtures::request(&space, [volume.path()])
+    };
+
+    let predicted = tonefit::run(&Request {
+        mode: Mode::DryRun,
+        ..request.clone()
+    })
+    .expect("预览应当成功");
+    let report = tonefit::run(&request).expect("处理应当成功");
+
+    let volume = &report.volumes[0];
+    for page in &volume.pages {
+        assert_eq!(
+            page.gate(),
+            Some(GeometryGate::Broken),
+            "夹具的前提：{} 的门不成立",
+            page.source.display()
+        );
+        assert_eq!(page.scores().len(), 1, "夹具的前提：这一页只剩一个候选");
+        assert_eq!(
+            fixtures::verdict(page),
+            tonefit::Verdict {
+                candidate: fixtures::plain(BitDepth::Four),
+                reason: Reason::LowestWithinThreshold,
+            },
+            "{} 的档不是它自己那条曲线判出来的",
+            page.source.display()
+        );
+    }
+    assert_eq!(
+        volume.verdict,
+        Some(VolumeVerdict::PerPage),
+        "默认那条路上答不出的那一角没有逐页判"
+    );
+    assert_eq!(
+        predicted.volumes[0].verdict, volume.verdict,
+        "预览预告的卷级判定与照做那一趟不一样"
+    );
 }
 
 /// 取这一卷的整卷统一灰阶。不是整卷统一灰阶定的档就是用例造错了输入。

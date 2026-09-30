@@ -868,6 +868,151 @@ fn a_pinned_run_under_the_envelope_records_and_skips_by_page() {
     assert_eq!(second.volumes[0].retained_pages, 1);
 }
 
+/// **默认那条路上只点灰阶档位、一卷两组门混着：逐页到底**（one-source/02；停车场 Q635、Q683、Q697）。
+///
+/// `--bit-depth 2` 下门成立的那一页还剩 `2bit` 与 `2bit+FS` 两个，门不成立的那一页只剩 `2bit`——
+/// 开卷之前答不出顶没顶死（`CONTEXT.md` 的《覆盖顶死》）。默认那条路上答不出的那一角一律逐页判：
+/// 卷级那一行是「逐页」、每一页的理由是它自己那条曲线判出来的那两种之一；一页判完当场编码，
+/// 参照一张都不进缓存；每一页记着它自己那一份源哈希、不记全卷那一个。
+///
+/// 下半段钉按页跳过：改掉门不成立的那一页，第二趟只重做它；产物与往空去处整卷重做的逐字节相同
+/// ——那一页 tEXt 里的理由只取决于它自己，留下的那一页搬过来一个字节不用改。
+#[test]
+fn a_single_override_on_a_volume_whose_pages_part_at_the_gate_goes_page_by_page_all_the_way() {
+    let space = Workspace::new();
+    let volume = pages_that_part_at_the_gate(&space);
+    let request = single_override_fitted_inside(&space, &volume);
+
+    let first = tonefit::run(&request).expect("处理应当成功");
+    let done = &first.volumes[0];
+    let gates: Vec<_> = done.pages.iter().map(|page| page.gate()).collect();
+    assert_eq!(
+        gates,
+        [
+            Some(tonefit::GeometryGate::Holds),
+            Some(tonefit::GeometryGate::Broken)
+        ],
+        "夹具的前提：头一页贴得住面板、第二页贴不住"
+    );
+    assert_eq!(done.verdict, Some(VolumeVerdict::PerPage));
+    for page in &done.pages {
+        let reason = fixtures::verdict(page).reason;
+        assert!(
+            matches!(
+                reason,
+                Reason::LowestWithinThreshold | Reason::NoneWithinThreshold
+            ),
+            "{} 的理由不是逐页那两种：{reason:?}",
+            page.source.display()
+        );
+        let text = fixtures::read_png_text(&page.output);
+        assert!(
+            fixtures::png_field(&text, "tonefit:page-source").is_some(),
+            "{} 没写页级源哈希",
+            page.output.display()
+        );
+        assert_eq!(
+            fixtures::png_field(&text, "tonefit:source"),
+            None,
+            "{} 写了卷级源哈希",
+            page.output.display()
+        );
+    }
+    assert_eq!(done.cached_references, 0, "参照还是进了缓存");
+
+    volume.page("002.png", &fixtures::screentone(fixtures::TINY));
+    let second = tonefit::run(&request).expect("第二趟应当成功");
+    let redone = &second.volumes[0];
+    assert_eq!(redone.verdict, Some(VolumeVerdict::PerPage));
+    assert_eq!(redone.decodes, 1, "没变的那一页也被解码了");
+    assert_eq!(redone.retained_pages, 1, "没变的那一页没留下");
+    assert_eq!(
+        redone
+            .pages
+            .iter()
+            .map(|page| page.source.file_name().and_then(|name| name.to_str()))
+            .collect::<Vec<_>>(),
+        [Some("002.png")],
+        "重做的不是改了的那一页"
+    );
+
+    let from_scratch = tonefit::run(&Request {
+        output_root: space.out_named("from-scratch"),
+        ..request
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        from_scratch.volumes[0].decodes, 2,
+        "夹具不对：这一趟没有整卷重做"
+    );
+    assert_eq!(
+        fixtures::fingerprint(&redone.output),
+        fixtures::fingerprint(&from_scratch.volumes[0].output),
+        "按页跳过的产物与整卷重做的不是同一份"
+    );
+}
+
+/// **同一角开着 `--envelope`：等整卷**（one-source/02）——参照每张灰度页一份、记全卷那一个源哈希、
+/// 不记页级那一份。它是 `a_single_override_on_a_volume_whose_pages_part_at_the_gate_goes_page_by_page_all_the_way`
+/// 的对照组：逐页到底的只是默认那条路。
+#[test]
+fn the_same_single_override_under_the_envelope_waits_for_the_volume() {
+    let space = Workspace::new();
+    let volume = pages_that_part_at_the_gate(&space);
+
+    let report = tonefit::run(&Request {
+        envelope: true,
+        ..single_override_fitted_inside(&space, &volume)
+    })
+    .expect("处理应当成功");
+
+    let done = &report.volumes[0];
+    assert_eq!(
+        done.cached_references, 2,
+        "整卷统一灰阶那条路上每张灰度页该存一份参照"
+    );
+    for page in &done.pages {
+        let text = fixtures::read_png_text(&page.output);
+        assert!(
+            fixtures::png_field(&text, "tonefit:source").is_some(),
+            "{} 没写卷级源哈希",
+            page.output.display()
+        );
+        assert_eq!(
+            fixtures::png_field(&text, "tonefit:page-source"),
+            None,
+            "{} 写了页级源哈希",
+            page.output.display()
+        );
+    }
+}
+
+/// 门分了家的两页（在 fit-inside 上）：头一页高等于面板高、四边顶着墨，贴得住面板；
+/// 第二页是 [`fixtures::TINY`] 那么小的纯色页，哪条边都贴不住。
+fn pages_that_part_at_the_gate(space: &Workspace) -> Volume {
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::full_bleed_gradient(fixtures::PASSES_THROUGH),
+    );
+    volume.page(
+        "002.png",
+        &fixtures::solid(fixtures::TINY, fixtures::NEEDS_TWO_BITS),
+    );
+    volume
+}
+
+/// 只点灰阶档位（`--bit-depth 2`）、fit-inside、默认那条路的请求。
+fn single_override_fitted_inside(space: &Workspace, volume: &Volume) -> Request {
+    Request {
+        bit_depth: Some(BitDepth::Two),
+        dither: None,
+        fit: FitMode::Inside,
+        envelope: false,
+        ..fixtures::request(space, [volume.path()])
+    }
+}
+
 /// **旧输出（默认路径上带卷级依据的那些）判为不命中，重做一次之后转成新形态**（two-pass-rework/15）。
 ///
 /// 两种旧形态各钉一次，都是默认路径上曾经写出的：只带卷级那一项的（13 号票之前），

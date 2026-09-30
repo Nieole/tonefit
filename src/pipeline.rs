@@ -158,12 +158,18 @@ fn placeholder(size: Size) -> GrayImage {
 /// 逐页已全是 `Override`——后者不是「没开」，而是逐页结果里根本没有分布可聚合。
 /// 两者在报告里各说各的，见 [`VolumeVerdict`]。
 ///
+/// **「覆盖项顶死没有」两条路问在不同的时点**（`CONTEXT.md` 的《覆盖顶死》）：默认那条路上只认
+/// 开卷之前答得出的那一种，与分析环节编字节时问的是同一句（[`Settles::if_processing`]，`candidates` 就是
+/// 为它交进来的），答不出的那一角逐页判（one-source/02）；整卷统一灰阶那条路整卷判完门之后
+/// 问其余页那一组（[`GateGroups::pinned`]）。
+///
 /// 进来的是**输出页**，不是源页（页几何批 03 号票）：一个源页产出的那几张各有各的几何、各有各的
 /// 画质分曲线，卷级那一层因此在切开之后取——序号也都指进输出页那个序列，
 /// 整卷统一灰阶的代表页序号跟着（见 [`Envelope::driver`]）。
 pub(crate) fn summarize_volume(
     pages: &[OutputPage],
     request: &Request,
+    candidates: &Candidates,
 ) -> (Vec<Option<Verdict>>, Option<VolumeVerdict>) {
     // 灰度路径上那些页在 `pages` 里的序号。卷级的一切都只在它们身上做。
     //
@@ -189,7 +195,12 @@ pub(crate) fn summarize_volume(
     let scores = |index: usize| pages[index].scores().expect("灰度路径上必有画质分曲线");
 
     let threshold = request.profile.threshold();
-    let pinned = groups.pinned(request, scores);
+    // 覆盖项顶死没有：两条路问在不同的时点，见本函数文档的那一段。
+    let pinned = match Settles::if_processing(request, candidates) {
+        Settles::UpFront(candidate) => Some(candidate),
+        Settles::OnItsOwn => None,
+        Settles::AfterTheVolume => groups.pinned(request, scores),
+    };
     // 逐页先各判各的。摘出去的两组都还用得上自己这一档：残缺页直接用它，
     // 未贴合屏幕的页拿它跟统一档位比出更严的那个（ADR 0007 决定第 3 条）。
     for &index in &gray {
@@ -261,6 +272,8 @@ pub(crate) fn summarize_volume(
 /// `scores` 取的是**其余页那一组**里的一页（问法见 [`GateGroups::pinned`]）。裁到只剩一个的
 /// 覆盖项落在未贴合屏幕那一组上时，那一组的候选集必然也只剩同一个——门只拿走抖动，
 /// 而剩下的那一个既然过得了门，它本来就不抖。
+///
+/// **只有整卷统一灰阶那条路整卷判完门之后这样问**，别处问的是开卷之前那一问（见 [`summarize_volume`]）。
 fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
     let overridden = request.bit_depth.is_some() || request.dither.is_some();
     match scores {
@@ -276,11 +289,11 @@ fn pinned(request: &Request, scores: &[CandidateScore]) -> Option<Candidate> {
 /// 门不成立的那些页就当其余页，摘出去的那一组是空的——统一档位由它们定出，
 /// 那一档必然不抖（ADR 0007 决定第 5 条）。
 ///
-/// **分组与分完之后那一问只写这一处**：转换那一趟拿它分一卷的输出页（[`summarize_volume`]），
-/// 样张拿它分一张图切出来的那几块（`proof::verdicts`）。「覆盖项顶死没有」问的是其余页那一组
-/// （[`GateGroups::pinned`]），而样张的判定要与转换那一趟把这张图摆成一卷时逐格相同——
-/// 两边各写一份，迟早各问各的组、各挑各的页（停车场 Q1014）。
-pub(crate) struct GateGroups {
+/// 用它的只有汇总（[`summarize_volume`]）：整卷统一灰阶那条路上按它摘出未贴合屏幕的页，
+/// 并在整卷判完门之后问其余页那一组「覆盖项顶死没有」（[`GateGroups::pinned`]）。
+/// 默认那条路与样张不问这一组——那两处顶死没有由开卷之前那一问答（[`Settles::if_processing`]），
+/// 与分组无关（one-source/02；样张为什么不能按块去问，停车场 Q1014）。
+struct GateGroups {
     /// 其余页那一组，按进来的次序。
     rest: Vec<usize>,
     /// 摘出去的那一组：未贴合屏幕的页，按进来的次序。其余页就是它们时这一组是空的。
@@ -289,7 +302,7 @@ pub(crate) struct GateGroups {
 
 impl GateGroups {
     /// 按门分组。进来的是一串 (序号, 门)。
-    pub(crate) fn of(gray: impl IntoIterator<Item = (usize, GeometryGate)>) -> Self {
+    fn of(gray: impl IntoIterator<Item = (usize, GeometryGate)>) -> Self {
         let (holding, broken): (Vec<_>, Vec<_>) =
             gray.into_iter().partition(|&(_, gate)| gate.holds());
         let indices =
@@ -312,7 +325,7 @@ impl GateGroups {
     ///
     /// 不拿未贴合屏幕的页去问：门那两组不一样长，答案会随卷里第一张灰度页碰巧是哪一种而变。
     /// 其余页一页都没有（一张灰度页都没有）时答 `None`。
-    pub(crate) fn pinned<'a>(
+    fn pinned<'a>(
         &self,
         request: &Request,
         scores: impl Fn(usize) -> &'a [CandidateScore],
@@ -817,6 +830,7 @@ pub(crate) enum Settles {
     /// **这一页自己**：默认那条路上灰阶档位逐页各判各的，不做迟滞（ADR 0018 决定第 2 条），
     /// 画质分一出来这一页的档就定了，没有后文可等。分析环节当场量化编码，那一格从头装的
     /// 就是字节，**参照一张都不进缓存**（ADR 0005 的《第二遍在逐页那条路上退化成纯写出》）。
+    /// 开卷之前答不出顶没顶死的那一角在默认那条路上也走这里（one-source/02）。
     OnItsOwn,
     /// **碰卷之前就定死**：覆盖项把候选裁到只剩一个，画质分说什么都不改结果。
     /// 分析环节当场量化编码，那一格从头装的就是字节，**参照一张都不进缓存**
@@ -831,10 +845,7 @@ impl Settles {
     /// 没有，缓存也只记账、不留页（[`cache::Retention::Account`]）——照旧攒参照，
     /// 预告的缓存用量因此与照做那一趟不是同一个数（停车场 Q430、Q537）。
     ///
-    /// 照做那一遍上先问开卷之前那一问（[`pinned_up_front`]），三种答案（[`UpFrontAnswer`]）
-    /// 各有去处：顶死在这一档就是顶死；答不出（要等整卷判完门）就等整卷——
-    /// **默认那条路上也一样**，那一卷照旧攒整卷参照，与整卷统一灰阶那条路逐字节相同；
-    /// 答得出而没顶死、判定还有得判时才分两条路：整卷统一灰阶开着等整卷，不开就这一页自己。
+    /// 照做那一遍上走哪一条，见 [`if_processing`](Self::if_processing)。
     pub(crate) fn for_this_run(request: &Request, candidates: &Candidates) -> Self {
         if request.mode != Mode::Process {
             return Self::AfterTheVolume;
@@ -849,15 +860,24 @@ impl Settles {
     /// 而照做时一页的依据是它自己的还是全卷的，只看这一页的字节是不是只取决于它自己——
     /// 那是参数的性质，与这一趟写不写无关。预览自己那一格缓存装什么，仍由上面那一问答。
     ///
-    /// 它**不是** `request.envelope`：`--envelope` 加两维都点名的那一趟顶死、字节只取决于页，
-    /// 按页；只点了一维而两组门混着的那一角要等整卷才知道理由那一句，按卷（停车场 Q635、Q683）。
+    /// 先问开卷之前那一问（[`pinned_up_front`]），三种答案（[`UpFrontAnswer`]）各有去处：
+    /// 顶死在这一档就是顶死，哪条路上都一样；其余两种——答不出、答得出而没顶死——判定还有得判，
+    /// 由整卷统一灰阶开没开定：开着等整卷，不开就这一页自己。
+    ///
+    /// **默认那条路上答不出也是这一页自己**（one-source/02；ADR 0005 的
+    /// 《覆盖项那一档答不出来时让位》）：那一角不等整卷判完门再问顶没顶死，每一页照它自己那条曲线判，
+    /// 理由是逐页那两种——《覆盖顶死》在默认那条路上只有开卷之前答得出的那一种。
+    /// 汇总从这里取同一句（[`summarize_volume`]），分析环节编字节用的档因此与汇总定的逐格相同。
+    ///
+    /// 它**不是** `request.envelope`：`--envelope` 加两维都点名的那一趟顶死、字节只取决于页，按页。
     /// 「依据的作用域 = 这一页的字节取决于什么」一处出处，两条路不重叠、不互相兜底。
     pub(crate) fn if_processing(request: &Request, candidates: &Candidates) -> Self {
         match pinned_up_front(request, candidates) {
             UpFrontAnswer::PinnedAt(candidate) => Self::UpFront(candidate),
-            UpFrontAnswer::CannotTell => Self::AfterTheVolume,
-            UpFrontAnswer::NotPinned if request.envelope => Self::AfterTheVolume,
-            UpFrontAnswer::NotPinned => Self::OnItsOwn,
+            UpFrontAnswer::CannotTell | UpFrontAnswer::NotPinned if request.envelope => {
+                Self::AfterTheVolume
+            }
+            UpFrontAnswer::CannotTell | UpFrontAnswer::NotPinned => Self::OnItsOwn,
         }
     }
 
@@ -882,7 +902,10 @@ impl Settles {
     }
 
     /// 顶死的那一档，交给 [`decide::decide`] 当 `pinned`：只有顶死的那一趟有。
-    fn pinned(self) -> Option<Candidate> {
+    ///
+    /// 样张借它问「覆盖项顶死没有」（`proof::verdicts`）：它不看整卷统一灰阶开没开——
+    /// 开着的那一趟没顶死时落在等整卷，不开落在这一页自己，两处这里都答 `None`。
+    pub(crate) fn pinned(self) -> Option<Candidate> {
         match self {
             Self::UpFront(candidate) => Some(candidate),
             Self::AfterTheVolume | Self::OnItsOwn => None,
@@ -1440,8 +1463,9 @@ pub(crate) fn examine_gray_page(
 ///
 /// [`pinned`] 拿的是**其余页那一组**的候选集，而哪一组是其余页要等整卷判完门才知道
 /// （一页门成立的都没有时，未贴合屏幕的那些就当其余页）。两组给出同一个答案时那一问与分组无关，
-/// 碰卷之前就答得出；一组裁到只剩一个、另一组没有时它要等整卷，
-/// 那一卷照旧攒整卷参照——默认那条路上也一样（见 [`Settles::for_this_run`]）。
+/// 碰卷之前就答得出；一组裁到只剩一个、另一组没有时答不出。答不出的那一卷去哪，
+/// 由整卷统一灰阶开没开定：开着等整卷、整卷判完门再问其余页那一组；默认那条路上逐页判，
+/// 不再问（one-source/02，见 [`Settles::if_processing`]）。
 ///
 /// 未贴合屏幕那一组被覆盖项裁空（`--dither fs`）时不必等：撞上门的页整趟被拒
 /// （见 [`Candidates::for_gate`]），能走完的卷里其余页只可能是门成立那一组。
@@ -1479,6 +1503,10 @@ fn pinned_up_front(request: &Request, candidates: &Candidates) -> UpFrontAnswer 
 /// 三态写成一个具名的枚举，而不是一个嵌套的 `Option`：两层 `Option` 里外层与内层的 `None`
 /// 各是一种答案，读的人得记住哪一层是哪一种，单看一处读不出意思（停车场 Q545）。
 /// [`Settles`] 从它派生（[`Settles::if_processing`]），这一问的答案只在那一处解一次。
+///
+/// 答不出与答得出而没顶死**去处相同**：默认那条路上都是这一页自己，
+/// 整卷统一灰阶那条路上都是等整卷。两种仍分开写，是因为它们说的是两件不同的事——
+/// 前者在整卷统一灰阶那条路上整卷判完门之后还可能被说成顶死，后者不会（停车场 Q1077）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UpFrontAnswer {
     /// **答不出**：两组门的候选集给的答案对不上（为什么就答不出，见 [`pinned_up_front`]）。
@@ -1847,7 +1875,7 @@ impl Encode<'_> {
                     cache::Held::Reference(reference) => reference,
                 };
                 let verdict = verdict.expect("灰度路径上必有判定");
-                // 参照留到这一遍才编的，只有整卷统一灰阶那条路（与 Q635 那一角）：这一页的档由全卷定，
+                // 参照留到这一遍才编的，只有整卷统一灰阶那条路：这一页的档由全卷定，
                 // 那是卷级那条路，页级那一份不写（源页序号不给，见 `metadata::Fingerprint::source_item`）。
                 gray_bytes(
                     &reference,
@@ -2118,7 +2146,7 @@ pub(crate) struct RetainedPage {
 ///
 /// **「齐」两条路各有各的说法**，整卷跳过只在齐的时候：
 ///
-/// - 卷级那条路（`--envelope`，与覆盖项只点了一维而两组门混着的那一角）：每一页都记着这份
+/// - 卷级那条路（`--envelope` 而开卷之前没顶死）：每一页都记着这份
 ///   指纹、透传文件都在——与 two-pass-rework/15 之前逐字相同。不齐就整卷重做：那条路上
 ///   一页的档由全卷定，没有第二问。透传文件变了、源里删了一页，全卷那一个数都看得见。
 /// - 页级那条路（默认）：每一页各自都没变、每个透传文件各自都没变（输出里那一份重新算出来
@@ -2786,7 +2814,8 @@ mod tests {
             envelope: true,
             ..request()
         };
-        let (verdicts, verdict) = summarize_volume(&pages, &request);
+        let candidates = Candidates::new(&request).expect("没点覆盖项，候选备得出");
+        let (verdicts, verdict) = summarize_volume(&pages, &request, &candidates);
 
         // 判定与输出页一一对应，一张一格。
         assert_eq!(verdicts.len(), 4);
