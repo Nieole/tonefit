@@ -1330,10 +1330,10 @@ fn a_seven_zip_leaves_no_temporary_directory_behind_even_when_the_run_is_aborted
 /// 断言两头都收——**至少装过一个**（不然「少于全部」在一个压根没建出来的目录上也成立），
 /// **少于全部**（那就是「不必等整卷解完」）。数的是盘上的事实，不是库里的调用次数。
 ///
-/// **「一遍都没走进去」另问一句**：这一卷一条 `PassStarted` 都不该有。摊开排在幂等那一道
-/// 之前，立即停止落在摊开途中，那一道因此连开工都不该报——报了就说明它接着往下走了一段
-/// （起了几条读取线程去读一个只摊了一半的临时目录）。这一句钉的是 `process_volume` 里
-/// `source::open` 紧接着那个检查点；少了它，那一句拿掉也不会有人红。
+/// **「后面的环节一个都没走进去」另问一句**：这一卷除了摊开，一条 `PassStarted` 都不该有。
+/// 摊开排在幂等那一道之前，立即停止落在摊开途中，那一道因此连开工都不该报——报了就说明
+/// 它接着往下走了一段（起了几条读取线程去读一个只摊了一半的临时目录）。这一句钉的是
+/// `process_volume` 里 `source::open` 紧接着那个检查点；少了它，那一句拿掉也不会有人红。
 ///
 /// 剩下三件与两级停止的既有承诺是同一批：那一卷不进报告、最终位置上一个字节都没动、
 /// 临时目录收干净。
@@ -1359,8 +1359,8 @@ fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
         "摊开途中按立即停止，它还是把整卷解完了：临时目录装过 {most} 个成员，卷里一共 {EXTRACTED_MEMBERS} 个"
     );
     assert!(
-        !watcher.any_pass_started(),
-        "摊开途中被立即停止的那一卷还报出了一遍的开工"
+        !watcher.a_later_pass_started(),
+        "摊开途中被立即停止的那一卷还报出了摊开之后那个环节的开工"
     );
 
     assert!(report.volumes.is_empty(), "被立即停止的那一卷进了报告");
@@ -1376,15 +1376,15 @@ fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
 
 /// **摊开那一段报得出步**，而预告的步数照旧是上界（`p4-parking-lot/13`）。
 ///
-/// 摊开排在开卷那条事件之后、第一条 `PassStarted` 之前（`src/lib.rs` 的 `process_volume`：
-/// 重开这一卷那一句在幂等那一道之前），因此「摊开途中报得出事件」在事件流上的样子就是
-/// **那两条之间有步**。从前那一截是空的——进度条一动不动，看着像挂死了。
+/// 摊开是一个环节（say-and-stop/03），「摊开途中报得出事件」在事件流上的样子因此就是
+/// **摊开那条 `PassStarted` 与下一条之间有步**。那一段要是空的，进度条一动不动，
+/// 看着像挂死了。步记在哪个环节名下那一半由 `tests/events.rs` 按个数钉着。
 ///
 /// 第二问同样非问不可：多报一段步而预告没跟着长，进度条就会冲过头，
 /// 而「预告的步数是**上界**」是 `CONTEXT.md` 的《进度》立的规矩。
 /// 比的是这一卷真走过的步与开卷那条事件预告的那个数，两个数都从事件流上取。
 #[test]
-fn extracting_a_volume_reports_steps_before_the_first_pass_starts() {
+fn extracting_a_volume_reports_steps_under_its_own_pass() {
     let space = Workspace::new();
     let mut sevenz = space.sevenz("volume-a");
     sevenz
@@ -1403,7 +1403,7 @@ fn extracting_a_volume_reports_steps_before_the_first_pass_starts() {
     assert_eq!(report.volumes.len(), 1, "这一卷没跑完");
     assert!(
         watcher.steps_while_extracting() > 0,
-        "开卷与第一条 PassStarted 之间一步都没报——摊开那一段仍旧是空的"
+        "摊开那个环节名下一步都没报——摊开那一段仍旧是空的"
     );
     let (walked, announced) = watcher.steps_against_what_was_announced();
     assert!(
@@ -1479,8 +1479,8 @@ fn many_member_seven_zip(space: &Workspace, name: &str) -> PathBuf {
 /// **摊开那一段**里插得上话的观察者：它数摊开报出来的步、看那个临时目录装到过多大，
 /// 并在摊开途中答一个事先摆好的字。
 ///
-/// 「此刻还在摊开」在事件流上就是**第一条 `PassStarted` 还没到**：摊开发生在重开这一卷
-/// 那一句里，而那一句排在幂等那一道之前（`src/lib.rs` 的 `process_volume`）。
+/// 「此刻还在摊开」在事件流上就是**最近一条 `PassStarted` 报的是摊开**：摊开是一个环节
+/// （say-and-stop/03），它开工到下一个环节开工之间报的步都是它的。
 /// 这一格因此不必知道库里摊到第几个成员——它问的是流的形状。
 #[derive(Clone)]
 struct WhileExtracting {
@@ -1493,8 +1493,10 @@ struct WhileExtracting {
 
 #[derive(Default)]
 struct Extracting {
-    /// 收到过 `PassStarted` 没有。收到就说明摊开那一段过去了。
-    a_pass_started: bool,
+    /// 最近一条 `PassStarted` 报的是哪个环节。还没收到过就是 `None`。
+    pass: Option<tonefit::Pass>,
+    /// 摊开**之后**的环节开过工没有。开过就说明摊开那一段过去了。
+    a_later_pass_started: bool,
     /// 摊开那一段里报到了几步。
     while_extracting: usize,
     /// 这一卷一共报到了几步。
@@ -1536,9 +1538,12 @@ impl WhileExtracting {
             .while_extracting
     }
 
-    /// 这一卷报过 `PassStarted` 没有。一遍都没报，说明它没走出摊开那一段。
-    fn any_pass_started(&self) -> bool {
-        self.state.lock().expect("读回报过一遍没有").a_pass_started
+    /// 这一卷报过摊开之后那个环节的开工没有。没报过，说明它没走出摊开那一段。
+    fn a_later_pass_started(&self) -> bool {
+        self.state
+            .lock()
+            .expect("读回报过后面的环节没有")
+            .a_later_pass_started
     }
 
     /// 这一卷真走过的步，配开卷那条事件预告的那个上界。
@@ -1573,13 +1578,15 @@ impl tonefit::Progress for WhileExtracting {
             tonefit::Event::VolumeStarted { steps, .. } => {
                 self.state.lock().expect("记预告").announced = steps;
             }
-            tonefit::Event::PassStarted { .. } => {
-                self.state.lock().expect("记一遍").a_pass_started = true;
+            tonefit::Event::PassStarted { pass, .. } => {
+                let mut state = self.state.lock().expect("记一个环节");
+                state.pass = Some(pass);
+                state.a_later_pass_started |= pass != tonefit::Pass::Extraction;
             }
             tonefit::Event::Stepped { .. } => {
                 let mut state = self.state.lock().expect("记一步");
                 state.walked += 1;
-                extracting = !state.a_pass_started;
+                extracting = state.pass == Some(tonefit::Pass::Extraction);
                 if extracting {
                     state.while_extracting += 1;
                 }

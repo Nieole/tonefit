@@ -86,7 +86,7 @@ pub enum Event<'a> {
     /// 一个卷开始了，这一卷这一趟最多走 `steps` 步。
     ///
     /// `steps` 是**上界**，不是承诺（见 `crate::volume_steps`）：幂等命中的卷提前收摊，
-    /// 而第二段那一截按「每张源页最多几张输出页」预告。
+    /// 而写出那一截按「每张源页最多几张输出页」预告。
     #[non_exhaustive]
     VolumeStarted {
         /// 卷标识：源目录路径，或源归档的文件路径。
@@ -99,7 +99,7 @@ pub enum Event<'a> {
     PassStarted {
         /// 在走哪一遍。
         pass: Pass,
-        /// 这一卷**到此刻为止**的报告。另外两遍恒是 `None`（停车场 Q52），
+        /// 这一卷**到此刻为止**的报告。其余环节恒是 `None`（停车场 Q52），
         /// 只有[确认点](Pass::Second)那一条带得着它——**而那一条也可能是 `None`**：
         /// 说自己不读它的观察者不会收到一份白拼的报告
         /// （[`Progress::reads_the_report_at_the_decision_point`]，07 号票）。
@@ -122,10 +122,9 @@ pub enum Event<'a> {
     /// 因此同一卷内可能并发到达、页序不作数——要页序的东西在
     /// [`VolumeFinished`](Self::VolumeFinished) 带的那份报告里。
     ///
-    /// **固实归档开工前摊开那一段也报它**，一个成员一步（`p4-parking-lot/13`，
-    /// 见 `crate::source::extract`）。那一段排在开卷之后、第一条
-    /// [`PassStarted`](Self::PassStarted) 之前，从前一条事件都没有——几百兆的卷在那里
-    /// 一动不动，看着像挂死了。预告的步数跟着把它算进去（见 `crate::volume_steps`），
+    /// **固实归档开工前摊开那一段也报它**，一个成员一步（见 `crate::source::extract`），
+    /// 记在[摊开](Pass::Extraction)那个环节名下——几百兆的卷在那里一动不动的话，
+    /// 看着像挂死了。预告的步数跟着把它算进去（见 `crate::volume_steps`），
     /// **「预告是上界」因此一格没动**。
     #[non_exhaustive]
     Stepped {},
@@ -223,17 +222,26 @@ impl Event<'_> {
     }
 }
 
-/// 一个卷这一趟要走的那几遍中的一遍（`CONTEXT.md` 的《进度》）。
+/// 一个卷这一趟要走的那几个**环节**中的一个（`CONTEXT.md` 的《进度》：环节）。
 ///
-/// 三遍与 `VolumeTiming` 的三段是同一条分界线，而且**各遍自己可能不在**：
-/// `--no-metadata` 关掉幂等那一道，dry-run 没有写出环节。报的是这一趟真要走的那几遍。
+/// 四个，按走的次序排在这里。它们与 `VolumeTiming` 的四段、与**步**的四段是同一条分界线：
+/// 一个环节开工的那条 [`Event::PassStarted`] 报出去之后，那一段的表才开始走，
+/// 此后报的每一步都记在它名下，直到下一个环节开工。写出环节开工那一条是确认点，
+/// 等人那一截夹在它与表之间，不算进任何一段（见 [`Second`](Self::Second)）。
 ///
-/// **步比遍多一段**：固实归档开工前摊开一整卷也报步（见 [`Event::Stepped`]），
-/// 而摊开**不是一遍**——它排在第一条 `PassStarted` 之前，这个枚举因此仍是三个值
-/// （`p4-parking-lot/13`；要不要让它成为第四遍，停车场 Q283 记着）。
+/// **各个环节自己可能不在**，报的是这一趟真要走的那几个：[摊开](Self::Extraction)
+/// 只有要摊开的卷有（由格式定，见 `crate::source::Volume::extracts_before_work`），
+/// `--no-metadata` 关掉幂等那一道，dry-run 没有写出环节。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Pass {
+    /// 摊开：开工前把固实归档（`.rar` / `.7z`）整卷解到临时目录，一个成员一步
+    /// （ADR 0015 决定第 3 条）。
+    ///
+    /// 它排在**开卷之后**——卷已经打开、成员已经列齐——而在第一个字节解出来之前，
+    /// 摊开途中报的每一步因此都记在它名下。**幂等命中而整卷跳过的卷照样走它**：
+    /// 查重要读源字节，而源字节要先摊开。不摊开的卷（目录卷、`.cbz` / `.zip`）不报它。
+    Extraction,
     /// 幂等这一道：算出本卷指纹，再与上一趟写在输出里的比。
     Fingerprint,
     /// 分析环节：解码、彩页识别、几何、缩放、算画质分、进缓存。
@@ -663,13 +671,13 @@ impl<'a> Events<'a> {
         self.report(Event::VolumeStarted { volume, steps });
     }
 
-    /// 某一遍开工了。
+    /// 某一个环节开工了。
     ///
     /// [写出环节](Pass::Second)不走这里，走
     /// [`ask_before_the_second_pass`](Self::ask_before_the_second_pass)——同一条事件，
     /// 只是那一处要把答复接回来。事件的形状因此没有分家。
     ///
-    /// 这两遍不带 `so_far`：那一格是给确认点用的，而这里还没有汇总可交
+    /// 走这里的几个环节不带 `so_far`：那一格是给确认点用的，而这里还没有汇总可交
     /// （见 [`Event::PassStarted`]）。
     #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn pass_started(self, pass: Pass) {
