@@ -87,9 +87,10 @@ const SEQUENCES = [
   { name: 'running-click-row', scene: 'running', size: MAIN, steps: [{ click: [10, 9] }], says: '已暂停自动滚动 ⋅ F 恢复' },
   { name: 'running-dblclick-dir', scene: 'running', size: MAIN, steps: [{ dblclick: [10, 9] }], says: '▾ ! 哆啦A梦' },
 
-  // ── 卷列表：目录行展开、收起；卷行进每页结果；展不开的卷（08；11） ──
+  // ── 卷列表：目录行展开、收起；卷行进每页结果；展不开的卷；`←`／`→` 与 `h`／`l` 同（08；11；design-parity/06） ──
   { name: 'ended-h', scene: 'ended', size: MAIN, steps: k('h'), says: '❯   ▸ ✗ 集英社/海贼王' },
   { name: 'ended-h-l', scene: 'ended', size: MAIN, steps: k('h', 'l'), says: '❯   ▾ ✗ 集英社/海贼王' },
+  { name: 'ended-ArrowLeft-ArrowRight', scene: 'ended', size: MAIN, steps: k('ArrowLeft', 'ArrowRight'), says: '❯   ▾ ✗ 集英社/海贼王' },
   { name: 'ended-h-Enter', scene: 'ended', size: MAIN, steps: k('h', 'Enter'), says: '❯   ▾ ✗ 集英社/海贼王' },
   { name: 'ended-h-Enter-Enter', scene: 'ended', size: MAIN, steps: k('h', 'Enter', 'Enter'), says: '❯   ▸ ✗ 集英社/海贼王' },
   { name: 'ended-l', scene: 'ended', size: MAIN, steps: k('l'), says: '[需留意的页]' },
@@ -98,6 +99,7 @@ const SEQUENCES = [
   { name: 'ended-l-a-j-h', scene: 'ended', size: MAIN, steps: k('l', 'a', 'j', 'h'), says: '❯ ' },
   { name: 'ended-Enter', scene: 'ended', size: MAIN, steps: k('Enter'), says: '[需留意的页]' },
   { name: 'pages-h', scene: 'pages', size: MAIN, steps: k('h'), says: '第07卷' },
+  { name: 'pages-ArrowLeft', scene: 'pages', size: MAIN, steps: k('ArrowLeft'), says: '第07卷' },
   { name: 'pages-Escape', scene: 'pages', size: MAIN, steps: k('Escape'), says: '第07卷' },
   { name: 'pages-a', scene: 'pages', size: MAIN, steps: k('a'), says: '[全部页]' },
   { name: 'pages-j', scene: 'pages', size: MAIN, steps: k('a', 'j', 'j'), says: '3 of 189' },
@@ -147,7 +149,7 @@ const SEQUENCES = [
   { name: 'ended-q', scene: 'ended', size: MAIN, steps: k('q'), says: '退出' },
   { name: 'fresh-q', scene: 'fresh', size: MAIN, steps: k('q'), says: '退出' },
 
-  // ── 全部按键：五个阶段各一屏；打字时 `F1`；覆盖层掀着时 `j`／`k`／`Esc`（spec；07） ──
+  // ── 全部按键：五个阶段各一屏；打字时 `F1`；覆盖层掀着时 `j`／`k`／`Esc`、滚轮（spec；07；design-parity/06） ──
   { name: 'fresh-help', scene: 'fresh', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'survey-help', scene: 'survey', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'deciding-help', scene: 'deciding', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
@@ -158,18 +160,22 @@ const SEQUENCES = [
   { name: 'help-Escape', scene: 'help', size: MAIN, steps: k('Escape'), says: '[自动滚动]' },
   { name: 'help-question', scene: 'help', size: MAIN, steps: k('?'), says: '[自动滚动]' },
   { name: 'help-narrow-j', scene: 'help', size: NARROW, steps: k('j'), says: '2–' },
+  { name: 'help-narrow-wheel-down', scene: 'help', size: NARROW, steps: [{ wheel: 1 }], says: '4–' },
   { name: 'add-F1', scene: 'add', size: MAIN, steps: k('F1'), says: '全部按键 ⋅ vim 风格' },
   { name: 'add-F1-j', scene: 'add', size: MAIN, steps: k('F1', 'j'), says: '1–26 of 26' },
   { name: 'add-narrow-F1-j', scene: 'add', size: NARROW, steps: k('F1', 'j'), says: '2–' },
   { name: 'add-F1-j-k-Escape', scene: 'add', size: MAIN, steps: k('F1', 'j', 'k', 'Escape'), says: '添加路径  ~/Comics/' },
   { name: 'add-narrow-F1-j-k', scene: 'add', size: NARROW, steps: k('F1', 'j', 'k'), says: '1–' },
   { name: 'add-narrow-F1-j-k-Escape', scene: 'add', size: NARROW, steps: k('F1', 'j', 'k', 'Escape'), says: '添加路径  ~/Comics/' },
+  { name: 'add-narrow-F1-wheel-down', scene: 'add', size: NARROW, steps: [{ key: 'F1' }, { wheel: 1 }], says: '4–' },
 
-  // ── 开跑之前：`o`（补全框、`Tab` 轮换、`C-w`、找不到的路径）、`i`、空格、`dd`；结束之后 `o`（spec；06；07；10） ──
+  // ── 开跑之前：`o`（补全框、`Tab` 轮换、滚轮、`C-w`、方向键不进缓冲、找不到的路径）、`i`、空格、`dd`；结束之后 `o`（spec；06；07；10；design-parity/06） ──
   { name: 'fresh-o', scene: 'fresh', size: MAIN, steps: k('o'), says: '添加路径  ~/' },
   { name: 'fresh-o-Tab', scene: 'fresh', size: MAIN, steps: k('o', 'Tab'), says: '可选项 ⋅ 4 项' },
   { name: 'fresh-o-Tab-Tab', scene: 'fresh', size: MAIN, steps: k('o', 'Tab', 'Tab'), says: '2 of 4' },
   { name: 'fresh-o-Tab-Tab-C-w', scene: 'fresh', size: MAIN, steps: k('o', 'Tab', 'Tab', 'C-w'), says: '添加路径  ~/' },
+  { name: 'add-wheel-down', scene: 'add', size: MAIN, steps: [{ wheel: 1 }], says: { has: ['4 of 4', '添加路径  ~/Comics/火之鸟/'] } },
+  { name: 'fresh-o-ArrowLeft-ArrowRight', scene: 'fresh', size: MAIN, steps: k('o', 'ArrowLeft', 'ArrowRight'), says: { has: ['添加路径  ~/▏'], lacks: ['~/h', '~/l'] } },
   { name: 'fresh-o-missing', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: '没有这个' }, { key: 'Enter' }], says: '找不到「~/没有这个」' },
   { name: 'fresh-o-added', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: 'Comics/火之鸟' }, { key: 'Enter' }], says: '已添加 ~/Comics/火之鸟' },
   { name: 'fresh-o-Escape', scene: 'fresh', size: MAIN, steps: k('o', 'Escape'), says: '[o → 添加路径]' },

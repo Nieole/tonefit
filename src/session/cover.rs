@@ -34,7 +34,7 @@ use super::home::Home;
 use super::keymap::{Deed, Group, Phase, Row, TABLE};
 use super::look::{Kind, Look, Segment};
 use super::tree::{Note, NoteKind};
-use super::view::{Views, Window};
+use super::view::{Views, Window, wheel_rows};
 
 /// 盖在视图上的那一张。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +358,19 @@ impl Views {
         };
         true
     }
+
+    /// 覆盖层上**滚轮**滚几格：一格[三行](wheel_rows)（往下为正），起点照样收在那一张真摆得下的那一段里
+    /// （设计稿 `drawHelp` 每一帧收）。掀着的不是那一张（说明卡不滚）或者什么都没掀，交回 `false`。
+    /// 滚轮在哪一块上做哪一件见 `Session::wheel` 的《滚轮在哪一块上做哪一件》。
+    ///
+    /// 滚几格是输入上带着的数、不是按键表上的一件事，因此与 [`Self::scroll_cover`] 分开一支。
+    pub fn wheel_cover(&mut self, notches: i16, sheet: &Sheet) -> bool {
+        let Some(Overlay::Keys { from }) = &mut self.cover else {
+            return false;
+        };
+        *from = sheet.from(from.saturating_add_signed(wheel_rows(notches)));
+        true
+    }
 }
 
 #[cfg(test)]
@@ -515,6 +528,36 @@ mod tests {
             !views.scroll_cover(Deed::Down, &sheet, narrow()),
             "没掀着就不管"
         );
+    }
+
+    /// **滚轮在这一张上一格滚三行**（`design-parity/06`），连滚几格一次挪完，同样收在摆得下的那一段里；
+    /// 说明卡不滚、没掀着不管——交回 `false`。
+    #[test]
+    fn the_wheel_scrolls_the_sheet_three_lines_a_notch() {
+        let mut views = Views::default();
+        views.lift_keys();
+        let sheet = Sheet::of(Phase::Fresh, narrow());
+        assert!(views.wheel_cover(1, &sheet));
+        assert_eq!(views.cover, Some(Overlay::Keys { from: 3 }));
+        views.wheel_cover(2, &sheet);
+        assert_eq!(views.cover, Some(Overlay::Keys { from: 9 }));
+        views.wheel_cover(-1, &sheet);
+        assert_eq!(views.cover, Some(Overlay::Keys { from: 6 }));
+        views.wheel_cover(-5, &sheet);
+        assert_eq!(views.cover, Some(Overlay::Keys { from: 0 }), "到顶为止");
+        views.wheel_cover(i16::MAX, &sheet);
+        assert_eq!(
+            views.cover,
+            Some(Overlay::Keys {
+                from: sheet.last_from()
+            }),
+            "到底为止"
+        );
+        views.lift_note(0, 0);
+        assert!(!views.wheel_cover(1, &sheet), "说明卡不滚");
+        assert_eq!(views.cover, Some(Overlay::Note { node: 0, at: 0 }));
+        views.drop_cover();
+        assert!(!views.wheel_cover(1, &sheet), "没掀着就不管");
     }
 
     /// 一条备注：两种各造一条，路径落在家目录底下。

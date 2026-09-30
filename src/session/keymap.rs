@@ -658,6 +658,8 @@ pub const TABLE: &[Row] = &[
         ANY_PHASE,
         UNCOVERED_OR_OVERLAY,
     ),
+    // 滚轮在哪一块上都认（停车场 Q979）；每一块上做哪一件见 `Session::wheel` 的
+    // 《滚轮在哪一块上做哪一件》，表上只说认不认。
     row(
         Group::Motion,
         Deed::Wheel,
@@ -666,7 +668,7 @@ pub const TABLE: &[Row] = &[
         "",
         "一格三行",
         ANY_PHASE,
-        UNCOVERED,
+        ANY_BLOCK,
     ),
     row(
         Group::Motion,
@@ -1540,6 +1542,37 @@ mod tests {
                     "{phase:?} 的 {used:?} 上的 `⏎`"
                 );
             }
+        }
+    }
+
+    /// **滚轮在哪一块上都派得出**（`design-parity/06`，停车场 Q979）；做哪一件不归表答。
+    /// 单击照旧只在没被盖着的那几块上派。
+    #[test]
+    fn the_wheel_is_dealt_on_every_block() {
+        for focus in Focus::every() {
+            assert_eq!(
+                deed(Phase::Running, focus, Chord::Wheel),
+                Some(Deed::Wheel),
+                "{focus:?} 上的滚轮"
+            );
+        }
+        assert_eq!(deed(Phase::Running, Focus::Overlay, Chord::Click), None);
+        assert_eq!(
+            deed(Phase::Fresh, Focus::Input(Use::AddPath), Chord::Click),
+            None
+        );
+    }
+
+    /// **左右方向键在表上没有自己的行**（`design-parity/06`；规矩在 `Input::Arrow`）：
+    /// 屏底与全部按键因此不多一种写法。
+    #[test]
+    fn the_left_and_right_arrows_have_no_row_of_their_own() {
+        for row in TABLE {
+            assert!(
+                !row.spelt.contains(['←', '→']),
+                "「{}」那一行写的是方向键",
+                row.spelt
+            );
         }
     }
 

@@ -291,7 +291,7 @@ pub(crate) fn sequences() -> Vec<String> {
 /// **交互序列**的一步（`CONTEXT.md` 的《会话》：交互序列；`manifest.json` 的 `steps`）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Step {
-    /// 按一个键，名字照清单上的写法：`j`、`Space`、`Enter`、`Escape`、`Tab`、`F1`、`C-w`。
+    /// 按一个键，名字照清单上的写法：`j`、`Space`、`Enter`、`Escape`、`Tab`、`F1`、`C-w`、`ArrowLeft`。
     Key(String),
     /// 打一串字。
     Type(String),
@@ -333,6 +333,9 @@ fn key_named(name: &str) -> Input {
         "Backspace" => Input::Key(Key::Backspace),
         "F1" => Input::Key(Key::F1),
         "C-c" => Input::Key(Key::Interrupt),
+        // 左右方向键（`Input::Arrow`）：与终端层 `translate` 交出去的是同一个，那边的用例钉着。
+        "ArrowLeft" => Input::Arrow('h'),
+        "ArrowRight" => Input::Arrow('l'),
         _ => match name.strip_prefix("C-") {
             Some(letter) if letter.chars().count() == 1 => {
                 Input::Ctrl(letter.chars().next().expect("一个字母"))
@@ -2101,6 +2104,8 @@ mod tests {
         assert_eq!(key_named("C-w"), Input::Ctrl('w'));
         assert_eq!(key_named("C-c"), Input::Key(Key::Interrupt));
         assert_eq!(key_named("?"), Input::Key(Key::Char('?')));
+        assert_eq!(key_named("ArrowLeft"), Input::Arrow('h'));
+        assert_eq!(key_named("ArrowRight"), Input::Arrow('l'));
     }
 
     /// **11 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
