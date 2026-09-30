@@ -51,4 +51,4 @@
 "c.......cc...................................ffffffffffffffffffffffffffffffff..c"
 "c......................................................................................................................c"
 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-".aq.........................................................................................c.cccccccc.c...cccccc."
+".aq..........................................................................c...ccccccc.c.cccccccc.c...cccccc."

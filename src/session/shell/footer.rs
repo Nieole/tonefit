@@ -34,7 +34,7 @@ pub(super) fn draw(
 ) {
     let y = canvas.height().saturating_sub(1);
     let width = canvas.width();
-    if session.views.focus() == Focus::Input
+    if matches!(session.views.focus(), Focus::Input(_))
         && let Some(line) = &session.views.input
     {
         let mut x = canvas.put(

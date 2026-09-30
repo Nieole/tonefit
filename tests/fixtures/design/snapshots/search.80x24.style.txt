@@ -39,4 +39,4 @@
 "c..............................................................................c"
 "c...fffffffffffffffff............................................c"
 "ccoooppppppppppppppppppccccccccccccccccccccccccccccccccccccccccccccccc"
-".a..q.............................................c.cccccccc.c...cccccc."
+".a..q..............................c...ccccccc.c.cccccccc.c...cccccc."

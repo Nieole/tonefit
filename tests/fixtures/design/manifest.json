@@ -3567,6 +3567,77 @@
       "data": "sequences/config-p-dd-dd.scene.json"
     },
     {
+      "name": "config-p-G",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        }
+      ],
+      "says": {
+        "has": [
+          "❯   ＋ 把当前设置保存为预设",
+          "[p → 返回]"
+        ],
+        "lacks": [
+          "[dd → 删除]"
+        ]
+      },
+      "text": "sequences/config-p-G.text.txt",
+      "style": "sequences/config-p-G.style.txt",
+      "data": "sequences/config-p-G.scene.json"
+    },
+    {
+      "name": "config-p-G-dd",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "❯   ＋ 把当前设置保存为预设",
+          "预设 ⋅ 2 个"
+        ],
+        "lacks": [
+          "[dd → 删除]",
+          "再按一次 dd"
+        ]
+      },
+      "text": "sequences/config-p-G-dd.text.txt",
+      "style": "sequences/config-p-G-dd.style.txt",
+      "data": "sequences/config-p-G-dd.scene.json"
+    },
+    {
       "name": "config-p-save",
       "scene": "config",
       "size": [

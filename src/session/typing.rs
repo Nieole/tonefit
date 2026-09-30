@@ -49,7 +49,8 @@ const VALUE_UNSET: &str = "未设置";
 /// 认用户敲的分隔符时两种都认（[`SEPARATORS`]）。
 const SHOWN_SEPARATOR: char = '/';
 
-/// 输入行用在哪一件事上；提示词随它。
+/// 输入行用在哪一件事上，**连同那件事的对象**（改的是哪一条处理路径、哪一项设置）；
+/// 提示词随它。去掉对象就是按键表认的那一格——这一行的用途（[`Use`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     /// 添加一条处理路径。
@@ -77,6 +78,45 @@ pub enum Purpose {
     Search,
 }
 
+/// **输入行的用途**（`CONTEXT.md` 的《输入行》）：[`Purpose`] 去掉对象之后那一格，六种，
+/// 没有数据、可以挂在焦点上（[`super::view::Focus::Input`]）。按键表按它分派
+/// （[`super::keymap`] 的《输入行的用途》）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Use {
+    AddPath,
+    EditPath,
+    Output,
+    Setting,
+    Preset,
+    Search,
+}
+
+impl Use {
+    /// 六种用途，次序同 [`Purpose`]。按用途逐种核的用例从这里取。
+    #[cfg(test)]
+    pub const ALL: [Self; 6] = [
+        Self::AddPath,
+        Self::EditPath,
+        Self::Output,
+        Self::Setting,
+        Self::Preset,
+        Self::Search,
+    ];
+}
+
+impl From<&Purpose> for Use {
+    fn from(purpose: &Purpose) -> Self {
+        match purpose {
+            Purpose::AddPath => Self::AddPath,
+            Purpose::EditPath(_) => Self::EditPath,
+            Purpose::Output => Self::Output,
+            Purpose::Setting(_) => Self::Setting,
+            Purpose::Preset => Self::Preset,
+            Purpose::Search => Self::Search,
+        }
+    }
+}
+
 impl Purpose {
     /// 提示词（设计稿 `startInput`）。**末尾那两格空算在提示词里**：设计稿按种类定它，
     /// 搜索那一种是 `/`、后面不空。改一项设置的值那一种的提示词**就是那一项的名字**，
@@ -94,15 +134,6 @@ impl Purpose {
             Self::Preset => "保存为预设，名称  ".to_owned(),
             Self::Search => "/".to_owned(),
         }
-    }
-
-    /// `Tab` 在这一种输入行上补得出东西吗——**只有路径那几种补得出**
-    /// （设计稿 `complete`：别的种类直接返回）。
-    ///
-    /// 屏底右端那一件照旧按表摆（`Complete` 只在还没开始那一档派得出）：表上没有
-    /// 「输入行用在哪件事上」那一维，停车场 Q794 记着这一处两边对不上的由来。
-    fn completes(&self) -> bool {
-        matches!(self, Self::AddPath | Self::EditPath(_) | Self::Output)
     }
 }
 
@@ -276,14 +307,13 @@ impl Session {
     }
 
     /// 按 `Tab`：候选多于一个就轮到下一个，否则列打到的那一层（模块文档《补全仍逐层、不递归、不建索引》）。
+    ///
+    /// 哪几种输入行派得出它只在按键表上答（[`super::keymap`] 的《输入行的用途》），
+    /// 这里不再问一遍。
     pub fn complete_typed(&mut self, now: Instant) {
         let Some(line) = &mut self.views.input else {
             return;
         };
-        // 补全只对路径那几种有意义（[`Purpose::completes`]）：改一项设置的值按下去一个字都不动。
-        if !line.purpose.completes() {
-            return;
-        }
         if line.candidates.len() > 1 {
             line.cycle();
             return;
@@ -567,7 +597,7 @@ mod tests {
         let now = Instant::now();
         session.open_adding();
         assert_eq!(typed(&session), "~/");
-        assert_eq!(session.views.focus(), Focus::Input);
+        assert_eq!(session.views.focus(), Focus::Input(Use::AddPath));
         for glyph in "Comics/".chars() {
             session.perform(Deed::Typed(glyph), now);
         }
@@ -753,5 +783,35 @@ mod tests {
             assert_eq!(session.views.pending(now), None, "打字时没有连击键");
         }
         assert_eq!(session.deed_of(Input::Ctrl('d'), Phase::Fresh, now), None);
+    }
+
+    /// **不是路径的那几种输入行上 `Tab` 派不出**（`design-parity/02`）：改一项设置的值、
+    /// 给预设起名、搜索那一行上按它，表上没有一件事、也不当一个字进缓冲；`C-w` 照样派得出。
+    /// 每一种都在它开得起来的那几档上问——值与预设名在还没开始与已结束，搜索在清点完之后。
+    #[test]
+    fn tab_is_not_dealt_on_a_line_that_is_not_a_path() {
+        let (_space, mut session) = at_home();
+        let now = Instant::now();
+        let outside_a_run = [Phase::Fresh, Phase::Ended];
+        let after_the_survey = [Phase::Running, Phase::Deciding, Phase::Ended];
+        for (purpose, phases) in [
+            (Purpose::Setting(Field::GrayLevels), &outside_a_run[..]),
+            (Purpose::Preset, &outside_a_run[..]),
+            (Purpose::Search, &after_the_survey[..]),
+        ] {
+            session.views.input = Some(InputLine::new(purpose.clone(), "14"));
+            for &phase in phases {
+                assert_eq!(
+                    session.deed_of(Input::Key(Key::Tab), phase, now),
+                    None,
+                    "{phase:?} 的 {purpose:?}"
+                );
+                assert_eq!(
+                    session.deed_of(Input::Ctrl('w'), phase, now),
+                    Some(Deed::DeleteWord),
+                    "{phase:?} 的 {purpose:?}"
+                );
+            }
+        }
     }
 }

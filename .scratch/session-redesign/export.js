@@ -215,6 +215,8 @@ const SEQUENCES = [
   { name: 'config-p-j-Enter', scene: 'config', size: MAIN, steps: k('p', 'j', 'Enter'), says: '已使用预设「画集」' },
   { name: 'config-p-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd'), says: '再按一次 dd 删除「漫画」' },
   { name: 'config-p-dd-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd', 'd', 'd'), says: '已删除预设「漫画」' },
+  { name: 'config-p-G', scene: 'config', size: MAIN, steps: k('p', 'G'), says: { has: ['❯   ＋ 把当前设置保存为预设', '[p → 返回]'], lacks: ['[dd → 删除]'] } },
+  { name: 'config-p-G-dd', scene: 'config', size: MAIN, steps: k('p', 'G', 'd', 'd'), says: { has: ['❯   ＋ 把当前设置保存为预设', '预设 ⋅ 2 个'], lacks: ['[dd → 删除]', '再按一次 dd'] } },
   { name: 'config-p-save', scene: 'config', size: MAIN, steps: k('p', 'G', 'Enter'), says: '保存为预设，名称  ' },
   { name: 'config-p-save-named', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '插图' }, { key: 'Enter' }], says: '已保存预设「插图」' },
   { name: 'config-p-p', scene: 'config', size: MAIN, steps: k('p', 'p'), says: '[l → 展开]' },

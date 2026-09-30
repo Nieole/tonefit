@@ -26,6 +26,16 @@
 //! 停车场 Q720），是跑着的那一段里开工那一条还没到的那一截；按键表要分它，
 //! 因为清点完之前树还没有，`l`／`/` 那几个键派不出去。
 //!
+//! # 输入行的用途
+//!
+//! 焦点在输入行上时带着这一行的**用途**（[`Use`]：添加与修改处理路径、改输出目录、
+//! 改一项设置的值、给预设起名、搜索），表上「输入」那一组的几行按这一行的用途分派：`Tab` 补全只在
+//! 路径那三种上派得出，`C-w` 删一段每一种上都派得出，`⏎` 在搜索那一行上说「跳到结果」、
+//! 别的几种说「确定」。**屏底右端那几件因此从表上一路派下来**，画法不问这一行是哪一种
+//! （`CONTEXT.md` 的《输入行》）。这是这条规矩在代码里的唯一出处，别处的注释只指到这一节。
+//!
+//! 「用途」在这里专指输入行的用途；全部按键那一张「按用途分的组」是另一回事（[`Group`]）。
+//!
 //! # 它一个终端都不碰
 //!
 //! 因此摆在 `tui` 特性**外面**（见 `super` 的《终端库在哪一半》）。
@@ -34,6 +44,7 @@ use tonefit::Instruction;
 
 use super::live::{Live, Reach};
 use super::state::{Key, Stage};
+use super::typing::Use;
 use super::view::Focus;
 
 /// 按键表上的阶段：会话的[`Stage`]加上「清点中」那一截（模块文档《阶段五档》）。
@@ -326,7 +337,31 @@ const SETTINGS: &[Focus] = &[Focus::Settings];
 /// 只在详情栏上：`⏎` 在这一栏上说「确定」。
 const DETAILS: &[Focus] = &[Focus::Details];
 const PICKER: &[Focus] = &[Focus::Picker];
-const INPUT: &[Focus] = &[Focus::Input];
+/// 输入行，六种用途都算（模块文档《输入行的用途》，下面三组同）。
+const INPUT: &[Focus] = &[
+    Focus::Input(Use::AddPath),
+    Focus::Input(Use::EditPath),
+    Focus::Input(Use::Output),
+    Focus::Input(Use::Setting),
+    Focus::Input(Use::Preset),
+    Focus::Input(Use::Search),
+];
+/// 路径那三种输入行：添加与修改处理路径、改输出目录。
+const PATH_LINES: &[Focus] = &[
+    Focus::Input(Use::AddPath),
+    Focus::Input(Use::EditPath),
+    Focus::Input(Use::Output),
+];
+/// 搜索之外的五种输入行。
+const NOT_SEARCH_LINE: &[Focus] = &[
+    Focus::Input(Use::AddPath),
+    Focus::Input(Use::EditPath),
+    Focus::Input(Use::Output),
+    Focus::Input(Use::Setting),
+    Focus::Input(Use::Preset),
+];
+/// 搜索那一行。
+const SEARCH_LINE: &[Focus] = &[Focus::Input(Use::Search)];
 const OVERLAY: &[Focus] = &[Focus::Overlay];
 /// 上下挪一行的键在这几块上说的都是「选择」。
 const SELECTING: &[Focus] = &[
@@ -1215,7 +1250,7 @@ pub const TABLE: &[Row] = &[
         "补全",
         "补全路径",
         FRESH,
-        INPUT,
+        PATH_LINES,
     ),
     row(
         Group::Input,
@@ -1245,7 +1280,7 @@ pub const TABLE: &[Row] = &[
         "确定",
         "确定",
         NOT_SURVEYING,
-        INPUT,
+        NOT_SEARCH_LINE,
     ),
     row(
         Group::Input,
@@ -1255,7 +1290,7 @@ pub const TABLE: &[Row] = &[
         "跳到结果",
         "确定",
         NOT_SURVEYING,
-        INPUT,
+        SEARCH_LINE,
     ),
     row(
         Group::Input,
@@ -1397,17 +1432,8 @@ mod tests {
             Phase::Deciding,
             Phase::Ended,
         ];
-        const BLOCKS: [Focus; 7] = [
-            Focus::VolumeList,
-            Focus::Pages,
-            Focus::Settings,
-            Focus::Details,
-            Focus::Picker,
-            Focus::Input,
-            Focus::Overlay,
-        ];
         for phase in PHASES {
-            for focus in BLOCKS {
+            for focus in Focus::every() {
                 for (i, a) in TABLE.iter().enumerate() {
                     for b in &TABLE[i + 1..] {
                         if a.chord == b.chord && a.applies(phase, focus) && b.applies(phase, focus)
@@ -1475,11 +1501,45 @@ mod tests {
             Some(Deed::CloseOverlay)
         );
         // `C-c` 在哪儿都退。
-        for focus in [Focus::VolumeList, Focus::Input, Focus::Overlay] {
+        for focus in [Focus::VolumeList, Focus::Input(Use::Search), Focus::Overlay] {
             assert_eq!(
                 deed(Phase::Running, focus, Chord::Key(Key::Interrupt)),
                 Some(Deed::Interrupt)
             );
+        }
+    }
+
+    /// **输入行的用途是表上的一维**：`Tab` 只在补得出路径的那三种输入行上派得出（添加与修改
+    /// 处理路径、改输出目录），`C-w` 在每一种上都派得出——搜索那一行也是；`⏎` 在搜索那一行上
+    /// 说「跳到结果」，别的几种说「确定」。
+    #[test]
+    fn the_input_line_deals_its_keys_by_what_it_is_used_for() {
+        const TYPING: [Phase; 4] = [Phase::Fresh, Phase::Running, Phase::Deciding, Phase::Ended];
+        for used in Use::ALL {
+            let on = Focus::Input(used);
+            let completes = matches!(used, Use::AddPath | Use::EditPath | Use::Output);
+            assert_eq!(
+                deed(Phase::Fresh, on, Chord::Key(Key::Tab)),
+                completes.then_some(Deed::Complete),
+                "{used:?} 上的 `Tab`"
+            );
+            for phase in TYPING {
+                assert_eq!(
+                    deed(phase, on, Chord::Ctrl('w')),
+                    Some(Deed::DeleteWord),
+                    "{phase:?} 的 {used:?} 上的 `C-w`"
+                );
+                let enter = hints(phase, on, &[Want::of(Deed::Confirm)]);
+                assert_eq!(
+                    enter.iter().map(|hint| hint.what).collect::<Vec<_>>(),
+                    [if used == Use::Search {
+                        "跳到结果"
+                    } else {
+                        "确定"
+                    }],
+                    "{phase:?} 的 {used:?} 上的 `⏎`"
+                );
+            }
         }
     }
 
