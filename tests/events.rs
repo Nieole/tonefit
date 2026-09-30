@@ -184,6 +184,25 @@ impl Recorder {
         self.0.passes.lock().expect("记账没有中毒").clone()
     }
 
+    /// 每一步记在哪个环节名下：按到达次序把流走一遍，一条 `PassStarted` 翻到下一个环节，
+    /// 其间的 `Stepped` 记在它名下。头一格是 `None`——第一个环节开工**之前**报的那几步。
+    ///
+    /// 只对**一卷**的流说得清：卷与卷之间没有 `PassStarted` 把两卷的步分开。
+    /// 次序靠得住，是因为一个环节报的步全在下一个环节开工之前收下（环节首尾相接，
+    /// 计算线程报完才收摊），而 `passes` 与 `shape` 在同一次 `observe` 里各记一笔。
+    fn steps_under_each_pass(&self) -> Vec<(Option<Pass>, usize)> {
+        let mut passes = self.passes().into_iter();
+        let mut under = vec![(None, 0)];
+        for name in self.shape() {
+            match name {
+                "PassStarted" => under.push((passes.next(), 0)),
+                "Stepped" => under.last_mut().expect("头一格一直在").1 += 1,
+                _ => {}
+            }
+        }
+        under
+    }
+
     fn named(&self) -> usize {
         self.0.named.load(Ordering::Relaxed)
     }
@@ -387,6 +406,185 @@ fn a_pass_that_will_not_happen_is_not_announced() {
         vec![Pass::First, Pass::Second],
         "关掉元数据就没有幂等那一道"
     );
+}
+
+/// 一个装着两页加一个透传文件的固实 `.7z`，连同它有几个成员。
+///
+/// 摊开那一段一个成员一步，用例拿交回来的这个数去比，不另写一个字面量——
+/// 成员加减一个，断言跟着走。
+fn small_seven_zip(space: &Workspace, name: &str) -> (PathBuf, usize) {
+    let page = fixtures::full_bleed_gradient(TINY);
+    let mut sevenz = space.sevenz(name);
+    let pages = ["001.png", "002.png"];
+    for page_name in pages {
+        sevenz.page(page_name, &page);
+    }
+    sevenz.file("ComicInfo.xml", b"<ComicInfo/>");
+    (sevenz.write(), pages.len() + 1)
+}
+
+/// 两个要摊开的格式各一卷，连同各自有几个成员：`.7z` 与 `.rar` 各有一遍自己的顺序扫
+/// （`source::spread_seven_zip` 与 `spread_rar`），只测一个的话另一个漏报了没有人会红。
+fn one_volume_of_each_extracted_format(space: &Workspace) -> [(PathBuf, usize); 2] {
+    [
+        small_seven_zip(space, "volume-7z"),
+        (
+            space.rar("volume-rar", fixtures::rar::SOLID),
+            fixtures::rar::members().len(),
+        ),
+    ]
+}
+
+/// **要摊开的卷先走摊开，摊开途中的步记在它名下**（say-and-stop/03）。
+///
+/// 「记在它名下」钉成两个数：开卷之后、第一个环节开工之前**一步都没有**
+/// （摊开的步不再落在一个没有名字的空档里），摊开那个环节名下**一个成员一步**。
+#[test]
+fn an_extracted_volume_walks_the_extraction_first_and_its_steps_are_its_own() {
+    let space = Workspace::new();
+
+    for (volume, members) in one_volume_of_each_extracted_format(&space) {
+        let recorder = Recorder::default();
+        tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            ..fixtures::request(&space, [volume.as_path()])
+        })
+        .expect("点名一个要摊开的卷该跑得起来");
+
+        let name = volume.display();
+        assert_eq!(
+            recorder.passes(),
+            vec![
+                Pass::Extraction,
+                Pass::Fingerprint,
+                Pass::First,
+                Pass::Second
+            ],
+            "{name} 没有先摊开、再按次序走其余环节"
+        );
+        let under = recorder.steps_under_each_pass();
+        assert_eq!(
+            under[0],
+            (None, 0),
+            "{name} 开卷之后、第一个环节开工之前报了步：{under:?}"
+        );
+        assert_eq!(
+            under[1],
+            (Some(Pass::Extraction), members),
+            "{name} 摊开那个环节名下不是一个成员一步：{under:?}"
+        );
+    }
+}
+
+/// **不摊开的卷不报摊开**：目录卷与随机取的归档卷（`.cbz`）照旧三个环节。
+///
+/// 摊开由格式定（ADR 0015 决定第 3 条），`.cbz` 是归档却不摊开——只拿目录卷问的话，
+/// 「归档卷一律报摊开」那种错法照样绿。
+#[test]
+fn a_volume_that_is_not_extracted_never_announces_the_extraction() {
+    let space = Workspace::new();
+    let directory = small_volume(&space, "volume-a");
+    let page = fixtures::full_bleed_gradient(TINY);
+    let mut cbz = space.cbz("volume-b");
+    cbz.page("001.png", &page).page("002.png", &page);
+    let cbz = cbz.write();
+
+    for volume in [directory.path(), cbz.as_path()] {
+        let recorder = Recorder::default();
+        tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            ..fixtures::request(&space, [volume])
+        })
+        .expect("处理应当成功");
+
+        assert_eq!(
+            recorder.passes(),
+            vec![Pass::Fingerprint, Pass::First, Pass::Second],
+            "{} 不该摊开，却报了别的环节",
+            volume.display()
+        );
+    }
+}
+
+/// **幂等命中、整卷跳过的归档卷照样报摊开**：查重要读源字节，源字节要先摊开（say-and-stop/03）。
+///
+/// 跳过的卷只走到查重为止——而摊开那一个一步不少。两个要摊开的格式各跑一遍。
+#[test]
+fn a_skipped_archive_volume_is_still_extracted_before_it_is_fingerprinted() {
+    let space = Workspace::new();
+
+    for (volume, members) in one_volume_of_each_extracted_format(&space) {
+        fixtures::run_paths(&space, [volume.as_path()]);
+
+        let recorder = Recorder::default();
+        let report = tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            ..fixtures::request(&space, [volume.as_path()])
+        })
+        .expect("第二趟应当成功");
+
+        let name = volume.display();
+        assert!(
+            report.volumes[0].skipped(),
+            "{name} 第二趟没有被跳过，这条用例测的就不是跳过了"
+        );
+        assert_eq!(
+            recorder.passes(),
+            vec![Pass::Extraction, Pass::Fingerprint],
+            "{name} 跳过之前该先摊开、再查重，然后收摊"
+        );
+        assert_eq!(
+            recorder.steps_under_each_pass()[1],
+            (Some(Pass::Extraction), members),
+            "{name} 跳过的卷摊开那一段少走了成员"
+        );
+    }
+}
+
+/// 开卷那一条上就答立即停止的观察者，记下这一趟报过哪几个环节。
+#[derive(Clone, Default)]
+struct StopsTheMomentAVolumeOpens(Arc<Mutex<Vec<Pass>>>);
+
+impl Progress for StopsTheMomentAVolumeOpens {
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        match event {
+            Event::VolumeStarted { .. } => return Instruction::Abort,
+            Event::PassStarted { pass, .. } => {
+                self.0.lock().expect("记账没有中毒").push(pass);
+            }
+            _ => {}
+        }
+        Instruction::Continue
+    }
+}
+
+/// **开卷那一条上就按了立即停止，这一卷一个环节都不报——摊开也不例外**（say-and-stop/03）。
+///
+/// 另外三个环节开工之前都先问一次闩；摊开要是不问，流上就多出一个一步不走的摊开，
+/// 与「报的是这一趟真要走的那几个」（[`a_pass_that_will_not_happen_is_not_announced`]）不合。
+/// 拿目录卷作对照：它本来就没有摊开，头一个环节（查重）照样不该报。
+#[test]
+fn a_volume_stopped_the_moment_it_opens_announces_no_pass_at_all() {
+    let space = Workspace::new();
+    let (seven_zip, _) = small_seven_zip(&space, "volume-a");
+    let directory = small_volume(&space, "volume-b");
+
+    for volume in [seven_zip.as_path(), directory.path()] {
+        let watcher = StopsTheMomentAVolumeOpens::default();
+        let report = tonefit::run(&Request {
+            progress: Some(ProgressSink::new(watcher.clone())),
+            ..fixtures::request(&space, [volume])
+        })
+        .expect("按停止不是失败");
+
+        let name = volume.display();
+        assert!(report.volumes.is_empty(), "{name} 被立即停止了还进了报告");
+        assert_eq!(
+            *watcher.0.lock().expect("记账没有中毒"),
+            Vec::<Pass>::new(),
+            "{name} 开卷那一刻就被立即停止，还报了环节开工"
+        );
+    }
 }
 
 /// 确认点那一条**带不带**这一卷到此刻为止的报告，由观察者自己答的那个字定（07 号票）。

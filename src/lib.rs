@@ -375,10 +375,13 @@ impl std::fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
-/// 掐一段的表：跑一遍 `work`，把这一段的墙钟耗时写进 `segment`。
+/// 掐一段的表：跑一遍 `work`，把这一段的墙钟耗时写进 `segment`。`work` 回 `Err` 时也照写。
 ///
-/// 写成一个函数而不是在调用处各写三行，为的是让「哪几段掐了表」在 [`process_volume`] 里
-/// 一眼数得清：段与段不许重叠，而重叠一旦发生，[`VolumeTiming`] 里三段之和就会大于总耗时。
+/// 写成一个函数而不是在调用处各写三行，为的是让「哪几段掐了表」一眼数得清：
+/// 段与段不许重叠，而重叠一旦发生，[`VolumeTiming`] 里四段之和就会大于总耗时。
+/// 四段的表都由 [`process_volume`] 交出去——后三段在它自己里面掐，摊开那一段交给
+/// `source::open` 去掐（那一段夹在重开这一卷的中间，见那里的《摊开那一段的表》）。
+/// 环节开工与掐表成对的那三段走 [`timed_pass`]。
 fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
     let started = Instant::now();
     let value = work();
@@ -386,12 +389,30 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
     value
 }
 
+/// 走一个[环节](Pass)：先报它开工，紧接着掐它那一段的表（见 [`timed`]）。
+///
+/// **计时与进度同一条分界线**（`CONTEXT.md` 的《卷级计时》）靠的就是这两句挨着：
+/// 那条事件报出去之后表才开始走，其间报的每一步都记在这个环节名下，直到下一个环节开工。
+/// 摊开、查重、分析三个环节走它；写出环节不走——它开工那条事件是确认点
+/// （[`progress::Events::ask_before_the_second_pass`]），等人那一截夹在报开工与掐表之间，
+/// 不算进任何一段。
+fn timed_pass<T>(
+    events: progress::Events<'_>,
+    pass: Pass,
+    segment: &mut Duration,
+    work: impl FnOnce() -> T,
+) -> T {
+    events.pass_started(pass);
+    timed(segment, work)
+}
+
 /// 这一卷要走多少步（spec 的 story 30）。
 ///
 /// **清点**算它，一卷一次（见 `survey`）：开卷那条事件报的是它，这一趟的全局总步数是
 /// 它们的和。两个数因此不会分家——不是各算一遍，是加出来的。
 ///
-/// 四段：**摊开**这一道落全部成员，幂等这一道读全部**源**成员，分析环节走每一张**源页**，
+/// 四段，一个[环节](Pass)一段，与 [`VolumeTiming`] 的四段是同一条分界线：
+/// **摊开**落全部成员，幂等这一道读全部**源**成员，分析环节走每一张**源页**，
 /// 写出环节写全部**输出**成员。
 /// 源那一侧与输出那一侧不是同一个数——一个源页产出一到多张输出页（页几何批 03 号票），
 /// 而几张由内容决定（有没有中缝，页几何批 04 号票）。四段里只有末一段按输出那一侧算：
@@ -407,12 +428,13 @@ fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
 /// 进度条一动不动。添进来的同时预告也跟着长，**「预告是上界」因此一格没动**——
 /// 只报步不改预告的话，固实归档上进度条会冲过头。
 ///
-/// 幂等命中的卷会提前收摊，那时走过的只有第一段——预告的步数是**上界**，不是承诺，
+/// 幂等命中的卷会提前收摊，那时走过的只有查重那一段（要摊开的卷上外加它前面的摊开）——
+/// 预告的步数是**上界**，不是承诺，
 /// 剩下的由 [`Event::VolumeFinished`] 一次性了结。**按页跳过的卷同理**（two-pass-rework/14）：
 /// 留下的页分析环节不走，那几步少报；写出环节它们照样一步一张（搬也是写）。哪几页会留下
 /// 要幂等那一道比过才知道，而清点在它之前，预告因此减不掉它们。
 ///
-/// 第二段那个数**也是上界**，理由与上面那条不同：一个源页产出几张要解了像素才知道，
+/// 写出那一段的数**也是上界**，理由与上面那条不同：一个源页产出几张要解了像素才知道，
 /// 而这一步在解码之前。取的是[每个源页最多几张](pipeline::MAX_OUTPUTS_PER_SOURCE_PAGE)——
 /// 一卷里真被切开的页越少，走过的步就越少。取下界会让进度条冲过头，
 /// 而「预告是上界」这条规矩本来就在。
@@ -509,6 +531,10 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// （见 [`volume_fingerprint`] 与 [`compare_with_the_prior_output`]）。dry-run 也走这一道——
 /// 它预告的是照做时会发生的事，而照做时会发生的正是「跳过」（spec 的 story 6、story 8）。
 ///
+/// 要摊开的卷（`.rar` / `.7z`）在幂等之前还有一个环节：**摊开**——重开这一卷时整卷解到
+/// 临时目录（ADR 0015 决定第 3 条，见 `source::open`），此后按目录卷走。幂等命中的卷也走它：
+/// 查重要读源字节，源字节要先摊开。
+///
 /// **依据按这一趟的作用域只有一种**（two-pass-rework/15；`CONTEXT.md` 的《源哈希》）：
 /// 一页的字节由全卷定（`--envelope` 那条路）就按卷——全卷一个源哈希，整卷跳或整卷重做；
 /// 只取决于它自己（默认路径）就按页——每一页自己一份，**卷不齐时按页**（two-pass-rework/14；
@@ -540,12 +566,13 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// **[页边界那个检查点](progress::Events::aborting)问在这几处**（ADR 0013 决定第 2 条）。
 /// 凡是**逐个成员**往下走的循环，循环头上都问一次——开工前[摊开一整卷](source::open)
 /// 那两遍顺序扫（`source::spread_seven_zip` 与 `spread_rar`，`p4-parking-lot/13`）、
-/// 幂等这一道、分析环节、写出环节写页、写出环节搬透传文件；**外加一处不是循环头的**：
-/// 本函数里 `source::open` 紧接着那一句——摊开途中按下的那一下要在那里收口，
+/// 幂等这一道、分析环节、写出环节写页、写出环节搬透传文件；**外加两处不是循环头的**：
+/// 摊开开工之前（`source::open`：开卷那一条上就答了立即停止的话，摊开那个环节连开工都不报），
+/// 以及本函数里 `source::open` 紧接着那一句——摊开途中按下的那一下要在那里收口，
 /// 它交出来的是一份半摊开的卷（见那一句上的注释）。
 /// 答立即停止就当场停下，这一卷回的是 `None`。
 /// 不逐个数它们，也不在别处复述这个清单：数目会随管线长，而这里是它唯一的出处。
-/// 前两处**落在读取那一层**，不在本函数里——「唯一的出处」说的是这张清单，不是这个文件。
+/// 摊开那三处**落在读取那一层**，不在本函数里——「唯一的出处」说的是这张清单，不是这个文件。
 ///
 /// `None` 说的是**那一卷等于没做**：它那格 `partial` 没有收尾、由析构丢掉
 /// （见 `crate::sink` 的两个 `Drop`），最终位置上一个字节都没动过，报告里因此
@@ -604,7 +631,7 @@ fn process_volume(
         lodgers,
         ..
     } = surveyed;
-    // 这一卷的表：三段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
+    // 这一卷的表：四段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
     // 也就是**在重开这一卷之前**；**再把清点枚举它的那一截加回去**——枚举两遍都是这一卷
     // 真花掉的时间，一遍在这个表里，一遍由清点交过来（见 `survey::Surveyed::enumerating`），
     // 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
@@ -637,7 +664,11 @@ fn process_volume(
     //
     // **观察者那条回路一并递进去**（`p4-parking-lot/13`）：摊开一整卷要跑很久，
     // 那一段里报得出步、也停得住（见 `source::open`）。
-    let mut volume = source::open(&root, events)?;
+    //
+    // **摊开那一段的表一并交进去**（say-and-stop/03）：摊开是一个环节，而它夹在这一句的中间
+    // ——成员列齐之后、卷交出来之前——这一层够不着它的两头（见 `source::open` 的《摊开那一段的表》）。
+    // 不摊开的卷那一格留着零。
+    let mut volume = source::open(&root, events, &mut timing.extraction)?;
     // **页边界那个检查点**，摊开途中按下的那一下在这里收口：`source::open` 交出来的
     // 是一份**半摊开**的卷（成员表齐、临时目录里只有停之前落下的那几个），
     // 底下每一件事都要源字节，一件都不能做。丢掉它连临时目录一起收走（见 `source::Extraction`），
@@ -697,8 +728,8 @@ fn process_volume(
     // 比出来的答案有三种（见 [`Reuse`]）：整卷跳、按页留、整卷重做。
     let mut reuse = Reuse::Nothing;
     let fingerprint = if request.metadata {
-        events.pass_started(Pass::Fingerprint);
-        timed(&mut timing.fingerprint, || -> Result<_> {
+        let segment = &mut timing.fingerprint;
+        timed_pass(events, Pass::Fingerprint, segment, || -> Result<_> {
             let fingerprint = volume_fingerprint(&mut volume, request, &io, by_page, events)?;
             // 立即停止之后**不再问幂等**。不是因为答案会错——下一句就把整卷连同这个答案一起
             // 丢掉了——而是因为问一次要开上一趟的输出容器、逐页读回记录，那是实打实的 I/O。
@@ -741,7 +772,7 @@ fn process_volume(
                 resizes: 0,
                 cached_references: 0,
                 io,
-                // 两遍一遍都不走，三段里只有幂等那一段有数。
+                // 分析、写出两个环节一个都不走：四段里有数的只有查重，外加要摊开的卷上的摊开。
                 timing: VolumeTiming {
                     elapsed: wall_clock(),
                     ..timing
@@ -769,11 +800,10 @@ fn process_volume(
     let cache = Mutex::new(cache::PageCache::new(request.cache_budget, retention));
     let counters = ComputeCounters::default();
     // 分析环节产出的是**输出页**：一个源页产出的那几张挨着排，卷内页序就是写出顺序。
-    events.pass_started(Pass::First);
     let FirstPass {
         pages: scored,
         settled,
-    } = timed(&mut timing.first_pass, || {
+    } = timed_pass(events, Pass::First, &mut timing.first_pass, || {
         let compute = Compute {
             request,
             counters: &counters,
@@ -1415,13 +1445,13 @@ mod tests {
             ..split
         };
         assert_eq!(volume_steps(intact, &request()), 4 + 3 + 4);
-        // dry-run 没有第二段，切成几张都不改变步数。
+        // dry-run 没有写出那一段，切成几张都不改变步数。
         let dry = Request {
             mode: Mode::DryRun,
             ..request()
         };
         assert_eq!(volume_steps(split, &dry), 4 + 3);
-        // `--no-metadata` 关掉幂等那一段，第二段照旧按输出算。
+        // `--no-metadata` 关掉幂等那一段，写出那一段照旧按输出算。
         let bare = Request {
             metadata: false,
             ..request()

@@ -9,7 +9,8 @@
 //!
 //! **这一层认得观察者那条回路，只在一处**：[`open`] 收一个 [`Events`]，
 //! 因为固实归档开工前要[整卷摊到临时目录](extract)，而那一段在几百兆的卷上是分钟级的
-//! ——期间要报得出步、也要停得住（`p4-parking-lot/13`，ADR 0013 的《后果》）。
+//! ——它是一个[环节](Pass::Extraction)，要报得出开工与步、也要停得住
+//! （`p4-parking-lot/13`，ADR 0013 的《后果》），卷级计时的那一段也在那里掐。
 //! [只列成员](enumerate)那一条不收它：那一遍一个内容字节都不解。
 //! 除此之外本模块对进度、事件、指令一无所知。
 
@@ -19,11 +20,12 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use tempfile::TempDir;
 
-use crate::progress::Events;
+use crate::progress::{Events, Pass};
 use crate::{cost, decode};
 
 /// 点名一个归档卷时认得的那几种格式。
@@ -129,10 +131,12 @@ type ListVolume = fn(&Path) -> Result<Volume>;
 
 /// 「拿一个卷根，摊开它、交出一个卷」——[`open`] 那一条的形状。
 ///
-/// 比 [`ListVolume`] 多一格[观察者那条回路](Events)：摊开一整卷要跑很久，
-/// 而那一段里得报得出步、也得停得住（`p4-parking-lot/13`，见 [`extract`]）。
-/// 只列成员那一条不收它——那一遍一个内容字节都不解，没有可报的步，也没有值得停的活。
-type OpenVolume = fn(&Path, Events<'_>) -> Result<Volume>;
+/// 比 [`ListVolume`] 多两格：[观察者那条回路](Events)——摊开一整卷要跑很久，
+/// 而那一段里得报得出步、也得停得住（`p4-parking-lot/13`，见 [`extract`]）；
+/// 以及[摊开](Pass::Extraction)那一段的表（见 [`open`] 的《摊开那一段的表》）。
+/// 只列成员那一条两格都不收——那一遍一个内容字节都不解，没有可报的步、没有值得停的活，
+/// 也不是任何一个环节。
+type OpenVolume = fn(&Path, Events<'_>, &mut Duration) -> Result<Volume>;
 
 const RAR: SolidFormat = SolidFormat {
     open: open_rar,
@@ -583,15 +587,33 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 ///
 /// 几百兆的固实归档摊开要跑很久，而这一段里既要报得出步、也要停得住。
 /// 收的因此是[事件那一端](Events)本身——不是另开一条信号通路：报出去的是既有的
-/// [走完一步](Events::step)，问回来的是既有的[页边界那个检查点](Events::aborting)
-/// （ADR 0013 决定第 2 条）。**摊开的粒度就是成员**，与页边界那一级是同一道边界。
+/// [环节开工](Pass::Extraction)与[走完一步](Events::step)，问回来的是既有的
+/// [页边界那个检查点](Events::aborting)（ADR 0013 决定第 2 条）。
+/// **摊开的粒度就是成员**，与页边界那一级是同一道边界。
 ///
-/// **停下来时它交出的是一份半摊开的卷**：成员表是齐的，临时目录里只有停之前落下的那几个。
+/// **停下来时它交出的是一份半摊开的卷**：成员表是齐的，临时目录里只有停之前落下的那几个；
+/// 开卷之前就已经答了立即停止的话，交出的是一份[只列了成员](enumerate)、一个字节都没摊的卷——
+/// 摊开那个环节连开工都不报，与另外三个环节开工之前先问一次闩是同一个待遇。
 /// 这不是一种要靠返回值说出口的失败——[闩只升不降](Events::aborting)，调用方紧接着再问
 /// 一次就知道该丢掉它（见 `crate::process_volume`），而那一丢连临时目录一起收走
 /// （见 [`Extraction`]）。各段不必把「我是被立即停止的」当成返回值往上传，这一条也一样。
-pub(crate) fn open(path: &Path, events: Events<'_>) -> Result<Volume> {
-    open_taking_solid_archives(path, |format| (format.open)(path, events))
+///
+/// # 摊开那一段的表
+///
+/// 摊开是一个[环节](Pass::Extraction)，卷级计时有它一段（`crate::VolumeTiming::extraction`）。
+/// 那一段**夹在这一句的中间**：卷已经打开、成员已经列齐，之后才开始解第一个字节——
+/// 调用方够不着它的两头，那一格（`segment`）因此交进来，由[摊开](extract)开工时掐。
+/// 不摊开的卷一次都不碰它，那一格留着零。
+///
+/// 掐表走 `crate::timed_pass`：摊不下回 `Err` 时那一格也照样写进去——
+/// 这一卷没做成，可摊开那一段是真花掉的时间。
+pub(crate) fn open(path: &Path, events: Events<'_>, segment: &mut Duration) -> Result<Volume> {
+    open_taking_solid_archives(path, |format| {
+        if events.aborting() {
+            return (format.list)(path);
+        }
+        (format.open)(path, events, segment)
+    })
 }
 
 /// [`open`] 的**用例入口**：没人在看的那一趟。
@@ -603,7 +625,7 @@ pub(crate) fn open(path: &Path, events: Events<'_>) -> Result<Volume> {
 #[cfg(test)]
 pub(crate) fn open_unwatched(path: &Path) -> Result<Volume> {
     let nobody = crate::progress::NobodyWatching::default();
-    open(path, nobody.events())
+    open(path, nobody.events(), &mut Duration::default())
 }
 
 /// **只列成员**：一个像素不解，固实归档也**不摊开**。清点走这一条（见 `crate::survey`）。
@@ -983,7 +1005,7 @@ fn unextracted_volume(path: &Path, members: Vec<Member>) -> Volume {
 /// 归档头解一遍就够：成员表与摊开用的是同一份 `files`，两者的下标因此对得上
 /// （见 [`Member::entry`]）。摊开之后读取端是一个目录，而 [`Volume::root`] 仍指着这个
 /// `.7z` 文件——下游看到的是一个**归档卷**，只是它的字节此刻躺在别处。
-fn open_seven_zip(path: &Path, events: Events<'_>) -> Result<Volume> {
+fn open_seven_zip(path: &Path, events: Events<'_>, segment: &mut Duration) -> Result<Volume> {
     let mut reader = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::empty())
         .map_err(|error| seven_zip_is_unreadable(path, error))?;
     let members = seven_zip_members(path, &reader.archive().files)?;
@@ -1002,7 +1024,7 @@ fn open_seven_zip(path: &Path, events: Events<'_>) -> Result<Volume> {
     // 摊开自成一个[阶段](crate::cost::Stage::Extract)：它一次吃掉整卷的解压加整卷的写盘，
     // 落在 `--features profiling` 那张表上才看得出这一笔有多大。
     let extraction = cost::stage(cost::Stage::Extract, || {
-        extract(path, |root| {
+        extract(path, events, segment, |root| {
             spread_seven_zip(root, &targets, &mut reader, events)
         })
     })?;
@@ -1090,7 +1112,7 @@ fn solid_members<'a>(
 /// 的游标，而摊开的去处要等成员表齐了才定得下来——[包装层](strip_wrapper_directory)
 /// 剥几层，得看全卷共有的前缀是什么。因此先 [`rar_headers`] 列一遍，再从头解一遍。
 /// 两个句柄**不重叠**：列成员那一个在 [`rar_headers`] 返回时就放掉了。
-fn open_rar(path: &Path, events: Events<'_>) -> Result<Volume> {
+fn open_rar(path: &Path, events: Events<'_>, segment: &mut Duration) -> Result<Volume> {
     let headers = rar_headers(path)?;
     let members = rar_members(path, &headers)?;
     // 包里那个原名 → 成员表里那条相对路径，用意与 [`open_seven_zip`] 那一份相同：
@@ -1105,7 +1127,9 @@ fn open_rar(path: &Path, events: Events<'_>) -> Result<Volume> {
         })
         .collect();
     let extraction = cost::stage(cost::Stage::Extract, || {
-        extract(path, |root| spread_rar(root, path, &targets, events))
+        extract(path, events, segment, |root| {
+            spread_rar(root, path, &targets, events)
+        })
     })?;
     Ok(extracted_volume(path, members, extraction))
 }
@@ -1236,14 +1260,31 @@ fn rar_is_unreadable(path: &Path, error: unrar_ng::error::UnrarError) -> anyhow:
 ///
 /// 立即停止那一支**不回 `Err`**：被停下来不是失败（见 [`open`] 的《摊开那一段接着观察者那条回路》）。
 /// 交出去的是一份半摊开的卷，调用方再问一次闩就知道该丢掉它。
-fn extract(path: &Path, spread: impl FnOnce(&Path) -> Result<u64>) -> Result<Extraction> {
-    let dir = tempfile::Builder::new()
-        .prefix(EXTRACTION_PREFIX)
-        .tempdir()
-        .with_context(|| format!("给 {} 建摊开用的临时目录", path.display()))?;
-    let bytes =
-        spread(dir.path()).with_context(|| format!("把 {} 摊到临时目录", path.display()))?;
-    Ok(Extraction { dir, bytes })
+///
+/// # 摊开是一个环节，它从这一句开工
+///
+/// [摊开](Pass::Extraction)那个环节的开工报在**这里**，排在第一个字节落盘之前——
+/// 卷已经打开、成员已经列齐（两个格式各自那半在调用方）。两份 `spread` 报的每一步因此
+/// 都记在它名下。**那一段的表也从这里掐**（写进 `segment`，见 [`open`] 的《摊开那一段的表》）：
+/// 报开工与掐表是 `crate::timed_pass` 那一对，计时与进度因此同一条分界线。
+///
+/// 两样都在这一处而不是两个格式各写一次：开工只有一个时刻，两处各写一份的话
+/// 迟早有一个格式报在列成员之前、另一个报在之后。
+fn extract(
+    path: &Path,
+    events: Events<'_>,
+    segment: &mut Duration,
+    spread: impl FnOnce(&Path) -> Result<u64>,
+) -> Result<Extraction> {
+    crate::timed_pass(events, Pass::Extraction, segment, || {
+        let dir = tempfile::Builder::new()
+            .prefix(EXTRACTION_PREFIX)
+            .tempdir()
+            .with_context(|| format!("给 {} 建摊开用的临时目录", path.display()))?;
+        let bytes =
+            spread(dir.path()).with_context(|| format!("把 {} 摊到临时目录", path.display()))?;
+        Ok(Extraction { dir, bytes })
+    })
 }
 
 /// `.7z` 那一遍顺序扫：`for_each_entries` 按块依次解，解出一个就落一个盘。

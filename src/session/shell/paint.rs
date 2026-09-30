@@ -80,7 +80,8 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Pass(Pass::Fingerprint)) => Some(Color::Magenta),
         Hue::Kind(Kind::Pass(Pass::First)) => Some(Color::Blue),
         Hue::Kind(Kind::Pass(Pass::Second)) => Some(Color::Cyan),
-        // 环节那个枚举是 `non_exhaustive`：库添第四遍时这一色再定。
+        // 环节那个枚举是 `non_exhaustive`。摊开眼下落在这一支上：它那一色由设计稿给，
+        // 归 `design-parity/13`。
         Hue::Kind(Kind::Pass(_)) => None,
         Hue::Kind(Kind::Done | Kind::Caption) => Some(Color::Green),
         Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),

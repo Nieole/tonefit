@@ -4699,6 +4699,7 @@ mod tests {
         slow.elapsed = Duration::from_secs(3600);
         for each in &mut slow.volumes {
             each.timing = VolumeTiming {
+                extraction: Duration::from_secs(1),
                 fingerprint: Duration::from_secs(11),
                 first_pass: Duration::from_secs(222),
                 second_pass: Duration::from_secs(3333),

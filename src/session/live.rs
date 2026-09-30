@@ -585,7 +585,7 @@ impl Live {
     /// 当前卷开始走某一遍。「进度条现在在走哪一遍」只有它答得出来。
     ///
     /// **确认点那一条还带着这一卷到此刻为止的报告**（`so_far`，停车场 Q52）：收下它，
-    /// 确认条就画得出「拿什么主意」。另外两遍那一格是 `None`，这里因此不动它。
+    /// 确认条就画得出「拿什么主意」。其余环节那一格是 `None`，这里因此不动它。
     ///
     /// **走到写出那一遍，「这一卷写不写盘」在这里定一半**（[`Walking::writes`]）：
     /// 执行那一趟走到这一遍就在写；接着写出那一趟这一遍前头是确认点，要等待确认
@@ -2203,7 +2203,7 @@ mod tests {
         live.run_finished(RunOutcome::Stopped(Instruction::Abort));
         assert!(live.summarized().is_none());
 
-        // 别的两遍那一格是 `None`，不该把摆着的那一份抹掉——它只在确认点上有。
+        // 其余环节那一格是 `None`，不该把摆着的那一份抹掉——它只在确认点上有。
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         live.volume_started(Path::new("库/卷一"), 6);
         live.pass_started(Pass::Second, Some(&summarized));

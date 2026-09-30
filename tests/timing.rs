@@ -4,14 +4,18 @@
 //! 红绿交给当时的负载。断言的是**结构**——这一趟走过的段该有数、没走过的段该是零、
 //! 段与段不重叠、段装得进总耗时。
 //!
-//! 断言里出现的唯一一个具体时长是**用例自己等掉的那一段**（见末一条：确认点上等人的那一截
-//! 不算进计时）。它不是机器快慢，是用例摆好的输入，因此可以钉。
+//! 断言里出现的具体时长都是**用例自己等掉的那一段**：确认点上等人的那一截不算进计时
+//! （`waiting_at_the_decision_point_is_charged_to_nobody`），摊开途中磨蹭的那一截算进摊开那一段
+//! （`an_extracted_volume_times_its_extraction_and_nothing_of_it_falls_outside_the_segments`）。
+//! 它们不是机器快慢，是用例摆好的输入，因此可以钉。
 //!
 //! 「计时不进渲染出的文字」不在这里：那是界面层的事实，由 `src/render.rs` 的
 //! `the_rendered_text_says_nothing_about_how_long_it_took` 钉着。
 
 mod fixtures;
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fixtures::{Volume, Workspace};
@@ -29,12 +33,31 @@ fn two_pages_and_an_extra(space: &Workspace, name: &str) -> Volume {
     volume
 }
 
-/// 三段加上段外那一截，收出来的那个数。
+/// 两页加一个透传文件的固实 `.7z`，连同它有几个成员（摊开那一段一个成员一步）。
+///
+/// 页取最便宜的那一张：这里问的是摊开那一段，分析环节只要走过就行。
+fn two_pages_and_an_extra_in_a_seven_zip(space: &Workspace, name: &str) -> (PathBuf, u32) {
+    let page = fixtures::cheap_page();
+    let mut sevenz = space.sevenz(name);
+    let pages = ["001.png", "002.png"];
+    for page_name in pages {
+        sevenz.page(page_name, &page);
+    }
+    sevenz.file("ComicInfo.xml", b"<ComicInfo/>");
+    let members = u32::try_from(pages.len() + 1).expect("几个成员装得进 u32");
+    (sevenz.write(), members)
+}
+
+/// 四段加上段外那一截，收出来的那个数。
 ///
 /// 它该恰好等于 [`VolumeTiming::elapsed`]。**这条等式是段不重叠的哨兵**：真有两段掐的表叠在
-/// 一起，三段之和就会大于总耗时，`outside_the_segments` 被饱和成零，这个和当场小于 `elapsed`。
+/// 一起，四段之和就会大于总耗时，`outside_the_segments` 被饱和成零，这个和当场小于 `elapsed`。
 fn accounted_for(timing: &VolumeTiming) -> Duration {
-    timing.fingerprint + timing.first_pass + timing.second_pass + timing.outside_the_segments()
+    timing.extraction
+        + timing.fingerprint
+        + timing.first_pass
+        + timing.second_pass
+        + timing.outside_the_segments()
 }
 
 #[test]
@@ -50,7 +73,9 @@ fn every_volume_and_the_whole_run_say_how_long_they_took() {
     let mut volumes = Duration::ZERO;
     for volume in &report.volumes {
         let timing = volume.timing;
-        // 这一趟三段都真走了：记录开着、卷要处理、模式是照做。
+        // 目录卷不摊开：那一段是零，而不是一个很小的数。
+        assert_eq!(timing.extraction, Duration::ZERO, "目录卷摊开了");
+        // 其余三段都真走了：记录开着、卷要处理、模式是照做。
         assert!(timing.fingerprint > Duration::ZERO, "幂等那一道没有耗时");
         assert!(timing.first_pass > Duration::ZERO, "分析环节没有耗时");
         assert!(timing.second_pass > Duration::ZERO, "写出环节没有耗时");
@@ -181,5 +206,121 @@ fn waiting_at_the_decision_point_is_charged_to_nobody() {
     );
     // 减掉一截之后段与总仍然对得上：等人不在任何一段里，因此三段一个都没变短。
     assert!(timing.second_pass > Duration::ZERO, "写出环节没走");
+    assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
+}
+
+/// **要摊开的卷，摊开那一段有它自己的一格，段外那一截不再装着它**（say-and-stop/03）。
+///
+/// 「不再装着它」要一个量得到的差别才钉得住：观察者在摊开途中每一步都磨蹭 `PAUSE`，
+/// 这一卷的摊开因此至少多花 `waits`（每个成员一次）。这一截落在摊开那一段里，那一段就不小于它；
+/// 落在段外的话，段外那一截当场不小于它。两句各钉一头。
+///
+/// 与确认点上等人那一截（[`waiting_at_the_decision_point_is_charged_to_nobody`]）**不是一回事**：
+/// 摊开途中库在等观察者返回才摊下一个成员，那是这一卷真花掉的墙钟，算进 `elapsed`——
+/// 只是得算在摊开那一段里。
+///
+/// 段外那一截在这一卷上只剩几样零头（见 `VolumeTiming::outside_the_segments`），这么小的一卷上
+/// 远小于 `waits`；它若装着摊开，至少就是 `waits`。
+#[test]
+fn an_extracted_volume_times_its_extraction_and_nothing_of_it_falls_outside_the_segments() {
+    /// 摊开途中每一步磨蹭这么久。
+    const PAUSE: Duration = Duration::from_millis(100);
+
+    /// 只在摊开途中磨蹭的观察者：摊开开工起、下一个环节开工止，每一步都睡一会儿。
+    #[derive(Default)]
+    struct DawdlesWhileExtracting {
+        extracting: AtomicBool,
+    }
+
+    impl Progress for DawdlesWhileExtracting {
+        fn observe(&self, event: Event<'_>) -> Instruction {
+            match event {
+                Event::PassStarted { pass, .. } => {
+                    self.extracting
+                        .store(pass == Pass::Extraction, Ordering::Relaxed);
+                }
+                Event::Stepped { .. } if self.extracting.load(Ordering::Relaxed) => {
+                    std::thread::sleep(PAUSE);
+                }
+                _ => {}
+            }
+            Instruction::Continue
+        }
+    }
+
+    let space = Workspace::new();
+    let (solid, members) = two_pages_and_an_extra_in_a_seven_zip(&space, "volume-a");
+    // 摊开那一段至少多花这么久：一个成员一步，每一步磨蹭一次。
+    let waits = PAUSE * members;
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(DawdlesWhileExtracting::default())),
+        ..fixtures::request(&space, [solid.as_path()])
+    })
+    .expect("点名一个 .7z 该跑得起来");
+
+    let timing = report.volumes[0].timing;
+    assert!(
+        timing.extraction >= waits,
+        "摊开那一段没装下它自己花掉的时间：{:?}，而摊开途中至少磨蹭了 {waits:?}",
+        timing.extraction
+    );
+    assert!(
+        timing.outside_the_segments() < waits,
+        "段外那一截还装着摊开：{:?}",
+        timing.outside_the_segments()
+    );
+    // 其余三段照旧都走了：摊开多了一段，不是顶掉了哪一段。
+    assert!(timing.fingerprint > Duration::ZERO, "幂等那一道没有耗时");
+    assert!(timing.first_pass > Duration::ZERO, "分析环节没有耗时");
+    assert!(timing.second_pass > Duration::ZERO, "写出环节没有耗时");
+    assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
+}
+
+/// **幂等命中而整卷跳过的归档卷，摊开那一段照样有数**：查重要读源字节，源字节要先摊开。
+///
+/// 与 [`a_skipped_volume_still_reports_what_the_idempotency_read_cost`] 同一个道理——
+/// 跳过不是零成本——只是这种卷上跳过要付两笔。
+#[test]
+fn a_skipped_archive_volume_still_reports_what_the_extraction_cost() {
+    let space = Workspace::new();
+    let (solid, _) = two_pages_and_an_extra_in_a_seven_zip(&space, "volume-a");
+    fixtures::run_paths(&space, [solid.as_path()]);
+
+    let report = fixtures::run_paths(&space, [solid.as_path()]);
+
+    let skipped = &report.volumes[0];
+    assert!(
+        skipped.skipped(),
+        "第二趟没有被跳过，这条用例测的就不是跳过了"
+    );
+    let timing = skipped.timing;
+    assert!(
+        timing.extraction > Duration::ZERO,
+        "跳过的归档卷没有摊开的耗时"
+    );
+    assert!(timing.fingerprint > Duration::ZERO, "幂等那一道没有耗时");
+    assert_eq!(timing.first_pass, Duration::ZERO, "跳过的卷走了分析环节");
+    assert_eq!(timing.second_pass, Duration::ZERO, "跳过的卷走了写出环节");
+    assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
+}
+
+/// **随机取的归档卷（`.cbz`）不摊开，摊开那一段是零**，而不是一个很小的数（say-and-stop/03）。
+///
+/// 目录卷那一半在 [`every_volume_and_the_whole_run_say_how_long_they_took`] 里；这一条问的是
+/// 「归档卷一律掐摊开」那种错法——摊开由格式定（ADR 0015 决定第 3 条），不由容器形态定。
+#[test]
+fn an_archive_that_is_not_extracted_times_no_extraction() {
+    let space = Workspace::new();
+    let page = fixtures::cheap_page();
+    let mut cbz = space.cbz("volume-a");
+    cbz.page("001.png", &page).page("002.png", &page);
+    let cbz = cbz.write();
+
+    let report = fixtures::run_paths(&space, [cbz.as_path()]);
+
+    let timing = report.volumes[0].timing;
+    assert_eq!(timing.extraction, Duration::ZERO, "`.cbz` 摊开了");
+    assert!(timing.first_pass > Duration::ZERO, "分析环节没有耗时");
     assert_eq!(accounted_for(&timing), timing.elapsed, "段与总对不上");
 }
