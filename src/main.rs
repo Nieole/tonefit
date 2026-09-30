@@ -75,6 +75,89 @@ struct Cli {
     #[arg(short, long, required = true, value_name = "目录")]
     out: Option<PathBuf>,
 
+    // `--preset`、设备设置与处理选项里转换与样张共用的那一排，见 `PageOptions`。
+    #[command(flatten)]
+    options: PageOptions,
+
+    /// 打开整卷统一灰阶：按卷取 p95 定出一个统一档位并加迟滞，卷内其余页都用这一档，
+    /// 报告指得出代表页。买到的是卷级齐整——翻页处灰调的颗粒感不换粗细；
+    /// 付的是体积——其余页要为代表页那一档多付灰阶档位。
+    ///
+    /// **默认不开**：默认路径上灰阶档位逐页各判各的，每一页拿到画质分说它要的那一档，
+    /// 不为一卷里少数几页的需要付全卷的体积。翻页处档位不同是内容不同的自然结果，
+    /// 不是要被平滑掉的东西。
+    ///
+    /// **反面是 `--no-envelope`**：预设把整卷统一灰阶打开之后，这一趟用它关回去。
+    /// 两个一起点名当场是一条错误——同一趟里说不出「开又不开」。
+    #[arg(long, conflicts_with = "no_envelope")]
+    envelope: bool,
+
+    /// 关掉整卷统一灰阶——**`--envelope` 的反面**，而**默认就是它**。
+    ///
+    /// 因此只有一种情形用得着：套的那份预设里写着 `envelope = true`，而这一趟要逐页。
+    /// 不套预设的那一趟点不点它是同一个结果。
+    ///
+    /// 打开整卷统一灰阶换来什么、代价是什么，一并写在 `--envelope` 那一条上。
+    #[arg(long)]
+    no_envelope: bool,
+
+    /// **已退场的开关。** 逐页判定现在就是默认，这一项写不写都一样——留成不做事的别名
+    /// 最坏：脚本里那一行看着还在、行为已经反过来。点到它当场报错，指去 `--envelope`。
+    #[arg(long, hide = true)]
+    per_page: bool,
+
+    /// **已退场的开关**，与 `--per-page` 一对。点到它当场报错，指去 `--envelope`。
+    #[arg(long, hide = true)]
+    no_per_page: bool,
+
+    /// 分析与写出之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
+    /// 超出的页写到临时文件，运行结束即删掉。
+    #[arg(long, value_name = "字节数")]
+    cache_budget: Option<String>,
+
+    /// 读盘方式：auto（按路径识别硬盘类型，默认）、serial（逐个读）、concurrent（同时读）。
+    /// auto 下机械硬盘逐个读、固态硬盘同时读；网络路径与识别不出来的一律逐个读。
+    #[arg(long, value_name = "模式")]
+    io_mode: Option<String>,
+
+    /// 预览：只分析，不写文件——报告照出，逐页给出判定与各档的画质分。
+    #[arg(long)]
+    dry_run: bool,
+
+    /// 不把自描述元数据写进输出 PNG。**重跑时就认不出转换过的卷**：判定与理由不再随文件走，
+    /// 无从判断这一卷变没变，每一趟都整卷重做。
+    #[arg(long)]
+    no_metadata: bool,
+
+    /// 报告只印到**目录那一级**，一枝一行；卷级与逐页那两段一行都不印。**默认是全印的。**
+    ///
+    /// 一枝那一行说的是几卷 · 统一档位分布 · 隔离几卷。
+    /// 几百卷的一趟重定向到文件之后要滚几百行才找得到那一枝，这一项把它折成一屏看得完。
+    /// 折的只有正文：抬头与**末尾那几小结**照旧一个字不少——没做成的那几卷、
+    /// 进了隔离的那几卷、发现无法访问的那几处，只有末尾那几小结点得出是哪几个。
+    ///
+    /// 它**一个像素都不改**，改的只是印出来什么样：**参数哈希不收它**，
+    /// 加不加都不会让上一趟的输出过期。逐页那几行画质分也跟着不印，
+    /// `--dry-run` 要读的正是它们——两项一起点名，读得到的只剩每一枝的分布。
+    #[arg(long)]
+    brief: bool,
+}
+
+// 转换那一趟与样张**共用的那一排**：`--preset`、设备设置三项、处理选项里一张图上谈得上的那几项
+// （样张 spec《Implementation Decisions》第八条）。
+//
+// 两处各 `flatten` 一份——**同一份定义、同一批解析**：「命令行赢、预设次之、默认兜底」那几个方法
+// 只在这里写一遍，样张因此不会与转换那一趟吃出两套值（停车场 Q999）。处理选项里另外三项
+// （整卷统一灰阶、内存上限、读盘方式）只挂在转换那一侧：它们说的是一卷，一张图上无从谈起。
+//
+// 字段的次序就是 `--help` 里的次序：这一排在 `Cli` 里摆在 `--out` 与 `--envelope` 之间。
+//
+// **这一段写成 `//`，不写成文档注释**：clap 把 `flatten` 进来的那个 `Args` 的文档注释当成
+// 整条命令的长说明，写成 `///` 就盖掉了 `tonefit --help` 的开头
+// （用例 `flattening_leaves_each_command_its_own_about` 钉着）。`VolumeOnly` 只摊在子命令里，
+// 子命令自己那一段说明排在它后面，盖不着。
+#[derive(clap::Args)]
+struct PageOptions {
     /// 套用一份命名预设：**设备设置**（型号、可见灰阶数、画质门槛）与**处理选项**（这一趟的立场）
     /// 从盘上那份配置里来。
     ///
@@ -239,69 +322,6 @@ struct Cli {
     /// 错误指得出是哪一页，不会静默照抖。
     #[arg(long, value_name = "模式")]
     dither: Option<String>,
-
-    /// 打开整卷统一灰阶：按卷取 p95 定出一个统一档位并加迟滞，卷内其余页都用这一档，
-    /// 报告指得出代表页。买到的是卷级齐整——翻页处灰调的颗粒感不换粗细；
-    /// 付的是体积——其余页要为代表页那一档多付灰阶档位。
-    ///
-    /// **默认不开**：默认路径上灰阶档位逐页各判各的，每一页拿到画质分说它要的那一档，
-    /// 不为一卷里少数几页的需要付全卷的体积。翻页处档位不同是内容不同的自然结果，
-    /// 不是要被平滑掉的东西。
-    ///
-    /// **反面是 `--no-envelope`**：预设把整卷统一灰阶打开之后，这一趟用它关回去。
-    /// 两个一起点名当场是一条错误——同一趟里说不出「开又不开」。
-    #[arg(long, conflicts_with = "no_envelope")]
-    envelope: bool,
-
-    /// 关掉整卷统一灰阶——**`--envelope` 的反面**，而**默认就是它**。
-    ///
-    /// 因此只有一种情形用得着：套的那份预设里写着 `envelope = true`，而这一趟要逐页。
-    /// 不套预设的那一趟点不点它是同一个结果。
-    ///
-    /// 打开整卷统一灰阶换来什么、代价是什么，一并写在 `--envelope` 那一条上。
-    #[arg(long)]
-    no_envelope: bool,
-
-    /// **已退场的开关。** 逐页判定现在就是默认，这一项写不写都一样——留成不做事的别名
-    /// 最坏：脚本里那一行看着还在、行为已经反过来。点到它当场报错，指去 `--envelope`。
-    #[arg(long, hide = true)]
-    per_page: bool,
-
-    /// **已退场的开关**，与 `--per-page` 一对。点到它当场报错，指去 `--envelope`。
-    #[arg(long, hide = true)]
-    no_per_page: bool,
-
-    /// 分析与写出之间的缓存最多在内存里留多少：纯字节数，或带 K/M/G 后缀，默认 512M。
-    /// 超出的页写到临时文件，运行结束即删掉。
-    #[arg(long, value_name = "字节数")]
-    cache_budget: Option<String>,
-
-    /// 读盘方式：auto（按路径识别硬盘类型，默认）、serial（逐个读）、concurrent（同时读）。
-    /// auto 下机械硬盘逐个读、固态硬盘同时读；网络路径与识别不出来的一律逐个读。
-    #[arg(long, value_name = "模式")]
-    io_mode: Option<String>,
-
-    /// 预览：只分析，不写文件——报告照出，逐页给出判定与各档的画质分。
-    #[arg(long)]
-    dry_run: bool,
-
-    /// 不把自描述元数据写进输出 PNG。**重跑时就认不出转换过的卷**：判定与理由不再随文件走，
-    /// 无从判断这一卷变没变，每一趟都整卷重做。
-    #[arg(long)]
-    no_metadata: bool,
-
-    /// 报告只印到**目录那一级**，一枝一行；卷级与逐页那两段一行都不印。**默认是全印的。**
-    ///
-    /// 一枝那一行说的是几卷 · 统一档位分布 · 隔离几卷。
-    /// 几百卷的一趟重定向到文件之后要滚几百行才找得到那一枝，这一项把它折成一屏看得完。
-    /// 折的只有正文：抬头与**末尾那几小结**照旧一个字不少——没做成的那几卷、
-    /// 进了隔离的那几卷、发现无法访问的那几处，只有末尾那几小结点得出是哪几个。
-    ///
-    /// 它**一个像素都不改**，改的只是印出来什么样：**参数哈希不收它**，
-    /// 加不加都不会让上一趟的输出过期。逐页那几行画质分也跟着不印，
-    /// `--dry-run` 要读的正是它们——两项一起点名，读得到的只剩每一枝的分布。
-    #[arg(long)]
-    brief: bool,
 }
 
 /// 命令行与预设合起来定出这一趟的每一项（p1-session 的 07 号票）。
@@ -322,15 +342,10 @@ struct Cli {
 ///
 /// 一对里**一个都不点就是「没说」**，那一格照上一段落到预设、再落到默认值上；
 /// **同时点名两个当场是一条错误**，由 clap 的 `conflicts_with` 挡（见 [`said`]）。
+///
+/// 大半的项不挂在这里，挂在 [`PageOptions`] 上——样张也吃它们，规矩是同一条；
+/// 这里只剩转换那一趟独有的几项（整卷统一灰阶、内存上限、读盘方式、做到哪一步、报告怎么折）。
 impl Cli {
-    /// 这一趟要套用的预设。**只在显式点名时读盘。**
-    fn preset(&self) -> Result<Preset> {
-        match &self.preset {
-            Some(name) => preset::load(name),
-            None => Ok(Preset::default()),
-        }
-    }
-
     /// 本次做到哪一步。
     ///
     /// 不收预设：`--dry-run` 说的是这一趟做到哪一步，不是一份存得住的立场
@@ -341,21 +356,6 @@ impl Cli {
         } else {
             Mode::Process
         }
-    }
-
-    /// 本次的缩放方式。不点名就是默认的以高为准（01 号票）。
-    fn fit_mode(&self, preset: &Preset) -> Result<FitMode> {
-        match &self.fit {
-            Some(name) => FitMode::resolve(name),
-            None => Ok(preset.taste.fit()),
-        }
-    }
-
-    /// 本次裁不裁白边（02 号票）。**默认裁**，`--no-crop` 关掉它、`--crop` 开回来。
-    fn crop(&self, preset: &Preset) -> bool {
-        // 默认值不在这里：它在 `TasteLayer::crop`，会话拼 `Request` 时读的是同一个
-        // （`Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它）。
-        said(self.crop, self.no_crop).unwrap_or_else(|| preset.taste.crop())
     }
 
     /// 本次的报告**摊到哪一级**（`p4-parking-lot/22`）。**默认摊开**，`--brief` 折起它。
@@ -395,6 +395,77 @@ impl Cli {
             "`{retired}` 已退场：灰阶档位默认就逐页各判各的，这个开关写不写都一样。\
              要卷级齐整（整卷统一灰阶加迟滞）改用 `--envelope`；要逐页，把它删掉即可。"
         )
+    }
+
+    /// 本次的内存上限。不点名就是默认的那一档。
+    fn cache_budget(&self, preset: &Preset) -> Result<CacheBudget> {
+        match &self.cache_budget {
+            Some(text) => CacheBudget::parse(text),
+            None => Ok(preset.taste.cache_budget()),
+        }
+    }
+
+    /// 本次的读盘方式。不点名就按路径探测硬盘类型（ADR 0009）。
+    fn io_mode(&self, preset: &Preset) -> Result<IoMode> {
+        match &self.io_mode {
+            Some(text) => IoMode::resolve(text),
+            None => Ok(preset.taste.io_mode()),
+        }
+    }
+
+    /// 把命令行与这一趟的预设合成 [`Request`]。
+    ///
+    /// 进度观察者不在这里装：那是界面的事，而这个方法答的是「这一趟的参数是什么」。
+    /// **参数哈希收的正是这里算出来的这些值**——它由 `Request` 求出（见 `tonefit` 的
+    /// `metadata`），而预设的名字一个字都没进来。改了预设的内容而名字没变，
+    /// 下一趟因此照样重做。
+    fn request(self, preset: &Preset) -> Result<Request> {
+        let options = &self.options;
+        Ok(Request {
+            profile: options.target_profile(preset)?,
+            fit: options.fit_mode(preset)?,
+            crop: options.crop(preset),
+            split: options.split_rule(preset)?,
+            filter: options.residual_filter(preset)?,
+            white_align_limit: options.white_align_limit(preset),
+            bit_depth: options.bit_depth_override(preset)?,
+            dither: options.dither_override(preset)?,
+            envelope: self.envelope(preset),
+            cache_budget: self.cache_budget(preset)?,
+            mode: self.mode(),
+            io_mode: self.io_mode(preset)?,
+            metadata: !self.no_metadata,
+            progress: None,
+            output_root: self.out.expect(REQUIRED_BY_CLAP),
+            inputs: self.inputs,
+        })
+    }
+}
+
+/// 转换那一趟与样张共用的那一排，各自怎么落到这一趟的值上。规矩是 [`Cli`] 那一侧同一条
+/// （见 `impl Cli` 的抬头）：命令行点到的赢，预设次之，默认值兜底——默认值一个都不在这里复述。
+impl PageOptions {
+    /// 这一趟要套用的预设。**只在显式点名时读盘。**
+    fn preset(&self) -> Result<Preset> {
+        match &self.preset {
+            Some(name) => preset::load(name),
+            None => Ok(Preset::default()),
+        }
+    }
+
+    /// 本次的缩放方式。不点名就是默认的以高为准（01 号票）。
+    fn fit_mode(&self, preset: &Preset) -> Result<FitMode> {
+        match &self.fit {
+            Some(name) => FitMode::resolve(name),
+            None => Ok(preset.taste.fit()),
+        }
+    }
+
+    /// 本次裁不裁白边（02 号票）。**默认裁**，`--no-crop` 关掉它、`--crop` 开回来。
+    fn crop(&self, preset: &Preset) -> bool {
+        // 默认值不在这里：它在 `TasteLayer::crop`，会话拼 `Request` 时读的是同一个
+        // （`Request::crop` 是个裸 `bool`，库那一侧没有一个 `Default` 说得出它）。
+        said(self.crop, self.no_crop).unwrap_or_else(|| preset.taste.crop())
     }
 
     /// 本次怎么拆跨页（04 号票）。三项收成一份规矩交给库，见 [`SplitRule`]。
@@ -452,22 +523,6 @@ impl Cli {
         }
     }
 
-    /// 本次的内存上限。不点名就是默认的那一档。
-    fn cache_budget(&self, preset: &Preset) -> Result<CacheBudget> {
-        match &self.cache_budget {
-            Some(text) => CacheBudget::parse(text),
-            None => Ok(preset.taste.cache_budget()),
-        }
-    }
-
-    /// 本次的读盘方式。不点名就按路径探测硬盘类型（ADR 0009）。
-    fn io_mode(&self, preset: &Preset) -> Result<IoMode> {
-        match &self.io_mode {
-            Some(text) => IoMode::resolve(text),
-            None => Ok(preset.taste.io_mode()),
-        }
-    }
-
     /// 把 `--profile`、`--gray-levels` 与 `--threshold` 合成本次要用的 profile。
     ///
     /// 三项都在**设备设置**，因此预设供得出它们中的任何一项。型号两处都没有时当场停下：
@@ -495,33 +550,6 @@ impl Cli {
             "预设「{name}」的设备设置没有型号，`--profile` 因此仍然必填。\
              要么在命令行上点名，要么往那份预设的 [preset.\"{name}\".device] 里写一行 profile = \"…\"。"
         )
-    }
-
-    /// 把命令行与这一趟的预设合成 [`Request`]。
-    ///
-    /// 进度观察者不在这里装：那是界面的事，而这个方法答的是「这一趟的参数是什么」。
-    /// **参数哈希收的正是这里算出来的这些值**——它由 `Request` 求出（见 `tonefit` 的
-    /// `metadata`），而预设的名字一个字都没进来。改了预设的内容而名字没变，
-    /// 下一趟因此照样重做。
-    fn request(self, preset: &Preset) -> Result<Request> {
-        Ok(Request {
-            profile: self.target_profile(preset)?,
-            fit: self.fit_mode(preset)?,
-            crop: self.crop(preset),
-            split: self.split_rule(preset)?,
-            filter: self.residual_filter(preset)?,
-            white_align_limit: self.white_align_limit(preset),
-            bit_depth: self.bit_depth_override(preset)?,
-            dither: self.dither_override(preset)?,
-            envelope: self.envelope(preset),
-            cache_budget: self.cache_budget(preset)?,
-            mode: self.mode(),
-            io_mode: self.io_mode(preset)?,
-            metadata: !self.no_metadata,
-            progress: None,
-            output_root: self.out.expect(REQUIRED_BY_CLAP),
-            inputs: self.inputs,
-        })
     }
 }
 
@@ -680,11 +708,11 @@ const INTERLOCK_HEADING: &str = "选项冲突（几项凑在一起会互相削�
 ///
 /// **型号不走这一条**：它的必填是有条件的（`required_unless_present = "preset"`），
 /// 而「那份预设到底有没有型号」只有读了盘才知道——那一头的说法在
-/// [`Cli::no_device_error`]。
+/// [`PageOptions::no_device_error`]。
 const REQUIRED_BY_CLAP: &str = "clap 的 required = true 已经挡在前面";
 
 /// 命令行上没有型号却走到了拼 profile 那一步，只可能是因为点了 `--preset`：
-/// `required_unless_present = "preset"` 放行的就是这一种（见 [`Cli::no_device_error`]）。
+/// `required_unless_present = "preset"` 放行的就是这一种（见 [`PageOptions::no_device_error`]）。
 const NAMED_A_PRESET: &str = "clap 的 required_unless_present = \"preset\" 已经挡在前面";
 
 /// 处理卷之外的那些事，各占一个子命令。
@@ -732,26 +760,115 @@ enum Command {
         #[arg(short, long, value_name = "文件")]
         out: PathBuf,
     },
-    /// 出样张：拿一张图走满管线，这块面板上这一页的每一个候选各编一张，连同参照一张，写进点名的目录。
+    /// 出样张：答「这一页换成这一档，在真机上还看得过去吗」——拿你自己那一页走满管线，这块面板上这一页的每一个候选各编一张，连同参照一张，写进点名的目录。
     ///
     /// 判定那一档的那一张与转换那一趟（不写记录时）写出的逐字节相同：样张答的是
     /// 「写出去会是什么样」。每一张的画质分与字节数、这一页的判定与理由、
     /// 画质门槛连同它在哪块屏上实测，一并印出来。
     ///
-    /// 样张不写自描述元数据，不碰源文件。处理选项眼下只走默认那一套。
+    /// 怎么读：把那几张拷进设备，以**原尺寸**打开（关掉缩放、适配屏幕与白边裁切——
+    /// 图被缩过一次，看到的就不是写出去的那一张）。同一页的几张按名字排在一起，**并排翻看**：
+    /// 参照是没量化过的那一张，拿它当对照，逐档看还看不看得过去，再把眼睛判出的次序
+    /// 与印出来的画质分对上号。
+    ///
+    /// 处理选项与 `--preset` 吃的与转换那一趟**同一套**，命令行上显式点到的那一项赢：
+    /// 改完 `--filter` 或 `--white-align-limit` 再出一叠，就看得见它改了什么。
+    /// `--bit-depth`／`--dither` **不裁候选集**——它们裁掉的是「这一趟不要」，不是「这一页不可能」——
+    /// 照出整套，判定只在它们留下的那几个里挑（只剩一个时就是被顶死的那一档）。
+    ///
+    /// 与卷有关的那几项不收：`--dry-run`、`--envelope`、`--brief`、`--io-mode`、`--cache-budget`、
+    /// `--no-metadata`，点到时说为什么；预设里整卷统一灰阶、内存上限、读盘方式那三项也不读。
+    /// 样张不写自描述元数据，不碰源文件。
+    #[command(after_long_help = interlock_help())]
     Proof {
         /// 一张图。
         #[arg(value_name = "图")]
         image: PathBuf,
 
-        /// 目标设备型号。与处理卷时同一张内置表，型号名不区分大小写与分隔符。
-        #[arg(short, long, value_name = "型号")]
-        profile: String,
-
         /// 样张写进哪个目录。不在就建出来。
         #[arg(short, long, value_name = "目录")]
         out: PathBuf,
+
+        // 与转换那一趟同一排：`--preset`、设备设置、处理选项（见 `PageOptions`）。
+        // 装在 `Box` 里：那一排十几格，摊在变体里会把 `Command` 撑得比 `Calibrate` 大出几倍
+        // （clippy 的 `large_enum_variant`）。
+        #[command(flatten)]
+        options: Box<PageOptions>,
+
+        // 与卷有关的那几项：不收，点到时说为什么（见 `VolumeOnly`）。
+        #[command(flatten)]
+        volume: VolumeOnly,
     },
+}
+
+/// 与卷有关的那六项，挂在 `proof` 上**只为说得出为什么不收**（样张 spec《Implementation Decisions》
+/// 第八条）。一张图上它们无从谈起；而不挂的话 clap 只会说「不认得这个参数」——点它的人多半是把
+/// 转换那一趟的命令行照抄了过来，要听的是这一项在样张上为什么没有意义。
+///
+/// 帮助里不列（`hide`）：它们不是样张的开关，`proof --help` 的正文里点了一句名。
+/// 整卷统一灰阶那一项连着它的反面：两面说的是同一件事，听见的是同一句。
+#[derive(clap::Args)]
+struct VolumeOnly {
+    #[arg(long, hide = true)]
+    dry_run: bool,
+    #[arg(long, hide = true)]
+    envelope: bool,
+    #[arg(long, hide = true)]
+    no_envelope: bool,
+    #[arg(long, hide = true)]
+    brief: bool,
+    #[arg(long, hide = true, value_name = "模式")]
+    io_mode: Option<String>,
+    #[arg(long, hide = true, value_name = "字节数")]
+    cache_budget: Option<String>,
+    #[arg(long, hide = true)]
+    no_metadata: bool,
+}
+
+impl VolumeOnly {
+    /// 点到了哪一项，就说那一项为什么在一张图上无从谈起；一项都没点就放行。
+    ///
+    /// **一项一句，各说各的理由**，不是一句通用的「样张不收」：理由才是点它的人要的那半句——
+    /// 知道了为什么，他才知道该去转换那一趟上做这件事，还是这件事根本不必做。
+    fn refuse(&self) -> Result<()> {
+        const ENVELOPE: &str = "整卷统一灰阶开不开，要整卷才谈得上——统一的那一档看完一整卷才定得下；\
+             样张只认一张图，判定恒是这一页自己的那一档";
+        let named = [
+            (
+                self.dry_run,
+                "--dry-run",
+                "它是「只分析、不写文件」，而出样张就是把每一档写出来——两件事自相矛盾。\
+                 只要各档的画质分，转换那一趟带上它逐页读得到",
+            ),
+            (self.envelope, "--envelope", ENVELOPE),
+            (self.no_envelope, "--no-envelope", ENVELOPE),
+            (
+                self.brief,
+                "--brief",
+                "它把报告折到目录那一级；样张印的是一张图的一叠，没有卷、也没有目录可折",
+            ),
+            (
+                self.io_mode.is_some(),
+                "--io-mode",
+                "它定的是一趟里若干个卷怎么读盘（逐个读还是同时读）；样张只读一张图、读一次，没有先后可排",
+            ),
+            (
+                self.cache_budget.is_some(),
+                "--cache-budget",
+                "它管的是分析与写出两个环节之间那份缓存最多占多少内存；样张一张图编完当场写出，不经过缓存",
+            ),
+            (
+                self.no_metadata,
+                "--no-metadata",
+                "样张本来就不写自描述元数据——它不是产物，写了下一趟幂等会把它读回来当输出；\
+                 判定那一张已经就是转换那一趟带上它写出的那一张",
+            ),
+        ];
+        match named.into_iter().find(|(said, ..)| *said) {
+            Some((_, flag, why)) => bail!("样张不收 `{flag}`：{why}。"),
+            None => Ok(()),
+        }
+    }
 }
 
 /// 把型号名与各覆盖项合成一个 profile。
@@ -901,17 +1018,18 @@ fn execute() -> Result<u8> {
     }
     if let Some(Command::Proof {
         image,
-        profile,
         out,
+        options,
+        volume,
     }) = &cli.command
     {
-        return proof(image, profile, out, terminal);
+        return proof(image, out, options, volume, terminal);
     }
     // 退场的开关先拦：那一句「改用 `--envelope`」要在读预设之前说——预设读不懂时
     // 用户该先听见的是这一句，不是那一份文件的错。
     cli.refuse_retired_switches()?;
     // 预设先读：它供得出型号，而下面每一项都可能落到它身上。**不点名就一个字节都不读盘。**
-    let preset = cli.preset()?;
+    let preset = cli.options.preset()?;
     let bar = Bar::new(cli.inputs.len());
     // 报告摊到哪一级。**在 `Request` 之外取下来**：它一个像素都不改，参数哈希因此不收它
     // （见 `Cli::report_fold`）；`request` 吃掉 `cli`，因此也得赶在它前面取。
@@ -949,16 +1067,25 @@ fn calibrate(device: &str, gray_levels: Option<u32>, out: &Path) -> Result<u8> {
     Ok(SUCCESS_EXIT)
 }
 
-/// 把命令行点名的那一张图、那台设备与去处交给库里出样张的入口（`proof-sheet/02`）。
+/// 把命令行点名的那一张图、那一排处理选项与去处交给库里出样张的入口（`proof-sheet/02`、`03`）。
 ///
 /// 样张是量具（`CONTEXT.md` 的《样张》）：不判定别人、不写输出目录、不碰源。
 /// 与灰阶测试图那一路同形——写成了就是 [`SUCCESS_EXIT`]，写不成是 `Err`。
 ///
-/// 出样张整件事在 [`tonefit::write_proof`] 里。这一层剩下两件命令行自己的事：
-/// 拼出这一趟的 [`Request`]（[`proof_request`]），以及印出[那几行文案](render::proof_note)——
-/// 折到 `terminal` 那么宽，与报告同一条规矩（见 [`wrap`]）。
-fn proof(image: &Path, device: &str, out: &Path, terminal: u16) -> Result<u8> {
-    let request = proof_request(target_profile(device, None, None)?, image, out);
+/// 出样张整件事在 [`tonefit::write_proof`] 里。这一层剩下命令行自己的几件事：
+/// 挡下与卷有关的那几项（[`VolumeOnly::refuse`]，排在读预设之前——与退场开关那一句同一条理由：
+/// 该先听见的是这一句，不是那一份预设文件的错）、拼出这一趟的 [`Request`]（[`proof_request`]），
+/// 以及印出[那几行文案](render::proof_note)——折到 `terminal` 那么宽，与报告同一条规矩（见 [`wrap`]）。
+fn proof(
+    image: &Path,
+    out: &Path,
+    options: &PageOptions,
+    volume: &VolumeOnly,
+    terminal: u16,
+) -> Result<u8> {
+    volume.refuse()?;
+    let preset = options.preset()?;
+    let request = proof_request(options, &preset, image, out)?;
     let proof = tonefit::write_proof(image, &request, out)?;
     print!(
         "{}",
@@ -967,32 +1094,39 @@ fn proof(image: &Path, device: &str, out: &Path, terminal: u16) -> Result<u8> {
     Ok(SUCCESS_EXIT)
 }
 
-/// 样张那一趟的 [`Request`]：型号是命令行点的那一台，**处理选项一项都没点**——
-/// 每一项落到默认值上，而默认值的去处只有 [`preset::TasteLayer`] 那一处
-/// （与会话拼 `Request` 同一条路，见 `session::state::Session::request`）。
+/// 样张那一趟的 [`Request`]：设备设置与处理选项那几格走的是转换那一趟**同一批方法**
+/// （[`PageOptions`]）——命令行点到的赢、预设次之、默认兜底，样张因此与转换那一趟吃同一套
+/// （样张 spec《Implementation Decisions》第八条）。
 ///
-/// 卷级那几格样张一格都不读（见 [`tonefit::write_proof`]），这里照实填：
-/// 点名的是那一张图、去处是样张的目录、不写记录（样张本来就不写）。
-fn proof_request(profile: Profile, image: &Path, out: &Path) -> Request {
-    let taste = preset::TasteLayer::default();
-    Request {
+/// 卷级那几格样张一格都不读（见 [`tonefit::write_proof`]），这里照实填：点名的是那一张图、
+/// 去处是样张的目录、不写记录（样张本来就不写）；整卷统一灰阶、内存上限、读盘方式落到默认值上——
+/// 预设里那三项也不读，一张图上它们无从谈起（见 [`VolumeOnly`]）。默认值的去处只有
+/// [`preset::TasteLayer`] 那一处。
+fn proof_request(
+    options: &PageOptions,
+    preset: &Preset,
+    image: &Path,
+    out: &Path,
+) -> Result<Request> {
+    let volume = preset::TasteLayer::default();
+    Ok(Request {
         inputs: vec![image.to_path_buf()],
         output_root: out.to_path_buf(),
-        profile,
-        fit: taste.fit(),
-        crop: taste.crop(),
-        split: taste.split_rule(),
-        filter: taste.filter(),
-        white_align_limit: taste.white_align_limit(),
-        bit_depth: taste.bit_depth,
-        dither: taste.dither,
-        envelope: taste.envelope(),
-        cache_budget: taste.cache_budget(),
+        profile: options.target_profile(preset)?,
+        fit: options.fit_mode(preset)?,
+        crop: options.crop(preset),
+        split: options.split_rule(preset)?,
+        filter: options.residual_filter(preset)?,
+        white_align_limit: options.white_align_limit(preset),
+        bit_depth: options.bit_depth_override(preset)?,
+        dither: options.dither_override(preset)?,
+        envelope: volume.envelope(),
+        cache_budget: volume.cache_budget(),
         mode: Mode::Process,
-        io_mode: taste.io_mode(),
+        io_mode: volume.io_mode(),
         progress: None,
         metadata: false,
-    }
+    })
 }
 
 /// 命令行这一趟按停止时按到过的那一级（ADR 0013）。
@@ -1378,6 +1512,32 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// **`flatten` 进来的那两排没有盖掉任何一条命令的开头**（`PageOptions`、`VolumeOnly`）。
+    ///
+    /// clap 把被 `flatten` 的 `Args` 的文档注释当成整条命令的长说明：那两排写成 `///` 时，
+    /// `tonefit --help` 开头印的是「转换那一趟与样张共用的那一排……」——本票落地途中真出过一次
+    /// （`-h` 不露馅：总命令的短说明是显式写死的）。两条命令的长短帮助各问一次开头是谁的。
+    #[test]
+    fn flattening_leaves_each_command_its_own_about() {
+        let mut command = Cli::command();
+        for help in [
+            command.render_help().to_string(),
+            command.render_long_help().to_string(),
+        ] {
+            assert!(
+                help.starts_with("把漫画页适配到电子墨水阅读设备\n\nUsage:"),
+                "总帮助的开头被盖掉了：{help}"
+            );
+        }
+        let proof = command.find_subcommand_mut("proof").expect("proof 子命令");
+        for help in [
+            proof.render_help().to_string(),
+            proof.render_long_help().to_string(),
+        ] {
+            assert!(help.starts_with("出样张"), "proof 的开头被盖掉了：{help}");
+        }
+    }
+
     /// 没点名 `--preset` 那一趟拿到的东西：每一项都是「没说」。
     ///
     /// 各项默认值的用例都拿它——它们问的是「命令行不点名时落到哪里」，
@@ -1493,9 +1653,11 @@ io-mode = \"concurrent\"
         let (preset, _) = every_field();
 
         let from_preset = parse(&["--preset", "漫画"])
+            .options
             .target_profile(&preset)
             .expect("合得出 profile");
         let from_flags = parse(&["--profile", "boox-poke6", "--threshold", "4.75"])
+            .options
             .target_profile(&no_preset())
             .expect("合得出 profile");
 
@@ -1534,41 +1696,7 @@ io-mode = \"concurrent\"
     #[test]
     fn an_explicit_flag_beats_the_preset() {
         let (preset, _) = every_field();
-        // 与预设里那一份处处不同的另一套值。
-        let flags = [
-            "--profile",
-            "kobo-libra-2",
-            "--gray-levels",
-            "8",
-            "--threshold",
-            "6.25",
-            "--fit",
-            "height",
-            "--split-threshold",
-            "2.5",
-            "--reading-order",
-            "rtl",
-            "--filter",
-            "bicubic",
-            // 预设说 2，命令行说 0——数值项的「关」也是一个说了的值，压得过预设（03 号票）。
-            "--white-align-limit",
-            "0",
-            "--bit-depth",
-            "4",
-            "--dither",
-            "off",
-            "--cache-budget",
-            "64M",
-            "--io-mode",
-            "serial",
-            // 三对布尔开关也在里面：预设把这三项说到了另一侧（`crop = false`、
-            // `split = false`、`envelope = true`），命令行在这里逐项说反面。
-            // 反面落地之前它们进不来——那时命令行只说得出预设已经说到的那一侧，
-            // 「命令行赢」在它们身上无从分辨（停车场 Q55）。
-            "--crop",
-            "--split",
-            "--no-envelope",
-        ];
+        let flags = every_field_otherwise();
         let mut with_preset = vec!["--preset", "漫画"];
         with_preset.extend_from_slice(&flags);
 
@@ -1594,9 +1722,9 @@ io-mode = \"concurrent\"
         .expect("读得懂");
         let line = ["--preset", "漫画", "--profile", "kobo-libra-2"];
 
-        assert!(!parse(&line).crop(&off), "预设关不掉裁白边");
+        assert!(!parse(&line).options.crop(&off), "预设关不掉裁白边");
         assert!(
-            !parse(&line).split_rule(&off).expect("合得出").on,
+            !parse(&line).options.split_rule(&off).expect("合得出").on,
             "预设关不掉拆分"
         );
         assert!(parse(&line).envelope(&off), "预设开不了整卷统一灰阶");
@@ -1604,11 +1732,11 @@ io-mode = \"concurrent\"
         let mut opened = line.to_vec();
         opened.extend(["--crop", "--split", "--no-envelope"]);
         assert!(
-            parse(&opened).crop(&off),
+            parse(&opened).options.crop(&off),
             "--crop 没把预设关掉的裁白边开回来"
         );
         assert!(
-            parse(&opened).split_rule(&off).expect("合得出").on,
+            parse(&opened).options.split_rule(&off).expect("合得出").on,
             "--split 没把预设关掉的拆分开回来"
         );
         assert!(
@@ -1624,9 +1752,9 @@ io-mode = \"concurrent\"
         .expect("读得懂");
         let mut closed = line.to_vec();
         closed.extend(["--no-crop", "--no-split", "--envelope"]);
-        assert!(!parse(&closed).crop(&on), "--no-crop 没压过预设");
+        assert!(!parse(&closed).options.crop(&on), "--no-crop 没压过预设");
         assert!(
-            !parse(&closed).split_rule(&on).expect("合得出").on,
+            !parse(&closed).options.split_rule(&on).expect("合得出").on,
             "--no-split 没压过预设"
         );
         assert!(parse(&closed).envelope(&on), "--envelope 没压过预设");
@@ -1807,7 +1935,7 @@ io-mode = \"concurrent\"
     #[test]
     fn a_run_that_names_no_preset_is_the_run_it_always_was() {
         let plain = parse(&["--profile", "kobo-libra-2"]);
-        let preset = plain.preset().expect("不点名不读盘，因此不会失败");
+        let preset = plain.options.preset().expect("不点名不读盘，因此不会失败");
 
         assert_eq!(preset, no_preset(), "不点名却拿到了一份有内容的预设");
         assert_eq!(
@@ -1838,6 +1966,7 @@ io-mode = \"concurrent\"
         )
         .expect("读得懂");
         let profile = parse(&["--preset", "漫画"])
+            .options
             .target_profile(&supplies)
             .expect("预设供得出型号");
         assert_eq!(profile.device(), "boox-poke6");
@@ -1846,6 +1975,7 @@ io-mode = \"concurrent\"
         let silent =
             preset::read("[preset.\"漫画\".taste]\nfit = \"inside\"\n", "漫画").expect("读得懂");
         let error = parse(&["--preset", "漫画"])
+            .options
             .target_profile(&silent)
             .expect_err("两处都没有型号")
             .to_string();
@@ -1959,88 +2089,287 @@ io-mode = \"concurrent\"
         assert!(plain.command.is_none());
     }
 
-    /// `proof` 点名**一张图**、一台设备与一个去处（`proof-sheet/02`）。
-    ///
-    /// 解析出的面板与转换那条路是同一块：两边走的是同一个 [`target_profile`]。
-    #[test]
-    fn the_proof_subcommand_names_one_image_a_device_and_where_the_sheets_go() {
-        let cli = Cli::try_parse_from([
-            "tonefit",
-            "proof",
-            "卷/001.png",
-            "--profile",
-            "Kobo Libra 2",
-            "--out",
-            "样张",
-        ])
-        .expect("参数应当可解析");
+    /// 一条完整的 `proof` 命令行，图与去处固定，其余由调用方补。
+    fn parse_proof(arguments: &[&str]) -> Cli {
+        let mut line = vec!["tonefit", "proof", "卷/001.png", "--out", "样张"];
+        line.extend_from_slice(arguments);
+        Cli::try_parse_from(line).expect("参数应当可解析")
+    }
 
+    /// 这一条 `proof` 命令行加这一份预设，样张那一趟合出来的 [`Request`]。
+    fn proof_request_of(arguments: &[&str], preset: &Preset) -> Request {
+        let cli = parse_proof(arguments);
         let Some(Command::Proof {
             image,
-            profile,
             out,
+            options,
+            ..
         }) = &cli.command
         else {
             panic!("没解析成 proof 子命令");
         };
+        proof_request(options, preset, image, out).expect("合得出 Request")
+    }
+
+    /// 样张那一趟合出来的**整份** `Request` 的 `Debug`——与 [`request_line`] 同一条道理：
+    /// 挑着比就等于自己重列一遍那张单子。
+    fn proof_line(arguments: &[&str], preset: &Preset) -> String {
+        format!("{:?}", proof_request_of(arguments, preset))
+    }
+
+    /// 一串处理卷的 flag 里**样张收的那几项**：去掉卷级那三项（整卷统一灰阶、内存上限、读盘方式），
+    /// 样张不收它们（见 [`VolumeOnly`]）。
+    fn for_one_image<'a>(flags: &[&'a str]) -> Vec<&'a str> {
+        let mut kept = Vec::new();
+        let mut flags = flags.iter();
+        while let Some(&flag) = flags.next() {
+            match flag {
+                "--envelope" | "--no-envelope" => {}
+                "--cache-budget" | "--io-mode" => {
+                    flags.next();
+                }
+                _ => kept.push(flag),
+            }
+        }
+        kept
+    }
+
+    /// 样张那一份**卷级那几格换成转换那一趟的**之后，整份 `Request` 的 `Debug`。
+    ///
+    /// 卷级那几格两边本来就不同（点名的是一张图还是一个卷、去处是样张目录还是输出根、
+    /// 写不写记录……），换掉之后剩下的就是两边该一格不差的那一半。**不挑着列处理选项那几格**：
+    /// 与 [`request_line`] 同一条道理，挑着列就等于自己重列一遍那张单子——`Request` 多出一格处理选项、
+    /// 样张那一侧没跟上时，列出来的那几格照样相同。反过来 `Request` 多出一格卷级的，
+    /// 这里不换它，比出来就不同，该往这张单子上添一行的人当场知道。
+    fn with_the_volume_side_of(run: &Request, proof: Request) -> String {
+        format!(
+            "{:?}",
+            Request {
+                inputs: run.inputs.clone(),
+                output_root: run.output_root.clone(),
+                envelope: run.envelope,
+                cache_budget: run.cache_budget,
+                mode: run.mode,
+                io_mode: run.io_mode,
+                metadata: run.metadata,
+                progress: None,
+                ..proof
+            }
+        )
+    }
+
+    /// 与 [`every_field`] 那一份预设**处处不同**的另一套值，逐项敲在命令行上。
+    ///
+    /// 「命令行上显式点到的那一项赢」要每一项都被预设与命令行各说一次才验得全，
+    /// 转换那一趟与样张两边用的是同一串（样张那一侧去掉卷级那几项，见 [`for_one_image`]）。
+    fn every_field_otherwise() -> [&'static str; 27] {
+        [
+            "--profile",
+            "kobo-libra-2",
+            "--gray-levels",
+            "8",
+            "--threshold",
+            "6.25",
+            "--fit",
+            "height",
+            "--split-threshold",
+            "2.5",
+            "--reading-order",
+            "rtl",
+            "--filter",
+            "bicubic",
+            // 预设说 2，命令行说 0——数值项的「关」也是一个说了的值，压得过预设（03 号票）。
+            "--white-align-limit",
+            "0",
+            "--bit-depth",
+            "4",
+            "--dither",
+            "off",
+            "--cache-budget",
+            "64M",
+            "--io-mode",
+            "serial",
+            // 三对布尔开关也在里面：预设把这三项说到了另一侧（`crop = false`、
+            // `split = false`、`envelope = true`），命令行在这里逐项说反面。
+            // 反面落地之前它们进不来——那时命令行只说得出预设已经说到的那一侧，
+            // 「命令行赢」在它们身上无从分辨（停车场 Q55）。
+            "--crop",
+            "--split",
+            "--no-envelope",
+        ]
+    }
+
+    /// `proof` 点名**一张图**、一台设备与一个去处，解析出的面板与转换那条路**是同一块**
+    /// （`proof-sheet/02`、`03`）。
+    ///
+    /// 比的是整份 `Profile`（面板四项、画质门槛连同来源），不只比型号名。设备设置三项都点名——
+    /// 型号之外那两项覆盖也得跟着走过去——另比一次由预设供出的那一台：两条路落在同一块面板上，
+    /// 靠的是同一个 [`PageOptions::target_profile`]。
+    #[test]
+    fn the_proof_subcommand_names_one_image_a_device_and_where_the_sheets_go() {
+        let device = [
+            "--profile",
+            "Kobo Libra 2",
+            "--gray-levels",
+            "8",
+            "--threshold",
+            "6.25",
+        ];
+        let cli = parse_proof(&device);
+        let Some(Command::Proof { image, out, .. }) = &cli.command else {
+            panic!("没解析成 proof 子命令");
+        };
         assert_eq!(image, &PathBuf::from("卷/001.png"));
         assert_eq!(out, &PathBuf::from("样张"));
-        // 同一个型号名在转换那条路上解出来的那一块：比整份 `Profile`（面板四项、画质门槛连同来源），
-        // 不只比型号名。
-        let run = parse(&["--profile", "Kobo Libra 2"])
-            .request(&no_preset())
-            .expect("合得出 Request");
-        assert_eq!(
-            format!(
-                "{:?}",
-                target_profile(profile, None, None).expect("内置型号")
-            ),
-            format!("{:?}", run.profile),
-            "样张与转换那条路解出来的不是同一块面板"
-        );
+
+        let (supplies, _) = every_field();
+        for (line, preset) in [
+            (&device[..], &no_preset()),
+            (&["--preset", "漫画"][..], &supplies),
+        ] {
+            let run = parse(line).request(preset).expect("合得出 Request");
+            assert_eq!(
+                format!("{:?}", proof_request_of(line, preset).profile),
+                format!("{:?}", run.profile),
+                "样张与转换那条路解出来的不是同一块面板：{line:?}"
+            );
+        }
     }
 
-    /// 样张那一趟吃的处理选项，与**一个 flag 都不点的转换那一趟**逐项相同（`proof-sheet/02`）。
+    /// **样张吃的处理选项与转换那一趟同一套**（`proof-sheet/03`；spec《Implementation Decisions》
+    /// 第八条：「样张等于产物」只在两边吃同一套选项时成立）。
     ///
-    /// 「样张等于产物」只在两边吃同一套选项时成立（spec《Implementation Decisions》第八条）。
-    /// 这张票只走默认那一套，因此比的是「都落到默认值上」——而默认值的去处只有一处
-    /// （`preset::TasteLayer`），两边各写一份就会在无人察觉时分家。
-    ///
-    /// 比的是 `Debug`，挑的是**样张读的那几格**（见 `tonefit::write_proof`）：
-    /// 卷级那几格两边本来就不同（点名的是一张图还是一个卷、去处是样张目录还是输出根）。
+    /// 三种来路各比一次：一个 flag 都不点、每一项都点成非默认值、套一份把每一项都说满的预设。
+    /// 同一条命令行上样张收不下的只有卷级那三项，转换那一趟照收（见 [`for_one_image`]）。
     #[test]
-    fn the_proof_takes_the_processing_options_a_plain_run_takes() {
-        let processing = |request: &Request| {
-            format!(
-                "{:?}",
-                (
-                    &request.profile,
-                    request.fit,
-                    request.crop,
-                    request.split,
-                    request.filter,
-                    request.white_align_limit,
-                    request.bit_depth,
-                    request.dither,
-                )
-            )
-        };
-        let run = parse(&["--profile", "kobo-libra-2"])
-            .request(&no_preset())
-            .expect("合得出 Request");
-        let proof = proof_request(
-            target_profile("kobo-libra-2", None, None).expect("内置型号"),
-            Path::new("卷/001.png"),
-            Path::new("样张"),
-        );
+    fn the_proof_takes_the_processing_options_a_run_takes() {
+        let (preset, flags) = every_field();
+        let bare = ["--profile", "kobo-libra-2"];
+        let named = ["--preset", "漫画"];
+        for (line, preset) in [
+            (&bare[..], &no_preset()),
+            (&flags[..], &no_preset()),
+            (&named[..], &preset),
+        ] {
+            let run = parse(line).request(preset).expect("合得出 Request");
+            let proof = proof_request_of(&for_one_image(line), preset);
+            assert!(!proof.metadata, "样张不写记录");
 
-        assert_eq!(processing(&proof), processing(&run));
-        assert!(!proof.metadata, "样张不写记录");
+            assert_eq!(
+                with_the_volume_side_of(&run, proof),
+                format!("{run:?}"),
+                "同一条命令行，样张与转换那一趟吃出两套值：{line:?}"
+            );
+        }
     }
 
-    /// `proof` 这一层只剩三件事：拼出这一趟的 `Request`、交给库出样张、写成了给出
-    /// [`SUCCESS_EXIT`]。出样张整件事在库里，断言因此只问**这条路真的走通了**：
-    /// 去处不在时建出来，里面一个候选一张、外加参照一张。那几张各是什么在 `tests/proof.rs` 上测。
+    /// **`--preset` 套得上，命令行上显式点到的那一项赢**——样张上与转换那一趟同一条规矩
+    /// （`proof-sheet/03`；转换那一侧是 [`an_explicit_flag_beats_the_preset`]）。
+    ///
+    /// 套得上：套那份预设，与把它说的那几项逐个敲出来，样张合出同一个 `Request`——
+    /// 预设里卷级那三项（整卷统一灰阶开着、内存上限、读盘方式）一格都没漏进来。
+    /// 显式赢：每一项各被预设与命令行各说一次，合出来的与只敲命令行那一趟相同。
+    #[test]
+    fn a_preset_applies_to_the_proof_and_an_explicit_flag_beats_it() {
+        let (preset, flags) = every_field();
+        assert_eq!(
+            proof_line(&["--preset", "漫画"], &preset),
+            proof_line(&for_one_image(&flags), &no_preset()),
+            "套预设与逐个敲 flag，样张合出来的不是同一趟"
+        );
+
+        // 与预设里那一份处处不同的另一套值；三对开关里样张收的那两对也说反面。
+        let flags = for_one_image(&every_field_otherwise());
+        let mut with_preset = vec!["--preset", "漫画"];
+        with_preset.extend_from_slice(&flags);
+        assert_eq!(
+            proof_line(&with_preset, &preset),
+            proof_line(&flags, &no_preset()),
+            "预设盖过了命令行上显式点到的那一项"
+        );
+    }
+
+    /// **与卷有关的那六项点到时各说得出为什么**（`proof-sheet/03`；spec《Implementation Decisions》
+    /// 第八条）：六句各有各的话，不是一句通用的「样张不收」。
+    ///
+    /// 每一句先点名敲的是哪一项，再说**为什么**——那一截各自带着它那一项的理由
+    /// （`--dry-run` 与出样张自相矛盾、`--envelope` 要整卷……）。比「各有各的话」时把点名的那一截
+    /// 抹掉再比：不抹，一句「`X` 在一张图上无从谈起」换六个名字也是六句不同的话。
+    /// `--no-envelope` 是整卷统一灰阶那一项的反面，与 `--envelope` 说同一句。
+    ///
+    /// 走的是 [`proof`] 这一层：拒绝要排在读预设、读图之前——图在这里根本不存在。
+    #[test]
+    fn each_volume_option_on_a_proof_is_refused_with_its_own_reason() {
+        let refused: [(&[&str], &str, &str); 7] = [
+            (&["--dry-run"], "--dry-run", "自相矛盾"),
+            (&["--envelope"], "--envelope", "整卷"),
+            (&["--no-envelope"], "--no-envelope", "整卷"),
+            (&["--brief"], "--brief", "目录那一级"),
+            (&["--io-mode", "serial"], "--io-mode", "读盘"),
+            (&["--cache-budget", "64M"], "--cache-budget", "缓存"),
+            (&["--no-metadata"], "--no-metadata", "元数据"),
+        ];
+        let mut reasons = std::collections::BTreeSet::new();
+        for (arguments, flag, why) in refused {
+            let mut line = vec!["--profile", "kobo-libra-2"];
+            line.extend_from_slice(arguments);
+            let cli = parse_proof(&line);
+            let Some(Command::Proof {
+                image,
+                out,
+                options,
+                volume,
+            }) = &cli.command
+            else {
+                panic!("没解析成 proof 子命令");
+            };
+
+            let said = proof(image, out, options, volume, 100)
+                .expect_err("与卷有关的那一项该被拒绝")
+                .to_string();
+
+            let named = format!("`{flag}`");
+            assert!(said.contains(&named), "没点名敲的是 {flag}：{said}");
+            assert!(
+                said.contains(why),
+                "{flag} 那一句没说为什么（{why}）：{said}"
+            );
+            reasons.insert(said.replacen(&named, "`…`", 1));
+        }
+        assert_eq!(
+            reasons.len(),
+            6,
+            "六项该有六句各自的话（`--envelope` 两面说同一句）：{reasons:#?}"
+        );
+    }
+
+    /// 一条 `proof` 命令行走一遍命令行这一层：图与去处由调用方给，其余照 `arguments`。
+    fn proof_through_the_command_line(image: &Path, out: &Path, arguments: &[&str]) -> Result<u8> {
+        let mut line: Vec<std::ffi::OsString> = vec![
+            "tonefit".into(),
+            "proof".into(),
+            image.into(),
+            "--out".into(),
+            out.into(),
+        ];
+        line.extend(arguments.iter().map(Into::into));
+        let cli = Cli::try_parse_from(line).expect("参数应当可解析");
+        let Some(Command::Proof {
+            image,
+            out,
+            options,
+            volume,
+        }) = &cli.command
+        else {
+            panic!("没解析成 proof 子命令");
+        };
+        proof(image, out, options, volume, 100)
+    }
+
+    /// `proof` 这一层只剩几件事：挡下与卷有关的那几项、拼出这一趟的 `Request`、交给库出样张、
+    /// 写成了给出 [`SUCCESS_EXIT`]。出样张整件事在库里，断言因此只问**这条路真的走通了**：
+    /// 去处不在时建出来，里面一个候选一张、外加参照一张；点了覆盖项也还是那一整套。
+    /// 那几张各是什么在 `tests/proof.rs` 上测。
     #[test]
     fn proof_writes_the_sheets_into_a_place_that_did_not_exist_and_says_it_succeeded() {
         let workspace = tempfile::tempdir().expect("建临时目录");
@@ -2050,14 +2379,29 @@ io-mode = \"concurrent\"
         }))
         .save(&image)
         .expect("写一张图");
-        let out = workspace.path().join("还不存在的目录").join("样张");
-
-        let code = proof(&image, "Kobo Libra 2", &out, 100).expect("出样张");
-
-        assert_eq!(code, SUCCESS_EXIT, "写成了就该是全部成功那个数");
-        let written = std::fs::read_dir(&out).expect("去处建出来了").count();
         // 基准面板是 e-ink、这一页缩到面板高，门成立：六个候选，外加参照一张。
-        assert_eq!(written, 6 + 1);
+        for (place, arguments) in [
+            ("样张", &["--profile", "Kobo Libra 2"][..]),
+            (
+                "顶死的样张",
+                &[
+                    "--profile",
+                    "Kobo Libra 2",
+                    "--bit-depth",
+                    "1",
+                    "--dither",
+                    "off",
+                ][..],
+            ),
+        ] {
+            let out = workspace.path().join("还不存在的目录").join(place);
+
+            let code = proof_through_the_command_line(&image, &out, arguments).expect("出样张");
+
+            assert_eq!(code, SUCCESS_EXIT, "写成了就该是全部成功那个数");
+            let written = std::fs::read_dir(&out).expect("去处建出来了").count();
+            assert_eq!(written, 6 + 1, "{arguments:?}");
+        }
     }
 
     /// 处理卷那一路的必填项一项都没松：`--out`、`--profile`、卷，缺一样都不许往下走。
@@ -2159,6 +2503,57 @@ io-mode = \"concurrent\"
         );
     }
 
+    /// `proof` 的帮助说得出**样张答的是哪一问**、**怎么在真机上读它**（`proof-sheet/03`；
+    /// 与 [`the_calibrate_help_says_the_chart_answers_two_things_and_what_the_count_means`] 同一个形状）。
+    ///
+    /// 那一问往头一行挤：短帮助只印那一行，而用户多半只敲 `-h`。长帮助另要说得出三件事——
+    /// 以原尺寸打开、并排看；处理选项与 `--preset` 吃的与转换那一趟同一套、覆盖项不裁候选集；
+    /// 不收的那六项各是哪几个。几项开关的帮助指着「`--help` 末尾的《选项冲突》」，
+    /// 那一节因此也得在 `proof --help` 的末尾。
+    ///
+    /// 「处理选项眼下只走默认那一套」曾在这份帮助里，本票落地之后它是假话——留一条反着钉的断言。
+    #[test]
+    fn the_proof_help_says_which_question_the_sheets_answer_and_how_to_read_them() {
+        let mut command = Cli::command();
+        let proof = command.find_subcommand_mut("proof").expect("proof 子命令");
+
+        for help in [
+            proof.render_help().to_string(),
+            proof.render_long_help().to_string(),
+        ] {
+            assert!(help.contains("在真机上还看得过去吗"), "{help}");
+        }
+
+        let long = proof.render_long_help().to_string();
+        // 怎么在真机上读。
+        assert!(long.contains("原尺寸"), "{long}");
+        assert!(long.contains("并排"), "{long}");
+        // 与转换那一趟吃同一套，覆盖项的读法不同。
+        assert!(long.contains("同一套"), "{long}");
+        assert!(long.contains("显式点到的那一项赢"), "{long}");
+        assert!(long.contains("不裁候选集"), "{long}");
+        // 不收的那六项点得出名。
+        for flag in [
+            "--dry-run",
+            "--envelope",
+            "--brief",
+            "--io-mode",
+            "--cache-budget",
+            "--no-metadata",
+        ] {
+            assert!(long.contains(flag), "没点名不收 {flag}：{long}");
+        }
+        assert!(long.contains(INTERLOCK_HEADING), "{long}");
+        assert!(!long.contains("只走默认那一套"), "那句假话又回来了：{long}");
+        assert!(
+            Cli::command()
+                .render_long_help()
+                .to_string()
+                .contains("proof"),
+            "总帮助里没有 proof"
+        );
+    }
+
     /// `calibrate` 这一层只剩两件事：把型号名与 `--gray-levels` 合成 profile 交给库出图，
     /// 以及写成了给出 [`SUCCESS_EXIT`]（14 号票、加固批 12 号票）。
     ///
@@ -2218,6 +2613,7 @@ io-mode = \"concurrent\"
         .expect("参数应当可解析");
 
         let profile = cli
+            .options
             .target_profile(&no_preset())
             .expect("profile 应当解析成功");
 
@@ -2240,23 +2636,30 @@ io-mode = \"concurrent\"
 
         assert_eq!(
             parse(&["--fit", "INSIDE"])
+                .options
                 .fit_mode(&no_preset())
                 .expect("inside 应当认得"),
             FitMode::Inside
         );
         assert_eq!(
             parse(&["--fit", "height"])
+                .options
                 .fit_mode(&no_preset())
                 .expect("height 应当认得"),
             FitMode::Height
         );
         // 不点名就是以高为准。
         assert_eq!(
-            parse(&[]).fit_mode(&no_preset()).expect("默认值"),
+            parse(&[]).options.fit_mode(&no_preset()).expect("默认值"),
             FitMode::Height
         );
         // 认不出的名字在拼 Request 之前就被挡下。
-        assert!(parse(&["--fit", "stretch"]).fit_mode(&no_preset()).is_err());
+        assert!(
+            parse(&["--fit", "stretch"])
+                .options
+                .fit_mode(&no_preset())
+                .is_err()
+        );
     }
 
     /// 帮助里要把这一趟的**行为变化与代价**说出来：默认是以高为准、跨页卷体积涨、
@@ -2286,8 +2689,8 @@ io-mode = \"concurrent\"
             Cli::try_parse_from(line).expect("参数应当可解析")
         };
 
-        assert!(!parse(&[]).no_crop, "不点名就该裁");
-        assert!(parse(&["--no-crop"]).no_crop);
+        assert!(!parse(&[]).options.no_crop, "不点名就该裁");
+        assert!(parse(&["--no-crop"]).options.no_crop);
     }
 
     /// 帮助里要说清**默认是裁的**，以及裁法与它认下的那两件事。
@@ -2357,7 +2760,7 @@ io-mode = \"concurrent\"
     /// 从前一行都不折：`--help` 里最长的那一行有 412 格，`-h` 有 300 格——
     /// clap 按空格折行，而中文长句里一个空格都没有（停车场 Q32）。
     ///
-    /// 四份都问：`-h` 与 `--help` 缩进不同一档（见 [`SHORT_HELP_INDENT`] 与
+    /// 总命令与两个子命令的 `-h`、`--help` 都问：两档缩进不同（见 [`SHORT_HELP_INDENT`] 与
     /// [`LONG_HELP_INDENT`]），子命令那一份还要再套一层。
     /// [`SHORT_HELP_INDENT`] 里那个 31 是量出来的——添一个更长的开关时这一条当场变红。
     ///
@@ -2386,6 +2789,18 @@ io-mode = \"concurrent\"
                     .clone()
                     .find_subcommand_mut("calibrate")
                     .expect("calibrate 子命令在")
+                    .render_long_help()
+                    .to_string(),
+                folded
+                    .clone()
+                    .find_subcommand_mut("proof")
+                    .expect("proof 子命令在")
+                    .render_help()
+                    .to_string(),
+                folded
+                    .clone()
+                    .find_subcommand_mut("proof")
+                    .expect("proof 子命令在")
                     .render_long_help()
                     .to_string(),
             ];
@@ -2468,19 +2883,21 @@ io-mode = \"concurrent\"
             Cli::try_parse_from(line).expect("参数应当可解析")
         };
 
-        let default = parse(&[]).split_rule(&no_preset()).expect("默认值");
+        let default = parse(&[]).options.split_rule(&no_preset()).expect("默认值");
         assert!(default.on, "不点名就该拆");
         assert_eq!(default.threshold, SplitThreshold::default());
         assert_eq!(default.order, ReadingOrder::RightToLeft);
 
         assert!(
             !parse(&["--no-split"])
+                .options
                 .split_rule(&no_preset())
                 .expect("认得")
                 .on
         );
         assert_eq!(
             parse(&["--split-threshold", "2.5"])
+                .options
                 .split_rule(&no_preset())
                 .expect("2.5 应当认得")
                 .threshold,
@@ -2488,6 +2905,7 @@ io-mode = \"concurrent\"
         );
         assert_eq!(
             parse(&["--reading-order", "LTR"])
+                .options
                 .split_rule(&no_preset())
                 .expect("ltr 应当认得")
                 .order,
@@ -2496,16 +2914,19 @@ io-mode = \"concurrent\"
         // 认不出的取值在拼 Request 之前就被挡下。
         assert!(
             parse(&["--reading-order", "japanese"])
+                .options
                 .split_rule(&no_preset())
                 .is_err()
         );
         assert!(
             parse(&["--split-threshold", "0"])
+                .options
                 .split_rule(&no_preset())
                 .is_err()
         );
         assert!(
             parse(&["--split-threshold", "很宽"])
+                .options
                 .split_rule(&no_preset())
                 .is_err()
         );
@@ -2547,7 +2968,7 @@ io-mode = \"concurrent\"
         let limit = |arguments: &[&str], preset: &Preset| {
             let mut line = vec!["--profile", "kobo-libra-2"];
             line.extend_from_slice(arguments);
-            parse(&line).white_align_limit(preset)
+            parse(&line).options.white_align_limit(preset)
         };
 
         assert_eq!(
@@ -2645,18 +3066,23 @@ io-mode = \"concurrent\"
         // `box` 与 `area` 是同一个缩放算法，大小写不论。
         assert_eq!(
             parse(&["--filter", "BOX"])
+                .options
                 .residual_filter(&no_preset())
                 .expect("box 应当认得"),
             Filter::Area
         );
         // 不点名就是 ADR 0001 定的默认。
         assert_eq!(
-            parse(&[]).residual_filter(&no_preset()).expect("默认值"),
+            parse(&[])
+                .options
+                .residual_filter(&no_preset())
+                .expect("默认值"),
             Filter::Lanczos3
         );
         // 认不出的名字在拼 Request 之前就被挡下。
         assert!(
             parse(&["--filter", "mitchell"])
+                .options
                 .residual_filter(&no_preset())
                 .is_err()
         );
@@ -2673,18 +3099,23 @@ io-mode = \"concurrent\"
 
         assert_eq!(
             parse(&["--bit-depth", "2"])
+                .options
                 .bit_depth_override(&no_preset())
                 .expect("2 应当认得"),
             Some(BitDepth::Two)
         );
         // 不点名就由画质分说了算。
         assert_eq!(
-            parse(&[]).bit_depth_override(&no_preset()).expect("默认值"),
+            parse(&[])
+                .options
+                .bit_depth_override(&no_preset())
+                .expect("默认值"),
             None
         );
         // 全集之外的比特数在拼 Request 之前就被挡下。
         assert!(
             parse(&["--bit-depth", "3"])
+                .options
                 .bit_depth_override(&no_preset())
                 .is_err()
         );
@@ -2729,24 +3160,30 @@ io-mode = \"concurrent\"
 
         assert_eq!(
             parse(&["--dither", "FS"])
+                .options
                 .dither_override(&no_preset())
                 .expect("fs 应当认得"),
             Some(Dither::FloydSteinberg)
         );
         assert_eq!(
             parse(&["--dither", "none"])
+                .options
                 .dither_override(&no_preset())
                 .expect("none 应当认得"),
             Some(Dither::Off)
         );
         // 不点名就由画质分在尺寸贴合检查放行的那几种里选。
         assert_eq!(
-            parse(&[]).dither_override(&no_preset()).expect("默认值"),
+            parse(&[])
+                .options
+                .dither_override(&no_preset())
+                .expect("默认值"),
             None
         );
         // 认不出的名字在拼 Request 之前就被挡下。
         assert!(
             parse(&["--dither", "bayer"])
+                .options
                 .dither_override(&no_preset())
                 .is_err()
         );

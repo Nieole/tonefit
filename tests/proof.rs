@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use fixtures::Workspace;
-use tonefit::{Candidate, Proof, ProofPage, Request};
+use tonefit::{BitDepth, Candidate, Dither, Proof, ProofPage, Reason, Request, Verdict};
 
 /// 一张**普通页**：单页、不拆、灰度路径、门成立——本票的对象。
 ///
@@ -22,21 +22,28 @@ use tonefit::{Candidate, Proof, ProofPage, Request};
 /// - **纸色提白**：纸白是离格 2 级的 [`fixtures::OFF_GRID_PAPER_WHITE`]，[`Plain`] 点名的上限钳得动它；
 /// - **画质分、量化、编码**：那一竖条从纯黑爬到纸白之下的灰调，六档各有各的样子。
 ///
-/// 内容本身是 [`fixtures::page_with_paper_white`]（四边顶着墨，裁白边正好停在它的边上）。
-fn plain_page() -> image::DynamicImage {
-    let content =
-        fixtures::page_with_paper_white(CONTENT, fixtures::OFF_GRID_PAPER_WHITE).to_luma8();
+/// 内容本身是 [`fixtures::page_with_paper_white`]（四边顶着墨，裁白边正好停在它的边上），
+/// 内容那一块多大由 `content` 说（[`CONTENT`] 或 [`WIDE`]）。
+fn plain_page(content: tonefit::Size) -> image::DynamicImage {
+    let inked = fixtures::page_with_paper_white(content, fixtures::OFF_GRID_PAPER_WHITE).to_luma8();
     let mut page = image::GrayImage::from_pixel(
-        CONTENT.width + 2 * MARGIN,
-        CONTENT.height + 2 * MARGIN,
+        content.width + 2 * MARGIN,
+        content.height + 2 * MARGIN,
         image::Luma([255]),
     );
-    image::imageops::replace(&mut page, &content, i64::from(MARGIN), i64::from(MARGIN));
+    image::imageops::replace(&mut page, &inked, i64::from(MARGIN), i64::from(MARGIN));
     image::DynamicImage::ImageLuma8(page)
 }
 
 /// 普通页里内容那一块：比面板高（1680）高一截，缩放因此真的在缩；宽高比远够不上跨页候选。
 const CONTENT: tonefit::Size = tonefit::Size::new(1200, 1800);
+
+/// **比面板更宽**的那一种普通页：宽高比 0.89 胜过面板的 0.75，而够不上跨页候选（面板比的 1.5 倍）。
+///
+/// 两种缩放方式在它身上**分得开**：以高为准缩到面板高（宽越过面板宽），fit-inside 让宽贴住面板宽、
+/// 高落在面板高之下。[`CONTENT`] 那一张做不到——普通漫画页两种方式产出同一个尺寸
+/// （`--fit` 的帮助里写着），`--fit inside` 在它身上是空操作。
+const WIDE: tonefit::Size = tonefit::Size::new(1600, 1800);
 
 /// 内容四周那一圈纯白边有多宽。
 const MARGIN: u32 = 96;
@@ -48,7 +55,7 @@ const MARGIN: u32 = 96;
 ///
 /// **处理选项那几格点名取值**，不借默认值（`docs/agents/testing.md`）：夹具让每一步都真在做事，
 /// 靠的是这几个数——默认值哪天挪了（比如提白上限降到 2 以下），神谕那一条就会在一张
-/// 什么都没提白的页上照绿。取值与眼下的默认值相同，是因为本票只走默认那一套。
+/// 什么都没提白的页上照绿。这几个数恰好是默认那一套；走非默认选项的用例各自改掉它点名的那几格。
 struct Plain {
     space: Workspace,
     source: PathBuf,
@@ -57,9 +64,14 @@ struct Plain {
 
 impl Plain {
     fn new() -> Self {
+        Self::of(CONTENT)
+    }
+
+    /// 内容那一块是 `content` 那么大的一张普通页。
+    fn of(content: tonefit::Size) -> Self {
         let space = Workspace::new();
         let volume = space.volume("卷");
-        let source = volume.page("001.png", &plain_page());
+        let source = volume.page("001.png", &plain_page(content));
         let request = Request {
             fit: tonefit::FitMode::Height,
             crop: true,
@@ -218,6 +230,238 @@ fn the_verdict_sheet_is_byte_for_byte_what_run_writes_without_metadata() {
         "样张与转换那一趟定下的不是同一档、同一个理由"
     );
 }
+
+/// **神谕在非默认选项上再跑一遍**：`--fit inside` 加一个非默认的缩放算法，两边吃同一套，
+/// 判定那一张照旧与 `run`（`--no-metadata`）写出的那一张逐字节相同（`proof-sheet/03`）。
+///
+/// 默认那一套上的神谕钉不住「样张跟着我给的选项走」（spec 的 story 13、15）：样张要是把
+/// 缩放方式或缩放算法写死成默认值，默认那一趟照样两边相同。两件都先在**转换那一趟**上断言
+/// 真在起作用——fit-inside 让这一页的宽贴住面板、高落在面板高之下（以高为准的话高恰是面板高）；
+/// 换回默认算法，写出去的就不是同一串字节。前提只问神谕那一侧，样张哪一格没跟上，
+/// 红在下面那个等号上，不红在前提上。
+#[test]
+fn the_verdict_sheet_follows_a_non_default_fit_and_filter_byte_for_byte() {
+    let wide = Plain::of(WIDE);
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        filter: tonefit::Filter::Hamming,
+        ..wide.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    let panel = request.profile.panel().resolution;
+    assert!(
+        ran.size.width == panel.width && ran.size.height < panel.height,
+        "夹具的前提：fit-inside 让宽贴住面板（{panel:?}），这一页却是 {:?}",
+        ran.size
+    );
+    let by_default_filter = tonefit::run(&Request {
+        filter: tonefit::Filter::Lanczos3,
+        output_root: wide.space.dir("默认算法"),
+        ..request.clone()
+    })
+    .expect("换回默认算法转换一趟");
+    assert!(
+        fs::read(&ran.output).expect("读转换那一趟写出的那一张")
+            != fs::read(&by_default_filter.volumes[0].pages[0].output)
+                .expect("读默认算法写出的那一张"),
+        "夹具的前提：这一页换缩放算法，写出去的就不是同一串字节"
+    );
+
+    let proof = tonefit::write_proof(&wide.source, &request, &wide.sheets()).expect("出样张");
+    let page = only_page(&proof);
+    assert_eq!(
+        page.page.verdict(),
+        ran.verdict(),
+        "样张与转换那一趟定下的不是同一档、同一个理由"
+    );
+    let written = fs::read(&ran.output).expect("读转换那一趟写出的那一张");
+    let proofed = fs::read(&page.page.output).expect("读样张里判定那一档的那一张");
+    assert!(
+        written == proofed,
+        "判定那一张与转换那一趟写出的不是同一串字节（样张 {} 字节，转换 {} 字节）",
+        proofed.len(),
+        written.len()
+    );
+}
+
+/// **两道覆盖项把判定顶死，却不裁样张的候选集**（样张 spec《Implementation Decisions》第三条；
+/// `CONTEXT.md` 的《覆盖顶死》）。
+///
+/// `--bit-depth` 与 `--dither` 两维都点名：转换那一趟的候选集裁到只剩一个，判定被顶掉、理由是覆盖。
+/// 样张照出整套——覆盖项裁掉的是「这一趟不要」，不是「这一页不可能」，而样张存在的理由正是并排看——
+/// 判定那一格说的是被顶死成了哪一档，那一张仍与 `run` 同一套选项写出的那一张逐字节相同。
+///
+/// 顶死的那一档取**画质分说它不达标**的那一档：判定落到它身上只可能是被顶死的，
+/// 不是画质分恰好判到了同一档（夹具的前提，先断言）。
+#[test]
+fn an_override_pins_the_verdict_and_leaves_every_candidate_on_the_sheets() {
+    let plain = Plain::new();
+    let pinned = Candidate::new(BitDepth::One, Dither::Off);
+    let request = Request {
+        bit_depth: Some(pinned.bit_depth),
+        dither: Some(pinned.dither),
+        ..plain.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&plain.source, &request, &plain.sheets()).expect("出样张");
+
+    let page = only_page(&proof);
+    let gate = page.page.gate().expect("普通页走灰度路径，有门");
+    let proofed: Vec<Candidate> = page.scored().map(|(scored, _)| scored.candidate).collect();
+    assert_eq!(
+        proofed,
+        Candidate::all(request.profile.panel().gray_levels, gate),
+        "覆盖项裁了样张的候选集"
+    );
+    assert_eq!(
+        fixtures::directory_members(&plain.sheets()).len(),
+        proofed.len() + 1,
+        "去处里该是整套候选各一张、外加参照一张"
+    );
+    let (scored, _) = page
+        .scored()
+        .find(|(scored, _)| scored.candidate == pinned)
+        .expect("顶死的那一档在整套里");
+    assert!(
+        !request.profile.threshold().admits(scored.score),
+        "夹具的前提：画质分说 {pinned} 不达标（{:?}）",
+        scored.score
+    );
+    assert_eq!(
+        page.page.verdict(),
+        Some(Verdict {
+            candidate: pinned,
+            reason: Reason::Override,
+        }),
+        "判定那一格没说被顶死成了哪一档"
+    );
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert_eq!(
+        page.page.verdict(),
+        ran.verdict(),
+        "样张与转换那一趟顶死的不是同一档"
+    );
+    let written = fs::read(&ran.output).expect("读转换那一趟写出的那一张");
+    let proofed = fs::read(&page.page.output).expect("读样张里判定那一档的那一张");
+    assert!(
+        written == proofed,
+        "顶死的那一张与转换那一趟写出的不是同一串字节（样张 {} 字节，转换 {} 字节）",
+        proofed.len(),
+        written.len()
+    );
+}
+
+/// **只点一维覆盖项时判定没被顶死**：它只收窄判定从哪几个里挑，样张照旧出整套。
+///
+/// `--bit-depth` 单点一维、门成立时，转换那一趟的候选集剩下那一档的抖动与不抖两个——
+/// 画质分照旧说了算，理由是判出来的那一种，不是覆盖（`CONTEXT.md` 的《覆盖顶死》：
+/// 顶死说的是**裁到只剩一个**）。把「点了覆盖项」读成「判定被顶死」，这一条就红。
+///
+/// 点名的那一档取**整套判下来不会落到**的那一档（夹具的前提，另出一叠先断言）：
+/// 不然覆盖项有没有被读进判定，这一条分不出来。
+#[test]
+fn a_single_override_narrows_the_verdict_but_not_the_sheets() {
+    let plain = Plain::new();
+    let named = BitDepth::Two;
+    let request = Request {
+        bit_depth: Some(named),
+        dither: None,
+        ..plain.request.clone()
+    };
+
+    let unpinned = tonefit::write_proof(&plain.source, &plain.request, &plain.space.dir("整套判"))
+        .expect("不点覆盖项出一叠");
+    let judged_whole = only_page(&unpinned).page.verdict().expect("灰度页有判定");
+    assert_ne!(
+        judged_whole.candidate.bit_depth, named,
+        "夹具的前提：整套判下来本来就不是 {named}"
+    );
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&plain.source, &request, &plain.sheets()).expect("出样张");
+
+    let page = only_page(&proof);
+    let gate = page.page.gate().expect("普通页走灰度路径，有门");
+    let proofed: Vec<Candidate> = page.scored().map(|(scored, _)| scored.candidate).collect();
+    assert_eq!(
+        proofed,
+        Candidate::all(request.profile.panel().gray_levels, gate),
+        "覆盖项裁了样张的候选集"
+    );
+    let verdict = page.page.verdict().expect("灰度页有判定");
+    assert_eq!(
+        verdict.candidate.bit_depth, named,
+        "判定没落在点名的那一档上"
+    );
+    assert_ne!(
+        verdict.reason,
+        Reason::Override,
+        "只点一维、还剩两个可挑，判定不该说被顶死"
+    );
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert_eq!(
+        Some(verdict),
+        ran.verdict(),
+        "样张与转换那一趟判的不是同一档"
+    );
+    assert!(
+        fs::read(&ran.output).expect("读转换那一趟写出的那一张")
+            == fs::read(&page.page.output).expect("读样张里判定那一档的那一张"),
+        "判定那一张与转换那一趟写出的不是同一串字节"
+    );
+}
+
+/// **`--dither fs` 撞上一页没贴合屏幕：样张与转换那一趟说同一句拒绝，去处里一张都没有**（互锁 ③）。
+///
+/// 覆盖项不裁样张的候选集，门那一侧的整套因此照样编得出来；可转换那一趟在这一页上一个字节都不写，
+/// 样张就没有「判定那一张」可给——它照转换那一趟拒绝，不自己挑一档顶上。
+///
+/// 页比面板小、fit-inside 不放大：目标尺寸哪条边都贴不住面板，门不成立。
+#[test]
+fn a_dither_override_the_geometry_gate_shuts_is_refused_as_run_refuses_it() {
+    let small = Plain::of(SMALL);
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        dither: Some(Dither::FloydSteinberg),
+        ..small.request.clone()
+    };
+
+    let ran = tonefit::run(&request).expect_err("转换那一趟该拒绝");
+    let proofed = tonefit::write_proof(&small.source, &request, &small.sheets())
+        .expect_err("样张该照转换那一趟拒绝");
+
+    let refused = tonefit::Interlock::DitherOutsideTheGate.to_string();
+    for said in [format!("{ran:#}"), format!("{proofed:#}")] {
+        assert!(said.contains(&refused), "说的不是互锁 ③ 那一句：{said}");
+        assert!(
+            said.contains(&small.source.display().to_string()),
+            "没指出撞上的是哪一页：{said}"
+        );
+    }
+    assert!(
+        format!("{ran:#}").contains(&format!("{proofed:#}")),
+        "样张与转换那一趟说的不是同一句：\n样张 {proofed:#}\n转换 {ran:#}"
+    );
+    assert!(
+        !small.sheets().exists(),
+        "拒绝了还在去处里留了东西：{:?}",
+        fixtures::directory_members(&small.sheets())
+    );
+}
+
+/// 比面板小的那一种普通页：fit-inside 不放大，它原样出，门不成立。
+const SMALL: tonefit::Size = tonefit::Size::new(600, 900);
 
 /// 《参照》那一张解回来是 **8 位灰度**，而且灰调级数**多于最高那一档的格点数**——它没被量化过
 /// （spec《Implementation Decisions》第四条：对照本身不许带自己的损伤）。

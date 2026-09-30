@@ -5682,15 +5682,28 @@ mod tests {
         .save(&image)
         .expect("写一张图");
         let sheets = workspace.path().join("样张");
-        // 提白上限点名 4：那一页的纸白离格 2 级，钳得动——「提了 2 级」那一句靠的是它，
-        // 不借默认值（`docs/agents/testing.md`）。
+        // 处理选项逐格点名，不借默认值（`docs/agents/testing.md`）。提白上限点名 4：那一页的纸白
+        // 离格 2 级，钳得动——「提了 2 级」那一句靠的是它。
         let request = Request {
+            inputs: vec![image.clone()],
+            output_root: sheets.clone(),
+            profile: Profile::resolve("kobo-libra-2").expect("内置型号"),
+            fit: FitMode::Height,
+            crop: true,
+            split: SplitRule {
+                on: true,
+                ..SplitRule::default()
+            },
+            filter: tonefit::Filter::Lanczos3,
             white_align_limit: WhiteAlignLimit::new(4),
-            ..crate::proof_request(
-                Profile::resolve("kobo-libra-2").expect("内置型号"),
-                &image,
-                &sheets,
-            )
+            bit_depth: None,
+            dither: None,
+            envelope: false,
+            cache_budget: CacheBudget::default(),
+            mode: Mode::Process,
+            io_mode: tonefit::IoMode::Auto,
+            progress: None,
+            metadata: false,
         };
 
         let proof = tonefit::write_proof(&image, &request, &sheets).expect("出样张");
