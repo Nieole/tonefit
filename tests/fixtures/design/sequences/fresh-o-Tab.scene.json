@@ -3,6 +3,8 @@
   "now_ms": "unchanged",
   "time_multiplier": "unchanged",
   "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",
@@ -21,11 +23,11 @@
     "input": {
       "kind": "add",
       "prompt": "添加路径  ",
-      "buffer": "~/漫画库/",
+      "buffer": "~/Comics/",
       "candidates": [
-        "漫画库/",
-        "下载/",
         "Comics/",
+        "下载/",
+        "漫画库/",
         "转好的/"
       ],
       "candidate": 0

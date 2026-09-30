@@ -17,15 +17,15 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读
-- [ ] 比对器上那四副打折手法删掉，用到它们的每一串比整屏且绿
-- [ ] `fresh-o-Tab`、`fresh-o-Tab-Tab` 两串比整屏且绿
-- [ ] 夹具里「先收下候选再把缓冲改回去」与「给预设文件摆一条家目录下的路径」两手删掉，改读场景数据
-- [ ] 场景数据里隔离那一卷的去处与库的镜像规则一致；目录的根只有设计稿一处算法
-- [ ] 实现的画法与终端层一行不动（`git diff` 只落在设计稿、导出、夹具与比对器上）
-- [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+- [x] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读
+- [x] 比对器上那四副打折手法删掉，用到它们的每一串比整屏且绿
+- [x] `fresh-o-Tab`、`fresh-o-Tab-Tab` 两串比整屏且绿
+- [x] 夹具里「先收下候选再把缓冲改回去」与「给预设文件摆一条家目录下的路径」两手删掉，改读场景数据
+- [x] 场景数据里隔离那一卷的去处与库的镜像规则一致；目录的根只有设计稿一处算法
+- [x] 实现的画法与终端层一行不动（`git diff` 只落在设计稿、导出、夹具与比对器上）
+- [x] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 停车场结转
 
@@ -42,6 +42,7 @@
 - **Recommend:** ①（与 Q777、Q783 同一批一起改，它们是同一条毛病的三处）
 - **Whose call:** 拍板的人（动设计稿）。顺带核到：**Q783 已不成立**——`survey.120x36` 的屏底就是 `[s → 停止] [j/k → 选择] [? → 全部按键]`，`]d` 与 `/` 都不在上面；**Q777 也已不成立**——`running.56x14` 写的是 `[C-c → 退出]`
 - **处置：** **拍板（2026-09-20）：先把设计稿改对，再同步改实现。** 四副折扣手法（本条的 `blanked`、Q844 的 `cell_like`、Q845 的 `shifted`、Q890 的 `instead`）全是设计稿与实现对不上逃出来的——照 ADR 0019 决定第 13 条改设计稿、重新导出、再改实现，四副都不必存在。**不收成统一记法**：那等于把病固化成工具。
+  **落地（design-parity/01，2026-10-01）：** `drawRow` 那一行清点中不摆 `[i → 修改]`，重导 `survey.*`、`survey-s`、`fresh-t`、`fresh-x`，`blanked` 删了。
 
 #### Q844 — 设计稿的环节横条走**连续时间**（`done` 带小数），实现一页一步：同一条横条差一格
 
@@ -54,6 +55,7 @@
 - **Recommend:** ③。这一处**设计稿自己不自洽**：同一行上那个数取 floor、横条取原值，而真程序拿不出半页
 - **Whose call:** 拍板的人（改设计稿、重新导出是他的事）
 - **处置：** **拍板（2026-09-20）：先把设计稿改对，再同步改实现**（与 Q807、Q845、Q890 同一判，四条一起做）。本条的根是设计稿那头的模拟走连续时间而实现一页一步——改设计稿、重导，`cell_like` 随之退场。
+  **落地（design-parity/01，2026-10-01）：** 三条环节横条的分子取 `Math.floor(done)`，重导 `envelope.*`、`search.*` 与两串，`cell_like` 删了。
 
 #### Q899 — `deciding-x-advance` 总进度那一行的末一位：夹具与期望屏把**同一个数**印成了两副
 
@@ -76,6 +78,7 @@
   根不同：那一条是连续时间对一页一步，这一条是同一个量印了两副）
 - **Whose call:** 拍板的人
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** 导出向下取整，外加环节走满时结清 `run.steps`（Q1057），重导 `deciding-x-advance`。
 
 #### Q845 — 说明卡正文：设计稿的折行**不带悬挂缩进**，而屏上《折行》那一条带
 
@@ -88,6 +91,7 @@
 - **Recommend:** ③。顶格那一行读起来像下一条的开头，而那正是 Q32 当初要治的毛病
 - **Whose call:** 拍板的人
 - **处置：** **拍板（2026-09-20）：先把设计稿改对，再同步改实现**（与 Q807、Q844、Q890 同一判）。设计稿的折行不带悬挂缩进而屏上《折行》带——改设计稿、重导，`shifted` 随之退场。
+  **落地（design-parity/01，2026-10-01）：** `wrap` 带悬挂缩进，重导 `ended-nonvolume-Enter`，`shifted` 删了。
 
 #### Q890 — 灰阶测试图那一句：设计稿说的是「原型不写文件」，而这一副真写得出文件
 
@@ -127,6 +131,7 @@
   **Q807、Q844、Q845 三条本身一个字都没动**。
 - **Whose call:** 拍板的人（动设计稿那一侧；四副折扣手法要不要收口同样归他）
 - **处置：** **拍板（2026-09-20）：先把设计稿改对，再同步改实现**（与 Q807、Q844、Q845 同一判）。设计稿那句「原型不写文件」与真程序写得出文件对不上——改设计稿、重导，`instead` 随之退场。**四副手法要不要收成一副：不收**，根治是让它们没有存在的理由。
+  **落地（design-parity/01，2026-10-01）：** 回话照实现说写到了哪里（`~/tonefit-calibration-kobo-libra-2-16-levels.png`，落点导成场景数据 `cwd`，Q1059），重导 `config-c`，`instead` 删了。四副不收成一副。
 
 #### Q790 — 补全候选的次序两边不同：设计稿按假盘 `FS` 的写法次序列（`漫画库 下载 Comics 转好的`、`棋魂 大友克洋 火之鸟 寄生兽`），实现按名字排——`fresh-o-Tab`、`fresh-o-Tab-Tab` 两串比不了屏
 
@@ -139,6 +144,7 @@
 - **Recommend:** ①
 - **Whose call:** 拍板的人（动设计稿）
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** `fsList` 按名字排，`fresh-o-Tab`、`fresh-o-Tab-Tab` 比整屏。
 
 #### Q797 — 设计稿「添加路径」那一景的状态按键到不了：候选摆上了、缓冲没跟着换（`~/Comics/`，按过 `Tab` 该是 `~/Comics/棋魂/`）
 
@@ -151,6 +157,7 @@
 - **Recommend:** ①（一景该是按键到得了的状态；与 Q790 一起改一次）
 - **Whose call:** 拍板的人（动设计稿）
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** `scene('add')` 走 `complete()`，夹具不再把缓冲改回去（新的 `offered` 从缓冲认出那一层）。
 
 #### Q765 — 设计稿里卷的去处少了处理路径自己那一级：`~/转好的/_isolated/集英社/海贼王/第07卷`，库的镜像规则是 `…/_isolated/漫画库/集英社/海贼王/第07卷`
 
@@ -163,6 +170,7 @@
 - **Recommend:** ②，下一次重导时顺手改——说明卡或更宽的屏哪天露出这条路径，它就该是库真会写出的那一条
 - **Whose call:** 拍板的人（设计稿的假数据）
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** `isolatedOutput` 照库的镜像规则；新用例 `an_isolated_volume_lands_where_the_library_mirrors_it` 钉住。干净去处另记 Q1058。
 
 #### Q738 — 设计稿里 `parentHint` 对分区底下的目录记的是处理路径的父目录，没人读它；导出自己按树算根
 
@@ -175,6 +183,7 @@
 - **Recommend:** ①，下次动设计稿时顺手
 - **Whose call:** 协调人
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** `parentHint` 是真父目录，设计稿立 `dirRoot`、卷带 `root`，导出直接读，`roots()` 删了。
 
 #### Q824 — 夹具里预设文件那条路径是**摆出来的**：设计稿把它写死了，而真文件不能摆进假家目录
 
@@ -194,3 +203,121 @@
 - **Recommend:** ①（那条路径本来就该是场景数据的一格：它是屏上的字）
 - **Whose call:** 拍板的人（动导出脚本＝动设计稿那一侧）
 - **处置：** 待处理。
+  **落地（design-parity/01，2026-10-01）：** `presets_file` 导进场景数据，夹具照它摆；真文件仍在临时目录（Q1060）。
+
+## 落地记录
+
+**本票做了什么。** 设计稿追上实现本来就对了的十处，重导一次，比对器上的四副打折手法连同每一处用法删掉，那几串改比整屏。
+每一处都是同一个次序：先把用例上的打折拿掉、看见红（红在设计稿那一格），再改设计稿、`npm run export`、看见绿。
+
+| 条目 | 设计稿（`.scratch/session-redesign/design.html`） | 重导牵到的屏 |
+|---|---|---|
+| Q807 | `drawRow` 输出目录那一行：`S.run` 在（清点中）就不摆 `[i → 修改]` | `survey.*`、`survey-s`、`fresh-t`、`fresh-x` |
+| Q844 | 三条环节横条（总览当前卷、目录行、卷行）的分子取 `Math.floor(done)`，与旁边那个数同源 | `envelope.*`、`search.*`、`search-Escape`、`search-Enter-Escape` |
+| Q899 | 导出 `steps: Math.floor(r.steps)`；**另在一个环节走满时把 `run.steps` 结清成整数**（Q1057） | `deciding-x-advance`（3798 → 3799） |
+| Q845 | `wrap` 带悬挂缩进：行首空格窄过这一格时跟着折下来的每一行走 | `ended-nonvolume-Enter` |
+| Q890 | `c` 的回话说「写到 ~/tonefit-calibration-kobo-libra-2-16-levels.png」（`chartPath` 照 `terminal::chart_file` 拼，会话从 `CWD` 敲起来），那半句使用说明不上屏底 | `config-c` |
+| Q790 | `fsList` 按名字排（与 `complete::level` 同一个键） | `fresh-o-Tab`、`fresh-o-Tab-Tab`、`add.*`、`add-F1*` |
+| Q797 | `scene('add')` 走 `complete()`：候选摆上、缓冲换成头一条 `~/Comics/大友克洋/` | 同上 |
+| Q765 | `isolatedOutput` 照库的镜像规则：`~/转好的/_isolated/漫画库/集英社/海贼王/第07卷` | 只动场景数据，屏一格没变 |
+| Q738 | `parentHint` 改成真父目录，新增 `dirRoot`；卷带上 `named` 与 `root`；`drawRow` 里两边一样的三目收掉 | 只动导出：`export.js` 的 `roots()` 删了，直接读设计稿；目录根与卷根一格没变 |
+| Q824 | 预设文件那条路径成了常量 `PRESETS_FILE`，导进场景数据 `presets_file` | 屏一格没变 |
+
+- **导出**（`export.js`、`render.js`）：场景数据多两格 `cwd`、`presets_file`（序列里多半是 `"unchanged"`）；`steps` 向下取整；
+  目录根读设计稿的 `dirRoot`、卷根读 `v.root`，导出自己不再算。
+- **比对器**（`src/session/shell/design.rs`）：`blanked`、`shifted`、`cell_like`、`instead` 四个删了，
+  `terminal.rs` 测试里的 `assert_sequence_with`／`_shifting`／`_like`／`_blanking` 四个包装一起删，`assert_sequence` 就是整屏比。
+  `grep -rnE '\.(blanked|shifted|cell_like|instead)\(' src/session` 为空。
+- **夹具**（`src/session/scene.rs`）：
+  - 「先收下候选再把缓冲改回去」删了：新的 `offered` 从缓冲减去轮到的那一条认出候选在哪一层，`views_of` 与假盘 `disk` 共用它；
+    收下候选、轮到那一条之后当场断言缓冲拼回场景数据那一句。
+  - 「给预设文件摆一条家目录下的路径」删了：`Views::presets` 照 `presets_file` 摆（真文件仍在临时目录，Q1060）。
+  - `Data` 多 `cwd`、`presets_file`；`cwd` 也建进假盘；`Run::steps` 改成 `u64`，自检 `overall.walked == run.steps`。
+  - 新用例 `an_isolated_volume_lands_where_the_library_mirrors_it`：每一份场景数据（场景与序列）里进了隔离的卷，
+    去处都是「输出目录 / `_isolated` / 卷根在处理路径的父目录之下那一截」。
+  - `output_of` 的算法没动、文档改成当前成立的事实（它不照库的规则，Q1058）。
+- **用例**：`shell.rs` 的清点中、整卷统一灰阶、搜索三景，`terminal.rs` 的 `fresh-t`、`fresh-x`、`survey-s`、`search-Escape`、
+  `search-Enter-Escape`、`deciding-x-advance`、`ended-nonvolume-Enter`、`config-c`、`fresh-o-Tab`、`fresh-o-Tab-Tab` 都比整屏。
+  `config-c` 那条比完整屏再核「屏上说的那条路径上真有这一张、只有这一张」（图落在场景数据说的 `cwd`，`charts_land_in` 读它）。
+  `f1_while_typing_…` 那一句缓冲跟着 Q797 改成 `~/Comics/大友克洋/`。
+- **实现的画法与终端层一行不动**：`terminal.rs`、`shell.rs` 的改动全在 `#[cfg(test)]` 模块里（逐段核过 `git diff -U0` 的行号）。
+  `draw_a_chart` 的文档末段还说「屏底那一句与设计稿不同」，已经不对了——终端层本票一行不动，留给改的正是这个函数的
+  `design-parity/11`（Q968）换成当前成立的事实。
+
+**重导的漂移核过**：`git diff --stat -- tests/fixtures/design` 里网格变了的恰是上表那 22 份；场景数据除新增的两行之外，
+只动了 `isolated_output`、`buffer`／`candidates`、`steps` 三格（`steps` 那 10 份只是千分位小数变整数）。`manifest.json` 没变。
+工具链 node 24.16.0（`fnm exec`）；`npm run check` 逐字节相同，`npm test` 4 条全过。
+
+### 按反跑过的几遍（改完都还原了）
+
+四副打折各拿掉一次，都先红在设计稿那一格：清点中「第 6 行第 26 格 实际「 」期望「[」」、横条「第 3 行第 46 格 实际「⣀」期望「⣿」」、
+总进度「第 2 行第 57 格 实际「9」期望「8」」、说明卡「第 20 行第 25 格 实际「 」期望「卷」」、灰阶测试图「第 35 行第 34 格 实际「写」期望「拷」」、
+补全「第 30 行第 5 格 实际「C」期望「漫」」；预设文件那一格先红在「missing field `presets_file`」，隔离去处那条先红在
+`~/转好的/_isolated/集英社/海贼王/第07卷` 对 `…/_isolated/漫画库/…`。新守卫另按反一次：
+
+| 按反 | 结果 |
+|---|---|
+| `views_of` 收下候选后轮到下一条（`at + 1`） | 红：`the_add_scene_…`，「收下候选、轮到第 0 条之后的缓冲」`~/Comics/寄生兽/` 对 `~/Comics/大友克洋/` |
+| `offered` 拿错那一条去减缓冲（`at + 1`） | 红：同一条，「缓冲「~/Comics/大友克洋/」不是那一层接上轮到的「寄生兽/」」 |
+| `draw_a_chart` 不真写图、照样说写到了 | 红：`c_draws_…`，「只写出一张，就在屏上说的那儿」`[]` 对那条路径 |
+| `deciding-x-advance.scene.json` 的 `steps` 改回 3798 | 红：`every_sequence_that_moves_…`，`3799` 对 `3798` |
+
+### 评审收了什么、驳了什么
+
+两轴各一个只读的子代理，看 `git diff c598cbe`。
+
+**收下的**：
+
+- **目录根的算法仍有两处**（Standards）：`mkVol` 的默认参数与 `export.js` 的 `roots().dirRoot` 各拼一遍 `${parentHint}${label}`。
+  设计稿立一个 `dirRoot`，`mkVol` 用它，导出经 `render.js` 的把手读它；`roots()` 那个只转交的小工厂一并删掉。
+- **`assert_sequence` 的文档说「那一套只有这一处」**（Standards）：`assert_sequence_with_every_page_of_the_open_volume` 还有一份，那句删掉。
+- **按反那一遍没写**（Standards，testing.md 第一条）：补跑、写进上一节。
+- **Q1058 推荐 ② 却落了 ③、而且新用例自己也在 Rust 里写了一遍规则**（Standards）：条目里补了两句——用例里那一份是拿来核数的神谕，
+  不是拿来造数的；② 要在设计稿里添一个十处之外的函数，派活说明不许。
+- **Q1061 原先那一条（`draw_a_chart` 文档）过不了「另一条路也说得通」**（Standards）：删掉、改记在本节上面；
+  空出来的号给了下一条。
+- **80 列「添加路径」那一屏缓冲被右端那几件盖住**（Spec）：Q797 之后才露出来的设计稿缺陷，记 Q1061。
+
+**驳回的**：
+
+- **`Math.floor(x.done)` 七处，提一个函数**（Standards）：设计稿是拍板的人的，本票只动十处；那几处数字本来就这么写，本票只让横条跟上。
+- **`cwd` 与终端层的 `here` 两个名字**（Standards）：`cwd` 是场景数据的一格（与 `output` 同一副 `~/` 写法），两处文档都写明是「会话是从哪儿敲起来的」；
+  词汇表里没有这个概念，它也不是新的领域概念（终端层早就有 `here`），不加词条。
+- **`tick` 里结清步数超出票面字面**（Spec 提了、也认同必需）：见 Q1057。
+
+### 停车场
+
+本票用了 Q1057–Q1066 里的六个：
+
+- **Q1057**：票面「导出时向下取整」单这一手收不了 Q899，另在环节走满时结清 `run.steps`。
+- **Q1058**：夹具的干净去处（`output_of`）仍不照库的镜像规则；推荐设计稿把干净去处也导进场景数据。
+- **Q1059**：灰阶测试图的落点导成场景数据 `cwd`，而不是夹具认定家目录。
+- **Q1060**：预设文件路径读场景数据了，真文件仍在临时目录。
+- **Q1061**：80 列「添加路径」那一屏缓冲被右端那几件盖住；推荐并进 `design-parity/02`。
+- **Q1062**：设计稿的折行只补了悬挂缩进，与 `crate::wrap` 还有三处边角不同。
+
+结转的十条（Q807、Q844、Q899、Q845、Q890、Q790、Q797、Q765、Q738、Q824）照上面的处置都收了。
+
+### 数
+
+review 收完、改完、`cargo fmt` 过之后跑的**那一趟**就是最终状态（日志 `dp-01.gate1.log`、`dp-01.gate2.log`、`dp-01.gate3.log`、`dp-01.polish.log`，都在树外）。
+
+这台机器是 macOS，闸门 1、2 在基线上就各红一条：`tests/concurrency.rs` 的
+`many_archive_volumes_never_hold_more_than_the_one_being_processed`，平台带来的，本票没碰它（Q995）。
+因此照前几票的跑法：闸门 1、2 各加 `--no-fail-fast`、各用自己那个 target 目录，闸门 3 走 `cargo xtask gate 3`。
+本票这一栏读作：**除了这一条基线红，没有新增的红。**
+
+| | 命令 | 末行 |
+|---|---|---|
+| 1 | `cargo test --no-fail-fast`（目录 `target`） | `GATE1_EXIT=101`；合计 **1036 通过 1 失败**；lib 239 / bin 424；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 48.29s`（`concurrency`） |
+| 2 | `cargo test --no-default-features --no-fail-fast --target-dir target/gate/no-default-features` | `GATE2_EXIT=101`；合计 **921 通过 1 失败**；lib 239 / bin 309；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.91s`（`concurrency`，同一条） |
+| 3 | `cargo xtask gate 3`（`cargo check --features profiling`，目录 `target/gate/profiling`） | 绿，`GATE3_EXIT=0`；`Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 11.34s` |
+| polish | `cargo xtask polish`（fmt、两道 clippy、doc） | 绿，`POLISH_EXIT=0`；四项全绿，`cargo doc` 告警 15 条（与基线同数） |
+
+**基线**是 `c598cbe`：闸门 1 **1035 通过 1 失败**（lib 239 / bin 423），闸门 2 **920 通过 1 失败**（lib 239 / bin 308），闸门 3 绿，红的是同一条。
+**两条闸门各多 1 条，都在预期里**：bin 里新添的 `an_isolated_volume_lands_where_the_library_mirrors_it`（夹具两趟都编）。
+删掉的四副打折手法没有自己的用例，比对器上那几条用例原样在，只是改成比整屏。
+
+**黄金快照逐格没动**：`git diff c598cbe -- tests/golden.rs tests/golden-snapshot.txt tests/counters.rs` 为空；
+快照 sha256 同为 `2a6aabc07627323b7ddd6539bc1c3a8450ebe8a234265fd7912fe0d48751602d`；`tests/golden.rs` 2 条全过（闸门 1 上 189.89 秒），
+`tests/counters.rs` 14 条全过。

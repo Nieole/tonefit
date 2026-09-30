@@ -175,24 +175,28 @@ function elide(s, w) {
 // 按显示宽度折行，带最简单的禁则：收尾标点不落行首
 const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
 // 西文词与路径不劈开，中文逐字可断
+// 悬挂缩进（CONTEXT《折行》，与 crate::wrap 同一条）：行首那一截缩进跟着折下来的每一行走，
+// 不然折下来的那一截读起来像下一条的开头；缩进宽过这一格时不留
 function wrap(text, w) {
   const lines = [];
   for (const para of String(text).split('\n')) {
     const tokens = para.match(/[A-Za-z0-9_.+\-/%~]+|./gu) || [''];
-    let line = '', used = 0;
+    const lead = /^ */.exec(para)[0], hang = lead.length < w ? lead : '';
+    let line = '', used = 0, start = 0;   // start：这一行行首那截悬挂缩进占几格（头一行没有）
+    const fold = () => { line = hang; used = start = hang.length; };
     for (const tok of tokens) {
       const tw = strW(tok);
-      if (used + tw > w && used > 0) {
-        if ([...tok].length === 1 && NO_HEAD.includes(tok) && [...line].length > 1) {
+      if (used + tw > w && used > start) {
+        if ([...tok].length === 1 && NO_HEAD.includes(tok) && [...line].length - start > 1) {
           const arr = [...line]; const last = arr.pop();
-          lines.push(arr.join('')); line = last; used = chW(last);
+          lines.push(arr.join('')); fold(); line += last; used += chW(last);
         } else {
-          lines.push(line.replace(/\s+$/, '')); line = ''; used = 0;
+          lines.push(line.replace(/\s+$/, '')); fold();
           if (tok === ' ') continue;
         }
       }
       if (tw > w) {
-        for (const ch of tok) { if (used + 1 > w) { lines.push(line); line = ''; used = 0; } line += ch; used += chW(ch); }
+        for (const ch of tok) { if (used + 1 > w) { lines.push(line); fold(); } line += ch; used += chW(ch); }
         continue;
       }
       line += tok; used += tw;
@@ -353,11 +357,16 @@ const FS = {
     '转好的': {},
   },
 };
+// 列一层按名字排（与 complete::level 同一个键：名字接上文件夹那个 `/`，逐码元比——基本平面上与 Rust 的字节序同序）：
+// 盘上列一层的次序本来不定，上面手写的次序不是哪一台机器会给的
+const listedAs = (c) => c.name + (c.dir ? '/' : '');
 function fsList(path) {
   const parts = path.split('/').filter(Boolean);
   let node = FS;
   for (const p of parts) { if (!node || typeof node !== 'object' || !(p in node)) return null; node = node[p]; }
-  return node && typeof node === 'object' ? Object.keys(node).map((k) => ({ name: k, dir: node[k] !== null })) : null;
+  return node && typeof node === 'object'
+    ? Object.keys(node).map((k) => ({ name: k, dir: node[k] !== null })).sort((a, b) => (listedAs(a) < listedAs(b) ? -1 : listedAs(a) > listedAs(b) ? 1 : 0))
+    : null;
 }
 
 const NAMED0 = [
@@ -422,11 +431,14 @@ const PLAN = {
 };
 
 let VOL_SEQ = 0, DIR_SEQ = 0;
+// 目录：`parentHint` 是它真正的父目录（`~/` 写法、带尾 `/`），接上 `label` 就是目录的根
 function mkDir(label, parentHint, mixKey) { return { id: 'd' + DIR_SEQ++, label, parentHint, mixKey, vols: [] }; }
-function mkVol(dir, name, mixKey) {
+const dirRoot = (d) => `${d.parentHint}${d.label}`;
+// 卷：`named` 是它从哪一条处理路径来，`root` 是卷根——目录接上卷名，点名的压缩包就是它自己
+function mkVol(dir, name, mixKey, named, root = `${dirRoot(dir)}/${name}`) {
   const r = rng(dir.label + name);
   const pages = 150 + Math.floor(r() * 90);
-  return { id: 'v' + VOL_SEQ++, dir, name, pages, mixKey, plan: PLAN[`${dir.label}/${name}`] || {} };
+  return { id: 'v' + VOL_SEQ++, dir, name, pages, mixKey, named, root, plan: PLAN[`${dir.label}/${name}`] || {} };
 }
 
 // 预扫的结果 → 任务树顶层：分区（≥2 个目录）与顶格目录行；单卷点名路径按父目录跨路径合并
@@ -442,14 +454,16 @@ function discover(named) {
         merged[parent] = d; entries.push({ type: 'dir', dir: d });
       }
       const d = merged[parent];
-      const v = mkVol(d, np.path.slice(np.path.lastIndexOf('/') + 1).replace(/\.cbz$/, ''), 'haibara');
+      const v = mkVol(d, np.path.slice(np.path.lastIndexOf('/') + 1).replace(/\.cbz$/, ''), 'haibara', np.path, np.path);
       d.vols.push(v); vols.push(v);
       continue;
     }
     const spec = LIB[np.path] || { groups: [[np.path.slice(np.path.lastIndexOf('/') + 1), 5, 'loghs']] };
+    // 分区（≥2 个目录）底下的目录在处理路径里面；只展开成一个目录的处理路径，那个目录就是它自己
+    const parentHint = spec.groups.length >= 2 ? `${np.path}/` : np.path.slice(0, np.path.lastIndexOf('/') + 1);
     const dirs = spec.groups.map(([label, n, mix, names]) => {
-      const d = mkDir(label, np.path.slice(0, np.path.lastIndexOf('/') + 1), mix);
-      for (let i = 0; i < n; i++) { const v = mkVol(d, names ? names[i] : vn(i + 1), mix); d.vols.push(v); vols.push(v); }
+      const d = mkDir(label, parentHint, mix);
+      for (let i = 0; i < n; i++) { const v = mkVol(d, names ? names[i] : vn(i + 1), mix, np.path); d.vols.push(v); vols.push(v); }
       return d;
     });
     if (dirs.length >= 2) entries.push({ type: 'section', path: np.path, dirs, notes: spec.notes || [] });
@@ -703,7 +717,9 @@ function tick(run, dt) {
     const speed = s.pass === 0 ? RATE * 7 : s.pass === 2 ? RATE * 1.6 : RATE;
     const need = v.pages - s.done, can = budget * speed;
     if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; budget = 0; }
-    else { s.done = v.pages; run.steps += need; const used = need / speed; s.elapsed += used; budget -= used; passDone(run); }
+    // 一个环节走满，总步数就是一个整数（真程序一页一步）：连续时间一路攒下的浮点尾数在这里结清，
+    // 不然 3799 会攒成 3798.999…，屏上取整印成 3798
+    else { s.done = v.pages; run.steps = Math.round(run.steps + need); const used = need / speed; s.elapsed += used; budget -= used; passDone(run); }
   }
 }
 
@@ -881,8 +897,19 @@ const S = {
 const FOCUS = 'c-lgreen';
 const CURSOR = FOCUS + ' b';
 const modelName = () => (CONFIG.find((c) => c.key === 'model') || {}).value || '型号未选择';
-// 此刻型号那块面板的分辨率（灰阶测试图就是这么大一张）：从 PANELS 里查，不另抄一份
-const panelSize = () => ((PANELS.find(([, ms]) => ms.includes(modelName())) || [''])[0].split(' ⋅ ')[0]);
+// 此刻型号那块面板的规格（`1264x1680 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白`）：从 PANELS 里查，不另抄一份
+const panelSpec = () => (PANELS.find(([, ms]) => ms.includes(modelName())) || [''])[0];
+// 此刻型号那块面板的分辨率（灰阶测试图就是这么大一张）
+const panelSize = () => panelSpec().split(' ⋅ ')[0];
+// 会话是从哪儿敲起来的（假数据）：灰阶测试图落在这里
+const CWD = '~';
+// 预设文件在哪儿（假数据）：配置视图顶上那一条右端印它
+const PRESETS_FILE = '~/.config/tonefit/presets.toml';
+// 灰阶测试图写到哪儿（terminal::chart_file）：名字带型号与屏幕灰阶数——填了可见灰阶数就是它，没填是面板标称的
+const chartPath = () => {
+  const levels = (CONFIG.find((c) => c.key === 'levels') || {}).value || (/(\d+) 级灰阶/.exec(panelSpec()) || [])[1];
+  return `${CWD}/tonefit-calibration-${modelName()}-${levels}-levels.png`;
+};
 // 顶栏上的版本号。导出的快照里它是占位，比对时代入 crate 的版本（spec《设计快照是验收标准》）
 const VERSION = '0.1.0';
 const key = (k) => [[k, 'c-fg b']];
@@ -1000,7 +1027,8 @@ function overviewLines(iw, compact) {
   const total = [['总进度 ', 'c-gray'], [f, r.stage === 'ended' ? 'c-green' : 'c-blue'], [e, 'c-gray d'], [` ${Math.floor(frac * 100)}%`, 'c-fg b'], [`  ${Math.floor(r.steps)}/${r.total} 步`, 'c-gray']];
   let here = [['当前卷 ', 'c-gray'], ['—', 'c-gray d']];
   if (cur && r.stage !== 'ended') {
-    const pf = cs.pass >= 0 && cs.pass < 3 ? cs.done / cur.pages : 1;
+    // 横条的分子与它旁边那个数同是走完的整页：模拟走连续时间，而真程序一页一步、拿不出半页
+    const pf = cs.pass >= 0 && cs.pass < 3 ? Math.floor(cs.done) / cur.pages : 1;
     const [bf, be] = bar(pf, compact ? 8 : Math.max(8, Math.min(24, iw - 80)));
     const pass = cs.pass >= 0 && cs.pass < 3 ? cs.pass : 1;
     here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [PASSES[pass], PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
@@ -1097,7 +1125,9 @@ function cols(iw) {
 }
 // 出自报告的那几句，字只有一处出处（ADR 0016）：卷级那几行与目录那一行的措辞照 src/render.rs
 const SKIPPED = '跳过 之前转换过：工具版本、设备配置、选项和源文件都没变，上次的输出还在，这一卷一页都没重做';   // render::SKIPPED
-const isolatedOutput = (v) => `${S.outRoot}/_isolated/${v.dir.label}/${v.name}`;                                       // 隔离目录里这一卷的去处（假数据）
+// 隔离目录里这一卷的去处（假数据），照库的镜像规则（discover::mirrored）：基准点是处理路径的父目录，
+// 处理路径自己的名字因此恒出现在去处里；隔离只在输出目录底下插一级 `_isolated`
+const isolatedOutput = (v) => `${S.outRoot}/_isolated${v.root.slice(v.named.lastIndexOf('/'))}`;
 const isolatedRow = (v, failed) => `隔离 ${failed} 页读不出：这一卷整卷写到隔离目录 ${isolatedOutput(v)}，读不出的页用空白页占位，页码顺序不变`; // render::isolated_row
 const isolatedNote = (count) => `隔离 ${count} 卷`;                                                                     // render::isolated_note（目录那一行）
 // 一卷为什么一页都没判，压成灰阶分布那一列摆得下的一个词（render::why_nothing_judged），连同它的语义色：没做成是出事，跳过是不要紧
@@ -1116,7 +1146,8 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
   const match = S.search && S.search.q && row.key && rowText(row).includes(S.search.q);
   const nameSt = (base) => base + (isCur ? ' b' : '') + (match ? ' u' : '');
   if (row.kind === 'out') {
-    scr.line(x, y, [curSeg, ['输出目录   ', 'c-gray'], [S.outRoot, nameSt('c-fg')], ['   ', ''], ...hint('i', '修改')], iw);
+    // 跑起来之后（清点中）`i` 派不出去（taskKey），这一件就不摆：屏上不摆按不动的键
+    scr.line(x, y, [curSeg, ['输出目录   ', 'c-gray'], [S.outRoot, nameSt('c-fg')], ...(r ? [] : [['   ', ''], ...hint('i', '修改')])], iw);
   } else if (row.kind === 'label') {
     const n = S.named.length;
     scr.line(x, y, [['  ', ''], ['处理路径', 'c-fg b'], [` (${n})`, 'c-gray'], ['   ⋅ 开始前不会读取里面的内容', 'c-gray d']], iw);
@@ -1152,7 +1183,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
     const chev = isDir ? (S.expanded.has(row.d.id) ? '▾ ' : '▸ ') : '  ';
     X = scr.put(X, y, chev, 'c-gray');
     X = scr.put(X, y, m + ' ', ms);
-    const label = isDir ? (row.indent === 0 && row.d.parentHint ? row.d.label : row.d.label) : row.v.name;
+    const label = isDir ? row.d.label : row.v.name;
     const nameW = c.nameW - (row.indent || 0) * 2;
     const running = isDir ? st.running || st.deciding : vs && (vs.state === 'running' || vs.state === 'deciding') ? row.v : null;
     X = scr.put(X, y, pad(elide(label, nameW), nameW), nameSt(running ? 'c-blue' : isDir ? 'c-fg' : 'c-white'));
@@ -1183,7 +1214,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
       if (st.deciding) tail = [[st.deciding.name + ' ⋅ ', 'c-fg'], ['等待确认', 'c-yellow b']];
       else if (st.running) {
         const s = stateOf(r, st.running), p = Math.max(0, Math.min(2, s.pass));
-        const [bf, be] = bar(s.done / st.running.pages, 8);
+        const [bf, be] = bar(Math.floor(s.done) / st.running.pages, 8);
         tail = [[st.running.name + ' ⋅ ', 'c-fg'], [PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(s.done)}/${st.running.pages}`, 'c-gray']];
       } else if (problemsSegs(st).length) tail = problemsSegs(st);
       else if (st.finished === 0) tail = [['等待中', 'c-gray d']];
@@ -1192,7 +1223,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
       const pr = problemsOf(row.v);
       if (vs.state === 'running') {
         const p = Math.max(0, Math.min(2, vs.pass));
-        const [bf, be] = bar(vs.done / row.v.pages, 10);
+        const [bf, be] = bar(Math.floor(vs.done) / row.v.pages, 10);
         tail = [[PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(vs.done)}/${row.v.pages}`, 'c-gray']];
       } else if (vs.state === 'deciding') tail = [['等待确认 ⋅ 已分析，还没写入任何文件', 'c-yellow']];
       // 没做成的卷那一行只有路径与那一句原因（render::failed_volume）：原因原样，不另加前缀
@@ -1337,7 +1368,7 @@ const valueOf = (c) => (c.kind === 'info' ? premiseText(c.key) : c.key === 'thre
 function drawConfig(scr) {
   const W = scr.c, H = scr.r, ro = readOnly();
   const ch = changedKeys();
-  scr.box(0, 1, W, 3, { st: 'c-gray', title: [['预设', 'c-fg b'], ...(ro ? [[' ⋅ 正在转换，设置暂时锁定', 'c-yellow']] : [])], right: [['~/.config/tonefit/presets.toml', 'c-gray d']] });
+  scr.box(0, 1, W, 3, { st: 'c-gray', title: [['预设', 'c-fg b'], ...(ro ? [[' ⋅ 正在转换，设置暂时锁定', 'c-yellow']] : [])], right: [[PRESETS_FILE, 'c-gray d']] });
   const hs = [...hint('p', '预设'), ['  ', ''], ...hint('c', '灰阶测试图')];
   scr.line(2, 2, [['当前使用 ', 'c-gray'], [S.cfg.applied ? '「' + S.cfg.applied + '」' : '（未使用预设）', 'c-green b'], ...(ch.length ? [['   改动了 ' + ch.length + ' 项：', 'c-yellow'], [ch.join('、'), 'c-fg']] : [['   与预设一致', 'c-gray']])], W - 6 - segW(hs));
   scr.line(W - 2 - segW(hs), 2, hs);
@@ -1800,7 +1831,7 @@ function taskKey(k) {
 function configKey(k) {
   const ro = readOnly(), c = CONFIG[S.cfg.cursor];
   if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
-  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], [`（${panelSize()}）：拷进设备，用原始尺寸打开（原型不写文件）`, 'c-fg']], 3200); return true; }
+  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], [`（${panelSize()}）：写到 ${chartPath()}`, 'c-fg']], 3200); return true; }
   if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
   if (S.cfg.presets) {
     if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
@@ -1932,7 +1963,7 @@ function scene(name) {
     }
     case 'config': S.view = 'config'; S.cfg.cursor = CONFIG.findIndex((c) => c.key === 'fit'); S.cfg.pane = 'right'; S.cfg.right = 2; break;
     case 'help': exec(0.18); S.overlay = { kind: 'help', from: 0 }; break;
-    case 'add': S.curKey = 'add'; startInput('add', '~/Comics/'); S.input.base = '~/Comics'; S.input.cands = fsList('~/Comics'); S.input.ci = 0; break;
+    case 'add': S.curKey = 'add'; startInput('add', '~/Comics/'); complete(); break;   // 按过一下 Tab：候选摆上、缓冲换成头一个
     case 'search': exec(0.62); startInput('search'); S.input.buf = '海贼'; S.search.q = '海贼'; break;
   }
   S.scene = name; syncChips(); term.focus();

@@ -30,7 +30,7 @@
 "c.......hhiiiiii...fffffffffffffffffffffffffffffffffffffffffff.c"
 "c.......cc...................................ffffffffffff..c"
 "c..............................................................................c"
-"c.ccccnnnnnnnnnnnnnnnnn.cccccccc.........dddddddddffcccccccc...........c"
+"c.ccccnnnnnnnnnnnnnnnnn.cccccccc.........ddddddddfffcccccccc...........c"
 "c...cccc.................cccccccc..fff...................................c"
 "c..............................................................................c"
 "c.cccccgggggggggggggcccccccc.cccccccccccccccccccccccccccccccccccccccccccc.c"

@@ -17,7 +17,7 @@
 "c.ccccgggg..............................................................c"
 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 "hhiiccccccccccccccchhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
-"h.jjccccccciiiii...c.cccccc...........................................h"
+"h.jjccccccciiiii........................................................h"
 "h...iiiicccccggggggggggggggggg.................................h"
 "h...kkkk.......................cccc......................................h"
 "h...kkkk.................ccccllllllllllllllllllllll.h"

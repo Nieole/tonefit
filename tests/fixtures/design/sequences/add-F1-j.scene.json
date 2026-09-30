@@ -3,6 +3,8 @@
   "now_ms": "unchanged",
   "time_multiplier": "unchanged",
   "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",
@@ -23,12 +25,12 @@
     "input": {
       "kind": "add",
       "prompt": "添加路径  ",
-      "buffer": "~/Comics/",
+      "buffer": "~/Comics/大友克洋/",
       "candidates": [
-        "棋魂/",
         "大友克洋/",
-        "火之鸟/",
-        "寄生兽/"
+        "寄生兽/",
+        "棋魂/",
+        "火之鸟/"
       ],
       "candidate": 0
     },

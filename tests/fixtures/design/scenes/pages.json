@@ -3,6 +3,8 @@
   "now_ms": 1000000,
   "time_multiplier": 7,
   "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
   "paths": [
     {
       "path": "~/漫画库",
@@ -1161,7 +1163,7 @@
             8
           ]
         ],
-        "isolated_output": "~/转好的/_isolated/集英社/海贼王/第07卷",
+        "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "pages": [
           {

@@ -3,6 +3,8 @@
   "now_ms": 1000000,
   "time_multiplier": 7,
   "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
   "paths": [
     {
       "path": "~/漫画库",
@@ -119,12 +121,12 @@
     "input": {
       "kind": "add",
       "prompt": "添加路径  ",
-      "buffer": "~/Comics/",
+      "buffer": "~/Comics/大友克洋/",
       "candidates": [
-        "棋魂/",
         "大友克洋/",
-        "火之鸟/",
-        "寄生兽/"
+        "寄生兽/",
+        "棋魂/",
+        "火之鸟/"
       ],
       "candidate": 0
     },

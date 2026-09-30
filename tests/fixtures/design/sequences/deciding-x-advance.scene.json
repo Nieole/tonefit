@@ -3,6 +3,8 @@
   "now_ms": 1030000,
   "time_multiplier": "unchanged",
   "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",

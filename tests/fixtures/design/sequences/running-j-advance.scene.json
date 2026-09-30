@@ -3,6 +3,8 @@
   "now_ms": 1003000,
   "time_multiplier": "unchanged",
   "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": "unchanged",
   "applied_preset": "unchanged",
@@ -13,7 +15,7 @@
     "outcome": null,
     "envelope": false,
     "elapsed_s": 199.5,
-    "steps": 17531.929,
+    "steps": 17531,
     "total_steps": 46809,
     "current": "~/漫画库/集英社/海贼王/第18卷",
     "stop_level": 0,
@@ -1062,7 +1064,7 @@
             8
           ]
         ],
-        "isolated_output": "~/转好的/_isolated/集英社/海贼王/第07卷",
+        "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "notable_pages": [
           {

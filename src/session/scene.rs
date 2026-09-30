@@ -73,6 +73,10 @@ pub(crate) struct Data {
     pub(crate) now_ms: u64,
     /// 输出目录（`~/` 写法）。
     pub(crate) output: String,
+    /// 会话是从哪儿敲起来的（`~/` 写法）：灰阶测试图落在这里（`terminal::chart_file`）。
+    pub(crate) cwd: String,
+    /// 预设文件在哪儿（`~/` 写法）：配置视图顶上那一条右端印的就是它。
+    pub(crate) presets_file: String,
     /// 处理路径与勾选。
     pub(crate) paths: Vec<Named>,
     /// 三组设置里进预设的那两组，键照预设文件（kebab-case），取值照那一项的类型；`null` 是「没说」。
@@ -118,8 +122,8 @@ pub(crate) struct Run {
     pub(crate) envelope: bool,
     /// 开工到此刻几秒（已乘设计稿的时间倍数）。
     pub(crate) elapsed_s: f64,
-    /// 走了几步（设计稿的模拟按连续时间推进，因此带小数）。
-    pub(crate) steps: f64,
+    /// 走完了几步：设计稿的模拟按连续时间推进，导出时与屏上总进度那个数同一种取整（向下）。
+    pub(crate) steps: u64,
     /// 共几步。
     pub(crate) total_steps: u64,
     /// 当前卷的卷根。
@@ -219,7 +223,7 @@ pub(crate) struct VolumeData {
     pub(crate) pages: Option<Vec<PageData>>,
     /// 没做成的原因。
     pub(crate) failure: Option<String>,
-    /// 进了隔离时它的去处。
+    /// 进了隔离时它的去处（`~/` 写法）：照库的镜像规则，输出目录底下插一级 `_isolated`。
     pub(crate) isolated_output: Option<String>,
 }
 
@@ -630,10 +634,9 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
             .unwrap_or_else(|error| panic!("套着的预设「{name}」读不出：{error:#}")),
     });
     config_of(&data.session["config"], &mut views, presets);
-    // **预设文件那一条路径设计稿是写死的**（`drawConfig`），它不是场景数据——夹具因此照它
-    // 摆一条家目录底下的路径。真文件仍在临时目录里（[`write_presets`]）：家目录底下只有
-    // 假盘那几样，补全那几串数的正是它（停车场 Q824）。
-    views.presets = Some(home.join(".config").join("tonefit").join("presets.toml"));
+    // **屏上印的预设文件路径照场景数据**。真文件不在那儿，在临时目录里（[`write_presets`]）：
+    // 家目录底下只有假盘那几样，补全那几串数的正是它。
+    views.presets = Some(expand(home, &data.presets_file));
     let input = &data.session["input"];
     let purpose = match input["kind"].as_str() {
         Some("add") => Some(Purpose::AddPath),
@@ -656,18 +659,20 @@ fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
     if let Some(purpose) = purpose {
         let buffer = input["buffer"].as_str().expect("输入行的缓冲").to_owned();
         let mut line = InputLine::new(purpose, buffer.clone());
-        if let Some(candidates) = input["candidates"].as_array() {
-            let listed: Vec<Completion> = candidates
+        // 照那一层收下候选、轮到那一条：缓冲自己就拼回场景数据那一句。
+        if let Some(offered) = offered(input) {
+            let listed = offered
+                .candidates
                 .iter()
-                .filter_map(Value::as_str)
-                .map(Completion::from_shown)
+                .map(|shown| Completion::from_shown(shown))
                 .collect();
-            let head = line.split().0.to_owned();
-            line.offer(&head, listed);
-            let at = input["candidate"].as_u64().unwrap_or(0) as usize;
-            line.step(at as isize);
-            // 设计稿的「添加路径」那一景把候选直接摆上去、缓冲没跟着换：照它的缓冲。
-            line.buffer = buffer;
+            line.offer(&offered.head, listed);
+            line.step(offered.at as isize);
+            assert_eq!(
+                line.buffer, buffer,
+                "收下候选、轮到第 {} 条之后的缓冲",
+                offered.at
+            );
         }
         views.input = Some(line);
     }
@@ -803,11 +808,45 @@ enum Shape {
     File,
 }
 
+/// 输入行补全框列着的那一层（场景数据 `session.input` 那一段）。
+struct Offered<'a> {
+    /// 那一层，按打的写法（`~/Comics/`）。
+    head: String,
+    /// 候选，屏上的写法（文件夹带 `/`）。
+    candidates: Vec<&'a str>,
+    /// 轮到第几条。
+    at: usize,
+}
+
+/// 补全框开着时它列的是哪一层：缓冲是**那一层接上轮到的那一条**（按过 `Tab` 的样子），
+/// 那一层就是缓冲去掉那一条。没列候选时是 `None`。
+fn offered(input: &Value) -> Option<Offered<'_>> {
+    let buffer = input["buffer"].as_str()?;
+    let candidates: Vec<&str> = input["candidates"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let at = input["candidate"].as_u64().unwrap_or(0) as usize;
+    let chosen = candidates
+        .get(at)
+        .unwrap_or_else(|| panic!("轮到第 {at} 条，候选只有 {} 条", candidates.len()));
+    let head = buffer
+        .strip_suffix(chosen)
+        .unwrap_or_else(|| panic!("缓冲「{buffer}」不是那一层接上轮到的「{chosen}」"))
+        .to_owned();
+    Some(Offered {
+        head,
+        candidates,
+        at,
+    })
+}
+
 /// **假盘上有什么**：11 个场景的场景数据提到的每一处的并集，`~/` 写法。
 ///
 /// 设计稿的假盘本身没有导出（停车场 Q764），能从场景数据认出来的是：处理路径（文件夹还是压缩包）、
 /// 清点清单上的分区、目录与卷根、备注里的路径（无法访问的地方是目录，非漫画文件是文件）、
-/// 输出目录，以及输入行补全框里列出的候选。一趟只算一次，每个场景各自建一棵。
+/// 输出目录、会话是从哪儿敲起来的那个目录，以及输入行补全框里列出的候选。一趟只算一次，每个场景各自建一棵。
 fn disk() -> &'static [(String, Shape)] {
     static DISK: OnceLock<Vec<(String, Shape)>> = OnceLock::new();
     DISK.get_or_init(|| {
@@ -820,6 +859,7 @@ fn disk() -> &'static [(String, Shape)] {
         for scene in scenes() {
             let data = scene_data(&scene);
             put(&data.output, Shape::Directory);
+            put(&data.cwd, Shape::Directory);
             for named in &data.paths {
                 put(&named.path, shape_of_named(&named.kind));
             }
@@ -851,13 +891,10 @@ fn disk() -> &'static [(String, Shape)] {
                     put(&listed.root, shape_of_root(&listed.root));
                 }
             }
-            // 输入行里补全到一半的路径与它列出的候选。
-            let input = &data.session["input"];
-            if let (Some(buffer), Some(candidates)) =
-                (input["buffer"].as_str(), input["candidates"].as_array())
-            {
-                for candidate in candidates.iter().filter_map(Value::as_str) {
-                    let path = format!("{buffer}{candidate}");
+            // 输入行补全框列着的那一层：每一条候选都在盘上。
+            if let Some(offered) = offered(&data.session["input"]) {
+                for candidate in offered.candidates {
+                    let path = format!("{}{candidate}", offered.head);
                     match path.strip_suffix('/') {
                         Some(directory) => put(directory, Shape::Directory),
                         None => put(&path, Shape::File),
@@ -1272,8 +1309,11 @@ fn typical_size() -> Size {
     })
 }
 
-/// 这一卷干净的去处：输出目录接上卷根在它那条分区（或顶格目录的上一层）之下的那一截——
-/// 与场景数据给出的隔离去处同一个写法（设计稿的假数据；库自己的镜像规则见停车场 Q765）。
+/// 这一卷干净的去处：输出目录接上卷根在它那条分区（或顶格目录的上一层）之下的那一截。
+///
+/// **它不照库的镜像规则**（基准点是处理路径的父目录，`discover::mirrored`），而场景数据给的
+/// 隔离去处照（[`VolumeData::isolated_output`]）——同一卷的两个去处因此不是同一副结构。
+/// 屏上一处都不露干净的去处；收成一副的做法记在停车场 Q1058。
 fn output_of(listed: &Listed, out: &Path, run: &Run) -> PathBuf {
     let base = run
         .survey
@@ -1783,7 +1823,7 @@ mod tests {
         // 总进度。
         let overall = live.overall();
         assert_eq!(overall.steps, run.total_steps, "{name}");
-        assert_eq!(overall.walked, run.steps.floor() as u64, "{name}");
+        assert_eq!(overall.walked, run.steps, "{name}");
         assert_eq!(overall.volumes, run.survey.volumes.len(), "{name}");
         assert_eq!(
             overall.elapsed,
@@ -2086,6 +2126,50 @@ mod tests {
         for name in moved {
             agrees_with_its_data(&Scene::after(&name));
         }
+    }
+
+    /// **隔离那一卷的去处照库的镜像规则**（`discover::mirrored`）：基准点是处理路径的父目录，
+    /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级 `_isolated`。
+    #[test]
+    fn an_isolated_volume_lands_where_the_library_mirrors_it() {
+        let every = scenes()
+            .into_iter()
+            .map(|name| (name.clone(), scene_data(&name)))
+            .chain(
+                sequences()
+                    .into_iter()
+                    .map(|name| (name.clone(), sequence_data(&name))),
+            );
+        let mut isolated = 0;
+        for (name, data) in every {
+            let Some(run) = &data.run else { continue };
+            for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
+                let Some(said) = &volume.isolated_output else {
+                    continue;
+                };
+                // 这一卷从哪一条处理路径来：勾着的、装着它的最外层那一条（里层那条已包含在它里面）。
+                let named = data
+                    .paths
+                    .iter()
+                    .filter(|named| named.checked)
+                    .filter(|named| {
+                        listed.root == named.path
+                            || listed.root.starts_with(&format!("{}/", named.path))
+                    })
+                    .min_by_key(|named| named.path.len())
+                    .unwrap_or_else(|| panic!("{name}：{} 不在哪一条处理路径底下", listed.root));
+                let parent = named.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let mirrored = &listed.root[parent.len()..];
+                assert_eq!(
+                    *said,
+                    format!("{}/_isolated{mirrored}", data.output),
+                    "{name}：{}",
+                    listed.root
+                );
+                isolated += 1;
+            }
+        }
+        assert!(isolated > 0, "场景数据里总有一卷进了隔离");
     }
 }
 
