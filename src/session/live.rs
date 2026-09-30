@@ -1255,7 +1255,8 @@ pub(crate) mod fixture {
     //! 几处要的是同一份东西，各搓一份就会在改动时走散。
     //!
     //! [`a_real_volume`] 是里面唯一**落到盘上**的一个：真起一条线程跑一趟的那几条用例
-    //! （`super::super::run`、`super::super::terminal`）共用它。
+    //! （`super::super::run`、`super::super::terminal`）共用它，命令行那一路在一趟真跑上
+    //! 过它自己观察者的那一条（`crate::tests`）也用它。
 
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};

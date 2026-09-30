@@ -126,6 +126,52 @@ const TRUNCATION_USED: [(&str, usize); 3] = [
 /// 钉着它的那条用例一句，两句说的是两件事（这一份不自己编 / 这一份存的就是它给的字节）。
 const LATCH_CODE_SIGNPOSTED: [(&str, usize); 2] = [("src/session/run.rs", 2), ("src/main.rs", 2)];
 
+/// **按停止的两条规矩**的字样（`say-and-stop/01`）：升级那张表（继续 → 做完再停 → 立即停止
+/// → 立即停止），与确认点上做完再停要让、立即停止不让。
+///
+/// 记号挑的是**那两个 `match` 的臂**：把规矩写下来只能写成这几支，而散文里说这件事用的是
+/// 「做完再停」「立即停止」那几个词，一个都不带 `=>`。确认点那一条只挑**守卫的头**
+/// （`Finish if`），不连着参数名——抄件换一个参数名就躲得过整句。
+///
+/// 两种写法各列一条：家里写的是 `Instruction::`，而这两条规矩最顺手的第二个去处是库里的
+/// `impl Instruction`——在那儿写就是 `Self::`。那一处恰是它们不该去的地方（让不让是调用方的策略，
+/// ADR 0012 决定第 3 条），抄件写哪一种都躲不过去。
+const STOP_RULE_MARKS: [&str; 6] = [
+    "Instruction::Continue => Instruction::Finish",
+    "Self::Continue => Self::Finish",
+    "Instruction::Finish | Instruction::Abort => Instruction::Abort",
+    "Self::Finish | Self::Abort => Self::Abort",
+    "Instruction::Finish if",
+    "Self::Finish if",
+];
+
+/// 那两条规矩的家，相对仓库根。它在 bin 里而不在库里：让不让是调用方的策略
+/// （ADR 0012 决定第 3 条）。
+const STOP_RULE_HOME: &str = "src/stop.rs";
+
+/// 调它的那两路，各在哪个文件里调哪几个——**命令行与会话都调的是它**。
+///
+/// 只问「别处没有第二份」的话，一路把规矩整个删掉（观察者把闩原样交给库、按一下直接跳到
+/// 立即停止）这一条照绿；这张表拦的是那一手。问的是**调用的形状**（`stop::` 带着左括号），
+/// 不是模块名——指路的散文不算调用。那一路调了之后真的照办没有，由两路各自的用例在一趟
+/// 真跑上问（`src/main.rs` 与 `src/session/run.rs` 各一条：卷跑到一半按一次做完再停，
+/// 那一卷仍旧整卷落盘）。
+const STOP_RULE_CALLERS: [(&str, &[&str]); 3] = [
+    (
+        "src/main.rs",
+        &[
+            "stop::next(",
+            "stop::at_the_decision_point(",
+            "stop::answer(",
+        ],
+    ),
+    (
+        "src/session/run.rs",
+        &["stop::at_the_decision_point(", "stop::answer("],
+    ),
+    ("src/session/state.rs", &["stop::next("]),
+];
+
 /// **《落格》那条不变量**的字样（`encoder-gate/01`，收停车场 Q936）。
 ///
 /// 记号挑的是那一条词条里**只有它说得出**的三句：这条不变量本身、它给出的那个上界、
@@ -336,6 +382,55 @@ fn the_latch_encoding_lives_in_one_place() {
             found >= least,
             "{file} 里指回那一份公共编码的路标从 {least} 句掉到了 {found} 句"
         );
+    }
+}
+
+/// 按停止的两条规矩在 bin 里只有一份，命令行与会话都调它（`say-and-stop/01`）。
+///
+/// 从前两路各抄一份、名字逐字相同，靠两条逐字相同的用例各拴各的——谁也发现不了另一份
+/// 跟自己分了家。现在规矩只在 [`STOP_RULE_HOME`]，两路只剩「谁按、记在哪儿、等不等人」。
+///
+/// **三件事一起问**，与[闩的编码那一条](the_latch_encoding_lives_in_one_place)同一个形状：
+/// 别处没有第二份、[家里那几支](STOP_RULE_MARKS)真住着、[两路](STOP_RULE_CALLERS)真调它。
+#[test]
+fn the_stop_rules_live_in_one_place() {
+    let home = root().join(STOP_RULE_HOME);
+    let marks: Vec<String> = STOP_RULE_MARKS.iter().map(|mark| squashed(mark)).collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(carrying, vec![home.clone()], "按停止的规矩长出了第二份");
+
+    let entry = squashed(&read(&home));
+    for mark in STOP_RULE_MARKS
+        .iter()
+        .filter(|mark| mark.starts_with("Instruction::"))
+    {
+        assert!(
+            entry.contains(&squashed(mark)),
+            "{STOP_RULE_HOME} 里少了「{mark}」那一支"
+        );
+    }
+
+    for (file, calls) in STOP_RULE_CALLERS {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：调它的那两路按文件路径记在 STOP_RULE_CALLERS 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let text = squashed(&read(&path));
+        for call in calls {
+            assert!(
+                text.contains(&squashed(call)),
+                "{file} 不再调「{call}」：那一路自己拿了主意，或者又抄了一份"
+            );
+        }
     }
 }
 
