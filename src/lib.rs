@@ -91,7 +91,7 @@ pub use metric::{
 };
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
-pub use proof::{Proof, ProofPage, Sheet};
+pub use proof::{Proof, ProofPage, Sheet, Sheets};
 pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
     NonVolumeFile, NonVolumeReason, PageBranch, PageOutcome, PageReport, Processed, Report,
@@ -135,9 +135,10 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 
 /// 出一张图的**样张**：走满管线，把这块面板上这一页派得出的**每一个**候选各编一张，
 /// 连同《参照》一张写进 `out`，去处不在就建出来（`CONTEXT.md` 的《样张》）。
+/// 彩色面板上的彩页例外，见下面《两种页拿不到整叠》。
 ///
 /// 它是第四个 seam，为什么不并进 [`run`]、为什么又必须走同一批函数，见本模块文档。
-/// 钉住后一句的是神谕那一条用例：**同一份 `request` 交给 [`run`]**（不写记录），
+/// 钉住后一句的是神谕那几条用例：**同一份 `request` 交给 [`run`]**（不写记录），
 /// 写出去的那一张与这里判定那一档的那一张逐字节相同（`tests/proof.rs`）。
 ///
 /// # `request` 读哪几格
@@ -155,11 +156,24 @@ pub fn write_calibration_chart(profile: &Profile, out: &Path) -> Result<()> {
 /// 与转换那一趟逐格相同，裁到只剩一个时判定被顶死、理由是覆盖（`CONTEXT.md` 的《覆盖顶死》）。
 /// 一张图切成几块时，「裁到只剩一个没有」照转换那一趟把这张图摆成一卷时那样问：问的是
 /// 这张图的**其余页那一组**（见库内的 `GateGroups`），不是一块一块地问（停车场 Q1014）。
-/// 覆盖项与面板对不上时（越界的灰阶档位、互锁 ③）回的是转换那一趟的同一句拒绝。
+/// 覆盖项与面板对不上时（越界的灰阶档位、互锁 ③）回的是转换那一趟的同一句拒绝——
+/// 越界的灰阶档位那一句彩色分支上的页也躲不过：转换那一趟碰卷之前就说它。
+///
+/// # 两种页拿不到整叠（`proof-sheet/05`）
+///
+/// 走哪条分支由**面板与页**共同决定，样张照转换那一趟那一处的判断走（库内的 `open_source_page`），
+/// 不自己另判：
+///
+/// - **彩色面板上的彩页走彩色分支**，不量化（ADR 0005 决定第 4 条）：没有候选、没有画质分、
+///   没有参照，那一叠只有**一张**——`run` 会写出的那一张（[`Sheets::Color`]），
+///   与 [`run`] 不写记录时写出的逐字节相同。黑白面板上同一张彩页转灰，照灰度路径出整叠。
+/// - **尺寸未贴合屏幕的页**候选里没有抖动那一维（ADR 0007 决定第 2 条）：出的是这一页的门
+///   派得出的那一套，与 [`run`] 在同一页上用的那一套相同；门不成立交出来的数据说得出
+///   （[`PageReport::gate`]）。
 ///
 /// 交回这张图每一张输出页的那一叠（[`Proof`]）：拆开的跨页两半各一叠，关掉拆分、或是找不到中缝的
 /// 连续跨页，整页一叠；每一叠的文件名，页那一截就是 `run` 给那一张的输出页名（库内的 `output_name`）。
-/// 每一张落在哪儿、多大，连同这一页的判定、几何事实与纸色提白。
+/// 每一张落在哪儿、多大，连同这一页的分支、判定、几何事实与纸色提白。
 /// **先全部编好再落盘**：解不开、撞上门、编不出来都发生在第一个字节写出去之前，
 /// 那时去处里一个文件都没有。写不出去回 `Err`，调用方接住它照自己的方式说。
 ///
@@ -1875,6 +1889,9 @@ impl Compute<'_> {
 
     /// 彩色分支上的一张：几何 → 缩放 → 编码，不进缓存、不求画质分（ADR 0005 决定第 4 条）。
     ///
+    /// **缩放与编码那一截不在这里**，它在 [`color_bytes`]——样张那条路与转换这一条共用它
+    /// （`proof-sheet/05`）。留在这里的是**只有转换这一趟才有**的两件：这一卷的记录、预览那一支。
+    ///
     /// **预览只走几何**：编码是缩放结果唯一的消费者（见 `resample::Resampler::resize_color`），
     /// 编出来的字节没人要时，缩放跟着不做（05 号票）。
     ///
@@ -1903,11 +1920,6 @@ impl Compute<'_> {
         // 正是预告那个判定。
         let (scaling, encoded) = match request.mode {
             Mode::Process => {
-                let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
-                    self.counters
-                        .resampler
-                        .resize_color(image, size, request.filter)
-                })?;
                 // 指纹与来路两样一起在、一起不在（见 [`Placement::new`]）：
                 // `zip` 把那件事写成一句，而不是在这里再判一次。
                 let record =
@@ -1916,10 +1928,14 @@ impl Compute<'_> {
                         .map(|(fingerprint, origin)| {
                             Record::color(fingerprint, origin, Some(placement.page), salvage)
                         });
-                let encoded = cost::stage(cost::Stage::Encode, || {
-                    encode::color_png(&scaled, record.as_ref())
-                })
-                .with_context(|| format!("编 {} 这一页", source.display()))?;
+                let (scaling, encoded) = color_bytes(
+                    source,
+                    image,
+                    size,
+                    request.filter,
+                    &self.counters.resampler,
+                    record.as_ref(),
+                )?;
                 (scaling, Some(encoded))
             }
             Mode::DryRun => (Scaling::plan(image.size(), size), None),
@@ -2782,6 +2798,32 @@ fn candidate_bytes(
     cost::stage(cost::Stage::Encode, || {
         encode::png(&quantized, candidate.bit_depth, record)
     })
+}
+
+/// 彩色分支上的一块走到**编好的字节**：缩放 → 编码，不量化、不抖动（ADR 0010 决定第 6 条）。
+///
+/// **两条路共用这一处**，与 [`candidate_bytes`] 同一条理由：转换那一趟照做时
+/// [`Compute::color_page`] 调它，样张那一趟为彩色面板上的彩页编那唯一的一张时调它——
+/// 样张说「那一张就是 `run` 会写出的那一张」，走的就必须是同一批函数。
+///
+/// 目标尺寸由调用方交进来：两处都是 [`FitMode::target`] 算的（兜底上界在那里），
+/// 而预览那一趟只要尺寸、不要字节，算尺寸那一步因此不收进来。
+/// 记录也由调用方备好交进来：样张与 `--no-metadata` 那一趟交的恒是 `None`。
+/// 缩放器与 [`examine_gray_page`] 收的是同一种东西——账本是谁的由调用方说了算。
+fn color_bytes(
+    source: &Path,
+    image: &ColorImage,
+    size: Size,
+    filter: Filter,
+    resampler: &resample::Resampler,
+    record: Option<&Record>,
+) -> Result<(Scaling, Vec<u8>)> {
+    let (scaled, scaling) = cost::stage(cost::Stage::Resize, || {
+        resampler.resize_color(image, size, filter)
+    })?;
+    let encoded = cost::stage(cost::Stage::Encode, || encode::color_png(&scaled, record))
+        .with_context(|| format!("编 {} 这一页", source.display()))?;
+    Ok((scaling, encoded))
 }
 
 /// 本次调用在这一卷上的幂等依据（ADR 0006：同一批 tEXt 字段兼作幂等依据）。

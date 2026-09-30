@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 
 use tonefit::{
     Candidate, CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport,
-    Profile, Proof, ProofPage, Report, Request, Sheet, Voice, VolumeFailure, VolumeReport,
+    Profile, Proof, ProofPage, Report, Request, Sheet, Sheets, Voice, VolumeFailure, VolumeReport,
     VolumeVerdict, WhiteAlignLimit, WhiteAlignment, aggregation, composition, masking,
 };
 // 「哪几页要紧」同理（见 [`Notable`]），只是它连 `--no-default-features` 那一趟的用例
@@ -1670,10 +1670,9 @@ fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
         ));
     } else {
         rows.push(gate_note(format!("没贴合：{}", first_few_names(&broken))));
-        rows.push(gate_note(
-            "这几页原图比屏幕小，按原尺寸输出，阅读器还会再缩放一次：它们不参与整卷统一灰阶，\
-             不加抖动，灰阶档位不低于其他页",
-        ));
+        rows.push(gate_note(format!(
+            "这几页{WHY_THE_GATE_SHUTS}：它们不参与整卷统一灰阶，不加抖动，灰阶档位不低于其他页",
+        )));
     }
     // 同一道门也撑着面板灰阶那道硬上界：像素与灰阶不再对齐，「多出来的级到不了眼睛」
     // 就不再成立。ADR 0003 说了不得沿用，也说了该用哪个集合尚未测量——P0 仍照它裁，
@@ -1689,6 +1688,12 @@ fn gate_rows(volume: &VolumeReport, verdict: &VolumeVerdict) -> Vec<Row> {
 fn gate_note(sentence: impl Into<String>) -> Row {
     sentence_row(RowKind::GateNote, sentence)
 }
+
+/// **门为什么不成立**那半句，逐页说的时候用：报告里「这几页……」那一句（[`gate_rows`]）与
+/// 样张里「这一页……」那一句（[`proof_gate_rows`]）都接在它前面，原因因此只说一遍。
+///
+/// 「一页都没贴合屏幕」那一句不用它：那一句说的是整卷，措辞本来就不同（「每一页原图都比屏幕小」）。
+const WHY_THE_GATE_SHUTS: &str = "原图比屏幕小，按原尺寸输出，阅读器还会再缩放一次";
 
 /// **纸色提白那一段**：本次上限，加上这一卷对齐了几页、超限几页、量不出纸白几页
 /// （纸色提白批 02 号票第 1 条）。
@@ -2101,16 +2106,25 @@ pub fn calibration_note(profile: &Profile, out: &Path) -> String {
 /// 跨页那一格说它是哪一半，行尾判定那一张的文件名带着那一族的第几张（`001-1`，与 `run`
 /// 给的输出页名同一套）。两样都是那一行的既有格子，这里不为跨页另添一句。
 ///
-/// **措辞一处都不新写**，每一句都从它既有的出处取：
+/// **比整叠少的那两种页各有一句话**（`proof-sheet/05`），读的人不会以为工具漏了几张：
+/// 彩色分支那一叠只有一张，判定那一行的位置上是逐页那一行说彩色分支的那一句（只缩放、不量化），
+/// 逐张那一行只有彩色分支那一张；尺寸未贴合屏幕的那一叠没有带抖动的候选，
+/// 尺寸贴合检查那一行底下一句说为什么（[`proof_gate_rows`]）。
+///
+/// **措辞能照搬的都照搬**，每一句都从它既有的出处取：
 ///
 /// - 画质门槛那一行就是报告抬头里的[那一行](judging_line)——数值连同**标定来源**；
 /// - 判定与理由（`Reason` 的 `Display`）、画质分那一串、纸白与钳制宽度，是逐页判定那一行
 ///   （[`page_row`]，纸白那一格[出](PaperWhite::Shown)：spec 的 story 12 要它）；
+///   彩色分支上那一行就是报告里说彩色分支的那一句；
 /// - 裁前 → 裁后、缩放、跨页哪一侧、兜底退回，是逐页几何那一行（[`geometry_cells`]）；
-/// - 门成不成立是卷级尺寸贴合检查那一行（[`proof_gate_row`]）——一叠就是一页，
+/// - 门成不成立是卷级尺寸贴合检查那一行（[`proof_gate_rows`]）——一叠就是一页，
 ///   判定范围就是它自己；
 /// - 逐张那一行（[`proof_sheet_rows`]）的「候选 分」是画质分那一串里的一项（[`scored_line`]），
 ///   字节数走库那一份进位（[`tonefit::format_bytes`]）。
+///
+/// **新写的只有半句**：门不成立时那一句的后半句（「样张里因此没有带抖动的候选」）——
+/// 报告里没有一句说样张，原因那半句仍与报告同出一处（[`WHY_THE_GATE_SHUTS`]）。
 ///
 /// 照搬得动，是因为样张的每一页与报告里的一页**同一个形状**（[`tonefit::ProofPage::page`]）。
 ///
@@ -2130,15 +2144,16 @@ pub fn proof_note(proof: &Proof, request: &Request) -> String {
             Row::new(RowKind::PageGeometry, geometry_cells(page)),
             page_row(page, PaperWhite::Shown),
         ];
-        rows.extend(proof_gate_row(page));
+        rows.extend(proof_gate_rows(page));
         rows.extend(proof_sheet_rows(sheets));
         text.extend(rows.iter().map(plain::line));
     }
     text
 }
 
-/// 一叠样张里逐张那几行：每一个候选一行（它的「候选 分」），参照那一张收尾。
-fn proof_sheet_rows(sheets: &ProofPage) -> Vec<Row> {
+/// 一叠样张里逐张那几行：灰度路径上每一个候选一行（它的「候选 分」），参照那一张收尾；
+/// 彩色分支上只有那一张。
+fn proof_sheet_rows(page: &ProofPage) -> Vec<Row> {
     let sheet_row = |which: String, sheet: &Sheet| {
         Row::new(
             RowKind::ProofSheet,
@@ -2149,11 +2164,14 @@ fn proof_sheet_rows(sheets: &ProofPage) -> Vec<Row> {
             ],
         )
     };
-    sheets
-        .scored()
-        .map(|(scored, sheet)| sheet_row(scored_line(scored), sheet))
-        .chain([sheet_row(PROOF_REFERENCE.to_owned(), &sheets.reference)])
-        .collect()
+    match &page.sheets {
+        Sheets::Gray { reference, .. } => page
+            .scored()
+            .map(|(scored, sheet)| sheet_row(scored_line(scored), sheet))
+            .chain([sheet_row(PROOF_REFERENCE.to_owned(), reference)])
+            .collect(),
+        Sheets::Color(sheet) => vec![sheet_row(PROOF_COLOR_BRANCH.to_owned(), sheet)],
+    }
 }
 
 /// 样张里《参照》那一张在逐张那几行上叫什么：取词条名。
@@ -2162,21 +2180,37 @@ fn proof_sheet_rows(sheets: &ProofPage) -> Vec<Row> {
 /// 一个是屏上怎么说，一个是文件叫什么——哪天文件名为了设备改成 ASCII，屏上照旧说「参照」。
 const PROOF_REFERENCE: &str = "参照";
 
-/// 一叠样张的**尺寸贴合检查**那一行：借的是卷级那一行（[`RowKind::Gate`]），
+/// 彩色分支上那一张在逐张那一行上叫什么：取词条名（《灰度路径 / 彩色分支》）。
+/// 与库那一侧起文件名的那一截不是同一个出处，理由同 [`PROOF_REFERENCE`]。
+const PROOF_COLOR_BRANCH: &str = "彩色分支";
+
+/// 一叠样张的**尺寸贴合检查**那一段：借的是卷级那一行（[`RowKind::Gate`]），
 /// 一叠就是一页，判定范围就是它自己——检查了 1 页、没贴合 0 或 1 页、这一页抖不抖。
 ///
-/// 彩色分支与坏页上没有这一行：它们不在判定范围里（与 [`gate_rows`] 同一条界）。
-fn proof_gate_row(page: &PageReport) -> Option<Row> {
-    let gate = page.gate()?;
-    let verdict = page.verdict()?;
-    Some(Row::new(
+/// **门不成立时底下多一句**（`proof-sheet/05`）：这一页为什么不加抖动，样张因此没有带抖动的候选
+/// ——不说，读的人会以为工具漏了几张。原因那半句与报告里那一句同出一处（[`WHY_THE_GATE_SHUTS`]），
+/// 后半句说的是样张：报告那一句接着说整卷统一灰阶与档位，那两件事一张图上无从谈起。
+///
+/// 彩色分支与坏页上没有这一段：它们不在判定范围里（与 [`gate_rows`] 同一条界）。
+/// 彩色分支那一叠为什么只有一张，由逐页那一行的既有一句说（[`page_row`]）。
+fn proof_gate_rows(page: &PageReport) -> Vec<Row> {
+    let (Some(gate), Some(verdict)) = (page.gate(), page.verdict()) else {
+        return Vec::new();
+    };
+    let mut rows = vec![Row::new(
         RowKind::Gate,
         vec![
             Cell::new(Field::GateScope, "1"),
             Cell::new(Field::GateBroken, usize::from(!gate.holds()).to_string()),
             Cell::new(Field::Dither, verdict.candidate.dither.to_string()),
         ],
-    ))
+    )];
+    if !gate.holds() {
+        rows.push(gate_note(format!(
+            "这一页{WHY_THE_GATE_SHUTS}：不加抖动，样张里因此没有带抖动的候选"
+        )));
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -5765,10 +5799,13 @@ mod tests {
             );
             assert!(note.contains(&line), "少了「{line}」：\n{note}");
         }
+        let Sheets::Gray { reference, .. } = &page.sheets else {
+            panic!("普通页走灰度路径，那一叠有参照");
+        };
         let reference = format!(
             "参照 · {} · {}",
-            tonefit::format_bytes(page.reference.bytes),
-            page.reference.file.display()
+            tonefit::format_bytes(reference.bytes),
+            reference.file.display()
         );
         assert!(note.contains(&reference), "少了「{reference}」：\n{note}");
     }
@@ -5868,9 +5905,8 @@ mod tests {
         let heads = [first_head, second_head];
         let rows = |stack: &tonefit::ProofPage| -> Vec<usize> {
             stack
-                .candidates
+                .sheets
                 .iter()
-                .chain([&stack.reference])
                 .map(|sheet| {
                     let file = sheet.file.display().to_string();
                     let found: Vec<usize> = lines
@@ -5898,5 +5934,120 @@ mod tests {
                 "第二叠的第 {at} 行排到了它自己的抬头（第 {second_head} 行）之前：\n{note}"
             );
         }
+    }
+
+    /// **样张比整叠少的那两种页，stdout 上各有一句话**（`proof-sheet/05`），读的人不会以为工具漏了几张：
+    ///
+    /// - 彩色面板上的彩页只出一张：逐页那一行说它走的是彩色分支、只缩放不量化——那一句是报告里
+    ///   逐页那一行的既有一句（[`page_row`]），逐张那一行只有彩色分支那一张；
+    /// - 尺寸未贴合屏幕的页：尺寸贴合检查那一行底下一句，说它为什么不加抖动、样张因此没有带抖动的候选。
+    ///
+    /// 两张图同一份请求：彩色面板、`--fit inside`、两张都比面板小——彩页走彩色分支（不问门），
+    /// 灰度页贴不住面板、门不成立。两句都按字面比：拿被测那一处现拼出来比，等号恒成立。
+    #[test]
+    fn the_proof_note_says_why_a_color_page_or_a_page_the_geometry_gate_shuts_has_fewer_sheets() {
+        /// 两张图都这么大：两条边都比 kobo-libra-colour 的面板（1264×1680）小，fit-inside 不放大。
+        const SIZE: (u32, u32) = (600, 900);
+        /// 四边那一圈墨多宽：裁白边在两张图上都是空操作，这一条问的不是它。
+        const RIM: u32 = 8;
+
+        let workspace = tempfile::tempdir().expect("建临时目录");
+        let rim = |x: u32, y: u32| x < RIM || y < RIM || x + RIM >= SIZE.0 || y + RIM >= SIZE.1;
+        // 彩页：纯红、纯蓝两色竖条，四边一圈黑。
+        let color = workspace.path().join("彩.png");
+        image::DynamicImage::ImageRgb8(image::ImageBuffer::from_fn(SIZE.0, SIZE.1, |x, y| {
+            image::Rgb(match (rim(x, y), x * 2 / SIZE.0) {
+                (true, _) => [0, 0, 0],
+                (false, 0) => [255, 0, 0],
+                (false, _) => [0, 0, 255],
+            })
+        }))
+        .save(&color)
+        .expect("写彩页");
+        // 灰度页：一片自上而下的灰调，四边一圈黑。
+        let gray = workspace.path().join("灰.png");
+        image::DynamicImage::ImageLuma8(image::ImageBuffer::from_fn(SIZE.0, SIZE.1, |x, y| {
+            image::Luma([if rim(x, y) {
+                0
+            } else {
+                (y * 240 / SIZE.1) as u8
+            }])
+        }))
+        .save(&gray)
+        .expect("写灰度页");
+        // 处理选项逐格点名，不借默认值（`docs/agents/testing.md`）。缩放方式点名 fit-inside：
+        // 以高为准会把比面板小的页放大到面板高，门就成立了。
+        // 卷级那几格（内存上限、读盘方式、观察者）样张一格都不读，照 `run` 要的填，取值不进任何断言。
+        let request = Request {
+            inputs: vec![workspace.path().to_path_buf()],
+            output_root: workspace.path().join("样张"),
+            profile: Profile::resolve("kobo-libra-colour").expect("内置型号"),
+            fit: FitMode::Inside,
+            crop: true,
+            split: SplitRule {
+                on: true,
+                threshold: tonefit::SplitThreshold::parse("1.5").expect("判定宽度"),
+                order: tonefit::ReadingOrder::RightToLeft,
+            },
+            filter: tonefit::Filter::Lanczos3,
+            white_align_limit: WhiteAlignLimit::new(4),
+            bit_depth: None,
+            dither: None,
+            envelope: false,
+            cache_budget: CacheBudget::default(),
+            mode: Mode::Process,
+            io_mode: tonefit::IoMode::Auto,
+            progress: None,
+            metadata: false,
+        };
+
+        let colored = tonefit::write_proof(&color, &request, &workspace.path().join("彩的样张"))
+            .expect("出彩页的样张");
+        let note = proof_note(&colored, &request);
+        let [page] = colored.pages.as_slice() else {
+            panic!("一张彩页出一叠");
+        };
+        let Sheets::Color(sheet) = &page.sheets else {
+            panic!("夹具的前提：彩色面板上的彩页走彩色分支：{:?}", page.sheets);
+        };
+        assert!(
+            note.contains("彩页 · 彩色分支：只缩放，不量化"),
+            "没说这一页走的是彩色分支：\n{note}"
+        );
+        // 逐张那几行缩在第四格、落在这一叠的去处里；几何那一行缩在第二格，不算在里面。
+        let dir = workspace.path().join("彩的样张").display().to_string();
+        let rows: Vec<&str> = note
+            .lines()
+            .filter(|line| line.starts_with("    ") && line.contains(&dir))
+            .collect();
+        let only = format!(
+            "    彩色分支 · {} · {}",
+            tonefit::format_bytes(sheet.bytes),
+            sheet.file.display()
+        );
+        assert_eq!(rows, [only], "逐张那几行该只有彩色分支那一张：\n{note}");
+
+        let outside = tonefit::write_proof(&gray, &request, &workspace.path().join("灰的样张"))
+            .expect("出灰度页的样张");
+        let note = proof_note(&outside, &request);
+        let [page] = outside.pages.as_slice() else {
+            panic!("一张普通页出一叠");
+        };
+        assert_eq!(
+            page.page.gate(),
+            Some(GeometryGate::Broken),
+            "夹具的前提：这一页贴不住面板"
+        );
+        assert!(
+            note.contains(
+                "这一页原图比屏幕小，按原尺寸输出，阅读器还会再缩放一次：\
+                 不加抖动，样张里因此没有带抖动的候选"
+            ),
+            "没说门为什么不成立、候选为什么少了：\n{note}"
+        );
+        assert!(
+            !note.contains("+FS"),
+            "门不成立的页那一叠里出现了带抖动的候选：\n{note}"
+        );
     }
 }

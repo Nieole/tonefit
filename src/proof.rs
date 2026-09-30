@@ -1,27 +1,30 @@
 //! 样张：一张图走满管线，这块面板上这一页派得出的**每一个**候选各编一张，
 //! 连同《参照》一张落进点名的目录（`CONTEXT.md` 的《样张》）。
+//! 彩色面板上的彩页例外：它走彩色分支、不量化，那一叠只有 `run` 会写出的那一张。
 //!
 //! 库的第四个 seam（[`crate::write_proof`]）落在这里，**它不另写一条管线**：
 //! 打开一张源页（[`crate::open_source_page`]）、量一张灰度页（[`crate::examine_gray_page`]）、
-//! 按一个候选编一张（[`crate::candidate_bytes`]），走的都是转换那一趟的同一批函数，
-//! 只是不经过卷、缓存与汇总那一层（spec《Implementation Decisions》第二条）。
+//! 按一个候选编一张（[`crate::candidate_bytes`]）、编彩色分支上那一张（[`crate::color_bytes`]），
+//! 走的都是转换那一趟的同一批函数，只是不经过卷、缓存与汇总那一层
+//! （spec《Implementation Decisions》第二条）。
 //! 另写一条平行的路，两条路迟早各自漂移——而样张要回答的正是「写出去会是什么样」。
-//! 钉住这一句的是 `tests/proof.rs` 里拿 `run` 当神谕的那一条。
+//! 钉住这一句的是 `tests/proof.rs` 里拿 `run` 当神谕的那几条。
 //!
 //! 印在终端上的那几行不在这里：那是**界面文案**，随调用方走（见二进制侧的 `render`），
 //! 与灰阶测试图同一条规矩。
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::decide::{self, CandidateScore, Verdict};
+use crate::geometry::Fit;
 use crate::quantize::{BitDepth, Candidate};
 use crate::report::{PageBranch, PageOutcome, PageReport, Processed};
 use crate::{
-    Candidates, Examined, GateGroups, GeometryGate, GrayImage, Opened, PageColor, Piece, Pieces,
-    Request, Salvage, WhiteWhenOff, candidate_bytes, decode, encode, examine_gray_page,
-    open_source_page, output_name, resample,
+    Candidates, ColorImage, Examined, GateGroups, GeometryGate, GrayImage, Opened, PageColor,
+    Piece, Pieces, Request, Salvage, Scaling, WhiteAlignment, WhiteWhenOff, candidate_bytes,
+    color_bytes, decode, encode, examine_gray_page, open_source_page, output_name, resample,
 };
 
 /// 一张图出的样张：**一张输出页一叠**，按阅读顺序（spec《Implementation Decisions》第六条）。
@@ -32,49 +35,89 @@ pub struct Proof {
     pub pages: Vec<ProofPage>,
 }
 
-/// 一张输出页的那一叠：这一页的每一个候选各一张，连同《参照》一张。
+/// 一张输出页的那一叠：灰度路径上这一页的每一个候选各一张，连同《参照》一张；
+/// 彩色分支上只有一张。
 #[derive(Debug, Clone)]
 pub struct ProofPage {
-    /// 这一页的几何、判定、画质分曲线、尺寸贴合检查与纸色提白。
+    /// 这一页的几何、分支，灰度路径上还有判定、画质分曲线、尺寸贴合检查与纸色提白。
     ///
     /// **与报告里的一页同一个形状**，不另起一个：几件事都是转换那一趟本来就说得出的，
     /// 界面层说它们的那一套措辞因此照搬得动（spec 第九条：措辞从既有出处取）。
-    /// `output` 指着**判定那一档的那一张**——转换那一趟写出去的就是它（神谕那一条比的也是它）。
+    /// 走的是哪条分支由它说（[`PageReport::branch`]）。
+    /// `output` 指着**转换那一趟写出去的那一张**——灰度路径上是判定那一档的那一张，
+    /// 彩色分支上就是唯一那一张（神谕那几条比的都是它）。
     pub page: PageReport,
-    /// 《参照》那一张：8 位无损写出，没被量化过（spec 第四条：对照本身不许带自己的损伤）。
-    pub reference: Sheet,
-    /// 这一页的每一个候选各一张，与 `page` 的画质分曲线**逐格同序**（由小到大）。
-    ///
-    /// 它不自己再记一遍是哪一档、画质分多少：那两样在曲线上只有一处出处，
-    /// 要成对地读走 [`scored`](Self::scored)。
-    pub candidates: Vec<Sheet>,
+    /// 这一叠落到盘上的那几张，**跟着 `page` 的分支走**：[`Sheets`] 的两种与 [`PageBranch`]
+    /// 的两种一一对应。类型拦不住两者对不上，拦住它的是构造——两样在落盘那一步的**同一个分支**里
+    /// 一起造出来，别处一个都不造。
+    pub sheets: Sheets,
 }
 
 impl ProofPage {
-    /// 这一页的每一个候选，连同它的画质分与它那一张，由小到大。
+    /// 这一页的每一个候选，连同它的画质分与它那一张，由小到大。彩色分支上一个都没有。
     ///
     /// 「第几张是哪一档」只在这里配一次：曲线与那几张逐格同序是 [`crate::write_proof`] 的承诺，
     /// 两边的调用方各自去配，早晚有一处配错位。
     pub fn scored(&self) -> impl Iterator<Item = (&CandidateScore, &Sheet)> {
         let scores = self.page.scores();
+        let candidates: &[Sheet] = match &self.sheets {
+            Sheets::Gray { candidates, .. } => candidates,
+            Sheets::Color(_) => &[],
+        };
         assert_eq!(
             scores.len(),
-            self.candidates.len(),
+            candidates.len(),
             "曲线上一个候选一张：{} 的样张对不上它的画质分曲线",
             self.page.source.display()
         );
-        scores.iter().zip(&self.candidates)
+        scores.iter().zip(candidates)
+    }
+}
+
+/// 一叠样张落到盘上的那几张，**跟着这一页走的那条分支**（[`PageBranch`]）。
+///
+/// 两种而不是几个各自可空的字段，与 [`PageBranch`] 同一条理由：两条分支出的不是同一套——
+/// 彩色分支不量化，没有候选可比，也就没有「量化之前长什么样」的参照可对照
+/// （样张 spec《Implementation Decisions》第七条）。
+#[derive(Debug, Clone)]
+pub enum Sheets {
+    /// 灰度路径：每一个候选各一张，连同《参照》一张。
+    Gray {
+        /// 《参照》那一张：8 位无损写出，没被量化过（spec 第四条：对照本身不许带自己的损伤）。
+        reference: Sheet,
+        /// 每一个候选各一张，与这一页的画质分曲线**逐格同序**（由小到大）。
+        ///
+        /// 它不自己再记一遍是哪一档、画质分多少：那两样在曲线上只有一处出处，
+        /// 要成对地读走 [`ProofPage::scored`]。
+        candidates: Vec<Sheet>,
+    },
+    /// 彩色分支：只有一张，就是 `run` 会写出的那一张（ADR 0005 决定第 4 条）。
+    Color(Sheet),
+}
+
+impl Sheets {
+    /// 这一叠落到盘上的每一张：灰度路径上候选那几张由小到大、参照收尾；彩色分支上就是那一张。
+    pub fn iter(&self) -> impl Iterator<Item = &Sheet> {
+        let (candidates, last): (&[Sheet], &Sheet) = match self {
+            Sheets::Gray {
+                reference,
+                candidates,
+            } => (candidates, reference),
+            Sheets::Color(sheet) => (&[], sheet),
+        };
+        candidates.iter().chain([last])
     }
 }
 
 /// 样张里的一张：落在哪儿、多大。
 ///
-/// 它是哪一张不记在这里：参照那一张是 [`ProofPage::reference`]，候选那几张各是哪一档
-/// 由 [`ProofPage::scored`] 配上。
+/// 它是哪一张不记在这里：由它在 [`Sheets`] 里的位置说——参照、彩色分支那一张各有自己那一格，
+/// 候选那几张各是哪一档由 [`ProofPage::scored`] 配上。
 #[derive(Debug, Clone)]
 pub struct Sheet {
     /// 落在哪个文件上：点名的去处接上这一张的名字——这一页在 `run` 那一侧的成员名，
-    /// 接上它是哪一档（`001.2bit+FS.png`），参照那一张接的是词条名（`001.参照.png`）。
+    /// 接上它是哪一张：候选那几张接它是哪一档（`001.2bit+FS.png`），参照那一张与彩色分支那一张
+    /// 接的是词条名（`001.参照.png`、`001.彩色分支.png`）。
     pub file: PathBuf,
     /// 写出去多少字节：体积与画质两轴要在同一屏上比得了（spec 的 story 16）。
     pub bytes: u64,
@@ -82,6 +125,9 @@ pub struct Sheet {
 
 /// 《参照》那一张文件名里的那一截：取词条名。
 const REFERENCE: &str = "参照";
+
+/// 彩色分支上那一张文件名里的那一截：取词条名（《灰度路径 / 彩色分支》）。
+const COLOR_BRANCH: &str = "彩色分支";
 
 /// 出一张图的样张，见 [`crate::write_proof`]。
 ///
@@ -96,32 +142,63 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         salvage,
         pieces,
     } = open_source_page(source, &bytes, request, &decode::Decoder::default())?;
-    // 彩色分支那一叠（只出 `run` 会写出的那一张，说清走的是彩色分支）归 `proof-sheet/05`；
-    // 在那之前这一支当场说清为什么出不了，而不是出一个空目录让人猜。
-    let Pieces::Gray(pieces) = pieces else {
-        bail!(
-            "{} 在这块面板上走彩色分支：它不量化，没有候选可比",
-            source.display()
-        );
-    };
     // 这一页在 `run` 那一侧的成员名从它推出（见 `crate::output_name`）。
     let name = source
         .file_name()
         .map(Path::new)
         .with_context(|| format!("{} 不是一张图", source.display()))?;
-    // 两套候选各管一件事（样张 spec《Implementation Decisions》第三条）：
-    // 出哪几张照**两道界**裁（`shown`），判定从哪几个里挑照转换那一趟裁（`judged`）——
-    // 覆盖项裁掉的是「这一趟不要」，不是「这一页不可能」。覆盖项越界的那句拒绝
-    // 也由后者照转换那一趟说，一个字不另写。
+    // 判定从哪几个里挑，照转换那一趟裁（见 [`draft_gray`]）。覆盖项越界（点名一档面板写不出）
+    // 的那句拒绝也在这里说，而它排在分流**之前**：转换那一趟碰卷之前就说它
+    // （`ensure_the_overrides_leave_a_candidate`），彩色分支上的页也逃不过——那一趟里它是这一卷的一页。
     let judged = Candidates::new(request)?;
-    let shown = Candidates::without_overrides(&request.profile);
     let resampler = resample::Resampler::default();
     let count = pieces.len();
+    // 走哪条分支由**面板与页**共同决定，那一问在 `open_source_page` 里、只问一次：
+    // 样张照它交出来的那一支走，不自己另判（ADR 0005 决定第 4 条）。
+    //
     // **切出来的每一块各出一叠**，按阅读顺序：样张按输出页出，不按源页（spec 第六条；
     // 停车场 Q996 判的是这一条）。名字照 `run` 给那一块的输出页名（`output_name`）。
-    //
-    // 每一块先量完，判定等整张图量完才下：「覆盖项顶死没有」问的是这张图的**其余页那一组**
-    // （见 [`verdicts`]），一块一块判答不出来（停车场 Q1014）。
+    let drafted = match pieces {
+        Pieces::Gray(pieces) => draft_gray(source, request, &judged, &resampler, pieces)?,
+        Pieces::Color(pieces) => draft_color(source, request, &resampler, pieces)?,
+    };
+    std::fs::create_dir_all(out).with_context(|| format!("建样张的去处 {}", out.display()))?;
+    let pages = drafted
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, drafted)| {
+            drafted.land(
+                source,
+                out,
+                &output_name(name, ordinal, count),
+                color,
+                salvage,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Proof { pages })
+}
+
+/// 灰度路径上切出来的那几块，每一块编好一叠：每一个候选一张，外加《参照》一张。
+///
+/// 两套候选各管一件事（样张 spec《Implementation Decisions》第三条）：
+/// 出哪几张照**两道界**裁（`shown`），判定从哪几个里挑照转换那一趟裁（`judged`）——
+/// 覆盖项裁掉的是「这一趟不要」，不是「这一页不可能」。覆盖项越界的那句拒绝
+/// 也由后者照转换那一趟说，一个字不另写。
+///
+/// 尺寸未贴合屏幕的那一块候选里没有抖动那一维（ADR 0007 决定第 2 条）：`shown` 按这一块的门给
+/// （[`Candidates::for_gate`]），与转换那一趟在同一页上用的是同一套。
+///
+/// 每一块先量完，判定等整张图量完才下：「覆盖项顶死没有」问的是这张图的**其余页那一组**
+/// （见 [`verdicts`]），一块一块判答不出来（停车场 Q1014）。
+fn draft_gray(
+    source: &Path,
+    request: &Request,
+    judged: &Candidates,
+    resampler: &resample::Resampler,
+    pieces: Vec<(GrayImage, Piece)>,
+) -> Result<Vec<Drafted>> {
+    let shown = Candidates::without_overrides(&request.profile);
     let measured = pieces
         .into_iter()
         .map(|(image, piece)| {
@@ -130,10 +207,10 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
                 &image,
                 request,
                 &shown,
-                &resampler,
+                resampler,
                 WhiteWhenOff::Foresee,
             )?;
-            let scores = judged_scores(source, &image, request, &judged, &examined)?;
+            let scores = judged_scores(source, &image, request, judged, &examined)?;
             Ok((examined, piece, scores))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -144,13 +221,12 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
             .map(|(examined, _, scores)| (examined.gate, scores.as_slice()))
             .collect::<Vec<_>>(),
     );
-    let drafted = measured
+    measured
         .into_iter()
         .zip(verdicts)
-        .enumerate()
-        .map(|(ordinal, ((examined, piece, _), verdict))| {
+        .map(|((examined, piece, _), verdict)| {
             let reference = encode::png(examined.reference.image(), BitDepth::Eight, None)?;
-            let sheets = examined
+            let candidates = examined
                 .scores
                 .iter()
                 .map(|score| {
@@ -160,22 +236,59 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
                         .map(|bytes| (score.candidate, bytes))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let Examined {
+                scores,
+                gate,
+                fit,
+                scaling,
+                white,
+                ..
+            } = examined;
             Ok(Drafted {
-                name: output_name(name, ordinal, count),
-                examined,
                 piece,
-                verdict,
-                reference,
-                sheets,
+                fit,
+                scaling,
+                sheets: DraftedSheets::Gray {
+                    gate,
+                    scores,
+                    verdict,
+                    white,
+                    reference,
+                    candidates,
+                },
             })
         })
-        .collect::<Result<Vec<_>>>()?;
-    std::fs::create_dir_all(out).with_context(|| format!("建样张的去处 {}", out.display()))?;
-    let pages = drafted
+        .collect()
+}
+
+/// 彩色分支上切出来的那几块，每一块编好**一张**：`run` 会写出的那一张（ADR 0005 决定第 4 条）。
+///
+/// 这条路不量化：没有候选可比、没有画质分，也就没有参照可对照。它不进尺寸贴合检查
+/// （ADR 0010 决定第 4 条），覆盖项在这里也无从说话——越界的那句拒绝在分流之前已经说过了。
+/// 目标尺寸与转换那一趟同出 [`crate::FitMode::target`]，缩放与编码同出 [`color_bytes`]。
+fn draft_color(
+    source: &Path,
+    request: &Request,
+    resampler: &resample::Resampler,
+    pieces: Vec<(ColorImage, Piece)>,
+) -> Result<Vec<Drafted>> {
+    let panel = request.profile.panel().resolution;
+    pieces
         .into_iter()
-        .map(|drafted| drafted.land(source, out, color, salvage))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Proof { pages })
+        .map(|(image, piece)| {
+            let fit = request.fit.target(image.size(), panel);
+            // 记录交 `None`：样张不写《记录》（spec 第五条）——那一张因此与 `run --no-metadata`
+            // 走的是同一个函数、同一组入参。
+            let (scaling, bytes) =
+                color_bytes(source, &image, fit.size(), request.filter, resampler, None)?;
+            Ok(Drafted {
+                piece,
+                fit,
+                scaling,
+                sheets: DraftedSheets::Color(bytes),
+            })
+        })
+        .collect()
 }
 
 /// 这一块上**判定从哪几格里挑**：画质分是整套求的，挑出转换那一趟在这一块上会留下的那几格。
@@ -226,55 +339,88 @@ fn verdicts(request: &Request, pieces: &[(GeometryGate, &[CandidateScore])]) -> 
 
 /// 一叠编好、还没落盘的样张。
 struct Drafted {
-    /// 这一页在 `run` 那一侧的成员名（`001.png`、`001-2.png`）。
-    name: PathBuf,
-    examined: Examined,
     piece: Piece,
-    verdict: Verdict,
-    /// 《参照》那一张编好的字节。
-    reference: Vec<u8>,
-    /// 每一个候选编好的字节，由小到大。
-    sheets: Vec<(Candidate, Vec<u8>)>,
+    /// 目标尺寸，连同它是不是被兜底上界退回来的。
+    fit: Fit,
+    scaling: Scaling,
+    sheets: DraftedSheets,
+}
+
+/// 一叠编好的那几张，跟着这一块走的那条分支——落盘之后就是 [`Sheets`] 那两种。
+enum DraftedSheets {
+    /// 灰度路径：这一块的门、画质分曲线、判定与纸色提白，连同编好的那几张。
+    Gray {
+        gate: GeometryGate,
+        scores: Vec<CandidateScore>,
+        verdict: Verdict,
+        white: WhiteAlignment,
+        /// 《参照》那一张编好的字节。
+        reference: Vec<u8>,
+        /// 每一个候选编好的字节，由小到大。
+        candidates: Vec<(Candidate, Vec<u8>)>,
+    },
+    /// 彩色分支：唯一那一张编好的字节。
+    Color(Vec<u8>),
 }
 
 impl Drafted {
-    /// 写进去处，拼出这一叠交给调用方的那一份。
+    /// 以 `name`（这一块在 `run` 那一侧的成员名：`001.png`、`001-2.png`）写进去处，
+    /// 拼出这一叠交给调用方的那一份。
     fn land(
         self,
         source: &Path,
         out: &Path,
+        name: &Path,
         color: PageColor,
         salvage: Option<Salvage>,
     ) -> Result<ProofPage> {
         let Self {
-            name,
-            examined,
             piece,
-            verdict,
-            reference,
-            sheets,
-        } = self;
-        let reference = written(out.join(sheet_name(&name, REFERENCE)), &reference)?;
-        let candidates = sheets
-            .iter()
-            .map(|(candidate, bytes)| {
-                written(out.join(sheet_name(&name, &candidate.to_string())), bytes)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let output = sheets
-            .iter()
-            .zip(&candidates)
-            .find(|((candidate, _), _)| *candidate == verdict.candidate)
-            .map(|(_, sheet)| sheet.file.clone())
-            .expect("判定出自这一页的曲线，那一档必在其中");
-        let Examined {
-            scores,
-            gate,
             fit,
             scaling,
-            white,
-            ..
-        } = examined;
+            sheets,
+        } = self;
+        let (output, branch, sheets) = match sheets {
+            DraftedSheets::Gray {
+                gate,
+                scores,
+                verdict,
+                white,
+                reference,
+                candidates,
+            } => {
+                let reference = written(out.join(sheet_name(name, REFERENCE)), &reference)?;
+                let landed = candidates
+                    .iter()
+                    .map(|(candidate, bytes)| {
+                        written(out.join(sheet_name(name, &candidate.to_string())), bytes)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let output = candidates
+                    .iter()
+                    .zip(&landed)
+                    .find(|((candidate, _), _)| *candidate == verdict.candidate)
+                    .map(|(_, sheet)| sheet.file.clone())
+                    .expect("判定出自这一页的曲线，那一档必在其中");
+                (
+                    output,
+                    PageBranch::Gray {
+                        gate,
+                        scores,
+                        verdict,
+                        white,
+                    },
+                    Sheets::Gray {
+                        reference,
+                        candidates: landed,
+                    },
+                )
+            }
+            DraftedSheets::Color(bytes) => {
+                let sheet = written(out.join(sheet_name(name, COLOR_BRANCH)), &bytes)?;
+                (sheet.file.clone(), PageBranch::Color, Sheets::Color(sheet))
+            }
+        };
         let processed = Processed {
             crop: piece.crop,
             backstopped: fit.backstopped(),
@@ -282,12 +428,7 @@ impl Drafted {
             spread_candidate: piece.candidate,
             scaling,
             color,
-            branch: PageBranch::Gray {
-                gate,
-                scores,
-                verdict,
-                white,
-            },
+            branch,
         };
         Ok(ProofPage {
             page: PageReport {
@@ -296,8 +437,7 @@ impl Drafted {
                 size: fit.size(),
                 outcome: PageOutcome::of(processed, salvage),
             },
-            reference,
-            candidates,
+            sheets,
         })
     }
 }
@@ -306,7 +446,7 @@ impl Drafted {
 ///
 /// 页那一截照 [`output_name`] 取（spec 第六条：与 `run` 给的输出页名同一套写法），
 /// 拷进设备之后认得出是哪一页的第几张；候选那一截取 [`Candidate`] 的写法（`2bit+FS`），
-/// 参照那一张取词条名。同一页的几张因此按名字排在一起。
+/// 参照与彩色分支那一张取词条名。同一页的几张因此按名字排在一起。
 fn sheet_name(page: &Path, what: &str) -> PathBuf {
     page.with_extension(format!("{what}.png"))
 }

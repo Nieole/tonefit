@@ -9,7 +9,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use fixtures::Workspace;
-use tonefit::{BitDepth, Candidate, Dither, Proof, ProofPage, Reason, Request, Verdict};
+use tonefit::{
+    BitDepth, Candidate, Dither, PageBranch, PageColor, Proof, ProofPage, Reason, Request, Sheets,
+    Verdict,
+};
 
 /// 一张**普通页**：单页、不拆、灰度路径、门成立——`proof-sheet/02` 的对象。
 ///
@@ -151,9 +154,8 @@ fn a_plain_page_gets_one_sheet_for_every_candidate_and_one_reference() {
         "去处里一个候选一张、外加参照一张：{on_disk:?}"
     );
     let mut named: Vec<String> = page
-        .candidates
+        .sheets
         .iter()
-        .chain([&page.reference])
         .map(|sheet| {
             assert_eq!(
                 fs::metadata(&sheet.file)
@@ -482,7 +484,10 @@ fn the_reference_sheet_is_eight_bit_gray_and_was_never_quantized() {
     let proof = plain.proof();
     let page = only_page(&proof);
 
-    let reference = fixtures::read_png(&page.reference.file);
+    let Sheets::Gray { reference, .. } = &page.sheets else {
+        panic!("普通页走灰度路径，那一叠有参照");
+    };
+    let reference = fixtures::read_png(&reference.file);
     assert_eq!(reference.color_type, png::ColorType::Grayscale);
     assert_eq!(reference.bit_depth, png::BitDepth::Eight);
     assert_eq!(
@@ -550,7 +555,7 @@ fn no_sheet_carries_a_text_chunk() {
 
     let proof = plain.proof();
     let page = only_page(&proof);
-    for sheet in page.candidates.iter().chain([&page.reference]) {
+    for sheet in page.sheets.iter() {
         assert_eq!(
             fixtures::read_png_text(&sheet.file),
             Vec::new(),
@@ -695,9 +700,8 @@ fn run_names(volume: &tonefit::VolumeReport) -> Vec<String> {
 /// 一叠样张里每一张的文件名，候选那几张在前、参照收尾。
 fn sheet_names(stack: &ProofPage) -> Vec<String> {
     stack
-        .candidates
+        .sheets
         .iter()
-        .chain([&stack.reference])
         .map(|sheet| {
             sheet
                 .file
@@ -966,4 +970,273 @@ fn a_single_override_on_a_spread_whose_halves_part_at_the_gate_is_judged_as_run_
             stack.page.cut()
         );
     }
+}
+
+// ── 彩页与尺寸未贴合屏幕（`proof-sheet/05`）──────────────────────────────────
+//
+// 两种页拿不到整叠样张，理由各不相同：彩色面板上的彩页走彩色分支、不量化，没有候选可比；
+// 尺寸未贴合屏幕的页候选里没有抖动那一维。两种都拿**同一份请求交给 `run`** 当对照。
+
+/// 彩色面板：与 [`Staged`] 点名的基准面板同分辨率、同 PPI，差的只有彩色那一项（ADR 0010 决定第 1 条）。
+const COLOR_DEVICE: &str = "kobo-libra-colour";
+
+/// 一张**彩页**：普通页（[`plain_page`]）染成真彩色（[`fixtures::colorize`]），白边仍是纯白。
+///
+/// 染过之后裁白边、缩放两步照样真在做事：四周那圈白边还在，内容那一块仍比面板高。
+fn color_plain_page() -> image::DynamicImage {
+    fixtures::colorize(&plain_page(CONTENT))
+}
+
+/// **彩色面板上的彩页只出一张**：没有候选、没有画质分、没有参照，交出来的数据说得出
+/// 它走的是彩色分支（ADR 0005 决定第 4 条；样张 spec《Implementation Decisions》第七条）。
+///
+/// 那一张的名字照别的样张的规矩起：页那一截是 `run` 的成员名，接上它是哪一张——这里接的是
+/// 词条名《彩色分支》（参照那一张接的是《参照》）。
+#[test]
+fn a_color_page_on_a_color_panel_gets_one_sheet_and_no_candidates() {
+    let staged = Staged::of(&color_plain_page());
+    let request = Request {
+        profile: fixtures::profile(COLOR_DEVICE),
+        ..staged.request.clone()
+    };
+
+    let proof = tonefit::write_proof(&staged.source, &request, &staged.sheets()).expect("出样张");
+    let page = only_page(&proof);
+
+    assert_eq!(
+        page.page.color(),
+        Some(PageColor::Color),
+        "夹具的前提：这是一张彩页"
+    );
+    assert!(
+        matches!(page.page.branch(), Some(PageBranch::Color)),
+        "交出来的数据说不出它走的是彩色分支：{:?}",
+        page.page.branch()
+    );
+    assert_eq!(page.page.verdict(), None, "彩色分支上没有判定");
+    assert!(page.page.scores().is_empty(), "彩色分支上没有画质分");
+    assert_eq!(page.scored().count(), 0, "彩色分支上没有候选");
+    let Sheets::Color(sheet) = &page.sheets else {
+        panic!("彩色分支那一叠该只有一张：{:?}", page.sheets);
+    };
+    assert_eq!(
+        page.page.output, sheet.file,
+        "那一张就是 `run` 会写出的那一张"
+    );
+    assert_eq!(
+        fixtures::directory_members(&staged.sheets()),
+        ["001.彩色分支.png"],
+        "去处里只该有那一张"
+    );
+    assert_eq!(
+        fs::metadata(&sheet.file).expect("那一张在盘上").len(),
+        sheet.bytes,
+        "交出来的字节数就是盘上那一张的大小"
+    );
+    assert_ne!(
+        fixtures::read_color_png(&sheet.file).color_type,
+        png::ColorType::Grayscale,
+        "彩色分支上那一张留着颜色"
+    );
+}
+
+/// **神谕在彩页上跑一遍**：彩色面板上那唯一一张与 `run --no-metadata` 写出的那一张**逐字节相同**
+/// （样张 spec《Testing Decisions》第一条）。
+///
+/// 前提照普通页那一条的规矩先问：白边真的裁掉了、内容真的被缩放过，那一张真的留着颜色——
+/// 任何一条不成立，下面那个等号就是在一张「什么都没发生」的页上成立的。
+#[test]
+fn the_color_sheet_is_byte_for_byte_what_run_writes_without_metadata() {
+    let staged = Staged::of(&color_plain_page());
+    let request = Request {
+        profile: fixtures::profile(COLOR_DEVICE),
+        ..staged.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&staged.source, &request, &staged.sheets()).expect("出样张");
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert!(
+        matches!(ran.branch(), Some(PageBranch::Color)),
+        "夹具的前提：转换那一趟走的是彩色分支"
+    );
+    let page = only_page(&proof);
+    let crop = page.page.crop().expect("处理成了的页有裁白边那一格");
+    assert!(crop.trimmed(), "夹具的前提：白边真的裁掉了");
+    assert_ne!(page.page.size, crop.after(), "夹具的前提：内容真的被缩放过");
+    assert_ne!(
+        fixtures::read_color_png(&ran.output).color_type,
+        png::ColorType::Grayscale,
+        "夹具的前提：转换那一趟写出的那一张留着颜色"
+    );
+    assert!(
+        page.page.output.starts_with(staged.sheets()),
+        "那一张指着样张的去处，不是转换那一趟的输出"
+    );
+    let written = fs::read(&ran.output).expect("读转换那一趟写出的那一张");
+    let proofed = fs::read(&page.page.output).expect("读样张里彩色分支那一张");
+    assert!(
+        written == proofed,
+        "彩色分支那一张与转换那一趟写出的不是同一串字节（样张 {} 字节，转换 {} 字节）",
+        proofed.len(),
+        written.len()
+    );
+}
+
+/// **黑白面板上同一张彩页转灰，出整叠**，与灰度路径上的普通页同形：每一个候选一张、参照一张，
+/// 名字一张不差（ADR 0005 决定第 4 条；样张 spec 的 story 23）。
+///
+/// 走哪条分支由**面板与页**共同决定：同一张彩页换一块黑白面板，就不再走彩色分支——
+/// 它仍然是一张彩页（交出来的数据说得出），只是转了灰。判定那一张也照神谕比一次字节。
+#[test]
+fn the_same_color_page_on_a_monochrome_panel_gets_a_full_gray_proof_page() {
+    let staged = Staged::of(&color_plain_page());
+    assert!(
+        !staged.request.profile.panel().color,
+        "夹具的前提：[`Staged`] 点名的是一块黑白面板"
+    );
+
+    let report = tonefit::run(&staged.request).expect("转换那一趟");
+    let proof = staged.proof();
+    let page = only_page(&proof);
+
+    assert_eq!(
+        page.page.color(),
+        Some(PageColor::Color),
+        "转了灰的彩页仍然说得出自己是彩页"
+    );
+    let gate = page.page.gate().expect("转灰之后走灰度路径，有门");
+    let proofed: Vec<Candidate> = page.scored().map(|(scored, _)| scored.candidate).collect();
+    assert_eq!(
+        proofed,
+        Candidate::all(staged.request.profile.panel().gray_levels, gate),
+        "交出来的候选集不是这一页的门派得出的那一整套"
+    );
+    assert!(
+        matches!(page.sheets, Sheets::Gray { .. }),
+        "黑白面板上那一叠该有参照"
+    );
+
+    // 同形：与一张普通页那一叠的名字一张不差。
+    let plain = Staged::plain();
+    plain.proof();
+    assert_eq!(
+        fixtures::directory_members(&staged.sheets()),
+        fixtures::directory_members(&plain.sheets()),
+        "转灰的彩页那一叠与普通页那一叠不同形"
+    );
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert_eq!(
+        page.page.verdict(),
+        ran.verdict(),
+        "样张与转换那一趟定下的不是同一档、同一个理由"
+    );
+    assert!(
+        fs::read(&ran.output).expect("读转换那一趟写出的那一张")
+            == fs::read(&page.page.output).expect("读样张里判定那一档的那一张"),
+        "判定那一张与转换那一趟写出的不是同一串字节"
+    );
+}
+
+/// **尺寸未贴合屏幕的页：候选里没有抖动那一维，交出来的数据说得出门不成立**；
+/// 那一套就是 `run` 在同一页上用的那一套（神谕；ADR 0007 决定第 2 条）。
+///
+/// 页比面板小、fit-inside 不放大（[`SMALL`]）：目标尺寸哪条边都贴不住面板。
+/// 前提先问两件：门成立时那一套比这一套多（门真的拿走了东西），转换那一趟在这一页上也是门不成立。
+/// 判定那一张照神谕比一次字节。
+#[test]
+fn a_page_the_geometry_gate_shuts_gets_no_dithered_sheets_and_the_candidates_run_uses() {
+    let small = Staged::plain_of(SMALL);
+    let request = Request {
+        fit: tonefit::FitMode::Inside,
+        ..small.request.clone()
+    };
+
+    let report = tonefit::run(&request).expect("转换那一趟");
+    let proof = tonefit::write_proof(&small.source, &request, &small.sheets()).expect("出样张");
+
+    let [ran] = report.volumes[0].pages.as_slice() else {
+        panic!("一页的卷，报告里该有一页");
+    };
+    assert_eq!(
+        ran.gate(),
+        Some(tonefit::GeometryGate::Broken),
+        "夹具的前提：转换那一趟在这一页上门不成立"
+    );
+    let page = only_page(&proof);
+    assert_eq!(
+        page.page.gate(),
+        Some(tonefit::GeometryGate::Broken),
+        "交出来的数据说不出门不成立"
+    );
+    let proofed: Vec<Candidate> = page.scored().map(|(scored, _)| scored.candidate).collect();
+    assert!(
+        proofed
+            .iter()
+            .all(|candidate| candidate.dither == Dither::Off),
+        "门不成立的页候选里有抖动那一维：{proofed:?}"
+    );
+    assert!(
+        proofed.len()
+            < Candidate::all(
+                request.profile.panel().gray_levels,
+                tonefit::GeometryGate::Holds
+            )
+            .len(),
+        "夹具的前提：门成立时那一套比这一套多"
+    );
+    let used: Vec<Candidate> = ran.scores().iter().map(|scored| scored.candidate).collect();
+    assert_eq!(
+        proofed, used,
+        "样张的候选集不是转换那一趟在同一页上用的那一套"
+    );
+    assert_eq!(
+        fixtures::directory_members(&small.sheets()).len(),
+        proofed.len() + 1,
+        "去处里该是这一套候选各一张、外加参照一张"
+    );
+    assert!(
+        fs::read(&ran.output).expect("读转换那一趟写出的那一张")
+            == fs::read(&page.page.output).expect("读样张里判定那一档的那一张"),
+        "判定那一张与转换那一趟写出的不是同一串字节"
+    );
+}
+
+/// **点名一档这块面板写不出的灰阶档位，彩色分支上的页也照转换那一趟拒绝**，去处里一张都没有。
+///
+/// 转换那一趟碰卷之前就说这一句——一卷里只有彩页也一样，那一趟里它是这一卷的一页。
+/// 样张要是只在灰度路径上问覆盖项，一张彩页就会在转换那一趟拒绝的请求上照出一张。
+#[test]
+fn an_override_the_panel_cannot_write_is_refused_on_a_color_page_as_run_refuses_it() {
+    let staged = Staged::of(&color_plain_page());
+    let request = Request {
+        profile: fixtures::profile(COLOR_DEVICE),
+        bit_depth: Some(BitDepth::Eight),
+        ..staged.request.clone()
+    };
+    assert!(
+        BitDepth::Eight.levels() > request.profile.panel().gray_levels,
+        "夹具的前提：这块面板写不出 8bit"
+    );
+
+    let ran = tonefit::run(&request).expect_err("转换那一趟该拒绝");
+    let proofed = tonefit::write_proof(&staged.source, &request, &staged.sheets())
+        .expect_err("样张该照转换那一趟拒绝");
+
+    assert_eq!(
+        format!("{proofed:#}"),
+        format!("{ran:#}"),
+        "样张与转换那一趟说的不是同一句"
+    );
+    assert!(
+        !staged.sheets().exists(),
+        "拒绝了还在去处里留了东西：{:?}",
+        fixtures::directory_members(&staged.sheets())
+    );
 }
