@@ -442,10 +442,10 @@ impl Deliberation {
 ///
 /// 规矩说的是「**没有**发生某件事」，而一把 guard 活到哪儿是编译期的作用域问题，
 /// 跑起来看不见：往管线里加一条报到，摆错了地方不会红，会死锁（停车场 Q40）。
-/// 哨兵把它变成看得见的——持着[卷缓存那把锁](crate::lock)走到报到那一步，
+/// 哨兵把它变成看得见的——持着[卷缓存那把锁](crate::pipeline::lock)走到报到那一步，
 /// [`Events::ask`] 当场恐慌，消息里指名是哪一处报到。
 ///
-/// 它是一枚 RAII 凭据：`crate::lock` 每交出一把锁就造一枚，锁放掉时它跟着析构。
+/// 它是一枚 RAII 凭据：`crate::pipeline::lock` 每交出一把锁就造一枚，锁放掉时它跟着析构。
 /// 数的是**这条线程**手上有几把——分析环节每条 rayon 线程各拿各的缓存锁，
 /// 一格全局计数会把别的线程的那把算到自己头上。计数而不是布尔，多握一把不抹掉前一把。
 ///
@@ -455,7 +455,7 @@ impl Deliberation {
 /// 会话那一端本来就要拿锁画屏。
 ///
 /// **发布构建上整个不在**（`cfg(debug_assertions)`）：为一个调试期的检查给每张页加开销，
-/// 得不偿失。`crate::CacheGuard` 那一格因此在发布构建上退化成一把裸 `MutexGuard`。
+/// 得不偿失。`crate::pipeline::CacheGuard` 那一格因此在发布构建上退化成一把裸 `MutexGuard`。
 #[cfg(debug_assertions)]
 pub(crate) struct LockSentinel(());
 

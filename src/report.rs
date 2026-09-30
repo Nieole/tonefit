@@ -391,7 +391,7 @@ pub struct VolumeReport {
     ///
     /// 一个源页产出一到多张输出页（页几何批 03 号票），同一源页切出来的那几张挨着排。
     /// 因此这里的条数是输出那一侧的数，源那一侧的数在 [`source_pages`](Self::source_pages)。
-    /// 一张源页切成几张由拆分跨页说了算（页几何批 04 号票），上界是 `crate::MAX_OUTPUTS_PER_SOURCE_PAGE`。
+    /// 一张源页切成几张由拆分跨页说了算（页几何批 04 号票），上界是 `crate::pipeline::MAX_OUTPUTS_PER_SOURCE_PAGE`。
     ///
     /// **留下的页不在里面**（two-pass-rework/14）：那几页这一趟没解、没判、没编，逐页结果
     /// 里的每一格——几何、画质分、判定——都无从谈起，摆一份编出来的上去不如不摆。
@@ -577,10 +577,10 @@ pub enum VolumeVerdict {
     /// 幂等命中：输出已经在，且工具版本、profile、参数、源都没变，本卷一页都没有重做
     /// （ADR 0006：同一批 tEXt 字段兼作幂等依据）。源那一项按这一趟的作用域比：
     /// `--envelope` 那条路是全卷一个数，默认路径是每一页各自那一份加上透传文件与陈旧产物那两问
-    /// （two-pass-rework/15，见 `crate::compare_with_the_prior_output`）。
+    /// （two-pass-rework/15，见 `crate::pipeline::compare_with_the_prior_output`）。
     ///
     /// `page_count` 是这一卷的**输出**页数——上一趟写在那儿、这一趟逐个比过依据的那些页
-    /// （见 `crate::compare_with_the_prior_output`）。不做工作也数得出来：那份名单从记录里
+    /// （见 `crate::pipeline::compare_with_the_prior_output`）。不做工作也数得出来：那份名单从记录里
     /// 读回来。源那一侧的数在 [`VolumeReport::source_pages`]。
     ///
     /// 它不叫 `pages`：[`VolumeReport::pages`] 是逐页结果，而跳过的那一趟一份都没有。
@@ -697,8 +697,8 @@ pub struct PageReport {
 ///
 /// **三种，不是两种。** 12 号票只问「解出来了吗」，而救回 99% 与救回 0 行在那一层是同一个
 /// 答案。中间那一种单列出来，是因为它在管线上真的与另外两种都不同：完好页什么都参加，
-/// 残缺页**不参与尺寸贴合检查与整卷统一灰阶**（见 `crate::first_pass` 与
-/// `crate::summarize_volume`），坏页连像素都没有。
+/// 残缺页**不参与尺寸贴合检查与整卷统一灰阶**（见 `crate::pipeline::first_pass` 与
+/// `crate::pipeline::summarize_volume`），坏页连像素都没有。
 ///
 /// 这一层与 [`PageBranch`] 问的不是同一件事：这里问「这一页解出来了多少」，那里问
 /// 「解出来之后它走了哪条路」。合成一个枚举就得回答「坏页走的是哪条分支」，
@@ -792,7 +792,7 @@ pub struct Processed {
 impl PageOutcome {
     /// 处理成了的一页，按**救回没救回**装成完好页或残缺页。
     ///
-    /// 转换那一趟拼报告（`crate::OutputPage::to_report`）与样张（`crate::proof`）两处都拼这一格，
+    /// 转换那一趟拼报告（`crate::pipeline::OutputPage::to_report`）与样张（`crate::proof`）两处都拼这一格，
     /// 「`salvage` 在就是残缺页」这一句因此只写在这里。
     pub(crate) fn of(page: Processed, salvage: Option<Salvage>) -> Self {
         match salvage {

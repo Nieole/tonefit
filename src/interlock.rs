@@ -9,7 +9,7 @@
 //!
 //! **那句话本身也在这里**（[`Interlock`] 的 `Display`）。措辞照例归界面层，
 //! 这一处是有理由的例外：同一句要从三张嘴里出来——报告抬头、`--help`、以及那条拒绝的
-//! 错误，而最后一张嘴在库内（见 `crate::dither_outside_the_gate_error`）。把它挪去界面层，
+//! 错误，而最后一张嘴在库内（见 `crate::pipeline::dither_outside_the_gate_error`）。把它挪去界面层，
 //! 库里那一份就成了第二个出处。变体自己的文档因此**不复述那句话**，只说它咬的是哪几项、
 //! 为什么这么处置。
 //!
@@ -113,7 +113,7 @@ impl Interlock {
     /// 它单独一个入口，不并进 [`engaged`](Self::engaged)：别的几条只看开关，这一条还要一页——
     /// 尺寸贴合检查是**页**的几何事实，一卷里可能一页都不撞（ADR 0007 决定第 1 条）。
     ///
-    /// **那条拒绝就由这一处判出来**（见 `crate::why_nothing_is_left`）：候选集抖动那一维被裁空
+    /// **那条拒绝就由这一处判出来**（见 `crate::pipeline::why_nothing_is_left`）：候选集抖动那一维被裁空
     /// 与这一问是同一件事，不是拿它去核对的第二个说法。
     ///
     /// 问的是「这一趟点名的那一档，门放不放行」——门放行哪几档只有
@@ -262,9 +262,9 @@ mod tests {
     /// `debug_assert!` 拴着，只在调试构建上验。这一条接下那份工，两种构建上都跑。
     ///
     /// 扫的是两个覆盖项 × 两种门的全部组合，逐格问三件事：裁完还剩不剩、
-    /// `crate::why_nothing_is_left` 说不说得出话、以及说话的是不是本条。
+    /// `crate::pipeline::why_nothing_is_left` 说不说得出话、以及说话的是不是本条。
     /// 第三问只在灰阶档位那一维过得去时问——两维一起对不上时报的是灰阶档位那一句
-    /// （见 `crate::why_nothing_is_left`）。
+    /// （见 `crate::pipeline::why_nothing_is_left`）。
     #[test]
     fn the_refusal_is_driven_by_this_interlock_alone() {
         let panel = crate::tests::request().profile.panel();
@@ -285,11 +285,15 @@ mod tests {
                                 bit_depth.is_none_or(|named| candidate.bit_depth == named)
                                     && dither.is_none_or(|named| candidate.dither == named)
                             });
-                    let said = crate::why_nothing_is_left(&request, gate);
+                    let said = crate::pipeline::why_nothing_is_left(&request, gate);
                     let at = format!("{bit_depth:?} {dither:?} {gate:?}");
 
                     assert_eq!(empty, said.is_some(), "{at}");
-                    assert_eq!(empty, crate::candidates(&request, gate).is_err(), "{at}");
+                    assert_eq!(
+                        empty,
+                        crate::pipeline::candidates(&request, gate).is_err(),
+                        "{at}"
+                    );
                     if bit_depth.is_none_or(|named| depths.contains(&named)) {
                         assert_eq!(
                             said.is_some(),

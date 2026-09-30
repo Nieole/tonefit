@@ -36,7 +36,7 @@ pub struct Verdict {
 ///
 /// 逐页与卷级两层共用本枚举，不是各起一个：两套并存的话，一份报告里
 /// 「这一档为什么是它」就有两种读法，而判定可解释正是 story 7 要的东西。
-/// 前三种由逐页判定给出，后四种由卷级汇总给出（`envelope` 与 `crate::summarize_volume`）。
+/// 前三种由逐页判定给出，后四种由卷级汇总给出（`envelope` 与 `crate::pipeline::summarize_volume`）。
 ///
 /// spec 把 `Skipped` 也列在判定理由里，它落在 [`crate::VolumeVerdict`] 而不是这里：
 /// 幂等命中是**整卷**的结果，那一趟一页都没有重做，也就没有逐页的理由可给
@@ -96,7 +96,7 @@ impl std::fmt::Display for Reason {
 /// `scores` 是这一页各候选的画质分值，由小到大——[`Candidate::all`] 就是这个次序，
 /// 「最低的一档」靠的正是它。
 ///
-/// `pinned` 是覆盖项裁到只剩一个候选时的那一个（见 `crate::pinned`）：判定被顶掉，
+/// `pinned` 是覆盖项裁到只剩一个候选时的那一个（见 `crate::pipeline::pinned`）：判定被顶掉，
 /// 画质分说什么都不改变结果。裁到只剩一个而**没有**覆盖项的面板（`--gray-levels 2`
 /// 撞上尺寸未贴合屏幕）不走这条路——那不是「被顶掉」，那一档仍是判出来的。
 pub fn decide(

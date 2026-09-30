@@ -338,7 +338,7 @@ impl Crop {
     /// 的区别只在所有权：这一个借图，因此同一张图上取得出两块——拆分跨页要的正是这件事。
     ///
     /// 它恒复制一份，连整页那个窗口也复制。调用方因此要自己躲开那一下
-    /// （`crate::Compute` 上一对一那条路根本不走这里）。
+    /// （`crate::pipeline::Compute` 上一对一那条路根本不走这里）。
     pub(crate) fn take_gray(self, image: &GrayImage) -> GrayImage {
         GrayImage::new(self.after, self.cut(image.pixels()))
     }
