@@ -1443,6 +1443,7 @@ pub(crate) mod fixture {
             resizes: 0,
             cached_references: 0,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: took(Duration::from_secs(3)),
         }
     }
@@ -1518,6 +1519,7 @@ pub(crate) mod fixture {
             resizes: 1,
             cached_references: 1,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: took(Duration::from_secs(72)),
         }
     }
@@ -1680,6 +1682,7 @@ pub(crate) mod fixture {
             resizes: 7,
             cached_references: 6,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: took(Duration::from_secs(96)),
         }
     }

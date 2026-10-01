@@ -423,6 +423,11 @@ enum Branch {
         /// （[`align_white`](crate::align_white)），重算一遍就是第二处——而对齐过的图上
         /// 重算出来的答案还是错的（那时纸白已经是 255 了）。
         white: WhiteAlignment,
+        /// **分析环节就编好了的话**，编好的那一页有多少字节（say-and-stop/06：产物体积）。
+        ///
+        /// 字节本身进了缓存（见 [`Settles`]），这里只留它的长度：确认点上还没写出的那一卷，
+        /// 说得出产物体积靠的就是它。整卷统一灰阶那条路、dry-run 这一页还没编，是 `None`。
+        encoded: Option<u64>,
     },
     /// 彩色分支：分析环节缩放并编好的 PNG 字节，等写出那一遍按阅读顺序落位。
     ///
@@ -478,6 +483,24 @@ impl OutputPage {
                 ..
             } => Some(*gate),
             _ => None,
+        }
+    }
+
+    /// 这一页写出去的那串字节**此刻已经编好了**的话，它有多长（say-and-stop/06：产物体积）。
+    ///
+    /// 默认那条路与顶死的那一趟灰度页分析环节就编好了，照做那一趟的彩页同样；整卷统一灰阶那条路上的
+    /// 灰度页、dry-run 的每一页、坏页（空白占位页要到写出环节才画）都还没有字节，是 `None`。
+    fn bytes_in_hand(&self) -> Option<u64> {
+        match &self.outcome {
+            Outcome::Processed {
+                branch: Branch::Gray { encoded, .. },
+                ..
+            } => *encoded,
+            Outcome::Processed {
+                branch: Branch::Color { encoded },
+                ..
+            } => encoded.as_ref().map(|bytes| bytes.len() as u64),
+            Outcome::Failed { .. } => None,
         }
     }
 
@@ -1115,7 +1138,7 @@ impl Compute<'_> {
             &self.counters.resampler,
             WhiteWhenOff::of(request.mode),
         )?;
-        let slot = match self.settles {
+        let (slot, encoded) = match self.settles {
             // 这一页的档分析环节就定得下——默认那条路上画质分一出来就定了，顶死的那一趟碰卷之前
             // 就定死了——量化与编码当场做完，那一格从头装的就是编好的字节，
             // **参照一张都不进缓存**（06、12 号票；ADR 0018）。
@@ -1137,17 +1160,23 @@ impl Compute<'_> {
                     recorder.as_ref(),
                 )
                 .with_context(|| format!("编 {} 这一页", source.display()))?;
-                cost::stage(cost::Stage::CacheIn, || {
+                // 长度先留下：字节进了缓存就要等写出环节才取得回来（产物体积要它）。
+                let length = bytes.len() as u64;
+                let slot = cost::stage(cost::Stage::CacheIn, || {
                     lock(self.cache).insert_encoded(bytes, reference.image())
-                })
+                });
+                (slot, Some(length))
             }
             // 整卷统一灰阶那条路存参照：那一档要看完整卷才定得下。
-            Settles::AfterTheVolume => cost::stage(cost::Stage::CacheIn, || {
-                let block = cache::compress(reference.image());
-                lock(self.cache).insert(block)
-            }),
-        }
-        .with_context(|| format!("缓存 {} 这一页", source.display()))?;
+            Settles::AfterTheVolume => {
+                let slot = cost::stage(cost::Stage::CacheIn, || {
+                    let block = cache::compress(reference.image());
+                    lock(self.cache).insert(block)
+                });
+                (slot, None)
+            }
+        };
+        let slot = slot.with_context(|| format!("缓存 {} 这一页", source.display()))?;
         Ok(placement.into_page(
             source,
             Outcome::Processed {
@@ -1163,6 +1192,7 @@ impl Compute<'_> {
                     gate,
                     slot,
                     white,
+                    encoded,
                 },
                 salvage,
             },
@@ -1679,6 +1709,15 @@ impl<'a> Slot<'a> {
         }
     }
 
+    /// 这一格要写出去的字节此刻已经在手上的话，有多少（say-and-stop/06：产物体积）。
+    /// 重做的一张问它自己（[`OutputPage::bytes_in_hand`]）；留下的一张比对时就量过了。
+    fn bytes_in_hand(&self) -> Option<u64> {
+        match self {
+            Slot::Redone { page, .. } => page.bytes_in_hand(),
+            Slot::Retained(page) => Some(page.bytes),
+        }
+    }
+
     /// 这一格要写出去的东西：重做的一张现取字节（编或从缓存取回），留下的一张只记下名字，
     /// 字节等写出时从上一趟的输出里搬——那一份读起来要 `&mut`，不进并行那一段。
     fn ready(&self, encode: &Encode) -> Result<Ready<'a>> {
@@ -1701,6 +1740,32 @@ enum Ready<'a> {
     },
     /// 留下的一张，轮到它时从上一趟的输出里搬（见 [`second_pass`]）。
     Retained(&'a Path),
+}
+
+/// 这一卷**写出环节还没走就说得出**的产物体积（say-and-stop/06；口径见 [`VolumeReport::output_bytes`](crate::VolumeReport::output_bytes)）。
+///
+/// **按路说**：只在分析环节就把字节编好的那两条路上有（[`Settles::encodes_in_the_first_pass`]：
+/// 默认那条路与顶死的那一趟，照做那一趟）。等整卷的那条路（`--envelope` 而没顶死）与 dry-run 一律 `None`——
+/// 哪怕这一卷碰巧全是彩页、字节其实在手上（停车场 Q1260）：「那条路预览时整行不出现」说的是路，
+/// 读报告的人不必逐卷去猜。
+///
+/// 路对了还得**每一格此刻都有字节**：坏页那张空白占位页要到写出环节才画，缺一格就是 `None`
+/// （停车场 Q1259）——不拿一个偏小的数冒充。留下的页比对时量过；透传文件的字节数开卷时就在
+/// 成员表上（[`Member::bytes`]），写出时原样搬过去，一个字节不改。
+///
+/// 确认点上（会话的预览停在那儿等人）交给观察者的那一份读它，答了做完再停的那一卷收摊时也读它。
+/// 走了写出环节的那一卷不读它：那一卷写进容器多少字节，[`second_pass`] 当场数得出来。
+/// 两处说的是同一个口径，`crate::process_volume` 里一条 `debug_assert!` 钉着它们对得上。
+pub(crate) fn output_bytes_up_front(
+    slots: &[Slot],
+    extras: &[Member],
+    settles: Settles,
+) -> Option<u64> {
+    if !settles.encodes_in_the_first_pass() {
+        return None;
+    }
+    let pages: Option<u64> = slots.iter().map(Slot::bytes_in_hand).sum();
+    pages.map(|pages| pages + extras.iter().map(|extra| extra.bytes).sum::<u64>())
 }
 
 /// 留下的与重做的按**阅读顺序**交错成写出环节要写的那一串（two-pass-rework/14）。
@@ -1787,13 +1852,18 @@ pub(crate) fn in_reading_order<'a>(
 /// 同一份）整页读回，一个字节不改，照写页那条路写进这一趟的容器——不解码、不判、不编。
 /// 记录里没有要改写的东西：页级那条路上每一页的记录只取决于它自己（收掉卷级那一项之后，
 /// 停车场 Q681 里的另一条路成了唯一的路），产物因此与整卷重做的逐字节相同。
+///
+/// **交回写进去的页一共多少字节**（say-and-stop/06：产物体积，见 [`VolumeReport::output_bytes`](crate::VolumeReport::output_bytes)）：重做的与留下的都算——
+/// 留下的页同样写进了这一趟的容器。数的是交给容器的那一串字节，容器自己的开销不在里面。
+/// 立即停止半路回来时那个数不全，而调用方那时连同整卷一起丢掉，不读它。
 pub(crate) fn second_pass(
     slots: &[Slot],
     encode: &Encode,
     sink: &mut Sink,
     mut prior_output: Option<&mut sink::Written>,
     events: progress::Events,
-) -> Result<()> {
+) -> Result<u64> {
+    let mut delivered = 0;
     for batch in slots.chunks(cores()) {
         let ready: Vec<Ready<'_>> = batch
             .par_iter()
@@ -1805,21 +1875,27 @@ pub(crate) fn second_pass(
             // 停在写出这一侧而不是编码那一侧：白编一批（至多核数张）远比多写一页便宜，
             // 而「已经写了几页」才是立即停止要回答的那个问题。
             if events.aborting() {
-                return Ok(());
+                return Ok(delivered);
             }
-            cost::stage(cost::Stage::Write, || match page {
-                Ready::Encoded { target, bytes } => sink.write_page(target, &bytes),
+            delivered += cost::stage(cost::Stage::Write, || match page {
+                Ready::Encoded { target, bytes } => write_counted(sink, target, &bytes),
                 // 留下的页从上一趟的输出里原样搬过来（two-pass-rework/14）。那一份在按页那一支上
                 // 恒打开着（见 [`Reuse::ByPage`]）；不在就是调用方拿错了路，当场报。
                 Ready::Retained(target) => match prior_output.as_mut() {
-                    Some(output) => sink.write_page(target, &output.bytes_of(target)?),
+                    Some(output) => write_counted(sink, target, &output.bytes_of(target)?),
                     None => bail!("留下 {} 这一页时没有上一趟的输出可搬", target.display()),
                 },
             })?;
             events.step();
         }
     }
-    Ok(())
+    Ok(delivered)
+}
+
+/// 写一页，交回它有多少字节：[`second_pass`] 那笔账一页一页在这里记。
+fn write_counted(sink: &mut Sink, target: &Path, bytes: &[u8]) -> Result<u64> {
+    sink.write_page(target, bytes)?;
+    Ok(bytes.len() as u64)
 }
 
 /// 写出环节上每条计算线程共用的那一摊，与分析环节的 [`Compute`] 同一个用意。
@@ -2089,12 +2165,12 @@ enum Feeding {
 /// 哪几项、有没有页的记录读不出（[`WhyRedone`]）；没什么可说的是 `None`。整卷跳过没有这一问。
 pub(crate) enum Reuse {
     /// 上一趟的输出还齐着——**整卷跳过**（spec 的 story 8）。`page_count` 是上一趟写在那儿的
-    /// 输出页数。
+    /// 输出页数，`bytes` 是那一份的产物体积（say-and-stop/06：各页与透传文件的字节之和，比的时候顺手量的）。
     ///
     /// 两条路各有各的「齐」（two-pass-rework/15）：卷级那条路上是每一页都记着这份指纹、
     /// 透传文件都在；页级那条路上是每一页各自都没变、透传文件各自都没变、输出里再没有别的
     /// （见 [`compare_with_the_prior_output`]）。
-    Whole { page_count: usize },
+    Whole { page_count: usize, bytes: u64 },
     /// 页级那条路上卷不齐，**按页**（two-pass-rework/14）：逐源页答留不留（[`Retained`]）。
     /// 一页都不留也是这一支——那时与整卷重做走的是同一条路，只是留下的页由搬代替了做。
     ///
@@ -2150,6 +2226,9 @@ pub(crate) struct RetainedPage {
     target: PathBuf,
     /// 上一趟写它时的像素尺寸，读自它的记录。卷内统一尺寸要数它（见 [`uniform_size`]）。
     size: Size,
+    /// 它在上一趟的输出里有多少字节，读记录时顺手量的（say-and-stop/06：产物体积）。
+    /// 写出环节原样搬它，一个字节不改，因此这也是它写进这一趟容器的字节数。
+    bytes: u64,
 }
 
 /// 拿上一趟的输出比这一趟的依据（spec 的 story 8；two-pass-rework/14 把答案从两种扩成三种）。
@@ -2252,28 +2331,40 @@ pub(crate) fn compare_with_the_prior_output(
                     source: volume.identity(page),
                     target: written.target,
                     size: written.record.size,
+                    bytes: written.bytes,
                 })
                 .collect()
         }));
     }
     let every_page = retained.iter().all(Option::is_some);
     let why = why.says_anything().then_some(why);
+    // 整卷跳过的那一卷，产物就是上一趟写在那儿的那一份（say-and-stop/06：产物体积）：
+    // 各页的长度读记录时量过了，透传文件在这里问一句各有多大——卷级那条路上这一问兼作「都还在吗」。
+    let retained_bytes: u64 = retained
+        .iter()
+        .flatten()
+        .flatten()
+        .map(|page| page.bytes)
+        .sum();
     match fingerprint.source() {
-        SourceHash::Volume(_) => {
-            let extras_in_place = volume
-                .extras
-                .iter()
-                .all(|extra| written.holds(&extra.relative));
-            if every_page && extras_in_place {
-                Reuse::Whole { page_count }
-            } else {
-                Reuse::Nothing { why }
-            }
-        }
+        SourceHash::Volume(_) => match extras_in_place(&mut written, volume) {
+            Some(extras) if every_page => Reuse::Whole {
+                page_count,
+                bytes: retained_bytes + extras,
+            },
+            _ => Reuse::Nothing { why },
+        },
         SourceHash::Page(sources) => {
-            if every_page && nothing_else_changed(&mut written, volume, sources, &retained, lodgers)
+            let whole = every_page
+                && nothing_else_changed(&mut written, volume, sources, &retained, lodgers);
+            if let Some(extras) = whole
+                .then(|| extras_in_place(&mut written, volume))
+                .flatten()
             {
-                Reuse::Whole { page_count }
+                Reuse::Whole {
+                    page_count,
+                    bytes: retained_bytes + extras,
+                }
             } else {
                 Reuse::ByPage {
                     retained: Retained(retained),
@@ -2283,6 +2374,19 @@ pub(crate) fn compare_with_the_prior_output(
             }
         }
     }
+}
+
+/// 这一卷的透传文件在上一趟的输出里**都还在**的话，它们一共多少字节；缺一个就是 `None`。
+///
+/// 整卷跳过要问它两件事：卷级那条路上「齐」的一半就是透传文件都在（与 two-pass-rework/15 之前逐字相同），
+/// 而跳过的卷的产物体积里有它们那一笔（say-and-stop/06）。量的是输出里那一份，不是源那一份：
+/// 卷级那条路只问在不在，输出里那一份被人改过的话，报告说的仍是盘上真有的那个数。
+fn extras_in_place(written: &mut sink::Written, volume: &Volume) -> Option<u64> {
+    volume
+        .extras
+        .iter()
+        .map(|extra| written.length_of(&extra.relative))
+        .sum()
 }
 
 /// 一个源页那一族没齐时（[`written_family`] 答 `None`），**它的头一张**说了什么：
@@ -2342,10 +2446,11 @@ fn nothing_else_changed(
     extras_unchanged && written.holds_nothing_but(members, lodgers)
 }
 
-/// 上一趟的输出里的一张页：它的成员名，与它记着的记录。
+/// 上一趟的输出里的一张页：它的成员名，它记着的记录，与它有多少字节（say-and-stop/06：产物体积）。
 struct WrittenPage {
     target: PathBuf,
     record: PageRecord,
+    bytes: u64,
 }
 
 /// 上一趟的输出里，一个源页那一族输出页：每一张的成员名与记录，按阅读顺序；
@@ -2361,18 +2466,19 @@ struct WrittenPage {
 /// 名字怎么拼只有一个出处（[`output_name`]），两支拼的都是它。
 fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<WrittenPage>> {
     let one = output_name(relative, 0, 1);
-    if let Some(record) = written.record_of(&one) {
+    if let Some((record, bytes)) = written.page_of(&one) {
         return record.is_the_page(relative, 0, 1).then(|| {
             vec![WrittenPage {
                 target: one,
                 record,
+                bytes,
             }]
         });
     }
     // 一对一那个名字不在。那这一族要么是切开的，要么根本没写出来——头一张说了算：
     // 它记着自己那一族共几张，而余下几张的名字由那个数推得出来。
     let first_of_many = output_name(relative, 0, MORE_THAN_ONE);
-    let first = written.record_of(&first_of_many)?;
+    let (first, bytes) = written.page_of(&first_of_many)?;
     let count = first.origin.as_ref()?.count();
     if count < MORE_THAN_ONE || !first.is_the_page(relative, 0, count) {
         return None;
@@ -2380,14 +2486,19 @@ fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<Wr
     let mut family = vec![WrittenPage {
         target: first_of_many,
         record: first,
+        bytes,
     }];
     for ordinal in 1..count {
         let target = output_name(relative, ordinal, count);
-        let record = written.record_of(&target)?;
+        let (record, bytes) = written.page_of(&target)?;
         if !record.is_the_page(relative, ordinal, count) {
             return None;
         }
-        family.push(WrittenPage { target, record });
+        family.push(WrittenPage {
+            target,
+            record,
+            bytes,
+        });
     }
     Some(family)
 }
@@ -2647,7 +2758,7 @@ mod tests {
         let written = sink::Written::open(output, volume.container);
         match compare_with_the_prior_output(written, volume, fingerprint, &sink::Lodgers::default())
         {
-            Reuse::Whole { page_count } => Some(page_count),
+            Reuse::Whole { page_count, .. } => Some(page_count),
             Reuse::ByPage { .. } => panic!("卷级那条路上不该答按页"),
             Reuse::Nothing { .. } => None,
         }
@@ -2688,6 +2799,7 @@ mod tests {
                     slot,
                     // 这一组用例问的是形状与序列，不是纸白：点名关掉那一趟的取值。
                     white: WhiteAlignment::Off,
+                    encoded: None,
                 },
                 salvage: None,
             },

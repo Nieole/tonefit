@@ -118,8 +118,8 @@ use metadata::Recorder;
 use pipeline::{
     Candidates, Compute, ComputeCounters, Encode, FirstPass, OutputPage, Retained, Reuse, Settles,
     Slot, compare_with_the_prior_output, cores, driver, ensure_the_overrides_leave_a_candidate,
-    first_pass, in_reading_order, lock, max_outputs_per_source_page, output_names, second_pass,
-    summarize_volume, uniform_size, volume_fingerprint,
+    first_pass, in_reading_order, lock, max_outputs_per_source_page, output_bytes_up_front,
+    output_names, second_pass, summarize_volume, uniform_size, volume_fingerprint,
 };
 use sink::{Lodgers, Sink};
 use source::{Container, Member, Volume};
@@ -851,7 +851,7 @@ fn process_volume(
     // 打开着的上一趟输出往下走（two-pass-rework/14）；整卷重做一页都不留。
     // 往下分析环节只走要重做的那些源页，写出环节按阅读顺序把留下的照搬、重做的写出。
     let (retained, mut prior_output, why_redone) = match reuse {
-        Reuse::Whole { page_count } => {
+        Reuse::Whole { page_count, bytes } => {
             let report = VolumeReport {
                 volume: volume.root,
                 output: clean,
@@ -875,6 +875,8 @@ fn process_volume(
                 fell_back_to_serial,
                 // 分析、写出两个环节一个都不走：四段里有数的只有查重，外加要摊开的卷上的摊开。
                 timing: stopwatch.read(),
+                // 产物就是上一趟写在那儿的那一份，比对时顺手量的（say-and-stop/06）。
+                output_bytes: Some(bytes),
             };
             // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
             // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
@@ -980,6 +982,9 @@ fn process_volume(
         (clean, isolated)
     };
     let superseded = superseded(&elsewhere);
+    // 写出环节还没走就说得出的产物体积（say-and-stop/06）：分析环节就编好字节的那两条路上、
+    // 每一格的字节此刻都已在手上才有。确认点上交出去的那一份、答了做完再停的那一卷收摊时那一份，读的都是它。
+    let up_front = output_bytes_up_front(&slots, &volume.extras, settles);
 
     // **这一卷的报告拼两次，拼法只有这一处。**一次在下面那个确认点上——交给观察者的就是它
     // （停车场 Q52：不给它，要在那里等人拿主意的调用方屏上画不出任何东西）；
@@ -993,7 +998,10 @@ fn process_volume(
     // **两个数不许各锁各的**：`MutexGuard` 的临时量活到整条语句末尾，摆进结构体字面量里
     // 就是同一条线程连着锁两次——当场死锁。
     // 全卷最容易踩的就是这一处，现在不再只靠人核——[哨兵](progress::LockSentinel)守着它。
-    let assemble = |timing: VolumeTiming| {
+    //
+    // 产物体积也由调用处交进来（say-and-stop/06）：确认点上那一份与收摊时那一份可能不是同一个来路
+    // ——走了写出环节就是写进容器的那笔账，没走就是此刻已经在手上的那些。
+    let assemble = |timing: VolumeTiming, output_bytes: Option<u64>| {
         cost::stage(cost::Stage::Assemble, || {
             let (usage, cached_references) = {
                 let cache = lock(&cache);
@@ -1020,6 +1028,7 @@ fn process_volume(
                 io: io.clone(),
                 fell_back_to_serial: fell_back_to_serial.clone(),
                 timing,
+                output_bytes,
             }
         })
     };
@@ -1029,7 +1038,7 @@ fn process_volume(
     // 这里当场编译不过，而那正是要的（ADR 0013 拍死了三级）。
     // 它答的是**当场那个字**而不是闩，为什么，见 `progress::Events::ask_before_the_second_pass`。
     let walks_the_second_pass = if writes {
-        match events.ask_before_the_second_pass(|| assemble(stopwatch.read())) {
+        match events.ask_before_the_second_pass(|| assemble(stopwatch.read(), up_front)) {
             // 答继续：往下做。参照还在缓存里，分析环节不重算——那正是接着写出买的东西。
             Instruction::Continue => true,
             // 答做完再停：**停在这儿**。那一卷等于走了一次预览，输出一个字节都不写、报告照出
@@ -1045,38 +1054,48 @@ fn process_volume(
         false
     };
     // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
+    //
+    // 写进容器的字节逐个数下来（say-and-stop/06：产物体积）：页那一笔 [`second_pass`] 交回来，
+    // 透传文件在这里加上。收了尾才算数——立即停止那一支连同整卷丢掉，交回 `None`。
+    let mut delivered = None;
     if walks_the_second_pass {
-        timed(&mut stopwatch.segments.second_pass, || -> Result<()> {
-            let mut sink = Sink::create(&output, volume.container, lodgers)?;
-            let recorder = fingerprint
-                .as_ref()
-                .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
-            let encode = Encode {
-                uniform,
-                cache: &cache,
-                recorder: recorder.as_ref(),
-            };
-            second_pass(&slots, &encode, &mut sink, prior_output.as_mut(), events)?;
-            // 留下的页都搬完了，上一趟的输出放掉：归档那一支握着最终位置上那个文件的句柄，
-            // 收尾改名之前必须放（见 [`sink::Written`]）。
-            drop(prior_output.take());
-            for extra in &volume.extras {
-                // 透传文件也是写出环节写出的成员，页边界那个检查点照样在循环头上。
-                if events.aborting() {
-                    break;
+        delivered = timed(
+            &mut stopwatch.segments.second_pass,
+            || -> Result<Option<u64>> {
+                let mut sink = Sink::create(&output, volume.container, lodgers)?;
+                let recorder = fingerprint
+                    .as_ref()
+                    .map(|fingerprint| Recorder::new(fingerprint, driver(verdict)));
+                let encode = Encode {
+                    uniform,
+                    cache: &cache,
+                    recorder: recorder.as_ref(),
+                };
+                let mut delivered =
+                    second_pass(&slots, &encode, &mut sink, prior_output.as_mut(), events)?;
+                // 留下的页都搬完了，上一趟的输出放掉：归档那一支握着最终位置上那个文件的句柄，
+                // 收尾改名之前必须放（见 [`sink::Written`]）。
+                drop(prior_output.take());
+                for extra in &volume.extras {
+                    // 透传文件也是写出环节写出的成员，页边界那个检查点照样在循环头上。
+                    if events.aborting() {
+                        break;
+                    }
+                    let bytes = volume.reader.read(extra)?;
+                    sink.write_extra(&extra.relative, &bytes)?;
+                    delivered += bytes.len() as u64;
+                    events.step();
                 }
-                let bytes = volume.reader.read(extra)?;
-                sink.write_extra(&extra.relative, &bytes)?;
-                events.step();
-            }
-            if events.aborting() {
-                // **立即停止：不收尾。** `sink` 在这里走出作用域，它那格 `partial` 由析构丢掉
-                // （见 `crate::sink` 的两个 `Drop`）——收尾改名是最终位置唯一被碰到的那一步，
-                // 不走它，最终位置上就一个字节都没动过（ADR 0013 决定第 2 条）。
-                return Ok(());
-            }
-            sink.finish()
-        })?;
+                if events.aborting() {
+                    // **立即停止：不收尾。** `sink` 在这里走出作用域，它那格 `partial` 由析构丢掉
+                    // （见 `crate::sink` 的两个 `Drop`）——收尾改名是最终位置唯一被碰到的那一步，
+                    // 不走它，最终位置上就一个字节都没动过（ADR 0013 决定第 2 条）。
+                    return Ok(None);
+                }
+                sink.finish()?;
+                Ok(Some(delivered))
+            },
+        )?;
         // 闭包里那一次问的是「收不收尾」，这一次问的是「这一卷算不算做完」——
         // 两个不同的问题，各在自己那一层。再问一次恒得同一个答案，闩只升不降。
         if events.aborting() {
@@ -1084,7 +1103,13 @@ fn process_volume(
         }
     }
 
-    let report = assemble(stopwatch.read());
+    // 走了写出环节就是那笔账，没走就是写出之前就在手上的那一份。两处都说得出时必须同数：
+    // 预览（确认点上答做完再停）与转换报的体积是同一个口径，分了家就是其中一处数错了。
+    debug_assert!(
+        delivered.is_none() || up_front.is_none() || delivered == up_front,
+        "写进容器的 {delivered:?} 字节与写出之前就数得出的 {up_front:?} 字节对不上"
+    );
+    let report = assemble(stopwatch.read(), delivered.or(up_front));
     events.volume_finished(&report);
     Ok(Some(report))
 }

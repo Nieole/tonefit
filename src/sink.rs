@@ -369,21 +369,30 @@ impl Written {
     ///
     /// 只读到第一个 IDAT 为止，一个像素都不解——成本停在这里，跳过一卷才比重做一卷便宜。
     pub fn record_of(&mut self, relative: &Path) -> Option<PageRecord> {
+        self.page_of(relative).map(|(record, _)| record)
+    }
+
+    /// 同 [`record_of`](Self::record_of)，另带**这一页有多少字节**（say-and-stop/06：产物体积，
+    /// 见 [`VolumeReport::output_bytes`](crate::VolumeReport::output_bytes)）。
+    ///
+    /// 长度是开着的那一个成员顺手答的，不多读一个字节：目录那一支问已经打开的文件句柄，
+    /// 归档那一支问中央目录里记着的那一格。留下的页原样搬，这个数因此就是它写进这一趟容器的字节数；
+    /// 整卷跳过的卷，各页这个数加起来就是它的产物体积。
+    pub fn page_of(&mut self, relative: &Path) -> Option<(PageRecord, u64)> {
         match self {
             Written::Directory(root) => {
-                PageRecord::read(BufReader::new(File::open(root.join(relative)).ok()?))
+                let file = File::open(root.join(relative)).ok()?;
+                let length = file.metadata().ok()?.len();
+                Some((PageRecord::read(BufReader::new(file))?, length))
             }
             Written::Archive(archive) => {
                 // 归档成员不能回退寻址，解码器却要得起 `Seek`：先取开头一截到内存里。
                 // 只取一截而不是整页，理由见 `RECORD_PREFIX`。
+                let member = archive.by_name(&archive_name(relative)).ok()?;
+                let length = member.size();
                 let mut prefix = Vec::new();
-                archive
-                    .by_name(&archive_name(relative))
-                    .ok()?
-                    .take(RECORD_PREFIX)
-                    .read_to_end(&mut prefix)
-                    .ok()?;
-                PageRecord::read(Cursor::new(prefix))
+                member.take(RECORD_PREFIX).read_to_end(&mut prefix).ok()?;
+                Some((PageRecord::read(Cursor::new(prefix))?, length))
             }
         }
     }
@@ -412,12 +421,26 @@ impl Written {
         }
     }
 
+    /// 这个成员还在的话有多少字节，不在就是 `None`（say-and-stop/06：整卷跳过的卷的产物体积）。
+    ///
+    /// 目录那一支是一次 `stat`，归档那一支是中央目录里的一格，一个字节都不读。
+    /// 「还在吗」（[`holds`](Self::holds)）问的就是它在不在。
+    pub fn length_of(&mut self, relative: &Path) -> Option<u64> {
+        match self {
+            Written::Directory(root) => std::fs::metadata(root.join(relative))
+                .ok()
+                .filter(std::fs::Metadata::is_file)
+                .map(|metadata| metadata.len()),
+            Written::Archive(archive) => archive
+                .by_name(&archive_name(relative))
+                .ok()
+                .map(|member| member.size()),
+        }
+    }
+
     /// 这个成员还在吗。透传文件不带记录，能问的只有在不在。
     pub fn holds(&mut self, relative: &Path) -> bool {
-        match self {
-            Written::Directory(root) => root.join(relative).is_file(),
-            Written::Archive(archive) => archive.by_name(&archive_name(relative)).is_ok(),
-        }
+        self.length_of(relative).is_some()
     }
 
     /// 除了 `members` 这些成员，这个容器里**再没有别的了**吗（two-pass-rework/15）。

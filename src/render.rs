@@ -24,7 +24,7 @@
 //! 抬头那一段**本来就是成句的**，出的仍是文字。卷级、逐页与末尾那几小结出的是一组
 //! [行](Row)——每一行带着[它是什么行](RowKind)，以及若干[格](Cell)。
 //!
-//! **末尾那几小结是一小结一行**（`p4-parking-lot/09`，停车场 Q155）：七小结分属三档语义，
+//! **末尾那几小结是一小结一行**（`p4-parking-lot/09`，停车场 Q155）：七样事分属三档语义，
 //! 拼成一段交出去，会话那一头就只上得了一种色。整段仍是**一句话**，装在成句那一格里——
 //! 拆的是粒度，不是措辞；**拼回一段文字是排版**，住在 [`plain::tail`]。
 //!
@@ -156,6 +156,9 @@ pub enum RowKind {
     Directory,
     /// 卷那一行：去处与页数。
     Volume,
+    /// **产物体积**那一行（一格，见 [`Field::OutputBytes`]；say-and-stop/06）：卷那一行说的那个去处里
+    /// 这一卷有多大。说不出的卷没有它。出处只有 [`output_bytes_row`]。
+    OutputBytes,
     /// 过期副本那一行（成句）。
     Superseded,
     /// **按页跳过**那一行（成句，two-pass-rework/14）：这一卷留下几页、重做几页。
@@ -222,10 +225,14 @@ pub enum RowKind {
     /// 它与[隔离](Self::Isolated)是两件事，`CONTEXT.md` 的《失败》分得很清楚：
     /// 那一种是卷交出来了、带着坏页，这一种是卷根本没交出来。
     FailedVolume,
+    /// **末尾那一小结：产物合计**（成句，见 [`output_total`]；say-and-stop/06）。
+    ///
+    /// 末尾那几小结的头一行：那几小结轻的在前，而它连一件事都不是——说的是这一趟交出去多少字节。
+    OutputTotal,
     /// **末尾那一小结：非漫画文件**（成句，见 [`non_volume_tail`]）。
     ///
-    /// 它连同下面五种是[末尾那几小结](tail)，一小结一行，次序即 [`tail`] 排的那个次序。
-    /// 它们与上面那些行的分别只有一处：**上面那些数的是一卷一页，这六行数的是整趟**。
+    /// 它连同上面那一种（产物合计）、下面六种是[末尾那几小结](tail)，一小结一行，次序即 [`tail`]
+    /// 排的那个次序。它们与上面那些行的分别只有一处：**上面那些数的是一卷一页，这几行数的是整趟**。
     /// 各自成句，一整段（含逐条那几行）装在[成句那一格](Field::Sentence)里。
     NonVolumeTail,
     /// **末尾那一小结：输出宽超过面板**（成句，见 [`overflow_tail`]）。
@@ -265,6 +272,8 @@ pub enum Field {
     Output,
     /// 输出页数。
     PageCount,
+    /// **产物体积**：这一卷的输出页与透传文件有多少字节，走库那一份进位（[`tonefit::format_bytes`]）。
+    OutputBytes,
     /// **一枝底下几卷**（目录那一行）。没做成的那几卷也算在里面。
     VolumeCount,
     /// **统一档位分布**：一枝底下各档各有几卷，排成一串（目录那一行）。
@@ -564,6 +573,10 @@ pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
     rows.extend(retained_row(volume));
     // 为什么重做那一行接在它后面（say-and-stop/04）：上一行说留下几页、重做几页，这一行说为什么重做。
     rows.extend(redone_row(volume));
+    // 产物体积收住这一组（say-and-stop/06，停车场 Q1261）：留下几页、重做几页、为什么重做，
+    // 合起来有多大。卷级判定那一段之前，任何一种卷都在这儿找得到它——没有前两行的卷（整卷跳过、
+    // 头一趟）它就接在卷那一行（或过期副本那一行）底下。
+    rows.extend(output_bytes_row(volume));
     rows.extend(verdict_rows(volume));
     // 纸色提白那一段接在判定后面（纸色提白批 02 号票）：判定说的是「这一卷判成什么」，
     // 它说的是「这一趟对这一卷的像素做了什么」。上限是**这一趟**的事实，因此从外面递进来
@@ -1068,14 +1081,16 @@ pub fn tally_pairs(volume: &VolumeReport) -> Vec<(Candidate, usize)> {
     )
 }
 
-/// 末尾那七小结：非漫画文件、输出宽超过面板、兜底上界退回、残缺、隔离、卷转换失败、
-/// 发现无法访问的地方。各自一个（一页、一卷、一处）都没有就一个字都不说。
+/// 末尾那几小结：产物合计，然后七样事——非漫画文件、输出宽超过面板、兜底上界退回、残缺、隔离、
+/// 卷转换失败、发现无法访问的地方。各自一个（一页、一卷、一处）都没有就一个字都不说；
+/// 产物合计说不出（有一卷说不出、一卷都没有）同样不说。
 ///
 /// 它们要看完整趟才给得出来，因此不进 [`volume`]：那几行数的是**这一趟**有几卷几页，
 /// 而不是这一卷。
 ///
 /// 次序按**这一趟出的事有多重**往下排，最重的压在末尾——终端上它离提示符最近，
-/// 也是几十卷跑下来最不该被往回翻的那一条。非漫画文件因此打头：它是这一列里唯一
+/// 也是几十卷跑下来最不该被往回翻的那一条。**产物合计打头**：它连一件事都不是，只说这一趟交出去
+/// 多少字节（say-and-stop/06）。非漫画文件紧随其后：它是七样事里唯一
 /// **连失败都不是**的一种（`CONTEXT.md` 的《失败》：非漫画文件不是失败），
 /// 退出码一格都不动它。**无法访问的地方压尾**：它与卷转换失败同一个退出码，
 /// 而它比那一种更说不清——那一种点得出是哪几卷，这一种连少了几卷都答不出来
@@ -1083,7 +1098,7 @@ pub fn tally_pairs(volume: &VolumeReport) -> Vec<(Candidate, usize)> {
 ///
 /// # 一小结一行，不是拼好的一段（`p4-parking-lot/09`，停车场 Q155）
 ///
-/// 七小结**分属三档语义**（`CONTEXT.md` 的《语义色》），而拼成一段交出去，
+/// 七样事**分属三档语义**（`CONTEXT.md` 的《语义色》），而拼成一段交出去，
 /// 会话那一头只上得了一种色——从前给的是「平常」，末尾那几小结因此一个颜色都没有。
 ///
 /// **哪一小结挂哪一档不在这一层**：这一层一个颜色概念都没有（spec 的《Out of Scope》：
@@ -1100,6 +1115,7 @@ pub fn tally_pairs(volume: &VolumeReport) -> Vec<(Candidate, usize)> {
 /// 而后者让「这一趟有没有这一小结」在会话那一头也是一个行数（画法不必再认空串）。
 pub fn tail(report: &Report) -> Vec<Row> {
     [
+        (RowKind::OutputTotal, output_total(report)),
         (RowKind::NonVolumeTail, non_volume_tail(report)),
         (RowKind::OverflowTail, overflow_tail(report)),
         (RowKind::BackstopTail, backstop_tail(report)),
@@ -1166,7 +1182,28 @@ pub fn outcome(report: &Report) -> Option<String> {
     Some(format!("按停止停下{level}：{}", taken.join("；")))
 }
 
-/// 非漫画文件那一小结，打头摆在末尾那几小结的最前面（`volume-discovery/04`）。
+/// 产物合计那一小结，打头摆在末尾那几小结的最前面（say-and-stop/06，停车场 Q801）。
+///
+/// 这一趟交出去多少字节，**「装不装得下」不必转完再去量盘**。卷那几行各说各的
+/// （[`output_bytes_row`]），这一句把它们加起来，连同**口径**说一次：输出页与透传文件，
+/// 不含容器开销——归档卷落到盘上那个文件因此比这个数略大，读的人对得上。
+///
+/// **打头**：末尾那几小结按出的事有多重往下排，而这一句连一件事都不是。
+///
+/// 有一卷说不出就**一个字都不说**（[`Report::output_bytes`] 答 `None`），一卷都没有同样不说：
+/// 不印零、不印估值。折起那一副（`--brief`）照印——它在末尾那几小结里，不在正文里。
+fn output_total(report: &Report) -> String {
+    let Some(total) = report.output_bytes().filter(|_| !report.volumes.is_empty()) else {
+        return String::new();
+    };
+    format!(
+        "产物合计 {} 卷 · {}：各卷输出页与透传文件的字节之和，不含输出容器自身的开销\n",
+        report.volumes.len(),
+        tonefit::format_bytes(total)
+    )
+}
+
+/// 非漫画文件那一小结，紧跟在产物合计后面（`volume-discovery/04`）。
 ///
 /// 这几个文件在报告正文里**一行都没有**，与卷转换失败那一小结同一个处境：正文逐卷那几段
 /// 来自 `Report::volumes`，而它们连卷都不是。这一小结因此是它们在报告里唯一的位置——
@@ -1442,6 +1479,20 @@ fn salvage_tail(report: &Report) -> String {
         .filter(|volume| volume.salvaged().next().is_some())
         .count();
     format!("残缺 {volumes} 卷 · {pages} 页：源文件不全，缺的那一段留成纸白\n")
+}
+
+/// 产物体积那一行（say-and-stop/06，停车场 Q801）。**库那一侧说得出的卷才有它**
+/// （`VolumeReport::output_bytes`，何时说得出写在那一格上）——说不出的不印零、不印估值，整行不在。
+///
+/// 一格，装的是值：字节数走库那一份进位（[`tonefit::format_bytes`]），与解压、缓存那两行同一种单位。
+/// 口径（输出页与透传文件，不含容器开销）只在趟级那一句里说一次（[`output_total`]），不逐卷复述。
+fn output_bytes_row(volume: &VolumeReport) -> Option<Row> {
+    volume.output_bytes.map(|bytes| {
+        Row::one(
+            RowKind::OutputBytes,
+            Cell::new(Field::OutputBytes, tonefit::format_bytes(bytes)),
+        )
+    })
 }
 
 /// 过期副本那一行（12 号票）。
@@ -2533,6 +2584,7 @@ mod tests {
                 resizes: 1,
                 cached_references: 1,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
                 retained_pages: 0,
@@ -3267,6 +3319,7 @@ mod tests {
                 resizes: 3,
                 cached_references: 2,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
                 why_redone: None,
@@ -3328,6 +3381,7 @@ mod tests {
                 resizes: 0,
                 cached_references: 0,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -3386,6 +3440,7 @@ mod tests {
                 resizes: 0,
                 cached_references: 0,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -3498,6 +3553,7 @@ mod tests {
                 resizes: 1,
                 cached_references: 1,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
                 why_redone: None,
@@ -3983,6 +4039,7 @@ mod tests {
                 resizes: 2,
                 cached_references: 2,
                 fell_back_to_serial: None,
+                output_bytes: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
                 why_redone: None,
@@ -4091,6 +4148,8 @@ mod tests {
             resizes: 1,
             cached_references: 1,
             fell_back_to_serial: None,
+            // 隔离的卷照样说得出：坏页那张空白占位页也写进了容器。
+            output_bytes: Some(45 * 1024),
             timing: VolumeTiming::default(),
             retained_pages: 0,
             why_redone: None,
@@ -4425,6 +4484,149 @@ mod tests {
         );
     }
 
+    /// **一卷说得出它的产物有多大**（say-and-stop/06，停车场 Q801）：一格，字节数走库那一份进位；
+    /// 收住「这一卷怎么来的」那一组——按页跳过、为什么重做（say-and-stop/04）之后、卷级判定之前；
+    /// 没有那两行的卷（整卷跳过的、头一趟）就接在卷那一行（与过期副本那一行）底下（停车场 Q1261）。
+    /// 库那一侧说不出（`None`：`--envelope` 那条路的预览、dry-run）时**整行不在**——不印零、不印估值。
+    #[test]
+    fn a_volume_says_how_big_its_output_is_and_nothing_when_it_cannot_tell() {
+        let kinds = |report: &VolumeReport| {
+            volume(report, WhiteAlignLimit::OFF)
+                .iter()
+                .map(|row| row.kind)
+                .take_while(|kind| *kind != RowKind::OutputBytes)
+                .chain([RowKind::OutputBytes])
+                .collect::<Vec<_>>()
+        };
+        let said = |report: &VolumeReport| {
+            volume(report, WhiteAlignLimit::OFF)
+                .iter()
+                .find(|row| row.kind == RowKind::OutputBytes)
+                .map(|row| {
+                    (
+                        row.cell(Field::OutputBytes).map(str::to_owned),
+                        plain::line(row),
+                    )
+                })
+        };
+
+        let mut redone = a_volume_worth_a_row_of_each_kind();
+        redone.verdict = Some(VolumeVerdict::PerPage);
+        redone.retained_pages = 3;
+        redone.why_redone = Some(WhyRedone {
+            tool: false,
+            profile: false,
+            params: true,
+            unreadable: false,
+        });
+        redone.output_bytes = Some(3 * 1024 * 1024 + 512 * 1024);
+        assert_eq!(
+            kinds(&redone),
+            vec![
+                RowKind::Volume,
+                RowKind::Superseded,
+                RowKind::Retained,
+                RowKind::Redone,
+                RowKind::OutputBytes
+            ]
+        );
+        assert_eq!(
+            said(&redone),
+            Some((Some("3.5 MiB".to_owned()), "  产物 3.5 MiB\n".to_owned()))
+        );
+
+        let mut skipped = redone.clone();
+        skipped.pages = Vec::new();
+        skipped.retained_pages = 0;
+        skipped.why_redone = None;
+        skipped.superseded = None;
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 2 });
+        skipped.output_bytes = Some(700);
+        assert_eq!(
+            kinds(&skipped),
+            vec![RowKind::Volume, RowKind::OutputBytes],
+            "整卷跳过的卷，产物那一行不在卷那一行底下"
+        );
+        assert_eq!(
+            said(&skipped).and_then(|(cell, _)| cell),
+            Some("700 B".to_owned()),
+            "整卷跳过的卷说不出它的产物有多大"
+        );
+
+        redone.output_bytes = None;
+        assert_eq!(said(&redone), None, "说不出的卷也出了产物那一行");
+        assert!(
+            !plain::volume(&redone, WhiteAlignLimit::OFF).contains("产物"),
+            "说不出的卷在纸上留了一个数"
+        );
+    }
+
+    /// **报告末尾一行说出这一趟的产物合计**（say-and-stop/06，停车场 Q801）：各卷那一格之和，
+    /// 连同口径（输出页与透传文件，不含容器开销）。它是末尾那几小结的**头一行**——那几小结
+    /// 轻的在前，而它连一件事都不是。
+    ///
+    /// 有一卷说不出（`--envelope` 那条路的预览）就**整行不在**：拿说得出的那几卷凑一个偏小的数，
+    /// 正是「不印估值」要挡的东西。一卷都没有的那一趟同样不说。
+    #[test]
+    fn the_run_ends_with_its_total_output_and_says_nothing_when_a_volume_cannot_tell() {
+        let total =
+            "产物合计 2 卷 · 1.5 MiB：各卷输出页与透传文件的字节之和，不含输出容器自身的开销\n";
+        let mut first = a_volume_worth_a_row_of_each_kind();
+        first.output_bytes = Some(1024 * 1024);
+        let mut second = first.clone();
+        second.volume = PathBuf::from("library/volume-b");
+        second.output = PathBuf::from("out/_isolated/volume-b");
+        second.output_bytes = Some(512 * 1024);
+        let mut report = one_page_report(
+            Profile::resolve("kobo-libra-2").expect("内置型号"),
+            VolumeVerdict::PerPage,
+            first.pages[0].clone(),
+        );
+        report.volumes = vec![first, second];
+
+        let rows = tail(&report);
+        assert_eq!(
+            rows[0].kind,
+            RowKind::OutputTotal,
+            "合计那一行不是末尾的头一行"
+        );
+        assert_eq!(rows[0].cell(Field::Sentence), Some(total));
+        let text = unfolded(&report, Mode::Process);
+        let at = text.find(total).expect("报告里没有合计那一行");
+        assert!(
+            text[..at].contains("volume-b") && text[at..].contains("隔离 2 卷"),
+            "合计那一行不在正文之后、隔离那一小结之前：\n{text}"
+        );
+
+        report.volumes[1].output_bytes = None;
+        assert!(
+            tail(&report)
+                .iter()
+                .all(|row| row.kind != RowKind::OutputTotal),
+            "有一卷说不出，合计却照出"
+        );
+        assert!(
+            !unfolded(&report, Mode::DryRun).contains("产物合计"),
+            "有一卷说不出，纸上还是留了一个合计"
+        );
+
+        // `--envelope` 那条路的预览：一卷都说不出，卷级那一行与合计那一行都不在，一个「产物」都不印。
+        report.volumes[0].output_bytes = None;
+        let text = unfolded(&report, Mode::DryRun);
+        assert!(
+            !text.contains("产物"),
+            "说不出的那一趟纸上还是有产物体积：\n{text}"
+        );
+
+        report.volumes.clear();
+        assert!(
+            tail(&report)
+                .iter()
+                .all(|row| row.kind != RowKind::OutputTotal),
+            "一卷都没有的那一趟也报了合计"
+        );
+    }
+
     /// **卷级与逐页出的是行，每一行说得出它是什么行**（ADR 0016）。
     ///
     /// 断言的是次序与种类，不是拼出来的那段文字——那一段由 [`plain`] 那一副钉着
@@ -4442,6 +4644,8 @@ mod tests {
             vec![
                 RowKind::Volume,
                 RowKind::Superseded,
+                // 产物体积收住「这一卷怎么来的」那一组，卷级判定之前（say-and-stop/06）。
+                RowKind::OutputBytes,
                 RowKind::Isolated,
                 RowKind::Gate,
                 RowKind::Envelope,
@@ -4474,19 +4678,22 @@ mod tests {
         assert_eq!(rows[0].cells.len(), 3);
         assert_eq!(rows[0].cell(Field::PageCount), Some("2"));
         assert_eq!(rows[0].cell(Field::ColorPages), None);
+        // 产物那一行一格。
+        assert_eq!(rows[2].cells.len(), 1);
+        assert_eq!(rows[2].cell(Field::OutputBytes), Some("45.0 KiB"));
         // 尺寸贴合检查那一行三格，三个数各占一格。
-        assert_eq!(rows[3].cells.len(), 3);
-        assert_eq!(rows[3].cell(Field::GateScope), Some("1"));
-        assert_eq!(rows[3].cell(Field::GateBroken), Some("0"));
+        assert_eq!(rows[4].cells.len(), 3);
+        assert_eq!(rows[4].cell(Field::GateScope), Some("1"));
+        assert_eq!(rows[4].cell(Field::GateBroken), Some("0"));
         // 统一档位单占一格：目录那一行的分布要的就是这一个值，不必回头去认那一整句话。
-        assert_eq!(rows[4].cell(Field::Base), Some("4bit"));
+        assert_eq!(rows[5].cell(Field::Base), Some("4bit"));
         assert!(
-            rows[4]
+            rows[5]
                 .cell(Field::Envelope)
                 .expect("整卷统一灰阶那一格")
                 .starts_with("统一档位 4bit"),
             "{:?}",
-            rows[4]
+            rows[5]
         );
     }
 
@@ -5051,6 +5258,7 @@ mod tests {
             resizes: 0,
             cached_references: 0,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: VolumeTiming::default(),
         });
 
@@ -5265,6 +5473,7 @@ mod tests {
             resizes: pages.len(),
             cached_references: pages.len(),
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: VolumeTiming::default(),
             retained_pages: 0,
             why_redone: None,
@@ -5628,6 +5837,7 @@ mod tests {
             resizes: 0,
             cached_references: 0,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: VolumeTiming::default(),
             pages: Vec::new(),
             retained_pages: 0,
@@ -5680,6 +5890,7 @@ mod tests {
             resizes: usize::from(!broken),
             cached_references: usize::from(!broken),
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: VolumeTiming::default(),
             pages: vec![page],
             retained_pages: 0,
