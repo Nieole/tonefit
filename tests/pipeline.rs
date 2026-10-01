@@ -4094,6 +4094,57 @@ fn two_volumes_that_would_write_to_the_same_place_are_refused() {
     );
 }
 
+/// **只差大小写的两个卷名，要写进同一处时开工前就拒**（`one-source/03`，收停车场 Q366）。
+///
+/// 从前撞名那一道按**编译平台**折大小写：Windows 上折、别处不折。而 macOS 默认那套文件系统
+/// 也不认大小写，`Abc.cbz` 与 `abc.cbz` 在那里**真的**是同一个文件——后到的那一卷静默盖掉
+/// 先到的那一卷，撞名那一道却说它们是两个。认不认大小写如今问的是**输出根所在的那块盘**
+/// （这一趟开工时探一次），用例自己也问一次（`fixtures::the_disk_folds_case`），两边各断言各的：
+///
+/// - **不认**的盘上：拒绝开始，两卷都点名；说的是分批处理那条出路——这一对撞的是卷名，
+///   不是扩展名归一；输出目录根本不建出来；
+/// - **认**的盘上：两卷各写各的——一条不适用的规矩不该把这一趟拦下。
+#[test]
+fn two_volumes_whose_names_differ_only_in_case_collide_where_the_output_disk_folds_them() {
+    let space = Workspace::new();
+    let upper = space.dir("甲部/Abc.cbz");
+    let lower = space.dir("乙部/abc.cbz");
+    for (path, page) in [
+        (&upper, fixtures::gradient(fixtures::TINY)),
+        (&lower, fixtures::line_art(fixtures::TINY)),
+    ] {
+        std::fs::create_dir_all(path.parent().expect("归档有上一级")).expect("建归档所在目录");
+        let mut archive = fixtures::Cbz::new(path.clone());
+        archive.page("001.png", &page);
+        archive.write();
+    }
+    // 输出根此刻还不在：它与工作区在同一块盘上，问源那边的名字问的是同一件事。
+    let folds = fixtures::the_disk_folds_case(&upper);
+
+    let run = tonefit::run(&fixtures::request(
+        &space,
+        [upper.as_path(), lower.as_path()],
+    ));
+
+    if folds {
+        let error = run
+            .expect_err("要写进同一处的两卷该在开工前被拒")
+            .to_string();
+        assert!(error.contains(&format!("← {}", upper.display())), "{error}");
+        assert!(error.contains(&format!("← {}", lower.display())), "{error}");
+        assert!(error.contains("分批处理"), "{error}");
+        assert!(!error.contains("只差扩展名"), "{error}");
+        assert!(!space.out().exists(), "拒之前已经动过输出目录");
+    } else {
+        let report = run.expect("认大小写的盘上两卷各写各的");
+        assert_eq!(report.volumes.len(), 2);
+        assert_eq!(
+            fixtures::directory_members(&space.out()),
+            ["Abc.cbz", "abc.cbz"]
+        );
+    }
+}
+
 /// 一个目录卷和一个归档卷即使卷名相同也不撞：去处一个是 `名字`、一个是 `名字.cbz`。
 ///
 /// 这条是上一条的反面。查撞车比的是**去处**，不是卷名——比卷名会把这一对误判成撞车。

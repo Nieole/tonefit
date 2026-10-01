@@ -41,13 +41,14 @@
 //! [`of`] 一次只看一个处理路径，而点名的路径可以**互相嵌套**（`库` 与 `库/作品`），
 //! 也可以干脆点两遍。那时同一个卷会被发现两遍。[`Found`] 因此在发现之后按**卷根**
 //! 折一遍：同一个卷根只留一份，镜像路径以**最外层**那个点名根为准（停车场 Q111）。
+//! 「同一个卷根」按[同一处](crate::place)认——写法不同（`./库`、只差大小写）也认得出。
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::place::{CaseSensitivity, Place, Places};
 use crate::source::{self, Container};
 
 /// 这一卷是**点名的**还是**发现的**。
@@ -129,56 +130,80 @@ pub(crate) fn of(named: &Path) -> Result<Vec<Candidate>> {
 pub(crate) struct Found {
     /// 收编之后的那些候选，按**发现顺序**：一个卷根头一回出现时占下它那一格，
     /// 后来的只往那一格上收编，不再排队。
-    candidates: Vec<Candidate>,
-    /// 卷根 → 它占着上面哪一格，加上收编下它的那个点名根**有几级**。
+    seats: Vec<Seat>,
+    /// 卷根 → 它占着上面哪一格，按[同一处](crate::place)认：写成 `库` 与 `./库`、
+    /// 或者在不认大小写的盘上写成 `D:\库` 与 `d:\库`，都是同一个卷根（停车场 Q241）。
+    /// 每个卷根带着**它那条处理路径**探出来的答案（[`Places`] 说两边答案不同时怎么认）。
     ///
-    /// 级数用来认「哪个点名根更外层」。这么认得住，是因为两个点名根展开出同一个卷根
-    /// **当且仅当**它们互相嵌套——发现只在点名的路径底下走，也不跟符号链接
-    /// （见本模块的《只在点名的路径底下走》与 [`push_children`]），子树因此严格按路径
-    /// 前缀嵌套；而嵌套的两条路径里，级数少的那条在外层。
-    ///
-    /// 查的是**路径本身**，而 [`Path`] 的相等在哪个平台上都逐字节比：同一个卷根写成
-    /// `D:\库` 与 `d:\库`（不区分大小写的文件系统上是同一个）、`库` 与 `./库`、
-    /// 或者一条软链与它指向的那棵树，收编都认不出来（停车场 Q241）。
+    /// **软链不解析**：一条软链与它指向的那棵树是两个名字，收编认不出来
+    /// （`CONTEXT.md` 的《尚未确立》）。
     ///
     /// 这张表随**卷数**长，活到 [`into_candidates`](Self::into_candidates) 为止。
     /// 它攥的是路径，不是句柄：与清点那笔「不攥着几千个句柄」的账不是同一本
     /// （见 `crate::survey` 的模块文档）。
-    at: HashMap<PathBuf, (usize, usize)>,
+    at: Places,
+}
+
+/// 收编表里的一格：一个候选，加上收编下它的那个点名根**有几级**。
+///
+/// 级数用来认「哪个点名根更外层」。这么认得住，是因为两个点名根展开出同一个卷根
+/// **当且仅当**它们互相嵌套——发现只在点名的路径底下走，也不跟符号链接
+/// （见本模块的《只在点名的路径底下走》与 [`push_children`]），子树因此严格按路径
+/// 前缀嵌套；而嵌套的两条路径里，级数少的那条在外层。
+///
+/// 数的是**规整之后**的级数（[`Place::depth`]）：`./库` 与 `库` 一样是一级，
+/// 不然点名 `库/作品 ./库` 时两者一样「深」，收编到的是里层那一个。
+struct Seat {
+    candidate: Candidate,
+    outermost: usize,
 }
 
 impl Found {
-    /// 点名 `named` 展开出来的那一批（[`of`] 的产出）收进来。
+    /// 点名 `named` 展开出来的那一批（[`of`] 的产出）收进来。`case` 是这条处理路径
+    /// 这一趟开工时探出来的答案（源那一侧，见 `crate::place::Side`）。
     ///
     /// 卷根头一回见就原样进队；见过就**收编**到它那一格上，两样东西各按各的规矩：
     ///
-    /// - **镜像路径**换成最外层那个点名根算出来的那一条（见本类型的文档）；
+    /// - **镜像路径**换成最外层那个点名根算出来的那一条（见 [`Seat`]）；
     /// - **[点名的那顶帽子](Provenance)** 两边有一顶就留着。用户明说了要处理它，
     ///   点不开就该整趟拒绝——收编改的是**去处**，不是 ADR 0014 决定第 5 条那条分别。
     ///
+    /// **卷根留头一回见到的那个写法**：报告里印的、点不开时拒绝那句话里说的，都是用户点的
+    /// 那一条（或者从它展开出来的那一条），不是规整过、折过大小写的那一串。
+    ///
     /// [`Candidate::container`] 不必挑：同一个卷根在盘上是同一样东西。
-    pub(crate) fn absorb(&mut self, named: &Path, candidates: Vec<Candidate>) {
-        let depth = named.components().count();
+    pub(crate) fn absorb(
+        &mut self,
+        named: &Path,
+        case: CaseSensitivity,
+        candidates: Vec<Candidate>,
+    ) {
+        let depth = Place::of(named, case).depth();
         for candidate in candidates {
-            let Some((at, outermost)) = self.at.get(&candidate.root).copied() else {
-                self.at
-                    .insert(candidate.root.clone(), (self.candidates.len(), depth));
-                self.candidates.push(candidate);
+            let Some(at) = self.at.find(&candidate.root, case) else {
+                self.at.insert(&candidate.root, case, self.seats.len());
+                self.seats.push(Seat {
+                    candidate,
+                    outermost: depth,
+                });
                 continue;
             };
+            // 这一回的写法也记上：只差大小写的第三种写法才认得回这一格（见 `Places::insert`）。
+            self.at.insert(&candidate.root, case, at);
+            let seat = &mut self.seats[at];
             if candidate.provenance == Provenance::Named {
-                self.candidates[at].provenance = Provenance::Named;
+                seat.candidate.provenance = Provenance::Named;
             }
-            if depth < outermost {
-                self.candidates[at].output_relative = candidate.output_relative;
-                self.at.insert(candidate.root, (at, depth));
+            if depth < seat.outermost {
+                seat.candidate.output_relative = candidate.output_relative;
+                seat.outermost = depth;
             }
         }
     }
 
     /// 收编完的那一批，按发现顺序。
     pub(crate) fn into_candidates(self) -> Vec<Candidate> {
-        self.candidates
+        self.seats.into_iter().map(|seat| seat.candidate).collect()
     }
 }
 

@@ -6,10 +6,15 @@
 //!
 //! 退出码那一条不在这里：「点名的 / 发现的」只决定点不开时的处置，而处置的差别是
 //! **退出码**，退出码只在真进程上观察得到（见 `tests/exit_code.rs`）。
+//!
+//! 起真进程的只有一条：`./库` 那个写法要从一个**当前目录**里敲才写得出来，而当前目录是
+//! 整个进程的事，同一个测试二进制里改它会搅到并行着的别的用例（见
+//! [`a_leading_dot_does_not_make_another_named_path`]）。
 
 mod fixtures;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use fixtures::Workspace;
@@ -392,6 +397,133 @@ fn the_run_announces_each_volume_once_however_the_named_paths_overlap() {
     );
     assert_eq!(nested, alone, "嵌套的点名把卷数或总步数多数了一遍");
     assert_eq!(twice, alone, "同一个路径点两遍把卷数或总步数多数了一遍");
+}
+
+/// **只差大小写的两种写法认得出是同一棵树**（`one-source/03`，收停车场 Q241 的第 1 种）。
+///
+/// 停车场那一例是 Windows 上的 `tonefit --out D:\out D:\库 d:\库\作品`：盘符大小写不同就够
+/// 同一卷做两遍、写两份，去处还不同，撞名那一道拦不住。盘符这台机器上造不出来，
+/// 这里拿同一条规则的另一种样子——**只差大小写的一级目录**——钉住它：`Lib` 与 `lib/作品`。
+///
+/// 认不认大小写由**这块盘**说了算（[`fixtures::the_disk_folds_case`]），两边各断言各的：
+///
+/// - **不认**的盘上（Windows、macOS 默认那套）`lib/作品` 就是 `Lib/作品`：收编成一棵树、
+///   那一卷只做一遍，镜像以最外层那个点名根为准；**报告里印的是用户点的写法**——
+///   头一回见到的那一条（先点的是 `lib/作品`），不是折过大小写的那一串；
+/// - **认**的盘上 `lib` 是另一个目录：摆一份真不同的进去，两边各做各的，一个都不许被收掉。
+#[test]
+fn two_spellings_that_differ_only_in_case_fold_into_one_tree_where_the_disk_folds_them() {
+    let space = Workspace::new();
+    let upper = directory(&space, "Lib");
+    write_archive(&space, "Lib/作品/第1话.cbz", 2);
+    let folds = fixtures::the_disk_folds_case(&upper);
+    if !folds {
+        write_archive(&space, "lib/作品/第1话.cbz", 2);
+    }
+    let lower_works = space.dir("lib/作品");
+
+    let report = fixtures::run_paths(&space, [lower_works.as_path(), upper.as_path()]);
+
+    if folds {
+        assert_eq!(report.volumes.len(), 1, "同一卷做了不止一遍");
+        assert_eq!(
+            fixtures::directory_members(&space.out()),
+            ["Lib/作品/第1话.cbz"],
+            "没收编成一棵树，或者镜像没以最外层那个点名根为准"
+        );
+        assert_eq!(
+            report.volumes[0].volume,
+            lower_works.join("第1话.cbz"),
+            "报告里印的不是用户点的那个写法"
+        );
+    } else {
+        assert_eq!(
+            report.volumes.len(),
+            2,
+            "认大小写的盘上两个真不同的目录被收成了一个"
+        );
+        assert_eq!(
+            fixtures::directory_members(&space.out()),
+            ["Lib/作品/第1话.cbz", "作品/第1话.cbz"]
+        );
+    }
+}
+
+/// **盘符大小写不同的两种写法**：停车场 Q241 那一例原样——`D:\库` 与 `d:\库\作品`。
+///
+/// 只在 Windows 上编得出、跑得到：盘符只在那里是一个分量。工作区在哪个盘上就翻哪个盘符，
+/// 工作区路径不以盘符打头（比如带着 `\\?\` 前缀）的机器上这条问不出来，当场收工。
+/// 别的平台上同一条规则由
+/// [`two_spellings_that_differ_only_in_case_fold_into_one_tree_where_the_disk_folds_them`]
+/// （只差大小写的一级目录）钉着。
+#[cfg(windows)]
+#[test]
+fn a_drive_letter_spelled_in_the_other_case_folds_into_the_same_tree() {
+    let space = Workspace::new();
+    let library = directory(&space, "库");
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+    let works = space.dir("库/作品");
+    let Some(flipped) = drive_letter_flipped(&works) else {
+        return;
+    };
+
+    let report = fixtures::run_paths(&space, [library.as_path(), flipped.as_path()]);
+
+    assert_eq!(report.volumes.len(), 1, "盘符大小写不同，同一卷做了两遍");
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/作品/第1话.cbz"]
+    );
+}
+
+/// `path` 的盘符翻到另一个大小写。不以盘符打头就是 `None`。
+#[cfg(windows)]
+fn drive_letter_flipped(path: &Path) -> Option<PathBuf> {
+    let text = path.to_str()?;
+    let mut chars = text.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return None;
+    }
+    let other = if drive.is_ascii_uppercase() {
+        drive.to_ascii_lowercase()
+    } else {
+        drive.to_ascii_uppercase()
+    };
+    Some(PathBuf::from(format!("{other}{}", &text[1..])))
+}
+
+/// **`库` 与 `./库` 是同一个处理路径**（`one-source/03`，收停车场 Q241 的第 2 种）：
+/// 写法不同不改变这一趟做什么——那一卷只做一遍，输出树与只点名 `库` 一模一样。
+///
+/// 点名的次序挑的是**里层在前**：外层那一条写成 `./库`，字面上比 `库/作品` 多一级、
+/// 两者一样「深」。认「哪个点名根更外层」数的要是规整之后的级数，不然收编到的是里层那一个，
+/// 输出树就成了 `作品/第1话.cbz`。
+///
+/// 起真进程是因为 `./` 只有从一个当前目录里敲才写得出来（见本文件的模块文档）。
+#[test]
+fn a_leading_dot_does_not_make_another_named_path() {
+    let space = Workspace::new();
+    write_archive(&space, "库/作品/第1话.cbz", 2);
+
+    let ran = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+        .current_dir(space.root())
+        .args(["--profile", fixtures::BASELINE_DEVICE, "--out", "out"])
+        .args(["库/作品", "./库"])
+        .output()
+        .expect("启动 tonefit");
+
+    assert_eq!(
+        ran.status.code(),
+        Some(0),
+        "这一趟没做成：{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["库/作品/第1话.cbz"],
+        "同一卷做了不止一遍，或者镜像没以最外层那个点名根为准"
+    );
 }
 
 /// 里外哪个先点名都一样：收编到的恒是**最外层**那个根，输出树因此确定且可预测。

@@ -235,6 +235,29 @@ const DEVICE_REFUSAL_MARKS: [&str; 3] = [
 /// 那一句的家，相对仓库根。
 const DEVICE_REFUSAL_HOME: &str = "src/profile.rs";
 
+/// **翻大小写问盘那个探法**的字样（`one-source/03`，收停车场 Q241、Q300、Q366）。
+///
+/// 记号挑的是探法里**只有它写得出**的那两件：把一个名字整个翻到另一个大小写，
+/// 与「一个字翻出来仍是一个字」那一问。补全从前自己攥着一份，撞名那一道另按编译平台折——
+/// 「是不是同一处」三处三套，这一条拦的是第二份长回来。
+///
+/// 头一件连着参数一起挑：会话里另有一个 `flipped(self)`（`a` 键来回翻两档清单），
+/// 那是另一件事，只挑函数名会把它也判成抄件。
+const CASE_PROBE_MARKS: [&str; 2] = ["fn flipped(name: &str)", "fn one_other_case("];
+
+/// 那个探法的家，相对仓库根：库里「同一处」那一把尺子（`CONTEXT.md` 的《同一处》）。
+const CASE_PROBE_HOME: &str = "src/place.rs";
+
+/// 调它的那几处，各在哪个文件里怎么调。问的是**调用的形状**（带着左括号），指路的散文不算。
+///
+/// 补全调探法本身、自己记一格；一趟开工时每条处理路径（源那一侧）与输出根（输出那一侧）
+/// 各探一次，按那一侧取探不出时的那一边。
+const CASE_PROBE_CALLERS: [(&str, &[&str]); 3] = [
+    ("src/session/complete.rs", &["tonefit::case_sensitivity("]),
+    ("src/survey.rs", &["Side::Source.probe("]),
+    ("src/lib.rs", &["Side::Output.probe("]),
+];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -577,5 +600,43 @@ fn the_unknown_device_refusal_lives_in_one_place() {
             entry.contains(&squashed(mark)),
             "{DEVICE_REFUSAL_HOME} 里少了「{mark}」那一截"
         );
+    }
+}
+
+/// **翻大小写问盘那个探法只有一份**，补全与一趟开工时调的都是它（`one-source/03`）。
+///
+/// 从前补全自己攥着一份运行期的探法，撞名那一道按 `cfg!(windows)` 折——同一件事实两套判法，
+/// macOS 上 `Abc.cbz` 与 `abc.cbz` 真会撞，撞名那一道却说它们是两个（停车场 Q366）。
+///
+/// **两件事一起问**：别处没有第二份、[调它的那几处](CASE_PROBE_CALLERS)真调它。
+/// 只问头一件的话，补全把探法整个删掉、退回平台常量，这一条照绿。
+#[test]
+fn the_case_probe_lives_in_one_place() {
+    let home = root().join(CASE_PROBE_HOME);
+    let marks: Vec<String> = CASE_PROBE_MARKS.iter().map(|mark| squashed(mark)).collect();
+
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| {
+            let text = squashed(&read(path));
+            marks.iter().any(|mark| text.contains(mark))
+        })
+        .collect();
+    assert_eq!(carrying, vec![home], "翻大小写问盘那个探法长出了第二份");
+
+    for (file, calls) in CASE_PROBE_CALLERS {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：调它的那几处按文件路径记在 CASE_PROBE_CALLERS 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let text = squashed(&read(&path));
+        for call in calls {
+            assert!(
+                text.contains(&squashed(call)),
+                "{file} 不再调「{call}」：那一处自己拿了主意，或者又抄了一份"
+            );
+        }
     }
 }

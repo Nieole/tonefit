@@ -5,8 +5,10 @@
 //!
 //! 1. **发现**——点名的每一个路径展开成一批卷（ADR 0014，见 [`crate::discover`]），
 //!    再按**卷根**收编成一批：点名的路径互相嵌套（`库` 与 `库/作品`）、或者同一个路径
-//!    点了两遍时，同一个卷根只留一份，镜像路径以最外层那个点名根为准
-//!    （见 [`discover::Found`]）。这一步不碰卷的内容，只看盘上的形状。
+//!    点了两遍（写法不同也算，`库` 与 `./库`）时，同一个卷根只留一份，镜像路径以最外层
+//!    那个点名根为准（见 [`discover::Found`]）。「同一个卷根」按[同一处](crate::place)认，
+//!    认不认大小写问的是每条处理路径这一趟开工时探出来的答案。
+//!    这一步不碰卷的内容，只看盘上的形状。
 //! 2. **计数**——每一个卷开一次、列一遍成员、算出它这一趟要走多少步。
 //!
 //! 一个卷要走多少步，得先枚举它的成员才知道，而枚举原先发生在处理那一卷的时候——
@@ -91,6 +93,7 @@ use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
 use crate::listing::FirstFew;
+use crate::place::{CaseSensitivity, Place, Side};
 use crate::progress::Events;
 use crate::report::{NonVolumeFile, NonVolumeReason, UnreachablePlace};
 use crate::sink::Lodgers;
@@ -216,7 +219,14 @@ impl Survey {
     ///
     /// **按停止赢过攒到一半的拒绝**：停之前已经撞上的点名坏路径不报，那张单子要
     /// **收齐了再报**（见下面那一句），而停下来的这一趟收不齐它——下一趟走完清点时一并说。
-    pub(crate) fn of(request: &Request, events: Events<'_>) -> Result<Option<Self>> {
+    ///
+    /// `output` 是输出根这一趟开工时探出来的答案（见 `crate::run`）：「谁住在谁的去处里」按它认
+    /// （见 [`find_the_lodgers`]）。处理路径那一侧在这里逐条探，收编按它认（见 [`discover::Found`]）。
+    pub(crate) fn of(
+        request: &Request,
+        output: CaseSensitivity,
+        events: Events<'_>,
+    ) -> Result<Option<Self>> {
         let mut volumes = Vec::new();
         let mut non_volume_files = Vec::new();
         let mut unreachable_places = Vec::new();
@@ -233,7 +243,8 @@ impl Survey {
             // 发现连一个候选都给不出来。**每个处理路径都问一遍**，被收编掉的那个也问——
             // 点名一个写错的路径仍是整趟拒绝（ADR 0014 决定第 5 条）。
             match discover::of(input) {
-                Ok(candidates) => found.absorb(input, candidates),
+                // 收编按[同一处](crate::place)认卷根，认不认大小写问的是**这条处理路径**。
+                Ok(candidates) => found.absorb(input, Side::Source.probe(input), candidates),
                 Err(error) => refused.push((input.clone(), error)),
             }
         }
@@ -280,10 +291,10 @@ impl Survey {
                 // 手上也不再有那个 `input`——而收编改的只是去处，不是这条分别
                 // （见 `discover::Found::absorb`）。
                 //
-                // 印出来的**写法**可能与用户敲的那一串不同：`Path` 比的是分量，
-                // 而收编留下的是头一回见到的那个写法——点名 `库 库/./作品` 时，
-                // 里层那个坏路径印成 `库/作品`（`read_dir` 拼出来的那一条）。
-                // 指的是同一个路径，用户认得出。
+                // 印出来的**写法**可能与用户敲的那一串不同：收编按[同一处](crate::place)认卷根，
+                // 而留下的是头一回见到的那个写法——点名 `库 ./库/作品` 时，
+                // 里层那个坏路径印成 `库/作品`（`read_dir` 拼出来的那一条）；不认大小写的盘上
+                // 点名 `Lib lib/作品` 时印成 `Lib/作品`。指的是同一个路径，用户认得出。
                 Err(error) => match (candidate.provenance, candidate.container) {
                     (Provenance::Named, _) => refused.push((candidate.root, error)),
                     // 发现出来的点不开的**归档**进非漫画文件清单，其余照做：
@@ -323,7 +334,7 @@ impl Survey {
             return Err(refuse(&refused, request.inputs.len()));
         }
         // 这一批卷齐了，「谁住在谁的去处里」这才答得出来。
-        find_the_lodgers(&mut volumes);
+        find_the_lodgers(&mut volumes, output);
         Ok(Some(Self {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
@@ -391,27 +402,30 @@ impl Survey {
 ///
 /// 比的是**镜像出来的相对路径**，不是卷根：借住这件事发生在输出那一侧，
 /// 而两个卷的源可以躺在完全不同的地方却镜像到同一棵输出树上。
-/// 它按分量逐字节比，与撞名那一道那把「文件系统认不认成同一个」的尺子不是一把
-/// （见 `crate::ensure_no_two_volumes_share_an_output`）：认漏一对的后果是那一卷
-/// 退回「整个换掉」，认多一对的后果是少清一件陈旧产物——都不写坏东西。
-fn find_the_lodgers(volumes: &mut [Surveyed]) {
-    let at: HashMap<PathBuf, usize> = volumes
+/// 「是不是那个卷的去处」按[同一处](crate::place)认，`output` 是输出根这一趟开工时探出来的答案——
+/// 与撞名那一道同一把尺子（见 `crate::ensure_no_two_volumes_share_an_output`）。
+/// 不认大小写的盘上 `out/N和S` 与 `out/n和s` 是同一个目录，住在后者里的那一卷就借住在前者那一卷的
+/// 去处里（停车场 Q300）。认漏一对的后果是那一卷退回「整个换掉」，认多一对的后果是少清一件陈旧产物
+/// ——都不写坏东西，探不出时输出那一侧因此按不认（宁可认多）。
+///
+/// 记下的那一段（住户相对这个去处的那一截）取**住户自己的写法**：它就是住户写出去时用的那几级，
+/// 写出那一层拿它去比盘上的名字。
+fn find_the_lodgers(volumes: &mut [Surveyed], output: CaseSensitivity) {
+    let at: HashMap<Place, usize> = volumes
         .iter()
         .enumerate()
-        .map(|(index, volume)| (volume.output_relative.clone(), index))
+        .map(|(index, volume)| (Place::of(&volume.output_relative, output), index))
         .collect();
     // 先收齐再写回：查表要借着 `volumes`，而填那一格要改它。
     let mut inside: Vec<(usize, PathBuf)> = Vec::new();
     for volume in volumes.iter() {
-        // `ancestors` 头一个是它自己，跳掉——一个卷不借住在自己的去处里。
-        for host in volume.output_relative.ancestors().skip(1) {
-            let Some(&index) = at.get(host) else {
-                continue;
-            };
-            let Ok(rest) = volume.output_relative.strip_prefix(host) else {
-                continue;
-            };
-            inside.push((index, rest.to_path_buf()));
+        let place = Place::of(&volume.output_relative, output);
+        let spelled = Place::of(&volume.output_relative, CaseSensitivity::Sensitive);
+        // 只问**真祖先**：到它自己那一级为止不含——一个卷不借住在自己的去处里。
+        for depth in 1..place.depth() {
+            if let Some(&index) = at.get(&place.ancestor(depth)) {
+                inside.push((index, spelled.below(depth)));
+            }
         }
     }
     let mut lodgers: Vec<Vec<PathBuf>> = vec![Vec::new(); volumes.len()];
@@ -489,7 +503,9 @@ mod tests {
     /// （清点中那一问见 [`Survey::of`]，问到停的那几条在 `tests/events.rs`）。
     fn survey_of(request: &Request) -> Result<Survey> {
         let nobody = crate::progress::NobodyWatching::default();
-        Survey::of(request, nobody.events())
+        // 输出那一侧照 `run` 那样探一次：这几条问的都不是它，而它该是真的那一个。
+        let output = Side::Output.probe(&request.output_root);
+        Survey::of(request, output, nobody.events())
             .map(|survey| survey.expect("没人可问，清点却停在了半路"))
     }
 
