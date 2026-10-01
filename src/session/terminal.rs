@@ -970,12 +970,22 @@ mod redesign {
     }
 
     /// 走完那一刻画一屏。
-    fn painted(scene: &Scene, running: &Running, (width, height): (u16, u16)) -> Buffer {
+    fn painted(scene: &Scene, running: &Running, size: (u16, u16)) -> Buffer {
+        painted_at(scene, running, size, scene.now())
+    }
+
+    /// 在给定的那一刻画一屏：会话一格不动，只是钟走到了那儿（回话到点、转轮转到哪一格）。
+    fn painted_at(
+        scene: &Scene,
+        running: &Running,
+        (width, height): (u16, u16),
+        now: std::time::Instant,
+    ) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
         let live = running.live();
         terminal
             .draw(|frame| {
-                shell::draw(frame, &scene.session, live.as_deref(), scene.now());
+                shell::draw(frame, &scene.session, live.as_deref(), now);
             })
             .expect("画得出来");
         terminal.backend().buffer().clone()
@@ -1460,6 +1470,19 @@ mod redesign {
         assert!(scene.session.deciding(), "回来还在确认点上，照旧答得出");
     }
 
+    /// **整卷统一灰阶那一趟停在确认点上按 `v`**（`design-parity/08`，停车场 Q902）：每页结果抬头
+    /// 「需留意 N/M 页」与确认条上「需留意的页」报的是同一个数，代表页都数进去
+    /// （`CONTEXT.md` 的《需留意的页》）——两块同在一屏上，比整屏。
+    #[test]
+    fn at_an_envelope_point_the_pages_and_the_decision_bar_count_the_same_notable_pages() {
+        let scene = assert_sequence("envelope-deciding-v");
+        assert!(
+            scene.session.views.task.pages.is_some(),
+            "`v` 换屏进了每页结果"
+        );
+        assert!(scene.session.deciding(), "看一眼不算答话");
+    }
+
     /// **`x` 写出这一卷**（票面第二条、第三条）：那个字**连同它管几卷**交到了停在确认点上的
     /// 那条线程手里（[`Running::decide`]），确认条收起来，**抬头当场翻成「转换」**
     /// ——这一卷从此在写。**结论行仍是预览那一副**：盘上这一刻还什么都没有
@@ -1628,6 +1651,22 @@ mod redesign {
             Some(Overlay::Keys { .. })
         ));
         assert!(scene.session.deciding(), "掀一张覆盖层不算答话");
+    }
+
+    /// **掀着全部按键那一张答话，屏底照样说那一句回话**（`design-parity/08`，停车场 Q903）：
+    /// 与按停止一个待遇——「此刻该不该说话」不问掀没掀覆盖层。三种答法各一串、各比整屏：
+    /// 那一张照旧掀着、列的键跟着阶段换（答继续回到跑着，答「不写出」那一趟收了场），
+    /// 屏底是那一句回话，不是覆盖层自己那两件。
+    #[test]
+    fn answering_under_the_key_sheet_still_says_what_the_answer_did() {
+        for name in ["deciding-help-x", "deciding-help-a", "deciding-help-s"] {
+            let scene = assert_sequence(name);
+            assert!(
+                matches!(scene.session.views.cover, Some(Overlay::Keys { .. })),
+                "「{name}」答完那一张照旧掀着"
+            );
+            assert!(!scene.session.deciding(), "「{name}」这一下答了话");
+        }
     }
 
     /// **备注行上 `⏎` 掀开说明卡、`Esc` 关**（票面第二条、第二个验收框）：
@@ -1848,6 +1887,16 @@ mod redesign {
         assert!(scene.session.views.input.is_none(), "那一行已经关了");
     }
 
+    /// **搜索那一行上 `C-w` 删一段，此刻搜的那一句跟着短**（`design-parity/08`，停车场 Q866）：
+    /// 「海贼」整段删掉，下划线与框底边左起那一截当场没了——此刻搜的那一句就是那一行的缓冲，
+    /// 中间不存第二份（[`super::super::view::Views::searching`]）。
+    #[test]
+    fn ctrl_w_on_the_search_line_shortens_what_is_searched() {
+        let scene = assert_sequence("search-C-w");
+        assert!(scene.session.searching_line(), "那一行还开着");
+        assert_eq!(scene.session.views.searching(), None);
+    }
+
     /// **搜进收着的目录里那一卷**（票面第二条那一串）：`棋魂/第15` 命中的是一卷，
     /// 而它那个目录收着——跳过去把目录展开、光标停在那一卷上。
     #[test]
@@ -1888,6 +1937,19 @@ mod redesign {
         ] {
             assert_sequence(name);
         }
+    }
+
+    /// **全部按键那一张掀着时 `g` `t` 不在它底下换视图**（`design-parity/08`，停车场 Q793）：
+    /// 覆盖层上的连击键只认 `gg`（`CONTEXT.md` 的《覆盖层》：除了按停止与答话别的键一律不派）——
+    /// `g` 待着、`t` 合不上就丢掉。关掉那一张时回到的还是原来那一屏。
+    #[test]
+    fn g_t_under_the_key_sheet_does_not_switch_the_view() {
+        let scene = assert_sequence("help-gt");
+        assert_eq!(scene.session.views.view, super::super::view::View::Task);
+        assert!(matches!(
+            scene.session.views.cover,
+            Some(Overlay::Keys { .. })
+        ));
     }
 
     /// **还在处理与还没轮到的卷停得住、展不开**：按下去不换屏，屏底说为什么
@@ -1966,6 +2028,65 @@ mod redesign {
         assert_eq!((line.buffer.as_str(), line.candidates.len()), ("~/", 0));
     }
 
+    /// **补全框里只有归档旁边标「压缩包」**（`design-parity/08`，停车场 Q791）：`~/漫画库/` 底下
+    /// 八项按名字排，`字体包.zip` 标、`答案.txt` 与 `README.md` 不标——按扩展名认，与卷列表同一把尺子。
+    #[test]
+    fn the_completion_box_labels_only_the_archives() {
+        let scene = assert_sequence("fresh-o-files-Tab");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        let labelled: Vec<(String, Option<&str>)> = line
+            .candidates
+            .iter()
+            .filter(|listed| !listed.directory)
+            .map(|listed| (listed.shown(), listed.label()))
+            .collect();
+        assert_eq!(
+            labelled,
+            [
+                ("README.md".to_owned(), None),
+                ("字体包.zip".to_owned(), Some("压缩包")),
+                ("答案.txt".to_owned(), None),
+            ],
+            "三个文件里只有那个归档带标签"
+        );
+    }
+
+    /// **补全框里挪候选只认 `↓`／`↑`**（`design-parity/08`，停车场 Q798）：`C-n` 不在按键表上，
+    /// 按下去候选一条不挪、缓冲一个字不进。
+    #[test]
+    fn ctrl_n_does_not_step_through_the_completion_box() {
+        let scene = assert_sequence("add-C-n");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.at, 0, "还停在头一条");
+        assert_eq!(
+            line.buffer,
+            format!("~/Comics/{}", line.candidates[0].shown())
+        );
+    }
+
+    /// **一条都对不上时那一句看得见**（`design-parity/08`，停车场 Q792）：打一个哪一项都不以它开头的
+    /// 前缀再按 `Tab`，「这里没有以「…」开头的项」画在**输入行右端那几件的位置**——输入行占着屏底，
+    /// 屏底只剩这一处说得出话；缓冲一个字不动，候选框不弹。到点那几件退回来。
+    #[test]
+    fn a_prefix_that_matches_nothing_says_so_at_the_right_end_of_the_input_line() {
+        let name = "fresh-o-unmatched-Tab";
+        let scene = assert_sequence(name);
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(
+            (line.buffer.as_str(), line.candidates.len()),
+            ("~/没有这个", 0)
+        );
+        // 到点那几件退回来：那一句占多久只有一处（`typing::NO_MATCH_LINGERS`，设计稿的 1600 毫秒）。
+        let later = scene.now() + super::super::typing::NO_MATCH_LINGERS;
+        // 这一景没开跑：画它不要那一趟。
+        let idle = Running::default();
+        let size = scene::sequence(name).size;
+        let lines = design::lines_of(&painted_at(&scene, &idle, size, later));
+        let footer = lines.last().expect("有屏底那一行");
+        assert!(footer.contains("[Tab → 补全]"), "那几件退回来了：{footer}");
+        assert!(!footer.contains("这里没有以"), "那一句到点就没了：{footer}");
+    }
+
     /// **打一个找不到的路径**：`⏎` 之后输入行关了、屏底说「找不到」、列表一条没多；
     /// **打一个找得到的**：添上、勾着、光标停到它上面、屏底说「已添加」。
     #[test]
@@ -2024,6 +2145,18 @@ mod redesign {
             assert_eq!(scene.session.views.config.focus(), Focus::Settings);
             assert_eq!(scene.session.taste.fit, Some(FitMode::Inside), "一格没改");
         }
+    }
+
+    /// **画质判定参数那一组在详情栏里怎么说**（`design-parity/08`：配置视图里每一句都有快照钉着）：
+    /// 光标停在「选项冲突」上，行内那一句整句摊开、底下说它与报告抬头逐字相同，外加「此刻的设置」
+    /// 那一句；缩放方式改成 `height` 之后一条冲突都没咬上，那一行是界面自己的「无」、
+    /// 「逐字相同」那一句不说，说明换成没有冲突的那一句。
+    #[test]
+    fn the_judging_rows_explain_themselves_in_the_details_pane() {
+        let scene = assert_sequence("config-h-G");
+        assert_eq!(scene.session.taste.fit, Some(FitMode::Inside));
+        let scene = assert_sequence("config-h-l-k-l-G");
+        assert_eq!(scene.session.taste.fit, Some(FitMode::Height));
     }
 
     /// **设置栏 `l` 进详情栏，光标停在此刻生效的那一格上**（票面第二条）：
@@ -2373,79 +2506,57 @@ mod redesign {
     }
 
     /// **同名覆盖要按两下**（票面第一条）：第一下**在预设栏里**问一句、盘一个字节都不动、
-    /// 输入行留着，第二下才盖掉；盖掉的只有那一份，文件里另一份原样留着。
+    /// 输入行与名字留着，第二下才盖掉；盖掉的只有那一份，文件里另一份原样留着。
     ///
-    /// 设计稿没有这一串（`submitInput` 那一支直接 push），因此**没有一份期望屏可对**；
-    /// 这一条比的是盘上那份文件、输入行还在不在，以及**屏上真画出了那一问**
-    /// ——屏底这一刻让给了输入行，那一句只有画出来才算说了（停车场 Q894）。
+    /// 两下各一串、**各比整屏**（`design-parity/08`，停车场 Q894）——那一问在预设栏里、
+    /// 说明底下那一行，屏底这一刻让给了输入行；措辞、位置、颜色由期望屏钉着。
+    /// 这里另核盘上那份文件：屏上说「盖了」不算，盘上真盖了、只盖了那一份才算。
     #[test]
     fn an_existing_name_takes_two_presses_before_it_overwrites() {
-        let mut scene = Scene::named("config");
-        let mut running = Running::default();
-        let now = scene.now();
-        let here = charts_land_in(&scene);
-        let window = Window {
-            cols: 120,
-            rows: 36,
-        };
-        let before = scene.presets.read("画集").expect("另一份读得出");
-        let taken = scene.presets.read("漫画").expect("撞名的那一份读得出");
-        let tap = |scene: &mut Scene, running: &mut Running, key: Key| {
-            super::input(
-                &mut scene.session,
-                running,
-                &scene.presets,
-                &here,
-                now,
-                window,
-                Input::Key(key),
-            );
-        };
-        // 掀开预设栏、停到末行、开输入行，打上一个**已经有了**的名字。
-        for key in [Key::Char('p'), Key::Char('G'), Key::Enter] {
-            tap(&mut scene, &mut running, key);
-        }
-        for character in "漫画".chars() {
-            tap(&mut scene, &mut running, Key::Char(character));
-        }
-        tap(&mut scene, &mut running, Key::Enter);
+        let untouched = Scene::named("config");
+        let taken = untouched.presets.read("漫画").expect("撞名的那一份读得出");
+        let other = untouched.presets.read("画集").expect("另一份读得出");
+        // 第一下：只问，输入行留着、盘一个字节都没动。
+        let scene = assert_sequence("config-p-save-taken");
         assert!(scene.session.views.input.is_some(), "第一下输入行留着");
         assert_eq!(
             scene.presets.read("漫画").expect("读得出"),
             taken,
             "第一下盘一个字节都没动"
         );
-        // **那一问真在屏上**：预设栏里、说明底下那一行——屏底这一刻让给了输入行，
-        // 说给屏底等于一个字都没说（停车场 Q894）。比的是**去掉空白之后**屏上有没有这几个字
-        // （宽字符占住的第二格画布清成空格）。
-        let screen: String = painted(&scene, &running, (120, 36))
-            .content()
-            .iter()
-            .flat_map(|cell| cell.symbol().chars())
-            .filter(|glyph| !glyph.is_whitespace())
-            .collect();
-        assert!(
-            screen.contains("再按一次⏎覆盖「漫画」："),
-            "屏上没画出那一问"
-        );
-        assert!(
-            !screen.contains("再按一次dd删除"),
-            "那一问不该串成删除那一句"
-        );
         // 第二下才盖。
-        tap(&mut scene, &mut running, Key::Enter);
+        let scene = assert_sequence("config-p-save-taken-Enter");
         assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        let stored = scene.session.preset_to_store();
+        // 盖上去的与原来那一份不同（这一景改过缩放方式与抖动）：否则「第二下才盖」是一次空操作，照绿。
+        assert_ne!(stored, taken, "这一景存出去的与原来那一份不同");
         assert_eq!(
             scene.presets.read("漫画").expect("读得出"),
-            scene.session.preset_to_store(),
+            stored,
             "第二下才盖掉"
         );
-        assert_eq!(scene.presets.read("画集").expect("原样留着"), before);
+        assert_eq!(scene.presets.read("画集").expect("原样留着"), other);
         assert_eq!(
             scene.presets.names().expect("读得出名字"),
             ["漫画", "画集"],
             "覆盖不添第三份"
         );
+    }
+
+    /// **重开一次起名那一行，上一次撞名等着的那一下就作废**（`design-parity/08`，停车场 Q894）：
+    /// 撞名、`Esc` 关掉、再在末行上按 `⏎`——预设栏里那一问没了，输入行重新空着开起来，
+    /// 盘上那一份一个字节都没动。
+    #[test]
+    fn reopening_the_naming_line_forgets_the_name_it_asked_about() {
+        let taken = Scene::named("config")
+            .presets
+            .read("漫画")
+            .expect("撞名的那一份读得出");
+        let scene = assert_sequence("config-p-save-taken-Escape-Enter");
+        assert_eq!(scene.session.views.config.armed_save, None);
+        let line = scene.session.views.input.as_ref().expect("输入行重新开着");
+        assert_eq!(line.buffer, "");
+        assert_eq!(scene.presets.read("漫画").expect("读得出"), taken);
     }
 
     /// **`c` 出灰阶测试图**（票面第一条）：图按此刻那块面板画出来、写到盘上，
