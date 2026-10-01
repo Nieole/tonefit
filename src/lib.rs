@@ -265,72 +265,96 @@ pub fn run(request: &Request) -> Result<Report> {
     let events = progress::Events::new(request.progress.as_ref(), &standing, &deliberation);
     // **清点**：开工之前发现这一趟有哪些卷，把它们全枚举一遍，算出这一趟的全局总步数
     // （ADR 0011 决定第 3 条、ADR 0014）。它排在开工那条事件**之前**，因为那条事件要带着
-    // 那个数；点名的坏路径因此在任何卷级事件之前就把整趟拒掉——输出目录下一个文件都没有
-    // （见 `survey`）。
-    let survey = survey::Survey::of(request)?;
-    // 撞名要在写出第一个字节之前说，而**撞在一起的是发现出来的那些卷**——点名的是
-    // 「在哪里找」，不是「找到什么」（ADR 0009 决定第 1 条）。这一道因此排在清点之后、
-    // 开工那条事件之前。
-    ensure_no_two_volumes_share_an_output(survey.volumes(), &request.output_root)?;
-    // 开工前那几道检查与清点都排在它之前：那几种失败一条事件都不发，调用方拿到的是错误本身。
-    // 报的是**发现出来的卷**，不是点名了几个路径：进度条上那个分母得是真要做的那些。
-    // 清点的三份产出一起带出去（`session-redesign/03`）——它们此刻已经齐了，这里不另算。
-    events.run_started(
-        survey.steps(),
-        &survey.roster(),
-        survey.non_volume_files(),
-        survey.unreachable_places(),
-    );
-    let mut volumes = Vec::with_capacity(survey.volumes().len());
+    // 那个数；点名的坏路径因此在任何开工与卷级事件之前就把整趟拒掉——输出目录下一个文件都没有
+    // （见 `survey`）。清点途中只有一种事件：每开一个归档头之前一条**清点中**，
+    // 观察者答停止就当场收手（`say-and-stop/02`）。
+    let mut volumes = Vec::new();
     let mut failed_volumes = Vec::new();
+    let mut aborted = None;
     let mut outcome = RunOutcome::Completed;
-    // 清点的**三份产出**一起交出来（见 `survey::Survey` 的那个同名方法）：卷这一份在下面
-    // 被逐个吃掉，另两份原样挂到报告上。它们整份在开工之前就齐了——发现走完
-    // 就不再变，因此按停止停在半路的那一趟，这两张表照样是全的。
-    let (surveyed_volumes, non_volume_files, unreachable_places) =
-        survey.into_volumes_and_the_rest();
-    for surveyed in surveyed_volumes {
-        // **卷边界上的检查点**（ADR 0013 决定第 1 条）：做完再停让当前卷跑完就停，
-        // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
-        // 立即停止在这一道上与做完再停同样停下：力度更强的指令不该比更弱的那个停得更晚。
-        if events.standing() != Instruction::Continue {
+    let survey = survey::Survey::of(request, events)?;
+    let (non_volume_files, unreachable_places, unstarted) = match survey {
+        // **清点途中按停止**（`say-and-stop/02`）：这一趟收成什么样只有一处说，见 `Event::Surveying`。
+        // 这里只填那份一卷都没有的报告——两张表空着，`unstarted` 是 `None`（说不出剩下几卷）。
+        None => {
             outcome = RunOutcome::of(events.standing());
-            break;
+            (Vec::new(), Vec::new(), None)
         }
-        // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
-        // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
-        let root = surveyed.root.clone();
-        match process_volume(surveyed, request, &mut probes, events) {
-            Ok(Some(report)) => volumes.push(report),
-            Ok(None) => {
-                // **立即停止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial` 已经丢掉，
-                // 它等于没做，报告里因此没有它这一条。下一卷更不必开工——卷边界那个检查点
-                // 也会拦下它，这里明写是为了让「立即停止掉的卷不进报告」与「后面的卷不做」
-                // 在同一处看得见。
-                outcome = RunOutcome::of(events.standing());
-                break;
+        Some(survey) => {
+            // 撞名要在写出第一个字节之前说，而**撞在一起的是发现出来的那些卷**——点名的是
+            // 「在哪里找」，不是「找到什么」（ADR 0009 决定第 1 条）。这一道因此排在清点之后、
+            // 开工那条事件之前。
+            ensure_no_two_volumes_share_an_output(survey.volumes(), &request.output_root)?;
+            // 开工前那几道检查与清点都排在它之前：那几种失败一条开工与卷级事件都不发，
+            // 调用方拿到的是错误本身。报的是**发现出来的卷**，不是点名了几个路径：
+            // 进度条上那个分母得是真要做的那些。
+            // 清点的三份产出一起带出去（`session-redesign/03`）——它们此刻已经齐了，这里不另算。
+            events.run_started(
+                survey.steps(),
+                &survey.roster(),
+                survey.non_volume_files(),
+                survey.unreachable_places(),
+            );
+            volumes.reserve(survey.volumes().len());
+            // 清点的**三份产出**一起交出来（见 `survey::Survey` 的那个同名方法）：卷这一份在下面
+            // 被逐个吃掉，另两份原样挂到报告上。它们整份在开工之前就齐了——发现走完
+            // 就不再变，因此按停止停在半路的那一趟，这两张表照样是全的。
+            let (surveyed_volumes, non_volume_files, unreachable_places) =
+                survey.into_volumes_and_the_rest();
+            // 还排着没开卷的那几卷。按停止停下时它剩下几卷，就是被拿走的那一截
+            // （`Report::unstarted`）；走到头时它是空的。
+            let mut queued = surveyed_volumes.into_iter();
+            let mut unstarted = 0;
+            while let Some(surveyed) = queued.next() {
+                // **卷边界上的检查点**（ADR 0013 决定第 1 条）：做完再停让当前卷跑完就停，
+                // 而「当前卷跑完」正是这里——盘上因此只有完整的卷，下一趟幂等接着走。
+                // 立即停止在这一道上与做完再停同样停下：力度更强的指令不该比更弱的那个停得更晚。
+                // 手上这一卷还没开卷，它也算在没开工的那一截里。
+                if events.stopping() {
+                    outcome = RunOutcome::of(events.standing());
+                    unstarted = 1 + queued.len();
+                    break;
+                }
+                // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
+                // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
+                let root = surveyed.root.clone();
+                match process_volume(surveyed, request, &mut probes, events) {
+                    Ok(Some(report)) => volumes.push(report),
+                    Ok(None) => {
+                        // **立即停止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial`
+                        // 已经丢掉，它等于没做，报告里因此没有它这一条——只记下丢掉的是它
+                        // （`Report::aborted`）。下一卷更不必开工——卷边界那个检查点
+                        // 也会拦下它，这里明写是为了让「立即停止掉的卷不进报告」与「后面的卷不做」
+                        // 在同一处看得见。
+                        outcome = RunOutcome::of(events.standing());
+                        aborted = Some(root);
+                        unstarted = queued.len();
+                        break;
+                    }
+                    // **拒绝开始**：错在这一趟的参数上，换一个卷不会变好（见 [`Refusal`]）。
+                    // 整趟当场停，返回的是那个错误本身——退出码 `1`，不是卷转换失败那个 `3`。
+                    // 结束那一条照发：开工报过了，结束就得报得到（见 `Event::RunFinished`）。
+                    Err(error) if error.downcast_ref::<Refusal>().is_some() => {
+                        events.run_finished(RunOutcome::Refused);
+                        return Err(error);
+                    }
+                    // **卷转换失败**（05 号票）：清点时打得开、轮到它却做不成的卷记一笔，
+                    // 其余卷照做、报告照出。整趟当场失败的话，前面几十卷的报告跟着一起没了，
+                    // 而它们的输出还好好地躺在盘上——那是几十卷的长任务里最难受的一种结局。
+                    Err(error) => {
+                        let reason = format!("{error:#}");
+                        events.volume_failed(&root, &reason);
+                        failed_volumes.push(VolumeFailure {
+                            volume: root,
+                            reason,
+                        });
+                    }
+                }
             }
-            // **拒绝开始**：错在这一趟的参数上，换一个卷不会变好（见 [`Refusal`]）。
-            // 整趟当场停，返回的是那个错误本身——退出码 `1`，不是卷转换失败那个 `3`。
-            // 结束那一条照发：开工报过了，结束就得报得到（见 `Event::RunFinished`）。
-            Err(error) if error.downcast_ref::<Refusal>().is_some() => {
-                events.run_finished(RunOutcome::Refused);
-                return Err(error);
-            }
-            // **卷转换失败**（05 号票）：清点时打得开、轮到它却做不成的卷记一笔，
-            // 其余卷照做、报告照出。整趟当场失败的话，前面几十卷的报告跟着一起没了，
-            // 而它们的输出还好好地躺在盘上——那是几十卷的长任务里最难受的一种结局。
-            Err(error) => {
-                let reason = format!("{error:#}");
-                events.volume_failed(&root, &reason);
-                failed_volumes.push(VolumeFailure {
-                    volume: root,
-                    reason,
-                });
-            }
+            events.run_finished(outcome);
+            (non_volume_files, unreachable_places, Some(unstarted))
         }
-    }
-    events.run_finished(outcome);
+    };
     // 分阶段耗时剖面（加固批 13 号票的量具）。特性关着时这一句什么都不做，见 `cost`。
     cost::print_profile();
     Ok(Report {
@@ -344,6 +368,8 @@ pub fn run(request: &Request) -> Result<Report> {
         non_volume_files,
         unreachable_places,
         outcome,
+        aborted,
+        unstarted,
         // 在确认点上等人的那几分钟不算这一趟的账（停车场 Q41）：库那时一步都没走。
         // 各卷的 `VolumeTiming::elapsed` 各自减掉自己那一截，这里减的是全部卷的和。
         elapsed: started.elapsed().saturating_sub(events.deliberated()),

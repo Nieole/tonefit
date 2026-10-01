@@ -69,6 +69,12 @@
 //! （见 [`Surveyed::steps`] 与 [`Surveyed::source_pages`]），成员数在处理那一卷时按重开的卷
 //! 重新数一遍。
 //!
+//! # 清点中：每开一个归档头之前问一句
+//!
+//! 清点途中观察者问得上话的只有这一处（`say-and-stop/02`，收停车场 Q261）：枚举一个**归档**之前
+//! 先报一条清点中、再问闩，按过停止就当场收手。目录那一侧不开归档头，不报也不问。
+//! 怎么收手、交回什么，见 [`Survey::of`]。
+//!
 //! # 开工那一条带着清点的产出
 //!
 //! 三份产出在开工那一条事件上**原样**带出去（`session-redesign/03`，收停车场 Q719）：
@@ -85,6 +91,7 @@ use anyhow::{Result, anyhow};
 
 use crate::discover::{self, Provenance};
 use crate::listing::FirstFew;
+use crate::progress::Events;
 use crate::report::{NonVolumeFile, NonVolumeReason, UnreachablePlace};
 use crate::sink::Lodgers;
 use crate::source::{self, Container};
@@ -194,11 +201,22 @@ pub struct SurveyedVolume {
 impl Survey {
     /// 发现这一趟有哪些卷（**重叠的点名先收编成一批**），再把它们逐个枚举一遍。
     ///
-    /// **点名的**路径里有一个点不开就整趟当场拒绝，一条事件都不发；发现出来的点不开的
+    /// **点名的**路径里有一个点不开就整趟当场拒绝，开工与卷级事件一条都不发；发现出来的点不开的
     /// 归档进非漫画文件那张表、点不开的目录进无法访问的地方那一张，其余照做。
     /// 开出来一页都没有的候选一并跳过——它不是卷，
     /// 它那一层里没被收下的东西同样进那张表（见 [`nothing_took_it`]）。
-    pub(crate) fn of(request: &Request) -> Result<Self> {
+    ///
+    /// # 清点中：每开一个归档头之前问一句（`say-and-stop/02`，收停车场 Q261）
+    ///
+    /// 枚举一个**归档**之前先报一条[清点中](crate::Event::Surveying)，再问一次[按过停止没有](Events::stopping)：
+    /// 按过停止（做完再停或立即停止，这一刻两级没有区别）就**当场收手**，这一个归档头不开，
+    /// 交回 `Ok(None)`——一卷都没有，非漫画文件、无法访问的地方两张表也不交：
+    /// 清点没走完，那两张不全，而它们的读者要的正是「全的」（`CONTEXT.md` 的《清点摘要》）。
+    /// 目录那一侧只列一层目录、不开归档头，不报也不问。
+    ///
+    /// **按停止赢过攒到一半的拒绝**：停之前已经撞上的点名坏路径不报，那张单子要
+    /// **收齐了再报**（见下面那一句），而停下来的这一趟收不齐它——下一趟走完清点时一并说。
+    pub(crate) fn of(request: &Request, events: Events<'_>) -> Result<Option<Self>> {
         let mut volumes = Vec::new();
         let mut non_volume_files = Vec::new();
         let mut unreachable_places = Vec::new();
@@ -220,6 +238,12 @@ impl Survey {
             }
         }
         for candidate in found.into_candidates() {
+            if candidate.container == Container::Archive {
+                events.surveying();
+                if events.stopping() {
+                    return Ok(None);
+                }
+            }
             let started = Instant::now();
             match source::enumerate(&candidate.root) {
                 Ok(volume) => {
@@ -300,12 +324,12 @@ impl Survey {
         }
         // 这一批卷齐了，「谁住在谁的去处里」这才答得出来。
         find_the_lodgers(&mut volumes);
-        Ok(Self {
+        Ok(Some(Self {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
             non_volume_files,
             unreachable_places,
-        })
+        }))
     }
 
     /// 这一趟最多走多少步。开工那条事件报的就是它。
@@ -461,6 +485,14 @@ fn refuse(refused: &[(PathBuf, anyhow::Error)], named: usize) -> anyhow::Error {
 mod tests {
     use super::*;
 
+    /// **没人可问**的那一趟清点：没人按得了停止，清点恒走完，`Ok(None)` 出不来
+    /// （清点中那一问见 [`Survey::of`]，问到停的那几条在 `tests/events.rs`）。
+    fn survey_of(request: &Request) -> Result<Survey> {
+        let nobody = crate::progress::NobodyWatching::default();
+        Survey::of(request, nobody.events())
+            .map(|survey| survey.expect("没人可问，清点却停在了半路"))
+    }
+
     /// 坏路径逐条列出，且说得出总共点名了几个。
     ///
     /// 只报第一条的话，点名十个卷、写错三个路径的人要来回改三趟——而这三条本来一次就说得完。
@@ -554,7 +586,7 @@ mod tests {
 
         // 点名的卷与输出目录之外，用的是 crate 里那一份最小请求（`crate::tests::request`）——
         // 本模块只关心点名了哪几个卷，别的一格都不改，也不该再抄一份 `Request` 字面量。
-        let survey = Survey::of(&Request {
+        let survey = survey_of(&Request {
             inputs,
             output_root: space.path().join("out"),
             ..crate::tests::request()
@@ -637,7 +669,7 @@ mod tests {
             return;
         };
 
-        let surveyed = Survey::of(&Request {
+        let surveyed = survey_of(&Request {
             inputs: vec![library],
             output_root: space.path().join("out"),
             ..crate::tests::request()
@@ -676,7 +708,7 @@ mod tests {
             return;
         }
 
-        let surveyed = Survey::of(&Request {
+        let surveyed = survey_of(&Request {
             inputs: vec![closed.clone()],
             output_root: space.path().join("out"),
             ..crate::tests::request()
@@ -703,7 +735,7 @@ mod tests {
         // 中央目录与尾记录都没有：这个归档结构根本读不出来。
         std::fs::write(library.join("坏的.cbz"), b"not a zip at all").expect("写坏归档");
 
-        let surveyed = Survey::of(&Request {
+        let surveyed = survey_of(&Request {
             inputs: vec![library.clone()],
             output_root: space.path().join("out"),
             ..crate::tests::request()

@@ -70,6 +70,8 @@ pub enum ReportFold {
 /// 整份报告：命令行跑完在最后一次性渲染出来的就是它。
 ///
 /// 四段按顺序拼起来，中间不加任何东西——会话逐段画出来的与这里拼出来的逐字节相同。
+/// 按停止停下的那一趟末尾再接一行[结束方式](super::outcome)，顶格，与末尾那几小结之间不空行；
+/// 走到头的那一趟没有它，四段之外一个字节都不多。
 ///
 /// **折的只有正文那一段**（`fold`，见 [`ReportFold`]）：抬头与末尾那几小结两副都全印。
 /// 那正是折起那一副仍答得出「这一趟出了什么事」的地方——没做成的那几卷、
@@ -90,6 +92,11 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
         }
     }
     text.push_str(&self::tail(report));
+    // **结束方式那一句压在最末**（`say-and-stop/02`）：走到头不出，按停止停下的那一趟一行。
+    if let Some(said) = super::outcome(report) {
+        text.push_str(&said);
+        text.push('\n');
+    }
     text
 }
 

@@ -48,6 +48,32 @@
 //! `--envelope`：这两条问的是「`Ctrl-C` 到底有没有变成那两个字」，两级停止的检查点
 //! 两条路共用，走哪条路不改结论——改的只是记号之间隔得够不够宽。
 
+//! # 报告末尾那一句结束方式（`say-and-stop/02`，收停车场 Q260）
+//!
+//! 按停之后屏上那一句走 stderr，对面不是终端时一个字节都不写；**留得下来的是 stdout 上那份报告**。
+//! 两级各一条都顺带读 stdout，问报告末尾有没有那一句（措辞的出处在 `src/render.rs` 的 `outcome`，
+//! 这里只认它印出来的样子）。报告按 100 格折过（对面不是终端，`src/wrap.rs`），
+//! 长的那一句会被折开——比之前两边的空白都去掉（见 [`says`]）。
+//!
+//! # 清点途中按停：盘上没有记号，拿一串命名管道当记号
+//!
+//! 清点只列归档头、一个字节都不写，《按在哪一刻》那张表里
+//! 一个记号都没有。记号换成**点名的命名管道**（扩展名 `.cbz`）：清点开到它时卡在 `open` 上，
+//! 等一个写端；用例**非阻塞地**去开写端——开得动，说明清点正卡在那儿（键因此早已装上：
+//! 它装在 `run` 之前），那一个归档头随即读到空的、点不开，清点接着走向下一个。
+//! **写端要攥到下一个管道放行为止**，不能开完就关：XNU 上读端被叫醒之后要再看一眼
+//! 「有没有写端」，写端在它醒来之前就关掉的话它接着睡，清点就此卡死在那个管道上
+//! （头一版十趟里卡死过一趟）。
+//! 按下 `Ctrl-C` 之后再一个个放行，直到进程退出：信号那条线程把那一下记进闩要一点功夫，
+//! 那一点功夫由**下一个归档头之前那一问**接住（`tonefit::Event::Surveying`）。
+//! 放行之前各歇几毫秒，给那条线程留出余地（量级与出处见 [`HOLES`]）——**那不是记号**，
+//! 记号仍是「清点卡在第几个管道上」；
+//! 余地不够的话管道会被放完，清点走到头、这一趟被拒，用例是**红**不是假绿。
+//!
+//! 管道是**点名的**而不是躺在一个目录里：发现只收普通文件（`src/discover.rs` 的 `push_children`），
+//! 管道连候选都当不上。点名的坏归档撞上停止时**停止赢**（`tonefit::Event::Surveying` 的文档），
+//! 这一趟因此交回报告而不是拒绝。
+
 // `Ctrl-C` 在 Windows 上不是一个信号（那一头是 `SetConsoleCtrlHandler`，见 `Cargo.toml`
 // 里 `ctrlc` 那一条的注释），送它要另一套 API。**装那个键**两个平台上是同一句
 // `ctrlc::set_handler`，而**按它**这一半只有 unix 这一侧本仓验得到（停车场 Q263）。
@@ -55,7 +81,7 @@
 
 mod fixtures;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use fixtures::Workspace;
@@ -75,11 +101,16 @@ fn one_ctrl_c_lets_the_volume_in_flight_finish_and_stops_there() {
         partial(&space).is_dir()
     });
     ctrl_c(&child);
-    let code = child.wait().expect("等子进程").code();
+    let (code, printed) = finished(child);
 
     // **按停止不是失败**：退出码照既有那四个走，这一趟做到的那一卷成了，交出的是 0
     // （`src/main.rs` 的 `exit_code`）。
     assert_eq!(code, Some(0), "按停止停下来的一趟没交出「全部成功」那个数");
+    // **报告说得出它被按停过**，剩下哪一截（`say-and-stop/02`）：当前卷做完，后面两卷没开工。
+    assert!(
+        says(&printed, "按停止停下（做完再停）：剩下 2 卷没开工"),
+        "stdout 上的报告没说这一趟是按停止停下的：{printed}"
+    );
     assert_eq!(
         fixtures::names_in(&space.out()),
         ["卷01"],
@@ -121,9 +152,18 @@ fn two_ctrl_c_throws_the_volume_in_flight_away_and_the_final_place_is_untouched(
         !fixtures::names_in(&partial(&space)).is_empty()
     });
     ctrl_c(&child);
-    let code = child.wait().expect("等子进程").code();
+    let (code, printed) = finished(child);
 
     assert_eq!(code, Some(0), "按停止停下来的一趟没交出「全部成功」那个数");
+    // **报告说得出丢掉的是哪一卷**、最终位置没动过、后面两卷没开工（`say-and-stop/02`）。
+    let said = format!(
+        "按停止停下（立即停止）：{} 做到一半丢掉了，最终位置上一个字节都没动过；剩下 2 卷没开工",
+        volumes[0].display()
+    );
+    assert!(
+        says(&printed, &said),
+        "stdout 上的报告没说当前那一卷丢掉了：{printed}"
+    );
     // **立即停止掉的那一卷等于没做**：最终位置上没有它，那格 `partial` 也没剩下——
     // 一格半成品都不留（`src/sink.rs` 的两个 `Drop`）。
     assert!(
@@ -131,6 +171,110 @@ fn two_ctrl_c_throws_the_volume_in_flight_away_and_the_final_place_is_untouched(
         "立即停止之后输出目录里还剩着东西：{:?}",
         fixtures::names_in(&space.out())
     );
+}
+
+/// **清点途中按停当场停**，报告说一卷都没开工（`say-and-stop/02`，收停车场 Q261）。
+///
+/// 从前清点那一段按下去停不下来：闩记住了，而第一个检查点在清点之后，几十个归档头要列完
+/// 才停得住。现在每开一个归档头之前问一句，这一趟当场收手——排在管道后面的那个真卷
+/// 一页都没做，stdout 上的报告以「清点途中按停止停下」收尾，退出码照按停止那一条走（0）。
+///
+/// 记号与余地怎么来的，见模块文档《清点途中按停》。
+#[test]
+fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
+    let space = Workspace::new();
+    let holes: Vec<PathBuf> = (1..=HOLES)
+        .map(|n| pipe(&space, &format!("坑{n:02}.cbz")))
+        .collect();
+    let volume = space.volume("卷01");
+    volume.page(&page_name(1), &fixtures::cheap_page());
+    let mut inputs = holes.clone();
+    inputs.push(volume.path().to_path_buf());
+    let mut child = spawn(&space, &inputs);
+
+    // 清点开到头一个管道上了：键早已装好。
+    let mut held =
+        let_through(&mut child, &holes[0]).expect("清点还没开到头一个归档头，进程就退了");
+    ctrl_c(&child);
+    for hole in &holes[1..] {
+        std::thread::sleep(BREATHER);
+        // 下一个放行了，上一个的写端才放手（模块文档《清点途中按停》）。
+        match let_through(&mut child, hole) {
+            Some(next) => held = next,
+            None => break,
+        }
+    }
+    drop(held);
+    let (code, printed) = finished(child);
+
+    assert_eq!(
+        code,
+        Some(0),
+        "清点途中按停止没交出按停止那个数（管道放完了、清点走到头被拒？）：{printed}"
+    );
+    assert!(
+        says(&printed, "清点途中按停止停下：一卷都没开工"),
+        "stdout 上的报告没说清点途中停下：{printed}"
+    );
+    assert!(
+        !space.out().join("卷01").exists(),
+        "清点途中按了停，排在后面的卷照样做了"
+    );
+}
+
+/// 清点途中那条用例摆几个管道。头一个当记号，按下之后剩下的那些每放行一个先歇 [`BREATHER`]，
+/// 合起来是信号那条线程把那一下记进闩的余地：39 × 5 毫秒，约 0.2 秒。
+///
+/// **余地的量级**：`ctrlc` 的回调跑在它自己那条线程上，信号处理函数往管道里写一个字节把它叫醒
+/// ——那是一次线程唤醒，空闲的机器上是微秒级；闸门那一趟所有核都在编页，排到它要等调度，
+/// 量级是毫秒到几十毫秒。0.2 秒高出后者一个数量级。正常的一趟里那条线程在第二、三个管道之前
+/// 就记上了，后面那些管道一个都不开（连跑二十趟，每趟整条用例约 0.7 秒，见票据《落地记录》）。
+/// 余地不够时这条用例**红**（管道放完、清点走到头被拒），不会假绿。
+const HOLES: usize = 40;
+
+/// 按下之后每放行一个管道之前歇多久。见 [`HOLES`]。
+const BREATHER: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// 在工作区根下造一个**命名管道**，名字照 `name`（带 `.cbz`，清点才把它当归档头去开）。
+fn pipe(space: &Workspace, name: &str) -> PathBuf {
+    let path = space.root().join(name);
+    let raw = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).expect("路径里没有 NUL");
+    // SAFETY: 一个以 NUL 收尾的路径、一个权限位；`mkfifo` 不碰别的内存。
+    let made = unsafe { libc::mkfifo(raw.as_ptr(), 0o644) };
+    assert_eq!(made, 0, "造不出命名管道 {}", path.display());
+    path
+}
+
+/// **放行一个管道**：等到清点卡在它的 `open` 上（非阻塞地开写端开得动），交回那个写端——
+/// 那一个归档头读到的是空的。写端由调用方攥着，攥到下一个放行为止（见模块文档）。
+/// 进程先退了就回 `None`，一个字节都不等。
+///
+/// 等一分钟都等不到读端就把子进程杀掉再红：那是清点卡在了别处，转下去只会把整趟闸门挂死。
+fn let_through(child: &mut Child, hole: &Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if child.try_wait().expect("问子进程还在不在").is_some() {
+            return None;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("一分钟都没等到清点开 {}：它卡在了别处", hole.display());
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(hole)
+        {
+            Ok(writer) => return Some(writer),
+            // 读端还没来：清点没开到这一个。歇一毫秒再问（理由同 [`until`]）。
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => panic!("开 {} 的写端：{error}", hole.display()),
+        }
+    }
 }
 
 /// 这一趟：三个卷。第一卷 [`pages`] 张（两条用例都停在它身上，见模块文档
@@ -194,7 +338,7 @@ fn partial(space: &Workspace) -> PathBuf {
 
 /// 起一趟，**不等它**。
 ///
-/// 报告与进度条都不进测试日志：这两条只看盘上留下什么与退出码是几。
+/// 进度条不进测试日志；报告接成管道，由 [`finished`] 读回来（只读末尾那一句结束方式）。
 /// 进度条那一头本来也不会写——对面不是终端时 indicatif 一个字节都不写
 /// （`src/main.rs` 的 `Bar`）。
 fn spawn(space: &Workspace, inputs: &[PathBuf]) -> Child {
@@ -205,10 +349,29 @@ fn spawn(space: &Workspace, inputs: &[PathBuf]) -> Child {
         // 写出环节要有编，两个记号之间才隔得开——模块文档《为什么开着 `--envelope`》。
         .arg("--envelope")
         .args(inputs)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("启动 tonefit")
+}
+
+/// 等它退出，交回退出码与 stdout 上的报告。
+///
+/// stdout 接成管道而不是丢掉：报告末尾那一句结束方式是这几条要读的（模块文档《报告末尾那一句结束方式》）。
+/// 报告不长，管道装得下，等完再读不会把子进程憋住。
+fn finished(child: Child) -> (Option<i32>, String) {
+    let output = child.wait_with_output().expect("等子进程");
+    let printed = String::from_utf8(output.stdout).expect("报告是 UTF-8");
+    (output.status.code(), printed)
+}
+
+/// 报告里**说了**这一句没有：两边的空白都去掉再比。
+///
+/// 报告按 100 格折过，长的那一句会被折开，折口落在空格上就吃掉那个空格、落在汉字之间就多一个换行；
+/// 两边都把空白去掉，折在哪儿都比得上。
+fn says(printed: &str, sentence: &str) -> bool {
+    let squashed = |text: &str| text.split_whitespace().collect::<String>();
+    squashed(printed).contains(&squashed(sentence))
 }
 
 /// 转到 `mark` 成立为止（见模块文档《按在哪一刻》）。

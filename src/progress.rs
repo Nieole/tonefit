@@ -46,11 +46,25 @@ use crate::survey::SurveyedVolume;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event<'a> {
+    /// **清点中**：清点要开下一个归档头了（`say-and-stop/02`，收停车场 Q261）。
+    ///
+    /// 清点每开一个**归档**头之前发一条；目录卷那一侧不开归档头，不发。它排在开工那一条
+    /// **之前**，因此是一趟里最早到得了观察者的那一种，而它**不带卷数**（停车场 Q720：
+    /// 清点中只说正在清点）——卷有几个要等清点走完才知道，那是开工那一条的事。
+    ///
+    /// 它是清点那一段里**唯一一处问话**：几十个归档卷在慢盘上列归档头要一阵，
+    /// 从前那一段里观察者一句都问不上，按停止要等清点整个走完。观察者照常回指令；
+    /// 答了做完再停或立即停止，清点**当场收手**——这一个归档头不开，开工那一条不发，
+    /// 结束那一条也不发（没报过开工就谈不上结束，见 [`RunFinished`](Self::RunFinished)），
+    /// `run` 交回一份一卷都没有的报告，结束方式是[按停止停下](RunOutcome::Stopped)。
+    /// 两级在这一刻没有区别：还没有一卷在做。
+    #[non_exhaustive]
+    Surveying {},
     /// 这一趟开始了，点名了 `volumes` 个卷，这一趟最多走 `steps` 步。
     ///
     /// 排在开工前那几道检查与**清点**之后：**拒绝开始**里发生在开工之前的那几种，
-    /// 都让 `run` 当场返回 `Err`，一条事件都不发——单子在 `CONTEXT.md` 的《失败》，
-    /// 这里不抄。
+    /// 都让 `run` 当场返回 `Err`，这一条与此后的事件一条都不发（清点途中报过的
+    /// [清点中](Self::Surveying)除外）——单子在 `CONTEXT.md` 的《失败》，这里不抄。
     /// 「一卷点不开就整趟拒绝」因此天然发生在任何卷级事件之前（见 `crate::survey`）。
     ///
     /// **它带着清点的三份产出**（`session-redesign/03`，收停车场 Q719）：卷清单、非漫画文件、
@@ -181,7 +195,9 @@ pub enum Event<'a> {
     /// 事件说了「完了」，返回值说了「为什么」）。
     ///
     /// 开工那条事件**之前**被拒的那几种（见 [`RunStarted`](Self::RunStarted)；单子在
-    /// `CONTEXT.md` 的《失败》）仍是一条事件都不发：那一趟连开工都没有，也就谈不上结束。
+    /// `CONTEXT.md` 的《失败》）不报它：那一趟连开工都没有，也就谈不上结束。
+    /// **清点途中按停止**停下的那一趟同理（见 [`Surveying`](Self::Surveying)）——
+    /// 它怎么收的场只落在报告上（[`Report::outcome`](crate::Report::outcome)）。
     #[non_exhaustive]
     RunFinished {
         /// 这一趟是怎么收的场。攒报告的那一端拿它填 `Report::outcome`——
@@ -210,6 +226,7 @@ impl Event<'_> {
     /// [`PASS_STARTED`](Self::PASS_STARTED)——两处报的是同一个字。
     fn name(&self) -> &'static str {
         match self {
+            Self::Surveying { .. } => "Surveying",
             Self::RunStarted { .. } => "RunStarted",
             Self::VolumeStarted { .. } => "VolumeStarted",
             Self::PassStarted { .. } => Self::PASS_STARTED,
@@ -648,6 +665,20 @@ impl<'a> Events<'a> {
         self.standing() == Instruction::Abort
     }
 
+    /// **这一趟按过停止了吗**，哪一级都算：卷边界那个检查点与清点里那一问用它
+    /// （`crate::run` 的逐卷循环、`crate::survey::Survey::of`）。两处问的都是「还开不开下一个」，
+    /// 做完再停与立即停止在那两道上同样停下——力度更强的指令不该比更弱的那个停得更晚。
+    pub(crate) fn stopping(self) -> bool {
+        self.standing() != Instruction::Continue
+    }
+
+    /// 清点中：要开下一个归档头了（见 [`Event::Surveying`]）。答的那个字只进闩，
+    /// 清点随后问[按过停止没有](Self::stopping)决定还开不开这一个。
+    #[cfg_attr(debug_assertions, track_caller)]
+    pub(crate) fn surveying(self) {
+        self.report(Event::Surveying {});
+    }
+
     /// 开工：带着清点的三份产出（见 [`Event::RunStarted`]）。卷数就是清单的长度。
     #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn run_started(
@@ -846,6 +877,7 @@ mod tests {
             path: PathBuf::from("私藏"),
             reason: "列不出这一层".to_owned(),
         }];
+        watched.surveying();
         watched.run_started(30, &roster, &non_volume_files, &unreachable_places);
         watched.volume_started(Path::new("卷一"), 10);
         watched.pass_started(Pass::First);
@@ -854,12 +886,14 @@ mod tests {
         watched.volume_failed(Path::new("卷二"), "盘拔了");
         watched.run_finished(RunOutcome::Completed);
 
-        // 七条整份比对，不是逐条挑几个字：少报一条进度条会停在半路，多报一条它会冲过头，
+        // 八条整份比对，不是逐条挑几个字：少报一条进度条会停在半路，多报一条它会冲过头，
         // 而带着的东西报错了——卷路径、预告的步数、失败原因、这一趟怎么收的场——
         // 挑着比就漏得掉，其中预告的步数报错正是进度条「停在某个百分比上再也不动」的样子。
+        // 清点中那一条整份就是一个名字：**不带卷数**（停车场 Q720），多带一个数这里当场红。
         assert_eq!(
             tally.seen(),
             [
+                "Surveying",
                 concat!(
                     "RunStarted { volumes: 2, steps: 30, roster: [",
                     r#"SurveyedVolume { root: "卷一", steps: 10, source_pages: 2 }, "#,
@@ -881,12 +915,13 @@ mod tests {
         let elsewhere = Standing::default();
         let unhurried = Deliberation::default();
         let unwatched = Events::new(None, &elsewhere, &unhurried);
+        unwatched.surveying();
         unwatched.run_started(30, &roster, &non_volume_files, &unreachable_places);
         unwatched.volume_started(Path::new("卷二"), 10);
         unwatched.step();
         unwatched.run_finished(RunOutcome::Completed);
 
-        assert_eq!(tally.seen().len(), 7, "没装观察者，事件却到了某处");
+        assert_eq!(tally.seen().len(), 8, "没装观察者，事件却到了某处");
         assert_eq!(
             unwatched.standing(),
             Instruction::Continue,
