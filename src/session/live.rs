@@ -16,8 +16,9 @@
 //!
 //! | 屏上那一行 | 来源 |
 //! |---|---|
-//! | 总览的抬头与总进度那一行 | `RunStarted` 的 `volumes` 与 `steps`（03 号票的清点），加 [`Live::walked`] |
+//! | 总览的抬头与总进度那一行 | `RunStarted` 带的卷清单（共几卷是它的长度）与 `steps`（03 号票的清点），加 [`Live::walked`] |
 //! | 卷清单与每一卷此刻怎么样 | `RunStarted` 带的清点产出（`session-redesign/03`），此后逐条事件推出[卷状态](VolumeState) |
+//! | 分区末尾的备注行 | `RunStarted` 带的那两张表，一到就写进 [`Live::report`]（`one-source/05`） |
 //! | 总览的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
 //! | 总览的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成转换那一副 |
 //! | 总览的问题行 | 同上，而坏页那一样连当前这一卷已经报过的那几页一起数（[`Live::failures_so_far`]） |
@@ -288,7 +289,14 @@ pub struct Live {
     /// 攒到此刻的报告，**除了收摊了的那几卷**：那一列在 [`settled`](Self::settled)，
     /// 这一份的 `volumes` 恒空。开工那一刻它是「零卷的一份」——抬头那几件事已经答得出。
     /// 要整份的那几处（退出时印的报告、退出码）走 [`report`](Self::report)，当场拼一份。
-    report: Report,
+    ///
+    /// **清点那两张表一到就在这里**（`one-source/05`，收停车场 Q745、Q964）：非漫画文件与
+    /// 无法访问的地方是开工那一条带来的，整份在清点走完就齐了。屏上读的（两个访问器）
+    /// 与退出时印到 stdout 的是这同一份。
+    ///
+    /// **一个 `Arc`**，理由与 [`settled`](Self::settled) 相同：那两张表有几千条，画一帧那一份
+    /// 也只拷一个指针。改它的那几下（`Arc::make_mut`）一趟里屈指可数（停车场 Q1217）。
+    report: Arc<Report>,
     /// **收摊了的那几卷的报告**，照收摊的先后——整份报告的 `volumes` 那一列。
     ///
     /// **一卷一个 `Arc`**（`session-redesign/17`）：画一帧之前在锁里拷一份 `Live`
@@ -310,12 +318,10 @@ pub struct Live {
     failed_at: Vec<Option<usize>>,
     /// **卷根换回清单序号**：清点已按卷根收编过，清单里卷根不重。开工那一刻立起来，此后不变。
     index: Arc<HashMap<PathBuf, usize>>,
-    /// 这一趟点名了几个卷（`RunStarted`）。
-    volumes: usize,
     /// 这一趟最多走多少步（`RunStarted`，各卷之和）。
     steps: u64,
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
-    /// 开工那一刻整份收下，此后一格不变。
+    /// 开工那一刻整份收下，此后一格不变。这一趟共几卷就是它的长度（停车场 Q1218）。
     roster: Arc<Vec<SurveyedVolume>>,
     /// **被立即停止掉的那一卷**在清单上排第几、做了多久——会话这一头自己量的那一份。
     ///
@@ -329,19 +335,11 @@ pub struct Live {
     /// 当前这一卷是什么时候开的。卷与卷之间是 `None`。
     began: Option<Instant>,
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序同长**——两列在
-    /// [`surveyed`](Self::surveyed) 里一起立起来，此后只改值、不增删。
+    /// [`run_started`](Self::run_started) 里一起立起来，此后只改值、不增删。
     states: Vec<VolumeState>,
     /// 当前卷在清单上排第几。卷与卷之间是 `None`；开卷那一条报的卷根
     /// 不在清单上时也是 `None`（那时谁的状态都不动）。
     current: Option<usize>,
-    /// 开工那一条带的非漫画文件那张表（`session-redesign/03`）。
-    ///
-    /// **摆在报告旁边，不当场进报告**：报告上那张表跟着 [`returned`](Self::returned) 换上的
-    /// 那一份到（逐条相同，停车场 Q745、Q964）。
-    /// 屏上读的是这一张。
-    non_volume_files: Arc<Vec<NonVolumeFile>>,
-    /// 开工那一条带的无法访问的地方那张表，与上一格同一个待遇。
-    unreachable_places: Arc<Vec<UnreachablePlace>>,
     /// 全局走过的步数，含各卷收摊时结清的那一截。
     walked: u64,
     /// 已经收摊的卷数（跑完的与没做成的都算）。总览块抬头那个「第几卷」用它。
@@ -406,7 +404,7 @@ impl Live {
             summarized: None,
             deliberated: Duration::ZERO,
             deliberating_since: None,
-            report: Report {
+            report: Arc::new(Report {
                 profile: request.profile.clone(),
                 fit: request.fit,
                 crop: request.crop,
@@ -415,9 +413,7 @@ impl Live {
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
                 // 这两张表整份在清点走完就齐了，开工那一条事件带着它们（`session-redesign/03`），
-                // 而攒到一半的这一份**仍旧空着**，跑完换成库交出来的那一份
-                // （见 [`returned`](Self::returned)）：清点那一刻收下的那两张摆在报告旁边
-                // （[`Self::non_volume_files`]），理由写在那一格上。
+                // 一到就写进来（见 [`run_started`](Self::run_started)）。
                 non_volume_files: Vec::new(),
                 unreachable_places: Vec::new(),
                 outcome: RunOutcome::Completed,
@@ -428,22 +424,19 @@ impl Live {
                 // 计时只进结构、不进渲染出的文字（见 `tonefit::Report::elapsed`），
                 // 攒到一半的这一份因此填零就够——跑完会换成库交出来的那一份。
                 elapsed: Duration::ZERO,
-            },
+            }),
             settled: Vec::new(),
             settled_at: Vec::new(),
             digests: Vec::new(),
             settled_failures: 0,
             failed_at: Vec::new(),
             index: Arc::default(),
-            volumes: 0,
             steps: 0,
             roster: Arc::default(),
             states: Vec::new(),
             aborted_elapsed: None,
             began: None,
             current: None,
-            non_volume_files: Arc::default(),
-            unreachable_places: Arc::default(),
             walked: 0,
             finished: 0,
             now,
@@ -463,23 +456,15 @@ impl Live {
     /// 用例因此只问得动那几个方法，这一层的对照表反倒是最不容易写错的一段。
     ///
     /// `_` 那一支不是遗漏：多一个变体不该逼着这里跟着改（ADR 0011 的《后果》）。
-    ///
-    /// **开工那一条转给两个方法**：总览块那两个数走 [`run_started`](Self::run_started)，
-    /// 清点的三份产出走 [`surveyed`](Self::surveyed)。分成两半是因为只关心那两个数的用例
-    /// 只喂前一半就够了。
     pub fn observe(&mut self, event: &Event<'_>) {
         match event {
             Event::RunStarted {
-                volumes,
                 steps,
                 roster,
                 non_volume_files,
                 unreachable_places,
                 ..
-            } => {
-                self.run_started(*volumes, *steps);
-                self.surveyed(roster, non_volume_files, unreachable_places);
-            }
+            } => self.run_started(*steps, roster, non_volume_files, unreachable_places),
             Event::VolumeStarted { volume, steps, .. } => self.volume_started(volume, *steps),
             Event::PassStarted { pass, so_far, .. } => self.pass_started(*pass, *so_far),
             Event::Stepped { .. } => self.stepped(),
@@ -496,15 +481,42 @@ impl Live {
         }
     }
 
-    /// 清点完了，开工：总览块那两个数就是 `RunStarted` 报的这两个（03 号票）。
+    /// 清点完了，开工：**开工那一条整条在这里收**（`one-source/05`，收停车场 Q747），
+    /// 与库里报它的那一处（`progress` 的 `Events::run_started`）同一副签名。
     ///
-    /// 同一条事件带的清点产出走 [`surveyed`](Self::surveyed)——见 [`observe`](Self::observe)
-    /// 那一支为什么分成两半。
-    pub fn run_started(&mut self, volumes: usize, steps: u64) {
-        self.volumes = volumes;
+    /// - 总览块那两个数：共几卷就是清单的长度（库那一侧报的卷数恒等于它，停车场 Q1218），
+    ///   共几步是 `steps`。
+    /// - 卷清单整份留下（`session-redesign/03`），每一卷立成[等待中](VolumeState::Queued)。
+    /// - 清点那两张表当场写进报告（收停车场 Q745、Q964）：屏上与退出时印到 stdout 的读同一份。
+    ///
+    /// 几样在开工那一条上就齐了、此后不再变，分区末尾的备注行因此在第一卷开工之前
+    /// 就画得出来。
+    pub fn run_started(
+        &mut self,
+        steps: u64,
+        roster: &[SurveyedVolume],
+        non_volume_files: &[NonVolumeFile],
+        unreachable_places: &[UnreachablePlace],
+    ) {
         self.steps = steps;
         // 表从这里开始掐：开工之前那一段是清点与那几道检查，剩余时间算不进去。
         self.started = self.now;
+        self.roster = Arc::new(roster.to_vec());
+        self.index = Arc::new(
+            roster
+                .iter()
+                .enumerate()
+                .map(|(at, listed)| (listed.root.clone(), at))
+                .collect(),
+        );
+        self.states = vec![VolumeState::Queued; roster.len()];
+        self.aborted_elapsed = None;
+        self.began = None;
+        self.current = None;
+        let report = Arc::make_mut(&mut self.report);
+        report.non_volume_files = non_volume_files.to_vec();
+        report.unreachable_places = unreachable_places.to_vec();
+        self.index_the_settled();
     }
 
     /// **这一帧的此刻**（`session-redesign/04`，spec《时钟》）：会话层每帧读一次单调时钟
@@ -524,34 +536,6 @@ impl Live {
     )]
     pub fn tick(&mut self, now: Instant) {
         self.now = now;
-    }
-
-    /// 收下开工那一条带的**清点产出**（`session-redesign/03`）：卷清单整份留下、每一卷立成
-    /// [等待中](VolumeState::Queued)，两张表摆在报告旁边。
-    ///
-    /// 三样在开工那一条上就齐了、此后不再变，分区末尾的备注行因此在第一卷开工之前
-    /// 就画得出来。两张表**不当场进报告**，理由见 [`Self::non_volume_files`]。
-    pub fn surveyed(
-        &mut self,
-        roster: &[SurveyedVolume],
-        non_volume_files: &[NonVolumeFile],
-        unreachable_places: &[UnreachablePlace],
-    ) {
-        self.roster = Arc::new(roster.to_vec());
-        self.index = Arc::new(
-            roster
-                .iter()
-                .enumerate()
-                .map(|(at, listed)| (listed.root.clone(), at))
-                .collect(),
-        );
-        self.states = vec![VolumeState::Queued; roster.len()];
-        self.aborted_elapsed = None;
-        self.began = None;
-        self.current = None;
-        self.non_volume_files = Arc::new(non_volume_files.to_vec());
-        self.unreachable_places = Arc::new(unreachable_places.to_vec());
-        self.index_the_settled();
     }
 
     /// 开一卷。**按卷根认回清单里的那一卷**（清点已按卷根收编过，清单里卷根不重），
@@ -715,17 +699,19 @@ impl Live {
         {
             *slot = Some(self.report.failed_volumes.len());
         }
-        self.report.failed_volumes.push(VolumeFailure {
-            volume: volume.to_path_buf(),
-            reason: reason.to_owned(),
-            timing,
-        });
+        Arc::make_mut(&mut self.report)
+            .failed_volumes
+            .push(VolumeFailure {
+                volume: volume.to_path_buf(),
+                reason: reason.to_owned(),
+                timing,
+            });
         self.finish_volume();
     }
 
     /// 这一趟完了，带着它是怎么收的场。
     pub fn run_finished(&mut self, outcome: RunOutcome) {
-        self.report.outcome = outcome;
+        Arc::make_mut(&mut self.report).outcome = outcome;
         // 这一趟结束时还开着的那一卷既没收摊也没报没做成：它被立即停止掉了
         // （见 [`VolumeState::Aborted`]）。**它做了多久照样留下**：库那一侧没有它的那一份，
         // 屏上那一列只有这一份（见 [`aborted_elapsed`](Self::aborted_elapsed)）。
@@ -777,7 +763,7 @@ impl Live {
                     .into_iter()
                     .map(Arc::new)
                     .collect();
-                self.report = report;
+                self.report = Arc::new(report);
                 self.index_the_settled();
             }
             // 没做成那一趟没有报告：攒到一半的那一份留着，它说得出已经做完的卷。
@@ -825,13 +811,13 @@ impl Live {
     }
 
     /// **清点中**：线程起了，开工那一条还没到（`CONTEXT.md` 的《总览》：清点中不报卷数）。
-    /// 开工那一条报的卷数不会是零——清点出零卷那一趟在它之前就拒绝了。
+    /// 开工那一条带的清单不会是空的——清点出零卷那一趟在它之前就拒绝了。
     #[cfg_attr(
         all(test, not(feature = "tui")),
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
     )]
     pub fn surveying(&self) -> bool {
-        self.volumes == 0 && !self.ended
+        self.roster.is_empty() && !self.ended
     }
 
     /// 这一趟**没做成**时那句话，做成了就是 `None`。
@@ -1094,7 +1080,7 @@ impl Live {
     pub fn report(&self) -> Report {
         Report {
             volumes: self.settled.iter().map(|one| (**one).clone()).collect(),
-            ..self.report.clone()
+            ..(*self.report).clone()
         }
     }
 
@@ -1126,14 +1112,15 @@ impl Live {
         &self.states
     }
 
-    /// 开工那一条带的非漫画文件那张表。与这一趟跑完之后报告上那一张逐条相同。
+    /// 报告上的非漫画文件那张表：开工那一条一到就有（`report` 那一格写着为什么）。
+    /// 屏上读它，不必为一张表拼整份报告。
     pub fn non_volume_files(&self) -> &[NonVolumeFile] {
-        &self.non_volume_files
+        &self.report.non_volume_files
     }
 
-    /// 开工那一条带的无法访问的地方那张表。与这一趟跑完之后报告上那一张逐条相同。
+    /// 报告上的无法访问的地方那张表，与 [`non_volume_files`](Self::non_volume_files) 同一份出处。
     pub fn unreachable_places(&self) -> &[UnreachablePlace] {
-        &self.unreachable_places
+        &self.report.unreachable_places
     }
 
     /// 总览块要的那几个数：第几卷 / 共几卷、走了几步 / 共几步、已用多久、还剩多久。
@@ -1159,7 +1146,7 @@ impl Live {
             volume: self
                 .finished
                 .saturating_add(usize::from(self.volume.is_some())),
-            volumes: self.volumes,
+            volumes: self.roster.len(),
             walked: self.walked,
             steps: self.steps,
             elapsed,
@@ -1779,8 +1766,7 @@ mod tests {
 
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         let roster = fixture::roster(["卷一", "卷二", "卷三", "卷四", "卷五", "卷六"]);
-        live.run_started(6, 6000);
-        live.surveyed(&roster, &[], &[]);
+        live.run_started(6000, &roster, &[], &[]);
         assert_eq!(live.roster(), roster, "清单没原样留下");
         assert_eq!(live.states(), [Queued; 6], "开工那一刻每一卷都该是等待中");
 
@@ -1860,8 +1846,7 @@ mod tests {
         let at = |seconds| epoch + Duration::from_secs(seconds);
         let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
         let roster = fixture::roster(["卷一", "卷二", "卷三", "卷四"]);
-        live.run_started(4, 4000);
-        live.surveyed(&roster, &[], &[]);
+        live.run_started(4000, &roster, &[], &[]);
 
         // 卷一：收摊了。会话这一头量出 20 秒，报告说它做了 72 秒。
         let finished = VolumeReport {
@@ -1918,8 +1903,12 @@ mod tests {
         };
 
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
-        live.run_started(4, 4000);
-        live.surveyed(&fixture::roster(["卷一", "卷二", "卷三", "卷四"]), &[], &[]);
+        live.run_started(
+            4000,
+            &fixture::roster(["卷一", "卷二", "卷三", "卷四"]),
+            &[],
+            &[],
+        );
 
         // 卷一：答继续，写完。
         let so_far = to_the_decision_point(&mut live, "卷一", None);
@@ -1945,8 +1934,7 @@ mod tests {
 
         // 不等人的那一趟：走到写出那一遍就在写，照旧完成。
         let mut goes_on = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
-        goes_on.run_started(1, 1000);
-        goes_on.surveyed(&fixture::roster(["卷一"]), &[], &[]);
+        goes_on.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         let so_far = to_the_decision_point(&mut goes_on, "卷一", None);
         goes_on.volume_finished(&so_far);
         assert_eq!(goes_on.states(), [Done]);
@@ -1962,8 +1950,7 @@ mod tests {
         use VolumeState::{Queued, Running};
 
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
-        live.run_started(3, 3000);
-        live.surveyed(&fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
+        live.run_started(3000, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
 
         live.volume_started(Path::new("库/卷三"), 1000);
         assert_eq!(live.states(), [Queued, Queued, Running { pass: None }]);
@@ -1981,32 +1968,63 @@ mod tests {
         );
     }
 
-    /// **两张表在清点一到就拿得到**（`session-redesign/03`）：非漫画文件与无法访问的地方
-    /// 不必等这一趟跑完。**报告上那两张照旧要等跑完**（停车场 Q745、Q964）。
+    /// **清点那两张表一到就在报告上**（`one-source/05`，收停车场 Q745、Q964）：非漫画文件与
+    /// 无法访问的地方不必等这一趟跑完，屏上读的（两个访问器）与退出时印到 stdout 的
+    /// （[`Live::report`]）是同一份。
     #[test]
-    fn the_two_tables_are_at_hand_the_moment_the_survey_arrives() {
+    fn the_two_tables_are_on_the_report_the_moment_the_survey_arrives() {
+        let non_volume_files = [tonefit::NonVolumeFile {
+            path: PathBuf::from("库/字体包.zip"),
+            reason: tonefit::NonVolumeReason::ArchiveWithoutAPage,
+        }];
+        let unreachable_places = [tonefit::UnreachablePlace {
+            path: PathBuf::from("库/私藏"),
+            reason: "列出 库/私藏 这一层: Permission denied (os error 13)".to_owned(),
+        }];
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
-        live.run_started(1, 1000);
-        live.surveyed(
+        live.run_started(
+            1000,
             &fixture::roster(["卷一"]),
-            &[tonefit::NonVolumeFile {
-                path: PathBuf::from("库/字体包.zip"),
-                reason: tonefit::NonVolumeReason::ArchiveWithoutAPage,
-            }],
-            &[tonefit::UnreachablePlace {
-                path: PathBuf::from("库/私藏"),
-                reason: "列出 库/私藏 这一层: Permission denied (os error 13)".to_owned(),
-            }],
+            &non_volume_files,
+            &unreachable_places,
         );
 
-        assert_eq!(live.non_volume_files().len(), 1, "非漫画文件没收下");
-        assert_eq!(live.unreachable_places().len(), 1, "无法访问的地方没收下");
-        assert!(
-            live.report().non_volume_files.is_empty()
-                && live.report().unreachable_places.is_empty(),
-            "报告上那两张表在跑完之前就填上了（Q745）"
+        // 两张表的库类型不带 `PartialEq`：逐条比路径与那一句为什么。
+        let said = |files: &[NonVolumeFile], places: &[UnreachablePlace]| {
+            (
+                files
+                    .iter()
+                    .map(|file| (file.path.clone(), render::non_volume_reason(&file.reason)))
+                    .collect::<Vec<_>>(),
+                places
+                    .iter()
+                    .map(|place| (place.path.clone(), place.reason.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let fed = said(&non_volume_files, &unreachable_places);
+        let report = live.report();
+        assert_eq!(
+            said(&report.non_volume_files, &report.unreachable_places),
+            fed,
+            "报告上那两张表要等跑完才填上"
         );
-        assert!(live.report().volumes.is_empty(), "一卷都还没收摊");
+        assert_eq!(
+            said(live.non_volume_files(), live.unreachable_places()),
+            fed,
+            "屏上读的与报告上那两张不是同一份"
+        );
+        assert!(report.volumes.is_empty(), "一卷都还没收摊");
+
+        // 开工之后这一趟没做成（覆盖项在分析环节里撞上的拒绝就是这一种）：退出时印到 stdout 的
+        // 是攒到一半的那一份（`super::run::Running::report`），两张表照样在上面。
+        live.returned(Err(anyhow::anyhow!("覆盖项把候选集裁空")));
+        let undone = live.report();
+        assert_eq!(
+            said(&undone.non_volume_files, &undone.unreachable_places),
+            fed,
+            "没做成那一趟印出去的那一份丢了两张表"
+        );
     }
 
     /// 一趟走完：全局那几个数、当前卷那一条、攒下来的报告，逐条对得上。
@@ -2015,7 +2033,7 @@ mod tests {
         let request = fixture::request(RunMode::Process);
         let mut live = Live::new(&request, Resuming::GoesOn);
 
-        live.run_started(2, 10);
+        live.run_started(10, &fixture::roster(["卷一", "卷二"]), &[], &[]);
         assert_eq!(live.overall().volumes, 2);
         assert_eq!(live.overall().steps, 10);
         // 一步都没走：剩多久答不出来，编一个数出来是骗人。
@@ -2062,7 +2080,7 @@ mod tests {
         const BROKEN: &str = "解不出完整尺寸：JPEG 数据截断";
 
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
-        live.run_started(2, 8);
+        live.run_started(12, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
         live.volume_started(Path::new("库/卷一"), 4);
         live.page_failed();
 
@@ -2140,7 +2158,7 @@ mod tests {
     #[test]
     fn the_run_has_written_once_the_first_volume_it_wrote_is_finished() {
         let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
-        trial.run_started(3, 3000);
+        trial.run_started(3000, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
         assert!(!trial.has_written(), "还没开卷就说写出过了");
 
         // 头一卷幂等命中：到不了确认点，一个字节都没写。
@@ -2174,7 +2192,7 @@ mod tests {
     #[test]
     fn having_written_is_a_latch() {
         let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
-        trial.run_started(3, 3000);
+        trial.run_started(3000, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
         trial.volume_started(Path::new("库/卷一"), 1000);
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
         trial.decide(Instruction::Continue, Reach::ThisVolume);
@@ -2206,7 +2224,7 @@ mod tests {
     #[test]
     fn a_volume_that_failed_while_being_written_does_not_count_as_written() {
         let mut trial = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
-        trial.run_started(3, 3000);
+        trial.run_started(3000, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
         trial.volume_started(Path::new("库/卷一"), 1000);
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
         trial.decide(Instruction::Continue, Reach::ForTheRest);
@@ -2228,14 +2246,14 @@ mod tests {
         );
 
         let mut processing = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
-        processing.run_started(1, 1000);
+        processing.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         processing.volume_started(Path::new("库/卷一"), 1000);
         processing.pass_started(Pass::Second, None);
         processing.volume_finished(&fixture::processed_volume("卷一", None));
         assert!(processing.has_written(), "转换那一趟头一卷收摊就该翻面");
 
         let mut dry = Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn);
-        dry.run_started(1, 1000);
+        dry.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         dry.volume_started(Path::new("库/卷一"), 1000);
         dry.pass_started(Pass::Second, None);
         dry.volume_finished(&fixture::processed_volume("卷一", None));
@@ -2276,7 +2294,7 @@ mod tests {
     fn the_elapsed_time_stops_moving_once_the_run_is_over() {
         let epoch = Instant::now();
         let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
-        live.run_started(1, 10);
+        live.run_started(10, &fixture::roster(["卷一"]), &[], &[]);
         let mut report = live.report().clone();
         report.elapsed = Duration::from_secs(42);
         live.returned(Ok(report));
@@ -2385,7 +2403,7 @@ mod tests {
     fn a_given_now_makes_elapsed_and_eta_the_same_every_time_they_are_asked() {
         let epoch = Instant::now();
         let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
-        live.run_started(1, 1000);
+        live.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         live.volume_started(Path::new("库/卷一"), 1000);
         for _ in 0..250 {
             live.stepped();
@@ -2409,7 +2427,7 @@ mod tests {
         let epoch = Instant::now();
         let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
         live.tick(epoch + Duration::from_secs(60));
-        live.run_started(1, 1000);
+        live.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         live.tick(epoch + Duration::from_secs(90));
         assert_eq!(live.overall().elapsed, Duration::from_secs(30));
     }
@@ -2435,7 +2453,7 @@ mod tests {
         let summarized = fixture::processed_volume("卷一", None);
 
         let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::Waits);
-        live.run_started(1, 1000);
+        live.run_started(3000, &fixture::roster(["卷一", "卷二", "卷三"]), &[], &[]);
         live.volume_started(Path::new("库/卷一"), 1000);
         live.stepped();
         // 确认点：等人那一截从这里起算。
@@ -2499,7 +2517,7 @@ mod tests {
 
         // 不等人的那一趟：确认点照样报，但那一格不开——观察者当场答字就返回。
         let mut going = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
-        going.run_started(1, 1000);
+        going.run_started(1000, &fixture::roster(["卷一"]), &[], &[]);
         going.volume_started(Path::new("库/卷一"), 1000);
         going.tick(epoch + RAN_FOR);
         going.pass_started(Pass::Second, Some(&summarized));

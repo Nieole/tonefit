@@ -73,8 +73,12 @@ fn big_library(epoch: Instant) -> (Session, Live) {
         ..fixture::request(RunMode::Process)
     };
     let mut live = fixture::live_for(epoch, &request, Resuming::GoesOn);
-    live.run_started(names.len(), names.len() as u64 * 1000);
-    live.surveyed(&fixture::roster(names.iter().map(String::as_str)), &[], &[]);
+    live.run_started(
+        names.len() as u64 * 1000,
+        &fixture::roster(names.iter().map(String::as_str)),
+        &[],
+        &[],
+    );
     let done = names.len() / 2;
     for name in &names[..done] {
         live.volume_started(&PathBuf::from(format!("库/{name}")), 1000);

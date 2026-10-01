@@ -1071,8 +1071,12 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
         })
         .collect();
     let (non_volume_files, unreachable_places) = tables(run, home);
-    live.run_started(roster.len(), run.total_steps);
-    live.surveyed(&roster, &non_volume_files, &unreachable_places);
+    live.run_started(
+        run.total_steps,
+        &roster,
+        &non_volume_files,
+        &unreachable_places,
+    );
 
     let out = expand(home, output);
     let disk = Disk { home, out: &out };
@@ -1193,11 +1197,9 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
             // 按停止按到哪一级不再按：结束之后会话的阶段上没有那一格，结局带着它。
             live.tick(now);
             live.run_finished(outcome_of(run));
-            // 那条线程回来了：库交出来的那一份与攒着的只差计时与两张表。
-            let mut report = live.report().clone();
+            // 那条线程回来了：库交出来的那一份与攒着的只差计时（两张表开工那一刻就在攒着的那一份上）。
+            let mut report = live.report();
             report.elapsed = Duration::from_secs_f64(run.elapsed_s);
-            report.non_volume_files = non_volume_files;
-            report.unreachable_places = unreachable_places;
             live.returned(Ok(report));
             session.run_finished();
         }
@@ -2426,9 +2428,7 @@ mod on_the_grid {
             "「{}」不在这一行上：{line}",
             place.reason
         );
-        let mut with_tables = live.report().clone();
-        with_tables.non_volume_files = live.non_volume_files().to_vec();
-        let tail = render::tail(&with_tables);
+        let tail = render::tail(&live.report());
         let said = sentence(&tail, RowKind::NonVolumeTail);
         let first = said.lines().next().expect("那一小结有抬头");
         let line = line_with(&lines, "已忽略");
