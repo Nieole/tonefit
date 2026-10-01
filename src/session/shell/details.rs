@@ -125,7 +125,7 @@ fn rows(session: &Session, item: Item, fold: u16, focused: bool) -> Vec<Row> {
     let locked = session.settings_locked();
     let mut rows = head(session, item, fold, focused, locked);
     rows.push(Row::blank());
-    rows.extend(folded(item.about(session), fold, Look::of(Hue::Prose)));
+    rows.extend(folded(&item.about(session), fold, Look::of(Hue::Prose)));
     if matches!(item, Item::Premise(_)) {
         rows.push(Row::blank());
         rows.extend(folded(NOW_NOT_LAST_TIME, fold, Look::FAINT));

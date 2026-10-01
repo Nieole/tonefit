@@ -253,6 +253,34 @@ mod tests {
         assert_scene("retained", 80, 24);
     }
 
+    /// **一页都不需留意那一句末尾那一件**（`design-parity/03`）：设计稿没有一屏钉着它
+    /// （停车场 Q1253），这里从「按页跳过」那一景切回需留意的页——那一卷一页都没有——钉住那一截。
+    /// 末尾那个键与框底边那一件同一处出处（按键表不问阶段与块的那一手）。
+    ///
+    /// **只钉「…的页 ⋅ a → 全部页」那一截**：那一句前半的措辞（「需留意」还是「需要留意」）
+    /// 等 Q1253 拍板；框底边那一件也写着 `a → 全部页`，前面那几个字把两处分开。
+    #[test]
+    fn a_volume_with_no_notable_page_says_so_and_names_the_key_that_lists_every_page() {
+        use super::super::state::Listing;
+
+        let mut scene = Scene::named("retained");
+        scene
+            .session
+            .views
+            .task
+            .pages
+            .as_mut()
+            .expect("这一景停在每页结果上")
+            .listing = Listing::Notable;
+        for (width, height) in [(120, 36), (80, 24)] {
+            let screen = design::lines_of(&painted(&scene, width, height)).join("\n");
+            assert!(
+                screen.contains("的页 ⋅ a → 全部页"),
+                "{width}×{height} 上没有那一句：\n{screen}"
+            );
+        }
+    }
+
     /// 每页结果上开着的那一卷的报告。
     fn opened(scene: &Scene) -> &tonefit::VolumeReport {
         scene

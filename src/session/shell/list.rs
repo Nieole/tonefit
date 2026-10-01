@@ -119,6 +119,8 @@ fn title(session: &Session, phase: Phase) -> Vec<Segment> {
 
 /// 框右端那一枚：**自动滚动**开着还是暂停了（`CONTEXT.md` 的《自动滚动》）。
 /// 还没开跑、清点中与结束之后不摆它——那几档没有「正在处理的那一卷」可跟。
+///
+/// 暂停着时那一句提到交回它的那个键，键取自按键表（[`keymap::spelt_for`]）。
 fn follow_chip(session: &Session, phase: Phase) -> Vec<Segment> {
     if !matches!(phase, Phase::Running | Phase::Deciding) {
         return Vec::new();
@@ -127,7 +129,10 @@ fn follow_chip(session: &Session, phase: Phase) -> Vec<Segment> {
         vec![Segment::new("[自动滚动]", Look::kind(Kind::Done).bold())]
     } else {
         vec![Segment::new(
-            "[已暂停自动滚动 ⋅ F 恢复]",
+            format!(
+                "[已暂停自动滚动 ⋅ {} 恢复]",
+                keymap::spelt_for(Deed::Follow).unwrap_or_default()
+            ),
             Look::tone(Tone::Caution),
         )]
     }
@@ -138,13 +143,23 @@ fn follow_chip(session: &Session, phase: Phase) -> Vec<Segment> {
 ///
 /// 一个字都还没打（刚按下 `/`）时**它自己就不在**——「空串不算在搜」判在
 /// [`super::super::view::Views::searching`] 一处，匹配处那一道下划线读的是同一份。
+///
+/// `n`／`N` 两个键取自按键表（[`keymap::spelt_for`]）；那一句是这一截自己的话——
+/// 表上那两行屏底那一句是空的（屏底不摆它们），全部按键那一句另是一副。
 fn searching_chip(session: &Session) -> Vec<Segment> {
     let Some(query) = session.views.searching() else {
         return Vec::new();
     };
     vec![
         Segment::new(format!("/{query}"), Look::tone(Tone::Caution).italic()),
-        Segment::new(" ⋅ n N 跳到下一个 / 上一个", Look::FAINT.italic()),
+        Segment::new(
+            format!(
+                " ⋅ {} {} 跳到下一个 / 上一个",
+                keymap::spelt_for(Deed::SearchNext).unwrap_or_default(),
+                keymap::spelt_for(Deed::SearchPrev).unwrap_or_default()
+            ),
+            Look::FAINT.italic(),
+        ),
     ]
 }
 

@@ -18,10 +18,12 @@
 //! 灰阶分布与需留意几页出自这一卷**攒着的那一份报告**（`Live::summarized`）——
 //! 与每页结果头一行报的是同一个数（[`Pages::notable_count`] 一处）。
 //!
-//! 第二行说**三种答法与 `v`**。这四句话是这一块自己写的（照设计稿 `drawDecision` 逐字），
-//! 与按键表上那四行**撞着车**：`x`／`a`／`s` 三句与表上长的那一句逐字相同，
-//! `v` 那一句短一截（表上是「查看这一卷的每页结果」）——停车场 **Q896**，
-//! 与 Q874（屏上一块自己那几句提到键的话仍是手抄的）同一笔。
+//! 第二行说**三种答法与 `v`**。**键取自按键表**（[`keymap::spelt_for`]，不问阶段与块的那一手），
+//! **那四句是这一块自己的措辞**（照设计稿 `drawDecision` 逐字，与屏底那几句回话一样）：
+//! 连同分段与颜色写死在这一行上（`x` 的前半截默认色、后半截灰；`v` 整句默认色），
+//! 表上「键 + 一句」两截拼不出这个形状，按键表也不为它添一列（`design-parity/03`，停车场 Q896）。
+//! `x`／`a`／`s` 三句与表上长的那一句逐字相同，`v` 那一句短一截（表上是「查看这一卷的每页结果」，
+//! 全部按键那一张要说清是哪一卷）。
 //!
 //! # 摆不下时收成短句
 //!
@@ -33,6 +35,7 @@ use ratatui::layout::Rect;
 use tonefit::VolumeReport;
 
 use super::super::columns::elide;
+use super::super::keymap::{self, Deed};
 use super::super::live::Live;
 use super::super::look::{Look, Segment};
 use super::super::state::Session;
@@ -154,32 +157,38 @@ fn this_volume(session: &Session, live: &Live, report: &VolumeReport, short: boo
     line
 }
 
-/// 第二行：三种答法与 `v`，一件一个键（模块文档《两行各说什么》：这四句是这一块自己写的）。
+/// 第二行：三种答法与 `v`，一件一个键（模块文档《两行各说什么》：键取自按键表，
+/// 四句是这一块自己写的）。
 fn answers(short: bool) -> Vec<Segment> {
-    let key = |glyph: &'static str| Segment::new(glyph, Look::tone(Tone::Caution).bold());
+    let key = |deed: Deed| {
+        Segment::new(
+            keymap::spelt_for(deed).unwrap_or_default(),
+            Look::tone(Tone::Caution).bold(),
+        )
+    };
     if short {
         return vec![
-            key("x"),
+            key(Deed::Write),
             Segment::plain(" 写出   "),
-            key("a"),
+            key(Deed::WriteAll),
             Segment::plain(" 写出，后面不再问   "),
-            key("s"),
+            key(Deed::End),
             Segment::plain(" 不写出，结束   "),
-            key("v"),
+            key(Deed::ViewPages),
             Segment::plain(" 查看每页结果"),
         ];
     }
     vec![
-        key("x"),
+        key(Deed::Write),
         Segment::plain(" 写出这一卷"),
         Segment::faint("（不用重新分析）     "),
-        key("a"),
+        key(Deed::WriteAll),
         Segment::plain(" 写出"),
         Segment::faint("，后面的卷不再询问     "),
-        key("s"),
+        key(Deed::End),
         Segment::plain(" 不写出"),
         Segment::faint("，结束预览     "),
-        key("v"),
+        key(Deed::ViewPages),
         Segment::plain(" 查看每页结果"),
     ]
 }

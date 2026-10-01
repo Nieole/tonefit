@@ -258,6 +258,69 @@ const CASE_PROBE_CALLERS: [(&str, &[&str]); 3] = [
     ("src/lib.rs", &["Side::Output.probe("]),
 ];
 
+/// **屏上一句话里顺口提到的一个键**手抄时的字面（`design-parity/03`，收停车场 Q874、Q963）。
+///
+/// 一句一条，都是新界面屏上真出现过的字。记号取的是**键挨着措辞**的那一截——手抄成一个字面的
+/// 那一句必然带着它，而从按键表取键的那一句在代码里写的是 `{key}`。
+///
+/// **记号写的是今天的键位**：换了键位再手抄一份，这几条记号就认不出它了。这一条守的是
+/// 「这几句不许抄回去」，「换键位屏上一起变」由那几屏的设计快照守。
+///
+/// **键与措辞分两段写的那几处记号认不出**（确认条行首那四个键、「按 F 恢复」那一句回话、
+/// 详情栏的 `[i → 修改]`）：分两段手抄的只是一个 `"x"`，代码里挨不着措辞。
+/// 那几处由[读着按键表的那几个文件](KEY_READERS)上的下界拦——每处各调一次，退回一处手抄就少一次；
+/// 确认条四个键共用一个闭包，那里数的是闭包的四次调用。
+///
+/// **「先按 s 停止，或按 C-c」不整截当记号**：按键表上 `q` 拒绝退出那一行长的那一句就是它
+/// （表自己的话，在家里），回话那一句因此拆成两截各挑带着自己那几个字的一截。
+const KEY_SENTENCE_MARKS: [&str; 20] = [
+    "a → 全部页",
+    "a → 只看需留意的页",
+    "h → 回卷列表",
+    "n N 跳到下一个",
+    "F 恢复",
+    "再按一次 dd 删除",
+    "再按一次 ⏎ 覆盖",
+    "p → 返回",
+    "h → 返回",
+    "h → 回到屏幕规格",
+    "按 c 生成灰阶测试图",
+    "Esc → 关闭",
+    "x 写出这一卷",
+    "a 写出，后面",
+    "s 不写出",
+    "v 查看每页结果",
+    "q 不会退出",
+    "请先按 s 停止",
+    "或按 C-c 立即退出",
+    "再按一次 s 立即停止",
+];
+
+/// 那几句问键的家：一件事的键怎么写，**不问阶段与块**（[`KEY_HOME_MARK`]）。
+const KEY_HOME: &str = "src/session/keymap.rs";
+
+/// 家里真住着的那一手：**只问名字，不问实现**（也不问它敞到哪一层）。
+const KEY_HOME_MARK: &str = "fn spelt_for(";
+
+/// 读着那一手的几个文件，各跟着它问的那一手与**代码里至少出现几次**（下界取实数，
+/// 与 [`TRUNCATION_USED`] 同一条：多一处不该变红，少一处必须变红）。
+///
+/// 画法那几块之外还有两处：`view.rs`（屏底那几句回话是它说出口的）与 `config.rs`
+/// （详情栏那几段长说明是它的字）。`decision.rs` 多问一手：四个键经同一个闭包取，
+/// 调 `spelt_for` 只有一次，退回一个键手抄少的是闭包那一次调用。
+/// **数的是代码里的**（[`code_only`]）：文档里点名它是指路，不算读。
+const KEY_READERS: [(&str, &str, usize); 9] = [
+    ("src/session/shell/pages.rs", "spelt_for(", 3),
+    ("src/session/shell/list.rs", "spelt_for(", 3),
+    ("src/session/shell/decision.rs", "spelt_for(", 1),
+    ("src/session/shell/decision.rs", "key(Deed::", 8),
+    ("src/session/shell/picker.rs", "spelt_for(", 2),
+    ("src/session/shell/details.rs", "spelt_for(", 3),
+    ("src/session/shell/overlay.rs", "spelt_for(", 1),
+    ("src/session/view.rs", "spelt_for(", 5),
+    ("src/session/config.rs", "spelt_for(", 1),
+];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -274,6 +337,37 @@ fn squashed(text: &str) -> String {
     text.chars()
         .filter(|ch| !ch.is_whitespace() && !matches!(ch, '*' | '/' | '`'))
         .collect()
+}
+
+/// 只留**代码**：砍掉头一个**就地展开的**用例模块（`#[cfg(test)]` 下一行 `mod 名字 {`）起的整段，
+/// 再去掉注释行。
+///
+/// 屏上那几句话在**用例**里出现是记录（期望屏逐字符比的就是它），在 **doc comment**
+/// 里出现是引用——两处都不是第二个出处。**在代码里出现才是**：代码里写着 `h → 回卷列表`
+/// 就是屏上多了一处手抄的键。本仓库就地展开的用例模块都收在文件末尾（`terminal.rs` 是两个连着：
+/// `redesign` 接着 `tests`）。**只声明不展开的那几行不砍**（`session.rs` 中段的
+/// `#[cfg(test)] mod scene;`）：它后面还是代码。
+///
+/// **整个文件都是用例的那几个照扫**（`scene.rs`、`shell/design.rs`、`terminal/measure.rs`）：
+/// 它们自己不知道自己只在用例里编，这里也不替它们记一张名单。错的方向是**误红**，不是漏查——
+/// 那几个文件里真写了一句记号，红了再看是哪一句。
+fn code_only(text: &str) -> String {
+    let opener = "#[cfg(test)]\nmod ";
+    let cut = text
+        .match_indices(opener)
+        .map(|(at, _)| at)
+        .find(|at| {
+            let rest = &text[at + opener.len()..];
+            rest.lines()
+                .next()
+                .is_some_and(|line| line.trim_end().ends_with('{'))
+        })
+        .unwrap_or(text.len());
+    text[..cut]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 该扫的那几处：仓库根上那几份交付文档（词条自己也在里面）、全部实现、`docs/`。
@@ -638,5 +732,69 @@ fn the_case_probe_lives_in_one_place() {
                 "{file} 不再调「{call}」：那一处自己拿了主意，或者又抄了一份"
             );
         }
+    }
+}
+
+/// 屏上一句话里顺口提到的一个键，写法只有按键表一处出处；抄回一句就当场变红
+/// （`design-parity/03`，收停车场 Q874、Q896、Q963）。
+///
+/// 屏底那一行与全部按键那一张的键早已从按键表派生（`keymap::hints`），而屏上还有十几句
+/// **自己的话**提着一个键：「a → 全部页」「这一卷跳过了：… h → 回卷列表」「n N 跳到下一个」、
+/// 确认条那四句、屏底那几句回话……它们**不随阶段改口**（等待确认那一档 `a` 让给答话、
+/// 屏底不摆它，框底边那一句照样写着），因此不能从按阶段过滤的 `hints` 取，取的是
+/// [不问阶段与块的那一手](KEY_HOME_MARK)；措辞仍是各自那一块自己的。从前那几个字母是手抄的
+/// ——换一个键位，屏底跟着变、那几句不变，而没有一条用例红。
+///
+/// **三件事一起问**，与前几条同一个形状：**代码里**没有第二份（[`code_only`]，用例与文档里
+/// 出现是记录不是出处）、[家里那一手](KEY_HOME_MARK)真住着、[读着它的那几个文件](KEY_READERS)
+/// 还在读。只问头一件的话，把那几句的键各换一副别的手抄字，这一条也是绿的。
+#[test]
+fn the_keys_the_screen_mentions_come_from_the_key_table() {
+    let marks: Vec<String> = KEY_SENTENCE_MARKS
+        .iter()
+        .map(|mark| squashed(mark))
+        .collect();
+
+    let mut code = Vec::new();
+    collect(&root().join("src"), "rs", true, &mut code);
+    // 一个文件连同它抄着的那几句一起报：红的时候一眼看得出该改哪几处。
+    let carrying: Vec<(PathBuf, Vec<&str>)> = code
+        .into_iter()
+        .filter_map(|path| {
+            let text = squashed(&code_only(&read(&path)));
+            let copied: Vec<&str> = KEY_SENTENCE_MARKS
+                .iter()
+                .zip(&marks)
+                .filter(|(_, mark)| text.contains(mark.as_str()))
+                .map(|(said, _)| *said)
+                .collect();
+            (!copied.is_empty()).then_some((path, copied))
+        })
+        .collect();
+    assert_eq!(
+        carrying,
+        Vec::<(PathBuf, Vec<&str>)>::new(),
+        "屏上提到键的那几句话在代码里又手抄了一份"
+    );
+
+    assert!(
+        squashed(&read(&root().join(KEY_HOME))).contains(&squashed(KEY_HOME_MARK)),
+        "{KEY_HOME} 里少了「{KEY_HOME_MARK}」那一手"
+    );
+
+    for (file, reads, least) in KEY_READERS {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：读着按键表的几处按文件路径记在 KEY_READERS 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        let found = squashed(&code_only(&read(&path)))
+            .matches(&squashed(reads))
+            .count();
+        assert!(
+            found >= least,
+            "{file} 里从按键表取键的那一手「{reads}」从 {least} 处掉到了 {found} 处"
+        );
     }
 }

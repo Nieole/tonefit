@@ -1341,6 +1341,12 @@ pub fn deed(phase: Phase, focus: Focus, chord: Chord) -> Option<Deed> {
 ///
 /// 屏上顺口提一个键而不是摆一件事的地方要它——全部按键那一张的抬头「? Esc → 关闭」里的 `?`
 /// 是掀开它的那个键（[`Deed::Help`]），再按一次关掉它；哪个键、怎么写都只从表上取。
+///
+/// **屏上一句话里提到的键一律从这里取**（`design-parity/03`）。那几句**不随阶段改口**——
+/// 等待确认那一档 `a` 让给答话、屏底不摆它，每页结果框底边那一句照样写着——因此不走按阶段过滤的
+/// [`hints`]。**措辞是各自那一块自己的**，表不为它们添列（确认条那四句也是）。
+/// 哪几句、手抄回一个键怎么当场红，见 `tests/single_source.rs` 的
+/// `the_keys_the_screen_mentions_come_from_the_key_table`。
 pub fn spelt_for(deed: Deed) -> Option<&'static str> {
     TABLE
         .iter()
