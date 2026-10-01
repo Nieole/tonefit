@@ -214,9 +214,11 @@ pub(super) fn line(row: &Row) -> String {
         ),
         RowKind::Superseded
         | RowKind::Retained
+        | RowKind::Redone
         | RowKind::Skipped
         | RowKind::Isolated
         | RowKind::Salvaged
+        | RowKind::FellBackToSerial
         | RowKind::Extraction => format!("  {}\n", cell(row, Field::Sentence)),
         RowKind::Gate => format!(
             "  尺寸贴合 检查了 {} 页灰度页 · 没贴合 {} 页 · 抖动 {}\n",

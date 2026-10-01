@@ -1433,6 +1433,7 @@ pub(crate) mod fixture {
             superseded: None,
             pages: Vec::new(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: page_count,
             verdict: Some(VolumeVerdict::Skipped { page_count }),
             cache: cache_usage(),
@@ -1441,6 +1442,7 @@ pub(crate) mod fixture {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            fell_back_to_serial: None,
             timing: took(Duration::from_secs(3)),
         }
     }
@@ -1499,6 +1501,7 @@ pub(crate) mod fixture {
             output: PathBuf::from(out),
             superseded: None,
             retained_pages: 0,
+            why_redone: None,
             source_pages: pages.len(),
             verdict: Some(VolumeVerdict::Envelope(Envelope {
                 base: candidate,
@@ -1514,6 +1517,7 @@ pub(crate) mod fixture {
             decodes: 1,
             resizes: 1,
             cached_references: 1,
+            fell_back_to_serial: None,
             timing: took(Duration::from_secs(72)),
         }
     }
@@ -1657,6 +1661,7 @@ pub(crate) mod fixture {
             output: PathBuf::from(format!("出/隔离/{name}")),
             superseded: None,
             retained_pages: 0,
+            why_redone: None,
             source_pages: pages.len(),
             // 其余页那一组是 `001`、`003`、`006` 三张：彩页、特例、未贴合屏幕、
             // 残缺、失败五张都在进这一层之前被摘走了（见 `Envelope::body_pages`）。
@@ -1674,6 +1679,7 @@ pub(crate) mod fixture {
             decodes: 8,
             resizes: 7,
             cached_references: 6,
+            fell_back_to_serial: None,
             timing: took(Duration::from_secs(96)),
         }
     }

@@ -1406,6 +1406,7 @@ fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>, run: &Ru
         superseded: None,
         pages: Vec::new(),
         retained_pages: 0,
+        why_redone: None,
         source_pages: listed.source_pages,
         verdict: Some(VolumeVerdict::Skipped {
             page_count: listed.source_pages,
@@ -1416,6 +1417,7 @@ fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>, run: &Ru
         decodes: 0,
         resizes: 0,
         cached_references: 0,
+        fell_back_to_serial: None,
         timing: fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
     }
 }
@@ -1470,6 +1472,7 @@ fn volume_report(
         superseded: None,
         pages,
         retained_pages: 0,
+        why_redone: None,
         source_pages: listed.source_pages,
         verdict,
         cache: fixture::cache_usage(),
@@ -1478,6 +1481,7 @@ fn volume_report(
         decodes: decoded,
         resizes: decoded,
         cached_references: decoded,
+        fell_back_to_serial: None,
         timing: fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
     }
 }

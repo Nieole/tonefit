@@ -27,8 +27,8 @@ use crate::{
     BitDepth, Candidate, CandidateScore, Crop, Dither, Envelope, Filter, GeometryGate, GrayImage,
     HARD_SPACE, Interlock, IoPlan, Mode, PageBranch, PageColor, PageOutcome, PageReport, Processed,
     Profile, Reason, Reference, Refusal, Request, Salvage, Scaling, Size, Threshold, Verdict,
-    VolumeVerdict, WhiteAlignment, cache, cost, decide, decode, encode, envelope, geometry, gray,
-    max_target_pixels, metric, progress, quantize, read, resample, white,
+    VolumeVerdict, WhiteAlignment, WhyRedone, cache, cost, decide, decode, encode, envelope,
+    geometry, gray, max_target_pixels, metric, progress, quantize, read, resample, white,
 };
 
 /// 锁上这一卷的缓存。
@@ -719,6 +719,8 @@ pub(crate) fn first_pass(
     let Volume { pages, reader, .. } = volume;
     let members: Vec<&Member> = redo.iter().map(|&index| &pages[index]).collect();
 
+    // 这一遍退不回串行，那句为什么因此不取（`read::Reads::fell_back`）：
+    // 见 [`volume_fingerprint`] 的《退回串行只撞得上这一遍》。
     let mut scored: Vec<(usize, Result<Vec<OutputPage>>)> =
         read::reads(reader, &members, io.readers.count, read::BUDGET)
             // **页边界那个检查点**（ADR 0013 决定第 2 条）：立即停止就不再往下发页。
@@ -1996,13 +1998,21 @@ pub(crate) fn color_bytes(
 /// 不是 [`IoPlan::readers`]（为什么两路各有一个数，见 [`IoPlan`] 的《为什么是两路》）。
 /// 并行的是**解**，不是**喂**：几条读取线程各拿一个自己的归档句柄各解各的成员，
 /// 交付仍按成员序号，因此同一卷串行与并行两趟的指纹**逐字节相同**。
+///
+/// # 退回串行只撞得上这一遍（say-and-stop/04）
+///
+/// 退回只发生在读取端是一个归档句柄的卷上（目录读取端恒核得上），而那种卷上**要几份自己的
+/// 归档句柄的只有这一遍**：分析与写出那一路恒派一条（`IoPlan::decide`），根本不去要第二份。
+/// 源在开卷之后被换掉，核不上就整卷退回串行（见 `read::reads`），那句为什么连同指纹一并交回去
+/// （`VolumeReport::fell_back_to_serial`）；没有这回事是 `None`。哪天那一路也派并发，
+/// 改的是 `IoPlan::decide`，[`first_pass`] 那一句 `read::reads` 就得跟着取它。
 pub(crate) fn volume_fingerprint(
     volume: &mut Volume,
     request: &Request,
     io: &IoPlan,
     by_page: bool,
     events: progress::Events,
-) -> Result<Fingerprint> {
+) -> Result<(Fingerprint, Option<String>)> {
     let Volume {
         pages,
         extras,
@@ -2017,7 +2027,9 @@ pub(crate) fn volume_fingerprint(
     } else {
         Feeding::Volume(Box::new(metadata::SourceHasher::new()))
     };
-    for read in read::reads(reader, &members, io.fingerprint.count, read::BUDGET) {
+    let reads = read::reads(reader, &members, io.fingerprint.count, read::BUDGET);
+    let fell_back = reads.fell_back().map(str::to_owned);
+    for read in reads {
         // **页边界那个检查点**（ADR 0013 决定第 2 条）：立即停止停在成员边界上。
         // 并发之下这一条不变：交付按成员序号，`break` 因此停在一个真正的成员边界上；
         // 走出去的这个循环把 `Reads` 丢掉，几条读取线程当场收摊（见 `read::Throttle::stop`）。
@@ -2055,7 +2067,7 @@ pub(crate) fn volume_fingerprint(
         Feeding::Volume(hasher) => SourceHash::Volume(hasher.finish()),
         Feeding::Page(sources) => SourceHash::Page(sources),
     };
-    Ok(Fingerprint::new(request, source))
+    Ok((Fingerprint::new(request, source), fell_back))
 }
 
 /// 幂等那一道正在喂的那个累加器：两种作用域各一种（见 [`volume_fingerprint`]）。
@@ -2072,6 +2084,9 @@ enum Feeding {
 /// 上一趟写在**干净去处**的输出**能复用多少**——幂等那一道比出来的答案（`CONTEXT.md` 的《幂等这一道》）。
 ///
 /// 三种，按代价从小到大排：整卷一页不做、按页只做变了的、整卷重做。
+///
+/// 后两种带着**为什么**（`why`，say-and-stop/04）：上一趟的输出与这一趟的依据差在共用三项的
+/// 哪几项、有没有页的记录读不出（[`WhyRedone`]）；没什么可说的是 `None`。整卷跳过没有这一问。
 pub(crate) enum Reuse {
     /// 上一趟的输出还齐着——**整卷跳过**（spec 的 story 8）。`page_count` 是上一趟写在那儿的
     /// 输出页数。
@@ -2089,9 +2104,11 @@ pub(crate) enum Reuse {
     ByPage {
         retained: Retained,
         output: sink::Written,
+        why: Option<WhyRedone>,
     },
     /// 无从比：头一趟、上一趟的输出不在，或卷级那条路上卷不齐——**整卷重做**。
-    Nothing,
+    /// 前两种没有上一趟的输出，`why` 恒是 `None`。
+    Nothing { why: Option<WhyRedone> },
 }
 
 /// 这一卷逐源页「留不留」的答案（two-pass-rework/14）：按源页序，留下的那一族是它每一张的
@@ -2188,6 +2205,13 @@ pub(crate) struct RetainedPage {
 /// 其余页各自对得上、各自留下；加一页、改名一页，新名字下没有记录，那一页重做，
 /// 旧名字下的那几张同样是陈旧产物。阅读顺序里的位置**不进依据**——它由名字的次序定，
 /// 挪动位置的那几页字节与名字都没变，留下它们正对。
+///
+/// # 为什么重做（say-and-stop/04）
+///
+/// 比的同一遍顺手记下**差在哪**（[`WhyRedone`]）：读回来的每一份记录，共用三项哪几项与这一趟的不同
+/// （[`PageRecord::what_changed`]）；页在、记录读不出，记一笔「读不出」。哪一页说哪一项都算进来。
+/// 不另读一遍：齐了的那一族记录本来就在手上；没齐的那一族才回头问它的头一张（[`what_the_head_says`]），
+/// 而那一页横竖要重做，多读一个 PNG 头不算账。
 pub(crate) fn compare_with_the_prior_output(
     output: Option<sink::Written>,
     volume: &Volume,
@@ -2195,15 +2219,25 @@ pub(crate) fn compare_with_the_prior_output(
     lodgers: &sink::Lodgers,
 ) -> Reuse {
     let Some(mut written) = output.filter(|_| !volume.pages.is_empty()) else {
-        return Reuse::Nothing;
+        return Reuse::Nothing { why: None };
     };
     let mut page_count = 0;
     let mut retained: Vec<Option<Vec<RetainedPage>>> = Vec::with_capacity(volume.pages.len());
+    let mut why = WhyRedone::default();
     for (index, page) in volume.pages.iter().enumerate() {
         let relative = &page.relative;
+        let found = written_family(&mut written, relative);
+        let said = match &found {
+            Some(family) => family
+                .iter()
+                .map(|written| written.record.what_changed(fingerprint))
+                .fold(WhyRedone::default(), WhyRedone::together),
+            None => what_the_head_says(&mut written, relative, fingerprint),
+        };
+        why = why.together(said);
         // 一族齐不齐是容器的事实（[`written_family`]），齐了之后逐张比这一趟的依据
         // （[`PageRecord::matches`]），这里只数「对得上几族」。
-        let family = written_family(&mut written, relative).filter(|family| {
+        let family = found.filter(|family| {
             family.iter().enumerate().all(|(ordinal, written)| {
                 written
                     .record
@@ -2223,6 +2257,7 @@ pub(crate) fn compare_with_the_prior_output(
         }));
     }
     let every_page = retained.iter().all(Option::is_some);
+    let why = why.says_anything().then_some(why);
     match fingerprint.source() {
         SourceHash::Volume(_) => {
             let extras_in_place = volume
@@ -2232,7 +2267,7 @@ pub(crate) fn compare_with_the_prior_output(
             if every_page && extras_in_place {
                 Reuse::Whole { page_count }
             } else {
-                Reuse::Nothing
+                Reuse::Nothing { why }
             }
         }
         SourceHash::Page(sources) => {
@@ -2243,10 +2278,40 @@ pub(crate) fn compare_with_the_prior_output(
                 Reuse::ByPage {
                     retained: Retained(retained),
                     output: written,
+                    why,
                 }
             }
         }
     }
+}
+
+/// 一个源页那一族没齐时（[`written_family`] 答 `None`），**它的头一张**说了什么：
+/// 记录读得出就比共用三项；页在、记录读不出就是「读不出」；一张都不在（源里新添的页、改了名的页）
+/// 就什么都不说——那是源那一侧的事，归按页跳过那一句。
+///
+/// 头一张的名字照 [`written_family`] 探的那两个：一对一那个，不在就是切开那一族的第一张。
+/// 来路对不上、一族缺了几张，头一张的记录照样读得出——这一族重做的原因可能正是共用三项变了
+/// （来路是页几何批 04 号票才有的，那之前写出的页没有它，而那一趟的工具版本也就不是这一趟的）。
+fn what_the_head_says(
+    written: &mut sink::Written,
+    relative: &Path,
+    fingerprint: &Fingerprint,
+) -> WhyRedone {
+    for head in [
+        output_name(relative, 0, 1),
+        output_name(relative, 0, MORE_THAN_ONE),
+    ] {
+        if let Some(record) = written.record_of(&head) {
+            return record.what_changed(fingerprint);
+        }
+        if written.holds(&head) {
+            return WhyRedone {
+                unreadable: true,
+                ..WhyRedone::default()
+            };
+        }
+    }
+    WhyRedone::default()
 }
 
 /// 页级那条路上，每一页都留得下之后整卷跳过还差的两问（two-pass-rework/15）：透传文件各自没变、
@@ -2584,7 +2649,7 @@ mod tests {
         {
             Reuse::Whole { page_count } => Some(page_count),
             Reuse::ByPage { .. } => panic!("卷级那条路上不该答按页"),
-            Reuse::Nothing => None,
+            Reuse::Nothing { .. } => None,
         }
     }
 

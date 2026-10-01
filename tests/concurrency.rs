@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use fixtures::{SMALLER_THAN_TARGET, Workspace};
 use tonefit::{
-    ChosenBy, Dither, Event, FitMode, GeometryGate, Instruction, IoMode, Mode, Progress,
+    ChosenBy, Dither, Event, FitMode, GeometryGate, Instruction, IoMode, Mode, Pass, Progress,
     ProgressSink, Request, Size, Verdict, VolumeVerdict,
 };
 
@@ -341,6 +341,76 @@ fn an_archive_is_still_skipped_when_the_fingerprint_pass_changes_how_it_reads() 
             "跳过的那一趟动了输出"
         );
     }
+}
+
+/// **跑到一半归档被换掉**，那一卷的报告说得出它退回了串行（say-and-stop/04，停车场 Q222）。
+///
+/// 换在查重那个环节开工的那一刻（见 [`Swap`]）：开卷那个句柄已经攥着原来那一份，
+/// 幂等那一道还没去要自己的几份读取端。点名并发，它要的那几份核不上开卷那一刻的印记，
+/// 整卷退回串行——那句为什么从前在读取层被丢掉，此刻随卷报告带出来。
+/// 读取层自己那一半（退回串行、字节仍是开卷那一份的）由 `src/read.rs` 的
+/// `an_archive_swapped_under_us_falls_back_to_serial` 钉。
+///
+/// 同一趟里另放一个没被换的卷作对照：它那一格是空的。没有这一半，「说了」可能是每一卷都说。
+#[test]
+fn an_archive_swapped_mid_run_says_in_its_report_that_it_fell_back_to_serial() {
+    // 单核机器上点名并发也只派一条：根本不去要第二份读取端，也就无从核起。
+    if num_cpus::get() < 2 {
+        return;
+    }
+    let space = Workspace::new();
+    let library = space.dir("库");
+    std::fs::create_dir(&library).expect("建库目录");
+    let archive = |name: &str, pages: usize| {
+        let mut cbz = fixtures::Cbz::new(library.join(name));
+        for index in 0..pages {
+            cbz.page(
+                &format!("{index:03}.png"),
+                &fixtures::full_bleed_gradient(fixtures::TINY),
+            );
+        }
+        cbz.write()
+    };
+    let swapped = archive("第01话.cbz", 4);
+    let untouched = archive("第02话.cbz", 4);
+    // 换上去的那一份成员少两个：中央目录的偏移与条目数跟着都变。它先住在库外，
+    // 免得被清点当成第三卷。
+    let mut other = fixtures::Cbz::new(space.dir("另一份.cbz"));
+    other.page("000.png", &fixtures::full_bleed_gradient(fixtures::TINY));
+    other.page("001.png", &fixtures::full_bleed_gradient(fixtures::TINY));
+    let swap = Swap::new(&swapped, other.write(), space.dir("原来那一份.cbz"));
+
+    let report = tonefit::run(&Request {
+        io_mode: IoMode::Concurrent,
+        fit: FitMode::Inside,
+        progress: Some(ProgressSink::new(swap.clone())),
+        ..fixtures::request(&space, [swapped.as_path(), untouched.as_path()])
+    })
+    .expect("换掉了也该跑完");
+
+    assert!(swap.done(), "查重那个环节一次都没开过工，换不上");
+    let of = |path: &Path| {
+        report
+            .volumes
+            .iter()
+            .find(|volume| volume.volume == path)
+            .expect("两卷都该交出来")
+    };
+    let said = of(&swapped)
+        .fell_back_to_serial
+        .as_deref()
+        .expect("换掉了的那一卷没说它退回了串行");
+    let name = swapped
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("卷名");
+    assert!(said.contains(name), "没说是哪一个卷：{said}");
+    assert!(said.contains("退回串行"), "没说接下来怎么走：{said}");
+    assert_eq!(
+        of(&untouched).fell_back_to_serial,
+        None,
+        "没被换的那一卷也说退回了串行"
+    );
 }
 
 /// 并发读之下每页仍然只解码一次（ADR 0005 的那条不变量）。
@@ -777,6 +847,75 @@ impl Progress for Handles {
         match event {
             Event::VolumeStarted { .. } => self.0.between.ask(&self.0.library),
             Event::PassStarted { .. } => self.0.during.ask(&self.0.library),
+            _ => {}
+        }
+        Instruction::Continue
+    }
+}
+
+/// 在点名那一卷的**查重那个环节开工那一刻**把它的归档换成另一份：下载工具补完、
+/// 用户手动替换都是这么落地的。
+///
+/// 那一刻开卷那个句柄已经攥着原来那一份，而幂等那一道还没去要自己的读取端——
+/// 换在这里，它要的那几份才核得出「不是开卷那一份了」。两条事件都出自 `run` 那条线程，
+/// 观察者不返回，被测的那一趟就走不下去，因此换的这两步之间没有别人在读。
+///
+/// **两步，不是一步**，理由与 `src/read.rs` 那条用例同一条：卷的读取端此刻正开着这个文件，
+/// Windows 上一步盖过去会被拒。先把开着的那一份挪开，再把新那一份搬到空出来的名字上。
+#[derive(Clone)]
+struct Swap(Arc<Swapping>);
+
+struct Swapping {
+    /// 要被换掉的那一卷。
+    target: PathBuf,
+    /// 换上去的那一份。
+    replacement: PathBuf,
+    /// 开着的那一份挪到哪儿。
+    evicted: PathBuf,
+    /// 此刻开工的是不是那一卷，以及换过没有。
+    state: Mutex<SwapState>,
+}
+
+/// [`Swapping`] 里随事件变的那两格。
+struct SwapState {
+    /// 此刻开工的正是要换的那一卷。
+    on_target: bool,
+    /// 已经换过了：只换一次。
+    swapped: bool,
+}
+
+impl Swap {
+    fn new(target: &Path, replacement: PathBuf, evicted: PathBuf) -> Self {
+        Self(Arc::new(Swapping {
+            target: target.to_path_buf(),
+            replacement,
+            evicted,
+            state: Mutex::new(SwapState {
+                on_target: false,
+                swapped: false,
+            }),
+        }))
+    }
+
+    /// 换过没有。
+    fn done(&self) -> bool {
+        self.0.state.lock().expect("锁").swapped
+    }
+}
+
+impl Progress for Swap {
+    fn observe(&self, event: Event<'_>) -> Instruction {
+        let mut state = self.0.state.lock().expect("锁");
+        match event {
+            Event::VolumeStarted { volume, .. } => state.on_target = volume == self.0.target,
+            Event::PassStarted {
+                pass: Pass::Fingerprint,
+                ..
+            } if state.on_target && !state.swapped => {
+                std::fs::rename(&self.0.target, &self.0.evicted).expect("把开着的那一份挪开");
+                std::fs::rename(&self.0.replacement, &self.0.target).expect("换上另一份");
+                state.swapped = true;
+            }
             _ => {}
         }
         Instruction::Continue

@@ -102,6 +102,7 @@ pub use quantize::{BitDepth, Candidate, Dither, quantize};
 pub use report::{
     NonVolumeFile, NonVolumeReason, PageBranch, PageOutcome, PageReport, Processed, Report,
     RunOutcome, UnreachablePlace, VolumeFailure, VolumeReport, VolumeTiming, VolumeVerdict,
+    WhyRedone,
 };
 pub use request::{Mode, Request};
 pub use resample::{Filter, Scaling};
@@ -818,11 +819,16 @@ fn process_volume(
     // 输出里的比）：比的那一半要开输出容器、逐成员读回记录，同样是真 I/O。摊到段外，
     // 「跳过一卷花在幂等上多久」就会少算一截，而那正是这个数存在的理由（加固批 11 号票）。
     // 比出来的答案有三种（见 [`Reuse`]）：整卷跳、按页留、整卷重做。
-    let mut reuse = Reuse::Nothing;
+    let mut reuse = Reuse::Nothing { why: None };
+    // 源在开卷之后被换掉、这一卷退回串行读时那句为什么（say-and-stop/04）：只撞得上这一道
+    // （见 [`volume_fingerprint`] 的《退回串行只撞得上这一遍》）。`--no-metadata` 那一趟这一道不在。
+    let mut fell_back_to_serial = None;
     let fingerprint = if request.metadata {
         let segment = &mut stopwatch.segments.fingerprint;
         timed_pass(events, Pass::Fingerprint, segment, || -> Result<_> {
-            let fingerprint = volume_fingerprint(&mut volume, request, &io, by_page, events)?;
+            let (fingerprint, fell_back) =
+                volume_fingerprint(&mut volume, request, &io, by_page, events)?;
+            fell_back_to_serial = fell_back;
             // 立即停止之后**不再问幂等**。不是因为答案会错——下一句就把整卷连同这个答案一起
             // 丢掉了——而是因为问一次要开上一趟的输出容器、逐页读回记录，那是实打实的 I/O。
             // 「立刻停」停的正是这种活。手上那份哈希此刻也只喂了一半，它同样走不出这一卷。
@@ -844,7 +850,7 @@ fn process_volume(
     // 三种答案三条路（见 [`Reuse`]）：整卷跳过在这里就收摊；按页那一支带着留下的页与
     // 打开着的上一趟输出往下走（two-pass-rework/14）；整卷重做一页都不留。
     // 往下分析环节只走要重做的那些源页，写出环节按阅读顺序把留下的照搬、重做的写出。
-    let (retained, mut prior_output) = match reuse {
+    let (retained, mut prior_output, why_redone) = match reuse {
         Reuse::Whole { page_count } => {
             let report = VolumeReport {
                 volume: volume.root,
@@ -853,6 +859,8 @@ fn process_volume(
                 superseded: superseded(&isolated),
                 pages: Vec::new(),
                 retained_pages: 0,
+                // 一页都没重做，没有「为什么」可说。
+                why_redone: None,
                 source_pages,
                 verdict: Some(VolumeVerdict::Skipped { page_count }),
                 cache: CacheUsage::new(request.cache_budget),
@@ -864,6 +872,7 @@ fn process_volume(
                 resizes: 0,
                 cached_references: 0,
                 io,
+                fell_back_to_serial,
                 // 分析、写出两个环节一个都不走：四段里有数的只有查重，外加要摊开的卷上的摊开。
                 timing: stopwatch.read(),
             };
@@ -872,8 +881,12 @@ fn process_volume(
             events.volume_finished(&report);
             return Ok(Some(report));
         }
-        Reuse::ByPage { retained, output } => (retained, Some(output)),
-        Reuse::Nothing => (Retained::nothing(source_pages), None),
+        Reuse::ByPage {
+            retained,
+            output,
+            why,
+        } => (retained, Some(output), why),
+        Reuse::Nothing { why } => (Retained::nothing(source_pages), None, why),
     };
     let redo = retained.redo();
     let retained_pages = retained.pages();
@@ -996,6 +1009,7 @@ fn process_volume(
                     .map(|(page, verdict)| page.to_report(&output, *verdict, uniform))
                     .collect(),
                 retained_pages,
+                why_redone,
                 source_pages,
                 verdict,
                 cache: usage,
@@ -1004,6 +1018,7 @@ fn process_volume(
                 resizes: counters.resampler.resizes(),
                 cached_references,
                 io: io.clone(),
+                fell_back_to_serial: fell_back_to_serial.clone(),
                 timing,
             }
         })

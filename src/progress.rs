@@ -793,6 +793,7 @@ mod tests {
             superseded: None,
             pages: Vec::new(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: 0,
             verdict: None,
             cache: crate::CacheUsage::new(crate::CacheBudget::default()),
@@ -807,6 +808,7 @@ mod tests {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            fell_back_to_serial: None,
             timing: crate::VolumeTiming::default(),
         }
     }

@@ -161,6 +161,9 @@ pub enum RowKind {
     /// **按页跳过**那一行（成句，two-pass-rework/14）：这一卷留下几页、重做几页。
     /// 一页都没留下的卷没有它。出处只有 [`retained_row`]。
     Retained,
+    /// **为什么重做**那一行（成句，say-and-stop/04）：上一趟的输出在，这一卷却有页重做了，
+    /// 差在共用三项的哪几项，或记录读不出。没什么可说的卷没有它。出处只有 [`redone_row`]。
+    Redone,
     /// 幂等命中而跳过那一行（成句）。
     Skipped,
     /// 隔离那一行（成句）。
@@ -197,6 +200,10 @@ pub enum RowKind {
     Tally,
     /// 这一趟怎么读的。
     Reading,
+    /// **退回串行**那一句（成句，say-and-stop/04）：这一卷的源在跑的过程中变过，
+    /// 这一趟没按[读法那一行](Self::Reading)走成。没有这回事的卷没有它。
+    /// 出处只有 [`fell_back_row`]。
+    FellBackToSerial,
     /// 开工前摊到临时目录的那一笔。
     Extraction,
     /// 缓存用量。
@@ -555,6 +562,8 @@ pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
     // 按页跳过那一行排在卷级各行**之前**（two-pass-rework/14）：底下尺寸贴合检查、纸色提白、
     // 灰阶分布数的都只是这一趟重做的那几页，先说清整本书里有几页没重做，那几个数才读得对。
     rows.extend(retained_row(volume));
+    // 为什么重做那一行接在它后面（say-and-stop/04）：上一行说留下几页、重做几页，这一行说为什么重做。
+    rows.extend(redone_row(volume));
     rows.extend(verdict_rows(volume));
     // 纸色提白那一段接在判定后面（纸色提白批 02 号票）：判定说的是「这一卷判成什么」，
     // 它说的是「这一趟对这一卷的像素做了什么」。上限是**这一趟**的事实，因此从外面递进来
@@ -566,6 +575,9 @@ pub fn volume(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
         RowKind::Reading,
         Cell::new(Field::Reading, volume.io.to_string()),
     ));
+    // 这一趟没按上一行走成时紧跟着说一句（say-and-stop/04）：上一行是定下来的读法，
+    // 这一句是它为什么没兑现。跳过的卷同样可能有——退回发生在幂等那一道上。
+    rows.extend(fell_back_row(volume));
     // 开工前摊到临时目录的那一笔（ADR 0015）。它同样排在跳过那一支**之前**，
     // 理由与上一行同一条：幂等那一道要把整卷的字节读一遍，而读之前得先摊开——
     // 跳过的卷付了这笔磁盘，报告里就得说得出。
@@ -1470,6 +1482,54 @@ fn retained_row(volume: &VolumeReport) -> Option<Row> {
     })
 }
 
+/// 为什么重做那一行（say-and-stop/04，停车场 Q528）：幂等命中那一句（[`SKIPPED`]）的反面。
+/// **库那一侧交了「为什么」的卷才有它**（`VolumeReport::why_redone`，何时交见 [`WhyRedone`](tonefit::WhyRedone)）。
+///
+/// 三项的叫法取自 [`SHARED_BASIS`]，与 [`SKIPPED`] 点名的前三项依据同一份：一个说没变、
+/// 一个说变了，读的人对得上是同一样东西。选项只说得出「变了」，说不出是哪一个：
+/// 参数哈希是一个整体。记录读不出是另一句话：那是依据丢了，不是依据变了，「之前转换过」
+/// 也就说不得——读不出记录的输出未必是本工具写的。
+fn redone_row(volume: &VolumeReport) -> Option<Row> {
+    let why = volume.why_redone?;
+    let [tool, profile, params] = SHARED_BASIS;
+    let changed: Vec<&str> = [
+        (why.tool, tool),
+        (why.profile, profile),
+        (why.params, params),
+    ]
+    .into_iter()
+    .filter_map(|(changed, item)| changed.then_some(item))
+    .collect();
+    let sentence = match (changed.is_empty(), why.unreadable) {
+        (true, true) => "重做 上次的输出还在，但有页读不出记录，比不出变了什么".to_owned(),
+        (true, false) => return None,
+        (false, unreadable) => format!(
+            "重做 之前转换过，但{}变了{}",
+            changed.join("、"),
+            if unreadable {
+                "；另有页读不出记录"
+            } else {
+                ""
+            }
+        ),
+    };
+    Some(sentence_row(RowKind::Redone, sentence))
+}
+
+/// 退回串行那一行（say-and-stop/04，停车场 Q222）。**只有源在跑的过程中变过的卷才有它**。
+///
+/// 只说发生了什么、结果是什么，不复述 `VolumeReport::fell_back_to_serial` 里那句长话：
+/// 那一句是给追查的人的（两个印记各是多少），读报告的人要知道的只是这一卷为什么没吃并发。
+/// 一卷照旧一页不少，这一行因此不进末尾那几小结——那几小结数的是少了什么。
+fn fell_back_row(volume: &VolumeReport) -> Option<Row> {
+    volume.fell_back_to_serial.as_ref().map(|_| {
+        sentence_row(
+            RowKind::FellBackToSerial,
+            "这一卷的源在跑的过程中变过，退回串行读",
+        )
+    })
+}
+
 /// 摊开那一行（ADR 0015 决定第 3 条）。**只有摊开过的卷才有它**。
 ///
 /// 这个数为什么非说不可，写在它那一格上（`tonefit::VolumeReport` 的 `extracted`），
@@ -1569,8 +1629,15 @@ fn geometry_cells(page: &PageReport) -> Vec<Cell> {
 ///
 /// 「跳过」本身不够——用户要能分清「这一卷没变」与「工具没做事」。四项依据点名摆出来，
 /// 改了其中哪一项会让它重做，一眼看得见（spec 的 story 8、story 9）。
+/// 前三项的叫法就是 [`SHARED_BASIS`]，用例 `the_redone_line_names_the_basis_the_way_the_skip_line_does` 核着。
 const SKIPPED: &str =
     "跳过 之前转换过：工具版本、设备配置、选项和源文件都没变，上次的输出还在，这一卷一页都没重做";
+
+/// 《指纹》里两条路共用的那三项在报告上的叫法：工具版本、型号名、参数哈希，按这个次序。
+///
+/// 两句话点它们：幂等命中那一句说它们没变（[`SKIPPED`]），为什么重做那一句说哪几项变了
+/// （[`redone_row`]）。叫法只在这里写一次——两句说的是同一样东西，读的人才对得上。
+const SHARED_BASIS: [&str; 3] = ["工具版本", "设备配置", "选项"];
 
 /// 卷那一行里说彩页有几张的那一格。
 ///
@@ -2281,7 +2348,7 @@ mod tests {
         BitDepth, CacheBudget, CacheUsage, Candidate, ChosenBy, Dither, Envelope, FitMode,
         GeometryGate, GrayImage, Interlock, IoPlan, Medium, NonVolumeFile, PageOutcome, Processed,
         Readers, Reason, Reference, RunOutcome, Salvage, Scaling, Size, UnreachablePlace, Verdict,
-        VolumeFailure, VolumeTiming,
+        VolumeFailure, VolumeTiming, WhyRedone,
     };
 
     /// 命令行印出去的那一份，**不折的那一副**（[`plain::ReportFold::Off`]）。
@@ -2465,9 +2532,11 @@ mod tests {
                 decodes: 1,
                 resizes: 1,
                 cached_references: 1,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
                 pages: vec![page],
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 1,
             }],
             elapsed: Duration::ZERO,
@@ -3197,8 +3266,10 @@ mod tests {
                 decodes: 3,
                 resizes: 3,
                 cached_references: 2,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 3,
                 pages: vec![
                     page("001", PageColor::Color, PageBranch::Color),
@@ -3247,6 +3318,7 @@ mod tests {
                 superseded: None,
                 pages: Vec::new(),
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
@@ -3255,6 +3327,7 @@ mod tests {
                 decodes: 0,
                 resizes: 0,
                 cached_references: 0,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -3303,6 +3376,7 @@ mod tests {
                 superseded: None,
                 pages: Vec::new(),
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 12,
                 verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
                 cache: cache_usage(),
@@ -3311,6 +3385,7 @@ mod tests {
                 decodes: 0,
                 resizes: 0,
                 cached_references: 0,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
             }],
             elapsed: Duration::ZERO,
@@ -3422,8 +3497,10 @@ mod tests {
                 decodes: 2,
                 resizes: 1,
                 cached_references: 1,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 2,
                 pages: vec![good, failed],
             }],
@@ -3905,8 +3982,10 @@ mod tests {
                 decodes: 2,
                 resizes: 2,
                 cached_references: 2,
+                fell_back_to_serial: None,
                 timing: VolumeTiming::default(),
                 retained_pages: 0,
+                why_redone: None,
                 source_pages: 2,
                 pages: vec![whole, salvaged],
             }],
@@ -4011,8 +4090,10 @@ mod tests {
             decodes: 2,
             resizes: 1,
             cached_references: 1,
+            fell_back_to_serial: None,
             timing: VolumeTiming::default(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: 2,
             pages: vec![
                 PageReport {
@@ -4198,6 +4279,149 @@ mod tests {
                 .iter()
                 .all(|row| row.kind != RowKind::Retained),
             "一页都没留下的卷也出了按页跳过那一行"
+        );
+    }
+
+    /// **一卷没被整卷跳过时说得出为什么**（say-and-stop/04，停车场 Q528）：上一趟的输出与这一趟
+    /// 差在共用三项的哪几项——工具版本、设备配置、选项各变一项各一句，几项一起变一句点全；
+    /// 或者记录读不出。
+    #[test]
+    fn a_redone_volume_says_which_of_the_shared_three_changed_or_that_the_record_is_unreadable() {
+        let said = |why: WhyRedone| {
+            let mut redone = a_volume_worth_a_row_of_each_kind();
+            redone.why_redone = Some(why);
+            let rows = volume(&redone, WhiteAlignLimit::OFF);
+            let found: Vec<&Row> = rows
+                .iter()
+                .filter(|row| row.kind == RowKind::Redone)
+                .collect();
+            assert_eq!(found.len(), 1, "{why:?} 出了 {} 行", found.len());
+            found[0].cell(Field::Sentence).expect("成句").to_owned()
+        };
+        let why = |tool, profile, params, unreadable| WhyRedone {
+            tool,
+            profile,
+            params,
+            unreadable,
+        };
+
+        assert_eq!(
+            said(why(true, false, false, false)),
+            "重做 之前转换过，但工具版本变了"
+        );
+        assert_eq!(
+            said(why(false, true, false, false)),
+            "重做 之前转换过，但设备配置变了"
+        );
+        assert_eq!(
+            said(why(false, false, true, false)),
+            "重做 之前转换过，但选项变了"
+        );
+        assert_eq!(
+            said(why(true, true, true, false)),
+            "重做 之前转换过，但工具版本、设备配置、选项变了"
+        );
+        assert_eq!(
+            said(why(false, false, false, true)),
+            "重做 上次的输出还在，但有页读不出记录，比不出变了什么"
+        );
+        assert_eq!(
+            said(why(false, false, true, true)),
+            "重做 之前转换过，但选项变了；另有页读不出记录"
+        );
+    }
+
+    /// **为什么重做那一句与幂等命中那一句点的是同一样东西**（say-and-stop/04）：
+    /// 三项的叫法（[`SHARED_BASIS`]）在跳过那一句里逐字出现。改了一处没改另一处，
+    /// 一句说「设备配置没变」、一句说「型号变了」，读的人对不上。
+    #[test]
+    fn the_redone_line_names_the_basis_the_way_the_skip_line_does() {
+        for item in SHARED_BASIS {
+            assert!(
+                SKIPPED.contains(item),
+                "跳过那一句里没有「{item}」：{SKIPPED}"
+            );
+        }
+    }
+
+    /// 「为什么重做」那一行的去处与不在场（say-and-stop/04）：紧跟在按页跳过那一行**后面**——
+    /// 那一行说留下几页、重做几页，这一行说为什么重做；没有上一趟的输出、或只因源变了而重做时
+    /// （库那一侧交 `None`），一个字都不说。
+    #[test]
+    fn why_a_volume_was_redone_follows_the_retained_line_and_is_absent_without_a_prior_output() {
+        let mut redone = a_volume_worth_a_row_of_each_kind();
+        redone.verdict = Some(VolumeVerdict::PerPage);
+        redone.retained_pages = 3;
+        redone.why_redone = Some(WhyRedone {
+            tool: false,
+            profile: false,
+            params: true,
+            unreadable: false,
+        });
+        assert_eq!(
+            volume(&redone, WhiteAlignLimit::OFF)
+                .iter()
+                .map(|row| row.kind)
+                .take(4)
+                .collect::<Vec<_>>(),
+            vec![
+                RowKind::Volume,
+                RowKind::Superseded,
+                RowKind::Retained,
+                RowKind::Redone
+            ]
+        );
+
+        redone.why_redone = None;
+        assert!(
+            volume(&redone, WhiteAlignLimit::OFF)
+                .iter()
+                .all(|row| row.kind != RowKind::Redone),
+            "没有上一趟的输出也说了为什么重做"
+        );
+    }
+
+    /// **源在跑的过程中变过、因此退回串行读的卷说一句**（say-and-stop/04，停车场 Q222），
+    /// 紧跟在读法那一行底下：那一行说定下来派几条，这一句说这一趟没走成。
+    /// 跳过的卷照样说——退回发生在幂等那一道上；没有这回事的卷没有这一行。
+    #[test]
+    fn a_volume_whose_source_changed_mid_run_says_it_fell_back_to_serial() {
+        let said = "这一卷的源在跑的过程中变过，退回串行读";
+        let mut swapped = a_volume_worth_a_row_of_each_kind();
+        // 库那一侧带着的那句长话这一行不复述（见 [`fell_back_row`]），随便一句就够。
+        swapped.fell_back_to_serial = Some("库那一侧拼的那句为什么".to_owned());
+
+        let sentence_under_reading = |report: &VolumeReport| {
+            let rows = volume(report, WhiteAlignLimit::OFF);
+            let at = rows
+                .iter()
+                .position(|row| row.kind == RowKind::Reading)
+                .expect("读法那一行恒在");
+            (
+                rows[at + 1].kind,
+                rows[at + 1].cell(Field::Sentence).map(str::to_owned),
+            )
+        };
+        assert_eq!(
+            sentence_under_reading(&swapped),
+            (RowKind::FellBackToSerial, Some(said.to_owned()))
+        );
+
+        let mut skipped = swapped.clone();
+        skipped.pages = Vec::new();
+        skipped.verdict = Some(VolumeVerdict::Skipped { page_count: 2 });
+        assert_eq!(
+            sentence_under_reading(&skipped),
+            (RowKind::FellBackToSerial, Some(said.to_owned())),
+            "跳过的卷退回了串行却没说"
+        );
+
+        swapped.fell_back_to_serial = None;
+        assert!(
+            volume(&swapped, WhiteAlignLimit::OFF)
+                .iter()
+                .all(|row| row.kind != RowKind::FellBackToSerial),
+            "没退回串行的卷也出了那一句"
         );
     }
 
@@ -4817,6 +5041,7 @@ mod tests {
             superseded: None,
             pages: Vec::new(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: 12,
             verdict: Some(VolumeVerdict::Skipped { page_count: 12 }),
             cache: cache_usage(),
@@ -4825,6 +5050,7 @@ mod tests {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            fell_back_to_serial: None,
             timing: VolumeTiming::default(),
         });
 
@@ -5038,8 +5264,10 @@ mod tests {
             decodes: pages.len(),
             resizes: pages.len(),
             cached_references: pages.len(),
+            fell_back_to_serial: None,
             timing: VolumeTiming::default(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: pages.len(),
             pages,
         }
@@ -5399,9 +5627,11 @@ mod tests {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            fell_back_to_serial: None,
             timing: VolumeTiming::default(),
             pages: Vec::new(),
             retained_pages: 0,
+            why_redone: None,
             source_pages: 0,
         }
     }
@@ -5449,9 +5679,11 @@ mod tests {
             decodes: 1,
             resizes: usize::from(!broken),
             cached_references: usize::from(!broken),
+            fell_back_to_serial: None,
             timing: VolumeTiming::default(),
             pages: vec![page],
             retained_pages: 0,
+            why_redone: None,
             source_pages: 1,
         }
     }

@@ -2,14 +2,19 @@
 //!
 //! 只断言外部可见的事实：写出的 PNG 的 tEXt 里有什么字段，重跑时 `Report` 说这一卷做了什么。
 //! 记录随文件走，因此这里的每一条都是文件的性质，不是某个内部表的性质。
+//!
+//! 唯一一条起真进程的是「为什么重做」那一句印没印到 stdout 上（say-and-stop/04）：
+//! 那一句的措辞在二进制里，`run` 这个 seam 上看不见它。
 
 mod fixtures;
 
 use std::fs;
+use std::process::Command;
 
 use fixtures::{Volume, Workspace};
 use tonefit::{
     BitDepth, CacheBudget, Filter, FitMode, Mode, PageColor, Reason, Request, VolumeVerdict,
+    WhyRedone,
 };
 
 /// 一处参数改动，连同它在断言里的说法。
@@ -129,7 +134,15 @@ fn a_changed_parameter_redoes_the_volume() {
     ];
 
     for (what, change) in changes {
-        assert_redone(rerun(|_| {}, change).verdict, what);
+        let redone = rerun(|_| {}, change);
+        assert_redone(redone.verdict, what);
+        // 每一项都进参数哈希，报告因此每一项都说得出「选项变了」（say-and-stop/04）；
+        // 两趟是同一个工具，记录也都读得出。型号那一项只有换 profile 那一格会跟着变，这里不问它。
+        let why = redone
+            .why
+            .unwrap_or_else(|| panic!("{what}之后报告说不出为什么重做"));
+        assert!(why.params, "{what}之后报告没说选项变了：{why:?}");
+        assert!(!why.tool && !why.unreadable, "{what}：{why:?}");
     }
 }
 
@@ -145,6 +158,81 @@ fn switching_to_another_alias_of_the_same_panel_redoes_the_volume() {
     );
 
     assert_redone(redone.verdict, "换了同一块面板的另一个别名");
+    // 报告说得出差在设备配置上，**只**差在它上：两个别名参数哈希相同（say-and-stop/04）。
+    assert_eq!(
+        redone.why,
+        Some(WhyRedone {
+            tool: false,
+            profile: true,
+            params: false,
+            unreadable: false,
+        })
+    );
+}
+
+/// **同一份源先后两趟换一个选项，第二趟那一卷的报告说得出差在选项上**——只差在它上
+/// （say-and-stop/04，停车场 Q528）。参数哈希是一个整体，说得出的只是「选项变了」，
+/// 说不出是哪一个。
+///
+/// 头一趟没有上一趟的输出，那一格是空的：报告不对着一件没发生的事解释。
+#[test]
+fn a_rerun_with_one_option_changed_says_the_options_changed() {
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let first = fixtures::run_volume(&space, &volume);
+    assert_eq!(
+        first.volumes[0].why_redone, None,
+        "头一趟没有上一趟的输出，却说了为什么重做"
+    );
+
+    let changed = Request {
+        filter: Filter::Bicubic,
+        ..fixtures::request(&space, [volume.path()])
+    };
+    assert_ne!(
+        changed.filter,
+        fixtures::request(&space, [volume.path()]).filter,
+        "夹具不对：改成的就是原来那一个"
+    );
+    let second = tonefit::run(&changed).expect("第二趟应当成功");
+
+    assert_eq!(
+        second.volumes[0].why_redone,
+        Some(WhyRedone {
+            tool: false,
+            profile: false,
+            params: true,
+            unreadable: false,
+        })
+    );
+}
+
+/// 同一条验收在**真进程**上（say-and-stop/04）：命令行第二趟印出来的报告里有「选项变了」那一句。
+///
+/// 库那一侧交出差在哪由上一条钉，那一句怎么说由 `render` 的用例钉；两头之间
+/// `main` 有没有把这一格一路交到 stdout 上，只有起一趟真进程看得见。
+#[test]
+fn the_printed_report_of_a_rerun_with_one_option_changed_says_the_options_changed() {
+    const SAID: &str = "重做 之前转换过，但选项变了";
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let tonefit = |filter: &str| {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+            .arg("--out")
+            .arg(space.out())
+            .args(["--profile", fixtures::BASELINE_DEVICE, "--filter", filter])
+            .arg(volume.path())
+            .output()
+            .expect("启动 tonefit");
+        let report = String::from_utf8_lossy(&ran.stdout).into_owned();
+        assert_eq!(ran.status.code(), Some(0), "这一趟该干净跑完：{report}");
+        report
+    };
+
+    let first = tonefit("lanczos3");
+    assert!(!first.contains(SAID), "头一趟就说了为什么重做：{first}");
+    let second = tonefit("bicubic");
+    assert!(second.contains(SAID), "第二趟没说选项变了：{second}");
 }
 
 /// 内存上限管的是峰值内存，一个像素都不改（ADR 0005）：改它不该让整库重做。
@@ -374,6 +462,8 @@ fn without_metadata_nothing_is_recorded_and_nothing_is_skipped() {
     let second = bare();
     assert_redone(second.volumes[0].verdict, "关掉元数据");
     assert_eq!(second.volumes[0].decodes, 2, "该重做的卷没有真的重做");
+    // 这一趟幂等那一道整个不在，上一趟的输出连看都没看：没有「为什么」可说（say-and-stop/04）。
+    assert_eq!(second.volumes[0].why_redone, None);
 }
 
 /// 上一趟写的记录是**这一趟**能不能跳过的唯一依据：`--no-metadata` 写出的输出没有记录，
@@ -391,6 +481,56 @@ fn an_output_written_without_metadata_is_redone() {
     let report = fixtures::run_volume(&space, &volume);
 
     assert_redone(report.volumes[0].verdict, "上一趟没写记录");
+    // 上一趟的输出在、页也在，只是记录读不出：报告说的是「依据丢了」，不是「依据变了」
+    // （say-and-stop/04，spec 的 story 20）。
+    assert_eq!(
+        report.volumes[0].why_redone,
+        Some(WhyRedone {
+            tool: false,
+            profile: false,
+            params: false,
+            unreadable: true,
+        })
+    );
+}
+
+/// **升级之后整库重跑一次，报告说得出是工具版本变了**（say-and-stop/04，停车场 Q528）。
+///
+/// 这一趟的工具版本是编进去的，换不了；换的是上一趟写下的那一项——把输出里每一页的
+/// `Software` 改成另一个版本，等于上一趟是另一个版本的 tonefit 写的。
+#[test]
+fn a_rerun_after_an_upgrade_says_the_tool_version_changed() {
+    const ANOTHER_VERSION: &str = "tonefit 0.0.0";
+    let space = Workspace::new();
+    let volume = two_pages_and_an_extra(&space);
+    let first = fixtures::run_volume(&space, &volume);
+    for page in &first.volumes[0].pages {
+        let written = fs::read(&page.output).expect("读回写出的页");
+        assert_ne!(
+            fixtures::png_field(&fixtures::png_text(&written), "Software").as_deref(),
+            Some(ANOTHER_VERSION),
+            "夹具不对：上一趟写下的就是这个版本"
+        );
+        let aged = with_text_chunk(
+            &without_text_chunk(&written, "Software"),
+            "Software",
+            ANOTHER_VERSION,
+        );
+        fs::write(&page.output, aged).expect("写回换了版本的页");
+    }
+
+    let second = fixtures::run_volume(&space, &volume);
+
+    assert_redone(second.volumes[0].verdict, "上一趟是另一个版本写的");
+    assert_eq!(
+        second.volumes[0].why_redone,
+        Some(WhyRedone {
+            tool: true,
+            profile: false,
+            params: false,
+            unreadable: false,
+        })
+    );
 }
 
 /// 记录写全六项：幂等那四项，加上判定与它的理由（spec 的 story 7 随文件走的那一份）。
@@ -1243,6 +1383,8 @@ fn changing_one_page_redoes_only_that_page() {
         "重做的不是改了的那一页"
     );
     assert_eq!(redone.page_count(), 2, "卷那一行的页数该是整本书的页数");
+    // 只有源变了：那一页由按页跳过那一句说，「为什么重做」那一句不出（say-and-stop/04）。
+    assert_eq!(redone.why_redone, None, "只是源变了，报告却说依据变了");
     let after = fixtures::fingerprint(&redone.output);
     assert_ne!(after, before, "改了的那一页没有重写");
     assert_eq!(
@@ -1735,11 +1877,13 @@ fn two_pages_and_an_extra(space: &Workspace) -> Volume {
     volume
 }
 
-/// 第二趟跑完留下的两样东西：这一卷的卷级判定，以及输出里剩下哪些成员。
+/// 第二趟跑完留下的三样东西：这一卷的卷级判定、报告说的为什么重做，以及输出里剩下哪些成员。
 ///
 /// 「这一卷重做了没有」与「重做之后输出里有什么」是同一件事的两半，判定只答得出前一半。
 struct Redone {
     verdict: Option<VolumeVerdict>,
+    /// 报告说上一趟的输出差在哪（say-and-stop/04）。
+    why: Option<WhyRedone>,
     /// 成员清单在 [`rerun`] 里就取好：工作区是个临时目录，那个函数一返回它就被删了，
     /// 输出路径带回来也问不出东西。
     members: Vec<String>,
@@ -1759,6 +1903,7 @@ fn rerun(touch: impl FnOnce(&Volume), change: impl FnOnce(&mut Request)) -> Redo
     let redone = report.volumes.into_iter().next().expect("一个卷");
     Redone {
         verdict: redone.verdict,
+        why: redone.why_redone,
         members: fixtures::directory_members(&redone.output),
     }
 }
