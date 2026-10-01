@@ -993,6 +993,8 @@ function stageHints() {
   if (r.stage === 'running' || r.stage === 'surveying') return [hint('s', r.latch ? '再按一次立即停' : '停止')];
   return S.view === 'config' ? [] : [hint('t', '再预览'), hint('x', '再转换')];
 }
+// 屏底那一行字摆到倒数第三列为止：按轻重排的那几件与回话都摆到这里（灰阶测试图那句回话照它省略路径）
+const footerRoom = (W) => W - 3;
 function drawFooter(scr) {
   const y = scr.r - 1, W = scr.c;
   // 覆盖层盖着输入行时屏底让给覆盖层，关掉之后输入行原样回来
@@ -1012,7 +1014,7 @@ function drawFooter(scr) {
     return;
   }
   const t = liveToast();
-  const maxW = W - 3 - (S.pending ? 6 : 0);
+  const maxW = footerRoom(W) - (S.pending ? 6 : 0);
   let segs;
   if (t) segs = t.segs;
   else {
@@ -1893,7 +1895,13 @@ function taskKey(k) {
 function configKey(k) {
   const ro = readOnly(), c = CONFIG[S.cfg.cursor];
   if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
-  if (k === 'c') { toast([['✓ 已生成灰阶测试图', 'c-green b'], [`（${panelSize()}）：写到 ${chartPath()}`, 'c-fg']], 3200); return true; }
+  // 写到哪儿摆不下时从中间省略（原样那一档的规矩，停车场 Q968）：目录的头与文件名的尾两头都在，
+  // 不从行尾截掉文件名
+  if (k === 'c') {
+    const done = '✓ 已生成灰阶测试图', said = `（${panelSize()}）：写到 `;
+    const room = Math.max(0, footerRoom(S.size[0]) - strW(done) - strW(said));
+    toast([[done, 'c-green b'], [said + elide(chartPath(), room), 'c-fg']], 3200); return true;
+  }
   if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
   if (S.cfg.presets) {
     if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }

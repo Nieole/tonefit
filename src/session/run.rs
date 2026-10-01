@@ -345,22 +345,19 @@ impl Running {
     /// 攒到一半的那一份说得出已经做完的哪几卷（见 `Live::returned`），
     /// [先前刚跑成的那一趟](Self::earlier)预览更是整份都在。
     ///
-    /// **这一层只答「取哪三段」，怎么接不在这里**：那是纯文本那一副的摆法
-    /// （[`crate::render::plain::undone`]，ADR 0016 决定第 3 条——会话退出时留在
+    /// **这一层只交出那三样**（先前那一份、这一趟那一份、这一趟为什么没做成），
+    /// **用不用、怎么接、怎么印出去不在这里**：那是纯文本那一副的摆法
+    /// （[`crate::render::plain::left_on_stdout`]，ADR 0016 决定第 3 条——会话退出时留在
     /// stdout 上的那一份走的就是那一副）。
     ///
     /// **退出码一格没动**（[`exit_code`](Self::exit_code)）：它仍取最后那一趟。
     pub fn report(&self) -> Option<String> {
         let live = self.live()?;
         let attempt = crate::render::plain::report(&live.report(), live.mode(), ReportFold::Off);
-        let Some(said) = live.undone() else {
-            // 做成了：这一趟那一份，与本票落地之前逐字相同。
-            return Some(attempt);
-        };
-        Some(crate::render::plain::undone(
+        Some(crate::render::plain::left_on_stdout(
             self.earlier.as_deref(),
             &attempt,
-            said,
+            live.undone(),
         ))
     }
 }

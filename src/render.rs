@@ -2070,7 +2070,7 @@ fn scored_line(scored: &CandidateScore) -> String {
 /// `said` 是库那一侧的原话——拒绝开始是一种，那条线程恐慌了是另一种；分得开它们的
 /// 就是这一句里带着的那一段（见 `crate::session::live::Live::undone`）。
 ///
-/// 措辞只有这一处：退出会话时 stdout 上跟在报告后面的那一段印它（`plain::undone`，21 号票），
+/// 措辞只有这一处：退出会话时 stdout 上跟在报告后面的那一段印它（`plain::left_on_stdout`，21 号票），
 /// 前后各空一行。
 ///
 /// **读者在会话里**，而会话整个挂在 `tui` 后面：关掉那个特性的**非测试**构建里
@@ -2299,21 +2299,22 @@ mod tests {
     ///
     /// 换回来这一步非有一条不可：那句话劝人换一条命令（互锁 ③ 那条拒绝里的
     /// `--dither fs`、`--fit height`），记号中间那个空格带着[不许断的标注](HARD_SPACE)，
-    /// 而**这一路不走折行**——折行那几处顺手做了这件事，`crate::session::terminal::enter`
-    /// 那一句 `print!` 没有。漏了它，用户从 `tonefit > 报告.txt` 里抄出来的命令
-    /// 带着一个 clap 认不出的字符，Q106／Q183 要买的东西正好反了。
+    /// 而**这一路不走折行**——折行那几处顺手做了这件事，这一路得自己过（[`plain::left_on_stdout`]；
+    /// `crate::session::terminal::enter` 那一句 `print!` 原样印它）。漏了它，用户从
+    /// `tonefit > 报告.txt` 里抄出来的命令带着一个 clap 认不出的字符，Q106／Q183 要买的东西正好反了。
+    /// 报告正文那一半在下一条。
     /// 命令行那一路的同一条在 `tests/exit_code.rs`（那一头落在 stderr 上）。
     #[test]
     fn what_is_left_on_stdout_spells_its_commands_with_a_plain_space() {
         let said = format!("点名的那一档撞上尺寸贴合检查，换 --dither{HARD_SPACE}fs 之外的路");
-        let left = plain::undone(
+        let left = plain::left_on_stdout(
             Some(
                 "先前那一趟
 ",
             ),
             "这一趟攒下来的
 ",
-            &said,
+            Some(&said),
         );
 
         // 三段都在，次序就是这个。
@@ -2338,6 +2339,42 @@ mod tests {
             ),
             "{left:?}"
         );
+    }
+
+    /// **退出时那一份整份都换回了普通空格，不只是那句没做成的话**（`design-parity/11`，
+    /// 收停车场 Q584）：报告正文里抬头那几句互锁同样劝人换一条命令（互锁 ① 的 `--fit height`），
+    /// 漏到 stdout 上同样敲不通。做成了与没做成两支都问。
+    ///
+    /// 换回来的是**命令行那一路同一个纯函数**（[`crate::wrap::printed`]），而这一路照旧
+    /// **不折行**——stdout 可能是一个文件，折到多宽另有一笔账：做成了那一支因此与
+    /// 那一份报告过一遍 `printed` 逐字节相同，一行都不多（先前那一份也不跟着印）。
+    #[test]
+    fn the_report_left_on_stdout_spells_its_commands_with_a_plain_space() {
+        // 拆分开着、缩放方式 fit-inside：互锁 ① 咬上，抬头那一句劝人换 `--fit height`。
+        let split = SplitRule {
+            on: true,
+            ..SplitRule::default()
+        };
+        let attempt = unfolded(
+            &switches_report(FitMode::Inside, true, split),
+            Mode::Process,
+        );
+        assert!(
+            attempt.contains(&format!("--fit{HARD_SPACE}height")),
+            "抬头那句互锁带着标注：{attempt}"
+        );
+        // 没做成的那句话取互锁 ③ 那条拒绝的原话：它劝人别点 `--dither fs`。
+        let said = Interlock::DitherOutsideTheGate.to_string();
+
+        let done = plain::left_on_stdout(Some("先前那一趟\n"), &attempt, None);
+        assert_eq!(done, crate::wrap::printed(&attempt));
+
+        let undone = plain::left_on_stdout(Some(&attempt), &attempt, Some(&said));
+        for left in [&done, &undone] {
+            assert!(!left.contains(HARD_SPACE), "标注落到 stdout 上了：{left:?}");
+            assert!(left.contains("--fit height"), "{left}");
+        }
+        assert!(undone.contains("--dither fs"), "{undone}");
     }
 
     /// 一份整卷统一灰阶。渲染这一侧只关心它有没有被说出来，一页的卷取那一页作代表页。

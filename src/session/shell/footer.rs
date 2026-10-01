@@ -25,6 +25,13 @@ const BUFFER_KEEPS_CLEAR: u16 = 40;
 /// 输入行上的光标。
 const CARET: &str = "▏";
 
+/// 屏底那一行字**摆到倒数第三列为止**（设计稿 `footerRoom`）：按轻重排的那几件与回话都摆到这里。
+/// 一句回话里有一截路径时，摆不摆得下照它算——灰阶测试图那一句的路径照它从中间省略
+/// （`terminal::draw_a_chart`）。
+pub(in crate::session) fn room(width: u16) -> u16 {
+    width.saturating_sub(3)
+}
+
 /// 画屏底。
 pub(super) fn draw(
     canvas: &mut Canvas<'_>,
@@ -63,21 +70,19 @@ pub(super) fn draw(
         return;
     }
     let pending = session.views.pending(now);
-    let room = width
-        .saturating_sub(3)
-        .saturating_sub(if pending.is_some() { PENDING_ROOM } else { 0 });
+    let space = room(width).saturating_sub(if pending.is_some() { PENDING_ROOM } else { 0 });
     let segments = match session.views.reply(now) {
         Some(reply) => reply.to_vec(),
         None => {
             let mut groups = hints(session, phase, live);
             // 摆不下从倒数第二件往前舍，末尾那一件（`?`）恒在。
-            while groups.len() > 2 && spread(&groups) > usize::from(room) {
+            while groups.len() > 2 && spread(&groups) > usize::from(space) {
                 groups.remove(groups.len() - 2);
             }
             spaced(groups)
         }
     };
-    canvas.line(1, y, &segments, Some(room));
+    canvas.line(1, y, &segments, Some(space));
     if let Some(prefix) = pending {
         // 前半截那个字贴着右端倒数第二格，省略号占末一格（设计稿 `drawFooter`）。
         let x = width.saturating_sub(2 + crate::wrap::width(&prefix.to_string()));

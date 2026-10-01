@@ -37,7 +37,8 @@ mod canvas;
 mod completions;
 mod decision;
 mod details;
-mod footer;
+/// `pub(super)`：屏底那一行摆到哪一格为止（[`footer::room`]）——灰阶测试图那句回话照它省略路径。
+pub(super) mod footer;
 mod list;
 mod marks;
 mod overlay;
