@@ -1094,6 +1094,7 @@ impl Session {
             // 而「哪个键答哪个字」在 [`Deed::answer`] 一处，两处不各算一遍。
             Deed::Write | Deed::WriteAll | Deed::End => self.answer_the_point(deed, now),
             Deed::Open => self.open_under_cursor(),
+            Deed::Toggle => self.toggle_under_cursor(),
             Deed::Close => self.collapse_directory(),
             // **`F` 交回自动滚动**：扳回那一格、屏底说一句是这里的事；而**光标当场
             // 跟到正在处理的那一卷**要读那一趟，那一步在终端层那一支上
@@ -1423,8 +1424,8 @@ impl Session {
         matches!(self.stage(), Stage::Running(_) | Stage::Deciding(_)) && self.views.task.surveyed
     }
 
-    /// `l`／`⏎` 按在光标那一行上：**目录行展开**（`CONTEXT.md` 的《展开》：目录→卷
-    /// 就地展开），**备注行掀开说明卡**（`Esc` 关）。
+    /// `l` 按在光标那一行上：**目录行展开**（`CONTEXT.md` 的《展开》：目录→卷
+    /// 就地展开；展开着的仍展开着），**备注行掀开说明卡**（`Esc` 关）。
     ///
     /// 卷行不在这里——那一下要问那一趟「这一卷展不展得开」，而状态机读不到它
     /// （那一支在 `super::terminal` 的 `input`）。
@@ -1441,6 +1442,20 @@ impl Session {
                 }
             }
             Cursor::Output | Cursor::Path(_) | Cursor::Add | Cursor::Volume(_) => {}
+        }
+    }
+
+    /// `⏎` 按在光标那一行上（[`Deed::Toggle`]）：**展开着的目录行收起**，与 `h` 落在目录行上
+    /// 做的一样；别的行（收着的目录行、备注行）与 `l` 同。卷行同样不在这里
+    /// （理由见 [`Self::open_under_cursor`]）。
+    fn toggle_under_cursor(&mut self) {
+        let task = &self.views.task;
+        let expanded =
+            matches!(&task.cursor, Cursor::Directory(path) if task.expanded.contains(path));
+        if expanded {
+            self.collapse_directory();
+        } else {
+            self.open_under_cursor();
         }
     }
 
@@ -2217,7 +2232,7 @@ impl Session {
                 .volume_state(live, root)
                 .opens_the_pages()
                 .then(|| Want::saying(Deed::Open, "每页结果")),
-            Cursor::Note(_) => Some(Want::saying(Deed::Open, "查看")),
+            Cursor::Note(_) => Some(Want::of(Deed::Toggle)),
             Cursor::Output | Cursor::Path(_) | Cursor::Add => None,
         }
     }

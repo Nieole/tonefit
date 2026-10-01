@@ -355,10 +355,10 @@ pub(super) fn input(
             draw_a_chart(session, here, window, now);
             Exit::Stay
         }
-        // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
-        // （`CONTEXT.md` 的《停得住 / 展得开》）——展得开的换屏进每页结果，
-        // 展不开的屏底说一句为什么。
-        Deed::Open if matches!(session.views.task.cursor, Cursor::Volume(_)) => {
+        // **卷行上按展开**（卷行上 `l` 与 `⏎` 做的事相同）：展不展得开要问那一趟这一卷此刻
+        // 怎么样，而状态机读不到它（`CONTEXT.md` 的《停得住 / 展得开》）——展得开的换屏进
+        // 每页结果，展不开的屏底说一句为什么。
+        Deed::Open | Deed::Toggle if matches!(session.views.task.cursor, Cursor::Volume(_)) => {
             open_a_volume(session, running, now);
             Exit::Stay
         }
@@ -857,10 +857,6 @@ mod redesign {
             None => Running::default(),
         };
         let mut now = scene.now();
-        let window = Window {
-            cols: sequence.size.0,
-            rows: sequence.size.1,
-        };
         // 预设那几支要读写盘，灰阶测试图要一个落点：两样都点在**临时目录**里
         // （`Scene::presets` 与 [`charts_land_in`]），一个用户的东西都不碰。
         let here = charts_land_in(&scene);
@@ -894,23 +890,7 @@ mod redesign {
                 now = scene.now();
                 continue;
             }
-            for input in step.inputs() {
-                // **单击落在上一帧交出的点得中的区域上**：真会话里每一下之前都画过一帧
-                // （`super::drive`），这里在单击之前照样画一帧、记下它交出的那一份。
-                if matches!(input, Input::Click { .. }) {
-                    let hits = frame_hits(&scene, &running, sequence.size, now);
-                    scene.session.views.hits = hits;
-                }
-                exit = super::input(
-                    &mut scene.session,
-                    &mut running,
-                    &scene.presets,
-                    &here,
-                    now,
-                    window,
-                    input,
-                );
-            }
+            exit = feed_step(&mut scene, &mut running, &here, now, sequence.size, step);
             // **夹具没有线程**：确认点上答了「不写出，结束预览」之后，那条线程把这一卷
             // 收了摊（写出环节一步不走，`tonefit::Pass::Second` 的文档）、这一趟就此收场，
             // 主循环随后 `reap` 到它、会话回到结束了——这一步走的是同一条路，只是当场走完。
@@ -959,6 +939,35 @@ mod redesign {
             }
         }
         (scene, running, exit)
+    }
+
+    /// 把一步交给输入入口（[`super::input`]），回最后一下的去留。**单击落在上一帧交出的
+    /// 点得中的区域上**：真会话里每一下之前都画过一帧（`super::drive`），这里在单击之前
+    /// 照样画一帧、记下它交出的那一份。
+    fn feed_step(
+        scene: &mut Scene,
+        running: &mut Running,
+        here: &std::path::Path,
+        now: std::time::Instant,
+        (cols, rows): (u16, u16),
+        step: &Step,
+    ) -> Exit {
+        let mut exit = Exit::Stay;
+        for input in step.inputs() {
+            if matches!(input, Input::Click { .. }) {
+                scene.session.views.hits = frame_hits(scene, running, (cols, rows), now);
+            }
+            exit = super::input(
+                &mut scene.session,
+                running,
+                &scene.presets,
+                here,
+                now,
+                Window { cols, rows },
+                input,
+            );
+        }
+        exit
     }
 
     /// 此刻画一帧，交出它的点得中的区域。
@@ -1183,10 +1192,6 @@ mod redesign {
     /// **`h` 在卷行上收起它那个目录、光标跟着停到目录行上，`l`／`⏎` 再展开**
     /// （`CONTEXT.md` 的《展开》）：三串走完与期望屏逐格相等，屏底那一件跟着光标那一行
     /// 从 `l → 每页结果` 换成 `l → 展开`。
-    ///
-    /// **`ended-h-Enter-Enter` 这一票没接**：那一串要 `⏎` 在**展开着的**目录行上收起它，
-    /// 而表上 `l` 与 `⏎` 派的是同一件事（一律展开）——停车场 **Q806** 记着那一条，
-    /// 收法归鼠标那一票（双击等于 `⏎`）。
     #[test]
     fn h_collapses_the_directory_of_the_volume_and_l_opens_it_again() {
         let scene = assert_sequence("ended-h");
@@ -1196,6 +1201,26 @@ mod redesign {
         );
         assert_sequence("ended-h-l");
         assert_sequence("ended-h-Enter");
+    }
+
+    /// **目录行上的 `⏎` 是开关，`l` 只展开**（`design-parity/05`；`CONTEXT.md` 的《展开》：
+    /// 展开着时再按 `⏎` 收起）：`ended-h-Enter-Enter` 走完与期望屏逐格相等（那一行变回 `▸`）。
+    /// `l` 那一边没有一串设计稿钉着第二下：在 `ended-h-l` 走完那一刻经同一个入口再按一次 `l`，
+    /// 整屏仍与 `ended-h-l` 那一屏逐格相同。
+    #[test]
+    fn enter_collapses_an_expanded_directory_row_and_l_leaves_it_expanded() {
+        assert_sequence("ended-h-Enter-Enter");
+        let name = "ended-h-l";
+        let (mut scene, mut running, _) = walked(name);
+        let sequence = scene::sequence(name);
+        let now = scene.now();
+        let here = charts_land_in(&scene);
+        let again = Step::Key("l".to_owned());
+        feed_step(&mut scene, &mut running, &here, now, sequence.size, &again);
+        assert_same_cells(
+            &painted(&scene, &running, sequence.size),
+            &design::sequence(name),
+        );
     }
 
     /// **没做成的那一卷停得住、展不开**：屏底说的是**它行尾那句原因**
@@ -2885,6 +2910,40 @@ mod redesign {
         ] {
             assert_sequence(name);
         }
+    }
+
+    /// **双击一个展开着的目录行收起它**（`design-parity/05` 票面第三条）：双击等于 `⏎`，
+    /// 而目录行上的 `⏎` 是开关。走完 `running-dblclick-dir`（双击展开那一串）之后，在同一处
+    /// 经本层再喂那一步（两下单击，每一下之前照真会话画一帧）：屏上那一行从 `▾` 变回 `▸`，
+    /// 整屏回到在那一处只单击一下的那一屏（`running-click-row`：那一行选中、收着、自动滚动暂停）。
+    #[test]
+    fn a_double_click_on_an_expanded_directory_row_collapses_it() {
+        let name = "running-dblclick-dir";
+        let (mut scene, mut running, _) = walked(name);
+        let sequence = scene::sequence(name);
+        let [step @ Step::DoubleClick(x, y)] = sequence.steps.as_slice() else {
+            panic!("「{name}」就是双击一下：{:?}", sequence.steps);
+        };
+        let clicked = scene::sequence("running-click-row");
+        assert_eq!(clicked.steps, [Step::Click(*x, *y)], "单击的是同一处");
+        let row = |scene: &Scene, running: &Running| {
+            design::lines_of(&painted(scene, running, sequence.size))[usize::from(*y)].clone()
+        };
+        let open = row(&scene, &running);
+        assert!(open.contains('▾'), "头一次双击展开了它：{open}");
+
+        let now = scene.now();
+        let here = charts_land_in(&scene);
+        feed_step(&mut scene, &mut running, &here, now, sequence.size, step);
+        assert_eq!(
+            row(&scene, &running),
+            open.replacen('▾', "▸", 1),
+            "同一行只换了那一枚记号"
+        );
+        assert_same_cells(
+            &painted(&scene, &running, sequence.size),
+            &design::sequence(clicked.name.as_str()),
+        );
     }
 
     /// **滚轮在全部按键那一张上滚它、补全框开着时挪候选**（`design-parity/06`）；打字时 `F1` 掀开的

@@ -131,6 +131,11 @@ pub enum Deed {
     Click,
     // 卷列表
     Open,
+    /// 卷列表上的 `⏎`：与 `l`（[`Open`](Self::Open)）同，**目录行上另是开关**——展开着就收起
+    /// （`CONTEXT.md` 的《展开》；设计稿 `taskKey`；`design-parity/05`，收停车场 Q806、Q853）。
+    /// 双击等于它。表上派在整张卷列表上、目录行上收不收由状态机按行分（停车场 Q1287）。
+    /// 它与 `Open` 长的那一句相同，全部按键那一张因此并成一行（`l ⏎`）。
+    Toggle,
     Close,
     Follow,
     Search,
@@ -703,7 +708,7 @@ pub const TABLE: &[Row] = &[
     ),
     row(
         Group::VolumeList,
-        Deed::Open,
+        Deed::Toggle,
         Chord::Key(Key::Enter),
         "⏎",
         "查看",
