@@ -9,7 +9,8 @@
 //! 之间的关系，是流的形状，跟卷有多长无关。
 //!
 //! **清点**那几条也在这里（会话批 03 号票）：它落在事件流的最前头——一卷点不开就整趟拒绝、
-//! 一条事件都不发，而它列出来的东西管线接着用、不重列一遍。
+//! 开工与卷级事件一条都不发，而它列出来的东西管线接着用、不重列一遍。清点途中每开一个归档头
+//! 之前一条**清点中**，答停止就当场收手（`say-and-stop/02`）。
 
 mod fixtures;
 
@@ -54,7 +55,7 @@ struct Recorded {
     /// 这一趟最多走多少步（`RunStarted` 带的那个数，清点算出来的全局总步数）。
     global_steps: AtomicU64,
     /// 开工那一条带的**卷清单**（`session-redesign/03`），整份留下。没收到那一条就是 `None`
-    /// ——「清点失败时一条事件都不发」要分得开「清单是空的」与「压根没报」。
+    /// ——「清点失败时开工那一条不发」要分得开「清单是空的」与「压根没报」。
     roster: Mutex<Option<Vec<SurveyedVolume>>>,
     /// 开工那一条带的非漫画文件那张表。
     non_volume_files: Mutex<Vec<NonVolumeFile>>,
@@ -66,11 +67,14 @@ struct Recorded {
     volume_steps: Mutex<Vec<u64>>,
     /// 收下第几卷之后改口。`None` 即一直继续。
     stop_after: Mutex<Option<(usize, Instruction)>>,
+    /// 收下第几条**清点中**之后改口（`say-and-stop/02`）。`None` 即清点那一段一直继续。
+    stop_while_surveying: Mutex<Option<(usize, Instruction)>>,
 }
 
 impl Progress for Recorder {
     fn observe(&self, event: Event<'_>) -> Instruction {
         let name = match event {
+            Event::Surveying { .. } => "Surveying",
             Event::RunStarted {
                 volumes,
                 steps,
@@ -148,7 +152,20 @@ impl Recorder {
         recorder
     }
 
+    /// 收下第 `nth` 条清点中（从 1 数）之后改口回 `instruction`：清点途中按下的那一下。
+    fn stopping_while_surveying(nth: usize, instruction: Instruction) -> Self {
+        let recorder = Self::default();
+        *recorder.0.stop_while_surveying.lock().expect("摆好答案") = Some((nth, instruction));
+        recorder
+    }
+
     fn answer(&self) -> Instruction {
+        // 清点途中改口：数的是**已经收下**的清点中——这一条在 `observe` 里先记进形状、再来问答案。
+        if let Some((nth, instruction)) = *self.0.stop_while_surveying.lock().expect("读回答案")
+            && self.surveyed() >= nth
+        {
+            return instruction;
+        }
         // 就地问长度，不走 `volumes()`：那一个要把至今收下的每一份卷报告整份克隆一遍，
         // 而这里只要一个数——每条事件都克隆一遍整卷的逐页结果，观察者自己就成了热路径。
         let done = self.0.volumes.lock().expect("记账没有中毒").len();
@@ -160,6 +177,17 @@ impl Recorder {
 
     fn shape(&self) -> Vec<&'static str> {
         self.0.shape.lock().expect("记账没有中毒").clone()
+    }
+
+    /// 至今收下了几条清点中。
+    fn surveyed(&self) -> usize {
+        self.0
+            .shape
+            .lock()
+            .expect("记账没有中毒")
+            .iter()
+            .filter(|name| **name == "Surveying")
+            .count()
     }
 
     fn volumes(&self) -> Vec<VolumeReport> {
@@ -820,6 +848,14 @@ fn aborting_at_a_page_boundary_throws_the_partial_container_away() {
         "被立即停止的那一卷进了报告：{:?}",
         report.volumes
     );
+    // 它两列报告里都没有，返回值上的痕迹是这两格（`say-and-stop/02`）：丢掉的是它，
+    // 它之后没有卷了。
+    assert_eq!(
+        report.aborted.as_deref(),
+        Some(volume.path()),
+        "报告说不出丢掉的是哪一卷"
+    );
+    assert_eq!(report.unstarted, Some(0), "只有一卷的一趟说还剩卷没开工");
     assert_eq!(
         fixtures::names_in(&space.out()),
         Vec::<String>::new(),
@@ -1563,8 +1599,9 @@ fn a_run_stopped_halfway_still_announced_the_whole_survey_when_it_started() {
 
 /// 一条点不开的路径让**整趟**当场被拒，且发生在任何卷级事件之前（会话批 03 号票）。
 ///
-/// 三件事一起断言：`run` 回的是 `Err`、一条事件都没报到、输出目录下一个文件都没有。
-/// 第三件是要害——好卷排在坏路径**前面**，管线要是按点名顺序边做边发现，那一卷已经落了盘。
+/// 三件事一起断言：`run` 回的是 `Err`、开工与卷级事件一条都没报到、输出目录下一个文件都没有。
+/// 报到了的只有**清点中**——每开一个归档头之前一条（`say-and-stop/02`），两个坏归档各一条：
+/// 那是清点自己在问话，不是这一趟开了工。第三件是要害——好卷排在坏路径**前面**，管线要是按点名顺序边做边发现，那一卷已经落了盘。
 /// 理由与「处理范围为空是错误」同一条：路径与输出错了可能写到别人的目录里。
 ///
 /// 顺带钉住**逐条列出**：两条坏路径要在同一句话里都说出来。点名十个卷写错三个路径的人
@@ -1590,7 +1627,11 @@ fn a_path_that_cannot_be_opened_refuses_the_whole_run_before_any_volume_event() 
     })
     .expect_err("有卷点不开，整趟该被拒");
 
-    assert_eq!(recorder.shape(), Vec::<&str>::new(), "被拒的一趟报了事件");
+    assert_eq!(
+        recorder.shape(),
+        ["Surveying", "Surveying"],
+        "被拒的一趟除了清点中还报了别的事件"
+    );
     assert_eq!(recorder.roster(), None, "被拒的一趟把清单报出去了");
     assert!(!space.out().exists(), "被拒的一趟在输出目录下留了东西");
 
@@ -1598,6 +1639,142 @@ fn a_path_that_cannot_be_opened_refuses_the_whole_run_before_any_volume_event() 
     for named in ["坏卷一.cbz", "坏卷二.cbz"] {
         assert!(said.contains(named), "拒绝的那句话里没有 {named}：{said}");
     }
+}
+
+/// 一个两页的小 `.cbz` 卷。清点中那几条只在归档卷上报，本文件的小卷（[`small_volume`]）是目录卷。
+fn small_cbz(space: &Workspace, name: &str) -> PathBuf {
+    let page = fixtures::full_bleed_gradient(TINY);
+    let mut cbz = space.cbz(name);
+    cbz.page("001.png", &page);
+    cbz.page("002.png", &page);
+    cbz.write()
+}
+
+/// **清点中**：清点每开一个归档头之前一条，全排在开工那一条之前；目录卷那一侧不开归档头，
+/// 一条都不发（`say-and-stop/02`，收停车场 Q261）。
+///
+/// 归档、目录、归档夹着摆：两条清点中对得上那两个归档，目录夹在中间不多出一条，
+/// 开工那一条之后一条都没有——清点走完了就不再问。只摆目录卷的那一趟一条都不报。
+/// 它**不带卷数**（停车场 Q720）由事件的形状钉着，见库内 `progress` 的用例。
+#[test]
+fn the_survey_asks_before_each_archive_header_and_never_for_a_directory() {
+    let space = Workspace::new();
+    let first = small_cbz(&space, "卷一");
+    let folder = small_volume(&space, "卷二");
+    let last = small_cbz(&space, "卷三");
+    let recorder = Recorder::default();
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [first.as_path(), folder.path(), last.as_path()])
+    })
+    .expect("处理应当成功");
+
+    assert_eq!(report.volumes.len(), 3, "清点中那一问把卷问丢了");
+    let shape = recorder.shape();
+    assert_eq!(
+        shape[..3],
+        ["Surveying", "Surveying", "RunStarted"],
+        "两个归档各一条清点中、都在开工之前：{shape:?}"
+    );
+    assert_eq!(recorder.surveyed(), 2, "开工之后还在报清点中：{shape:?}");
+
+    let folders_only = Recorder::default();
+    tonefit::run(&Request {
+        progress: Some(ProgressSink::new(folders_only.clone())),
+        output_root: space.out_named("只有目录卷"),
+        ..fixtures::request(&space, [folder.path()])
+    })
+    .expect("处理应当成功");
+    assert_eq!(
+        folders_only.surveyed(),
+        0,
+        "目录卷那一侧报了清点中：{:?}",
+        folders_only.shape()
+    );
+}
+
+/// **清点中答停止，清点当场收手**（`say-and-stop/02`，收停车场 Q261）：
+/// 开工那一条不发、结束那一条也不发，交回的报告一卷都没有，结束方式是按停止停下。
+///
+/// 停在**第二个**归档头之前：第一条答了继续，清点照走；第二条答停止，第三个归档头连问都不问
+/// ——流上只有两条清点中，此后一条都没有。两级各问一遍：这一刻还没有一卷在做，
+/// 做完再停与立即停止停下来的现场相同，交出的结束方式各带各的那一级。
+///
+/// 「剩下几卷」这一趟说不出：清点没走完（[`tonefit::Report::unstarted`] 是 `None`），
+/// 命令行报告末尾那一句因此说的是「清点途中按停止停下：一卷都没开工」（`src/render.rs` 的 `outcome`）。
+#[test]
+fn stopping_while_surveying_starts_nothing_and_returns_an_empty_report() {
+    let space = Workspace::new();
+    let archives = [
+        small_cbz(&space, "卷一"),
+        small_cbz(&space, "卷二"),
+        small_cbz(&space, "卷三"),
+    ];
+
+    for (level, out) in [
+        (Instruction::Finish, space.out_named("做完再停")),
+        (Instruction::Abort, space.out_named("立即停止")),
+    ] {
+        let recorder = Recorder::stopping_while_surveying(2, level);
+
+        let report = tonefit::run(&Request {
+            progress: Some(ProgressSink::new(recorder.clone())),
+            output_root: out.clone(),
+            ..fixtures::request(&space, archives.iter().map(PathBuf::as_path))
+        })
+        .expect("按停止不是失败");
+
+        assert_eq!(
+            recorder.shape(),
+            ["Surveying", "Surveying"],
+            "{level:?}：清点没在第二个归档头之前收手"
+        );
+        assert_eq!(recorder.roster(), None, "{level:?}：开工那一条发出去了");
+        assert_eq!(recorder.outcome(), None, "{level:?}：没开工却报了结束");
+        assert_eq!(report.outcome, RunOutcome::Stopped(level), "{level:?}");
+        assert!(report.volumes.is_empty(), "{level:?}：报告里有卷");
+        assert!(
+            report.failed_volumes.is_empty(),
+            "{level:?}：报告里有没做成的卷"
+        );
+        assert_eq!(
+            report.aborted, None,
+            "{level:?}：没有一卷开过，却说丢了一卷"
+        );
+        assert_eq!(
+            report.unstarted, None,
+            "{level:?}：清点没走完，却说得出剩下几卷"
+        );
+        assert_eq!(
+            fixtures::names_in(&out),
+            Vec::<String>::new(),
+            "{level:?}：输出目录下留了东西"
+        );
+    }
+}
+
+/// **按停止赢过清点途中攒下的拒绝**（`say-and-stop/02`）：一个点名的坏归档在停之前就开过了，
+/// 而清点没走完——交回的仍是那份一卷都没有的报告，不是拒绝开始。
+///
+/// 拒绝开始那张单子要**收齐了再报**（`crate::survey` 的 `refuse`：一次说清才改得完一遍），
+/// 而清点途中停下的那一趟收不齐它。坏路径留给下一趟走完清点时一并说。
+#[test]
+fn a_stop_while_surveying_wins_over_a_refusal_it_had_not_finished_collecting() {
+    let space = Workspace::new();
+    let broken = space.stray_file("坏卷.cbz", b"not a zip at all");
+    let good = small_cbz(&space, "好卷");
+    let recorder = Recorder::stopping_while_surveying(2, Instruction::Finish);
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [broken.as_path(), good.as_path()])
+    })
+    .expect("清点途中按停止不是拒绝开始");
+
+    assert_eq!(recorder.shape(), ["Surveying", "Surveying"]);
+    assert_eq!(report.outcome, RunOutcome::Stopped(Instruction::Finish));
+    assert_eq!(report.unstarted, None);
 }
 
 /// 处理那一卷时**按路径再开一次**：清点只数不留（`volume-discovery/01`）。
@@ -1834,6 +2011,8 @@ fn the_last_event_says_how_the_run_ended() {
         RunOutcome::Completed,
         "报告与事件说的不是同一件事"
     );
+    assert_eq!(report.unstarted, Some(0), "走到头的那一趟说还剩卷没开工");
+    assert_eq!(report.aborted, None, "走到头的那一趟说丢了一卷");
 
     // 做完再停：当前卷跑完就停，剩下的卷没有开工。
     let winding_up = Recorder::stopping_after(1, Instruction::Finish);
@@ -1843,8 +2022,13 @@ fn the_last_event_says_how_the_run_ended() {
         Some(RunOutcome::Stopped(Instruction::Finish))
     );
     assert_eq!(report.outcome, RunOutcome::Stopped(Instruction::Finish));
+    // 被拿走的那一截说得出有几卷（`say-and-stop/02`）：三卷做了一卷，剩下两卷没开工。
+    assert_eq!(report.unstarted, Some(2), "做完再停之后剩下几卷说错了");
+    assert_eq!(report.aborted, None, "做完再停丢了一卷");
 
-    // 立即停止：当前那一卷也丢掉，而它两列报告里都没有——这一项是它唯一的痕迹。
+    // 立即停止：答在第一卷跑完那一条上，停在**卷边界**上——那一刻没有一卷做到一半，
+    // 因此一卷都没丢（`Report::aborted` 是 `None`），剩下两卷没开工。
+    // 做到一半丢掉的那一种见 `aborting_at_a_page_boundary_throws_the_partial_container_away`。
     let aborting = Recorder::stopping_after(1, Instruction::Abort);
     let report = run(&aborting, space.out_named("立即停止"));
     assert_eq!(
@@ -1853,6 +2037,8 @@ fn the_last_event_says_how_the_run_ended() {
     );
     assert_eq!(report.outcome, RunOutcome::Stopped(Instruction::Abort));
     assert_eq!(report.volumes.len(), 1, "立即停止之后还接着做了下一卷");
+    assert_eq!(report.unstarted, Some(2), "立即停止之后剩下几卷说错了");
+    assert_eq!(report.aborted, None, "停在卷边界上，却说丢了一卷");
 }
 
 /// **报过开工，就一定报得到结束**——拒绝开始的那一趟也不例外（停车场 Q39）。

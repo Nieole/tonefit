@@ -52,9 +52,10 @@ use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
 
 use tonefit::{
-    Candidate, CandidateScore, FirstFew, Mode, NonVolumeReason, PageBranch, PageColor, PageReport,
-    Profile, Proof, ProofPage, Report, Request, Sheet, Sheets, Voice, VolumeFailure, VolumeReport,
-    VolumeVerdict, WhiteAlignLimit, WhiteAlignment, aggregation, composition, masking,
+    Candidate, CandidateScore, FirstFew, Instruction, Mode, NonVolumeReason, PageBranch, PageColor,
+    PageReport, Profile, Proof, ProofPage, Report, Request, RunOutcome, Sheet, Sheets, Voice,
+    VolumeFailure, VolumeReport, VolumeVerdict, WhiteAlignLimit, WhiteAlignment, aggregation,
+    composition, masking,
 };
 // 「哪几页要紧」同理（见 [`Notable`]），只是它连 `--no-default-features` 那一趟的用例
 // 一起要，因此挂的是 `any(feature = "tui", test)`。
@@ -1099,6 +1100,58 @@ pub fn tail(report: &Report) -> Vec<Row> {
     .filter(|(_, said)| !said.is_empty())
     .map(|(kind, said)| sentence_row(kind, said))
     .collect()
+}
+
+/// 这一趟**怎么收的场**：命令行报告末尾那一句（`say-and-stop/02`，收停车场 Q260）。
+/// **走到头不出**（`None`）——正常跑完的报告照旧干净，黄金快照一个字节不变。
+///
+/// 按停止停下的那一趟从前只在 stderr 上说过一句（按下的当场，`crate::pressed_note`），
+/// 而对面不是终端时那一句一个字节都不写；`tonefit … > 报告.txt` 那一份于是看不出它被按停过，
+/// 只看得出卷比点名的少了几个。这一句落在 stdout 的报告上，说的是**被拿走的是哪一截**：
+///
+/// - **清点途中就停下**（[`Report::unstarted`] 是 `None`）：一卷都没开工。两级在这一刻没有区别，
+///   不说是哪一级；卷数也不说——清点没走完，说不出来。
+/// - **做完再停**：剩下几卷没开工（下一趟要补的就是它们，做完的那几卷幂等跳过）。
+/// - **立即停止**：丢掉的是哪一卷、最终位置上一个字节都没动过（[`Report::aborted`]），
+///   再加剩下几卷没开工。答在卷边界上的立即停止一卷都没丢，那半句因此不说——
+///   说了就是一句假话。剩下零卷时那半句同样不说。
+///
+/// 措辞只有这一处；**会话屏上的结束方式照设计稿说**（总览抬头那一句，界面层的句子，ADR 0019），
+/// 不读这一句。会话退出时印到 stdout 的那一份走的是命令行那一副（[`plain::report`]），
+/// 因此也以它收尾。
+///
+/// 逐个变体都列出来、不留 `_`：[`RunOutcome`] 与 [`Instruction`] 都不非穷尽，
+/// 多一种结束该怎么说是个要当场拿的主意。
+pub fn outcome(report: &Report) -> Option<String> {
+    let level = match report.outcome {
+        // 拒绝开始那一种在报告上出不来（那一趟返回的是错误本身），走到头的那一种不说。
+        RunOutcome::Completed | RunOutcome::Refused => return None,
+        RunOutcome::Stopped(level) => level,
+    };
+    let Some(unstarted) = report.unstarted else {
+        return Some("清点途中按停止停下：一卷都没开工".to_owned());
+    };
+    let level = match level {
+        Instruction::Finish => "（做完再停）",
+        Instruction::Abort => "（立即停止）",
+        // `Stopped` 里恒不是「继续」（见 `RunOutcome::of`）。真到了这里说明库那一侧
+        // 改了那条性质，而这一句至少不撒谎：停了，不说是哪一级。
+        Instruction::Continue => "",
+    };
+    let mut taken = Vec::new();
+    if let Some(volume) = &report.aborted {
+        taken.push(format!(
+            "{} 做到一半丢掉了，最终位置上一个字节都没动过",
+            volume.display()
+        ));
+    }
+    if unstarted > 0 {
+        taken.push(format!("剩下 {unstarted} 卷没开工"));
+    }
+    if taken.is_empty() {
+        return Some(format!("按停止停下{level}"));
+    }
+    Some(format!("按停止停下{level}：{}", taken.join("；")))
 }
 
 /// 非漫画文件那一小结，打头摆在末尾那几小结的最前面（`volume-discovery/04`）。
@@ -2362,6 +2415,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -3085,6 +3140,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -3145,6 +3202,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -3199,6 +3258,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from(r"\\nas\share\volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -3309,6 +3370,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/_isolated/volume-a"),
@@ -3392,6 +3455,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             elapsed: Duration::ZERO,
         };
 
@@ -3491,6 +3556,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             elapsed: Duration::ZERO,
         };
 
@@ -3501,6 +3568,90 @@ mod tests {
             super::tail(&report).is_empty(),
             "什么都没出事的一趟还多出一行"
         );
+    }
+
+    /// **报告末尾说出这一趟怎么收的场**（`say-and-stop/02`，收停车场 Q260）：按停止停下的
+    /// 三种各一句——做完再停说剩下几卷没开工，立即停止说丢掉的是哪一卷、最终位置没动过，
+    /// 清点途中停下说一卷都没开工——**走到头一个字都不出**。
+    ///
+    /// 立即停止另有一种：那个字答在卷边界上，停下来的那一刻没有一卷做到一半
+    /// （`Report::aborted` 是 `None`）。那一句**不许说丢了一卷**——反着钉在这里。
+    ///
+    /// 问两层：措辞那一层交出的那一句，以及命令行那一份报告以它收尾。
+    #[test]
+    fn the_report_ends_with_how_a_stopped_run_stopped_and_says_nothing_when_it_ran_to_the_end() {
+        let ended = |outcome: RunOutcome, aborted: Option<&str>, unstarted: Option<usize>| {
+            let mut report = switches_report(FitMode::Inside, true, SplitRule::default());
+            report.outcome = outcome;
+            report.aborted = aborted.map(PathBuf::from);
+            report.unstarted = unstarted;
+            report
+        };
+
+        let to_the_end = ended(RunOutcome::Completed, None, Some(0));
+        assert_eq!(
+            super::outcome(&to_the_end),
+            None,
+            "走到头的那一趟说了结束方式"
+        );
+        assert!(
+            !unfolded(&to_the_end, Mode::Process).contains("按停止"),
+            "走到头的那一份报告里冒出了按停止"
+        );
+
+        let cases = [
+            (
+                ended(RunOutcome::Stopped(Instruction::Finish), None, Some(2)),
+                "按停止停下（做完再停）：剩下 2 卷没开工",
+            ),
+            (
+                ended(
+                    RunOutcome::Stopped(Instruction::Abort),
+                    Some("library/volume-b"),
+                    Some(3),
+                ),
+                "按停止停下（立即停止）：library/volume-b 做到一半丢掉了，\
+                 最终位置上一个字节都没动过；剩下 3 卷没开工",
+            ),
+            // 丢掉的正是最后一卷：后面没有卷了，那半句不说「剩下 0 卷」。
+            (
+                ended(
+                    RunOutcome::Stopped(Instruction::Abort),
+                    Some("library/volume-b"),
+                    Some(0),
+                ),
+                "按停止停下（立即停止）：library/volume-b 做到一半丢掉了，\
+                 最终位置上一个字节都没动过",
+            ),
+            (
+                ended(RunOutcome::Stopped(Instruction::Abort), None, Some(4)),
+                "按停止停下（立即停止）：剩下 4 卷没开工",
+            ),
+            (
+                ended(RunOutcome::Stopped(Instruction::Finish), None, None),
+                "清点途中按停止停下：一卷都没开工",
+            ),
+            (
+                ended(RunOutcome::Stopped(Instruction::Abort), None, None),
+                "清点途中按停止停下：一卷都没开工",
+            ),
+        ];
+        for (report, said) in cases {
+            assert_eq!(
+                super::outcome(&report).as_deref(),
+                Some(said),
+                "{:?} 那一趟的结束方式说错了",
+                report.outcome
+            );
+            let printed = unfolded(&report, Mode::Process);
+            assert!(
+                printed.ends_with(&format!("{said}\n")),
+                "命令行报告没以结束方式那一句收尾：{printed}"
+            );
+            if report.aborted.is_none() {
+                assert!(!said.contains("丢掉"), "一卷都没丢，却说丢了：{said}");
+            }
+        }
     }
 
     /// **发现无法访问的地方说得出来，并且进退出码**（`p4-parking-lot/11`，收停车场 Q117）。
@@ -3701,6 +3852,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             volumes: vec![VolumeReport {
                 volume: PathBuf::from("library/volume-a"),
                 output: PathBuf::from("out/volume-a"),
@@ -4256,6 +4409,8 @@ mod tests {
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
             outcome: RunOutcome::Completed,
+            aborted: None,
+            unstarted: Some(0),
             elapsed: Duration::ZERO,
         };
         assert!(

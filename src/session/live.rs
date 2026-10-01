@@ -411,6 +411,10 @@ impl Live {
                 non_volume_files: Vec::new(),
                 unreachable_places: Vec::new(),
                 outcome: RunOutcome::Completed,
+                // 被停止拿走的那一截（`say-and-stop/02`）同上：攒到一半的这一份照「走到头」填，
+                // 按停止停下的那一趟跑完换成库交出来的那一份，那两格由 `run` 自己填。
+                aborted: None,
+                unstarted: Some(0),
                 // 计时只进结构、不进渲染出的文字（见 `tonefit::Report::elapsed`），
                 // 攒到一半的这一份因此填零就够——跑完会换成库交出来的那一份。
                 elapsed: Duration::ZERO,

@@ -64,7 +64,8 @@ pub struct Report {
     /// 编一个缺省值，而报告不该有编出来的字段（同一条理由见 [`Processed`]）。
     ///
     /// 清点之后才出的那种失败才落在这里：清点**当场**发现的坏路径整趟拒绝、一页不做
-    /// （见 `crate::survey`），那一趟根本没有报告。
+    /// （见 `crate::survey`），那一趟根本没有报告——清点途中按停止停下的那一趟除外：
+    /// 停止赢过攒到一半的拒绝，交回一份一卷都没有的报告，坏路径也不在这一列里。
     pub failed_volumes: Vec<VolumeFailure>,
     /// 这一趟**没被任何卷收下**的那些文件，按发现顺序（`volume-discovery/04`：非漫画文件）。
     ///
@@ -108,15 +109,38 @@ pub struct Report {
     ///
     /// 它答的是「点名的卷都走过了吗」——[`volumes`](Self::volumes) 与
     /// [`failed_volumes`](Self::failed_volumes) 加起来短了一截时，短的那一截是**按停止**
-    /// 拿走的，而不是调用方少点了几个卷。立即停止掉的那一卷两列里都没有（它等于没做，
-    /// ADR 0013 决定第 2 条），这一项是它在返回值上唯一的痕迹。
+    /// 拿走的，而不是调用方少点了几个卷。短的那一截**是哪几卷**由下面两格说
+    /// （[`aborted`](Self::aborted) 与 [`unstarted`](Self::unstarted)）。
     ///
     /// [`non_volume_files`](Self::non_volume_files) 与
     /// [`unreachable_places`](Self::unreachable_places) 都不进这笔账：它们数的不是卷。
     ///
+    /// **清点途中就按停止停下**的那一趟也是 [`RunOutcome::Stopped`]（`say-and-stop/02`）：
+    /// 那一趟一卷都没开工，两列都空着，分得开它的是 [`unstarted`](Self::unstarted) 为 `None`。
+    ///
     /// [`RunOutcome::Refused`] 在这里出不来，而那不是漏：拒绝开始的那一趟 `run` 返回的是
     /// `Err`，这份结构存在本身就是它没被拒的证据（同一条理由见 [`Report::interlocks`]）。
     pub outcome: RunOutcome,
+    /// **被立即停止掉的那一卷**的卷根（ADR 0013 决定第 2 条）：开了卷、停在页边界上，
+    /// 它那格 `partial`（建出来过的话）已经丢掉，最终位置上一个字节都没动过。没有就是 `None`。
+    ///
+    /// 它两列报告里都没有——它等于没做，进不了 [`volumes`](Self::volumes)；被停下来也不是失败，
+    /// 进不了 [`failed_volumes`](Self::failed_volumes)——这一格是它在返回值上唯一的痕迹
+    /// （`say-and-stop/02`，收停车场 Q260：命令行报告末尾那一句要说得出丢掉的是哪一卷）。
+    ///
+    /// **立即停止不一定丢掉一卷**：那个字要是答在卷边界上（一卷刚跑完、下一卷还没开），
+    /// 停下来的那一刻没有一卷做到一半，这一格就是 `None`。分得开这两种的只有 `run` 自己——
+    /// 它知道停在了哪一道检查点上——因此由它填，报告的读者不必去猜。
+    pub aborted: Option<PathBuf>,
+    /// **一卷都没开工**的有几卷：按停止拿走的那一截（`say-and-stop/02`，收停车场 Q260）。
+    /// 走到头的那一趟是 `Some(0)`。
+    ///
+    /// 数的是清点出来、开卷那一条都没报到的卷——[`aborted`](Self::aborted) 那一卷开过，不算在里面。
+    ///
+    /// **清点途中就停下的那一趟是 `None`**：清点没走完，这一趟有几卷无从说起
+    /// （清点中那一条本来就不带卷数，停车场 Q720）。不填一个 0：那会说成「一卷都不剩」，
+    /// 而真相是「不知道有几卷」。
+    pub unstarted: Option<usize>,
     /// **这一趟做了多久**：`run` 从进到出的墙钟，扣掉在确认点上等人的那几分钟
     /// （加固批 11 号票，停车场 Q41）。
     ///
@@ -335,9 +359,10 @@ pub enum RunOutcome {
     Completed,
     /// 按停止停在半路：剩下的卷一个都没开工（ADR 0013 的两级停止）。
     ///
-    /// 带着按下的那一级，因为两级停止下来的现场不同：[做完再停](Instruction::Finish)之后
-    /// 盘上只有完整的卷，[立即停止](Instruction::Abort)还额外丢掉了当前那一卷——
-    /// 那一卷两列报告里都没有，这里是它唯一的痕迹。
+    /// 带着按下的那一级，因为两级停止下来的现场可能不同：[做完再停](Instruction::Finish)之后
+    /// 盘上只有完整的卷，[立即停止](Instruction::Abort)答在页边界上时还额外丢掉了当前那一卷——
+    /// 那一卷两列报告里都没有，它是哪一卷见 [`Report::aborted`]。立即停止答在卷边界上时
+    /// 一卷都没丢，现场与做完再停相同。
     ///
     /// 里面**恒不是** [`Instruction::Continue`]：它只由库内的 `RunOutcome::of` 造得出来，
     /// 而那一个把「继续」映成 [`Completed`](Self::Completed)。
@@ -356,7 +381,8 @@ pub enum RunOutcome {
 impl RunOutcome {
     /// 闩上那个字定出来的结束：没人按停止就是走到头了。
     ///
-    /// 只在**真被拿走了东西**的那两处叫得到（`crate::run` 的两条 `break`），
+    /// 只在**真被拿走了东西**的那几处叫得到（`crate::run` 逐卷循环的两条 `break`，
+    /// 外加清点途中按停止的那一支——那时一卷都没开工），
     /// 因此 [`Stopped`](Self::Stopped) 里恒是做完再停或立即停止。做完再停按在最后一卷上、
     /// 一卷都没被拿走的那一趟不走这里——那一趟点名的卷全做完了，说它「停在半路」是假话。
     pub(crate) fn of(standing: Instruction) -> Self {
