@@ -666,6 +666,31 @@ pub fn band_center_row(size: Size, band: usize) -> u32 {
     (band as u32 * 2 + 1) * size.height / (bands * 2)
 }
 
+/// **这块盘认不认大小写**，用例自己问一次：`existing` 末一级名字里的 ASCII 字母翻个大小写，
+/// 翻出来的那个写法开不开得开。
+///
+/// 它与库里那个探法（`tonefit::case_sensitivity`）各自独立地问同一件事：认不认大小写的那几条
+/// 集成用例按它分两支各断言各的，探法探反了，走的那一支就对不上。在跑用例的那块盘上真问，
+/// 不按平台常量猜（那正是「是不是同一处」那把尺子要治的病）。
+pub fn the_disk_folds_case(existing: &Path) -> bool {
+    let name = existing
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("末一级是一个名字");
+    let flipped: String = name
+        .chars()
+        .map(|here| {
+            if here.is_ascii_uppercase() {
+                here.to_ascii_lowercase()
+            } else {
+                here.to_ascii_uppercase()
+            }
+        })
+        .collect();
+    assert_ne!(flipped, name, "{name} 里没有一个翻得动的字母，问不出来");
+    fs::symlink_metadata(existing.with_file_name(flipped)).is_ok()
+}
+
 /// 一次测试的工作区：源卷与输出目录分处两地，互不嵌套。
 pub struct Workspace {
     tmp: tempfile::TempDir,

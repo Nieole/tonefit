@@ -952,6 +952,62 @@ fn a_directory_volume_with_lodgers_still_skips_as_a_whole() {
     );
 }
 
+/// **借住认得出大小写不同的去处**（`one-source/03`，收停车场 Q300）。
+///
+/// 两条处理路径互不嵌套，镜像却落进同一棵输出树：`甲/N和S`（一张封面，自成一卷）与
+/// `乙/n和s`（只装着一话，自己不是卷）。不认大小写的盘上 `out/N和S` 与 `out/n和s` 是同一个目录，
+/// 那一话因此**借住**在封面那一卷的去处里。从前认借住是逐字节比镜像路径，认漏了：
+/// 封面那一卷重做时整个换掉它的去处，那一话上一趟的产物跟着被删、只好跟着重做——
+/// 而那一趟要是没走完，它就再也回不来了（Q113 的形状）。
+///
+/// 第二趟只改封面：认得出借住，那一话**整卷跳过**；认漏了，它就被连带重做。
+/// 认大小写的盘上两个目录各是各的，谁也不借住在谁里面：那一话照样整卷跳过，输出树上是两个目录。
+/// 认不认大小写由这块盘说了算（`fixtures::the_disk_folds_case`）。
+#[test]
+fn a_lodger_is_recognised_in_a_place_spelled_in_another_case() {
+    let space = Workspace::new();
+    let page = fixtures::gradient(fixtures::TINY);
+    let host = space.volume("甲/N和S");
+    host.page("cover.png", &page);
+    let shelf = space.dir("乙/n和s");
+    std::fs::create_dir_all(&shelf).expect("建只装着一话的目录");
+    let chapter = shelf.join("第1话.cbz");
+    let mut archive = fixtures::Cbz::new(chapter.clone());
+    archive.page("001.png", &page);
+    archive.write();
+    let folds = fixtures::the_disk_folds_case(host.path());
+
+    let first = run_paths(&space, [host.path(), shelf.as_path()]);
+    assert_eq!(first.volumes.len(), 2, "夹具不对：封面与那一话没各自成卷");
+    host.page("cover.png", &fixtures::solid(fixtures::TINY, 40));
+    let second = run_paths(&space, [host.path(), shelf.as_path()]);
+
+    let verdict_of = |volume: &Path| {
+        second
+            .volumes
+            .iter()
+            .find(|report| report.volume == volume)
+            .unwrap_or_else(|| panic!("报告里没有 {}", volume.display()))
+            .verdict
+    };
+    assert_ne!(
+        verdict_of(host.path()),
+        Some(tonefit::VolumeVerdict::Skipped { page_count: 1 }),
+        "夹具不对：封面那一卷被幂等跳过了，收尾根本没走到"
+    );
+    assert_eq!(
+        verdict_of(&chapter),
+        Some(tonefit::VolumeVerdict::Skipped { page_count: 1 }),
+        "那一话被连带重做了：封面那一卷收尾时整个换掉了它借住的那个去处"
+    );
+    let expected: &[&str] = if folds {
+        &["N和S/cover.png", "N和S/第1话.cbz"]
+    } else {
+        &["N和S/cover.png", "n和s/第1话.cbz"]
+    };
+    assert_eq!(fixtures::directory_members(&space.out()), expected);
+}
+
 /// **混装目录里那一卷中途失败，盘上一个字节都没动**——它自己上一趟的产物与借住的卷都在。
 ///
 /// 这是上一条的另一半（票 `p4-parking-lot/16` 的第三条验收）：收窄的是「换掉什么」，

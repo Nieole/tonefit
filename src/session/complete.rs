@@ -9,15 +9,17 @@
 //! 打到一半那一层**之前**的路径原样留着。补全不该顺手替他把路径重写一遍。
 //!
 //! **大小写按这一层所在的文件系统的规矩办，而那件事是运行期探出来的**——那个概念叫
-//! **大小写敏感性**，含义由 `CONTEXT.md` 的《会话》定，这里只说它在本模块怎么落地（见 [`probe`]）：
+//! **大小写敏感性**，含义由 `CONTEXT.md` 的《会话》定，这里只说它在本模块怎么落地：
 //! 不认大小写的文件系统上敲 `d` 补得出 `Doraemon`，而补回来的是**盘上那个写法**——
 //! 打到一半的那一截因此是补全唯一会改写的地方，改的也只有大小写。
 //! 认大小写的那一档上一个字都不放宽。
 //!
-//! 探法**只读**：拿刚读回来的一个名字翻一次大小写去问盘。源库只读（ADR 0009 决定第 1 条），
-//! 「造一个探针文件再去开它」那种常见探法在这里不成立，何况源库那一层多半根本不可写。
+//! **探法在库里**（[`tonefit::case_sensitivity`]）：一趟开工时收编、借住、撞名认「是不是同一处」
+//! 问的是同一个探法（`CONTEXT.md` 的《同一处》），屏上补得出的名字与跑起来认的名字因此按同一把尺子。
+//! 它只读——拿一个已有的名字翻一次大小写去问盘。
 //! **一个进程只探一次**——那一格就是上面说的那个例外，而它记的不是这一层有什么，
 //! 是**这台机器的文件系统怎么比名字**，后者不会在两次 `Tab` 之间变（见 [`asked_once`]）。
+//! 记不记、记多久是这里的事，库里那个探法问一次付一次。
 //!
 //! 按平台常量猜是这里从前的病：Windows 不认大小写，**macOS 默认那套也不认**，
 //! 一个 `cfg!(windows)` 在 macOS 上恰好全错——那台机器上敲小写补不出大写开头的卷名。
@@ -25,22 +27,11 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+use tonefit::CaseSensitivity;
+
 /// 路径分隔符，两种都认——Windows 上用户敲哪一个的都有。输入行拆「哪一层」与「打到一半的那一截」、
 /// 删一段、认一条候选是不是文件夹，都读这一份（`super::typing`），不另抄。
 pub(super) const SEPARATORS: [char; 2] = ['/', '\\'];
-
-/// 这一层所在的文件系统**认不认大小写**。
-///
-/// 两个只差大小写的目录在认的那一档上是**两个**目录，一律折大小写来比会让它们互相污染
-/// （停车场 Q59 摆的两条路，走的是这一条）；不认的那一档上它们是同一个，
-/// 打到一半的 `c` 因此该筛得出 `Comics`。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CaseSensitivity {
-    /// 认：`Doraemon` 与 `doraemon` 是两个目录，打到一半的那一截一个字都不放宽。
-    Sensitive,
-    /// 不认：两者是同一个，打到一半的那一截因此折过大小写再比。
-    Insensitive,
-}
 
 /// 打到这儿时，**这一层**里对得上的有哪些。
 ///
@@ -56,10 +47,10 @@ pub fn level(typed: &str) -> Vec<String> {
 /// 画质分从外面交进来，[`level`] 那一路才有一个够得着的缝：探测问的是**跑着的这台机器**，
 /// 而两边的行为（macOS 折得开、Linux 不放宽）得在**每台**机器上都验得到——
 /// 用例自己再按平台分岔一次，就是把本模块刚治好的那个病又犯一遍。
-fn level_asking_case(
-    typed: &str,
-    ask: impl FnOnce(&Path, &[String]) -> CaseSensitivity,
-) -> Vec<String> {
+///
+/// 这个缝交进来的是**答案**，不是探法：探法本身没有缝，在跑用例的那个文件系统上真验
+/// （库里 `place` 那几条用例）。
+fn level_asking_case(typed: &str, ask: impl FnOnce(&Path) -> CaseSensitivity) -> Vec<String> {
     let (head, prefix) = split(typed);
     let directory = if head.is_empty() {
         Path::new(".")
@@ -69,15 +60,14 @@ fn level_asking_case(
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Vec::new();
     };
-    // 整层先收下来再筛：画质分要先看过这一层有哪些名字（[`remembered`] 拿它去探）。
-    // 名字与条目各留一份，为的是 `file_type()` **仍旧只对筛得中的那几项问**——
+    // 整层先收下来再筛。名字与条目各留一份，为的是 `file_type()` **仍旧只对筛得中的那几项问**——
     // 并进上面那一步的话，每一个条目都要摊上一次（`d_type` 答不出的文件系统上那是一次 stat）。
     let read: Vec<std::fs::DirEntry> = entries.flatten().collect();
     let names: Vec<String> = read
         .iter()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
-    let sensitivity = ask(directory, &names);
+    let sensitivity = ask(directory);
     let mut listed: Vec<String> = read
         .iter()
         .zip(&names)
@@ -126,18 +116,14 @@ fn matches_prefix(name: &str, prefix: &str, sensitivity: CaseSensitivity) -> boo
     }
 }
 
-/// 真问文件系统那一路：探一次、记一格。
+/// 真问文件系统那一路：探一次、记一格。探的是库里那一个（[`tonefit::case_sensitivity`]）。
 ///
 /// 记的是**一个进程一格**，不是一个挂载点一格——大小写敏感性其实是挂载点的性质
 /// （macOS 上挂得出大小写敏感的 APFS，Linux 上挂得出 ciopfs），跨挂载点补全会拿到
 /// 头一处那个答案。一张会长大的表连同它的失效问题正是 ADR 0009 关掉的那件事的小号版本，
 /// 而答错那一边只是多列或少列几项候选，一个字节都不写（停车场 Q364）。
-fn remembered(directory: &Path, names: &[String]) -> CaseSensitivity {
-    asked_once(&KNOWN, || {
-        probe(names, |other| {
-            std::fs::symlink_metadata(directory.join(other)).map(|_| ())
-        })
-    })
+fn remembered(directory: &Path) -> CaseSensitivity {
+    asked_once(&KNOWN, || tonefit::case_sensitivity(directory))
 }
 
 /// 这台机器那一格。**整个进程共用它**，因此摆在模块这一层、不摆在 [`remembered`] 里面——
@@ -159,70 +145,6 @@ fn asked_once(
         Some(answer) => *known.get_or_init(|| answer),
         None => UNPROVEN,
     }
-}
-
-/// 探一次：这一层所在的文件系统认不认大小写。答不出来就 `None`。
-///
-/// **只读**——拿刚读回来的一个名字翻一次大小写，问盘上有没有翻出来的那个写法。
-/// 源库只读是 ADR 0009 的决定第 1 条，探针文件那种探法在这里不成立。
-///
-/// **那一问也是从外面交进来的**（`open`）：翻过大小写的那个写法开不开得开，
-/// 在一台认大小写的机器上**造不出来**。不留这个缝，「不认大小写的那一档答什么」
-/// 就只能在 macOS 上验——而这个模块要治的病正是「拿编译期的东西冒充运行期的事实」。
-fn probe(
-    names: &[String],
-    open: impl FnOnce(&str) -> std::io::Result<()>,
-) -> Option<CaseSensitivity> {
-    let other = names.iter().find_map(|name| flipped(name))?;
-    if names.contains(&other) {
-        // 两个只差大小写的名字同时在这一层里——不认大小写的文件系统装不下它们。
-        // 这一层自己已经把话说完了，那一问一次都不必问（问了反倒答反：翻出来的那个写法
-        // 正是旁边那个货真价实的兄弟）。
-        return Some(CaseSensitivity::Sensitive);
-    }
-    match open(&other) {
-        Ok(()) => Some(CaseSensitivity::Insensitive),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Some(CaseSensitivity::Sensitive)
-        }
-        // 那一问自己失败了（权限不够之类）：这不是答案，别把它当答案记住。
-        Err(_) => None,
-    }
-}
-
-/// 把一个名字里每个**翻得动**的字都翻到另一个大小写；一个都翻不动就 `None`。
-///
-/// 只认「翻出来仍是一个字」的那些——`ß` 的大写是两个字母，翻出来的名字在**任何**
-/// 文件系统上都问不着，拿它探等于白探。名字里带 U+FFFD 的一并不认：那是
-/// `to_string_lossy` 给非 UTF-8 名字留下的记号，那个名字同样问不着盘，
-/// 答出来的「认」是假的。
-fn flipped(name: &str) -> Option<String> {
-    if name.contains('\u{fffd}') {
-        return None;
-    }
-    let mut any = false;
-    let mut other = String::with_capacity(name.len());
-    for here in name.chars() {
-        match one_other_case(here) {
-            Some(there) => {
-                any = true;
-                other.push(there);
-            }
-            None => other.push(here),
-        }
-    }
-    any.then_some(other)
-}
-
-/// 一个字的另一个大小写，**仍是一个字**的那一种；没有就 `None`。
-fn one_other_case(here: char) -> Option<char> {
-    fn only_one(mut cased: impl Iterator<Item = char>, here: char) -> Option<char> {
-        match (cased.next(), cased.next()) {
-            (Some(one), None) if one != here => Some(one),
-            _ => None,
-        }
-    }
-    only_one(here.to_uppercase(), here).or_else(|| only_one(here.to_lowercase(), here))
 }
 
 /// 折一次大小写再比前缀。
@@ -372,8 +294,8 @@ mod tests {
         std::fs::create_dir(root.path().join("Doraemon 01")).expect("建目录");
         let typed = format!("{}/d", root.path().display());
 
-        let folded = level_asking_case(&typed, |_, _| CaseSensitivity::Insensitive);
-        let strict = level_asking_case(&typed, |_, _| CaseSensitivity::Sensitive);
+        let folded = level_asking_case(&typed, |_| CaseSensitivity::Insensitive);
+        let strict = level_asking_case(&typed, |_| CaseSensitivity::Sensitive);
 
         assert_eq!(folded.len(), 1, "{folded:?}");
         assert!(
@@ -381,71 +303,6 @@ mod tests {
             "补回来的不是盘上那个写法：{folded:?}"
         );
         assert!(strict.is_empty(), "{strict:?}");
-    }
-
-    /// **不认大小写那一档答什么**：盘上开得出翻过大小写的那个写法，答案就是「不认」。
-    /// 那一问由调用方交进来，因此这条在一台**认**大小写的机器上照样跑得到——
-    /// macOS 那半条验收落在这里。顺带钉住问的是**哪个**写法。
-    #[test]
-    fn a_level_that_opens_the_other_case_is_one_that_folds_case() {
-        let names = vec!["Doraemon 01".to_owned()];
-        let mut asked = None;
-
-        let answer = probe(&names, |other| {
-            asked = Some(other.to_owned());
-            Ok(())
-        });
-
-        assert_eq!(answer, Some(CaseSensitivity::Insensitive));
-        assert_eq!(
-            asked.as_deref(),
-            Some("dORAEMON 01"),
-            "问出去的不是翻过大小写的那个写法"
-        );
-    }
-
-    /// **认大小写那一档答什么**：翻过大小写的那个写法根本不在，答案就是「认」。
-    #[test]
-    fn a_level_that_does_not_open_the_other_case_keeps_case() {
-        let names = vec!["Doraemon 01".to_owned()];
-
-        let answer = probe(&names, |_| Err(std::io::ErrorKind::NotFound.into()));
-
-        assert_eq!(answer, Some(CaseSensitivity::Sensitive));
-    }
-
-    /// 那一问**自己**失败（权限不够之类）不是答案：探不出来就说探不出来，
-    /// 别把一次失败当成「认大小写」记进那一格。
-    #[test]
-    fn a_question_that_fails_is_not_an_answer() {
-        let names = vec!["Doraemon 01".to_owned()];
-
-        let answer = probe(&names, |_| Err(std::io::ErrorKind::PermissionDenied.into()));
-
-        assert_eq!(answer, None);
-    }
-
-    /// 两个只差大小写的名字**同时在这一层里**，这件事本身就答完了：不认大小写的
-    /// 文件系统装不下它们。那一问**一次都不问**——问了反倒答反，因为翻出来的那个写法
-    /// 正是旁边那个货真价实的兄弟。问出去就当场恐慌，因此「省掉那一问」是钉死的。
-    #[test]
-    fn two_names_that_differ_only_in_case_settle_it_without_asking() {
-        let names = vec!["Doraemon".to_owned(), "dORAEMON".to_owned()];
-
-        let answer = probe(&names, |_| panic!("这一层自己已经答完了，不该再问盘"));
-
-        assert_eq!(answer, Some(CaseSensitivity::Sensitive));
-    }
-
-    /// 这一层里一个带大小写的名字都没有：**探不出来**，而且一次盘都不问。
-    /// 那一档上折不折其实都一样——名字里没有翻得动的字，折法就是恒等。
-    #[test]
-    fn a_level_with_no_cased_name_cannot_be_probed() {
-        let names = vec!["棋魂".to_owned(), "001".to_owned()];
-
-        let answer = probe(&names, |_| panic!("没有可翻的名字，不该问盘"));
-
-        assert_eq!(answer, None);
     }
 
     /// 探不出来的那一次按**严的那一边**走，而且**不记进那一格**——下一层也许答得出。
@@ -488,7 +345,8 @@ mod tests {
     /// **一个进程只探一次**落在哪儿：那一格是模块级的 [`KNOWN`]，不是 [`remembered`]
     /// 每次调用新起的一格。把它挪进函数里，别的用例一条都不会红——只有这一条会。
     ///
-    /// 落下来的那个答案与**当场独立探一次**得到的是同一个：那一格记的不是随便什么东西。
+    /// 落下来的那个答案与**当场拿库里那个探法独立探一次**得到的是同一个：那一格记的不是随便
+    /// 什么东西，记的是库里那一个探法的答案——补全与一趟开工时认「是不是同一处」问的是同一个探法。
     #[test]
     fn the_answer_lands_in_the_one_the_whole_process_shares() {
         let root = tempfile::tempdir().expect("建临时目录");
@@ -498,10 +356,7 @@ mod tests {
         let _ = level(&typed);
 
         let landed = KNOWN.get().copied().expect("那一格没落下来");
-        let straight = probe(&["Doraemon 01".to_owned()], |other| {
-            std::fs::symlink_metadata(root.path().join(other)).map(|_| ())
-        })
-        .expect("这一层探得出来");
+        let straight = tonefit::case_sensitivity(root.path()).expect("这一层探得出来");
         assert_eq!(landed, straight);
     }
 

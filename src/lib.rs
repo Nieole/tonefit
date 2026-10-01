@@ -55,6 +55,7 @@ mod medium;
 mod metadata;
 mod metric;
 mod pipeline;
+mod place;
 mod profile;
 mod progress;
 mod proof;
@@ -91,6 +92,9 @@ pub use medium::{ChosenBy, IoMode, IoPlan, Medium, Readers};
 pub use metric::{
     Aggregation, Composition, Masking, Reference, Score, aggregation, composition, masking, score,
 };
+// 「认不认大小写」那个探法：一趟开工时收编、借住、撞名认「是不是同一处」用它
+// （`CONTEXT.md` 的《同一处》），会话的逐层补全也读这一个、自己记一格——探法只有这一份。
+pub use place::{CaseSensitivity, case_sensitivity};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use proof::{Proof, ProofPage, Sheet, Sheets};
@@ -255,6 +259,9 @@ pub fn run(request: &Request) -> Result<Report> {
     // 撞在一起的是发现出来的那些卷，发现之前问不出来（见
     // [`ensure_no_two_volumes_share_an_output`]）。
     ensure_the_output_root_takes_a_write(&request.output_root)?;
+    // 输出那一侧认不认大小写，撞名与借住都按它认「是不是同一处」（`CONTEXT.md` 的《同一处》）。
+    // 排在探写之后：探写把它现建的那几级收回去了，这里问的是盘上此刻真有的那几级。
+    let output_case = place::Side::Output.probe(&request.output_root);
     // 硬盘类型**按路径**探测，一次运行共用一份缓存（ADR 0009 决定第 2 条，见 `medium`）：
     // 同一趟里源卷可能在仓库盘上、输出在系统盘上，逐卷各判各的，互不影响。
     let mut probes = medium::Probes::new();
@@ -272,7 +279,7 @@ pub fn run(request: &Request) -> Result<Report> {
     let mut failed_volumes = Vec::new();
     let mut aborted = None;
     let mut outcome = RunOutcome::Completed;
-    let survey = survey::Survey::of(request, events)?;
+    let survey = survey::Survey::of(request, output_case, events)?;
     let (non_volume_files, unreachable_places, unstarted) = match survey {
         // **清点途中按停止**（`say-and-stop/02`）：这一趟收成什么样只有一处说，见 `Event::Surveying`。
         // 这里只填那份一卷都没有的报告——两张表空着，`unstarted` 是 `None`（说不出剩下几卷）。
@@ -284,7 +291,11 @@ pub fn run(request: &Request) -> Result<Report> {
             // 撞名要在写出第一个字节之前说，而**撞在一起的是发现出来的那些卷**——点名的是
             // 「在哪里找」，不是「找到什么」（ADR 0009 决定第 1 条）。这一道因此排在清点之后、
             // 开工那条事件之前。
-            ensure_no_two_volumes_share_an_output(survey.volumes(), &request.output_root)?;
+            ensure_no_two_volumes_share_an_output(
+                survey.volumes(),
+                &request.output_root,
+                output_case,
+            )?;
             // 开工前那几道检查与清点都排在它之前：那几种失败一条开工与卷级事件都不发，
             // 调用方拿到的是错误本身。报的是**发现出来的卷**，不是点名了几个路径：
             // 进度条上那个分母得是真要做的那些。
@@ -1186,17 +1197,22 @@ fn ensure_distinct_outputs<'a, M: Copy>(
 /// **查的是发现出来的那些卷**，不是点名的那几个路径：点名的是「在哪里找」，
 /// 不是「找到什么」。这一道因此排在清点之后（见 `run`），撞车仍在写出第一个字节之前说。
 ///
+/// **「同一个去处」按[同一处](place)认**，`case` 是输出根这一趟开工时探出来的答案：
+/// 不认大小写的盘上 `Abc.cbz` 与 `abc.cbz` 是同一个文件，后到的那一卷会把先到的整卷盖掉
+/// （停车场 Q366——从前按编译平台折，macOS 上恰好判反）。
+///
 /// 不替用户改名。「输出名就是卷名」这条约定要能反着用——看着输出得认得出是哪一卷——
 /// 自动加后缀会让它失效，而失效的方式还是静默的。
 fn ensure_no_two_volumes_share_an_output(
     volumes: &[survey::Surveyed],
     output_root: &Path,
+    case: CaseSensitivity,
 ) -> Result<()> {
-    let mut by_target: HashMap<String, (PathBuf, Vec<&Path>)> = HashMap::new();
+    let mut by_target: HashMap<place::Place, (PathBuf, Vec<&Path>)> = HashMap::new();
     for surveyed in volumes {
         let target = surveyed.output_path(output_root);
         by_target
-            .entry(collision_key(&target))
+            .entry(place::Place::of(&target, case))
             .or_insert_with(|| (target, Vec::new()))
             .1
             .push(surveyed.root.as_path());
@@ -1230,8 +1246,10 @@ fn ensure_no_two_volumes_share_an_output(
     // 两条出路各按自己那一种撞车出场：混着念，对其中一种必然是错的指引。
     let by_volume_name = collisions
         .iter()
-        .any(|(_, by)| !normalises_an_extension(by));
-    let by_extension = collisions.iter().any(|(_, by)| normalises_an_extension(by));
+        .any(|(_, by)| !normalises_an_extension(by, case));
+    let by_extension = collisions
+        .iter()
+        .any(|(_, by)| normalises_an_extension(by, case));
     said.push_str("输出按源的结构镜像，末一级取自卷名，同名的卷因此撞在一起。");
     if by_volume_name {
         said.push_str("分批处理，每批给一个自己的输出目录。");
@@ -1253,29 +1271,16 @@ fn ensure_no_two_volumes_share_an_output(
 /// 都叫 `第1话`）；文件名不同还撞得上同一个去处，只可能是归档卷的扩展名在
 /// [`source::output_name_of`] 那一步被归一掉了（`第10话.zip` 与 `第10话.cbz`）。
 ///
-/// 比文件名用的是 [`collision_key`]：与比去处同一把尺子，不然 Windows 上
+/// 比文件名用的是比去处的同一把尺子（[`place::same_place`]，同一个 `case`）：不然不认大小写的盘上
 /// `第1话.CBZ` 与 `第1话.cbz` 会被这里当成两个名字、报成扩展名归一，而它撞的其实是大小写。
-fn normalises_an_extension(group: &[&Path]) -> bool {
+fn normalises_an_extension(group: &[&Path], case: CaseSensitivity) -> bool {
     let mut names = group
         .iter()
-        .map(|input| collision_key(Path::new(input.file_name().unwrap_or(input.as_os_str()))));
+        .map(|input| Path::new(input.file_name().unwrap_or(input.as_os_str())));
     let Some(first) = names.next() else {
         return false;
     };
-    names.any(|name| name != first)
-}
-
-/// 撞车比的是文件系统认不认成同一个去处。
-///
-/// Windows 上大小写不区分，`Abc.cbz` 与 `abc.cbz` 是同一个文件；别的平台上是两个。
-/// 按平台折叠，查出来的撞车才与真会发生的撞车一致。
-fn collision_key(target: &Path) -> String {
-    let text = target.to_string_lossy().into_owned();
-    if cfg!(windows) {
-        text.to_lowercase()
-    } else {
-        text
-    }
+    names.any(|name| !place::same_place(first, name, case))
 }
 
 fn ensure_output_is_elsewhere(input: &Path, output_root: &Path) -> Result<()> {
