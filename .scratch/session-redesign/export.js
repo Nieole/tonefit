@@ -40,9 +40,9 @@ const MAIN = [120, 36];
 const NARROW = [80, 24];
 const TINY = [56, 14];
 
-/** 要导出的快照：13 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
+/** 要导出的快照：14 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding']
+  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -107,7 +107,8 @@ const SEQUENCES = [
   { name: 'pages-Escape', scene: 'pages', size: MAIN, steps: k('Escape'), says: '第07卷' },
   { name: 'pages-a', scene: 'pages', size: MAIN, steps: k('a'), says: '[全部页]' },
   { name: 'pages-j', scene: 'pages', size: MAIN, steps: k('a', 'j', 'j'), says: '3 of 189' },
-  { name: 'pages-click-page', scene: 'pages', size: MAIN, steps: [{ key: 'a' }, { click: [20, 14] }], says: '5 of 189' },
+  // 点的是第五页那一行：框里正文头三行是灰阶分布、耗时与列头，第五页落在屏上第 15 行
+  { name: 'pages-click-page', scene: 'pages', size: MAIN, steps: [{ key: 'a' }, { click: [20, 15] }], says: '5 of 189' },
   { name: 'ended-failed-l', scene: 'ended', size: MAIN, steps: k('j', 'j', 'j', 'j', 'l'), says: '✗ 转换失败：' },
   { name: 'ended-skipped-l', scene: 'ended', size: MAIN, steps: k('g', 'g', 'l', 'j', 'l'), says: '这一卷跳过了：' },
   { name: 'running-vol-l', scene: 'running', size: MAIN, steps: k('l'), says: '还在处理：' },
@@ -395,10 +396,13 @@ function cursorData(design, key, { dirRoot, rootOf }) {
   return { kind: 'unknown', key };
 }
 
+/** 卷级计时的四段在库里叫什么（`tonefit::VolumeTiming` 的字段）：设计稿按环节那个词记，导出照库的名字写。 */
+const SEGMENT = { 摊开: 'extraction', 查重: 'fingerprint', 分析: 'first_pass', 写出: 'second_pass' };
+
 /** 这一刻的场景数据（spec《导出》：语义字段，不是屏上的字）。 */
 function sceneData(page) {
   const { design, clock } = page;
-  const { S, CONFIG, PRESETS, PANELS, SHOW, CWD, PRESETS_FILE, pagesOf, stepsOf, extracts, isolatedOutput, dirRoot } = design;
+  const { S, CONFIG, PRESETS, PANELS, PASSES, SHOW, CWD, PRESETS_FILE, pagesOf, retainedOf, stepsOf, extracts, isolatedOutput, dirRoot } = design;
   const r = S.run;
   const cfgIndex = (i) => (CONFIG[i] && CONFIG[i].key) || null;
   const settings = settingsOf(CONFIG.filter((c) => c.key && c.kind !== 'info').map((c) => [c.key, c.value ?? null]));
@@ -461,14 +465,20 @@ function sceneData(page) {
     // 每卷此刻怎么样。逐页结果只给**屏上开着的那一卷**整份（一趟 84 卷 × 近两百页，整份摆出来一个场景就是
     // 六兆字节）；其余各卷给灰阶分布与要紧的那几页——屏上从它们身上能读到的只有这两样，
     // 夹具照分布补齐不要紧的页就是（05 号票）。
+    // `took_s` 是卷级计时那几段（库 `VolumeTiming` 的四格，键照它的字段名）：走过的环节各花了几秒，
+    // 没走的不写（库在那一格上记零）；一个环节都没走过的卷整格不写。按页跳过的卷多一格 `retained_pages`
+    // （库 `VolumeReport::retained_pages`），页数 `page_count` 把它加回去（库 `VolumeReport::page_count`）
     volumes: r.tree.vols.map((v, i) => {
       const s = r.vs[i];
       const out = { root: rootOf(v), state: s.state, pass: s.pass, done: num(s.done), elapsed_s: num(s.elapsed * SHOW), tally: s.tally ? s.tally.map(([k, n]) => [k, n]) : null };
+      const took = PASSES.filter((p) => s.took[p] > 0);
+      if (took.length) out.took_s = Object.fromEntries(took.map((p) => [SEGMENT[p], num(s.took[p] * SHOW)]));
       if (s.state === 'failed') out.failure = v.plan.volFail;
       if (s.state === 'isolated') out.isolated_output = isolatedOutput(v);
       if (s.tally) {
-        const pages = pagesOf(v);
-        out.page_count = pages.length;
+        const pages = pagesOf(v), retained = retainedOf(v);
+        out.page_count = pages.length + retained;
+        if (retained) out.retained_pages = retained;
         if (S.pages && S.pages.vol === v) out.pages = pages.map((p) => pageData(design, p));
         else out.notable_pages = pages.filter((p) => p.kinds.length).map((p) => pageData(design, p));
       }

@@ -786,7 +786,7 @@ mod tests {
         let snapshots = manifest["snapshots"].as_array().expect("快照清单");
         let sequences = manifest["sequences"].as_array().expect("序列清单");
         // 有场景数据的场景几个：主稿与验收线各一份快照，外加窗口太小两份。
-        let scenes = 13;
+        let scenes = 14;
         assert_eq!(
             snapshots.len(),
             scenes * 2 + 2,

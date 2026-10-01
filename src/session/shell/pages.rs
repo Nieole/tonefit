@@ -4,14 +4,26 @@
 //! ```text
 //! ┏ 任务 › ~/漫画库 › 集英社/海贼王 › 第07卷 ━━━━━━━━━━━━━━━━━━━━━━ [需留意的页] ━┓
 //! ┃ 灰阶分布 2bit+FS 130 ⋅ 4bit 50 ⋅ 2bit 8   需留意 1/189 页   这一卷输出在 _isol ┃
+//! ┃ 耗时 查重 1s ⋅ 分析 4s ⋅ 写出 3s                                               ┃
 //! ┃    页面      尺寸       缩放                    灰阶     原因     画质分   提示 ┃
 //! ┃❯ ✗ 017.jpg   1182x1680  读不出 ⋅ 用空白页占位                    失败 JPEG ⋯   ┃
 //! ┗ a → 全部页 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1 of 1 ━┛
 //! ```
 //!
 //! **抬头是面包屑**（任务 › 分区的路径 › 目录 › 卷），右端说此刻的[列法](Listing)；
-//! 头一行是这一卷的灰阶分布与需留意几页；此后一页一行。框底边左起是 `a` 那一件、
+//! 头一行是这一卷的灰阶分布与需留意几页（按页跳过的卷接着说**留下了几页**），第二行是
+//! **各环节耗时**，此后一页一行（[头三行](HEAD_ROWS)）。框底边左起是 `a` 那一件、
 //! 右端说光标停在第几页、共几页。
+//!
+//! # 头两行说的是这一趟对这一卷做了多少
+//!
+//! **留下几页**（`design-parity/10`，停车场 Q682）：《留下的页》不进逐页结果，屏上只报个数，
+//! 跟在「需留意 N/M 页」后面——M 是这一趟做了的页（全部页那一列有几行），两个数加起来就是整本书，
+//! 表里为什么少一截一眼看得出。**没有留下的页时这一截不在**。
+//!
+//! **各环节耗时**（停车场 Q624）：一卷跑得慢，展开它就知道慢在哪一步。数逐段取自那一卷的
+//! 卷级计时（[`passes::took`]，没走的那一段不列），词与横条上那个词同一处出处、同一色。
+//! 跳过的卷也有这一行：查重那一道不是免费的，「跳过一卷为什么也要等」只有它答得出。
 //!
 //! # 每一格的字出自报告那一处
 //!
@@ -23,9 +35,11 @@
 //!
 //! **表外那几句是这一块自己说的**，逐字照设计稿：列头（[`PagesColumn::head`]）、
 //! [行首记号](Mark)、框底边那一件、跳过的卷那一句、一页都不需留意那一句，
-//! 以及灰阶分布那一行末尾「等待确认」「输出在隔离目录」两个短标签。
+//! 灰阶分布那一行的「留下 N 页没重做」与末尾「等待确认」「输出在隔离目录」两个短标签，
+//! 以及耗时那一行的「耗时」。
 //! 它们在命令行上**根本没有**（那一路把同一批格摆成一段散文），因此不是第二份说法；
-//! 唯一与库那一头撞车的是跳过那一句——停车场 **Q877**。
+//! 与库那一头撞车的有两处：跳过那一句（停车场 **Q877**），与留下几页那一截——命令行那一句
+//! （`render` 的按页跳过那一行）说的是同一个数，屏上只报个数、措辞另写一份（停车场 **Q1247**）。
 //!
 //! # 一行的列
 //!
@@ -43,6 +57,7 @@ use tonefit::{BitDepth, Mode, Panel, VolumeReport};
 use super::super::columns::{self, Column, PAGES_MARKS, PagesColumn, PagesWidths};
 use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
+use super::super::passes;
 use super::super::state::{Listing, Session};
 use super::super::tone::Tone;
 use super::super::view::{Focus, Pages, Target};
@@ -180,8 +195,13 @@ impl Entry {
     }
 }
 
+/// **框里正文的头三行**：灰阶分布那一行（跳过的卷换成它跳过了那一句）、
+/// [耗时那一行](timing_line)、列头；此后一页一行。**这个数只有这一处**：
+/// 摆得下几页、列头画在哪一行、页从哪一行画起，都从它算（设计稿 `PAGES_HEAD`）。
+const HEAD_ROWS: u16 = 3;
+
 /// **一页那一行比框里别的几行靠左一格**：它从光标记号那一格起笔（设计稿
-/// `scr.line(x + 1, …, iw + 1)`），而抬头那几行（灰阶分布、列头、一页都列不出来时那一句）
+/// `scr.line(x + 1, …, iw + 1)`），而抬头那几行（灰阶分布、耗时、列头、一页都列不出来时那一句）
 /// 从 `x + 2` 起笔。**那一格之差只有这一个数**：行摆得下几格、列头前面留几格空、
 /// 行画在哪一列，三处都从它算。
 const ROW_STARTS_EARLIER: u16 = 1;
@@ -280,9 +300,9 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
     } else {
         Look::FAINT
     };
-    // 框里正文那一截有多宽、摆得下几行（设计稿的 `iw`／`ih`）。
+    // 框里正文那一截有多宽、摆得下几页（设计稿的 `iw`／`ih`）：上下两道框线、头三行之外的都给页。
     let inner = area.width.saturating_sub(4);
-    let shown = area.height.saturating_sub(4);
+    let shown = area.height.saturating_sub(2 + HEAD_ROWS);
     let report = session.pages_report(live);
     let listed = session.listed_pages(live).unwrap_or_default();
     let at = pages.settled(listed.len());
@@ -316,12 +336,15 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
     let (Some(report), Some(live)) = (report, live) else {
         return;
     };
+    // 耗时那一行恒在第二行，跳过的卷也一样（查重那一道不是免费的）。
+    canvas.line(area.x + 2, area.y + 2, &timing_line(report), Some(inner));
     // **进得来却一页结果都没有的只有跳过的卷**（`CONTEXT.md` 的《停得住 / 展得开》）：
-    // 它这一趟一页都没重新分析，连灰阶分布与列头都没有可写的。
+    // 它这一趟一页都没重新分析，连灰阶分布与列头都没有可写的。那一句占灰阶分布那一行的位置
+    // ——它说的正是这一卷的页这一趟成了什么。
     if report.skipped() {
         canvas.line(
             area.x + 2,
-            area.y + 2,
+            area.y + 1,
             &[
                 Segment::new("这一卷跳过了：", Look::FAINT.bold()),
                 Segment::plain(
@@ -344,11 +367,18 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
     let kept = widths.kept();
     // 一行比抬头那几行[靠左一格](ROW_STARTS_EARLIER)，因此也宽一格。
     let row_width = inner + ROW_STARTS_EARLIER;
-    canvas.line(area.x + 2, area.y + 2, &heads(&kept, &widths), Some(inner));
+    canvas.line(
+        area.x + 2,
+        area.y + HEAD_ROWS,
+        &heads(&kept, &widths),
+        Some(inner),
+    );
+    // 页从头三行之后那一行画起。
+    let first = area.y + 1 + HEAD_ROWS;
     if listed.is_empty() {
         canvas.line(
             area.x + 2,
-            area.y + 3,
+            first,
             &[
                 Segment::plain("这一卷没有需留意的页 ⋅ "),
                 Segment::faint("a → 全部页"),
@@ -368,13 +398,14 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
         let Some(entry) = all.get(*index) else {
             continue;
         };
+        let y = first + (row - from) as u16;
         canvas.line(
             area.x + 2 - ROW_STARTS_EARLIER,
-            area.y + 3 + (row - from) as u16,
+            y,
             &row_segments(entry, &kept, &widths, row == at, row_width),
             Some(row_width),
         );
-        canvas.hit_row(area, area.y + 3 + (row - from) as u16, Target::Page(row));
+        canvas.hit_row(area, y, Target::Page(row));
     }
 }
 
@@ -415,21 +446,35 @@ fn listing_chip(listing: Listing) -> Segment {
     }
 }
 
-/// 框里头一行：**这一卷的灰阶分布 · 需留意几页 · 这一卷此刻还有一句什么**。
+/// 框里头一行：**这一卷的灰阶分布 · 需留意几页 · 留下几页 · 这一卷此刻还有一句什么**。
 ///
 /// 灰阶分布与卷行那一列同一处出处（[`render::tally_pairs`] 与
 /// [`marks::tally_segments`]）：进了一卷之后卷列表不在屏上，而「这一卷各页写成了哪几档」
 /// 正是逐页那几行要比的东西。
+///
+/// **「需留意 N/M 页」的 M 是这一趟做了的页**（逐页结果的条数，全部页那一列有几行）：
+/// 需留意几页数的正是它们。按页跳过的卷紧跟着说**留下了几页**
+/// （[`VolumeReport::retained_pages`]，`design-parity/10`）——两个数加起来就是整本书；
+/// 没有留下的页时这一截不在。它排在末尾那句短标签之前：窄屏上摆不下时先让的是那一句
+/// （确认条与卷行上各说过一遍），不是这一个数。
 fn tally_line(session: &Session, report: &VolumeReport, live: &Live, panel: Panel) -> Vec<Segment> {
-    let pages = report.page_count();
+    let done = report.pages.len();
     let notable = Pages::notable_count(report, panel);
     let mut segments = vec![Segment::faint("灰阶分布 ")];
     segments.extend(marks::tally_segments(&render::tally_pairs(report), 3));
     segments.push(Segment::faint("   需留意 "));
     segments.push(Segment::new(
-        format!("{notable}/{pages} 页"),
+        format!("{notable}/{done} 页"),
         Look::PLAIN.bold(),
     ));
+    if report.retained_pages > 0 {
+        segments.push(Segment::faint("   留下 "));
+        segments.push(Segment::new(
+            format!("{} 页", report.retained_pages),
+            Look::PLAIN.bold(),
+        ));
+        segments.push(Segment::faint("没重做"));
+    }
     segments.push(Segment::plain("   "));
     // 末一句说的是**这一卷此刻还有一件什么事**：等待确认的那一份一个字节都没写，
     // 进了隔离的那一卷整卷去了隔离目录。都不是就不摆。
@@ -440,6 +485,30 @@ fn tally_line(session: &Session, report: &VolumeReport, live: &Live, panel: Pane
     };
     if !said.is_empty() {
         segments.push(Segment::new(said, Look::tone(Tone::Caution)));
+    }
+    segments
+}
+
+/// 框里第二行：**这一卷各环节花了多久**（`CONTEXT.md` 的《卷级计时》，停车场 Q624）。
+///
+/// 按走的次序，**每一段原样取自那一卷的卷级计时**（[`passes::took`]：没走的那一段不列）；
+/// 环节那个词出自 [`passes::name`]、上它那一色（[`marks::pass_look`]，与横条同一色），
+/// 时长与卷行耗时那一列同一种写法（[`marks::spell`]）。一个环节都没走过就整行不摆
+/// ——摆一个光秃秃的「耗时」什么都没说。
+fn timing_line(report: &VolumeReport) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    for (pass, took) in passes::took(&report.timing) {
+        if !segments.is_empty() {
+            segments.push(Segment::faint(" ⋅ "));
+        }
+        segments.push(Segment::new(
+            passes::name(Some(pass)),
+            marks::pass_look(Some(pass)),
+        ));
+        segments.push(Segment::plain(format!(" {}", marks::spell(took))));
+    }
+    if !segments.is_empty() {
+        segments.insert(0, Segment::faint("耗时 "));
     }
     segments
 }

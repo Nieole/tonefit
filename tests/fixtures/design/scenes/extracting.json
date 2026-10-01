@@ -834,6 +834,12 @@
             34
           ]
         ],
+        "took_s": {
+          "extraction": 1.385,
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -853,6 +859,12 @@
             47
           ]
         ],
+        "took_s": {
+          "extraction": 1.378,
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -862,7 +874,10 @@
         "pass": 0,
         "done": 106.946,
         "elapsed_s": 0.78,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "extraction": 0.78
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第01卷",

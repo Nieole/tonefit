@@ -780,7 +780,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第02卷",
@@ -788,7 +791,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第03卷",
@@ -796,7 +802,10 @@
         "pass": 3,
         "done": 224,
         "elapsed_s": 0.7,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.7
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第04卷",
@@ -804,7 +813,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第05卷",
@@ -826,6 +838,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -865,6 +882,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -888,6 +910,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -911,6 +938,11 @@
             10
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -934,6 +966,11 @@
             7
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.703,
+          "first_pass": 4.922,
+          "second_pass": 3.076
+        },
         "page_count": 225,
         "notable_pages": []
       },
@@ -957,6 +994,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.697,
+          "first_pass": 4.878,
+          "second_pass": 3.049
+        },
         "page_count": 223,
         "notable_pages": []
       },
@@ -980,6 +1022,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": []
       },
@@ -1003,6 +1050,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": []
       },
@@ -1026,6 +1078,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1049,6 +1106,11 @@
             4
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1072,6 +1134,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1095,6 +1162,11 @@
             9
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1118,6 +1190,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -1141,6 +1218,11 @@
             6
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -1164,6 +1246,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "notable_pages": [
@@ -1200,6 +1287,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -1223,6 +1315,11 @@
             6
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.606,
+          "first_pass": 4.244,
+          "second_pass": 2.652
+        },
         "page_count": 194,
         "notable_pages": []
       },
@@ -1246,6 +1343,11 @@
             4
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": []
       },
@@ -1256,6 +1358,9 @@
         "done": 174,
         "elapsed_s": 0.544,
         "tally": null,
+        "took_s": {
+          "fingerprint": 0.544
+        },
         "failure": "压缩包损坏"
       },
       {
@@ -1278,6 +1383,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": []
       },
@@ -1301,6 +1411,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -1324,6 +1439,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -1333,7 +1453,11 @@
         "pass": 1,
         "done": 13.679,
         "elapsed_s": 0.84,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 0.299
+        }
       },
       {
         "root": "~/漫画库/集英社/海贼王/第16卷",

@@ -780,7 +780,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第02卷",
@@ -788,7 +791,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第03卷",
@@ -796,7 +802,10 @@
         "pass": 3,
         "done": 224,
         "elapsed_s": 0.7,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.7
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第04卷",
@@ -804,7 +813,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第05卷",
@@ -822,6 +834,11 @@
             1
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -883,6 +900,11 @@
             224
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -914,6 +936,11 @@
             224
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -945,6 +972,11 @@
             224
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -976,6 +1008,11 @@
             225
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.703,
+          "first_pass": 4.922,
+          "second_pass": 3.076
+        },
         "page_count": 225,
         "notable_pages": [
           {
@@ -1007,6 +1044,11 @@
             223
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.697,
+          "first_pass": 4.878,
+          "second_pass": 3.049
+        },
         "page_count": 223,
         "notable_pages": [
           {
@@ -1038,6 +1080,11 @@
             217
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": [
           {
@@ -1069,6 +1116,11 @@
             217
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": [
           {
@@ -1100,6 +1152,11 @@
             190
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": [
           {
@@ -1131,6 +1188,11 @@
             190
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": [
           {
@@ -1162,6 +1224,11 @@
             190
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": [
           {
@@ -1193,6 +1260,11 @@
             190
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": [
           {
@@ -1224,6 +1296,11 @@
             189
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": [
           {
@@ -1255,6 +1332,11 @@
             189
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": [
           {
@@ -1290,6 +1372,11 @@
             1
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "notable_pages": [
@@ -1348,6 +1435,11 @@
             189
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": [
           {
@@ -1379,6 +1471,11 @@
             194
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.606,
+          "first_pass": 4.244,
+          "second_pass": 2.652
+        },
         "page_count": 194,
         "notable_pages": [
           {
@@ -1410,6 +1507,11 @@
             174
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": [
           {
@@ -1436,6 +1538,9 @@
         "done": 174,
         "elapsed_s": 0.544,
         "tally": null,
+        "took_s": {
+          "fingerprint": 0.544
+        },
         "failure": "压缩包损坏"
       },
       {
@@ -1450,6 +1555,11 @@
             174
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": [
           {
@@ -1481,6 +1591,11 @@
             173
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": [
           {
@@ -1512,6 +1627,11 @@
             173
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": [
           {
@@ -1543,6 +1663,11 @@
             173
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": [
           {
@@ -1574,6 +1699,11 @@
             173
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": [
           {
@@ -1605,6 +1735,11 @@
             172
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.538,
+          "first_pass": 3.762,
+          "second_pass": 2.352
+        },
         "page_count": 172,
         "notable_pages": [
           {
@@ -1636,6 +1771,11 @@
             173
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": [
           {
@@ -1667,6 +1807,11 @@
             233
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -1702,6 +1847,11 @@
             2
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -1778,6 +1928,11 @@
             233
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -1809,6 +1964,11 @@
             233
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -1840,6 +2000,11 @@
             233
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -1871,6 +2036,11 @@
             229
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.716,
+          "first_pass": 5.009,
+          "second_pass": 3.131
+        },
         "page_count": 229,
         "notable_pages": [
           {
@@ -1902,6 +2072,11 @@
             177
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.553,
+          "first_pass": 3.872,
+          "second_pass": 2.42
+        },
         "page_count": 177,
         "notable_pages": [
           {
@@ -1933,6 +2108,11 @@
             176
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": [
           {
@@ -1964,6 +2144,11 @@
             176
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": [
           {
@@ -1995,6 +2180,11 @@
             176
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": [
           {
@@ -2026,6 +2216,11 @@
             176
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": [
           {
@@ -2061,6 +2256,11 @@
             1
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": [
           {
@@ -2107,6 +2307,11 @@
             175
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": [
           {
@@ -2138,6 +2343,11 @@
             176
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": [
           {
@@ -2169,6 +2379,11 @@
             175
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": [
           {
@@ -2200,6 +2415,11 @@
             167
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.522,
+          "first_pass": 3.653,
+          "second_pass": 2.283
+        },
         "page_count": 167,
         "notable_pages": [
           {
@@ -2231,6 +2451,11 @@
             167
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.522,
+          "first_pass": 3.653,
+          "second_pass": 2.283
+        },
         "page_count": 167,
         "notable_pages": [
           {
@@ -2262,6 +2487,11 @@
             166
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": [
           {
@@ -2293,6 +2523,11 @@
             166
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": [
           {
@@ -2318,7 +2553,11 @@
         "pass": 1,
         "done": 114.554,
         "elapsed_s": 3.025,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 2.506
+        }
       },
       {
         "root": "~/下载/灰原哀/第06卷.cbz",

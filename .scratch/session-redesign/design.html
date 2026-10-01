@@ -356,7 +356,7 @@ const dirOf = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [vn(
 const FS = {
   '~': {
     '漫画库': { '哆啦A梦': dirOf(12), '集英社': { '海贼王': dirOf(18) }, '攻壳机动队': dirOf(6), '银河英雄传说': dirOf(9), '私藏': {}, '字体包.zip': null, '答案.txt': null, 'README.md': null },
-    '下载': { '灰原哀': Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${vn(i + 1)}.cbz`, null])), '轻小说插图': dirOf(3), '虫师': Object.fromEntries(Array.from({ length: 3 }, (_, i) => [`${vn(i + 1)}.rar`, null])) },
+    '下载': { '灰原哀': Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${vn(i + 1)}.cbz`, null])), '轻小说插图': dirOf(3), '虫师': Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`${vn(i + 1)}.rar`, null])) },
     'Comics': { '棋魂': dirOf(23), '大友克洋': { 'AKIRA': dirOf(6), '童梦': { '上': {}, '下': {} } }, '火之鸟': dirOf(12), '寄生兽': dirOf(10) },
     '转好的': {},
   },
@@ -383,6 +383,9 @@ const NAMED0 = [
 ];
 // 要摊开的那几卷（`.rar`，CONTEXT《读取形态》）：只有「正在摊开」那一景把它们勾上，排在最前
 const NAMED_RAR = Array.from({ length: 3 }, (_, i) => ({ path: `~/下载/虫师/${vn(i + 1)}.rar`, kind: '压缩包', on: true }));
+// 按页跳过的那一卷（CONTEXT《按页跳过》《留下的页》）：只有「按页跳过」那一景点它，而且只点它——上一趟转过，
+// 这一趟换了一话的扫描再跑一遍。它是 `.rar`，四个环节都走，耗时那一行四段齐全
+const NAMED_KEPT = { path: '~/下载/虫师/第04卷.rar', kind: '压缩包', on: true };
 const nestedIn = (p, list) => list.find((o) => o.on && o.path !== p && o.kind === '文件夹' && p.startsWith(o.path + '/'));
 // 备注行行尾那一句：无法访问的地方一行就是一处（`entries` 恒一条），给那条错误链；非漫画文件一行装整组，给那一小结抬头那一句
 const noteBrief = (n) => (n.kind === 'unreach' ? n.entries[0][1] : n.said);
@@ -434,6 +437,8 @@ const PLAN = {
   'AKIRA/第03卷': { outliers: 2 },
   '灰原哀/第05卷': { wide: 1 },
   '银河英雄传说/第06卷': { outliers: 1 },
+  // 按页跳过：上一趟转过，这一趟只换了第 41–64 页（一话的扫描）。`redo` 是重做的那几页的页码，其余的页留下
+  '虫师/第04卷': { redo: Array.from({ length: 24 }, (_, i) => 41 + i) },
 };
 
 let VOL_SEQ = 0, DIR_SEQ = 0;
@@ -549,10 +554,15 @@ function pagesOf(v) {
     page.metric = page.verdict ? `${page.verdict} ${page.score.toFixed(3)}` : '';
     list.push(page);
   }
-  if (envelope) envelopeOver(list, mix);
-  PAGE_CACHE.set(v.id, list);
-  return list;
+  // 按页跳过的卷：逐页结果里只有这一趟重做的那几页（《留下的页》不进逐页结果）。整卷照旧逐页生成再挑，
+  // 重做的那几页因此与整卷重做时那几页一模一样
+  const done = p.redo ? list.filter((_, i) => p.redo.includes(i + 1)) : list;
+  if (envelope) envelopeOver(done, mix);
+  PAGE_CACHE.set(v.id, done);
+  return done;
 }
+// 留下的页有几页（CONTEXT《留下的页》）：整本书减掉重做的那几页；不是按页跳过的卷是 0（库 `VolumeReport::retained_pages`）
+const retainedOf = (v) => (v.plan.redo ? v.pages - v.plan.redo.length : 0);
 // 整卷统一灰阶：按省空间的次序累计到 p95 的那一档就是统一档位（CONTEXT.md《整卷统一灰阶》）。
 // 差异大的页、没贴合屏幕的页、坏页各自在场；照统一档位写的页里，本来就判成这一档的头一页当代表页
 const COST = ['1bit', '1bit+FS', '2bit', '2bit+FS', '4bit', '4bit+FS'];
@@ -719,13 +729,17 @@ const SURVEY_SEC = 1.8;
 
 // 一卷几步：它走的每个环节各走一遍它的页数（摊开一个成员一步，假数据里成员就是页；总进度按步数算）
 const stepsOf = (v) => passesOf(v).length * v.pages;
+// 一个环节真走几步：分析只走重做的那几页（留下的页不读、不解、不判）；其余环节走整卷——写出环节把留下的页
+// 从上一趟的输出原样搬进来，一页一步。不是按页跳过的卷每个环节都是整卷，与 `stepsOf` 预告的一样
+const passLen = (v, p) => (p === '分析' ? v.pages - retainedOf(v) : v.pages);
 function newRun(mode, tree) {
   return {
     mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
     // 开跑那一刻的快照：跑起来之后设置锁住，结束后再改也不影响这一趟的结果
     envelope: (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开',
     wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + stepsOf(v), 0),
-    vs: tree.vols.map(() => ({ state: 'queued', pass: -1, done: 0, elapsed: 0, tally: null })),
+    // `took` 是卷级计时那几段（CONTEXT《卷级计时》）：每个环节花了多久，模拟秒；没走的环节不在里面
+    vs: tree.vols.map(() => ({ state: 'queued', pass: -1, done: 0, elapsed: 0, took: {}, tally: null })),
   };
 }
 
@@ -741,11 +755,11 @@ function tick(run, dt) {
   while (budget > 1e-9 && run.stage === 'running') {
     const v = run.tree.vols[run.cur], s = run.vs[run.cur], p = passOf(v, s);
     const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : p === '摊开' ? RATE * 3 : RATE;
-    const need = v.pages - s.done, can = budget * speed;
-    if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; budget = 0; }
+    const len = passLen(v, p), need = len - s.done, can = budget * speed;
+    if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; s.took[p] = (s.took[p] || 0) + budget; budget = 0; }
     // 一个环节走满，总步数就是一个整数（真程序一页一步）：连续时间一路攒下的浮点尾数在这里结清，
     // 不然 3799 会攒成 3798.999…，屏上取整印成 3798
-    else { s.done = v.pages; run.steps = Math.round(run.steps + need); const used = need / speed; s.elapsed += used; budget -= used; passDone(run); }
+    else { s.done = len; run.steps = Math.round(run.steps + need); const used = need / speed; s.elapsed += used; s.took[p] = (s.took[p] || 0) + used; budget -= used; passDone(run); }
   }
 }
 
@@ -767,8 +781,9 @@ function passDone(run) {
 }
 
 function finishVol(run, state) {
-  const v = run.tree.vols[run.cur], s = run.vs[run.cur], n = passesOf(v).length;
-  const walked = Math.max(0, s.pass) * v.pages + (s.pass >= 0 && s.pass < n ? s.done : 0);
+  const v = run.tree.vols[run.cur], s = run.vs[run.cur], ps = passesOf(v), n = ps.length;
+  // 走过的步：走完的那几个环节各走了它那么长（`passLen`），正走着的那一个走到第几步
+  const walked = ps.slice(0, Math.max(0, s.pass)).reduce((a, p) => a + passLen(v, p), 0) + (s.pass >= 0 && s.pass < n ? s.done : 0);
   run.steps += Math.max(0, stepsOf(v) - walked);   // 一卷收摊时结清预告剩下的步
   s.state = state; s.pass = n; s.done = v.pages;
   if (run.latch >= 1) return endRun(run, 'stopped');
@@ -1339,35 +1354,56 @@ function drawDecision(scr, x, y, w) {
 }
 
 // ───── 逐页表 ─────
+// 耗时那一行（CONTEXT《卷级计时》，停车场 Q624）：这一卷各环节花了多久，按走的次序，只列走过的——
+// 没走的那一段库记零（不摊开的卷没有摊开、跳过的卷没走分析与写出、答了不写出的卷没走写出），一个都不编。
+// 环节那个词与横条上同一个、同一色；时长与卷行耗时那一列同一种写法。一个环节都没走过就整行不摆
+function tookSegs(s) {
+  const segs = [];
+  for (const p of PASSES.filter((p) => s.took[p] > 0)) {
+    if (segs.length) segs.push([' ⋅ ', 'c-gray']);
+    segs.push([p, PASS_ST[p]], [' ' + fmtDur(s.took[p] * SHOW), 'c-fg']);
+  }
+  return segs.length ? [['耗时 ', 'c-gray'], ...segs] : [];
+}
+// 框里正文的头三行：灰阶分布那一行（跳过的卷换成那一句）、耗时那一行、列头；此后一页一行
+const PAGES_HEAD = 3;
 function drawPages(scr, x, y, w, h) {
   const P = S.pages, v = P.vol, r = S.run, s = stateOf(r, v);
   const all = pagesOf(v);
   const judged = s && s.tally;
   const list = judged ? (P.all ? all : all.filter(notableOf)) : [];
   P.cursor = Math.max(0, Math.min(P.cursor, list.length - 1));
-  const iw = w - 4, ih = h - 4;
+  const iw = w - 4, ih = h - 2 - PAGES_HEAD;
   const entry = r.tree.entries.find((e) => (e.type === 'section' ? e.dirs.includes(v.dir) : e.dir === v.dir));
   const crumbs = [['任务', 'c-gray'], [' › ', 'c-gray'], ...(entry.type === 'section' ? [[entry.path, 'c-gray'], [' › ', 'c-gray']] : []), [v.dir.label, 'c-fg'], [' › ', 'c-gray'], [v.name, 'c-fg b']];
   const from = viewport(P.cursor, list.length, ih);
   scr.box(x, y, w, h, { thick: !S.overlay, st: S.overlay ? 'c-gray' : FOCUS, title: crumbs, right: [[P.all ? '[全部页]' : '[需留意的页]', P.all ? 'c-fg b' : 'c-yellow b']],
     bottomRight: [[list.length ? `${P.cursor + 1} of ${list.length}` : '0 of 0', S.overlay ? 'c-gray' : FOCUS]], bottomLeft: [['a → ' + (P.all ? '只看需留意的页' : '全部页'), 'c-gray i']], scroll: { total: list.length, from, view: ih } });
+  // 耗时那一行在第二行，跳过的卷也一样（查重那一道不是免费的：跳过一卷为什么也要等，只有它答得出）
+  scr.line(x + 2, y + 2, tookSegs(s), iw);
   if (!judged) {
-    // 进得来却没有每页结果的只有跳过的卷（见 whyNotExpandable）：它这一趟一页都没重新分析
-    scr.line(x + 2, y + 2, [['这一卷跳过了：', 'c-gray b'], ['之前转换过，源文件和设置都没变，这一趟没有重新分析，所以没有每页结果。', 'c-fg'], ['  h → 回卷列表', 'c-gray']], iw);
+    // 进得来却没有每页结果的只有跳过的卷（见 whyNotExpandable）：它这一趟一页都没重新分析。
+    // 这一句占灰阶分布那一行的位置——它说的正是这一卷的页这一趟成了什么
+    scr.line(x + 2, y + 1, [['这一卷跳过了：', 'c-gray b'], ['之前转换过，源文件和设置都没变，这一趟没有重新分析，所以没有每页结果。', 'c-fg'], ['  h → 回卷列表', 'c-gray']], iw);
     return;
   }
-  const notableN = all.filter(notableOf).length;
-  scr.line(x + 2, y + 1, [['灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意 ', 'c-gray'], [`${notableN}/${all.length} 页`, 'c-fg b'], ['   ', ''], [s.state === 'deciding' ? '等待确认：还没写入任何文件' : s.state === 'isolated' ? '这一卷输出在 _isolated/' : '', s.state === 'deciding' ? 'c-yellow' : 'c-yellow']], iw);
+  // 需留意 N/M 页：M 是这一趟做了的页，也就是全部页那一列有几行。按页跳过的卷紧跟着说留下了几页
+  // （《留下的页》不进逐页结果，屏上只报个数，停车场 Q682）：两个数加起来就是整本书，表里那几行为什么少一截一眼看得出。
+  // 它排在末尾那句短标签之前——窄屏上摆不下时先让的是那一句（确认条与卷行上各说过一遍），不是这一个数
+  const notableN = all.filter(notableOf).length, kept = retainedOf(v);
+  scr.line(x + 2, y + 1, [['灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意 ', 'c-gray'], [`${notableN}/${all.length} 页`, 'c-fg b'],
+    ...(kept ? [['   留下 ', 'c-gray'], [`${kept} 页`, 'c-fg b'], ['没重做', 'c-gray']] : []),
+    ['   ', ''], [s.state === 'deciding' ? '等待确认：还没写入任何文件' : s.state === 'isolated' ? '这一卷输出在 _isolated/' : '', s.state === 'deciding' ? 'c-yellow' : 'c-yellow']], iw);
   const C = { name: 10, size: iw >= 84 ? 11 : 0, scale: iw >= 112 ? 24 : 0, verdict: 9, reason: 22, metric: iw >= 98 ? 15 : 0 };
   const head = [['   ', ''], [pad('页面', C.name), 'c-gray b'], [C.size ? pad('尺寸', C.size) : '', 'c-gray b'], [C.scale ? pad('缩放', C.scale) : '', 'c-gray b'], [pad('灰阶', C.verdict), 'c-gray b'], [pad('原因', C.reason), 'c-gray b'], [C.metric ? pad('画质分', C.metric) : '', 'c-gray b'], ['提示', 'c-gray b']];
-  scr.line(x + 2, y + 2, head, iw);
-  if (!list.length) { scr.line(x + 2, y + 3, [['这一卷没有需要留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
+  scr.line(x + 2, y + PAGES_HEAD, head, iw);
+  if (!list.length) { scr.line(x + 2, y + 1 + PAGES_HEAD, [['这一卷没有需要留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
   for (let i = 0; i < ih - 0 && from + i < list.length; i++) {
     const p = list[from + i], cur = from + i === P.cursor;
     const mark = p.tone === 'bad' ? ['✗ ', 'c-red b'] : p.tone === 'warn' ? ['! ', 'c-yellow b'] : ['  ', ''];
     const [depth, fs] = p.verdict.split('+');
     const vc = depth === '1bit' ? 'c-magenta' : depth === '2bit' ? 'c-cyan' : depth === '4bit' ? 'c-blue' : 'c-gray';
-    const yy = y + 3 + i;
+    const yy = y + 1 + PAGES_HEAD + i;
     if (yy >= y + h - 1) break;
     const notesW = Math.max(4, iw + 1 - (2 + 2 + C.name + C.size + C.scale + C.verdict + C.reason + C.metric));
     scr.line(x + 1, yy, [[cur ? '❯ ' : '  ', CURSOR], mark, [pad(p.name, C.name), cur ? 'c-fg b' : 'c-fg'], [C.size ? pad(p.size, C.size) : '', p.kinds.includes('wide') ? 'c-yellow' : 'c-gray'],
@@ -2018,7 +2054,7 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
@@ -2058,6 +2094,15 @@ function scene(name) {
       CONFIG.find((c) => c.key === 'envelope').value = '开';
       startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null;
       S.expanded.add(S.run.tree.vols[S.run.cur].dir.id);
+      break;
+    }
+    case 'retained': {
+      // 按页跳过（CONTEXT《按页跳过》《留下的页》）：只点了「虫师」第04卷，上一趟转过它，这一趟换了一话的扫描再跑一遍。
+      // 跑完进它的每页结果、列全部页：表里只有重做的那几页，灰阶分布那一行说出留下了几页，耗时那一行四个环节齐全
+      S.named = [{ ...NAMED_KEPT }];
+      exec(1.01);
+      const v = findVol('虫师', '第04卷');
+      reveal(v); S.pages = { vol: v, cursor: 0, all: true };
       break;
     }
     case 'config': S.view = 'config'; S.cfg.cursor = CONFIG.findIndex((c) => c.key === 'fit'); S.cfg.pane = 'right'; S.cfg.right = 2; break;
@@ -2111,7 +2156,7 @@ function describe() {
       : ['左边是设备和处理选项，右边是选中那一项的详情：可选的值、说明、预设里是怎么设的。选值时不会再把其他行挤出屏幕。', '顶部一行显示当前使用的预设和改动了哪几项；左边带 * 的就是改过的。', '设备型号先选屏幕规格再选型号：同一种屏幕的型号效果一样。', r && r.stage !== 'ended' ? '转换进行中：设置暂时锁定，但可以随时查看；右上角显示着转换进度。' : '画质判定参数在左边最下面，只能查看，每一项都附有说明。'];
     tries = S.cfg.presets ? [['j k', '选择'], ['⏎', '使用'], ['dd', '删除'], ['p', '返回']] : [['j k', '选择'], ['l ⏎', '展开 / 确定'], ['h', '返回'], ['p', '预设'], ['1', '回任务']];
   } else if (S.pages) {
-    title = '每页结果'; points = ['从卷进入每页结果会切换整屏：每页的信息列很多，需要整个宽度；顶部显示所在位置，按 h 回到卷列表原来的位置。', '默认只列需要留意的页：读不出、部分损坏、尺寸未贴合屏幕、页面超宽；打开整卷统一灰阶时还有差异大的页和代表页。按 a 查看全部页。', '顶部的总览一直固定显示，查看细节时进度不会消失。']; tries = [['j k', '选择'], ['a', '全部页'], ['h', '回卷列表']];
+    title = '每页结果'; points = ['从卷进入每页结果会切换整屏：每页的信息列很多，需要整个宽度；顶部显示所在位置，按 h 回到卷列表原来的位置。', '默认只列需要留意的页：读不出、部分损坏、尺寸未贴合屏幕、页面超宽；打开整卷统一灰阶时还有差异大的页和代表页。按 a 查看全部页。', '第二行是这一卷每个环节各花了多久（摊开、查重、分析、写出，没走的环节不列）：一卷跑得慢，看这一行就知道慢在哪一步。', '上次转换过、这次只改了几页的卷，只重新处理改过的页，其余的页原样留下：第一行说出留下了几页，表里只列这次重做的页。', '顶部的总览一直固定显示，查看细节时进度不会消失。']; tries = [['j k', '选择'], ['a', '全部页'], ['h', '回卷列表']];
   } else if (!r) {
     title = '还没开始'; points = ['任务视图的主线是「路径」：开始之前只列出你添加的路径，不会读取里面的内容。', '[x] [ ] 用空格勾选，没勾选的会变暗；一个路径已经包含在另一个路径里时，会标出来。', 'o 添加路径，i 修改，dd 删除；输出目录在列表最上面。'];
     tries = [['j k', '选择'], ['o', '添加路径'], ['空格', '勾选'], ['dd', '删除'], ['t', '预览'], ['x', '转换']];

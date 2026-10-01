@@ -12,9 +12,10 @@
 # k = c-cyan
 # l = c-cyan d
 # m = c-yellow
-# n = c-gray b
-# o = c-lgreen b
-# p = c-gray i
+# n = c-magenta
+# o = c-gray b
+# p = c-lgreen b
+# q = c-gray i
 ".aabbccccccc....................ddddddddddddddddddddddddddddddddddddddd."
 "ccaaa...........ccccccccccccccccccccccccccccccccccccccccccccccc"
 "c.cccceeeeeeeeeefffff.......................................................c"
@@ -22,8 +23,9 @@
 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 "iiccccccccccccc.......cccffffiiiiiiiiiiiiiiiiiiiiiiijjjjjjjiii"
 "i.ccccckkkklll....cccdddd...ccckkkk..cccccccfffffff...mmmmmmmmmm.i"
-"i....nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.............................i"
-"iooggffffffffffccccccccchhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.............i"
+"i.cccnn...cccdd...ccckk................................................i"
+"i....ooooooooooooooooooooooooooooooooooooo.............................i"
+"ippggffffffffffccccccccchhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.............i"
 "i..............................................................................i"
 "i..............................................................................i"
 "i..............................................................................i"
@@ -36,6 +38,5 @@
 "i..............................................................................i"
 "i..............................................................................i"
 "i..............................................................................i"
-"i..............................................................................i"
-"iipppppppiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
+"iiqqqqqqqiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
 ".c.ccccccc.c.ccccccc.c.ccccccc.c.cccccccc.c.cccccccc..........."

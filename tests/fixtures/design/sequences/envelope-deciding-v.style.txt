@@ -12,9 +12,10 @@
 # k = c-red
 # l = c-yellow
 # m = c-lgreen
-# n = c-gray b
-# o = c-lgreen b
-# p = c-gray i
+# n = c-magenta
+# o = c-gray b
+# p = c-lgreen b
+# q = c-gray i
 ".aabbccccccc........................................................ddddddddddddddddddddddddddddddddddddddddd."
 "ccee..............ffffcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 "c.ccccdddggggggggggggggggggggggggggggggggggggghhhcccccccccccccc....................................................c"
@@ -28,10 +29,11 @@
 "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllccccccccccclll"
 "mmccccccccccccc....ccchhhhmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmfffffffmmm"
 "m.cccccdddd....cccddddiii..ccccccchhhhhhh...lllllllllllll.........................................m"
-"m....nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn...................m"
-"moo..hhhhhhhhhhccccccccccccccccccccccccccccddddddddd................ccccccccccccccc....................m"
-"mooff..........ccccccccccccccccccccccccccccddddddddd..............ccccccccccccccclllll.............m"
-"mooff..........lllllllllllcccccccccccccccccddddddddd................cccccccccccccccllll...............m"
+"m.cccnn...cccdd..................................................................................................m"
+"m....oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo...................m"
+"mpp..hhhhhhhhhhccccccccccccccccccccccccccccddddddddd................ccccccccccccccc....................m"
+"mppff..........ccccccccccccccccccccccccccccddddddddd..............ccccccccccccccclllll.............m"
+"mppff..........lllllllllllcccccccccccccccccddddddddd................cccccccccccccccllll...............m"
 "m......................................................................................................................m"
 "m......................................................................................................................m"
 "m......................................................................................................................m"
@@ -48,6 +50,5 @@
 "m......................................................................................................................m"
 "m......................................................................................................................m"
 "m......................................................................................................................m"
-"m......................................................................................................................m"
-"mmpppppppmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+"mmqqqqqqqmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
 ".c.cccccc.c.cccccccc.c.cccccc.c.cccccccc.c...cccccc.c.cccccccc........................................"

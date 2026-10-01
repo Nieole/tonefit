@@ -1,8 +1,8 @@
 //! **环节**在屏上叫什么、按什么次序、各在做什么（`CONTEXT.md` 的《环节》）。
 //!
-//! 屏上写环节名字的有三处：总览的当前卷那一行、卷列表上在跑的那几行（横条前那个词，
-//! `super::shell::marks`），以及全部按键那一张的环节一节（[`super::cover`]）——
-//! 三处与词汇表逐字相同，**出处只在这里**。
+//! 屏上写环节名字的有四处：总览的当前卷那一行、卷列表上在跑的那几行（横条前那个词，
+//! `super::shell::marks`）、全部按键那一张的环节一节（[`super::cover`]），以及每页结果的
+//! 耗时那一行（[`took`]：各环节花了多久）——四处与词汇表逐字相同，**出处只在这里**。
 //!
 //! # 它一个终端都不碰
 //!
@@ -13,7 +13,9 @@
 //! 也不是一个字形；`CONTEXT.md` 把《环节》当一个词，与《语义色》同级，那一个也自己一个模块
 //! （[`super::tone`]）。
 
-use tonefit::Pass;
+use std::time::Duration;
+
+use tonefit::{Pass, VolumeTiming};
 
 /// 环节**按走的次序**，各带屏上那个词与它在做什么（全部按键那一张的环节一节照这个次序列）。
 ///
@@ -53,9 +55,73 @@ pub fn legend() -> impl Iterator<Item = (&'static str, &'static str)> {
     PASSES.iter().map(|(_, said, what)| (*said, *what))
 }
 
+/// 一卷**各环节花了多久**：按走的次序，每一段原样取自[卷级计时](VolumeTiming)那一格
+/// （`CONTEXT.md` 的《卷级计时》；每页结果的耗时那一行读它，`design-parity/10`）。
+///
+/// **是零的那一段不列**：库在那一格上记零，说的是「这一遍压根没走」（不摊开的卷没有摊开、
+/// 跳过的卷没走分析与写出、确认点上答了不写出的那一卷没走写出），不是一个很小的数。
+/// 总数（[`VolumeTiming::elapsed`]）不是一段，不在这里——它装着四段之外的那一截。
+#[cfg_attr(
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
+)]
+pub fn took(timing: &VolumeTiming) -> impl Iterator<Item = (Pass, Duration)> + '_ {
+    PASSES
+        .iter()
+        .map(|(pass, ..)| (*pass, segment(timing, *pass)))
+        .filter(|(_, took)| !took.is_zero())
+}
+
+/// 一个环节在卷级计时上是哪一段。**一个环节一段**（[`VolumeTiming`] 的文档）；
+/// [`Pass`] 非穷尽，库多一个环节而这里还没认，那一段就当没走——不列，而不是编一个数。
+fn segment(timing: &VolumeTiming, pass: Pass) -> Duration {
+    match pass {
+        Pass::Extraction => timing.extraction,
+        Pass::Fingerprint => timing.fingerprint,
+        Pass::First => timing.first_pass,
+        Pass::Second => timing.second_pass,
+        _ => Duration::ZERO,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **一卷各环节花了多久，逐段就是卷级计时那几段**（`design-parity/10`）：按走的次序，
+    /// 每一段的时长原样取自 `VolumeTiming` 那一格；**是零的那一段不列**——零说的是
+    /// 「这一遍压根没走」（不摊开的卷、跳过的卷、确认点上答了不写出的那一卷），不是一个很小的数。
+    #[test]
+    fn the_passes_walked_are_the_segments_of_the_volume_timing_in_walk_order() {
+        let second = Duration::from_secs;
+        let walked: Vec<(Pass, Duration)> = took(&VolumeTiming {
+            extraction: second(62),
+            fingerprint: second(4),
+            first_pass: second(41),
+            second_pass: second(18),
+            elapsed: second(130),
+        })
+        .collect();
+        assert_eq!(
+            walked,
+            [
+                (Pass::Extraction, second(62)),
+                (Pass::Fingerprint, second(4)),
+                (Pass::First, second(41)),
+                (Pass::Second, second(18)),
+            ]
+        );
+        // 跳过的卷：只走了查重那一道；总数不是一段，不列。
+        let skipped: Vec<(Pass, Duration)> = took(&VolumeTiming {
+            extraction: Duration::ZERO,
+            fingerprint: second(3),
+            first_pass: Duration::ZERO,
+            second_pass: Duration::ZERO,
+            elapsed: second(5),
+        })
+        .collect();
+        assert_eq!(skipped, [(Pass::Fingerprint, second(3))]);
+    }
 
     /// 环节那个词说它在做什么；开卷之后、第一条 `PassStarted` 到达之前那一格不是一个环节。
     #[test]
