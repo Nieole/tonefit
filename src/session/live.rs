@@ -85,10 +85,10 @@ pub enum Reach {
 ///
 /// 卷的身份是**清单里的第几卷**（`session-redesign/03`）：一卷在开工之前就有身份，
 /// 它此刻怎么样由随后的事件推出来——开卷翻成处理中，某一遍开工记下走到哪个环节，
-/// 确认点上等人是等待确认，收摊按那一卷的报告分成完成、跳过、进了隔离，
+/// 确认点上等人是等待确认，收摊按那一卷的报告与它写没写分成完成、预览过、跳过、进了隔离，
 /// 没做成是那一条事件，这一趟结束时还开着的那一卷是被立即停止掉的。
 ///
-/// 三种收摊分开而不是各带一份报告：报告在 [`Live::report`] 上，这一格只答「怎么样」——
+/// 几种收摊分开而不是各带一份报告：报告在 [`Live::report`] 上，这一格只答「怎么样」——
 /// 行首记号问的正是这一件（`CONTEXT.md` 的《会话》：行首记号）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VolumeState {
@@ -107,6 +107,14 @@ pub enum VolumeState {
     Deciding,
     /// **完成**：收摊了，做过事、没进隔离。
     Done,
+    /// **预览过**：确认点上答了「不写出」、分析做完而写出环节一步没走就收摊的那一卷
+    /// （`CONTEXT.md` 的《卷状态》）。判的是**这一卷写没写**（[`Walking::writes`]），
+    /// 不是答了哪个字：答继续、答过「后面的卷都写出」、不等人的那几卷走到写出那一遍就在写，
+    /// 收摊照旧是[完成](Self::Done)。
+    ///
+    /// **带坏页也落在这一档**，不是[进了隔离](Self::Isolated)：它一个字节都没写，
+    /// 没有东西挪进隔离目录。行首记号与完成同一套，总览上的「完成」不数它。
+    Trialed,
     /// **进了隔离**：收摊了，而它有坏页（`VolumeReport::isolated`）。
     Isolated,
     /// **跳过**：幂等命中，一页都没重做。
@@ -123,7 +131,7 @@ pub enum VolumeState {
 
 /// 当前卷那一条：它叫什么、预告多少步、走了几步、在走哪一遍、这一遍写不写盘。
 impl VolumeState {
-    /// 这一卷**收摊了**吗：做完 · 进了隔离 · 跳过 · 没做成都算（`CONTEXT.md` 的《卷状态》）。
+    /// 这一卷**收摊了**吗：做完 · 预览过 · 进了隔离 · 跳过 · 没做成都算（`CONTEXT.md` 的《卷状态》）。
     ///
     /// **一处出处**：目录行的「做完几卷／共几卷」、总览结论行的「等待几卷」问的是同一件事。
     /// 被立即停止掉的那一卷**不算**——它既没收摊也没报没做成。
@@ -134,7 +142,7 @@ impl VolumeState {
     pub fn settled(self) -> bool {
         matches!(
             self,
-            Self::Done | Self::Isolated | Self::Skipped | Self::Failed
+            Self::Done | Self::Trialed | Self::Isolated | Self::Skipped | Self::Failed
         )
     }
 
@@ -150,7 +158,7 @@ impl VolumeState {
     pub fn opens_the_pages(self) -> bool {
         matches!(
             self,
-            Self::Done | Self::Isolated | Self::Skipped | Self::Deciding
+            Self::Done | Self::Trialed | Self::Isolated | Self::Skipped | Self::Deciding
         )
     }
 }
@@ -655,12 +663,21 @@ impl Live {
     /// 「这一卷要写了」，写完与否要等它收摊才知道：写出环节里没做成的那一卷走的是
     /// [`volume_failed`](Self::volume_failed)，不算写出过。
     pub fn volume_finished(&mut self, report: &VolumeReport) {
-        if self.volume.as_ref().is_some_and(|walking| walking.writes) {
+        let (writes, at_the_writing_pass) =
+            self.volume.as_ref().map_or((false, false), |walking| {
+                (walking.writes, walking.pass == Some(Pass::Second))
+            });
+        if writes {
             self.written = true;
         }
-        // 三种收摊：跳过（幂等命中）、进了隔离（有坏页）、完成。
+        // **走到了写出那一遍、一步没写就收摊**：确认点上答了「不写出」的那一卷
+        // （[`VolumeState::Trialed`]）。判的是这一卷写没写，排在隔离之前——没写的卷没有东西可挪。
+        let trialed = at_the_writing_pass && !writes;
+        // 四种收摊：跳过（幂等命中）、预览过（没写）、进了隔离（有坏页）、完成。
         self.set_state(if report.skipped() {
             VolumeState::Skipped
+        } else if trialed {
+            VolumeState::Trialed
         } else if report.isolated() {
             VolumeState::Isolated
         } else {
@@ -915,7 +932,8 @@ impl Live {
         }
         // 答的是继续，停在确认点上的那一卷从此在走写出那一遍。**答做完再停不在这里换档**：
         // 那一卷写出环节一步不走、一卷跑完那一条紧跟着到（`tonefit::Pass::Second` 的文档），
-        // 收摊那一条把它翻成完成；标成「写出」是假话。
+        // 收摊那一条把它翻成预览过（它一步没写，[`volume_finished`](Self::volume_finished)）；
+        // 标成「写出」是假话。
         if said == Instruction::Continue && self.deciding() {
             self.set_state(VolumeState::Running {
                 pass: Some(Pass::Second),
@@ -1049,7 +1067,7 @@ impl Live {
     pub fn troubled_at(&self, at: usize) -> bool {
         match self.states.get(at) {
             Some(VolumeState::Failed | VolumeState::Isolated) => true,
-            Some(VolumeState::Done) => self.notable_at(at).any(),
+            Some(VolumeState::Done | VolumeState::Trialed) => self.notable_at(at).any(),
             _ => false,
         }
     }
@@ -1808,6 +1826,57 @@ mod tests {
             [Skipped, Done, Isolated, Failed, Aborted, Queued],
             "这一趟结束时还开着的那一卷是被立即停止掉的，没轮到的仍是等待中"
         );
+    }
+
+    /// **确认点上答了「不写出」的那一卷收摊在预览过**（`design-parity/04`，收停车场 Q769）：
+    /// 判的是这一卷写没写——走到写出那一遍、一步没写就收摊。答继续、答过「后面的卷都写出」、
+    /// 不等人的那几卷照旧完成；带坏页的那一卷也是预览过，不是进了隔离（它什么都没写，
+    /// 也就没有东西挪进隔离目录）。它收摊了、展得开。
+    #[test]
+    fn a_volume_answered_not_to_write_settles_as_trialed() {
+        use VolumeState::{Done, Trialed};
+
+        let to_the_decision_point = |live: &mut Live, name: &str, broken: Option<&str>| {
+            live.volume_started(&Path::new("库").join(name), 1000);
+            live.pass_started(Pass::First, None);
+            let so_far = fixture::processed_volume(name, broken);
+            live.pass_started(Pass::Second, Some(&so_far));
+            so_far
+        };
+
+        let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
+        live.run_started(4, 4000);
+        live.surveyed(&fixture::roster(["卷一", "卷二", "卷三", "卷四"]), &[], &[]);
+
+        // 卷一：答继续，写完。
+        let so_far = to_the_decision_point(&mut live, "卷一", None);
+        live.decide(Instruction::Continue, Reach::ThisVolume);
+        live.volume_finished(&so_far);
+        // 卷二：答「不写出」，写出环节一步不走就收摊。
+        let so_far = to_the_decision_point(&mut live, "卷二", None);
+        live.decide(Instruction::Finish, Reach::ThisVolume);
+        live.volume_finished(&so_far);
+        // 卷三：同样答「不写出」，而它有坏页。
+        let so_far = to_the_decision_point(&mut live, "卷三", Some("解不出完整尺寸"));
+        live.decide(Instruction::Finish, Reach::ThisVolume);
+        live.volume_finished(&so_far);
+        // 卷四：答过「后面的卷都写出」，不再停下来问。
+        live.decide(Instruction::Continue, Reach::ForTheRest);
+        let so_far = to_the_decision_point(&mut live, "卷四", None);
+        live.volume_finished(&so_far);
+
+        assert_eq!(live.states(), [Done, Trialed, Trialed, Done]);
+        assert!(Trialed.settled(), "预览过的那一卷收摊了");
+        assert!(Trialed.opens_the_pages(), "预览过的那一卷展得开");
+        assert!(live.has_written(), "卷一写了出去");
+
+        // 不等人的那一趟：走到写出那一遍就在写，照旧完成。
+        let mut goes_on = Live::new(&fixture::request(RunMode::Process), Resuming::GoesOn);
+        goes_on.run_started(1, 1000);
+        goes_on.surveyed(&fixture::roster(["卷一"]), &[], &[]);
+        let so_far = to_the_decision_point(&mut goes_on, "卷一", None);
+        goes_on.volume_finished(&so_far);
+        assert_eq!(goes_on.states(), [Done]);
     }
 
     /// **开卷那一条按卷根认回清单里的那一卷**，不是按「轮到第几个」——清点已按卷根收编过，

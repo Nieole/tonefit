@@ -1854,6 +1854,102 @@
       "data": "sequences/deciding-s.scene.json"
     },
     {
+      "name": "deciding-x-advance-s-l",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "x"
+        },
+        {
+          "advance": 30
+        },
+        {
+          "key": "s"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "完成 1 卷 ⋅ 跳过 4 卷 ⋅ 等待 78 卷",
+          "✓ 第06卷",
+          "已分析，未写出"
+        ]
+      },
+      "text": "sequences/deciding-x-advance-s-l.text.txt",
+      "style": "sequences/deciding-x-advance-s-l.style.txt",
+      "data": "sequences/deciding-x-advance-s-l.scene.json"
+    },
+    {
+      "name": "deciding-x-advance-s-trialed-l-a",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "x"
+        },
+        {
+          "advance": 30
+        },
+        {
+          "key": "s"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "a"
+        }
+      ],
+      "says": {
+        "has": [
+          "哆啦A梦 › 第06卷",
+          "[全部页]",
+          "1 of 224"
+        ]
+      },
+      "text": "sequences/deciding-x-advance-s-trialed-l-a.text.txt",
+      "style": "sequences/deciding-x-advance-s-trialed-l-a.style.txt",
+      "data": "sequences/deciding-x-advance-s-trialed-l-a.scene.json"
+    },
+    {
       "name": "deciding-2",
       "scene": "deciding",
       "size": [

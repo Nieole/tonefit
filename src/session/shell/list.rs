@@ -534,7 +534,10 @@ impl Painter<'_> {
                     tally.warn += 1;
                     tally.isolated += 1;
                 }
-                VolumeState::Done | VolumeState::Queued | VolumeState::Aborted => {}
+                VolumeState::Done
+                | VolumeState::Trialed
+                | VolumeState::Queued
+                | VolumeState::Aborted => {}
             }
             if state == VolumeState::Aborted {
                 continue;
@@ -757,7 +760,7 @@ impl Painter<'_> {
                 .map(|said| vec![Segment::new(said, Look::tone(Tone::Caution))])
                 .unwrap_or_default(),
             VolumeState::Queued => vec![Segment::new("等待中", Look::FAINT.dim())],
-            VolumeState::Done if notable > 0 => {
+            VolumeState::Done | VolumeState::Trialed if notable > 0 => {
                 let said: Vec<String> = self
                     .notable_bits(at)
                     .into_iter()
@@ -765,6 +768,9 @@ impl Painter<'_> {
                     .collect();
                 vec![Segment::new(said.join(" ⋅ "), Look::tone(Tone::Caution))]
             }
+            // **预览过的那一卷说清它没写出去**（`CONTEXT.md` 的《卷状态》）：盘上没有它，
+            // 行尾空着就与写了出去的那几卷长得一样。需留意的几样更要紧，有就让给上面那一支。
+            VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
             VolumeState::Done => Vec::new(),
         }
     }

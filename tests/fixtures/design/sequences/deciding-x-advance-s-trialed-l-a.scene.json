@@ -1,0 +1,5729 @@
+{
+  "scene": "deciding",
+  "now_ms": 1030000,
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": {
+    "mode": "dry-run",
+    "stage": "ended",
+    "outcome": "stopped",
+    "envelope": false,
+    "elapsed_s": 29.75,
+    "steps": 4023,
+    "total_steps": 46809,
+    "current": "~/漫画库/哆啦A梦/第06卷",
+    "stop_level": 1,
+    "for_the_rest": false,
+    "wrote": true,
+    "survey": {
+      "entries": [
+        {
+          "kind": "section",
+          "path": "~/漫画库",
+          "directories": [
+            "~/漫画库/哆啦A梦",
+            "~/漫画库/集英社/海贼王",
+            "~/漫画库/攻壳机动队",
+            "~/漫画库/银河英雄传说"
+          ],
+          "notes": [
+            {
+              "kind": "unreachable",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏",
+                  "reason": "列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)"
+                }
+              ]
+            },
+            {
+              "kind": "non-volume",
+              "entries": [
+                {
+                  "path": "~/漫画库/字体包.zip",
+                  "reason": "压缩包里没有图片：不算一卷，输出里不会有空的压缩包"
+                },
+                {
+                  "path": "~/漫画库/答案.txt",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                },
+                {
+                  "path": "~/漫画库/README.md",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "directory",
+          "root": "~/下载/灰原哀",
+          "notes": []
+        },
+        {
+          "kind": "directory",
+          "root": "~/Comics/棋魂",
+          "notes": []
+        },
+        {
+          "kind": "section",
+          "path": "~/Comics/大友克洋",
+          "directories": [
+            "~/Comics/大友克洋/AKIRA",
+            "~/Comics/大友克洋/童梦"
+          ],
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第01卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第02卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第03卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第04卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第05卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第06卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第07卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第08卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第09卷",
+          "source_pages": 225,
+          "steps": 675
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第10卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第11卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第12卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第01卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第02卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第03卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第04卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第05卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第06卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第07卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第08卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第09卷",
+          "source_pages": 194,
+          "steps": 582
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第10卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第11卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第12卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第13卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第14卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第15卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第16卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第17卷",
+          "source_pages": 172,
+          "steps": 516
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第18卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第01卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第02卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第03卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第04卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第05卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第06卷",
+          "source_pages": 229,
+          "steps": 687
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第01卷",
+          "source_pages": 177,
+          "steps": 531
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第02卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第03卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第04卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第05卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第06卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第07卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第08卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第09卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/下载/灰原哀/第01卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第01卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第02卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第02卷",
+          "source_pages": 167,
+          "steps": 501
+        },
+        {
+          "root": "~/下载/灰原哀/第03卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第03卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第04卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第04卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第05卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第05卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第06卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第06卷",
+          "source_pages": 166,
+          "steps": 498
+        },
+        {
+          "root": "~/下载/灰原哀/第07卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第07卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/下载/灰原哀/第08卷.cbz",
+          "directory": "~/下载/灰原哀",
+          "name": "第08卷",
+          "source_pages": 165,
+          "steps": 495
+        },
+        {
+          "root": "~/Comics/棋魂/第01卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第01卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第02卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第02卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第03卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第03卷",
+          "source_pages": 168,
+          "steps": 504
+        },
+        {
+          "root": "~/Comics/棋魂/第04卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第04卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第05卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第05卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第06卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第06卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第07卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第07卷",
+          "source_pages": 169,
+          "steps": 507
+        },
+        {
+          "root": "~/Comics/棋魂/第08卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第08卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第09卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第09卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/棋魂/第10卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第10卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第11卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第11卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第12卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第12卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第13卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第13卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第14卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第14卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第15卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第15卷",
+          "source_pages": 162,
+          "steps": 486
+        },
+        {
+          "root": "~/Comics/棋魂/第16卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第16卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第17卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第17卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第18卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第18卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第19卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第19卷",
+          "source_pages": 163,
+          "steps": 489
+        },
+        {
+          "root": "~/Comics/棋魂/第20卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第20卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第21卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第21卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第22卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第22卷",
+          "source_pages": 227,
+          "steps": 681
+        },
+        {
+          "root": "~/Comics/棋魂/第23卷",
+          "directory": "~/Comics/棋魂",
+          "name": "第23卷",
+          "source_pages": 226,
+          "steps": 678
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第01卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第01卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第02卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第02卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第03卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第03卷",
+          "source_pages": 164,
+          "steps": 492
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第04卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第04卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第05卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第05卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第06卷",
+          "directory": "~/Comics/大友克洋/AKIRA",
+          "name": "第06卷",
+          "source_pages": 158,
+          "steps": 474
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/上",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "上",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/下",
+          "directory": "~/Comics/大友克洋/童梦",
+          "name": "下",
+          "source_pages": 176,
+          "steps": 528
+        }
+      ],
+      "unchecked": 1
+    },
+    "volumes": [
+      {
+        "root": "~/漫画库/哆啦A梦/第01卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第02卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第03卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 0.7,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第04卷",
+        "state": "skipped",
+        "pass": 3,
+        "done": 223,
+        "elapsed_s": 0.697,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第05卷",
+        "state": "done",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 8.663,
+        "tally": [
+          [
+            "2bit+FS",
+            187
+          ],
+          [
+            "4bit",
+            32
+          ],
+          [
+            "1bit",
+            5
+          ]
+        ],
+        "page_count": 224,
+        "notable_pages": [
+          {
+            "name": "062.jpg",
+            "output_size": [
+              2364,
+              1680
+            ],
+            "kinds": [
+              "wide"
+            ],
+            "source_height": 1936,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.662,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第06卷",
+        "state": "trialed",
+        "pass": 3,
+        "done": 224,
+        "elapsed_s": 5.6,
+        "tally": [
+          [
+            "2bit+FS",
+            186
+          ],
+          [
+            "4bit",
+            30
+          ],
+          [
+            "1bit",
+            8
+          ]
+        ],
+        "page_count": 224,
+        "pages": [
+          {
+            "name": "001.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2180,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.829,
+            "driver": false
+          },
+          {
+            "name": "002.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2022,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.552,
+            "driver": false
+          },
+          {
+            "name": "003.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2024,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.601,
+            "driver": false
+          },
+          {
+            "name": "004.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2146,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.646,
+            "driver": false
+          },
+          {
+            "name": "005.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1969,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.256,
+            "driver": false
+          },
+          {
+            "name": "006.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2180,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.872,
+            "driver": false
+          },
+          {
+            "name": "007.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1956,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.253,
+            "driver": false
+          },
+          {
+            "name": "008.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2136,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.426,
+            "driver": false
+          },
+          {
+            "name": "009.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2159,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.408,
+            "driver": false
+          },
+          {
+            "name": "010.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1964,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.735,
+            "driver": false
+          },
+          {
+            "name": "011.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2013,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.678,
+            "driver": false
+          },
+          {
+            "name": "012.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2157,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.656,
+            "driver": false
+          },
+          {
+            "name": "013.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1933,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.37,
+            "driver": false
+          },
+          {
+            "name": "014.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2072,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.992,
+            "driver": false
+          },
+          {
+            "name": "015.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1968,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.775,
+            "driver": false
+          },
+          {
+            "name": "016.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1974,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.094,
+            "driver": false
+          },
+          {
+            "name": "017.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1902,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.508,
+            "driver": false
+          },
+          {
+            "name": "018.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1984,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.608,
+            "driver": false
+          },
+          {
+            "name": "019.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1948,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.617,
+            "driver": false
+          },
+          {
+            "name": "020.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1997,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.17,
+            "driver": false
+          },
+          {
+            "name": "021.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2072,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.099,
+            "driver": false
+          },
+          {
+            "name": "022.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2135,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.865,
+            "driver": false
+          },
+          {
+            "name": "023.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2116,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.941,
+            "driver": false
+          },
+          {
+            "name": "024.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2114,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.838,
+            "driver": false
+          },
+          {
+            "name": "025.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2141,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.347,
+            "driver": false
+          },
+          {
+            "name": "026.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1909,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.67,
+            "driver": false
+          },
+          {
+            "name": "027.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2025,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.125,
+            "driver": false
+          },
+          {
+            "name": "028.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1953,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.047,
+            "driver": false
+          },
+          {
+            "name": "029.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2011,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.598,
+            "driver": false
+          },
+          {
+            "name": "030.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2157,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.987,
+            "driver": false
+          },
+          {
+            "name": "031.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2092,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.242,
+            "driver": false
+          },
+          {
+            "name": "032.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2141,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.456,
+            "driver": false
+          },
+          {
+            "name": "033.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2024,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.241,
+            "driver": false
+          },
+          {
+            "name": "034.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1937,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.998,
+            "driver": false
+          },
+          {
+            "name": "035.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2128,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.049,
+            "driver": false
+          },
+          {
+            "name": "036.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1931,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.933,
+            "driver": false
+          },
+          {
+            "name": "037.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2086,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.313,
+            "driver": false
+          },
+          {
+            "name": "038.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2148,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.842,
+            "driver": false
+          },
+          {
+            "name": "039.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2086,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.531,
+            "driver": false
+          },
+          {
+            "name": "040.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2011,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.824,
+            "driver": false
+          },
+          {
+            "name": "041.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2180,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.808,
+            "driver": false
+          },
+          {
+            "name": "042.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2063,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.948,
+            "driver": false
+          },
+          {
+            "name": "043.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2071,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.867,
+            "driver": false
+          },
+          {
+            "name": "044.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1975,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.629,
+            "driver": false
+          },
+          {
+            "name": "045.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1885,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.703,
+            "driver": false
+          },
+          {
+            "name": "046.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1956,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.074,
+            "driver": false
+          },
+          {
+            "name": "047.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2047,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.483,
+            "driver": false
+          },
+          {
+            "name": "048.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1926,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.855,
+            "driver": false
+          },
+          {
+            "name": "049.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2106,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.441,
+            "driver": false
+          },
+          {
+            "name": "050.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1925,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.93,
+            "driver": false
+          },
+          {
+            "name": "051.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2022,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.8,
+            "driver": false
+          },
+          {
+            "name": "052.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2083,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.299,
+            "driver": false
+          },
+          {
+            "name": "053.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2164,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.181,
+            "driver": false
+          },
+          {
+            "name": "054.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1989,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.194,
+            "driver": false
+          },
+          {
+            "name": "055.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1949,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.574,
+            "driver": false
+          },
+          {
+            "name": "056.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1948,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.103,
+            "driver": false
+          },
+          {
+            "name": "057.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2116,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.748,
+            "driver": false
+          },
+          {
+            "name": "058.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1996,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.809,
+            "driver": false
+          },
+          {
+            "name": "059.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2123,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.092,
+            "driver": false
+          },
+          {
+            "name": "060.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2000,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.315,
+            "driver": false
+          },
+          {
+            "name": "061.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1972,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.642,
+            "driver": false
+          },
+          {
+            "name": "062.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2133,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.03,
+            "driver": false
+          },
+          {
+            "name": "063.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1984,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.145,
+            "driver": false
+          },
+          {
+            "name": "064.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1964,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.937,
+            "driver": false
+          },
+          {
+            "name": "065.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2057,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.104,
+            "driver": false
+          },
+          {
+            "name": "066.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1970,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.058,
+            "driver": false
+          },
+          {
+            "name": "067.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2171,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.307,
+            "driver": false
+          },
+          {
+            "name": "068.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2134,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.019,
+            "driver": false
+          },
+          {
+            "name": "069.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2027,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.153,
+            "driver": false
+          },
+          {
+            "name": "070.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1966,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.359,
+            "driver": false
+          },
+          {
+            "name": "071.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1955,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.163,
+            "driver": false
+          },
+          {
+            "name": "072.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1894,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.89,
+            "driver": false
+          },
+          {
+            "name": "073.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1956,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.124,
+            "driver": false
+          },
+          {
+            "name": "074.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1886,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.505,
+            "driver": false
+          },
+          {
+            "name": "075.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2161,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.67,
+            "driver": false
+          },
+          {
+            "name": "076.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1947,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.208,
+            "driver": false
+          },
+          {
+            "name": "077.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2075,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.819,
+            "driver": false
+          },
+          {
+            "name": "078.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2137,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.263,
+            "driver": false
+          },
+          {
+            "name": "079.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1986,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.874,
+            "driver": false
+          },
+          {
+            "name": "080.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1952,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.672,
+            "driver": false
+          },
+          {
+            "name": "081.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2048,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.689,
+            "driver": false
+          },
+          {
+            "name": "082.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1971,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.532,
+            "driver": false
+          },
+          {
+            "name": "083.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1967,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.286,
+            "driver": false
+          },
+          {
+            "name": "084.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2169,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.742,
+            "driver": false
+          },
+          {
+            "name": "085.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1891,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.387,
+            "driver": false
+          },
+          {
+            "name": "086.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1949,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.346,
+            "driver": false
+          },
+          {
+            "name": "087.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2137,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.708,
+            "driver": false
+          },
+          {
+            "name": "088.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1965,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.069,
+            "driver": false
+          },
+          {
+            "name": "089.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1901,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.448,
+            "driver": false
+          },
+          {
+            "name": "090.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1894,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.098,
+            "driver": false
+          },
+          {
+            "name": "091.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2021,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.102,
+            "driver": false
+          },
+          {
+            "name": "092.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2138,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.043,
+            "driver": false
+          },
+          {
+            "name": "093.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2034,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.714,
+            "driver": false
+          },
+          {
+            "name": "094.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1887,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.156,
+            "driver": false
+          },
+          {
+            "name": "095.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1896,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.234,
+            "driver": false
+          },
+          {
+            "name": "096.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1948,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.675,
+            "driver": false
+          },
+          {
+            "name": "097.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1951,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.554,
+            "driver": false
+          },
+          {
+            "name": "098.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2013,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.301,
+            "driver": false
+          },
+          {
+            "name": "099.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2147,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.756,
+            "driver": false
+          },
+          {
+            "name": "100.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1957,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.664,
+            "driver": false
+          },
+          {
+            "name": "101.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1883,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.531,
+            "driver": false
+          },
+          {
+            "name": "102.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1977,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.382,
+            "driver": false
+          },
+          {
+            "name": "103.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1899,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.773,
+            "driver": false
+          },
+          {
+            "name": "104.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2103,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.591,
+            "driver": false
+          },
+          {
+            "name": "105.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2064,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.954,
+            "driver": false
+          },
+          {
+            "name": "106.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2060,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.599,
+            "driver": false
+          },
+          {
+            "name": "107.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2115,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.915,
+            "driver": false
+          },
+          {
+            "name": "108.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2066,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.353,
+            "driver": false
+          },
+          {
+            "name": "109.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2144,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.128,
+            "driver": false
+          },
+          {
+            "name": "110.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2151,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.923,
+            "driver": false
+          },
+          {
+            "name": "111.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1995,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.496,
+            "driver": false
+          },
+          {
+            "name": "112.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2151,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.197,
+            "driver": false
+          },
+          {
+            "name": "113.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1903,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.995,
+            "driver": false
+          },
+          {
+            "name": "114.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1909,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.949,
+            "driver": false
+          },
+          {
+            "name": "115.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2113,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.929,
+            "driver": false
+          },
+          {
+            "name": "116.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2064,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.454,
+            "driver": false
+          },
+          {
+            "name": "117.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2026,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.329,
+            "driver": false
+          },
+          {
+            "name": "118.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1946,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.607,
+            "driver": false
+          },
+          {
+            "name": "119.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2051,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.894,
+            "driver": false
+          },
+          {
+            "name": "120.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2141,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.191,
+            "driver": false
+          },
+          {
+            "name": "121.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2018,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.351,
+            "driver": false
+          },
+          {
+            "name": "122.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2025,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.256,
+            "driver": false
+          },
+          {
+            "name": "123.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1996,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.861,
+            "driver": false
+          },
+          {
+            "name": "124.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1950,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.924,
+            "driver": false
+          },
+          {
+            "name": "125.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1978,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.91,
+            "driver": false
+          },
+          {
+            "name": "126.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1952,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.818,
+            "driver": false
+          },
+          {
+            "name": "127.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2130,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.8,
+            "driver": false
+          },
+          {
+            "name": "128.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2096,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.769,
+            "driver": false
+          },
+          {
+            "name": "129.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1934,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.875,
+            "driver": false
+          },
+          {
+            "name": "130.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1933,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.182,
+            "driver": false
+          },
+          {
+            "name": "131.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2036,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.122,
+            "driver": false
+          },
+          {
+            "name": "132.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2065,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.232,
+            "driver": false
+          },
+          {
+            "name": "133.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2045,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.942,
+            "driver": false
+          },
+          {
+            "name": "134.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2087,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.033,
+            "driver": false
+          },
+          {
+            "name": "135.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2178,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.827,
+            "driver": false
+          },
+          {
+            "name": "136.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1967,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.851,
+            "driver": false
+          },
+          {
+            "name": "137.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1970,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.971,
+            "driver": false
+          },
+          {
+            "name": "138.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1953,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.926,
+            "driver": false
+          },
+          {
+            "name": "139.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1890,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.565,
+            "driver": false
+          },
+          {
+            "name": "140.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2019,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.488,
+            "driver": false
+          },
+          {
+            "name": "141.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2051,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.119,
+            "driver": false
+          },
+          {
+            "name": "142.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2055,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.37,
+            "driver": false
+          },
+          {
+            "name": "143.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2041,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.192,
+            "driver": false
+          },
+          {
+            "name": "144.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2107,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.604,
+            "driver": false
+          },
+          {
+            "name": "145.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2037,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.927,
+            "driver": false
+          },
+          {
+            "name": "146.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1988,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.865,
+            "driver": false
+          },
+          {
+            "name": "147.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2132,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.779,
+            "driver": false
+          },
+          {
+            "name": "148.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2011,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.648,
+            "driver": false
+          },
+          {
+            "name": "149.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2153,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.34,
+            "driver": false
+          },
+          {
+            "name": "150.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2138,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.285,
+            "driver": false
+          },
+          {
+            "name": "151.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2125,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.616,
+            "driver": false
+          },
+          {
+            "name": "152.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1926,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.999,
+            "driver": false
+          },
+          {
+            "name": "153.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1928,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.686,
+            "driver": false
+          },
+          {
+            "name": "154.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2073,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.95,
+            "driver": false
+          },
+          {
+            "name": "155.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2011,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.399,
+            "driver": false
+          },
+          {
+            "name": "156.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2162,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.774,
+            "driver": false
+          },
+          {
+            "name": "157.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1981,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.636,
+            "driver": false
+          },
+          {
+            "name": "158.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1965,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.411,
+            "driver": false
+          },
+          {
+            "name": "159.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2171,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.527,
+            "driver": false
+          },
+          {
+            "name": "160.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2126,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.249,
+            "driver": false
+          },
+          {
+            "name": "161.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1907,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.116,
+            "driver": false
+          },
+          {
+            "name": "162.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1978,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.772,
+            "driver": false
+          },
+          {
+            "name": "163.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1893,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.347,
+            "driver": false
+          },
+          {
+            "name": "164.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2093,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.088,
+            "driver": false
+          },
+          {
+            "name": "165.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2030,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.961,
+            "driver": false
+          },
+          {
+            "name": "166.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2034,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.213,
+            "driver": false
+          },
+          {
+            "name": "167.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2066,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.51,
+            "driver": false
+          },
+          {
+            "name": "168.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2050,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.569,
+            "driver": false
+          },
+          {
+            "name": "169.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2166,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.722,
+            "driver": false
+          },
+          {
+            "name": "170.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1883,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.032,
+            "driver": false
+          },
+          {
+            "name": "171.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2049,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.506,
+            "driver": false
+          },
+          {
+            "name": "172.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2045,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.873,
+            "driver": false
+          },
+          {
+            "name": "173.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1998,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.793,
+            "driver": false
+          },
+          {
+            "name": "174.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2095,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.915,
+            "driver": false
+          },
+          {
+            "name": "175.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2073,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.577,
+            "driver": false
+          },
+          {
+            "name": "176.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2136,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.409,
+            "driver": false
+          },
+          {
+            "name": "177.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2122,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.69,
+            "driver": false
+          },
+          {
+            "name": "178.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1892,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.03,
+            "driver": false
+          },
+          {
+            "name": "179.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1911,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.508,
+            "driver": false
+          },
+          {
+            "name": "180.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1967,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.307,
+            "driver": false
+          },
+          {
+            "name": "181.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1899,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.02,
+            "driver": false
+          },
+          {
+            "name": "182.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2166,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.192,
+            "driver": false
+          },
+          {
+            "name": "183.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1920,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 2.671,
+            "driver": false
+          },
+          {
+            "name": "184.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2073,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.284,
+            "driver": false
+          },
+          {
+            "name": "185.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1920,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.943,
+            "driver": false
+          },
+          {
+            "name": "186.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2092,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.226,
+            "driver": false
+          },
+          {
+            "name": "187.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2096,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.819,
+            "driver": false
+          },
+          {
+            "name": "188.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2108,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.724,
+            "driver": false
+          },
+          {
+            "name": "189.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2069,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.984,
+            "driver": false
+          },
+          {
+            "name": "190.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2084,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.902,
+            "driver": false
+          },
+          {
+            "name": "191.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2003,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.432,
+            "driver": false
+          },
+          {
+            "name": "192.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2108,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.068,
+            "driver": false
+          },
+          {
+            "name": "193.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1946,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.451,
+            "driver": false
+          },
+          {
+            "name": "194.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2000,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.344,
+            "driver": false
+          },
+          {
+            "name": "195.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1944,
+            "verdict": "1bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.225,
+            "driver": false
+          },
+          {
+            "name": "196.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2033,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.349,
+            "driver": false
+          },
+          {
+            "name": "197.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1914,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.982,
+            "driver": false
+          },
+          {
+            "name": "198.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2091,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.099,
+            "driver": false
+          },
+          {
+            "name": "199.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2169,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.792,
+            "driver": false
+          },
+          {
+            "name": "200.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1950,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.839,
+            "driver": false
+          },
+          {
+            "name": "201.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2134,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.739,
+            "driver": false
+          },
+          {
+            "name": "202.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1982,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.144,
+            "driver": false
+          },
+          {
+            "name": "203.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1907,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.788,
+            "driver": false
+          },
+          {
+            "name": "204.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2138,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.345,
+            "driver": false
+          },
+          {
+            "name": "205.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2118,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.054,
+            "driver": false
+          },
+          {
+            "name": "206.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2141,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.876,
+            "driver": false
+          },
+          {
+            "name": "207.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2134,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.241,
+            "driver": false
+          },
+          {
+            "name": "208.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1990,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.035,
+            "driver": false
+          },
+          {
+            "name": "209.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1893,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.573,
+            "driver": false
+          },
+          {
+            "name": "210.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2157,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.754,
+            "driver": false
+          },
+          {
+            "name": "211.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2002,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.12,
+            "driver": false
+          },
+          {
+            "name": "212.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1917,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.772,
+            "driver": false
+          },
+          {
+            "name": "213.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2008,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.694,
+            "driver": false
+          },
+          {
+            "name": "214.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2077,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.091,
+            "driver": false
+          },
+          {
+            "name": "215.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1892,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.275,
+            "driver": false
+          },
+          {
+            "name": "216.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1896,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.77,
+            "driver": false
+          },
+          {
+            "name": "217.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2089,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.655,
+            "driver": false
+          },
+          {
+            "name": "218.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1883,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.198,
+            "driver": false
+          },
+          {
+            "name": "219.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2120,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.404,
+            "driver": false
+          },
+          {
+            "name": "220.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1993,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.902,
+            "driver": false
+          },
+          {
+            "name": "221.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1917,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.035,
+            "driver": false
+          },
+          {
+            "name": "222.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1912,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.127,
+            "driver": false
+          },
+          {
+            "name": "223.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1923,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.345,
+            "driver": false
+          },
+          {
+            "name": "224.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2003,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.913,
+            "driver": false
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第01卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第02卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第03卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第04卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第05卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第06卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第07卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/下载/灰原哀/第08卷.cbz",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第19卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第20卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第21卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第22卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/棋魂/第23卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/AKIRA/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/上",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/Comics/大友克洋/童梦/下",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "volume",
+      "root": "~/漫画库/哆啦A梦/第06卷"
+    },
+    "expanded": [
+      "~/漫画库/哆啦A梦"
+    ],
+    "follow": true,
+    "pages": {
+      "volume": "~/漫画库/哆啦A梦/第06卷",
+      "cursor": 0,
+      "all": true
+    },
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "已结束预览：这一卷不写出，后面的卷也不处理",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  },
+  "advanced": {
+    "now_ms": 1030000,
+    "run": {
+      "mode": "dry-run",
+      "stage": "deciding",
+      "outcome": null,
+      "envelope": false,
+      "elapsed_s": 29.75,
+      "steps": 3799,
+      "total_steps": 46809,
+      "current": "~/漫画库/哆啦A梦/第06卷",
+      "stop_level": 0,
+      "for_the_rest": false,
+      "wrote": true,
+      "survey": {
+        "entries": [
+          {
+            "kind": "section",
+            "path": "~/漫画库",
+            "directories": [
+              "~/漫画库/哆啦A梦",
+              "~/漫画库/集英社/海贼王",
+              "~/漫画库/攻壳机动队",
+              "~/漫画库/银河英雄传说"
+            ],
+            "notes": [
+              {
+                "kind": "unreachable",
+                "entries": [
+                  {
+                    "path": "~/漫画库/私藏",
+                    "reason": "列出 ~/漫画库/私藏 这一层: Permission denied (os error 13)"
+                  }
+                ]
+              },
+              {
+                "kind": "non-volume",
+                "entries": [
+                  {
+                    "path": "~/漫画库/字体包.zip",
+                    "reason": "压缩包里没有图片：不算一卷，输出里不会有空的压缩包"
+                  },
+                  {
+                    "path": "~/漫画库/答案.txt",
+                    "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                  },
+                  {
+                    "path": "~/漫画库/README.md",
+                    "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "directory",
+            "root": "~/下载/灰原哀",
+            "notes": []
+          },
+          {
+            "kind": "directory",
+            "root": "~/Comics/棋魂",
+            "notes": []
+          },
+          {
+            "kind": "section",
+            "path": "~/Comics/大友克洋",
+            "directories": [
+              "~/Comics/大友克洋/AKIRA",
+              "~/Comics/大友克洋/童梦"
+            ],
+            "notes": []
+          }
+        ],
+        "volumes": [
+          {
+            "root": "~/漫画库/哆啦A梦/第01卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第01卷",
+            "source_pages": 223,
+            "steps": 669
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第02卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第02卷",
+            "source_pages": 223,
+            "steps": 669
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第03卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第03卷",
+            "source_pages": 224,
+            "steps": 672
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第04卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第04卷",
+            "source_pages": 223,
+            "steps": 669
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第05卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第05卷",
+            "source_pages": 224,
+            "steps": 672
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第06卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第06卷",
+            "source_pages": 224,
+            "steps": 672
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第07卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第07卷",
+            "source_pages": 224,
+            "steps": 672
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第08卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第08卷",
+            "source_pages": 224,
+            "steps": 672
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第09卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第09卷",
+            "source_pages": 225,
+            "steps": 675
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第10卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第10卷",
+            "source_pages": 223,
+            "steps": 669
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第11卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第11卷",
+            "source_pages": 217,
+            "steps": 651
+          },
+          {
+            "root": "~/漫画库/哆啦A梦/第12卷",
+            "directory": "~/漫画库/哆啦A梦",
+            "name": "第12卷",
+            "source_pages": 217,
+            "steps": 651
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第01卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第01卷",
+            "source_pages": 190,
+            "steps": 570
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第02卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第02卷",
+            "source_pages": 190,
+            "steps": 570
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第03卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第03卷",
+            "source_pages": 190,
+            "steps": 570
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第04卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第04卷",
+            "source_pages": 190,
+            "steps": 570
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第05卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第05卷",
+            "source_pages": 189,
+            "steps": 567
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第06卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第06卷",
+            "source_pages": 189,
+            "steps": 567
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第07卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第07卷",
+            "source_pages": 189,
+            "steps": 567
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第08卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第08卷",
+            "source_pages": 189,
+            "steps": 567
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第09卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第09卷",
+            "source_pages": 194,
+            "steps": 582
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第10卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第10卷",
+            "source_pages": 174,
+            "steps": 522
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第11卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第11卷",
+            "source_pages": 174,
+            "steps": 522
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第12卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第12卷",
+            "source_pages": 174,
+            "steps": 522
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第13卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第13卷",
+            "source_pages": 173,
+            "steps": 519
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第14卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第14卷",
+            "source_pages": 173,
+            "steps": 519
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第15卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第15卷",
+            "source_pages": 173,
+            "steps": 519
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第16卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第16卷",
+            "source_pages": 173,
+            "steps": 519
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第17卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第17卷",
+            "source_pages": 172,
+            "steps": 516
+          },
+          {
+            "root": "~/漫画库/集英社/海贼王/第18卷",
+            "directory": "~/漫画库/集英社/海贼王",
+            "name": "第18卷",
+            "source_pages": 173,
+            "steps": 519
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第01卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第01卷",
+            "source_pages": 233,
+            "steps": 699
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第02卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第02卷",
+            "source_pages": 233,
+            "steps": 699
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第03卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第03卷",
+            "source_pages": 233,
+            "steps": 699
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第04卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第04卷",
+            "source_pages": 233,
+            "steps": 699
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第05卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第05卷",
+            "source_pages": 233,
+            "steps": 699
+          },
+          {
+            "root": "~/漫画库/攻壳机动队/第06卷",
+            "directory": "~/漫画库/攻壳机动队",
+            "name": "第06卷",
+            "source_pages": 229,
+            "steps": 687
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第01卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第01卷",
+            "source_pages": 177,
+            "steps": 531
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第02卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第02卷",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第03卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第03卷",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第04卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第04卷",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第05卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第05卷",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第06卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第06卷",
+            "source_pages": 175,
+            "steps": 525
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第07卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第07卷",
+            "source_pages": 175,
+            "steps": 525
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第08卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第08卷",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/漫画库/银河英雄传说/第09卷",
+            "directory": "~/漫画库/银河英雄传说",
+            "name": "第09卷",
+            "source_pages": 175,
+            "steps": 525
+          },
+          {
+            "root": "~/下载/灰原哀/第01卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第01卷",
+            "source_pages": 167,
+            "steps": 501
+          },
+          {
+            "root": "~/下载/灰原哀/第02卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第02卷",
+            "source_pages": 167,
+            "steps": 501
+          },
+          {
+            "root": "~/下载/灰原哀/第03卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第03卷",
+            "source_pages": 166,
+            "steps": 498
+          },
+          {
+            "root": "~/下载/灰原哀/第04卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第04卷",
+            "source_pages": 166,
+            "steps": 498
+          },
+          {
+            "root": "~/下载/灰原哀/第05卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第05卷",
+            "source_pages": 166,
+            "steps": 498
+          },
+          {
+            "root": "~/下载/灰原哀/第06卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第06卷",
+            "source_pages": 166,
+            "steps": 498
+          },
+          {
+            "root": "~/下载/灰原哀/第07卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第07卷",
+            "source_pages": 165,
+            "steps": 495
+          },
+          {
+            "root": "~/下载/灰原哀/第08卷.cbz",
+            "directory": "~/下载/灰原哀",
+            "name": "第08卷",
+            "source_pages": 165,
+            "steps": 495
+          },
+          {
+            "root": "~/Comics/棋魂/第01卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第01卷",
+            "source_pages": 168,
+            "steps": 504
+          },
+          {
+            "root": "~/Comics/棋魂/第02卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第02卷",
+            "source_pages": 168,
+            "steps": 504
+          },
+          {
+            "root": "~/Comics/棋魂/第03卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第03卷",
+            "source_pages": 168,
+            "steps": 504
+          },
+          {
+            "root": "~/Comics/棋魂/第04卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第04卷",
+            "source_pages": 169,
+            "steps": 507
+          },
+          {
+            "root": "~/Comics/棋魂/第05卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第05卷",
+            "source_pages": 169,
+            "steps": 507
+          },
+          {
+            "root": "~/Comics/棋魂/第06卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第06卷",
+            "source_pages": 169,
+            "steps": 507
+          },
+          {
+            "root": "~/Comics/棋魂/第07卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第07卷",
+            "source_pages": 169,
+            "steps": 507
+          },
+          {
+            "root": "~/Comics/棋魂/第08卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第08卷",
+            "source_pages": 164,
+            "steps": 492
+          },
+          {
+            "root": "~/Comics/棋魂/第09卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第09卷",
+            "source_pages": 164,
+            "steps": 492
+          },
+          {
+            "root": "~/Comics/棋魂/第10卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第10卷",
+            "source_pages": 162,
+            "steps": 486
+          },
+          {
+            "root": "~/Comics/棋魂/第11卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第11卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第12卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第12卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第13卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第13卷",
+            "source_pages": 162,
+            "steps": 486
+          },
+          {
+            "root": "~/Comics/棋魂/第14卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第14卷",
+            "source_pages": 162,
+            "steps": 486
+          },
+          {
+            "root": "~/Comics/棋魂/第15卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第15卷",
+            "source_pages": 162,
+            "steps": 486
+          },
+          {
+            "root": "~/Comics/棋魂/第16卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第16卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第17卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第17卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第18卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第18卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第19卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第19卷",
+            "source_pages": 163,
+            "steps": 489
+          },
+          {
+            "root": "~/Comics/棋魂/第20卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第20卷",
+            "source_pages": 227,
+            "steps": 681
+          },
+          {
+            "root": "~/Comics/棋魂/第21卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第21卷",
+            "source_pages": 227,
+            "steps": 681
+          },
+          {
+            "root": "~/Comics/棋魂/第22卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第22卷",
+            "source_pages": 227,
+            "steps": 681
+          },
+          {
+            "root": "~/Comics/棋魂/第23卷",
+            "directory": "~/Comics/棋魂",
+            "name": "第23卷",
+            "source_pages": 226,
+            "steps": 678
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第01卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第01卷",
+            "source_pages": 164,
+            "steps": 492
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第02卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第02卷",
+            "source_pages": 164,
+            "steps": 492
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第03卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第03卷",
+            "source_pages": 164,
+            "steps": 492
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第04卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第04卷",
+            "source_pages": 158,
+            "steps": 474
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第05卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第05卷",
+            "source_pages": 158,
+            "steps": 474
+          },
+          {
+            "root": "~/Comics/大友克洋/AKIRA/第06卷",
+            "directory": "~/Comics/大友克洋/AKIRA",
+            "name": "第06卷",
+            "source_pages": 158,
+            "steps": 474
+          },
+          {
+            "root": "~/Comics/大友克洋/童梦/上",
+            "directory": "~/Comics/大友克洋/童梦",
+            "name": "上",
+            "source_pages": 176,
+            "steps": 528
+          },
+          {
+            "root": "~/Comics/大友克洋/童梦/下",
+            "directory": "~/Comics/大友克洋/童梦",
+            "name": "下",
+            "source_pages": 176,
+            "steps": 528
+          }
+        ],
+        "unchecked": 1
+      },
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "state": "skipped",
+          "pass": 3,
+          "done": 223,
+          "elapsed_s": 0.697,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "state": "skipped",
+          "pass": 3,
+          "done": 223,
+          "elapsed_s": 0.697,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "state": "skipped",
+          "pass": 3,
+          "done": 224,
+          "elapsed_s": 0.7,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "state": "skipped",
+          "pass": 3,
+          "done": 223,
+          "elapsed_s": 0.697,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "state": "done",
+          "pass": 3,
+          "done": 224,
+          "elapsed_s": 8.663,
+          "tally": [
+            [
+              "2bit+FS",
+              187
+            ],
+            [
+              "4bit",
+              32
+            ],
+            [
+              "1bit",
+              5
+            ]
+          ],
+          "page_count": 224,
+          "notable_pages": [
+            {
+              "name": "062.jpg",
+              "output_size": [
+                2364,
+                1680
+              ],
+              "kinds": [
+                "wide"
+              ],
+              "source_height": 1936,
+              "verdict": "2bit+FS",
+              "reason": "lowest-within-threshold",
+              "score": 2.662,
+              "driver": false
+            }
+          ]
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "state": "deciding",
+          "pass": 1,
+          "done": 224,
+          "elapsed_s": 5.6,
+          "tally": [
+            [
+              "2bit+FS",
+              186
+            ],
+            [
+              "4bit",
+              30
+            ],
+            [
+              "1bit",
+              8
+            ]
+          ],
+          "page_count": 224,
+          "notable_pages": []
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第01卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第02卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第03卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第04卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第05卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第06卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第07卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/下载/灰原哀/第08卷.cbz",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第01卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第02卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第03卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第04卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第05卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第06卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第07卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第08卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第09卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第10卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第11卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第12卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第13卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第14卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第15卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第16卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第17卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第18卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第19卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第20卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第21卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第22卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/棋魂/第23卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第01卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第02卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第03卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第04卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第05卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/AKIRA/第06卷",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/上",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        },
+        {
+          "root": "~/Comics/大友克洋/童梦/下",
+          "state": "queued",
+          "pass": -1,
+          "done": 0,
+          "elapsed_s": 0,
+          "tally": null
+        }
+      ]
+    }
+  }
+}

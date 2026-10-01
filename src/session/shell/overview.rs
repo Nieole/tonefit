@@ -411,6 +411,8 @@ impl Counted {
             wide: 0,
         };
         for (at, state) in live.states().iter().enumerate() {
+            // **「完成」只数写了出去的卷**：预览过的那一卷盘上没有它，不进完成；它收摊了，
+            // 也不进等待（设计稿 `runTotals`，停车场 Q674）。已分析几卷照旧数它。
             match state {
                 VolumeState::Done | VolumeState::Isolated => counted.done += 1,
                 VolumeState::Skipped => counted.skipped += 1,
