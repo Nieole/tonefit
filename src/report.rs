@@ -437,6 +437,10 @@ pub struct VolumeReport {
     /// 整卷跳过的卷这里是 0——那一卷一页都没搬，卷级判定是 [`VolumeVerdict::Skipped`]，
     /// 页数在它身上；头一趟、`--envelope` 那条路、整卷重做的卷同样是 0。
     pub retained_pages: usize,
+    /// **上一趟的输出在、这一卷却有页重做了，是因为什么**（say-and-stop/04，停车场 Q528），
+    /// 见 [`WhyRedone`]。没什么可说的是 `None`：头一趟（没有上一趟的输出）、整卷跳过的卷、
+    /// 只因源变了而重做的卷，以及 `--no-metadata` 那一趟（这一道整个不在）。
+    pub why_redone: Option<WhyRedone>,
     /// 本卷的**源页数**：这一卷有几张待处理的图片（页几何批 03 号票）。
     ///
     /// 与输出页数分开说，因为两者从此不是同一个数：一个源页可以产出多张输出页。
@@ -468,6 +472,17 @@ pub struct VolumeReport {
     ///
     /// 跳过的卷也有一份：幂等那一道照样要把整卷的字节读一遍，读法与做事的那一趟同一个。
     pub io: IoPlan,
+    /// **这一卷的源在跑的过程中变过、因此退回了串行读**时那句为什么（say-and-stop/04，停车场 Q222）；
+    /// 没有这回事是 `None`。
+    ///
+    /// 归档在开卷之后被换成另一份时，再要的读取端核不上开卷那一刻的印记（`CONTEXT.md` 的《印记》），
+    /// 这一卷整卷改读开卷那个句柄（见 `crate::read::reads`）。那句话指得出是哪一卷、两个印记各是多少，
+    /// 出自 `source` 那一处，这里原样带着。
+    ///
+    /// 它不改 [`io`](Self::io) 那一格：那一格说的是**定下来**要派几条、谁定的；
+    /// 这一格说的是这一趟**真走成了**什么。一卷照旧一页不少，变的只是慢一点——
+    /// 这一格在，「为什么这一卷没吃并发」才有答案。跳过的卷也可能有：退回发生在幂等那一道上。
+    pub fell_back_to_serial: Option<String>,
     /// 本卷解码源页的次数。跳过的卷是 0——「不重复工作」量得出来的形式就是它。
     ///
     /// 两遍管线的不变量是「每页只解码一次」（ADR 0005：解码一次，缓存缩放后的图），
@@ -592,6 +607,48 @@ impl VolumeTiming {
     pub fn outside_the_segments(&self) -> Duration {
         self.elapsed
             .saturating_sub(self.extraction + self.fingerprint + self.first_pass + self.second_pass)
+    }
+}
+
+/// 一卷没被整卷跳过时，上一趟的输出**差在哪**（say-and-stop/04，停车场 Q528）：
+/// 《指纹》里两条路共用的那三项各变没变，以及有没有页的《记录》读不出。
+///
+/// 幂等命中那一句列着依据一项没变（`跳过 之前转换过：…`），这是它的反面：升级之后整库重跑一次，
+/// 用户要知道是工具版本变了，不是自己点错了什么。
+///
+/// - **源那一项不在这里**：源变了的那几页由按页跳过那一句说（[`VolumeReport::retained_pages`]），
+///   这一份只管共用的三项。卷级那条路（`--envelope`）上源变了就整卷重做，那时这一份也不说它。
+/// - **参数哈希是一个整体**，[`params`](Self::params) 只说得出「选项变了」，说不出是哪一项
+///   （`CONTEXT.md`《尚未确立》的「接着写出的粒度」）。它收着面板的几项规格，因此换到另一块面板的型号上，
+///   [`profile`](Self::profile) 与它一起变；同一块面板的另一个别名只变前者。
+/// - **几项可以一起变**：逐页读回来的记录各比各的，哪一页说哪一项变了都算进来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WhyRedone {
+    /// 工具版本变了（`Software` 那一项）。
+    pub tool: bool,
+    /// 设备配置变了：记录里的型号名不是这一趟的（`tonefit:profile` 那一项）。
+    pub profile: bool,
+    /// 选项变了：参数哈希对不上（`tonefit:params` 那一项）。
+    pub params: bool,
+    /// 上一趟的输出在、页也在，**记录读不出**：`--no-metadata` 写出的，或不是本工具写的。
+    /// 分得开「依据变了」与「依据丢了」，靠的就是这一格。
+    pub unreadable: bool,
+}
+
+impl WhyRedone {
+    /// 有一项要说吗。一项都没有就不该交出这一份（见 [`VolumeReport::why_redone`]）。
+    pub fn says_anything(&self) -> bool {
+        self.tool || self.profile || self.params || self.unreadable
+    }
+
+    /// 两份合成一份：哪一份说哪一项变了都算。逐页读回来的记录各说各的，一卷那一份由它们合起来。
+    pub(crate) fn together(self, other: Self) -> Self {
+        Self {
+            tool: self.tool || other.tool,
+            profile: self.profile || other.profile,
+            params: self.params || other.params,
+            unreadable: self.unreadable || other.unreadable,
+        }
     }
 }
 

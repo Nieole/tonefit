@@ -432,9 +432,8 @@ pub enum Independent {
     Same(Reader),
     /// **核不上**：归档在开卷之后被换掉了，这一份不敢用。
     ///
-    /// 带着那句说得出为什么的话（[`archive_was_replaced`] 拼的）。
-    /// **眼下只有用例读得到它**：报告里没有「退回串行」这一栏——12 号票判的不加，
-    /// 理由与去处记在停车场 Q222。
+    /// 带着那句说得出为什么的话（[`archive_was_replaced`] 拼的）。读取层把它随串行那一批交出去，
+    /// 原样进卷级报告（`VolumeReport::fell_back_to_serial`，say-and-stop/04）。
     Replaced(String),
 }
 

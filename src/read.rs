@@ -79,6 +79,9 @@ pub struct Read {
 /// 而此刻已经知道这个文件动过，那点证据不够。串行读的是**卷自己那个句柄**——
 /// 成员表就是它解出来的，字节与成员表因此出自同一份。
 /// **那一趟仍旧跑完**，只是不吃并发；这一卷、其余卷、其余页一页不少。
+/// 核不上时那句话随这一批交出去（[`Reads::fell_back`]），调用方把它带进卷级报告
+/// （`VolumeReport::fell_back_to_serial`，say-and-stop/04）：用户看到的是慢一点，
+/// 报告得说得出为什么慢。
 ///
 /// **换上去那一份解不开时**（下载到一半的 `.part`、根本不是 zip），走的是上面
 /// 「句柄开不出来」那一支，**未必退回串行**：`source::open_archive_handle` 对
@@ -86,7 +89,8 @@ pub struct Read {
 /// 字节仍是对的——手里那几份攥的是换掉之前那一份，`Member::entry` 在它上面仍指得准。
 /// 记在停车场 Q224。
 ///
-/// 降下来的这个条数**不进报告**：报告印的是[读取计划](crate::medium::IoPlan)——
+/// **句柄开不出来**而降下来的这个条数**不进报告**（核不上而整卷退回串行的那一支进，见上面「整卷退回串行」那一段）：
+/// 报告印的是[读取计划](crate::medium::IoPlan)——
 /// 定下来要派几条，以及那个数是谁定的。真派出去几条是这一层的实况，两者可以不等，
 /// 而这条分岔**只在异常路径上**：一趟同时要的句柄够不着任何平台的上限
 /// （数与式子见 [`Reader`] 的《一趟同时开着几个句柄》），因此没有哪道上限会让这两个数
@@ -104,16 +108,16 @@ pub fn reads<'a>(
     ));
     // 比成员还多的读取线程是白开的：它们生下来就领不到号。
     let readers = readers.min(members.len());
+    let mut fell_back = None;
     if readers > 1 {
         let mut own: Vec<Reader> = Vec::with_capacity(readers);
-        let mut same_archive = true;
         while own.len() < readers {
             match reader.independent() {
                 Ok(Independent::Same(opened)) => own.push(opened),
                 // 核不上：整卷退回串行，手里这几份一并丢掉（见本函数的文档）。
-                // 那句为什么眼下没有去处——报告里没有这一栏（12 号票判的，见停车场 Q222）。
-                Ok(Independent::Replaced(_why)) => {
-                    same_archive = false;
+                // 那句为什么随串行那一支交出去，不丢（say-and-stop/04）。
+                Ok(Independent::Replaced(why)) => {
+                    fell_back = Some(why);
                     break;
                 }
                 // 句柄开不出来，或者换上去那一份根本解不开：用开出来的那几条接着做
@@ -121,7 +125,7 @@ pub fn reads<'a>(
                 Err(_) => break,
             }
         }
-        if same_archive && own.len() > 1 {
+        if fell_back.is_none() && own.len() > 1 {
             // 成员表要整个搬进线程里：线程活得比这次借用长，借不过去（见 `Member` 的《可克隆》）。
             let owned: Arc<Vec<Member>> =
                 Arc::new(members.iter().map(|member| (*member).clone()).collect());
@@ -132,6 +136,7 @@ pub fn reads<'a>(
         reader,
         members,
         throttle,
+        fell_back,
     }
 }
 
@@ -148,6 +153,10 @@ pub enum Reads<'a> {
         reader: &'a mut Reader,
         members: &'a [&'a Member],
         throttle: Arc<Throttle>,
+        /// 本该并发、却因为源在开卷之后被换掉而退回了串行时，那句为什么
+        /// （[`Independent::Replaced`]）。点名一条、开不出句柄而少派的那几种是 `None`——
+        /// 那几种不是这一卷的源出了事（见 [`reads`]）。
+        fell_back: Option<String>,
     },
     /// 并发：几条读取线程同时在读，读完的先到通道里排队，取的那一端按序号放行。
     Concurrent(Concurrent),
@@ -162,6 +171,7 @@ impl Iterator for Reads<'_> {
                 reader,
                 members,
                 throttle,
+                ..
             } => {
                 let claim = throttle.claim()?;
                 let bytes = cost::stage(cost::Stage::Read, || reader.read(members[claim.index]));
@@ -177,6 +187,17 @@ impl Iterator for Reads<'_> {
 }
 
 impl Reads<'_> {
+    /// 这一批为什么退回了串行：源在开卷之后被换掉时那句话（[`Independent::Replaced`]），
+    /// 别的情形一律是 `None`（见 [`Reads::Serial`] 那一格）。
+    ///
+    /// **调用方取走它，再去取字节**：`for` 一开就把这一批整个吞了，到时候问不着。
+    pub fn fell_back(&self) -> Option<&str> {
+        match self {
+            Reads::Serial { fell_back, .. } => fell_back.as_deref(),
+            Reads::Concurrent(_) => None,
+        }
+    }
+
     /// 在途字节到过的最高点。背压那一条靠它量得出来。
     ///
     /// 只有用例问它：管线上没有哪一步要看这个数，而它是「有界通道真的有界」唯一
@@ -611,13 +632,14 @@ mod tests {
         let members: Vec<&Member> = volume.pages.iter().collect();
 
         // 对照：源没动时同一批参数派得出并发——没有这一半，下面那一半说明不了任何事。
+        // 这一批在改名之前放掉：几条读取线程各攥着一个句柄。
+        let untouched = reads(&mut volume.reader, &members, 4, BUDGET);
         assert!(
-            matches!(
-                reads(&mut volume.reader, &members, 4, BUDGET),
-                Reads::Concurrent(_)
-            ),
+            matches!(untouched, Reads::Concurrent(_)),
             "源一个字节没动却没派并发"
         );
+        assert_eq!(untouched.fell_back(), None, "源没动也说退回了串行");
+        drop(untouched);
 
         // 换成另一份：成员少两个、每个也大一倍，中央目录的偏移与条目数跟着都变。
         //
@@ -637,6 +659,15 @@ mod tests {
             matches!(taking, Reads::Serial { .. }),
             "源被换掉了却照样派了并发"
         );
+        // 那句话随这一批交出去，不再丢掉（say-and-stop/04，停车场 Q222）：
+        // 卷级报告那一句「这一卷的源在跑的过程中变过，退回串行读」靠的就是它。
+        let said = taking.fell_back().expect("退回了串行却说不出为什么");
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("卷名");
+        assert!(said.contains(name), "没说是哪一个卷：{said}");
+        assert!(said.contains("退回串行"), "没说接下来怎么走：{said}");
         let taken = drain(&mut taking);
         assert_eq!(taken.len(), 4, "退回串行之后那一趟没跑完");
         for (index, (order, bytes)) in taken.iter().enumerate() {

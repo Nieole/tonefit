@@ -31,6 +31,7 @@ use crate::decode::Salvage;
 use crate::geometry::Size;
 use crate::metric::{Aggregation, Composition, Masking, aggregation, composition, masking};
 use crate::quantize::Dither;
+use crate::report::WhyRedone;
 use crate::request::Request;
 
 /// 工具版本那一项：包名加版本号。
@@ -421,6 +422,21 @@ impl PageRecord {
         self.invocation == fingerprint.invocation
             && source
             && self.is_the_page(relative, ordinal, count)
+    }
+
+    /// 这一页记的共用三项与这份指纹**差在哪几项**（say-and-stop/04）：工具版本、profile 名、
+    /// 参数哈希各比各的。三项都没差，就是 [`matches`](Self::matches) 里共用那一半成立。
+    ///
+    /// 只答共用的三项：源那一项归按页跳过那一句说，「记录读不出」轮不到一份读出来了的记录答
+    /// （见 [`WhyRedone`]）。
+    pub fn what_changed(&self, fingerprint: &Fingerprint) -> WhyRedone {
+        let (ours, theirs) = (&fingerprint.invocation, &self.invocation);
+        WhyRedone {
+            tool: theirs.tool != ours.tool,
+            profile: theirs.profile != ours.profile,
+            params: theirs.params != ours.params,
+            unreadable: false,
+        }
     }
 }
 
