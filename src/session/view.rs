@@ -943,7 +943,7 @@ impl Session {
         (on, self.scope.paths.len() - on)
     }
 
-    /// 与套着的预设不同的有几项。是哪几项、为什么型号不算，都在 [`config::changed`]
+    /// 与套着的预设不同的有几项（型号在内）。是哪几项在 [`config::changed`]
     /// ——总览与顶上那一条预设读的是同一份。
     pub fn changed_from_preset(&self) -> usize {
         config::changed(self).len()
@@ -1916,10 +1916,12 @@ impl Session {
     /// 把设备设置与处理选项**整个换成这一份**（`CONTEXT.md` 的《预设栏》）：
     /// 它没说的那几项回到「没说」，**路径与输出一格不动**。
     ///
-    /// **型号也一格不动**：设计稿存与套都跳过它（`configKey` 那一支只收取值环与自由填的
-    /// 那几项），与设置栏上行尾那个 `*` 不数型号是同一条（[`config::starred`]）。
-    /// 换了型号要走[它自己那一路](Self::set_device)——那一下还要清掉两个标定数。
+    /// **型号跟着换**（`CONTEXT.md` 的《预设》：型号在设备设置里；停车场 Q891 拍板）：没写型号的那一份套下来，
+    /// 型号回到「没说」，跑之前得先挑一个——拦它的是 [`Session::request`] 头一句，屏上说的
+    /// 也是那一句。换型号走[它自己那一路](Self::set_device)，两个标定数随即换成这一份说的那两个：
+    /// 它们读进来那一刻已经对着这一份自己的型号验过界（`crate::preset::read`）。
     pub(super) fn apply_preset(&mut self, name: &str, preset: Preset) {
+        self.set_device(preset.device.profile.clone());
         self.device.gray_levels = preset.device.gray_levels;
         self.device.threshold = preset.device.threshold;
         self.taste = preset.taste.clone();
@@ -1929,16 +1931,14 @@ impl Session {
         });
     }
 
-    /// **存出去的是哪一份**：设备设置与处理选项两组里[预设记得下的那几项](config::stored_fields)。
+    /// **存出去的是哪一份**：会话上设备设置与处理选项那两层整份，型号在里面（停车场 Q891 拍板）
+    /// ——那两层就是预设装的那两层，与[预设记得下的那几项](config::stored_fields)一格不差。
     ///
-    /// 与[套用](Self::apply_preset)对着来：型号不写进去，因此存完再读回来仍是同一份
+    /// 与[套用](Self::apply_preset)对着来：存完再读回来仍是同一份
     /// ——顶上那一条当场就说「与预设一致」。
     pub(super) fn preset_to_store(&self) -> Preset {
         Preset {
-            device: crate::preset::DeviceLayer {
-                profile: None,
-                ..self.device.clone()
-            },
+            device: self.device.clone(),
             taste: self.taste.clone(),
         }
     }
@@ -3090,9 +3090,9 @@ mod tests {
         assert_eq!(footer(&session), task);
     }
 
-    /// 改了几项从套着的预设算：型号不算，取值环与自由填的项算。
+    /// 改了几项从套着的预设算：型号也算，取值环与自由填的项算（[`config::stored_fields`]）。
     #[test]
-    fn changed_items_are_counted_against_the_applied_preset_without_the_model() {
+    fn changed_items_are_counted_against_the_applied_preset_the_model_too() {
         let mut session = three_paths();
         assert_eq!(session.changed_from_preset(), 0, "没套预设");
         session.views.config.applied = Some(Applied {
@@ -3101,11 +3101,11 @@ mod tests {
         });
         assert_eq!(session.changed_from_preset(), 0);
         session.device.profile = Some("kobo-libra-2".to_owned());
-        assert_eq!(session.changed_from_preset(), 0, "型号不算");
+        assert_eq!(session.changed_from_preset(), 1, "型号也算：预设没写型号");
         session.taste.fit = Some(tonefit::FitMode::Inside);
         session.taste.dither = Some(tonefit::Dither::FloydSteinberg);
         session.device.gray_levels = Some(12);
-        assert_eq!(session.changed_from_preset(), 3);
+        assert_eq!(session.changed_from_preset(), 4);
     }
 
     // ───────────────────────── 每页结果（11） ─────────────────────────
@@ -3388,9 +3388,10 @@ mod tests {
     }
 
     /// **套用一份就是把两组整个换成它**（`CONTEXT.md` 的《预设栏》）：它没说的那几项回到
-    /// 「没说」，**型号与路径、输出一格不动**，顶上那一条当场说「与预设一致」。
+    /// 「没说」——**型号也是**，没写型号的那一份套下来型号回到「没说」——**路径与输出一格不动**，
+    /// 顶上那一条当场说「与预设一致」。
     #[test]
-    fn using_a_preset_replaces_both_bands_and_leaves_the_model_and_the_paths_alone() {
+    fn using_a_preset_replaces_both_bands_the_model_too_and_leaves_the_paths_alone() {
         let mut session = with_a_picker();
         let now = Instant::now();
         session.device.profile = Some("kobo-libra-2".to_owned());
@@ -3403,23 +3404,46 @@ mod tests {
         assert_eq!(session.taste.crop, Some(false));
         assert_eq!(session.taste.dither, None, "它没说的回到「没说」");
         assert_eq!(session.device.gray_levels, None, "它没说的回到「没说」");
-        assert_eq!(
-            session.device.profile.as_deref(),
-            Some("kobo-libra-2"),
-            "型号一格不动"
-        );
+        assert_eq!(session.device.profile, None, "没写型号：型号回到「没说」");
         assert_eq!(session.scope.paths, paths, "路径一格不动");
         assert_eq!(session.changed_from_preset(), 0, "与预设一致");
     }
 
-    /// **存出去的那一份不记型号**，因此存完就是「与预设一致」（[`config::stored_fields`]）。
+    /// **写了型号的那一份，型号跟着换，两个标定数也照它**：换型号那一下清掉标定数
+    /// （[`Session::set_device`]），清完再摆上这一份说的那两个——先后颠倒的话，
+    /// 这一份说的可见灰阶数会被换型号那一下抹掉。
     #[test]
-    fn the_preset_a_save_would_store_leaves_the_model_out() {
+    fn using_a_preset_that_names_a_model_brings_the_model_and_its_numbers_along() {
+        let mut session = with_a_picker();
+        let now = Instant::now();
+        let device = crate::preset::DeviceLayer {
+            profile: Some("boox-poke6".to_owned()),
+            gray_levels: Some(12),
+            threshold: None,
+        };
+        session.views.config.listed.push(NamedPreset {
+            name: "另一台".to_owned(),
+            preset: Some(Preset {
+                device: device.clone(),
+                taste: crate::preset::TasteLayer::default(),
+            }),
+        });
+        session.device.profile = Some("kobo-libra-2".to_owned());
+        session.perform(Deed::Down, now);
+        session.perform(Deed::Down, now);
+        session.perform(Deed::UsePreset, now);
+        assert_eq!(session.device, device, "型号与两个标定数照这一份");
+        assert_eq!(session.changed_from_preset(), 0, "与预设一致");
+    }
+
+    /// **存出去的那一份连型号一起存**，因此存完就是「与预设一致」（[`config::stored_fields`]）。
+    #[test]
+    fn the_preset_a_save_would_store_carries_the_model() {
         let mut session = three_paths();
         session.device.profile = Some("kobo-libra-2".to_owned());
         session.taste.fit = Some(tonefit::FitMode::Inside);
         let stored = session.preset_to_store();
-        assert_eq!(stored.device.profile, None, "型号不写进去");
+        assert_eq!(stored.device.profile, session.device.profile, "型号写进去");
         assert_eq!(stored.taste.fit, Some(tonefit::FitMode::Inside));
         session.preset_saved("插图", stored, Instant::now());
         assert_eq!(

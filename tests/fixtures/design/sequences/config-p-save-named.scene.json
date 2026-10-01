@@ -12,6 +12,7 @@
     {
       "name": "漫画",
       "says": {
+        "profile": "kobo-libra-2",
         "fit": null,
         "dither": null
       }
@@ -28,6 +29,7 @@
     {
       "name": "插图",
       "says": {
+        "profile": "kobo-libra-2",
         "gray-levels": null,
         "threshold": null,
         "fit": "inside",

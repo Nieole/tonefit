@@ -11,15 +11,15 @@
 # j = c-white
 # k = c-green
 # l = c-gray b
-".aaaaaaabbcc............................................................ddddddddddddddddddddddddddddddddddddddd."
+".aaaaaaabbcc..............................................................dddddddddddddddddddddddddddddddd."
 "aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaffffffffffffffffffffffffffffffaaa"
 "a.aaaaabbbbaaaaaaaa..........................................................a.aaaaaa..a.aaaaaaaaa.a"
 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 "aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaggeeaaaaaaggggggggggggggggggggggggggggggggggggggggggaaaaaaggg"
-"a.hhhhfffffffffff........................ag.iibb......aaaaaaaaaaaaa.........................g"
-"aaajjjjjjjjjjjjjjjj................................ag.iibbeeeeeeaaaaaaaaaaaaaaaaaaaaaaaaaak.g"
+"a.hhhhfffffffffff........................ag.iibb......aaaaaaaaaaa................................g"
+"aaajjjjjjjjjjjjjjjj.....................ag.iibbeeeeeeaaaaaaaaaaaaaaaaaaaaaaaaaak.g"
 "aaajjjjjjjjjjjjjaaaaaaaaa..............ag.ii..kkkkkkkkkkkk....................................g"
-"aaajjjjjjjjjjjjjjaaaaaaaaaaaaaaaaaaaaaaaa..ag................................................................g"
+"aaajjjjjjjjjjjjjjaaaaaaaaaaa..........ag................................................................g"
 "a.hhhhfffffffffff........................ag.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj...g"
 "aaaeeeeeeeeeeeeee................................ag.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj...g"
 "aaajjjjjjjjjjjjjjj..............................ag.jjjjjj...................................................g"
@@ -34,7 +34,7 @@
 "aaajjjjjjjjjjjjjjaaaaaaaaaaaaa...............ag................................................................g"
 "aaajjjjjjjjjjjjjjaaaaaaaa....................ag................................................................g"
 "a.llllllfffff................................ag................................................................g"
-"aaajjjjjjjjjjjjjjaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.ag................................................................g"
+"aaajjjjjjjjjjjjjjaaaaa......................ag................................................................g"
 "aaajjjjjjjjjjjjjaaaaaaaaaaaaaaaa..ag................................................................g"
 "aaajjjjjjjjjjjjjjaaaaaaaaaaaaaaaaa.ag................................................................g"
 "aaajjjjjjjjjjjjjjaaaaaaaaaaaaaaaaaaaa..ag................................................................g"

@@ -2092,6 +2092,10 @@ mod redesign {
     /// **套用一份**（票面第一条）：`j` 挪到「画集」、`⏎` 套下来——设备设置与处理选项
     /// **整个换成它**（它没说的那几项回到「没说」），路径与输出一格不动，
     /// 顶上那一条换成它、设置栏上一个 `*` 都不剩。
+    ///
+    /// 「画集」**没写型号**（盘上那一节一行 `profile` 都没有，照旧读得进）：型号跟着回到「没说」
+    /// （`design-parity/07`）。跑之前要先挑型号那一句见
+    /// [`a_preset_that_names_no_model_leaves_the_run_asking_for_one`]。
     #[test]
     fn enter_uses_the_preset_under_the_cursor_and_replaces_both_bands() {
         let scene = assert_sequence("config-p-j-Enter");
@@ -2109,11 +2113,7 @@ mod redesign {
         assert_eq!(session.taste.crop, Some(false));
         assert_eq!(session.taste.dither, None, "它没说的回到「没说」");
         assert_eq!(session.changed_from_preset(), 0, "与预设一致");
-        assert_eq!(
-            session.device.profile.as_deref(),
-            Some("kobo-libra-2"),
-            "型号一格不动"
-        );
+        assert_eq!(session.device.profile, None, "没写型号：型号回到「没说」");
         // **路径与输出一格不动**：与没按过那几下的同一景比。两份夹具各有各的临时目录，
         // 因此比的是**屏上那几条**（家目录缩写成 `~` 之后），不是绝对路径。
         let untouched = Scene::named("config");
@@ -2131,6 +2131,110 @@ mod redesign {
             session.output_shown(),
             untouched.session.output_shown(),
             "输出目录一格不动"
+        );
+    }
+
+    /// **套一份没写型号的预设，跑之前要先挑型号，屏上照现成那一句说**（`design-parity/07`
+    /// 票面第三条）：「画集」套下来之后按 `t`，屏底说的就是拼 `Request` 那一头拼不出来时那一句
+    /// （`Session::request` 头一句，这里从它取、不另抄），那一趟没起来、会话原地不动。
+    #[test]
+    fn a_preset_that_names_no_model_leaves_the_run_asking_for_one() {
+        let (mut scene, mut running, _) = walked("config-p-j-Enter");
+        assert_eq!(
+            scene.session.device.profile, None,
+            "前提：型号回到了「没说」"
+        );
+        let here = charts_land_in(&scene);
+        let refused = format!(
+            "{:#}",
+            scene
+                .session
+                .request(tonefit::Mode::DryRun)
+                .expect_err("没有型号拼不出来")
+        );
+
+        let exit = tap_all(&mut scene, &mut running, &here, [Key::Char('t')]);
+
+        assert_eq!(exit, Exit::Stay);
+        let said = replied(&scene);
+        assert!(said.contains(&refused), "{said}");
+        assert!(running.live().is_none(), "那一趟不该起来");
+        assert_eq!(
+            scene.session.stage(),
+            super::super::state::Stage::Fresh,
+            "会话原地不动"
+        );
+    }
+
+    /// **套一份写了型号的预设，型号跟着换**（`design-parity/07` 票面第二条）：盘上那份文件里
+    /// 手写一节带 `profile` 与 `gray-levels` 的，`p` 掀开预设栏时从盘上读进来，挪到它上面 `⏎`——
+    /// 型号换成它写的那一块，可见灰阶数也照它（换型号那一下清掉的是旧的那两个数），
+    /// 顶上那一条当场说「与预设一致」。
+    #[test]
+    fn a_preset_that_names_a_model_brings_it_along_when_used() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let here = charts_land_in(&scene);
+        let (model, levels) = ("boox-poke6", 12);
+        let file = scene.presets.path().expect("说得出位置").to_path_buf();
+        let mut text = std::fs::read_to_string(&file).expect("读得出来");
+        text.push_str(&format!(
+            "\n[preset.\"黑白屏\".device]\nprofile = \"{model}\"\ngray-levels = {levels}\n"
+        ));
+        std::fs::write(&file, text).expect("写得进去");
+        assert_eq!(
+            scene.session.device.profile.as_deref(),
+            Some("kobo-libra-2"),
+            "前提：此刻是另一块"
+        );
+
+        // 按名字排，它在末一份：`G` 停到末行那一件，`k` 退到它上面。
+        tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('p'), Key::Char('G'), Key::Char('k'), Key::Enter],
+        );
+
+        let session = &scene.session;
+        assert_eq!(
+            session
+                .views
+                .config
+                .applied
+                .as_ref()
+                .map(|one| one.name.as_str()),
+            Some("黑白屏")
+        );
+        assert_eq!(session.device.profile.as_deref(), Some(model));
+        assert_eq!(session.device.gray_levels, Some(levels), "标定数照这一份");
+        assert_eq!(session.changed_from_preset(), 0, "与预设一致");
+    }
+
+    /// **一项都没说的那一份，预设栏那一行说「没有设置任何项」**：设计稿那两份都说了点什么
+    /// （「漫画」写了型号，停车场 Q1147），那一句没有一份期望屏钉着，由这一条钉。
+    /// 比的是去掉空白之后屏上有没有那一行（宽字符占住的第二格画布清成空格）。
+    #[test]
+    fn a_preset_that_says_nothing_is_listed_as_saying_nothing() {
+        let mut scene = Scene::named("config");
+        let mut running = Running::default();
+        let here = charts_land_in(&scene);
+        scene
+            .presets
+            .save("空白", &crate::preset::Preset::default())
+            .expect("存得进去");
+
+        tap_all(&mut scene, &mut running, &here, [Key::Char('p')]);
+
+        let screen: String = painted(&scene, &running, (120, 36))
+            .content()
+            .iter()
+            .flat_map(|cell| cell.symbol().chars())
+            .filter(|glyph| !glyph.is_whitespace())
+            .collect();
+        assert!(
+            screen.contains("空白没有设置任何项（全部默认）"),
+            "屏上没有那一行"
         );
     }
 
@@ -2182,7 +2286,7 @@ mod redesign {
 
     /// **保存并起名**（票面第一条与第二条）：`G` 停到末行、`⏎` 开输入行
     /// （提示词是「保存为预设，名称  」），打完 `⏎` 存进**临时目录那份预设文件**——
-    /// 文件里原来那两份原样留着，存下的那一份当场成了套着的那一份、**不记型号**。
+    /// 文件里原来那两份原样留着，存下的那一份当场成了套着的那一份、**连型号一起存**。
     #[test]
     fn saving_a_named_preset_writes_it_into_the_preset_file_on_disk() {
         let scene = assert_sequence("config-p-save");
@@ -2202,7 +2306,14 @@ mod redesign {
         assert_eq!(scene.presets.read("画集").expect("原样留着"), before);
         let stored = scene.presets.read("插图").expect("存下来了");
         assert_eq!(stored, scene.session.preset_to_store());
-        assert_eq!(stored.device.profile, None, "存出去的那一份不记型号");
+        assert!(
+            scene.session.device.profile.is_some(),
+            "前提：这一景挑了型号"
+        );
+        assert_eq!(
+            stored.device.profile, scene.session.device.profile,
+            "存出去的那一份连型号一起存"
+        );
         assert_eq!(
             scene
                 .session
@@ -2233,6 +2344,7 @@ mod redesign {
             rows: 36,
         };
         let before = scene.presets.read("画集").expect("另一份读得出");
+        let taken = scene.presets.read("漫画").expect("撞名的那一份读得出");
         let tap = |scene: &mut Scene, running: &mut Running, key: Key| {
             super::input(
                 &mut scene.session,
@@ -2255,7 +2367,7 @@ mod redesign {
         assert!(scene.session.views.input.is_some(), "第一下输入行留着");
         assert_eq!(
             scene.presets.read("漫画").expect("读得出"),
-            crate::preset::Preset::default(),
+            taken,
             "第一下盘一个字节都没动"
         );
         // **那一问真在屏上**：预设栏里、说明底下那一行——屏底这一刻让给了输入行，
@@ -2380,7 +2492,8 @@ mod redesign {
 
     /// **命令行上 `--preset` 拿到的，与会话里存出去的是同一份**（会话批 12 号票第五条，
     /// 经新输入入口）：问的是**接头**——会话写出去的那份文件，`Cli` 那一路读得懂，
-    /// 而且合出来的 `Request` 与会话拼的一样（型号不进预设，命令行那一头照样点名）。
+    /// 而且合出来的 `Request` 与会话拼的一样。**型号跟着那一份走**（`design-parity/07`）：
+    /// 命令行上不点 `--profile`，型号从那份预设里来——那一份没写型号的话，这里拼不出来。
     #[test]
     fn a_preset_saved_in_the_session_is_the_one_the_command_line_takes() {
         let mut scene = Scene::named("config");
@@ -2404,12 +2517,6 @@ mod redesign {
         let read_back = crate::preset::read(&text, "插图").expect("命令行这一路读得懂");
         assert_eq!(read_back, scene.session.preset_to_store());
 
-        let device = scene
-            .session
-            .device
-            .profile
-            .clone()
-            .expect("这一景挑了型号");
         let asked = scene
             .session
             .request(tonefit::Mode::Process)
@@ -2417,8 +2524,6 @@ mod redesign {
         let out = asked.output_root.display().to_string();
         let mut line = vec![
             "tonefit".to_owned(),
-            "--profile".to_owned(),
-            device,
             "--out".to_owned(),
             out,
             "--preset".to_owned(),

@@ -666,8 +666,9 @@ function premiseText(key) {
     default: return '';
   }
 }
+// 「漫画」是在这台 kobo-libra-2 上存的，型号跟着进了那一份；「画集」没写型号，套它型号回到「没说」（CONTEXT《预设栏》）
 const PRESETS = [
-  { name: '漫画', says: { fit: null, dither: null } },
+  { name: '漫画', says: { model: 'kobo-libra-2', fit: null, dither: null } },
   { name: '画集', says: { fit: 'inside', crop: '不裁', split: '不拆', depth: '4bit' } },
 ];
 
@@ -1373,10 +1374,13 @@ function drawTask(scr) {
 // ───────────────────────── 配置视图、覆盖层、补全弹层、终端太小 ─────────────────────────
 
 const presetOf = (name) => PRESETS.find((p) => p.name === name);
+// 一份预设记得下的那几项：设备设置与处理选项两组，型号在里面（CONTEXT《预设》，停车场 Q891 拍板）。
+// 存、套、「改动了 N 项」、行尾的 `*` 读它；「包含 N 项设置」数的是一份的 `says`，而存出去的 `says` 就是这几项
+const stored = (c) => c.kind === 'model' || c.kind === 'ring' || c.kind === 'text';
 function changedKeys() {
   const p = presetOf(S.cfg.applied);
   if (!p) return [];
-  return CONFIG.filter((c) => c.key && (c.kind === 'ring' || c.kind === 'text') && (c.value ?? null) !== (p.says[c.key] ?? null)).map((c) => c.label);
+  return CONFIG.filter((c) => c.key && stored(c) && (c.value ?? null) !== (p.says[c.key] ?? null)).map((c) => c.label);
 }
 const cfgSelectable = () => CONFIG.map((c, i) => (c.key ? i : -1)).filter((i) => i >= 0);
 const readOnly = () => S.run && S.run.stage !== 'ended';
@@ -1412,7 +1416,7 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
       continue;
     }
     const set = c.kind === 'model' || c.kind === 'info' ? c.kind === 'model' : c.value != null;
-    const changed = p && (c.kind === 'ring' || c.kind === 'text') && (c.value ?? null) !== (p.says[c.key] ?? null);
+    const changed = p && stored(c) && (c.value ?? null) !== (p.says[c.key] ?? null);
     const vst = (set ? 'c-fg' : 'c-gray') + (ro ? ' d' : '') + (cur && focused ? ' b' : '');
     scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
     scr.hit(x + 1, yy, w - 2, 1, { cfgRow: from + i });
@@ -1692,7 +1696,7 @@ function submitInput() {
   const path = inp.buf.replace(/\/+$/, '');
   if (inp.kind === 'search') { S.search = { q: inp.buf }; if (inp.buf) jump({ q: inp.buf }, 1); return; }
   if (inp.kind === 'value') { CONFIG[S.cfg.cursor].value = inp.buf.trim() || null; return toast([['✓ ', 'c-green b'], [CONFIG[S.cfg.cursor].label + ' → ' + (inp.buf.trim() || '未设置'), 'c-fg']]); }
-  if (inp.kind === 'preset') { if (!inp.buf.trim()) return; PRESETS.push({ name: inp.buf.trim(), says: Object.fromEntries(CONFIG.filter((c) => c.kind === 'ring' || c.kind === 'text').map((c) => [c.key, c.value])) }); S.cfg.applied = inp.buf.trim(); return toast([['✓ ', 'c-green b'], ['已保存预设「' + inp.buf.trim() + '」', 'c-fg']]); }
+  if (inp.kind === 'preset') { if (!inp.buf.trim()) return; PRESETS.push({ name: inp.buf.trim(), says: Object.fromEntries(CONFIG.filter(stored).map((c) => [c.key, c.value])) }); S.cfg.applied = inp.buf.trim(); return toast([['✓ ', 'c-green b'], ['已保存预设「' + inp.buf.trim() + '」', 'c-fg']]); }
   if (!path) return;
   const parent = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1);
   const hit = (fsList(parent) || []).find((c) => c.name === name);
@@ -1860,7 +1864,7 @@ function configKey(k) {
       if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
       if (S.cfg.pcursor === PRESETS.length) { startInput('preset'); return true; }
       const p = PRESETS[S.cfg.pcursor];
-      for (const item of CONFIG) if (item.kind === 'ring' || item.kind === 'text') item.value = p.says[item.key] ?? null;
+      for (const item of CONFIG) if (stored(item)) item.value = p.says[item.key] ?? null;
       S.cfg.applied = p.name;
       toast([['✓ ', 'c-green b'], ['已使用预设「' + p.name + '」', 'c-fg']]);
       return true;
