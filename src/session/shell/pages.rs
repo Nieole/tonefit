@@ -162,7 +162,7 @@ fn word_of(what: Notable) -> Option<&'static str> {
 struct Entry {
     mark: Mark,
     /// 页面：**源那一侧的成员名**，只印最后那一段（[`render::volume_name`]，
-    /// 与面包屑末一截同一处出处）。
+    /// 与卷表代表页那一列同一处出处）。
     name: String,
     size: String,
     scaling: String,
@@ -425,8 +425,8 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
 /// 抬头那条**面包屑**：任务 › 分区的路径 › 目录 › 卷。
 ///
 /// **分区那一截只在这一卷归一条分区时在场**（顶格目录行本身就是顶层，
-/// `CONTEXT.md` 的《分区》）。末一截是卷名（[`render::volume_name`]，归档卷去掉扩展名，
-/// 停车场 Q849），与表上页名同一处出处。
+/// `CONTEXT.md` 的《分区》）。末一截是卷名：清点清单上那一格
+/// （[`super::super::tree::Tree::name`]，分卷序列那一卷是序列的名字，`design-parity/12`）。
 fn crumbs(session: &Session) -> Vec<Segment> {
     let mut segments = vec![Segment::faint("任务")];
     let Some(pages) = &session.views.task.pages else {
@@ -444,7 +444,9 @@ fn crumbs(session: &Session) -> Vec<Segment> {
     }
     segments.push(Segment::faint(" › "));
     segments.push(Segment::new(
-        render::volume_name(&pages.volume),
+        at.and_then(|at| tree.name(at))
+            .unwrap_or_default()
+            .to_owned(),
         Look::PLAIN.bold(),
     ));
     segments

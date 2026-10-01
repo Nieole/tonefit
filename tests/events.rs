@@ -14,6 +14,7 @@
 
 mod fixtures;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1414,7 +1415,7 @@ fn volume_with_pages(space: &Workspace, name: &str, pages: usize) -> fixtures::V
 }
 
 /// 开工那一条带着**卷清单**：照发现的次序，每一卷的卷根、步数上界、源页数
-/// （`session-redesign/03`，收停车场 Q719）。
+/// （`session-redesign/03`，收停车场 Q719；卷名那一格见下一条）。
 ///
 /// 三样各与随后的事件、返回的报告对一遍：卷根按随后各卷**开卷的次序**一一对得上；
 /// 步数与开卷那一条报的是同一个数；源页数与那一卷报告上的 `source_pages` 相同。
@@ -1470,6 +1471,52 @@ fn the_run_started_event_carries_the_survey_in_the_order_the_volumes_open() {
             .map(|volume| volume.source_pages)
             .collect::<Vec<_>>(),
         "清单上的源页数与各卷报告说的不是一个数"
+    );
+}
+
+/// 清单上**每一卷各带一个卷名**，就是清点认卷时算出来的那一个（`design-parity/12`，
+/// 收停车场 Q849）：目录卷是目录名，归档卷是去掉扩展名的文件名，**分卷序列**是序列的名字
+/// ——`.partN` 那一截要读一次归档头才去得掉，而清点认「这一份是不是另一份的续」时本来就读过它
+/// （`CONTEXT.md` 的《分卷序列》）。续的那几份不是卷，清单上没有它们。
+///
+/// 卷名在两个入口各算一次，两个各走一遍：库里**发现**出来的那几卷（`库` 底下一个目录卷、
+/// 一个 `.cbz`、一组分卷），与**点名**的那一份分卷头。比的是「卷根 → 卷名」整张表，
+/// 清单上多一份续的、少一卷、哪一卷名字带着 `.partN`，都对不上。
+#[test]
+fn the_roster_names_every_volume_and_a_split_sequence_after_the_sequence() {
+    let space = Workspace::new();
+    let directory = volume_with_pages(&space, "库/目录卷", 2);
+    let archive = small_cbz(&space, "库/归档卷");
+    let library = directory
+        .path()
+        .parent()
+        .expect("目录卷在库里")
+        .to_path_buf();
+    let discovered = fixtures::rar::write_split(&library, "第01卷", 2);
+    let named = space.split_rar("第02卷", 2);
+    let recorder = Recorder::default();
+
+    tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [library.as_path(), named[0].as_path()])
+    })
+    .expect("处理应当成功");
+
+    let roster = recorder.roster().expect("开工那一条没到");
+    let names: BTreeMap<PathBuf, String> = roster
+        .iter()
+        .map(|one| (one.root.clone(), one.name.clone()))
+        .collect();
+    assert_eq!(names.len(), roster.len(), "清单里卷根重了：{roster:?}");
+    assert_eq!(
+        names,
+        BTreeMap::from([
+            (directory.path().to_path_buf(), "目录卷".to_owned()),
+            (archive, "归档卷".to_owned()),
+            (discovered[0].clone(), "第01卷".to_owned()),
+            (named[0].clone(), "第02卷".to_owned()),
+        ]),
+        "清单上的卷名不是清点认出来的那一个，或者续的那一份上了清单"
     );
 }
 

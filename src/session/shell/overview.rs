@@ -27,7 +27,7 @@ use super::canvas::{Border, Canvas, hint};
 use super::marks::{self, spell};
 use super::topbar::model;
 use super::yielding;
-use crate::render::{self, Notable};
+use crate::render::Notable;
 
 /// 画总览，从第 `y` 行起、占整宽；回它占了几行（正文加上下两条框线）。
 pub(super) fn draw(
@@ -343,7 +343,8 @@ fn compact_lines(
     vec![first, second]
 }
 
-/// 当前卷屏上怎么写：它那个目录加卷名（`集英社/海贼王/第15卷`）。
+/// 当前卷屏上怎么写：它那个目录加卷名（`集英社/海贼王/第15卷`）。卷名是清点清单上那一格
+/// （[`super::super::tree::Tree::name`]），分卷序列那一卷是序列的名字。
 ///
 /// **总览与确认条说的是同一卷，名字因此同一处**（[`super::decision`]）：
 /// 两处各写一遍的话，等待确认那一屏上下两行会把同一卷叫成两个名字。
@@ -352,13 +353,13 @@ pub(super) fn current_name(session: &Session, live: &Live) -> String {
         return String::new();
     };
     let tree = &session.views.task.tree;
-    let name = render::volume_name(&walking.volume);
-    match tree
-        .index_of(&walking.volume)
-        .and_then(|at| tree.directory_of(at))
-    {
+    let Some(at) = tree.index_of(&walking.volume) else {
+        return String::new();
+    };
+    let name = tree.name(at).unwrap_or_default();
+    match tree.directory_of(at) {
         Some(directory) => format!("{}/{name}", directory.label),
-        None => name,
+        None => name.to_owned(),
     }
 }
 

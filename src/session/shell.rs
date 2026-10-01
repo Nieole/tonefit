@@ -154,21 +154,45 @@ fn config(canvas: &mut Canvas<'_>, session: &Session, phase: Phase, screen: Rect
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::time::Instant;
+
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
+    use tonefit::{Mode as RunMode, Pass, Request, SurveyedVolume};
 
+    use super::super::live::{Live, Resuming, fixture};
     use super::super::scene::Scene;
+    use super::super::state::{NamedPath, Session};
+    use super::super::view::Pages;
     use super::design::{self, Expected, assert_no_background, assert_same_cells};
     use super::draw;
     use super::paint::forcing;
 
     /// 在测试后端上画一屏，取回缓冲。
     fn painted(scene: &Scene, width: u16, height: u16) -> Buffer {
+        painted_as(
+            &scene.session,
+            scene.live.as_ref(),
+            scene.now(),
+            width,
+            height,
+        )
+    }
+
+    /// 同 [`painted`]，会话与那一趟由用例自己摆（场景数据里没有的那一种卷，用例自己造）。
+    fn painted_as(
+        session: &Session,
+        live: Option<&Live>,
+        now: Instant,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试后端起得来");
         terminal
             .draw(|frame| {
-                draw(frame, &scene.session, scene.live.as_ref(), scene.now());
+                draw(frame, session, live, now);
             })
             .expect("画得出来");
         terminal.backend().buffer().clone()
@@ -486,5 +510,92 @@ mod tests {
         // 对照：上色那一屏与快照本来就相等，说明差的只有颜色。
         let coloured = forcing(true, || painted(&scene, 120, 36));
         assert_same_cells(&coloured, &design::snapshot("fresh", 120, 36));
+    }
+
+    /// **分卷序列那一卷屏上写序列的名字**（`design-parity/12`，收停车场 Q849）：
+    /// `第01卷`，不是 `第01卷.part1`——卷名读清点清单上那一格，不从卷根猜。
+    ///
+    /// 场景数据里没有分卷序列，这里用 `live` 的夹具自己摆：`库/棋魂` 底下两组分卷，
+    /// 头一组做完了、第二组正在处理，目录展开着。名字落在屏上的四处各看一眼——卷行、
+    /// 目录行行尾那一卷、总览的当前卷、进了做完那一卷之后每页结果面包屑的末一截——
+    /// 而 `.part` 这一截哪一屏上都不许再出现（屏上改掉的一句假话，反着钉）。
+    #[test]
+    fn a_split_sequence_goes_by_the_sequence_name_on_screen() {
+        /// 每一卷预告的步数与源页数：只此一处，下面开卷、开工与认卷行都读它。
+        const STEPS: u64 = 1000;
+        const PAGES: usize = 20;
+        let library = PathBuf::from("库");
+        let shelf = library.join("棋魂");
+        let roster: Vec<SurveyedVolume> = ["第01卷", "第02卷"]
+            .into_iter()
+            .map(|name| SurveyedVolume {
+                root: shelf.join(format!("{name}.part1.rar")),
+                name: name.to_owned(),
+                steps: STEPS,
+                source_pages: PAGES,
+            })
+            .collect();
+        let epoch = Instant::now();
+        let request = Request {
+            inputs: vec![library.clone()],
+            ..fixture::request(RunMode::Process)
+        };
+        let mut live = fixture::live_for(epoch, &request, Resuming::GoesOn);
+        live.run_started(
+            roster.iter().map(|listed| listed.steps).sum(),
+            &roster,
+            &[],
+            &[],
+        );
+        // 做完的那一卷：夹具的卷报告按 `库/<名>` 摆卷路径，名字从清单上那个卷根切出来。
+        let finished = roster[0].root.strip_prefix(&library).expect("卷在库里");
+        live.volume_started(&roster[0].root, STEPS);
+        live.volume_finished(&fixture::processed_volume(
+            finished.to_str().expect("卷根是 UTF-8"),
+            None,
+        ));
+        live.volume_started(&roster[1].root, STEPS);
+        live.pass_started(Pass::First, None);
+        let mut session = Session::new();
+        session.scope.paths = vec![NamedPath {
+            path: library.clone(),
+            on: true,
+        }];
+        session.views.clock = Some(epoch);
+        session.run_started();
+        session.watch_the_run(&live);
+        session.views.task.expanded.insert(shelf.clone());
+
+        let listed = design::lines_of(&painted_as(&session, Some(&live), epoch, 120, 36));
+        session.views.task.pages = Some(Pages::of(roster[0].root.clone()));
+        let opened = design::lines_of(&painted_as(&session, Some(&live), epoch, 120, 36));
+
+        // 屏上带着 `marker` 的那一行，找不到就把整屏印出来。
+        let line = |lines: &[String], marker: &str| -> String {
+            lines
+                .iter()
+                .find(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("屏上没有带「{marker}」的一行：\n{}", lines.join("\n")))
+                .clone()
+        };
+        for (said, expected) in [
+            (line(&listed, "✓ "), "✓ 第01卷 "),
+            (line(&listed, &format!("{PAGES} 页")), "第02卷 "),
+            (line(&listed, "1/2 卷"), "第02卷 ⋅ "),
+            (line(&listed, "当前卷 "), "当前卷 棋魂/第02卷 ⋅ "),
+            (line(&opened, "任务 › "), "任务 › 棋魂 › 第01卷 "),
+        ] {
+            assert!(
+                said.contains(expected),
+                "该写「{expected}」的那一行写成了：{said}"
+            );
+        }
+        for lines in [&listed, &opened] {
+            assert!(
+                !lines.iter().any(|line| line.contains(".part")),
+                "分卷那一截又上了屏：\n{}",
+                lines.join("\n")
+            );
+        }
     }
 }

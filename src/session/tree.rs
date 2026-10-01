@@ -130,6 +130,13 @@ pub struct Tree {
     /// 留一份在树上，行才**自己答得出身份**：认一行是哪一卷不必再去问那一趟，
     /// 而状态机（[`super::view::Session::perform`]）本来就够不着它。
     pub roots: Vec<PathBuf>,
+    /// 清点清单上每一卷的**卷名**，与 [`roots`](Self::roots) 同序同长（[`name`](Self::name)）。
+    ///
+    /// **一卷在屏上叫什么一律读它**（`design-parity/12`，收停车场 Q849）：卷行、目录行行尾
+    /// 那一卷、总览的当前卷、每页结果面包屑的末一截、搜索比的「目录名/卷名」。它是库清点时
+    /// 认卷算出来的那一个（[`tonefit::SurveyedVolume::name`]）——分卷序列那一卷是序列的名字，
+    /// 从卷根上只猜得出 `第01卷.part1`。留一份在树上，是因为搜索那一问在状态机里，够不着那一趟。
+    names: Vec<String>,
     /// 没勾的处理路径有几条——末行那一句说的就是它，零就没有那一行。
     pub unchecked: usize,
     /// **卷根换回清单序号**（[`index_of`](Self::index_of)）。拼树那一刻立起来：
@@ -245,6 +252,7 @@ impl Tree {
         Self {
             nodes,
             roots: roster.iter().map(|listed| listed.root.clone()).collect(),
+            names: roster.iter().map(|listed| listed.name.clone()).collect(),
             unchecked: paths.iter().filter(|named| !named.on).count(),
             index: roster
                 .iter()
@@ -329,6 +337,11 @@ impl Tree {
         self.roots.get(volume).map(PathBuf::as_path)
     }
 
+    /// 清单里第几卷**叫什么**：清点清单上的卷名（见 [`names`](Self::names)）。
+    pub fn name(&self, volume: usize) -> Option<&str> {
+        self.names.get(volume).map(String::as_str)
+    }
+
     /// 树上**每一个目录**的路径。只有[全部摊开那一副](Self::every_row)要它。
     fn every_directory(&self) -> BTreeSet<PathBuf> {
         self.nodes
@@ -361,7 +374,7 @@ impl Tree {
             Row::Volume { at, .. } => Some(format!(
                 "{}/{}",
                 self.directory_of(at)?.label,
-                crate::render::volume_name(self.root(at)?)
+                self.name(at)?
             )),
             Row::Note { node, at, .. } => {
                 let note = self.note(node, at)?;
@@ -555,10 +568,17 @@ mod tests {
         }
     }
 
-    /// 清点清单上的一卷（步数与源页数这一层不看）。
+    /// 清点清单上的一卷（步数与源页数这一层不看）。卷名取卷根末一级去掉扩展名——
+    /// 用它的那几条不问卷名；卷名与卷根对不上的那一种（分卷序列）由问它的那一条自己造。
     fn listed(root: &str) -> SurveyedVolume {
+        let root = PathBuf::from(root);
         SurveyedVolume {
-            root: PathBuf::from(root),
+            name: root
+                .file_stem()
+                .expect("卷根有末一级")
+                .to_string_lossy()
+                .into_owned(),
+            root,
             steps: 3,
             source_pages: 1,
         }
@@ -757,5 +777,27 @@ mod tests {
         let roster = [listed("/甲/一/第01卷"), listed("/乙/二/第01卷")];
         let tree = Tree::of(&paths, &roster, &[], &[]);
         assert_eq!(sketch(&tree, &BTreeSet::new(), &roster), ["二", "一"]);
+    }
+
+    /// **一卷叫什么读清单上的卷名，不从卷根猜**（`design-parity/12`，收停车场 Q849）：
+    /// 分卷序列那一卷的卷根是头一份（`第01卷.part1.rar`），清单上的卷名是序列的名字——
+    /// 树把它原样留着，搜索比的「目录名/卷名」用的就是它，`.part1` 那一截不进来。
+    #[test]
+    fn a_volume_goes_by_its_name_on_the_roster_not_by_its_root() {
+        let paths = [named("/库/棋魂", true)];
+        let roster = [SurveyedVolume {
+            root: PathBuf::from("/库/棋魂/第01卷.part1.rar"),
+            name: "第01卷".to_owned(),
+            steps: 3,
+            source_pages: 1,
+        }];
+        let tree = Tree::of(&paths, &roster, &[], &[]);
+        assert_eq!(tree.name(0), Some("第01卷"));
+        assert_eq!(
+            tree.searched_text(Row::Volume { at: 0, indent: 1 })
+                .as_deref(),
+            Some("棋魂/第01卷"),
+            "搜索比的卷名不是清单上那一个"
+        );
     }
 }

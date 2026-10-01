@@ -1100,6 +1100,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
         .iter()
         .map(|listed| SurveyedVolume {
             root: expand(home, &listed.root),
+            name: listed.name.clone(),
             steps: listed.steps,
             source_pages: listed.source_pages,
         })
