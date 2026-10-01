@@ -24,16 +24,17 @@
 //! 配置视图那一副的内容（设置栏那几行、详情栏那几格、画质判定参数那五行）在 [`config`]；
 //! 家目录缩写在 [`home`]；边跑边攒的那一份在 [`live`]；起线程在 [`run`]；
 //! 一个列表在一个格子里露出哪一段在 [`viewport`]；卷列表与每页结果那两张表各有哪几列、
-//! 窄了先让谁在 [`columns`]；屏上一件事有多重分成哪四种在 [`tone`]，一格要什么样子在 [`look`]。
+//! 窄了先让谁在 [`columns`]；屏上一件事有多重分成哪四种在 [`tone`]，一格要什么样子在 [`look`]，
+//! 环节在屏上叫什么在 [`passes`]。
 //! 整屏画法在 [`shell`]（屏上一块一个模块，**名单只在它的模块文档那张表里**，这里不抄第二份），
 //! 进出终端、键码翻译与那条循环在 [`terminal`]（它把每一个输入交给 `input`）。
 //! 按设计稿的场景数据摆出那一趟与三组设置的测试夹具在 [`scene`]（只在 `test` 里）。
 //!
 //! # 终端库在哪一半
 //!
-//! **分界就是这几行 `mod`。**上面十五个模块（[`columns`]、[`state`]、[`live`]、[`run`]、
+//! **分界就是这几行 `mod`。**上面十六个模块（[`columns`]、[`state`]、[`live`]、[`run`]、
 //! [`complete`]、[`viewport`]、[`tone`]、[`look`]、[`home`]、[`keymap`]、[`view`]、[`cover`]、
-//! [`typing`]、[`tree`]、[`config`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
+//! [`typing`]、[`tree`]、[`config`]、[`passes`]）一个终端库都不 `use`，因此摆在特性**外面**：`--no-default-features`
 //! 那一趟照编、照跑它们自带的用例（`p2-loose-ends/01`，闸门的第二条）；只在 `test` 里的
 //! [`scene`] 也在外面，那一趟照跑它不经画法的那几条。真要终端库的那两个
 //! （[`shell`] 画屏，[`terminal`] 进出终端并翻译 crossterm 键码）留在 `tui` 后面——
@@ -77,12 +78,13 @@ mod cover;
 mod home;
 mod keymap;
 mod look;
+mod passes;
 mod tree;
 mod typing;
 mod view;
 
 // 场景夹具：按设计稿导出的场景数据摆出那一趟与三组设置（`session-redesign/05`）。
-// 它一个终端库都不 `use`，因此与上面十五个一样摆在特性外面：`--no-default-features`
+// 它一个终端库都不 `use`，因此与上面十六个一样摆在特性外面：`--no-default-features`
 // 那一趟照编、照跑它自带的用例；只有对着设计快照字网格的那几条挂在 `tui` 后面。
 #[cfg(test)]
 mod scene;

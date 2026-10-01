@@ -19,11 +19,12 @@ use tonefit::{Candidate, Instruction, RunOutcome};
 use super::super::keymap::{self, Deed, Phase, Want};
 use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
+use super::super::passes;
 use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::Focus;
 use super::canvas::{Border, Canvas, hint};
-use super::marks::{self, pass_name, spell};
+use super::marks::{self, spell};
 use super::topbar::model;
 use super::yielding;
 use crate::render;
@@ -249,7 +250,7 @@ fn in_a_run(
                 Look::PLAIN.bold(),
             ),
             Segment::faint(" ⋅ "),
-            Segment::new(pass_name(pass), marks::pass_look(pass)),
+            Segment::new(passes::name(pass), marks::pass_look(pass)),
             Segment::plain(" "),
         ];
         let width = inner.saturating_sub(80).clamp(8, 24);
@@ -329,7 +330,7 @@ fn compact_lines(
                 super::super::columns::elide(&current_name(session, live), 22),
                 Look::PLAIN.bold(),
             ),
-            Segment::new(format!(" {}", pass_name(pass)), marks::pass_look(pass)),
+            Segment::new(format!(" {}", passes::name(pass)), marks::pass_look(pass)),
             Segment::faint(format!(" {done}/{pages}")),
         ]);
     }

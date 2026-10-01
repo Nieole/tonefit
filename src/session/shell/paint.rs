@@ -26,7 +26,7 @@ use tonefit::{BitDepth, Pass};
 /// | 转换 | 青 |
 /// | 卷名 | 灰（ANSI 7） |
 /// | 灰阶档位 | 1bit 品红 · 2bit 青 · 4bit 蓝 |
-/// | 环节 | 查重品红 · 分析蓝 · 写出青 |
+/// | 环节 | 摊开绿 · 查重品红 · 分析蓝 · 写出青 |
 /// | 完成 · 处理中 | 绿 · 蓝 |
 /// | 聚焦框与光标 | 亮绿 |
 /// | 顶栏右端那一块 | 蓝 |
@@ -77,11 +77,12 @@ fn colour_of(hue: Hue) -> Option<Color> {
         Hue::Kind(Kind::Depth(BitDepth::Two)) => Some(Color::Cyan),
         Hue::Kind(Kind::Depth(BitDepth::Four)) => Some(Color::Blue),
         Hue::Kind(Kind::Depth(BitDepth::Eight)) => None,
+        // 摊开那一色由设计稿给（停车场 Q1127）：与另外三个环节分得开，又不是一种语义色。
+        Hue::Kind(Kind::Pass(Pass::Extraction)) => Some(Color::Green),
         Hue::Kind(Kind::Pass(Pass::Fingerprint)) => Some(Color::Magenta),
         Hue::Kind(Kind::Pass(Pass::First)) => Some(Color::Blue),
         Hue::Kind(Kind::Pass(Pass::Second)) => Some(Color::Cyan),
-        // 环节那个枚举是 `non_exhaustive`。摊开眼下落在这一支上：它那一色由设计稿给，
-        // 归 `design-parity/13`。
+        // 环节那个枚举是 `non_exhaustive`：库多一个环节，屏上先不上色。
         Hue::Kind(Kind::Pass(_)) => None,
         Hue::Kind(Kind::Done | Kind::Caption) => Some(Color::Green),
         Hue::Kind(Kind::Working | Kind::Banner | Kind::Directory) => Some(Color::Blue),

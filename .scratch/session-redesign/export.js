@@ -40,9 +40,9 @@ const MAIN = [120, 36];
 const NARROW = [80, 24];
 const TINY = [56, 14];
 
-/** 要导出的快照：11 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
+/** 要导出的快照：12 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search']
+  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -154,7 +154,7 @@ const SEQUENCES = [
   { name: 'survey-help', scene: 'survey', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'deciding-help', scene: 'deciding', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'ended-help', scene: 'ended', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
-  { name: 'help-j', scene: 'help', size: MAIN, steps: k('j'), says: '1–27 of 27' },
+  { name: 'help-j', scene: 'help', size: MAIN, steps: k('j'), says: '1–31 of 31' },
   { name: 'help-narrow-j-k', scene: 'help', size: NARROW, steps: k('j', 'k'), says: '1–' },
   { name: 'help-narrow-G', scene: 'help', size: NARROW, steps: k('G'), says: 'of' },
   { name: 'help-Escape', scene: 'help', size: MAIN, steps: k('Escape'), says: '[自动滚动]' },
@@ -353,7 +353,7 @@ function cursorData(design, key, { dirRoot, rootOf }) {
 /** 这一刻的场景数据（spec《导出》：语义字段，不是屏上的字）。 */
 function sceneData(page) {
   const { design, clock } = page;
-  const { S, CONFIG, PRESETS, PANELS, SHOW, CWD, PRESETS_FILE, pagesOf, stepsOf, isolatedOutput, dirRoot } = design;
+  const { S, CONFIG, PRESETS, PANELS, SHOW, CWD, PRESETS_FILE, pagesOf, stepsOf, extracts, isolatedOutput, dirRoot } = design;
   const r = S.run;
   const cfgIndex = (i) => (CONFIG[i] && CONFIG[i].key) || null;
   const settings = settingsOf(CONFIG.filter((c) => c.key && c.kind !== 'info').map((c) => [c.key, c.value ?? null]));
@@ -409,7 +409,8 @@ function sceneData(page) {
       entries: r.tree.entries.map((e) => (e.type === 'section'
         ? { kind: 'section', path: e.path, directories: e.dirs.map(dirRoot), notes: e.notes.map(noteData) }
         : { kind: 'directory', root: dirRoot(e.dir), notes: (e.notes || []).map(noteData) })),
-      volumes: r.tree.vols.map((v) => ({ root: rootOf(v), directory: dirRoot(v.dir), name: v.name, source_pages: v.pages, steps: stepsOf(v) })),
+      // 要摊开的卷多记一格 `extracts`（它先走摊开那个环节，`pass` 数的是它自己那四个）；不摊开的卷不写这一格
+      volumes: r.tree.vols.map((v) => ({ root: rootOf(v), directory: dirRoot(v.dir), name: v.name, source_pages: v.pages, steps: stepsOf(v), ...(extracts(v) ? { extracts: true } : {}) })),
       unchecked: r.tree.unchecked,
     },
     // 每卷此刻怎么样。逐页结果只给**屏上开着的那一卷**整份（一趟 84 卷 × 近两百页，整份摆出来一个场景就是

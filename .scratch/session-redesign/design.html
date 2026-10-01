@@ -352,7 +352,7 @@ const dirOf = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [vn(
 const FS = {
   '~': {
     '漫画库': { '哆啦A梦': dirOf(12), '集英社': { '海贼王': dirOf(18) }, '攻壳机动队': dirOf(6), '银河英雄传说': dirOf(9), '私藏': {}, '字体包.zip': null, '答案.txt': null, 'README.md': null },
-    '下载': { '灰原哀': Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${vn(i + 1)}.cbz`, null])), '轻小说插图': dirOf(3) },
+    '下载': { '灰原哀': Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${vn(i + 1)}.cbz`, null])), '轻小说插图': dirOf(3), '虫师': Object.fromEntries(Array.from({ length: 3 }, (_, i) => [`${vn(i + 1)}.rar`, null])) },
     'Comics': { '棋魂': dirOf(23), '大友克洋': { 'AKIRA': dirOf(6), '童梦': { '上': {}, '下': {} } }, '火之鸟': dirOf(12), '寄生兽': dirOf(10) },
     '转好的': {},
   },
@@ -377,6 +377,8 @@ const NAMED0 = [
   { path: '~/Comics/棋魂', kind: '文件夹', on: true },
   { path: '~/Comics/大友克洋', kind: '文件夹', on: true },
 ];
+// 要摊开的那几卷（`.rar`，CONTEXT《读取形态》）：只有「正在摊开」那一景把它们勾上，排在最前
+const NAMED_RAR = Array.from({ length: 3 }, (_, i) => ({ path: `~/下载/虫师/${vn(i + 1)}.rar`, kind: '压缩包', on: true }));
 const nestedIn = (p, list) => list.find((o) => o.on && o.path !== p && o.kind === '文件夹' && p.startsWith(o.path + '/'));
 // 备注行行尾那一句：无法访问的地方一行就是一处（`entries` 恒一条），给那条错误链；非漫画文件一行装整组，给那一小结抬头那一句
 const noteBrief = (n) => (n.kind === 'unreach' ? n.entries[0][1] : n.said);
@@ -454,7 +456,7 @@ function discover(named) {
         merged[parent] = d; entries.push({ type: 'dir', dir: d });
       }
       const d = merged[parent];
-      const v = mkVol(d, np.path.slice(np.path.lastIndexOf('/') + 1).replace(/\.cbz$/, ''), 'haibara', np.path, np.path);
+      const v = mkVol(d, np.path.slice(np.path.lastIndexOf('/') + 1).replace(/\.(cbz|zip|rar|7z)$/, ''), 'haibara', np.path, np.path);
       d.vols.push(v); vols.push(v);
       continue;
     }
@@ -669,8 +671,20 @@ const PRESETS = [
   { name: '画集', says: { fit: 'inside', crop: '不裁', split: '不拆', depth: '4bit' } },
 ];
 
+// 环节（CONTEXT《环节》）：按走的次序，名字、种类色与它在做什么。要摊开的卷（.rar／.7z，《读取形态》）先摊开，
+// 其余的卷走后三个。横条上那个词、全部按键那一张的环节一节都从这里取，与词汇表逐字相同。
+// 摊开那一色是绿：与另外三个环节（品红 · 蓝 · 青）分得开，又不是一种语义色（黄 · 红 · 暗灰说的是「怎么样」）（停车场 Q1127）
+const PASSES = ['摊开', '查重', '分析', '写出'];
+const PASS_ST = { 摊开: 'c-green', 查重: 'c-magenta', 分析: 'c-blue', 写出: 'c-cyan' };
+const PASS_WHAT = { 摊开: '.rar / .7z 先整卷解到临时目录', 查重: '之前转换过、源和设置没变就跳过', 分析: '逐页解码、缩放，定下灰阶档位', 写出: '照定下的档位编码，写进输出目录' };
+const extracts = (v) => /\.(rar|7z)$/.test(v.root);
+// 这一卷走哪几个环节；卷状态里的 `pass` 是其中第几个（-1 还没轮到，走完是它的个数）
+const passesOf = (v) => (extracts(v) ? PASSES : PASSES.slice(1));
+const passOf = (v, s) => passesOf(v)[s.pass];
+
 // 全部按键只列此刻派得出的键：每一行第三格是派得出它的阶段——I 还没开始 · S 清点中 · R 转换中 · D 等待确认 · E 已结束，
-// 不写即任何阶段都派得出。同一个键在不同阶段做的事不同，就分成几行各写各的；一行都不剩的组整组不出
+// 不写即任何阶段都派得出。同一个键在不同阶段做的事不同，就分成几行各写各的；一行都不剩的组整组不出。
+// 末尾两节不是键：灰阶写法与环节是屏上那几个字各是什么意思；环节那几个字只在跑着与等待确认时上屏（Q1128）
 const KEYMAP = [
   ['全局', [['1 2', '切换视图：任务 / 配置'], ['gt gT', '下一个 / 上一个视图'], ['Tab', '同一视图里切换区块'], ['?', '全部按键，再按一次关闭'], ['q', '退出', 'IE'], ['q', '不退出：先按 s 停止，或按 C-c', 'SRD'], ['C-c', '退出（当前卷不保存，不留半成品）']]],
   ['移动', [['j k', '上下一行'], ['C-d C-u', '半屏'], ['C-f C-b', '一屏'], ['gg G', '到顶 / 到底'], ['滚轮', '一格三行'], ['单击', '选中那一行']]],
@@ -682,17 +696,16 @@ const KEYMAP = [
   ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图']]],
   ['输入', [['Tab', '补全路径', 'I'], ['C-w', '删一段', 'IRDE'], ['⏎', '确定', 'IRDE'], ['Esc', '取消', 'IRDE'], ['F1', '全部按键', 'IRDE']]],
   ['灰阶写法', [['1bit', '2 级灰'], ['2bit', '4 级灰'], ['4bit', '16 级灰'], ['+FS', '加抖动（误差扩散）']]],
+  ['环节', PASSES.map((p) => [p, PASS_WHAT[p], 'RD'])],
 ];
-// ───────────────────────── 模拟一趟：预扫 → 对指纹 → 读图定档 →（决策点）→ 按档写出 ─────────────────────────
+// ───────────────────────── 模拟一趟：预扫 →（摊开）→ 对指纹 → 读图定档 →（决策点）→ 按档写出 ─────────────────────────
 
-const PASSES = ['查重', '分析', '写出'];
-const PASS_ST = ['c-magenta', 'c-blue', 'c-cyan'];
 const RATE = 320;          // 读图定档每模拟秒走的步
 const SHOW = 7;            // 屏上的时间是模拟时间的几倍，让数字像一趟真的跑
 const SURVEY_SEC = 1.8;
 
-// 一卷几步：三个环节各走一遍它的页数（总进度按步数算）
-const stepsOf = (v) => 3 * v.pages;
+// 一卷几步：它走的每个环节各走一遍它的页数（摊开一个成员一步，假数据里成员就是页；总进度按步数算）
+const stepsOf = (v) => passesOf(v).length * v.pages;
 function newRun(mode, tree) {
   return {
     mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
@@ -713,8 +726,8 @@ function tick(run, dt) {
   }
   let budget = dt;
   while (budget > 1e-9 && run.stage === 'running') {
-    const v = run.tree.vols[run.cur], s = run.vs[run.cur];
-    const speed = s.pass === 0 ? RATE * 7 : s.pass === 2 ? RATE * 1.6 : RATE;
+    const v = run.tree.vols[run.cur], s = run.vs[run.cur], p = passOf(v, s);
+    const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : p === '摊开' ? RATE * 3 : RATE;
     const need = v.pages - s.done, can = budget * speed;
     if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; budget = 0; }
     // 一个环节走满，总步数就是一个整数（真程序一页一步）：连续时间一路攒下的浮点尾数在这里结清，
@@ -724,26 +737,27 @@ function tick(run, dt) {
 }
 
 function passDone(run) {
-  const v = run.tree.vols[run.cur], s = run.vs[run.cur];
-  if (s.pass === 0) {
+  const v = run.tree.vols[run.cur], s = run.vs[run.cur], p = passOf(v, s);
+  if (p === '摊开') { s.pass++; s.done = 0; return; }
+  if (p === '查重') {
     if (v.plan.volFail) return finishVol(run, 'failed');
     if (v.plan.skip) return finishVol(run, 'skipped');
-    s.pass = 1; s.done = 0; return;
+    s.pass++; s.done = 0; return;
   }
-  if (s.pass === 1) {
+  if (p === '分析') {
     s.tally = tallyOf(v);
     if (run.mode === 'trial' && !run.forTheRest) { run.stage = 'deciding'; s.state = 'deciding'; return; }
-    s.pass = 2; s.done = 0; return;
+    s.pass++; s.done = 0; return;
   }
   run.wrote = true;
   finishVol(run, v.plan.isolated ? 'isolated' : 'done');
 }
 
 function finishVol(run, state) {
-  const v = run.tree.vols[run.cur], s = run.vs[run.cur];
-  const walked = Math.max(0, s.pass) * v.pages + (s.pass >= 0 && s.pass < 3 ? s.done : 0);
+  const v = run.tree.vols[run.cur], s = run.vs[run.cur], n = passesOf(v).length;
+  const walked = Math.max(0, s.pass) * v.pages + (s.pass >= 0 && s.pass < n ? s.done : 0);
   run.steps += Math.max(0, stepsOf(v) - walked);   // 一卷收摊时结清预告剩下的步
-  s.state = state; s.pass = 3; s.done = v.pages;
+  s.state = state; s.pass = n; s.done = v.pages;
   if (run.latch >= 1) return endRun(run, 'stopped');
   startNext(run);
 }
@@ -760,7 +774,7 @@ function answer(run, key) {
   const s = run.vs[run.cur];
   if (key === 'x' || key === 'a') {
     if (key === 'a') run.forTheRest = true;
-    Object.assign(s, { state: 'running', pass: 2, done: 0 });
+    Object.assign(s, { state: 'running', pass: passesOf(run.tree.vols[run.cur]).indexOf('写出'), done: 0 });
     run.stage = 'running';
     return true;
   }
@@ -1031,10 +1045,10 @@ function overviewLines(iw, compact) {
   let here = [['当前卷 ', 'c-gray'], ['—', 'c-gray d']];
   if (cur && r.stage !== 'ended') {
     // 横条的分子与它旁边那个数同是走完的整页：模拟走连续时间，而真程序一页一步、拿不出半页
-    const pf = cs.pass >= 0 && cs.pass < 3 ? Math.floor(cs.done) / cur.pages : 1;
+    const pf = passOf(cur, cs) ? Math.floor(cs.done) / cur.pages : 1;
     const [bf, be] = bar(pf, compact ? 8 : Math.max(8, Math.min(24, iw - 80)));
-    const pass = cs.pass >= 0 && cs.pass < 3 ? cs.pass : 1;
-    here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [PASSES[pass], PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
+    const pass = passOf(cur, cs) || '分析';
+    here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [pass, PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
   }
   const wroteYet = r.mode === 'exec' || r.wrote;
   const concl = wroteYet
@@ -1052,8 +1066,8 @@ function overviewLines(iw, compact) {
     const [f2, e2] = bar(frac, 10);
     const l1 = [['总进度 ', 'c-gray'], [f2, r.stage === 'ended' ? 'c-green' : 'c-blue'], [e2, 'c-gray d'], [` ${Math.floor(frac * 100)}%`, 'c-fg b']];
     if (cur && r.stage !== 'ended') {
-      const pass = cs.pass >= 0 && cs.pass < 3 ? cs.pass : 1;
-      l1.push(['   当前卷 ', 'c-gray'], [elide(volPath(cur), 22), 'c-fg b'], [' ' + PASSES[pass], PASS_ST[pass]], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']);
+      const pass = passOf(cur, cs) || '分析';
+      l1.push(['   当前卷 ', 'c-gray'], [elide(volPath(cur), 22), 'c-fg b'], [' ' + pass, PASS_ST[pass]], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']);
     }
     const short = wroteYet
       ? [['完成 ', 'c-gray'], [String(t.done), 'c-fg b'], [` ⋅ 跳过 ${t.skipped} ⋅ 等待 ${r.tree.vols.length - t.finished}`, 'c-gray']]
@@ -1072,7 +1086,7 @@ function overviewTitle() {
   const r = S.run;
   if (!r) return { title: [['还没开始', 'c-fg b']], right: null };
   const N = r.tree.vols.length;
-  const wroteYet = r.mode === 'exec' || r.wrote || (r.stage === 'running' && r.vs[r.cur] && r.vs[r.cur].pass === 2);
+  const wroteYet = r.mode === 'exec' || r.wrote || (r.stage === 'running' && r.vs[r.cur] && passOf(r.tree.vols[r.cur], r.vs[r.cur]) === '写出');
   const mode = [wroteYet ? '转换' : '预览', wroteYet ? 'c-cyan b' : 'c-magenta b'];
   const used = [['已用 ' + fmtDur(r.elapsed * SHOW), 'c-gray']];
   if (r.stage === 'surveying') return { title: [mode, [' ⋅ 清点中', 'c-fg']], right: used };
@@ -1216,18 +1230,18 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
     if (isDir) {
       if (st.deciding) tail = [[st.deciding.name + ' ⋅ ', 'c-fg'], ['等待确认', 'c-yellow b']];
       else if (st.running) {
-        const s = stateOf(r, st.running), p = Math.max(0, Math.min(2, s.pass));
+        const s = stateOf(r, st.running), p = passOf(st.running, s);
         const [bf, be] = bar(Math.floor(s.done) / st.running.pages, 8);
-        tail = [[st.running.name + ' ⋅ ', 'c-fg'], [PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(s.done)}/${st.running.pages}`, 'c-gray']];
+        tail = [[st.running.name + ' ⋅ ', 'c-fg'], [p + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(s.done)}/${st.running.pages}`, 'c-gray']];
       } else if (problemsSegs(st).length) tail = problemsSegs(st);
       else if (st.finished === 0) tail = [['等待中', 'c-gray d']];
       else if (st.skipped === st.total) tail = [[SKIPPED, 'c-gray d']];
     } else if (vs) {
       const pr = problemsOf(row.v);
       if (vs.state === 'running') {
-        const p = Math.max(0, Math.min(2, vs.pass));
+        const p = passOf(row.v, vs);
         const [bf, be] = bar(Math.floor(vs.done) / row.v.pages, 10);
-        tail = [[PASSES[p] + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(vs.done)}/${row.v.pages}`, 'c-gray']];
+        tail = [[p + ' ', PASS_ST[p]], [bf, PASS_ST[p]], [be, 'c-gray d'], [` ${Math.floor(vs.done)}/${row.v.pages}`, 'c-gray']];
       } else if (vs.state === 'deciding') tail = [['等待确认 ⋅ 已分析，还没写入任何文件', 'c-yellow']];
       // 没做成的卷那一行只有路径与那一句原因（render::failed_volume）：原因原样，不另加前缀
       else if (vs.state === 'failed') tail = [[row.v.plan.volFail, 'c-red']];
@@ -1946,7 +1960,7 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
@@ -1954,6 +1968,17 @@ function scene(name) {
     case 'fresh': S.curKey = 'np:~/漫画库'; break;
     case 'survey': startRun('exec'); S.run.surveyT = 0.8; S.playing = false; S.toast = null; break;
     case 'running': exec(0.34); { const v = findVol('集英社/海贼王', '第07卷'); if (v) S.expanded.add(v.dir.id); } break;
+    case 'extracting': {
+      // 有一卷正在摊开（CONTEXT《环节》）：虫师那三卷排在最前，前两卷做完，第03卷摊开到一半
+      // （总进度过了 2%，抬头报得出预计还要多久。预计还要多久那一句设计稿与实现算法两处不同——不到 2% 时说不说、
+      // 分子取不取整步——这一景挑在两边四舍五入到同一秒的那一刻，停车场 Q1129）
+      S.named = [...NAMED_RAR.map((n) => ({ ...n })), ...S.named];
+      startRun('exec');
+      fastForward(S.run, (r) => { const v = findVol('虫师', '第03卷'), s = stateOf(r, v); return passOf(v, s) === '摊开' && s.done >= v.pages / 2; });
+      S.toast = null;
+      S.expanded.add(findVol('虫师', '第03卷').dir.id);
+      break;
+    }
     case 'deciding': startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null; break;
     case 'ended': case 'pages': {
       exec(1.01);
@@ -1996,7 +2021,7 @@ chips('g-sim', [['play', '⏯ 播放 / 暂停'], ['1', '1×'], ['4', '4×'], ['1
 document.getElementById('legend').innerHTML = [
   ['✓', 'c-green', '完成'], ['⠹', 'c-blue', '处理中'], ['?', 'c-yellow', '等待确认'], ['!', 'c-yellow', '需留意'], ['✗', 'c-red', '出错'], ['-', 'c-gray', '已跳过'], ['⋅', 'c-gray', '等待中'],
 ].map(([g, c, t]) => `<span><b class="sw" style="color:var(--t-${c.slice(2)})">${g}</b>${t}</span>`).join('') +
-  '<span>灰阶：<b style="color:var(--t-magenta)">1bit</b> <b style="color:var(--t-cyan)">2bit</b> <b style="color:var(--t-blue)">4bit</b>（2 / 4 / 16 级灰，+FS = 加抖动）</span><span>步骤：<b style="color:var(--t-magenta)">查重</b> <b style="color:var(--t-blue)">分析</b> <b style="color:var(--t-cyan)">写出</b></span>';
+  '<span>灰阶：<b style="color:var(--t-magenta)">1bit</b> <b style="color:var(--t-cyan)">2bit</b> <b style="color:var(--t-blue)">4bit</b>（2 / 4 / 16 级灰，+FS = 加抖动）</span><span>步骤：<b style="color:var(--t-green)">摊开</b> <b style="color:var(--t-magenta)">查重</b> <b style="color:var(--t-blue)">分析</b> <b style="color:var(--t-cyan)">写出</b></span>';
 document.getElementById('legend').style.cssText += ';--t-green:#a6e3a1;--t-blue:#89b4fa;--t-yellow:#f9e2af;--t-red:#f38ba8;--t-gray:#7f849c;--t-magenta:#f5c2e7;--t-cyan:#94e2d5';
 
 function describe() {
