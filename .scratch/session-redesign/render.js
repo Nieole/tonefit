@@ -2,7 +2,7 @@
 'use strict';
 // 在伪 DOM（jsdom）里跑设计稿自己的脚本，不需要浏览器。
 //
-// 眼下它做一件事：12 个场景 × 120×36、80×24、56×14 各画一遍，逐格拼出整屏，零报错才算过
+// 眼下它做一件事：全部场景 × 120×36、80×24、56×14 各画一遍，逐格拼出整屏，零报错才算过
 // （session-redesign/01）。02 号票在它上面长出导出：快照、场景数据、交互期望屏都从 `load()`
 // 交出来的那只把手上取——时钟冻住、主循环不跑，画哪一帧由调用方定。
 //
@@ -27,7 +27,7 @@ const SIZES = [[120, 36], [80, 24], [56, 14]];
 const HANDLES = [
   'S', 'SCENES', 'render', 'setSize', 'term',
   'onMouse', 'onWheel', 'frame',
-  'VERSION', 'SHOW', 'TARGET_H', 'CONFIG', 'PRESETS', 'PANELS', 'pagesOf', 'stepsOf', 'extracts', 'isolatedOutput', 'dirRoot', 'CWD', 'PRESETS_FILE',
+  'VERSION', 'SHOW', 'TARGET_H', 'CONFIG', 'PRESETS', 'PANELS', 'PASSES', 'pagesOf', 'retainedOf', 'stepsOf', 'extracts', 'isolatedOutput', 'dirRoot', 'CWD', 'PRESETS_FILE',
 ];
 
 /**

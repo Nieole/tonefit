@@ -233,8 +233,8 @@ mod tests {
 
     /// **「每页结果」120×36 与 80×24 逐格相等**（`session-redesign/11` 票面第一条）：
     /// 抬头是面包屑（任务 › 分区的路径 › 目录 › 卷）、右端写着此刻的列法，
-    /// 头一行是这一卷的灰阶分布与需留意几页，此后一页一行；框底边左起是 `a` 那一件、
-    /// 右端说光标停在第几页。
+    /// 头一行是这一卷的灰阶分布与需留意几页，第二行是各环节耗时，此后一页一行；
+    /// 框底边左起是 `a` 那一件、右端说光标停在第几页。
     ///
     /// **80 列那一档缩放、画质分与尺寸三列都让掉**，只剩页面 · 灰阶 · 原因 · 提示
     /// ——砍列的次序在 `session::columns` 一处。
@@ -242,6 +242,101 @@ mod tests {
     fn the_pages_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("pages", 120, 36);
         assert_scene("pages", 80, 24);
+    }
+
+    /// **「按页跳过」120×36 与 80×24 逐格相等**（`design-parity/10`）：只点了一卷要摊开的 `.rar`，
+    /// 上一趟转过、这一趟换了一话的扫描；进它的每页结果、列全部页——表里只有重做的那几页，
+    /// 灰阶分布那一行在需留意几页之后说出**留下了几页**，第二行是**四个环节各花了多久**。
+    #[test]
+    fn the_retained_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("retained", 120, 36);
+        assert_scene("retained", 80, 24);
+    }
+
+    /// 每页结果上开着的那一卷的报告。
+    fn opened(scene: &Scene) -> &tonefit::VolumeReport {
+        scene
+            .session
+            .pages_report(scene.live.as_ref())
+            .unwrap_or_else(|| panic!("「{}」上开着一卷", scene.label))
+    }
+
+    /// **耗时那一行逐段就是报告里那一卷的卷级计时**（`design-parity/10`，收停车场 Q624）：
+    /// 环节的词出自 `session::passes`，每一段的数是 `VolumeTiming` 那一格、与卷行耗时那一列同一种写法，
+    /// 按走的次序；**没走的那一段不列**——不摊开的卷没有摊开那一截。宽窄两屏都摆得下整行。
+    #[test]
+    fn the_timing_line_on_the_pages_reads_the_volume_timing_segment_by_segment() {
+        use super::super::passes::name;
+        use super::marks::spell;
+        use tonefit::Pass;
+
+        let said = |pass: Pass, took| format!("{} {}", name(Some(pass)), spell(took));
+        for (width, height) in [(120, 36), (80, 24)] {
+            let scene = Scene::named("retained");
+            let timing = opened(&scene).timing;
+            let expected = format!(
+                "耗时 {} ⋅ {} ⋅ {} ⋅ {}",
+                said(Pass::Extraction, timing.extraction),
+                said(Pass::Fingerprint, timing.fingerprint),
+                said(Pass::First, timing.first_pass),
+                said(Pass::Second, timing.second_pass),
+            );
+            let screen = design::lines_of(&painted(&scene, width, height));
+            assert!(
+                screen.iter().any(|line| line.contains(&expected)),
+                "{width}×{height} 上没有「{expected}」：\n{}",
+                screen.join("\n")
+            );
+        }
+        // 目录卷不摊开：摊开那一段是零，耗时那一行从查重说起。
+        let scene = Scene::named("pages");
+        let timing = opened(&scene).timing;
+        assert!(timing.extraction.is_zero(), "目录卷没有摊开");
+        let expected = format!(
+            "耗时 {} ⋅ {} ⋅ {}",
+            said(Pass::Fingerprint, timing.fingerprint),
+            said(Pass::First, timing.first_pass),
+            said(Pass::Second, timing.second_pass),
+        );
+        let screen = design::lines_of(&painted(&scene, 120, 36));
+        let line = screen
+            .iter()
+            .find(|line| line.contains("耗时 "))
+            .unwrap_or_else(|| panic!("每页结果上没有耗时那一行：\n{}", screen.join("\n")));
+        assert!(line.contains(&expected), "{line}");
+        assert!(!line.contains(name(Some(Pass::Extraction))), "{line}");
+    }
+
+    /// **按页跳过的卷说出留下了几页，没有留下的页时那一句不在**（`design-parity/10`，收停车场 Q682）：
+    /// 留下的页不进逐页结果，屏上只报个数——跟在「需留意 N/M 页」之后，M 是这一趟做了的页，
+    /// 两个数加起来就是整本书。
+    #[test]
+    fn only_a_volume_skipped_by_page_says_how_many_pages_it_retained() {
+        let scene = Scene::named("retained");
+        let report = opened(&scene);
+        assert!(report.retained_pages > 0, "这一景开着的是按页跳过的卷");
+        for (width, height) in [(120, 36), (80, 24)] {
+            let screen = design::lines_of(&painted(&scene, width, height)).join("\n");
+            for said in [
+                format!("/{} 页", report.pages.len()),
+                format!("留下 {} 页没重做", report.retained_pages),
+            ] {
+                assert!(
+                    screen.contains(&said),
+                    "{width}×{height} 上没有「{said}」：\n{screen}"
+                );
+            }
+            // 反着钉：分母不是整本书——留下的页一页都没问过需不需留意。
+            let whole = format!("/{} 页", report.page_count());
+            assert!(
+                !screen.contains(&whole),
+                "{width}×{height} 上需留意几页拿整本书作分母：\n{screen}"
+            );
+        }
+        let scene = Scene::named("pages");
+        assert_eq!(opened(&scene).retained_pages, 0, "这一卷整卷重做");
+        let screen = design::lines_of(&painted(&scene, 120, 36)).join("\n");
+        assert!(!screen.contains("留下"), "没有留下的页却说了：\n{screen}");
     }
 
     /// **「等待确认」120×36 与 80×24 逐格相等**（`session-redesign/12` 票面第一条）：

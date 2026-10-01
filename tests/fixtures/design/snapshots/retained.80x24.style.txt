@@ -1,0 +1,38 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-green
+# f = c-fg b
+# g = c-lgreen
+# h = c-cyan
+# i = c-cyan d
+# j = c-magenta
+# k = c-gray b
+# l = c-lgreen b
+# m = c-gray i
+".aabbccccccc....................ddddddddddddddddddddddddddddddddddddddd."
+"ccaaa..........cccccccccccccccccccccccccccccccccccccccccccccccc"
+"c.cccceeeeeeeeeefffff.......................................................c"
+"c.cccfcccccccccccccc.....................................................c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"ggccccc..cccffffgggggggggggggggggggggggggggggggggggggggggggggggfffffggg"
+"g.ccccchhhhiii...cccdddd..cccccccffffffccccccfffffccc............."
+"g.cccee...cccjj...cccdd...ccchh......................................."
+"g....kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk.............................."
+"gll..ffffffffffhhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................."
+"gll............hhhhhhhhh..............................................g"
+"gll............hhhhhhhhh..............................................g"
+"gll............ddddddddd..............................................g"
+"gll............hhhhhhhhh..............................................g"
+"gll............hhhhhhhhh..............................................g"
+"gll............hhhhhhhhh..............................................g"
+"gll............hhhhhhhhh..............................................g"
+"ggmmmmmmmmmmmgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+".c.ccccccc.c.ccccccc.c.ccccccccccc.c.cccccccc.c.cccccccc..."

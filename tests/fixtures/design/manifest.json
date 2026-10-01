@@ -251,6 +251,25 @@
       "style": "snapshots/envelope-deciding.80x24.style.txt"
     },
     {
+      "scene": "retained",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/retained.120x36.text.txt",
+      "style": "snapshots/retained.120x36.style.txt",
+      "data": "scenes/retained.json"
+    },
+    {
+      "scene": "retained",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/retained.80x24.text.txt",
+      "style": "snapshots/retained.80x24.style.txt"
+    },
+    {
       "scene": "fresh",
       "size": [
         56,
@@ -1086,7 +1105,7 @@
         {
           "click": [
             20,
-            14
+            15
           ]
         }
       ],

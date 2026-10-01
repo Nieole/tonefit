@@ -780,7 +780,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第02卷",
@@ -788,7 +791,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第03卷",
@@ -796,7 +802,10 @@
         "pass": 3,
         "done": 224,
         "elapsed_s": 0.7,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.7
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第04卷",
@@ -804,7 +813,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第05卷",
@@ -826,6 +838,10 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9
+        },
         "page_count": 224,
         "notable_pages": [
           {

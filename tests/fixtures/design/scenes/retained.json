@@ -1,0 +1,457 @@
+{
+  "scene": "retained",
+  "now_ms": 1000000,
+  "time_multiplier": 7,
+  "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
+  "paths": [
+    {
+      "path": "~/下载/虫师/第04卷.rar",
+      "kind": "archive",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "漫画",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "profile": "kobo-libra-2",
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": {
+    "mode": "process",
+    "stage": "ended",
+    "outcome": "done",
+    "envelope": false,
+    "elapsed_s": 17.85,
+    "steps": 756,
+    "total_steps": 756,
+    "current": null,
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": true,
+    "survey": {
+      "entries": [
+        {
+          "kind": "directory",
+          "root": "~/下载/虫师",
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/下载/虫师/第04卷.rar",
+          "directory": "~/下载/虫师",
+          "name": "第04卷",
+          "source_pages": 189,
+          "steps": 756,
+          "extracts": true
+        }
+      ],
+      "unchecked": 0
+    },
+    "volumes": [
+      {
+        "root": "~/下载/虫师/第04卷.rar",
+        "state": "done",
+        "pass": 4,
+        "done": 189,
+        "elapsed_s": 5.078,
+        "tally": [
+          [
+            "2bit+FS",
+            22
+          ],
+          [
+            "4bit",
+            2
+          ]
+        ],
+        "took_s": {
+          "extraction": 1.378,
+          "fingerprint": 0.591,
+          "first_pass": 0.525,
+          "second_pass": 2.584
+        },
+        "page_count": 189,
+        "retained_pages": 165,
+        "pages": [
+          {
+            "name": "041.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2047,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.308,
+            "driver": false
+          },
+          {
+            "name": "042.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2102,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.571,
+            "driver": false
+          },
+          {
+            "name": "043.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1967,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.298,
+            "driver": false
+          },
+          {
+            "name": "044.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1929,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.348,
+            "driver": false
+          },
+          {
+            "name": "045.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1939,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.583,
+            "driver": false
+          },
+          {
+            "name": "046.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2177,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.946,
+            "driver": false
+          },
+          {
+            "name": "047.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2135,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.607,
+            "driver": false
+          },
+          {
+            "name": "048.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1903,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.893,
+            "driver": false
+          },
+          {
+            "name": "049.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2086,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 3.76,
+            "driver": false
+          },
+          {
+            "name": "050.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2047,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.695,
+            "driver": false
+          },
+          {
+            "name": "051.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2112,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.832,
+            "driver": false
+          },
+          {
+            "name": "052.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1990,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.382,
+            "driver": false
+          },
+          {
+            "name": "053.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1883,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.177,
+            "driver": false
+          },
+          {
+            "name": "054.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1981,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.181,
+            "driver": false
+          },
+          {
+            "name": "055.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1890,
+            "verdict": "4bit",
+            "reason": "lowest-within-threshold",
+            "score": 4.31,
+            "driver": false
+          },
+          {
+            "name": "056.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2105,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.776,
+            "driver": false
+          },
+          {
+            "name": "057.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1940,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.344,
+            "driver": false
+          },
+          {
+            "name": "058.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2005,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.211,
+            "driver": false
+          },
+          {
+            "name": "059.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2039,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.729,
+            "driver": false
+          },
+          {
+            "name": "060.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1917,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.474,
+            "driver": false
+          },
+          {
+            "name": "061.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1974,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 3.916,
+            "driver": false
+          },
+          {
+            "name": "062.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 1968,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 2.874,
+            "driver": false
+          },
+          {
+            "name": "063.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2122,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.495,
+            "driver": false
+          },
+          {
+            "name": "064.png",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [],
+            "source_height": 2004,
+            "verdict": "2bit+FS",
+            "reason": "lowest-within-threshold",
+            "score": 4.584,
+            "driver": false
+          }
+        ]
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "volume",
+      "root": "~/下载/虫师/第04卷.rar"
+    },
+    "expanded": [
+      "~/下载/虫师"
+    ],
+    "follow": false,
+    "pages": {
+      "volume": "~/下载/虫师/第04卷.rar",
+      "cursor": 0,
+      "all": true
+    },
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

@@ -31,7 +31,7 @@ use tonefit::{
     BitDepth, Candidate, CandidateScore, Crop, Dither, Envelope, GeometryGate, Instruction,
     Mode as RunMode, NonVolumeFile, NonVolumeReason, PageBranch, PageColor, PageOutcome,
     PageReport, Pass, Processed, Reason, RunOutcome, Salvage, Scaling, Score, Size, SurveyedVolume,
-    UnreachablePlace, Verdict, VolumeReport, VolumeVerdict, WhiteAlignment,
+    UnreachablePlace, Verdict, VolumeReport, VolumeTiming, VolumeVerdict, WhiteAlignment,
 };
 
 use super::config::Item;
@@ -232,9 +232,18 @@ pub(crate) struct VolumeData {
     /// 这一环节走到第几页（连续时间推进，带小数）。
     pub(crate) done: f64,
     pub(crate) elapsed_s: f64,
+    /// **卷级计时那几段**：走过的环节各花了几秒（`design-parity/10`）。设计稿只写走过的那几段，
+    /// 没写的那一段就是零——库在没走的环节上记的正是零。
+    #[serde(default)]
+    pub(crate) took_s: Took,
     /// 灰阶分布：档位与页数，页多的在前。一页判定都没有是 `None`。
     pub(crate) tally: Option<Vec<(String, usize)>>,
+    /// 输出页数（`VolumeReport::page_count`）：按页跳过的卷把[留下的页](Self::retained_pages)加回去。
     pub(crate) page_count: Option<usize>,
+    /// **留下的页**有几页（`VolumeReport::retained_pages`）：只有按页跳过的卷写这一格，
+    /// 逐页结果（[`pages`](Self::pages)、[`notable_pages`](Self::notable_pages)）里只有重做的那几页。
+    #[serde(default)]
+    pub(crate) retained_pages: usize,
     /// 需留意的那几页（没开着的卷给这个）。
     pub(crate) notable_pages: Option<Vec<PageData>>,
     /// 整份逐页（屏上开着的那一卷才有，Q736）。
@@ -243,6 +252,31 @@ pub(crate) struct VolumeData {
     pub(crate) failure: Option<String>,
     /// 进了隔离时它的去处（`~/` 写法）：照库的镜像规则，输出目录底下插一级 `_isolated`。
     pub(crate) isolated_output: Option<String>,
+}
+
+/// 卷级计时那四段，秒（已乘设计稿的时间倍数）。键照 `tonefit::VolumeTiming` 的字段名。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct Took {
+    pub(crate) extraction: f64,
+    pub(crate) fingerprint: f64,
+    pub(crate) first_pass: f64,
+    pub(crate) second_pass: f64,
+}
+
+impl VolumeData {
+    /// 这一卷的**卷级计时**：四段照 [`took_s`](Self::took_s)，总数照
+    /// [`elapsed_s`](Self::elapsed_s)。收摊了的、没做成的、确认点上攒着的那一份读的都是它。
+    fn timing(&self) -> VolumeTiming {
+        let seconds = Duration::from_secs_f64;
+        VolumeTiming {
+            extraction: seconds(self.took_s.extraction),
+            fingerprint: seconds(self.took_s.fingerprint),
+            first_pass: seconds(self.took_s.first_pass),
+            second_pass: seconds(self.took_s.second_pass),
+            elapsed: seconds(self.elapsed_s),
+        }
+    }
 }
 
 /// 一页。
@@ -883,7 +917,7 @@ fn offered(input: &Value) -> Option<Offered<'_>> {
     })
 }
 
-/// **假盘上有什么**：13 个场景的场景数据提到的每一处的并集，`~/` 写法。
+/// **假盘上有什么**：每个场景的场景数据提到的每一处的并集，`~/` 写法。
 ///
 /// 设计稿的假盘本身没有导出（停车场 Q764），能从场景数据认出来的是：处理路径（文件夹还是压缩包）、
 /// 清点清单上的分区、目录与卷根、备注里的路径（无法访问的地方是目录，非漫画文件是文件）、
@@ -1100,7 +1134,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 live.volume_failed(
                     &root,
                     volume.failure.as_deref().expect("没做成的卷带着原因"),
-                    fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
+                    volume.timing(),
                 );
             }
             "done" | "isolated" | "trialed" => {
@@ -1114,10 +1148,17 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 } else {
                     Instruction::Continue
                 };
+                // **按页跳过的卷分析环节只走重做的那几页**（留下的页不读、不解、不判；设计稿 `passLen`），
+                // 写出环节照旧一页一步——留下的页也从上一趟搬进来。没走满的那几步收摊时结清。
                 for &pass in listed.passes() {
                     begin_pass(&mut live, pass, resumes, run, Some(&report), said);
                     if pass != Pass::Second || said == Instruction::Continue {
-                        stepped(&mut live, pages);
+                        let walks = if pass == Pass::First {
+                            pages - volume.retained_pages
+                        } else {
+                            pages
+                        };
+                        stepped(&mut live, walks);
                     }
                 }
                 fixture::volume_finished_with_its_failures(&mut live, &report);
@@ -1339,7 +1380,7 @@ fn non_volume_reason_of(sentence: &str) -> NonVolumeReason {
     }
 }
 
-/// **普通一页的输出尺寸**：13 个场景的场景数据里头一张不超宽的页说的那个。
+/// **普通一页的输出尺寸**：各场景的场景数据里头一张不超宽的页说的那个。
 /// 没开着的卷补的页都按它（与[假盘](disk)同一个道理：一趟只算一次，取自全部场景的并集——
 /// 单看一个场景，等待确认那一景只有一张超宽的页可查）。
 fn typical_size() -> Size {
@@ -1416,7 +1457,7 @@ fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>, run: &Ru
         decodes: 0,
         resizes: 0,
         cached_references: 0,
-        timing: fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
+        timing: volume.timing(),
     }
 }
 
@@ -1469,7 +1510,7 @@ fn volume_report(
         output,
         superseded: None,
         pages,
-        retained_pages: 0,
+        retained_pages: volume.retained_pages,
         source_pages: listed.source_pages,
         verdict,
         cache: fixture::cache_usage(),
@@ -1478,7 +1519,7 @@ fn volume_report(
         decodes: decoded,
         resizes: decoded,
         cached_references: decoded,
-        timing: fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
+        timing: volume.timing(),
     }
 }
 
@@ -2006,9 +2047,29 @@ mod tests {
                 assert_eq!(report.output, scene.path(isolated), "{name}");
             }
             assert_eq!(
-                report.timing.elapsed,
-                Duration::from_secs_f64(volume.elapsed_s),
-                "{name}"
+                report.retained_pages, volume.retained_pages,
+                "{name}：{}",
+                listed.root
+            );
+            // 卷级计时：总数与四段（`design-parity/10`：每页结果的耗时那一行读的就是这四段）。
+            let seconds = Duration::from_secs_f64;
+            assert_eq!(
+                [
+                    report.timing.elapsed,
+                    report.timing.extraction,
+                    report.timing.fingerprint,
+                    report.timing.first_pass,
+                    report.timing.second_pass,
+                ],
+                [
+                    seconds(volume.elapsed_s),
+                    seconds(volume.took_s.extraction),
+                    seconds(volume.took_s.fingerprint),
+                    seconds(volume.took_s.first_pass),
+                    seconds(volume.took_s.second_pass),
+                ],
+                "{name}：{}",
+                listed.root
             );
         }
         // 没做成的卷：那句原因，与库那一份计时。
@@ -2171,11 +2232,11 @@ mod tests {
         assert_eq!(key_named("ArrowRight"), Input::Arrow('l'));
     }
 
-    /// **13 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
+    /// **每个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 13, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 14, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }

@@ -780,7 +780,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第02卷",
@@ -788,7 +791,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第03卷",
@@ -796,7 +802,10 @@
         "pass": 3,
         "done": 224,
         "elapsed_s": 0.7,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.7
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第04卷",
@@ -804,7 +813,10 @@
         "pass": 3,
         "done": 223,
         "elapsed_s": 0.697,
-        "tally": null
+        "tally": null,
+        "took_s": {
+          "fingerprint": 0.697
+        }
       },
       {
         "root": "~/漫画库/哆啦A梦/第05卷",
@@ -826,6 +838,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": [
           {
@@ -865,6 +882,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -888,6 +910,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -911,6 +938,11 @@
             10
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.7,
+          "first_pass": 4.9,
+          "second_pass": 3.063
+        },
         "page_count": 224,
         "notable_pages": []
       },
@@ -934,6 +966,11 @@
             7
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.703,
+          "first_pass": 4.922,
+          "second_pass": 3.076
+        },
         "page_count": 225,
         "notable_pages": []
       },
@@ -957,6 +994,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.697,
+          "first_pass": 4.878,
+          "second_pass": 3.049
+        },
         "page_count": 223,
         "notable_pages": []
       },
@@ -980,6 +1022,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": []
       },
@@ -1003,6 +1050,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.678,
+          "first_pass": 4.747,
+          "second_pass": 2.967
+        },
         "page_count": 217,
         "notable_pages": []
       },
@@ -1026,6 +1078,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1049,6 +1106,11 @@
             4
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1072,6 +1134,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1095,6 +1162,11 @@
             9
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.594,
+          "first_pass": 4.156,
+          "second_pass": 2.598
+        },
         "page_count": 190,
         "notable_pages": []
       },
@@ -1118,6 +1190,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -1141,6 +1218,11 @@
             6
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -1164,6 +1246,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "isolated_output": "~/转好的/_isolated/漫画库/集英社/海贼王/第07卷",
         "page_count": 189,
         "pages": [
@@ -3644,6 +3731,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.591,
+          "first_pass": 4.134,
+          "second_pass": 2.584
+        },
         "page_count": 189,
         "notable_pages": []
       },
@@ -3667,6 +3759,11 @@
             6
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.606,
+          "first_pass": 4.244,
+          "second_pass": 2.652
+        },
         "page_count": 194,
         "notable_pages": []
       },
@@ -3690,6 +3787,11 @@
             4
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": []
       },
@@ -3700,6 +3802,9 @@
         "done": 174,
         "elapsed_s": 0.544,
         "tally": null,
+        "took_s": {
+          "fingerprint": 0.544
+        },
         "failure": "压缩包损坏"
       },
       {
@@ -3722,6 +3827,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.544,
+          "first_pass": 3.806,
+          "second_pass": 2.379
+        },
         "page_count": 174,
         "notable_pages": []
       },
@@ -3745,6 +3855,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -3768,6 +3883,11 @@
             3
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -3791,6 +3911,11 @@
             5
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -3814,6 +3939,11 @@
             8
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -3837,6 +3967,11 @@
             7
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.538,
+          "first_pass": 3.762,
+          "second_pass": 2.352
+        },
         "page_count": 172,
         "notable_pages": []
       },
@@ -3860,6 +3995,11 @@
             4
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.541,
+          "first_pass": 3.784,
+          "second_pass": 2.365
+        },
         "page_count": 173,
         "notable_pages": []
       },
@@ -3879,6 +4019,11 @@
             88
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": []
       },
@@ -3902,6 +4047,11 @@
             2
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": [
           {
@@ -3967,6 +4117,11 @@
             82
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": []
       },
@@ -3986,6 +4141,11 @@
             96
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": []
       },
@@ -4005,6 +4165,11 @@
             113
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.728,
+          "first_pass": 5.097,
+          "second_pass": 3.186
+        },
         "page_count": 233,
         "notable_pages": []
       },
@@ -4024,6 +4189,11 @@
             92
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.716,
+          "first_pass": 5.009,
+          "second_pass": 3.131
+        },
         "page_count": 229,
         "notable_pages": []
       },
@@ -4043,6 +4213,11 @@
             14
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.553,
+          "first_pass": 3.872,
+          "second_pass": 2.42
+        },
         "page_count": 177,
         "notable_pages": []
       },
@@ -4062,6 +4237,11 @@
             14
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -4081,6 +4261,11 @@
             18
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -4100,6 +4285,11 @@
             16
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -4119,6 +4309,11 @@
             17
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -4138,6 +4333,11 @@
             16
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": []
       },
@@ -4157,6 +4357,11 @@
             26
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": []
       },
@@ -4176,6 +4381,11 @@
             13
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -4195,6 +4405,11 @@
             14
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.547,
+          "first_pass": 3.828,
+          "second_pass": 2.393
+        },
         "page_count": 175,
         "notable_pages": []
       },
@@ -4214,6 +4429,11 @@
             34
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.522,
+          "first_pass": 3.653,
+          "second_pass": 2.283
+        },
         "page_count": 167,
         "notable_pages": []
       },
@@ -4233,6 +4453,11 @@
             29
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.522,
+          "first_pass": 3.653,
+          "second_pass": 2.283
+        },
         "page_count": 167,
         "notable_pages": []
       },
@@ -4252,6 +4477,11 @@
             32
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": []
       },
@@ -4271,6 +4501,11 @@
             30
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": []
       },
@@ -4290,6 +4525,11 @@
             41
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": [
           {
@@ -4325,6 +4565,11 @@
             33
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.519,
+          "first_pass": 3.631,
+          "second_pass": 2.27
+        },
         "page_count": 166,
         "notable_pages": []
       },
@@ -4344,6 +4589,11 @@
             29
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.516,
+          "first_pass": 3.609,
+          "second_pass": 2.256
+        },
         "page_count": 165,
         "notable_pages": []
       },
@@ -4363,6 +4613,11 @@
             34
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.516,
+          "first_pass": 3.609,
+          "second_pass": 2.256
+        },
         "page_count": 165,
         "notable_pages": []
       },
@@ -4386,6 +4641,11 @@
             16
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.525,
+          "first_pass": 3.675,
+          "second_pass": 2.297
+        },
         "page_count": 168,
         "notable_pages": []
       },
@@ -4409,6 +4669,11 @@
             19
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.525,
+          "first_pass": 3.675,
+          "second_pass": 2.297
+        },
         "page_count": 168,
         "notable_pages": []
       },
@@ -4432,6 +4697,11 @@
             22
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.525,
+          "first_pass": 3.675,
+          "second_pass": 2.297
+        },
         "page_count": 168,
         "notable_pages": []
       },
@@ -4455,6 +4725,11 @@
             18
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.528,
+          "first_pass": 3.697,
+          "second_pass": 2.311
+        },
         "page_count": 169,
         "notable_pages": []
       },
@@ -4478,6 +4753,11 @@
             16
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.528,
+          "first_pass": 3.697,
+          "second_pass": 2.311
+        },
         "page_count": 169,
         "notable_pages": []
       },
@@ -4501,6 +4781,11 @@
             15
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.528,
+          "first_pass": 3.697,
+          "second_pass": 2.311
+        },
         "page_count": 169,
         "notable_pages": []
       },
@@ -4524,6 +4809,11 @@
             17
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.528,
+          "first_pass": 3.697,
+          "second_pass": 2.311
+        },
         "page_count": 169,
         "notable_pages": []
       },
@@ -4547,6 +4837,11 @@
             9
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.513,
+          "first_pass": 3.587,
+          "second_pass": 2.242
+        },
         "page_count": 164,
         "notable_pages": []
       },
@@ -4570,6 +4865,11 @@
             13
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.513,
+          "first_pass": 3.587,
+          "second_pass": 2.242
+        },
         "page_count": 164,
         "notable_pages": []
       },
@@ -4593,6 +4893,11 @@
             12
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.506,
+          "first_pass": 3.544,
+          "second_pass": 2.215
+        },
         "page_count": 162,
         "notable_pages": []
       },
@@ -4616,6 +4921,11 @@
             12
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4639,6 +4949,11 @@
             13
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4662,6 +4977,11 @@
             15
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.506,
+          "first_pass": 3.544,
+          "second_pass": 2.215
+        },
         "page_count": 162,
         "notable_pages": []
       },
@@ -4685,6 +5005,11 @@
             16
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.506,
+          "first_pass": 3.544,
+          "second_pass": 2.215
+        },
         "page_count": 162,
         "notable_pages": []
       },
@@ -4708,6 +5033,11 @@
             11
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.506,
+          "first_pass": 3.544,
+          "second_pass": 2.215
+        },
         "page_count": 162,
         "notable_pages": [
           {
@@ -4778,6 +5108,11 @@
             17
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4801,6 +5136,11 @@
             19
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4824,6 +5164,11 @@
             15
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4847,6 +5192,11 @@
             15
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.509,
+          "first_pass": 3.566,
+          "second_pass": 2.229
+        },
         "page_count": 163,
         "notable_pages": []
       },
@@ -4870,6 +5220,11 @@
             24
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.709,
+          "first_pass": 4.966,
+          "second_pass": 3.104
+        },
         "page_count": 227,
         "notable_pages": []
       },
@@ -4893,6 +5248,11 @@
             25
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.709,
+          "first_pass": 4.966,
+          "second_pass": 3.104
+        },
         "page_count": 227,
         "notable_pages": []
       },
@@ -4916,6 +5276,11 @@
             23
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.709,
+          "first_pass": 4.966,
+          "second_pass": 3.104
+        },
         "page_count": 227,
         "notable_pages": []
       },
@@ -4939,6 +5304,11 @@
             24
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.706,
+          "first_pass": 4.944,
+          "second_pass": 3.09
+        },
         "page_count": 226,
         "notable_pages": []
       },
@@ -4962,6 +5332,11 @@
             31
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.513,
+          "first_pass": 3.587,
+          "second_pass": 2.242
+        },
         "page_count": 164,
         "notable_pages": []
       },
@@ -4985,6 +5360,11 @@
             25
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.513,
+          "first_pass": 3.587,
+          "second_pass": 2.242
+        },
         "page_count": 164,
         "notable_pages": []
       },
@@ -5008,6 +5388,11 @@
             31
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.513,
+          "first_pass": 3.588,
+          "second_pass": 2.242
+        },
         "page_count": 164,
         "notable_pages": []
       },
@@ -5031,6 +5416,11 @@
             27
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.494,
+          "first_pass": 3.456,
+          "second_pass": 2.16
+        },
         "page_count": 158,
         "notable_pages": []
       },
@@ -5054,6 +5444,11 @@
             21
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.494,
+          "first_pass": 3.456,
+          "second_pass": 2.16
+        },
         "page_count": 158,
         "notable_pages": []
       },
@@ -5077,6 +5472,11 @@
             25
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.494,
+          "first_pass": 3.456,
+          "second_pass": 2.16
+        },
         "page_count": 158,
         "notable_pages": []
       },
@@ -5100,6 +5500,11 @@
             24
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       },
@@ -5123,6 +5528,11 @@
             33
           ]
         ],
+        "took_s": {
+          "fingerprint": 0.55,
+          "first_pass": 3.85,
+          "second_pass": 2.406
+        },
         "page_count": 176,
         "notable_pages": []
       }
