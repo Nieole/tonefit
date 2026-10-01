@@ -3973,6 +3973,31 @@
       "data": "sequences/config-c.scene.json"
     },
     {
+      "name": "config-narrow-c",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "c"
+        }
+      ],
+      "says": {
+        "has": [
+          "写到 ~/tonefit-calibrati⋯bra-2-16-levels.png"
+        ]
+      },
+      "text": "sequences/config-narrow-c.text.txt",
+      "style": "sequences/config-narrow-c.style.txt",
+      "data": "sequences/config-narrow-c.scene.json"
+    },
+    {
       "name": "config-h-G",
       "scene": "config",
       "size": [

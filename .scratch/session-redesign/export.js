@@ -234,6 +234,8 @@ const SEQUENCES = [
   { name: 'running-2-fit-l', scene: 'running', size: MAIN, steps: k('2', 'j', 'j', 'j', 'l'), says: '[⏎ → 查看]' },
   { name: 'running-2-fit-l-l', scene: 'running', size: MAIN, steps: k('2', 'j', 'j', 'j', 'l', 'l'), says: '设置已锁定，结束后才能修改' },
   { name: 'config-c', scene: 'config', size: MAIN, steps: k('c'), says: '已生成灰阶测试图' },
+  // 验收线上那条路径摆不下：从中间省略，目录的头与文件名的尾两头都在（design-parity/11，停车场 Q968）
+  { name: 'config-narrow-c', scene: 'config', size: NARROW, steps: k('c'), says: { has: ['写到 ~/tonefit-calibrati⋯bra-2-16-levels.png'] } },
   // 画质判定参数那一组在详情栏里怎么说：行内那一句整句摊开、与报告抬头逐字相同，外加此刻与上一趟那一句；
   // 选项冲突一条都没咬上时那一行是界面自己的「无」、说明换一句（design-parity/08：配置视图里每一句都有快照钉着）
   { name: 'config-h-G', scene: 'config', size: MAIN, steps: k('h', 'G'), says: { has: ['选项冲突 ⋅ 画质判定参数', '与报告抬头里的这一行逐字相同', '这里是此刻的设置，下一趟照它判定'] } },

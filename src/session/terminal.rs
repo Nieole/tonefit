@@ -28,11 +28,12 @@ use ratatui::crossterm::terminal::{
 
 use tonefit::{Mode as RunMode, Request};
 
+use super::columns;
 use super::cover;
 use super::home::Home;
 use super::keymap::{Deed, Phase};
 use super::live::{Live, Resuming, VolumeState};
-use super::look::{Kind, Look, Segment};
+use super::look::{Kind, Look, Segment, width_of};
 use super::run::{Glimpse, Running};
 use super::shell;
 use super::state::{Exit, Key, Session};
@@ -351,7 +352,7 @@ pub(super) fn input(
             Exit::Stay
         }
         Deed::Chart => {
-            draw_a_chart(session, here, now);
+            draw_a_chart(session, here, window, now);
             Exit::Stay
         }
         // **卷行上按展开**：展不展得开要问那一趟这一卷此刻怎么样，而状态机读不到它
@@ -574,23 +575,29 @@ fn store_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
 /// 这一层只点了个名：建的不是目录、写的不是文件，父目录不在就建出来也是那一头的事；
 /// 写不出去时库那一侧回的 `Err` 原样端到屏底，会话原地不动。图落在哪儿见 [`chart_file`]。
 ///
-/// **屏底那一句与设计稿不同**：设计稿那一句末尾写的是「（原型不写文件）」，
-/// 而这一副真写得出文件，票面第五条要的正是**回话说写到了哪里**。
-/// 前半截照设计稿一字不差，末尾那一截换成图落在哪儿（停车场 Q890）。
-fn draw_a_chart(session: &mut Session, here: &Path, now: Instant) {
+/// **屏底那一句说写到了哪里**，与设计稿逐字相同（设计稿 `configKey` 的 `c` 那一支，停车场 Q890）。
+/// 那条路径摆不下时**从中间省略**（[`columns::elide`]，原样那一档的规矩，停车场 Q968）：
+/// 目录的头与文件名的尾两头都在，不由屏底从行尾截掉文件名。摆得下多少照这一刻的窗口算
+/// （屏底那一行摆到哪一格为止在 [`shell::footer::room`]）——设计稿同样在按下去那一刻算。
+fn draw_a_chart(session: &mut Session, here: &Path, window: Window, now: Instant) {
     let drawn = session.chart_profile().and_then(|profile| {
         let out = chart_file(here, &profile);
         tonefit::write_calibration_chart(&profile, &out).map(|()| (profile.panel().resolution, out))
     });
     match drawn {
-        Ok((size, out)) => session.views.say_for(
-            vec![
+        Ok((size, out)) => {
+            let mut said = vec![
                 Segment::new("✓ 已生成灰阶测试图", Look::kind(Kind::Done).bold()),
-                Segment::plain(format!("（{size}）：写到 {}", session.home_shown(&out))),
-            ],
-            CHART_LINGERS,
-            now,
-        ),
+                Segment::plain(format!("（{size}）：写到 ")),
+            ];
+            let room =
+                usize::from(shell::footer::room(window.cols)).saturating_sub(width_of(&said));
+            said.push(Segment::plain(columns::elide(
+                &session.home_shown(&out),
+                room,
+            )));
+            session.views.say_for(said, CHART_LINGERS, now);
+        }
         Err(error) => session.views.complain(format!("{error:#}"), now),
     }
 }
@@ -2566,18 +2573,51 @@ mod redesign {
     fn c_draws_a_calibration_chart_and_says_where_it_landed() {
         let scene = assert_sequence("config-c");
         // 屏上说的那条路径上真有这张图，而且只写出这一张（假盘在临时目录里，一个用户的东西都不碰）。
-        let said = scene::sequence_data("config-c").session["toast"]
+        let there = said_to_land_at("config-c");
+        assert_eq!(
+            charts_landed(&scene),
+            [scene.path(&there)],
+            "只写出一张，就在屏上说的那儿"
+        );
+    }
+
+    /// **那条路径摆不下时从中间省略**（`design-parity/11`，停车场 Q968）：验收线上那一句回话
+    /// 摆不下整条路径，屏上是**目录的头 · 省略号 · 文件名的尾**——不从行尾截掉文件名
+    /// （原样那一档的规矩，与卷名同一副省略法）。走完那一屏与设计稿逐格相等；
+    /// 省略号两边各是盘上那张图的路径的头与尾。
+    #[test]
+    fn a_chart_path_that_does_not_fit_is_elided_in_the_middle() {
+        let scene = assert_sequence("config-narrow-c");
+        let there = said_to_land_at("config-narrow-c");
+        let (head, tail) = there.split_once('⋯').expect("摆不下，从中间省略");
+        let landed = charts_landed(&scene);
+        let [landed] = landed.as_slice() else {
+            panic!("只写出一张：{landed:?}");
+        };
+        let whole = scene.session.home_shown(landed);
+        assert!(whole.starts_with(head), "{whole} 的头不是 {head}");
+        assert!(whole.ends_with(tail), "{whole} 的尾不是 {tail}");
+        assert!(tail.ends_with("-levels.png"), "文件名的尾不在屏上：{tail}");
+    }
+
+    /// 这一串走完那一刻，屏底那句回话说图写到了哪里（「写到 」后面那一截，照场景数据）。
+    fn said_to_land_at(name: &str) -> String {
+        let said = scene::sequence_data(name).session["toast"]
             .as_str()
             .expect("走完那一刻屏底有一句回话")
             .to_owned();
         let (_, there) = said.split_once("写到 ").expect("回话说写到了哪里");
-        let landed: Vec<PathBuf> = std::fs::read_dir(charts_land_in(&scene))
+        there.to_owned()
+    }
+
+    /// 落点上写出来的那几张灰阶测试图（假盘在临时目录里，一个用户的东西都不碰）。
+    fn charts_landed(scene: &Scene) -> Vec<PathBuf> {
+        std::fs::read_dir(charts_land_in(scene))
             .expect("落点读得出")
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_some_and(|kind| kind == "png"))
-            .collect();
-        assert_eq!(landed, [scene.path(there)], "只写出一张，就在屏上说的那儿");
+            .collect()
     }
 
     /// 在配置视图那一景上逐个喂键（`here` 是灰阶测试图的落点），回最后一下的去留。

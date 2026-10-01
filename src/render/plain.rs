@@ -29,8 +29,8 @@
 //!
 //! - **命令行**：跑完一次性把四段拼起来印出去（[`report`]，`crate::execute`）。
 //! - **会话退出时**：`stdout` 上留下的那份报告照的是命令行那一路的原格式
-//!   （`crate::session::run` 的 `Running::report`），走的也是 [`report`]。
-//!   最后那一趟没做成时它后面还跟着一段 [`undone`]——那一句为什么没做成，
+//!   （`crate::session::run` 的 `Running::report`），走的也是 [`report`]，接法与印出去的样子在
+//!   [`left_on_stdout`]：最后那一趟没做成时报告后面还跟着一段——那一句为什么没做成，
 //!   与报告正文分得开（21 号票）。
 //! - **样张**：命令行出完样张印的那几行（[`super::proof_note`]），一行一行走 [`line`]。
 //!
@@ -100,21 +100,24 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     text
 }
 
-/// **这一趟没做成**时，退出会话在 stdout 上留下的那一份（21 号票，收停车场 Q66）。
+/// **退出时那一份**：退出会话在 stdout 上留下的那一段（`CONTEXT.md` 的《退出时那一份》）。
 ///
-/// 三段按次序接起来：`earlier`（先前那一份做成了的报告，一趟都没做成过就没有）、
-/// `attempt`（这一趟攒下来的那一份，说得出已经做完的哪几卷）、以及这一趟为什么没做成。
+/// `attempt` 是最后那一趟攒下来的报告。那一趟**做成了**（`why_undone` 是 `None`）就只有它——
+/// `earlier` 这时不印：最后那一趟做成了，它就是这一份（《退出时那一份》）。
+/// **没做成**（21 号票，收停车场 Q66）则三段按次序接起来：`earlier`（先前那一份做成了的报告，
+/// 一趟都没做成过就没有）、`attempt`（说得出已经做完的哪几卷）、以及 `why_undone`（这一趟为什么没做成）。
 ///
 /// **两条缝两种待遇，各有各的理由。**报告与报告之间**不加任何东西**——两份各自都以换行
 /// 收尾，接下去仍是一段报告（与 [`report`] 那四段同一条）。那句话前面**空一行**：
 /// 它不是报告的一部分，而是它为什么没算完，读的人要分得开。**两条缝都只有这一处说了算**
 /// ——`stdout` 上那一份是纯文本这一副（ADR 0016 决定第 3 条），摆法不该散到会话那一层去。
+/// 措辞在 [`super::undone`]。
 ///
-/// 措辞在 [`super::undone`]。**那一句在这里过一遍 [`crate::wrap::printed`]**：
-/// 它劝人换一条命令（`--dither fs`、`--fit height`），而记号里那个空格带着
-/// [不许断的标注](tonefit::HARD_SPACE)——标注是给折行看的，不是印出去的东西，
-/// 而这一路不走折行（`CONTEXT.md` 的**字形约定**：印出去之前换回普通空格）。
-/// **只过这一段**：报告正文那两份仍与本票落地之前逐字节相同，那一半的账记在停车场 Q584。
+/// **整份过一遍 [`crate::wrap::printed`]**（`design-parity/11`，收停车场 Q584）：报告抬头那几句
+/// 互锁与没做成的那句话都劝人换一条命令（`--fit height`、`--dither fs`），记号里那个空格带着
+/// [不许断的标注](tonefit::HARD_SPACE)——标注是给折行看的，不是印出去的东西
+/// （`CONTEXT.md` 的**字形约定**：印出去之前换回普通空格）。命令行那一路过的是同一个纯函数。
+/// **这一路不折行**：stdout 可能是一个文件，折到多宽另有一笔账。
 ///
 /// **唯一的读者是会话**（`crate::session::run::Running::report`），而会话整个挂在 `tui`
 /// 后面：关掉那个特性的**非测试**构建里它一个读者都没有——**那不是死代码，是那一趟的前提**
@@ -123,13 +126,16 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     not(feature = "tui"),
     allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
 )]
-pub fn undone(earlier: Option<&str>, attempt: &str, said: &str) -> String {
+pub fn left_on_stdout(earlier: Option<&str>, attempt: &str, why_undone: Option<&str>) -> String {
+    let Some(said) = why_undone else {
+        return crate::wrap::printed(attempt).into_owned();
+    };
     let mut text = earlier.unwrap_or_default().to_owned();
     text.push_str(attempt);
     text.push('\n');
-    text.push_str(&crate::wrap::printed(&super::undone(said)));
+    text.push_str(&super::undone(said));
     text.push('\n');
-    text
+    crate::wrap::printed(&text).into_owned()
 }
 
 /// **末尾那几小结拼回一段文字**（[`super::tail`] 出的那几行）。
