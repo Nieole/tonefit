@@ -85,13 +85,13 @@
 //! 会话因此在第一卷开工之前就画得出整棵树。
 //! **库里不为它另算一个数**：三样在清点走完那一刻都已经在了，这里只是没把它们丢掉。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 
-use crate::discover::{self, Provenance};
+use crate::discover::{self, Candidate, Provenance};
 use crate::listing::FirstFew;
 use crate::place::{CaseSensitivity, Place, Side};
 use crate::progress::Events;
@@ -119,6 +119,21 @@ pub(crate) struct Survey {
     /// 与上面那两份同一遍产出，而它答的是第三件事：「这一块**没看过**」。
     /// 来处只有一处——[`Survey::of`] 里点不开那一支的目录那一格。
     unreachable_places: Vec<UnreachablePlace>,
+    /// 撞上[借住的卷](Lodgers)的去处的那些成员，按发现顺序（`one-source/04`，见 [`clashes`]）。
+    /// 开工前的撞名那一道按它拒绝开始（见 `crate::ensure_no_member_clashes_with_a_lodger`）。
+    clashes: Vec<Clash>,
+}
+
+/// 一个成员与一个[借住的卷](Lodgers)**撞同一个去处**（`one-source/04`，收停车场 Q301）：
+/// 成员要在那里写一个文件，借住的卷要在那里建目录——它的去处就是那一级，或在那一级底下。
+/// 两样只能留一个。
+pub(crate) struct Clash {
+    /// 那个成员，按[成员身份](source::Volume::identity)：源里那一页（或那个透传文件）。
+    pub(crate) member: PathBuf,
+    /// 那个借住的卷的卷根。
+    pub(crate) lodger: PathBuf,
+    /// 撞在哪儿，**相对输出目录**：成员那一卷的去处接上成员一张都不切时的输出名（成员自己的写法）。
+    pub(crate) at: PathBuf,
 }
 
 /// 清点过的一个卷：**只有数与路径**，没有卷本身。
@@ -138,7 +153,7 @@ pub(crate) struct Surveyed {
     /// 住在这一卷去处**里面**的那些别的卷，各按相对这一卷去处的那一段
     /// （见 [`Lodgers`]）。这一卷收尾时换掉的范围按它收窄。
     ///
-    /// 它由 [`find_the_lodgers`] 在这一批卷全部发现出来之后填上——一个卷住不住在另一个卷的去处里，
+    /// 它由 [`find_the_lodgers`] 在这一批卷全部发现出来之后认出、[`record_the_lodgers`] 填上——一个卷住不住在另一个卷的去处里，
     /// 得等两条镜像路径都在手上才答得出，逐个发现的时候答不了。
     pub(crate) lodgers: Lodgers,
     /// 这一卷这一趟最多走多少步。开卷那条事件报的就是它。
@@ -248,7 +263,13 @@ impl Survey {
                 Err(error) => refused.push((input.clone(), error)),
             }
         }
-        for candidate in found.into_candidates() {
+        let candidates = found.into_candidates();
+        // 成员撞借住的卷要拿**那一卷一张都不切时的输出名**去比，而那批名字只在下面列成员的那一刻在手上
+        // （见 [`clashes`]）。全留着的话随这一趟的总页数长；只有去处**住得下别的卷**的那几卷要比，
+        // 那几个去处从候选的镜像路径上就认得出来，列成员之前先认一遍。
+        let with_room = places_with_room_for_a_lodger(&candidates, output);
+        let mut named: Vec<(usize, Vec<(PathBuf, PathBuf)>)> = Vec::new();
+        for candidate in candidates {
             if candidate.container == Container::Archive {
                 events.surveying();
                 if events.stopping() {
@@ -269,6 +290,15 @@ impl Survey {
                     let enumerating = started.elapsed();
                     // 成员数只数这一遍：源页数从同一份里取，不另数（见 [`Surveyed::source_pages`]）。
                     let members = MemberCounts::of(&volume, request);
+                    // 只有目录卷的成员写在盘上的那个去处里；归档卷的成员写在包里，挡不着任何一个目录。
+                    if volume.container == Container::Directory
+                        && with_room.contains(&Place::of(&candidate.output_relative, output))
+                    {
+                        let names = crate::one_to_one_names(&volume)
+                            .map(|(member, name)| (volume.identity(member), name))
+                            .collect();
+                        named.push((volumes.len(), names));
+                    }
                     volumes.push(Surveyed {
                         steps: volume_steps(members, request),
                         source_pages: members.source_pages,
@@ -333,13 +363,16 @@ impl Survey {
         if !refused.is_empty() {
             return Err(refuse(&refused, request.inputs.len()));
         }
-        // 这一批卷齐了，「谁住在谁的去处里」这才答得出来。
-        find_the_lodgers(&mut volumes, output);
+        // 这一批卷齐了，「谁住在谁的去处里」这才答得出来；成员撞不撞借住的卷，紧跟着就比得出来。
+        let lodging = find_the_lodgers(&volumes, output);
+        let clashes = clashes(&volumes, &named, &lodging, output);
+        record_the_lodgers(&mut volumes, lodging);
         Ok(Some(Self {
             steps: volumes.iter().map(|surveyed| surveyed.steps).sum(),
             volumes,
             non_volume_files,
             unreachable_places,
+            clashes,
         }))
     }
 
@@ -382,6 +415,12 @@ impl Survey {
         &self.volumes
     }
 
+    /// 撞上借住的卷的去处的那些成员（见 [`clashes`]）。开工前那道撞名校验按它拒
+    /// （见 `crate::ensure_no_member_clashes_with_a_lodger`）。
+    pub(crate) fn clashes(&self) -> &[Clash] {
+        &self.clashes
+    }
+
     /// 按发现顺序交出清点的**三份产出**：那些卷、那些非漫画文件、那些无法访问的地方。
     ///
     /// 一次交出而不是分三个取数：后两份要跟着卷一路走到 [`crate::Report`] 上，
@@ -393,9 +432,18 @@ impl Survey {
     }
 }
 
-/// 认出**谁住在谁的去处里**：镜像出来的去处互相嵌套的那几对，各记进外面那一卷的
-/// [`Surveyed::lodgers`]。写出那一层认得出[借住的卷](Lodgers)，收尾才换得掉
-/// 「这一卷那几个成员」而不是整个去处（见 `crate::sink::DirectorySink`，收停车场 Q113）。
+/// 一对借住关系：第 `outer` 卷的去处里住着第 `inner` 卷（两个下标指的是同一批卷）。
+struct Lodging {
+    outer: usize,
+    inner: usize,
+    /// 住户相对外面那一卷去处的那一段，取**住户自己的写法**（见 [`find_the_lodgers`]）。
+    inside: PathBuf,
+}
+
+/// 认出**谁住在谁的去处里**：镜像出来的去处互相嵌套的那几对。它们由 [`record_the_lodgers`] 记进外面那一卷的
+/// [`Surveyed::lodgers`]——写出那一层认得出[借住的卷](Lodgers)，收尾才换得掉
+/// 「这一卷那几个成员」而不是整个去处（见 `crate::sink::DirectorySink`，收停车场 Q113）；
+/// 记之前先拿去比一遍成员（见 [`clashes`]）。
 ///
 /// 算法是**逐个卷往上找祖先**，不是两两比：卷数是几千的量级（点名一个库就是几千个卷），
 /// 两两比是它的平方，而一条镜像路径的级数是个位数。
@@ -410,31 +458,105 @@ impl Survey {
 ///
 /// 记下的那一段（住户相对这个去处的那一截）取**住户自己的写法**：它就是住户写出去时用的那几级，
 /// 写出那一层拿它去比盘上的名字。
-fn find_the_lodgers(volumes: &mut [Surveyed], output: CaseSensitivity) {
+fn find_the_lodgers(volumes: &[Surveyed], output: CaseSensitivity) -> Vec<Lodging> {
     let at: HashMap<Place, usize> = volumes
         .iter()
         .enumerate()
         .map(|(index, volume)| (Place::of(&volume.output_relative, output), index))
         .collect();
-    // 先收齐再写回：查表要借着 `volumes`，而填那一格要改它。
-    let mut inside: Vec<(usize, PathBuf)> = Vec::new();
-    for volume in volumes.iter() {
-        let place = Place::of(&volume.output_relative, output);
+    let mut lodging = Vec::new();
+    for (inner, volume) in volumes.iter().enumerate() {
         let spelled = Place::of(&volume.output_relative, CaseSensitivity::Sensitive);
-        // 只问**真祖先**：到它自己那一级为止不含——一个卷不借住在自己的去处里。
-        for depth in 1..place.depth() {
-            if let Some(&index) = at.get(&place.ancestor(depth)) {
-                inside.push((index, spelled.below(depth)));
+        // 只问**真祖先**：一个卷不借住在自己的去处里。
+        for (depth, ancestor) in Place::of(&volume.output_relative, output).into_ancestors() {
+            if let Some(&outer) = at.get(&ancestor) {
+                lodging.push(Lodging {
+                    outer,
+                    inner,
+                    inside: spelled.below(depth),
+                });
             }
         }
     }
+    lodging
+}
+
+/// 把认出来的那几对各记进外面那一卷的 [`Surveyed::lodgers`]。
+fn record_the_lodgers(volumes: &mut [Surveyed], lodging: Vec<Lodging>) {
     let mut lodgers: Vec<Vec<PathBuf>> = vec![Vec::new(); volumes.len()];
-    for (index, rest) in inside {
-        lodgers[index].push(rest);
+    for Lodging { outer, inside, .. } in lodging {
+        lodgers[outer].push(inside);
     }
     for (volume, inside) in volumes.iter_mut().zip(lodgers) {
         volume.lodgers = Lodgers::new(inside);
     }
+}
+
+/// 这一批候选里**住得下别的候选**的那几个去处：某一个候选去处的真祖先，按输出那一侧的答案认。
+///
+/// 它是 [`find_the_lodgers`] 认出来的那几个外面那一卷的**超集**：那一个问的是卷，这一个问的是候选——
+/// 列成员之前还不知道哪个候选开得出一页来（一页都没有的东西不是卷）。认多了的代价是一卷多留一份成员名、
+/// 比完就扔；认漏了就是一处撞车没人查——两处数的是同一批祖先（[`Place::into_ancestors`]），漏不了。
+fn places_with_room_for_a_lodger(
+    candidates: &[Candidate],
+    output: CaseSensitivity,
+) -> HashSet<Place> {
+    candidates
+        .iter()
+        .flat_map(|candidate| Place::of(&candidate.output_relative, output).into_ancestors())
+        .map(|(_, ancestor)| ancestor)
+        .collect()
+}
+
+/// **成员撞借住的卷**：一卷一张都不切时的输出名，撞上住在它去处里的哪一卷（`one-source/04`，收停车场 Q301）。
+///
+/// 混装目录 `N和S/` 里同时有 `001.jpg` 这一页与 `001.png/` 这个目录卷时，前者的输出成员名换成 `001.png`，
+/// 后者住在前者那一卷的去处里、去处也叫 `001.png`。卷与卷撞名那一道比的是卷，卷内那两道比的是成员，
+/// 这一撞落在两者之间。
+///
+/// 撞得上的只有**去处直接那一层**：目录卷的成员全写在那一层上（ADR 0014 决定第 1 条），
+/// 而借住的卷从那一层的某一级进去。成员的输出名与住户那一段的**头一级**是同一处，就撞了——
+/// 住户就躺在那一级上时两样要的是同一个去处；躺在更深处时（`001.png/第1话/`）那一级是它去处的祖先，
+/// 一个要写成文件、一个要在那里建目录，同样只能留一个。
+///
+/// 「同一处」按输出那一侧的答案认（[`crate::place::same_place`] 那一把，这里拿它的键 [`Place`] 查表），
+/// 与认借住、卷与卷撞名是同一把尺子。比的只是**一对一那一套**名字——切开之后才有的那一半
+/// 要解了像素才知道，在那一卷里查（见 `crate::ensure_no_page_clashes_with_a_lodger`）。
+///
+/// `named` 是住得下别的卷的那几卷（见 [`places_with_room_for_a_lodger`]）各自的 (成员身份, 输出成员名)，按卷的下标排好。
+/// 交回的次序：外面那一卷按发现顺序、成员按卷内顺序、住户按发现顺序——报错要可复现。
+fn clashes(
+    volumes: &[Surveyed],
+    named: &[(usize, Vec<(PathBuf, PathBuf)>)],
+    lodging: &[Lodging],
+    output: CaseSensitivity,
+) -> Vec<Clash> {
+    // 每一卷去处直接那一层上通往借住的卷的那几级 → 从那一级进去的那几个住户。
+    let mut heads: HashMap<(usize, Place), Vec<usize>> = HashMap::new();
+    for lodging in lodging {
+        if let Some(head) = lodging.inside.iter().next() {
+            heads
+                .entry((lodging.outer, Place::of(Path::new(head), output)))
+                .or_default()
+                .push(lodging.inner);
+        }
+    }
+    let mut clashes = Vec::new();
+    for (outer, names) in named {
+        for (member, name) in names {
+            let Some(inners) = heads.get(&(*outer, Place::of(name, output))) else {
+                continue;
+            };
+            for &inner in inners {
+                clashes.push(Clash {
+                    member: member.clone(),
+                    lodger: volumes[inner].root.clone(),
+                    at: volumes[*outer].output_relative.join(name),
+                });
+            }
+        }
+    }
+    clashes
 }
 
 /// 一个候选**开出来一页都没有**时，它在非漫画文件那张表上留下的那几条。
@@ -507,6 +629,66 @@ mod tests {
         let output = Side::Output.probe(&request.output_root);
         Survey::of(request, output, nobody.events())
             .map(|survey| survey.expect("没人可问，清点却停在了半路"))
+    }
+
+    /// **成员挡在借住的卷的去处的祖先上，同样算撞**（`one-source/04`）：`N和S/001.jpg` 与
+    /// `N和S/001.png/第1话/`——`001.png/` 自己一页都没有、不是卷，住户躺在它底下。成员要在 `001.png`
+    /// 写一个文件，住户要在那里建目录、再往下一级才是它的去处，两样同样只能留一个。
+    ///
+    /// 只比住户那一段**整段**的话认不出这一对（`001.png` 对 `001.png/第1话`），比头一级才认得出。
+    /// 页的字节这一遍不读：清点只列成员（见本模块的模块文档）。
+    #[test]
+    fn a_member_standing_on_the_way_to_a_lodger_clashes_with_it() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let mixed = space.path().join("N和S");
+        let lodger = mixed.join("001.png").join("第1话");
+        std::fs::create_dir_all(&lodger).expect("建住户");
+        std::fs::write(mixed.join("001.jpg"), b"not decoded here").expect("写混装目录那一页");
+        std::fs::write(lodger.join("001.png"), b"not decoded here").expect("写住户那一页");
+
+        let survey = survey_of(&Request {
+            inputs: vec![mixed.clone()],
+            output_root: space.path().join("out"),
+            ..crate::tests::request()
+        })
+        .expect("点名的那个目录点得开");
+
+        let [clash] = survey.clashes() else {
+            panic!("撞了 {} 对，该是 1 对", survey.clashes().len());
+        };
+        assert_eq!(clash.member, mixed.join("001.jpg"));
+        assert_eq!(clash.lodger, lodger);
+        assert_eq!(clash.at, Path::new("N和S").join("001.png"));
+    }
+
+    /// **透传文件也是成员**，原名就是它的输出名，撞上借住的卷同样算（`one-source/04`）。
+    ///
+    /// 同一个目录里装不下 `info.txt` 文件与 `info.txt/` 目录，这一对要从两条处理路径镜像进同一棵输出树：
+    /// `甲/N和S`（一页加一个 `info.txt`）与 `乙/N和S`（自己不是卷，只装着 `info.txt/` 那一卷）。
+    #[test]
+    fn a_pass_through_file_clashes_with_a_lodger_too() {
+        let space = tempfile::tempdir().expect("建临时目录");
+        let host = space.path().join("甲").join("N和S");
+        let shelf = space.path().join("乙").join("N和S");
+        let lodger = shelf.join("info.txt");
+        std::fs::create_dir_all(&host).expect("建混装目录");
+        std::fs::create_dir_all(&lodger).expect("建住户");
+        std::fs::write(host.join("001.png"), b"not decoded here").expect("写那一页");
+        std::fs::write(host.join("info.txt"), b"pass through").expect("写透传文件");
+        std::fs::write(lodger.join("001.png"), b"not decoded here").expect("写住户那一页");
+
+        let survey = survey_of(&Request {
+            inputs: vec![host.clone(), shelf],
+            output_root: space.path().join("out"),
+            ..crate::tests::request()
+        })
+        .expect("点名的两个目录都点得开");
+
+        let [clash] = survey.clashes() else {
+            panic!("撞了 {} 对，该是 1 对", survey.clashes().len());
+        };
+        assert_eq!(clash.member, host.join("info.txt"));
+        assert_eq!(clash.lodger, lodger);
     }
 
     /// 坏路径逐条列出，且说得出总共点名了几个。

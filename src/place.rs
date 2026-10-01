@@ -8,7 +8,8 @@
 //! - **探法**（[`case_sensitivity`]）：那个答案从哪儿来。只读地翻一个已有名字的大小写去问盘。
 //!
 //! 用它的有四处：**收编**认「同一个卷根」（`crate::discover::Found`）、**借住**认「这个卷的去处是不是
-//! 那个卷去处的祖先」（`crate::survey`）、**撞名**认「同一个去处」（`crate::run` 开工前那一道），
+//! 那个卷去处的祖先」（`crate::survey`）、**撞名**认「同一个去处」（卷与卷在 `crate::run` 开工前那一道；
+//! 成员与借住的卷在清点里比、切开之后的名字在那一卷里比，见 `one-source/04`），
 //! 以及会话的**逐层补全**——它只用探法，按前缀筛名字用它自己的折法。
 //!
 //! # 每一趟开工时探，不跨趟记
@@ -213,6 +214,14 @@ impl Place {
     /// 它往上数、只剩头 `depth` 级的那一个祖先。
     pub(crate) fn ancestor(&self, depth: usize) -> Self {
         Self(self.0[..depth].to_vec())
+    }
+
+    /// 它的每一个**真祖先**（到它自己那一级为止不含），从最外一级起，各带着它有几级。
+    ///
+    /// 「谁住在谁的去处里」与「哪几个去处住得下别的卷」数的都是它（`crate::survey`）：
+    /// 后者是前者的超集，靠的正是两处数的是同一批祖先。
+    pub(crate) fn into_ancestors(self) -> impl Iterator<Item = (usize, Self)> {
+        (1..self.depth()).map(move |depth| (depth, self.ancestor(depth)))
     }
 
     /// 头 `depth` 级底下的那一段，拼回一条相对路径——它在那个祖先里的位置。

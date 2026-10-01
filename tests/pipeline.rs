@@ -4207,6 +4207,113 @@ fn a_zip_and_a_cbz_of_the_same_name_collide_and_the_message_says_why() {
     assert!(!space.out().exists(), "拒之前已经动过输出目录");
 }
 
+/// **一张页与一个借住的卷撞同一个去处，开工前就拒**（`one-source/04`，收停车场 Q301）。
+///
+/// 混装目录 `N和S/` 里同时有 `001.jpg` 这一页与 `001.png/` 这个目录卷：前者的输出成员名换成 `001.png`，
+/// 后者住在前者那一卷的去处里、去处也叫 `001.png`——一个要写成文件，一个要建成目录。
+/// 撞名那一道从前只比卷与卷，卷内那两道只比成员与成员，这一撞没有一处查得出来：
+/// 住户先写出来的话，封面那一卷收尾时把它整个清掉，一句告警都没有。
+///
+/// 那句话点得出那一张页、那一卷，与它们撞在哪儿；拒在写出第一个字节之前，输出目录根本不建。
+#[test]
+fn a_page_and_a_lodger_that_would_write_to_the_same_place_are_refused() {
+    let space = Workspace::new();
+    let mixed = space.volume("N和S");
+    let page = mixed.page("001.jpg", &fixtures::cheap_page());
+    let lodger = space.volume("N和S/001.png");
+    lodger.page("001.png", &fixtures::cheap_page());
+
+    let error = fixtures::run_paths_expecting_failure(&space, [mixed.path()]).to_string();
+
+    assert!(error.contains(&format!("← {}", page.display())), "{error}");
+    assert!(
+        error.contains(&format!("← {}", lodger.path().display())),
+        "{error}"
+    );
+    let shared = space.out().join("N和S").join("001.png");
+    assert!(error.contains(&shared.display().to_string()), "{error}");
+    // 这一撞出在同一个混装目录里，卷名撞车那条出路（分批处理）分不开它们，念出来就是一句对不上号的指引。
+    assert!(!error.contains("分批处理"), "{error}");
+    assert!(!space.out().exists(), "拒之前已经动过输出目录");
+}
+
+/// **页与借住的卷是不是同一个去处，按输出那一侧的折法认**（`one-source/04`）。
+///
+/// `001.jpg` 与 `001.PNG/`：前者的输出名是 `001.png`，与后者只差大小写。不认大小写的盘上它们是同一个去处，
+/// 开工前就拒；认的盘上是两处，两卷各写各的——一条不适用的规矩不该把这一趟拦下。
+/// 认不认大小写由这块盘说了算（`fixtures::the_disk_folds_case`）。
+#[test]
+fn a_page_and_a_lodger_that_differ_only_in_case_collide_where_the_output_disk_folds_them() {
+    let space = Workspace::new();
+    let mixed = space.volume("N和S");
+    let page = mixed.page("001.jpg", &fixtures::cheap_page());
+    let lodger = space.volume("N和S/001.PNG");
+    lodger.page("001.png", &fixtures::cheap_page());
+    let folds = fixtures::the_disk_folds_case(lodger.path());
+
+    let run = tonefit::run(&fixtures::request(&space, [mixed.path()]));
+
+    if folds {
+        let error = run
+            .expect_err("撞同一个去处的页与卷该在开工前被拒")
+            .to_string();
+        assert!(error.contains(&format!("← {}", page.display())), "{error}");
+        assert!(
+            error.contains(&format!("← {}", lodger.path().display())),
+            "{error}"
+        );
+        assert!(!space.out().exists(), "拒之前已经动过输出目录");
+    } else {
+        let report = run.expect("认大小写的盘上页与卷各写各的");
+        assert_eq!(report.volumes.len(), 2);
+        assert_eq!(
+            fixtures::directory_members(&space.out()),
+            ["N和S/001.PNG/001.png", "N和S/001.png"]
+        );
+    }
+}
+
+/// **切开之后的名字撞上借住的卷，照旧走卷转换失败**（`one-source/04`）。
+///
+/// 一对一那一套名字清点时就比过了；跨页切开之后多出来的 `001-1.png` 要解了像素才知道，
+/// 只能在那一卷里、写出第一个字节之前查。撞上的是那一卷的内容，不是这一趟的参数——
+/// 那一卷记一笔转换失败，借住的卷照做。
+///
+/// 住户点名在前：收编按「头一回被发现」占座，它因此先写出来，随后混装目录那一卷才收尾——
+/// 那一卷要是没拦下，收尾时就把挡路的那个目录（住户的整卷输出）清掉了。
+#[test]
+fn a_split_half_that_lands_on_a_lodger_takes_only_its_own_volume_down() {
+    let space = Workspace::new();
+    let mixed = space.volume("N和S");
+    mixed.page(
+        "001.png",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+    let lodger = space.volume("N和S/001-1.png");
+    lodger.page("001.png", &fixtures::cheap_page());
+
+    let report = fixtures::run_paths(&space, [lodger.path(), mixed.path()]);
+
+    let [failed] = &report.failed_volumes[..] else {
+        panic!("撞上借住的卷没被拦下：{:?}", report.failed_volumes);
+    };
+    assert_eq!(failed.volume, mixed.path());
+    assert!(failed.reason.contains("001-1.png"), "{}", failed.reason);
+    let [done] = &report.volumes[..] else {
+        panic!("借住的卷没照做：{:?}", report.volumes.len());
+    };
+    assert_eq!(done.volume, lodger.path());
+    assert_eq!(
+        fixtures::directory_members(&space.out()),
+        ["N和S/001-1.png/001.png"],
+        "借住的卷的输出被动了，或者混装目录那一卷写出了东西"
+    );
+}
+
 /// **报告说得出这一趟的纸色提白对每一页做了什么**（纸色提白批 02 号票第 1 条）。
 ///
 /// 三页各落在一种情形上，卷级那一行的三个数正是数它们数出来的：离格且钳得动的一页、
