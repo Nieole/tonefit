@@ -40,6 +40,8 @@
 //! 它们在命令行上**根本没有**（那一路把同一批格摆成一段散文），因此不是第二份说法；
 //! 与库那一头撞车的有两处：跳过那一句（停车场 **Q877**），与留下几页那一截——命令行那一句
 //! （`render` 的按页跳过那一行）说的是同一个数，屏上只报个数、措辞另写一份（停车场 **Q1247**）。
+//! **那几句里提到的键不是这一块的**：框底边与两句末尾的 `a`／`h` 取自按键表那个不问阶段与块的
+//! 写法（[`keymap::spelt_for`]），措辞才是这一块自己的。
 //!
 //! # 一行的列
 //!
@@ -55,6 +57,7 @@ use ratatui::layout::Rect;
 use tonefit::{BitDepth, Mode, Panel, VolumeReport};
 
 use super::super::columns::{self, Column, PAGES_MARKS, PagesColumn, PagesWidths};
+use super::super::keymap::{self, Deed};
 use super::super::live::{Live, VolumeState};
 use super::super::look::{Kind, Look, Segment};
 use super::super::passes;
@@ -321,9 +324,13 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
             right: &[listing_chip(pages.listing)],
             // **屏上这一块自己的开关**：它写的是**按下去会到的那一副**，
             // 而且不随阶段改口——等待确认那一档 `a` 让给答话、屏底不摆它，
-            // 这一句照样写着（设计稿 `drawPages` 的 `bottomLeft`）。
+            // 这一句照样写着（设计稿 `drawPages` 的 `bottomLeft`）。键取自 [`keymap::spelt_for`]。
             bottom_left: &[Segment::new(
-                format!("a → {}", session.listing_key_says()),
+                format!(
+                    "{} → {}",
+                    keymap::spelt_for(Deed::ListAll).unwrap_or_default(),
+                    session.listing_key_says()
+                ),
                 Look::FAINT.italic(),
             )],
             bottom_right: &[Segment::new(position, look)],
@@ -350,7 +357,10 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
                 Segment::plain(
                     "之前转换过，源文件和设置都没变，这一趟没有重新分析，所以没有每页结果。",
                 ),
-                Segment::faint("  h → 回卷列表"),
+                Segment::faint(format!(
+                    "  {} → 回卷列表",
+                    keymap::spelt_for(Deed::BackToList).unwrap_or_default()
+                )),
             ],
             Some(inner),
         );
@@ -381,7 +391,10 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
             first,
             &[
                 Segment::plain("这一卷没有需留意的页 ⋅ "),
-                Segment::faint("a → 全部页"),
+                Segment::faint(format!(
+                    "{} → 全部页",
+                    keymap::spelt_for(Deed::ListAll).unwrap_or_default()
+                )),
             ],
             Some(inner),
         );

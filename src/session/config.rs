@@ -26,8 +26,11 @@
 //! 因此摆在 `tui` 特性**外面**（见 `super` 的《终端库在哪一半》）：`--no-default-features`
 //! 那一趟照编、照跑它自带的用例。
 
+use std::borrow::Cow;
+
 use tonefit::{Panel, Profile};
 
+use super::keymap::{self, Deed};
 use super::state::{DEVICE_FIELDS, Field, Session, Shape, TASTE_FIELDS};
 use crate::preset::Preset;
 use crate::render::{self, Judging, Switches};
@@ -148,13 +151,13 @@ impl Item {
     ///
     /// 选项冲突那一项两句话分两种情形：咬上了说「代价是什么看上面那句」，
     /// 没咬上说「这一组之间没有冲突」——两句都指着 `tonefit --help` 的末尾那张全表。
-    pub fn about(self, session: &Session) -> &'static str {
+    pub fn about(self, session: &Session) -> Cow<'static, str> {
         match self {
             Self::Setting(field) => about_setting(field),
-            Self::Premise(Judging::Interlock) if !engaged(session) => {
-                "当前这组设置之间没有互相冲突的组合。所有可能冲突的组合写在 tonefit --help 的末尾。"
-            }
-            Self::Premise(which) => about_premise(which),
+            Self::Premise(Judging::Interlock) if !engaged(session) => Cow::Borrowed(
+                "当前这组设置之间没有互相冲突的组合。所有可能冲突的组合写在 tonefit --help 的末尾。",
+            ),
+            Self::Premise(which) => Cow::Borrowed(about_premise(which)),
         }
     }
 }
@@ -404,13 +407,19 @@ pub fn panels() -> Vec<(Panel, Vec<&'static str>)> {
 /// 对得上靠用例：环上每一格都得在说明里**从一句的句首点名**
 /// （`every_value_on_a_ring_is_spelt_in_its_description_as_the_ring_spells_it`），
 /// 库里换掉一个取值的写法、或者环上多出一格，那一条当场红。
-fn about_setting(field: Field) -> &'static str {
-    match field {
+///
+/// **说明里提到的键取自按键表**（[`keymap::spelt_for`]）：可见灰阶数那一段让人按哪个键生成
+/// 灰阶测试图，读的是表上 [`Deed::Chart`] 那一行；措辞是这一段自己的（`design-parity/03`）。
+fn about_setting(field: Field) -> Cow<'static, str> {
+    Cow::Borrowed(match field {
         Field::Profile => {
             "先选屏幕规格，再选型号：同一种屏幕的型号，转出来的效果完全一样。表里没有你的设备时，挑一个屏幕规格相同的型号，再按实际情况填可见灰阶数。换型号会清空之前填的可见灰阶数和画质门槛。"
         }
         Field::GrayLevels => {
-            "你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。"
+            return Cow::Owned(format!(
+                "你在这台设备上用肉眼能分清几级灰。按 {} 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。",
+                keymap::spelt_for(Deed::Chart).unwrap_or_default()
+            ));
         }
         Field::Threshold => {
             "画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。"
@@ -449,7 +458,7 @@ fn about_setting(field: Field) -> &'static str {
         Field::IoMode => {
             "auto（自动）：按硬盘类型自己选。serial（逐个读）：适合机械硬盘和网络盘。concurrent（同时读）：适合固态硬盘。"
         }
-    }
+    })
 }
 
 /// 画质判定参数那几项的**长说明**（设计稿 `CONFIG` 的 `desc`）。
@@ -656,7 +665,7 @@ mod tests {
             let about = item.about(&scene.session);
             for cell in &cells[1..] {
                 assert!(
-                    names(about, cell),
+                    names(&about, cell),
                     "{item:?}：说明里没有点环上的「{cell}」：{about}"
                 );
             }

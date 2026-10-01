@@ -1051,10 +1051,16 @@ impl Session {
                     line.step(if deed == Deed::Down { 1 } else { -1 });
                 }
             }
+            // 这一句提到的三个键都取自按键表（[`keymap::spelt_for`]），措辞是这一句自己的。
             Deed::QuitRefused => self.views.say(
                 vec![
                     Segment::new("正在转换：", Look::tone(Tone::Caution).bold()),
-                    Segment::plain("q 不会退出，请先按 s 停止，或按 C-c 立即退出"),
+                    Segment::plain(format!(
+                        "{} 不会退出，请先按 {} 停止，或按 {} 立即退出",
+                        keymap::spelt_for(Deed::QuitRefused).unwrap_or_default(),
+                        keymap::spelt_for(Deed::Stop).unwrap_or_default(),
+                        keymap::spelt_for(Deed::Interrupt).unwrap_or_default(),
+                    )),
                 ],
                 now,
             ),
@@ -1350,12 +1356,22 @@ impl Session {
     }
 
     /// 按停止升一级，屏底说一句：按一次做完当前卷再停，再按一次立即停止。
+    /// 「再按一次」的那个键取自按键表（[`keymap::spelt_for`]）。
     fn stop_a_notch(&mut self, now: Instant) {
         self.raise_stop();
         let (head, rest) = if self.stopping() == tonefit::Instruction::Abort {
-            ("! 已立即停止：", "当前卷未保存，输出目录里不会留下半成品")
+            (
+                "! 已立即停止：",
+                "当前卷未保存，输出目录里不会留下半成品".to_owned(),
+            )
         } else {
-            ("! 正在停止：", "做完当前卷就停 ⋅ 再按一次 s 立即停止")
+            (
+                "! 正在停止：",
+                format!(
+                    "做完当前卷就停 ⋅ 再按一次 {} 立即停止",
+                    keymap::spelt_for(Deed::Stop).unwrap_or_default()
+                ),
+            )
         };
         self.views.say_for(
             vec![
@@ -1368,7 +1384,8 @@ impl Session {
     }
 
     /// **光标一挪，自动滚动就暂停**（`CONTEXT.md` 的《自动滚动》）：挪光标那几个键与
-    /// 滚轮（[`Self::wheel`]）走这一处，屏底跟着说一句「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回。
+    /// 滚轮（[`Self::wheel`]）走这一处，屏底跟着说一句「已暂停自动滚动 ⋅ 按 F 恢复」，`F` 交回
+    /// （那一句里的键取自按键表，[`keymap::spelt_for`]）。
     /// **单击一行同样暂停，但不走这一处、不说这一句**（设计稿那一屏如此，见 [`Self::select`]）。
     ///
     /// **跳转不走这一处**：`]d`／`[d` 与搜索跳过去同样暂停，但屏底说的是它们自己那一句
@@ -1386,7 +1403,10 @@ impl Session {
             vec![
                 Segment::new("已暂停自动滚动", Look::tone(Tone::Caution).bold()),
                 Segment::faint(" ⋅ 按 "),
-                Segment::new("F", Look::PLAIN.bold()),
+                Segment::new(
+                    keymap::spelt_for(Deed::Follow).unwrap_or_default(),
+                    Look::PLAIN.bold(),
+                ),
                 Segment::faint(" 恢复"),
             ],
             now,
