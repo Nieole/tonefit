@@ -7,7 +7,7 @@
   "presets_file": "unchanged",
   "paths": "unchanged",
   "settings": {
-    "profile": "kobo-libra-2",
+    "profile": null,
     "gray-levels": null,
     "threshold": null,
     "fit": "inside",

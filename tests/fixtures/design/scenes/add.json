@@ -94,6 +94,7 @@
     {
       "name": "漫画",
       "says": {
+        "profile": "kobo-libra-2",
         "fit": null,
         "dither": null
       }
