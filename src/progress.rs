@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::report::{NonVolumeFile, RunOutcome, UnreachablePlace, VolumeReport};
+use crate::report::{NonVolumeFile, RunOutcome, UnreachablePlace, VolumeReport, VolumeTiming};
 use crate::survey::SurveyedVolume;
 
 /// 库向外报的一条消息（ADR 0011 决定第 1 条）。
@@ -169,13 +169,13 @@ pub enum Event<'a> {
         /// 这一卷的报告。攒下来即是 `Report::volumes`，一字不差。
         report: &'a VolumeReport,
     },
-    /// 一整卷**没做成**，附上给人读的那句原因（05 号票：卷转换失败）。
+    /// 一整卷**没做成**，附上给人读的那句原因（05 号票：卷转换失败）与它到那一刻为止的卷级计时。
     ///
     /// 它与 [`VolumeFinished`](Self::VolumeFinished) 二选一：一条开卷之后到得了的只有其中
-    /// 一条——那一卷要么交出一份报告，要么交出这一句原因。两条都没有的只剩两种情形：
+    /// 一条——那一卷要么交出一份报告，要么交出这一句原因与那份计时。两条都没有的只剩两种情形：
     /// [立即停止](Instruction::Abort)，或拒绝开始撞在半路（互锁 ③ 那一页，`RunOutcome::Refused`）。
     ///
-    /// 同一句原因随后也会在 `Report::failed_volumes` 里出现一次——那一份是结果，
+    /// 同一句原因与同一份计时随后也会在 `Report::failed_volumes` 里出现一次——那一份是结果，
     /// 这一条是增量，与 [`PageFailed`](Self::PageFailed) 同一个待遇。
     ///
     /// **这一趟不因此停下**：其余卷照做，结束那一条照报。画进度的实现方要在这里
@@ -187,6 +187,9 @@ pub enum Event<'a> {
         volume: &'a Path,
         /// 为什么没做成，由内到外的错误链。
         reason: &'a str,
+        /// 这一卷到没做成那一刻为止的卷级计时（`say-and-stop/07`）：走过的环节各有一段。
+        /// 与 `VolumeFailure::timing` 同一份。
+        timing: VolumeTiming,
     },
     /// 这一趟完了，带着**它是怎么收的场**（停车场 Q39）。
     ///
@@ -732,8 +735,12 @@ impl<'a> Events<'a> {
     }
 
     #[cfg_attr(debug_assertions, track_caller)]
-    pub(crate) fn volume_failed(self, volume: &Path, reason: &str) {
-        self.report(Event::VolumeFailed { volume, reason });
+    pub(crate) fn volume_failed(self, volume: &Path, reason: &str, timing: VolumeTiming) {
+        self.report(Event::VolumeFailed {
+            volume,
+            reason,
+            timing,
+        });
     }
 
     #[cfg_attr(debug_assertions, track_caller)]
@@ -883,11 +890,19 @@ mod tests {
         watched.pass_started(Pass::First);
         watched.step();
         watched.page_failed(Path::new("卷一/003.png"), "解不出来");
-        watched.volume_failed(Path::new("卷二"), "盘拔了");
+        // 没做成的那一卷坏在分析环节里：前两段有数，写出那一段没走到。
+        let took = VolumeTiming {
+            extraction: Duration::ZERO,
+            fingerprint: Duration::from_millis(400),
+            first_pass: Duration::from_secs(2),
+            second_pass: Duration::ZERO,
+            elapsed: Duration::from_secs(3),
+        };
+        watched.volume_failed(Path::new("卷二"), "盘拔了", took);
         watched.run_finished(RunOutcome::Completed);
 
         // 八条整份比对，不是逐条挑几个字：少报一条进度条会停在半路，多报一条它会冲过头，
-        // 而带着的东西报错了——卷路径、预告的步数、失败原因、这一趟怎么收的场——
+        // 而带着的东西报错了——卷路径、预告的步数、失败原因、卷级计时、这一趟怎么收的场——
         // 挑着比就漏得掉，其中预告的步数报错正是进度条「停在某个百分比上再也不动」的样子。
         // 清点中那一条整份就是一个名字：**不带卷数**（停车场 Q720），多带一个数这里当场红。
         assert_eq!(
@@ -905,7 +920,11 @@ mod tests {
                 "PassStarted { pass: First, so_far: None }",
                 "Stepped",
                 r#"PageFailed { page: "卷一/003.png", reason: "解不出来" }"#,
-                r#"VolumeFailed { volume: "卷二", reason: "盘拔了" }"#,
+                concat!(
+                    r#"VolumeFailed { volume: "卷二", reason: "盘拔了", "#,
+                    "timing: VolumeTiming { extraction: 0ns, fingerprint: 400ms, ",
+                    "first_pass: 2s, second_pass: 0ns, elapsed: 3s } }",
+                ),
                 "RunFinished { outcome: Completed }",
             ],
             "报到的那几条与发出去的对不上"

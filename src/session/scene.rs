@@ -1077,10 +1077,8 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
     let out = expand(home, output);
     let disk = Disk { home, out: &out };
     let typical = typical_size();
-    // **没有报告的那几卷，耗时只有会话这一头记得住**（`Live::elapsed_at`）：把「此刻」
-    // 推到它开卷与收手那两刻，量出来的就是场景数据说的那个数。收摊了的卷不必——
-    // 它们那个数在自己那份报告的 `VolumeTiming` 上。
-    let mut clock = epoch;
+    // 收摊了的卷与没做成的卷做了多久，在库那一份上（报告的、没做成那一条的 `VolumeTiming`）：
+    // 夹具照场景数据给，「此刻」不必跟着推（`Live::elapsed_at`）。
     for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
         assert_eq!(listed.root, volume.root, "每卷状态那一列与清单同序");
         let root = expand(home, &listed.root);
@@ -1093,14 +1091,12 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 live.volume_finished(&skipped_report(listed, volume, disk, run));
             }
             "failed" => {
-                live.tick(clock);
                 live.volume_started(&root, listed.steps);
                 up_to_the_fingerprint(&mut live, listed);
-                clock += Duration::from_secs_f64(volume.elapsed_s);
-                live.tick(clock);
                 live.volume_failed(
                     &root,
                     volume.failure.as_deref().expect("没做成的卷带着原因"),
+                    fixture::took(Duration::from_secs_f64(volume.elapsed_s)),
                 );
             }
             "done" | "isolated" | "trialed" => {
@@ -1123,12 +1119,14 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 fixture::volume_finished_with_its_failures(&mut live, &report);
             }
             "running" | "deciding" | "aborted" => {
-                // 还没收摊的那一卷：把「此刻」退回它开卷那一刻，末尾那一次 `tick` 因此
-                // 正好量出它做了多久（等待确认那一卷有攒着的那一份报告，不必退）。
+                // 还没收摊的那一卷**只有会话这一头记得住它做了多久**：把「此刻」退回它开卷那一刻，
+                // 末尾那一次 `tick` 因此正好量出场景数据说的那个数（等待确认那一卷有攒着的
+                // 那一份报告，不必退）。
                 if volume.state != "deciding" {
-                    clock = epoch
-                        + Duration::from_secs_f64((run.elapsed_s - volume.elapsed_s).max(0.0));
-                    live.tick(clock);
+                    live.tick(
+                        epoch
+                            + Duration::from_secs_f64((run.elapsed_s - volume.elapsed_s).max(0.0)),
+                    );
                 }
                 // 分析环节走完的卷才有到此刻为止的报告（灰阶分布）；还在它之前那几个环节上的卷没有。
                 let so_far = volume
@@ -2011,7 +2009,7 @@ mod tests {
                 "{name}"
             );
         }
-        // 没做成的卷：那句原因。
+        // 没做成的卷：那句原因，与库那一份计时。
         for volume in run.volumes.iter().filter(|volume| volume.state == "failed") {
             let root = scene.path(&volume.root);
             let failure = whole
@@ -2022,6 +2020,11 @@ mod tests {
             assert_eq!(
                 Some(failure.reason.as_str()),
                 volume.failure.as_deref(),
+                "{name}"
+            );
+            assert_eq!(
+                failure.timing.elapsed,
+                Duration::from_secs_f64(volume.elapsed_s),
                 "{name}"
             );
         }

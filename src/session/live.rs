@@ -21,7 +21,7 @@
 //! | 总览的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
 //! | 总览的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成转换那一副 |
 //! | 总览的问题行 | 同上，而坏页那一样连当前这一卷已经报过的那几页一起数（[`Live::failures_so_far`]） |
-//! | 卷列表那几行与每页结果 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句（[`Live::report_at`]、[`Live::undone_at`]） |
+//! | 卷列表那几行与每页结果 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句与那份计时（[`Live::report_at`]、[`Live::undone_at`]、[`Live::elapsed_at`]） |
 //!
 //! 预告的步数是**上界**不是承诺（`CONTEXT.md` 的《进度》）。拿它画全局进度的实现方
 //! 因此要在一卷跑完时**结清**那一卷预告剩下的步——这是 [`tonefit::Event::RunStarted`]
@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use tonefit::{
     Event, Instruction, Mode as RunMode, NonVolumeFile, Pass, Report, Request, RunOutcome,
-    SurveyedVolume, UnreachablePlace, VolumeFailure, VolumeReport,
+    SurveyedVolume, UnreachablePlace, VolumeFailure, VolumeReport, VolumeTiming,
 };
 
 use crate::render;
@@ -119,7 +119,7 @@ pub enum VolumeState {
     Isolated,
     /// **跳过**：幂等命中，一页都没重做。
     Skipped,
-    /// **没做成**：整卷没做成，报告上只有一句原因（`VolumeFailure`）。
+    /// **没做成**：整卷没做成，报告上只有一句原因与那份计时（`VolumeFailure`）。
     Failed,
     /// **被立即停止掉**：开了卷，这一趟就被立即停止了——既没收摊也没报没做成，那一卷等于没做
     /// （`tonefit::Event::VolumeFinished` 的文档：流上一条开卷、后面两条一条都没有）。
@@ -154,7 +154,7 @@ impl VolumeState {
     /// 「屏上不摆按不动的键」那句话，只有这两处读同一份判据才成立。
     ///
     /// 与[收摊了](Self::settled)差两格：**没做成的那一卷收摊了、却没有每页结果**
-    /// （报告上只有一句原因），而**等待确认**那一份还没收摊、每页结果已经算出来了。
+    /// （报告上只有一句原因与那份计时），而**等待确认**那一份还没收摊、每页结果已经算出来了。
     pub fn opens_the_pages(self) -> bool {
         matches!(
             self,
@@ -317,13 +317,15 @@ pub struct Live {
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
     /// 开工那一刻整份收下，此后一格不变。
     roster: Arc<Vec<SurveyedVolume>>,
-    /// 清单上每一卷**做了多久**，与 [`roster`](Self::roster) 同序同长。
+    /// **被立即停止掉的那一卷**在清单上排第几、做了多久——会话这一头自己量的那一份。
     ///
-    /// **只给没有报告的那几卷用**（没做成、被立即停止掉、还在跑的那一卷）：收摊了的卷
-    /// 那个数在它自己那份报告的 `VolumeTiming::elapsed` 上，而只有库那一侧减得掉在
-    /// 确认点上等人的那一截（与 [`deliberated`](Self::deliberated) 同一条理由）。
-    /// 屏上那一列因此**有报告就走报告**，没有的才落到这一份上（`super::shell::list`）。
-    timings: Vec<Duration>,
+    /// 一卷做了多久先读库那一份，会话这一头只量**没有库那一份**的两种（读的先后见
+    /// [`elapsed_at`](Self::elapsed_at)）：还在跑的那一卷（[`began`](Self::began) 到此刻，现算），
+    /// 与这一格——它开了卷、这一趟就结束了，库那一侧既不交报告也不报没做成。一趟至多一卷。
+    ///
+    /// 不叫 `aborted`：报告上那一格（`Report::aborted`）记的是被立即停止掉的是哪一卷，
+    /// 这一格记的是它做了多久。
+    aborted_elapsed: Option<(usize, Duration)>,
     /// 当前这一卷是什么时候开的。卷与卷之间是 `None`。
     began: Option<Instant>,
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序同长**——两列在
@@ -364,7 +366,7 @@ pub struct Live {
     in_flight_failures: usize,
     /// **跟着没做成的那几卷一起没了去处的坏页**，几条。
     ///
-    /// 一卷没做成时它连一份卷报告都没有（[`VolumeFailure`] 只带一句原因），
+    /// 一卷没做成时它连一份卷报告都没有（[`VolumeFailure`] 只带一句原因与那份计时），
     /// 它那几页因此**永远进不了** [`report`](Self::report)——而它们确实坏了。
     /// 不单记一格的话，那一卷废掉的那一刻屏上那个数会自己往回走
     /// （一个自称答「此刻」的数缩回去，正是 Q148 要治的病换了一种卷）。
@@ -437,7 +439,7 @@ impl Live {
             steps: 0,
             roster: Arc::default(),
             states: Vec::new(),
-            timings: Vec::new(),
+            aborted_elapsed: None,
             began: None,
             current: None,
             non_volume_files: Arc::default(),
@@ -483,7 +485,12 @@ impl Live {
             Event::Stepped { .. } => self.stepped(),
             Event::PageFailed { .. } => self.page_failed(),
             Event::VolumeFinished { report, .. } => self.volume_finished(report),
-            Event::VolumeFailed { volume, reason, .. } => self.volume_failed(volume, reason),
+            Event::VolumeFailed {
+                volume,
+                reason,
+                timing,
+                ..
+            } => self.volume_failed(volume, reason, *timing),
             Event::RunFinished { outcome, .. } => self.run_finished(*outcome),
             _ => {}
         }
@@ -539,7 +546,7 @@ impl Live {
                 .collect(),
         );
         self.states = vec![VolumeState::Queued; roster.len()];
-        self.timings = vec![Duration::ZERO; roster.len()];
+        self.aborted_elapsed = None;
         self.began = None;
         self.current = None;
         self.non_volume_files = Arc::new(non_volume_files.to_vec());
@@ -700,7 +707,7 @@ impl Live {
     /// **它那几页坏页跟着换一格记**（[`lost_failures`](Self::lost_failures)）：
     /// 这一卷没有报告，那几页因此永远进不了 [`report`](Self::report)——不记的话，
     /// 屏上那个「此刻坏了几页」会在这一刻自己往回走。
-    pub fn volume_failed(&mut self, volume: &Path, reason: &str) {
+    pub fn volume_failed(&mut self, volume: &Path, reason: &str, timing: VolumeTiming) {
         self.lost_failures = self.lost_failures.saturating_add(self.in_flight_failures);
         self.set_state(VolumeState::Failed);
         if let Some(at) = self.index.get(volume)
@@ -711,6 +718,7 @@ impl Live {
         self.report.failed_volumes.push(VolumeFailure {
             volume: volume.to_path_buf(),
             reason: reason.to_owned(),
+            timing,
         });
         self.finish_volume();
     }
@@ -719,13 +727,11 @@ impl Live {
     pub fn run_finished(&mut self, outcome: RunOutcome) {
         self.report.outcome = outcome;
         // 这一趟结束时还开着的那一卷既没收摊也没报没做成：它被立即停止掉了
-        // （见 [`VolumeState::Aborted`]）。**它做了多久照样留下**：它没有报告，
-        // 屏上那一列只有这一份（见 [`timings`](Self::timings)）。
+        // （见 [`VolumeState::Aborted`]）。**它做了多久照样留下**：库那一侧没有它的那一份，
+        // 屏上那一列只有这一份（见 [`aborted_elapsed`](Self::aborted_elapsed)）。
         self.set_state(VolumeState::Aborted);
-        if let (Some(at), Some(began)) = (self.current, self.began)
-            && let Some(slot) = self.timings.get_mut(at)
-        {
-            *slot = self.now.saturating_duration_since(began);
+        if let (Some(at), Some(began)) = (self.current, self.began) {
+            self.aborted_elapsed = Some((at, self.now.saturating_duration_since(began)));
         }
         self.began = None;
         self.current = None;
@@ -749,11 +755,6 @@ impl Live {
         self.summary_is_stale();
         self.in_flight_failures = 0;
         self.finished += 1;
-        if let (Some(at), Some(began)) = (self.current, self.began)
-            && let Some(slot) = self.timings.get_mut(at)
-        {
-            *slot = self.now.saturating_duration_since(began);
-        }
         self.began = None;
         self.current = None;
         if let Some(walking) = self.volume.take() {
@@ -980,24 +981,34 @@ impl Live {
         self.summarized.as_ref()
     }
 
-    /// 清点清单里第几卷**做了多久**，由会话这一头量的那一份。
+    /// 清点清单里第几卷**做了多久**：卷列表耗时那一列与目录行那个和读的都是它。
     ///
-    /// **只在那一卷没有报告时才该问它**：收摊了的卷那个数在它自己那份报告上
-    /// （`VolumeTiming::elapsed`，`CONTEXT.md` 的《卷级计时》——只有库那一侧减得掉
-    /// 在确认点上等人的那一截）。没做成的卷连一份报告都没有，被立即停止掉的与
-    /// 还在跑的那一卷也还没有，而屏上那一列照样要写得出（`CONTEXT.md` 的
-    /// 《目录行 / 卷行》：跳过的卷耗时照给）。一步都还没开的卷是 `None`。
+    /// **有库那一份就读库那一份**（`VolumeTiming::elapsed`，`CONTEXT.md` 的《卷级计时》——
+    /// 只有库那一侧减得掉在确认点上等人的那一截）：有报告的卷（收摊了的、确认点上攒着的那一份，
+    /// [`report_at`](Self::report_at)）读报告，没做成的卷读它那一条 `VolumeFailure::timing`
+    /// （`say-and-stop/07`，收停车场 Q808）。**没有库那一份的只剩两种**，读会话这一头量的：
+    /// 还在跑的那一卷（开卷到此刻）、被立即停止掉的那一卷（[`aborted_elapsed`](Self::aborted_elapsed)）。
+    /// 屏上那一列对这几种照样要写得出（`CONTEXT.md` 的《目录行 / 卷行》：跳过的卷耗时照给）。
+    /// 还没轮到的卷是 `None`。
     #[cfg_attr(
         not(feature = "tui"),
         allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
     )]
     pub fn elapsed_at(&self, at: usize) -> Option<Duration> {
+        if let Some(report) = self.report_at(at) {
+            return Some(report.timing.elapsed);
+        }
+        if let Some(failure) = self.failure_at(at) {
+            return Some(failure.timing.elapsed);
+        }
         if self.current == Some(at)
             && let Some(began) = self.began
         {
             return Some(self.now.saturating_duration_since(began));
         }
-        self.timings.get(at).copied().filter(|one| !one.is_zero())
+        self.aborted_elapsed
+            .filter(|(aborted, _)| *aborted == at)
+            .map(|(_, took)| took)
     }
 
     /// 清点清单里第几卷**没做成的那一句原因**。没做成之外的卷答 `None`。
@@ -1009,8 +1020,13 @@ impl Live {
         allow(dead_code, reason = "只有画法与那条循环读得到，而它们在 tui 特性后面")
     )]
     pub fn undone_at(&self, at: usize) -> Option<&str> {
+        Some(self.failure_at(at)?.reason.as_str())
+    }
+
+    /// 清点清单里第几卷**没做成的那一条**（报告的 `failed_volumes` 里那一条）。没做成之外的卷答 `None`。
+    fn failure_at(&self, at: usize) -> Option<&VolumeFailure> {
         let failed = (*self.failed_at.get(at)?)?;
-        Some(self.report.failed_volumes.get(failed)?.reason.as_str())
+        self.report.failed_volumes.get(failed)
     }
 
     /// 清点清单里第几卷**那一份报告**：收摊了的、或者确认点上攒着的那一份；没做成的、
@@ -1809,7 +1825,11 @@ mod tests {
 
         // 卷四：整卷没做成。
         live.volume_started(Path::new("库/卷四"), 1000);
-        live.volume_failed(Path::new("库/卷四"), "盘拔了");
+        live.volume_failed(
+            Path::new("库/卷四"),
+            "盘拔了",
+            fixture::took(Duration::from_secs(5)),
+        );
         assert_eq!(live.states()[3], Failed);
 
         // 卷五：停在确认点上时被立即停止；卷六还没轮到。
@@ -1826,6 +1846,59 @@ mod tests {
             [Skipped, Done, Isolated, Failed, Aborted, Queued],
             "这一趟结束时还开着的那一卷是被立即停止掉的，没轮到的仍是等待中"
         );
+    }
+
+    /// **一卷做了多久读库那一份，会话自己量的只留给还在跑的与被立即停止掉的那一卷**
+    /// （`say-and-stop/07`，收停车场 Q808）：那两种没有库那一份可读。
+    ///
+    /// 「此刻」与库报的数故意错开：收摊了的卷、没做成的卷，会话这一头量出来的都不是库说的那个数
+    /// ——库扣掉了等人那一截、读在它自己那一刻，会话这一头两样都答不出。读到会话量的那个数，
+    /// 就是还在读第二个出处。
+    #[test]
+    fn only_the_running_and_the_aborted_volume_are_timed_by_the_session() {
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
+        let roster = fixture::roster(["卷一", "卷二", "卷三", "卷四"]);
+        live.run_started(4, 4000);
+        live.surveyed(&roster, &[], &[]);
+
+        // 卷一：收摊了。会话这一头量出 20 秒，报告说它做了 72 秒。
+        let finished = VolumeReport {
+            timing: fixture::took(Duration::from_secs(72)),
+            ..fixture::processed_volume("卷一", None)
+        };
+        live.volume_started(Path::new("库/卷一"), 1000);
+        live.tick(at(20));
+        live.volume_finished(&finished);
+        assert_eq!(live.elapsed_at(0), Some(finished.timing.elapsed));
+
+        // 卷二：没做成。会话这一头量出 10 秒，库说它做了 4 秒。
+        let failed = fixture::took(Duration::from_secs(4));
+        live.volume_started(Path::new("库/卷二"), 1000);
+        live.tick(at(30));
+        live.volume_failed(Path::new("库/卷二"), "盘拔了", failed);
+        assert_eq!(
+            live.elapsed_at(1),
+            Some(failed.elapsed),
+            "没做成的卷读的不是库那一份"
+        );
+
+        // 卷三：还在跑，没有库那一份——读会话这一头的此刻。
+        live.volume_started(Path::new("库/卷三"), 1000);
+        live.tick(at(37));
+        assert_eq!(live.elapsed_at(2), Some(Duration::from_secs(7)));
+
+        // 这一趟在第 39 秒被立即停止：卷三停在那一刻，往后的此刻不再加到它身上。
+        live.tick(at(39));
+        live.run_finished(RunOutcome::Stopped(Instruction::Abort));
+        live.tick(at(60));
+        assert_eq!(live.elapsed_at(2), Some(Duration::from_secs(9)));
+
+        // 前两卷那两个数一格没动，没轮到的那一卷没有数。
+        assert_eq!(live.elapsed_at(0), Some(finished.timing.elapsed));
+        assert_eq!(live.elapsed_at(1), Some(failed.elapsed));
+        assert_eq!(live.elapsed_at(3), None, "没轮到的卷有了耗时");
     }
 
     /// **确认点上答了「不写出」的那一卷收摊在预览过**（`design-parity/04`，收停车场 Q769）：
@@ -1965,7 +2038,11 @@ mod tests {
 
         // 一卷没做成：同样收摊、同样结清，原因进报告。
         live.volume_started(Path::new("库/卷二"), 4);
-        live.volume_failed(Path::new("库/卷二"), "盘拔了");
+        live.volume_failed(
+            Path::new("库/卷二"),
+            "盘拔了",
+            fixture::took(Duration::from_secs(5)),
+        );
         assert_eq!(live.overall().walked, 10, "那条横条走不到头");
         assert_eq!(live.report().failed_volumes.len(), 1);
 
@@ -2008,7 +2085,11 @@ mod tests {
         assert_eq!(live.failures_so_far(), 2);
         assert_eq!(live.report().failures().count(), 1);
 
-        live.volume_failed(Path::new("库/卷二"), "写不出去");
+        live.volume_failed(
+            Path::new("库/卷二"),
+            "写不出去",
+            fixture::took(Duration::from_secs(5)),
+        );
         assert_eq!(
             live.failures_so_far(),
             2,
@@ -2129,7 +2210,11 @@ mod tests {
         trial.volume_started(Path::new("库/卷一"), 1000);
         trial.pass_started(Pass::Second, Some(&fixture::processed_volume("卷一", None)));
         trial.decide(Instruction::Continue, Reach::ForTheRest);
-        trial.volume_failed(Path::new("库/卷一"), "写不出去");
+        trial.volume_failed(
+            Path::new("库/卷一"),
+            "写不出去",
+            fixture::took(Duration::from_secs(5)),
+        );
         assert!(!trial.has_written(), "写出环节里废掉的那一卷算成写出过了");
 
         // 往下不再问：走到写出那一遍就在写。
@@ -2267,7 +2352,11 @@ mod tests {
         let mut live = Live::new(&fixture::request(RunMode::Process), Resuming::Waits);
         live.volume_started(Path::new("库/卷一"), 6);
         live.pass_started(Pass::Second, Some(&summarized));
-        live.volume_failed(Path::new("库/卷一"), "盘拔了");
+        live.volume_failed(
+            Path::new("库/卷一"),
+            "盘拔了",
+            fixture::took(Duration::from_secs(5)),
+        );
         assert!(live.summarized().is_none());
 
         // 这一趟结束（确认点上被立即停止就是这一条）：同样作废。

@@ -264,6 +264,12 @@ pub struct VolumeFailure {
     /// 与 [`PageOutcome::Failed`] 那一句同一个待遇——报告里的失败非说得出原因不可，
     /// 不然用户只知道少了一卷，不知道该去修什么。
     pub reason: String,
+    /// 这一卷**到没做成那一刻为止**的墙钟耗时，段的分法与 [`VolumeReport::timing`] 相同
+    /// （`say-and-stop/07`，收停车场 Q808）；没做成的卷上哪几段是零、总数比那一份多装了什么，
+    /// 见 [`VolumeTiming`]。
+    ///
+    /// 会话屏上这一卷的耗时与目录行那个和读的就是它——不另量一份。
+    pub timing: VolumeTiming,
 }
 
 /// 一个**非漫画文件**（`CONTEXT.md` 的《处理对象》）：发现走完之后没被任何卷收下的文件。
@@ -517,11 +523,15 @@ pub struct VolumeReport {
 ///
 /// 四段之和**不等于** [`elapsed`](Self::elapsed)：差的那一截有名字，
 /// 装着什么见 [`outside_the_segments`](Self::outside_the_segments)。
+///
+/// **没做成的卷也有一份**（[`VolumeFailure::timing`]，`say-and-stop/07`）：走过的环节照记，
+/// 坏在哪个环节里，那一段掐到坏的那一刻；没走到的环节是 [`Duration::ZERO`]。下面各段说
+/// 「什么时候是零」时不再一一列这一种。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VolumeTiming {
     /// 摊开：开工前把固实归档整卷解到临时目录（ADR 0015 决定第 3 条）——整卷解压加整卷写盘。
     ///
-    /// **只有要摊开的卷有它**（`.rar` / `.7z`），而且那种卷上它不许是零：幂等命中而整卷跳过的
+    /// **只有要摊开的卷有它**（`.rar` / `.7z`），而且那种卷上轮到它就不许是零：幂等命中而整卷跳过的
     /// 卷也照样摊开（查重要读源字节，源字节要先摊开）。不摊开的卷——目录卷、`.cbz` / `.zip`——
     /// 是 [`Duration::ZERO`]。摊了多少字节见 [`VolumeReport::extracted`]。
     pub extraction: Duration,
@@ -530,7 +540,7 @@ pub struct VolumeTiming {
     ///
     /// 它**不是免费的**（`CONTEXT.md` 的《管线》），而幂等命中的卷付的正好只有这一笔——
     /// 「跳过一卷为什么也要等这么久」只有这个数答得出来，报告里因此不许报零。
-    /// `--no-metadata` 下整道不在，那时才是 [`Duration::ZERO`]。
+    /// `--no-metadata` 下整道不在，那时是 [`Duration::ZERO`]。
     pub fingerprint: Duration,
     /// 分析环节：解码、彩页识别、几何、缩放、算画质分、进缓存。
     ///
@@ -546,8 +556,8 @@ pub struct VolumeTiming {
     /// 观察者在**确认点**上答了做完再停（ADR 0012 决定第 2 条：那一卷停在写出环节之前，
     /// 等于走了一次预览）。三种都是「这一遍压根没走」，因此是零而不是一个很小的数。
     pub second_pass: Duration,
-    /// **这一卷做了多久**：从打开卷到这份卷报告成型的墙钟，扣掉在确认点上等人的那一截
-    /// （停车场 Q41）。
+    /// **这一卷做了多久**：从打开卷到这份卷报告成型（没做成的卷：到它没做成那一刻）的墙钟，
+    /// 扣掉在确认点上等人的那一截（停车场 Q41）。
     ///
     /// 「打开卷」是**两遍**：清点那一遍由清点交过来，重开那一遍就发生在这段墙钟之内
     /// （见 [`outside_the_segments`](Self::outside_the_segments)）。
@@ -570,6 +580,9 @@ impl VolumeTiming {
     ///
     /// **摊开不在这里**：它是一个环节，有自己的一段（[`extraction`](Self::extraction)）。
     /// 固实归档上摊开是分钟级的，落在这一截里的话，这个数会远大于它该装的那几样零头。
+    ///
+    /// **没做成的卷上还多一样**：总数读在这一卷手上的东西放掉之后（见 `crate::Stopwatch`），
+    /// 摊开的卷收走临时目录的那一截因此落在这里。收摊了的卷读在放掉之前，没有这一样。
     ///
     /// 名字不叫 `elsewhere`：那个词在 crate 里已经指着**卷的另一个去处**
     /// （见 `crate::superseded`），一个词两个意思，读的人迟早认错一处。

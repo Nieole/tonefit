@@ -17,11 +17,12 @@ mod fixtures;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use fixtures::{TINY, Workspace, open_the_door, shut_the_door};
 use tonefit::{
     Dither, Event, FitMode, Instruction, Mode, NonVolumeFile, Pass, Progress, ProgressSink,
-    Request, RunOutcome, SurveyedVolume, UnreachablePlace, VolumeReport,
+    Request, RunOutcome, SurveyedVolume, UnreachablePlace, VolumeReport, VolumeTiming,
 };
 
 /// 记录型观察者：事件收下来，一条不落。
@@ -44,8 +45,9 @@ struct Recorded {
     volumes: Mutex<Vec<VolumeReport>>,
     /// 每一条「一页失败了」带着的那两样。
     failures: Mutex<Vec<(PathBuf, String)>>,
-    /// 每一条「一整卷没做成」带着的那两样（05 号票）。
-    volume_failures: Mutex<Vec<(PathBuf, String)>>,
+    /// 每一条「一整卷没做成」带着的那三样：哪一卷、为什么（05 号票），
+    /// 与它的卷级计时（`say-and-stop/07`）。
+    volume_failures: Mutex<Vec<(PathBuf, String, VolumeTiming)>>,
     /// 结束那一条带着的「这一趟是怎么收的场」。没收到那一条就是 `None`。
     outcome: Mutex<Option<RunOutcome>>,
     /// 走过哪几遍，按到达顺序。
@@ -125,12 +127,17 @@ impl Progress for Recorder {
                     .push(report.clone());
                 "VolumeFinished"
             }
-            Event::VolumeFailed { volume, reason, .. } => {
-                self.0
-                    .volume_failures
-                    .lock()
-                    .expect("记账没有中毒")
-                    .push((volume.to_path_buf(), reason.to_owned()));
+            Event::VolumeFailed {
+                volume,
+                reason,
+                timing,
+                ..
+            } => {
+                self.0.volume_failures.lock().expect("记账没有中毒").push((
+                    volume.to_path_buf(),
+                    reason.to_owned(),
+                    timing,
+                ));
                 "VolumeFailed"
             }
             Event::RunFinished { outcome, .. } => {
@@ -198,7 +205,7 @@ impl Recorder {
         self.0.failures.lock().expect("记账没有中毒").clone()
     }
 
-    fn volume_failures(&self) -> Vec<(PathBuf, String)> {
+    fn volume_failures(&self) -> Vec<(PathBuf, String, VolumeTiming)> {
         self.0.volume_failures.lock().expect("记账没有中毒").clone()
     }
 
@@ -1908,8 +1915,8 @@ fn a_slow_observer_does_not_wedge_the_pipeline() {
 /// 而这一趟后面还有几十卷要跑。次序在这里钉住两件事——那一条排在**下一卷开工之前**，
 /// 而且那一卷**没有**与它配对的「一卷跑完」：一条开卷之后到得了的只有其中一条。
 ///
-/// 事件带的那两样与报告里那一条是同一份（一份是增量，一份是结果），
-/// 与坏页那一对同一个待遇。
+/// 事件带的那三样——哪一卷、为什么、卷级计时——与报告里那一条是同一份
+/// （一份是增量，一份是结果），与坏页那一对同一个待遇。
 #[test]
 fn a_volume_that_never_got_done_is_reported_the_moment_it_fails() {
     let space = Workspace::new();
@@ -1934,12 +1941,16 @@ fn a_volume_that_never_got_done_is_reported_the_moment_it_fails() {
     assert_eq!(failures[0].0, doomed, "指错了卷：{failures:?}");
     assert!(failures[0].1.contains("ComicInfo.xml"), "{failures:?}");
 
-    // 同一卷在报告里也有一份，两处指的是同一卷，说的是同一句。
+    // 同一卷在报告里也有一份，两处指的是同一卷，说的是同一句，计的是同一份时。
     assert_eq!(
         report
             .failed_volumes
             .iter()
-            .map(|failure| (failure.volume.clone(), failure.reason.clone()))
+            .map(|failure| (
+                failure.volume.clone(),
+                failure.reason.clone(),
+                failure.timing
+            ))
             .collect::<Vec<_>>(),
         failures,
         "事件说的那一卷与报告里的那一卷对不上"
@@ -1972,6 +1983,110 @@ fn a_volume_that_never_got_done_is_reported_the_moment_it_fails() {
     // 后面那一卷照做，结束那一条照报。
     assert_eq!(report.volumes.len(), 1, "没做成的卷把后面那一卷也带走了");
     assert_eq!(recorder.outcome(), Some(RunOutcome::Completed));
+}
+
+/// 没做成的那一卷**带着卷级计时**：坏在写出环节的末一步，前面走过的三个环节各有一段
+/// （`say-and-stop/07`，收停车场 Q808）。
+///
+/// 从前那一条只带一句原因，会话屏上那一卷的耗时只好自己量——两个出处，读的先后要另写一道规矩。
+/// 这一卷的去处先被占成一个普通文件：查重、分析都走得完，写出环节也开了工，坏在收尾改名那一步
+/// （与 `tests/isolation.rs` 的 `a_volume_whose_destination_is_taken_is_the_only_one_that_fails`
+/// 同一种造法）。**哪几段该有数，读的是流上这一卷报过开工的环节**，不是用例自己猜。
+#[test]
+fn a_volume_that_fails_while_writing_carries_the_time_each_pass_took() {
+    let space = Workspace::new();
+    let doomed = small_volume(&space, "volume-a");
+    std::fs::create_dir_all(space.out()).expect("建输出目录");
+    std::fs::write(space.out().join("volume-a"), b"occupied").expect("占住那一卷的去处");
+    let recorder = Recorder::default();
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        metadata: true,
+        mode: Mode::Process,
+        ..fixtures::request(&space, [doomed.path()])
+    })
+    .expect("一卷的去处被占不该毁掉整趟");
+
+    // 夹具咬住了：三个环节都开了工，坏在写出环节里。
+    assert_eq!(
+        recorder.passes(),
+        [Pass::Fingerprint, Pass::First, Pass::Second],
+        "这一卷没走到写出环节就坏了，夹具没造出要的现场"
+    );
+    assert_the_failure_carries_the_time_each_walked_pass_took(&recorder, &report);
+}
+
+/// 同一件事坏在**摊开**上：压缩流被打坏的 `.7z`，清点列得出成员，摊到一半才解不开。
+///
+/// 摊开那一段夹在重开这一卷的中间（见 `tonefit::VolumeTiming::extraction`），它在回 `Err`
+/// 的那一刻照样掐了表——这一卷没做成，可摊开那一截是真花掉的时间。
+#[test]
+fn a_volume_that_fails_to_extract_carries_the_time_extraction_took() {
+    let space = Workspace::new();
+    let mut broken = space.sevenz("volume-a");
+    broken.page("001.png", &fixtures::full_bleed_gradient(TINY));
+    let broken = broken.write_with_a_broken_stream();
+    let recorder = Recorder::default();
+
+    let report = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(recorder.clone())),
+        ..fixtures::request(&space, [broken.as_path()])
+    })
+    .expect("一卷摊不开不该毁掉整趟");
+
+    assert_eq!(
+        recorder.passes(),
+        [Pass::Extraction],
+        "这一卷不是坏在摊开上，夹具没造出要的现场"
+    );
+    assert_the_failure_carries_the_time_each_walked_pass_took(&recorder, &report);
+}
+
+/// 这一趟恰好一卷没做成，它那一条带的卷级计时：**流上报过开工的环节各有一段、不为零**，
+/// 没开工的那几段是零，总数装得下四段；报告里那一条是同一份。
+///
+/// 一趟只开一卷才读得清——卷与卷之间没有东西把两卷的环节分开（同 `steps_under_each_pass`）。
+fn assert_the_failure_carries_the_time_each_walked_pass_took(
+    recorder: &Recorder,
+    report: &tonefit::Report,
+) {
+    let failures = recorder.volume_failures();
+    let [(_, _, timing)] = &failures[..] else {
+        panic!("这一趟该恰好一卷没做成：{failures:?}");
+    };
+    let walked = recorder.passes();
+    let segments = [
+        (Pass::Extraction, timing.extraction),
+        (Pass::Fingerprint, timing.fingerprint),
+        (Pass::First, timing.first_pass),
+        (Pass::Second, timing.second_pass),
+    ];
+    for (pass, took) in segments {
+        if walked.contains(&pass) {
+            assert!(
+                took > Duration::ZERO,
+                "{pass:?} 开了工，没做成那一条里它那一段却是零：{timing:?}"
+            );
+        } else {
+            assert_eq!(
+                took,
+                Duration::ZERO,
+                "{pass:?} 没开工，没做成那一条里它那一段却有数：{timing:?}"
+            );
+        }
+    }
+    let accounted: Duration = segments.iter().map(|(_, took)| *took).sum();
+    assert!(timing.elapsed >= accounted, "总数装不下四段：{timing:?}");
+    assert_eq!(
+        report
+            .failed_volumes
+            .iter()
+            .map(|failure| failure.timing)
+            .collect::<Vec<_>>(),
+        [*timing],
+        "事件带的那份计时与报告里那一条不是同一份"
+    );
 }
 
 /// 结束那一条说得出**这一趟是怎么收的场**，三种各说一种（停车场 Q39、Q46）。
