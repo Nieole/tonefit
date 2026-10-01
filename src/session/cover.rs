@@ -13,7 +13,8 @@
 //!
 //! **一个键都不列**：[`Sheet`] 把 [`super::keymap::TABLE`] 上此刻阶段派得出、长的那一句不为空的行
 //! 按组摆开——同一组里长的那一句相同的几行并成一行（`j k`、`l ⏎`），一行都不剩的组整组不出；
-//! 末尾再接一节**灰阶写法**（那不是键，是屏上 `1bit`／`+FS` 那几个字各是什么意思）。
+//! 末尾再接一节**灰阶写法**（那不是键，是屏上 `1bit`／`+FS` 那几个字各是什么意思），
+//! 跑着与等待确认时再接一节**环节**（横条前那个词各是在做什么，出处在 [`super::passes`]）。
 //! 表里加一个键，屏底与这一张都跟着出现——用例 `the_sheet_and_the_footer_both_come_from_the_key_table` 在本模块里。
 //!
 //! # 它记的是从第几行画起
@@ -33,6 +34,7 @@ use tonefit::{BitDepth, Candidate, Dither};
 use super::home::Home;
 use super::keymap::{Deed, Group, Phase, Row, TABLE};
 use super::look::{Kind, Look, Segment};
+use super::passes;
 use super::tree::{Note, NoteKind};
 use super::view::{Views, Window, wheel_rows};
 
@@ -245,7 +247,8 @@ impl Card {
     }
 }
 
-/// 表上此刻派得出的行按组摆开：每组一行组名、一键一行、末尾一个空行；末尾再接灰阶写法那一节。
+/// 表上此刻派得出的行按组摆开：每组一行组名、一键一行、末尾一个空行；末尾再接灰阶写法那一节，
+/// 跑着与等待确认两档上再接环节那一节。
 fn groups(phase: Phase) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     for group in Group::ALL {
@@ -270,6 +273,14 @@ fn groups(phase: Phase) -> Vec<Section> {
         ));
     }
     out.push(section("灰阶写法", depths().into_iter()));
+    // 环节那几个字只在这两档上屏（总览的当前卷那一行、卷列表上在跑的那几行），
+    // 别的档上列它是解释一样屏上没有的东西（停车场 Q1128）。
+    if matches!(phase, Phase::Running | Phase::Deciding) {
+        out.push(section(
+            "环节",
+            passes::legend().map(|(said, what)| (said.to_owned(), what.to_owned())),
+        ));
+    }
     out
 }
 
@@ -437,6 +448,38 @@ mod tests {
         assert!(lines.contains(&"q         不退出：先按 s 停止，或按 C-c".to_owned()));
         assert!(lines.iter().any(|line| line.starts_with("s         停止")));
         assert!(!lines.iter().any(|line| line.starts_with("o ")));
+    }
+
+    /// **环节那一节只在跑着与等待确认两档上**：环节那几个字只在那两档上屏（总览的当前卷那一行、
+    /// 卷列表上在跑的那几行），按走的次序列四个，词与横条上那个词出自同一处（[`passes::legend`]）；
+    /// 其余三档不出这一节（`design-parity/13`，停车场 Q1128）。
+    #[test]
+    fn the_sheet_explains_the_passes_only_while_they_are_on_screen() {
+        let listed = |phase| -> Vec<String> {
+            Sheet::of(phase, narrow())
+                .lines
+                .iter()
+                .map(|(left, _)| text(left).trim_end().to_owned())
+                .skip_while(|line| line != "环节")
+                .take_while(|line| !line.is_empty())
+                .collect()
+        };
+        for phase in [Phase::Running, Phase::Deciding] {
+            assert_eq!(
+                listed(phase),
+                [
+                    "环节",
+                    "摊开      .rar / .7z 先整卷解到临时目录",
+                    "查重      之前转换过、源和设置没变就跳过",
+                    "分析      逐页解码、缩放，定下灰阶档位",
+                    "写出      照定下的档位编码，写进输出目录",
+                ],
+                "{phase:?}"
+            );
+        }
+        for phase in [Phase::Fresh, Phase::Surveying, Phase::Ended] {
+            assert!(listed(phase).is_empty(), "{phase:?}");
+        }
     }
 
     /// 宽时两栏、窄时一栏：120×36 上 104 格宽、两栏，80×24 上 76 格宽、一栏；
@@ -668,7 +711,7 @@ mod tests {
     /// **全部按键与屏底出自同一张表**（`session-redesign/07` 票面第四条）：表上每一行，长的那一句不空的
     /// 在它派得出的每一档上都在那一张上（键的写法在那一行头上、那一句在后面），短的那一句不空的在它派得出的
     /// 那一块上屏底问它就摆得出来、派不出的那一块上问它摆不出来；反过来那一张上每一行都是表上的一行
-    /// （组名与灰阶写法那一节除外）。表里加一个键——加一行——两处都跟着出现，不必改第二处。
+    /// （组名与灰阶写法、环节那两节除外）。表里加一个键——加一行——两处都跟着出现，不必改第二处。
     ///
     /// **块那一维把输入行按用途逐种算**（[`Focus::every`](super::super::view::Focus::every)，
     /// `design-parity/02`）：`Tab → 补全` 只在路径那三种上摆得出，`⏎ → 跳到结果` 只在搜索那一行上。
@@ -688,9 +731,13 @@ mod tests {
         let titles: Vec<&str> = Group::ALL
             .iter()
             .map(|group| group.title())
-            .chain(["灰阶写法"])
+            .chain(["灰阶写法", "环节"])
             .collect();
-        let legend: Vec<String> = depths().into_iter().map(|(spelt, _)| spelt).collect();
+        let legend: Vec<String> = depths()
+            .into_iter()
+            .map(|(spelt, _)| spelt)
+            .chain(passes::legend().map(|(said, _)| said.to_owned()))
+            .collect();
         for phase in PHASES {
             let lines: Vec<String> = Sheet::of(phase, narrow())
                 .lines

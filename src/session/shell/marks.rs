@@ -8,9 +8,9 @@
 //! 读的是同一份，而那一份摆在 `tui` 特性外面——反过来摆不成，本模块整个在特性后面。
 //! 本模块只多做一件它管不着的事：一行自己的**错相**（`offset`）。
 //!
-//! 同住在这里的还有屏上几处共用的两个**词**：环节叫什么（[`pass_name`]）与一段时长怎么写
-//! （[`spell`]）——总览、卷列表那棵树与环节横条说的是同一个词，同一屏上两种写法读的人就得
-//! 先分辨一遍。
+//! 同住在这里的还有屏上几处共用的一个**词**：一段时长怎么写（[`spell`]）——总览与卷列表那棵树
+//! 说的是同一个词，同一屏上两种写法读的人就得先分辨一遍。环节叫什么不在这里：全部按键那一张
+//! 也要它，而那一张在特性外面，出处因此在 [`super::super::passes`]。
 
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,7 @@ use tonefit::{Candidate, Dither, Pass};
 
 use super::super::live::VolumeState;
 use super::super::look::{Kind, Look, Segment};
+use super::super::passes;
 use super::super::tone::Tone;
 use super::super::view::{SPINNER, SPINS_EVERY};
 use crate::render::Notable;
@@ -81,7 +82,7 @@ pub(super) fn pass_bar(pass: Option<Pass>, fraction: f64, width: u16) -> Vec<Seg
     ]
 }
 
-/// 一个**环节**在屏上是哪一色（种类色：查重品红 · 分析蓝 · 写出青）。
+/// 一个**环节**在屏上是哪一色（种类色，各是哪一色只在 `super::paint` 那张表里）。
 /// 还没进环节的那一段跟着分析走——屏上那一格写的是「开卷」，它是分析之前的那一截。
 pub(super) fn pass_look(pass: Option<Pass>) -> Look {
     Look::kind(Kind::Pass(pass.unwrap_or(Pass::First)))
@@ -280,7 +281,7 @@ pub(super) fn pass_segments(
         0.0
     };
     let mut segments = vec![Segment::new(
-        format!("{} ", pass_name(pass)),
+        format!("{} ", passes::name(pass)),
         pass_look(pass),
     )];
     segments.extend(pass_bar(pass, fraction, width));
@@ -319,30 +320,6 @@ pub(super) fn percent(walked: u64, steps: u64) -> u64 {
         return 0;
     }
     (walked as f64 / steps as f64 * 100.0).floor() as u64
-}
-
-/// 在走哪一个环节——**屏上那个词的唯一出处**。三个词与词汇表《环节》那一条逐字相同
-/// （`CONTEXT.md` 的《进度》：遍）。
-///
-/// **叫的是它在做什么，不是第几遍**（`two-pass-rework/01`）：「第一遍 / 第二遍」看得见
-/// 进度在走，看不出在做什么、为什么非做两遍不可。
-///
-/// `_` 那一支不是遗漏：[`Pass`] 非穷尽，多一个环节不该逼着这里跟着改。
-/// **摊开眼下就落在它上面**：库已经报得出摊开那个环节（`say-and-stop/03`），
-/// 屏上的名字与颜色归 `design-parity/13`，在那之前摊开期间屏上写的是兜底那一句。
-pub(super) fn pass_name(pass: Option<Pass>) -> &'static str {
-    match pass {
-        // 开卷之后、第一条 `PassStarted` 到达之前：打开容器、列成员，还没走进任何一个环节。
-        // 固实归档的摊开**不在这一段里**——它是一个环节，有自己那条 `PassStarted`。
-        None => "开卷",
-        // 算出本卷指纹，与上一趟写在输出里的比（`CONTEXT.md` 的《管线》：幂等这一道）。
-        Some(Pass::Fingerprint) => "查重",
-        // 解码、缩放、算画质分，定下每一页要哪一档（《管线》：分析环节）。
-        Some(Pass::First) => "分析",
-        // 按定下的档量化、编码、写进输出（《管线》：写出环节）。
-        Some(Pass::Second) => "写出",
-        Some(_) => "这一遍",
-    }
 }
 
 /// 一段时长：`42s`、`6m40s`、`1h06m`。
@@ -386,19 +363,6 @@ mod tests {
                     "{glyph} 是东亚歧义宽度：{seconds}s 写成「{said}」"
                 );
             }
-        }
-    }
-
-    /// 环节那个词说它在做什么；开卷之后、第一条 `PassStarted` 到达之前那一格不是一遍。
-    #[test]
-    fn the_pass_says_what_it_does() {
-        for (pass, said) in [
-            (Some(Pass::Fingerprint), "查重"),
-            (Some(Pass::First), "分析"),
-            (Some(Pass::Second), "写出"),
-            (None, "开卷"),
-        ] {
-            assert_eq!(pass_name(pass), said, "{pass:?}");
         }
     }
 

@@ -777,8 +777,8 @@ mod tests {
         let sequences = manifest["sequences"].as_array().expect("序列清单");
         assert_eq!(
             snapshots.len(),
-            11 * 2 + 2,
-            "11 个场景 × 两种尺寸外加窗口太小两份"
+            12 * 2 + 2,
+            "12 个场景 × 两种尺寸外加窗口太小两份"
         );
         assert!(!sequences.is_empty());
 
@@ -862,7 +862,7 @@ mod tests {
                 scene_data(data);
             }
         }
-        assert_eq!(seen_versions, 11 * 2);
+        assert_eq!(seen_versions, 12 * 2);
         for entry in sequences {
             let name = entry["name"].as_str().expect("序列名");
             let expected = sequence(name);

@@ -213,6 +213,25 @@
       "style": "snapshots/search.80x24.style.txt"
     },
     {
+      "scene": "extracting",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/extracting.120x36.text.txt",
+      "style": "snapshots/extracting.120x36.style.txt",
+      "data": "scenes/extracting.json"
+    },
+    {
+      "scene": "extracting",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/extracting.80x24.text.txt",
+      "style": "snapshots/extracting.80x24.style.txt"
+    },
+    {
       "scene": "fresh",
       "size": [
         56,
@@ -2108,7 +2127,7 @@
           "key": "j"
         }
       ],
-      "says": "1–27 of 27",
+      "says": "1–31 of 31",
       "text": "sequences/help-j.text.txt",
       "style": "sequences/help-j.style.txt",
       "data": "sequences/help-j.scene.json"

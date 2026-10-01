@@ -211,6 +211,15 @@ mod tests {
         assert_scene("running", 80, 24);
     }
 
+    /// **「正在摊开」120×36 与 80×24 逐格相等**（`design-parity/13`）：要摊开的卷（`.rar`）
+    /// 走在摊开那一段时，总览的当前卷那一行、目录行与卷行的行尾都写「摊开」，词与横条上
+    /// 摊开那一色；做完的那一卷与还没轮到的卷照旧。
+    #[test]
+    fn the_extracting_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("extracting", 120, 36);
+        assert_scene("extracting", 80, 24);
+    }
+
     /// **「已结束」120×36 与 80×24 逐格相等**（`session-redesign/10` 票面第一条）：
     /// 总览抬头换成结束那句话加用时、右端写输出目录，结论行是转换那一副；转换失败的卷是
     /// 它目录里的 `✗` 卷行、行尾是那句原因；备注行挂在分区末尾。**代表页那一列整个不在场**

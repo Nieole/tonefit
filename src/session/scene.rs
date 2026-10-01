@@ -52,8 +52,15 @@ const FIXTURES: &str = "tests/fixtures/design";
 /// 场景数据的设置是一张平的表，写成 TOML 时按这三个分进 `device` 那一节，其余归 `taste`。
 const DEVICE_KEYS: [&str; 3] = ["profile", "gray-levels", "threshold"];
 
-/// 三遍按设计稿的编号：`pass` 0 是幂等那一道、1 是分析环节、2 是写出环节，3 是三遍都走完。
-const PASSES: [Pass; 3] = [Pass::Fingerprint, Pass::First, Pass::Second];
+/// 环节按走的次序（`CONTEXT.md` 的《环节》）：要摊开的卷走四个，其余的卷走后三个
+/// （[`Listed::passes`]）。场景数据里的 `pass` 是**这一卷自己那几个**里的第几个——
+/// 设计稿 `passesOf` 同一种数法。
+const PASSES: [Pass; 4] = [
+    Pass::Extraction,
+    Pass::Fingerprint,
+    Pass::First,
+    Pass::Second,
+];
 
 // ───────────────────────── 场景数据的形状 ─────────────────────────
 //
@@ -201,6 +208,17 @@ pub(crate) struct Listed {
     pub(crate) name: String,
     pub(crate) source_pages: usize,
     pub(crate) steps: u64,
+    /// **要摊开的卷**（`.rar`／`.7z`，《读取形态》）：先走摊开那个环节。
+    /// 设计稿只在要摊开的卷上写这一格，不摊开的卷不写。
+    #[serde(default)]
+    pub(crate) extracts: bool,
+}
+
+impl Listed {
+    /// 这一卷走哪几个环节，按走的次序（设计稿 `passesOf`）。
+    fn passes(&self) -> &'static [Pass] {
+        if self.extracts { &PASSES } else { &PASSES[1..] }
+    }
 }
 
 /// 一卷此刻怎么样。
@@ -209,9 +227,9 @@ pub(crate) struct VolumeData {
     pub(crate) root: String,
     /// `queued` · `running` · `deciding` · `done` · `isolated` · `skipped` · `failed` · `aborted` · `trialed`。
     pub(crate) state: String,
-    /// 走到哪一遍（见 [`PASSES`]）；还没轮到是 -1。
+    /// 走到这一卷自己那几个环节里的第几个（见 [`Listed::passes`]）；还没轮到是 -1，走完是它的个数。
     pub(crate) pass: i8,
-    /// 这一遍走到第几页（连续时间推进，带小数）。
+    /// 这一环节走到第几页（连续时间推进，带小数）。
     pub(crate) done: f64,
     pub(crate) elapsed_s: f64,
     /// 灰阶分布：档位与页数，页多的在前。一页判定都没有是 `None`。
@@ -845,7 +863,7 @@ fn offered(input: &Value) -> Option<Offered<'_>> {
     })
 }
 
-/// **假盘上有什么**：11 个场景的场景数据提到的每一处的并集，`~/` 写法。
+/// **假盘上有什么**：12 个场景的场景数据提到的每一处的并集，`~/` 写法。
 ///
 /// 设计稿的假盘本身没有导出（停车场 Q764），能从场景数据认出来的是：处理路径（文件夹还是压缩包）、
 /// 清点清单上的分区、目录与卷根、备注里的路径（无法访问的地方是目录，非漫画文件是文件）、
@@ -1047,24 +1065,17 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
         assert_eq!(listed.root, volume.root, "每卷状态那一列与清单同序");
         let root = expand(home, &listed.root);
         let pages = listed.source_pages;
-        let step = |live: &mut Live, times: usize| {
-            for _ in 0..times {
-                live.stepped();
-            }
-        };
         match volume.state.as_str() {
             "queued" => {}
             "skipped" => {
                 live.volume_started(&root, listed.steps);
-                live.pass_started(Pass::Fingerprint, None);
-                step(&mut live, pages);
+                up_to_the_fingerprint(&mut live, listed);
                 live.volume_finished(&skipped_report(listed, volume, disk, run));
             }
             "failed" => {
                 live.tick(clock);
                 live.volume_started(&root, listed.steps);
-                live.pass_started(Pass::Fingerprint, None);
-                step(&mut live, pages);
+                up_to_the_fingerprint(&mut live, listed);
                 clock += Duration::from_secs_f64(volume.elapsed_s);
                 live.tick(clock);
                 live.volume_failed(
@@ -1075,17 +1086,17 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
             "done" | "isolated" | "trialed" => {
                 let report = volume_report(listed, volume, disk, run, typical);
                 live.volume_started(&root, listed.steps);
-                // 前两遍走满；写出那一遍在确认点上答的字：答了「不写出」的那一卷（`trialed`）
-                // 写出环节一步不走，紧跟着收摊（`tonefit::Pass::Second` 的文档）。
+                // 写出之前的那几个环节走满；写出环节开工那一条是确认点，照答的字走：答了「不写出」的
+                // 那一卷（`trialed`）写出环节一步不走，紧跟着收摊（`tonefit::Pass::Second` 的文档）。
                 let said = if volume.state == "trialed" {
                     Instruction::Finish
                 } else {
                     Instruction::Continue
                 };
-                for pass in PASSES {
+                for &pass in listed.passes() {
                     begin_pass(&mut live, pass, resumes, run, Some(&report), said);
                     if pass != Pass::Second || said == Instruction::Continue {
-                        step(&mut live, pages);
+                        stepped(&mut live, pages);
                     }
                 }
                 fixture::volume_finished_with_its_failures(&mut live, &report);
@@ -1098,16 +1109,16 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                         + Duration::from_secs_f64((run.elapsed_s - volume.elapsed_s).max(0.0));
                     live.tick(clock);
                 }
-                // 分析环节走完的卷才有到此刻为止的报告（灰阶分布）；还在前两遍上的卷没有。
+                // 分析环节走完的卷才有到此刻为止的报告（灰阶分布）；还在它之前那几个环节上的卷没有。
                 let so_far = volume
                     .tally
                     .is_some()
                     .then(|| volume_report(listed, volume, disk, run, typical));
                 live.volume_started(&root, listed.steps);
-                let pass = usize::try_from(volume.pass).expect("开了卷的卷走到了某一遍");
-                // 走完了的那几遍走满，正在走的这一遍走到第几页；坏页在分析环节里当场报
+                let pass = usize::try_from(volume.pass).expect("开了卷的卷走到了某个环节");
+                // 走完了的那几个环节走满，正在走的这一个走到第几页；坏页在分析环节里当场报
                 // （`Event::PageFailed`：出现的当场一条，收摊时报告里再一次）。
-                for (at, walking) in PASSES.iter().enumerate().take(pass + 1) {
+                for (at, walking) in listed.passes().iter().enumerate().take(pass + 1) {
                     begin_pass(
                         &mut live,
                         *walking,
@@ -1116,7 +1127,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                         so_far.as_ref(),
                         Instruction::Continue,
                     );
-                    step(
+                    stepped(
                         &mut live,
                         if at < pass {
                             pages
@@ -1138,8 +1149,8 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                     // 等待确认：分析环节走完，停在写出那一遍的确认点上。「此刻」要在确认点那一条
                     // **之前**给——等人那一截从那一条起算，给在它之后会把跑过的那一段减光。
                     assert_eq!(
-                        (pass, volume.done as usize),
-                        (1, pages),
+                        (listed.passes()[pass], volume.done as usize),
+                        (Pass::First, pages),
                         "等待确认的卷停在分析环节走完之后"
                     );
                     live.tick(now);
@@ -1186,7 +1197,26 @@ fn outcome_of(run: &Run) -> RunOutcome {
     }
 }
 
-/// 某一遍开工：写出那一遍走确认点那一支（[`second_pass`]，照 `said` 答话），另两遍直接开。
+/// 跳过与没做成的卷停在查重走满之后（设计稿 `passDone` 查重那一支）：要摊开的卷
+/// 先把摊开也走满，一个环节走它的页数那么多步。
+fn up_to_the_fingerprint(live: &mut Live, listed: &Listed) {
+    for &pass in listed.passes() {
+        live.pass_started(pass, None);
+        stepped(live, listed.source_pages);
+        if pass == Pass::Fingerprint {
+            break;
+        }
+    }
+}
+
+/// 走 `times` 步（一页一步）。
+fn stepped(live: &mut Live, times: usize) {
+    for _ in 0..times {
+        live.stepped();
+    }
+}
+
+/// 某个环节开工：写出环节走确认点那一支（[`second_pass`]，照 `said` 答话），其余环节直接开。
 fn begin_pass(
     live: &mut Live,
     pass: Pass,
@@ -1288,7 +1318,7 @@ fn non_volume_reason_of(sentence: &str) -> NonVolumeReason {
     }
 }
 
-/// **普通一页的输出尺寸**：11 个场景的场景数据里头一张不超宽的页说的那个。
+/// **普通一页的输出尺寸**：12 个场景的场景数据里头一张不超宽的页说的那个。
 /// 没开着的卷补的页都按它（与[假盘](disk)同一个道理：一趟只算一次，取自全部场景的并集——
 /// 单看一个场景，等待确认那一景只有一张超宽的页可查）。
 fn typical_size() -> Size {
@@ -1613,11 +1643,11 @@ mod tests {
 
     /// 场景数据里一卷此刻怎么样，翻成 [`VolumeState`]：七种各一档，外加设计稿多出来的
     /// `trialed`（确认点上答了「不写出」的那一卷——库那一侧它收摊成完成，只是没写）。
-    fn state_of(volume: &VolumeData) -> VolumeState {
+    fn state_of(listed: &Listed, volume: &VolumeData) -> VolumeState {
         match volume.state.as_str() {
             "queued" => VolumeState::Queued,
             "running" => VolumeState::Running {
-                pass: Some(PASSES[volume.pass as usize]),
+                pass: Some(listed.passes()[volume.pass as usize]),
             },
             "deciding" => VolumeState::Deciding,
             "done" | "trialed" => VolumeState::Done,
@@ -1848,7 +1878,7 @@ mod tests {
             assert_eq!(walking.volume, scene.path(current), "{name}");
             let (listed, state) = volume_of(run, current);
             assert_eq!(walking.steps, listed.steps, "{name}");
-            let pass = usize::try_from(state.pass).expect("当前卷走到了某一遍");
+            let pass = usize::try_from(state.pass).expect("当前卷走到了某个环节");
             let walked = pass as u64 * listed.source_pages as u64 + state.done.floor() as u64;
             assert_eq!(walking.walked, walked, "{name}");
             if state.state == "deciding" {
@@ -1858,13 +1888,19 @@ mod tests {
                     "{name}：等待确认停在写出那一遍前"
                 );
             } else {
-                assert_eq!(walking.pass, Some(PASSES[pass]), "{name}");
+                assert_eq!(walking.pass, Some(listed.passes()[pass]), "{name}");
             }
         }
 
         // 每卷状态。
-        for (volume, state) in run.volumes.iter().zip(live.states()) {
-            assert_eq!(*state, state_of(volume), "{name}：{}", volume.root);
+        for ((listed, volume), state) in run
+            .survey
+            .volumes
+            .iter()
+            .zip(&run.volumes)
+            .zip(live.states())
+        {
+            assert_eq!(*state, state_of(listed, volume), "{name}：{}", volume.root);
         }
 
         // 问题计数：坏页、转换失败的卷、无法访问的地方、非漫画文件。坏页数的是此刻——
@@ -2108,11 +2144,11 @@ mod tests {
         assert_eq!(key_named("ArrowRight"), Input::Arrow('l'));
     }
 
-    /// **11 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
+    /// **12 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 11, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 12, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }
