@@ -389,6 +389,7 @@ pub fn run(request: &Request) -> Result<Report> {
         crop: request.crop,
         split: request.split,
         white_align_limit: request.white_align_limit,
+        envelope: request.envelope,
         volumes,
         failed_volumes,
         non_volume_files,

@@ -360,7 +360,7 @@ pub enum Field {
     Bytes,
 }
 
-/// 抬头：这批输出给哪台设备、页尺寸照哪种缩放方式算出、画质分是什么形状
+/// 抬头：这批输出给哪台设备、页尺寸照哪种缩放方式算出、灰阶档位走哪条路、画质分是什么形状
 /// （构成 · 细节放宽 · 聚合三行），以及这一趟写不写盘。
 ///
 /// 一趟只出一次。它吃的是整份报告而不是单独一个 profile——报告是**逐卷攒出来的**
@@ -383,6 +383,10 @@ pub fn header(report: &Report, mode: Mode) -> String {
     // 这一趟的开关咬上的那几条互锁（页几何批 05 号票）。它接在四个开关后面，
     // 因为它说的正是那四项凑在一起之后的事。
     text.push_str(&interlock_lines(report));
+    // 灰阶档位走哪条路（say-and-stop/05，收停车场 Q637）：改产物的开关里漏在抬头外面的那一个。
+    // 卷级判定只在做了事的卷上说得出它，每一卷都幂等命中的那一趟只剩这一行。它接在几何那几项
+    // 之后、画质分那三行之前：前面说页长什么样，这一行说档位怎么挑，后面说挑档的那把尺。
+    text.push_str(&envelope_line(report.envelope));
     // 逐页那一行的每个数由两项合成，其中抖动颗粒项那道地板与画质门槛同一批盲测标定
     // （ADR 0002 决定第 5 条）。画质分不再是单一个量，构成因此要说出来，
     // 否则读的人无从判断「1bit+FS 20.279」这样的数是从哪来的。
@@ -411,7 +415,8 @@ pub fn header(report: &Report, mode: Mode) -> String {
         text.push_str("预览：只分析，不写文件，下面列出的输出路径都还没有写入\n");
         // 预览只记账、不留页，缓存那一行报的是**参照**那一摊；照做时默认路径缓存里装的是
         // 编好的 PNG，那个数与它不是同一个、也不见得更小（停车场 Q638）。`--envelope` 那条路
-        // 两趟攒的是同一摊参照，数才相同。抬头不带那个开关（Q637），这里两条路各说一句。
+        // 两趟攒的是同一摊参照，数才相同。两条路这里各说一句，哪怕上面那一行已经说出这一趟
+        // 走的是哪条（要不要只说走的那一条，停车场 Q1281）。
         text.push_str(
             "缓存那一行是预览时的占用：真正转换时缓存里装的是编好的 PNG，\
              大小会不同；开 --envelope 时两者相同\n",
@@ -434,6 +439,32 @@ fn interlock_lines(report: &Report) -> String {
         .map(|said| format!("{} {said}\n", Judging::Interlock.label()))
         .collect()
 }
+
+/// **整卷统一灰阶开关**的项名（`CONTEXT.md` 的《整卷统一灰阶开关》；say-and-stop/05）：
+/// 抬头里说灰阶档位走哪条路的那一行以它开头，会话设置栏那一项（`Field::Envelope`）也叫它——
+/// 同一个出处，一个字都不另写。
+pub const ENVELOPE_LABEL: &str = "整卷统一灰阶";
+
+/// 那个开关的取值怎么写（开 · 关）：抬头那一行与会话设置栏那一项的取值环是同一副。
+pub fn envelope_value(on: bool) -> &'static str {
+    if on { "开" } else { "关" }
+}
+
+/// 抬头里说**灰阶档位走哪条路**的那一整行，末尾接上换行：项名、开没开，括号里是这条路怎么挑档位。
+///
+/// 括号里那半句说的是开关，不是每一卷实际怎么判的：覆盖项把候选顶成一档的那一趟，
+/// 卷级那一句（`VolumeVerdict::Override`）另说它自己的（见 `Report::envelope`）。
+fn envelope_line(on: bool) -> String {
+    let path = if on {
+        "每卷定一个统一档位，差异大的页单独定档".to_owned()
+    } else {
+        format!("逐页判断：{PER_PAGE_RULE}")
+    };
+    format!("{ENVELOPE_LABEL} {}（{path}）\n", envelope_value(on))
+}
+
+/// 默认那条路怎么挑档位，半句：抬头那一行（[`envelope_line`]）与卷级判定「逐页」那一句共用。
+const PER_PAGE_RULE: &str = "每页各自选达标的最省空间档位";
 
 /// 抬头里**画质判定参数**那一组的五项（`CONTEXT.md` 的《画质判定参数》）。
 ///
@@ -1755,8 +1786,9 @@ fn verdict_rows(volume: &VolumeReport) -> Vec<Row> {
         )],
         VolumeVerdict::PerPage => vec![sentence_row(
             RowKind::PerPage,
-            "逐页判断（默认）：每页各自选达标的最省空间档位，相邻页的档位可能不同；\
-             想整卷统一就开 --envelope",
+            format!(
+                "逐页判断（默认）：{PER_PAGE_RULE}，相邻页的档位可能不同；想整卷统一就开 --envelope"
+            ),
         )],
         // 上面那一支已经把跳过的卷送走了。
         VolumeVerdict::Skipped { .. } => Vec::new(),
@@ -2566,6 +2598,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::OFF,
+            envelope: matches!(verdict, VolumeVerdict::Envelope(_)),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -2692,13 +2725,13 @@ mod tests {
 
         let text = unfolded(&report, Mode::Process);
 
-        // profile 一行、缩放方式一行、裁白边一行、拆分跨页一行、画质分形状**三行**
+        // profile 一行、缩放方式一行、裁白边一行、拆分跨页一行、**整卷统一灰阶一行**、画质分形状**三行**
         // （构成、细节放宽、聚合——一块的读数由什么组成、怎么加权、怎么收成一个数）、
         // **目录一行**（`volume-discovery/08`：命令行那一副把这一枝摆在它那几卷前面）、
         // 卷**八行**（去处、尺寸贴合检查、卷级、代表页、**灰阶分布**、**纸色提白**、读取、缓存），
         // 页两行：一行几何，一行判定。纸色提白那一行**恒在**，这一趟上限取 0 时也在
         // ——它说的是「没开」（纸色提白批 02 号票第 6 条）。
-        assert_eq!(text.lines().count(), 18);
+        assert_eq!(text.lines().count(), 19);
         // 这一卷只有一页、判成 4bit：灰阶分布就是这一档一页（`two-pass-rework/02`）。
         assert!(text.contains("\n  灰阶分布 4bit 1\n"), "{text}");
         // 这一趟没开纸色提白，而那一行照样说得出这件事。
@@ -2740,7 +2773,7 @@ mod tests {
         );
         // 画质门槛对整份报告只有一个，写在头一行的 profile 里，并标明它是怎么定出来的。
         assert!(
-            text.contains("画质门槛 5.123（在 boox-poke6 上实测，其他屏幕未验证）"),
+            text.contains("画质门槛 5.123（在 boox-poke6 与 kobo-libra-2 上实测，其他屏幕未验证）"),
             "{text}"
         );
         // 画质分那一栏的每个数都是分块聚合收出来的，而聚合里的 K 同样没标定——
@@ -2946,6 +2979,84 @@ mod tests {
                 "{interlock:?}\n{text}"
             );
         }
+    }
+
+    /// **内置画质门槛的标定来源说出两块面板**（say-and-stop/05，收停车场 Q472）：窗口有两道，
+    /// 外面那道在 boox-poke6 上夹出、里面那道在 kobo-libra-2 上夹出（measurements 的《位深盲测》
+    /// 与《第十轮》），读的人要拿它判断那个数对手上那块屏成不成立。
+    ///
+    /// 反着钉一句：只点名 boox-poke6 的那一副说得不全，不许回来。
+    #[test]
+    fn the_builtin_threshold_names_both_panels_it_was_calibrated_on() {
+        let report = switches_report(FitMode::Height, true, SplitRule::default());
+
+        let header = super::header(&report, Mode::Process);
+        let device = header
+            .lines()
+            .find(|line| line.starts_with(Judging::Device.label()))
+            .unwrap_or_else(|| panic!("抬头里没有设备配置那一行：{header}"));
+
+        assert!(
+            device.contains("（在 boox-poke6 与 kobo-libra-2 上实测，其他屏幕未验证）"),
+            "{device}"
+        );
+        assert!(!header.contains("（在 boox-poke6 上实测"), "{header}");
+    }
+
+    /// 一份**每一卷都幂等命中**的报告，整卷统一灰阶开没开点名给。
+    ///
+    /// 那是说不出自己走哪条路的那一种趟（停车场 Q637）：跳过的卷卷级只说跳过，
+    /// 一句判定都没有——逐页判断与整卷统一灰阶那两句都只在做了事的卷上出现。
+    fn every_volume_skipped(envelope: bool) -> Report {
+        let mut report = switches_report(FitMode::Height, true, SplitRule::default());
+        report.envelope = envelope;
+        let volume = &mut report.volumes[0];
+        volume.verdict = Some(VolumeVerdict::Skipped { page_count: 1 });
+        volume.pages = Vec::new();
+        report
+    }
+
+    /// **抬头说出灰阶档位走的哪条路：默认那条**（say-and-stop/05，收停车场 Q637）。
+    /// 全卷都幂等命中的那一趟也说得出——卷级那几行在这一趟上一句判定都没有。
+    #[test]
+    fn the_header_says_the_per_page_path_even_when_every_volume_was_skipped() {
+        let report = every_volume_skipped(false);
+
+        let header = super::header(&report, Mode::Process);
+
+        assert!(
+            header
+                .lines()
+                .any(|line| line == "整卷统一灰阶 关（逐页判断：每页各自选达标的最省空间档位）"),
+            "{header}"
+        );
+        assert!(!header.contains("整卷统一灰阶 开"), "{header}");
+        let text = unfolded(&report, Mode::Process);
+        assert!(
+            !text.contains("逐页判断（默认）"),
+            "夹具的前提：卷级没有判定那一句\n{text}"
+        );
+    }
+
+    /// **抬头说出灰阶档位走的哪条路：`--envelope` 那条**（say-and-stop/05，收停车场 Q637）。
+    #[test]
+    fn the_header_says_the_envelope_path_even_when_every_volume_was_skipped() {
+        let report = every_volume_skipped(true);
+
+        let header = super::header(&report, Mode::Process);
+
+        assert!(
+            header
+                .lines()
+                .any(|line| line == "整卷统一灰阶 开（每卷定一个统一档位，差异大的页单独定档）"),
+            "{header}"
+        );
+        assert!(!header.contains("整卷统一灰阶 关"), "{header}");
+        let text = unfolded(&report, Mode::Process);
+        assert!(
+            !text.contains("整卷档位"),
+            "夹具的前提：卷级没有判定那一句\n{text}"
+        );
     }
 
     /// 尺寸贴合检查那一段要说出**判定范围**与**被排除的页**（06 号票）：门逐页判，
@@ -3294,6 +3405,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: true,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3359,6 +3471,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: false,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3389,9 +3502,9 @@ mod tests {
 
         let text = unfolded(&report, Mode::Process);
 
-        // profile 一行、缩放方式一行、裁白边一行、拆分跨页一行、画质分形状**三行**、**目录一行**、
-        // 卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
-        assert_eq!(text.lines().count(), 11);
+        // profile 一行、缩放方式一行、裁白边一行、拆分跨页一行、**整卷统一灰阶一行**、画质分形状**三行**、
+        // **目录一行**、卷两行，加上读取那一行——跳过的卷同样把整卷读了一遍。
+        assert_eq!(text.lines().count(), 12);
         assert!(
             text.contains("library/volume-a → out/volume-a（12 页）"),
             "{text}"
@@ -3418,6 +3531,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: false,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3533,6 +3647,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: true,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3617,6 +3732,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: false,
             // 点名一个卷、它没做成：做出了东西的卷一个都没有。
             volumes: Vec::new(),
             failed_volumes: vec![VolumeFailure {
@@ -3723,6 +3839,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: false,
             volumes: Vec::new(),
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
@@ -4021,6 +4138,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: true,
             failed_volumes: Vec::new(),
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -4876,6 +4994,7 @@ mod tests {
             crop: true,
             split: SplitRule::default(),
             white_align_limit: WhiteAlignLimit::default(),
+            envelope: false,
             volumes: Vec::new(),
             failed_volumes: vec![failure],
             non_volume_files: Vec::new(),
@@ -6404,7 +6523,7 @@ mod tests {
             .expect("报告抬头里有设备配置那一行")
             .to_owned();
         assert!(
-            threshold.contains("（在 boox-poke6 上实测，其他屏幕未验证）"),
+            threshold.contains("（在 boox-poke6 与 kobo-libra-2 上实测，其他屏幕未验证）"),
             "夹具的前提：抬头那一行带着标定来源：{threshold}"
         );
         assert!(

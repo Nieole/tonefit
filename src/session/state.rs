@@ -40,6 +40,7 @@ use tonefit::{
 use super::home::Home;
 use super::view::{Cursor, Views};
 use crate::preset::{DeviceLayer, TasteLayer};
+use crate::render;
 
 /// 会话认得的按键。**不是终端库那一侧的键码**——那一层的翻译在终端层（`super::terminal`）。
 ///
@@ -180,7 +181,7 @@ impl Field {
             Field::WhiteAlignLimit => "提白上限",
             Field::BitDepth => "灰阶档位",
             Field::Dither => "抖动",
-            Field::Envelope => "整卷统一灰阶",
+            Field::Envelope => render::ENVELOPE_LABEL,
             Field::CacheBudget => "内存上限",
             Field::IoMode => "读盘方式",
         }
@@ -950,7 +951,12 @@ impl Session {
                 Some(dither) => dither.name().to_owned(),
                 None => "自动（画质分说了算）".to_owned(),
             },
-            Field::Envelope => spell_flag(self.taste.envelope, self.taste.envelope(), "开", "关"),
+            Field::Envelope => spell_flag(
+                self.taste.envelope,
+                self.taste.envelope(),
+                render::envelope_value(true),
+                render::envelope_value(false),
+            ),
             Field::CacheBudget => match self.taste.cache_budget {
                 Some(budget) => budget.to_string(),
                 None => format!("默认（{}）", CacheBudget::default()),
@@ -1257,6 +1263,34 @@ mod tests {
             "会话另编了一套说法"
         );
         assert!(pinned.contains("由你指定"), "{pinned}");
+    }
+
+    /// **整卷统一灰阶那一行与报告抬头说灰阶档位走哪条路的那一行同一个叫法**（say-and-stop/05）：
+    /// 项名一样、开没开的写法一样——抬头那一行读起来就是这一行把那一格说出口的样子。
+    ///
+    /// 比的是**真的那一份抬头**：两景各有一趟（`running` 没开、`envelope` 开着），攒到此刻的报告
+    /// 交给 [`crate::render::header`]；会话这一侧另写一份叫法的那一天，这一条当场变红。
+    #[test]
+    fn the_envelope_row_is_named_as_the_report_header_names_it() {
+        for (name, on) in [("running", false), ("envelope", true)] {
+            let scene = crate::session::scene::Scene::named(name);
+            assert_eq!(scene.session.taste.envelope(), on, "夹具的前提：{name}");
+            let live = scene.live();
+            let header = crate::render::header(&live.report(), live.mode());
+
+            let mut said = Session::new();
+            said.taste.envelope = Some(on);
+            let row = format!(
+                "{} {}（",
+                Field::Envelope.label(),
+                said.shown(Field::Envelope)
+            );
+
+            assert!(
+                header.lines().any(|line| line.starts_with(&row)),
+                "「{row}」不是抬头里那一行的开头（{name}）：\n{header}"
+            );
+        }
     }
 
     /// 屏上的两层与预设装的两层是**同一层**：格数一项不多一项不少。

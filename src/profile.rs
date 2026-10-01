@@ -61,7 +61,15 @@ pub struct Threshold {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ThresholdSource {
     /// 内置值，由真实素材上的人工盲测定出（见 measurements 的《位深盲测》）。
-    Calibrated,
+    ///
+    /// **装得下几块面板**（say-and-stop/05，收停车场 Q472）：一道窗口在一块面板上夹出，
+    /// 内置那个数今天由两道窗口定（见 `DEFAULT_THRESHOLD`），再多一道就在这里多一个型号，
+    /// `Display` 那句话不必重写。
+    Calibrated {
+        /// 盲测在哪几台设备上做的，按窗口夹出的先后；型号名取内置表里的规范名
+        /// （`every_calibration_device_is_in_the_built_in_table` 钉着）。
+        devices: &'static [&'static str],
+    },
     /// 用户**点名**的界。他在自己那台设备上数出来的那个数走这一条。
     ///
     /// 这一项分的是「这个数怎么定出来的」，不是「从哪个入口点的名」（`p1-session/12` 判的），
@@ -100,11 +108,23 @@ impl Threshold {
 
 impl std::fmt::Display for Threshold {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let source = match self.source {
-            ThresholdSource::Calibrated => "在 boox-poke6 上实测，其他屏幕未验证",
-            ThresholdSource::Pinned => "由你指定",
-        };
-        write!(f, "画质门槛 {:.3}（{source}）", self.value)
+        write!(f, "画质门槛 {:.3}（", self.value)?;
+        match self.source {
+            ThresholdSource::Calibrated { devices } => {
+                write!(f, "在 {} 上实测，其他屏幕未验证", enumerated(devices))?;
+            }
+            ThresholdSource::Pinned => f.write_str("由你指定")?,
+        }
+        f.write_str("）")
+    }
+}
+
+/// 几个名字连成一串：末两个之间用「与」，其余用顿号（`a`、`a 与 b`、`a、b 与 c`）。
+fn enumerated(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => (*only).to_owned(),
+        [init @ .., last] => format!("{} 与 {last}", init.join("、")),
     }
 }
 
@@ -141,7 +161,8 @@ impl std::fmt::Display for Threshold {
 /// 画质分跟着面板走、不可跨面板比较（ADR 0002），而这里是一个常数——**其余面板沿用这个数，
 /// 没有复核**。`Display` 把这句话写在数值旁边，[`Profile::with_threshold`] 是出口。
 /// **两道窗口各在各的面板上量的**（外面那道 boox-poke6，里面那道 kobo-libra-2），
-/// 两者不可比；取窄的那一道是保守取法，不是把它们并成了一道。
+/// 两者不可比；取窄的那一道是保守取法，不是把它们并成了一道。两块面板因此都记在标定来源上，
+/// 按窗口夹出的先后（[`ThresholdSource::Calibrated`]）。
 ///
 /// **它仍然挡掉 2bit 不抖**——那一档真机排第 2、比 2bit+FS 省 18% 体积，而画质分在棋魂两页上
 /// 读它 8.250 与 18.878。那不是界的问题，是画质分认为那两页的灰调塌陷值这么多；
@@ -157,7 +178,9 @@ impl std::fmt::Display for Threshold {
 /// **拿到的仍是那一档，变的是理由**。
 const DEFAULT_THRESHOLD: Threshold = Threshold {
     value: 5.123,
-    source: ThresholdSource::Calibrated,
+    source: ThresholdSource::Calibrated {
+        devices: &["boox-poke6", "kobo-libra-2"],
+    },
 };
 
 /// 一次处理调用的目标设备。
@@ -412,6 +435,31 @@ const DEVICES: &[(&str, Panel)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **标定来源点名的设备都在内置表里，而且各是一块面板**（say-and-stop/05）：报告上那句
+    /// 「在 X 与 Y 上实测」要让读的人拿去比自己那块屏，名字拼错一个字母就比不成；
+    /// 两个型号落在同一块面板上，那句话说的就是一块面板、却读成了两块。
+    #[test]
+    fn every_calibration_device_is_in_the_built_in_table() {
+        let ThresholdSource::Calibrated { devices } = DEFAULT_THRESHOLD.source() else {
+            panic!("内置的界不是标定出来的");
+        };
+        let mut panels: Vec<Panel> = Vec::new();
+        for device in devices {
+            let profile =
+                Profile::resolve(device).unwrap_or_else(|error| panic!("{device}：{error}"));
+            assert_eq!(
+                profile.device(),
+                *device,
+                "标定来源里的名字必须已经是规范名"
+            );
+            assert!(
+                !panels.contains(&profile.panel()),
+                "{device} 与前面那台是同一块面板"
+            );
+            panels.push(profile.panel());
+        }
+    }
 
     /// 表的完整性：名字不重复、已是规范名、解析出来的面板就是表里写的那块。
     #[test]

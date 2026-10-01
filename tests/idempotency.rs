@@ -3,8 +3,8 @@
 //! 只断言外部可见的事实：写出的 PNG 的 tEXt 里有什么字段，重跑时 `Report` 说这一卷做了什么。
 //! 记录随文件走，因此这里的每一条都是文件的性质，不是某个内部表的性质。
 //!
-//! 唯一一条起真进程的是「为什么重做」那一句印没印到 stdout 上（say-and-stop/04）：
-//! 那一句的措辞在二进制里，`run` 这个 seam 上看不见它。
+//! 起真进程的只有两条：「为什么重做」那一句（say-and-stop/04）与抬头上灰阶档位走哪条路那一行
+//! （say-and-stop/05）印没印到 stdout 上——那两句的措辞在二进制里，`run` 这个 seam 上看不见它们。
 
 mod fixtures;
 
@@ -277,6 +277,49 @@ fn the_printed_report_of_a_rerun_with_one_option_changed_says_the_options_change
     assert!(!first.contains(SAID), "头一趟就说了为什么重做：{first}");
     let second = tonefit("bicubic");
     assert!(second.contains(SAID), "第二趟没说选项变了：{second}");
+}
+
+/// **每一卷都幂等命中的那一趟也说得出自己走的哪条路**（say-and-stop/05，收停车场 Q637），在真进程上：
+/// 两条路各跑两趟，第二趟一卷都没做——跳过的卷卷级只说跳过，一句判定都没有——抬头那一行照样在。
+///
+/// 那一行怎么说由 `render` 的用例钉；`run` 有没有把开关填进报告、`main` 有没有把它一路交到
+/// stdout 上，只有起一趟真进程看得见。默认那条路也点名（`--no-envelope`），不借默认值。
+#[test]
+fn the_printed_report_of_a_run_that_skipped_every_volume_says_which_path_it_took() {
+    const PER_PAGE: &str = "整卷统一灰阶 关（逐页判断";
+    const ENVELOPE: &str = "整卷统一灰阶 开（";
+    for (switch, said, not_said) in [
+        ("--no-envelope", PER_PAGE, ENVELOPE),
+        ("--envelope", ENVELOPE, PER_PAGE),
+    ] {
+        let space = Workspace::new();
+        let volume = two_pages_and_an_extra(&space);
+        let tonefit = || {
+            let ran = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+                .arg("--out")
+                .arg(space.out())
+                .args(["--profile", fixtures::BASELINE_DEVICE, switch])
+                .arg(volume.path())
+                .output()
+                .expect("启动 tonefit");
+            let report = String::from_utf8_lossy(&ran.stdout).into_owned();
+            assert_eq!(ran.status.code(), Some(0), "这一趟该干净跑完：{report}");
+            report
+        };
+
+        tonefit();
+        let second = tonefit();
+
+        assert!(
+            second.contains("跳过 之前转换过"),
+            "夹具的前提：第二趟整卷跳过（{switch}）：{second}"
+        );
+        assert!(
+            second.lines().any(|line| line.starts_with(said)),
+            "{switch} 那一趟没说自己走的哪条路：{second}"
+        );
+        assert!(!second.contains(not_said), "{switch}：{second}");
+    }
 }
 
 /// 内存上限管的是峰值内存，一个像素都不改（ADR 0005）：改它不该让整库重做。
