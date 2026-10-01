@@ -4122,6 +4122,383 @@
       "data": "sequences/config-click-choice.scene.json"
     },
     {
+      "name": "config-crop",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（裁）",
+          "不裁："
+        ]
+      },
+      "text": "sequences/config-crop.text.txt",
+      "style": "sequences/config-crop.style.txt",
+      "data": "sequences/config-crop.scene.json"
+    },
+    {
+      "name": "config-split",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（拆）",
+          "不拆："
+        ]
+      },
+      "text": "sequences/config-split.text.txt",
+      "style": "sequences/config-split.style.txt",
+      "data": "sequences/config-split.scene.json"
+    },
+    {
+      "name": "config-order",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（rtl）",
+          "ltr（从左往右）"
+        ]
+      },
+      "text": "sequences/config-order.text.txt",
+      "style": "sequences/config-order.style.txt",
+      "data": "sequences/config-order.scene.json"
+    },
+    {
+      "name": "config-filter",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（lanczos3）",
+          "bicubic"
+        ]
+      },
+      "text": "sequences/config-filter.text.txt",
+      "style": "sequences/config-filter.style.txt",
+      "data": "sequences/config-filter.scene.json"
+    },
+    {
+      "name": "config-depth",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 自动（画质分说了算）",
+          "    8bit",
+          "8bit = 256 级灰"
+        ],
+        "lacks": [
+          "三档"
+        ]
+      },
+      "text": "sequences/config-depth.text.txt",
+      "style": "sequences/config-depth.style.txt",
+      "data": "sequences/config-depth.scene.json"
+    },
+    {
+      "name": "config-dither",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 fs",
+          "off（不加抖动）"
+        ]
+      },
+      "text": "sequences/config-dither.text.txt",
+      "style": "sequences/config-dither.style.txt",
+      "data": "sequences/config-dither.scene.json"
+    },
+    {
+      "name": "config-envelope",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（关）",
+          "差异大的页"
+        ]
+      },
+      "text": "sequences/config-envelope.text.txt",
+      "style": "sequences/config-envelope.style.txt",
+      "data": "sequences/config-envelope.scene.json"
+    },
+    {
+      "name": "config-io",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "当前 默认（auto）",
+          "concurrent（同时读）"
+        ]
+      },
+      "text": "sequences/config-io.text.txt",
+      "style": "sequences/config-io.style.txt",
+      "data": "sequences/config-io.scene.json"
+    },
+    {
       "name": "config-p",
       "scene": "config",
       "size": [

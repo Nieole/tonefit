@@ -172,8 +172,9 @@ function elide(s, w) {
   }
   return head + '⋯' + tail;
 }
-// 按显示宽度折行，带最简单的禁则：收尾标点不落行首
+// 按显示宽度折行，带禁则：收尾记号不落行首，起首记号不落行尾（后一张与 crate::wrap 的 NEVER_ENDS_A_ROW 同一张表）
 const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
+const NO_TAIL = '（【《「『〈〔“‘([{';
 // 西文词与路径不劈开，中文逐字可断
 // 悬挂缩进（CONTEXT《折行》，与 crate::wrap 同一条）：行首那一截缩进跟着折下来的每一行走，
 // 不然折下来的那一截读起来像下一条的开头；缩进宽过这一格时不留
@@ -191,7 +192,10 @@ function wrap(text, w) {
           const arr = [...line]; const last = arr.pop();
           lines.push(arr.join('')); fold(); line += last; used += chW(last);
         } else {
-          lines.push(line.replace(/\s+$/, '')); fold();
+          // 行尾那几个起首记号挪到下一行打头；退到这一行只剩一格就认下（与 crate::wrap 同一个让法）
+          const arr = [...line]; let carry = '';
+          while (arr.length - start > 1 && NO_TAIL.includes(arr[arr.length - 1])) carry = arr.pop() + carry;
+          lines.push(arr.join('').replace(/\s+$/, '')); fold(); line += carry; used += strW(carry);
           if (tok === ' ') continue;
         }
       }
@@ -593,6 +597,8 @@ const PANELS = [
   ['1650x2200 ⋅ 207 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['boox-max-lumi2', 'boox-tab-x']],
   ['1860x2480 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白', ['kindle-scribe']],
 ];
+// desc 是详情栏里那一段长说明。有取值环的每一项，desc 里叫一个取值用的就是取值那一格的写法
+// （`height`、`serial`、`1bit`、`裁`），中文称呼只跟在括号里：用户从屏上抄得出命令行（停车场 Q732）
 const CONFIG = [
   { layer: '设备设置', note: '换设备时才需要改' },
   { key: 'model', label: '型号', kind: 'model', unset: '未挑（跑起来之前必填）', value: 'kobo-libra-2',
@@ -603,26 +609,27 @@ const CONFIG = [
     desc: '画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。' },
   { layer: '处理选项', note: '每次转换都可以调' },
   { key: 'fit', label: '缩放方式', kind: 'ring', options: ['height', 'inside'], unset: '默认（height）', value: 'inside', preset: null,
-    desc: '按高度铺满：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。整页放进屏幕：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
+    desc: 'height（按高度铺满）：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。inside（整页放进屏幕）：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
   { key: 'crop', label: '裁白边', kind: 'ring', options: ['裁', '不裁'], unset: '默认（裁）', value: null,
-    desc: '自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。' },
+    desc: '裁：自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。不裁：白边原样留着。' },
   { key: 'split', label: '拆分跨页', kind: 'ring', options: ['拆', '不拆'], unset: '默认（拆）', value: null,
-    desc: '把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。开着时，有跨页的卷体积会变大不少。' },
+    desc: '拆：把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。有跨页的卷体积会因此变大不少。不拆：跨页保持一整张。' },
   { key: 'splitAt', label: '跨页判定宽度', kind: 'text', unset: '默认（1.5）', value: null, desc: '页面的宽高比超过屏幕宽高比的多少倍，才当成跨页处理。' },
-  { key: 'order', label: '阅读方向', kind: 'ring', options: ['rtl', 'ltr'], unset: '默认（rtl）', value: null, desc: '跨页拆开之后，左右两半谁排在前面。日漫是从右往左。' },
+  { key: 'order', label: '阅读方向', kind: 'ring', options: ['rtl', 'ltr'], unset: '默认（rtl）', value: null, desc: '跨页拆开之后，左右两半谁排在前面。rtl（从右往左）：右半在前，日漫是这样。ltr（从左往右）：左半在前。' },
   { key: 'filter', label: '缩放算法', kind: 'ring', options: ['area', 'bilinear', 'hamming', 'bicubic', 'lanczos3'], unset: '默认（lanczos3）', value: null,
-    desc: '缩小图片时用的算法。lanczos3 最清晰，一般不用改；area 会偏糊，只用来对比。' },
+    desc: '缩小图片时用的算法。lanczos3 最清晰，一般不用改。bilinear、hamming、bicubic 是另外几种常见的算法，area 会偏糊，它们都只用来对比。' },
   { key: 'white', label: '提白上限', kind: 'text', unset: '默认（4）', value: null,
     desc: '扫描出来的纸色常常略微发灰，加抖动时白底上会冒出零星噪点。开着时把接近纯白的纸色提成纯白，数字是最多提几级灰度；0 = 关闭，结果和没有这个功能时完全一样。' },
-  { key: 'depth', label: '灰阶档位', kind: 'ring', options: ['1bit', '2bit', '4bit'], unset: '自动（画质分说了算）', value: null,
-    desc: '指定整卷用几级灰，不再逐页自动判断。电子墨水屏最多显示 16 级灰，所以只有这三档。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰；+FS = 加抖动。' },
+  // 环上四格是灰阶档位的全集（命令行 --bit-depth 收的同一个）；8bit 在电子墨水屏上越过灰阶硬上界，开跑就被拒（ADR 0003，停车场 Q730）
+  { key: 'depth', label: '灰阶档位', kind: 'ring', options: ['1bit', '2bit', '4bit', '8bit'], unset: '自动（画质分说了算）', value: null,
+    desc: '指定整卷用几级灰，不再逐页自动判断。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰，8bit = 256 级灰；+FS = 加抖动。电子墨水屏最多显示 16 级灰，8bit 多出来的那些级到不了眼睛、只让文件变大，所以在电子墨水屏上派不上用场：可见灰阶数不到 256 时选它，这一趟一开始就会被拒绝。' },
   { key: 'dither', label: '抖动', kind: 'ring', options: ['off', 'fs'], unset: '自动（画质分说了算）', value: 'fs', preset: null,
-    desc: '用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。' },
+    desc: 'off（不加抖动）：每个像素直接取最近的那一级灰，渐变处可能出现色带。fs（加抖动）：用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。' },
   { key: 'envelope', label: '整卷统一灰阶', kind: 'ring', options: ['开', '关'], unset: '默认（关）', value: null,
-    desc: '关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，和其他页差异特别大的页单独处理。' },
+    desc: '关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，差异大的页（和其他页差得特别远的那几页）单独处理。' },
   { key: 'cache', label: '内存上限', kind: 'text', unset: '默认（512.0 MiB）', value: null, desc: '转换时最多占用多少内存，超出的部分临时写到硬盘上。它限制的是内存占用，不限制卷的大小。' },
   { key: 'io', label: '读盘方式', kind: 'ring', options: ['auto', 'serial', 'concurrent'], unset: '默认（auto）', value: null,
-    desc: '自动：按硬盘类型自己选。逐个读：适合机械硬盘和网络盘。同时读：适合固态硬盘。' },
+    desc: 'auto（自动）：按硬盘类型自己选。serial（逐个读）：适合机械硬盘和网络盘。concurrent（同时读）：适合固态硬盘。' },
   { layer: '画质判定参数', note: '只读' },
   { key: 'p1', label: '设备配置', kind: 'info',
     desc: '下一趟照这份设备配置判定：型号、屏幕规格、画质门槛，门槛是在哪块屏幕上实测的也写着。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。' },
@@ -1073,7 +1080,8 @@ function overviewLines(iw, compact) {
   if (t.failedPages) add(`坏页 ${t.failedPages} 页`, 'c-red');
   if (t.failedVols) add(`转换失败 ${t.failedVols} 卷`, 'c-red');
   if (t.unreach) add(`无法访问 ${t.unreach} 处`, 'c-red');
-  if (!wroteYet && t.outlier) add(`与其他页差异大 ${t.outlier} 页`, 'c-yellow');
+  // 差异大的页只有一个叫法：词汇表的名字，与卷行行尾、确认条同一个词（停车场 Q731）
+  if (!wroteYet && t.outlier) add(`差异大的页 ${t.outlier} 页`, 'c-yellow');
   if (!wroteYet && t.wide) add(`页面超宽 ${t.wide} 页`, 'c-yellow');
   const troubleLine = trouble.length ? [['问题 ', 'c-red b'], ...trouble] : null;
   if (compact) {
@@ -1091,7 +1099,7 @@ function overviewLines(iw, compact) {
     if (t.failedPages) add2(`坏页 ${t.failedPages}`, 'c-red');
     if (t.failedVols) add2(`转换失败 ${t.failedVols}`, 'c-red');
     if (t.unreach) add2(`无法访问 ${t.unreach}`, 'c-red');
-    if (!wroteYet && t.outlier) add2(`差异大 ${t.outlier}`, 'c-yellow');
+    if (!wroteYet && t.outlier) add2(`差异大的页 ${t.outlier}`, 'c-yellow');
     return [l1, tr.length ? [...short, ['   问题 ', 'c-red b'], ...tr] : short];
   }
   return troubleLine ? [total, here, concl, [...troubleLine, ['    ', ''], ...hint(']d', '跳到下一个')]] : [total, here, concl];
@@ -1326,7 +1334,7 @@ function drawDecision(scr, x, y, w) {
     scr.line(x + 2, y + 2, [['x', 'c-yellow b'], [' 写出   ', 'c-fg'], ['a', 'c-yellow b'], [' 写出，后面不再问   ', 'c-fg'], ['s', 'c-yellow b'], [' 不写出，结束   ', 'c-fg'], ['v', 'c-yellow b'], [' 查看每页结果', 'c-fg']], w - 4);
     return;
   }
-  scr.line(x + 2, y + 1, [['? ', 'c-yellow b'], [volPath(v), 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意的页 ', 'c-gray'], [String(notable), notable ? 'c-yellow b' : 'c-fg'], ...(pr.outlier ? [[` ⋅ 与其他页差异大 ${pr.outlier}`, 'c-yellow']] : [])], w - 4);
+  scr.line(x + 2, y + 1, [['? ', 'c-yellow b'], [volPath(v), 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(s.tally), ['   需留意的页 ', 'c-gray'], [String(notable), notable ? 'c-yellow b' : 'c-fg'], ...(pr.outlier ? [[` ⋅ 差异大的页 ${pr.outlier}`, 'c-yellow']] : [])], w - 4);
   scr.line(x + 2, y + 2, [['x', 'c-yellow b'], [' 写出这一卷', 'c-fg'], ['（不用重新分析）     ', 'c-gray'], ['a', 'c-yellow b'], [' 写出', 'c-fg'], ['，后面的卷不再询问     ', 'c-gray'], ['s', 'c-yellow b'], [' 不写出', 'c-fg'], ['，结束预览     ', 'c-gray'], ['v', 'c-yellow b'], [' 查看每页结果', 'c-fg']], w - 4);
 }
 
@@ -2044,7 +2052,7 @@ function scene(name) {
       break;
     }
     case 'envelope-deciding': {
-      // 整卷统一灰阶那一趟停在确认点上：差异大的页与代表页只有这一趟才有，确认条上「与其他页差异大」那一截、
+      // 整卷统一灰阶那一趟停在确认点上：差异大的页与代表页只有这一趟才有，确认条上「差异大的页」那一截、
       // 「需留意的页」那个数（代表页也数进去）连同卷行那几列，这一景一起钉住（停车场 Q900、Q902）。
       // 那一卷所在的目录展开着，卷行在屏上
       CONFIG.find((c) => c.key === 'envelope').value = '开';
@@ -2103,7 +2111,7 @@ function describe() {
       : ['左边是设备和处理选项，右边是选中那一项的详情：可选的值、说明、预设里是怎么设的。选值时不会再把其他行挤出屏幕。', '顶部一行显示当前使用的预设和改动了哪几项；左边带 * 的就是改过的。', '设备型号先选屏幕规格再选型号：同一种屏幕的型号效果一样。', r && r.stage !== 'ended' ? '转换进行中：设置暂时锁定，但可以随时查看；右上角显示着转换进度。' : '画质判定参数在左边最下面，只能查看，每一项都附有说明。'];
     tries = S.cfg.presets ? [['j k', '选择'], ['⏎', '使用'], ['dd', '删除'], ['p', '返回']] : [['j k', '选择'], ['l ⏎', '展开 / 确定'], ['h', '返回'], ['p', '预设'], ['1', '回任务']];
   } else if (S.pages) {
-    title = '每页结果'; points = ['从卷进入每页结果会切换整屏：每页的信息列很多，需要整个宽度；顶部显示所在位置，按 h 回到卷列表原来的位置。', '默认只列需要留意的页：读不出、部分损坏、尺寸未贴合屏幕、页面超宽；打开整卷统一灰阶时还有与其他页差异大的页和代表页。按 a 查看全部页。', '顶部的总览一直固定显示，查看细节时进度不会消失。']; tries = [['j k', '选择'], ['a', '全部页'], ['h', '回卷列表']];
+    title = '每页结果'; points = ['从卷进入每页结果会切换整屏：每页的信息列很多，需要整个宽度；顶部显示所在位置，按 h 回到卷列表原来的位置。', '默认只列需要留意的页：读不出、部分损坏、尺寸未贴合屏幕、页面超宽；打开整卷统一灰阶时还有差异大的页和代表页。按 a 查看全部页。', '顶部的总览一直固定显示，查看细节时进度不会消失。']; tries = [['j k', '选择'], ['a', '全部页'], ['h', '回卷列表']];
   } else if (!r) {
     title = '还没开始'; points = ['任务视图的主线是「路径」：开始之前只列出你添加的路径，不会读取里面的内容。', '[x] [ ] 用空格勾选，没勾选的会变暗；一个路径已经包含在另一个路径里时，会标出来。', 'o 添加路径，i 修改，dd 删除；输出目录在列表最上面。'];
     tries = [['j k', '选择'], ['o', '添加路径'], ['空格', '勾选'], ['dd', '删除'], ['t', '预览'], ['x', '转换']];

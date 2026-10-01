@@ -41,10 +41,11 @@ pub(super) fn spinner(now: Instant, opened_at: Instant, offset: usize) -> &'stat
 /// 一页**要紧在哪一处，屏上那个词**（`CONTEXT.md` 的《语义色》在页那一级分出的那几样）。
 ///
 /// **新界面的措辞只有这一处**：卷行行尾按种类报几页（[`super::list`]，数出自
-/// [`Live::notable_at`](super::super::live::Live::notable_at)）与每页结果提示那一列写
+/// [`Live::notable_at`](super::super::live::Live::notable_at)）、每页结果提示那一列写
 /// 这一页要紧在哪几处（[`super::pages`]，判出自
-/// [`render::notable`](crate::render::notable)）——两处读同一份，
-/// 同一件事在屏上不会有两个叫法。
+/// [`render::notable`](crate::render::notable)）、总览问题行（[`super::overview`]）与
+/// 确认条（[`super::decision`]）报差异大的页、页面超宽各几页——几处读同一份，
+/// 同一件事在屏上不会有两个叫法（停车场 Q731）。
 ///
 /// **[坏页](Notable::Failed)不给词**：它行尾跟着那一句原因，而那一句以「失败」开头——
 /// 多加一个词是同一件事说两遍。哪几种在某一处**不写词**由那一处自己答

@@ -42,7 +42,7 @@ use super::canvas::{Border, Canvas};
 use super::marks;
 use super::overview::current_name;
 use super::yielding;
-use crate::render;
+use crate::render::{self, Notable};
 
 /// 这一条占几行：上下两条框线加两行正文（设计稿 `drawDecision` 的 `h = 4`）。
 pub(super) const ROWS: u16 = 4;
@@ -135,16 +135,19 @@ fn this_volume(session: &Session, live: &Live, report: &VolumeReport, short: boo
     line.push(count);
     // **差异大的页另报一个数**（设计稿 `drawDecision` 那一截）：整卷统一灰阶那一趟
     // 才有这几页，而它同样停得到确认点上。数出自 [`Live::notable_at`] 一处——
-    // 卷行行尾报的是同一份（`CONTEXT.md` 的《需留意的页》）。
+    // 卷行行尾报的是同一份（`CONTEXT.md` 的《需留意的页》）；**词也是同一个**
+    // （[`marks::notable_word`] 一处，停车场 Q731）。
     let outlier = session
         .views
         .task
         .tree
         .index_of(&report.volume)
         .map_or(0, |at| live.notable_at(at).outlier);
-    if outlier > 0 {
+    if outlier > 0
+        && let Some(word) = marks::notable_word(Notable::Outlier)
+    {
         line.push(Segment::new(
-            format!(" ⋅ 与其他页差异大 {outlier}"),
+            format!(" ⋅ {word} {outlier}"),
             Look::tone(Tone::Caution),
         ));
     }
