@@ -1372,7 +1372,9 @@ impl Bar {
     fn start(&self, volume: &Path, steps: u64) {
         let bar = self.frame.add(ProgressBar::new(steps));
         bar.set_style(bar_style());
-        // 卷名怎么取只有一处（`render::volume_name`）：会话的当前卷条印的是同一个。
+        // 卷名从开卷那一条报的卷根取（`render::volume_name`）——开工那一条带的卷清单，
+        // `start_run` 收下时没留——分卷序列那一卷因此仍带着 `.partN`；会话那一侧读清单上的卷名，
+        // 写的是序列的名字（停车场 Q1297）。
         bar.set_message(render::volume_name(volume));
         *self.current() = Some(bar);
     }

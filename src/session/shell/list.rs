@@ -640,14 +640,16 @@ impl Painter<'_> {
         Vec::new()
     }
 
-    /// 清单里第几卷叫什么（屏上那个名字与进度条印的是同一个）。
+    /// 清单里第几卷叫什么：清点清单上的卷名（[`super::super::tree::Tree::name`]），
+    /// 分卷序列那一卷是序列的名字。
     fn volume_name(&self, at: usize) -> String {
         self.session
             .views
             .task
             .tree
-            .root(at)
-            .map_or_else(String::new, render::volume_name)
+            .name(at)
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// 正在处理那一段：环节 · 横条 · 走到第几页（摆法与总览那一行同一副，在 [`marks`] 一处）。
@@ -918,7 +920,7 @@ fn problem_parts(tally: &BranchTally, unreachable: usize) -> Vec<Segment> {
 
 /// 代表页那一列的字：[那一行](RowKind::Driver)上的路径，只印最后那一段。
 ///
-/// 只印最后一段，与卷名同一条规矩（[`crate::render::volume_name`]）：
+/// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::volume_name`]）：
 /// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
 fn driver(rows: &[render::Row]) -> Option<String> {
     rows.iter()

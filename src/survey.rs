@@ -80,7 +80,7 @@
 //! # 开工那一条带着清点的产出
 //!
 //! 三份产出在开工那一条事件上**原样**带出去（`session-redesign/03`，收停车场 Q719）：
-//! 卷那一份摊成**卷清单**——每一卷的[清点摘要](SurveyedVolume)（卷根、步数上界、源页数），
+//! 卷那一份摊成**卷清单**——每一卷的[清点摘要](SurveyedVolume)（卷根、卷名、步数上界、源页数），
 //! 照发现的次序（见 [`Survey::roster`]）——另两份就是报告上那两张表。
 //! 会话因此在第一卷开工之前就画得出整棵树。
 //! **库里不为它另算一个数**：三样在清点走完那一刻都已经在了，这里只是没把它们丢掉。
@@ -145,6 +145,8 @@ pub(crate) struct Surveyed {
     ///
     /// 它**不一定是点名的那个路径**——发现出来的卷躺在点名的路径底下（ADR 0014）。
     pub(crate) root: PathBuf,
+    /// 卷名：发现认卷时算出来的那一个（见 [`discover::Candidate::name`]），卷清单那一格就是它。
+    pub(crate) name: String,
     /// 这一卷在**输出目录之下**的去处，相对路径（见 [`discover::Candidate::output_relative`]）。
     ///
     /// 私有：外面要的是接好的那条路径，走 [`output_path`](Self::output_path)——
@@ -191,17 +193,17 @@ impl Surveyed {
     }
 }
 
-/// **清点摘要**：清点交出来的一卷——卷根、步数上界、源页数（`CONTEXT.md` 的《进度》）。
+/// **清点摘要**：清点交出来的一卷——卷根、卷名、步数上界、源页数（`CONTEXT.md` 的《进度》）。
 /// 开工那一条事件照发现的次序带着全部卷的这一份，那一列就是**卷清单**
 /// （`session-redesign/03`，库内由 `Survey::roster` 摊出来）。
 ///
 /// 它是库对外交出来的那一份，与库内的 `Surveyed` 分开：那一个还带着去处、借住的卷
 /// 与枚举耗时，全是处理这一卷时才用得着的东西，而且随卷被处理时**吃掉**；这一份只有画一棵树
-/// 要的三样，开工那一刻整份交出去，此后一格不变。
+/// 要的四样，开工那一刻整份交出去，此后一格不变。
 ///
-/// **三样都是清点数出来的，库里不为这一份另算**：卷根与步数就是开卷那一条会报的那两样，
-/// 源页数是数成员时本来就数出来的那个。步数与那一条同一个性质——**上界**，不是承诺
-/// （见 `crate::volume_steps`）。
+/// **四样都是清点得出来的，库里不为这一份另算**：卷根与步数就是开卷那一条会报的那两样，
+/// 卷名是发现认卷时算出来的那一个，源页数是数成员时本来就数出来的那个。
+/// 步数与那一条同一个性质——**上界**，不是承诺（见 `crate::volume_steps`）。
 ///
 /// 字段全公开、不非穷尽：会话那一侧的用例要按设计稿的场景数据**造**出一份来喂进去
 /// （与 [`VolumeReport`](crate::VolumeReport) 同一条理由）。
@@ -210,6 +212,14 @@ pub struct SurveyedVolume {
     /// 卷根：目录路径，或归档文件路径。开卷那一条事件报的就是它，会话按它认回清单里的这一卷
     /// （清点已按卷根收编过，清单里卷根不重）。
     pub root: PathBuf,
+    /// **卷名**：这一卷在屏上叫什么（`design-parity/12`，收停车场 Q849）。目录卷是目录名，
+    /// 归档卷是去掉扩展名的文件名，**分卷序列是序列的名字**（`第01卷`，不是 `第01卷.part1`，
+    /// `CONTEXT.md` 的《分卷序列》）。
+    ///
+    /// 它是发现认这一卷的那一刻算出来的那一个——那一刻为了认「这一份是不是另一份的续」
+    /// 本来就读过一次归档头，序列的名字要的正是那一读。
+    /// 卷根上只看得到名字，猜不出序列名：会话写卷名因此一律读这一格。
+    pub name: String,
     /// 这一卷这一趟最多走多少步。**上界**，不是承诺。
     pub steps: u64,
     /// 这一卷的源页数：清点数成员时数出来的。
@@ -303,6 +313,7 @@ impl Survey {
                         steps: volume_steps(members, request),
                         source_pages: members.source_pages,
                         root: volume.root,
+                        name: candidate.name,
                         output_relative: candidate.output_relative,
                         // 这一格要等这一批卷全在手上才填得了，见循环之后那一句 [`find_the_lodgers`]。
                         lodgers: Lodgers::default(),
@@ -392,6 +403,7 @@ impl Survey {
             .iter()
             .map(|surveyed| SurveyedVolume {
                 root: surveyed.root.clone(),
+                name: surveyed.name.clone(),
                 steps: surveyed.steps,
                 source_pages: surveyed.source_pages,
             })

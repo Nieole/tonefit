@@ -83,8 +83,8 @@ pub enum Event<'a> {
         /// 结清**那一卷预告剩下的步——这是这个字段对实现方的要求，不是一句建议。
         /// CLI 那一份见二进制侧的 `Bar::finish_volume`。
         steps: u64,
-        /// **卷清单**，照发现的次序：每一卷的[清点摘要](SurveyedVolume)——卷根、步数上界、
-        /// 源页数（`CONTEXT.md` 的《进度》：清点摘要）。
+        /// **卷清单**，照发现的次序：每一卷的[清点摘要](SurveyedVolume)——卷根、卷名、
+        /// 步数上界、源页数（`CONTEXT.md` 的《进度》：清点摘要）。
         ///
         /// 随后每一条 [`VolumeStarted`](Self::VolumeStarted) 报的卷根都在这里，
         /// 而且**按这里的次序**开；那一条报的步数就是这里那一卷的步数。
@@ -870,11 +870,13 @@ mod tests {
         let roster = [
             SurveyedVolume {
                 root: PathBuf::from("卷一"),
+                name: "卷一".to_owned(),
                 steps: 10,
                 source_pages: 2,
             },
             SurveyedVolume {
                 root: PathBuf::from("卷二"),
+                name: "卷二".to_owned(),
                 steps: 20,
                 source_pages: 4,
             },
@@ -914,8 +916,8 @@ mod tests {
                 "Surveying",
                 concat!(
                     "RunStarted { volumes: 2, steps: 30, roster: [",
-                    r#"SurveyedVolume { root: "卷一", steps: 10, source_pages: 2 }, "#,
-                    r#"SurveyedVolume { root: "卷二", steps: 20, source_pages: 4 }], "#,
+                    r#"SurveyedVolume { root: "卷一", name: "卷一", steps: 10, source_pages: 2 }, "#,
+                    r#"SurveyedVolume { root: "卷二", name: "卷二", steps: 20, source_pages: 4 }], "#,
                     r#"non_volume_files: [NonVolumeFile { path: "字体包.zip", reason: ArchiveWithoutAPage }], "#,
                     r#"unreachable_places: [UnreachablePlace { path: "私藏", reason: "列不出这一层" }] }"#,
                 ),

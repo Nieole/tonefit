@@ -69,11 +69,11 @@ fn a_split_rar_comes_out_as_one_volume_named_after_the_sequence() {
     );
     // **报告与进度条印的是同一个**，而两边印的都是分卷序列的**头一份**。
     //
-    // 屏上那个名字**不是**序列名：命令行与会话共用 `render::volume_name`，而它印的一直是
-    // **源文件自己的名字**——一个 `第10话.zip` 也印成 `第10话.zip`，与它的去处
-    // `第10话.cbz` 从来就不同。分卷这一卷照这条既有惯例印 `第01卷.part1.rar`，
-    // 而序列名出现在**去处**上（上面那一条断言）。票面第 2 条后半句还有另一种读法
-    // （两处印的都该是序列名），那要连四种格式一起改，记在停车场 Q331。
+    // 卷标识**不是**序列名：它是头一份那个文件，报告、幂等的去处、成员身份都按它算。
+    // 序列名出现在**去处**上（上面那一条断言），与开工那一条的卷清单上
+    // （`SurveyedVolume::name`，`tests/events.rs` 的
+    // `the_roster_names_every_volume_and_a_split_sequence_after_the_sequence` 钉着）——
+    // 会话写卷名读的是后者；命令行进度条读的是卷标识，仍印 `第01卷.part1`（停车场 Q1297）。
     //
     // 这一条钉的因此是**两处不许分道**：`Event::VolumeStarted` 的卷标识与
     // `VolumeReport::volume` 眼下同源，而「让进度条改印序列名」正是最容易只改一处的改法。
@@ -793,8 +793,8 @@ impl tonefit::Progress for Announced {
 
 /// 只留每条**开卷**事件带的那个卷标识，别的一律不看。
 ///
-/// 进度条印的卷从这里来（命令行那一路的 `Bar::start`、会话那一路的
-/// `Live::volume_started` 都取 `Event::VolumeStarted` 的 `volume`），
+/// 进度条印的卷从这里来（命令行那一路的 `Bar::start` 取 `Event::VolumeStarted` 的 `volume`；
+/// 会话那一路按它认回清单上那一卷、卷名读清单），
 /// 而报告里那一格是 `VolumeReport::volume`——「报告与进度条印的是同一个」
 /// 只有把两边比一次才钉得住。
 #[derive(Default)]

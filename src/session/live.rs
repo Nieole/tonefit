@@ -19,7 +19,7 @@
 //! | 总览的抬头与总进度那一行 | `RunStarted` 带的卷清单（共几卷是它的长度）与 `steps`（03 号票的清点），加 [`Live::walked`] |
 //! | 卷清单与每一卷此刻怎么样 | `RunStarted` 带的清点产出（`session-redesign/03`），此后逐条事件推出[卷状态](VolumeState) |
 //! | 分区末尾的备注行 | `RunStarted` 带的那两张表，一到就写进 [`Live::report`]（`one-source/05`） |
-//! | 总览的当前卷那一行 | `VolumeStarted` 的卷名与步数，加 `PassStarted` 的[那一遍](Pass) |
+//! | 总览的当前卷那一行 | `VolumeStarted` 的卷根与步数——卷名是按卷根认回的那一卷在 `RunStarted` 卷清单上那一格（`design-parity/12`）——加 `PassStarted` 的[那一遍](Pass) |
 //! | 总览的结论行 | 攒到此刻的 [`Live::report`]，按[起手按的哪一个键](Live::started_as)分岔，[第一卷真写完](Live::has_written)翻成转换那一副 |
 //! | 总览的问题行 | 同上，而坏页那一样连当前这一卷已经报过的那几页一起数（[`Live::failures_so_far`]） |
 //! | 卷列表那几行与每页结果 | `VolumeFinished` 带的卷报告、`VolumeFailed` 那一句与那份计时（[`Live::report_at`]、[`Live::undone_at`]、[`Live::elapsed_at`]） |
@@ -1412,11 +1412,17 @@ pub(crate) mod fixture {
     /// 一份**卷清单**：`names` 那几卷，卷根在 `库/` 底下——与 [`skipped_volume`]、
     /// [`processed_volume`] 那几份卷报告的卷路径同一个写法，开卷那一条按卷根认回清单里
     /// 的那一卷靠的正是这一点。步数与源页数各一个固定的数：状态那几条用例不问它们。
+    /// 卷名是 `name` 的末一级（`第00部/卷001` 那一卷叫 `卷001`）：这几卷都是目录卷。
     pub fn roster<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<SurveyedVolume> {
         names
             .into_iter()
             .map(|name| SurveyedVolume {
                 root: PathBuf::from(format!("库/{name}")),
+                name: Path::new(name)
+                    .file_name()
+                    .expect("卷有名字")
+                    .to_string_lossy()
+                    .into_owned(),
                 steps: 1000,
                 source_pages: 20,
             })

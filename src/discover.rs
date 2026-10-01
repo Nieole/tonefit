@@ -66,6 +66,15 @@ pub(crate) enum Provenance {
 pub(crate) struct Candidate {
     /// 卷根：目录路径，或归档文件路径。
     pub(crate) root: PathBuf,
+    /// **卷名**：认这个候选是不是卷的那一刻算出来的那一个（[`source::identity_of`] 或
+    /// [`source::volume_name_of`]）——分卷序列的头一份在那一刻已经换成序列的名字，
+    /// 而那要读一次归档头（`CONTEXT.md` 的《分卷序列》）。[去处](Self::output_relative)的末一级
+    /// 由它接出来，卷清单上那一格也是它（`crate::SurveyedVolume::name`），不另算。
+    ///
+    /// 收编时它跟着[卷根](Self::root)走：留下的是头一回见到的那个写法，卷名出自同一个写法。
+    /// 去处却换成更外层那一条的（见 [`Found::absorb`]）——两条写法指的是[同一处](crate::place)，
+    /// 卷名与去处的末一级因此至多只差大小写（停车场 Q1301）。
+    pub(crate) name: String,
     /// 这一卷在**输出目录之下**的去处，相对路径。归档卷的扩展名已经归一成 `.cbz`。
     ///
     /// 由发现算出而不是由卷自己算出：镜像的基准点是**处理路径的父目录**，
@@ -95,6 +104,7 @@ pub(crate) fn of(named: &Path) -> Result<Vec<Candidate>> {
     let mut found = vec![Candidate {
         root: named.to_path_buf(),
         output_relative: mirrored(named, named, &source::output_name_of(&name, container)),
+        name,
         provenance: Provenance::Named,
         container,
     }];
@@ -230,6 +240,7 @@ fn expand(named: &Path, found: &mut Vec<Candidate>) {
                 &child.path,
                 &source::output_name_of(&name, child.container),
             ),
+            name,
             provenance: Provenance::Discovered,
             container: child.container,
         });

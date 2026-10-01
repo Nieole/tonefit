@@ -2299,10 +2299,17 @@ mod tests {
         session
     }
 
-    /// 清点清单上的一卷（步数与源页数这一层不看）。
+    /// 清点清单上的一卷（步数与源页数这一层不看）。卷名是卷根的末一级——
+    /// 这几个卷根都是目录卷；搜索那几条比的「目录名/卷名」就是它。
     fn listed(root: &str) -> tonefit::SurveyedVolume {
+        let root = PathBuf::from(root);
         tonefit::SurveyedVolume {
-            root: PathBuf::from(root),
+            name: root
+                .file_name()
+                .expect("卷根有末一级")
+                .to_string_lossy()
+                .into_owned(),
+            root,
             steps: 3,
             source_pages: 1,
         }
