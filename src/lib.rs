@@ -120,8 +120,8 @@ use pipeline::{
     first_pass, in_reading_order, lock, max_outputs_per_source_page, output_names, second_pass,
     summarize_volume, uniform_size, volume_fingerprint,
 };
-use sink::Sink;
-use source::Volume;
+use sink::{Lodgers, Sink};
+use source::{Container, Member, Volume};
 
 /// 画一张灰阶测试图并写到 `out`，父目录不在就建出来。
 ///
@@ -296,6 +296,8 @@ pub fn run(request: &Request) -> Result<Report> {
                 &request.output_root,
                 output_case,
             )?;
+            // 同一道多比一种：一个卷的成员撞上住在它去处里的另一个卷（`one-source/04`）。
+            ensure_no_member_clashes_with_a_lodger(survey.clashes(), &request.output_root)?;
             // 开工前那几道检查与清点都排在它之前：那几种失败一条开工与卷级事件都不发，
             // 调用方拿到的是错误本身。报的是**发现出来的卷**，不是点名了几个路径：
             // 进度条上那个分母得是真要做的那些。
@@ -329,7 +331,7 @@ pub fn run(request: &Request) -> Result<Report> {
                 // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
                 // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
                 let root = surveyed.root.clone();
-                match process_volume(surveyed, request, &mut probes, events) {
+                match process_volume(surveyed, request, output_case, &mut probes, events) {
                     Ok(Some(report)) => volumes.push(report),
                     Ok(None) => {
                         // **立即停止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial`
@@ -648,6 +650,7 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 fn process_volume(
     surveyed: survey::Surveyed,
     request: &Request,
+    output_case: CaseSensitivity,
     probes: &mut medium::Probes,
     events: progress::Events,
 ) -> Result<Option<VolumeReport>> {
@@ -722,7 +725,7 @@ fn process_volume(
     // （有没有中缝，页几何批 04 号票），而这一步在解码之前。撞名因此查两遍——
     // 这一遍拦下与内容无关的那些（`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
     // 真正产出的那批名字等分析环节走完再查一遍。早查这一遍买的是**别白做一整卷**。
-    ensure_one_member_per_output(&volume, &one_to_one_targets(&volume))?;
+    ensure_one_member_per_output(&volume)?;
     let source_pages = members.source_pages;
 
     // **硬盘类型按这一卷此刻真正住的那个路径探**（ADR 0009 决定第 2 条）：按路径探测那条边界
@@ -889,6 +892,8 @@ fn process_volume(
     // （源里同时有 `001.jpg` 与 `001-1.png`），而那一撞要在写出第一个字节之前拦下。
     // 留下的页照样在这一批里：新切出的一张与留下的一张撞名，同样不能静默覆盖。
     ensure_no_two_outputs_collide(&volume, &slots)?;
+    // 同一刻再比一种：切开之后才有的名字撞上住在这一卷去处里的卷（`one-source/04`）。
+    ensure_no_page_clashes_with_a_lodger(&volume, &slots, &lodgers, output_case)?;
     // 分析环节提前编好字节的那两条路各自也定了一份档，而字节已经照它编好了
     // （默认那条路与顶死那一条，见 `pipeline::first_pass_verdicts`）。
     // 两份必须逐格相同：报告说的那一档与写出去的那一页，一处出处。
@@ -1031,23 +1036,32 @@ fn superseded(elsewhere: &Path) -> Option<PathBuf> {
     elsewhere.exists().then(|| elsewhere.to_path_buf())
 }
 
-/// 这一卷每个源页**当它一张都不切时**的输出成员名：外层按源页序，内层按阅读顺序。
+/// 这一卷每个成员**一张都不切时**的输出成员名，各带着那个成员：页按源页序、各换成 png
+/// （[`output_names`]），透传文件原名不动、排在后面。
 ///
 /// 这一份是碰像素之前唯一给得出来的名单：一个源页产出几张由内容决定（页几何批 04 号票），
-/// 而这一步在解码之前。它只喂开工前那道撞名校验——拦下与内容无关的那些
-/// （`001.jpg` 与 `001.png` 撞在同一个输出上、归档里的同名成员），
-/// 买的是**别白做一整卷**。真正产出的那批名字等分析环节走完再查一遍
-/// （见 [`ensure_no_two_outputs_collide`]）。
+/// 而这一步在解码之前。它喂开工前的两道撞名，买的都是**别白做**：
+///
+/// - 卷内那一道（[`ensure_one_member_per_output`]）：`001.jpg` 与 `001.png` 撞在同一个输出上、
+///   归档里的同名成员；
+/// - 清点那一道（`crate::survey` 的 `clashes`）：成员撞上**借住的卷**的去处
+///   （`one-source/04`）。
+///
+/// 真正产出的那批名字等分析环节走完再查一遍（见 [`ensure_no_two_outputs_collide`]
+/// 与 [`ensure_no_page_clashes_with_a_lodger`]）。
 ///
 /// 幂等不再问它：名单改从上一趟写在输出里的记录读回来（见 [`compare_with_the_prior_output`]）。
-///
-/// 透传文件原名不动，不必单列一份。
-fn one_to_one_targets(volume: &Volume) -> Vec<Vec<PathBuf>> {
-    volume
-        .pages
+pub(crate) fn one_to_one_names(volume: &Volume) -> impl Iterator<Item = (&Member, PathBuf)> {
+    let pages = volume.pages.iter().flat_map(|page| {
+        output_names(&page.relative, 1)
+            .into_iter()
+            .map(move |name| (page, name))
+    });
+    let extras = volume
+        .extras
         .iter()
-        .map(|page| output_names(&page.relative, 1))
-        .collect()
+        .map(|extra| (extra, extra.relative.clone()));
+    pages.chain(extras)
 }
 
 /// 轮到这一卷时它的卷根还在不在。不在就是**这一卷没做成**（05 号票）。
@@ -1113,19 +1127,12 @@ fn ensure_the_volume_root_is_still_there(root: &Path) -> Result<()> {
 /// 扩展名一律换成 png，`001.jpg` 与 `001.png` 于是撞在同一个输出上；一个源页产出多张时
 /// 加的那个序号也可能撞上卷里本来就有的成员；归档里还可能有同名成员。
 /// 撞了就报错——静默覆盖会让 `Report` 里两页指向同一个文件。
-fn ensure_one_member_per_output(volume: &Volume, targets: &[Vec<PathBuf>]) -> Result<()> {
-    let pages = volume
-        .pages
-        .iter()
-        .zip(targets)
-        .flat_map(|(page, names)| names.iter().map(move |name| (page, name.as_path())));
-    let extras = volume
-        .extras
-        .iter()
-        .map(|extra| (extra, extra.relative.as_path()));
-    ensure_distinct_outputs(pages.chain(extras), |member| {
-        volume.identity(member).display().to_string()
-    })
+fn ensure_one_member_per_output(volume: &Volume) -> Result<()> {
+    let named: Vec<_> = one_to_one_names(volume).collect();
+    ensure_distinct_outputs(
+        named.iter().map(|(member, name)| (*member, name.as_path())),
+        |member| volume.identity(member).display().to_string(),
+    )
 }
 
 /// 分析环节**真产出**的那批成员名互不冲突（页几何批 04 号票）。
@@ -1149,6 +1156,43 @@ fn ensure_no_two_outputs_collide(volume: &Volume, pages: &[Slot]) -> Result<()> 
         .iter()
         .map(|(identity, relative)| (identity.as_path(), relative.as_path()));
     ensure_distinct_outputs(written.chain(extras), |source| source.display().to_string())
+}
+
+/// 分析环节**真产出**的那批页名不撞[借住的卷](Lodgers)的去处（`one-source/04`，收停车场 Q301）。
+///
+/// 一对一那一套名字清点时就比过了，撞上是拒绝开始（见 [`ensure_no_member_clashes_with_a_lodger`]）；
+/// 这里补的是**解了像素才知道的那一半**：跨页切开之后多出来的 `001-1.png`，撞上住在这一卷去处里的
+/// `001-1.png/` 那一卷。撞上的是这一卷的内容，不是这一趟的参数——与切开的名字撞上卷里本来就有的成员
+/// （[`ensure_no_two_outputs_collide`]）同一个待遇：这一卷记一笔转换失败，住户照做。
+/// 不拦的话，住户先写出来时，这一卷收尾会把挡路的那个目录整个清掉（`sink::DirectorySink`）。
+///
+/// 比法与清点那一道同一条（见 `crate::survey` 的 `clashes`）：页名与住户那一段的头一级按[同一处](place)认，
+/// `case` 是输出根这一趟开工时探出来的答案。只有目录卷要问——归档卷的成员写在包里，挡不着盘上任何一个目录。
+fn ensure_no_page_clashes_with_a_lodger(
+    volume: &Volume,
+    pages: &[Slot],
+    lodgers: &Lodgers,
+    case: CaseSensitivity,
+) -> Result<()> {
+    if volume.container != Container::Directory {
+        return Ok(());
+    }
+    let heads: HashMap<place::Place, &std::ffi::OsStr> = lodgers
+        .heads()
+        .map(|head| (place::Place::of(Path::new(head), case), head))
+        .collect();
+    for page in pages {
+        if let Some(head) = heads.get(&place::Place::of(page.target(), case)) {
+            bail!(
+                "{} 要写成 {}，而借住在这一卷去处里的卷要在 {} 这一级建目录：一个文件、一个目录，\
+                 只能留一个。请让这一页与那一卷的名字不撞",
+                page.source().display(),
+                page.target().display(),
+                Path::new(head).display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// 一批 (源成员, 它要写到的输出成员) 里有没有两个源成员认领同一个输出成员。
@@ -1281,6 +1325,50 @@ fn normalises_an_extension(group: &[&Path], case: CaseSensitivity) -> bool {
         return false;
     };
     names.any(|name| !place::same_place(first, name, case))
+}
+
+/// 一个卷的**成员**与住在它去处里的**另一个卷**撞同一个去处：拒绝开始（`one-source/04`，收停车场 Q301）。
+///
+/// 混装目录 `N和S/` 里同时有 `001.jpg` 这一页与 `001.png/` 这个目录卷时，前者要在 `out/N和S/001.png`
+/// 写一个文件，后者要在那里建目录。不拦的话两种结局都不对：混装目录那一卷先写，住户收尾时腾不出位置、
+/// 记一笔转换失败；住户先写（点名在前），混装目录那一卷收尾时把它整个清掉，一句告警都没有。
+///
+/// 撞没撞在清点里就比完了（见 `crate::survey` 的 `clashes`）：借住关系是清点算出来的，那一卷的成员也是
+/// 清点列出来的。比的是**一对一那一套**输出名——切开之后才有的那一半在那一卷里查、走卷转换失败
+/// （见 [`ensure_no_page_clashes_with_a_lodger`]）。
+///
+/// 与 [`ensure_no_two_volumes_share_an_output`] 排在同一刻、**各说各的**：出路不同——卷名撞车分批处理就分得开，
+/// 这一对多半分不开：住户多半就躺在那一卷的源目录里，点名那一卷就把它一起发现出来了。
+/// 这里只给**改名**那一条，它对哪一对都成立。
+fn ensure_no_member_clashes_with_a_lodger(
+    clashes: &[survey::Clash],
+    output_root: &Path,
+) -> Result<()> {
+    if clashes.is_empty() {
+        return Ok(());
+    }
+    let mut said = format!(
+        "{} 对成员与借住的卷撞同一个去处：成员要在那里写一个文件，借住的卷要在那里建目录，\
+         两样只能留一个。撞在一起的是：\n",
+        clashes.len()
+    );
+    // 列几条、剩下的怎么说走的是[那一处出处](FirstFew)。
+    said.push_str(&FirstFew::of(clashes).stacked(
+        |clash| {
+            format!(
+                "  {}\n    ← {}（成员）\n    ← {}（借住的卷）\n",
+                output_root.join(&clash.at).display(),
+                clash.member.display(),
+                clash.lodger.display()
+            )
+        },
+        "对",
+    ));
+    said.push_str(
+        "成员写在它那一卷的去处里（页的输出名换成 .png，透传文件照原名），借住的卷的去处是同一个目录里\
+         取自卷名的那一级，两者因此撞在一起。改掉源里其中一个的名字再重跑。",
+    );
+    bail!(said)
 }
 
 fn ensure_output_is_elsewhere(input: &Path, output_root: &Path) -> Result<()> {

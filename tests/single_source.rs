@@ -20,13 +20,13 @@ use std::path::{Path, PathBuf};
 /// （停车场 Q174）。拿它们当记号会把真话也判成抄。
 ///
 /// 记号与被扫的文字**两头都归一**（见 [`squashed`]）：折行与行内加粗因此躲不过去——
-/// 本仓库的中文 doc comment 是手工折行的，`两个卷撞同一` 接着 `个去处`、
+/// 本仓库的中文 doc comment 是手工折行的，`两样东西撞同一` 接着 `个去处`、
 /// 以及 `**输出**落在源里`，都得算命中。
 const REFUSAL_MARKS: [&str; 5] = [
     "输出落在源里",
     "输出不在源里",
-    "两个卷撞同一个去处",
-    "两个卷不撞同一个去处",
+    "两样东西撞同一个去处",
+    "两样东西不撞同一个去处",
     "清点发现点名的路径点不开",
 ];
 
@@ -333,7 +333,7 @@ fn the_refusal_list_lives_in_one_place() {
     );
 
     let entry = squashed(&read(&home));
-    for mark in ["输出落在源里", "两个卷撞同一个去处", "覆盖项把候选集裁空"]
+    for mark in ["输出落在源里", "两样东西撞同一个去处", "覆盖项把候选集裁空"]
     {
         assert!(
             entry.contains(&squashed(mark)),

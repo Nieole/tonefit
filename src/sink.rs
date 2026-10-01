@@ -140,14 +140,17 @@ impl Lodgers {
         self.0.iter().any(|inside| place.join(inside).exists())
     }
 
-    /// 去处**直接那一层**的 `name` 是通往某个借住的卷的吗。
+    /// 去处**直接那一层**上通往借住的卷的那几级，各是住户自己写的那个名字（几个住户同走一级时有重的）。
     ///
     /// 借住的卷不一定就在直接那一层上（`子目录\第01话.cbz` 也是一个），
     /// 而挡住那一整棵子树只需要认出它的头一级。
+    pub(crate) fn heads(&self) -> impl Iterator<Item = &OsStr> {
+        self.0.iter().filter_map(|inside| inside.iter().next())
+    }
+
+    /// 去处**直接那一层**的 `name` 是通往某个借住的卷的吗（见 [`heads`](Self::heads)）。
     fn leads_to_one(&self, name: &OsStr) -> bool {
-        self.0
-            .iter()
-            .any(|inside| inside.iter().next() == Some(name))
+        self.heads().any(|head| head == name)
     }
 
     /// 去处直接那一层的 `name` **有人认领**吗：是这一卷自己的成员（`mine`），或通往某个借住的卷。
@@ -298,11 +301,11 @@ impl DirectorySink {
         for name in &mine {
             let source = partial.join(name);
             let target = self.path.join(name);
-            // 同名的目录挡着改名：一个文件改不到一个目录上去。它几乎恒是上一趟留下的
-            // 陈旧产物，与同名的陈旧文件同一个待遇；而**极罕见的一种是撞名的借住的卷**
-            // ——源里同时有 `001.jpg` 这一页与 `001.png` 这个目录卷时，两者的去处同名，
-            // 而撞名那一道只比卷与卷，这一种今天没人查（停车场 Q301）。
-            // 两种一个待遇：本趟的成员让它让位，与「整个换掉」那一支的结果逐字节相同。
+            // 同名的目录挡着改名：一个文件改不到一个目录上去。它是上一趟留下的陈旧产物，
+            // 与同名的陈旧文件同一个待遇：本趟的成员让它让位，与「整个换掉」那一支的结果逐字节相同。
+            // **它不该是一个借住的卷**：成员撞上借住的卷的去处，开工前就拒了（一对一那一套名字，
+            // 见 `crate::survey` 的 `clashes`），切开之后才有的名字在那一卷里拦下、走卷转换失败
+            // （`crate::ensure_no_page_clashes_with_a_lodger`）——两道都在这一卷碰最终位置之前（`one-source/04`）。
             if is_a_real_directory(&target) {
                 std::fs::remove_dir_all(&target)
                     .with_context(|| format!("腾出输出位置 {}", target.display()))?;
