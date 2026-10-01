@@ -27,7 +27,7 @@ use super::canvas::{Border, Canvas, hint};
 use super::marks::{self, spell};
 use super::topbar::model;
 use super::yielding;
-use crate::render;
+use crate::render::{self, Notable};
 
 /// 画总览，从第 `y` 行起、占整宽；回它占了几行（正文加上下两条框线）。
 pub(super) fn draw(
@@ -486,8 +486,13 @@ impl Counted {
             (self.unreachable, "无法访问", "处", Tone::Trouble),
         ];
         if !self.wrote {
-            bits.push((self.outlier, "与其他页差异大", "页", Tone::Caution));
-            bits.push((self.wide, "页面超宽", "页", Tone::Caution));
+            bits.extend(notable_bits(
+                &[
+                    (self.outlier, Notable::Outlier),
+                    (self.wide, Notable::Overflowed),
+                ],
+                "页",
+            ));
         }
         self.bits(&bits)
     }
@@ -500,7 +505,7 @@ impl Counted {
             (self.unreachable, "无法访问", "", Tone::Trouble),
         ];
         if !self.wrote {
-            bits.push((self.outlier, "差异大", "", Tone::Caution));
+            bits.extend(notable_bits(&[(self.outlier, Notable::Outlier)], ""));
         }
         self.bits(&bits)
     }
@@ -521,6 +526,20 @@ impl Counted {
             .collect();
         marks::dotted(parts)
     }
+}
+
+/// 问题行上**判定上要留意的那几样**各报个数，注意色。**词在 [`marks::notable_word`] 一处**：
+/// 卷行行尾、确认条、每页结果提示那一列读的是同一份——同一样东西屏上只有一个叫法
+/// （词汇表的名字，停车场 Q731）。
+fn notable_bits<'a>(
+    of: &[(usize, Notable)],
+    unit: &'a str,
+) -> Vec<(usize, &'static str, &'a str, Tone)> {
+    of.iter()
+        .filter_map(|(count, what)| {
+            Some((*count, marks::notable_word(*what)?, unit, Tone::Caution))
+        })
+        .collect()
 }
 
 /// 还没开始那两行。

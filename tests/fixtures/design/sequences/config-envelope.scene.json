@@ -1,0 +1,37 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "envelope",
+      "choice": null,
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

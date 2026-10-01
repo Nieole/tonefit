@@ -823,12 +823,13 @@ mod redesign {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
+    use super::super::config::Item;
     use super::super::cover::Overlay;
     use super::super::run::Running;
     use super::super::scene::{self, Scene, Step};
     use super::super::shell;
     use super::super::shell::design::{self, assert_no_background, assert_same_cells};
-    use super::super::state::{Exit, Key};
+    use super::super::state::{Exit, Field, Key};
     use super::super::view::{Cursor, Focus, Input, Pane, Window};
     use crate::preset::Presets;
     use std::path::PathBuf;
@@ -2206,6 +2207,31 @@ mod redesign {
         assert_eq!(scene.session.device.profile.as_deref(), Some("boox-leaf2"));
         assert_eq!(scene.session.device.gray_levels, None);
         assert_eq!(scene.session.device.threshold, None);
+    }
+
+    /// **有取值环的每一项，详情栏的长说明里叫一个取值用的就是取值那一格的写法**
+    /// （`design-parity/09`，收停车场 Q732）：设置栏上从缩放方式往下挪到那一项、`l` 进详情栏，
+    /// 环上那几格连同长说明与期望屏逐格相等（缩放方式那一屏就是 `config` 这一景本身）。
+    ///
+    /// **灰阶档位那一环四格**（Q730）：环照旧由穷尽的取值生成，`1bit`·`2bit`·`4bit`·`8bit` 都在环上，
+    /// 说明说清 8bit 那一格在电子墨水屏上派不上用场（灰阶硬上界，ADR 0003）。
+    #[test]
+    fn every_ring_spells_its_values_in_its_description_on_the_details_pane() {
+        for (name, field) in [
+            ("config-crop", Field::Crop),
+            ("config-split", Field::Split),
+            ("config-order", Field::ReadingOrder),
+            ("config-filter", Field::Filter),
+            ("config-depth", Field::BitDepth),
+            ("config-dither", Field::Dither),
+            ("config-envelope", Field::Envelope),
+            ("config-io", Field::IoMode),
+        ] {
+            let scene = assert_sequence(name);
+            let config = &scene.session.views.config;
+            assert_eq!(config.focus(), Focus::Details, "{name}：进了详情栏");
+            assert_eq!(config.cursor, Item::Setting(field), "{name}：停在那一项上");
+        }
     }
 
     /// **自由填的那一项 `i` 经输入行改**（票面第二条）：屏底换成「可见灰阶数  ▏」，

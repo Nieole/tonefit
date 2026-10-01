@@ -18,7 +18,7 @@
 ".aabbccccccc................ddddddddddddddddddddddddddddddddddddddddd."
 "ccee..............ffffcccccccccccccccccccccccccccccccccccccccccccccccc"
 "c.ccccdggggggggghhhccccccchhhhhhhhhdddcccccccc....................c"
-"c.cccchhhiiiiiijjjjjjccckkkkk.....................................c"
+"c.cccchhhiiiiiijjjjjjccckkkkkkk.................................c"
 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 "kkffff................kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
 "k.ffhhhhhhhhh..dddd....cccddddlll..ccccccccf.........................k"

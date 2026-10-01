@@ -148,10 +148,6 @@ impl Item {
     ///
     /// 选项冲突那一项两句话分两种情形：咬上了说「代价是什么看上面那句」，
     /// 没咬上说「这一组之间没有冲突」——两句都指着 `tonefit --help` 的末尾那张全表。
-    #[cfg_attr(
-        not(feature = "tui"),
-        expect(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
-    )]
     pub fn about(self, session: &Session) -> &'static str {
         match self {
             Self::Setting(field) => about_setting(field),
@@ -402,10 +398,12 @@ pub fn panels() -> Vec<(Panel, Vec<&'static str>)> {
 }
 
 /// 处理选项与设备设置那几项的**长说明**（设计稿 `CONFIG` 的 `desc`）。
-#[cfg_attr(
-    not(feature = "tui"),
-    expect(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
-)]
+///
+/// **有取值环的那几项，说明里叫一个取值用的就是取值那一格的写法**（`height`、`serial`、`1bit`、
+/// `裁`），中文称呼只跟在括号里——用户从屏上抄得出命令行（停车场 Q732）。两处的字各写一份，
+/// 对得上靠用例：环上每一格都得在说明里**从一句的句首点名**
+/// （`every_value_on_a_ring_is_spelt_in_its_description_as_the_ring_spells_it`），
+/// 库里换掉一个取值的写法、或者环上多出一格，那一条当场红。
 fn about_setting(field: Field) -> &'static str {
     match field {
         Field::Profile => {
@@ -418,34 +416,38 @@ fn about_setting(field: Field) -> &'static str {
             "画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。"
         }
         Field::Fit => {
-            "按高度铺满：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。整页放进屏幕：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。"
+            "height（按高度铺满）：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。inside（整页放进屏幕）：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。"
         }
-        Field::Crop => "自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。",
+        Field::Crop => {
+            "裁：自动裁掉扫描时留下的白边。每页各裁各的，所以翻页时字的大小可能略有变化。不裁：白边原样留着。"
+        }
         Field::Split => {
-            "把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。开着时，有跨页的卷体积会变大不少。"
+            "拆：把横跨两页的大图从中缝切成两页；找不到中缝的（一幅画横跨两页）不切。有跨页的卷体积会因此变大不少。不拆：跨页保持一整张。"
         }
         Field::SplitThreshold => "页面的宽高比超过屏幕宽高比的多少倍，才当成跨页处理。",
-        Field::ReadingOrder => "跨页拆开之后，左右两半谁排在前面。日漫是从右往左。",
+        Field::ReadingOrder => {
+            "跨页拆开之后，左右两半谁排在前面。rtl（从右往左）：右半在前，日漫是这样。ltr（从左往右）：左半在前。"
+        }
         Field::Filter => {
-            "缩小图片时用的算法。lanczos3 最清晰，一般不用改；area 会偏糊，只用来对比。"
+            "缩小图片时用的算法。lanczos3 最清晰，一般不用改。bilinear、hamming、bicubic 是另外几种常见的算法，area 会偏糊，它们都只用来对比。"
         }
         Field::WhiteAlignLimit => {
             "扫描出来的纸色常常略微发灰，加抖动时白底上会冒出零星噪点。开着时把接近纯白的纸色提成纯白，数字是最多提几级灰度；0 = 关闭，结果和没有这个功能时完全一样。"
         }
         Field::BitDepth => {
-            "指定整卷用几级灰，不再逐页自动判断。电子墨水屏最多显示 16 级灰，所以只有这三档。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰；+FS = 加抖动。"
+            "指定整卷用几级灰，不再逐页自动判断。表格里的写法：1bit = 2 级灰，2bit = 4 级灰，4bit = 16 级灰，8bit = 256 级灰；+FS = 加抖动。电子墨水屏最多显示 16 级灰，8bit 多出来的那些级到不了眼睛、只让文件变大，所以在电子墨水屏上派不上用场：可见灰阶数不到 256 时选它，这一趟一开始就会被拒绝。"
         }
         Field::Dither => {
-            "用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。"
+            "off（不加抖动）：每个像素直接取最近的那一级灰，渐变处可能出现色带。fs（加抖动）：用细小的点模拟中间灰度，看起来更细腻，但点子可能显眼。尺寸没有贴合屏幕的页一律不加抖动：阅读器再缩放一次，会把点子糊成脏灰。"
         }
         Field::Envelope => {
-            "关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，和其他页差异特别大的页单独处理。"
+            "关（默认）：每页各自选最合适的档位，不会为了少数几页让整卷变大。开：整卷用同一个档位，差异大的页（和其他页差得特别远的那几页）单独处理。"
         }
         Field::CacheBudget => {
             "转换时最多占用多少内存，超出的部分临时写到硬盘上。它限制的是内存占用，不限制卷的大小。"
         }
         Field::IoMode => {
-            "自动：按硬盘类型自己选。逐个读：适合机械硬盘和网络盘。同时读：适合固态硬盘。"
+            "auto（自动）：按硬盘类型自己选。serial（逐个读）：适合机械硬盘和网络盘。concurrent（同时读）：适合固态硬盘。"
         }
     }
 }
@@ -453,10 +455,6 @@ fn about_setting(field: Field) -> &'static str {
 /// 画质判定参数那几项的**长说明**（设计稿 `CONFIG` 的 `desc`）。
 ///
 /// 选项冲突那一项咬上时说这一句；没咬上那一句在 [`Item::about`] 里分出去。
-#[cfg_attr(
-    not(feature = "tui"),
-    expect(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
-)]
 fn about_premise(which: Judging) -> &'static str {
     match which {
         Judging::Device => {
@@ -635,5 +633,75 @@ mod tests {
         assert_eq!(named(&model), ["型号"]);
         let four = scene.presets.read("画集").expect("读得出「画集」");
         assert_eq!(named(&four), ["缩放方式", "裁白边", "拆分跨页", "灰阶档位"]);
+    }
+
+    /// **有取值环的每一项，长说明里带着环上每一格的写法**（`design-parity/09`，收停车场 Q732）：
+    /// 说明里叫一个取值，叫的就是取值那一格印的那个词（`height`、`serial`、`1bit`、`裁`），
+    /// 中文称呼只跟在括号里——用户从屏上抄得出命令行。
+    ///
+    /// 环上那几格从那一项自己的环上数出来（[`choices`]，走的是 `Session::ring`），**第一格不算**：
+    /// 那是「没说」那一格，印的是默认值那一句，不是一个取值。库里换掉某个取值的写法、
+    /// 或者环上多出一格，说明没跟着改，这一条当场红。
+    ///
+    /// **点名**认的是句首（[`names`]）：只查「说明里有这几个字」的话，`裁` 那一格在 `不裁`、
+    /// `裁掉` 里就算过了，单字的那几格（`裁`、`拆`、`开`、`关`）查了等于没查。
+    #[test]
+    fn every_value_on_a_ring_is_spelt_in_its_description_as_the_ring_spells_it() {
+        let scene = Scene::named("config");
+        let mut rings = 0;
+        for item in items() {
+            let Choices::Ring { cells, .. } = choices(&scene.session, item, None) else {
+                continue;
+            };
+            let about = item.about(&scene.session);
+            for cell in &cells[1..] {
+                assert!(
+                    names(about, cell),
+                    "{item:?}：说明里没有点环上的「{cell}」：{about}"
+                );
+            }
+            rings += 1;
+        }
+        assert!(rings > 0, "一个取值环都没查到");
+    }
+
+    /// 说明里**从一句的句首点了这一格的名**：写法前面是文首或 `。；，、：` 与空格，
+    /// 后面不再接西文字母或数字——`裁` 算不进 `不裁`、`裁掉`，`1bit` 算不进 `1bits`。
+    fn names(about: &str, cell: &str) -> bool {
+        about.match_indices(cell).any(|(at, _)| {
+            let before = about[..at].chars().next_back();
+            let after = about[at + cell.len()..].chars().next();
+            before.is_none_or(|glyph| "。；，、： ".contains(glyph))
+                && after.is_none_or(|glyph| !glyph.is_ascii_alphanumeric())
+        })
+    }
+
+    /// **灰阶档位那一环四格，说明与之相符**（`design-parity/09`，收停车场 Q730）：环由穷尽的取值
+    /// 生成（`state` 的 `next_bit_depth`），环上那四格就是全集——与命令行 `--bit-depth` 收的同一个；
+    /// 说明逐档说出几级灰，并说清 8bit 那一格在电子墨水屏上派不上用场（灰阶硬上界，ADR 0003）。
+    ///
+    /// 改掉的那句假话反着钉：环上是四格，说明不许再说「只有这三档」。
+    #[test]
+    fn the_bit_depth_ring_is_the_whole_set_and_its_description_says_so() {
+        let scene = Scene::named("config");
+        let item = Item::Setting(Field::BitDepth);
+        let Choices::Ring { cells, .. } = choices(&scene.session, item, None) else {
+            panic!("灰阶档位那一项是一个取值环");
+        };
+        let whole: Vec<String> = tonefit::BitDepth::ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(cells[1..], whole, "环上那几格就是全集");
+        let about = item.about(&scene.session);
+        for depth in tonefit::BitDepth::ALL {
+            let said = format!("{depth} = {} 级灰", depth.levels());
+            assert!(about.contains(&said), "说明里没有「{said}」：{about}");
+        }
+        assert!(
+            about.contains("派不上用场"),
+            "没说 8bit 在电子墨水屏上为什么用不上：{about}"
+        );
+        assert!(!about.contains("三档"), "环上是四格，说明还说三档：{about}");
     }
 }

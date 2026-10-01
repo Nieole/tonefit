@@ -65,6 +65,8 @@ const SNAPSHOTS = [
 // 序列名就是后面各票认领的名字：spec《交互序列》列的每一条与 03–17 各票验收点名的每一串各占一条，
 // 一票要的几步分成几串各导一屏（前缀各有名字），走到哪一屏比哪一屏。
 const k = (...keys) => keys.map((key) => ({ key }));
+// 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
+const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
   // ── 视图：`1`／`2`／`gt`／`gT`、单击视图名（spec；13：跑着时 `2` 看只读与顶栏进度；16） ──
   { name: 'running-2', scene: 'running', size: MAIN, steps: k('2'), says: '处理中' },
@@ -242,6 +244,17 @@ const SEQUENCES = [
   { name: 'config-h-l-k-l-G', scene: 'config', size: MAIN, steps: k('h', 'l', 'k', 'l', 'G'), says: { has: ['选项冲突 ⋅ 画质判定参数', '当前这组设置之间没有互相冲突的组合'], lacks: ['与报告抬头里的这一行逐字相同'] } },
   { name: 'config-click-row', scene: 'config', size: MAIN, steps: [{ click: [10, 7] }], says: { has: ['[l → 展开]', '❯ 可见灰阶数'] } },
   { name: 'config-click-choice', scene: 'config', size: MAIN, steps: [{ click: [70, 6] }], says: '❯   height' },
+  // 有取值环的每一项各一屏（设置栏上从缩放方式往下挪几行、`l` 进详情栏）：长说明里叫一个取值，用的就是取值那一格的写法
+  // （design-parity/09，停车场 Q732；缩放方式那一屏就是 `config` 这一景）。灰阶档位那一环四格，说明说清 8bit 那一格
+  // 在电子墨水屏上派不上用场（Q730）
+  { name: 'config-crop', scene: 'config', size: MAIN, steps: onItem(1), says: { has: ['当前 默认（裁）', '不裁：'] } },
+  { name: 'config-split', scene: 'config', size: MAIN, steps: onItem(2), says: { has: ['当前 默认（拆）', '不拆：'] } },
+  { name: 'config-order', scene: 'config', size: MAIN, steps: onItem(4), says: { has: ['当前 默认（rtl）', 'ltr（从左往右）'] } },
+  { name: 'config-filter', scene: 'config', size: MAIN, steps: onItem(5), says: { has: ['当前 默认（lanczos3）', 'bicubic'] } },
+  { name: 'config-depth', scene: 'config', size: MAIN, steps: onItem(7), says: { has: ['当前 自动（画质分说了算）', '    8bit', '8bit = 256 级灰'], lacks: ['三档'] } },
+  { name: 'config-dither', scene: 'config', size: MAIN, steps: onItem(8), says: { has: ['当前 fs', 'off（不加抖动）'] } },
+  { name: 'config-envelope', scene: 'config', size: MAIN, steps: onItem(9), says: { has: ['当前 默认（关）', '差异大的页'] } },
+  { name: 'config-io', scene: 'config', size: MAIN, steps: onItem(11), says: { has: ['当前 默认（auto）', 'concurrent（同时读）'] } },
 
   // ── 预设栏（spec；14） ──
   { name: 'config-p', scene: 'config', size: MAIN, steps: k('p'), says: '预设 ⋅ 2 个' },

@@ -269,15 +269,44 @@ mod tests {
 
     /// **「整卷统一灰阶 + 等待确认」120×36 与 80×24 逐格相等**（`design-parity/08`，停车场 Q900、Q902）：
     /// 差异大的页与代表页只有整卷统一灰阶那一趟才有，而它同样停得到确认点上——
-    /// 确认条头一行在需留意几页之后另报「与其他页差异大 N」，**需留意几页把代表页数进去**
+    /// 确认条头一行在需留意几页之后另报「差异大的页 N」，**需留意几页把代表页数进去**
     /// （与每页结果抬头同一个数，`CONTEXT.md` 的《需留意的页》）；那一卷所在的目录展开着，
     /// 卷行带着代表页那一列、行尾说等待确认。
     ///
-    /// **80 列那一档确认条收成短句**，「与其他页差异大」那一截随长句一起让掉，需留意几页照旧是那个数。
+    /// **80 列那一档确认条收成短句**，「差异大的页」那一截随长句一起让掉，需留意几页照旧是那个数。
     #[test]
     fn the_envelope_deciding_scene_matches_its_design_snapshot_wide_and_narrow() {
         assert_scene("envelope-deciding", 120, 36);
         assert_scene("envelope-deciding", 80, 24);
+    }
+
+    /// **差异大的页屏上只有一个叫法**（`design-parity/09`，收停车场 Q731）：总览的问题行
+    /// （宽窄两副）、确认条、卷行行尾说的都是词汇表那个名字「差异大的页」。
+    ///
+    /// 屏上改掉的那两种叫法反着钉（`docs/agents/testing.md`）：「与其他页差异大 N 页」与窄屏那一副的
+    /// 「差异大 N」——这几屏上每一处「差异大」后面都得跟着「的页」。每页结果原因那一列的
+    /// 「差异大，单独判断」是判定的理由（库的那一句，命令行报告也印它），不在这几屏上。
+    #[test]
+    fn an_outlier_goes_by_one_name_on_the_overview_the_decision_bar_and_the_volume_row() {
+        for (name, width, height) in [
+            ("envelope", 120, 36),
+            ("envelope", 80, 24),
+            ("envelope-deciding", 120, 36),
+            ("envelope-deciding", 80, 24),
+        ] {
+            let scene = Scene::named(name);
+            let screen = design::lines_of(&painted(&scene, width, height)).join("\n");
+            assert!(
+                !screen.contains("与其他页差异大"),
+                "{name} {width}×{height} 上又出现了第二种叫法：\n{screen}"
+            );
+            for (at, _) in screen.match_indices("差异大") {
+                assert!(
+                    screen[at + "差异大".len()..].starts_with("的页"),
+                    "{name} {width}×{height} 上有一处「差异大」不是「差异大的页」：\n{screen}"
+                );
+            }
+        }
     }
 
     /// **「窗口太小」转换中那一份逐格相等**（票面第一条）：中间那一行是总进度。
