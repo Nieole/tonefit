@@ -331,7 +331,16 @@ pub fn run(request: &Request) -> Result<Report> {
                 // 卷根在这里先留一份：`process_volume` 要把这一格吃进去，而没做成的那一卷
                 // 仍然得指得出自己是谁。一卷一次克隆，摊不到页上。
                 let root = surveyed.root.clone();
-                match process_volume(surveyed, request, output_case, &mut probes, events) {
+                // 这一卷的表（见 [`Stopwatch`]）。
+                let mut stopwatch = Stopwatch::start(surveyed.enumerating, events);
+                match process_volume(
+                    surveyed,
+                    request,
+                    output_case,
+                    &mut probes,
+                    events,
+                    &mut stopwatch,
+                ) {
                     Ok(Some(report)) => volumes.push(report),
                     Ok(None) => {
                         // **立即停止**（ADR 0013 决定第 2 条）：这一卷停在页边界上、那格 `partial`
@@ -354,12 +363,15 @@ pub fn run(request: &Request) -> Result<Report> {
                     // **卷转换失败**（05 号票）：清点时打得开、轮到它却做不成的卷记一笔，
                     // 其余卷照做、报告照出。整趟当场失败的话，前面几十卷的报告跟着一起没了，
                     // 而它们的输出还好好地躺在盘上——那是几十卷的长任务里最难受的一种结局。
+                    // 那一卷做了多久照样报（`say-and-stop/07`）：走过的环节各有一段。
                     Err(error) => {
+                        let timing = stopwatch.read();
                         let reason = format!("{error:#}");
-                        events.volume_failed(&root, &reason);
+                        events.volume_failed(&root, &reason, timing);
                         failed_volumes.push(VolumeFailure {
                             volume: root,
                             reason,
+                            timing,
                         });
                     }
                 }
@@ -414,12 +426,64 @@ impl std::fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
+/// **一卷的表**（加固批 11 号票，见 [`VolumeTiming`]）：四段各一格，外加读总数的那一副。
+///
+/// **摆在 [`run`] 手上、交给 [`process_volume`] 去掐**（`say-and-stop/07`，收停车场 Q808）：
+/// 一卷没做成时 `process_volume` 交回的只有那个错误，而那一卷做了多久照样要报
+/// （[`VolumeFailure::timing`]）。表在外面，`run` 在 `Err` 那一支上读得到它掐到了哪儿——
+/// 坏在哪个环节里，那一段在回 `Err` 时照样写进去（见 [`timed`]）。
+///
+/// 总数**读的时候现算**，不记：跳过的卷收摊、停在确认点上、一卷跑完、一卷没做成，
+/// 各读一次，读的都是那一刻。没做成那一次读在 `process_volume` 返回之后
+/// （总数因此多装了什么，见 [`VolumeTiming::outside_the_segments`]）。
+struct Stopwatch<'a> {
+    /// 四段。`elapsed` 那一格不在这里记，见 [`read`](Self::read)。
+    segments: VolumeTiming,
+    /// 总数从这一刻起算，也就是**在重开这一卷之前**。
+    started: Instant,
+    /// **开表时**等人那一截的累计读数，与 `started` 成一对。这一卷的墙钟要减掉
+    /// 「在确认点上等人」的那一截（停车场 Q41），而那一截就是这个快照与读表时那个读数之差——
+    /// 累计只升不降，见 `progress::Deliberation`。
+    deliberated_at_open: Duration,
+    /// 清点枚举这一卷的那一截，**加回总数里**：枚举两遍都是这一卷真花掉的时间，
+    /// 一遍在这个表里，一遍由清点交过来（见 `survey::Surveyed::enumerating`），
+    /// 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
+    enumerating: Duration,
+    events: progress::Events<'a>,
+}
+
+impl<'a> Stopwatch<'a> {
+    /// 开表：这一卷的第一件事之前。
+    fn start(enumerating: Duration, events: progress::Events<'a>) -> Self {
+        Self {
+            segments: VolumeTiming::default(),
+            started: Instant::now(),
+            deliberated_at_open: events.deliberated(),
+            enumerating,
+            events,
+        }
+    }
+
+    /// 到此刻为止的卷级计时：四段照记，总数从重开这一卷（外加清点枚举它的那一截）
+    /// 算到此刻，减去等人的那一截。
+    fn read(&self) -> VolumeTiming {
+        let deliberated = self
+            .events
+            .deliberated()
+            .saturating_sub(self.deliberated_at_open);
+        VolumeTiming {
+            elapsed: self.enumerating + self.started.elapsed().saturating_sub(deliberated),
+            ..self.segments
+        }
+    }
+}
+
 /// 掐一段的表：跑一遍 `work`，把这一段的墙钟耗时写进 `segment`。`work` 回 `Err` 时也照写。
 ///
 /// 写成一个函数而不是在调用处各写三行，为的是让「哪几段掐了表」一眼数得清：
 /// 段与段不许重叠，而重叠一旦发生，[`VolumeTiming`] 里四段之和就会大于总耗时。
-/// 四段的表都由 [`process_volume`] 交出去——后三段在它自己里面掐，摊开那一段交给
-/// `source::open` 去掐（那一段夹在重开这一卷的中间，见那里的《摊开那一段的表》）。
+/// 四段的表都在 [`Stopwatch`] 上，由 [`process_volume`] 交出去——后三段在它自己里面掐，
+/// 摊开那一段交给 `source::open` 去掐（那一段夹在重开这一卷的中间，见那里的《摊开那一段的表》）。
 /// 环节开工与掐表成对的那三段走 [`timed_pass`]。
 fn timed<T>(segment: &mut Duration, work: impl FnOnce() -> T) -> T {
     let started = Instant::now();
@@ -644,6 +708,9 @@ const ISOLATED_DIRECTORY: &str = "_isolated";
 /// 撞名、指纹那一道读不出字节、分析环节读不出源、建不出输出容器、透传文件搬不动，
 /// 都从这条路出去。
 ///
+/// **那一卷做了多久不随错误一起交出去**：表是 `run` 交进来的，`run` 在 `Err` 那一支上读它
+/// （见 [`Stopwatch`]）。
+///
 /// **一个例外**：戴着 [`Refusal`] 的那种错误说的是「这一趟的参数错了」，
 /// `run` 认出它就整趟当场停。这里不必分辨两者——标记在造错误的地方戴上，
 /// 这一层只管把错误交出去。
@@ -653,6 +720,7 @@ fn process_volume(
     output_case: CaseSensitivity,
     probes: &mut medium::Probes,
     events: progress::Events,
+    stopwatch: &mut Stopwatch,
 ) -> Result<Option<VolumeReport>> {
     // 这一卷的两个可能去处。哪一个作数要等分析环节走完才知道，另一个则可能留着上一趟的过期副本。
     //
@@ -667,25 +735,9 @@ fn process_volume(
     let survey::Surveyed {
         root,
         steps,
-        enumerating,
         lodgers,
         ..
     } = surveyed;
-    // 这一卷的表：四段各自掐（加固批 11 号票，见 [`VolumeTiming`]）。总的那个数从这里起算，
-    // 也就是**在重开这一卷之前**；**再把清点枚举它的那一截加回去**——枚举两遍都是这一卷
-    // 真花掉的时间，一遍在这个表里，一遍由清点交过来（见 `survey::Surveyed::enumerating`），
-    // 而 `outside_the_segments` 的文档正指着它说「少掉的那一截恰恰是枚举」。
-    let started = Instant::now();
-    // **开卷时**的累计读数，与 `started` 成一对。这一卷的墙钟要减掉「在确认点上等人」
-    // 的那一截（停车场 Q41），而那一截就是这个快照与拼报告时那个读数之差——
-    // 累计只升不降，见 `progress::Deliberation`。
-    let deliberated_at_open = events.deliberated();
-    // 这一卷的墙钟：从重开这一卷（外加清点枚举它的那一截）算到这份报告成型，减去等人的那一截。
-    let wall_clock = || {
-        let deliberated = events.deliberated().saturating_sub(deliberated_at_open);
-        enumerating + started.elapsed().saturating_sub(deliberated)
-    };
-    let mut timing = VolumeTiming::default();
     // 开卷那一条排在**这一卷的第一件事之前**：往后每一条出口——一卷跑完、卷转换失败、
     // 立即停止——都在它之后，画进度的那一层因此不必分「这一卷开过头没有」两种情形
     // （见 `progress::Event::VolumeFailed`）。它排在下面那道「卷根还在不在」之前
@@ -708,7 +760,7 @@ fn process_volume(
     // **摊开那一段的表一并交进去**（say-and-stop/03）：摊开是一个环节，而它夹在这一句的中间
     // ——成员列齐之后、卷交出来之前——这一层够不着它的两头（见 `source::open` 的《摊开那一段的表》）。
     // 不摊开的卷那一格留着零。
-    let mut volume = source::open(&root, events, &mut timing.extraction)?;
+    let mut volume = source::open(&root, events, &mut stopwatch.segments.extraction)?;
     // **页边界那个检查点**，摊开途中按下的那一下在这里收口：`source::open` 交出来的
     // 是一份**半摊开**的卷（成员表齐、临时目录里只有停之前落下的那几个），
     // 底下每一件事都要源字节，一件都不能做。丢掉它连临时目录一起收走（见 `source::Extraction`），
@@ -768,7 +820,7 @@ fn process_volume(
     // 比出来的答案有三种（见 [`Reuse`]）：整卷跳、按页留、整卷重做。
     let mut reuse = Reuse::Nothing;
     let fingerprint = if request.metadata {
-        let segment = &mut timing.fingerprint;
+        let segment = &mut stopwatch.segments.fingerprint;
         timed_pass(events, Pass::Fingerprint, segment, || -> Result<_> {
             let fingerprint = volume_fingerprint(&mut volume, request, &io, by_page, events)?;
             // 立即停止之后**不再问幂等**。不是因为答案会错——下一句就把整卷连同这个答案一起
@@ -813,10 +865,7 @@ fn process_volume(
                 cached_references: 0,
                 io,
                 // 分析、写出两个环节一个都不走：四段里有数的只有查重，外加要摊开的卷上的摊开。
-                timing: VolumeTiming {
-                    elapsed: wall_clock(),
-                    ..timing
-                },
+                timing: stopwatch.read(),
             };
             // 跳过的卷照样报这一条：「跳过」在屏幕上不该长成「卡住」，
             // 而它带的那份报告与做了事的卷同形，攒报告的那一端不必分两种情形。
@@ -843,18 +892,23 @@ fn process_volume(
     let FirstPass {
         pages: scored,
         settled,
-    } = timed_pass(events, Pass::First, &mut timing.first_pass, || {
-        let compute = Compute {
-            request,
-            counters: &counters,
-            cache: &cache,
-            fingerprint: fingerprint.as_ref(),
-            candidates: &candidates,
-            settles,
-            events,
-        };
-        first_pass(&mut volume, &redo, &compute, &io)
-    })?;
+    } = timed_pass(
+        events,
+        Pass::First,
+        &mut stopwatch.segments.first_pass,
+        || {
+            let compute = Compute {
+                request,
+                counters: &counters,
+                cache: &cache,
+                fingerprint: fingerprint.as_ref(),
+                candidates: &candidates,
+                settles,
+                events,
+            };
+            first_pass(&mut volume, &redo, &compute, &io)
+        },
+    )?;
     if events.aborting() {
         // 立即停止停在分析环节的页边界上：手上这半份逐页结果连同这一卷一起丢掉。
         // 写出环节还没开始，一格 `partial` 都还没建，最终位置纹丝不动。
@@ -960,12 +1014,7 @@ fn process_volume(
     // 这里当场编译不过，而那正是要的（ADR 0013 拍死了三级）。
     // 它答的是**当场那个字**而不是闩，为什么，见 `progress::Events::ask_before_the_second_pass`。
     let walks_the_second_pass = if writes {
-        match events.ask_before_the_second_pass(|| {
-            assemble(VolumeTiming {
-                elapsed: wall_clock(),
-                ..timing
-            })
-        }) {
+        match events.ask_before_the_second_pass(|| assemble(stopwatch.read())) {
             // 答继续：往下做。参照还在缓存里，分析环节不重算——那正是接着写出买的东西。
             Instruction::Continue => true,
             // 答做完再停：**停在这儿**。那一卷等于走了一次预览，输出一个字节都不写、报告照出
@@ -982,7 +1031,7 @@ fn process_volume(
     };
     // 建容器与收尾改名一并掐在这一段里：它们是「写出」这件事的两头（加固批 11 号票）。
     if walks_the_second_pass {
-        timed(&mut timing.second_pass, || -> Result<()> {
+        timed(&mut stopwatch.segments.second_pass, || -> Result<()> {
             let mut sink = Sink::create(&output, volume.container, lodgers)?;
             let recorder = fingerprint
                 .as_ref()
@@ -1020,10 +1069,7 @@ fn process_volume(
         }
     }
 
-    let report = assemble(VolumeTiming {
-        elapsed: wall_clock(),
-        ..timing
-    });
+    let report = assemble(stopwatch.read());
     events.volume_finished(&report);
     Ok(Some(report))
 }

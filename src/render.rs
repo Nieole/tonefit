@@ -3426,6 +3426,7 @@ mod tests {
         also_a_failed_volume.failed_volumes.push(VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
             reason: "打开 library/volume-b: 拒绝访问".to_owned(),
+            timing: VolumeTiming::default(),
         });
         assert_eq!(exit_code(&also_a_failed_volume), FAILED_VOLUME_EXIT);
     }
@@ -3451,6 +3452,7 @@ mod tests {
             failed_volumes: vec![VolumeFailure {
                 volume: PathBuf::from("library/volume-b"),
                 reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
+                timing: VolumeTiming::default(),
             }],
             non_volume_files: Vec::new(),
             unreachable_places: Vec::new(),
@@ -3764,6 +3766,7 @@ mod tests {
             .map(|nth| VolumeFailure {
                 volume: PathBuf::from(format!("library/没做成-{nth:02}")),
                 reason: format!("读 library/没做成-{nth:02}/ComicInfo.xml: 找不到"),
+                timing: VolumeTiming::default(),
             })
             .collect();
         report.unreachable_places = (1..=7)
@@ -4387,6 +4390,7 @@ mod tests {
         let failure = VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
             reason: "读 library/volume-b/ComicInfo.xml: 系统找不到指定的文件".to_owned(),
+            timing: VolumeTiming::default(),
         };
 
         let row = failed_volume(&failure);
@@ -4464,6 +4468,7 @@ mod tests {
         report.failed_volumes = vec![VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
             reason: "卷根不在了".to_owned(),
+            timing: VolumeTiming::default(),
         }];
 
         let rows = tail(&report);
@@ -4527,6 +4532,7 @@ mod tests {
         let failure = VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
             reason: "卷根不在了".to_owned(),
+            timing: VolumeTiming::default(),
         };
         let gone = failed_volume(&failure);
         assert_eq!(
@@ -4662,6 +4668,7 @@ mod tests {
         let gone = failed_volume(&VolumeFailure {
             volume: PathBuf::from("library/volume-b"),
             reason: "卷根不在了".to_owned(),
+            timing: VolumeTiming::default(),
         });
         assert_eq!(
             tally_column(std::slice::from_ref(&gone)),
@@ -5495,6 +5502,7 @@ mod tests {
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第4话"),
             reason: "卷根不在了".to_owned(),
+            timing: VolumeTiming::default(),
         }];
         let listed: Vec<Listed<'_>> = volumes
             .iter()
@@ -5733,6 +5741,7 @@ mod tests {
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第5话"),
             reason: "卷根不在了".to_owned(),
+            timing: VolumeTiming::default(),
         }];
         let listed: Vec<Listed<'_>> = volumes
             .iter()

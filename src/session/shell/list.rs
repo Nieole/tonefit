@@ -563,17 +563,12 @@ impl Painter<'_> {
         self.live?.report_at(at)
     }
 
-    /// 这一卷做了多久：**收摊了的那几卷走报告那一份**（`CONTEXT.md` 的《卷级计时》：
-    /// 只扣掉在确认点上等人的那一截），没有报告的那几卷（没做成、还在跑、被立即停止掉）
-    /// 走会话这一头自己记的那一份（[`Live::elapsed_at`]）。
+    /// 这一卷做了多久。**出处在那一趟上**（[`Live::elapsed_at`]）：读库那一份还是会话自己量的
+    /// 那一份，先后只在那里写一次——卷行那一列与目录行那个和读的是同一个数。
     fn elapsed_of(&self, at: usize) -> Duration {
-        let Some(live) = self.live else {
-            return Duration::ZERO;
-        };
-        self.report_of(at).map_or_else(
-            || live.elapsed_at(at).unwrap_or_default(),
-            |report| report.timing.elapsed,
-        )
+        self.live
+            .and_then(|live| live.elapsed_at(at))
+            .unwrap_or_default()
     }
 
     /// 这一卷有几页**需留意**（`CONTEXT.md` 的《需留意的页》）。
