@@ -410,6 +410,7 @@ impl Live {
                 crop: request.crop,
                 split: request.split,
                 white_align_limit: request.white_align_limit,
+                envelope: request.envelope,
                 volumes: Vec::new(),
                 failed_volumes: Vec::new(),
                 // 这两张表整份在清点走完就齐了，开工那一条事件带着它们（`session-redesign/03`），

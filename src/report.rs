@@ -56,6 +56,19 @@ pub struct Report {
     /// 取值的唯一出处仍是 [`WhiteAlignLimit::default`](crate::WhiteAlignLimit)：
     /// 这一格装的是**这一趟用的那个值**，不是又一个默认值。
     pub white_align_limit: WhiteAlignLimit,
+    /// 这一趟开没开**整卷统一灰阶**：灰阶档位走逐页判断（`false`，默认那条路）还是整卷统一灰阶
+    /// （`true`，`--envelope`；say-and-stop/05，收停车场 Q637）。照 [`Request::envelope`] 原样填。
+    ///
+    /// 与上面那几项并排，理由是同一条：这一趟的像素照哪条规矩出，读的人要知道。卷级判定
+    /// （[`VolumeVerdict::Envelope`]／[`VolumeVerdict::PerPage`]）各自只在自己那条路上出现，
+    /// **分得开两条路的却只有做了事的卷**——每一卷都幂等命中的那一趟一句卷级判定都没有，
+    /// 说得出自己走哪条路的只剩这一格。
+    ///
+    /// 它说的是开关，不是每一卷实际怎么判的：覆盖项把候选顶成一档的那一趟两条路一个样，
+    /// 卷级那一句（[`VolumeVerdict::Override`]）照旧由它自己说。
+    ///
+    /// [`Request::envelope`]: crate::Request::envelope
+    pub envelope: bool,
     pub volumes: Vec<VolumeReport>,
     /// 这一趟**没做成**的那几卷，按点名顺序（05 号票：卷转换失败）。
     ///

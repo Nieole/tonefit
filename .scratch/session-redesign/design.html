@@ -662,7 +662,7 @@ const fmt3 = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(3) : String(
 function thresholdText(c) {
   if (!cfgValue('model')) return '跟着型号走（先挑一个）';
   const v = c ? c.value : cfgValue('threshold');
-  return v != null ? `画质门槛 ${fmt3(v)}（由你指定）` : '画质门槛 5.123（在 boox-poke6 上实测，其他屏幕未验证）';
+  return v != null ? `画质门槛 ${fmt3(v)}（由你指定）` : '画质门槛 5.123（在 boox-poke6 与 kobo-libra-2 上实测，其他屏幕未验证）';
 }
 // 拆分开着、缩放方式却是整页放进屏幕：抬头上唯一会露面的那一条选项冲突（Interlock::SpreadsStayFlattened）
 function interlockText() {
