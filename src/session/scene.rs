@@ -442,6 +442,26 @@ pub(crate) fn scene_data(scene: &str) -> Data {
 /// 一串交互走完那一刻的场景数据：与起点场景一样的那几样导出时写成 `"unchanged"`，
 /// 这里从起点场景那一份补回来。
 pub(crate) fn sequence_data(sequence: &str) -> Data {
+    parse(sequence_json(sequence))
+}
+
+/// 一串交互**推进完那一刻**的场景数据：序列里「推进几秒」那一步摆的是它
+/// （`super::terminal` 的交互序列用例）。
+///
+/// 推进之后的几步又动了那一趟时（在下一个确认点上答「不写出」，`design-parity/04`），
+/// 导出另记一格 `advanced`：推进完那一刻的 `run` 与 `now_ms`，盖在走完那一刻那一份上。
+/// 没记就是推进之后那一趟一格没动，走完那一刻那一份就是它。
+pub(crate) fn advanced_data(sequence: &str) -> Data {
+    let mut data = sequence_json(sequence);
+    let fields = data.as_object_mut().expect("场景数据是一张表");
+    if let Some(Value::Object(advanced)) = fields.remove("advanced") {
+        fields.extend(advanced);
+    }
+    parse(data)
+}
+
+/// 一串交互走完那一刻的场景数据，`"unchanged"` 那几样已从起点场景补回、还没读成形状。
+fn sequence_json(sequence: &str) -> Value {
     let mut after = json(&format!("sequences/{sequence}.scene.json"));
     let scene = after["scene"]
         .as_str()
@@ -454,7 +474,7 @@ pub(crate) fn sequence_data(sequence: &str) -> Data {
             fields.insert(key.clone(), value.clone());
         }
     }
-    parse(after)
+    after
 }
 
 // ───────────────────────── 摆出来 ─────────────────────────
@@ -1087,7 +1107,8 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
                 let report = volume_report(listed, volume, disk, run, typical);
                 live.volume_started(&root, listed.steps);
                 // 写出之前的那几个环节走满；写出环节开工那一条是确认点，照答的字走：答了「不写出」的
-                // 那一卷（`trialed`）写出环节一步不走，紧跟着收摊（`tonefit::Pass::Second` 的文档）。
+                // 那一卷（`trialed`）写出环节一步不走，紧跟着收摊（`tonefit::Pass::Second` 的文档），
+                // `Live` 按它没写把它收在预览过——夹具不替它判，走的是真跑那一条路。
                 let said = if volume.state == "trialed" {
                     Instruction::Finish
                 } else {
@@ -1641,8 +1662,8 @@ mod tests {
         (&run.survey.volumes[at], &run.volumes[at])
     }
 
-    /// 场景数据里一卷此刻怎么样，翻成 [`VolumeState`]：七种各一档，外加设计稿多出来的
-    /// `trialed`（确认点上答了「不写出」的那一卷——库那一侧它收摊成完成，只是没写）。
+    /// 场景数据里一卷此刻怎么样，翻成 [`VolumeState`]：九种各一档，`trialed` 是
+    /// [预览过](VolumeState::Trialed)（确认点上答了「不写出」的那一卷）。
     fn state_of(listed: &Listed, volume: &VolumeData) -> VolumeState {
         match volume.state.as_str() {
             "queued" => VolumeState::Queued,
@@ -1650,7 +1671,8 @@ mod tests {
                 pass: Some(listed.passes()[volume.pass as usize]),
             },
             "deciding" => VolumeState::Deciding,
-            "done" | "trialed" => VolumeState::Done,
+            "done" => VolumeState::Done,
+            "trialed" => VolumeState::Trialed,
             "isolated" => VolumeState::Isolated,
             "skipped" => VolumeState::Skipped,
             "failed" => VolumeState::Failed,
@@ -2166,6 +2188,27 @@ mod tests {
         assert!(moved.len() >= 20, "那一趟变了的序列：{moved:?}");
         for name in moved {
             agrees_with_its_data(&Scene::after(&name));
+        }
+    }
+
+    /// **推进完那一刻另记了一份的那几串，那一刻也摆得出来**（[`advanced_data`]）：推进之后又在
+    /// 下一个确认点上答话的那一串，推进时摆的是停在那个确认点上的那一趟，不是走完那一刻那一趟。
+    #[test]
+    fn every_sequence_that_moves_the_run_after_advancing_stands_where_it_advanced_to() {
+        let advanced: Vec<String> = sequences()
+            .into_iter()
+            .filter(|name| {
+                json(&format!("sequences/{name}.scene.json"))
+                    .get("advanced")
+                    .is_some()
+            })
+            .collect();
+        assert!(
+            advanced.contains(&"deciding-x-advance-s-l".to_owned()),
+            "推进完那一刻另记了一份的序列：{advanced:?}"
+        );
+        for name in advanced {
+            agrees_with_its_data(&Scene::from_data(&name, advanced_data(&name)));
         }
     }
 

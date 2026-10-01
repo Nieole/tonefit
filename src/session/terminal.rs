@@ -448,6 +448,7 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
     let said = match state {
         // 上面那道守卫已经把展得开的那几卷挡回去了。
         VolumeState::Done
+        | VolumeState::Trialed
         | VolumeState::Isolated
         | VolumeState::Skipped
         | VolumeState::Deciding => return,
@@ -865,20 +866,22 @@ mod redesign {
             // **推进几秒**：夹具没有线程，推进之后那一趟走到哪儿由这一串自己的场景数据说
             // （`Scene::advance_to`，停车场 Q805 的同一条）。界面状态一格不动。
             //
-            // **一串只推得动一次**：场景数据说的是这一串**走完那一刻**，一串只有一份
-            // ——推第二次拿的还是同一份，那是假的（停车场 Q852）。
+            // **一串只推得动一次**：场景数据说的是这一串**走完那一刻**，外加推进完那一刻
+            // 那一趟（[`scene::advanced_data`]）——推第二次没有第三份可摆（停车场 Q852）。
             //
-            // **推进之后还有输入照样摆得对**，前提是后面那几步一格都不动那一趟：
-            // `running-j-advance-F` 的 `F` 只扳自动滚动那一格与屏底那一句。
+            // **推进之后的几步动不动那一趟都摆得对**：一格不动的（`running-j-advance-F`
+            // 的 `F` 只扳自动滚动那一格与屏底那一句），推进完那一刻就是走完那一刻；
+            // 又动了那一趟的（推进到下一个确认点、再答「不写出」，`design-parity/04`），
+            // 导出另记推进完那一刻那一份，推进时摆它，后面那几步照常喂。
             // 按住这一条的是**屏本身**——总览那三行印着第几卷、已用多久、走了几步，
-            // 后面那几步真动了那一趟，走完那一屏当场对不上。
+            // 摆错了那一刻，走完那一屏当场对不上。
             if matches!(step, Step::Advance(_)) {
                 assert!(
                     !advanced,
-                    "「{name}」推进了两次：夹具只摆得出走完那一刻（Q852）"
+                    "「{name}」推进了两次：夹具只摆得出推进完那一刻（Q852）"
                 );
                 advanced = true;
-                scene.advance_to(scene::sequence_data(name));
+                scene.advance_to(scene::advanced_data(name));
                 running = Running::holding(scene.live.take().expect("推进之后那一趟"));
                 now = scene.now();
                 continue;
@@ -907,8 +910,13 @@ mod redesign {
             //
             // **收摊用的就是确认点上攒着的那一份**：那一卷写出环节一步都没走，
             // 库交出来的与攒着的逐格相同（`scene::replay` 的 `trialed` 那一支同样这么摆）。
+            //
+            // **认的是「会话答完了话、那一卷却仍停在确认点上」**：答继续的那一卷当场翻成
+            // 处理中（`Live::decide`），只有答「不写出」的那一卷留在等待确认、等线程替它收摊。
+            // 不认 `Live::decided`——那一格记的是答过的字里最弱的那一个，先答过继续的那一趟
+            // 再答「不写出」，它仍是继续。
             let trialed = running.live().as_deref().and_then(|live| {
-                if live.ended() || live.decided() != Some(tonefit::Instruction::Finish) {
+                if live.ended() || !live.deciding() || scene.session.deciding() {
                     return None;
                 }
                 live.summarized().cloned()
@@ -1187,10 +1195,12 @@ mod redesign {
     /// 别的页由夹具照灰阶分布补出来——补出来的那几页缩放比与画质分都是占位的数。
     /// 而**这一串自己的场景数据带着它那 189 页**（`l` 按下去之后它就是开着的那一卷）。
     ///
-    /// **键一个都不碰那一趟**（这一串没有推进、没有答话、没有开跑），两份说的是**同一趟**、
-    /// 只是详略不同，照这一串那一份重放一遍即可；界面状态由 [`Scene::advance_to`] 自己保住，
-    /// 走完那一屏仍是**逐格断言**。重放前后核一遍那一趟真没动（各卷此刻怎么样、收摊了几卷），
-    /// 补的只是详略。
+    /// **走完那一刻的那一趟与这一串自己的场景数据说的是同一趟**、只是详略不同：键一个都不碰
+    /// 那一趟的那几串（没有推进、没有答话、没有开跑）是这样；碰了的那几串走完那一刻正是那份
+    /// 数据记下的那一刻，也是这样（`deciding-x-advance-s-trialed-l-a`：推进到下一个确认点、
+    /// 答「不写出」，再进那一卷）。照这一串那一份重放一遍即可；界面状态由 [`Scene::advance_to`]
+    /// 自己保住，走完那一屏仍是**逐格断言**。重放前后核一遍那一趟真没动（各卷此刻怎么样、
+    /// 收摊了几卷），补的只是详略。
     ///
     /// **停车场 Q876**：真要收干净是让导出给每一景都带上整份逐页
     /// （ADR 0019 决定第 13 条：先改设计稿、重导）。
@@ -1520,6 +1530,41 @@ mod redesign {
         assert!(!live.has_written(), "这一卷一个字节都没写，结论行不翻");
         drop(live);
         assert_sequence("deciding-s");
+    }
+
+    /// **写出过一卷之后再答「不写出」，那一卷收在预览过**（`design-parity/04`，收停车场 Q769、Q674）：
+    /// `x` 写完第 5 卷、推进到第 6 卷的确认点、`s`——第 6 卷行首 `✓`、行尾「已分析，未写出」；
+    /// 结论行已是转换那一副，「完成 1 卷」只数写了出去的第 5 卷，「等待 78 卷」也不数它
+    /// （它收摊了）。它展得开，每页结果照常（进去切全部页，224 页逐格对得上）。
+    ///
+    /// **推进那一步摆的是停在第 6 卷确认点上的那一趟**（[`scene::advanced_data`]）：
+    /// 走完那一刻那一份里第 6 卷已经收摊，拿它推进，`s` 就答不到话了。
+    #[test]
+    fn a_volume_answered_not_to_write_is_trialed_and_not_counted_as_done() {
+        let name = "deciding-x-advance-s-l";
+        let (scene, running, _) = walked(name);
+        assert_eq!(
+            scene.session.stage(),
+            super::super::state::Stage::Ended,
+            "答「不写出」之后那一趟收了场"
+        );
+        let size = scene::sequence(name).size;
+        let lines = design::lines_of(&painted(&scene, &running, size));
+        // 屏上改掉的那一句假话反着钉：那一卷盘上没有，「完成」不许把它数进去。
+        assert!(
+            !lines.iter().any(|line| line.contains("完成 2 卷")),
+            "没写出的那一卷数进了「完成」：\n{}",
+            lines.join("\n")
+        );
+        assert_sequence(name);
+        // 进那一卷再切全部页：开着的那一卷逐页详略要补齐（起点那一刻它停在确认点上，
+        // 场景数据只带了需留意的那几页——一页都没有）。
+        let scene =
+            assert_sequence_with_every_page_of_the_open_volume("deciding-x-advance-s-trialed-l-a");
+        assert!(
+            scene.session.views.task.pages.is_some(),
+            "预览过的那一卷展得开"
+        );
     }
 
     /// **答完一卷再推进**（票面第二条那两串）：`x` 之后 30 秒，第 5 卷写完了、

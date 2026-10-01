@@ -73,11 +73,21 @@ impl Expected {
     /// **字网格**：一行一屏行，只有字、不带样式。场景夹具拿它核「报告那一处说出来的字
     /// 在设计快照上找得到」（`session-redesign/05`）——那一问只关字，不关颜色。
     pub(in crate::session) fn lines(&self) -> Vec<String> {
-        self.rows
-            .iter()
-            .map(|row| row.iter().map(|glyph| glyph.symbol.as_str()).collect())
-            .collect()
+        text_of(&self.rows)
     }
+}
+
+/// **实际画出来的那一屏的字网格**，与 [`Expected::lines`] 同一副：屏上改掉一句假话之后，
+/// 反着钉「这句不许再出现」的用例拿它查（`docs/agents/testing.md`）。
+pub(in crate::session) fn lines_of(buffer: &Buffer) -> Vec<String> {
+    text_of(&read(buffer))
+}
+
+/// 一屏格子的字网格：一行一屏行，只有字。期望那一屏与实际那一屏共用这一副读法。
+fn text_of(rows: &[Vec<Painted>]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.iter().map(|glyph| glyph.symbol.as_str()).collect())
+        .collect()
 }
 
 /// 读快照要的两样：样式对照表（设计稿类名 → 颜色，修饰记号 → 修饰）与顶栏版本号的占位。

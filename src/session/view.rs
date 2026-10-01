@@ -3259,6 +3259,7 @@ mod tests {
         }
         let opens = |state: VolumeState| state.opens_the_pages();
         assert!(opens(VolumeState::Done));
+        assert!(opens(VolumeState::Trialed), "预览过的那一卷收摊了，展得开");
         assert!(opens(VolumeState::Isolated));
         assert!(opens(VolumeState::Skipped));
         assert!(opens(VolumeState::Deciding));

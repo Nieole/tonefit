@@ -55,7 +55,9 @@ const SNAPSHOTS = [
 //   { key: 'j' }            按一个键，键名照设计稿：`C-w`、`Space`、`Enter`、`Escape`、`Tab`、`F1`、一个汉字
 //   { type: '海贼' }        逐字打
 //   { advance: 3 }          推进 3 秒：设计稿自己的主循环跑 3 秒（50 ms 一帧，模拟 1×，时钟跟着走），
-//                           这一趟的模拟时间与会话的时钟因此各走 3 秒；结束那句回话、连击键超时都照设计稿的来
+//                           这一趟的模拟时间与会话的时钟因此各走 3 秒；结束那句回话、连击键超时都照设计稿的来。
+//                           一串只推一次；推进之后的几步又动了那一趟（比如在下一个确认点上答话），
+//                           场景数据另带一格 `advanced`：推进完那一刻的 `run` 与 `now_ms`（Rust 侧推进时摆的是它）
 //   { click: [x, y] }       在第 x 格第 y 行单击；{ dblclick: [x, y] } 同一处连点两下（等于 ⏎）
 //   { wheel: n }            滚轮滚 n 格（往下为正），一格三行；几格连滚只画一帧
 //   { resize: [cols, rows] } 换尺寸（清单里 `final_size` 记走完那一屏多大）
@@ -138,6 +140,9 @@ const SEQUENCES = [
   { name: 'deciding-a', scene: 'deciding', size: MAIN, steps: k('a'), says: '全部写出：' },
   { name: 'deciding-a-advance', scene: 'deciding', size: MAIN, steps: [{ key: 'a' }, { advance: 30 }], says: '转换' },
   { name: 'deciding-s', scene: 'deciding', size: MAIN, steps: k('s'), says: '已结束预览：' },
+  // 写出过一卷之后，下一个确认点上答「不写出」：那一卷收在预览过，总览的「完成」不数它（design-parity/04）
+  { name: 'deciding-x-advance-s-l', scene: 'deciding', size: MAIN, steps: [{ key: 'x' }, { advance: 30 }, { key: 's' }, { key: 'l' }], says: { has: ['完成 1 卷 ⋅ 跳过 4 卷 ⋅ 等待 78 卷', '✓ 第06卷', '已分析，未写出'] } },
+  { name: 'deciding-x-advance-s-trialed-l-a', scene: 'deciding', size: MAIN, steps: [{ key: 'x' }, { advance: 30 }, ...k('s', 'l', 'j', 'j', 'j', 'j', 'j', 'j', 'l', 'a')], says: { has: ['哆啦A梦 › 第06卷', '[全部页]', '1 of 224'] } },
   { name: 'deciding-2', scene: 'deciding', size: MAIN, steps: k('2'), says: '? 等待确认 ⋅' },
 
   // ── 停止、`q`（spec；08；10） ──
@@ -438,9 +443,13 @@ function sceneData(page) {
 /** `says` 写成一句或 `{ has, lacks }`：走完那一屏上该看得见的几句、不该再有的几句。 */
 const wanted = (says) => (typeof says === 'string' ? { has: [says], lacks: [] } : { has: says.has || [], lacks: says.lacks || [] });
 
-/** 一步一步走完一串输入；每一步之后画一帧（鼠标命中的是上一帧交出的区域）。 */
+/**
+ * 一步一步走完一串输入；每一步之后画一帧（鼠标命中的是上一帧交出的区域）。
+ * 回推进完那一刻的场景数据（没有推进就是 `undefined`）：推进之后的几步动没动那一趟，由调用方比。
+ */
 function replay(page, steps) {
   const { design } = page;
+  let advanced;
   for (const step of steps) {
     if ('key' in step) page.press(step.key);
     else if ('type' in step) for (const ch of step.type) page.press(ch);
@@ -451,7 +460,12 @@ function replay(page, steps) {
     else if ('resize' in step) page.resize(step.resize[0], step.resize[1]);
     else throw new Error(`不认识这一步：${JSON.stringify(step)}`);
     page.frame();
+    if ('advance' in step) {
+      if (advanced) throw new Error('一串只推进一次：Rust 侧只摆得出推进完的那一刻');
+      advanced = sceneData(page);
+    }
   }
+  return advanced;
 }
 
 /** 摆好一个场景与尺寸，画一帧（每一份都从新装的伪 DOM 起，上一份留下的状态一点都带不过来）。 */
@@ -495,7 +509,7 @@ async function exportAll(out = OUT) {
   for (const seq of SEQUENCES) {
     if (!baseline.has(seq.scene)) baseline.set(seq.scene, sceneData(await stage(seq.scene, MAIN)));
     const page = await stage(seq.scene, seq.size);
-    replay(page, seq.steps);
+    const advanced = replay(page, seq.steps);
     const { text, style } = grids(page);
     for (const said of wanted(seq.says).has) if (!text.includes(said)) throw new Error(`序列 ${seq.name} 走完的那一屏上没有「${said}」：\n${text}`);
     for (const said of wanted(seq.says).lacks) if (text.includes(said)) throw new Error(`序列 ${seq.name} 走完的那一屏上不该还有「${said}」：\n${text}`);
@@ -503,7 +517,10 @@ async function exportAll(out = OUT) {
     const base = path.join(out, 'sequences', seq.name);
     write(`${base}.text.txt`, text);
     write(`${base}.style.txt`, style);
-    write(`${base}.scene.json`, json(unchangedElided(sceneData(page), baseline.get(seq.scene))));
+    const data = sceneData(page);
+    // 推进之后的几步又动了那一趟：推进完那一刻那一趟另记一格（Rust 侧推进时摆它，走完比的仍是 `run`）
+    if (advanced && JSON.stringify(advanced.run) !== JSON.stringify(data.run)) data.advanced = { now_ms: advanced.now_ms, run: advanced.run };
+    write(`${base}.scene.json`, json(unchangedElided(data, baseline.get(seq.scene))));
     // `size` 是起点场景摆在多大的屏上，`final_size` 是走完那一屏多大：只有换尺寸那几串两者不同
     manifest.sequences.push({ name: seq.name, scene: seq.scene, size: seq.size, final_size: page.design.S.size.slice(), steps: seq.steps, says: seq.says, text: `sequences/${seq.name}.text.txt`, style: `sequences/${seq.name}.style.txt`, data: `sequences/${seq.name}.scene.json` });
   }

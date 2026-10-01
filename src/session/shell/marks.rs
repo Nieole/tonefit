@@ -122,7 +122,8 @@ impl Mark {
 
 /// **一卷此刻的行首记号**（`CONTEXT.md` 的《行首记号》《卷状态》）：
 /// `✓` 完成 · 转轮 处理中 · `?` 等待确认 · `!` 需留意 · `✗` 出错 · `-` 已跳过 ·
-/// `⋅` 等待中。`notable` 是这一卷有没有需留意的页——收摊了的卷靠它分 `✓` 与 `!`。
+/// `⋅` 等待中。`notable` 是这一卷有没有需留意的页——完成与预览过的卷靠它分 `✓` 与 `!`
+/// （预览过与完成同一套记号，两者在行尾那一句上分开，设计稿 `volMark`）。
 pub(super) fn volume_mark(state: VolumeState, notable: bool, spin: &'static str) -> Mark {
     match state {
         VolumeState::Running { .. } => Mark::of(spin, Look::kind(Kind::Working).bold()),
@@ -131,8 +132,10 @@ pub(super) fn volume_mark(state: VolumeState, notable: bool, spin: &'static str)
         VolumeState::Failed => Mark::broken(),
         VolumeState::Isolated => Mark::of("!", Look::tone(Tone::Caution).bold()),
         VolumeState::Aborted | VolumeState::Queued => Mark::queued(),
-        VolumeState::Done if notable => Mark::of("!", Look::tone(Tone::Caution).bold()),
-        VolumeState::Done => Mark::of("✓", Look::kind(Kind::Done)),
+        VolumeState::Done | VolumeState::Trialed if notable => {
+            Mark::of("!", Look::tone(Tone::Caution).bold())
+        }
+        VolumeState::Done | VolumeState::Trialed => Mark::of("✓", Look::kind(Kind::Done)),
     }
 }
 
