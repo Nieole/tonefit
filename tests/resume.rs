@@ -302,6 +302,216 @@ fn finishing_at_the_decision_point_writes_nothing_on_the_envelope_path_either() 
     );
 }
 
+/// 一台彩色面板设备：彩页只有在它上面才走彩色分支（ADR 0010），分析环节就编好字节。
+const COLOR_DEVICE: &str = "kobo-libra-colour";
+
+/// 一种请求的写法，连同它在断言里的说法。
+type Setting = (&'static str, fn(&mut Request));
+
+/// 一种卷的造法，连同它在断言里的说法。
+type Build = (&'static str, fn(&Workspace) -> Volume);
+
+/// 灰度页、彩页、透传文件各有的一卷：产物体积三样都要数（say-and-stop/06）。
+fn a_volume_of_every_member(space: &Workspace, name: &str) -> Volume {
+    let volume = small_volume(space, name);
+    volume.page("003.png", &fixtures::color_page(TINY));
+    volume
+}
+
+/// 同一份请求先预览、再转换（say-and-stop/06）：预览是**确认点上答做完再停**——会话按下去的那一趟，
+/// 一个字节都不写；转换是一个观察者都不装的那一趟。交回三个数：确认点上带着的那份报告、
+/// 预览收摊时那份报告、转换那份报告，各自的产物体积。
+fn preview_then_convert(space: &Workspace, request: Request) -> [Option<u64>; 3] {
+    // 输出目录在预览前后各看一眼：按页跳过那一条先转过一趟，目录本来就在。
+    let on_disk = || {
+        let out = space.out();
+        if out.exists() {
+            fixtures::fingerprint(&out)
+        } else {
+            Vec::new()
+        }
+    };
+    let before = on_disk();
+    let watcher = AtTheDecisionPoint::new(space, None, Instruction::Finish);
+    let previewed = tonefit::run(&Request {
+        progress: Some(ProgressSink::new(watcher.clone())),
+        ..request.clone()
+    })
+    .expect("在确认点上停下来不是失败");
+    assert_eq!(on_disk(), before, "预览动了输出目录");
+    let at_the_decision_point = watcher.so_far()[0]
+        .as_ref()
+        .expect("确认点带着报告")
+        .output_bytes;
+    let converted = tonefit::run(&request).expect("处理应当成功");
+    assert!(
+        converted.volumes[0].timing.second_pass > std::time::Duration::ZERO,
+        "夹具不对：转换那一趟没走写出环节"
+    );
+    [
+        at_the_decision_point,
+        previewed.volumes[0].output_bytes,
+        converted.volumes[0].output_bytes,
+    ]
+}
+
+/// **默认那条路上预览说得出产物有多大，而且与转换那一趟同一个数**（say-and-stop/06，停车场 Q801）。
+///
+/// 白捡的：那条路上分析环节一页判完当场就编（灰度页进缓存的就是字节，彩页编好留着），透传文件的
+/// 字节数开卷时就在成员表上。确认点上交给观察者的那一份就说得出——会话正是在那儿等人拿主意。
+/// 覆盖把两维都点死的那一趟同理，`--envelope` 底下也一样：顶死了就不必等整卷。
+#[test]
+fn a_preview_says_the_same_output_as_the_conversion_where_the_bytes_come_for_free() {
+    let cases: [Setting; 2] = [
+        ("默认那条路", |request| request.envelope = false),
+        ("--envelope 底下两维都点死", |request| {
+            request.envelope = true;
+            request.bit_depth = Some(tonefit::BitDepth::Two);
+            request.dither = Some(tonefit::Dither::Off);
+        }),
+    ];
+    for (what, set) in cases {
+        let space = Workspace::new();
+        let volume = a_volume_of_every_member(&space, "volume-a");
+        let mut request = Request {
+            profile: fixtures::profile(COLOR_DEVICE),
+            ..fixtures::request(&space, [volume.path()])
+        };
+        set(&mut request);
+
+        let [asked, previewed, converted] = preview_then_convert(&space, request);
+
+        assert!(converted.is_some(), "{what}：转换那一趟说不出产物体积");
+        assert_eq!(previewed, converted, "{what}：预览与转换报的体积不同");
+        assert_eq!(asked, converted, "{what}：确认点上那一份说的与转换不同");
+    }
+}
+
+/// **`--envelope` 那条路上预览说不出，整个不在**（say-and-stop/06）：灰度页的字节要到写出环节才编，
+/// 预览一个字节都不编——要说就得白编一遍再丢掉，而不印零、不印估值。转换那一趟照说。
+///
+/// **按路说，不逐卷猜**（停车场 Q1260）：一卷全是彩页时，彩页的字节其实分析环节就编好了，
+/// 那一卷在这条路上的预览照样不报——「那条路预览时整行不出现」说的是路。
+#[test]
+fn a_preview_on_the_envelope_path_says_nothing_about_the_output_and_the_conversion_does() {
+    let all_color = |space: &Workspace| {
+        let volume = space.volume("volume-a");
+        volume.page("001.png", &fixtures::color_page(TINY));
+        volume.page("002.png", &fixtures::color_page(TINY));
+        volume
+    };
+    let cases: [Build; 2] = [
+        ("灰度页、彩页、透传文件各有", |space| {
+            a_volume_of_every_member(space, "volume-a")
+        }),
+        ("一卷全是彩页", all_color),
+    ];
+    for (what, build) in cases {
+        let space = Workspace::new();
+        let volume = build(&space);
+        let request = Request {
+            envelope: true,
+            profile: fixtures::profile(COLOR_DEVICE),
+            ..fixtures::request(&space, [volume.path()])
+        };
+        let [asked, previewed, converted] = preview_then_convert(&space, request);
+        assert_eq!(
+            asked, None,
+            "{what}：--envelope 那条路上确认点那一份报了产物体积"
+        );
+        assert_eq!(
+            previewed, None,
+            "{what}：--envelope 那条路上预览报了产物体积"
+        );
+        assert!(
+            converted.is_some(),
+            "{what}：--envelope 那条路上转换说不出产物体积"
+        );
+    }
+}
+
+/// **dry-run 两条路上都说不出**（say-and-stop/06，停车场 Q1257）：那一趟一页都不编
+/// （ADR 0005《覆盖顶死的那一趟不必等到第二遍》里预览那一条：没有写出环节，编出来的字节一个读者都没有），
+/// 默认那条路也不例外——白捡的只是转换那一趟与确认点上的预览。彩页同样不编
+/// （`CONTEXT.md` 的《灰度路径 / 彩色分支》），透传文件那几个字节凑不成一卷的数。
+#[test]
+fn a_dry_run_says_nothing_about_the_output_on_either_path() {
+    for envelope in [false, true] {
+        let space = Workspace::new();
+        let volume = a_volume_of_every_member(&space, "volume-a");
+        let tried = tonefit::run(&Request {
+            envelope,
+            mode: Mode::DryRun,
+            profile: fixtures::profile(COLOR_DEVICE),
+            ..fixtures::request(&space, [volume.path()])
+        })
+        .expect("dry-run 应当成功");
+        assert_eq!(
+            tried.volumes[0].output_bytes, None,
+            "dry-run（envelope = {envelope}）报了产物体积"
+        );
+        assert_eq!(tried.output_bytes(), None);
+    }
+}
+
+/// **有坏页的卷在确认点上说不出**（say-and-stop/06）：那张空白占位页要到写出环节才画，
+/// 此刻手上没有它的字节。转换那一趟照说——占位页也写进了容器，照算。
+#[test]
+fn a_preview_with_a_failed_page_cannot_say_its_output_until_the_placeholder_is_drawn() {
+    let space = Workspace::new();
+    let volume = small_volume(&space, "volume-a");
+    volume.file("003.png", b"not a png");
+    // 默认那条路：别的页分析环节就编好了，缺的只有占位页那一格。
+    let request = Request {
+        envelope: false,
+        ..fixtures::request(&space, [volume.path()])
+    };
+
+    let [asked, previewed, converted] = preview_then_convert(&space, request);
+
+    assert_eq!(asked, None, "确认点上替还没画的占位页报了字节");
+    assert_eq!(previewed, None, "预览替还没画的占位页报了字节");
+    assert!(converted.is_some(), "有坏页的卷转换之后说不出产物体积");
+}
+
+/// **按页跳过的卷，留下的页的字节算在里面**（say-and-stop/06）：它们同样写进了这一趟的容器。
+/// 转换报的就是容器里那些成员之和；预览（确认点上答做完再停）报的是同一个数——
+/// 留下的页的字节数，比对时读记录顺手量下来了。
+#[test]
+fn a_volume_skipped_by_page_counts_its_retained_pages() {
+    let space = Workspace::new();
+    let volume = small_volume(&space, "volume-a");
+    // 按页跳过只在默认那条路上有（`CONTEXT.md` 的《按页跳过》）。
+    let request = Request {
+        envelope: false,
+        ..fixtures::request(&space, [volume.path()])
+    };
+    tonefit::run(&request).expect("处理应当成功");
+    volume.page("001.png", &fixtures::gradient(TINY));
+
+    let [asked, previewed, converted] = preview_then_convert(&space, request);
+
+    let output = space.out().join("volume-a");
+    let members: u64 = fixtures::directory_members(&output)
+        .iter()
+        .map(|name| {
+            std::fs::metadata(output.join(name))
+                .expect("读输出成员的大小")
+                .len()
+        })
+        .sum();
+    assert_eq!(converted, Some(members), "留下的页没算进产物体积");
+    let retained = std::fs::metadata(output.join("002.png"))
+        .expect("留下的那一页")
+        .len();
+    assert!(
+        retained > 0 && members > retained,
+        "夹具不对：留下的那一页是空的"
+    );
+    assert_eq!(previewed, converted, "按页跳过的卷，预览与转换报的体积不同");
+    assert_eq!(asked, converted);
+}
+
 /// 确认点上答**立即停止**：那一卷等于没做，报告里没有它（ADR 0013 决定第 2 条）。
 ///
 /// 它与答做完再停在同一处按下，停出来的现场却相反——**分得开才有意义**：

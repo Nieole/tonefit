@@ -330,6 +330,67 @@ fn an_archive_carries_its_non_page_members_across_byte_for_byte() {
     );
 }
 
+/// **一卷报的产物体积就是它写进容器的那些成员的字节之和**（say-and-stop/06，停车场 Q801）：
+/// 页与透传文件逐个加起来，**不含容器开销**——归档落到盘上那个文件比它大（成员头、中央目录），
+/// 目录卷没有这一截。两种容器、两条路（默认与 `--envelope`）上都是这一个口径；
+/// 整趟那个合计是各卷之和。
+#[test]
+fn a_volume_reports_the_bytes_of_the_members_it_wrote_and_not_the_container() {
+    for envelope in [false, true] {
+        let space = Workspace::new();
+        let loose = space.volume("volume-a");
+        loose.page("001.png", &fixtures::cheap_page());
+        loose.page("002.png", &fixtures::full_bleed_gradient(fixtures::TINY));
+        loose.file("ComicInfo.xml", COMIC_INFO.as_bytes());
+        let mut packed = space.cbz("volume-b");
+        packed
+            .page("001.png", &fixtures::cheap_page())
+            .page("002.png", &fixtures::full_bleed_gradient(fixtures::TINY))
+            .file("ComicInfo.xml", COMIC_INFO.as_bytes());
+        let packed = packed.write();
+
+        let report = tonefit::run(&tonefit::Request {
+            envelope,
+            ..fixtures::request(&space, [loose.path(), packed.as_path()])
+        })
+        .expect("处理应当成功");
+
+        let path = if envelope {
+            "--envelope"
+        } else {
+            "默认那条路"
+        };
+        let directory = &report.volumes[0];
+        let written: u64 = walkdir::WalkDir::new(&directory.output)
+            .into_iter()
+            .map(|entry| entry.expect("遍历输出目录"))
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| entry.metadata().expect("读输出成员的大小").len())
+            .sum();
+        assert_eq!(directory.output_bytes, Some(written), "{path}：目录卷");
+
+        let archive = &report.volumes[1];
+        let members: u64 = fixtures::read_cbz(&archive.output)
+            .iter()
+            .map(|(_, bytes)| bytes.len() as u64)
+            .sum();
+        assert_eq!(archive.output_bytes, Some(members), "{path}：归档卷");
+        let on_disk = std::fs::metadata(&archive.output)
+            .expect("读输出归档的大小")
+            .len();
+        assert!(
+            members < on_disk,
+            "{path}：夹具不对，归档没有比成员之和多出容器那一截（{members} 对 {on_disk}）"
+        );
+
+        assert_eq!(
+            report.output_bytes(),
+            Some(written + members),
+            "{path}：整趟的合计不是各卷之和"
+        );
+    }
+}
+
 #[test]
 fn a_directory_and_an_archive_can_be_named_in_the_same_run() {
     let space = Workspace::new();

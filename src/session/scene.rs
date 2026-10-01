@@ -1459,6 +1459,7 @@ fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>, run: &Ru
         resizes: 0,
         cached_references: 0,
         fell_back_to_serial: None,
+        output_bytes: None,
         timing: volume.timing(),
     }
 }
@@ -1523,6 +1524,7 @@ fn volume_report(
         resizes: decoded,
         cached_references: decoded,
         fell_back_to_serial: None,
+        output_bytes: None,
         timing: volume.timing(),
     }
 }

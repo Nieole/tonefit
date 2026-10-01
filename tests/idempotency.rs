@@ -74,6 +74,50 @@ fn a_dry_run_predicts_the_skip() {
     );
 }
 
+/// **整卷跳过的卷也说得出它的产物有多大**（say-and-stop/06）：产物就是上一趟写在那儿的那一份，
+/// 比对时读记录顺手量下来——各页的长度、透传文件的字节数，与写它那一趟报的同一个数。
+/// 两条路（默认按页比、`--envelope` 按卷比）、两种容器上都是；dry-run 预告的跳过同样说得出——
+/// 那几个数不要编任何东西。
+#[test]
+fn a_skipped_volume_reports_the_output_it_left_in_place() {
+    let cases: [(&str, bool, bool); 3] = [
+        ("目录卷 · 默认那条路", false, false),
+        ("目录卷 · --envelope", false, true),
+        ("归档卷 · 默认那条路", true, false),
+    ];
+    for (what, archive, envelope) in cases {
+        let space = Workspace::new();
+        let directory = two_pages_and_an_extra(&space);
+        let input = if archive {
+            let mut cbz = space.cbz("volume-b");
+            cbz.page("001.png", &fixtures::solid(fixtures::TINY, 128))
+                .page("002.png", &fixtures::screentone(fixtures::TINY))
+                .file("ComicInfo.xml", b"<ComicInfo/>");
+            cbz.write()
+        } else {
+            directory.path().to_owned()
+        };
+        let request = |mode| Request {
+            envelope,
+            mode,
+            ..fixtures::request(&space, [input.as_path()])
+        };
+        let written = tonefit::run(&request(Mode::Process)).expect("处理应当成功");
+        let wrote = written.volumes[0].output_bytes;
+        assert!(wrote.is_some(), "{what}：写它那一趟说不出产物体积");
+
+        for mode in [Mode::Process, Mode::DryRun] {
+            let again = tonefit::run(&request(mode)).expect("处理应当成功");
+            let skipped = &again.volumes[0];
+            assert!(skipped.skipped(), "{what}：夹具不对，这一趟没有整卷跳过");
+            assert_eq!(
+                skipped.output_bytes, wrote,
+                "{what}（{mode:?}）：跳过的卷报的产物体积与写它那一趟不同"
+            );
+        }
+    }
+}
+
 /// 参数哈希收的是**会改变输出**的每一项：其中任何一项变了，上一趟的输出就过期了。
 #[test]
 fn a_changed_parameter_redoes_the_volume() {

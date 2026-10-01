@@ -809,6 +809,7 @@ mod tests {
             resizes: 0,
             cached_references: 0,
             fell_back_to_serial: None,
+            output_bytes: None,
             timing: crate::VolumeTiming::default(),
         }
     }
