@@ -1,0 +1,41 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-magenta b
+# f = c-yellow b
+# g = c-gray d
+# h = c-fg b
+# i = c-red b
+# j = c-red
+# k = c-yellow
+# l = c-blue d
+# m = c-lgreen
+# n = c-white
+# o = c-lgreen b
+# p = c-blue b
+".aabbccccccc................ddddddddddddddddddddddddddddddddddddddddd."
+"ccee..............ffffcccccccccccccccccccccccccccccccccccccccccccccccc"
+"c.ccccdggggggggghhhccccccchhhhhhhhhdddcccccccc....................c"
+"c.cccchhhiiiiiijjjjjjccckkkkk.....................................c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"kkffff................kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+"k.ffhhhhhhhhh..dddd....cccddddlll..ccccccccf.........................k"
+"k.f......f............f..........f.......................k"
+"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkccccccccccckkk"
+"mmhhcccccccmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmaaaaaammm"
+"m.cccffhhhhhccccccccccccjjjjjj.ccccccccccccccccccccccccccccccccccccccc.."
+"m.....ccffddddddddddddd.cccccccc.........ffff........................."
+"m.......ccccnnnnnnnnnnnn.cccccccc..gggggggggggggggggggg..."
+"m.......ccccnnnnnnnnnnnn.cccccccc..gggggggggggggggggggg..."
+"m.......ccccnnnnnnnnnnnn.cccccccc..gggggggggggggggggggg..."
+"m.......ccccnnnnnnnnnnnn.cccccccc..gggggggggggggggggggg..m"
+"m.oo....ccffpppppppppppp.cccccccc..kkkkkkkkkkkkkkkkkkk......m"
+"m.......ccccnnnnnnnnnnnn.cccccccc..ggg...................................m"
+"m.......ccccnnnnnnnnnnnn.cccccccc..ggg...................................m"
+"m.......ccccnnnnnnnnnnnn.cccccccc..ggg...................................m"
+"m.......ccccnnnnnnnnnnnn.cccccccc..ggg...................................m"
+"m.......ccccnnnnnnnnnnnn.cccccccc..ggg...................................m"
+"mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+".c.cccccc.c.cccccccc.c.cccccc.c.cccccccc.c.cccccccc............."

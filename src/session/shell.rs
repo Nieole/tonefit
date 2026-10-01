@@ -266,6 +266,19 @@ mod tests {
         assert_scene("envelope", 80, 24);
     }
 
+    /// **「整卷统一灰阶 + 等待确认」120×36 与 80×24 逐格相等**（`design-parity/08`，停车场 Q900、Q902）：
+    /// 差异大的页与代表页只有整卷统一灰阶那一趟才有，而它同样停得到确认点上——
+    /// 确认条头一行在需留意几页之后另报「与其他页差异大 N」，**需留意几页把代表页数进去**
+    /// （与每页结果抬头同一个数，`CONTEXT.md` 的《需留意的页》）；那一卷所在的目录展开着，
+    /// 卷行带着代表页那一列、行尾说等待确认。
+    ///
+    /// **80 列那一档确认条收成短句**，「与其他页差异大」那一截随长句一起让掉，需留意几页照旧是那个数。
+    #[test]
+    fn the_envelope_deciding_scene_matches_its_design_snapshot_wide_and_narrow() {
+        assert_scene("envelope-deciding", 120, 36);
+        assert_scene("envelope-deciding", 80, 24);
+    }
+
     /// **「窗口太小」转换中那一份逐格相等**（票面第一条）：中间那一行是总进度。
     #[test]
     fn the_too_small_screen_while_running_matches_its_design_snapshot() {

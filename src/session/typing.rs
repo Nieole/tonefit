@@ -9,8 +9,8 @@
 //!
 //! 按 `Tab` 只列打到的那一层（ADR 0009；[`super::complete::level`]，大小写认不认在那里探）：
 //! 候选多于一个时留着这一份、屏底上方弹出**补全框**，再按 `Tab` 轮到下一个（[`InputLine::cycle`]）；
-//! 只有一个就直接补上；一个都没有屏底说一句。打一个字、退一个字、删一段都把这一份作废
-//! ——下一次 `Tab` 重新列一遍。
+//! 只有一个就直接补上；一个都没有就说一句（画在输入行右端那几件的位置上）。
+//! 打一个字、退一个字、删一段都把这一份作废——下一次 `Tab` 重新列一遍。
 //!
 //! # 确定与取消
 //!
@@ -32,8 +32,9 @@ use super::state::{Field, NamedPath, Session};
 use super::tone::Tone;
 use super::view::Cursor;
 
-/// 「这里没有以「…」开头的项」在屏底占多久（设计稿 `complete` 里那 1600 毫秒）。
-const NO_MATCH_LINGERS: Duration = Duration::from_millis(1600);
+/// 「这里没有以「…」开头的项」占多久（设计稿 `complete` 里那 1600 毫秒）。输入行这一刻占着屏底，
+/// 那一句画在输入行右端那几件的位置上（`super::shell::footer`，停车场 Q792），到点那几件退回来。
+pub(super) const NO_MATCH_LINGERS: Duration = Duration::from_millis(1600);
 
 /// 补全框至多露几行（设计稿 `drawCompletions` 的 `vis`）。
 #[cfg_attr(
@@ -163,8 +164,9 @@ impl Completion {
         }
     }
 
-    /// 旁边那一句：是压缩包就说「压缩包」（措辞在 [`NamedPath::kind_of`]），文件夹与别的文件不说。
-    /// 设计稿把每一个文件都标成压缩包（停车场 Q791），这里按扩展名认。
+    /// 旁边那一句：是压缩包就说「压缩包」（措辞在 [`NamedPath::kind_of`]），文件夹与别的文件不说
+    /// ——按扩展名认，与卷列表同一把尺子（设计稿 `drawCompletions`：`答案.txt`、`README.md` 不标；
+    /// 停车场 Q791）。
     pub fn label(&self) -> Option<&'static str> {
         let path = Path::new(&self.name);
         (!self.directory && tonefit::is_archive(path)).then(|| NamedPath::kind_of(path))
@@ -629,7 +631,7 @@ mod tests {
                 .is_empty(),
             "打一个字候选作废"
         );
-        // 只有一个对得上就直接补上，不留候选；一个都没有屏底说一句、缓冲不动。
+        // 只有一个对得上就直接补上，不留候选；一个都没有说一句、缓冲不动。
         session.perform(Deed::DeleteWord, now);
         for glyph in "火".chars() {
             session.perform(Deed::Typed(glyph), now);

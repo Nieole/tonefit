@@ -785,10 +785,12 @@ mod tests {
         let manifest = json("manifest.json");
         let snapshots = manifest["snapshots"].as_array().expect("快照清单");
         let sequences = manifest["sequences"].as_array().expect("序列清单");
+        // 有场景数据的场景几个：主稿与验收线各一份快照，外加窗口太小两份。
+        let scenes = 13;
         assert_eq!(
             snapshots.len(),
-            12 * 2 + 2,
-            "12 个场景 × 两种尺寸外加窗口太小两份"
+            scenes * 2 + 2,
+            "{scenes} 个场景 × 两种尺寸外加窗口太小两份"
         );
         assert!(!sequences.is_empty());
 
@@ -872,7 +874,7 @@ mod tests {
                 scene_data(data);
             }
         }
-        assert_eq!(seen_versions, 12 * 2);
+        assert_eq!(seen_versions, scenes * 2);
         for entry in sequences {
             let name = entry["name"].as_str().expect("序列名");
             let expected = sequence(name);

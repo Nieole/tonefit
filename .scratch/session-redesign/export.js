@@ -40,9 +40,9 @@ const MAIN = [120, 36];
 const NARROW = [80, 24];
 const TINY = [56, 14];
 
-/** 要导出的快照：12 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
+/** 要导出的快照：13 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting']
+  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -131,6 +131,8 @@ const SEQUENCES = [
   { name: 'ended-search-nothing', scene: 'ended', size: MAIN, steps: [{ key: '/' }, { type: '不存在' }, { key: 'Enter' }], says: '没有找到和「不存在」相关的卷或文件夹' },
   { name: 'search-Escape', scene: 'search', size: MAIN, steps: k('Escape'), says: '[/ → 搜索]' },
   { name: 'search-Enter-Escape', scene: 'search', size: MAIN, steps: k('Enter', 'Escape'), says: { has: ['搜索结果 1/1'], lacks: ['/海贼 ⋅ n N'] } },
+  // 删一段之后此刻搜的那一句跟着短：下划线与框底边那一截当场没了（design-parity/08，Q866）
+  { name: 'search-C-w', scene: 'search', size: MAIN, steps: k('C-w'), says: { has: ['/▏'], lacks: ['/海贼 ⋅ n N'] } },
 
   // ── 等待确认（spec；12） ──
   { name: 'deciding-v', scene: 'deciding', size: MAIN, steps: k('v'), says: '等待确认：还没写入任何文件' },
@@ -144,6 +146,8 @@ const SEQUENCES = [
   { name: 'deciding-x-advance-s-l', scene: 'deciding', size: MAIN, steps: [{ key: 'x' }, { advance: 30 }, { key: 's' }, { key: 'l' }], says: { has: ['完成 1 卷 ⋅ 跳过 4 卷 ⋅ 等待 78 卷', '✓ 第06卷', '已分析，未写出'] } },
   { name: 'deciding-x-advance-s-trialed-l-a', scene: 'deciding', size: MAIN, steps: [{ key: 'x' }, { advance: 30 }, ...k('s', 'l', 'j', 'j', 'j', 'j', 'j', 'j', 'l', 'a')], says: { has: ['哆啦A梦 › 第06卷', '[全部页]', '1 of 224'] } },
   { name: 'deciding-2', scene: 'deciding', size: MAIN, steps: k('2'), says: '? 等待确认 ⋅' },
+  // 整卷统一灰阶那一趟停在确认点上按 v：每页结果抬头报的需留意几页与确认条同一个数，代表页数进去（design-parity/08，Q902）
+  { name: 'envelope-deciding-v', scene: 'envelope-deciding', size: MAIN, steps: k('v'), says: { has: ['需留意的页 3', '需留意 3/224 页'] } },
 
   // ── 停止、`q`（spec；08；10） ──
   { name: 'running-s', scene: 'running', size: MAIN, steps: k('s'), says: '正在停止：' },
@@ -158,6 +162,10 @@ const SEQUENCES = [
   { name: 'fresh-help', scene: 'fresh', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'survey-help', scene: 'survey', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'deciding-help', scene: 'deciding', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
+  // 掀着覆盖层答话：屏底照样说那一句回话，与按停止一个待遇（design-parity/08，Q903）
+  { name: 'deciding-help-x', scene: 'deciding', size: MAIN, steps: k('?', 'x'), says: { has: ['全部按键 ⋅ vim 风格', '写出这一卷（不用重新分析）'], lacks: ['[Esc → 关闭]'] } },
+  { name: 'deciding-help-a', scene: 'deciding', size: MAIN, steps: k('?', 'a'), says: { has: ['全部按键 ⋅ vim 风格', '全部写出：后面的卷不再询问'], lacks: ['[Esc → 关闭]'] } },
+  { name: 'deciding-help-s', scene: 'deciding', size: MAIN, steps: k('?', 's'), says: { has: ['全部按键 ⋅ vim 风格', '已结束预览：这一卷不写出，后面的卷也不处理'], lacks: ['[Esc → 关闭]'] } },
   { name: 'ended-help', scene: 'ended', size: MAIN, steps: k('?'), says: '全部按键 ⋅ vim 风格' },
   { name: 'help-j', scene: 'help', size: MAIN, steps: k('j'), says: '1–31 of 31' },
   { name: 'help-narrow-j-k', scene: 'help', size: NARROW, steps: k('j', 'k'), says: '1–' },
@@ -166,6 +174,8 @@ const SEQUENCES = [
   { name: 'help-question', scene: 'help', size: MAIN, steps: k('?'), says: '[自动滚动]' },
   { name: 'help-narrow-j', scene: 'help', size: NARROW, steps: k('j'), says: '2–' },
   { name: 'help-narrow-wheel-down', scene: 'help', size: NARROW, steps: [{ wheel: 1 }], says: '4–' },
+  // 覆盖层上只认 gg：gt 不在它底下换视图（design-parity/08，Q793）
+  { name: 'help-gt', scene: 'help', size: MAIN, steps: k('g', 't'), says: { has: ['全部按键 ⋅ vim 风格', '┌ 转换 ⋅'], lacks: ['┌ 预设'] } },
   { name: 'add-F1', scene: 'add', size: MAIN, steps: k('F1'), says: '全部按键 ⋅ vim 风格' },
   { name: 'add-F1-j', scene: 'add', size: MAIN, steps: k('F1', 'j'), says: '1–26 of 26' },
   { name: 'add-narrow-F1-j', scene: 'add', size: NARROW, steps: k('F1', 'j'), says: '2–' },
@@ -180,6 +190,12 @@ const SEQUENCES = [
   { name: 'fresh-o-Tab-Tab', scene: 'fresh', size: MAIN, steps: k('o', 'Tab', 'Tab'), says: '2 of 4' },
   { name: 'fresh-o-Tab-Tab-C-w', scene: 'fresh', size: MAIN, steps: k('o', 'Tab', 'Tab', 'C-w'), says: '添加路径  ~/' },
   { name: 'add-wheel-down', scene: 'add', size: MAIN, steps: [{ wheel: 1 }], says: { has: ['4 of 4', '添加路径  ~/Comics/火之鸟/'] } },
+  // 补全框里挪候选只认 ↓／↑，C-n 不挪（design-parity/08，Q798）
+  { name: 'add-C-n', scene: 'add', size: MAIN, steps: k('C-n'), says: { has: ['1 of 4'], lacks: ['2 of 4'] } },
+  // 补全框里只有归档标「压缩包」：字体包.zip 标，答案.txt、README.md 不标（design-parity/08，Q791）
+  { name: 'fresh-o-files-Tab', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: '漫画库/' }, { key: 'Tab' }], says: { has: ['字体包.zip  压缩包', 'README.md', '答案.txt'], lacks: ['答案.txt  压缩包', 'README.md  压缩包'] } },
+  // 一条都对不上时那一句画在输入行右端那几件的位置，看得见（design-parity/08，Q792）
+  { name: 'fresh-o-unmatched-Tab', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: '没有这个' }, { key: 'Tab' }], says: { has: ['添加路径  ~/没有这个▏', '这里没有以「没有这个」开头的项'], lacks: ['[Tab → 补全]'] } },
   { name: 'fresh-o-ArrowLeft-ArrowRight', scene: 'fresh', size: MAIN, steps: k('o', 'ArrowLeft', 'ArrowRight'), says: { has: ['添加路径  ~/▏'], lacks: ['~/h', '~/l'] } },
   { name: 'fresh-o-missing', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: '没有这个' }, { key: 'Enter' }], says: '找不到「~/没有这个」' },
   { name: 'fresh-o-added', scene: 'fresh', size: MAIN, steps: [{ key: 'o' }, { type: 'Comics/火之鸟' }, { key: 'Enter' }], says: '已添加 ~/Comics/火之鸟' },
@@ -218,6 +234,10 @@ const SEQUENCES = [
   { name: 'running-2-fit-l', scene: 'running', size: MAIN, steps: k('2', 'j', 'j', 'j', 'l'), says: '[⏎ → 查看]' },
   { name: 'running-2-fit-l-l', scene: 'running', size: MAIN, steps: k('2', 'j', 'j', 'j', 'l', 'l'), says: '设置已锁定，结束后才能修改' },
   { name: 'config-c', scene: 'config', size: MAIN, steps: k('c'), says: '已生成灰阶测试图' },
+  // 画质判定参数那一组在详情栏里怎么说：行内那一句整句摊开、与报告抬头逐字相同，外加此刻与上一趟那一句；
+  // 选项冲突一条都没咬上时那一行是界面自己的「无」、说明换一句（design-parity/08：配置视图里每一句都有快照钉着）
+  { name: 'config-h-G', scene: 'config', size: MAIN, steps: k('h', 'G'), says: { has: ['选项冲突 ⋅ 画质判定参数', '与报告抬头里的这一行逐字相同', '这里是此刻的设置，下一趟照它判定'] } },
+  { name: 'config-h-l-k-l-G', scene: 'config', size: MAIN, steps: k('h', 'l', 'k', 'l', 'G'), says: { has: ['选项冲突 ⋅ 画质判定参数', '当前这组设置之间没有互相冲突的组合'], lacks: ['与报告抬头里的这一行逐字相同'] } },
   { name: 'config-click-row', scene: 'config', size: MAIN, steps: [{ click: [10, 7] }], says: { has: ['[l → 展开]', '❯ 可见灰阶数'] } },
   { name: 'config-click-choice', scene: 'config', size: MAIN, steps: [{ click: [70, 6] }], says: '❯   height' },
 
@@ -230,6 +250,11 @@ const SEQUENCES = [
   { name: 'config-p-G-dd', scene: 'config', size: MAIN, steps: k('p', 'G', 'd', 'd'), says: { has: ['❯   ＋ 把当前设置保存为预设', '预设 ⋅ 2 个'], lacks: ['[dd → 删除]', '再按一次 dd'] } },
   { name: 'config-p-save', scene: 'config', size: MAIN, steps: k('p', 'G', 'Enter'), says: '保存为预设，名称  ' },
   { name: 'config-p-save-named', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '插图' }, { key: 'Enter' }], says: '已保存预设「插图」' },
+  // 同名覆盖要按两下：第一下在预设栏里问一句、输入行与名字留着，第二下才盖（design-parity/08，Q894）
+  { name: 'config-p-save-taken', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }], says: { has: ['再按一次 ⏎ 覆盖「漫画」：覆盖后无法恢复，其他预设不受影响', '保存为预设，名称  漫画▏'], lacks: ['已保存预设', '再按一次 dd'] } },
+  // 重开起名那一行，上一次撞名等着的那一下就作废：那一问没了（Esc 关掉之后它还挂着，Q1189）
+  { name: 'config-p-save-taken-Escape-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'Enter' }], says: { has: ['保存为预设，名称  ▏'], lacks: ['再按一次'] } },
+  { name: 'config-p-save-taken-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Enter' }], says: { has: ['已保存预设「漫画」', '预设 ⋅ 2 个'], lacks: ['再按一次'] } },
   { name: 'config-p-p', scene: 'config', size: MAIN, steps: k('p', 'p'), says: '[l → 展开]' },
   { name: 'config-p-h', scene: 'config', size: MAIN, steps: k('p', 'h'), says: '[l → 展开]' },
   { name: 'config-p-click-preset', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { click: [70, 6] }], says: '❯   画集' },
@@ -478,6 +503,14 @@ async function stage(scene, size) {
   return page;
 }
 
+/**
+ * 一份伪 DOM 用完就关掉，而且**留下来的东西一样都不能是它那个 realm 造的**：设计稿里的数组
+ * （`S.size.slice()`、`PRESETS.map(…)` 交出来的）经原型链拽着它整个全局对象，留一个就留下整份伪 DOM——
+ * 导出两趟（`npm test`）的一百多份合起来顶到堆的上限。要留的先抄成 Node 这一侧的普通数据（`toNodeSide`）。
+ */
+const release = (page) => page.window.close();
+const toNodeSide = (value) => JSON.parse(JSON.stringify(value));
+
 const grids = (page) => {
   const scr = withVersionPlaceholder(page.frame(), page.design.VERSION);
   return { text: `${textGrid(scr)}\n`, style: styleGrid(scr) };
@@ -504,10 +537,15 @@ async function exportAll(out = OUT) {
     if (size === MAIN) write(path.join(out, 'scenes', `${scene}.json`), json(sceneData(page)));
     if (page.errors.length) throw new Error(`${scene} ${size.join('x')} 画的时候报错：${page.errors[0].stack || page.errors[0]}`);
     manifest.snapshots.push({ scene, size, text: `snapshots/${scene}.${size.join('x')}.text.txt`, style: `snapshots/${scene}.${size.join('x')}.style.txt`, ...(size === MAIN ? { data: `scenes/${scene}.json` } : {}) });
+    release(page);
   }
   const baseline = new Map();
   for (const seq of SEQUENCES) {
-    if (!baseline.has(seq.scene)) baseline.set(seq.scene, sceneData(await stage(seq.scene, MAIN)));
+    if (!baseline.has(seq.scene)) {
+      const start = await stage(seq.scene, MAIN);
+      baseline.set(seq.scene, toNodeSide(sceneData(start)));
+      release(start);
+    }
     const page = await stage(seq.scene, seq.size);
     const advanced = replay(page, seq.steps);
     const { text, style } = grids(page);
@@ -522,7 +560,8 @@ async function exportAll(out = OUT) {
     if (advanced && JSON.stringify(advanced.run) !== JSON.stringify(data.run)) data.advanced = { now_ms: advanced.now_ms, run: advanced.run };
     write(`${base}.scene.json`, json(unchangedElided(data, baseline.get(seq.scene))));
     // `size` 是起点场景摆在多大的屏上，`final_size` 是走完那一屏多大：只有换尺寸那几串两者不同
-    manifest.sequences.push({ name: seq.name, scene: seq.scene, size: seq.size, final_size: page.design.S.size.slice(), steps: seq.steps, says: seq.says, text: `sequences/${seq.name}.text.txt`, style: `sequences/${seq.name}.style.txt`, data: `sequences/${seq.name}.scene.json` });
+    manifest.sequences.push({ name: seq.name, scene: seq.scene, size: seq.size, final_size: toNodeSide(page.design.S.size), steps: seq.steps, says: seq.says, text: `sequences/${seq.name}.text.txt`, style: `sequences/${seq.name}.style.txt`, data: `sequences/${seq.name}.scene.json` });
+    release(page);
   }
   write(path.join(out, 'manifest.json'), json(manifest));
   return { manifest };

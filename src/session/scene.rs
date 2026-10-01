@@ -883,7 +883,7 @@ fn offered(input: &Value) -> Option<Offered<'_>> {
     })
 }
 
-/// **假盘上有什么**：12 个场景的场景数据提到的每一处的并集，`~/` 写法。
+/// **假盘上有什么**：13 个场景的场景数据提到的每一处的并集，`~/` 写法。
 ///
 /// 设计稿的假盘本身没有导出（停车场 Q764），能从场景数据认出来的是：处理路径（文件夹还是压缩包）、
 /// 清点清单上的分区、目录与卷根、备注里的路径（无法访问的地方是目录，非漫画文件是文件）、
@@ -1339,7 +1339,7 @@ fn non_volume_reason_of(sentence: &str) -> NonVolumeReason {
     }
 }
 
-/// **普通一页的输出尺寸**：12 个场景的场景数据里头一张不超宽的页说的那个。
+/// **普通一页的输出尺寸**：13 个场景的场景数据里头一张不超宽的页说的那个。
 /// 没开着的卷补的页都按它（与[假盘](disk)同一个道理：一趟只算一次，取自全部场景的并集——
 /// 单看一个场景，等待确认那一景只有一张超宽的页可查）。
 fn typical_size() -> Size {
@@ -2166,11 +2166,11 @@ mod tests {
         assert_eq!(key_named("ArrowRight"), Input::Arrow('l'));
     }
 
-    /// **12 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
+    /// **13 个场景的那一趟与设置都摆得出来**，各与自己的场景数据逐项相同（票面第一、二条）。
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 12, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 13, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }

@@ -232,6 +232,25 @@
       "style": "snapshots/extracting.80x24.style.txt"
     },
     {
+      "scene": "envelope-deciding",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/envelope-deciding.120x36.text.txt",
+      "style": "snapshots/envelope-deciding.120x36.style.txt",
+      "data": "scenes/envelope-deciding.json"
+    },
+    {
+      "scene": "envelope-deciding",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/envelope-deciding.80x24.text.txt",
+      "style": "snapshots/envelope-deciding.80x24.style.txt"
+    },
+    {
       "scene": "fresh",
       "size": [
         56,
@@ -1698,6 +1717,34 @@
       "data": "sequences/search-Enter-Escape.scene.json"
     },
     {
+      "name": "search-C-w",
+      "scene": "search",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-w"
+        }
+      ],
+      "says": {
+        "has": [
+          "/▏"
+        ],
+        "lacks": [
+          "/海贼 ⋅ n N"
+        ]
+      },
+      "text": "sequences/search-C-w.text.txt",
+      "style": "sequences/search-C-w.style.txt",
+      "data": "sequences/search-C-w.scene.json"
+    },
+    {
       "name": "deciding-v",
       "scene": "deciding",
       "size": [
@@ -1971,6 +2018,32 @@
       "data": "sequences/deciding-2.scene.json"
     },
     {
+      "name": "envelope-deciding-v",
+      "scene": "envelope-deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "v"
+        }
+      ],
+      "says": {
+        "has": [
+          "需留意的页 3",
+          "需留意 3/224 页"
+        ]
+      },
+      "text": "sequences/envelope-deciding-v.text.txt",
+      "style": "sequences/envelope-deciding-v.style.txt",
+      "data": "sequences/envelope-deciding-v.scene.json"
+    },
+    {
       "name": "running-s",
       "scene": "running",
       "size": [
@@ -2187,6 +2260,102 @@
       "data": "sequences/deciding-help.scene.json"
     },
     {
+      "name": "deciding-help-x",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        },
+        {
+          "key": "x"
+        }
+      ],
+      "says": {
+        "has": [
+          "全部按键 ⋅ vim 风格",
+          "写出这一卷（不用重新分析）"
+        ],
+        "lacks": [
+          "[Esc → 关闭]"
+        ]
+      },
+      "text": "sequences/deciding-help-x.text.txt",
+      "style": "sequences/deciding-help-x.style.txt",
+      "data": "sequences/deciding-help-x.scene.json"
+    },
+    {
+      "name": "deciding-help-a",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        },
+        {
+          "key": "a"
+        }
+      ],
+      "says": {
+        "has": [
+          "全部按键 ⋅ vim 风格",
+          "全部写出：后面的卷不再询问"
+        ],
+        "lacks": [
+          "[Esc → 关闭]"
+        ]
+      },
+      "text": "sequences/deciding-help-a.text.txt",
+      "style": "sequences/deciding-help-a.style.txt",
+      "data": "sequences/deciding-help-a.scene.json"
+    },
+    {
+      "name": "deciding-help-s",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "?"
+        },
+        {
+          "key": "s"
+        }
+      ],
+      "says": {
+        "has": [
+          "全部按键 ⋅ vim 风格",
+          "已结束预览：这一卷不写出，后面的卷也不处理"
+        ],
+        "lacks": [
+          "[Esc → 关闭]"
+        ]
+      },
+      "text": "sequences/deciding-help-s.text.txt",
+      "style": "sequences/deciding-help-s.style.txt",
+      "data": "sequences/deciding-help-s.scene.json"
+    },
+    {
       "name": "ended-help",
       "scene": "ended",
       "size": [
@@ -2356,6 +2525,38 @@
       "text": "sequences/help-narrow-wheel-down.text.txt",
       "style": "sequences/help-narrow-wheel-down.style.txt",
       "data": "sequences/help-narrow-wheel-down.scene.json"
+    },
+    {
+      "name": "help-gt",
+      "scene": "help",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "g"
+        },
+        {
+          "key": "t"
+        }
+      ],
+      "says": {
+        "has": [
+          "全部按键 ⋅ vim 风格",
+          "┌ 转换 ⋅"
+        ],
+        "lacks": [
+          "┌ 预设"
+        ]
+      },
+      "text": "sequences/help-gt.text.txt",
+      "style": "sequences/help-gt.style.txt",
+      "data": "sequences/help-gt.scene.json"
     },
     {
       "name": "add-F1",
@@ -2664,6 +2865,106 @@
       "text": "sequences/add-wheel-down.text.txt",
       "style": "sequences/add-wheel-down.style.txt",
       "data": "sequences/add-wheel-down.scene.json"
+    },
+    {
+      "name": "add-C-n",
+      "scene": "add",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "C-n"
+        }
+      ],
+      "says": {
+        "has": [
+          "1 of 4"
+        ],
+        "lacks": [
+          "2 of 4"
+        ]
+      },
+      "text": "sequences/add-C-n.text.txt",
+      "style": "sequences/add-C-n.style.txt",
+      "data": "sequences/add-C-n.scene.json"
+    },
+    {
+      "name": "fresh-o-files-Tab",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "漫画库/"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "字体包.zip  压缩包",
+          "README.md",
+          "答案.txt"
+        ],
+        "lacks": [
+          "答案.txt  压缩包",
+          "README.md  压缩包"
+        ]
+      },
+      "text": "sequences/fresh-o-files-Tab.text.txt",
+      "style": "sequences/fresh-o-files-Tab.style.txt",
+      "data": "sequences/fresh-o-files-Tab.scene.json"
+    },
+    {
+      "name": "fresh-o-unmatched-Tab",
+      "scene": "fresh",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "没有这个"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "添加路径  ~/没有这个▏",
+          "这里没有以「没有这个」开头的项"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/fresh-o-unmatched-Tab.text.txt",
+      "style": "sequences/fresh-o-unmatched-Tab.style.txt",
+      "data": "sequences/fresh-o-unmatched-Tab.scene.json"
     },
     {
       "name": "fresh-o-ArrowLeft-ArrowRight",
@@ -3672,6 +3973,77 @@
       "data": "sequences/config-c.scene.json"
     },
     {
+      "name": "config-h-G",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "G"
+        }
+      ],
+      "says": {
+        "has": [
+          "选项冲突 ⋅ 画质判定参数",
+          "与报告抬头里的这一行逐字相同",
+          "这里是此刻的设置，下一趟照它判定"
+        ]
+      },
+      "text": "sequences/config-h-G.text.txt",
+      "style": "sequences/config-h-G.style.txt",
+      "data": "sequences/config-h-G.scene.json"
+    },
+    {
+      "name": "config-h-l-k-l-G",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "G"
+        }
+      ],
+      "says": {
+        "has": [
+          "选项冲突 ⋅ 画质判定参数",
+          "当前这组设置之间没有互相冲突的组合"
+        ],
+        "lacks": [
+          "与报告抬头里的这一行逐字相同"
+        ]
+      },
+      "text": "sequences/config-h-l-k-l-G.text.txt",
+      "style": "sequences/config-h-l-k-l-G.style.txt",
+      "data": "sequences/config-h-l-k-l-G.scene.json"
+    },
+    {
       "name": "config-click-row",
       "scene": "config",
       "size": [
@@ -3962,6 +4334,138 @@
       "text": "sequences/config-p-save-named.text.txt",
       "style": "sequences/config-p-save-named.style.txt",
       "data": "sequences/config-p-save-named.scene.json"
+    },
+    {
+      "name": "config-p-save-taken",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": {
+        "has": [
+          "再按一次 ⏎ 覆盖「漫画」：覆盖后无法恢复，其他预设不受影响",
+          "保存为预设，名称  漫画▏"
+        ],
+        "lacks": [
+          "已保存预设",
+          "再按一次 dd"
+        ]
+      },
+      "text": "sequences/config-p-save-taken.text.txt",
+      "style": "sequences/config-p-save-taken.style.txt",
+      "data": "sequences/config-p-save-taken.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Escape-Enter",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": {
+        "has": [
+          "保存为预设，名称  ▏"
+        ],
+        "lacks": [
+          "再按一次"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Escape-Enter.text.txt",
+      "style": "sequences/config-p-save-taken-Escape-Enter.style.txt",
+      "data": "sequences/config-p-save-taken-Escape-Enter.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Enter",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": {
+        "has": [
+          "已保存预设「漫画」",
+          "预设 ⋅ 2 个"
+        ],
+        "lacks": [
+          "再按一次"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Enter.text.txt",
+      "style": "sequences/config-p-save-taken-Enter.style.txt",
+      "data": "sequences/config-p-save-taken-Enter.scene.json"
     },
     {
       "name": "config-p-p",

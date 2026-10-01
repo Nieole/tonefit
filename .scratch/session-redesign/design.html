@@ -565,6 +565,9 @@ function envelopeOver(list, mix) {
   const d = driver || list.find((pg) => pg.why === 'envelope');
   if (d) { d.driver = true; d.kinds.push('driver'); d.notes.push('代表页'); }
 }
+// 需留意的页（CONTEXT《需留意的页》）：要紧在哪一处的那几页，加上代表页（它是这一卷的答案，非在不可）。
+// 确认条上「需留意的页」与每页结果抬头「需留意 N/M 页」、只看需留意的页那一列都数它，一处数法（停车场 Q902）
+const notableOf = (p) => !!(p.tone || p.driver);
 function tallyOf(v) {
   const m = new Map();
   for (const pg of pagesOf(v)) if (pg.verdict) m.set(pg.verdict, (m.get(pg.verdict) || 0) + 1);
@@ -679,6 +682,8 @@ const PASSES = ['摊开', '查重', '分析', '写出'];
 const PASS_ST = { 摊开: 'c-green', 查重: 'c-magenta', 分析: 'c-blue', 写出: 'c-cyan' };
 const PASS_WHAT = { 摊开: '.rar / .7z 先整卷解到临时目录', 查重: '之前转换过、源和设置没变就跳过', 分析: '逐页解码、缩放，定下灰阶档位', 写出: '照定下的档位编码，写进输出目录' };
 const extracts = (v) => /\.(rar|7z)$/.test(v.root);
+// 一个文件是不是归档：只看扩展名、不分大小写（tonefit::is_archive 那一张表：cbz · zip · rar · 7z）
+const isArchive = (name) => /\.(cbz|zip|rar|7z)$/i.test(name);
 // 这一卷走哪几个环节；卷状态里的 `pass` 是其中第几个（-1 还没轮到，走完是它的个数）
 const passesOf = (v) => (extracts(v) ? PASSES : PASSES.slice(1));
 const passOf = (v, s) => passesOf(v)[s.pass];
@@ -899,7 +904,8 @@ const S = {
   curKey: 'out',
   follow: true,
   pages: null,                 // { vol, cursor, all }
-  cfg: { pane: 'left', cursor: 1, right: 0, drill: null, presets: false, pcursor: 0, applied: '漫画', armedDelete: null },
+  // armedDelete：dd 按过第一下、等着第二下的那一份（第几份）；armedSave：起名那一行上 ⏎ 撞上了同名、等着第二下的那个名字
+  cfg: { pane: 'left', cursor: 1, right: 0, drill: null, presets: false, pcursor: 0, applied: '漫画', armedDelete: null, armedSave: null },
   overlay: null,               // { kind:'help'|'note', from, note }
   input: null,                 // { kind:'add'|'edit'|'out'|'search', prompt, buf, cands, ci, target }
   search: null,                // { q }
@@ -930,6 +936,8 @@ const VERSION = '0.1.0';
 const key = (k) => [[k, 'c-fg b']];
 const hint = (k, what) => [['[', 'c-gray'], [k, 'c-fg'], [' → ' + what + ']', 'c-gray']];
 function toast(segs, ms = 2600) { S.toast = { segs, until: performance.now() + ms }; }
+// 此刻还占着屏底的那句回话（到点就没有了）
+const liveToast = () => (S.toast && S.toast.until > performance.now() ? S.toast : null);
 
 // 视口：从光标算出来，不记着（CONTEXT《视口》「滚动量是算出来的，不是记着的」）：光标落在格子
 // 最后一行上，格子高过 8 行时再留一行余量。与实现 `session::viewport::Viewport::with_margin` 同一个式子（停车场 Q775）
@@ -994,13 +1002,16 @@ function drawFooter(scr) {
     x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
     scr.put(x, y, '▏', FOCUS);
     // 右端那几件按输入行的用途摆（屏上不摆按不动的键，按得动的都摆）：`Tab` 只在补得出路径的那几种上，
-    // `C-w` 每一种都有，`⏎` 在搜索那一行上说「跳到结果」
-    const right = [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')]
+    // `C-w` 每一种都有，`⏎` 在搜索那一行上说「跳到结果」。
+    // 回话占着的那几秒，回话画在这几件的位置上：输入行开着时屏底只剩这一处说得出话
+    // （「这里没有以……开头的项」就落在这里，停车场 Q792）；到点退回那几件
+    const said = liveToast();
+    const right = said ? said.segs : [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')]
       .flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
     scr.line(W - 1 - segW(right), y, right);
     return;
   }
-  const t = S.toast && S.toast.until > performance.now() ? S.toast : null;
+  const t = liveToast();
   const maxW = W - 3 - (S.pending ? 6 : 0);
   let segs;
   if (t) segs = t.segs;
@@ -1306,7 +1317,7 @@ function drawList(scr, x, y, w, h) {
 function drawDecision(scr, x, y, w) {
   const r = S.run, v = r.tree.vols[r.cur], s = r.vs[r.cur];
   const pr = problemsOf(v);
-  const notable = pagesOf(v).filter((p) => p.tone).length;
+  const notable = pagesOf(v).filter(notableOf).length;
   scr.box(x, y, w, 4, { thick: true, st: 'c-yellow', title: [['需要确认', 'c-yellow b'], [' ⋅ 这一卷分析完了，要写出吗？', 'c-fg']], bottomRight: [['目前还没有写入任何文件', 'c-gray']] });
   if (w < 110) {
     scr.line(x + 2, y + 1, [['? ', 'c-yellow b'], [elide(volPath(v), 24), 'c-fg b'], ['  ', ''], ...tallySegs(s.tally, 2), ['  需留意的页 ', 'c-gray'], [String(notable), notable ? 'c-yellow b' : 'c-fg']], w - 4);
@@ -1322,7 +1333,6 @@ function drawPages(scr, x, y, w, h) {
   const P = S.pages, v = P.vol, r = S.run, s = stateOf(r, v);
   const all = pagesOf(v);
   const judged = s && s.tally;
-  const notableOf = (p) => p.tone || p.driver;
   const list = judged ? (P.all ? all : all.filter(notableOf)) : [];
   P.cursor = Math.max(0, Math.min(P.cursor, list.length - 1));
   const iw = w - 4, ih = h - 4;
@@ -1495,9 +1505,13 @@ function drawPresets(scr, x, y, w, h, focused) {
   scr.line(x + 2, yy, [[addCur && focused ? '❯ ' : '  ', CURSOR], ['  ', ''], ['＋ 把当前设置保存为预设', addCur ? 'c-green b' : 'c-green']], iw);
   yy += 2;
   for (const l of wrap('使用预设会替换全部设备和处理选项：预设里没设置的项恢复默认，路径不受影响。保存预设时只记录设置过的项。删除或覆盖预设需要按两次确认。', iw - 2)) scr.line(x + 2, yy++, [[l, 'c-white']], iw);
-  if (S.cfg.armedDelete != null) {
+  // 等着第二下的那一问：删一份（dd），或者存那一下撞上了同名的那一份（⏎）——同一副骨架，同一处。
+  // 覆盖那一问也写在这一栏里：那一刻屏底让给了输入行，说给屏底等于一个字都没说（停车场 Q894）
+  const asking = S.cfg.armedDelete != null ? ['dd', '删除', PRESETS[S.cfg.armedDelete].name] : S.cfg.armedSave != null ? ['⏎', '覆盖', S.cfg.armedSave] : null;
+  if (asking) {
+    const [k, what, name] = asking;
     yy++;
-    scr.line(x + 2, yy, [['再按一次 dd 删除「' + PRESETS[S.cfg.armedDelete].name + '」：', 'c-yellow b'], ['删除后无法恢复，其他预设不受影响', 'c-yellow']], iw);
+    scr.line(x + 2, yy, [[`再按一次 ${k} ${what}「${name}」：`, 'c-yellow b'], [`${what}后无法恢复，其他预设不受影响`, 'c-yellow']], iw);
   }
 }
 
@@ -1548,7 +1562,8 @@ function drawCompletions(scr) {
   scr.box(x, y, w, h, { thick: true, st: FOCUS, title: [['可选项', 'c-fg b'], [` ⋅ ${n} 项`, 'c-gray']], bottomRight: [[`${inp.ci + 1} of ${n}`, FOCUS]], scroll: { total: n, from, view: vis } });
   for (let i = 0; i < vis && from + i < n; i++) {
     const c = inp.cands[from + i], cur = from + i === inp.ci;
-    scr.line(x + 2, y + 1 + i, [[cur ? '❯ ' : '  ', CURSOR], [c.name + (c.dir ? '/' : ''), (c.dir ? 'c-blue' : 'c-fg') + (cur ? ' b' : '')], [c.dir ? '' : '  压缩包', 'c-gray d']], w - 4);
+    // 只有归档旁边说「压缩包」（按扩展名认，与卷列表同一把尺子）：答案.txt、README.md 不是压缩包（停车场 Q791）
+    scr.line(x + 2, y + 1 + i, [[cur ? '❯ ' : '  ', CURSOR], [c.name + (c.dir ? '/' : ''), (c.dir ? 'c-blue' : 'c-fg') + (cur ? ' b' : '')], [!c.dir && isArchive(c.name) ? '  压缩包' : '', 'c-gray d']], w - 4);
   }
 }
 function drawTooSmall(scr) {
@@ -1696,7 +1711,18 @@ function submitInput() {
   const path = inp.buf.replace(/\/+$/, '');
   if (inp.kind === 'search') { S.search = { q: inp.buf }; if (inp.buf) jump({ q: inp.buf }, 1); return; }
   if (inp.kind === 'value') { CONFIG[S.cfg.cursor].value = inp.buf.trim() || null; return toast([['✓ ', 'c-green b'], [CONFIG[S.cfg.cursor].label + ' → ' + (inp.buf.trim() || '未设置'), 'c-fg']]); }
-  if (inp.kind === 'preset') { if (!inp.buf.trim()) return; PRESETS.push({ name: inp.buf.trim(), says: Object.fromEntries(CONFIG.filter(stored).map((c) => [c.key, c.value])) }); S.cfg.applied = inp.buf.trim(); return toast([['✓ ', 'c-green b'], ['已保存预设「' + inp.buf.trim() + '」', 'c-fg']]); }
+  if (inp.kind === 'preset') {
+    const name = inp.buf.trim();
+    if (!name) return;
+    // 撞上同名的那一份要按两下（CONTEXT《预设》）：第一下只闩上那个名字、在预设栏里问一句（drawPresets），
+    // 输入行与名字都留着；再按一次 ⏎ 才覆盖，覆盖的只有那一份
+    const at = PRESETS.findIndex((p) => p.name === name);
+    if (at >= 0 && S.cfg.armedSave !== name) { S.cfg.armedSave = name; S.input = inp; return; }
+    const saved = { name, says: Object.fromEntries(CONFIG.filter(stored).map((c) => [c.key, c.value])) };
+    if (at >= 0) PRESETS[at] = saved; else PRESETS.push(saved);
+    S.cfg.armedSave = null; S.cfg.applied = name;
+    return toast([['✓ ', 'c-green b'], ['已保存预设「' + name + '」', 'c-fg']]);
+  }
   if (!path) return;
   const parent = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1);
   const hit = (fsList(parent) || []).find((c) => c.name === name);
@@ -1725,20 +1751,25 @@ function onKey(k, raw = k) {
     if (k === 'Enter') { submitInput(); return true; }
     if (k === 'Tab') { complete(); return true; }
     if (k === 'Backspace') { inp.buf = [...inp.buf].slice(0, -1).join(''); inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
-    if (k === 'C-w') { inp.buf = inp.buf.replace(/[^/\s]*\/?$/, ''); inp.cands = null; return true; }
-    if ((raw === 'ArrowDown' || k === 'C-n') && inp.cands) { moveBy(1); return true; }
-    if ((raw === 'ArrowUp' || k === 'C-p') && inp.cands) { moveBy(-1); return true; }
+    // 删一段之后「此刻搜的是哪一句」跟着短，与打字、退格两支一样（停车场 Q866）
+    if (k === 'C-w') { inp.buf = inp.buf.replace(/[^/\s]*\/?$/, ''); inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
+    // 补全框里挪候选只认 ↓／↑：KEYMAP 上没有 C-n／C-p，全部按键那一张列的就是全部（停车场 Q798）
+    if (raw === 'ArrowDown' && inp.cands) { moveBy(1); return true; }
+    if (raw === 'ArrowUp' && inp.cands) { moveBy(-1); return true; }
     if (raw.startsWith('Arrow')) return true;
     if ((k.length === 1 && !k.startsWith('C-')) || k === 'Space') { inp.buf += k === 'Space' ? ' ' : k; inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
     return false;
   }
-  // 连击键
+  // 连击键。覆盖层掀着时只认 gg（CONTEXT《覆盖层》：除了按停止与答话，别的键一律不派）——
+  // gt／gT 不在它底下换视图，`t` 合不上就落到覆盖层那一支、什么都不做（停车场 Q793）
   if (S.pending) {
     const combo = S.pending + k; S.pending = '';
     if (combo === 'gg') { moveEdge(false); return true; }
-    if (combo === 'gt' || combo === 'gT') { S.view = S.view === 'task' ? 'config' : 'task'; return true; }
-    if (combo === ']d' || combo === '[d') { if (S.view === 'task') jump({ trouble: true }, combo[0] === ']' ? 1 : -1); return true; }
-    if (combo === 'dd') return deleteHere();
+    if (!S.overlay) {
+      if (combo === 'gt' || combo === 'gT') { S.view = S.view === 'task' ? 'config' : 'task'; return true; }
+      if (combo === ']d' || combo === '[d') { if (S.view === 'task') jump({ trouble: true }, combo[0] === ']' ? 1 : -1); return true; }
+      if (combo === 'dd') return deleteHere();
+    }
   }
   if (startsCombo(k)) { S.pending = k; S.pendingAt = performance.now(); return true; }
   // 覆盖层
@@ -1747,7 +1778,7 @@ function onKey(k, raw = k) {
     if (k === 'j') return moveBy(1), true; if (k === 'k') return moveBy(-1), true;
     if (k === 'C-d' || k === 'C-f') return moveBy(pageH()), true; if (k === 'C-u' || k === 'C-b') return moveBy(-pageH()), true;
     if (k === 'G') return moveEdge(true), true;
-    if (r && r.stage === 'deciding' && 'xas'.includes(k)) return answer(r, k), true;
+    if (r && r.stage === 'deciding' && 'xas'.includes(k)) return answerKey(k), true;
     if (k === 's' && r) return stopKey(), true;
     return true;
   }
@@ -1766,10 +1797,16 @@ function onKey(k, raw = k) {
     if (k === 'q') toast(r && r.stage !== 'ended' ? [['正在转换：', 'c-yellow b'], ['q 不会退出，请先按 s 停止，或按 C-c 立即退出', 'c-fg']] : [['退出', 'c-fg b'], ['（原型里不会真的退出）', 'c-gray']]);
     return true;
   }
-  if (r && r.stage === 'deciding' && (k === 'x' || k === 's' || (k === 'a'))) { answer(r, k); toast(k === 's' ? [['已结束预览：', 'c-yellow b'], ['这一卷不写出，后面的卷也不处理', 'c-fg']] : k === 'a' ? [['全部写出：', 'c-green b'], ['后面的卷不再询问', 'c-fg']] : [['写出这一卷', 'c-green b'], ['（不用重新分析）', 'c-gray']]); return true; }
+  if (r && r.stage === 'deciding' && (k === 'x' || k === 's' || (k === 'a'))) { answerKey(k); return true; }
   if (k === 's') return stopKey(), true;
   if (k === 't' || k === 'x') { startRun(k === 't' ? 'trial' : 'exec'); return true; }
   return S.view === 'config' ? configKey(k) : taskKey(k);
+}
+// 确认点上答话：答完屏底说一句这一下做了什么。覆盖层掀着时答话也说——与按停止（stopKey）一个待遇，
+// 「掀着覆盖层就不说回话」不是一条规矩（停车场 Q903）
+function answerKey(k) {
+  answer(S.run, k);
+  toast(k === 's' ? [['已结束预览：', 'c-yellow b'], ['这一卷不写出，后面的卷也不处理', 'c-fg']] : k === 'a' ? [['全部写出：', 'c-green b'], ['后面的卷不再询问', 'c-fg']] : [['写出这一卷', 'c-green b'], ['（不用重新分析）', 'c-gray']]);
 }
 function stopKey() {
   const lvl = stop(S.run);
@@ -1862,7 +1899,8 @@ function configKey(k) {
     if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
     if (k === 'Enter' || k === 'l') {
       if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
-      if (S.cfg.pcursor === PRESETS.length) { startInput('preset'); return true; }
+      // 末行那一件经输入行起名；重开一次就把上一次撞名等着的那一下作废——那一问问的是上一次打的名字
+      if (S.cfg.pcursor === PRESETS.length) { S.cfg.armedSave = null; startInput('preset'); return true; }
       const p = PRESETS[S.cfg.pcursor];
       for (const item of CONFIG) if (stored(item)) item.value = p.says[item.key] ?? null;
       S.cfg.applied = p.name;
@@ -1958,13 +1996,13 @@ const PRESETS0 = PRESETS.map((p) => ({ name: p.name, says: { ...p.says } }));
 // 跳场景 = 从同一份假数据重新开始：上一个场景里删掉的路径、换掉的型号、套用的预设都复原
 function resetView() {
   Object.assign(S, { view: 'task', run: null, pages: null, overlay: null, input: null, search: null, expanded: new Set(), follow: true, curKey: 'out', pending: '', toast: null, lastRows: [] });
-  Object.assign(S.cfg, { pane: 'left', presets: false, drill: null, armedDelete: null, applied: '漫画', pcursor: 0 });
+  Object.assign(S.cfg, { pane: 'left', presets: false, drill: null, armedDelete: null, armedSave: null, applied: '漫画', pcursor: 0 });
   S.named = NAMED0.map((n) => ({ ...n }));
   S.outRoot = '~/转好的';
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
@@ -1995,6 +2033,15 @@ function scene(name) {
       exec(0.62);
       const v = findVol('哆啦A梦', '第05卷');
       if (v) S.expanded.add(v.dir.id);
+      break;
+    }
+    case 'envelope-deciding': {
+      // 整卷统一灰阶那一趟停在确认点上：差异大的页与代表页只有这一趟才有，确认条上「与其他页差异大」那一截、
+      // 「需留意的页」那个数（代表页也数进去）连同卷行那几列，这一景一起钉住（停车场 Q900、Q902）。
+      // 那一卷所在的目录展开着，卷行在屏上
+      CONFIG.find((c) => c.key === 'envelope').value = '开';
+      startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null;
+      S.expanded.add(S.run.tree.vols[S.run.cur].dir.id);
       break;
     }
     case 'config': S.view = 'config'; S.cfg.cursor = CONFIG.findIndex((c) => c.key === 'fit'); S.cfg.pane = 'right'; S.cfg.right = 2; break;
@@ -2044,7 +2091,7 @@ function describe() {
     title = '输入'; points = ['输入只占屏幕最下面一行，按 Tab 补全路径；候选多时会弹出一个能滚动的小列表，不会把底部撑高。', 'C-w 删掉一段，⏎ 确定，Esc 取消；找不到的路径会马上提示。']; tries = [['Tab', '补全 / 下一个'], ['C-w', '删一段'], ['⏎', '确定'], ['Esc', '取消'], ['F1', '全部按键']];
   } else if (S.view === 'config') {
     title = S.cfg.presets ? '预设' : '配置';
-    points = S.cfg.presets ? ['按 p 打开的预设列表显示在右边，左边的设置仍然可见——保存预设时，保存的就是左边这些。', '使用预设会替换全部设置；删除预设需要按两次 dd。']
+    points = S.cfg.presets ? ['按 p 打开的预设列表显示在右边，左边的设置仍然可见——保存预设时，保存的就是左边这些。', '使用预设会替换全部设置；删除预设需要按两次 dd，保存时撞上同名的那一份要再按一次 ⏎ 才覆盖。']
       : ['左边是设备和处理选项，右边是选中那一项的详情：可选的值、说明、预设里是怎么设的。选值时不会再把其他行挤出屏幕。', '顶部一行显示当前使用的预设和改动了哪几项；左边带 * 的就是改过的。', '设备型号先选屏幕规格再选型号：同一种屏幕的型号效果一样。', r && r.stage !== 'ended' ? '转换进行中：设置暂时锁定，但可以随时查看；右上角显示着转换进度。' : '画质判定参数在左边最下面，只能查看，每一项都附有说明。'];
     tries = S.cfg.presets ? [['j k', '选择'], ['⏎', '使用'], ['dd', '删除'], ['p', '返回']] : [['j k', '选择'], ['l ⏎', '展开 / 确定'], ['h', '返回'], ['p', '预设'], ['1', '回任务']];
   } else if (S.pages) {

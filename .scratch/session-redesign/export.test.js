@@ -39,8 +39,8 @@ test('库里那一份就是这一趟导出来的：设计稿改了没重导，�
   }
 });
 
-test('快照是 12 个场景 × 两种尺寸外加窗口太小两份；序列每一条都有名字与期望屏', () => {
-  assert.equal(SNAPSHOTS.length, 12 * 2 + 2);
+test('快照是 13 个场景 × 两种尺寸外加窗口太小两份；序列每一条都有名字与期望屏', () => {
+  assert.equal(SNAPSHOTS.length, 13 * 2 + 2);
   const names = SEQUENCES.map((s) => s.name);
   assert.equal(new Set(names).size, names.length, '序列名撞了');
   assert.equal(manifest.sequences.length, SEQUENCES.length);
