@@ -583,8 +583,8 @@ fn clashes(
 ///   空目录因此一条都不留——它没有落下任何东西。
 ///
 /// 收下与没收下的分界由 [`source`] 一处说了算：躺在这一层的归档是卷不是成员、打包环境
-/// 留下的边车与索引文件根本不算成员（见 `source::open_directory` 与 `source::is_junk`）。
-/// 这里读的是它分好的那两摞，不另立一套「什么算页」。
+/// 留下的边车与索引文件根本不算成员（见 `source::open_directory` 与
+/// `source::is_ignored_member`）。这里读的是它分好的那两摞，不另立一套「什么算页」。
 fn nothing_took_it(volume: &source::Volume) -> Vec<NonVolumeFile> {
     match volume.container {
         Container::Archive => vec![NonVolumeFile {
