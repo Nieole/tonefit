@@ -321,6 +321,43 @@ const KEY_READERS: [(&str, &str, usize); 9] = [
     ("src/session/config.rs", "spelt_for(", 1),
 ];
 
+/// **转轮那一段算式**的字样（`one-source/06`，收停车场 Q864）：十格字形那一张表、
+/// 「过了几格」那一除里的周期、「转满一圈从头来」那一模。
+///
+/// 三件各挑**算式里只有它写得出**的那一截：周期与字形表在家里是私有的，别处的抄件
+/// 得自带一张表，那张表就是头一件；家里另写一段，就得再除一次周期、再模一次表长。
+///
+/// **问的是「代码里恰好一处、就在家里」**（[`code_only`]）：抄件可以落在别的文件，
+/// 也可以落在家里另一个函数里——只问「别的文件没有」拦不住后一种。
+const SPINNER_MARKS: [&str; 3] = [
+    r#"["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]"#,
+    "SPINS_EVERY.as_millis()",
+    "% SPINNER.len()",
+];
+
+/// 那一段算式的家，相对仓库根：视图那一层摆在 `tui` 特性外面，
+/// 顶栏、行首记号、总览上清点那一条都够得着它（`marks.rs` 整个在特性后面，反过来摆不成）。
+const SPINNER_HOME: &str = "src/session/view.rs";
+
+/// **会话的时钟起点**那一格，住在[家里](SPINNER_HOME)：只问名字与类型。
+const CLOCK_HOME_MARK: &str = "pub clock: Option<Instant>";
+
+/// 时钟起点从前另有的那一格：会话自己身上的「会话打开那一刻」。同一个值存两处，
+/// 夹具就得摆两次——Q864 那次合并撞出来的次序问题出在这里。
+///
+/// **记号写的是从前那一格的名字**：换一个名字再长一格，这一条认不出它。可那一格要让转轮
+/// 从它算，就得另写一段算式（家里那一段只读[那一格](CLOCK_HOME_MARK)），那一段由
+/// [`SPINNER_MARKS`] 拦。
+const CLOCK_COPY_MARK: &str = "opened_at";
+
+/// 读转轮的那几处，各在哪个文件里怎么读：顶栏右端那一截、行首记号（卷列表那棵树）、
+/// 总览上清点那一条。问的是**调用的形状**（带着左括号），指路的散文不算。
+const SPINNER_READERS: [(&str, &str); 3] = [
+    ("src/session/shell/topbar.rs", "views.spinning("),
+    ("src/session/shell/list.rs", "views.spinning("),
+    ("src/session/shell/overview.rs", "views.spinning("),
+];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -795,6 +832,77 @@ fn the_keys_the_screen_mentions_come_from_the_key_table() {
         assert!(
             found >= least,
             "{file} 里从按键表取键的那一手「{reads}」从 {least} 处掉到了 {found} 处"
+        );
+    }
+}
+
+/// **转轮只有一段算式、会话的时钟只有一个起点**（`one-source/06`，收停车场 Q864）。
+///
+/// 从前顶栏那一截从视图那一格起点算、行首记号与总览从会话自己那一格起点算：同一个值存两处、
+/// 算式写两段。夹具因此得摆两次，而合并 08 与 13 时那两次摆错了次序、差了整一格转轮——
+/// 两棵树各自的闸门都是绿的。现在算式只在 [`SPINNER_HOME`]：从那一格起点算，
+/// 再加一行自己的错相。
+///
+/// **四件事一起问**：[算式](SPINNER_MARKS)在代码里恰好一处、就在家里；
+/// [时钟起点那一格](CLOCK_HOME_MARK)真住在家里；[另一格](CLOCK_COPY_MARK)哪儿都不在
+/// （文档里也不在：说着一格不存在的东西的路标是一句假话）；[读转轮的那几处](SPINNER_READERS)
+/// 真调它。只问头一件的话，一处读的地方退回手写一个字形，这一条照绿。
+#[test]
+fn the_spinner_and_its_clock_start_live_in_one_place() {
+    let home = root().join(SPINNER_HOME);
+
+    let mut code = Vec::new();
+    collect(&root().join("src"), "rs", true, &mut code);
+    let code: Vec<(PathBuf, String)> = code
+        .into_iter()
+        .map(|path| {
+            let text = squashed(&code_only(&read(&path)));
+            (path, text)
+        })
+        .collect();
+    for mark in SPINNER_MARKS {
+        let wanted = squashed(mark);
+        // 一个文件连同它写了几遍一起报：家里写了两遍与别处抄了一遍都看得出来。
+        let carrying: Vec<(PathBuf, usize)> = code
+            .iter()
+            .filter_map(|(path, text)| {
+                let found = text.matches(&wanted).count();
+                (found > 0).then(|| (path.clone(), found))
+            })
+            .collect();
+        assert_eq!(
+            carrying,
+            vec![(home.clone(), 1)],
+            "转轮那一段算式里的「{mark}」不止一处，或者不在家里"
+        );
+    }
+
+    assert!(
+        squashed(&read(&home)).contains(&squashed(CLOCK_HOME_MARK)),
+        "{SPINNER_HOME} 里少了「{CLOCK_HOME_MARK}」那一格"
+    );
+
+    let copy = squashed(CLOCK_COPY_MARK);
+    let carrying: Vec<PathBuf> = delivered()
+        .into_iter()
+        .filter(|path| squashed(&read(path)).contains(&copy))
+        .collect();
+    assert_eq!(
+        carrying,
+        Vec::<PathBuf>::new(),
+        "会话的时钟起点又长出了第二格「{CLOCK_COPY_MARK}」"
+    );
+
+    for (file, call) in SPINNER_READERS {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：读转轮的那几处按文件路径记在 SPINNER_READERS 上，\
+             模块挪了位置就把那张表跟着改"
+        );
+        assert!(
+            squashed(&code_only(&read(&path))).contains(&squashed(call)),
+            "{file} 不再调「{call}」：那一处自己拿了主意，或者又抄了一份"
         );
     }
 }

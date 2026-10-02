@@ -230,7 +230,7 @@ impl Painter<'_> {
 
     /// 屏上这一行的转轮转到第几格；`offset` 是这一行自己的错相。
     fn spin(&self, offset: usize) -> &'static str {
-        marks::spinner(self.now, self.session.opened_at, offset)
+        self.session.views.spinning(self.now, offset)
     }
 
     /// **这一行匹配着搜索那一句吗**——匹配的那一行**名字那一列加下划线**

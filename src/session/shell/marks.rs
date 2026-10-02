@@ -4,15 +4,16 @@
 //! 三样各只有一处出处：总览、卷列表那棵树、窗口太小那一屏画的是同一个转轮、同一种横条、
 //! 同一套记号——**颜色不是唯一载体**，每一处上色的地方旁边都靠这几个字形说话。
 //!
-//! 转轮那一样的**出处在 [`super::super::view`]**（`SPINNER` 与 `SPINS_EVERY`）：顶栏右端那一截
-//! 读的是同一份，而那一份摆在 `tui` 特性外面——反过来摆不成，本模块整个在特性后面。
-//! 本模块只多做一件它管不着的事：一行自己的**错相**（`offset`）。
+//! 转轮那一样的**出处在 [`super::super::view`]**：字形、周期、连同一行自己的错相怎么加，
+//! 只在 [`Views::spinning`](super::super::view::Views::spinning) 那一段算式里，从会话的时钟起点
+//! 算。顶栏右端那一截读的是同一段，而它摆在 `tui` 特性外面——反过来摆不成，本模块整个在特性后面。
+//! 本模块收的是转出来的那一格（[`volume_mark`]、[`branch_mark`] 的 `spin`），不自己算。
 //!
 //! 同住在这里的还有屏上几处共用的一个**词**：一段时长怎么写（[`spell`]）——总览与卷列表那棵树
 //! 说的是同一个词，同一屏上两种写法读的人就得先分辨一遍。环节叫什么不在这里：全部按键那一张
 //! 也要它，而那一张在特性外面，出处因此在 [`super::super::passes`]。
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tonefit::{Candidate, Dither, Pass};
 
@@ -20,23 +21,11 @@ use super::super::live::VolumeState;
 use super::super::look::{Kind, Look, Segment};
 use super::super::passes;
 use super::super::tone::Tone;
-use super::super::view::{SPINNER, SPINS_EVERY};
 use crate::render::Notable;
 
 /// 横条的两个字形：走过的那一截与没走的那一截（盲文点阵，宽度稳）。
 const FULL: &str = "⣿";
 const EMPTY: &str = "⣀";
-
-/// 转轮此刻转到第几格：从**会话打开那一刻**算（[`super::super::state::Session::opened_at`]），
-/// 不从这一趟的计时算——清点中那一段一步都没走，转轮照样得转。
-///
-/// `offset` 是这一行自己的错相：清点中那一副的处理路径**一行一格地错开**（设计稿），
-/// 让一串路径看着像在依次扫过去；别处一律传零，屏上那几个转轮同相。
-pub(super) fn spinner(now: Instant, opened_at: Instant, offset: usize) -> &'static str {
-    let frames = now.saturating_duration_since(opened_at).as_millis() / SPINS_EVERY.as_millis();
-    let at = (frames as usize).wrapping_add(offset) % SPINNER.len();
-    SPINNER[at]
-}
 
 /// 一页**要紧在哪一处，屏上那个词**（`CONTEXT.md` 的《语义色》在页那一级分出的那几样）。
 ///
@@ -368,16 +357,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// **转轮十格一圈、一格 90 毫秒**，从会话打开那一刻算；一行自己的错相往后挪一格。
-    #[test]
-    fn the_spinner_turns_one_frame_every_ninety_milliseconds_and_wraps_at_ten() {
-        let opened = Instant::now();
-        assert_eq!(spinner(opened, opened, 0), "⠋");
-        assert_eq!(spinner(opened + Duration::from_millis(90), opened, 0), "⠙");
-        assert_eq!(spinner(opened + Duration::from_millis(900), opened, 0), "⠋");
-        assert_eq!(spinner(opened, opened, 1), "⠙", "错开一格就是下一格");
     }
 
     /// **横条满格数四舍五入**，两截加起来恰好那么宽。

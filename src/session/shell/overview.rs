@@ -200,7 +200,7 @@ fn surveying(session: &Session, now: Instant) -> Vec<Vec<Segment>> {
     vec![
         vec![
             Segment::new(
-                format!("{} 清点 ", marks::spinner(now, session.opened_at, 0)),
+                format!("{} 清点 ", session.views.spinning(now, 0)),
                 Look::kind(Kind::Surveying).bold(),
             ),
             Segment::plain("正在找出每个路径里的卷"),

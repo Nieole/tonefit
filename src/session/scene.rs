@@ -73,9 +73,8 @@ pub(crate) struct Data {
     /// 场景名。
     pub(crate) scene: String,
     /// 设计稿那只表冻在第几毫秒（`render.js` 把 `performance.now` 冻在它上）。
-    /// **转轮转到第几格从它算**：夹具照它往回推出会话的时钟起点
-    /// （`super::state::Session::opened_at`：会话打开那一刻）——转轮与这一趟跑了多久无关，
-    /// 清点中那一段一步都没走，它照样得转。
+    /// **转轮转到第几格从它算**：夹具照它往回推出会话的时钟起点（[`clock_of`]）——
+    /// 转轮与这一趟跑了多久无关，清点中那一段一步都没走，它照样得转。
     #[serde(default)]
     pub(crate) now_ms: u64,
     /// 输出目录（`~/` 写法）。
@@ -570,17 +569,8 @@ impl Scene {
             .map(|run| replay(run, &home, &data.output, epoch, &mut session));
         // **界面状态摆在回放之后**：起一趟那一下会把树、展开与自动滚动扳回开跑那一刻的样子
         // （`Session::run_started`），场景数据说的那几格要压在它上面。
-        session.views = views_of(&data, &home, &presets);
-        // **会话的时钟起点，两格都摆在这一句之后**：设计稿那只表冻在 `now_ms` 上，照它往回推,
-        // 屏上那几个转轮因此都停在设计稿导出那一刻的那一格（顶栏那一截读
-        // [`super::view::Views::spinning`]，行首记号与总览读 `shell::marks::spinner`）。
-        //
-        // 摆在上面那一句**之前**会被它抹掉——`views_of` 整份换掉 `session.views`，
-        // 而这正是 08 与 13 两张票各设一格、合起来差了一格转轮的那道坑（停车场 Q864）。
-        let back = Duration::from_millis(data.now_ms);
-        let origin = epoch + elapsed(data.run.as_ref());
-        session.views.clock = origin.checked_sub(back);
-        session.opened_at = origin - back;
+        // 会话的时钟起点连同这一份一起摆（[`clock_of`]）。
+        session.views = views_of(&data, &home, &presets, epoch);
         // 清点的产出到了就把树拼出来，自动滚动开着时光标跟到正在处理的那一卷——
         // 与真会话里那一层做的是同一件事（`super::terminal::input`）。
         if let Some(live) = &live {
@@ -629,14 +619,14 @@ impl Scene {
     /// **界面状态一格不动**：视图、光标、展开、掀着的那一张都是前面那几步输入摆出来的，
     /// 而那正是这一串要看的东西——[`replay`] 起手要走一遍「起一趟」
     /// （[`Session::run_started`]，那一下会把它们扳回开跑那一刻），因此前后各存回一次。
+    /// **会话的时钟起点除外**：它不是输入摆出来的，跟着 `data` 重新往回推（[`clock_of`]）——
+    /// 设计稿那只表与那一趟的已用秒数不是一起走的，推进前后两份数据推出来的起点不一样。
     pub(crate) fn advance_to(&mut self, data: Data) {
         let run = data.run.as_ref().expect("推进之后那一串仍在一趟里");
         let views = self.session.views.clone();
         let live = replay(run, &self.home, &data.output, self.epoch, &mut self.session);
         self.session.views = views;
-        // 会话打开那一刻：往回推设计稿那一头的钟（与 [`Scene::from_data`] 同一条式子）。
-        self.session.opened_at =
-            self.epoch + elapsed(data.run.as_ref()) - Duration::from_millis(data.now_ms);
+        self.session.views.clock = Some(clock_of(self.epoch, &data));
         self.data = data;
         // 与真会话里那一层每一下做的是同一件事：清点的产出已经在了，树不必重拼；
         // 结束了的那一趟自动滚动不再跟（`Session::watch_the_run`）。
@@ -651,8 +641,12 @@ impl Scene {
 /// 树上的光标、展开与自动滚动（08）；搜索那一句连同搜索那一种输入行（09）；
 /// 每页结果开着哪一卷、光标停在第几页、列的是哪几页（11）。
 /// 认不得的先停在输出目录那一行上；给预设起名那一种输入行随那一票认。
-fn views_of(data: &Data, home: &Path, presets: &Presets) -> Views {
+///
+/// **会话的时钟起点也在这里摆**（[`clock_of`]）：它不在 `session` 那一段里，
+/// 可它住在 [`Views`] 上——摆在外面，就得记着摆在这一份整份换上去之后（停车场 Q864）。
+fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> Views {
     let mut views = Views::default();
+    views.clock = Some(clock_of(epoch, data));
     views.view = match data.session["view"].as_str() {
         Some("config") => View::Config,
         _ => View::Task,
@@ -872,6 +866,15 @@ fn expand(home: &Path, tilde: &str) -> PathBuf {
 /// 场景数据里这一趟已用了多久。
 fn elapsed(run: Option<&Run>) -> Duration {
     run.map_or(Duration::ZERO, |run| Duration::from_secs_f64(run.elapsed_s))
+}
+
+/// **会话的时钟起点**（[`Views::clock`]）：设计稿那只表冻在 `now_ms` 上，从这一景的「此刻」
+/// 照它往回推——屏上那几个转轮因此都停在设计稿导出那一刻的那一格。
+/// 摆一个场景与推进几秒摆的都是它（[`views_of`]、[`Scene::advance_to`]）。
+fn clock_of(epoch: Instant, data: &Data) -> Instant {
+    let now = epoch + elapsed(data.run.as_ref());
+    now.checked_sub(Duration::from_millis(data.now_ms))
+        .expect("单调时钟往回推不出设计稿那只表走过的那几秒：开机还不到那么久")
 }
 
 // ───────────────────────── 假盘 ─────────────────────────
@@ -2187,6 +2190,9 @@ mod tests {
     /// 展开着的那几个目录一格不动——那是前面那几步输入摆出来的，正是那一串要看的东西。
     /// 家目录也不换：换进来的那一趟报回来的卷根与树上的仍对得上。
     ///
+    /// **会话的时钟起点除外**：它跟着推进之后那一份往回推——此刻减去它，恰是那一份里设计稿
+    /// 那只表冻住的读数（`now_ms`）。这一串前后两份推出来的起点不一样，差的也不是整圈的转轮。
+    ///
     /// 换进来的那一趟**与那一串自己的场景数据逐项相同**（走的是同一条 `agrees_with_its_data`）。
     #[test]
     fn advancing_swaps_the_run_and_leaves_the_interface_alone() {
@@ -2194,9 +2200,19 @@ mod tests {
         let before = scene.session.views.clone();
         let home = scene.home.clone();
         assert!(!scene.live().ended(), "起点那一趟还在跑");
-        scene.advance_to(sequence_data("running-s-advance"));
+        let advanced = sequence_data("running-s-advance");
+        let frozen = Duration::from_millis(advanced.now_ms);
+        scene.advance_to(advanced);
         assert!(scene.live().ended(), "推进之后那一趟收了场");
-        assert_eq!(scene.session.views, before, "界面状态一格都没动");
+        let mut after = scene.session.views.clone();
+        let clock = after.clock.expect("推进之后会话照样起着表");
+        assert_eq!(
+            scene.now() - clock,
+            frozen,
+            "时钟起点跟着推进之后那一份往回推"
+        );
+        after.clock = before.clock;
+        assert_eq!(after, before, "界面状态一格都没动");
         assert_eq!(scene.home, home, "家目录没换");
         assert_eq!(
             scene.live().roster().len(),
