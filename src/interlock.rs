@@ -262,11 +262,17 @@ mod tests {
     /// `debug_assert!` 拴着，只在调试构建上验。这一条接下那份工，两种构建上都跑。
     ///
     /// 扫的是两个覆盖项 × 两种门的全部组合，逐格问三件事：裁完还剩不剩、
-    /// `crate::pipeline::why_nothing_is_left` 说不说得出话、以及说话的是不是本条。
-    /// 第三问只在灰阶档位那一维过得去时问——两维一起对不上时报的是灰阶档位那一句
+    /// `crate::pipeline::why_nothing_is_left` 说不说得出是哪一维、以及抖动那一支是不是本条。
+    /// 第三问只在灰阶档位那一维过得去时问——两维一起对不上时报的是灰阶档位那一支
     /// （见 `crate::pipeline::why_nothing_is_left`）。
+    ///
+    /// 末了问调用处那一侧（`crate::pipeline::candidates`）是不是**按那一支**办的：灰阶档位那一支
+    /// 碰卷之前就拒绝，抖动那一支只交「这一侧没有候选」——它只是个标记，那句拒绝要这一页才说得全
+    /// （one-source/09，收停车场 Q583）。
     #[test]
     fn the_refusal_is_driven_by_this_interlock_alone() {
+        use crate::pipeline::NothingLeft;
+
         let panel = crate::tests::request().profile.panel();
         let depths = BitDepth::candidates(panel.gray_levels);
         for gate in [GeometryGate::Holds, GeometryGate::Broken] {
@@ -287,19 +293,20 @@ mod tests {
                             });
                     let said = crate::pipeline::why_nothing_is_left(&request, gate);
                     let at = format!("{bit_depth:?} {dither:?} {gate:?}");
+                    let by_the_interlock = matches!(said, Some(NothingLeft::DitherOutsideTheGate));
 
                     assert_eq!(empty, said.is_some(), "{at}");
-                    assert_eq!(
-                        empty,
-                        crate::pipeline::candidates(&request, gate).is_err(),
-                        "{at}"
-                    );
                     if bit_depth.is_none_or(|named| depths.contains(&named)) {
                         assert_eq!(
-                            said.is_some(),
+                            by_the_interlock,
                             Interlock::dither_outside_the_gate(dither, gate),
                             "{at}"
                         );
+                    }
+                    match crate::pipeline::candidates(&request, gate) {
+                        Ok(Some(_)) => assert!(!empty, "{at}"),
+                        Ok(None) => assert!(by_the_interlock, "{at}"),
+                        Err(_) => assert!(matches!(said, Some(NothingLeft::BitDepth(_))), "{at}"),
                     }
                 }
             }

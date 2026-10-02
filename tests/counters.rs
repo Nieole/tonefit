@@ -4,9 +4,9 @@
 //! 它们钉的不是用户看得见的东西，而是**看不见的工作量**。屏上一处不露面的数因此需要
 //! 一个自己的家——不然后面几票把某一趟的白付删掉时，除了「行为不变」再没有别的说法。
 //!
-//! 三个数：解码次数（既有，`VolumeReport::decodes`）、缩放次数、参照进缓存次数。
+//! 四个数：解码次数（既有，`VolumeReport::decodes`）、缩放次数、参照进缓存次数、来路造了几份。
 //! 解码那一个的断言散在 `idempotency`、`resume`、`concurrency` 几处，跟着它们各自那条性质走；
-//! 这里只收另外两个，以及三个数之间那几条互相说明的关系。
+//! 这里只收另外三个，以及几个数之间那几条互相说明的关系。
 //!
 //! **参照进缓存那一个分两条路读**：整卷统一灰阶那条路（`--envelope`）上统一档位要看完整卷才定得下，
 //! 每张灰度输出页存一份参照；默认那条路（逐页，ADR 0018）上一页判完当场量化编码，
@@ -473,6 +473,64 @@ fn a_pinned_dry_run_still_caches_every_reference() {
         report.cached_references, 2,
         "预览编了一遍码——那一趟没有写出环节要这些字节"
     );
+}
+
+/// **预览那一趟一份来路都不造**（one-source/09，收停车场 Q490）。
+///
+/// 来路唯一的读者是《记录》，而预览一个字节都不写：记录开着、指纹照算（幂等那一道要问它），
+/// 来路却一份都不该有。转换那一趟照旧**每张输出页一份**——卷里摆一张跨页，切成两张，
+/// 「每页」数的因此是输出页，不是源页。关掉记录的那一趟两样都不在（07 号票），一并钉住：
+/// 「来路在场 ⟺ 这一趟真要写记录」两个方向都量得出来。
+#[test]
+fn a_dry_run_builds_no_origin_and_a_conversion_builds_one_per_output_page() {
+    // 跨页切成两张，加一张不切的：三趟各产出这么多张输出页。
+    const OUTPUT_PAGES: usize = 3;
+    let space = Workspace::new();
+    let volume = space.volume("volume-a");
+    volume.page(
+        "001.png",
+        &fixtures::spread_with_gutter(
+            fixtures::SPREAD_WITH_GUTTER,
+            fixtures::GUTTER_CENTER,
+            fixtures::GUTTER_WIDTH,
+        ),
+    );
+    volume.page(
+        "002.png",
+        &fixtures::full_bleed_gradient(fixtures::PASSES_THROUGH),
+    );
+
+    // 预览排在前头：转换那一趟写下了输出，跟在它后面的预览会被幂等整卷跳过。
+    let previewed = one_volume(tonefit::Request {
+        mode: tonefit::Mode::DryRun,
+        metadata: true,
+        ..fixtures::request(&space, [volume.path()])
+    });
+    let converted = one_volume(tonefit::Request {
+        mode: tonefit::Mode::Process,
+        metadata: true,
+        ..fixtures::request(&space, [volume.path()])
+    });
+    // 关掉记录的那一趟没有幂等那一道，跟在转换后面照样整卷重做。
+    let unrecorded = one_volume(tonefit::Request {
+        mode: tonefit::Mode::Process,
+        metadata: false,
+        ..fixtures::request(&space, [volume.path()])
+    });
+
+    for each in [&previewed, &converted, &unrecorded] {
+        assert_eq!(
+            each.pages.len(),
+            OUTPUT_PAGES,
+            "那张跨页没切开，「每页」就分不出输出页与源页"
+        );
+    }
+    assert_eq!(previewed.origins, 0, "预览那一趟造了没有读者的来路");
+    assert_eq!(
+        converted.origins, OUTPUT_PAGES,
+        "转换那一趟该每张输出页一份来路"
+    );
+    assert_eq!(unrecorded.origins, 0, "关掉记录的那一趟造了来路");
 }
 
 /// **满核并行之下两个数仍然准。**页乱序算完，而缩放那一个是锁外的原子加。

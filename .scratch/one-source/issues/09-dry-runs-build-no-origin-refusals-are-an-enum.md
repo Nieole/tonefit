@@ -7,12 +7,88 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 窄计数器断言：试算那一趟（记录开着）造的来路是零份；照做那一趟照旧每页一份
-- [ ] `why_nothing_is_left` 交出枚举；拒绝那几句话一个字不变
-- [ ] 互锁 ③「只有一处判定」那条用例照旧绿
-- [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+- [x] 窄计数器断言：试算那一趟（记录开着）造的来路是零份；照做那一趟照旧每页一份
+- [x] `why_nothing_is_left` 交出枚举；拒绝那几句话一个字不变
+- [x] 互锁 ③「只有一处判定」那条用例照旧绿
+- [x] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+
+## 落地记录
+
+**本票做了什么。** 两处行为收紧（收停车场 Q490、Q583）。转换那一趟的输出字节、拒绝的每一句话一个字不变。
+
+1. **预览不造来路**（Q490）：`Compute` 里那一格从「这一卷的指纹」收窄成「这一趟盖记录用的那份指纹」，改名 `records`，
+   在 `process_volume` 装这一摊时只给真要写的那一趟（`fingerprint.as_ref().filter(|_| writes)`，`writes` 即 `mode == Process`）。
+   读它的三处——来路（`Placement::new`）、彩页当场盖的 `Record`、灰度页当场造的 `Recorder`——因此同进同退；后两处本来就只在转换那一趟走得到，
+   收窄对它们是空操作（Q1328）。幂等那一道用的指纹是另一个变量，没动。剩下一角：确认点上答做完再停的那一卷来路照旧造了，写在 `Placement::new` 的文档里（Q1329）。
+2. **窄计数器「来路造了几份」**：`VolumeReport::origins`（公共字段，库对外形状多一格）。数记在造的动作上——`pipeline::Origins::of` 造一份记一份，
+   与解码器、缩放器同形装进 `ComputeCounters`。`CONTEXT.md`《窄计数器》的列举从三个改成四个，含义没动（Q1327）；`decode.rs`、`tests/counters.rs` 模块文档、
+   `render.rs` 那条「窄计数器不进渲染」的用例跟着改。19 处 `VolumeReport` 字面量各添 `origins: 0`（五处在 `src/session/`）。
+3. **`why_nothing_is_left` 交出枚举**（Q583）：`NothingLeft::BitDepth(String)` 带着那句话，`NothingLeft::DitherOutsideTheGate` 只是个标记。
+   唯一的调用处 `candidates` 按它办（Q1330）：灰阶档位那一支戴 `Refusal` 交 `Err`；抖动那一支交 `Ok(None)`，那句拒绝照旧由 `Candidates::for_gate` 在撞上的那一页上造全。
+   `Candidates::new` 两侧都用 `?`，门成立那一侧的 `None` 由一句 `expect` 认定不可能；从前那一行 `.ok()` 连同它丢掉的半截话一起没了。
+   位深那一句的 `format!` 原样搬进枚举，`for_gate` 与 `dither_outside_the_gate_error` 一个字没动。
+4. **用例**：
+   - `tests/counters.rs` 新添 `a_dry_run_builds_no_origin_and_a_conversion_builds_one_per_output_page`：一张跨页加一张不切的页（三张输出页），
+     预览（记录开着）零份、转换三份、关掉记录的转换零份。
+   - `src/interlock.rs` 的 `the_refusal_is_driven_by_this_interlock_alone` 改了形状：「裁空 ⟺ 说得出是哪一维」照旧；
+     「抖动那一支 ⟺ 互锁 ③」改问变体；末了按 `candidates` 交回的三种形状（有候选 / 这一侧没有 / 拒绝）逐格核对它是按哪一支办的。
+
+### 按反跑看见了什么
+
+- 新用例落在谓词改动之前：预览那一趟 `origins` 是 3，红在「预览那一趟造了没有读者的来路」（`left: 3, right: 0`）。
+- 谓词按反成「从不给」（`filter(|_| false)`）：预览那一格照绿，红在「转换那一趟该每张输出页一份来路」（`left: 0, right: 3`）——两条断言各自咬得住。
+- 互锁那条用例：把 `candidates` 的抖动那一支退回旧形状（戴着规则那一句的 `Refusal` 交 `Err`），红在 `None Some(FloydSteinberg) Broken` 那一格。
+
+三次按反都已撤回。
+
+### 评审收了什么、驳了什么
+
+两轴各一个只读子代理，看 `git diff e6d95ab`。Spec 轴：没有阻塞项；谓词、拒绝措辞、互锁用例、新用例逐条核过等价。
+
+**收下的**：
+
+- 新写的文字用了旧称「试算」（`CONTEXT.md`《预览》：旧称「试算」）——代码、用例、停车场条目一律改成「预览」，用例名里的 `real_run` 改成 `conversion`（《模式》：转换）。票面原文的「试算」没动。
+- 新用例三处 `pages.len()` 各写一个 `3`（`docs/agents/testing.md`：同一个数只有一个出处）——收成一个 `OUTPUT_PAGES`。
+- `Placement::new` 的文档前一段说「两个方向都成立」、后一段又认下做完再停那一角，自相抵触——改成「只有一角对不上」，指到 Q1329。
+- `Origins` 的文档说「来路只此一处造」，而幂等比对那几处也现造一份 `Origin` 去比——写明数的是跟着输出页、要写进记录的那一份。
+- 「预览那一趟指纹照算」的理由写了四遍（单一出处）——只留在 `Compute::records`，`lib.rs` 那句注释与 `Origins` 的文档改成指过去；`ComputeCounters` 的文档不再数窄计数器有几个。
+- 停车场四条缺 **Why it matters**——补上；Q1327 的另一条路原是「不进报告」，与票面相抵近于稻草人——换成「报告照添、拼报告时数产物」。
+
+**驳回的**：
+
+- `Compute::records` 名字指《记录》、装的是《指纹》：名字说用途、类型说内容，与 `Placement::new` 那个参数同名；岔口记在 Q1328。
+- `Origins` 读着像「一堆来路」：与 `Decoder`、`Resampler` 同一个位置，名字取词条《来路》，文档首句说清它是带计数的造法。
+- `self.records` 与 `&self.counters.origins` 在两处一起传进 `Placement::new`（Data Clumps）：两处在同一个函数里、隔十行；`Placement::new` 收几个参数已在 Q1309 记着。
+- 19 处 `origins: 0`（Shotgun Surgery）：报告是结构体字面量造的，多一格公共字段就是这么多处，没有构造器可收；不为它另造一个夹具建造器（spec《Out of Scope》：卷报告夹具的建造器拷问判不做）。
+
+### 停车场
+
+本票用了 Q1327–Q1330：
+
+- **Q1327**：「来路造了几份」做成第四个窄计数器，数记在动作上；`CONTEXT.md`《窄计数器》列举从三个改成四个——请协调人确认。
+- **Q1328**：谓词收在装 `Compute` 的那一处，字段改名 `records`。
+- **Q1329**：确认点上答做完再停的那一卷，来路照旧在分析环节里造了。
+- **Q1330**：`candidates` 交 `Result<Option<Vec<Candidate>>>`，门成立那一侧由一句 `expect` 认定不可能。
+
+### 数
+
+最终状态跑的那一趟：评审收完、`cargo fmt` 过之后，四条顺序跑。日志是 `os-09.gate1.log`、`os-09.gate2.log`、`os-09.gate3.log`、`os-09.polish.log`，
+都在树外，每份末尾记着退出码。这台机器是 macOS，闸门 1、2 在基线上就各红一条：`tests/concurrency.rs` 的
+`many_archive_volumes_never_hold_more_than_the_one_being_processed`（Q995，平台带来的，本票没碰它）。
+闸门 1、2 各加 `--no-fail-fast`、各用自己那个 target 目录；闸门 3 走 `cargo xtask gate 3`。本栏读作：**除了这一条基线红，没有新增的红。**
+条数比基线（`e6d95ab`）多一条：`tests/counters.rs` 那条新用例；互锁那条改的是形状，条数不变。
+
+| | 命令 | 末行 |
+|---|---|---|
+| 1 | `cargo test --no-fail-fast`（目录 `target`） | `GATE1_EXIT=101`；合计 **1145 通过 1 失败**（1 ignored）；lib 253 / bin 478；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 77.34s`（`concurrency`） |
+| 2 | `cargo test --no-default-features --no-fail-fast --target-dir target/gate/no-default-features` | `GATE2_EXIT=101`；合计 **1003 通过 1 失败**；lib 253 / bin 336；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.76s`（`concurrency`，同一条） |
+| 3 | `cargo xtask gate 3`（`cargo check --features profiling`，目录 `target/gate/profiling`） | 绿，`GATE3_EXIT=0`；末行 `全绿。`（检查那一步 `Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 8.06s`） |
+| polish | `cargo xtask polish`（fmt、两道 clippy、doc） | 绿，`POLISH_EXIT=0`；末行 `全绿。`；两道 clippy 零告警；`cargo doc` 告警 15 条（`warning: \`tonefit\` (lib doc) generated 15 warnings`），与基线同数 |
+
+**黄金快照**：`tests/golden.rs` 2 条全过（闸门 1 上 200.80 秒、闸门 2 上 164.67 秒），快照没动。
+**设计快照**：会话里比设计快照的那几景在闸门 1 的 bin 478 条里，全绿；本票在 `src/session/` 只给五处报告夹具添了 `origins: 0`，屏上一格没动。
 
 ## 停车场结转
 
@@ -52,7 +128,7 @@
   **开不开票不是本票定的**——落地的人在自己的票里替排票的人开票是抢板；
   这一条把分界与做法写实到这里为止，够 `/settle` 那一趟一眼判得出该不该开。
 - **Whose call:** 排票的人（开不开票）；真做的时候是落地的人
-- **处置：** 待处理。
+- **处置：** **`one-source/09` 落地（2026-10-02）：照②了结。**谓词收在装 `Compute` 的那一处（`Compute::records`，只给真要写的那一趟那份指纹，Q1328）；预览那一趟来路零份，由新添的窄计数器 `VolumeReport::origins` 钉着（Q1327）。剩下确认点上答做完再停的那一角（Q1329）。
 
 #### Q583 — `why_nothing_is_left` 抖动那一支回的是半截话，而没有一个用户看得到它
 
@@ -77,4 +153,4 @@
 - **Recommend:** ②，但不在这张票里做——它动的是那条用例的形状，而那条用例是
   「互锁 ③ 只有一处判定」这条性质的唯一闸门，值得单独一趟。③ 不要：那个入参没有真值。
 - **Whose call:** 拍板的人（`why_nothing_is_left` 的返回类型要不要换成枚举）
-- **处置：** 待处理。
+- **处置：** **`one-source/09` 落地（2026-10-02）：照②了结。**`why_nothing_is_left` 交 `NothingLeft`（`BitDepth(String)` / `DitherOutsideTheGate`），唯一的调用处 `candidates` 按它造拒绝（Q1330）；互锁那条用例改问变体与调用处的三种形状。拒绝的话一个字没变。

@@ -869,9 +869,11 @@ fn process_volume(
                 // 而读之前得先摊开（见 `VolumeReport::extracted`）。
                 extracted,
                 decodes: 0,
-                // 跳过的卷一张都没缩、一张参照都没进缓存——两个数与解码那一个同形（窄计数器）。
+                // 跳过的卷一张都没缩、一张参照都没进缓存、一份来路都没造——
+                // 三个数与解码那一个同形（窄计数器）。
                 resizes: 0,
                 cached_references: 0,
+                origins: 0,
                 io,
                 fell_back_to_serial,
                 // 分析、写出两个环节一个都不走：四段里有数的只有查重，外加要摊开的卷上的摊开。
@@ -917,7 +919,8 @@ fn process_volume(
                 request,
                 counters: &counters,
                 cache: &cache,
-                fingerprint: fingerprint.as_ref(),
+                // 盖记录用的那份指纹只给真要写的那一趟（见 `pipeline::Compute::records`）。
+                records: fingerprint.as_ref().filter(|_| writes),
                 candidates: &candidates,
                 settles,
                 events,
@@ -1026,6 +1029,7 @@ fn process_volume(
                 decodes: counters.decoder.decodes(),
                 resizes: counters.resampler.resizes(),
                 cached_references,
+                origins: counters.origins.built(),
                 io: io.clone(),
                 fell_back_to_serial: fell_back_to_serial.clone(),
                 timing,
