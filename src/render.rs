@@ -181,7 +181,7 @@ pub enum RowKind {
     /// （纸色提白批 02 号票第 1 条）。
     ///
     /// 它**恒在**（跳过的卷与一张灰度页都没有的卷除外，那两种什么都没算）：
-    /// 上限取 0 时照样出，上限那一格自己说「没开」——开没开是这一趟的事实，
+    /// 上限取 0 时照样出，上限那一格自己说「关闭」——开没开是这一趟的事实，
     /// 不是可有可无的注解。
     WhiteAlign,
     /// [纸色提白那一行](Self::WhiteAlign)底下的一句注解（成句）：
@@ -277,7 +277,8 @@ pub enum Field {
     /// **一枝底下几卷**（目录那一行）。没做成的那几卷也算在里面。
     VolumeCount,
     /// **统一档位分布**：一枝底下各档各有几卷，排成一串（目录那一行）。
-    /// **一卷都判不出档位就不在场。**
+    /// **一卷都判不出档位就不在场，默认那条路上也不在场**（只在 `--envelope` 那条路上出，
+    /// 理由见 [`directory`]）。
     Bases,
     /// **一枝底下几卷进了隔离**（目录那一行）。**一卷都没有就不在场。**
     Isolated,
@@ -289,10 +290,10 @@ pub enum Field {
     GateBroken,
     /// 本卷抖不抖。
     Dither,
-    /// **本次的提白上限**，连同它取 0 时那句「没开」。
+    /// **本次的提白上限**，连同它取 0 时那句「关闭」、开着时那句「暂定值」（见 [`limit_line`]）。
     ///
     /// 字面出处是**措辞**（`CONTEXT.md` 的《格》）：界面层自己造的字面。
-    /// 「级」这个单位与那句「没开」都在格里，与[缩放那一格](Self::Scaling)在坏页上
+    /// 「级」这个单位与那两句话都在格里，与[缩放那一格](Self::Scaling)在坏页上
     /// 说的那句同一条理由：这一格没有一个自己的列头，摆到哪一副排版上都得自带这几个字。
     WhiteAlignLimit,
     /// 这一卷**对齐了几页**。**一页都没量过就不在场**（上限取 0 那一趟照做的报告）。
@@ -849,9 +850,8 @@ fn why_nothing_judged(kind: RowKind) -> Option<&'static str> {
 /// （「跳过 之前转换过……」「无（默认逐页）……」「判定 X（覆盖项裁到只剩一个候选）」），
 /// 分布只是把它压成一个词，不编第二套说法。
 ///
-/// **读它的只有目录那一级**（[`Listed::base`]）：命令行那一副的折叠与会话的目录表因此
-/// 数的是同一批字（`volume-discovery/08`）。卷表那一列不读它——那一列是[灰阶分布](tally_column)，
-/// 默认路径上每卷都算作「逐页」的这一份在那里一个字的信息量都没有（spec 的 story 18）。
+/// **读它的只有命令行目录那一行**（[`Listed::base`]），**而且只在 `--envelope` 那条路上**
+/// （理由见 [`directory`]）。卷列表那一列不读它——那一列是[灰阶分布](tally_column)（spec 的 story 18）。
 fn base_of(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
         // 判出了统一档位的那一种：那一格就是它（[`Field::Base`] 的文档说的正是这一处）。
@@ -1012,9 +1012,15 @@ fn directory_of(root: &Path) -> &Path {
 /// **哪几格在场随这一枝而变**：一卷都没判出档位的目录没有分布那一格，
 /// 一卷都没进隔离的目录没有隔离那一格——一格在不在场本身就是一句话（见 [`Row::cell`]）。
 ///
+/// **分布那一格只在 `--envelope` 那条路上在场**（`envelope` 照 [`Report::envelope`] 原样传；
+/// say-and-stop/08，收停车场 Q706）。默认那条路上每一卷判的都是「逐页」，那一格写出来是
+/// 「逐页 N」，与卷数那一格说的是同一件事——整格不在，跳过与没做成的那几卷也不另起一格。
+/// 与会话卷列表上代表页那一列同一条规矩（`CONTEXT.md` 的《目录行 / 卷行》：默认逐页那一趟整列不在场）。
+///
 /// 卷数把**没做成的那几卷也算进去**：它们同样是这一枝底下点到过的卷，
-/// 而「几卷没做成」由分布那一格说（[`base_of`] 对它们答的是「没做成」）。
-pub fn directory(group: &Group, listed: &[Listed<'_>]) -> Row {
+/// 而「几卷没做成」在 `--envelope` 那条路上由分布那一格说（[`base_of`] 对它们答的是「没做成」），
+/// 两条路上都由末尾那几小结点名（[`tail`]）。
+pub fn directory(group: &Group, listed: &[Listed<'_>], envelope: bool) -> Row {
     let inside: Vec<Listed<'_>> = group
         .at
         .iter()
@@ -1024,9 +1030,11 @@ pub fn directory(group: &Group, listed: &[Listed<'_>]) -> Row {
         Cell::new(Field::Source, group.directory.display().to_string()),
         Cell::new(Field::VolumeCount, inside.len().to_string()),
     ];
-    let spread = base_spread(&inside);
-    if !spread.is_empty() {
-        cells.push(Cell::new(Field::Bases, spread));
+    if envelope {
+        let spread = base_spread(&inside);
+        if !spread.is_empty() {
+            cells.push(Cell::new(Field::Bases, spread));
+        }
     }
     let isolated = inside.iter().filter(|one| one.isolated()).count();
     if isolated > 0 {
@@ -1904,7 +1912,7 @@ const WHY_THE_GATE_SHUTS: &str = "原图比屏幕小，按原尺寸输出，阅�
 /// # 上限那一格恒在，三个数不恒在
 ///
 /// 「这一趟开没开」是**这一趟的事实**，不是可有可无的注解：上限取 0 时这一行照样出，
-/// 那一格自己说「没开」（票面第 6 条）。
+/// 那一格自己说「关闭」（票面第 6 条）。
 ///
 /// 三个数则**只在真量过纸白时才在场**——照做那一趟上限取 0 时对齐连纸白都不量
 /// （`crate::align_white` 那道短路），摆三个 0 上去是编的，而报告不该有编出来的字段
@@ -1984,15 +1992,20 @@ fn white_align_rows(volume: &VolumeReport, limit: WhiteAlignLimit) -> Vec<Row> {
     rows
 }
 
-/// 本次上限那一格怎么说：**取 0 时那句「没开」就在这一格里**。
+/// 本次上限那一格怎么说：**取 0 时那句「关闭」就在这一格里，开着时那句「暂定值」也在**。
 ///
-/// 「级」这个单位与那句话都在格里，不在排版那一层：这一格没有自己的列头
+/// 「级」这个单位与那两句话都在格里，不在排版那一层：这一格没有自己的列头
 /// （见 [`Field::WhiteAlignLimit`]），而「0 该读成什么」是措辞，一副排版都不许自己编。
+///
+/// **开着时注明是暂定值**（say-and-stop/08，收停车场 Q548）：这个数是**未标定占位值**
+/// （`CONTEXT.md` 的《尚未确立》），与抬头里分块取分的 K、细节放宽那两个数同一个待遇，
+/// 屏上的说法也取它们那一个词（票面字面是「未标定占位值」，停车场 Q1387）。
+/// 关着时不挂：那一趟没有一个数在用，占不占位无从谈起。
 fn limit_line(limit: WhiteAlignLimit) -> String {
     if limit == WhiteAlignLimit::OFF {
         format!("{limit} 级（关闭）")
     } else {
-        format!("{limit} 级")
+        format!("{limit} 级（暂定值）")
     }
 }
 
@@ -2592,7 +2605,7 @@ mod tests {
     /// 卷级那一段是从页数出来的（06 号票）。
     ///
     /// **纸色提白那一格点名取 0，不拿默认值**：靠这一份报告的用例里有一条**逐字**比着
-    /// 「上限 0 级（没开）」那一行，而它摆的页是 [`WhiteAlignment::Off`]，两样要对得上。
+    /// 「上限 0 级（关闭）」那一行，而它摆的页是 [`WhiteAlignment::Off`]，两样要对得上。
     ///
     /// 本文件另有十来处报告夹具是「页摆 `Off`、上限拿 `default()`」，05 号票把默认值
     /// 抬到 4 之后**它们描述的成了一个屏上不可能出现的状态**（上限 4 级，却一页都没量过）。
@@ -5357,7 +5370,7 @@ mod tests {
         let mut drawn = header(&report, Mode::Process);
         let listed = self::listed(&report);
         for group in grouped(&listed) {
-            drawn.push_str(&plain::directory(&group, &listed));
+            drawn.push_str(&plain::directory(&group, &listed, report.envelope));
             for at in &group.at {
                 let Listed::Settled(each) = listed[*at] else {
                     continue;
@@ -5620,6 +5633,43 @@ mod tests {
 
         let said = white_align_said(&volume, WhiteAlignLimit::OFF);
         assert_eq!(said, "  纸色提白 上限 0 级（关闭）\n", "{said}");
+        // **关着时不挂占位的说明**（say-and-stop/08）：「暂定值」说的是一个在用的数，
+        // 关着的那一趟没有一个数在用，多那一句是无关的话。
+        assert!(
+            !said.contains("暂定值"),
+            "关着的那一趟也挂上了占位的说明：{said}"
+        );
+    }
+
+    /// **上限非 0 时那一格注明它是暂定值**（say-and-stop/08，收停车场 Q548）。
+    ///
+    /// 与分块取分的 K、细节放宽那两个数**同一个待遇**：抬头那几行把它们各自标成「暂定值」，
+    /// 提白上限从前光秃秃一个「4 级」——读的人无从知道那个数是分布上的一个断口、
+    /// 真机上一次都没验过（`CONTEXT.md` 的《尚未确立》）。
+    ///
+    /// 上限点名取 7，不借默认值：注明跟着「开着」走，不跟着默认值走。
+    /// **光秃秃那一句不许再出现**——那是这一票改掉的话。
+    #[test]
+    fn a_white_align_limit_that_is_on_is_marked_as_a_placeholder() {
+        let volume = a_volume_whose_pages_were(&[WhiteAlignment::Aligned { paper_white: 253 }]);
+        let limit = WhiteAlignLimit::new(7);
+
+        let rows = self::volume(&volume, limit);
+        let line = rows
+            .iter()
+            .find(|row| row.kind == RowKind::WhiteAlign)
+            .expect("纸色提白那一行整行没了");
+        assert_eq!(line.cell(Field::WhiteAlignLimit), Some("7 级（暂定值）"));
+
+        let said = white_align_said(&volume, limit);
+        assert!(
+            said.starts_with("  纸色提白 上限 7 级（暂定值） · 提白 1 页"),
+            "{said}"
+        );
+        assert!(
+            !said.contains("上限 7 级 "),
+            "上限又成了光秃秃一个数，一个字不提它是暂定值：{said}"
+        );
     }
 
     /// **默认那一趟说的是「对齐了几页」，不再是「没开」**（纸色提白批 05 号票第 6 条）。
@@ -5709,7 +5759,7 @@ mod tests {
         // ——这一卷对齐了两页。
         assert_eq!(
             said,
-            "  纸色提白 上限 4 级 · 提白 2 页 · 超过上限 1 页 · 找不到纸色 1 页\n    \
+            "  纸色提白 上限 4 级（暂定值） · 提白 2 页 · 超过上限 1 页 · 找不到纸色 1 页\n    \
              没提白：library/volume-a/003.jpg、library/volume-a/004.jpg\n",
             "{said}"
         );
@@ -6013,6 +6063,8 @@ mod tests {
         report
             .volumes
             .push(a_volume("库/别的作品/第1话", base, broken));
+        // 两卷判的都是整卷统一灰阶，这一趟因此走的是那条路——目录那一行的分布那一格只在那条路上在场。
+        report.envelope = true;
         report
     }
 
@@ -6085,7 +6137,7 @@ mod tests {
         let groups = grouped(&listed);
         assert_eq!(groups.len(), 1, "四条都在同一枝上");
 
-        let row = directory(&groups[0], &listed);
+        let row = directory(&groups[0], &listed, true);
 
         assert_eq!(row.kind, RowKind::Directory);
         assert_eq!(row.cell(Field::Source), Some("库"));
@@ -6099,15 +6151,62 @@ mod tests {
         // 一卷都没进隔离时那一格不在场。
         let clean = [a_volume("库/第1话", four, false)];
         let listed: Vec<Listed<'_>> = clean.iter().map(Listed::Settled).collect();
-        let row = directory(&grouped(&listed)[0], &listed);
+        let row = directory(&grouped(&listed)[0], &listed, true);
         assert_eq!(row.cell(Field::Isolated), None);
         assert_eq!(row.cell(Field::VolumeCount), Some("1"));
 
         // 一卷都判不出档位时分布那一格也不在场（整卷彩页、整卷失败那一档）。
         let unjudged = [a_volume("库/第1话", None, true)];
         let listed: Vec<Listed<'_>> = unjudged.iter().map(Listed::Settled).collect();
-        let row = directory(&grouped(&listed)[0], &listed);
+        let row = directory(&grouped(&listed)[0], &listed, true);
         assert_eq!(row.cell(Field::Bases), None);
+    }
+
+    /// **统一档位分布那一格只在 `--envelope` 那条路上在场**（say-and-stop/08，收停车场 Q706）。
+    ///
+    /// 默认那条路上每一卷判的都是「逐页」，那一格于是写成「逐页 N」——与卷数那一格说的是同一件事。
+    /// 一格在不在场本身就是一句话：默认路径上**整格不在**，跳过的那几卷也不例外；
+    /// `--envelope` 那条路上各卷判出各自的统一档位，那一格说得出新东西，照旧在。
+    ///
+    /// 问的是命令行 `--brief` 那一副（[`plain::report`]）：那条路走没走由**报告**上那一格说
+    /// （[`Report::envelope`]），接线漏了这一条照样红。两条路各摆一份那条路上真出得来的卷
+    /// （默认路径上没有统一档位，`--envelope` 上没有「逐页」），开关点名给。
+    /// **「逐页」不许再出现在默认那条路的目录行上**——那是这一票改掉的话
+    /// （抬头那一行说的「逐页判断」是另一件事，所以只问目录那一行）。
+    #[test]
+    fn the_directory_row_spreads_bases_only_on_the_envelope_path() {
+        let directory_line = |judged: Option<VolumeVerdict>, enveloped: bool| {
+            let skipped = Some(VolumeVerdict::Skipped { page_count: 1 });
+            let mut report = one_page_report(
+                Profile::resolve("kobo-libra-2").expect("内置型号"),
+                VolumeVerdict::Skipped { page_count: 1 },
+                a_volume("库/第1话", judged, false).pages.remove(0),
+            );
+            report.volumes = vec![
+                a_volume("库/第1话", judged, false),
+                a_volume("库/第2话", judged, false),
+                a_volume("库/第3话", skipped, false),
+            ];
+            report.envelope = enveloped;
+            let text = plain::report(&report, Mode::Process, plain::ReportFold::ByDirectory);
+            text.lines()
+                .find(|line| line.starts_with("库  "))
+                .unwrap_or_else(|| panic!("目录那一行不在：{text}"))
+                .to_owned()
+        };
+
+        let per_page = directory_line(Some(VolumeVerdict::PerPage), false);
+        assert_eq!(per_page, "库  3 卷", "默认那条路上分布那一格还在");
+        assert!(
+            !per_page.contains("逐页"),
+            "默认那条路的目录行又写上了「逐页」，与卷数那一格说的是同一件事：{per_page}"
+        );
+
+        let four = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
+            BitDepth::Four,
+            Dither::Off,
+        ))));
+        assert_eq!(directory_line(four, true), "库  3 卷 · 4bit 2 ⋅ 跳过 1");
     }
 
     /// **命令行那一副把目录那一行摆在它那几卷前面**（票面第三条）。
@@ -6122,7 +6221,7 @@ mod tests {
 
         let listed = self::listed(&report);
         for group in grouped(&listed) {
-            let said = plain::directory(&group, &listed);
+            let said = plain::directory(&group, &listed, report.envelope);
             assert!(text.contains(said.trim_end()), "{said} 不在报告里：{text}");
         }
         // 两枝各一行，摆在它那一卷**前面**。
@@ -6166,7 +6265,7 @@ mod tests {
         // 目录那两行都在，逐字与摊开那一副相同。
         let listed = self::listed(&report);
         for group in grouped(&listed) {
-            let said = plain::directory(&group, &listed);
+            let said = plain::directory(&group, &listed, report.envelope);
             assert!(folded.contains(&said), "{said} 不在折起那一副里：{folded}");
         }
         // 卷级那一段一行都不印——而不折那一副印着它。
@@ -6464,7 +6563,7 @@ mod tests {
 
         let mut rows: Vec<Row> = grouped(&listed)
             .iter()
-            .map(|group| directory(group, &listed))
+            .map(|group| directory(group, &listed, true))
             .collect();
         for one in &volumes {
             rows.extend(volume(one, WhiteAlignLimit::default()));

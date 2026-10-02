@@ -14,7 +14,7 @@
 //! # 目录那一级也在这一副里（`volume-discovery/08`）
 //!
 //! [`report`] 按**目录**分组（[`super::grouped`]），每一枝那几卷前面摆一行
-//! [目录行](directory)：几卷 · 统一档位分布 · 几卷进了隔离。
+//! [目录行](directory)：几卷 · 统一档位分布（只在 `--envelope` 那条路上）· 几卷进了隔离。
 //! **分组与聚合都不在这里**——它们在 [`super`]，会话的目录表读的是同一份。
 //!
 //!
@@ -80,7 +80,7 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     let mut text = super::header(report, mode);
     let listed = super::listed(report);
     for group in super::grouped(&listed) {
-        text.push_str(&directory(&group, &listed));
+        text.push_str(&directory(&group, &listed, report.envelope));
         if fold == ReportFold::ByDirectory {
             continue;
         }
@@ -157,8 +157,11 @@ pub fn tail(report: &Report) -> String {
 /// （目录 → 卷 → 页），只是命令行默认三级一并摆出来——那一路没有一个键可按，
 /// 藏起来的那两级在屏上就再也没有第二个地方看得到了。要藏得当场点名
 /// （[`ReportFold::ByDirectory`]），那一副印出来就只剩这一行。
-pub fn directory(group: &super::Group, listed: &[Listed<'_>]) -> String {
-    line(&super::directory(group, listed))
+///
+/// `envelope` 是这一趟走没走整卷统一灰阶（[`Report::envelope`]）：分布那一格只在那条路上在场
+/// （见 [`super::directory`]）。
+pub fn directory(group: &super::Group, listed: &[Listed<'_>], envelope: bool) -> String {
+    line(&super::directory(group, listed, envelope))
 }
 
 /// 一个卷的卷级那几行，摆成纯文本（[`super::volume`] 出的行）。
@@ -232,7 +235,7 @@ pub(super) fn line(row: &Row) -> String {
         RowKind::GateNote => format!("    {}\n", cell(row, Field::Sentence)),
         // **上限那一格恒在，三个数不恒在**（见 [`super::white_align_rows`]）：
         // 照做那一趟上限取 0 时一页都没量过，三个 0 摆出去是编的。
-        // 「上限」是列头、「页」是单位，两样都在这一层；「级」与那句「没开」在格里，
+        // 「上限」是列头、「页」是单位，两样都在这一层；「级」与「关闭」「暂定值」那两句在格里，
         // 因为这一格摆到哪一副排版上都得自带它们。
         RowKind::WhiteAlign => format!(
             "  纸色提白 上限 {}{}\n",
