@@ -18,7 +18,8 @@ use rayon::prelude::*;
 
 use crate::color::{self, ColorImage};
 use crate::metadata::{
-    self, Fingerprint, Origin, PageRecord, PageSource, PageSources, Record, Recorder, SourceHash,
+    self, Fingerprint, MemberPart, Origin, PageRecord, PageSource, PageSources, Record, Recorder,
+    SourceHash,
 };
 use crate::sink::{self, Sink};
 use crate::source::{Member, Volume};
@@ -1000,13 +1001,8 @@ impl Compute<'_> {
             //
             // 坏页**恒产出一张**空白占位页：没有像素可切，切不出第二张来。
             Err(error) => {
-                let placement = Placement::new(
-                    relative,
-                    0,
-                    OUTPUTS_PER_FAILED_PAGE,
-                    self.fingerprint,
-                    index,
-                );
+                let part = MemberPart::new(relative, 0, OUTPUTS_PER_FAILED_PAGE);
+                let placement = Placement::new(part, self.fingerprint, index);
                 return Ok(vec![placement.into_page(
                     source,
                     Outcome::Failed {
@@ -1015,21 +1011,22 @@ impl Compute<'_> {
                 )]);
             }
         };
-        let count = pieces.len();
-        let placement = |ordinal| Placement::new(relative, ordinal, count, self.fingerprint, index);
+        // 切出来几块，那一族就几张：每一块按阅读顺序配上自己那一张的去处与来路。
+        let placements = MemberPart::family(relative, pieces.len())
+            .map(|part| Placement::new(part, self.fingerprint, index));
         match pieces {
             Pieces::Gray(pieces) => pieces
                 .into_iter()
-                .enumerate()
-                .map(|(ordinal, (image, piece))| {
-                    self.gray_page(source, placement(ordinal), image, piece, color, salvage)
+                .zip(placements)
+                .map(|((image, piece), placement)| {
+                    self.gray_page(source, placement, image, piece, color, salvage)
                 })
                 .collect(),
             Pieces::Color(pieces) => pieces
                 .into_iter()
-                .enumerate()
-                .map(|(ordinal, (image, piece))| {
-                    self.color_page(source, placement(ordinal), &image, piece, color, salvage)
+                .zip(placements)
+                .map(|((image, piece), placement)| {
+                    self.color_page(source, placement, &image, piece, color, salvage)
                 })
                 .collect(),
         }
@@ -1608,9 +1605,7 @@ impl Piece {
 
 /// 一张输出页在输出容器里的位置与它的**来路**。
 ///
-/// 两者由同一组 (源成员, 第几张, 共几张) 算出，因此一同算出、一同传下去：
-/// 分开算就是两个出处，而两处一旦对不上，幂等去找的名字与真写出的名字就错开了
-/// ——报告照出，输出里却少了成员（页几何批 04 号票）。
+/// 两者由同一张（[`MemberPart`]）算出，因此一同算出、一同传下去——为什么非得同一张，见那里。
 struct Placement {
     /// 它在输出容器里的相对位置（见 [`output_name`]）。
     target: PathBuf,
@@ -1640,18 +1635,10 @@ impl Placement {
     /// 那一处白造本票没收，记在停车场 `Q490`。
     ///
     /// `page` 是这一张来自的源页序号（见 [`Placement::page`]）。
-    fn new(
-        relative: &Path,
-        ordinal: usize,
-        count: usize,
-        records: Option<&Fingerprint>,
-        page: usize,
-    ) -> Self {
+    fn new(part: MemberPart, records: Option<&Fingerprint>, page: usize) -> Self {
         Self {
-            target: output_name(relative, ordinal, count),
-            origin: records
-                .is_some()
-                .then(|| Origin::new(relative, ordinal, count)),
+            target: output_name(part),
+            origin: records.is_some().then(|| Origin::of(part)),
             page,
         }
     }
@@ -2317,11 +2304,10 @@ pub(crate) fn compare_with_the_prior_output(
         // 一族齐不齐是容器的事实（[`written_family`]），齐了之后逐张比这一趟的依据
         // （[`PageRecord::matches`]），这里只数「对得上几族」。
         let family = found.filter(|family| {
-            family.iter().enumerate().all(|(ordinal, written)| {
-                written
-                    .record
-                    .matches(fingerprint, index, relative, ordinal, family.len())
-            })
+            family
+                .iter()
+                .zip(MemberPart::family(relative, family.len()))
+                .all(|(written, part)| written.record.matches(fingerprint, index, part))
         });
         page_count += family.as_ref().map_or(0, Vec::len);
         retained.push(family.map(|family| {
@@ -2401,10 +2387,8 @@ fn what_the_head_says(
     relative: &Path,
     fingerprint: &Fingerprint,
 ) -> WhyRedone {
-    for head in [
-        output_name(relative, 0, 1),
-        output_name(relative, 0, MORE_THAN_ONE),
-    ] {
+    for count in [1, MORE_THAN_ONE] {
+        let head = output_name(MemberPart::new(relative, 0, count));
         if let Some(record) = written.record_of(&head) {
             return record.what_changed(fingerprint);
         }
@@ -2465,9 +2449,10 @@ struct WrittenPage {
 ///
 /// 名字怎么拼只有一个出处（[`output_name`]），两支拼的都是它。
 fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<WrittenPage>> {
-    let one = output_name(relative, 0, 1);
+    let only = MemberPart::new(relative, 0, 1);
+    let one = output_name(only);
     if let Some((record, bytes)) = written.page_of(&one) {
-        return record.is_the_page(relative, 0, 1).then(|| {
+        return record.is_the_page(only).then(|| {
             vec![WrittenPage {
                 target: one,
                 record,
@@ -2477,10 +2462,11 @@ fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<Wr
     }
     // 一对一那个名字不在。那这一族要么是切开的，要么根本没写出来——头一张说了算：
     // 它记着自己那一族共几张，而余下几张的名字由那个数推得出来。
-    let first_of_many = output_name(relative, 0, MORE_THAN_ONE);
+    let first_of_many = output_name(MemberPart::new(relative, 0, MORE_THAN_ONE));
     let (first, bytes) = written.page_of(&first_of_many)?;
     let count = first.origin.as_ref()?.count();
-    if count < MORE_THAN_ONE || !first.is_the_page(relative, 0, count) {
+    let mut parts = MemberPart::family(relative, count);
+    if count < MORE_THAN_ONE || !parts.next().is_some_and(|head| first.is_the_page(head)) {
         return None;
     }
     let mut family = vec![WrittenPage {
@@ -2488,10 +2474,10 @@ fn written_family(written: &mut sink::Written, relative: &Path) -> Option<Vec<Wr
         record: first,
         bytes,
     }];
-    for ordinal in 1..count {
-        let target = output_name(relative, ordinal, count);
+    for part in parts {
+        let target = output_name(part);
         let (record, bytes) = written.page_of(&target)?;
-        if !record.is_the_page(relative, ordinal, count) {
+        if !record.is_the_page(part) {
             return None;
         }
         family.push(WrittenPage {
@@ -2691,8 +2677,8 @@ pub(crate) fn max_outputs_per_source_page(request: &Request) -> usize {
 /// 仍然只出一张——预告那个上界因此对它偏大一张，那正是[区间断言](crate::process_volume)容得下的。
 const OUTPUTS_PER_FAILED_PAGE: usize = 1;
 
-/// 一个源页产出的第 `ordinal` 张输出页（从 0 起）在输出容器里的相对位置，
-/// `count` 是这一源页总共产出几张。
+/// 一个源页产出的那一张输出页（[`MemberPart`]：哪个源成员、第几张、共几张）在输出容器里的
+/// 相对位置。
 ///
 /// 扩展名一律换成 png。**只产出一张时名字就是源页名换扩展名**——一对一那条老路
 /// 一个字符都不多，升级的人手上的输出因此不会有成员被改名。产出多张时在名字后面接一个
@@ -2700,19 +2686,20 @@ const OUTPUTS_PER_FAILED_PAGE: usize = 1;
 ///
 /// 加了序号的名字可能撞上卷里本来就有的另一个成员（源里同时有 `001.jpg` 与 `001-1.png`），
 /// 那一撞由 [`ensure_one_member_per_output`](crate::ensure_one_member_per_output) 当场拦下，不静默覆盖。
-pub(crate) fn output_name(relative: &Path, ordinal: usize, count: usize) -> PathBuf {
-    if count <= 1 {
+pub(crate) fn output_name(part: MemberPart) -> PathBuf {
+    let relative = part.relative();
+    if part.count() <= 1 {
         return relative.with_extension("png");
     }
     let mut name = relative.file_stem().unwrap_or_default().to_os_string();
-    name.push(format!("-{}.png", ordinal + 1));
+    name.push(format!("-{}.png", part.ordinal() + 1));
     relative.with_file_name(name)
 }
 
 /// 一个源页产出的那几张输出页的成员名，按阅读顺序。规则见 [`output_name`]。
 pub(crate) fn output_names(relative: &Path, count: usize) -> Vec<PathBuf> {
-    (0..count)
-        .map(|ordinal| output_name(relative, ordinal, count))
+    MemberPart::family(relative, count)
+        .map(output_name)
         .collect()
 }
 #[cfg(test)]
@@ -2784,7 +2771,7 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
-            origin: Some(Origin::new(Path::new(source), 0, 1)),
+            origin: Some(Origin::of(MemberPart::new(Path::new(source), 0, 1))),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
@@ -2811,7 +2798,7 @@ mod tests {
         OutputPage {
             source: PathBuf::from(source),
             target: PathBuf::from(target),
-            origin: Some(Origin::new(Path::new(source), 0, 1)),
+            origin: Some(Origin::of(MemberPart::new(Path::new(source), 0, 1))),
             outcome: Outcome::Processed {
                 size,
                 crop: Crop::keeping_all(size),
@@ -2877,10 +2864,11 @@ mod tests {
         let volume = source::open_unwatched(&root).expect("打开源卷");
 
         // 这一张源页切成了两半：两张输出页各记着自己是那一族的第几张。
-        let names = output_names(Path::new("001.png"), 2);
+        let family: Vec<MemberPart> = MemberPart::family(Path::new("001.png"), 2).collect();
+        let names: Vec<PathBuf> = family.iter().copied().map(output_name).collect();
         let fingerprint = by_volume('0');
-        let written = |ordinal: usize, count: usize| {
-            let origin = Origin::new(Path::new("001.png"), ordinal, count);
+        let written = |part: MemberPart| {
+            let origin = Origin::of(part);
             let record = Record::color(&fingerprint, &origin, None, None);
             encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
         };
@@ -2888,8 +2876,8 @@ mod tests {
         // 两半都在、都带着这份指纹与自己那一格：跳得过，而且数得出是两张。
         let output = space.path().join("out-both");
         fs::create_dir_all(&output).expect("建输出容器");
-        for (ordinal, name) in names.iter().enumerate() {
-            fs::write(output.join(name), written(ordinal, 2)).expect("写一张输出页");
+        for (&part, name) in family.iter().zip(&names) {
+            fs::write(output.join(name), written(part)).expect("写一张输出页");
         }
         assert_eq!(
             whole_skip(&output, &volume, &fingerprint),
@@ -2933,7 +2921,7 @@ mod tests {
         let volume = source::open_unwatched(&root).expect("打开源卷");
         let fingerprint = by_volume('0');
         let written = |count: usize| {
-            let origin = Origin::new(Path::new("001.png"), 0, count);
+            let origin = Origin::of(MemberPart::new(Path::new("001.png"), 0, count));
             let record = Record::color(&fingerprint, &origin, None, None);
             encode::png(&page, BitDepth::One, Some(&record)).expect("编一张带记录的页")
         };
