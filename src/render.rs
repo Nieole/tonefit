@@ -309,8 +309,8 @@ pub enum Field {
     ///
     /// 字面出处是**措辞**。它不占逐页表的一列，跟在行尾——与[残缺那一格](Self::Salvage)
     /// 同一个待遇，那几个字因此也在格里（同 [`WhiteAlignLimit`](Self::WhiteAlignLimit)）。
-    /// 不占列因此也不进那一关（`wording_cells` 从三张表的列导出）：串起它那两样的仍是
-    /// 本模块那个宽度稳的记号（`SEPARATOR`），而行尾错一格不牵连别人。
+    /// 不占列也照样过宽度那一关（那一关问措辞这一层出的全部格，停车场 Q962）：
+    /// 串起它那两样的是本模块那个宽度稳的记号（`SEPARATOR`）。
     PaperWhite,
     /// 统一档位。**目录那一行的[统一档位分布](directory)要的就是这一格**（[`base_of`]），
     /// 而成句的那一格里说的是同一个数。卷表不读它——那一列是[灰阶分布](Self::Tally)。
@@ -806,12 +806,12 @@ pub fn failed_volume(failure: &VolumeFailure) -> Row {
 /// **「跳过」与「没做成」只有 [`why_nothing_judged`] 一处**：目录那一行的[统一档位分布](directory)
 /// 对这两种卷说的是同一个词（[`base_of`]），两处不各写一遍。
 ///
-/// **此刻读它的只有用例**（这里与会话的场景夹具）：卷列表那棵树上那一格的两个词
-/// （跳过、没做成）在画法那一层另写了一份，还没接回这一处——停车场 **Q961**。
-/// 分布那一格本身两副排版都读，它在 [`tally_row`]。
+/// **卷列表那棵树读它**（`crate::session::shell::list`）：一页都没判的卷在那一格上写的
+/// 那两个词就从这里取。判过页的卷那一格要按档位上色，读的是[那几笔](tally_pairs)——
+/// 一串字上不了色；分布那一格本身两副排版都读，它在 [`tally_row`]。
 #[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "卷列表那一格还没接回这一处，停车场 Q961")
+    not(feature = "tui"),
+    allow(dead_code, reason = "只有会话读得到，而它整个在 tui 特性后面")
 )]
 pub fn tally_column(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
@@ -6252,7 +6252,113 @@ mod tests {
         assert!(!folded.contains("JPEG 数据截断"), "{folded}");
     }
 
-    /// **摆进列里的那几格，字形在哪种终端上都占同一格**
+    /// 措辞这一层出的**每一种格**，连同[宽度那一关](every_glyph_this_layer_puts_in_a_cell_is_the_same_width_on_any_terminal)
+    /// 问不问它的字形。
+    ///
+    /// **问不问看的是这一格的字是谁写的**（`CONTEXT.md`《格》的字面出处），不看它在屏上摆没摆成列
+    /// （停车场 Q962）：屏上换一张表，那一关不跟着缩。不问的两种各自的理由写在 `match` 那两臂上。
+    ///
+    /// **`match` 不留 `_`**：添一种格先在这里编译不过，当场决定它归哪一档。名单本身编译器不管，
+    /// 它挨着 `match` 写，添那一臂的人就在名单底下——与这一模块里候选、理由那两张表同一副写法。
+    fn every_field() -> Vec<(Field, Asked)> {
+        let every = [
+            Field::Sentence,
+            Field::Source,
+            Field::Output,
+            Field::PageCount,
+            Field::OutputBytes,
+            Field::VolumeCount,
+            Field::Bases,
+            Field::Isolated,
+            Field::ColorPages,
+            Field::GateScope,
+            Field::GateBroken,
+            Field::Dither,
+            Field::WhiteAlignLimit,
+            Field::WhiteAligned,
+            Field::WhiteOverTheLimit,
+            Field::WhiteNoPaperWhite,
+            Field::PaperWhite,
+            Field::Base,
+            Field::Tally,
+            Field::Envelope,
+            Field::Candidate,
+            Field::Reason,
+            Field::Scores,
+            Field::VerdictScore,
+            Field::Reading,
+            Field::Cache,
+            Field::Size,
+            Field::Crop,
+            Field::Scaling,
+            Field::Cut,
+            Field::Backstop,
+            Field::Salvage,
+            Field::ColorToGray,
+            Field::Sheet,
+            Field::Bytes,
+        ];
+        every
+            .into_iter()
+            .map(|field| {
+                let asked = match field {
+                    // **原样那一档**：用户的字节——卷根、目录与代表页那一页（`Source`），
+                    // 卷的去处、一页的去处与样张那一张的文件（`Output`）。宽度永远稳不住，
+                    // 摆不下时归从中间省略管（`CONTEXT.md`《格》）。
+                    Field::Source | Field::Output => Asked::No,
+                    // **成句的那一格**：整句话，画它的那一头把它当整段文字折行，错一格不牵连别人；
+                    // 句子里还夹着原样那一档的字（隔离那一句的整条去处、坏页那一句的错误链）。
+                    // 库那一头同一条理由放开成句的 `Display`（`tonefit::glyph` 的 `SENTENCES`）。
+                    Field::Sentence => Asked::No,
+                    Field::PageCount
+                    | Field::OutputBytes
+                    | Field::VolumeCount
+                    | Field::Bases
+                    | Field::Isolated
+                    | Field::ColorPages
+                    | Field::GateScope
+                    | Field::GateBroken
+                    | Field::Dither
+                    | Field::WhiteAlignLimit
+                    | Field::WhiteAligned
+                    | Field::WhiteOverTheLimit
+                    | Field::WhiteNoPaperWhite
+                    | Field::PaperWhite
+                    | Field::Base
+                    | Field::Tally
+                    | Field::Envelope
+                    | Field::Candidate
+                    | Field::Reason
+                    | Field::Scores
+                    | Field::VerdictScore
+                    | Field::Reading
+                    | Field::Cache
+                    | Field::Size
+                    | Field::Crop
+                    | Field::Scaling
+                    | Field::Cut
+                    | Field::Backstop
+                    | Field::Salvage
+                    | Field::ColorToGray
+                    | Field::Sheet
+                    | Field::Bytes => Asked::Yes,
+                };
+                (field, asked)
+            })
+            .collect()
+    }
+
+    /// [宽度那一关](every_glyph_this_layer_puts_in_a_cell_is_the_same_width_on_any_terminal)
+    /// 问不问一种格的字形（见 [`every_field`]）。
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Asked {
+        /// 问：**措辞那一档**，字是这一层（或库）挑的。
+        Yes,
+        /// 不问：原样那一档，或成句的那一格。
+        No,
+    }
+
+    /// **措辞这一层出的每一格，字形在哪种终端上都占同一格**
     /// （画质分 `tonefit::width_is_stable`，`p4-parking-lot/05` 收的 Q168）。
     ///
     /// 东亚宽度表上标着 **Ambiguous** 的字形（`×` `·` `…` 之类）在按 CJK 配置的终端上画
@@ -6260,26 +6366,30 @@ mod tests {
     /// 它右边每一列就整体错开一格。**尺寸那一列夹在页名与判定中间**，
     /// 从前有 `×` 的行（正常页）与那一格空着的行（坏页）因此整行错开一格。
     ///
-    /// **问哪几格不再手抄。** 那份名单从屏上那两张表（卷列表那棵树、每页结果）的
-    /// [字面出处](crate::session::columns::Provenance)导出（`crate::session::columns::wording_cells`）
-    /// ——从前它在这里另写一份，往表里添一列不跟着添**也不会红**（停车场 Q188）。
-    /// 裁白边、彩页转灰、跨页、画质分那一串、页数、卷数、统一档位分布几格不在屏上成列，
-    /// 因此不进这一关——停车场 **Q962**。
+    /// **问的是措辞这一层出的全部格**，哪几种不问只在 [`every_field`] 一处。
+    /// 行首记号、省略号与耗时那一列是画法那一层自己造的，在 `crate::session::columns` 与
+    /// `crate::session::shell::marks` 那两头问。
     ///
-    /// **添一个不稳的字形，这一条当场变红。** 装**路径**的那几列（目录名、卷名、页名、
-    /// 代表页、去处）不在里面——那是用户的字节，不是这一层挑的字形，它们归**原样**那一档，
-    /// 摆不下时从中间省略（`CONTEXT.md`《格》）。行首记号、省略号与耗时那一列是画法那一层
-    /// 自己造的，在 `crate::session::columns` 与 `crate::session::shell::marks` 那两头问。
+    /// **添一个不稳的字形，这一条当场变红**——不论那一格在不在屏上。
     #[test]
-    fn every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal() {
-        // 屏上那两张表把哪几格摆成列，**由那两张表自己说**（`crate::session::columns` 的
-        // `TreeColumn`、`PagesColumn` 各列逐个报出自己的字面出处）。
-        // 其余各格成句、跟在行尾或整段折行印出来，错一格不牵连别人。
-        let lined_up = crate::session::columns::wording_cells();
-        // **每页结果的尺寸与缩放两列此刻真在这一关里**：这两格的字面出自库的 `Size` 与
-        // `Scaling`，缩放那一格从前漏在名单外面，CJK 终端上整张表因此逐行错位（停车场 Q188）。
-        for field in [Field::Size, Field::Scaling] {
-            assert!(lined_up.contains(&field), "{field:?} 不在那一关里");
+    fn every_glyph_this_layer_puts_in_a_cell_is_the_same_width_on_any_terminal() {
+        let every = every_field();
+        let asked = |field: Field| {
+            every
+                .iter()
+                .find(|(each, _)| *each == field)
+                .map(|(_, asked)| *asked)
+                .unwrap_or_else(|| panic!("{field:?} 不在 every_field 那张名单上"))
+        };
+        // **屏上那两张表摆成列的那几格一格都不落在关外**：哪几列出自措辞那一层的哪一格，
+        // 由那两张表自己说（`crate::session::columns` 逐列报出的字面出处）。一列说自己出自
+        // 措辞那一层、那一格却被这里放开了，两处就各说各的。
+        for field in crate::session::columns::wording_cells() {
+            assert_eq!(
+                asked(field),
+                Asked::Yes,
+                "{field:?} 摆在屏上的列里，却不在那一关里"
+            );
         }
 
         let profile = Profile::resolve("kobo-libra-2").expect("内置型号");
@@ -6333,19 +6443,39 @@ mod tests {
         volumes[0].pages[0].output = PathBuf::from("out/第1话·上/序·卷首.png");
         if let PageOutcome::Whole(processed) = &mut volumes[0].pages[0].outcome
             && let PageBranch::Gray {
-                scores, verdict, ..
+                scores,
+                verdict,
+                white,
+                ..
             } = &mut processed.branch
         {
             *scores = scored;
             // **判成的那一档在各候选里**，每页结果那一列（[`Field::VerdictScore`]）才摆得出来。
             verdict.candidate = Candidate::new(BitDepth::Two, Dither::Off);
+            // **量出了纸白**：卷级那一行才摆得出对齐了几页那三格，预览那一副的逐页那一行
+            // 才摆得出纸白那一格（[`Field::PaperWhite`]，它也串着那个记号）。
+            *white = WhiteAlignment::Aligned { paper_white: 236 };
         }
-        // **裁白边与彩页转灰那两格得真在场**，不然那两列进了名单也没人问：
+        // 产物体积那一行要库那一侧说得出才在场。
+        volumes[0].output_bytes = Some(1_234_567);
+        // **裁白边与彩页转灰那两格得真在场**，不然那两格进了名单也没人问：
         // 一个像素都没裁的页不占裁白边那一格，不是彩页的页不占彩页那一格。
+        // 兜底上界那一格同理：没退回过的页不占它。
         if let PageOutcome::Whole(processed) = &mut volumes[3].pages[0].outcome {
             processed.crop = Crop::new(Size::new(1441, 2048), (20, 24), Size::new(1400, 2000));
             processed.color = PageColor::Color;
+            processed.backstopped = true;
         }
+        // 残缺那一格只在残缺页上：同一页再摆一张救回了一截的。
+        let mut salvaged = volumes[3].pages[0].clone();
+        salvaged.source = PathBuf::from("库/第4话/002.jpg");
+        if let PageOutcome::Whole(processed) = salvaged.outcome {
+            salvaged.outcome = PageOutcome::Salvaged {
+                page: processed,
+                salvage: Salvage::from_share(0.625),
+            };
+        }
+        volumes[3].pages.push(salvaged);
         // **灰阶分布那一格要两档才串得起来**：头一卷再添一页、判成另一档
         // （`two-pass-rework/02`），那一格因此也带上了那个记号。
         let mut second = volumes[0].pages[0].clone();
@@ -6356,9 +6486,10 @@ mod tests {
             verdict.candidate = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
         }
         volumes[0].pages.push(second);
+        // **没做成那一句里夹着一条带 `·` 的路径**：成句的那一格不进那一关，喂进去照旧绿。
         let failures = [VolumeFailure {
             volume: PathBuf::from("库/第5话"),
-            reason: "卷根不在了".to_owned(),
+            reason: "读不出 库/第5话·下：卷根不在了".to_owned(),
             timing: VolumeTiming::default(),
         }];
         let listed: Vec<Listed<'_>> = volumes
@@ -6366,6 +6497,19 @@ mod tests {
             .map(Listed::Settled)
             .chain(failures.iter().map(Listed::Failed))
             .collect();
+        // **样张那几行**（`proof-sheet/02`）：会话眼下不接样张，命令行那一份照样是这一层出的格。
+        // 一张那一行装着「候选 分」、字节数与那一张的文件（原样那一档，也带一个 `·`）。
+        let sheet = |name: &str| Sheet {
+            file: PathBuf::from(format!("out/样张/序·卷首.{name}.png")),
+            bytes: 40_960,
+        };
+        let proof = ProofPage {
+            page: volumes[0].pages[0].clone(),
+            sheets: Sheets::Gray {
+                reference: sheet("参照"),
+                candidates: vec![sheet("1bit+FS"), sheet("2bit")],
+            },
+        };
 
         let mut rows: Vec<Row> = grouped(&listed)
             .iter()
@@ -6373,8 +6517,12 @@ mod tests {
             .collect();
         for one in &volumes {
             rows.extend(volume(one, WhiteAlignLimit::default()));
-            rows.extend(pages(one, Mode::Process));
+            // **预览那一副**：比照做那一副多出纸白那一格，别的一格不少。
+            rows.extend(pages(one, Mode::DryRun));
         }
+        rows.push(failed_volume(&failures[0]));
+        rows.extend(proof_gate_rows(&proof.page));
+        rows.extend(proof_sheet_rows(&proof));
 
         let stable = |said: &str, whose: &str| {
             for glyph in said.chars() {
@@ -6385,8 +6533,8 @@ mod tests {
             }
         };
 
-        // 那三格真的串起来了——不然这一条问的是几个一个记号都没有的串。
-        for field in [Field::Bases, Field::Tally, Field::Scores] {
+        // 那几格真的串起来了——不然这一条问的是几个一个记号都没有的串。
+        for field in [Field::Bases, Field::Tally, Field::Scores, Field::PaperWhite] {
             assert!(
                 rows.iter()
                     .filter_map(|row| row.cell(field))
@@ -6402,30 +6550,28 @@ mod tests {
             "没做成那一档没摆进分布那一格"
         );
 
-        // **导出来的那几格，夹具真摆得出来**——名单进得来、格不在场，那一列等于没问。
+        // **要问的每一种格，夹具真摆得出来**——名单上问、格不在场，那一种等于没问。
         //
         // **只放开一格**：跨页那一格要一个 `tonefit::Cut`，而它在库外造不出来
         // （字段私有、没有构造函数），它那个 `Display` 由库自己那条穷举的用例钉着
         // （`tonefit::glyph`）。名单只放开眼下真放不下的那一个，再来一格就得存心加一行。
         const NOT_MADE_OUTSIDE_THE_LIBRARY: &[Field] = &[Field::Cut];
-        for field in &lined_up {
-            if NOT_MADE_OUTSIDE_THE_LIBRARY.contains(field) {
+        for (field, asked) in &every {
+            if *asked == Asked::No || NOT_MADE_OUTSIDE_THE_LIBRARY.contains(field) {
                 continue;
             }
             assert!(
                 rows.iter().any(|row| row.cell(*field).is_some()),
-                "{field:?} 在那一关的名单里，而这一份夹具一行都没摆出它"
+                "{field:?} 在那一关里，而这一份夹具一行都没摆出它"
             );
         }
 
-        // **原样那一档不进那一关**——页名、卷名、目录名、去处路径、代表页名都是用户的字节，
-        // 宽度**永远稳不住**，摆不下时归从中间省略管，不归这一关管（`CONTEXT.md`《格》）。
-        //
-        // 措辞那一层把那几列的字装在这两格里：[`Field::Source`] 装卷根、目录与代表页那一页，
-        // [`Field::Output`] 装卷的去处与一页的去处。夹具已经往两格都喂进了 `·`（U+00B7），
-        // **两格都过不了那一关，而这一条照旧绿**——那才叫「不进那一关」。
-        for field in [Field::Source, Field::Output] {
-            assert!(!lined_up.contains(&field), "{field:?} 被拉进了那一关");
+        // **不问的那几格真放开了**——夹具往每一种都喂进了 `·`（U+00B7）：
+        // [`Field::Source`] 装卷根、目录与代表页那一页，[`Field::Output`] 装卷的去处、
+        // 一页的去处与样张那一张，[`Field::Sentence`] 装着没做成那一句。
+        // **三种都过不了那一关，而这一条照旧绿**——那才叫「不进那一关」。
+        for field in [Field::Source, Field::Output, Field::Sentence] {
+            assert_eq!(asked(field), Asked::No, "{field:?} 被拉进了那一关");
             assert!(
                 rows.iter()
                     .filter_map(|row| row.cell(field))
@@ -6436,7 +6582,7 @@ mod tests {
 
         for row in &rows {
             for cell in &row.cells {
-                if !lined_up.contains(&cell.field) {
+                if asked(cell.field) == Asked::No {
                     continue;
                 }
                 stable(
@@ -6446,11 +6592,11 @@ mod tests {
             }
         }
 
-        // **判定与理由那两列的取值是枚举**，夹具只摆得出其中几种：逐个再问一遍，
+        // **判定与理由那两格的取值是枚举**，夹具只摆得出其中几种：逐个再问一遍，
         // 添一个带歧义宽度字形的候选或理由才当场变红。
         for gate in [GeometryGate::Holds, GeometryGate::Broken] {
             for candidate in Candidate::all(profile.panel().gray_levels, gate) {
-                stable(&candidate.to_string(), "判定那一列");
+                stable(&candidate.to_string(), "判定那一格");
             }
         }
         for reason in [
@@ -6473,7 +6619,7 @@ mod tests {
                 | Reason::Outlier
                 | Reason::OutsideTheGate => {}
             }
-            stable(&reason.to_string(), "理由那一列");
+            stable(&reason.to_string(), "理由那一格");
         }
     }
 

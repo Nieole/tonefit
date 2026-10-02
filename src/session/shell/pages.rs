@@ -41,7 +41,8 @@
 //! 与库那一头撞车的有两处：跳过那一句（停车场 **Q877**），与留下几页那一截——命令行那一句
 //! （`render` 的按页跳过那一行）说的是同一个数，屏上只报个数、措辞另写一份（停车场 **Q1247**）。
 //! **那几句里提到的键不是这一块的**：框底边与两句末尾的 `a`／`h` 取自按键表那个不问阶段与块的
-//! 写法（[`keymap::spelt_for`]），措辞才是这一块自己的。
+//! 写法（[`keymap::spelt_for`]），措辞才是这一块自己的。隔离那个短标签里的**目录名**同理，
+//! 取自库那一格（[`tonefit::ISOLATED_DIRECTORY`]，停车场 Q870）。
 //!
 //! # 一行的列
 //!
@@ -494,9 +495,9 @@ fn tally_line(session: &Session, report: &VolumeReport, live: &Live, panel: Pane
     // 末一句说的是**这一卷此刻还有一件什么事**：等待确认的那一份一个字节都没写，
     // 进了隔离的那一卷整卷去了隔离目录。都不是就不摆。
     let said = match session.volume_state(Some(live), &report.volume) {
-        VolumeState::Deciding => "等待确认：还没写入任何文件",
-        VolumeState::Isolated => "这一卷输出在 _isolated/",
-        _ => "",
+        VolumeState::Deciding => "等待确认：还没写入任何文件".to_owned(),
+        VolumeState::Isolated => format!("这一卷输出在 {}/", tonefit::ISOLATED_DIRECTORY),
+        _ => String::new(),
     };
     if !said.is_empty() {
         segments.push(Segment::new(said, Look::tone(Tone::Caution)));
