@@ -388,6 +388,43 @@ const WHY_NOTHING_HOME: &str = "src/render.rs";
 /// 卷列表那一格读那两个词走的那一手：**问的是调用的形状**，指路的散文不算。
 const WHY_NOTHING_READER: (&str, &str) = ("src/session/shell/list.rs", "render::tally_column(");
 
+/// 词汇表，相对仓库根。下面两条问的都是它里面的**一条**，不是整个文件（见 [`vocabulary_row`]）。
+const VOCABULARY: &str = "CONTEXT.md";
+
+/// **《砍列》**（`one-source/08`，收停车场 Q615）：词汇表那一条的名字。
+const DROPPED_TERM: &str = "砍列";
+
+/// 砍列那两个次序的家：两张表各在自己的 `impl Column` 里宣告一个。
+const DROPPED_HOME: &str = "src/session/columns.rs";
+
+/// 宣告那一格的名字，后面紧跟着那一串变体。**记号里只许有名字、不许有值**：是哪几列、
+/// 谁先谁后，用例当场从家里读（[`dropped_in_turn`]）——把次序抄进这里，这个文件就成了
+/// 仓库里又一处写着它的地方（`p4-parking-lot/27` 立的那条判法，与 [`TRUNCATION_HOME_MARKS`]
+/// 只问上限的名字同一条）。
+const DROPPED_MARK: &str = "const DROPPED_IN_TURN: &'static [Self] = &[";
+
+/// 从一个变体认回它在屏上叫什么的那一手：列头。词汇表里抄次序抄的是屏上的叫法。
+const HEAD_MARK: &str = "fn head(self)";
+
+/// 《砍列》指回家里的那句路标——引用的是**那一格的名字**，`columns` 怎么改都不使引用失效。
+const DROPPED_SIGNPOST: &str = "`session::columns` 的 `Column::DROPPED_IN_TURN`";
+
+/// **《视口》**（`one-source/08`，收停车场 Q615）：词汇表那一条的名字。
+const VIEWPORT_TERM: &str = "视口 (Viewport)";
+
+/// 「屏上哪几处共用视口」那张表的家。
+const VIEWPORT_HOME: &str = "src/session/viewport.rs";
+
+/// 那张表的表头只认头一格：**用在哪**——那一列列的就是共用它的那几处（[`sharing_a_viewport`]）。
+/// 与 [`DROPPED_MARK`] 同一条判法：哪几处是值，用例当场从家里读，不抄进来。
+const VIEWPORT_TABLE_HEAD: &str = "/// | 用在哪 |";
+
+/// 那张表挂在谁身上：它是这个类型的文档，不是别的哪一段散文里的一张表。
+const VIEWPORT_OWNER: &str = "struct Viewport";
+
+/// 《视口》指回家里的那句路标。
+const VIEWPORT_SIGNPOST: &str = "`session::viewport` 的 `Viewport` 那张表";
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -1013,4 +1050,185 @@ fn the_isolated_directory_name_and_the_why_nothing_words_live_in_one_place() {
             "{file} 不再读「{reads}」：那一处又手写了一份，或者自己拿了主意"
         );
     }
+}
+
+/// 词汇表里的**一条**：[`VOCABULARY`] 里以 `| **<词条>** |` 起头的那一行。
+///
+/// 只拿那一行、不拿整个文件：别的词条提到同一列、同一处是它们自己的事
+/// （《目录行 / 卷行》从左到右列着树上那几列——那是列的次序，不是砍列的次序）。
+fn vocabulary_row(term: &str) -> String {
+    let head = format!("| **{term}** |");
+    let rows: Vec<String> = read(&root().join(VOCABULARY))
+        .lines()
+        .filter(|line| line.starts_with(&head))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        rows.len(),
+        1,
+        "{VOCABULARY} 里《{term}》那一条该恰好一行：词条改了名就把用例里那个名字跟着改"
+    );
+    rows.into_iter().next().expect("恰好一行")
+}
+
+/// 两张表各自宣告的砍列次序，**按屏上的列头**，当场从[家里](DROPPED_HOME)读：
+/// 各表 `impl Column for …` 那一段里[宣告那一格](DROPPED_MARK)列着的变体，
+/// 到同一段的[列头那一手](HEAD_MARK)里认回它叫什么。
+///
+/// 读的是**归一之后的代码**（[`code_only`] 再 [`squashed`]）：折行不折行都认得出，
+/// 文档与用例模块里提到 `DROPPED_IN_TURN` 的那几句不算宣告。认不出就当场红，不交回一个空次序——
+/// 空次序拿去比，词汇表抄什么都是绿的。
+fn dropped_in_turn() -> Vec<Vec<String>> {
+    let code = squashed(&code_only(&read(&root().join(DROPPED_HOME))));
+    let declared = squashed(DROPPED_MARK);
+    let heads_at = squashed(HEAD_MARK);
+    let orders: Vec<Vec<String>> = code
+        .split(&squashed("impl Column for "))
+        .skip(1)
+        .map(|block| {
+            let (_, rest) = block
+                .split_once(&declared)
+                .unwrap_or_else(|| panic!("{DROPPED_HOME} 里有一张表没宣告「{DROPPED_MARK}」"));
+            let (variants, _) = rest.split_once(']').expect("宣告那一格收得了尾");
+            let (_, heads) = block
+                .split_once(&heads_at)
+                .unwrap_or_else(|| panic!("{DROPPED_HOME} 里有一张表没有「{HEAD_MARK}」"));
+            let order: Vec<String> = variants
+                .split(',')
+                .filter(|variant| !variant.is_empty())
+                .map(|variant| {
+                    let arm = format!("{variant}=>\"");
+                    let (_, said) = heads
+                        .split_once(&arm)
+                        .unwrap_or_else(|| panic!("列头那一手里认不出 {variant}"));
+                    said.split_once('"').expect("列头收得了尾").0.to_owned()
+                })
+                .collect();
+            assert!(!order.is_empty(), "{DROPPED_HOME} 里有一个砍列次序是空的");
+            order
+        })
+        .collect();
+    assert!(
+        !orders.is_empty(),
+        "{DROPPED_HOME} 里一个砍列次序都没读到：宣告那一格改了名就把 DROPPED_MARK 跟着改"
+    );
+    orders
+}
+
+/// **《砍列》那一条只指着家里，不写出次序**（`one-source/08`，收停车场 Q615）。
+///
+/// 词条指向 [`DROPPED_HOME`]、明写「这里也不抄」——那是一句话，不是一个闸门：
+/// 词条里的一份抄件不随实现换列，而换了列没有一条别的用例会红。这一条是那句话的闸门。
+///
+/// **三件事一起问**，与[拒绝开始那一条](the_refusal_list_lives_in_one_place)同一个形状，
+/// 只是**家在代码里、该守的那一处在词汇表里**：词条里一列都不点名（次序里的任何一列都不许出现——
+/// 点名一列就是抄了次序的一截）、家里真宣告着次序、词条那句路标还在。
+/// 只问头一件的话，把路标一并删掉这一条也是绿的。
+///
+/// **认的是屏上的列头**：换一个叫法抄（列头的半截、一个别称）认不出。错的方向是**误红**——
+/// 哪天词条要为别的事提到其中一列，红了再看那一句是不是次序。
+#[test]
+fn the_order_columns_drop_in_lives_in_one_place() {
+    let orders = dropped_in_turn();
+    let row = squashed(&vocabulary_row(DROPPED_TERM));
+
+    let named: Vec<&String> = orders
+        .iter()
+        .flatten()
+        .filter(|head| row.contains(&squashed(head)))
+        .collect();
+    assert_eq!(
+        named,
+        Vec::<&String>::new(),
+        "《{DROPPED_TERM}》里点了砍列次序里的列名：词条只许指着家里那一格，不许写出是哪几列"
+    );
+
+    assert!(
+        row.contains(&squashed(DROPPED_SIGNPOST)),
+        "《{DROPPED_TERM}》里指回家里的路标「{DROPPED_SIGNPOST}」不在了"
+    );
+}
+
+/// 共用视口的那几处，**按那张表头一格的叫法**，当场从[家里](VIEWPORT_HOME)读：
+/// [表头](VIEWPORT_TABLE_HEAD)往下、分隔那一行之外的每一行，头一格括号之前那几个字。
+///
+/// 还核那张表**挂在 [`VIEWPORT_OWNER`] 身上**：表到那个类型之间只隔着文档与属性——
+/// 词条指的是「`Viewport` 那张表」，挪到别处的一张表不是它。认不出就当场红，不交回一个空名单。
+fn sharing_a_viewport() -> Vec<String> {
+    let text = read(&root().join(VIEWPORT_HOME));
+    let lines: Vec<&str> = text.lines().map(str::trim_start).collect();
+    let head = lines
+        .iter()
+        .position(|line| line.starts_with(VIEWPORT_TABLE_HEAD))
+        .unwrap_or_else(|| {
+            panic!(
+                "{VIEWPORT_HOME} 里没有「{VIEWPORT_TABLE_HEAD}」那张表：\
+                 表头改了就把 VIEWPORT_TABLE_HEAD 跟着改"
+            )
+        });
+
+    let places: Vec<String> = lines[head + 1..]
+        .iter()
+        .take_while(|line| line.starts_with("/// |"))
+        .map(|line| {
+            let first = line["/// |".len()..]
+                .split('|')
+                .next()
+                .expect("一行至少一格")
+                .trim();
+            first
+                .split(['（', '('])
+                .next()
+                .expect("括号之前那一截")
+                .trim()
+                .to_owned()
+        })
+        .filter(|place| !place.chars().all(|ch| matches!(ch, '-' | ':')))
+        .collect();
+    assert!(
+        !places.is_empty(),
+        "{VIEWPORT_HOME} 那张表一行都没有：共用视口的那几处不在家里了"
+    );
+
+    let owner = lines[head..]
+        .iter()
+        .find(|line| !line.starts_with("///") && !line.starts_with("#["))
+        .expect("那张表后面还有代码");
+    assert!(
+        owner.contains(VIEWPORT_OWNER),
+        "{VIEWPORT_HOME} 那张表不再挂在「{VIEWPORT_OWNER}」身上，而挂在「{owner}」上"
+    );
+    places
+}
+
+/// **《视口》那一条只指着家里，不写出共用它的是哪几处**（`one-source/08`，收停车场 Q615）。
+///
+/// 词条指向 [`VIEWPORT_HOME`] 的那张表、明写「这里不抄第二份」——与[《砍列》那一条](the_order_columns_drop_in_lives_in_one_place)
+/// 同一个缺口：屏上换了几块，词条里的一份抄件不跟着换。
+///
+/// **三件事一起问**，与[《砍列》那一条](the_order_columns_drop_in_lives_in_one_place)同一个形状：
+/// 词条里那几处一处都不点名、家里那张表真住着（还挂在 `Viewport` 身上）、词条那句路标还在。
+///
+/// 问的是**表上头一格的叫法**：表上另两列（有没有光标、画不画滚动条）是挂在那几处身上的，
+/// 不点名哪一处就抄不出来。词条里那句「唯一的例外是覆盖层」不算抄——它说的是
+/// 「滚动量是算出来的」那条规矩的例外，叫的是词汇表里的词（《覆盖层》），不是表上那一格。
+#[test]
+fn the_list_of_places_sharing_a_viewport_lives_in_one_place() {
+    let places = sharing_a_viewport();
+    let row = squashed(&vocabulary_row(VIEWPORT_TERM));
+
+    let named: Vec<&String> = places
+        .iter()
+        .filter(|place| row.contains(&squashed(place)))
+        .collect();
+    assert_eq!(
+        named,
+        Vec::<&String>::new(),
+        "《{VIEWPORT_TERM}》里点了共用视口的那几处：词条只许指着家里那张表，不许写出是哪几处"
+    );
+
+    assert!(
+        row.contains(&squashed(VIEWPORT_SIGNPOST)),
+        "《{VIEWPORT_TERM}》里指回家里的路标「{VIEWPORT_SIGNPOST}」不在了"
+    );
 }
