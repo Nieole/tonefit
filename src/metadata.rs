@@ -197,7 +197,62 @@ impl PageSources {
     }
 }
 
+/// 一个源成员产出的输出页里的**一张**：哪个源成员、那一族的第几张、那一族共几张
+/// （`CONTEXT.md` 的《成员的一张》）。
+///
+/// # 它为什么是一个类型
+///
+/// 这三样必须**同一组值**一起走：输出成员名（`crate::pipeline::output_name`）、来路
+/// （[`Origin::of`]）、幂等比对（[`PageRecord::matches`]）与认写出的那一族
+/// （[`PageRecord::is_the_page`]）都从它算。拆成三个同型参数传，「这几处拿的是同一组值」
+/// 就只剩文档在说；两处一旦对不上，幂等去找的名字与真写出的名字就错开了——报告照出，
+/// 输出里却少了成员（页几何批 04 号票）。
+///
+/// 它借着源成员的相对路径，不另存一份：用完它的那几处都在同一个源页手上。
+#[derive(Debug, Clone, Copy)]
+pub struct MemberPart<'a> {
+    /// 源成员的相对路径。
+    relative: &'a Path,
+    /// 这一张在那一族里排第几，从 0 数起。
+    ordinal: usize,
+    /// 那一族一共几张。
+    count: usize,
+}
+
+impl<'a> MemberPart<'a> {
+    /// `relative` 那个源成员产出的第 `ordinal` 张（从 0 起），那一族共 `count` 张。
+    pub fn new(relative: &'a Path, ordinal: usize, count: usize) -> Self {
+        Self {
+            relative,
+            ordinal,
+            count,
+        }
+    }
+
+    /// `relative` 那个源成员产出 `count` 张时的那一族，按阅读顺序一张一张给。
+    pub fn family(relative: &'a Path, count: usize) -> impl Iterator<Item = Self> {
+        (0..count).map(move |ordinal| Self::new(relative, ordinal, count))
+    }
+
+    /// 源成员的相对路径。
+    pub fn relative(self) -> &'a Path {
+        self.relative
+    }
+
+    /// 这一张在那一族里排第几，从 0 数起。
+    pub fn ordinal(self) -> usize {
+        self.ordinal
+    }
+
+    /// 那一族一共几张。
+    pub fn count(self) -> usize {
+        self.count
+    }
+}
+
 /// 一张输出页的**来路**：它来自哪个源成员，在那一族里排第几，那一族一共几张。
+///
+/// 那三样就是 [`MemberPart`] 那三样，这里是它**写进记录的那一种写法**（见下面的《取值写法》）。
 ///
 /// # 它为什么存在
 ///
@@ -231,12 +286,12 @@ pub struct Origin {
 }
 
 impl Origin {
-    /// 一个源成员切出来的第 `ordinal` 张（从 0 起），那一族共 `count` 张。
-    pub fn new(relative: &Path, ordinal: usize, count: usize) -> Self {
+    /// 那一张的来路：源成员名转义一遍，序号与张数照抄。
+    pub fn of(part: MemberPart) -> Self {
         Self {
-            member: escape(&normalized(relative)),
-            ordinal,
-            count,
+            member: escape(&normalized(part.relative)),
+            ordinal: part.ordinal,
+            count: part.count,
         }
     }
 
@@ -387,8 +442,8 @@ impl PageRecord {
     ///
     /// 来路缺项即不是，理由见 [`PageRecord::origin`]。它只答这一张**属于哪一格**，
     /// 不答该不该重做：那一问见 [`matches`](Self::matches)。
-    pub fn is_the_page(&self, relative: &Path, ordinal: usize, count: usize) -> bool {
-        self.origin.as_ref() == Some(&Origin::new(relative, ordinal, count))
+    pub fn is_the_page(&self, part: MemberPart) -> bool {
+        self.origin.as_ref() == Some(&Origin::of(part))
     }
 
     /// 这一页记的正是「这份指纹下、那个源成员切出来的第几张」吗。
@@ -400,14 +455,7 @@ impl PageRecord {
     /// （见 [`SourceHash`]）；带着另一种的，要么是另一条路写的，要么是本票之前默认路径写的
     /// 旧记录（两种都带）——判为不命中，重做一次之后就是新形态。只认自己那一种而放过另一种，
     /// 旧形态会借着留下的页一直传下去，输出里从此两种形态混着。
-    pub fn matches(
-        &self,
-        fingerprint: &Fingerprint,
-        index: usize,
-        relative: &Path,
-        ordinal: usize,
-        count: usize,
-    ) -> bool {
+    pub fn matches(&self, fingerprint: &Fingerprint, index: usize, part: MemberPart) -> bool {
         let source = match &fingerprint.source {
             SourceHash::Volume(ours) => {
                 self.source.as_deref() == Some(ours.text()) && self.page_source.is_none()
@@ -419,9 +467,7 @@ impl PageRecord {
                     && self.source.is_none()
             }
         };
-        self.invocation == fingerprint.invocation
-            && source
-            && self.is_the_page(relative, ordinal, count)
+        self.invocation == fingerprint.invocation && source && self.is_the_page(part)
     }
 
     /// 这一页记的共用三项与这份指纹**差在哪几项**（say-and-stop/04）：工具版本、profile 名、
@@ -1068,7 +1114,7 @@ mod tests {
             reason: Reason::VolumeEnvelope,
         };
         // 成员名取一个**带中文的**：那是这批素材的常态，而 tEXt 只装得下 Latin-1。
-        let origin = Origin::new(Path::new("第 1 话/001.jpg"), 0, 2);
+        let origin = Origin::of(MemberPart::new(Path::new("第 1 话/001.jpg"), 0, 2));
         let page_source = PageSource::of(Path::new("第 1 话/001.jpg"), b"jpeg bytes");
         let paged = by_page(Some(page_source), None);
         let records = [
@@ -1113,7 +1159,8 @@ mod tests {
             },
             ..today.clone()
         };
-        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let part = MemberPart::new(Path::new("001.jpg"), 0, 1);
+        let origin = Origin::of(part);
         let old_record = Record {
             fingerprint: &yesterday,
             origin: origin.text(),
@@ -1125,11 +1172,11 @@ mod tests {
             .expect("旧记录该读得回来");
 
         assert!(
-            read.matches(&yesterday, 0, Path::new("001.jpg"), 0, 1),
+            read.matches(&yesterday, 0, part),
             "同一份指纹该命中——理由那一句不进比对"
         );
         assert!(
-            !read.matches(&today, 0, Path::new("001.jpg"), 0, 1),
+            !read.matches(&today, 0, part),
             "参数哈希变了却命中了：翻默认那一趟从没点过开关的用户本该全部重做"
         );
     }
@@ -1165,14 +1212,15 @@ mod tests {
     fn the_page_level_basis_reads_back_and_a_malformed_one_is_a_miss_on_both_paths() {
         let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
         let fingerprint = by_page(Some(page_source.clone()), None);
-        let origin = Origin::new(Path::new("001.jpg"), 1, 2);
+        let part = MemberPart::new(Path::new("001.jpg"), 1, 2);
+        let origin = Origin::of(part);
 
         let today = Record::color(&fingerprint, &origin, Some(0), None);
         let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&today)))
             .expect("新记录该读得回来");
         assert_eq!(read.page_source.as_deref(), Some(page_source.text()));
         assert_eq!(read.source, None, "页级那条路上写了卷级那一项");
-        assert!(read.matches(&fingerprint, 0, Path::new("001.jpg"), 1, 2));
+        assert!(read.matches(&fingerprint, 0, part));
 
         let malformed = Record {
             source: Some((PAGE_SOURCE_KEYWORD, "not a hash".to_owned())),
@@ -1181,7 +1229,7 @@ mod tests {
         let read = PageRecord::read(std::io::Cursor::new(one_pixel_png(&malformed)))
             .expect("其余几项齐着，记录该读得回来");
         assert_eq!(read.page_source.as_deref(), Some("not a hash"));
-        assert!(!read.matches(&fingerprint, 0, Path::new("001.jpg"), 1, 2));
+        assert!(!read.matches(&fingerprint, 0, part));
         let by_volume = Fingerprint::new(&request(), volume('0'));
         let record = Record::color(&by_volume, &origin, None, None);
         let mut fields = record.fields();
@@ -1189,7 +1237,7 @@ mod tests {
         let read = PageRecord::read(std::io::Cursor::new(png_with(&fields)))
             .expect("其余几项齐着，记录该读得回来");
         assert!(
-            !read.matches(&by_volume, 0, Path::new("001.jpg"), 1, 2),
+            !read.matches(&by_volume, 0, part),
             "卷级那条路认了一份带着坏的页级键的记录：在场按键判，不按写法判"
         );
     }
@@ -1200,7 +1248,7 @@ mod tests {
     /// 「只带一种」由构造保证：两种取值都从同一份指纹里来，卷级那条路上给了源页序号也取不出页级那一份。
     #[test]
     fn a_record_carries_exactly_one_source_item() {
-        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let origin = Origin::of(MemberPart::new(Path::new("001.jpg"), 0, 1));
         let verdict = Verdict {
             candidate: Candidate::new(BitDepth::Two, Dither::FloydSteinberg),
             reason: Reason::LowestWithinThreshold,
@@ -1260,7 +1308,8 @@ mod tests {
     #[test]
     fn each_path_compares_only_its_own_source_item_and_a_record_carrying_the_other_is_a_miss() {
         let page = Path::new("001.jpg");
-        let origin = Origin::new(page, 0, 1);
+        let part = MemberPart::new(page, 0, 1);
+        let origin = Origin::of(part);
         let page_source = PageSource::of(page, b"jpeg bytes");
         let paged = by_page(Some(page_source.clone()), None);
         let by_volume = Fingerprint::new(&request(), volume('0'));
@@ -1270,10 +1319,10 @@ mod tests {
 
         // 页级那条路上写的记录。
         let paged_record = read(&Record::color(&paged, &origin, Some(0), None));
-        assert!(paged_record.matches(&paged, 0, page, 0, 1));
+        assert!(paged_record.matches(&paged, 0, part));
         let edited = by_page(Some(PageSource::of(page, b"other bytes")), None);
         assert!(
-            !paged_record.matches(&edited, 0, page, 0, 1),
+            !paged_record.matches(&edited, 0, part),
             "这一页改了却命中了"
         );
         let mut other = request();
@@ -1282,28 +1331,28 @@ mod tests {
         sources.push_page(Some(page_source.clone()));
         let reparameterised = Fingerprint::new(&other, SourceHash::Page(sources));
         assert!(
-            !paged_record.matches(&reparameterised, 0, page, 0, 1),
+            !paged_record.matches(&reparameterised, 0, part),
             "参数变了却命中了"
         );
         assert!(
-            !paged_record.matches(&paged, 0, page, 0, 2),
+            !paged_record.matches(&paged, 0, MemberPart::new(page, 0, 2)),
             "来路对不上却命中了"
         );
         assert!(
-            !paged_record.matches(&by_volume, 0, page, 0, 1),
+            !paged_record.matches(&by_volume, 0, part),
             "卷级那条路认了一份只带页级那一项的记录"
         );
 
         // 卷级那条路上写的记录。
         let volume_record = read(&Record::color(&by_volume, &origin, None, None));
-        assert!(volume_record.matches(&by_volume, 0, page, 0, 1));
+        assert!(volume_record.matches(&by_volume, 0, part));
         let other_volume = Fingerprint::new(&request(), volume('1'));
         assert!(
-            !volume_record.matches(&other_volume, 0, page, 0, 1),
+            !volume_record.matches(&other_volume, 0, part),
             "卷里有页改了却命中了"
         );
         assert!(
-            !volume_record.matches(&paged, 0, page, 0, 1),
+            !volume_record.matches(&paged, 0, part),
             "页级那条路认了一份只带卷级那一项的记录"
         );
 
@@ -1321,11 +1370,11 @@ mod tests {
             "夹具不对"
         );
         assert!(
-            !old.matches(&paged, 0, page, 0, 1),
+            !old.matches(&paged, 0, part),
             "页级那条路认了一份两种都带的旧记录"
         );
         assert!(
-            !old.matches(&by_volume, 0, page, 0, 1),
+            !old.matches(&by_volume, 0, part),
             "卷级那条路认了一份两种都带的旧记录"
         );
     }
@@ -1375,7 +1424,7 @@ mod tests {
             reason: Reason::VolumeEnvelope,
         };
 
-        let origin = Origin::new(Path::new("001.jpg"), 0, 1);
+        let origin = Origin::of(MemberPart::new(Path::new("001.jpg"), 0, 1));
         assert_eq!(
             Recorder::new(&fingerprint, Some(86))
                 .gray(&origin, None, verdict, Some(half()))

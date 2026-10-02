@@ -20,6 +20,7 @@ use anyhow::{Context, Result, bail};
 use crate::color::ColorImage;
 use crate::decide::{self, CandidateScore, Verdict};
 use crate::geometry::Fit;
+use crate::metadata::MemberPart;
 use crate::pipeline::{
     Candidates, Examined, Opened, Piece, Pieces, Settles, WhiteWhenOff, candidate_bytes,
     color_bytes, examine_gray_page, open_source_page, output_name,
@@ -163,7 +164,7 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         .map(Path::new)
         .with_context(|| format!("{} 不是一张图", source.display()))?;
     let resampler = resample::Resampler::default();
-    let count = pieces.len();
+    let parts = MemberPart::family(name, pieces.len());
     // 走哪条分支由**面板与页**共同决定，那一问在 `open_source_page` 里、只问一次：
     // 样张照它交出来的那一支走，不自己另判（ADR 0005 决定第 4 条）。
     //
@@ -177,16 +178,8 @@ pub(crate) fn write(source: &Path, request: &Request, out: &Path) -> Result<Proo
         .with_context(|| format!("{CANNOT_WRITE}：去处 {} 建不出来", out.display()))?;
     let pages = drafted
         .into_iter()
-        .enumerate()
-        .map(|(ordinal, drafted)| {
-            drafted.land(
-                source,
-                out,
-                &output_name(name, ordinal, count),
-                color,
-                salvage,
-            )
-        })
+        .zip(parts)
+        .map(|(drafted, part)| drafted.land(source, out, &output_name(part), color, salvage))
         .collect::<Result<Vec<_>>>()?;
     Ok(Proof { pages })
 }
