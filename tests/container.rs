@@ -221,9 +221,9 @@ fn a_sidecar_that_sits_next_to_the_pages_is_not_carried_across_either() {
     assert_eq!(member_names(&report.volumes[0].output), ["001.png"]);
 }
 
-/// 目录卷同形：同一批垃圾从目录里读进来也一样不算成员。
+/// 目录卷同形：打包环境留下的同一批边车与索引文件，从目录里读进来也一样不算成员。
 #[test]
-fn a_directory_volume_ignores_the_same_system_junk() {
+fn a_directory_volume_ignores_the_same_sidecars_and_index_files() {
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     volume.page("001.png", &fixtures::cheap_page());

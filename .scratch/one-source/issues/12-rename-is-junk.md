@@ -5,12 +5,71 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 成员那一侧的谓词名字里有「不看」这个词，与目录那一侧对上
-- [ ] 三处文档、调用点、那条用例名一起改；旧名在仓库里一处不剩
-- [ ] 全部用例照旧绿，黄金快照一个字节不动；设计快照照旧绿
-- [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+- [x] 成员那一侧的谓词名字里有「不看」这个词，与目录那一侧对上
+- [x] 三处文档、调用点、那条用例名一起改；旧名在仓库里一处不剩
+- [x] 全部用例照旧绿，黄金快照一个字节不动；设计快照照旧绿
+- [x] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+
+## 落地记录
+
+**本票做了什么。** 成员那一侧的谓词 `is_junk` 改名 `is_ignored_member`（收停车场 Q477）。行为一格不变：函数体、调用处的条件与用例断言一字没动。
+
+1. **谓词**（`src/source.rs`）：`fn is_junk` → `fn is_ignored_member`，函数体一字没动；与目录那一侧的 `is_ignored_directory`、名单 `IGNORED_DIRECTORIES`、
+   词条英文名 `IgnoredPlace` 同一个词（取名的岔口见 Q1337）。
+2. **调用点**：三个——`open_directory`、`open_archive`、`solid_members`（`.7z` 与 `.rar` 两路共用它）。票面写「五个调用点」，是 Q477 记下时的数；
+   今天 `.7z`、`.rar` 两处已并进 `solid_members`，量出来是三个，三个都改了。
+3. **文档**：指着它的五处都改了——票面那三处（`solid_members`、`strip_wrapper_directory`、`src/survey.rs` 的 `nothing_took_it`），
+   外加名单 `IGNORED_DIRECTORIES` 与 `is_ignored_directory` 自己的文档各一处。四处 rustdoc 链接都解析得到，`cargo doc` 告警数不变。
+4. **用例**：`tests/container.rs` 的 `a_directory_volume_ignores_the_same_system_junk` → `a_directory_volume_ignores_the_same_sidecars_and_index_files`，
+   抬头那句「同一批垃圾」改成「打包环境留下的同一批边车与索引文件」（《成员》词条原话），断言没碰。
+5. **顺带的散文**（Q1338）：`src/source.rs` 里六句「垃圾成员」改成「不看的成员」，`is_one_of` 的闭包参数 `junk` → `listed`。`JUNK_FILES` 没动——它装的正是打包环境留下的那几个文件。
+
+**没动的**：`CONTEXT.md` 一字没动——《成员》词条只说了打包环境那一半，改写已有词条要先拍板，记 Q1339；`.scratch/` 里指着旧名的历史票据与 spec 照旧；没添用例
+（纯改名，约束由编译器守，全部用例照旧绿就是行为没变的证明）。
+
+### 评审收了什么、驳了什么
+
+两轴各一个只读子代理，看 `git diff d615eac`。Spec 轴：九处（定义一、调用点三、文档五）全改到，`src`、`tests`、`docs`、`CONTEXT.md`、`xtask` 里 `is_junk` 一处不剩；
+谓词体与断言逐字没动；散文那一组算票面之外，已记 Q1338、理由站得住。
+
+**收下的**：
+
+- 用例头一版取名 `a_directory_volume_ignores_the_same_members`（两轴都指到）：照《成员》词条，边车与索引文件**不算**成员，名字却叫它们 members，
+  而同一个文件里 `both_container_shapes_hold_the_same_members_after_a_page_is_deleted` 的 members 是真成员——改成 `…_sidecars_and_index_files`，取《成员》原话。
+- Q1337 原先只列谓词的候选，没列用例名的（Standards）——补上用例名的三个候选与头一版被驳的理由。
+- Q1339 的选项里有一个占位链接 `[…](#)`（文档写作第 5 条，稳定引用）——改成直接写词条名。
+
+**驳回的**：
+
+- Q1337 谓词那一半「Q477 已推荐过，不算岔口」（Standards）：派活说明把取哪个英文名点成岔口、要求记一条说清另外一两个名字；条目里注明了这一层。
+
+### 停车场
+
+本票用了 Q1337–Q1339：
+
+- **Q1337**：谓词取 `is_ignored_member`、用例取 `…_ignores_the_same_sidecars_and_index_files`，各自考虑过的另外两个名字。
+- **Q1338**：散文里的「垃圾成员」与 `is_one_of` 的闭包参数一起改。
+- **Q1339**：《成员》词条只说了打包环境那一半，没顺手改，待拍板。
+
+### 数
+
+最终状态跑的那一趟：评审收完、`cargo fmt --check` 过之后，四条顺序跑。日志是 `os-12.gate1.log`、`os-12.gate2.log`、`os-12.gate3.log`、`os-12.polish.log`，
+都在树外，每份末尾记着退出码。这台机器是 macOS，闸门 1、2 在基线上就各红一条：`tests/concurrency.rs` 的
+`many_archive_volumes_never_hold_more_than_the_one_being_processed`（Q995，平台带来的，本票没碰它）。
+闸门 1、2 各加 `--no-fail-fast`、各用自己那个 target 目录；闸门 3 走 `cargo xtask gate 3`。本栏读作：**除了这一条基线红，没有新增的红。**
+条数与基线（d615eac）相同：本票没添用例，只改了一条的名字。
+
+| | 命令 | 末行 |
+|---|---|---|
+| 1 | `cargo test --no-fail-fast`（目录 `target`） | `GATE1_EXIT=101`；合计 **1145 通过 1 失败**（1 ignored）；lib 253 / bin 478；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.51s`（`concurrency`） |
+| 2 | `cargo test --no-default-features --no-fail-fast --target-dir target/gate/no-default-features` | `GATE2_EXIT=101`；合计 **1004 通过 1 失败**；lib 253 / bin 337；末行 `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`；红的那一个二进制：`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.46s`（`concurrency`，同一条） |
+| 3 | `cargo xtask gate 3`（`cargo check --features profiling`，目录 `target/gate/profiling`） | 绿，`GATE3_EXIT=0`；末行 `全绿。`（检查那一步 `Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 6.73s`） |
+| polish | `cargo xtask polish`（fmt、两道 clippy、doc） | 绿，`POLISH_EXIT=0`；末行 `全绿。`；两道 clippy 零告警；`cargo doc` 告警 15 条（`warning: \`tonefit\` (lib doc) generated 15 warnings`），与基线同数 |
+
+**黄金快照**：`tests/golden.rs` 2 条全过（闸门 1 上 288.06 秒、闸门 2 上 149.02 秒），快照没动。
+**设计快照**：会话里比设计快照的那几景在闸门 1 的 bin 478 条里，全绿；本票没碰会话与设计稿。
 
 ## 停车场结转
 
@@ -42,4 +101,4 @@
   （Standards 轴判为 Mysterious Name 并直接点名方案 ②）。
   ③ 不选：两条判据在**每一个**调用点都同时要，拆开只是把一个 `||` 从函数里搬到五处去。
 - **Whose call:** 落地的人
-- **处置：** 待处理。
+- **处置：** **`one-source/12` 落地（2026-10-02）：照②了结。**`is_junk` 改名 `is_ignored_member`（取名见 Q1337），三个调用点（`.7z`、`.rar` 两处已并进 `solid_members`）、五处文档与那条用例（今名 `a_directory_volume_ignores_the_same_sidecars_and_index_files`）一起改；散文里的「垃圾成员」一并改口（Q1338）；《成员》词条那一半记 Q1339。

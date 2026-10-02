@@ -407,7 +407,7 @@ pub enum Reader {
 pub struct ArchiveStamp {
     /// 中央目录在文件里的偏移。任一成员的压缩后大小变了，它就变。
     central_directory: u64,
-    /// 中央目录里的条目数。**不是这一卷的成员数**——垃圾成员与目录项这时还没摘
+    /// 中央目录里的条目数。**不是这一卷的成员数**——不看的成员与目录项这时还没摘
     /// （见 [`open_archive`]）。它认的是这个文件，不是那张成员表。
     entries: usize,
 }
@@ -879,7 +879,7 @@ fn open_directory(root: &Path) -> Result<Volume> {
             continue;
         }
         let relative = PathBuf::from(entry.file_name());
-        if is_junk(&relative) || is_archive(&relative) {
+        if is_ignored_member(&relative) || is_archive(&relative) {
             continue;
         }
         // 列目录时已经 stat 过一次，这里拿的是那一次的结果，不再多问一次文件系统。
@@ -935,7 +935,7 @@ fn open_archive(path: &Path) -> Result<Volume> {
         let name = decode_name(file.name_raw(), file.name());
         let relative = relative_path(&name)
             .with_context(|| format!("{} 的成员名 {name} 不能当作输出路径", path.display()))?;
-        if is_junk(&relative) {
+        if is_ignored_member(&relative) {
             continue;
         }
         let bytes = file.size();
@@ -1009,7 +1009,7 @@ fn open_seven_zip(path: &Path, events: Events<'_>, segment: &mut Duration) -> Re
         .map_err(|error| seven_zip_is_unreadable(path, error))?;
     let members = seven_zip_members(path, &reader.archive().files)?;
     // 包里那个原名 → 成员表里那条相对路径。**摊开按后者落盘**：包装层已经剥掉、
-    // 垃圾成员已经摘掉，读取端于是与一个目录卷同形。
+    // 不看的成员已经摘掉，读取端于是与一个目录卷同形。
     // 拿的是拥有的 `String` 而不是借用：下一句要 `&mut reader`，而借用还挂在它身上。
     let targets: HashMap<String, PathBuf> = members
         .iter()
@@ -1076,7 +1076,7 @@ fn seven_zip_members(path: &Path, files: &[sevenz_rust2::ArchiveEntry]) -> Resul
 /// 摘的那一句就是两个格式唯一不同的地方。
 ///
 /// 规矩与 [`open_archive`] 那一段同形，而且**只写在这一处**：目录项不算成员、
-/// 名字要能[当作卷内相对路径](relative_path)、[不看的东西](is_junk)摘掉、
+/// 名字要能[当作卷内相对路径](relative_path)、[不看的东西](is_ignored_member)摘掉、
 /// [包装层](strip_wrapper_directory)剥掉。
 ///
 /// `entry` 是**归档头里的下标**（见 [`Member::entry`]），因此数的是交进来的全部条目、
@@ -1092,7 +1092,7 @@ fn solid_members<'a>(
         }
         let relative = relative_path(&name)
             .with_context(|| format!("{} 的成员名 {name} 不能当作输出路径", path.display()))?;
-        if is_junk(&relative) {
+        if is_ignored_member(&relative) {
             continue;
         }
         members.push(Member {
@@ -1313,7 +1313,7 @@ fn spread_seven_zip(
             return Ok(false);
         }
         let Some(relative) = targets.get(&entry.name) else {
-            // 目录项、垃圾成员：成员表没收下它们，盘上也就不该有。
+            // 目录项、不看的成员：成员表没收下它们，盘上也就不该有。
             // 它们不在成员表里，因此也不占一步（步数照成员表预告，见 `crate::volume_steps`）。
             return Ok(true);
         };
@@ -1340,7 +1340,7 @@ fn spread_seven_zip(
 ///
 /// **一个成员先整个进内存再落盘**，与 `.7z` 那边边解边写不同：UnRAR 只给两种取法——
 /// 由它自己写文件，或者交出一个 `Vec<u8>`。让它写文件就等于把[路径那一道](relative_path)
-/// 交给 C++ 那一侧，而包装层剥到哪一级、垃圾成员摘不摘、`..` 与盘符收不收，
+/// 交给 C++ 那一侧，而包装层剥到哪一级、不看的成员摘不摘、`..` 与盘符收不收，
 /// 都是这一侧的规矩。多出来的那一份内存是**一个成员**，而一个成员本来就整个进内存
 /// （见 [`Reader::read`]）。
 fn spread_rar(
@@ -1360,7 +1360,7 @@ fn spread_rar(
             break;
         }
         let Some(relative) = targets.get(&cursor.entry().filename) else {
-            // 目录项、垃圾成员：成员表没收下它们，盘上也就不该有。
+            // 目录项、不看的成员：成员表没收下它们，盘上也就不该有。
             archive = cursor.skip().map_err(anyhow::Error::new)?;
             continue;
         };
@@ -1491,8 +1491,8 @@ fn is_drive_letter(part: &str) -> bool {
 /// 一份包里不会有 `.git`，也不会有 `System Volume Information`；如今发现要走进真实的
 /// 库目录，而回收站里躺着的正是用户删掉的那些卷——走进去就是把删掉的东西又转一遍。
 ///
-/// 这一组在**两处**同时作数：卷内不当成员（见 [`is_junk`]），发现时整棵子树不进去
-/// （见 [`is_ignored_directory`]）。
+/// 这一组在**两处**同时作数：卷内不当成员（见 [`is_ignored_member`]），
+/// 发现时整棵子树不进去（见 [`is_ignored_directory`]）。
 const IGNORED_DIRECTORIES: [&str; 14] = [
     "__MACOSX",
     ".Spotlight-V100",
@@ -1523,7 +1523,7 @@ const APPLE_DOUBLE_PREFIX: &str = "._";
 /// 整卷因此进隔离目录还被插上白页；当透传文件搬过去，则是把打包环境的产物带进成品。
 ///
 /// 目录卷与归档卷共用这一条：两者在源之下同形，同一份卷解开到磁盘上再处理不该换一个答案。
-fn is_junk(relative: &Path) -> bool {
+fn is_ignored_member(relative: &Path) -> bool {
     let mut parts = relative
         .components()
         .filter_map(|component| component.as_os_str().to_str());
@@ -1539,7 +1539,7 @@ fn is_junk(relative: &Path) -> bool {
 /// 这个目录名是不是[本来就自动跳过的目录](IGNORED_DIRECTORIES)。发现走到它就整棵子树不进去
 /// （见 [`crate::discover`]），它因此**根本不成为候选**。
 ///
-/// 与 [`is_junk`] 同一份名单：同一个 `__MACOSX`，在归档成员名里不算成员，
+/// 与 [`is_ignored_member`] 同一份名单：同一个 `__MACOSX`，在归档成员名里不算成员，
 /// 在盘上也不该被走进去找卷。
 pub(crate) fn is_ignored_directory(name: &str) -> bool {
     is_one_of(&IGNORED_DIRECTORIES, name)
@@ -1549,7 +1549,7 @@ pub(crate) fn is_ignored_directory(name: &str) -> bool {
 ///
 /// 大小写不敏感地比：这些名字来处的文件系统本就不分大小写，`Thumbs.db` 各家写法不一。
 fn is_one_of(names: &[&str], name: &str) -> bool {
-    names.iter().any(|junk| junk.eq_ignore_ascii_case(name))
+    names.iter().any(|listed| listed.eq_ignore_ascii_case(name))
 }
 
 /// 剥掉包内统一的目录前缀。
@@ -1563,8 +1563,8 @@ fn is_one_of(names: &[&str], name: &str) -> bool {
 ///
 /// 目录卷没有这一步：用户点名的那个目录就是卷根，里面的第一层是他自己的组织方式。
 ///
-/// 垃圾成员在这一步之前就摘掉了（见 [`is_junk`]）：`__MACOSX` 与 `.DS_Store` 都是包装层的
-/// **兄弟**，留着它们，这一层就一层都剥不掉。
+/// 不看的成员在这一步之前就摘掉了（见 [`is_ignored_member`]）：`__MACOSX` 与 `.DS_Store`
+/// 都是包装层的**兄弟**，留着它们，这一层就一层都剥不掉。
 fn strip_wrapper_directory(members: &mut [Member]) {
     loop {
         let mut wrapper: Option<Component> = None;
