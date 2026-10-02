@@ -209,7 +209,7 @@ fn assert_on_grid(path: &std::path::Path, depth: BitDepth) {
     );
     for &level in &written.pixels {
         assert!(
-            grid.pixels().contains(&level),
+            grid.image().pixels().contains(&level),
             "{} 判定 {depth}，却写出了格点外的 {level}",
             path.display()
         );

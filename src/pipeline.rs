@@ -2052,7 +2052,7 @@ pub(crate) fn candidate_bytes(
         quantize::quantize(reference, candidate)
     });
     cost::stage(cost::Stage::Encode, || {
-        encode::png(&quantized, candidate.bit_depth, record)
+        encode::png(quantized.image(), quantized.bit_depth(), record)
     })
 }
 
@@ -2551,11 +2551,7 @@ fn candidate_scores(reference: &Reference, allowed: &[Candidate]) -> Vec<Candida
         .iter()
         .map(|&candidate| CandidateScore {
             candidate,
-            score: metric::score(
-                reference,
-                &quantize::quantize(reference.image(), candidate),
-                candidate.bit_depth,
-            ),
+            score: metric::score(reference, &quantize::quantize(reference.image(), candidate)),
         })
         .collect()
 }

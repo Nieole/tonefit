@@ -207,7 +207,7 @@ fn on_grid_paper_white_takes_no_dither_dots() -> Outcome {
     let field_pixels = white_field_rows(PAGE) as usize * PAGE.width as usize;
     let dots = |paper_white: u8, candidate: Candidate| {
         let page = page_with_a_white_field_above_a_tone_band(PAGE, paper_white);
-        quantize(&page, candidate).pixels()[..field_pixels]
+        quantize(&page, candidate).image().pixels()[..field_pixels]
             .iter()
             .filter(|&&level| level != 255)
             .count()
@@ -515,12 +515,8 @@ fn baseline_reference(image: GrayImage) -> Reference {
     Reference::new(fixtures::baseline_profile().panel(), image)
 }
 
-/// 把 `candidate` 量化出来，量它离参照有多远。灰阶档位从候选身上取——
-/// 画质分要它算抖动颗粒项那道地板，而候选正是量化这张图的那一档（同 `tests/metric.rs`）。
+/// 把 `candidate` 量化出来，量它离参照有多远。画质分算抖动颗粒项那道地板要的那一档灰阶档位
+/// 跟着量化图一起进去，不另交（同 `tests/metric.rs`）。
 fn reading(reference: &Reference, candidate: Candidate) -> Score {
-    score(
-        reference,
-        &quantize(reference.image(), candidate),
-        candidate.bit_depth,
-    )
+    score(reference, &quantize(reference.image(), candidate))
 }

@@ -206,15 +206,83 @@ impl std::fmt::Display for Candidate {
     }
 }
 
-/// 按 `candidate` 量化，再摊回 8 位工作精度。
+/// 量化图：摊回 8 位工作精度的像素，**连同量化它的那一档灰阶档位**（`CONTEXT.md`）。
+///
+/// 两样绑在一起交出来，因为画质分两样都要、而且两样必须对得上：抖动颗粒项那道颗粒可见下限
+/// 跟着格点间距走，格点间距只有灰阶档位说得出来，而从像素上反推不成立（见 [`crate::score`]）。
+/// 分头交的话传错一档，画质分安静地按另一道地板读数、一条用例都不会红；
+/// 绑在一起，那一档就只有一个出处。
+///
+/// 造得出它的只有两处：[`quantize`]，灰阶档位取自那个候选；[`Quantized::at_working_precision`]，
+/// 给没被目标灰阶档位量化过的合成候选。**没有收「像素 + 一档灰阶档位」的构造**——
+/// 那正是要堵的那条路，守它的只有这一句话：下面那一对示例拦得住 [`crate::score`] 退回去直接收像素，
+/// 拦不住有人在这里再添一个那样的构造。抖动模式不在里面：画质分用不上它，收了是一条假的依赖。
+///
+/// 光交像素进不了画质分：
+///
+/// ```compile_fail
+/// # use tonefit::{BitDepth, Candidate, Dither, GrayImage, Profile, Reference, Size, quantize, score};
+/// # let panel = Profile::resolve("kobo-libra-2").expect("内置型号").panel();
+/// # let reference = Reference::new(panel, GrayImage::new(Size::new(1, 1), vec![200]));
+/// let quantized = quantize(reference.image(), Candidate::new(BitDepth::Two, Dither::Off));
+/// score(&reference, quantized.image());
+/// ```
+///
+/// 交量化图本身才进得去——与上面那一段只差末一行：
+///
+/// ```
+/// # use tonefit::{BitDepth, Candidate, Dither, GrayImage, Profile, Reference, Size, quantize, score};
+/// # let panel = Profile::resolve("kobo-libra-2").expect("内置型号").panel();
+/// # let reference = Reference::new(panel, GrayImage::new(Size::new(1, 1), vec![200]));
+/// let quantized = quantize(reference.image(), Candidate::new(BitDepth::Two, Dither::Off));
+/// score(&reference, &quantized);
+/// ```
+#[derive(Debug, Clone)]
+pub struct Quantized {
+    image: GrayImage,
+    bit_depth: BitDepth,
+}
+
+impl Quantized {
+    /// 一张没被目标灰阶档位量化过的图，当作**工作精度那一档**（8bit）的量化图。
+    ///
+    /// 给用例里编出来的合成候选用（整页偏几级的那种）：它们不出自任何候选，
+    /// 画质分照样要一档灰阶档位来定颗粒可见下限。8bit 的格点就是 8 位工作精度本身，
+    /// 量化在这一档上是恒等——这里造出来的，与拿 8bit 不抖动[量化](quantize)一遍得到的那一张分不出来。
+    ///
+    /// **它是编译器管不着的那一个口子**：把一张别的档位量化出来的像素塞进来，照样编得过，
+    /// 画质分按 8bit 的地板读它（停车场 Q1371）。生产路径一处都不调它，管线上的候选一律出自
+    /// [`quantize`]。它公开，是因为编合成候选的用例有一半在库外（`tests/`），
+    /// 与 [`Score::from_value`](crate::Score::from_value) 同一条。
+    pub fn at_working_precision(image: GrayImage) -> Self {
+        Self {
+            image,
+            bit_depth: BitDepth::Eight,
+        }
+    }
+
+    /// 摊回 8 位工作精度的像素。
+    pub fn image(&self) -> &GrayImage {
+        &self.image
+    }
+
+    /// 量化它的那一档灰阶档位。
+    pub fn bit_depth(&self) -> BitDepth {
+        self.bit_depth
+    }
+}
+
+/// 按 `candidate` 量化，再摊回 8 位工作精度；交出的[量化图](Quantized)带着 `candidate` 的灰阶档位。
 ///
 /// 各灰阶档位的格点是套嵌的（255 = 3×85 = 15×17），所以灰阶档位升高只会让格点变密，
 /// 不会把某个取值推到更远的格点上。抖动改的是误差落在哪里，不是可用的格点。
-pub fn quantize(image: &GrayImage, candidate: Candidate) -> GrayImage {
-    match candidate.dither {
-        Dither::Off => nearest(image, candidate.bit_depth),
-        Dither::FloydSteinberg => floyd_steinberg(image, candidate.bit_depth),
-    }
+pub fn quantize(image: &GrayImage, candidate: Candidate) -> Quantized {
+    let bit_depth = candidate.bit_depth;
+    let image = match candidate.dither {
+        Dither::Off => nearest(image, bit_depth),
+        Dither::FloydSteinberg => floyd_steinberg(image, bit_depth),
+    };
+    Quantized { image, bit_depth }
 }
 
 /// 就近取整到 `depth` 的格点。
@@ -468,8 +536,41 @@ mod tests {
         let image = GrayImage::new(size, vec![128; 12]);
         for dither in [Dither::Off, Dither::FloydSteinberg] {
             let candidate = Candidate::new(BitDepth::Two, dither);
-            assert_eq!(quantize(&image, candidate).size(), size, "{candidate}");
+            assert_eq!(
+                quantize(&image, candidate).image().size(),
+                size,
+                "{candidate}"
+            );
         }
+    }
+
+    /// 量化图带着量化它的那一档灰阶档位：画质分的颗粒可见下限从这里取，调用方不再另交一档。
+    /// 两维都走满——抖动换的是误差落在哪里，不换灰阶档位。
+    #[test]
+    fn a_quantized_image_carries_the_depth_it_was_quantized_at() {
+        let image = GrayImage::new(Size::new(4, 3), vec![128; 12]);
+        for depth in BitDepth::ALL {
+            for dither in [Dither::Off, Dither::FloydSteinberg] {
+                let candidate = Candidate::new(depth, dither);
+                assert_eq!(
+                    quantize(&image, candidate).bit_depth(),
+                    depth,
+                    "{candidate}"
+                );
+            }
+        }
+    }
+
+    /// 工作精度那一档的量化图，与拿 8bit 不抖动量化一遍得到的那一张分不出来：同一档、同一份像素。
+    /// [`Quantized::at_working_precision`] 文档里那一句，在这里钉成断言。
+    #[test]
+    fn an_image_at_working_precision_is_one_quantized_at_eight_bits() {
+        let image = GrayImage::new(Size::new(16, 16), (0..=255u8).collect());
+        let synthetic = Quantized::at_working_precision(image.clone());
+        let quantized = quantize(&image, Candidate::new(BitDepth::Eight, Dither::Off));
+
+        assert_eq!(synthetic.bit_depth(), quantized.bit_depth());
+        assert_eq!(synthetic.image().pixels(), quantized.image().pixels());
     }
 
     /// 抖动写出的取值同样只落在那一档的格点上：抖动换的是误差的分布，不是可用的取值。
@@ -486,7 +587,7 @@ mod tests {
         for depth in BitDepth::ALL {
             let table = levels_table(depth);
             let dithered = quantize(&ramp, Candidate::new(depth, Dither::FloydSteinberg));
-            for &level in dithered.pixels() {
+            for &level in dithered.image().pixels() {
                 assert!(table.contains(&level), "{depth} 抖出了格点外的 {level}");
             }
         }
@@ -504,8 +605,8 @@ mod tests {
         let mean = |image: &GrayImage| {
             image.pixels().iter().map(|&v| f64::from(v)).sum::<f64>() / image.pixels().len() as f64
         };
-        let plain = mean(&quantize(&flat, candidate(Dither::Off)));
-        let dithered = mean(&quantize(&flat, candidate(Dither::FloydSteinberg)));
+        let plain = mean(quantize(&flat, candidate(Dither::Off)).image());
+        let dithered = mean(quantize(&flat, candidate(Dither::FloydSteinberg)).image());
 
         assert_eq!(plain, 255.0, "不抖动本该整块塌到一个格点上");
         assert!(
@@ -526,7 +627,7 @@ mod tests {
             Candidate::new(BitDepth::Eight, Dither::FloydSteinberg),
         );
 
-        assert_eq!(dithered.pixels(), pixels.as_slice());
+        assert_eq!(dithered.image().pixels(), pixels.as_slice());
     }
 
     /// 候选集是两道裁剪的乘积，由小到大排——「界以内最低的一档」靠的就是这个次序。
