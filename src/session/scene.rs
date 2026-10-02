@@ -641,7 +641,7 @@ impl Scene {
 /// （在哪一栏、两栏各自的光标、下钻进了哪一块，加上改一项设置的值那种输入行，13）；
 /// 树上的光标、展开与自动滚动（08）；搜索那一句连同搜索那一种输入行（09）；
 /// 每页结果开着哪一卷、光标停在第几页、列的是哪几页（11）。
-/// 认不得的先停在输出目录那一行上；给预设起名那一种输入行随那一票认。
+/// 光标认不出当场红（[`cursor_of`]）。
 ///
 /// **会话的时钟起点也在这里摆**（[`clock_of`]）：它不在 `session` 那一段里，
 /// 可它住在 [`Views`] 上——摆在外面，就得记着摆在这一份整份换上去之后（停车场 Q864）。
@@ -652,26 +652,8 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
         Some("config") => View::Config,
         _ => View::Task,
     };
-    let cursor = &data.session["cursor"];
-    let at = |key: &str| {
-        expand(
-            home,
-            cursor[key]
-                .as_str()
-                .unwrap_or_else(|| panic!("光标那一{key}")),
-        )
-    };
-    views.task.cursor = match cursor["kind"].as_str() {
-        Some("out") => Cursor::Output,
-        Some("add") => Cursor::Add,
-        Some("path") => Cursor::Path(at("path")),
-        Some("directory") => Cursor::Directory(at("root")),
-        Some("volume") => Cursor::Volume(at("root")),
-        // **备注行那一种在这里认不出**：场景数据记的是那一条备注的「是哪几处」，
-        // 而认它要树，树在这一步之后才拼出来（见 [`stand_on_a_note`]）。
-        Some("note") => Cursor::Output,
-        _ => Cursor::Output,
-    };
+    views.task.cursor =
+        cursor_of(&data.session["cursor"], home).unwrap_or_else(|why| panic!("{why}"));
     // 展开着的那几个目录，与自动滚动开着没有。
     if let Some(expanded) = data.session["expanded"].as_array() {
         views.task.expanded = expanded
@@ -753,6 +735,35 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
         });
     }
     views
+}
+
+/// 场景数据 `session.cursor` 那一格认回卷列表的光标：种类，连同那一种带着的那一格。
+///
+/// **认不出就交回一句话，不落到哪一行上**（停车场 Q846）：种类不在下面那几支里、
+/// 该带的那一格缺了，都算认不出。落到输出目录那一行上是一声不响的——`cursor_line`
+/// 再把它挪到头一行停得住的，读错一个键名，屏上照样摆得出一副像样的样子。
+///
+/// **备注行那一种在这里只核它带着「是哪几处」**：认它要树，树在这一步之后才拼出来
+/// （见 [`stand_on_a_note`]），这里先停在输出目录那一行上。
+fn cursor_of(cursor: &Value, home: &Path) -> Result<Cursor, String> {
+    let said = |key: &str| {
+        cursor[key]
+            .as_str()
+            .ok_or_else(|| format!("光标少了 `{key}` 那一格：{cursor}"))
+    };
+    let at = |key: &str| said(key).map(|tilde| expand(home, tilde));
+    Ok(match cursor["kind"].as_str() {
+        Some("out") => Cursor::Output,
+        Some("add") => Cursor::Add,
+        Some("path") => Cursor::Path(at("path")?),
+        Some("directory") => Cursor::Directory(at("root")?),
+        Some("volume") => Cursor::Volume(at("root")?),
+        Some("note") => {
+            said("what")?;
+            Cursor::Output
+        }
+        _ => return Err(format!("光标的种类认不出：{cursor}")),
+    })
 }
 
 /// 场景数据 `session.config` 那一段：在哪一栏、掀着预设栏没有、三块各自的光标、
@@ -2304,21 +2315,25 @@ mod tests {
         }
     }
 
-    /// **隔离那一卷的去处照库的镜像规则**（`discover::mirrored`）：基准点是处理路径的父目录，
-    /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级，
-    /// 名字取库那一格（[`tonefit::ISOLATED_DIRECTORY`]）。
-    #[test]
-    fn an_isolated_volume_lands_where_the_library_mirrors_it() {
-        let every = scenes()
+    /// 全部场景与全部序列走完那一刻的场景数据，各带着它是哪一份（场景名或序列名）。
+    fn every_scene_data() -> impl Iterator<Item = (String, Data)> {
+        scenes()
             .into_iter()
             .map(|name| (name.clone(), scene_data(&name)))
             .chain(
                 sequences()
                     .into_iter()
                     .map(|name| (name.clone(), sequence_data(&name))),
-            );
+            )
+    }
+
+    /// **隔离那一卷的去处照库的镜像规则**（`discover::mirrored`）：基准点是处理路径的父目录，
+    /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级，
+    /// 名字取库那一格（[`tonefit::ISOLATED_DIRECTORY`]）。
+    #[test]
+    fn an_isolated_volume_lands_where_the_library_mirrors_it() {
         let mut isolated = 0;
-        for (name, data) in every {
+        for (name, data) in every_scene_data() {
             let Some(run) = &data.run else { continue };
             for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
                 let Some(said) = &volume.isolated_output else {
@@ -2347,6 +2362,30 @@ mod tests {
             }
         }
         assert!(isolated > 0, "场景数据里总有一卷进了隔离");
+    }
+
+    /// **场景数据里每一处光标都认得出**（`one-source/08`，收停车场 Q846）：走遍全部场景与
+    /// 全部序列走完那一刻的场景数据，[`cursor_of`] 一处都不交回认不出。
+    ///
+    /// 摆场景的那几条照不全它：序列走完那一刻那几份，那一趟没变的大半没有一条用例摆过
+    /// （交互序列那几条从起点场景摆、再喂输入），认不出的种类在那里躺多久都没人问。
+    /// 一个种类都不点名——**认得哪几种只在 [`cursor_of`] 那一处**，这里只问「有没有认不出的」，
+    /// 认不出的连同它在哪一份里一起报。
+    #[test]
+    fn every_cursor_kind_in_the_scene_data_is_one_the_fixture_reads() {
+        let home = Path::new("/home");
+        assert!(
+            !sequences().is_empty(),
+            "清单上一串序列都没有，这一条走不到它们"
+        );
+        let unread: Vec<String> = every_scene_data()
+            .filter_map(|(name, data)| {
+                cursor_of(&data.session["cursor"], home)
+                    .err()
+                    .map(|why| format!("{name}：{why}"))
+            })
+            .collect();
+        assert_eq!(unread, Vec::<String>::new(), "场景数据里有认不出的光标");
     }
 }
 
