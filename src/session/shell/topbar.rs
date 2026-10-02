@@ -79,7 +79,7 @@ fn in_flight(session: &Session, live: Option<&Live>, phase: Phase, now: Instant)
         steps => overall.walked.saturating_mul(100) / steps,
     };
     vec![Segment::new(
-        format!("{} 处理中 {percent}% ⋅ ", session.views.spinning(now)),
+        format!("{} 处理中 {percent}% ⋅ ", session.views.spinning(now, 0)),
         Look::kind(Kind::Progress),
     )]
 }

@@ -30,7 +30,6 @@
 //! 而那正是存成预设时两者的差别。
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use tonefit::{
     BitDepth, CacheBudget, Dither, Filter, FitMode, Instruction, IoMode, Mode as RunMode, Profile,
@@ -351,13 +350,6 @@ pub struct Session {
     /// **家目录**：屏上的路径把它缩写成 `~`（[`super::home`]）。由会话入口问一次摆进来，
     /// 问不出来就不缩写。
     pub home: Home,
-    /// **会话打开那一刻**：屏上那个**转轮**转到第几格从它算
-    /// （一格 90 毫秒、十格一圈，见 `super::shell::marks`）。
-    ///
-    /// 转轮说的是「还在动」，与这一趟跑了多久、这一卷走到第几页都无关——
-    /// 清点中那一段一步都没走，转轮照样得转。它因此从**会话**那一头的钟算，
-    /// 不从那一趟的计时算。用例给定它（`super::scene`）。
-    pub opened_at: Instant,
 }
 
 impl Default for Session {
@@ -375,7 +367,6 @@ impl Session {
             stage: Stage::Fresh,
             views: Views::default(),
             home: Home::unknown(),
-            opened_at: Instant::now(),
         }
     }
 

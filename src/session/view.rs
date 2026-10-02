@@ -72,27 +72,21 @@ pub const STOP_LINGERS: Duration = Duration::from_millis(4000);
     )
 )]
 pub const CHART_LINGERS: Duration = Duration::from_millis(3200);
-/// **转轮**转一格要多久（设计稿 `SPIN` 那一处的 90 毫秒）。
+/// **转轮**转一格要多久（设计稿 `SPIN` 那一处的 90 毫秒）。只有 [`Views::spinning`] 读它。
 #[cfg_attr(
     not(feature = "tui"),
-    expect(
-        dead_code,
-        reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
-    )
+    allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
 )]
-pub const SPINS_EVERY: Duration = Duration::from_millis(90);
+const SPINS_EVERY: Duration = Duration::from_millis(90);
 
 /// **转轮**的十格字形（设计稿的 `SPIN`）：顶栏右端那一截、行首记号的「处理中」、
-/// 总览上清点那一条，三处同一份。转到第几格由会话的[「此刻」](CONTEXT.md)算
-/// （[`Views::spinning`]）。
+/// 总览上清点那一条，三处同一份。转到第几格由会话的[「此刻」](CONTEXT.md)算，
+/// 只在 [`Views::spinning`] 那一段里算。
 #[cfg_attr(
     not(feature = "tui"),
-    expect(
-        dead_code,
-        reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
-    )
+    allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
 )]
-pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// 跑着与等待确认时定不下来那一刻屏底说的**短的那一句**（换型号那一下；设计稿 `configKey`）。
 fn locked_short() -> Vec<Segment> {
@@ -533,10 +527,13 @@ pub struct Views {
     pub input: Option<InputLine>,
     /// 掀开着的那一张（[`super::cover`]）。盖住输入行，不替掉它。
     pub cover: Option<Overlay>,
-    /// **会话的时钟起点**：转轮转到第几格从「此刻」减它算。由会话入口摆下这一刻
-    /// （`CONTEXT.md` 的《会话》：此刻），用例给定值——设计稿把它那只表冻在场景数据的
-    /// `now_ms` 上，夹具照它往回推。**还没起过表时转轮停在第一格**：真会话里到不了，
-    /// 入口第一件事就是摆下它。
+    /// **会话的时钟起点**，只有这一格：屏上每一个转轮转到第几格都从「此刻」减它算
+    /// （[`Views::spinning`]）。由会话入口摆下这一刻（`CONTEXT.md` 的《会话》：此刻），
+    /// 用例给定值——设计稿把它那只表冻在场景数据的 `now_ms` 上，夹具照它往回推。
+    /// **还没起过表时转轮停在第一格**：真会话里到不了，入口第一件事就是摆下它。
+    ///
+    /// 转轮说的是「还在动」，与这一趟跑了多久、这一卷走到第几页都无关——清点中那一段
+    /// 一步都没走，转轮照样得转。它因此从**会话**那一头的钟算，不从那一趟的计时算。
     pub clock: Option<Instant>,
     /// **预设文件在哪**：配置视图顶上那一条右端写它（家目录缩写成 `~`）。
     /// 由会话入口问一次摆进来（`Presets::path`），
@@ -571,20 +568,22 @@ impl Views {
         }
     }
 
-    /// 屏上那个**转轮**此刻转到哪一格（模块文档《它一个终端都不碰》：两个时长照设计稿）。
+    /// 屏上一个**转轮**此刻转到哪一格：从[会话的时钟起点](Self::clock)算，
+    /// 再往后挪 `offset` 格（模块文档《它一个终端都不碰》：时长照设计稿）。
+    ///
+    /// **算式只有这一段**：顶栏右端那一截、行首记号的「处理中」、总览上清点那一条都调它。
+    /// `offset` 是一行自己的**错相**：清点中那一副的处理路径一行一格地错开（设计稿），
+    /// 让一串路径看着像在依次扫过去；别处一律传零，屏上那几个转轮同相。
     #[cfg_attr(
         not(feature = "tui"),
-        expect(
-            dead_code,
-            reason = "只有画法读得到，而它在 tui 特性后面：顶栏此刻读它，行首记号与总览那两处随 08 接上"
-        )
+        allow(dead_code, reason = "只有画法读得到，而它在 tui 特性后面")
     )]
-    pub fn spinning(&self, now: Instant) -> &'static str {
+    pub fn spinning(&self, now: Instant, offset: usize) -> &'static str {
         let since = self.clock.map_or(Duration::ZERO, |started| {
             now.saturating_duration_since(started)
         });
-        let step = (since.as_millis() / SPINS_EVERY.as_millis()) as usize;
-        SPINNER[step % SPINNER.len()]
+        let frames = (since.as_millis() / SPINS_EVERY.as_millis()) as usize;
+        SPINNER[frames.wrapping_add(offset) % SPINNER.len()]
     }
 
     /// **说一句没做成**：屏底那一句的「出事」那一副（行首一个 `✗`，整句出事红）。
@@ -3571,5 +3570,29 @@ mod tests {
         assert_eq!(session.views.config.listed.len(), 1);
         assert!(session.views.config.applied.is_none());
         assert_eq!(session.views.config.armed_delete, None);
+    }
+
+    /// **转轮十格一圈、一格 90 毫秒**，从会话的时钟起点算；一行自己的错相往后挪一格。
+    /// 还没起过表时停在第一格。
+    #[test]
+    fn the_spinner_turns_one_frame_every_ninety_milliseconds_and_wraps_at_ten() {
+        let started = Instant::now();
+        let views = Views {
+            clock: Some(started),
+            ..Views::default()
+        };
+        assert_eq!(views.spinning(started, 0), "⠋");
+        assert_eq!(views.spinning(started + Duration::from_millis(90), 0), "⠙");
+        assert_eq!(views.spinning(started + Duration::from_millis(900), 0), "⠋");
+        assert_eq!(views.spinning(started, 1), "⠙", "错开一格就是下一格");
+        let unstarted = Views {
+            clock: None,
+            ..Views::default()
+        };
+        assert_eq!(
+            unstarted.spinning(started + Duration::from_millis(90), 1),
+            "⠙",
+            "没起过表就从第一格起，错相照加"
+        );
     }
 }
