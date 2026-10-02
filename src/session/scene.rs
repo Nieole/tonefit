@@ -249,7 +249,8 @@ pub(crate) struct VolumeData {
     pub(crate) pages: Option<Vec<PageData>>,
     /// 没做成的原因。
     pub(crate) failure: Option<String>,
-    /// 进了隔离时它的去处（`~/` 写法）：照库的镜像规则，输出目录底下插一级 `_isolated`。
+    /// 进了隔离时它的去处（`~/` 写法）：照库的镜像规则，输出目录底下插一级
+    /// [隔离目录](tonefit::ISOLATED_DIRECTORY)。
     pub(crate) isolated_output: Option<String>,
 }
 
@@ -2304,7 +2305,8 @@ mod tests {
     }
 
     /// **隔离那一卷的去处照库的镜像规则**（`discover::mirrored`）：基准点是处理路径的父目录，
-    /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级 `_isolated`。
+    /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级，
+    /// 名字取库那一格（[`tonefit::ISOLATED_DIRECTORY`]）。
     #[test]
     fn an_isolated_volume_lands_where_the_library_mirrors_it() {
         let every = scenes()
@@ -2337,7 +2339,7 @@ mod tests {
                 let mirrored = &listed.root[parent.len()..];
                 assert_eq!(
                     *said,
-                    format!("{}/_isolated{mirrored}", data.output),
+                    format!("{}/{}{mirrored}", data.output, tonefit::ISOLATED_DIRECTORY),
                     "{name}：{}",
                     listed.root
                 );

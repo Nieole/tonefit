@@ -1011,7 +1011,10 @@ impl Live {
     }
 
     /// 清点清单里第几卷**没做成的那一条**（报告的 `failed_volumes` 里那一条）。没做成之外的卷答 `None`。
-    fn failure_at(&self, at: usize) -> Option<&VolumeFailure> {
+    ///
+    /// 卷列表灰阶分布那一格也读它：没做成的卷在那一格上写的词出自措辞那一层
+    /// `render::failed_volume` 那一行，而那一行吃的就是这一条。
+    pub fn failure_at(&self, at: usize) -> Option<&VolumeFailure> {
         let failed = (*self.failed_at.get(at)?)?;
         self.report.failed_volumes.get(failed)
     }

@@ -33,7 +33,7 @@ use super::super::viewport::Viewport;
 use super::canvas::{Border, Canvas, hint, padded};
 use super::marks::{self, BranchTally, Mark, spell};
 use super::yielding;
-use crate::render::{self, Field, Notable, RowKind};
+use crate::render::{self, Field, Notable, Row, RowKind};
 
 /// 缩进一级占几格。
 const A_LEVEL: u16 = 2;
@@ -668,17 +668,15 @@ impl Painter<'_> {
         marks::pass_segments(pass, done, pages, width)
     }
 
-    /// 报告那一侧一句成句的话（跳过、隔离……）：**字只有一处出处**（ADR 0016）。
-    fn sentence(&self, at: usize, kind: RowKind) -> Option<String> {
-        let report = self.report_of(at)?;
+    /// 一卷的**卷级那几行**（[`render::volume`]）。
+    ///
+    /// 卷行上读措辞那一层的三处——[代表页](driver)、[灰阶分布那一格](Self::why_nothing)上的
+    /// 「跳过」、行尾[成句的那一句](sentence)——**一帧只拼这一次**，三处读同一份。
+    fn volume_rows(&self, report: &VolumeReport) -> Vec<Row> {
         render::volume(
             report,
             self.session.taste.white_align_limit.unwrap_or_default(),
         )
-        .iter()
-        .find(|row| row.kind == kind)
-        .and_then(|row| row.cell(Field::Sentence))
-        .map(str::to_owned)
     }
 
     /// 一卷那一行。
@@ -707,12 +705,7 @@ impl Painter<'_> {
             .filter(|_| state != VolumeState::Aborted)
             .map(render::tally_pairs)
             .unwrap_or_default();
-        // 一页都没判的卷在灰阶分布那一列上写的是**为什么**（`render::tally_column` 那两个词）。
-        let why_nothing = match state {
-            VolumeState::Skipped => vec![Segment::new("跳过", Look::FAINT.dim())],
-            VolumeState::Failed => vec![Segment::new("没做成", Look::tone(Tone::Trouble))],
-            _ => Vec::new(),
-        };
+        let rows = report.map(|report| self.volume_rows(report));
         let running = matches!(state, VolumeState::Running { .. } | VolumeState::Deciding);
         self.lined_row(
             canvas,
@@ -731,26 +724,47 @@ impl Painter<'_> {
                 count: format!("{pages} 页"),
                 count_look: Look::FAINT,
                 tally,
-                why_nothing,
-                driver: self.driver_of(at),
+                why_nothing: self.why_nothing(at, state, rows.as_deref()),
+                driver: rows.as_deref().and_then(driver),
                 elapsed: self.elapsed_of(at),
-                tail: self.volume_tail(at, state, notable),
+                tail: self.volume_tail(at, state, notable, rows.as_deref()),
             },
         );
     }
 
-    /// **代表页那一列**：这一卷的档位是哪一页定出来的。只有整卷统一灰阶判出来的卷有
-    /// （默认逐页那一趟这一列整个不在场，停车场 Q712）。字出自 [`driver`]。
-    fn driver_of(&self, at: usize) -> Option<String> {
-        let report = self.report_of(at)?;
-        driver(&render::volume(
-            report,
-            self.session.taste.white_align_limit.unwrap_or_default(),
-        ))
+    /// 一页都没判的卷在灰阶分布那一列上写的**为什么**（跳过、没做成），别的卷一格不摆。
+    ///
+    /// **词出自措辞那一层那一格**（[`render::tally_column`]，ADR 0016）：跳过的卷读它那一份
+    /// [卷级那几行](Self::volume_rows)，没做成的卷连一份卷报告都没有，读
+    /// [它那一行](render::failed_volume)。这一层只配样子——跳过压暗，没做成上出事那一色
+    /// （`CONTEXT.md` 的《语义色》）。
+    fn why_nothing(&self, at: usize, state: VolumeState, rows: Option<&[Row]>) -> Vec<Segment> {
+        let (said, look) = match state {
+            VolumeState::Skipped => (rows.and_then(render::tally_column), Look::FAINT.dim()),
+            VolumeState::Failed => (
+                self.live
+                    .and_then(|live| live.failure_at(at))
+                    .map(render::failed_volume)
+                    .and_then(|row| render::tally_column(std::slice::from_ref(&row))),
+                Look::tone(Tone::Trouble),
+            ),
+            _ => return Vec::new(),
+        };
+        said.map(|said| vec![Segment::new(said, look)])
+            .unwrap_or_default()
     }
 
     /// 卷行行尾那一句：**这一行此刻最要紧的事**（`CONTEXT.md` 的《目录行 / 卷行》）。
-    fn volume_tail(&self, at: usize, state: VolumeState, notable: usize) -> Vec<Segment> {
+    ///
+    /// 跳过与隔离那两句是报告那一侧[成句的那一句](sentence)，读的是这一卷的
+    /// [卷级那几行](Self::volume_rows)。
+    fn volume_tail(
+        &self,
+        at: usize,
+        state: VolumeState,
+        notable: usize,
+        rows: Option<&[Row]>,
+    ) -> Vec<Segment> {
         match state {
             VolumeState::Running { .. } => self.walking_segments(at, 10),
             VolumeState::Deciding => vec![Segment::new(
@@ -762,13 +776,13 @@ impl Painter<'_> {
                 .and_then(|live| live.undone_at(at))
                 .map(|reason| vec![Segment::new(reason, Look::tone(Tone::Trouble))])
                 .unwrap_or_default(),
-            VolumeState::Skipped => self
-                .sentence(at, RowKind::Skipped)
+            VolumeState::Skipped => rows
+                .and_then(|rows| sentence(rows, RowKind::Skipped))
                 .map(|said| vec![Segment::new(said, Look::FAINT.dim())])
                 .unwrap_or_default(),
             VolumeState::Aborted => vec![Segment::new("已中断，未保存", Look::FAINT.dim())],
-            VolumeState::Isolated => self
-                .sentence(at, RowKind::Isolated)
+            VolumeState::Isolated => rows
+                .and_then(|rows| sentence(rows, RowKind::Isolated))
                 .map(|said| vec![Segment::new(said, Look::tone(Tone::Caution))])
                 .unwrap_or_default(),
             VolumeState::Queued => vec![Segment::new("等待中", Look::FAINT.dim())],
@@ -918,11 +932,20 @@ fn problem_parts(tally: &BranchTally, unreachable: usize) -> Vec<Segment> {
     marks::dotted(parts)
 }
 
+/// 报告那一侧一句成句的话（跳过、隔离……）：那一种行上[成句的那一格](Field::Sentence)。
+/// **字只有一处出处**（ADR 0016）。
+fn sentence(rows: &[Row], kind: RowKind) -> Option<String> {
+    rows.iter()
+        .find(|row| row.kind == kind)
+        .and_then(|row| row.cell(Field::Sentence))
+        .map(str::to_owned)
+}
+
 /// 代表页那一列的字：[那一行](RowKind::Driver)上的路径，只印最后那一段。
 ///
 /// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::volume_name`]）：
 /// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
-fn driver(rows: &[render::Row]) -> Option<String> {
+fn driver(rows: &[Row]) -> Option<String> {
     rows.iter()
         .find(|row| row.kind == RowKind::Driver)
         .and_then(|row| row.cell(Field::Source))

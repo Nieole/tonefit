@@ -7,7 +7,8 @@
 //! 环节本身住在 `pipeline`（`CONTEXT.md` 的《管线》）。
 //!
 //! [`run`] 是主 seam：所有模式走同一个入口，CLI 是它之上的薄层，只负责把命令行参数拼成
-//! [`Request`]、把 [`Report`] 渲染成文字。
+//! [`Request`]、把 [`Report`] 渲染成文字。含坏页的卷它整卷写进输出目录下那一级
+//! [隔离目录](ISOLATED_DIRECTORY)，那个名字随它一并公开：界面要说得出它。
 //!
 //! [`score`] 是第二个 seam：画质分的纯函数形态，数值与性质测试、标定工具直接调它。
 //! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`Candidate`]、[`quantize`]——
@@ -620,7 +621,11 @@ impl MemberCounts {
 ///
 /// 名字用 ASCII：输出常常要经 MTP 或 FAT 搬到阅读器上，目录名少一分编码上的赌注是一分。
 /// 下划线前缀买两件事——它不至于撞上一个真叫这个名字的卷，列目录时也排在最前面。
-const ISOLATED_DIRECTORY: &str = "_isolated";
+///
+/// **公开，因为界面要说出它**：会话里进了隔离的那一卷，每页结果头一行末尾那个短标签
+/// 说的就是这个名字（`CONTEXT.md` 的《隔离目录》）。界面住在另一个 crate 里，
+/// 私有的那一格它够不着，而手写一份就是第二个出处（`one-source/07`，停车场 Q870）。
+pub const ISOLATED_DIRECTORY: &str = "_isolated";
 
 /// 处理一个卷：分析环节解码到画质分，写出环节量化到写出，非图片成员原样搬过去。
 ///

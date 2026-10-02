@@ -26,13 +26,14 @@
 //! **它按 `UnicodeWidthChar::width` 算，不按 `width_cjk`**：东亚宽度表上标着
 //! **Ambiguous** 的字形在这里一律当一格。这是仓库既有的约定（`crate::wrap` 那一头也是
 //! 它），本模块跟着走，不另立第二套——跟着走的代价由**字形的选法**接住：
-//! **摆进列里的字形一个都不许是歧义宽度**，画质分、边界与理由都在
+//! **界面层挑的字形一个都不许是歧义宽度**，画质分、边界与理由都在
 //! [`tonefit::width_is_stable`]。
 //!
 //! 那条规矩管两层：**这一层自己造的字形**（[`ELLIPSIS`] 与两张表的行首记号），
-//! 与**措辞那一层摆进列里的那几格**（哪几格由下一节那一维答，不在这里点名）。
-//! 后者从前划在规矩外面——换它们是命令行印出去的字节的一次变动，不归画法这一层；
-//! `p4-parking-lot/05` 换掉了那两个字形，管辖面跟着扩到那一层（停车场 Q168）。
+//! 与**措辞那一层出的格**——那一层出的格都问，**摆没摆进列里不论**（那一关与它不问哪几种都在
+//! `crate::render`，停车场 Q962）。措辞那一层从前划在规矩外面——
+//! 换它们是命令行印出去的字节的一次变动，不归画法这一层；`p4-parking-lot/05` 换掉了那两个字形，
+//! 管辖面跟着扩到那一层（停车场 Q168）。
 //!
 //! 停车场 Q154 记着这笔账的由来：从前报告是散文，错一格看不出来；表上头一次靠宽度吃饭。
 //!
@@ -42,8 +43,8 @@
 //! （`CONTEXT.md`《格》立的那一维）。三处 `match` 一个 `_` 都不留：
 //! **添一列不写这一格，编译就过不去**。
 //!
-//! 「哪几格要过宽度那一关」因此**只有这一处出处**（`wording_cells` 从它导出）。
-//! 从前措辞那一层还手抄着第二份，往表里添一列那一份不跟着添**也不会红**（停车场 Q188）。
+//! 摆进列里的措辞格因此**一格都落不到宽度那一关外面**：`wording_cells` 从这一维导出屏上那几格，
+//! 那一关拿它核对——一列说自己出自措辞那一层的哪一格，那一格就得在关里。
 
 use crate::render::Field;
 use crate::wrap;
@@ -69,8 +70,8 @@ pub(crate) enum Provenance {
     /// **措辞 (Wording)**：界面层自己造的字面（尺寸、裁白边、缩放、判定、理由、页数、分布……）。
     ///
     /// 字形宽度**必须稳**（[`tonefit::width_is_stable`]），而查它的是**造字面的那一层**——
-    /// 带着的正是「查哪一格」：`Some(field)` 是 [`crate::render`] 出的那一格，
-    /// 那一层那条用例从 `wording_cells` 拿走全部要查的格；`None` 是画法这一层
+    /// 带着的正是「出自哪一格」：`Some(field)` 是 [`crate::render`] 出的那一格，
+    /// 那一层那条用例拿 `wording_cells` 核对它们都在关里；`None` 是画法这一层
     /// 自己造的字（[耗时](TreeColumn::Elapsed)、[树上那一列卷数](TreeColumn::Count)、
     /// [提示](PagesColumn::Notes)），
     /// 它们在自己那一头查。
@@ -461,15 +462,15 @@ fn least_pages_width(column: PagesColumn) -> u16 {
 /// **摆进列里、由[措辞](Provenance::Wording)那一层写下的那几格。**
 ///
 /// 从屏上那两张表（[树](TreeColumn)与[每页结果](PagesColumn)）逐列导出；**一格只进一列**
-/// ——同一格报两遍，那一关反而分不清问的是哪一列（本模块那条用例钉着）。
+/// ——同一格报两遍，其中一列多半报错了自己出自哪一格（本模块那条用例钉着）。
 ///
-/// 「摆进列里的字形一个都不许是歧义宽度」那一关问的就是这几格，
-/// 而**那一关跑在造字面的那一层**（`crate::render` 那条
-/// `every_glyph_this_layer_puts_in_a_lined_up_cell_is_the_same_width_on_any_terminal`）——
-/// 它从这里导出，不再手抄第二份（停车场 Q188）。
+/// **宽度那一关拿它核对**：那一关跑在造字面的那一层（`crate::render` 那条
+/// `every_glyph_this_layer_puts_in_a_cell_is_the_same_width_on_any_terminal`），问的是那一层出的
+/// **全部**格（停车场 Q962）；这几格一格都不许落在它放开的那几种里——
+/// 一列说自己出自措辞那一层的哪一格，那一格就得在关里。
 ///
 /// **只有这一处出处。** 添一列时 [`Column::provenance`] 那个 `match` 不写就编译不过，
-/// 新添的列进不进这一关**因此不由人的记性决定**。
+/// 新添的列说没说对自己出自哪一格**因此不由人的记性决定**。
 ///
 /// 画法这一层自己造的那几格不在里面（[耗时](TreeColumn::Elapsed)、[省略号](ELLIPSIS)、
 /// 两张表的行首记号）：措辞那一层没有它们那一格，它们各在自己那一头问。
@@ -477,7 +478,7 @@ fn least_pages_width(column: PagesColumn) -> u16 {
 /// **读它的只有那一关**（`crate::render` 那条用例），非测试的那一趟因此没有一个调用方——
 /// 与会话里那几处「只有画法读得到」的同一副写法，放开的是这一处，不是整个模块
 /// （见 `super` 的模块文档）。[`Column::provenance`] 与 [`Provenance`] 跟着它一起立在那里：
-/// **那不是死代码，是那一关的前提**。
+/// **那不是死代码，是那一关要核对的那一份**。
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn wording_cells() -> Vec<Field> {
     fn of<C: Column>(into: &mut Vec<Field>) {
@@ -551,7 +552,7 @@ mod tests {
     /// **省略号那一格在哪种终端上都占一格**（画质分见 [`tonefit::width_is_stable`]）。
     ///
     /// 它是这一层自己造的唯一一个字形，两张表的行首记号各在自己那一头问；
-    /// 措辞那一层摆进列里的那几格在 `crate::render` 那一头问。
+    /// 措辞那一层出的格在 `crate::render` 那一头问。
     #[test]
     fn the_ellipsis_this_module_makes_is_the_same_width_on_any_terminal() {
         assert!(
@@ -595,7 +596,7 @@ mod tests {
         assert_eq!(TreeColumn::Name.provenance(), Provenance::Verbatim);
         assert_eq!(PagesColumn::Name.provenance(), Provenance::Verbatim);
 
-        // **一格只进一列**：两列报出同一格，那一关就把其中一列真正装的东西漏问了。
+        // **一格只进一列**：两列报出同一格，其中一列多半报错了自己出自哪一格。
         let cells: Vec<Field> = wording.iter().filter_map(|(_, field)| *field).collect();
         for (at, field) in cells.iter().enumerate() {
             assert!(!cells[..at].contains(field), "{field:?} 被两列报出来了");
@@ -615,7 +616,7 @@ mod tests {
             "措辞那一档多了一列说自己不出自措辞那一层"
         );
 
-        // 导出去给那一关的就是这几格，一格不多一格不少。
+        // 导出去给那一关核对的就是这几格，一格不多一格不少。
         assert_eq!(wording_cells(), cells);
     }
 

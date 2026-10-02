@@ -358,6 +358,36 @@ const SPINNER_READERS: [(&str, &str); 3] = [
     ("src/session/shell/overview.rs", "views.spinning("),
 ];
 
+/// **隔离目录的名字**（`one-source/07`，收停车场 Q870）：盘上那一级目录叫什么。
+///
+/// **认的是一个独立的词**（[`standalone_count`]）：前面挨着字母、数字或下划线的不算
+/// （`any_isolated` 那几个方法名），前面是引号、斜杠、空格的都算——`"_isolated"`、
+/// `"out/_isolated"`、`"输出在 _isolated/"` 手抄的就是这几种。不归一：[`squashed`] 会把斜杠去掉，
+/// `out/_isolated` 就粘成了一个词。
+const ISOLATED_NAME: &str = "_isolated";
+
+/// 那个名字的家：库那一格公开常量。会话住在另一个 crate 里，私有的那一格它够不着。
+const ISOLATED_HOME: &str = "src/lib.rs";
+
+/// 家里真住着的那一格：**只问名字与类型**，不问值——值是 [`ISOLATED_NAME`] 那一问的事。
+const ISOLATED_HOME_MARK: &str = "pub const ISOLATED_DIRECTORY: &str";
+
+/// 读那一格的那一处：每页结果头一行末尾那个短标签。问的是**读的形状**（带着 crate 名），
+/// 指路的散文不算。场景数据那条「去处照库的镜像规则」的用例也读它，但用例不是出处
+/// （[`code_only`] 把它砍掉了），不在这里问。
+const ISOLATED_READER: (&str, &str) = ("src/session/shell/pages.rs", "tonefit::ISOLATED_DIRECTORY");
+
+/// **一页都没判的卷在灰阶分布那一列上写的那两个词**（`one-source/07`，收停车场 Q961）：
+/// 跳过、没做成。认的是**整个字面**（连引号）：「这一卷跳过了：」「 ⋅ 跳过 」那几句是别的话，
+/// 不该被这一条判成抄件。
+const WHY_NOTHING_MARKS: [&str; 2] = [r#""跳过""#, r#""没做成""#];
+
+/// 那两个词的家：措辞那一层（`why_nothing_judged`）。
+const WHY_NOTHING_HOME: &str = "src/render.rs";
+
+/// 卷列表那一格读那两个词走的那一手：**问的是调用的形状**，指路的散文不算。
+const WHY_NOTHING_READER: (&str, &str) = ("src/session/shell/list.rs", "render::tally_column(");
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -903,6 +933,84 @@ fn the_spinner_and_its_clock_start_live_in_one_place() {
         assert!(
             squashed(&code_only(&read(&path))).contains(&squashed(call)),
             "{file} 不再调「{call}」：那一处自己拿了主意，或者又抄了一份"
+        );
+    }
+}
+
+/// 一个独立的词在这段文字里出现几次：**前面挨着字母、数字或下划线的不算**
+/// （[`ISOLATED_NAME`] 说的那条）。
+fn standalone_count(text: &str, word: &str) -> usize {
+    text.match_indices(word)
+        .filter(|(at, _)| {
+            !text[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| before.is_ascii_alphanumeric() || before == '_')
+        })
+        .count()
+}
+
+/// **隔离目录的名字与「跳过」「没做成」两个词，代码里各只有一处**（`one-source/07`，
+/// 收停车场 Q870、Q961）。
+///
+/// 从前会话那一头各手写着一份：每页结果头一行末尾「这一卷输出在 _isolated/」写死了目录名，
+/// 而库那一格是私有的、会话够不着；卷列表灰阶分布那一格的两个词在画法那一层另写了一份，
+/// 措辞那一层那一处（`render::tally_column`）只剩用例在读。两处今天写的都是同一串，
+/// 屏上一个字不差——改名、换词那一天才分家，而那一天没有一条用例会红。
+///
+/// **三件事一起问**，与前几条同一个形状：**代码里**只在家里出现一次（[`code_only`]：
+/// 用例与文档里出现是记录与引用，不是出处）、家里那一格真住着、读它的那几处真读它。
+/// 只问头一件的话，那几处把字换一副写法手抄回去（`format!` 拼出来、换个引号），这一条照绿。
+#[test]
+fn the_isolated_directory_name_and_the_why_nothing_words_live_in_one_place() {
+    let mut code = Vec::new();
+    collect(&root().join("src"), "rs", true, &mut code);
+    let code: Vec<(PathBuf, String)> = code
+        .into_iter()
+        .map(|path| {
+            let text = code_only(&read(&path));
+            (path, text)
+        })
+        .collect();
+
+    // 一个文件连同它写了几遍一起报：家里写了两遍与别处抄了一遍都看得出来。
+    let carrying = |count: &dyn Fn(&str) -> usize| -> Vec<(PathBuf, usize)> {
+        code.iter()
+            .filter_map(|(path, text)| {
+                let found = count(text);
+                (found > 0).then(|| (path.clone(), found))
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        carrying(&|text| standalone_count(text, ISOLATED_NAME)),
+        vec![(root().join(ISOLATED_HOME), 1)],
+        "隔离目录的名字「{ISOLATED_NAME}」不止一处，或者不在家里"
+    );
+    assert!(
+        read(&root().join(ISOLATED_HOME)).contains(ISOLATED_HOME_MARK),
+        "{ISOLATED_HOME} 里少了「{ISOLATED_HOME_MARK}」那一格"
+    );
+
+    for mark in WHY_NOTHING_MARKS {
+        assert_eq!(
+            carrying(&|text| text.matches(mark).count()),
+            vec![(root().join(WHY_NOTHING_HOME), 1)],
+            "{mark} 不止一处，或者不在家里"
+        );
+    }
+
+    for (file, reads) in [ISOLATED_READER, WHY_NOTHING_READER] {
+        let path = root().join(file);
+        assert!(
+            path.is_file(),
+            "{file} 不在了：读的那一处按文件路径记在 ISOLATED_READER、WHY_NOTHING_READER 上，\
+             模块挪了位置就把那两格跟着改"
+        );
+        assert!(
+            code_only(&read(&path)).contains(reads),
+            "{file} 不再读「{reads}」：那一处又手写了一份，或者自己拿了主意"
         );
     }
 }
