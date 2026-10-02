@@ -747,7 +747,7 @@ fn the_record_on_the_default_path_still_names_the_verdict_and_its_reason() {
 }
 
 /// 彩色分支不量化，没有判定灰阶档位可写（ADR 0005 决定第 4 条）；幂等依据一项不少——
-/// 默认路径上是共用的三项加页级源哈希（two-pass-rework/15）。
+/// 默认路径上是共用的三项加成员源哈希（two-pass-rework/15）。
 #[test]
 fn a_color_page_carries_the_same_record_without_a_bit_depth() {
     let space = Workspace::new();
@@ -864,7 +864,7 @@ fn a_split_page_records_which_source_member_it_came_from() {
 /// **每张输出页记着它自己那一份源哈希，卷级那一份不再写**（two-pass-rework/13 的页级依据；
 /// two-pass-rework/15 收掉卷级那一份）。
 ///
-/// `tonefit:page-source` 只算这一张来自的那个源成员——改了一页，只有那一页的页级哈希变，
+/// `tonefit:page-source` 只算这一张来自的那个源成员——改了一页，只有那一页的成员源哈希变，
 /// 旁边那一页的纹丝不动。这正是 spec 的 story 23：一页的幂等依据只取决于这一页自己。
 /// 默认路径上的记录里没有 `tonefit:source`：那一项只对整卷统一灰阶成立（它论证的是统一档位由全卷定），
 /// 留着就是第二个出处，两份对不上时没人说得清哪份作数。
@@ -899,26 +899,26 @@ fn every_page_on_the_default_path_carries_its_own_source_hash_and_no_volume_leve
             "tonefit:page-source 不是十六进制哈希：{hash}"
         );
     }
-    assert_ne!(page_a, page_b, "两张不同的源页给出了同一个页级源哈希");
+    assert_ne!(page_a, page_b, "两张不同的源页给出了同一个成员源哈希");
 
-    // 改第一页：只有它的页级哈希变，第二页的不动——第二页留下没重做，字节原样搬过来。
+    // 改第一页：只有它的成员源哈希变，第二页的不动——第二页留下没重做，字节原样搬过来。
     volume.page("001.png", &fixtures::gradient(fixtures::TINY));
     let second = fixtures::run_volume(&space, &volume);
     assert_redone(second.volumes[0].verdict, "改了一页");
     let page_a2 = basis(&second, "001.png");
     let page_b2 = basis(&second, "002.png");
-    assert_ne!(page_a2, page_a, "改了第一页，它的页级源哈希却没变");
+    assert_ne!(page_a2, page_a, "改了第一页，它的成员源哈希却没变");
     assert_eq!(
         page_b2, page_b,
-        "改的是第一页，第二页的页级源哈希却跟着变了"
+        "改的是第一页，第二页的成员源哈希却跟着变了"
     );
 }
 
 /// **拆分跨页下页级依据定义得清楚**（two-pass-rework/13）：一个源页出两张输出页，
-/// 两张的页级源哈希**相同**——它们来自同一个成员的同一批字节——而来路那一项各说自己是哪一半。
+/// 两张的成员源哈希**相同**——它们来自同一个成员的同一批字节——而来路那一项各说自己是哪一半。
 /// 两项合在一起，每一张都指得回「源页 001.png 的第几半」；没切开的那一张另有自己的哈希。
 ///
-/// 页级源哈希算的是**源成员**而不是切出来的像素，这一条钉的正是这个选择：反过来算像素的话，
+/// 成员源哈希算的是**源成员**而不是切出来的像素，这一条钉的正是这个选择：反过来算像素的话，
 /// 幂等就得先解码再问「这一半变没变」，而幂等的全部意义是在碰像素之前答完。
 #[test]
 fn both_halves_of_a_split_page_share_one_source_hash_and_the_origin_tells_them_apart() {
@@ -948,10 +948,10 @@ fn both_halves_of_a_split_page_share_one_source_hash_and_the_origin_tells_them_a
     let (right, right_origin) = basis(1);
     let (whole, whole_origin) = basis(2);
 
-    assert_eq!(left, right, "同一张跨页切出的两半给出了两个页级源哈希");
+    assert_eq!(left, right, "同一张跨页切出的两半给出了两个成员源哈希");
     assert_eq!(left_origin, "001.png 1/2");
     assert_eq!(right_origin, "001.png 2/2");
-    assert_ne!(whole, left, "另一张源页与那张跨页给出了同一个页级源哈希");
+    assert_ne!(whole, left, "另一张源页与那张跨页给出了同一个成员源哈希");
     assert_eq!(whole_origin, "002.png 1/1");
 }
 
@@ -997,7 +997,7 @@ fn the_envelope_path_records_no_page_level_basis_and_still_skips_as_a_whole() {
         assert_eq!(
             fixtures::png_field(&text, "tonefit:page-source"),
             None,
-            "整卷统一灰阶那条路上写了页级源哈希：{}",
+            "整卷统一灰阶那条路上写了成员源哈希：{}",
             page.output.display()
         );
     }
@@ -1078,7 +1078,7 @@ fn a_pinned_run_under_the_envelope_records_and_skips_by_page() {
         let text = fixtures::read_png_text(&page.output);
         assert!(
             fixtures::png_field(&text, "tonefit:page-source").is_some(),
-            "顶死的那一趟没写页级源哈希：{}",
+            "顶死的那一趟没写成员源哈希：{}",
             page.output.display()
         );
         assert_eq!(
@@ -1135,7 +1135,7 @@ fn a_single_override_on_a_volume_whose_pages_part_at_the_gate_goes_page_by_page_
         let text = fixtures::read_png_text(&page.output);
         assert!(
             fixtures::png_field(&text, "tonefit:page-source").is_some(),
-            "{} 没写页级源哈希",
+            "{} 没写成员源哈希",
             page.output.display()
         );
         assert_eq!(
@@ -1208,7 +1208,7 @@ fn the_same_single_override_under_the_envelope_waits_for_the_volume() {
         assert_eq!(
             fixtures::png_field(&text, "tonefit:page-source"),
             None,
-            "{} 写了页级源哈希",
+            "{} 写了成员源哈希",
             page.output.display()
         );
     }
@@ -1424,7 +1424,7 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
     assert_eq!(
         fixtures::png_field(&placeholder, "tonefit:page-source"),
         None,
-        "空白占位页写了页级源哈希——它的尺寸由全卷定，页级答不了"
+        "空白占位页写了成员源哈希——它的尺寸由全卷定，页级答不了"
     );
     assert!(
         fixtures::png_field(&placeholder, "tonefit:params").is_some(),
@@ -1433,7 +1433,7 @@ fn a_placeholder_page_carries_no_page_level_basis_while_its_neighbour_does() {
     let neighbour = fixtures::read_png_text(&reported.pages[1].output);
     assert!(
         fixtures::png_field(&neighbour, "tonefit:page-source").is_some(),
-        "同一卷里的好页丢了页级源哈希"
+        "同一卷里的好页丢了成员源哈希"
     );
 }
 
@@ -1733,7 +1733,7 @@ fn a_failed_page_isolates_the_volume_and_the_retained_pages_go_along() {
 
 /// **切开的那一族整族留下、整族重做**（two-pass-rework/14；页几何批 04 号票的来路）。
 ///
-/// 一张跨页切成两张输出页，页级源哈希相同、来路各说自己是哪一半。改旁边那一页，
+/// 一张跨页切成两张输出页，成员源哈希相同、来路各说自己是哪一半。改旁边那一页，
 /// 这一族两张都留下——留下的数按**输出页**数，是 2。反过来把那张跨页换成一张单页：
 /// 一族从两张变一张，`001-1.png`、`001-2.png` 成了陈旧产物，收尾整个换掉时一并清走。
 #[test]

@@ -10,7 +10,7 @@
 //!   加上源那一项——**两种作用域各一种写法，一份记录只带一种**（two-pass-rework/15，
 //!   见 [`SourceHash`]）：等整卷那条路（`--envelope`）写卷级的 `tonefit:source`
 //!   （[`VolumeSource`]，整卷一个数），跳过的单位是卷；这一页自己定得下的那条路（默认）
-//!   写页级的 `tonefit:page-source`（[`PageSource`]，这一张自己那一份），跳过的单位是页。
+//!   写页级的 `tonefit:page-source`（[`MemberSource`]，这一张自己那一份），跳过的单位是页。
 //!   重跑时读回来逐项比，对得上就不必重做（见 `crate::pipeline::compare_with_the_prior_output`）。
 //! - **来路**一项：这一张来自哪个源成员，以及它在那一族里排第几、一共几张（见 [`Origin`]）。
 //!   它不是「要不要重做」的依据，是让幂等**问得出这个问题**的索引——一个源页产出几张
@@ -112,7 +112,7 @@ impl Fingerprint {
     ///
     /// `page` 是 `None`，或那一页没有自己那一份（读不出字节的成员、立即停止之后没喂到的成员），
     /// 页级那条路上就不写：写出环节盖记录的那两种页——整卷统一灰阶那条路上的灰度页、坏页——
-    /// 按规矩都不写它（见 [`PageSource`] 的《哪些页有》）。两种作用域的取值都从这一份指纹里来，
+    /// 按规矩都不写它（见 [`MemberSource`] 的《哪些页有》）。两种作用域的取值都从这一份指纹里来，
     /// 「一份记录只带一种」因此由构造保证，不靠调用方对得上。
     fn source_item(&self, page: Option<usize>) -> Option<(&'static str, String)> {
         match &self.source {
@@ -140,7 +140,7 @@ pub enum SourceHash {
     /// 卷级：全卷一个数，页与透传文件按阅读顺序都喂进去（[`SourceHasher`]）。跳过的单位是卷。
     Volume(VolumeSource),
     /// 页级：每个源页各一个，透传文件也各一个（只拿去比，不进记录）。跳过的单位是页。
-    Page(PageSources),
+    Page(MemberSources),
 }
 
 /// 卷级源哈希：`tonefit:source` 那一项的取值，[`SourceHasher`] 收口出来的那个数。
@@ -157,17 +157,17 @@ impl VolumeSource {
 /// 页级那条路上幂等那一道算出来的那一批（two-pass-rework/15）：每个源页一份、每个透传文件一份，
 /// 各按自己的成员序。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PageSources {
+pub struct MemberSources {
     /// 每个源页自己那一份，按源页序。读不出字节的成员是 `None`——它在分析环节里会变成坏页，
     /// 而坏页不写。**立即停止之后可能短于源页数**，那一份走不出这一卷。
-    pages: Vec<Option<PageSource>>,
+    pages: Vec<Option<MemberSource>>,
     /// 每个透传文件自己那一份，按透传文件序，同一条规矩算出来。它**不进记录**（透传文件不是
     /// PNG），只拿去与输出里那一份重新算出来的比：页级那条路上整卷跳过要它们逐字节相同——
     /// 卷级那一个数从前顺手盖住了这件事，页级各比各的看不见它。
-    extras: Vec<Option<PageSource>>,
+    extras: Vec<Option<MemberSource>>,
 }
 
-impl PageSources {
+impl MemberSources {
     /// 一批空的，容量按这一卷有几个源页、几个透传文件给：幂等那一道逐成员喂进来。
     pub fn with_capacity(pages: usize, extras: usize) -> Self {
         Self {
@@ -177,22 +177,22 @@ impl PageSources {
     }
 
     /// 下一个源页那一份，按源页序喂。
-    pub fn push_page(&mut self, source: Option<PageSource>) {
+    pub fn push_page(&mut self, source: Option<MemberSource>) {
         self.pages.push(source);
     }
 
     /// 下一个透传文件那一份，按透传文件序喂。
-    pub fn push_extra(&mut self, source: Option<PageSource>) {
+    pub fn push_extra(&mut self, source: Option<MemberSource>) {
         self.extras.push(source);
     }
 
     /// 第 `index` 个源页那一份。
-    pub fn page(&self, index: usize) -> Option<&PageSource> {
+    pub fn page(&self, index: usize) -> Option<&MemberSource> {
         self.pages.get(index).and_then(Option::as_ref)
     }
 
     /// 第 `index` 个透传文件那一份。
-    pub fn extra(&self, index: usize) -> Option<&PageSource> {
+    pub fn extra(&self, index: usize) -> Option<&MemberSource> {
         self.extras.get(index).and_then(Option::as_ref)
     }
 }
@@ -322,7 +322,10 @@ impl Origin {
     }
 }
 
-/// 页级源哈希：一张输出页**自己那一份**幂等依据里代表源的那一项（two-pass-rework/13）。
+/// 成员源哈希：《源哈希》的页级写法，**每个成员一份**（`CONTEXT.md` 的《成员源哈希》；two-pass-rework/13）。
+/// 页上写的就是这一份（`tonefit:page-source`），它是一张输出页**自己那一份**幂等依据里代表源的那一项；
+/// 透传文件那一份同一条规矩算出来，只拿去比、不进记录（见 [`MemberSources`]）——名字因此说「成员」
+/// 不说「页」（停车场 Q699）。
 ///
 /// 卷级那一份（[`VolumeSource`]）说的是「这一卷变没变」；这一份说的是
 /// 「这一张来自的那个源成员变没变」。默认路径上一页的档只取决于它自己
@@ -343,12 +346,9 @@ impl Origin {
 /// 这一个成员：同一条规矩，两个作用域。名字照喂，理由与卷级那一份相同——两页对调名字，
 /// 输出整个错位。
 ///
-/// 「页级」说的是**作用域**——一个成员一份。透传文件在页级那条路上也各算一份，只拿去比、
-/// 不进记录（见 [`PageSources`]）。
-///
 /// # 拆分跨页下它指得回哪一半
 ///
-/// 一个源页切出两张输出页，两张的页级源哈希**相同**：它们来自同一个成员的同一批字节。
+/// 一个源页切出两张输出页，两张的成员源哈希**相同**：它们来自同一个成员的同一批字节。
 /// 哪一半由 [`Origin`] 说（`001.jpg 1/2` 对 `001.jpg 2/2`）——两项合在一起才是页级依据，
 /// 这一项单独不成立。
 ///
@@ -365,10 +365,10 @@ impl Origin {
 /// 其余三项依据没变，这一页就**留下**，不解码、不判、不编。写它与读它用的是同一份
 /// （[`Fingerprint::source_item`] 从同一份指纹里取），两侧因此不会各算各的。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageSource(String);
+pub struct MemberSource(String);
 
-impl PageSource {
-    /// 一个源成员的页级源哈希：名字与字节都算，规矩见类型文档。
+impl MemberSource {
+    /// 一个源成员那一份：名字与字节都算，规矩见类型文档。
     pub fn of(relative: &Path, bytes: &[u8]) -> Self {
         let mut hasher = SourceHasher::new();
         hasher.member(relative, bytes);
@@ -530,7 +530,7 @@ pub const RECORD_PREFIX: u64 = 64 * 1024;
 ///
 /// 卷级那一份把页与透传文件都喂进去，收口成 [`VolumeSource`]——作用域为什么是卷，
 /// 见 ADR 0006 的《决定》末段（那一段只对整卷统一灰阶成立）；页级那一份只喂一个成员
-/// （[`PageSource::of`]），同一条规矩、两个作用域。
+/// （[`MemberSource::of`]），同一条规矩、两个作用域。
 pub struct SourceHasher(blake3::Hasher);
 
 /// 读不出字节的成员在源哈希里占的那个长度前缀。真实成员到不了这个长度。
@@ -697,8 +697,8 @@ impl<'a> Recorder<'a> {
     ///
     /// 坏页那一族恒只有一张（`crate::pipeline::OUTPUTS_PER_FAILED_PAGE`）：它没有像素可切。
     ///
-    /// 页级源哈希**不写**（源页序号不给）：空白占位页的尺寸是卷内统一尺寸，由全卷定，这一页的字节
-    /// 因此不只取决于它自己——与整卷统一灰阶那条路同一条理由（见 [`PageSource`] 的《哪些页有》）。
+    /// 成员源哈希**不写**（源页序号不给）：空白占位页的尺寸是卷内统一尺寸，由全卷定，这一页的字节
+    /// 因此不只取决于它自己——与整卷统一灰阶那条路同一条理由（见 [`MemberSource`] 的《哪些页有》）。
     /// 卷级那条路上卷级那一项照写（那条路上每一页都写它）。
     pub fn failed(&self, origin: &Origin) -> Record<'a> {
         Record {
@@ -1071,8 +1071,8 @@ mod tests {
     }
 
     /// 页级那条路上的指纹：一个源页、一个透传文件，各带一份。
-    fn by_page(page: Option<PageSource>, extra: Option<PageSource>) -> Fingerprint {
-        let mut sources = PageSources::with_capacity(1, 1);
+    fn by_page(page: Option<MemberSource>, extra: Option<MemberSource>) -> Fingerprint {
+        let mut sources = MemberSources::with_capacity(1, 1);
         sources.push_page(page);
         sources.push_extra(extra);
         Fingerprint::new(&request(), SourceHash::Page(sources))
@@ -1115,7 +1115,7 @@ mod tests {
         };
         // 成员名取一个**带中文的**：那是这批素材的常态，而 tEXt 只装得下 Latin-1。
         let origin = Origin::of(MemberPart::new(Path::new("第 1 话/001.jpg"), 0, 2));
-        let page_source = PageSource::of(Path::new("第 1 话/001.jpg"), b"jpeg bytes");
+        let page_source = MemberSource::of(Path::new("第 1 话/001.jpg"), b"jpeg bytes");
         let paged = by_page(Some(page_source), None);
         let records = [
             Recorder::new(&fingerprint, Some(86)).gray(&origin, None, verdict, None),
@@ -1203,14 +1203,14 @@ mod tests {
         bytes
     }
 
-    /// **页级源哈希写下去、读得回来；写法不对的读回来是原文、判不命中，不判错**（two-pass-rework/13、15）。
+    /// **成员源哈希写下去、读得回来；写法不对的读回来是原文、判不命中，不判错**（two-pass-rework/13、15）。
     ///
     /// 页级那条路上新写的记录带着它，读回来逐字相同、按页级命中。写法不对的取值
     /// （不是 32 个十六进制字符）照样读回来——那不是本工具写的记录，判不命中；它**在场**，
     /// 卷级那条路上也因此不认这一页（见 [`PageRecord::matches`] 的《另一种在场就不认》）。
     #[test]
     fn the_page_level_basis_reads_back_and_a_malformed_one_is_a_miss_on_both_paths() {
-        let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
+        let page_source = MemberSource::of(Path::new("001.jpg"), b"jpeg bytes");
         let fingerprint = by_page(Some(page_source.clone()), None);
         let part = MemberPart::new(Path::new("001.jpg"), 1, 2);
         let origin = Origin::of(part);
@@ -1276,7 +1276,7 @@ mod tests {
             );
         }
 
-        let page_source = PageSource::of(Path::new("001.jpg"), b"jpeg bytes");
+        let page_source = MemberSource::of(Path::new("001.jpg"), b"jpeg bytes");
         let paged = by_page(Some(page_source), None);
         let recorder = Recorder::new(&paged, None);
         for record in [
@@ -1310,7 +1310,7 @@ mod tests {
         let page = Path::new("001.jpg");
         let part = MemberPart::new(page, 0, 1);
         let origin = Origin::of(part);
-        let page_source = PageSource::of(page, b"jpeg bytes");
+        let page_source = MemberSource::of(page, b"jpeg bytes");
         let paged = by_page(Some(page_source.clone()), None);
         let by_volume = Fingerprint::new(&request(), volume('0'));
         let read = |record: &Record| {
@@ -1320,14 +1320,14 @@ mod tests {
         // 页级那条路上写的记录。
         let paged_record = read(&Record::color(&paged, &origin, Some(0), None));
         assert!(paged_record.matches(&paged, 0, part));
-        let edited = by_page(Some(PageSource::of(page, b"other bytes")), None);
+        let edited = by_page(Some(MemberSource::of(page, b"other bytes")), None);
         assert!(
             !paged_record.matches(&edited, 0, part),
             "这一页改了却命中了"
         );
         let mut other = request();
         other.crop = false;
-        let mut sources = PageSources::with_capacity(1, 0);
+        let mut sources = MemberSources::with_capacity(1, 0);
         sources.push_page(Some(page_source.clone()));
         let reparameterised = Fingerprint::new(&other, SourceHash::Page(sources));
         assert!(
@@ -1379,31 +1379,31 @@ mod tests {
         );
     }
 
-    /// 页级源哈希的**写法钉死**（two-pass-rework/13）：它要落进真实输出，按页跳过那一票
+    /// 成员源哈希的**写法钉死**（two-pass-rework/13）：它要落进真实输出，按页跳过那一票
     /// 落地之后改一次定义就是全库页级不命中一趟（停车场 Q667）。字面量是本票落地那一刻
     /// 算出来的数——规矩是「只喂这一个成员的 [`SourceHasher`]」，名字与字节都算，
     /// 两页对调名字，输出整个错位，页级也得看得见。
     #[test]
-    fn the_page_source_has_a_frozen_definition() {
-        let page = PageSource::of(Path::new("ch1/001.jpg"), b"one");
+    fn the_member_source_has_a_frozen_definition() {
+        let page = MemberSource::of(Path::new("ch1/001.jpg"), b"one");
 
         assert_eq!(
             page.text(),
             "20ec99fd09b7c84efdf8e48d87fd3e8b",
-            "页级源哈希的定义变了"
+            "成员源哈希的定义变了"
         );
         assert_ne!(
-            PageSource::of(Path::new("ch1/002.jpg"), b"one"),
+            MemberSource::of(Path::new("ch1/002.jpg"), b"one"),
             page,
-            "换了名字，页级源哈希却没变"
+            "换了名字，成员源哈希却没变"
         );
         assert_ne!(
-            PageSource::of(Path::new("ch1/001.jpg"), b"two"),
+            MemberSource::of(Path::new("ch1/001.jpg"), b"two"),
             page,
-            "换了字节，页级源哈希却没变"
+            "换了字节，成员源哈希却没变"
         );
         // 一族两张共用同一份：它算的是源成员，不是切出来的哪一半。
-        assert_eq!(PageSource::of(Path::new("ch1/001.jpg"), b"one"), page);
+        assert_eq!(MemberSource::of(Path::new("ch1/001.jpg"), b"one"), page);
     }
 
     /// 救回了多少这一半的页数，`Salvage` 造不出来——它只在 `decode` 里量得出。
