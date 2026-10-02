@@ -2622,6 +2622,7 @@ mod tests {
                 decodes: 1,
                 resizes: 1,
                 cached_references: 1,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -3436,6 +3437,7 @@ mod tests {
                 decodes: 3,
                 resizes: 3,
                 cached_references: 2,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -3499,6 +3501,7 @@ mod tests {
                 decodes: 0,
                 resizes: 0,
                 cached_references: 0,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -3559,6 +3562,7 @@ mod tests {
                 decodes: 0,
                 resizes: 0,
                 cached_references: 0,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -3674,6 +3678,7 @@ mod tests {
                 decodes: 2,
                 resizes: 1,
                 cached_references: 1,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -4163,6 +4168,7 @@ mod tests {
                 decodes: 2,
                 resizes: 2,
                 cached_references: 2,
+                origins: 0,
                 fell_back_to_serial: None,
                 output_bytes: None,
                 timing: VolumeTiming::default(),
@@ -4272,6 +4278,7 @@ mod tests {
             decodes: 2,
             resizes: 1,
             cached_references: 1,
+            origins: 0,
             fell_back_to_serial: None,
             // 隔离的卷照样说得出：坏页那张空白占位页也写进了容器。
             output_bytes: Some(45 * 1024),
@@ -5383,6 +5390,7 @@ mod tests {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            origins: 0,
             fell_back_to_serial: None,
             output_bytes: None,
             timing: VolumeTiming::default(),
@@ -5482,11 +5490,11 @@ mod tests {
             unfolded(&quick, Mode::Process)
         );
     }
-    /// **窄计数器不进渲染出的文字**（`CONTEXT.md` 的《窄计数器》）：那三个数在报告里，
+    /// **窄计数器不进渲染出的文字**（`CONTEXT.md` 的《窄计数器》）：那四个数在报告里，
     /// 屏上一处不露面。
     ///
     /// 断言照[计时那一条](the_rendered_text_says_nothing_about_how_long_it_took)办——
-    /// 同一份报告只改那三个数，画出来逐字节相同——而不是「文字里找不到 222」：
+    /// 同一份报告只改那四个数，画出来逐字节相同——而不是「文字里找不到 222」：
     /// 后者只挡得住恰好那一个写法。
     ///
     /// 这一层是措辞的**唯一出处**（纯文本与表两副共用），因此挡住这里就挡住了两副排版。
@@ -5496,12 +5504,13 @@ mod tests {
         // 添一卷说得上话的：过期副本、摊开、隔离、整卷统一灰阶、坏页那几行都在它身上。
         quiet.volumes.push(a_volume_worth_a_row_of_each_kind());
 
-        // 同一份报告，三个数全换成扎眼的：别的一个字节都不动。
+        // 同一份报告，四个数全换成扎眼的：别的一个字节都不动。
         let mut busy = quiet.clone();
         for each in &mut busy.volumes {
             each.decodes = 111;
             each.resizes = 222;
             each.cached_references = 333;
+            each.origins = 444;
         }
 
         // 四段逐段比，理由同计时那一条：会话画的是这四段。
@@ -5598,6 +5607,7 @@ mod tests {
             decodes: pages.len(),
             resizes: pages.len(),
             cached_references: pages.len(),
+            origins: 0,
             fell_back_to_serial: None,
             output_bytes: None,
             timing: VolumeTiming::default(),
@@ -5962,6 +5972,7 @@ mod tests {
             decodes: 0,
             resizes: 0,
             cached_references: 0,
+            origins: 0,
             fell_back_to_serial: None,
             output_bytes: None,
             timing: VolumeTiming::default(),
@@ -6015,6 +6026,7 @@ mod tests {
             decodes: 1,
             resizes: usize::from(!broken),
             cached_references: usize::from(!broken),
+            origins: 0,
             fell_back_to_serial: None,
             output_bytes: None,
             timing: VolumeTiming::default(),

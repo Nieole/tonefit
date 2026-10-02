@@ -11,6 +11,7 @@
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -357,9 +358,9 @@ pub(crate) struct OutputPage {
     /// 带着那一族的位次）。幂等靠它把输出页反查回源页——一个源页产出几张由内容决定，
     /// 输出成员名因此在碰像素之前预告不出来（见 [`Origin`] 与 [`compare_with_the_prior_output`]）。
     ///
-    /// **关掉记录的那一趟它整个不在**（07 号票）：它唯一的消费者是 [`Recorder`]，
-    /// 而 `--no-metadata` 那一趟一个 [`Recorder`] 都不在场——既没有记录可写，
-    /// 也没有依据可比。在场与否与指纹同一格，见 [`Placement::new`]。
+    /// **关掉记录的那一趟与预览那一趟它都整个不在**（07 号票、one-source/09）：它唯一的消费者是
+    /// [`Recorder`]，而那两趟一个 [`Recorder`] 都不在场——一趟没有记录可写，一趟一个字节都不写。
+    /// 在场与否见 [`Placement::new`]。
     origin: Option<Origin>,
     outcome: Outcome,
 }
@@ -609,13 +610,14 @@ pub(crate) struct Candidates {
 }
 
 impl Candidates {
+    /// 碰卷之前备好两套。灰阶档位那一维裁空就在这里拒绝（见 [`candidates`]）；
+    /// 抖动那一维裁空（互锁 ③）只让未贴合屏幕那一套是 `None`，拒绝留给撞上门的那一页。
     pub(crate) fn new(request: &Request) -> Result<Self> {
         Ok(Self {
-            holds: candidates(request, GeometryGate::Holds)?,
-            // 丢掉的那个错误是[规则那一句](Interlock::DitherOutsideTheGate)，出路那一半
-            // 还没有页可判（见 [`why_nothing_is_left`]）——这里只要「裁空了没有」。
-            // 灰阶档位那一维在上一行就拦下了（它不看门），走到这里的 `Err` 只可能是互锁 ③。
-            broken: candidates(request, GeometryGate::Broken).ok(),
+            // 门成立那一侧咬不上互锁 ③：抖动那一维在那一侧是全集（见 [`Dither::candidates`]），
+            // 走得过灰阶档位那一问就一定有候选。
+            holds: candidates(request, GeometryGate::Holds)?.expect("门成立那一侧咬不上互锁 ③"),
+            broken: candidates(request, GeometryGate::Broken)?,
         })
     }
 
@@ -806,19 +808,46 @@ pub(crate) struct FirstPass {
     pub(crate) settled: Option<Vec<Option<Verdict>>>,
 }
 
-/// **计算层**这一卷自己那两样带计数的家伙：解码器与缩放器（`CONTEXT.md` 的《读取层 / 计算层》）。
+/// **计算层**这一卷自己那三样带计数的家伙：解码器、缩放器与造来路的那一处
+/// （`CONTEXT.md` 的《读取层 / 计算层》）。
 ///
-/// 装成一个而不是两个参数：它们从 [`process_volume`](crate::process_volume) 一路传到 [`Compute`]，
+/// 装成一个而不是三个参数：它们从 [`process_volume`](crate::process_volume) 一路传到 [`Compute`]，
 /// 走的是同一截路、活的是同一段命——一卷一份，卷跑完连同各自的数一起交进报告。
-/// 两个都是锁外的原子加，因此满核并行照旧不必独占。
+/// 三个都是锁外的原子加，因此满核并行照旧不必独占。
 ///
-/// **不叫「窄计数器」**：那个词指的是三个数（`CONTEXT.md` 的《窄计数器》），
-/// 而第三个不在计算层——参照进缓存那一个记在缓存上，缓存是**两遍之间**的东西，
-/// 账本要串起来，另走一把锁。
+/// **不叫「窄计数器」**：那个词（`CONTEXT.md` 的《窄计数器》）里还有一个数不在计算层——
+/// 参照进缓存那一个记在缓存上，缓存是**两遍之间**的东西，账本要串起来，另走一把锁。
 #[derive(Debug, Default)]
 pub(crate) struct ComputeCounters {
     pub(crate) decoder: decode::Decoder,
     pub(crate) resampler: resample::Resampler,
+    pub(crate) origins: Origins,
+}
+
+/// 给输出页造来路的那一处：造一份记一份（`CONTEXT.md` 的《窄计数器》）。
+///
+/// 与 [`decode::Decoder`]、[`resample::Resampler`] 同形——数记在**造这个动作本身**上，
+/// 不记在调用方的循环里。跟着输出页走、要写进记录的来路只此一处造（[`Placement::new`]），
+/// 哪一趟白造了，这个数瞒不住。幂等比对时拿源成员现造一份去比的那几处（`metadata::PageRecord`）
+/// 不在这里：那一份比完就扔，不跟着任何一张输出页，问的是另一件事。
+///
+/// 这个数为什么进报告，见 `VolumeReport::origins`。
+#[derive(Debug, Default)]
+pub(crate) struct Origins {
+    built: AtomicUsize,
+}
+
+impl Origins {
+    /// 至此造了几份。
+    pub(crate) fn built(&self) -> usize {
+        self.built.load(Ordering::Relaxed)
+    }
+
+    /// 给这一张造一份来路，记一笔。
+    fn of(&self, part: MemberPart) -> Origin {
+        self.built.fetch_add(1, Ordering::Relaxed);
+        Origin::of(part)
+    }
 }
 
 /// 分析环节上每条计算线程共用的那一摊。
@@ -830,11 +859,17 @@ pub(crate) struct ComputeCounters {
 /// 那两样因此在分析环节之前就备好了。
 pub(crate) struct Compute<'a> {
     pub(crate) request: &'a Request,
-    /// 解码与缩放两个动作，连同各自记着的那个数（见 [`ComputeCounters`]）。
+    /// 解码、缩放、造来路三个动作，连同各自记着的那个数（见 [`ComputeCounters`]）。
     pub(crate) counters: &'a ComputeCounters,
     /// 缓存的账本只有一本，因此非串起来不可。压缩在锁外做（见 `cache::compress`）。
     pub(crate) cache: &'a Mutex<cache::PageCache>,
-    pub(crate) fingerprint: Option<&'a Fingerprint>,
+    /// 这一趟盖《记录》用的那份指纹：**只有真要写的那一趟才有**（one-source/09）。
+    ///
+    /// 它不是「这一卷算没算指纹」：预览那一趟指纹照算（幂等那一道要问它），而一个字节都不写，
+    /// 这一格因此是 `None`；`--no-metadata` 那一趟指纹不在，同样是 `None`。这一摊里读它的
+    /// 三处——来路（[`Placement::new`]）、灰度页与彩页当场盖的记录——问的都是「这一页带不带记录」，
+    /// 收窄在装这一摊的那一处（`crate::process_volume`），三处因此同进同退。
+    pub(crate) records: Option<&'a Fingerprint>,
     /// 两套候选集。这一页判出门之后现取一套（见 [`Candidates::for_gate`]）。
     pub(crate) candidates: &'a Candidates,
     /// 这一卷的档什么时候定得下来——它决定灰度页那一格缓存里装的是什么。
@@ -973,7 +1008,7 @@ impl Compute<'_> {
     ///
     /// **走到切好裁好的那几块那一截不在这里**，它在 [`open_source_page`]——样张那条路与转换这一条
     /// 共用它。留在这里的是**只有转换这一趟才有**的那两件：解不开的一张占一格白页
-    /// （它要这一卷的指纹才造得出来路），以及每一块的去处与来路（[`Placement`]，同样问指纹）。
+    /// （它的来路要这一趟盖记录用的那份指纹才造），以及每一块的去处与来路（[`Placement`]，同样问它）。
     ///
     /// `index` 是这一张在卷里的源页序号：盖记录时页级那一份源哈希按它从指纹里取
     /// （two-pass-rework/15，了结停车场 Q686——幂等那一道趁字节在手上已经给每个源页算过一份，
@@ -1002,7 +1037,7 @@ impl Compute<'_> {
             // 坏页**恒产出一张**空白占位页：没有像素可切，切不出第二张来。
             Err(error) => {
                 let part = MemberPart::new(relative, 0, OUTPUTS_PER_FAILED_PAGE);
-                let placement = Placement::new(part, self.fingerprint, index);
+                let placement = Placement::new(part, self.records, &self.counters.origins, index);
                 return Ok(vec![placement.into_page(
                     source,
                     Outcome::Failed {
@@ -1013,7 +1048,7 @@ impl Compute<'_> {
         };
         // 切出来几块，那一族就几张：每一块按阅读顺序配上自己那一张的去处与来路。
         let placements = MemberPart::family(relative, pieces.len())
-            .map(|part| Placement::new(part, self.fingerprint, index));
+            .map(|part| Placement::new(part, self.records, &self.counters.origins, index));
         match pieces {
             Pieces::Gray(pieces) => pieces
                 .into_iter()
@@ -1065,10 +1100,10 @@ impl Compute<'_> {
         // 正是预告那个判定。
         let (scaling, encoded) = match request.mode {
             Mode::Process => {
-                // 指纹与来路两样一起在、一起不在（见 [`Placement::new`]）：
+                // 盖记录用的指纹与来路两样一起在、一起不在（见 [`Placement::new`]）：
                 // `zip` 把那件事写成一句，而不是在这里再判一次。
                 let record =
-                    self.fingerprint
+                    self.records
                         .zip(placement.origin.as_ref())
                         .map(|(fingerprint, origin)| {
                             Record::color(fingerprint, origin, Some(placement.page), salvage)
@@ -1106,7 +1141,7 @@ impl Compute<'_> {
     ///
     /// **走到参照与画质分曲线那一截不在这里**，它在 [`examine_gray_page`]——样张那条路
     /// 与转换这一条共用它，两条路因此走的是同一批函数。留在这里的是**只有转换这一趟才有**
-    /// 的那几件：缓存那一格、这一卷的指纹、[`Settles`]。
+    /// 的那几件：缓存那一格、这一趟盖记录用的那份指纹、[`Settles`]。
     ///
     /// **那一格装参照还是装编好的字节，由 [`Settles`] 一处说了算。**顶死的那一趟
     /// 判定在碰卷之前就定死，量化与编码当场做完（06 号票）；另外两条路存的是参照。
@@ -1146,7 +1181,7 @@ impl Compute<'_> {
                 // 代表页那一格是 `None`：两条路上都没有哪一页把整卷拉上去
                 // （与 [`driver`] 对上）。
                 let recorder = self
-                    .fingerprint
+                    .records
                     .map(|fingerprint| Recorder::new(fingerprint, None));
                 let bytes = gray_bytes(
                     reference.image(),
@@ -1240,7 +1275,7 @@ impl Pieces {
 /// （与 [`examine_gray_page`] 同一条理由，spec《Implementation Decisions》第二条）。
 ///
 /// **[`Compute`] 那一摊，它一格都不收**：事件流、指纹、缓存一个字都不提。
-/// 解不开的一页在转换那一趟要占一格白页、报一句坏页——那一格的来路要这一卷的指纹，
+/// 解不开的一页在转换那一趟要占一格白页、报一句坏页——那一格的来路要这一趟盖记录用的指纹，
 /// 那一句要这一趟的事件流，两样都是**一卷这一趟**的事；而样张认的是一张图，解不开就是解不开，
 /// 当场回 `Err`。两件事因此都留在调用方：这一段只把解不开原样交出去。
 /// **解不开那一句怎么说也归调用方**：转换那一趟说成坏页那一格的原因，样张那一趟说成一句拒绝
@@ -1624,21 +1659,28 @@ struct Placement {
 }
 
 impl Placement {
-    /// 位置总要算，来路**只在有人会读它的那一趟才造**（07 号票）。
+    /// 位置总要算，来路**只在有人会读它的那一趟才造**（07 号票、one-source/09）。
     ///
-    /// 谓词就是[指纹](Fingerprint)本身：来路唯一的消费者是 [`Recorder`]，而 [`Recorder`]
-    /// 要一份指纹才在（见 `crate::process_volume` 与 [`Compute::gray_page`]）。
-    /// 来路与指纹在场与否因此**恒相同**，出自这一句、没有第二处画质分可以与它对不上。
+    /// 谓词是**这一趟盖记录用的那份指纹**（[`Compute::records`]，「指纹在场**且**这一趟真要写」）：
+    /// 来路唯一的消费者是 [`Recorder`]，而 [`Recorder`] 只在真要写的那一趟、拿那份指纹才造得出来
+    /// （见 `crate::process_volume` 与 [`Compute::gray_page`]）。关掉记录的那一趟与预览那一趟
+    /// 来路因此一份都不造，与记录器同进同退。
     ///
-    /// **这一句只说到指纹为止，反向不成立**：指纹在不等于 [`Recorder`] 在。预览那一趟
-    /// 指纹照算（幂等那一道要问它），而写出环节不走、分析环节也不编——来路于是照造，没有读者。
-    /// 那一处白造本票没收，记在停车场 `Q490`。
+    /// **「真要写」是模式说的，碰卷之前就定，只有一角对不上**：确认点上答了做完再停的那一卷，
+    /// 来路在分析环节里已经造了，而整卷统一灰阶那条路上读它的写出环节不再走——
+    /// 那一问在分析环节之后才问得出（停车场 Q1329）。
     ///
+    /// 造一份记一份（[`Origins`]），哪一趟造了几份由报告上那个数说。
     /// `page` 是这一张来自的源页序号（见 [`Placement::page`]）。
-    fn new(part: MemberPart, records: Option<&Fingerprint>, page: usize) -> Self {
+    fn new(
+        part: MemberPart,
+        records: Option<&Fingerprint>,
+        origins: &Origins,
+        page: usize,
+    ) -> Self {
         Self {
             target: output_name(part),
-            origin: records.is_some().then(|| Origin::of(part)),
+            origin: records.is_some().then(|| origins.of(part)),
             page,
         }
     }
@@ -2524,33 +2566,41 @@ fn candidate_scores(reference: &Reference, allowed: &[Candidate]) -> Vec<Candida
 /// （ADR 0007），`--bit-depth` 与 `--dither` 各再裁自己那一维。前两道是界，后两道是覆盖项，
 /// 但作用方式是同一个——都只从候选集里拿走东西，谁都放不回被拿走的。
 ///
-/// 裁空了就报错，而**那件事在裁之前问**（见 [`why_nothing_is_left`]）：面板显示不出来、
-/// 或几何上到不了眼睛的那些候选，写出去也是白写，宁可当场拒绝也不静默照写。
-/// 门那一维裁空的时候，拒绝的报出的是**哪一页**撞上的门（见 [`Candidates::for_gate`]）。
+/// 裁空了就不交候选，而**那件事在裁之前问**（见 [`why_nothing_is_left`]）：面板显示不出来、
+/// 或几何上到不了眼睛的那些候选，写出去也是白写，宁可拒绝也不静默照写。
+/// 裁空的是哪一维，这里各按各的办（见 [`NothingLeft`]）：
 ///
-/// 回来的这一套因此**非空**，这里不再数一遍：候选集是两维的全积（[`Candidate::all`]），
+/// - **灰阶档位那一维**：当场戴上 [`Refusal`] 拒绝——那句话碰卷之前就说得全。
+/// - **抖动那一维**（互锁 ③）：交 `Ok(None)`，「这一侧没有候选」。那句拒绝要**这一页**才说得全，
+///   由 [`Candidates::for_gate`] 在撞上门的那一页上造，报出的也是**哪一页**撞上的门。
+///
+/// 交出来的那一套因此**非空**，这里不再数一遍：候选集是两维的全积（[`Candidate::all`]），
 /// 积空当且仅当有一维空，而两维各自那一问都过了。**两维本身也空不了**——灰阶档位那一维
 /// 1bit 恒在里面（屏幕灰阶数至少 2 级，[`Profile::with_gray_levels`] 挡着），
 /// 抖动那一维门的两侧都留着 `Dither::Off`（见 [`Dither::candidates`]）。
 /// 数一遍就是把同一件事判第二次。
-pub(crate) fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Candidate>> {
-    if let Some(said) = why_nothing_is_left(request, gate) {
-        return Err(Refusal(said).into());
+pub(crate) fn candidates(request: &Request, gate: GeometryGate) -> Result<Option<Vec<Candidate>>> {
+    match why_nothing_is_left(request, gate) {
+        Some(NothingLeft::BitDepth(said)) => return Err(Refusal(said).into()),
+        Some(NothingLeft::DitherOutsideTheGate) => return Ok(None),
+        None => {}
     }
     let panel = request.profile.panel();
-    Ok(Candidate::all(panel.gray_levels, gate)
-        .into_iter()
-        .filter(|candidate| {
-            request
-                .bit_depth
-                .is_none_or(|bit_depth| candidate.bit_depth == bit_depth)
-        })
-        .filter(|candidate| {
-            request
-                .dither
-                .is_none_or(|dither| candidate.dither == dither)
-        })
-        .collect())
+    Ok(Some(
+        Candidate::all(panel.gray_levels, gate)
+            .into_iter()
+            .filter(|candidate| {
+                request
+                    .bit_depth
+                    .is_none_or(|bit_depth| candidate.bit_depth == bit_depth)
+            })
+            .filter(|candidate| {
+                request
+                    .dither
+                    .is_none_or(|dither| candidate.dither == dither)
+            })
+            .collect(),
+    ))
 }
 
 /// 覆盖项与面板对不对得上，在碰卷之前先问一次。
@@ -2558,34 +2608,43 @@ pub(crate) fn candidates(request: &Request, gate: GeometryGate) -> Result<Vec<Ca
 /// 尺寸贴合检查此刻还没有页可判，先当它成立：门那一侧裁空的候选集只有等到分析环节里
 /// 真撞上那一页才拦得住（见 [`Candidates::for_gate`]）。
 pub(crate) fn ensure_the_overrides_leave_a_candidate(request: &Request) -> Result<()> {
-    candidates(request, GeometryGate::Holds).map(|_| ())
+    candidates(request, GeometryGate::Holds).map(drop)
 }
 
-/// 覆盖项把哪一维裁空了——裁空了给出那句话，两维都过得去回 `None`。
+/// 覆盖项把候选集的**哪一维**裁空了（见 [`why_nothing_is_left`]）。
+///
+/// 两支带的东西不一样多，那正是它是一个枚举的理由：灰阶档位那一句碰卷之前就说得全——
+/// 屏幕灰阶数是**这一趟**的事实；抖动那一句要**这一页**才说得全——出路由这一页的几何定
+/// （够得着以高为准的页与够不着的页听见的不是同一句，21 号票、停车场 Q102）。
+/// 前一支因此带着那句话，后一支只是个标记，没有一句先说一半、再等人补全的话（one-source/09，停车场 Q583）。
+///
+/// 各调用处按它造拒绝：灰阶档位那一支由 [`candidates`] 戴上 [`Refusal`]，抖动那一支由
+/// [`Candidates::for_gate`] 在撞上门的那一页上造全那一句、戴上同一个标记。
+/// 两支都是**覆盖项**与面板对不上，错在这一趟的参数上，换一个卷不会变好（05 号票）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NothingLeft {
+    /// 灰阶档位那一维：点名的那一档越过了屏幕灰阶数（ADR 0003 的硬上界）。带着对用户说的那句话。
+    BitDepth(String),
+    /// 抖动那一维：互锁 ③ 咬上了（[`Interlock::DitherOutsideTheGate`]）。只是个标记。
+    DitherOutsideTheGate,
+}
+
+/// 覆盖项把哪一维裁空了，两维都过得去回 `None`。
 ///
 /// **两维各判各的，各只有一处判定。**灰阶档位那一维问「点名的那一档，这块面板写不写得出」
 /// （ADR 0003 的硬上界）；抖动那一维问「这一趟咬上互锁 ③ 了吗」，判定在
 /// [`Interlock::dither_outside_the_gate`]，这里只取它的答案——那条拒绝**由互锁驱动**，
 /// 不再有第二处形态拿去核对。
 ///
-/// 次序不是随手排的：两维一起对不上时报的是灰阶档位那一句。它指得出一道**动得了**的界，
-/// 而抖动那一句指的是页的几何事实。
+/// 次序不是随手排的：两维一起对不上时报的是灰阶档位那一支。它指得出一道**动得了**的界，
+/// 而抖动那一支指的是页的几何事实。
 ///
 /// 两道界只有一道动得了：屏幕灰阶数走 `--gray-levels`（ADR 0003），尺寸贴合检查动不了——
 /// 它是页的几何事实，不是一个可以放宽的档位。
 ///
-/// **两支说得出的话不一样全，那不是漏。**灰阶档位那一句碰卷之前就说得全——屏幕灰阶数是
-/// **这一趟**的事实。抖动那一支回的只有[规则那一句](Interlock::DitherOutsideTheGate)：
-/// 出路那一半要**这一页**才答得出（够得着以高为准的页与够不着的页听见的不是同一句，
-/// 21 号票、停车场 Q102），补上它并戴上 [`Refusal`] 的是 [`Candidates::for_gate`]。
-/// 尺寸贴合是页的几何事实，判定与措辞因此都只在碰上那一页时才收得了口。
-///
-/// 出来的是那句话本身，不是一个错误。**灰阶档位那一支戴 [`Refusal`] 由 [`candidates`] 做**，
-/// 而抖动那一支走的是另一条路（上一段说的那件事）：它那句话要补全，戴标记因此也由
-/// 补全它的 [`Candidates::for_gate`] 做。**两支仍不会一支戴一支忘**——各自那一处都只有
-/// 一个出口，而 [`Candidates::new`] 那一行 `.ok()` 是它们分家的地方，写在那儿。
-/// 两支都是**覆盖项**与面板对不上，错在这一趟的参数上，换一个卷不会变好（05 号票）。
-pub(crate) fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<String> {
+/// 出来的是**哪一维**，不是一个错误：两支说得全话的时机不一样，拒绝因此由各调用处按它造，
+/// 见 [`NothingLeft`]。
+pub(crate) fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Option<NothingLeft> {
     let panel = request.profile.panel();
     let depths = BitDepth::candidates(panel.gray_levels);
     if let Some(bit_depth) = request.bit_depth.filter(|depth| !depths.contains(depth)) {
@@ -2594,16 +2653,16 @@ pub(crate) fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Opti
             .map(BitDepth::to_string)
             .collect::<Vec<_>>()
             .join("、");
-        return Some(format!(
+        return Some(NothingLeft::BitDepth(format!(
             "{bit_depth} 越过了面板的 {} 级灰阶：这块面板上写得出的是 {listed}。\
              真要写 {bit_depth}，先按实测用 --gray-levels 抬高上界",
             panel.gray_levels
-        ));
+        )));
     }
     // 抖动那一维：尺寸未贴合屏幕而 `--dither` 点了抖动。那正是互锁 ③，
-    // 处置是维持拒绝（页几何批 05 号票）。**出路那一半不在这里**，见上面那一段。
+    // 处置是维持拒绝（页几何批 05 号票）。**那句话不在这里**，见 [`NothingLeft`]。
     Interlock::dither_outside_the_gate(request.dither, gate)
-        .then(|| Interlock::DitherOutsideTheGate.to_string())
+        .then_some(NothingLeft::DitherOutsideTheGate)
 }
 
 /// 互锁 ③ 咬上时那条拒绝的说法（05 号票的处置 ③：**维持拒绝**）。
@@ -2624,7 +2683,8 @@ pub(crate) fn why_nothing_is_left(request: &Request, gate: GeometryGate) -> Opti
 ///   一张 fit-inside 的页。劝它换 `--fit height` 是**假话**，改说剩下的那两条路。
 ///   这一支与这一趟点的是哪个缩放方式无关：以高为准上走得到拒绝的页恒是这一种。
 ///
-/// 出来的是那句话本身，不是一个错误，理由见 [`why_nothing_is_left`]（05 号票）。
+/// 出来的是那句话本身，不是一个错误：戴上 [`Refusal`] 的是 [`Candidates::for_gate`]
+/// （各调用处按裁空的那一维造拒绝，见 [`NothingLeft`]）。
 ///
 /// **记号里面那个空格是[不许断的那个空格](HARD_SPACE)**：这句话劝人换一条命令，
 /// 断成两行之后抄不出一条能用的命令（停车场 Q106）。规矩只有一处出处，就是那条公共 API。
