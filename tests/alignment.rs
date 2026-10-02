@@ -154,7 +154,7 @@ fn an_aligned_page_reads_255_and_takes_not_one_dithered_dot() {
     let two_bit_fs = Candidate::new(BitDepth::Two, Dither::FloydSteinberg);
     let flat = fixtures::gray_image(&fixtures::solid(PAGE, fixtures::OFF_GRID_PAPER_WHITE));
 
-    let sprinkled = dots(&quantize(&flat, two_bit_fs));
+    let sprinkled = dots(quantize(&flat, two_bit_fs).image());
     assert!(
         sprinkled > 0,
         "夹具没咬住：纸白 {} 的白底在 2bit+FS 上本该撒点",
@@ -171,7 +171,7 @@ fn an_aligned_page_reads_255_and_takes_not_one_dithered_dot() {
         "对齐之后这一页的纸白不是 255"
     );
     assert_eq!(
-        dots(&quantize(&aligned, two_bit_fs)),
+        dots(quantize(&aligned, two_bit_fs).image()),
         0,
         "对齐之后白底上还撒着点"
     );

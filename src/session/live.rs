@@ -1709,9 +1709,7 @@ pub(crate) mod fixture {
         let reference = Reference::new(profile.panel(), GrayImage::new(Size::new(1, 1), vec![128]));
         tonefit::score(
             &reference,
-            &GrayImage::new(Size::new(1, 1), vec![shade]),
-            // 编出来的 1×1，没经过目标灰阶档位量化：取工作精度那一档（`metric::score` 的文档）。
-            BitDepth::Eight,
+            &tonefit::Quantized::at_working_precision(GrayImage::new(Size::new(1, 1), vec![shade])),
         )
     }
 

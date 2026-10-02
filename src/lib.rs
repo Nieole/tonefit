@@ -10,7 +10,7 @@
 //! [`Request`]、把 [`Report`] 渲染成文字。
 //!
 //! [`score`] 是第二个 seam：画质分的纯函数形态，数值与性质测试、标定工具直接调它。
-//! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`Candidate`]、[`quantize`]——
+//! 它周边的类型——[`Reference`]、[`Score`]、[`GrayImage`]、[`Candidate`]、[`quantize`]、[`Quantized`]——
 //! 一并公开，画质分的调用方要拿它们拼出参照与候选。
 //!
 //! [`write_calibration_chart`] 是第三个：灰阶测试图。它不并进主入口——不读源、不走管线、
@@ -98,7 +98,7 @@ pub use place::{CaseSensitivity, case_sensitivity};
 pub use profile::{Panel, Profile, Threshold, ThresholdSource};
 pub use progress::{Event, Instruction, Pass, Progress, ProgressSink};
 pub use proof::{Proof, ProofPage, Sheet, Sheets};
-pub use quantize::{BitDepth, Candidate, Dither, quantize};
+pub use quantize::{BitDepth, Candidate, Dither, Quantized, quantize};
 pub use report::{
     NonVolumeFile, NonVolumeReason, PageBranch, PageOutcome, PageReport, Processed, Report,
     RunOutcome, UnreachablePlace, VolumeFailure, VolumeReport, VolumeTiming, VolumeVerdict,

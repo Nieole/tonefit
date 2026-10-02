@@ -9,18 +9,14 @@
 
 mod fixtures;
 
-use tonefit::{BitDepth, Candidate, GrayImage, Reference, Size, quantize, score};
+use tonefit::{BitDepth, Candidate, GrayImage, Quantized, Reference, Size, quantize, score};
 
-/// 把 `candidate` 量化出来，量它离参照有多远。
+/// 把 `candidate` 量化出来，量它离参照有多远。摆成一处，免得每条用例各写一遍。
 ///
-/// 灰阶档位从候选身上取——画质分要它算抖动颗粒项那道地板（`metric::Composition::floor`），
-/// 而候选正是量化这张图的那一档。摆成一处，免得每条用例各写一遍。
+/// 画质分算抖动颗粒项那道地板（`metric::Composition::floor`）要的那一档灰阶档位
+/// 跟着量化图一起进去，不另交——那一档就是量化它的这个候选的。
 fn reading(reference: &Reference, candidate: Candidate) -> tonefit::Score {
-    score(
-        reference,
-        &quantize(reference.image(), candidate),
-        candidate.bit_depth,
-    )
+    score(reference, &quantize(reference.image(), candidate))
 }
 
 /// 性质测试用的页尺寸。画质分只吃像素与面板 PPI，不要求尺寸恰好是目标尺寸；
@@ -33,8 +29,8 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
     let dithered = quantize(reference.image(), fixtures::dithered(BitDepth::One));
 
-    let plain_score = score(&reference, &plain, BitDepth::One);
-    let dithered_score = score(&reference, &dithered, BitDepth::One);
+    let plain_score = score(&reference, &plain);
+    let dithered_score = score(&reference, &dithered);
     assert!(
         dithered_score < plain_score,
         "抖动候选 {dithered_score} 没有赢过不抖动的 {plain_score}"
@@ -42,8 +38,8 @@ fn on_a_gradient_the_dithered_candidate_beats_the_undithered_one() {
 
     // 同一对候选上，逐像素度量给出相反的排序。这正是画质分必须低通的理由：
     // 抖动用高频误差换低频保真，逐像素度量只看得见前者（ADR 0002、measurements 的《抖动》）。
-    let plain_pixelwise = pixelwise_rmse(reference.image(), &plain);
-    let dithered_pixelwise = pixelwise_rmse(reference.image(), &dithered);
+    let plain_pixelwise = pixelwise_rmse(reference.image(), plain.image());
+    let dithered_pixelwise = pixelwise_rmse(reference.image(), dithered.image());
     assert!(
         dithered_pixelwise > plain_pixelwise,
         "逐像素度量本该反过来：抖动 {dithered_pixelwise:.2} 对不抖动 {plain_pixelwise:.2}"
@@ -65,15 +61,16 @@ fn on_a_screentone_page_the_dithered_candidate_still_beats_the_undithered_one() 
     let plain = quantize(reference.image(), fixtures::plain(BitDepth::One));
     let dithered = quantize(reference.image(), fixtures::dithered(BitDepth::One));
 
-    let plain_score = score(&reference, &plain, BitDepth::One);
-    let dithered_score = score(&reference, &dithered, BitDepth::One);
+    let plain_score = score(&reference, &plain);
+    let dithered_score = score(&reference, &dithered);
     assert!(
         dithered_score < plain_score,
         "网点页上抖动 {dithered_score} 没有赢过不抖动 {plain_score}"
     );
     // 同一对候选上逐像素度量给出相反的排序——《抖动》记的正是这个符号。
     assert!(
-        pixelwise_rmse(reference.image(), &dithered) > pixelwise_rmse(reference.image(), &plain),
+        pixelwise_rmse(reference.image(), dithered.image())
+            > pixelwise_rmse(reference.image(), plain.image()),
         "夹具不对：逐像素度量本该反过来"
     );
 }
@@ -213,22 +210,14 @@ fn a_slow_ramp_does_not_buy_itself_any_masking() {
             .collect(),
     );
     let lifted = |image: &GrayImage| {
-        GrayImage::new(
+        Quantized::at_working_precision(GrayImage::new(
             image.size(),
             image.pixels().iter().map(|&v| v + 8).collect(),
-        )
+        ))
     };
 
-    let flat_score = score(
-        &Reference::new(panel, flat.clone()),
-        &lifted(&flat),
-        BitDepth::Eight,
-    );
-    let ramp_score = score(
-        &Reference::new(panel, ramp.clone()),
-        &lifted(&ramp),
-        BitDepth::Eight,
-    );
+    let flat_score = score(&Reference::new(panel, flat.clone()), &lifted(&flat));
+    let ramp_score = score(&Reference::new(panel, ramp.clone()), &lifted(&ramp));
 
     assert!(
         ramp_score.value() > flat_score.value() * 0.97,
@@ -245,12 +234,10 @@ fn a_known_offset_reads_back_as_that_many_gray_levels() {
     let one_bit = score(
         &reference,
         &quantize(reference.image(), fixtures::plain(BitDepth::One)),
-        BitDepth::One,
     );
     let two_bit = score(
         &reference,
         &quantize(reference.image(), fixtures::plain(BitDepth::Two)),
-        BitDepth::Two,
     );
 
     assert!(
@@ -303,7 +290,6 @@ fn the_error_never_grows_when_the_bit_depth_does() {
                     score(
                         &reference,
                         &quantize(reference.image(), fixtures::plain(depth)),
-                        depth,
                     ),
                 )
             })
@@ -339,12 +325,10 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     let cramped_score = score(
         &cramped,
         &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
-        BitDepth::One,
     );
     let roomy_score = score(
         &roomy,
         &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
-        BitDepth::One,
     );
     // 读数几乎不变，且大页那一侧不高过小页——留白只会往下拉，不会凭空添出误差来。
     //
@@ -363,11 +347,11 @@ fn a_page_of_white_around_the_damage_does_not_dilute_it() {
     // 因为补丁尺寸跟着 K 走——这一条要证的是「夹具确实摊薄了」，不是那个倍数本身。
     let cramped_pixelwise = pixelwise_rmse(
         cramped.image(),
-        &quantize(cramped.image(), fixtures::plain(BitDepth::One)),
+        quantize(cramped.image(), fixtures::plain(BitDepth::One)).image(),
     );
     let roomy_pixelwise = pixelwise_rmse(
         roomy.image(),
-        &quantize(roomy.image(), fixtures::plain(BitDepth::One)),
+        quantize(roomy.image(), fixtures::plain(BitDepth::One)).image(),
     );
     assert!(
         cramped_pixelwise > roomy_pixelwise * 5.0,
@@ -402,14 +386,14 @@ fn the_same_error_counts_for_more_in_a_flat_area_than_in_a_textured_one() {
     // 同一个偏移加在两张参照上。低通是线性的，两边的局部均值误差因此逐像素相等，
     // 画质分只剩细节放宽加权这一项还能不同。
     let lifted = |reference: &Reference| {
-        GrayImage::new(
+        Quantized::at_working_precision(GrayImage::new(
             reference.size(),
             reference.image().pixels().iter().map(|&v| v + 8).collect(),
-        )
+        ))
     };
 
-    let flat_score = score(&flat, &lifted(&flat), BitDepth::Eight);
-    let textured_score = score(&textured, &lifted(&textured), BitDepth::Eight);
+    let flat_score = score(&flat, &lifted(&flat));
+    let textured_score = score(&textured, &lifted(&textured));
 
     // 平坦低对比区不打折：8 级偏移就算 8 级误差。
     assert!(
@@ -434,7 +418,7 @@ fn two_panels_of_the_same_resolution_but_different_ppi_do_not_share_a_metric() {
     let dithered = quantize(&page, fixtures::dithered(BitDepth::One));
     let on = |panel| {
         let reference = Reference::new(panel, page.clone());
-        score(&reference, &dithered, BitDepth::One)
+        score(&reference, &dithered)
     };
 
     // 核由 PPI 推出：面板越密，同一个视角盖住的像素越多，抖动的高频被抹得越干净。
@@ -468,7 +452,6 @@ fn damage_covering_the_tail_width_reads_back_at_every_page_size() {
         let score = score(
             &reference,
             &quantize(reference.image(), fixtures::plain(BitDepth::One)),
-            BitDepth::One,
         );
         assert!(
             score.value() > 0.0,

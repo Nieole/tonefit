@@ -14,7 +14,7 @@
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 use crate::profile::Panel;
-use crate::quantize::BitDepth;
+use crate::quantize::{BitDepth, Quantized};
 
 /// 一个候选离参照有多远。单位是 8 位灰度级，越小越好。
 ///
@@ -101,27 +101,27 @@ impl Reference {
 
 /// 画质分：候选离参照有多远。纯函数，不碰文件系统与全局状态。
 ///
-/// 候选传的是它量化之后摊回 8 位工作精度的像素（见 [`crate::quantize`]），
-/// `depth` 是把它量化出来的那一档灰阶档位。
+/// 候选收的是[量化图](Quantized)：量化之后摊回 8 位工作精度的像素，连同量化它的那一档灰阶档位。
 /// 尺寸必须与参照一致——画质分比的是同一页的两种量化，尺寸对不上是调用方的 bug。
 ///
-/// **灰阶档位要单独传进来**，因为抖动颗粒项那道颗粒可见下限是**格点间距的一个比例**
+/// **灰阶档位跟着像素一起进来**，因为抖动颗粒项那道颗粒可见下限是**格点间距的一个比例**
 /// （见 [`Composition`]），而格点间距只有灰阶档位说得出来。从候选的像素上反推格点数
 /// 不成立：一张纯色页在任何一档上都只用得着一个格点，反推出来的是 1bit。
-/// 每一个调用点手里本来就有 `Candidate`，灰阶档位因此是现成的。
+/// 为什么绑在一起、不另收一个参数，见 [`Quantized`]。
 ///
 /// 一块的读数是**两项相加**，再乘上这一块的细节放宽加权。
 ///
 /// 相加而不是取更大的那个：抖动做的正是「拿低频换高频」，取更大的那个会让这笔交换在画质分上
 /// 免费。也不是平方和开方——抖动颗粒项减过颗粒可见下限之后已经不是一个 RMS 分量，
 /// 两项各自是一种**看得见的损伤**，同一块上两种都摊上就该两笔都算。
-pub fn score(reference: &Reference, candidate: &GrayImage, depth: BitDepth) -> Score {
+pub fn score(reference: &Reference, quantized: &Quantized) -> Score {
+    let floor = composition().floor(quantized.bit_depth());
+    let candidate = quantized.image();
     assert_eq!(
         candidate.size(),
         reference.size(),
         "候选与参照尺寸不一致：画质分比的是同一页的两种量化"
     );
-    let floor = composition().floor(depth);
     let candidate_low_pass = low_pass(candidate.pixels(), candidate.size(), reference.kernel);
     let width = reference.size().width as usize;
     let mut errors: Vec<f32> = reference

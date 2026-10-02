@@ -290,8 +290,12 @@ mod tests {
         let size = Size::new(7, 5);
         for depth in BitDepth::ALL {
             let quantized = quantize(&gradient(size), Candidate::new(depth, Dither::Off));
-            let (_, _, read_back) = read(&png(&quantized, depth, None).expect("编 PNG"));
-            assert_eq!(read_back, quantized.pixels(), "{depth} 没有原样解回来");
+            let (_, _, read_back) = read(&png(quantized.image(), depth, None).expect("编 PNG"));
+            assert_eq!(
+                read_back,
+                quantized.image().pixels(),
+                "{depth} 没有原样解回来"
+            );
         }
     }
 
@@ -303,7 +307,7 @@ mod tests {
             Candidate::new(BitDepth::Four, Dither::Off),
         );
         let (color_type, bit_depth, _) =
-            read(&png(&quantized, BitDepth::Four, None).expect("编 PNG"));
+            read(&png(quantized.image(), BitDepth::Four, None).expect("编 PNG"));
         assert_eq!(color_type, png::ColorType::Grayscale);
         assert_eq!(bit_depth, png::BitDepth::Four);
     }

@@ -533,7 +533,7 @@ fn every_candidate_sheet_is_on_the_grid_of_its_bit_depth() {
         let written = fixtures::read_png(&sheet.file);
         for &level in &written.pixels {
             assert!(
-                grid.pixels().contains(&level),
+                grid.image().pixels().contains(&level),
                 "{} 是 {candidate}，却写着格点外的 {level}",
                 sheet.file.display()
             );
