@@ -19,8 +19,8 @@ use rayon::prelude::*;
 
 use crate::color::{self, ColorImage};
 use crate::metadata::{
-    self, Fingerprint, MemberPart, Origin, PageRecord, PageSource, PageSources, Record, Recorder,
-    SourceHash,
+    self, Fingerprint, MemberPart, MemberSource, MemberSources, Origin, PageRecord, Record,
+    Recorder, SourceHash,
 };
 use crate::sink::{self, Sink};
 use crate::source::{Member, Volume};
@@ -1647,10 +1647,10 @@ struct Placement {
     /// 它的来路，写进 tEXt（见 [`Origin`]）。**只有记着的那一趟才有**，
     /// 见 [`OutputPage::origin`]。
     origin: Option<Origin>,
-    /// 它来自卷里第几个源页。盖记录时页级那一份源哈希按它从指纹里取（two-pass-rework/15，
+    /// 它来自卷里第几个源页。盖记录时这一页的成员源哈希按它从指纹里取（two-pass-rework/15，
     /// 见 `metadata::Fingerprint::source_item`）——卷级那条路上取不出来，`--no-metadata` 没有指纹，
-    /// 序号本身两处都无害。一个源页切出的几张共用同一个序号，它们的页级源哈希因此也共用同一份
-    /// （它算的是源成员，见 [`PageSource`]）。
+    /// 序号本身两处都无害。一个源页切出的几张共用同一个序号，它们的成员源哈希因此也共用同一份
+    /// （它算的是源成员，见 [`MemberSource`]）。
     ///
     /// 它**不进** [`OutputPage`]：唯一的读者是分析环节盖记录的那一下（[`Compute::gray_page`]
     /// 与 [`Compute::color_page`]），写出环节盖记录的两种页——整卷统一灰阶那条路上的灰度页、
@@ -2128,7 +2128,7 @@ pub(crate) fn volume_fingerprint(
     let members: Vec<&Member> = pages.iter().chain(extras.iter()).collect();
     // 两种作用域各一个累加器，一趟只开一个：算出来没人读的那一份一个都不算（story 30）。
     let mut feeding = if by_page {
-        Feeding::Page(PageSources::with_capacity(source_pages, extras.len()))
+        Feeding::Page(MemberSources::with_capacity(source_pages, extras.len()))
     } else {
         Feeding::Volume(Box::new(metadata::SourceHasher::new()))
     };
@@ -2157,7 +2157,7 @@ pub(crate) fn volume_fingerprint(
             // （见 [`Recorder::failed`]）——它在这里也就没有可比的，记成「没有」。
             Feeding::Page(sources) => {
                 let hashed = read.bytes.as_ref().ok().map(|bytes| {
-                    cost::stage(cost::Stage::Hash, || PageSource::of(relative, bytes))
+                    cost::stage(cost::Stage::Hash, || MemberSource::of(relative, bytes))
                 });
                 if read.index < source_pages {
                     sources.push_page(hashed);
@@ -2183,7 +2183,7 @@ enum Feeding {
     /// 卷级：页与透传文件按次序喂进同一个累加器，收口成全卷一个数。
     Volume(Box<metadata::SourceHasher>),
     /// 页级：每个成员各算一份，页与透传文件各归各的表。
-    Page(PageSources),
+    Page(MemberSources),
 }
 
 /// 上一趟写在**干净去处**的输出**能复用多少**——幂等那一道比出来的答案（`CONTEXT.md` 的《幂等这一道》）。
@@ -2308,7 +2308,7 @@ pub(crate) struct RetainedPage {
 ///
 /// # 删一页、加一页、改名（two-pass-rework/14）
 ///
-/// 输出成员名由源成员名推出（[`output_name`]），页级依据连名字一起喂（[`PageSource`]）：
+/// 输出成员名由源成员名推出（[`output_name`]），页级依据连名字一起喂（[`MemberSource`]）：
 /// 删掉源里一页，它那一族在输出里成了陈旧产物，收尾整个换掉时一并清走（见 `crate::sink`），
 /// 其余页各自对得上、各自留下；加一页、改名一页，新名字下没有记录，那一页重做，
 /// 旧名字下的那几张同样是陈旧产物。阅读顺序里的位置**不进依据**——它由名字的次序定，
@@ -2452,7 +2452,7 @@ fn what_the_head_says(
 fn nothing_else_changed(
     written: &mut sink::Written,
     volume: &Volume,
-    sources: &PageSources,
+    sources: &MemberSources,
     retained: &[Option<Vec<RetainedPage>>],
     lodgers: &sink::Lodgers,
 ) -> bool {
@@ -2460,7 +2460,7 @@ fn nothing_else_changed(
         sources.extra(index).is_some_and(|ours| {
             written
                 .bytes_of(&extra.relative)
-                .is_ok_and(|bytes| PageSource::of(&extra.relative, &bytes) == *ours)
+                .is_ok_and(|bytes| MemberSource::of(&extra.relative, &bytes) == *ours)
         })
     });
     let members = retained
