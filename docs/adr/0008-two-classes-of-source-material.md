@@ -1,3 +1,11 @@
+---
+id: adr-0008
+type: architecture-design
+title: "ADR 0008：两类源由总缩放比自然分流，不设类型检测器"
+status: draft
+parent: tonefit-page-transform
+---
+
 # ADR 0008：两类源由总缩放比自然分流，不设类型检测器
 
 状态：已采纳（2026-08-25）

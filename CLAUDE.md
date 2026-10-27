@@ -17,6 +17,11 @@ See `docs/agents/triage-labels.md`.
 Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`.
 See `docs/agents/domain.md`.
 
+产品级事实另有三处：`goal-and-requirements.md`（产品是什么、给谁、非目标、原则）、
+`architecture.md`（拓扑、边界、不变量）与 `src/specs/`（每一处边界的职责与边界）。
+改了产品原则或模块边界，同一改动里回写那一份；哪一类事实归哪一份，见
+`docs/agents/domain.md` 的《Which doc owns what》。
+
 ## 闸门
 
 **三条命令，三条都要绿**——三种构建各一条。一条命令跑满三条，**各用各的 target 目录**：

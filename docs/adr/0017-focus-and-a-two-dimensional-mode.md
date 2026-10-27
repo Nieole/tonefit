@@ -1,3 +1,11 @@
+---
+id: adr-0017
+type: architecture-design
+title: "ADR 0017：会话的模式拆成两维"
+status: draft
+parent: tonefit-session
+---
+
 # ADR 0017：会话的模式拆成两维
 
 状态：已采纳（2026-09-05）；**修订**（2026-09-14，ADR 0019）——焦点那一维换了取值，决定第 5、6、8 条被取代

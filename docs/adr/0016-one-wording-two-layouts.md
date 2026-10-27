@@ -1,3 +1,11 @@
+---
+id: adr-0016
+type: architecture-design
+title: "ADR 0016：措辞一处，排版两处"
+status: draft
+parent: tonefit-cli
+---
+
 # ADR 0016：措辞一处，排版两处
 
 状态：已采纳（2026-09-04）

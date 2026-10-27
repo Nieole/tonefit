@@ -1,3 +1,11 @@
+---
+id: tonefit-measurements
+type: architecture-design
+title: "实测数据"
+status: draft
+parent: tonefit-goal
+---
+
 # 实测数据
 
 本项目全部测量结果的唯一来源。其它文档引用本文的小节名，不复制数字。

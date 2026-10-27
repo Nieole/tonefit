@@ -1,3 +1,11 @@
+---
+id: adr-0009
+type: architecture-design
+title: "ADR 0009：处理点名的子集，介质按路径探测"
+status: draft
+parent: tonefit-scope
+---
+
 # ADR 0009：处理点名的子集，介质按路径探测
 
 状态：已采纳（2026-08-25）；决定第 1 条修订（2026-09-03，点名的路径展开成一批卷，见 ADR 0014）

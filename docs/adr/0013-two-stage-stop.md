@@ -1,3 +1,11 @@
+---
+id: adr-0013
+type: architecture-design
+title: "ADR 0013：两级停——收尾与中止"
+status: draft
+parent: tonefit-progress-report
+---
+
 # ADR 0013：两级停——收尾与中止
 
 状态：已采纳（2026-08-26）；决定第 2 条修订（2026-08-26，目录卷改成整目录重写之后）；

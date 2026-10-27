@@ -1,3 +1,11 @@
+---
+id: adr-0014
+type: architecture-design
+title: "ADR 0014：点名的路径展开成一批卷"
+status: draft
+parent: tonefit-scope
+---
+
 # ADR 0014：点名的路径展开成一批卷
 
 状态：已采纳（2026-09-03）；决定第 3 条头一句**说法就地订正**（2026-09-10，`p4-parking-lot/25`）——

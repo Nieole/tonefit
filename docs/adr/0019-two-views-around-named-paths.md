@@ -1,3 +1,13 @@
+---
+id: adr-0019
+type: architecture-design
+title: "ADR 0019：会话按「任务 / 配置」两个视图重排，任务视图以处理路径为主线"
+status: draft
+parent: tonefit-session
+depends-on:
+  - adr-0017
+---
+
 # ADR 0019：会话按「任务 / 配置」两个视图重排，任务视图以处理路径为主线
 
 状态：已采纳（2026-09-14）；已落地（2026-09-22，`.scratch/session-redesign/`）

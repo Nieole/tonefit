@@ -1,3 +1,13 @@
+---
+id: adr-0012
+type: architecture-design
+title: "ADR 0012：试算与执行之间续做"
+status: draft
+parent: tonefit-assembly
+depends-on:
+  - adr-0005
+---
+
 # ADR 0012：试算与执行之间续做
 
 状态：已采纳（2026-08-26）；决定第 1～4 条修订（2026-08-26，开 spec 时）；决定第 3 条修订（2026-09-04，多卷改为逐卷等答话）；决定第 1 条**说法就地订正**（2026-09-10，`p4-parking-lot/25`）——收窄到它那条内存理由撑得住的范围，决定本身一格没动
