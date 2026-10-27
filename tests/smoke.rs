@@ -23,7 +23,7 @@
 //!
 //! 这一条的价值全在合成夹具够不着的地方：真实的有损转码伪影、真实的成员名与编码、
 //! 真实的页数与尺寸分布。它捞不出「判定得对不对」，只捞得出「跑不跑得下来」——
-//! 而那正是 `CONTEXT.md` 的《尚未确立》列着的那几个洞目前唯一的现场反馈。
+//! 而那正是 `GLOSSARY.md` 的《尚未确立》列着的那几个洞目前唯一的现场反馈。
 
 mod fixtures;
 
@@ -201,7 +201,7 @@ fn check_volume(volume: &VolumeReport) -> usize {
             page.size
         );
         // 灰度路径写出的位宽不该超过判定那一档：调色板可以更窄（一页用不满格点时），
-        // 但更宽就意味着判定与写出的对不上（ADR 0004：颜色类型在编码器接口以内）。
+        // 但更宽就意味着判定与写出的对不上（ADR 0021 决定第 6 条：颜色类型在编码器接口以内）。
         if let Some(verdict) = page.verdict() {
             assert!(
                 fixtures::written_bits(png.bit_depth) <= verdict.candidate.bit_depth.bits(),
@@ -324,7 +324,7 @@ impl Written {
 /// 自带 harness 不捕获输出，因此不必再 `-- --nocapture`：印了就看得见。
 ///
 /// 冒烟不断言判定，可判定恰恰是跑它的人要看的东西——真实素材上的灰阶分布，
-/// 是 `CONTEXT.md` 的《尚未确立》里那几条目前唯一的现场数据来源。
+/// 是 `GLOSSARY.md` 的《尚未确立》里那几条目前唯一的现场数据来源。
 fn summarize(report: &Report) {
     println!("profile：{}", report.profile);
     println!("拆分跨页：{}", report.split);
@@ -338,7 +338,7 @@ fn summarize(report: &Report) {
                 .to_string_lossy(),
             volume.page_count(),
             if volume.isolated() { " · 隔离" } else { "" },
-            // 与黄金回归共用同一份说法（`CONTEXT.md` 的用词），两处不会走散。
+            // 与黄金回归共用同一份说法（`GLOSSARY.md` 的用词），两处不会走散。
             fixtures::volume_verdict(volume),
         );
         let color = volume

@@ -594,7 +594,7 @@ fn isolating_a_volume_leaves_the_source_untouched() {
 /// 这一卷重开一次（见 `tonefit` 的 `survey`），成员因此已经枚举完了，而读到它是写出环节的事。
 /// 那正是「清点时打得开、轮到它时做不成」。
 /// 透传文件没有页那条出路：页读不出来变成坏页、整卷进隔离目录，
-/// 而透传文件搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
+/// 而透传文件搬不动就交不出这一卷（`GLOSSARY.md` 的《失败》）。
 #[test]
 fn a_volume_that_fails_after_the_survey_leaves_the_rest_of_the_run_alone() {
     let space = Workspace::new();

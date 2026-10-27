@@ -1,5 +1,5 @@
 //! **每页结果**：从卷行进到页那一副，换掉卷列表、占整宽，一个框
-//! （`CONTEXT.md` 的《会话》：每页结果、需留意的页；spec 的《每页结果》）。
+//! （`GLOSSARY.md` 的《会话》：每页结果、需留意的页；spec 的《每页结果》）。
 //!
 //! ```text
 //! ┏ 任务 › ~/漫画库 › 集英社/海贼王 › 第07卷 ━━━━━━━━━━━━━━━━━━━━━━ [需留意的页] ━┓
@@ -70,7 +70,7 @@ use super::canvas::{Border, Canvas, padded};
 use super::marks;
 use crate::render::{self, Field, Notable, Row, RowKind};
 
-/// 行首记号：**这一页要不要紧，一个字符说完**（`CONTEXT.md` 的《语义色》：
+/// 行首记号：**这一页要不要紧，一个字符说完**（`GLOSSARY.md` 的《语义色》：
 /// 颜色不是唯一载体）。
 ///
 /// 三档：**不给不要紧的页一个记号**（一屏 `✓` 说不出哪一页要紧），**代表页也不给**——它不是出了事，
@@ -120,7 +120,7 @@ impl Mark {
 
 /// 一页**要紧在这一处**挂哪一个[记号](Mark)。
 ///
-/// 逐条对上 `CONTEXT.md` 的《语义色》：坏页是「出事」，那五样是「注意」，
+/// 逐条对上 `GLOSSARY.md` 的《语义色》：坏页是「出事」，那五样是「注意」，
 /// **代表页一档都不占**——它不是一件要留神的事，是这一卷的答案。
 fn mark_of(what: Notable) -> Mark {
     match what {
@@ -158,7 +158,7 @@ fn word_of(what: Notable) -> Option<&'static str> {
 
 /// 表上的一行：一页。
 ///
-/// 不在场的格是空串——**一格在不在场本身就是一句话**（`CONTEXT.md` 的《格》）：
+/// 不在场的格是空串——**一格在不在场本身就是一句话**（`GLOSSARY.md` 的《格》）：
 /// 坏页没有灰阶、没有原因、没有画质分。
 struct Entry {
     mark: Mark,
@@ -215,7 +215,7 @@ fn cell(row: &Row, field: Field) -> String {
     row.cell(field).unwrap_or_default().to_owned()
 }
 
-/// 这一行上有这一格就收下，**不在场就不动**（`CONTEXT.md` 的《格》：
+/// 这一行上有这一格就收下，**不在场就不动**（`GLOSSARY.md` 的《格》：
 /// 一格在不在场本身就是一句话）。
 fn take_cell(into: &mut String, row: &Row, field: Field) {
     if let Some(said) = row.cell(field) {
@@ -346,7 +346,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
     };
     // 耗时那一行恒在第二行，跳过的卷也一样（查重那一道不是免费的）。
     canvas.line(area.x + 2, area.y + 2, &timing_line(report), Some(inner));
-    // **进得来却一页结果都没有的只有跳过的卷**（`CONTEXT.md` 的《停得住 / 展得开》）：
+    // **进得来却一页结果都没有的只有跳过的卷**（`GLOSSARY.md` 的《停得住 / 展得开》）：
     // 它这一趟一页都没重新分析，连灰阶分布与列头都没有可写的。那一句占灰阶分布那一行的位置
     // ——它说的正是这一卷的页这一趟成了什么。
     if report.skipped() {
@@ -426,7 +426,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, live: Option<&Liv
 /// 抬头那条**面包屑**：任务 › 分区的路径 › 目录 › 卷。
 ///
 /// **分区那一截只在这一卷归一条分区时在场**（顶格目录行本身就是顶层，
-/// `CONTEXT.md` 的《分区》）。末一截是卷名：清点清单上那一格
+/// `GLOSSARY.md` 的《分区》）。末一截是卷名：清点清单上那一格
 /// （[`super::super::tree::Tree::name`]，分卷序列那一卷是序列的名字，`design-parity/12`）。
 fn crumbs(session: &Session) -> Vec<Segment> {
     let mut segments = vec![Segment::faint("任务")];
@@ -505,7 +505,7 @@ fn tally_line(session: &Session, report: &VolumeReport, live: &Live, panel: Pane
     segments
 }
 
-/// 框里第二行：**这一卷各环节花了多久**（`CONTEXT.md` 的《卷级计时》，停车场 Q624）。
+/// 框里第二行：**这一卷各环节花了多久**（`GLOSSARY.md` 的《卷级计时》，停车场 Q624）。
 ///
 /// 按走的次序，**每一段原样取自那一卷的卷级计时**（[`passes::took`]：没走的那一段不列）；
 /// 环节那个词出自 [`passes::name`]、上它那一色（[`marks::pass_look`]，与横条同一色），
@@ -580,7 +580,7 @@ fn row_segments(
     for column in kept {
         let width = widths.of_column(*column);
         let look = match column {
-            // 页面那一列：**光标那一行加粗**（`CONTEXT.md` 的《语义色》：
+            // 页面那一列：**光标那一行加粗**（`GLOSSARY.md` 的《语义色》：
             // 光标行加粗不归 `NO_COLOR` 管）。
             PagesColumn::Name if at_cursor => Look::PLAIN.bold(),
             PagesColumn::Name => Look::PLAIN,

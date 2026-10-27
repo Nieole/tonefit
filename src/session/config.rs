@@ -1,5 +1,5 @@
 //! **配置视图**那一副的内容：设置栏上那几行、详情栏答的那几样、画质判定参数那五行
-//! （`CONTEXT.md` 的《配置视图》《设置栏》《详情栏》《下钻》《画质判定参数》；
+//! （`GLOSSARY.md` 的《配置视图》《设置栏》《详情栏》《下钻》《画质判定参数》；
 //! spec 的《配置视图》）。
 //!
 //! 画法在 [`super::shell`] 底下那三块（顶上一条预设、设置栏、详情栏），本模块答**屏上那几行
@@ -38,13 +38,13 @@ use crate::render::{self, Judging, Switches};
 /// 还没挑型号时**设备配置**那一行印什么：抬头那一行到这一刻还出不来（界挂在 profile 上）。
 const NO_MODEL: &str = "型号未选择";
 
-/// **选项冲突**一条都没咬上时那一行印什么（`CONTEXT.md` 的《画质判定参数》：否则写「无」）。
+/// **选项冲突**一条都没咬上时那一行印什么（`GLOSSARY.md` 的《画质判定参数》：否则写「无」）。
 const NO_INTERLOCK: &str = "无";
 
-/// 设置栏上的一**组**（`CONTEXT.md` 的《设置栏》：三组）。
+/// 设置栏上的一**组**（`GLOSSARY.md` 的《设置栏》：三组）。
 ///
 /// 分界线与三组设置画在同一处**生命周期**上（[`super::state::Layer`]），
-/// 只是第三组换成了**画质判定参数**——路径与输出那一组不在配置视图里（`CONTEXT.md`
+/// 只是第三组换成了**画质判定参数**——路径与输出那一组不在配置视图里（`GLOSSARY.md`
 /// 的《路径与输出》：它跟着这一趟走，摆在任务视图开跑之前那一副里）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Band {
@@ -146,7 +146,7 @@ impl Item {
         }
     }
 
-    /// 详情栏里那一段**长说明**——**会话自己的字**（`CONTEXT.md` 的《画质判定参数》：
+    /// 详情栏里那一段**长说明**——**会话自己的字**（`GLOSSARY.md` 的《画质判定参数》：
     /// 「详情栏里另有一段说明，那是界面层自己的解释文字，出处只在会话这一侧」）。
     ///
     /// 选项冲突那一项两句话分两种情形：咬上了说「代价是什么看上面那句」，
@@ -215,7 +215,7 @@ pub fn premise(session: &Session, which: Judging) -> String {
 }
 
 /// 详情栏里摊开的那**一整行**：项名 · 空格 · 行内那一句——
-/// **与报告抬头里的那一行逐字相同**（`CONTEXT.md` 的《画质判定参数》）。
+/// **与报告抬头里的那一行逐字相同**（`GLOSSARY.md` 的《画质判定参数》）。
 pub fn premise_line(session: &Session, which: Judging) -> String {
     format!("{} {}", which.label(), premise(session, which))
 }
@@ -244,7 +244,7 @@ fn switches(session: &Session) -> Switches {
 }
 
 /// **一份预设记得下的那几项**，次序照设置栏：设备设置与处理选项两组，一项不落，
-/// **型号在里面**（`CONTEXT.md` 的《预设》：预设装设备设置与处理选项两组；停车场 Q891 拍板）。
+/// **型号在里面**（`GLOSSARY.md` 的《预设》：预设装设备设置与处理选项两组；停车场 Q891 拍板）。
 ///
 /// 顶上那句「改动了 N 项」（[`changed`]）与预设栏那句「包含 N 项设置」（[`said_fields`]）
 /// 数的是这一份单子；设置栏行尾那个 `*`（[`starred`]）挂在那两组的每一行上，而那两组就是它。
@@ -276,7 +276,7 @@ pub fn starred(session: &Session, field: Field) -> bool {
 
 /// 这一份预设**说了哪几项**，次序照设置栏（预设栏上那一行写「包含 N 项设置：…」）。
 ///
-/// 「没说」与「说了一个恰好等于默认值的值」是两件事（`CONTEXT.md` 的《预设》那一段），
+/// 「没说」与「说了一个恰好等于默认值的值」是两件事（`GLOSSARY.md` 的《预设》那一段），
 /// 判它的是 [`Session::unsaid`] 一处：把这一份摆进一个探针会话里问一遍。
 pub fn said_fields(session: &Session, preset: &Preset) -> Vec<Field> {
     let mut probe = session.clone();
@@ -301,7 +301,7 @@ pub fn preset_says(session: &Session, preset: &Preset, field: Field) -> Option<S
     (!probe.unsaid(field)).then(|| probe.shown(field))
 }
 
-/// 详情栏上这一项**列得出的那几格**（`CONTEXT.md` 的《详情栏》《下钻》）。
+/// 详情栏上这一项**列得出的那几格**（`GLOSSARY.md` 的《详情栏》《下钻》）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choices {
     /// 有取值环的那几项：环上每一格，**第一格恒是「没说」那一格**；`chosen` 是此刻生效的那一格。
@@ -392,7 +392,7 @@ fn under<'a>(
         .map(|(panel, devices)| (*panel, devices))
 }
 
-/// **屏幕规格分组**：详情栏第一层一块一行，第几格就是第几块（`CONTEXT.md` 的《下钻》）。
+/// **屏幕规格分组**：详情栏第一层一块一行，第几格就是第几块（`GLOSSARY.md` 的《下钻》）。
 ///
 /// 分组走 [`Profile::devices_by_panel`]，与未知型号那条错误消息**同一份**：内置表里加一个型号、
 /// 多一块屏幕规格，这一列当场跟着变。每一块印的是它自己的 `Display`，会话不另写一份格式。
@@ -516,7 +516,7 @@ mod tests {
     }
 
     /// **选项冲突一条都没咬上时写「无」**，而且那一刻不说自己与抬头相同——
-    /// 抬头那一刻一个字都不说（`CONTEXT.md` 的《画质判定参数》）。
+    /// 抬头那一刻一个字都不说（`GLOSSARY.md` 的《画质判定参数》）。
     #[test]
     fn with_no_interlock_engaged_the_row_says_none_and_claims_nothing() {
         let mut scene = Scene::named("config");
@@ -593,7 +593,7 @@ mod tests {
         }
     }
 
-    /// **一份预设记得下的是设置栏那两组，型号在里面**（`CONTEXT.md` 的《预设》：
+    /// **一份预设记得下的是设置栏那两组，型号在里面**（`GLOSSARY.md` 的《预设》：
     /// 预设装设备设置与处理选项两组；拍板见停车场 Q891）：屏上行尾那个 `*`、
     /// 顶上那句「改动了 N 项」、预设栏那句「包含 N 项设置」、存出去的那一份，读的都是这一份单子。
     ///

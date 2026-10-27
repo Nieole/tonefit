@@ -1,5 +1,5 @@
 //! 卷列表那棵树与每页结果那两张表的**列**：有哪几列、窄了先让谁、各多宽、
-//! 一格摆不下的字怎么省略（`CONTEXT.md` 的《砍列》《格》）。
+//! 一格摆不下的字怎么省略（`GLOSSARY.md` 的《砍列》《格》）。
 //!
 //! 表真画出来是画法那一层的事（`super::shell::list` 与 `super::shell::pages`）；
 //! 本模块只答三件事：**列的次序**、**砍列的次序**（各表那几道宽度门槛），
@@ -40,7 +40,7 @@
 //! # 每一列说得出自己的字面出处
 //!
 //! 一列的字**是谁写的**——[措辞 · 原样 · 记号](Provenance)三档，逐列写在 [`Column::provenance`] 上
-//! （`CONTEXT.md`《格》立的那一维）。三处 `match` 一个 `_` 都不留：
+//! （`GLOSSARY.md`《格》立的那一维）。三处 `match` 一个 `_` 都不留：
 //! **添一列不写这一格，编译就过不去**。
 //!
 //! 摆进列里的措辞格因此**一格都落不到宽度那一关外面**：`wording_cells` 从这一维导出屏上那几格，
@@ -56,7 +56,7 @@ use crate::wrap;
 /// 省略过的是名字那一列，它右边还可能留着几列。
 const ELLIPSIS: char = '⋯';
 
-/// 一列的字**是谁写的**：`CONTEXT.md`《格》立的那一维——**字面出处 (Provenance)**，
+/// 一列的字**是谁写的**：`GLOSSARY.md`《格》立的那一维——**字面出处 (Provenance)**，
 /// 三档，一档不多（措辞 · 原样 · 记号，名字逐个取自词汇表）。
 ///
 /// **挂在列上，不挂在格上。** 列与格不是一对一：[记号](Self::Mark)那一列压根不是一格字、
@@ -82,7 +82,7 @@ pub(crate) enum Provenance {
     /// [从中间省略](elide)管，**不进那一关**。它因此不必报出自己出自哪一格。
     Verbatim,
     /// **记号 (Mark)**：一个字符说完一件事，**不是一格字**
-    /// （`CONTEXT.md`《语义色》：颜色不是唯一载体）。
+    /// （`GLOSSARY.md`《语义色》：颜色不是唯一载体）。
     ///
     /// 两张表的行首记号都在这一档，那几个字形由画它的那一层问（`super::shell::marks`）。
     Mark,
@@ -93,7 +93,7 @@ pub(super) trait Column: Copy + PartialEq + 'static {
     /// 全部列，**从左到右**。表就按这个次序摆。
     const ALL: &'static [Self];
 
-    /// **砍列的次序**：横向摆不下时按它一列一列舍掉（`CONTEXT.md` 的《砍列》）。
+    /// **砍列的次序**：横向摆不下时按它一列一列舍掉（`GLOSSARY.md` 的《砍列》）。
     ///
     /// **只有这一处宣告。** 恒在的那几列不在这里边——一行上先要认得出这是哪一行、
     /// 它出没出事，剩下的几列都是这两件之后的事。落实它的是各表那几道宽度门槛
@@ -123,7 +123,7 @@ pub(super) trait Column: Copy + PartialEq + 'static {
 /// **卷列表那棵树**上的一列（`session-redesign/08`）：新界面清点之后那一副，
 /// 目录行与卷行**共用同一套列**——两种行只差左边的缩进与记号，右边那几列对齐在同一处。
 ///
-/// **页数恒在**（`CONTEXT.md` 的《目录行 / 卷行》：做完几卷／共几卷，或几页，
+/// **页数恒在**（`GLOSSARY.md` 的《目录行 / 卷行》：做完几卷／共几卷，或几页，
 /// 与名字一起就是一行的身份）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TreeColumn {
@@ -151,7 +151,7 @@ impl Column for TreeColumn {
         Self::Elapsed,
     ];
 
-    /// **砍列的次序：耗时 → 代表页 → 灰阶分布**（spec《卷列表》；`CONTEXT.md` 的《砍列》）。
+    /// **砍列的次序：耗时 → 代表页 → 灰阶分布**（spec《卷列表》；`GLOSSARY.md` 的《砍列》）。
     ///
     /// 记号、名字与卷数不在这里边——它们**恒在**：一行上先要认得出这是哪一行、它出没出事、
     /// 它有多厚。次序按「摆不下时先舍谁」排：耗时最先——它是这一行做完之后的一个旁证；
@@ -265,7 +265,7 @@ fn least_width(column: TreeColumn, envelope: bool) -> u16 {
 /// **每页结果那一张表**上的一列（`session-redesign/11`）：新界面从卷行进到页的那一副。
 ///
 /// 列宽**定死**（占整宽，一页一行要对齐在同一处）；**先让缩放、再让画质分、再让尺寸**，
-/// 而**灰阶恒在**（`CONTEXT.md` 的《砍列》；spec 的《每页结果》）。
+/// 而**灰阶恒在**（`GLOSSARY.md` 的《砍列》；spec 的《每页结果》）。
 ///
 /// 列的选法答的是**从卷进到页要问的那件事**：哪一页判成了哪一档、凭什么。
 /// 从左到右四段：**这一页是谁**（记号 · 页面）、**它这个样子是怎么来的**（尺寸 · 缩放）、
@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(usize::from(wrap::width(&ELLIPSIS.to_string())), 1);
     }
 
-    /// **两张表的每一列都说得出自己的[字面出处](Provenance)**（`CONTEXT.md`《格》那一维）。
+    /// **两张表的每一列都说得出自己的[字面出处](Provenance)**（`GLOSSARY.md`《格》那一维）。
     ///
     /// **编译先红，这一条是第二道**：[`Column::provenance`] 那两处 `match` 一个 `_` 都不留，
     /// 添一列不写那一格就编译不过。这里问的是**答出来的那一档站不站得住**——
@@ -583,7 +583,7 @@ mod tests {
                 }
             }
             // **记号那一档恰好一列，而且是行首那一列**：它一个字符说完一件事，
-            // 别的列装的都是字（`CONTEXT.md`《语义色》）。
+            // 别的列装的都是字（`GLOSSARY.md`《语义色》）。
             assert_eq!(marks.len(), 1, "{table}：记号那一档不止一列 {marks:?}");
             assert_eq!(marks[0], C::ALL[0], "{table}：记号不是行首那一列 {marks:?}");
             wording
@@ -592,7 +592,7 @@ mod tests {
         let mut wording = walk::<TreeColumn>("树");
         wording.extend(walk::<PagesColumn>("每页结果"));
         // **摆不下时从中间省略的名字那一列是原样那一档**：从中间省略正是那一档的规矩，
-        // 而措辞那一档摆不下时不靠省略活着（`CONTEXT.md`《格》）。
+        // 而措辞那一档摆不下时不靠省略活着（`GLOSSARY.md`《格》）。
         assert_eq!(TreeColumn::Name.provenance(), Provenance::Verbatim);
         assert_eq!(PagesColumn::Name.provenance(), Provenance::Verbatim);
 

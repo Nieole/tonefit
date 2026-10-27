@@ -1,4 +1,4 @@
-//! 新界面**摆不下时谁让位**，次序只有这一处（`CONTEXT.md` 的《会话》：让位；spec《尺寸与让位》）。
+//! 新界面**摆不下时谁让位**，次序只有这一处（`GLOSSARY.md` 的《会话》：让位；spec《尺寸与让位》）。
 //!
 //! 宽度：卷列表砍列（随树那一票接进 `super::super::columns`）、配置视图不到 90 列单栏、
 //! 确认条不到 110 列短句、横条先收窄后让掉；高度：屏底恒一行，不到 30 行总览正文两行，
@@ -13,17 +13,17 @@ pub(super) const LEAST: (u16, u16) = (60, 16);
 /// 不到这么多行时总览正文收成两行。
 const COMPACT_BELOW: u16 = 30;
 
-/// 不到这么多列时配置视图退成单栏（`CONTEXT.md` 的《让位》）。
+/// 不到这么多列时配置视图退成单栏（`GLOSSARY.md` 的《让位》）。
 const SINGLE_COLUMN_BELOW: u16 = 90;
 
-/// 不到这么多列时确认条收成短句（`CONTEXT.md` 的《让位》）。
+/// 不到这么多列时确认条收成短句（`GLOSSARY.md` 的《让位》）。
 const SHORT_DECISION_BELOW: u16 = 110;
 
 /// 设置栏至多多宽，以及两栏摆得下时它占整屏的几成（设计稿 `drawConfig` 的 `LW`）。
 const SETTINGS_WIDEST: u16 = 56;
 const SETTINGS_SHARE: u32 = 45;
 
-/// 窗口太小：只剩「窗口太小」那几行（`CONTEXT.md` 的《让位》）。
+/// 窗口太小：只剩「窗口太小」那几行（`GLOSSARY.md` 的《让位》）。
 pub(super) fn too_small(screen: Rect) -> bool {
     screen.width < LEAST.0 || screen.height < LEAST.1
 }
@@ -38,7 +38,7 @@ pub(super) fn single_column(screen: Rect) -> bool {
     screen.width < SINGLE_COLUMN_BELOW
 }
 
-/// 确认条收不收成短句（`CONTEXT.md` 的《确认条》：宽度不到 110 列收成短句）。
+/// 确认条收不收成短句（`GLOSSARY.md` 的《确认条》：宽度不到 110 列收成短句）。
 pub(super) fn short_decision(screen: Rect) -> bool {
     screen.width < SHORT_DECISION_BELOW
 }
@@ -75,7 +75,7 @@ mod tests {
         assert!(!compact(Rect::new(0, 0, 120, 36)));
     }
 
-    /// 确认条：110 列起摆整句，差一列就收成短句（`CONTEXT.md` 的《确认条》）。
+    /// 确认条：110 列起摆整句，差一列就收成短句（`GLOSSARY.md` 的《确认条》）。
     #[test]
     fn the_decision_bar_falls_back_to_short_sentences_below_one_hundred_and_ten_columns() {
         assert!(!short_decision(Rect::new(0, 0, 110, 36)));

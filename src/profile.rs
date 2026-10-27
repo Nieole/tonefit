@@ -1,6 +1,6 @@
 //! Profile 与面板表。
 //!
-//! 面板是物理显示面板：分辨率 + PPI + 屏幕灰阶数 + 彩色，四项俱全才是 profile 的主键（`CONTEXT.md`）。
+//! 面板是物理显示面板：分辨率 + PPI + 屏幕灰阶数 + 彩色，四项俱全才是 profile 的主键（`GLOSSARY.md`）。
 //! 设备只是面板的别名，多对一——表里面板是少数几个常量，型号一行一个。
 //!
 //! 画质门槛档位属于 profile、不属于面板：面板是物理事实，档位是标定出来的（ADR 0003）。
@@ -16,7 +16,7 @@ use crate::metric::Score;
 /// 物理显示面板。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Panel {
-    /// 面板分辨率。目标尺寸由它 fit-inside 算出，两者不是一回事（`CONTEXT.md`）。
+    /// 面板分辨率。目标尺寸由它 fit-inside 算出，两者不是一回事（`GLOSSARY.md`）。
     pub resolution: Size,
     /// 每英寸像素数。画质分的低通核由它推出（ADR 0002）。
     pub ppi: u32,
@@ -46,7 +46,7 @@ impl std::fmt::Display for Panel {
     }
 }
 
-/// 画质分的可接受上限（`CONTEXT.md`：**画质分是量，画质门槛是界**）。
+/// 画质分的可接受上限（`GLOSSARY.md`：**画质分是量，画质门槛是界**）。
 ///
 /// 与画质分同一把尺，单位是 8 位灰度级。跟着画质分一起不可跨面板比较（ADR 0002）。
 ///
@@ -166,7 +166,7 @@ fn enumerated(names: &[&str]) -> String {
 ///
 /// **它仍然挡掉 2bit 不抖**——那一档真机排第 2、比 2bit+FS 省 18% 体积，而画质分在棋魂两页上
 /// 读它 8.250 与 18.878。那不是界的问题，是画质分认为那两页的灰调塌陷值这么多；
-/// 两侧都只有一份数据，复核之前画质分说了算（见 `CONTEXT.md` 的《尚未确立》）。
+/// 两侧都只有一份数据，复核之前画质分说了算（见 `GLOSSARY.md` 的《尚未确立》）。
 ///
 /// **「候选上界恒过关」这条不成立，而且不是这一次才不成立的。** 8.5 是 4bit 量化步长的一半，
 /// 保证 4bit 恒在界内；5.123 不保证，5.500 那时也已经不保证——抖动颗粒项那道地板改按格点间距
@@ -261,7 +261,7 @@ impl Profile {
     /// **分组的规矩只有这一处出处**：未知型号那条错误消息（`unknown_device_error`）
     /// 与会话里型号那一行摊开的第一层（`p3-session-legibility/06`）端的是同一份。
     /// 两处要的本来就是同一件事——「内置表里没有你那台设备时，你要挑的从来不是名字，
-    /// 是那块屏」，而**设备只是面板的别名，多对一**（`CONTEXT.md`）：面板相同的型号
+    /// 是那块屏」，而**设备只是面板的别名，多对一**（`GLOSSARY.md`）：面板相同的型号
     /// 输出完全一致，所以挑替身该从面板挑起。抄第二份就会有一处漏掉新加的型号。
     ///
     /// 与 [`devices`](Self::devices) 同一条：它不是新 seam，是既有类型上的一个读法
@@ -334,7 +334,7 @@ fn canonical(device: &str) -> String {
     key.trim_matches('-').to_owned()
 }
 
-/// e-ink 面板的屏幕灰阶数恒为 16（`CONTEXT.md`）。
+/// e-ink 面板的屏幕灰阶数恒为 16（`GLOSSARY.md`）。
 const EINK_GRAY_LEVELS: u32 = 16;
 
 /// 一块纯黑白 e-ink 面板。
@@ -352,7 +352,7 @@ const fn eink(width: u32, height: u32, ppi: u32) -> Panel {
 /// 分辨率与 PPI 填的是**黑白那一层**的规格——面板的主键、目标尺寸与低通核都由它推出。
 /// 彩色滤光片让彩色内容的实际分辨率降到黑白层之下（各家口径是一半），
 /// 但 P0 的彩色分支只做缩放、不做画质分，这个折减到不了任何判定上；
-/// 真要利用它得先测（`CONTEXT.md` 的《尚未确立》）。
+/// 真要利用它得先测（`GLOSSARY.md` 的《尚未确立》）。
 const fn kaleido(width: u32, height: u32, ppi: u32) -> Panel {
     Panel {
         resolution: Size::new(width, height),

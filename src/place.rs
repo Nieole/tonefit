@@ -1,4 +1,4 @@
-//! **同一处**：两条路径指不指着盘上同一个地方（`CONTEXT.md` 的《同一处》）。
+//! **同一处**：两条路径指不指着盘上同一个地方（`GLOSSARY.md` 的《同一处》）。
 //! 收编、借住、撞名认这件事只用这一把尺子（`one-source/03`，收停车场 Q241、Q300、Q366）。
 //!
 //! 两半，各住一处：
@@ -16,11 +16,11 @@
 //!
 //! 一趟开工时**每条处理路径与输出根各探一次**（[`Side::probe`]：处理路径在清点里逐条探，
 //! 输出根在 `crate::run` 探写之后探），答案只活在这一趟里——为什么不跨趟记见 ADR 0009，
-//! 规矩本身见 `CONTEXT.md` 的《同一处》。补全自己记一格进程内的答案，那是它自己的事。
+//! 规矩本身见 `GLOSSARY.md` 的《同一处》。补全自己记一格进程内的答案，那是它自己的事。
 //!
 //! # 认下的边界
 //!
-//! - **软链不解析**：一条软链与它指向的那棵树是两个名字（`CONTEXT.md` 的《尚未确立》）。
+//! - **软链不解析**：一条软链与它指向的那棵树是两个名字（`GLOSSARY.md` 的《尚未确立》）。
 //!   解析要路径存在，而撞名比的是还没写出来的去处。
 //! - **`..` 不解析**：与软链一起时，字面解析会指错地方。
 //! - **相对与绝对不互相认**：`库` 与 `/当前目录/库` 是两个写法——规整是字面的。
@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 
-/// 一个位置所在的文件系统**认不认大小写**（`CONTEXT.md` 的《大小写敏感性》）。
+/// 一个位置所在的文件系统**认不认大小写**（`GLOSSARY.md` 的《大小写敏感性》）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CaseSensitivity {
     /// 认：`Doraemon` 与 `doraemon` 是两个名字。
@@ -156,7 +156,7 @@ pub(crate) enum Side {
 
 impl Side {
     /// 这一侧拿什么去判等：探出来的答案原样用；**探不出时两侧取相反的一边**——源那一侧按认、
-    /// 输出那一侧按不认。两边各取代价小的那一边，各是什么代价见 `CONTEXT.md` 的《同一处》。
+    /// 输出那一侧按不认。两边各取代价小的那一边，各是什么代价见 `GLOSSARY.md` 的《同一处》。
     pub(crate) fn case(self, probed: Option<CaseSensitivity>) -> CaseSensitivity {
         probed.unwrap_or(match self {
             Side::Source => CaseSensitivity::Sensitive,
@@ -174,7 +174,7 @@ impl Side {
 ///
 /// 两步：**字面规整**——去掉 `.` 分量与尾分隔符，**`..` 不解析**（中间那一级是一条软链的话，
 /// 字面解析会指错地方）——再按 `case` 决定折不折大小写。软链同样不解析：一条软链与它指向的
-/// 那棵树是两个名字（`CONTEXT.md` 的《尚未确立》）。
+/// 那棵树是两个名字（`GLOSSARY.md` 的《尚未确立》）。
 ///
 /// `case` 是**这一侧**的答案（[`Side::case`]）。要拿它当表的键时用 [`Place`]，两者是同一件事。
 pub(crate) fn same_place(a: &Path, b: &Path, case: CaseSensitivity) -> bool {

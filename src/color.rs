@@ -8,7 +8,7 @@ use image::DynamicImage;
 use crate::geometry::Size;
 use crate::gray::{self, GrayImage};
 
-/// 一页有没有彩色内容。分析环节识别出来（`CONTEXT.md`：彩页）。
+/// 一页有没有彩色内容。分析环节识别出来（`GLOSSARY.md`：彩页）。
 ///
 /// 这是**页的事实**，不是它走了哪条路径：黑白 profile 下彩页照样转灰走灰度路径，
 /// 但它仍然是一张彩页，报告要区分得出来（ADR 0005 决定第 4 条）。
@@ -40,7 +40,7 @@ impl std::fmt::Display for PageColor {
 ///
 /// 不取「色度非零」，因为有损转码会给消色像素添上几级色度：B 类素材整批是 8bit YUV420 的
 /// 有损 AVIF（见 measurements 的《B 类素材普查》），照非零判，那 97% 的近灰度页会整批
-/// 被判成彩页。地板取在噪声之上、真彩色之下——`CONTEXT.md` 的《尚未确立》把
+/// 被判成彩页。地板取在噪声之上、真彩色之下——`GLOSSARY.md` 的《尚未确立》把
 /// 「有损转码源的行为」记为未知，这个数就落在那个洞里。
 const CHROMA_FLOOR: u8 = 16;
 
@@ -281,7 +281,7 @@ mod tests {
     /// **覆盖率那一维一点忙都帮不上**，拦住它的只有地板——地板降到 [`NOISE_CHROMA`]
     /// 以下，这 97% 的素材就整批被判成彩页。
     ///
-    /// `CONTEXT.md` 的《尚未确立》记着「有损转码源的行为」这个洞，地板的高度就在洞里。
+    /// `GLOSSARY.md` 的《尚未确立》记着「有损转码源的行为」这个洞，地板的高度就在洞里。
     #[test]
     fn a_near_gray_page_with_transcode_noise_stays_gray() {
         let noisy = rgb(|x, y| {

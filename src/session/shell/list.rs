@@ -1,4 +1,4 @@
-//! **卷列表**：任务视图的主体，一张整宽的列表，一个框（`CONTEXT.md` 的《会话》：卷列表、
+//! **卷列表**：任务视图的主体，一张整宽的列表，一个框（`GLOSSARY.md` 的《会话》：卷列表、
 //! 停得住 / 展得开、焦点——聚焦框）。
 //!
 //! **形状随阶段换。** 清点完之前是**开跑之前**那一副：输出目录那一行 · 「处理路径 (N)」·
@@ -117,7 +117,7 @@ fn title(session: &Session, phase: Phase) -> Vec<Segment> {
     vec![Segment::new("任务", Look::PLAIN.bold()), rest]
 }
 
-/// 框右端那一枚：**自动滚动**开着还是暂停了（`CONTEXT.md` 的《自动滚动》）。
+/// 框右端那一枚：**自动滚动**开着还是暂停了（`GLOSSARY.md` 的《自动滚动》）。
 /// 还没开跑、清点中与结束之后不摆它——那几档没有「正在处理的那一卷」可跟。
 ///
 /// 暂停着时那一句提到交回它的那个键，键取自按键表（[`keymap::spelt_for`]）。
@@ -138,7 +138,7 @@ fn follow_chip(session: &Session, phase: Phase) -> Vec<Segment> {
     }
 }
 
-/// 框**底边左起**那一截：**此刻搜的那一句**连同 `n`／`N`（`CONTEXT.md` 的《卷列表》：
+/// 框**底边左起**那一截：**此刻搜的那一句**连同 `n`／`N`（`GLOSSARY.md` 的《卷列表》：
 /// `n`／`N` 在结果之间跳）。
 ///
 /// 一个字都还没打（刚按下 `/`）时**它自己就不在**——「空串不算在搜」判在
@@ -177,7 +177,7 @@ struct Pointed {
 }
 
 /// 名字那一列的样子：**光标那一行加粗，匹配着搜索那一句的加下划线**
-/// （`CONTEXT.md` 的《语义色》：光标行加粗与搜索匹配加下划线两样都不归 `NO_COLOR` 管）。
+/// （`GLOSSARY.md` 的《语义色》：光标行加粗与搜索匹配加下划线两样都不归 `NO_COLOR` 管）。
 ///
 /// 树上的目录行与卷行、备注行的名头、开跑之前那一副的每一行，**四处共用这一份**。
 fn name_look(look: Look, pointed: &Pointed) -> Look {
@@ -234,7 +234,7 @@ impl Painter<'_> {
     }
 
     /// **这一行匹配着搜索那一句吗**——匹配的那一行**名字那一列加下划线**
-    /// （`CONTEXT.md` 的《卷列表》：匹配处加下划线；《语义色》：搜索匹配加下划线，
+    /// （`GLOSSARY.md` 的《卷列表》：匹配处加下划线；《语义色》：搜索匹配加下划线，
     /// 不归 `NO_COLOR` 管）。
     ///
     /// 比的是哪一截字：清点之后那棵树上的行由树答（[`tree::Tree::searched_text`]），
@@ -486,7 +486,7 @@ impl Painter<'_> {
         }
     }
 
-    /// **备注行**：名头 · 是哪几处 · 行尾那一句（`CONTEXT.md` 的《备注行》）。
+    /// **备注行**：名头 · 是哪几处 · 行尾那一句（`GLOSSARY.md` 的《备注行》）。
     fn note_row(
         &self,
         canvas: &mut Canvas<'_>,
@@ -586,7 +586,7 @@ impl Painter<'_> {
             .unwrap_or_default()
     }
 
-    /// 这一卷有几页**需留意**（`CONTEXT.md` 的《需留意的页》）。
+    /// 这一卷有几页**需留意**（`GLOSSARY.md` 的《需留意的页》）。
     fn notable(&self, at: usize) -> usize {
         self.notable_tally(at).pages()
     }
@@ -599,7 +599,7 @@ impl Painter<'_> {
             .unwrap_or_default()
     }
 
-    /// 需留意那几样**在屏上各怎么写**，照屏上的次序（`CONTEXT.md` 的《语义色》在页
+    /// 需留意那几样**在屏上各怎么写**，照屏上的次序（`GLOSSARY.md` 的《语义色》在页
     /// 那一级分出的那几样）。数由那一趟折出来，**词在 [`marks::notable_word`] 一处**
     /// ——每页结果提示那一列读的是同一份。
     fn notable_bits(&self, at: usize) -> Vec<(&'static str, usize)> {
@@ -737,7 +737,7 @@ impl Painter<'_> {
     /// **词出自措辞那一层那一格**（[`render::tally_column`]，ADR 0016）：跳过的卷读它那一份
     /// [卷级那几行](Self::volume_rows)，没做成的卷连一份卷报告都没有，读
     /// [它那一行](render::failed_volume)。这一层只配样子——跳过压暗，没做成上出事那一色
-    /// （`CONTEXT.md` 的《语义色》）。
+    /// （`GLOSSARY.md` 的《语义色》）。
     fn why_nothing(&self, at: usize, state: VolumeState, rows: Option<&[Row]>) -> Vec<Segment> {
         let (said, look) = match state {
             VolumeState::Skipped => (rows.and_then(render::tally_column), Look::FAINT.dim()),
@@ -754,7 +754,7 @@ impl Painter<'_> {
             .unwrap_or_default()
     }
 
-    /// 卷行行尾那一句：**这一行此刻最要紧的事**（`CONTEXT.md` 的《目录行 / 卷行》）。
+    /// 卷行行尾那一句：**这一行此刻最要紧的事**（`GLOSSARY.md` 的《目录行 / 卷行》）。
     ///
     /// 跳过与隔离那两句是报告那一侧[成句的那一句](sentence)，读的是这一卷的
     /// [卷级那几行](Self::volume_rows)。
@@ -794,7 +794,7 @@ impl Painter<'_> {
                     .collect();
                 vec![Segment::new(said.join(" ⋅ "), Look::tone(Tone::Caution))]
             }
-            // **预览过的那一卷说清它没写出去**（`CONTEXT.md` 的《卷状态》）：盘上没有它，
+            // **预览过的那一卷说清它没写出去**（`GLOSSARY.md` 的《卷状态》）：盘上没有它，
             // 行尾空着就与写了出去的那几卷长得一样。需留意的几样更要紧，有就让给上面那一支。
             VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
             VolumeState::Done => Vec::new(),

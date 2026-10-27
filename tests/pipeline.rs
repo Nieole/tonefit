@@ -118,7 +118,7 @@ const BANDING_BLOCK: usize = 8;
 /// 「消没消掉」因此量得出来。4bit 的格距只有 17，两侧的差别缩在噪声里。
 const BANDING_DEPTH: BitDepth = BitDepth::Two;
 
-/// 一份写出去的东西在《落格》那条不变量里站在哪一侧（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+/// 一份写出去的东西在《落格》那条不变量里站在哪一侧（**《落格》，见 `GLOSSARY.md` 的《量化》**）。
 ///
 /// 站在**里面**的只有一种——有判定的页。另外三种各有各的理由站在外面，而那几条理由由词条给，
 /// 这里只照着问，不在用例里另写一份（`CLAUDE.md`《文档写作》第 4 条：单一出处）。
@@ -158,7 +158,7 @@ fn classify(path: &std::path::Path) -> OnGridSide {
         "failed" => OnGridSide::Placeholder,
         other => panic!(
             "{} 的记录写着「{other}」：这是一类《落格》还没说过的页。\
-             先去 `CONTEXT.md` 的《量化》把它为什么不在这条不变量里说清楚，再回来",
+             先去 `GLOSSARY.md` 的《量化》把它为什么不在这条不变量里说清楚，再回来",
             path.display()
         ),
     }
@@ -168,7 +168,7 @@ fn classify(path: &std::path::Path) -> OnGridSide {
 ///
 /// **一页写出去的东西读不回 PNG，正是这条闸变红的形态之一**：换了编码器，
 /// 下面那几条断言连解都解不开它。那是《落格》给编码器立下的那道闸的机械形式
-/// （见 `CONTEXT.md` 的《量化》）。
+/// （见 `GLOSSARY.md` 的《量化》）。
 fn recorded_verdict(path: &std::path::Path) -> Option<String> {
     let bytes = std::fs::read(path).expect("读输出里的这一份");
     png::Decoder::new(std::io::Cursor::new(bytes.as_slice()))
@@ -190,7 +190,7 @@ fn candidate_named(recorded: &str) -> Option<Candidate> {
         .find(|candidate| candidate.to_string() == recorded)
 }
 
-/// 《落格》那条不变量在一张写出去的页上问一遍（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+/// 《落格》那条不变量在一张写出去的页上问一遍（**《落格》，见 `GLOSSARY.md` 的《量化》**）。
 ///
 /// 画质分比的就是这些格点与参照的差，文件里出现格点之外的取值，等于画质分算的不是最终输出。
 ///
@@ -264,7 +264,7 @@ fn everything_written(
         .collect()
 }
 
-/// 报告与文件对得上吗——这就是那条**双向对应**（`CONTEXT.md` 的《量化》与《灰阶分布》）。
+/// 报告与文件对得上吗——这就是那条**双向对应**（`GLOSSARY.md` 的《量化》与《灰阶分布》）。
 ///
 /// 有判定的页：文件里写着的候选与报告说的是同一个，落格由 [`everything_written`] 问。
 /// 没有判定的页：它只能是彩色分支上的页或坏页，两者都在那一条词条里各有一句理由。
@@ -278,7 +278,7 @@ fn assert_the_report_and_the_files_agree(volume: &tonefit::VolumeReport) {
             (None, None, Some(_)) => OnGridSide::Placeholder,
             _ => panic!(
                 "{source} 没有判定，而它既不是彩色分支上的页，也不是坏页——\
-                 先去 `CONTEXT.md` 的《量化》说清这一类为什么不在《落格》里，再回来"
+                 先去 `GLOSSARY.md` 的《量化》说清这一类为什么不在《落格》里，再回来"
             ),
         };
         assert_eq!(
@@ -314,7 +314,7 @@ fn with_the_whole_set(space: &Workspace, volume: &fixtures::Volume) -> tonefit::
 }
 
 /// **六个候选各走到一次，8bit 也在里面，灰度与调色板两支各走到一次**——每一格写出去的页
-/// 都落格（**《落格》，见 `CONTEXT.md` 的《量化》**）。
+/// 都落格（**《落格》，见 `GLOSSARY.md` 的《量化》**）。
 ///
 /// 这一条是**编码器那道闸**：判定说的是量化格点，落格问的是那些格点有没有真的进到文件里。
 /// 一个把页还原成连续调的编码器接进来，这一条当场红——理由因此不再只是一段文字。
@@ -330,7 +330,7 @@ fn with_the_whole_set(space: &Workspace, volume: &fixtures::Volume) -> tonefit::
 /// 说的正是这件事——抬开上界，不点名档位。
 ///
 /// **两支各点名一格，不靠碰巧**：`encode` 的 `png` 在灰度与调色板之间按字节取小者，
-/// 两种写出的像素完全相同（见 `encode` 的模块文档与 ADR 0004）。抖过的 `1bit` 渐变页把
+/// 两种写出的像素完全相同（见 `encode` 的模块文档与 ADR 0021 决定第 6 条）。抖过的 `1bit` 渐变页把
 /// 两个格点铺满，调色板买不到更窄的位宽、还要多背一个 PLTE，灰度胜出；单取值的页在 `8bit` 上
 /// 调色板只要 1 位而灰度要 8 位，调色板胜出。两格各断各的颜色类型，末尾再断两支都在场。
 ///
@@ -465,7 +465,7 @@ fn every_candidate_the_pipeline_writes_comes_out_on_grid() {
 }
 
 /// **一个混排卷一次盖住那条双向对应**：有判定的页落格成立，没有判定的三种各说得出
-/// 自己是什么（`CONTEXT.md` 的《量化》与《灰阶分布》）。
+/// 自己是什么（`GLOSSARY.md` 的《量化》与《灰阶分布》）。
 ///
 /// 卷里四样各一：灰度页、彩页、坏页、透传文件。**同一卷跑两台面板**：
 ///
@@ -523,7 +523,7 @@ fn a_mixed_volume_puts_every_page_on_one_side_of_the_invariant_or_the_other() {
 /// **《留下的页》照旧落格**（two-pass-rework/14：按页跳过）。
 ///
 /// 它这一趟没解、没判、没编，从上一趟的输出里原样搬过来——判定随字节一起搬来，
-/// 落格跟着成立（**《落格》，见 `CONTEXT.md` 的《量化》**）。它**不在报告的逐页结果里**，
+/// 落格跟着成立（**《落格》，见 `GLOSSARY.md` 的《量化》**）。它**不在报告的逐页结果里**，
 /// 这一条因此只问得动文件：[`everything_written`] 问的正是输出容器里的每一份东西。
 ///
 /// 顺带把「按页跳过省的是工、不是结果」又验了一次：搬过来的那一页仍在这条不变量里。
@@ -563,7 +563,7 @@ fn a_retained_page_is_still_on_grid() {
 fn a_page_with_few_levels_is_written_as_a_palette_narrower_than_its_verdict() {
     // 二值线稿页点名 4bit：格点有 16 个，页上只用得着 2 个。
     // 调色板于是把它装进 1 位，像素一个不动——判定说的是量化格点，
-    // 文件里那个位宽是编码器接口以内的事（ADR 0004）。
+    // 文件里那个位宽是编码器接口以内的事（ADR 0021 决定第 6 条）。
     let space = Workspace::new();
     let volume = space.volume("volume-a");
     // 恒等通过的尺寸：不经缩放，「像素一个不动」才谈得成（页几何批 01 号票）。
@@ -1434,7 +1434,7 @@ fn the_target_size_leads_with_the_panel_height_by_default() {
 /// 以高为准让宽随源比例算出、阅读上不设上限，而目标宽 = 源宽 × 面板高 ÷ 源高：
 /// 一根长条在面板上算出的尺寸能到几亿像素，那块缓冲分配不下会**中止整趟**——
 /// 不是变成一个坏页，是整趟死掉。管线本来有隔离机制专防「一页坏内容毁掉一整卷」
-/// （`CONTEXT.md` 的《失败》），这条用例要的正是那条性质回来。
+/// （`GLOSSARY.md` 的《失败》），这条用例要的正是那条性质回来。
 ///
 /// 退回的是 fit-inside，**不是坏页**：那一页的像素是好的，退回来仍然读得了，
 /// 变成一张白页反而丢内容。
@@ -1729,7 +1729,7 @@ fn all_four_combinations_of_crop_and_fit_run_through() {
 
 /// **残缺页不裁白边**（页几何批 02 号票）。
 ///
-/// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而纸白按墨量就是白边——
+/// 它缺的那一段留成纸白（`GLOSSARY.md` 的《失败》），而纸白按墨量就是白边——
 /// 裁掉它等于把「这一页缺了一半」从产物里抹掉，报告里那个救回比例也就再对不上尺寸。
 /// 缺的那一段不是白边，是缺的那一段。
 #[test]
@@ -2111,7 +2111,7 @@ fn the_color_branch_splits_a_spread_at_the_very_same_place() {
 
 /// **残缺页不切**（页几何批 04 号票）。
 ///
-/// 它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），而一张缺了右半边的跨页按墨量看
+/// 它缺的那一段留成纸白（`GLOSSARY.md` 的《失败》），而一张缺了右半边的跨页按墨量看
 /// 就是「中缝正好在中间」——切开它等于把「这一页缺了一半」变成两张各自完整的页。
 /// 与「残缺页不裁白边」是同一句话的两半：缺的那一段不是白边，也不是中缝。
 #[test]
@@ -2242,7 +2242,7 @@ fn assert_scaling(report: &tonefit::Report, expected: [(f64, u32, f64); 5]) {
             "{name} 的残差比是 {}",
             scaling.residual_ratio()
         );
-        // 残差比恒 < 2 是 `CONTEXT.md` 的不变量，不只是这几页的巧合。
+        // 残差比恒 < 2 是 `GLOSSARY.md` 的不变量，不只是这几页的巧合。
         assert!(scaling.residual_ratio() < 2.0, "{name} 的残差比越过了 2");
     }
 }
@@ -3984,7 +3984,7 @@ fn an_override_leaves_no_volume_envelope_to_speak_of() {
 }
 
 /// **默认那条路上只点灰阶档位，一卷的门处处不成立：照样逐页判，不说「覆盖」**
-/// （one-source/02；`CONTEXT.md` 的《覆盖顶死》；ADR 0005 的《覆盖项那一档答不出来时让位》）。
+/// （one-source/02；`GLOSSARY.md` 的《覆盖顶死》；ADR 0005 的《覆盖项那一档答不出来时让位》）。
 ///
 /// 未贴合屏幕的页候选里没有抖动那一维，`--bit-depth 4` 一点名，每一页都只剩 `4bit` 一个候选——
 /// 字节与顶死无异。可这一趟开卷之前答不出顶没顶死：门成立的页若在卷里，它们还剩抖与不抖两个。

@@ -146,7 +146,7 @@ impl std::fmt::Display for Readers {
 ///
 /// # 为什么是两路
 ///
-/// 一个卷这一趟读两遍源字节，而两遍要的读法不是同一种（`CONTEXT.md` 的《I/O 与并发》）：
+/// 一个卷这一趟读两遍源字节，而两遍要的读法不是同一种（`GLOSSARY.md` 的《I/O 与并发》）：
 ///
 /// - **两遍那一路**（分析环节解码、写出环节写出）在**读取端是一个归档句柄**的卷上是一条顺序扫。
 ///   成员按顺序码在一个文件里，顺着扫最快，而读取与计算的重叠由有界通道负责
@@ -188,7 +188,7 @@ impl IoPlan {
     /// **未知按有惩罚办**（ADR 0009 决定第 3 条的「保守并发度」）：并发在机械盘上是真损失，
     /// 在别的硬盘类型上只是没赚到。归档卷的幂等那一道同吃这一条——几个句柄各解各的成员是
     /// **随机读**，机械盘上那正是要避开的东西。NAS 的最优策略尚未测量
-    /// （`CONTEXT.md` 的《尚未确立》），想要并发的用户走 `--io-mode concurrent`。
+    /// （`GLOSSARY.md` 的《尚未确立》），想要并发的用户走 `--io-mode concurrent`。
     pub(crate) fn decide(medium: Medium, mode: IoMode, reading: ReadingEnd, cores: usize) -> Self {
         let concurrent = cores.max(1);
         let (count, chosen_by) = match (mode, &medium) {

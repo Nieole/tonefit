@@ -1,5 +1,5 @@
 //! **转轮 · 横条 · 行首记号**：屏上说「这一行此刻怎么样」的那几个字形
-//! （`CONTEXT.md` 的《会话》：行首记号、语义色；spec《颜色》）。
+//! （`GLOSSARY.md` 的《会话》：行首记号、语义色；spec《颜色》）。
 //!
 //! 三样各只有一处出处：总览、卷列表那棵树、窗口太小那一屏画的是同一个转轮、同一种横条、
 //! 同一套记号——**颜色不是唯一载体**，每一处上色的地方旁边都靠这几个字形说话。
@@ -27,7 +27,7 @@ use crate::render::Notable;
 const FULL: &str = "⣿";
 const EMPTY: &str = "⣀";
 
-/// 一页**要紧在哪一处，屏上那个词**（`CONTEXT.md` 的《语义色》在页那一级分出的那几样）。
+/// 一页**要紧在哪一处，屏上那个词**（`GLOSSARY.md` 的《语义色》在页那一级分出的那几样）。
 ///
 /// **新界面的措辞只有这一处**：卷行行尾按种类报几页（[`super::list`]，数出自
 /// [`Live::notable_at`](super::super::live::Live::notable_at)）、每页结果提示那一列写
@@ -110,7 +110,7 @@ impl Mark {
     }
 }
 
-/// **一卷此刻的行首记号**（`CONTEXT.md` 的《行首记号》《卷状态》）：
+/// **一卷此刻的行首记号**（`GLOSSARY.md` 的《行首记号》《卷状态》）：
 /// `✓` 完成 · 转轮 处理中 · `?` 等待确认 · `!` 需留意 · `✗` 出错 · `-` 已跳过 ·
 /// `⋅` 等待中。`notable` 是这一卷有没有需留意的页——完成与预览过的卷靠它分 `✓` 与 `!`
 /// （预览过与完成同一套记号，两者在行尾那一句上分开，设计稿 `volMark`）。
@@ -130,7 +130,7 @@ pub(super) fn volume_mark(state: VolumeState, notable: bool, spin: &'static str)
 }
 
 /// **一个目录行或一条分区的行首记号**：底下那几卷**一行要紧在好几处时取最重的那一个**
-/// （`CONTEXT.md` 的《行首记号》），外加它自己那一档「做了一部分」。
+/// （`GLOSSARY.md` 的《行首记号》），外加它自己那一档「做了一部分」。
 ///
 /// 次序即轻重：等待确认 → 处理中 → 出错 → 需留意 → 全做完 → 做了一部分 → 等待中。
 pub(super) fn branch_mark(tally: &BranchTally, spin: &'static str) -> Mark {
@@ -214,7 +214,7 @@ pub(super) fn add_to(tally: &mut Vec<(Candidate, usize)>, candidate: Candidate, 
 }
 
 /// **灰阶分布那一格**：页多的在前，最多 `most` 笔，灰阶档位上**种类色**、`+FS` 那半截压暗
-/// （`CONTEXT.md` 的《语义色》：灰阶档位 1bit 品红 · 2bit 青 · 4bit 蓝）。
+/// （`GLOSSARY.md` 的《语义色》：灰阶档位 1bit 品红 · 2bit 青 · 4bit 蓝）。
 ///
 /// **屏上那几个字出自候选自己的写法**（`4bit`／`4bit+FS`，`Candidate` 的 `Display`），
 /// 这一层一个字都不另编：它只挑色，而挑色要的是两半分开——整串上不了两种色。
@@ -260,7 +260,7 @@ pub(super) fn dotted(parts: Vec<Segment>) -> Vec<Segment> {
 
 /// **正在处理那一段**：环节那个词 · 这一环节的横条 · 走到第几页。
 ///
-/// 总览的当前卷那一行与树上在跑的那几行摆的是同一副（`CONTEXT.md` 的《目录行 / 卷行》：
+/// 总览的当前卷那一行与树上在跑的那几行摆的是同一副（`GLOSSARY.md` 的《目录行 / 卷行》：
 /// 行尾那一句带的是**这一环节**的进度）。
 pub(super) fn pass_segments(
     pass: Option<Pass>,
@@ -290,7 +290,7 @@ pub(super) fn pass_segments(
 /// **停在确认点上的那一卷报的是分析环节走完了**（设计稿 `overviewLines` 那一支，
 /// 与场景数据记的 `pass` 逐格相同）：库那一侧的确认点就是写出那一遍那一条事件，
 /// [`Walking::pass`](super::super::live::Walking::pass) 因此已经是写出——而屏上报成
-/// 「写出 0/224」说的是一件**还没定下来、可能永远不做**的事（`CONTEXT.md` 的《等待确认》：
+/// 「写出 0/224」说的是一件**还没定下来、可能永远不做**的事（`GLOSSARY.md` 的《等待确认》：
 /// 确认点问的是「这一卷的写出环节还做不做」）。判据是[那一卷此刻怎么样](
 /// super::super::live::Live::deciding) 一处，与卷行那一格分两档走的是同一份。
 pub(super) fn at_this_pass(live: &super::super::live::Live, pages: usize) -> (Option<Pass>, usize) {

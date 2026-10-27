@@ -278,7 +278,7 @@ impl PageCache {
         self.usage
     }
 
-    /// 至此有多少张**参照**进了缓存。窄计数器（`CONTEXT.md` 的《窄计数器》），
+    /// 至此有多少张**参照**进了缓存。窄计数器（`GLOSSARY.md` 的《窄计数器》），
     /// 它与 [`CacheUsage::pages`] 的分工写在 `crate::VolumeReport::cached_references` 上。
     ///
     /// 落到这一层只剩一条**给改这个模块的人**的规矩：这个数**只数参照**。

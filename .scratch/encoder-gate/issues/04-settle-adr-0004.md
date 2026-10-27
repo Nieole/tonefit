@@ -251,3 +251,56 @@
   而 `CLAUDE.md`《文档写作》第 1 条要的是「写当前成立的事实，变更史交给 git」
 - **Whose call:** 记下即可（改一句夹具文档，归下一张碰这批夹具的票）
 - **处置：** 待处理。
+
+## 落地记录
+
+**状态：已落地（2026-10-27）**，走的是「整篇取代」那一支——而它现在的依据比票面写的更硬：
+不是「03 的数回来之后挑一支」，是**两道闸一条都过不去**，其中《落格》那一条由
+`.scratch/avif-output/probe/avif_lossless_probe.rs` 当场量出来（`rav1e` 0.8.1 不做无损，
+21 组里 17 组解回来的像素与写出去的不相等，近似无损在 1~4bit 内容上大 9~702 倍）。
+
+落地的东西：
+
+- `docs/adr/0021-png-is-the-only-output-encoder.md` 新开，取代 ADR 0004 的决定第 2、3、4 条；
+  两道闸写成决定第 2 条（元数据那一道按 Q958 的判法读作「链上现成 API 读得回」）；
+  补一条决定第 6 条，把 0004 决定第 3 条后半句（位深与抖动在编码外、调色板在编码内）接过来；
+  翻案条件写成决定第 5 条。
+- `docs/adr/0004` 状态行改成「已被取代（2026-10-27，ADR 0021）」，加修订记录块，
+  写法与 ADR 0017 同形。《不要做的「简化」》**一个字节没动**。
+> 同批还带上了 `CONTEXT.md` → `GLOSSARY.md` 的全仓改名（spec 图那一批的收尾）。
+> 因此下面凡写 `CONTEXT.md` 的地方，今天读作 `GLOSSARY.md`；`.scratch/` 里的旧票照旧用旧名。
+
+- `docs/measurements.md` 添《AVIF 无损输出：这条依赖链上做不到，而近似无损在 1~4bit 内容上大 9~702 倍》，
+  21 组全表 + 编码器版本 + 两条源码依据 + 与《编码器对比》不可并列的注。**03 号票那一格由这一节收下。**
+- `src/encode.rs` 两句、`src/request.rs` 一句、`src/specs/encoding.md` 两处、`CONTEXT.md` 的《输出》一节
+  跟着改口；`src/report.rs`、`src/pipeline.rs`、`tests/pipeline.rs`、`tests/smoke.rs` 里指 0004 的
+  调色板那几处改指 0021 决定第 6 条（0004 的决定第 3 条已被取代，指针不能留在那儿）。
+- `tests/single_source.rs` 的 `ON_GRID_SIGNPOSTED` 补上 ADR 0021 那一行（注释里预告过的那一步）。
+- 停车场 Q939、Q957、Q958、Q960 了结。
+
+**没做的事，各有理由：**
+
+- **那条常驻用例没立**（票面「03 量出 AVIF 保不住落格 → 另立一条」）。它要断的是
+  **上游库**有损编 AVIF，而本仓不再用它——与 `encoder-gate/02` 的探针为什么留在 `.scratch/`
+  同一条理由（Q956：那钉的是上游能力边界，不是本仓的行为）。
+- **Q937、Q938、Q940 没动**：它们各是夹具与 spec 里的一句话，与本票的措辞无关，
+  照旧留在《停车场结转》里等下一张碰那批夹具的票。
+- **这张票一个字节的产物没改**，黄金回归一格没动。
+
+### 数
+
+跑在本机 macOS arm64（2026-10-27）。**两条红都不是这一段改出来的**：改的只有注释与
+`tests/single_source.rs` 的一张常量表，`git diff -U0 -- src/ tests/` 里除注释外只有那张表变了；
+红的是 `tests/concurrency.rs` 的 `many_archive_volumes_never_hold_more_than_the_one_being_processed`
+——它在非 Linux 上退到 Windows 那一问，而 macOS 上开着文件照样改得动名（记成停车场 Q1389）。
+
+| | 命令 | 数 |
+|---|---|---|
+| 闸门 1 | `cargo test`（`target`） | 755 通过 1 失败；红的就是 Q1389 那一条 |
+| 闸门 2 | `cargo test --no-default-features`（`target/gate/no-default-features`） | 614 通过 1 失败；同一条 |
+| 闸门 3 | `cargo check --features profiling`（`target/gate/profiling`） | 绿 |
+| 排版 | `cargo fmt --check` | 绿 |
+| clippy | `--all-targets` / `--all-targets --no-default-features` | 各绿，零告警 |
+| 文档 | `cargo doc --no-deps` | 绿，`lib doc` 15 warnings（与基线同数） |
+
+另：`cargo test --test single_source` 12 通过。

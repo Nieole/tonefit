@@ -424,7 +424,7 @@ pub const PAPER_PATCH: u32 = 68;
 
 /// 够得着 [`OFF_GRID_PAPER_WHITE`] 那 2 级离格量的一个《提白上限》。
 ///
-/// 取 4 只因为它眼下是那个占位值（`CONTEXT.md` 的《尚未确立》）。
+/// 取 4 只因为它眼下是那个占位值（`GLOSSARY.md` 的《尚未确立》）。
 /// **这几条性质与它取多少无关**，只要大得过夹具那 2 级——标定把 4 换掉，这里不必跟着改。
 pub const ALIGNING_LIMIT: tonefit::WhiteAlignLimit = tonefit::WhiteAlignLimit::new(4);
 
@@ -802,7 +802,7 @@ pub const fn dithered(bit_depth: BitDepth) -> tonefit::Candidate {
     tonefit::Candidate::new(bit_depth, Dither::FloydSteinberg)
 }
 
-/// 基准设备：`CONTEXT.md` 里画质门槛标定的那台。不点名 profile 的用例都用它。
+/// 基准设备：`GLOSSARY.md` 里画质门槛标定的那台。不点名 profile 的用例都用它。
 pub const BASELINE_DEVICE: &str = "kobo-libra-2";
 
 /// 按型号名取 profile。型号必须在内置表里，不在就是夹具写错了。
@@ -1350,7 +1350,7 @@ pub fn relative_name(root: &Path, path: &Path) -> String {
 
 /// 一个卷的卷级判定，写成一行给人读的话。
 ///
-/// 用词取自 `CONTEXT.md`：整卷统一灰阶定出的那一档叫**统一档位**，站在分位秩上的那一页叫**代表页**，
+/// 用词取自 `GLOSSARY.md`：整卷统一灰阶定出的那一档叫**统一档位**，站在分位秩上的那一页叫**代表页**，
 /// 因迟滞升上去的那些页叫**迟滞升档**。`Envelope` 自己的 `Display` 另有一份，那一份还带着
 /// 「四者均未标定」那句注脚——快照要的是钉死的一行，注脚每趟都一样，摆进去只是噪声。
 ///
@@ -1439,7 +1439,7 @@ impl tonefit::Progress for RemoveOnceTheSurveyIsDone {
 /// 点名那一卷**刚被重开**的那一刻，抽走它里面的一个成员。
 ///
 /// 造「清点时打得开、轮到它时做不成」用它。抽走一个**透传文件**得到的是一个卷转换失败
-/// （透传文件搬不动就交不出这一卷，`CONTEXT.md` 的《失败》）；透传文件排在页之后写，
+/// （透传文件搬不动就交不出这一卷，`GLOSSARY.md` 的《失败》）；透传文件排在页之后写，
 /// 那一刻半卷已经进了临时容器，「写到一半才失败」因此也由它造。
 ///
 /// 「刚被重开」在事件流上的位置是**这一卷的第一条 `PassStarted`**：管线在 `VolumeStarted`

@@ -132,7 +132,7 @@ impl Page<'_> {
 ///
 /// **这里不先取一次全卷的整卷统一灰阶。**特例检验要的立脚点整个在 [`outlying`] 以内逐页取，
 /// 卷级聚合当不了它——那一档由全卷算出，被判的页自己也在里面
-/// （`CONTEXT.md` 的《画质分》：立脚点不含被判的这一页）。
+/// （`GLOSSARY.md` 的《画质分》：立脚点不含被判的这一页）。
 pub(crate) fn summarize(pages: &[Page], threshold: Threshold) -> Option<Summary> {
     if pages.is_empty() {
         return None;
@@ -209,10 +209,10 @@ fn by_demand(indices: &[usize], pages: &[Page]) -> Vec<usize> {
     order
 }
 
-/// 差异大的页：画质分显著偏离卷内分布的页（`CONTEXT.md`）。不参与整卷统一灰阶，单独定档
+/// 差异大的页：画质分显著偏离卷内分布的页（`GLOSSARY.md`）。不参与整卷统一灰阶，单独定档
 /// （ADR 0006 决定第 5 条）。
 ///
-/// 偏离量在**立脚点**那一档上量（`CONTEXT.md` 的《画质分》）：把被判的这一页从
+/// 偏离量在**立脚点**那一档上量（`GLOSSARY.md` 的《画质分》）：把被判的这一页从
 /// [`by_demand`] 排出的序列里抽掉，站在 [`ANCHOR_QUANTILE`] 秩上的那一页就是它。
 /// 卷内其余页过得去的那一档，差异大的页远远过不去。
 ///

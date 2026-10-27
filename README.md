@@ -117,7 +117,7 @@ tonefit calibrate --profile kobo-libra-2 --out 灰阶测试图.png
 
 | | |
 |---|---|
-| `CONTEXT.md` | 领域词汇表。类型名、模块名、报告里的说法都取自它 |
+| `GLOSSARY.md` | 领域词汇表。类型名、模块名、报告里的说法都取自它 |
 | `docs/adr/` | 每一条立得住的决定各一篇：为什么这么定、代价是什么、否掉了哪些别的走法 |
 | `docs/measurements.md` | 全部实测数字的唯一出处 |
 

@@ -1,4 +1,4 @@
-//! **场景夹具**：按设计稿导出的[场景数据](CONTEXT.md)摆出那一趟与三组设置
+//! **场景夹具**：按设计稿导出的[场景数据](GLOSSARY.md)摆出那一趟与三组设置
 //! （`session-redesign/05`；spec《夹具》）。
 //!
 //! 读 `tests/fixtures/design/scenes/<场景>.json`（或一串交互走完那一刻的
@@ -52,7 +52,7 @@ const FIXTURES: &str = "tests/fixtures/design";
 /// 场景数据的设置是一张平的表，写成 TOML 时按这三个分进 `device` 那一节，其余归 `taste`。
 const DEVICE_KEYS: [&str; 3] = ["profile", "gray-levels", "threshold"];
 
-/// 环节按走的次序（`CONTEXT.md` 的《环节》）：要摊开的卷走四个，其余的卷走后三个
+/// 环节按走的次序（`GLOSSARY.md` 的《环节》）：要摊开的卷走四个，其余的卷走后三个
 /// （[`Listed::passes`]）。场景数据里的 `pass` 是**这一卷自己那几个**里的第几个——
 /// 设计稿 `passesOf` 同一种数法。
 const PASSES: [Pass; 4] = [
@@ -183,7 +183,7 @@ pub(crate) struct Note {
     pub(crate) entries: Vec<NoteEntry>,
 }
 
-/// 备注的两种：报告末尾那两小结拆散后挂回来的那一条（`CONTEXT.md` 的《备注行》）。
+/// 备注的两种：报告末尾那两小结拆散后挂回来的那一条（`GLOSSARY.md` 的《备注行》）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub(crate) enum NoteKind {
     #[serde(rename = "unreachable")]
@@ -340,7 +340,7 @@ pub(crate) fn sequences() -> Vec<String> {
         .collect()
 }
 
-/// **交互序列**的一步（`CONTEXT.md` 的《会话》：交互序列；`manifest.json` 的 `steps`）。
+/// **交互序列**的一步（`GLOSSARY.md` 的《会话》：交互序列；`manifest.json` 的 `steps`）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Step {
     /// 按一个键，名字照清单上的写法：`j`、`Space`、`Enter`、`Escape`、`Tab`、`F1`、`C-w`、`ArrowLeft`。
@@ -810,7 +810,7 @@ fn config_of(said: &Value, views: &mut Views, presets: &Presets) {
 /// 设计稿给设置栏每一行起的名字认回一项（`design.html` 的 `CONFIG` 的 `key`）。
 ///
 /// **这张对照表只在夹具这一侧**：那几个名字是设计稿自己的，实现那一头的名字取自
-/// `CONTEXT.md`（[`Field`] 与 [`crate::render::Judging`]）。
+/// `GLOSSARY.md`（[`Field`] 与 [`crate::render::Judging`]）。
 fn item_named(key: &str) -> Option<Item> {
     let field = match key {
         "model" => Field::Profile,
@@ -1102,7 +1102,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
     session.run_started();
     let now = epoch + Duration::from_secs_f64(run.elapsed_s);
 
-    // 清点中：线程起了，开工那一条还没到——清单还是空的（`CONTEXT.md` 的《总览》：不报卷数）。
+    // 清点中：线程起了，开工那一条还没到——清单还是空的（`GLOSSARY.md` 的《总览》：不报卷数）。
     if run.stage == "surveying" {
         press_stop(session, run);
         live.tick(now);

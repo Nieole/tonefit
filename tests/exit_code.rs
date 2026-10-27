@@ -36,7 +36,7 @@ fn the_exit_code_tells_the_four_ways_a_run_can_end_apart() {
 
     // 清点时打得开、轮到它时做不成的卷（05 号票）。造它的是一个**读不出字节的透传成员**：
     // 归档结构完好，中央目录列得出它，坏的是那一个成员——只有真去读才看得出来。
-    // 透传文件没有页那条出路，搬不动就交不出这一卷（`CONTEXT.md` 的《失败》）。
+    // 透传文件没有页那条出路，搬不动就交不出这一卷（`GLOSSARY.md` 的《失败》）。
     let mut failed = space.cbz("volume-d");
     failed
         .page("001.png", &fixtures::gradient(fixtures::TINY))
@@ -123,7 +123,7 @@ fn a_broken_archive_is_refused_when_named_and_skipped_when_discovered() {
 ///
 /// 三类一次全摆上：卷架上的 txt、一页都没有的归档、发现出来但点不开的归档。
 /// 这一趟因此有一份不空的清单，而脚本那一侧看到的与全部成功一模一样——
-/// 它们既没被转，也不是「没做成」，只是不属于这一趟的产物（`CONTEXT.md` 的《失败》）。
+/// 它们既没被转，也不是「没做成」，只是不属于这一趟的产物（`GLOSSARY.md` 的《失败》）。
 ///
 /// 非在真进程上问不可：清单不空这件事在库那一侧断言得了（见 `tests/discovery.rs`），
 /// 而「四个码一格不动」只有退出码说得出，退出码只在进程那一层观察得到。
@@ -292,7 +292,7 @@ fn a_named_place_that_cannot_be_entered_is_still_refused() {
 /// 从前这一趟恒收在 `3` 上：`System Volume Information` 这一类**永远**读不动，
 /// 于是每一趟都进无法访问的地方那一栏、每一趟都把退出码从 `0` 拖走，重跑一百遍都一样。
 /// 点名一个盘根或共享根的人因此永远拿不到 `0`，而那一栏劝他做的事对这一类一件都做不了
-/// （为什么做不了，见 `CONTEXT.md` 的《自动跳过的目录 (IgnoredPlace)》）。
+/// （为什么做不了，见 `GLOSSARY.md` 的《自动跳过的目录 (IgnoredPlace)》）。
 ///
 /// 这一条在两种机器上问的不是同一件事，两边都不恒真：
 ///
