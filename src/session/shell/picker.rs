@@ -1,4 +1,4 @@
-//! 屏上那一块：**预设栏**——`p` 掀开、**替换详情栏**的那一栏（`CONTEXT.md` 的《预设栏》）。
+//! 屏上那一块：**预设栏**——`p` 掀开、**替换详情栏**的那一栏（`GLOSSARY.md` 的《预设栏》）。
 //!
 //! 列的是**进这一栏那一刻**盘上有的那几份：一份一行，行首是光标那两格与「正在用的是它」那个
 //! `✓`，接着是名字、这一份说了哪几项，正在用的那一份行尾再写一句「使用中」。
@@ -74,7 +74,7 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
     );
     let shown = area.height.saturating_sub(2);
     let lines = rows(session, inner.saturating_sub(FOLD_MARGIN), focused);
-    // 视口跟着**光标那一行**走（`CONTEXT.md` 的《视口》：滚动量是算出来的，不是记着的）
+    // 视口跟着**光标那一行**走（`GLOSSARY.md` 的《视口》：滚动量是算出来的，不是记着的）
     // ——那几份多过这一栏装得下的行数时，光标照旧在屏上。滚动条不画，与详情栏同一档。
     let viewport = Viewport::with_margin(lines.len(), usize::from(shown), config.preset_cursor);
     let from = viewport.from();
@@ -134,7 +134,7 @@ fn rows(session: &Session, fold: u16, focused: bool) -> Vec<Vec<Segment>> {
 /// 屏上一句话里提到的键一律从那里取）。
 fn asked(config: &ConfigView) -> Option<Vec<Segment>> {
     // 删与覆盖**同一副骨架**：再按一次哪个键、对哪一份做哪件事，后半句说那件事的两半
-    // ——「那一份的内容没了、撤不回来」与「文件里其余几份照旧留着」（`CONTEXT.md` 的《预设》）。
+    // ——「那一份的内容没了、撤不回来」与「文件里其余几份照旧留着」（`GLOSSARY.md` 的《预设》）。
     let (deed, what, name) = match (&config.armed_delete, &config.armed_save) {
         (Some(name), _) => (Deed::DeletePreset, "删除", name),
         (None, Some(name)) => (Deed::Confirm, "覆盖", name),

@@ -1,5 +1,5 @@
 //! **清点之后的那棵树**：卷列表由开工那一条带回来的[清点清单](tonefit::SurveyedVolume)
-//! 与这一趟勾着的[处理路径](super::state::NamedPath)拼出来的形状（`CONTEXT.md` 的《会话》：
+//! 与这一趟勾着的[处理路径](super::state::NamedPath)拼出来的形状（`GLOSSARY.md` 的《会话》：
 //! 卷列表、分区、目录行 / 卷行、备注行、展开；ADR 0019 决定第 2 条；spec《卷列表》清点之后）。
 //!
 //! # 拼法
@@ -44,7 +44,7 @@ pub struct Directory {
     pub volumes: Vec<usize>,
 }
 
-/// **备注的两种**（`CONTEXT.md` 的《备注行》：报告末尾那两小结拆散后挂回来的那一条）。
+/// **备注的两种**（`GLOSSARY.md` 的《备注行》：报告末尾那两小结拆散后挂回来的那一条）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKind {
     /// 无法访问的地方，一处一行（`✗`）。
@@ -78,7 +78,7 @@ pub struct Note {
     pub said: Vec<(PathBuf, String)>,
 }
 
-/// 树顶层的一项是哪一种（`CONTEXT.md` 的《分区》：顶层只有分区与顶格目录行两种）。
+/// 树顶层的一项是哪一种（`GLOSSARY.md` 的《分区》：顶层只有分区与顶格目录行两种）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shape {
     /// **分区**：一条处理路径展开成两个及以上目录。光标停不上，也不折叠。
@@ -147,7 +147,7 @@ pub struct Tree {
     homes: Vec<Option<(usize, usize)>>,
 }
 
-/// 树上的一行（`CONTEXT.md` 的《目录行 / 卷行》《备注行》）。
+/// 树上的一行（`GLOSSARY.md` 的《目录行 / 卷行》《备注行》）。
 ///
 /// **缩进以两格为一级**：分区底下的目录行缩一级，卷行再缩一级；顶格目录行不缩。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,7 +325,7 @@ impl Tree {
 
     /// 光标记着的那条备注在树上是第几个节点的第几条。
     ///
-    /// 掀说明卡那一下要它：光标记的是[那一条备注的身份](Note::at)（`CONTEXT.md` 的
+    /// 掀说明卡那一下要它：光标记的是[那一条备注的身份](Note::at)（`GLOSSARY.md` 的
     /// 《卷列表》：光标记的是行的身份），而那张卡记的是树上的位置——树一趟只拼一次，
     /// 掀着的这一会儿它一格不动。
     pub fn locate_note(&self, at: &Path) -> Option<(usize, usize)> {
@@ -352,7 +352,7 @@ impl Tree {
     }
 
     /// **全部目录都摊开**那一副的行：**跳转按这一副数次序**
-    /// （`CONTEXT.md` 的《卷列表》：收着的目录自动展开到那一卷）。
+    /// （`GLOSSARY.md` 的《卷列表》：收着的目录自动展开到那一卷）。
     ///
     /// 收着的目录里那几卷照样是落点——跳过去才把那个目录展开，
     /// 而「下一个」指的是**树上**的下一个，不是「屏上此刻摆着的那几行里的下一个」：
@@ -361,7 +361,7 @@ impl Tree {
         self.rows(&self.every_directory())
     }
 
-    /// 这一行**拿哪一截字给搜索比**（`CONTEXT.md` 的《卷列表》：`/` 搜卷名或目录名）：
+    /// 这一行**拿哪一截字给搜索比**（`GLOSSARY.md` 的《卷列表》：`/` 搜卷名或目录名）：
     /// 目录行是它的名字，卷行是「目录名/卷名」，备注行是名头加「是哪几处」。
     /// 分区标题、空行与末行那一句不参与，答 `None`。
     ///
@@ -391,7 +391,7 @@ impl Tree {
         self.index.get(root).copied()
     }
 
-    /// 这一卷归哪一条**分区**——每页结果的面包屑上那一截（`CONTEXT.md` 的《分区》）。
+    /// 这一卷归哪一条**分区**——每页结果的面包屑上那一截（`GLOSSARY.md` 的《分区》）。
     ///
     /// **顶格目录行底下的卷没有分区**：那一行本身就是顶层，面包屑上因此少一截
     /// （设计稿 `drawPages` 的 `crumbs` 那一支）。
@@ -415,7 +415,7 @@ impl Tree {
 }
 
 impl Row {
-    /// 这一行停得住的话，它的**身份**（`CONTEXT.md` 的《停得住 / 展得开》：
+    /// 这一行停得住的话，它的**身份**（`GLOSSARY.md` 的《停得住 / 展得开》：
     /// 分区标题、空行与末行那一句停不上）。
     pub fn stop(&self, tree: &Tree) -> Option<Cursor> {
         match self {

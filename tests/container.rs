@@ -1498,7 +1498,7 @@ fn aborting_while_a_volume_is_extracted_stops_before_the_whole_volume_is_out() {
 /// 看着像挂死了。步记在哪个环节名下那一半由 `tests/events.rs` 按个数钉着。
 ///
 /// 第二问同样非问不可：多报一段步而预告没跟着长，进度条就会冲过头，
-/// 而「预告的步数是**上界**」是 `CONTEXT.md` 的《进度》立的规矩。
+/// 而「预告的步数是**上界**」是 `GLOSSARY.md` 的《进度》立的规矩。
 /// 比的是这一卷真走过的步与开卷那条事件预告的那个数，两个数都从事件流上取。
 #[test]
 fn extracting_a_volume_reports_steps_under_its_own_pass() {

@@ -433,7 +433,7 @@ fn a_preview_on_the_envelope_path_says_nothing_about_the_output_and_the_conversi
 /// **dry-run 两条路上都说不出**（say-and-stop/06，停车场 Q1257）：那一趟一页都不编
 /// （ADR 0005《覆盖顶死的那一趟不必等到第二遍》里预览那一条：没有写出环节，编出来的字节一个读者都没有），
 /// 默认那条路也不例外——白捡的只是转换那一趟与确认点上的预览。彩页同样不编
-/// （`CONTEXT.md` 的《灰度路径 / 彩色分支》），透传文件那几个字节凑不成一卷的数。
+/// （`GLOSSARY.md` 的《灰度路径 / 彩色分支》），透传文件那几个字节凑不成一卷的数。
 #[test]
 fn a_dry_run_says_nothing_about_the_output_on_either_path() {
     for envelope in [false, true] {
@@ -481,7 +481,7 @@ fn a_preview_with_a_failed_page_cannot_say_its_output_until_the_placeholder_is_d
 fn a_volume_skipped_by_page_counts_its_retained_pages() {
     let space = Workspace::new();
     let volume = small_volume(&space, "volume-a");
-    // 按页跳过只在默认那条路上有（`CONTEXT.md` 的《按页跳过》）。
+    // 按页跳过只在默认那条路上有（`GLOSSARY.md` 的《按页跳过》）。
     let request = Request {
         envelope: false,
         ..fixtures::request(&space, [volume.path()])

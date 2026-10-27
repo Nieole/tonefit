@@ -65,9 +65,9 @@ pub fn enter() -> Result<u8> {
     }
     let mut screen = Screen::open()?;
     let mut session = Session::new();
-    // 家目录问一次、摆在会话上往下传（`CONTEXT.md` 的《会话》：家目录）：屏上把它缩写成 `~`。
+    // 家目录问一次、摆在会话上往下传（`GLOSSARY.md` 的《会话》：家目录）：屏上把它缩写成 `~`。
     session.home = Home::found();
-    // 会话的时钟起点：屏上那个转轮转到第几格从它算起（`CONTEXT.md` 的《会话》：此刻）。
+    // 会话的时钟起点：屏上那个转轮转到第几格从它算起（`GLOSSARY.md` 的《会话》：此刻）。
     session.views.clock = Some(Instant::now());
     // 跑着的那一趟**一定**要收手：`?` 提前返回、恐慌展开，走的都是 `Running` 的 `Drop`。
     // 终端同理，走 `Screen` 的 `Drop`。
@@ -157,7 +157,7 @@ fn one_turn<B: Backend<Error = std::io::Error>>(
     pending: Vec<Input>,
 ) -> Result<Exit> {
     // **这一转的「此刻」**：单调时钟一转读一次，会话里要时刻的地方都读它
-    // （`CONTEXT.md` 的《会话》：此刻；`session-redesign/04`）——屏上那几个数、
+    // （`GLOSSARY.md` 的《会话》：此刻；`session-redesign/04`）——屏上那几个数、
     // 屏底那句回话到没到点、连击键的待续记号，出自同一个时刻。
     let now = Instant::now();
     for step in turn(pending) {
@@ -293,7 +293,7 @@ pub(super) fn input(
         // 与按停止同一条分工——认键在那边，碰线程在这边；而「哪一件答哪个字」在
         // [`Deed::answer`] 一处。
         //
-        // **它不进闩**：按停止按到的那一级一格不动（`CONTEXT.md` 的《等待确认》），
+        // **它不进闩**：按停止按到的那一级一格不动（`GLOSSARY.md` 的《等待确认》），
         // 因此这里不调 `running.stop`。「后面的卷都写出」进的是观察者那一侧的
         // 「确认点的默认答案」，那一格在 [`Running::decide`] 里。
         Deed::Write | Deed::WriteAll | Deed::End => {
@@ -356,7 +356,7 @@ pub(super) fn input(
             Exit::Stay
         }
         // **卷行上按展开**（卷行上 `l` 与 `⏎` 做的事相同）：展不展得开要问那一趟这一卷此刻
-        // 怎么样，而状态机读不到它（`CONTEXT.md` 的《停得住 / 展得开》）——展得开的换屏进
+        // 怎么样，而状态机读不到它（`GLOSSARY.md` 的《停得住 / 展得开》）——展得开的换屏进
         // 每页结果，展不开的屏底说一句为什么。
         Deed::Open | Deed::Toggle if matches!(session.views.task.cursor, Cursor::Volume(_)) => {
             open_a_volume(session, running, now);
@@ -405,7 +405,7 @@ fn begin(session: &mut Session, running: &mut Running, mode: RunMode, now: Insta
     }
 }
 
-/// **等待确认时 `v` 换屏进每页结果**（`CONTEXT.md` 的《等待确认》：`v` 进这一卷的每页结果，
+/// **等待确认时 `v` 换屏进每页结果**（`GLOSSARY.md` 的《等待确认》：`v` 进这一卷的每页结果，
 /// `h` 回来再答）。
 ///
 /// 进的是**确认点上那一卷**——不是光标停着的那一行（那一下是 `l`，走 [`open_a_volume`]）：
@@ -424,7 +424,7 @@ fn view_the_pages(session: &mut Session, running: &Running) {
 }
 
 /// 卷行上按下展开：**展得开的只有收摊了的那几卷（跳过的也算）与确认点上那一份**；
-/// 其余停得住、展不开，屏底说一句为什么（`CONTEXT.md` 的《停得住 / 展得开》）。
+/// 其余停得住、展不开，屏底说一句为什么（`GLOSSARY.md` 的《停得住 / 展得开》）。
 fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
     let Cursor::Volume(root) = session.views.task.cursor.clone() else {
         return;
@@ -435,7 +435,7 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
     // 屏上自己就说清了这一下做成了什么。展不展得开的判据在
     // [`VolumeState::opens_the_pages`] 一处，屏底摆不摆 `l` 读的是同一份。
     //
-    // **跳过的卷也进得来**（`CONTEXT.md` 的《停得住 / 展得开》），只是它一页结果都没有
+    // **跳过的卷也进得来**（`GLOSSARY.md` 的《停得住 / 展得开》），只是它一页结果都没有
     // ——那一屏里说一句它跳过了（`super::shell::pages`）。
     if state.opens_the_pages() {
         session.views.task.pages = Some(Pages::of(root));
@@ -483,7 +483,7 @@ fn open_a_volume(session: &mut Session, running: &Running, now: Instant) {
 // （停车场 Q74）。
 
 /// **`p`：掀开或收起预设栏。** 掀开那一下把盘上有的那几份连同它们的内容读进来
-/// （`CONTEXT.md` 的《预设栏》：列的是**进这一栏那一刻**盘上有的几份），
+/// （`GLOSSARY.md` 的《预设栏》：列的是**进这一栏那一刻**盘上有的几份），
 /// 收起那一下一个字节都不碰盘。
 ///
 /// **读得出名字就够开这一栏**：一份字段过时的预设不该让别的几份列不出来
@@ -533,7 +533,7 @@ fn erase_a_preset(session: &mut Session, presets: &Presets, now: Instant) {
 ///
 /// **第一下盖不掉同名的那一份**：[`Presets::save`] 撞上就是 [`Saved::Taken`]，
 /// **预设栏里问一句**、输入行留着（名字还在缓冲里等着改），再按一次 `⏎` 才走
-/// [`Presets::replace`]（`CONTEXT.md` 的《预设》那一段：盖掉一份同名的要按两下）。
+/// [`Presets::replace`]（`GLOSSARY.md` 的《预设》那一段：盖掉一份同名的要按两下）。
 /// **那一问摆在栏里、不摆在屏底**：这一刻屏底整个让给了输入行（`shell::footer`），
 /// 说给屏底等于一个字都没说。
 /// **撞名的判断落在盘那一侧**，不落在掀开这一栏时列的那份名单上：名单是进来那一刻的快照。
@@ -1190,7 +1190,7 @@ mod redesign {
     }
 
     /// **`h` 在卷行上收起它那个目录、光标跟着停到目录行上，`l`／`⏎` 再展开**
-    /// （`CONTEXT.md` 的《展开》）：三串走完与期望屏逐格相等，屏底那一件跟着光标那一行
+    /// （`GLOSSARY.md` 的《展开》）：三串走完与期望屏逐格相等，屏底那一件跟着光标那一行
     /// 从 `l → 每页结果` 换成 `l → 展开`。
     #[test]
     fn h_collapses_the_directory_of_the_volume_and_l_opens_it_again() {
@@ -1203,7 +1203,7 @@ mod redesign {
         assert_sequence("ended-h-Enter");
     }
 
-    /// **目录行上的 `⏎` 是开关，`l` 只展开**（`design-parity/05`；`CONTEXT.md` 的《展开》：
+    /// **目录行上的 `⏎` 是开关，`l` 只展开**（`design-parity/05`；`GLOSSARY.md` 的《展开》：
     /// 展开着时再按 `⏎` 收起）：`ended-h-Enter-Enter` 走完与期望屏逐格相等（那一行变回 `▸`）。
     /// `l` 那一边没有一串设计稿钉着第二下：在 `ended-h-l` 走完那一刻经同一个入口再按一次 `l`，
     /// 整屏仍与 `ended-h-l` 那一屏逐格相同。
@@ -1224,7 +1224,7 @@ mod redesign {
     }
 
     /// **没做成的那一卷停得住、展不开**：屏底说的是**它行尾那句原因**
-    /// （票面第二条那一句「转换失败的卷…行尾是那句原因」；`CONTEXT.md` 的
+    /// （票面第二条那一句「转换失败的卷…行尾是那句原因」；`GLOSSARY.md` 的
     /// 《停得住 / 展得开》：「没做成的那一句就是它行尾的原因」）。
     #[test]
     fn a_failed_volume_says_the_reason_from_its_own_row() {
@@ -1298,7 +1298,7 @@ mod redesign {
         );
     }
 
-    /// **跳过的卷进得来，只说一句它跳过了**（票面第五条末一句；`CONTEXT.md` 的
+    /// **跳过的卷进得来，只说一句它跳过了**（票面第五条末一句；`GLOSSARY.md` 的
     /// 《停得住 / 展得开》：跳过的也算）：它这一趟一页都没重新分析，那一屏里
     /// 连灰阶分布与列头都没有——给的是一句话，不是一张空表。
     #[test]
@@ -1402,7 +1402,7 @@ mod redesign {
     /// - 第二趟：头一卷按 `a` → 一路做完，**一次都不再问**。盘上两卷都有。
     ///
     /// **按停止按到的那一级自始至终一格不动**（票面第三条末一句；
-    /// `CONTEXT.md` 的《等待确认》：这里的 `s` 不是按停止）。
+    /// `GLOSSARY.md` 的《等待确认》：这里的 `s` 不是按停止）。
     ///
     /// 不开终端：[`super::input`] 收的是 `&mut Session` 与 `&mut Running`。
     #[test]
@@ -1505,7 +1505,7 @@ mod redesign {
 
     /// **整卷统一灰阶那一趟停在确认点上按 `v`**（`design-parity/08`，停车场 Q902）：每页结果抬头
     /// 「需留意 N/M 页」与确认条上「需留意的页」报的是同一个数，代表页都数进去
-    /// （`CONTEXT.md` 的《需留意的页》）——两块同在一屏上，比整屏。
+    /// （`GLOSSARY.md` 的《需留意的页》）——两块同在一屏上，比整屏。
     #[test]
     fn at_an_envelope_point_the_pages_and_the_decision_bar_count_the_same_notable_pages() {
         let scene = assert_sequence("envelope-deciding-v");
@@ -1542,7 +1542,7 @@ mod redesign {
 
     /// **`a` 写出、后面的卷不再询问**（票面第二条、第三条）：同一个字，管的是后面每一卷
     /// （[`Reach::ForTheRest`]）。**按停止按到的那一级一格不动**——那一格答的是另一问
-    /// （`CONTEXT.md` 的《等待确认》：这里的 `s` 不是按停止），会话与那一趟两头都没动它。
+    /// （`GLOSSARY.md` 的《等待确认》：这里的 `s` 不是按停止），会话与那一趟两头都没动它。
     #[test]
     fn a_answers_for_the_rest_and_leaves_the_stop_latch_alone() {
         let (scene, running, _) = walked("deciding-a");
@@ -1663,7 +1663,7 @@ mod redesign {
         assert_sequence("deciding-a-advance");
     }
 
-    /// **等待确认时 `2` 切到配置视图**（`CONTEXT.md` 的《视图》：人在配置视图时顶栏右端
+    /// **等待确认时 `2` 切到配置视图**（`GLOSSARY.md` 的《视图》：人在配置视图时顶栏右端
     /// 另带着「等待确认」）：确认条不跟过去——它是任务视图那一屏上的一块，
     /// 而那一问由顶栏右端那一枚说。三组设置此刻仍旧只读、看得见、进得去。
     #[test]
@@ -1909,7 +1909,7 @@ mod redesign {
     /// **搜索那一行上 `Esc` 连那一句一起丢**（票面第三条）：屏底换回按键提示、
     /// 框底边左起那一截没了、一条下划线都不剩。
     ///
-    /// **`⏎` 之后再 `Esc` 丢的只有那一句**（`CONTEXT.md` 的《退出会话》：`Esc` 只退一级）：
+    /// **`⏎` 之后再 `Esc` 丢的只有那一句**（`GLOSSARY.md` 的《退出会话》：`Esc` 只退一级）：
     /// 光标停在刚跳到的那一行上不动，屏底那句「搜索结果 1/1」还在。
     #[test]
     fn escape_drops_the_search_and_its_underlines() {
@@ -1973,7 +1973,7 @@ mod redesign {
     }
 
     /// **全部按键那一张掀着时 `g` `t` 不在它底下换视图**（`design-parity/08`，停车场 Q793）：
-    /// 覆盖层上的连击键只认 `gg`（`CONTEXT.md` 的《覆盖层》：除了按停止与答话别的键一律不派）——
+    /// 覆盖层上的连击键只认 `gg`（`GLOSSARY.md` 的《覆盖层》：除了按停止与答话别的键一律不派）——
     /// `g` 待着、`t` 合不上就丢掉。关掉那一张时回到的还是原来那一屏。
     #[test]
     fn g_t_under_the_key_sheet_does_not_switch_the_view() {
@@ -1986,7 +1986,7 @@ mod redesign {
     }
 
     /// **还在处理与还没轮到的卷停得住、展不开**：按下去不换屏，屏底说为什么
-    /// （`CONTEXT.md` 的《停得住 / 展得开》）。
+    /// （`GLOSSARY.md` 的《停得住 / 展得开》）。
     #[test]
     fn a_volume_still_in_flight_or_still_queued_says_why_it_cannot_be_opened() {
         assert_sequence("running-vol-l");

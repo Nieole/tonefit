@@ -21,7 +21,7 @@
 //! # 摊到哪一级由一个开关定（`p4-parking-lot/22`）
 //!
 //! [`ReportFold`]，命令行上的 `--brief`。两副的分别、默认为什么是不折、
-//! 以及它为什么不改产物，**一处答完**：`CONTEXT.md` 的《报告折叠》。
+//! 以及它为什么不改产物，**一处答完**：`GLOSSARY.md` 的《报告折叠》。
 //! 这一层只落两件事——[哪一副摆哪几行](report)，以及**会话那一副与它无关**
 //! （会话默认只给目录那一级、按 `⏎` 往下摊，那是《展开》那个状态）。
 //!
@@ -57,7 +57,7 @@ use super::{Field, Listed, Row, RowKind};
 
 /// 命令行印出去的报告**摊到哪一级**（`p4-parking-lot/22`，收停车场 Q171）。
 ///
-/// 两副各是什么、默认为什么取不折、它为什么不进 `Request`：`CONTEXT.md` 的《报告折叠》。
+/// 两副各是什么、默认为什么取不折、它为什么不进 `Request`：`GLOSSARY.md` 的《报告折叠》。
 /// 命令行上挑它的是 `--brief`（见 `crate::Cli` 上那一项的帮助）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportFold {
@@ -100,7 +100,7 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
     text
 }
 
-/// **退出时那一份**：退出会话在 stdout 上留下的那一段（`CONTEXT.md` 的《退出时那一份》）。
+/// **退出时那一份**：退出会话在 stdout 上留下的那一段（`GLOSSARY.md` 的《退出时那一份》）。
 ///
 /// `attempt` 是最后那一趟攒下来的报告。那一趟**做成了**（`why_undone` 是 `None`）就只有它——
 /// `earlier` 这时不印：最后那一趟做成了，它就是这一份（《退出时那一份》）。
@@ -116,7 +116,7 @@ pub fn report(report: &Report, mode: Mode, fold: ReportFold) -> String {
 /// **整份过一遍 [`crate::wrap::printed`]**（`design-parity/11`，收停车场 Q584）：报告抬头那几句
 /// 互锁与没做成的那句话都劝人换一条命令（`--fit height`、`--dither fs`），记号里那个空格带着
 /// [不许断的标注](tonefit::HARD_SPACE)——标注是给折行看的，不是印出去的东西
-/// （`CONTEXT.md` 的**字形约定**：印出去之前换回普通空格）。命令行那一路过的是同一个纯函数。
+/// （`GLOSSARY.md` 的**字形约定**：印出去之前换回普通空格）。命令行那一路过的是同一个纯函数。
 /// **这一路不折行**：stdout 可能是一个文件，折到多宽另有一笔账。
 ///
 /// **唯一的读者是会话**（`crate::session::run::Running::report`），而会话整个挂在 `tui`

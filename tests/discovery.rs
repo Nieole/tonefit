@@ -287,7 +287,7 @@ fn every_file_no_volume_took_is_listed_with_a_reason_of_its_own() {
             "库/答案.txt · 既不是页也不是归档",
         ]
     );
-    // 清单不为空，而这一趟一卷都没失败：非漫画文件不是失败（`CONTEXT.md` 的《失败》）。
+    // 清单不为空，而这一趟一卷都没失败：非漫画文件不是失败（`GLOSSARY.md` 的《失败》）。
     assert!(report.failed_volumes.is_empty(), "非漫画文件被记成了失败");
     assert_eq!(report.volumes.len(), 3, "封面与两话没各自成卷");
     // 输出树里**只有产物**：清单上那三个一个字节都没有，而卷内的透传文件照旧在。

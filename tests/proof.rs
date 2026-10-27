@@ -1,4 +1,4 @@
-//! 样张（`CONTEXT.md` 的《样张》），在库的第四个 seam——[`tonefit::write_proof`]——上测。
+//! 样张（`GLOSSARY.md` 的《样张》），在库的第四个 seam——[`tonefit::write_proof`]——上测。
 //!
 //! 只断言**外部看得见的事实**：交出来的数据、落到盘上的文件有什么性质、源文件有没有被动过。
 //! 不断内部怎么走——与 `tests/pipeline.rs` 的模块文档同一句话（spec《Testing Decisions》）。
@@ -305,7 +305,7 @@ fn the_verdict_sheet_follows_a_non_default_fit_and_filter_byte_for_byte() {
 }
 
 /// **两道覆盖项把判定顶死，却不裁样张的候选集**（样张 spec《Implementation Decisions》第三条；
-/// `CONTEXT.md` 的《覆盖顶死》）。
+/// `GLOSSARY.md` 的《覆盖顶死》）。
 ///
 /// `--bit-depth` 与 `--dither` 两维都点名：转换那一趟的候选集裁到只剩一个，判定被顶掉、理由是覆盖。
 /// 样张照出整套——覆盖项裁掉的是「这一趟不要」，不是「这一页不可能」，而样张存在的理由正是并排看——
@@ -378,7 +378,7 @@ fn an_override_pins_the_verdict_and_leaves_every_candidate_on_the_sheets() {
 /// **只点一维覆盖项时判定没被顶死**：它只收窄判定从哪几个里挑，样张照旧出整套。
 ///
 /// `--bit-depth` 单点一维、门成立时，转换那一趟的候选集剩下那一档的抖动与不抖两个——
-/// 画质分照旧说了算，理由是判出来的那一种，不是覆盖（`CONTEXT.md` 的《覆盖顶死》：
+/// 画质分照旧说了算，理由是判出来的那一种，不是覆盖（`GLOSSARY.md` 的《覆盖顶死》：
 /// 顶死说的是**裁到只剩一个**）。把「点了覆盖项」读成「判定被顶死」，这一条就红。
 ///
 /// 点名的那一档取**整套判下来不会落到**的那一档（夹具的前提，另出一叠先断言）：
@@ -514,7 +514,7 @@ fn the_reference_sheet_is_eight_bit_gray_and_was_never_quantized() {
 }
 
 /// 每一张候选图**落格**：解回来的取值都在它那一档的格点上
-/// （**《落格》，见 `CONTEXT.md` 的《量化》**）。
+/// （**《落格》，见 `GLOSSARY.md` 的《量化》**）。
 ///
 /// 与 `tests/pipeline.rs` 那道闸问的是同一个性质的**另一半**：那一批问 `run` 写出的页，
 /// 这一条问样张（spec《Testing Decisions》第二条）。格点不在这里现算——
@@ -804,7 +804,7 @@ fn with_splitting_off_a_spread_gets_one_proof_page() {
 }
 
 /// **找不到中缝的连续跨页出一叠**，而交出来的数据说得出它**没被切开**：它够得上跨页候选
-/// （不是没判成候选），挡下它的是「没有沟」那一关（`CONTEXT.md` 的《连续跨页》）。
+/// （不是没判成候选），挡下它的是「没有沟」那一关（`GLOSSARY.md` 的《连续跨页》）。
 ///
 /// 两格一起问：候选那一格为真、切口那一格为空。只问后一格，一张够不上候选的普通页也答得一样。
 #[test]
@@ -924,7 +924,7 @@ fn both_halves_of_a_spread_are_byte_for_byte_what_run_writes_without_metadata() 
 }
 
 /// **两半的门分了家、只点灰阶档位时，「顶死没有」照转换那一趟问——不拿某一块剩下几个候选去问**
-/// （停车场 Q1014；`CONTEXT.md` 的《覆盖顶死》）。
+/// （停车场 Q1014；`GLOSSARY.md` 的《覆盖顶死》）。
 ///
 /// `--fit inside` 上 [`lopsided_spread`] 的左半贴不住面板（门不成立，候选里没有抖动那一维），
 /// 右半贴得住。只点 `--bit-depth` 一维：左半那一套只剩一个候选，右半那一套还剩抖与不抖两个。
@@ -979,7 +979,7 @@ fn a_single_override_on_a_spread_whose_halves_part_at_the_gate_is_judged_as_run_
 }
 
 /// **一张门不成立的图只点灰阶档位：候选只剩一个，判定照转换那一趟逐页判，不说被顶死**
-/// （one-source/02；`CONTEXT.md` 的《覆盖顶死》）。
+/// （one-source/02；`GLOSSARY.md` 的《覆盖顶死》）。
 ///
 /// 页比面板小、fit-inside 不放大（[`SMALL`]）：门不成立，候选里没有抖动那一维，`--bit-depth 2`
 /// 一点名就只剩 `2bit` 一个。默认那条路上顶死只认开卷之前答得出的那一种，这一角答不出——
@@ -1445,7 +1445,7 @@ fn a_file_run_passes_through_is_refused_with_the_sentence_that_a_proof_takes_one
 /// **点了一张解不开的图，当场一句话说它解不开，去处里一个文件都没有**（spec 的 story 24）——
 /// 去处本来不在的话，连一个空目录都不留：用户不必去翻一个空目录猜。
 ///
-/// 「解不开」照转换那一趟认：就是那一趟的**坏页**（`CONTEXT.md` 的《失败》）。神谕那一侧先问实：
+/// 「解不开」照转换那一趟认：就是那一趟的**坏页**（`GLOSSARY.md` 的《失败》）。神谕那一侧先问实：
 /// 三种夹具在 `run` 里都是坏页——尺寸都解不出来的、尺寸解得出来而缓冲分配不下的、
 /// 救回却一个像素都没解出来的。**残缺页不在里面**：它救回到了像素，那一趟照常写出，
 /// 样张也照出（界画宽了，残缺页就被说成解不开）。

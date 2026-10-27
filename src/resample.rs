@@ -16,7 +16,7 @@ use crate::color::ColorImage;
 use crate::geometry::Size;
 use crate::gray::GrayImage;
 
-/// 总缩放比到这个值才触发预缩：低于它，整数倍预缩无处可缩（`CONTEXT.md`）。
+/// 总缩放比到这个值才触发预缩：低于它，整数倍预缩无处可缩（`GLOSSARY.md`）。
 const PRESCALE_THRESHOLD: f64 = 2.0;
 
 /// 残差段的重采样缩放算法。
@@ -131,7 +131,7 @@ impl Scaling {
         }
     }
 
-    /// 总缩放比：源页高 ÷ 目标高（`CONTEXT.md`）。
+    /// 总缩放比：源页高 ÷ 目标高（`GLOSSARY.md`）。
     pub fn total_ratio(self) -> f64 {
         self.ratio
     }
@@ -141,7 +141,7 @@ impl Scaling {
         self.prescale
     }
 
-    /// 残差比：预缩之后剩下的非整数段，恒 < 2（`CONTEXT.md`）。
+    /// 残差比：预缩之后剩下的非整数段，恒 < 2（`GLOSSARY.md`）。
     pub fn residual_ratio(self) -> f64 {
         self.residual
     }
@@ -361,7 +361,7 @@ mod tests {
         }
     }
 
-    /// 不变量（`CONTEXT.md`）：残差比恒 < 2，且预缩绝不缩过头——预缩之后仍不小于目标。
+    /// 不变量（`GLOSSARY.md`）：残差比恒 < 2，且预缩绝不缩过头——预缩之后仍不小于目标。
     ///
     /// 扫的是真实几何算出来的目标尺寸，不是编出来的比值：取整发生在缩放方式那一层，
     /// 这条不变量必须在取整之后仍然成立。**两种缩放方式各扫一遍**（页几何批 01 号票）——

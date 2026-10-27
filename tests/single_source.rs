@@ -31,11 +31,11 @@ const REFUSAL_MARKS: [&str; 5] = [
 ];
 
 /// 那张单子的家，相对仓库根。
-const REFUSAL_HOME: &str = "CONTEXT.md";
+const REFUSAL_HOME: &str = "GLOSSARY.md";
 
 /// 从前抄着单子的那五处，如今留的是这句路标——引用的是**小节标题**而不是行号，
 /// 那五个文件怎么改都不使引用失效（`CLAUDE.md`《文档写作》第 5 条：稳定引用）。
-const REFUSAL_SIGNPOST: &str = "`CONTEXT.md` 的《失败》";
+const REFUSAL_SIGNPOST: &str = "`GLOSSARY.md` 的《失败》";
 
 /// 那五处摊在这四个文件里，跟着的是**那句路标在这个文件里至少出现几次**。
 ///
@@ -186,7 +186,7 @@ const ON_GRID_MARKS: [&str; 3] = [
 ];
 
 /// 那条不变量的家，相对仓库根。
-const ON_GRID_HOME: &str = "CONTEXT.md";
+const ON_GRID_HOME: &str = "GLOSSARY.md";
 
 /// 家里真住着的那三句：**哪几种页不在这条不变量里，各自凭什么**。
 ///
@@ -201,21 +201,22 @@ const ON_GRID_HOME_MARKS: [&str; 3] = [
 
 /// 指回来的那句路标——**term 与它的家一并写着**，因此换了小节标题会变红，
 /// 而词条在文件里挪位置不会（`CLAUDE.md`《文档写作》第 5 条：稳定引用）。
-const ON_GRID_SIGNPOST: &str = "《落格》，见 `CONTEXT.md` 的《量化》";
+const ON_GRID_SIGNPOST: &str = "《落格》，见 `GLOSSARY.md` 的《量化》";
 
 /// 指回来的那句路标在哪几个文件里，跟着的是**至少出现几次**（下界取实数，
 /// 与 [`TRUNCATION_USED`] 同一条：多一句指路不该变红，少一句必须变红）。
 ///
-/// 两处：ADR 0009 的《不要做的「简化」》把《落格》列成第二个编码器要过的另一道闸；
+/// 三处：ADR 0009 的《不要做的「简化」》把《落格》列成第二个编码器要过的另一道闸；
+/// ADR 0021 把两道闸写进决定（《落格》那道与页内元数据载体那道）；
 /// `tests/pipeline.rs` 那道闸自己**只指过去、不复述词条**，四句路标各在一处
-/// （枚举、逐页那一问，加两条用例的抬头）。`encoder-gate/04` 处置 ADR 0004 之后
-/// 那一篇也会指回来，届时这张表跟着加一行。
+/// （枚举、逐页那一问，加两条用例的抬头）。
 ///
 /// **`tests/` 在这张表里，而不在[被扫的那几处](delivered)**：那一批扫的是
 /// 「别处有没有抄第二份」，用例不在其中（这一支自己就攥着记号）；这张表问的是
 /// 「指回来的那句话还在不在」，按文件路径问得着任何一个文件。
-const ON_GRID_SIGNPOSTED: [(&str, usize); 2] = [
+const ON_GRID_SIGNPOSTED: [(&str, usize); 3] = [
     ("docs/adr/0009-scope-is-a-named-subset.md", 1),
+    ("docs/adr/0021-png-is-the-only-output-encoder.md", 1),
     ("tests/pipeline.rs", 4),
 ];
 
@@ -224,7 +225,7 @@ const ON_GRID_SIGNPOSTED: [(&str, usize); 2] = [
 /// 三截各挑一截：抬头（带着那个占位符——**把这一句现拼出来**才写得出它，与
 /// [`TRUNCATION_MARKS`] 同一条道理）、分组那一截、兜底办法那一截。抄件少抄哪一截都还剩另外两截。
 ///
-/// **「未知型号」那四个字当不了记号**：`preset.rs`、会话那几处、`CONTEXT.md` 的《下钻》说的都是
+/// **「未知型号」那四个字当不了记号**：`preset.rs`、会话那几处、`GLOSSARY.md` 的《下钻》说的都是
 /// 「与未知型号那条错误同一份」——那是**指着它**，不是又写了一份。
 const DEVICE_REFUSAL_MARKS: [&str; 3] = [
     "未知型号「{",
@@ -245,7 +246,7 @@ const DEVICE_REFUSAL_HOME: &str = "src/profile.rs";
 /// 那是另一件事，只挑函数名会把它也判成抄件。
 const CASE_PROBE_MARKS: [&str; 2] = ["fn flipped(name: &str)", "fn one_other_case("];
 
-/// 那个探法的家，相对仓库根：库里「同一处」那一把尺子（`CONTEXT.md` 的《同一处》）。
+/// 那个探法的家，相对仓库根：库里「同一处」那一把尺子（`GLOSSARY.md` 的《同一处》）。
 const CASE_PROBE_HOME: &str = "src/place.rs";
 
 /// 调它的那几处，各在哪个文件里怎么调。问的是**调用的形状**（带着左括号），指路的散文不算。
@@ -389,7 +390,7 @@ const WHY_NOTHING_HOME: &str = "src/render.rs";
 const WHY_NOTHING_READER: (&str, &str) = ("src/session/shell/list.rs", "render::tally_column(");
 
 /// 词汇表，相对仓库根。下面两条问的都是它里面的**一条**，不是整个文件（见 [`vocabulary_row`]）。
-const VOCABULARY: &str = "CONTEXT.md";
+const VOCABULARY: &str = "GLOSSARY.md";
 
 /// **《砍列》**（`one-source/08`，收停车场 Q615）：词汇表那一条的名字。
 const DROPPED_TERM: &str = "砍列";
@@ -508,7 +509,7 @@ fn collect(dir: &Path, extension: &str, descend: bool, into: &mut Vec<PathBuf>) 
 /// 加第六种拒绝开始只改一处——这一条是那句话的闸门（P4 01 号票，收停车场 Q91）。
 ///
 /// 从前那张单子在实现文档里抄了五份，加一种要五处一起改（Shotgun Surgery）。
-/// 现在单子只在 `CONTEXT.md` 的《失败》，五处只留指路。
+/// 现在单子只在 `GLOSSARY.md` 的《失败》，五处只留指路。
 ///
 /// **三件事一起问**，少一件这一条就问不出话来：别处没有第二份、家里真住着那张单子、
 /// 五处的路标还在。只问头一件的话，把词条整个删掉这一条也是绿的。

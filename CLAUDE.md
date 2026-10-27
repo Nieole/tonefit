@@ -14,7 +14,7 @@ See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`.
+Single-context: `GLOSSARY.md` at the repo root plus `docs/adr/`.
 See `docs/agents/domain.md`.
 
 产品级事实另有三处：`goal-and-requirements.md`（产品是什么、给谁、非目标、原则）、
@@ -35,7 +35,7 @@ cargo xtask gate
 
 ## 写代码前
 
-`CONTEXT.md` 定义领域术语——类型名、模块名、测试名、issue 标题一律取自它。
+`GLOSSARY.md` 定义领域术语——类型名、模块名、测试名、issue 标题一律取自它。
 
 改动触及缩放、判据、位深、抖动、几何裁切、缓存、编码器、处理范围中的任何一项，
 先读 `docs/adr/` 里对应的那一篇。
@@ -44,7 +44,7 @@ cargo xtask gate
 
 写用例照 `docs/agents/testing.md` 那三条手法。
 
-## 改 CONTEXT.md 的规矩
+## 改 GLOSSARY.md 的规矩
 
 **新词可以当场加**：实现引入了一个新概念（新类型、新开关、新状态），加进词汇表是落地的一部分——
 不加，`CLAUDE.md` 那条「类型名一律取自它」就执行不了。
@@ -54,7 +54,7 @@ cargo xtask gate
 
 ## 文档写作
 
-agent 消费的文档（`CONTEXT.md`、`docs/`、issue、spec）按这五条写：
+agent 消费的文档（`GLOSSARY.md`、`docs/`、issue、spec）按这五条写：
 
 1. **结果**——写当前成立的事实与决定。变更史交给 git。
 2. **单一职责**——一个文件只承载它那一件事。

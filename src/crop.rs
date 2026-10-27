@@ -184,7 +184,7 @@ impl Crop {
     /// 两种页原样通过：
     ///
     /// - 裁白边**关着**（`--no-crop`）。
-    /// - **残缺页**。它缺的那一段留成纸白（`CONTEXT.md` 的《失败》），
+    /// - **残缺页**。它缺的那一段留成纸白（`GLOSSARY.md` 的《失败》），
     ///   而纸白按墨量就是白边——裁掉它等于把「这一页缺了一半」从产物里抹掉，
     ///   报告里那个救回比例也就再对不上尺寸。缺的那一段不是白边，是缺的那一段。
     pub fn of_gray(image: &GrayImage, enabled: bool, salvage: Option<Salvage>) -> Self {

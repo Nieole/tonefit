@@ -62,7 +62,7 @@ pub(in crate::session) struct Expected {
 
 impl Expected {
     /// 同一份快照在 `NO_COLOR` 下该是什么样：每一格的前景色退回终端默认色，字与修饰一格不动
-    /// （`CONTEXT.md` 的《语义色》）。新界面那条不上色的用例拿它比（`session-redesign/06`）。
+    /// （`GLOSSARY.md` 的《语义色》）。新界面那条不上色的用例拿它比（`session-redesign/06`）。
     pub(in crate::session) fn without_colour(mut self) -> Self {
         for glyph in self.rows.iter_mut().flatten() {
             glyph.fg = Color::Reset;
