@@ -1,3 +1,13 @@
+---
+id: adr-0018
+type: architecture-design
+title: "ADR 0018：翻页跳变不是问题——位深逐页各判各的，不做迟滞"
+status: draft
+parent: tonefit-judging
+depends-on:
+  - adr-0006
+---
+
 # ADR 0018：翻页跳变不是问题——位深逐页各判各的，不做迟滞
 
 状态：已采纳（2026-09-11）

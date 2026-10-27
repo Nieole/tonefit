@@ -1,3 +1,11 @@
+---
+id: adr-0015
+type: architecture-design
+title: "ADR 0015：归档格式认四种，输出一律 .cbz，固实的先摊开"
+status: draft
+parent: tonefit-io
+---
+
 # ADR 0015：归档格式认四种，输出一律 `.cbz`，固实的先摊开
 
 状态：已采纳（2026-09-03）；三条决定全部实现，四个格式一个不缺

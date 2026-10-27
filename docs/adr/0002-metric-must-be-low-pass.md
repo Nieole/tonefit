@@ -1,3 +1,11 @@
+---
+id: adr-0002
+type: architecture-design
+title: "ADR 0002：判据建立在低通后的局部均值上"
+status: draft
+parent: tonefit-judging
+---
+
 # ADR 0002：判据建立在低通后的局部均值上
 
 状态：已采纳（2026-08-25）；此后经五次修订，最近一次 2026-09-09（地板上界的推导订正：FS 的低通残留不是零）。变更史见 git

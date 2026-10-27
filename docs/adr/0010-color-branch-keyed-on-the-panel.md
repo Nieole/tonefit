@@ -1,3 +1,11 @@
+---
+id: adr-0010
+type: architecture-design
+title: "ADR 0010：彩页按 profile 分流，彩色是面板的第四项"
+status: draft
+parent: tonefit-page-transform
+---
+
 # ADR 0010：彩页按 profile 分流，彩色是面板的第四项
 
 状态：已采纳（2026-08-25）

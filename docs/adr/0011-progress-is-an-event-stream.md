@@ -1,3 +1,11 @@
+---
+id: adr-0011
+type: architecture-design
+title: "ADR 0011：进度是事件流，开工前先预扫"
+status: draft
+parent: tonefit-progress-report
+---
+
 # ADR 0011：进度是事件流，开工前先预扫
 
 状态：已采纳（2026-08-26）；决定第 3 条修订（2026-09-03，预扫改成只数不留）

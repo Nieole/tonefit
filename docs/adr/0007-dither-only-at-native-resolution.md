@@ -1,3 +1,11 @@
+---
+id: adr-0007
+type: architecture-design
+title: "ADR 0007：抖动仅在目标尺寸未被下游缩放时启用"
+status: draft
+parent: tonefit-page-transform
+---
+
 # ADR 0007：抖动仅在目标尺寸未被下游缩放时启用
 
 状态：已采纳（2026-08-25）；决定第 1～3 条修订（2026-08-26，几何门改为按页判定）；

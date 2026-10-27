@@ -1,3 +1,11 @@
+---
+id: adr-0001
+type: architecture-design
+title: "ADR 0001：高倍降采样分两段，主重采样器恒为 Lanczos3"
+status: draft
+parent: tonefit-page-transform
+---
+
 # ADR 0001：高倍降采样分两段，主重采样器恒为 Lanczos3
 
 状态：已采纳（2026-08-25）；理由改写（2026-08-26）

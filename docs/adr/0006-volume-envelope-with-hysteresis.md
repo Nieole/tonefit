@@ -1,3 +1,11 @@
+---
+id: adr-0006
+type: architecture-design
+title: "ADR 0006：位深按卷取上包络并加迟滞"
+status: draft
+parent: tonefit-judging
+---
+
 # ADR 0006：位深按卷取上包络并加迟滞
 
 状态：已采纳（2026-08-25）；**修订**（2026-09-11，ADR 0018）——动机被推翻、决定降为显式选项
