@@ -7,13 +7,14 @@
 //! 关掉之后原样回来）、连击键按了前半截时右端那个待续记号。输入行开着时说了一句回话，
 //! 那一句画在输入行右端那几件的位置上，到点那几件退回来。
 
+use super::super::columns::{self, Keep};
 use super::super::keymap::Phase;
 use super::super::live::Live;
 use super::super::look::{Kind, Look, Segment, width_of};
 use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::Focus;
-use super::canvas::{Canvas, clip, hint};
+use super::canvas::{Canvas, hint};
 use std::time::Instant;
 
 /// 待续记号占的宽度（`d…` 连同两边的空）。
@@ -54,7 +55,11 @@ pub(super) fn draw(
         x = canvas.put(
             x,
             y,
-            &clip(&line.buffer, width.saturating_sub(BUFFER_KEEPS_CLEAR)),
+            &columns::clip(
+                &line.buffer,
+                usize::from(width.saturating_sub(BUFFER_KEEPS_CLEAR)),
+                Keep::Start,
+            ),
             Look::PLAIN,
         );
         canvas.put(x, y, CARET, Look::kind(Kind::Focus));

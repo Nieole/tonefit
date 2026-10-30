@@ -3,7 +3,7 @@
 //!
 //! 表真画出来是画法那一层的事（`super::shell::list` 与 `super::shell::pages`）；
 //! 本模块只答三件事：**列的次序**、**砍列的次序**（各表那几道宽度门槛），
-//! 以及**一格摆不下的字怎么省略**（[`elide`]）。
+//! 以及**一格摆不下的字怎么截**（[`elide`]、[`elide_at`]、[`clip`]）：《让位》的三种省略与不加记号的裁剪都在这里。
 //!
 //! # 两张表，各一个次序
 //!
@@ -49,11 +49,11 @@
 use crate::render::Field;
 use crate::wrap;
 
-/// 摆不下时省略号那一格：一列的内容从**中间**掐掉一截，留下的两头之间摆它。
+/// 摆不下时省略号那一格：《让位》的三种截法都用它。
 ///
 /// 取 `⋯`（U+22EF）而不是 `…`（U+2026）：后者过不了
 /// [`width_is_stable`](tonefit::width_is_stable) 那一关（停车场 Q154）。
-/// 省略过的是名字那一列，它右边还可能留着几列。
+/// 名字从中间省略，设置栏一行在末尾放它，输入行缓冲在前面放它。
 const ELLIPSIS: char = '⋯';
 
 /// 一列的字**是谁写的**：`GLOSSARY.md`《格》立的那一维——**字面出处 (Provenance)**，
@@ -506,6 +506,20 @@ pub(crate) fn wording_cells() -> Vec<Field> {
 /// 摆得下就一个字都不动。一格都没有时给空串；只剩一格时只剩[省略号](ELLIPSIS)——
 /// 那一档上这一列已经答不出任何事，但它仍占着自己那一格，表不会因此错位。
 pub(super) fn elide(text: &str, room: usize) -> String {
+    elide_at(text, room, None)
+}
+
+/// 哪一头要紧：设置栏留开头，输入行缓冲留末尾（《让位》）。
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Keep {
+    Start,
+    End,
+}
+
+/// 摆不下时放 `⋯`：`None` 两头都留（从中间省略），`Some` 只留点名的那一头。
+/// 摆得下不动；宽度窄过省略号本身时给空串。
+/// 设置栏留开头用 `Some(Keep::Start)`，输入行缓冲留末尾用 `Some(Keep::End)`。
+pub(super) fn elide_at(text: &str, room: usize, keep: Option<Keep>) -> String {
     if usize::from(wrap::width(text)) <= room {
         return text.to_owned();
     }
@@ -513,19 +527,33 @@ pub(super) fn elide(text: &str, room: usize) -> String {
         return String::new();
     }
     // 省略号自己占一格，两头分掉剩下的：多出来的那一格给头上——书名比卷号长。
-    let keep = room - 1;
-    let head = take(text.chars(), keep.div_ceil(2));
+    let room = room - 1;
+    if let Some(keep) = keep {
+        let kept = clip(text, room, keep);
+        return match keep {
+            Keep::Start => format!("{kept}{ELLIPSIS}"),
+            Keep::End => format!("{ELLIPSIS}{kept}"),
+        };
+    }
+    let head = clip(text, room.div_ceil(2), Keep::Start);
     // **头上没用完的那几格还给尾巴**：一个汉字跨在预算边界上时头上会白剩一格，
     // 而那一格摆到尾巴上多半正好再认出一个字（`消⋯卷` → `消⋯那卷`）。
     // 反过来不必再来一轮——头上先分到的就是多的那一半。
-    let tail: String = take(
-        text.chars().rev(),
-        keep.saturating_sub(usize::from(wrap::width(&head))),
-    )
-    .chars()
-    .rev()
-    .collect();
+    let tail = clip(
+        text,
+        room.saturating_sub(usize::from(wrap::width(&head))),
+        Keep::End,
+    );
     format!("{head}{ELLIPSIS}{tail}")
+}
+
+/// 不加省略号，从点名的那一头取到 `room` 格；宽字符装不下就停在它前面。
+/// 画布的裁剪、补齐与三种省略共用这一处，不各自数宽字。
+pub(super) fn clip(text: &str, room: usize, keep: Keep) -> String {
+    match keep {
+        Keep::Start => take(text.chars(), room),
+        Keep::End => take(text.chars().rev(), room).chars().rev().collect(),
+    }
 }
 
 /// 从这一头取到 `room` 格为止。**宽字符跨在边界上就不要它**——半个汉字画出来是一格空白，
@@ -734,6 +762,38 @@ mod tests {
         let envelope = TreeWidths::of(130, true);
         assert!(envelope.driver > 0);
         assert!(envelope.kept().contains(&TreeColumn::Driver));
+    }
+
+    /// 《让位》的三种截法：字面期望值不借实现推算。
+    #[test]
+    fn each_elision_keeps_the_important_end_without_splitting_wide_glyphs() {
+        let text = "甲a乙b丙"; // 八格，宽窄混排。
+        for (keep, seven, four, two) in [
+            (None, "甲a⋯b丙", "甲⋯", "⋯"),
+            (Some(Keep::Start), "甲a乙b⋯", "甲a⋯", "⋯"),
+            (Some(Keep::End), "⋯a乙b丙", "⋯b丙", "⋯"),
+        ] {
+            assert_eq!(elide_at(text, 9, keep), text);
+            assert_eq!(elide_at(text, 8, keep), text, "刚好摆得下不省略");
+            assert_eq!(elide_at(text, 7, keep), seven, "差一格");
+            assert_eq!(elide_at(text, 4, keep), four);
+            assert_eq!(elide_at(text, 2, keep), two, "不留半个宽字");
+            assert_eq!(elide_at(text, 1, keep), "⋯");
+            assert_eq!(elide_at(text, 0, keep), "", "窄过省略号本身");
+            assert_eq!(elide_at("", 0, keep), "");
+        }
+    }
+
+    #[test]
+    fn clipping_keeps_one_end_without_an_ellipsis() {
+        for (keep, seven, three) in [(Keep::Start, "甲a乙b", "甲a"), (Keep::End, "a乙b丙", "b丙")]
+        {
+            assert_eq!(clip("甲a乙b丙", 8, keep), "甲a乙b丙");
+            assert_eq!(clip("甲a乙b丙", 7, keep), seven);
+            assert_eq!(clip("甲a乙b丙", 3, keep), three);
+            assert_eq!(clip("甲a乙b丙", 1, keep), "");
+            assert_eq!(clip("甲a乙b丙", 0, keep), "");
+        }
     }
 
     /// **卷名摆不下时从中间省略，两头留着。**
