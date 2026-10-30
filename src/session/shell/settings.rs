@@ -8,14 +8,13 @@
 
 use ratatui::layout::Rect;
 
-use super::super::columns::{self, Keep};
 use super::super::config::{self, Band, Item};
 use super::super::look::{Hue, Kind, Look, Segment};
 use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::{Focus, Target};
 use super::super::viewport::Viewport;
-use super::canvas::{Border, Canvas, padded};
+use super::canvas::{Border, Canvas, elided_row, padded};
 
 /// 项名那一列至多、至少多宽，以及取值那一列留多少（设计稿 `drawCfgLeft` 的 `labelW`）。
 const LABEL_WIDEST: u16 = 18;
@@ -150,33 +149,4 @@ fn item_row(
         segments.push(Segment::new(" *", Look::tone(Tone::Caution).bold()));
     }
     segments
-}
-
-/// 三组共用《让位》的保留开头截法；按原段分回样式，省略号沿用被截那一段。
-fn elided_row(segments: Vec<Segment>, room: u16) -> Vec<Segment> {
-    let text: String = segments
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect();
-    let elided = columns::elide_at(&text, usize::from(room), Some(Keep::Start));
-    if elided == text {
-        return segments;
-    }
-    if room == 0 {
-        return Vec::new();
-    }
-    let mut left = elided.chars().count() - 1;
-    let mut out = Vec::new();
-    for segment in segments {
-        let count = segment.text.chars().count();
-        if count > left {
-            let mut head: String = segment.text.chars().take(left).collect();
-            head.push_str(&elided[elided.len() - '⋯'.len_utf8()..]);
-            out.push(Segment::new(head, segment.look));
-            break;
-        }
-        left -= count;
-        out.push(segment);
-    }
-    out
 }

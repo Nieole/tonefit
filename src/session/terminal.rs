@@ -2088,6 +2088,30 @@ mod redesign {
         }
     }
 
+    /// 补全失败的长回话也不能盖掉缓冲与光标。
+    #[test]
+    fn the_input_completion_reply_never_overwrites_the_buffer_or_caret() {
+        let name = "input-unmatched-prefix-reply";
+        assert_sequence(name);
+        let (scene, running, _) = walked(name);
+        let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+        let footer = lines.last().expect("屏底");
+        assert!(
+            footer.contains(&format!("~/{}▏", "z".repeat(50))),
+            "缓冲不许消失：{footer}"
+        );
+        assert_eq!(footer.matches('▏').count(), 1, "光标不许消失：{footer}");
+        assert!(
+            footer.contains("这里没有") && footer.contains('⋯'),
+            "回话须有界且看得出省略：{footer}"
+        );
+        assert!(
+            !footer.contains("zzzz」开头的项"),
+            "完整长回话不许盖住输入：{footer}"
+        );
+        assert!(!footer.contains("[Tab → 补全]"), "回话占提示区：{footer}");
+    }
+
     /// 搜索也按同一副让法，长到全让光才从前面省略，末字与光标始终在场。
     #[test]
     fn the_input_search_yields_hints_before_clipping_the_buffer() {

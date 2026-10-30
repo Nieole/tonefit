@@ -14,7 +14,7 @@ use super::super::look::{Kind, Look, Segment, width_of};
 use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::Focus;
-use super::canvas::{Canvas, hint};
+use super::canvas::{Canvas, elided_row, hint};
 use std::time::Instant;
 
 /// 待续记号占的宽度（`d…` 连同两边的空）。
@@ -57,9 +57,12 @@ pub(super) fn draw(
         {
             groups.remove(0);
         }
-        // 回话照旧占右端那几件的位置，到点再退回提示。
+        // 回话只用缓冲与光标之外的余位，不许盖住正在打的字。
         let right = match reply {
-            Some(reply) => reply.to_vec(),
+            Some(reply) => elided_row(
+                reply.to_vec(),
+                usize::from(width).saturating_sub(2 + left_width) as u16,
+            ),
             None => spaced(groups),
         };
         let right_x = width.saturating_sub(1 + width_of(&right) as u16);

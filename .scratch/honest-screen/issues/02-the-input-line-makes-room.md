@@ -124,3 +124,59 @@
   - 编译 / clippy 的既有 `src/main.rs:1193` `fetch_update` 弃用告警未动。初次 fmt check 提示两处换行，按 rustfmt 调整后 polish 通过。
 - `npm run export`：30 份快照、188 串期望屏；`npm run check` 逐字节相同；`npm test` **4 通过**（最终日志 `/tmp/hs-02-design-export.log`、`/tmp/hs-02-design-check.log`、`/tmp/hs-02-npm-test.log`）。
 - `git diff --check` 通过。
+
+
+## 落地记录补正 — rc_61dcb3ed：长补全失败回话仍会盖住输入
+
+本次独立复核发现原交付没有覆盖「输入行开着且回话很长」：80 列上添加路径、打 50 个不匹配 ASCII 字符再 Tab，回话从第 7 格画起，盖掉缓冲与第 11 格光标。前次记录的提示让位与滚轮验收仍成立，但不能当成回话分支也已验过的证据。本段追加补正，不改历史测试数字。
+
+- 工作树 `/tmp/tonefit-honest-screen/input-reply-fix`，分支 `hs-input-reply-fix`，起点与当前 HEAD `e894da1`；先认领后修复，全部未提交。
+- 接缝沿用批准的终端输入 → 设计稿期望整屏（字、色、修饰），无需新增产品访谈。先在 `export.js` 加 `input-unmatched-prefix-reply`：fresh → o → 50 个 z → Tab，80×24；设计导出自检要求完整输入与光标仍在，回话带 `⋯`，旧提示不在。
+- 先修 `design.html`：回话只用缓冲、光标、间隔与边距之外的余位，沿用带样式的末尾省略；没有余位时回话让光，缓冲照既有规则保留末尾。重导之后才改 Rust。原有快照/序列未改，新增一串及清单项均由导出器生成，未手改夹具。
+- Rust `footer.rs` 镜像相同预算，回话不再挤占缓冲。将设置栏既有带样式省略 helper 原样移到 `canvas.rs` 共用，`settings.rs` 只改引用，没有第二份截字算法，也没有改变设置栏行为。
+- `terminal.rs` 新增整屏回归，并负向钉住缓冲不消失、光标不消失、不出现覆盖输入的完整长回话、不出现原提示；正向要求回话仍有可读开头与省略记号。
+- 无依赖、特性、边界、领域定义变更；没有改黄金快照、`.gitattributes`、其他票或 Q995。
+
+### 本次实际红 → 绿 → 反转红 → 恢复绿
+
+1. 缺 jsdom 时先 `npm ci`（日志 `/tmp/hs-input-reply-npm-ci.log`），不把缺依赖当回归红。随后旧设计 `npm run export` 实际退出 2，屏底是「添加路这里没有以「zz…」开头的项」，缓冲/光标不见（`/tmp/hs-input-reply-design-red.log`）。设计修复后，补全失败回话并无 `✗`，自检改为实际的「这里没有」；重导/check/test 全绿。
+2. 设计导出后、旧 Rust 上新增整屏用例实际 0 通过 / 1 失败，退出 101（`/tmp/hs-input-reply-rust-red.log`）。修复预算后同一用例 1 通过（`/tmp/hs-input-reply-rust-green.log`）。
+3. 临时撤掉回话省略预算、恢复 `reply.to_vec()`，同一整屏用例再次 0 通过 / 1 失败、退出 101（`/tmp/hs-input-reply-reversal-red.log`）。恢复修复，整组 session 331 通过 / 0 失败 / 1 个既有忽略（`/tmp/hs-input-reply-session.log`，包含新增回归）。
+
+### 本次精确验证命令与日志
+
+npm 均在本工作树 `.scratch/session-redesign` 执行：
+
+```sh
+npm ci         # /tmp/hs-input-reply-npm-ci.log
+npm run export # 旧设计红 /tmp/hs-input-reply-design-red.log；最终 /tmp/hs-input-reply-export.log
+npm run check  # /tmp/hs-input-reply-check.log
+npm test       # /tmp/hs-input-reply-npm-test.log
+```
+
+以下每条 Cargo 命令均带完全相同前缀：
+`RUSTC_WORKSPACE_WRAPPER=/tmp/hs-input-reply-rustc-workspace.sh python3 /tmp/tonefit-honest-screen-cargo.py`。
+唯一 wrapper 内容为 `#!/bin/sh` 换行 `exec "$@"`，所有 Cargo 都经串行 runner，没有裸跑。
+
+```sh
+cargo test --bin tonefit the_input_completion_reply_never_overwrites -- --nocapture
+# 依次对应 rust-red、rust-green、reversal-red 三份上述日志
+cargo fmt                         # /tmp/hs-input-reply-fmt.log
+cargo test --bin tonefit session:: # /tmp/hs-input-reply-session.log，恢复后绿
+cargo xtask gate 1                 # /tmp/hs-input-reply-gate1.log
+cargo xtask gate 2                 # /tmp/hs-input-reply-gate2.log
+cargo xtask gate 3                 # /tmp/hs-input-reply-gate3.log
+cargo xtask polish                 # /tmp/hs-input-reply-polish.log
+git diff --check                   # 通过
+```
+
+### 本次数
+
+- npm export：30 份快照、192 串期望屏；check 逐字节相同；npm test 4 通过、0 失败。
+- session：331 通过、0 失败、1 既有忽略；默认 bin 全组在 gate 1 中 488 通过、0 失败、1 既有忽略。
+- gate 1 退出 1：合计 762 通过 / 1 失败，lib 255 / bin 488；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.54s`。
+- gate 2 退出 1：合计 616 通过 / 1 失败，lib 255 / bin 342；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 42.65s`。
+- 两处唯一红仍是范围外 Q995，`tests/concurrency.rs:755` 同一重命名检出力断言，实际 0 / 期望 96；未绕过或弱化，后续集成二进制因闸门早停未执行。三条闸门全绿保持未勾。
+- gate 3 退出 0：`Finished dev profile [unoptimized + debuginfo] target(s) in 2.40s`。
+- polish 退出 0：fmt、两种 clippy、doc 四项绿；默认 clippy 5.71s，无默认特性 clippy 5.00s；文档 15 条既有私有链接告警，未增加。`src/main.rs:1193` 既有弃用告警未动。
+- 剩余：仅已知基线 Q995；本 finding 修复与反转验收完成，交新 merger 检查，保持未提交。

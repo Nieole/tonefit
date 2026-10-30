@@ -781,6 +781,43 @@
       "data": "sequences/input-search-yield-45.scene.json"
     },
     {
+      "name": "input-unmatched-prefix-reply",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz▏",
+          "这里没有",
+          "⋯"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-unmatched-prefix-reply.text.txt",
+      "style": "sequences/input-unmatched-prefix-reply.style.txt",
+      "data": "sequences/input-unmatched-prefix-reply.scene.json"
+    },
+    {
       "name": "input-add-empty-wheel",
       "scene": "fresh",
       "size": [

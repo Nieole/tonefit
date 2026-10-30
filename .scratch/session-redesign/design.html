@@ -183,7 +183,7 @@ function elideStart(s, w) {
   }
   return '⋯' + tail;
 }
-// 设置栏保留开头；省略号跟被截的那一截同样式，三组共用。
+// 保留开头；省略号跟被截的那一截同样式，设置栏与输入行回话共用。
 function elideEndSegments(segs, w) {
   if (segW(segs) <= w) return segs;
   if (w <= 0) return [];
@@ -1052,8 +1052,8 @@ function drawFooter(scr) {
     // 缓冲与光标先于提示：从前往后让，全让光仍放不下才截缓冲。
     const leftW = 1 + strW(inp.prompt) + strW(inp.buf) + 1;
     while (!said && groups.length && leftW + 1 + segW(spaced()) > W - 1) groups.shift();
-    // 回话照旧占右端那几件的位置，到点再退回提示。
-    const right = said ? said.segs : spaced();
+    // 回话只用缓冲与光标之外的余位，不许盖住正在打的字。
+    const right = said ? elideEndSegments(said.segs, Math.max(0, W - 2 - leftW)) : spaced();
     const rightX = W - 1 - segW(right);
     let x = scr.put(1, y, inp.prompt, 'c-green b');
     x = scr.put(x, y, elideStart(inp.buf, Math.max(0, rightX - (right.length ? 1 : 0) - x - 1)), 'c-fg');

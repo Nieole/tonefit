@@ -85,6 +85,9 @@ const SEQUENCES = [
     steps: [{ key: '/' }, { type: '漫画'.repeat(Math.floor(n / 2)) + (n % 2 ? '卷' : '') }],
     says: { has: [n % 2 ? '卷▏' : '画▏', ...(n === 45 ? ['⋯'] : [])], lacks: ['[C-w → 删一段]', ...(n >= 25 ? ['[⏎ → 跳到结果]'] : []), ...(n >= 32 ? ['[Esc → 取消]'] : [])] },
   })),
+  { name: 'input-unmatched-prefix-reply', scene: 'fresh', size: NARROW,
+    steps: [...k('o'), { type: 'z'.repeat(50) }, { key: 'Tab' }],
+    says: { has: ['~/'+ 'z'.repeat(50) + '▏', '这里没有', '⋯'], lacks: ['[Tab → 补全]', '[Esc → 取消]'] } },
   // 空候选时滚轮不动底下任一块；有候选仍挪三项。
   { name: 'input-add-empty-wheel', scene: 'fresh', size: NARROW, steps: [...k('o'), { wheel: -1 }], says: '添加路径  ~/▏' },
   { name: 'input-search-empty-wheel', scene: 'running', size: NARROW, steps: [...k('/'), { wheel: 1 }], says: { has: ['[自动滚动]', '/▏'], lacks: ['已暂停自动滚动'] } },

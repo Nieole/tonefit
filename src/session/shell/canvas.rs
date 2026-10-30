@@ -474,3 +474,32 @@ mod tests {
         assert_eq!(cell.bg, Color::Reset, "不设背景色");
     }
 }
+
+/// 保留开头并沿用原段样式：设置栏与输入行回话共用。
+pub(super) fn elided_row(segments: Vec<Segment>, room: u16) -> Vec<Segment> {
+    let text: String = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect();
+    let elided = columns::elide_at(&text, usize::from(room), Some(Keep::Start));
+    if elided == text {
+        return segments;
+    }
+    if room == 0 {
+        return Vec::new();
+    }
+    let mut left = elided.chars().count() - 1;
+    let mut out = Vec::new();
+    for segment in segments {
+        let count = segment.text.chars().count();
+        if count > left {
+            let mut head: String = segment.text.chars().take(left).collect();
+            head.push_str(&elided[elided.len() - '⋯'.len_utf8()..]);
+            out.push(Segment::new(head, segment.look));
+            break;
+        }
+        left -= count;
+        out.push(segment);
+    }
+    out
+}
