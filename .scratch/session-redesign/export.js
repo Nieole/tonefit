@@ -42,7 +42,7 @@ const TINY = [56, 14];
 
 /** 要导出的快照：14 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
+  ...['fresh', 'survey', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -68,6 +68,15 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  { name: 'deciding-trialed-notable-jump', scene: 'deciding', size: MAIN, steps: k('s', 'l', ']', 'd'),
+    says: { has: ['❯       ! 第05卷', '已分析，未写出'], lacks: ['整卷写到隔离'] } },
+  { name: 'bad-page-deciding-s-jump', scene: 'bad-page-deciding', size: MAIN, steps: k('s', ']', 'd'),
+    says: { has: ['❯       ! 第01卷', '▾ ! 哆啦A梦', '! ~/漫画库', '已分析，未写出', '问题 1/1'], lacks: ['整卷写到隔离', '隔离 1 卷'] } },
+  { name: 'bad-page-deciding-s-collapsed', scene: 'bad-page-deciding', size: MAIN, steps: k('s', ']', 'd', 'h', 'h'),
+    says: { has: ['▸ ! 哆啦A梦', '! ~/漫画库'], lacks: ['整卷写到隔离'] } },
+  { name: 'retained-no-notable-pages', scene: 'retained', size: MAIN, steps: k('a'),
+    says: { has: ['这一卷没有需留意的页'], lacks: ['需要留意'] } },
+
   // honest-screen/05：预设型号的解释与两段标定来源说明。
   { name: 'details-model-specified', scene: 'config', size: MAIN,
     steps: k('h', 'g', 'g', 'l', 'l', 'j', 'l', 'l'),

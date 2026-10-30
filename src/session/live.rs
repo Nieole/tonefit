@@ -1073,7 +1073,10 @@ impl Live {
     pub fn troubled_at(&self, at: usize) -> bool {
         match self.states.get(at) {
             Some(VolumeState::Failed | VolumeState::Isolated) => true,
-            Some(VolumeState::Done | VolumeState::Trialed) => self.notable_at(at).any(),
+            Some(VolumeState::Done) => self.notable_at(at).any(),
+            Some(VolumeState::Trialed) => self
+                .digest_at(at)
+                .is_some_and(|digest| digest.notable.any() || digest.failed_pages > 0),
             _ => false,
         }
     }

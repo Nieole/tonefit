@@ -1,0 +1,816 @@
+{
+  "scene": "bad-page-deciding",
+  "now_ms": 1000000,
+  "time_multiplier": 7,
+  "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
+  "paths": [
+    {
+      "path": "~/漫画库",
+      "kind": "directory",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "漫画",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "profile": "kobo-libra-2",
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": {
+    "mode": "dry-run",
+    "stage": "deciding",
+    "outcome": null,
+    "envelope": false,
+    "elapsed_s": 18.2,
+    "steps": 446,
+    "total_steps": 26748,
+    "current": "~/漫画库/哆啦A梦/第01卷",
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": false,
+    "survey": {
+      "entries": [
+        {
+          "kind": "section",
+          "path": "~/漫画库",
+          "directories": [
+            "~/漫画库/哆啦A梦",
+            "~/漫画库/集英社/海贼王",
+            "~/漫画库/攻壳机动队",
+            "~/漫画库/银河英雄传说"
+          ],
+          "notes": []
+        }
+      ],
+      "volumes": [
+        {
+          "root": "~/漫画库/哆啦A梦/第01卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第01卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第02卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第02卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第03卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第03卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第04卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第04卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第05卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第05卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第06卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第06卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第07卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第07卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第08卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第08卷",
+          "source_pages": 224,
+          "steps": 672
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第09卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第09卷",
+          "source_pages": 225,
+          "steps": 675
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第10卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第10卷",
+          "source_pages": 223,
+          "steps": 669
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第11卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第11卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/哆啦A梦/第12卷",
+          "directory": "~/漫画库/哆啦A梦",
+          "name": "第12卷",
+          "source_pages": 217,
+          "steps": 651
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第01卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第01卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第02卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第02卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第03卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第03卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第04卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第04卷",
+          "source_pages": 190,
+          "steps": 570
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第05卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第05卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第06卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第06卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第07卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第07卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第08卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第08卷",
+          "source_pages": 189,
+          "steps": 567
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第09卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第09卷",
+          "source_pages": 194,
+          "steps": 582
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第10卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第10卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第11卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第11卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第12卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第12卷",
+          "source_pages": 174,
+          "steps": 522
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第13卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第13卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第14卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第14卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第15卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第15卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第16卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第16卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第17卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第17卷",
+          "source_pages": 172,
+          "steps": 516
+        },
+        {
+          "root": "~/漫画库/集英社/海贼王/第18卷",
+          "directory": "~/漫画库/集英社/海贼王",
+          "name": "第18卷",
+          "source_pages": 173,
+          "steps": 519
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第01卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第01卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第02卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第02卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第03卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第03卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第04卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第04卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第05卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第05卷",
+          "source_pages": 233,
+          "steps": 699
+        },
+        {
+          "root": "~/漫画库/攻壳机动队/第06卷",
+          "directory": "~/漫画库/攻壳机动队",
+          "name": "第06卷",
+          "source_pages": 229,
+          "steps": 687
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第01卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第01卷",
+          "source_pages": 177,
+          "steps": 531
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第02卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第02卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第03卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第03卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第04卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第04卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第05卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第05卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第06卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第06卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第07卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第07卷",
+          "source_pages": 175,
+          "steps": 525
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第08卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第08卷",
+          "source_pages": 176,
+          "steps": 528
+        },
+        {
+          "root": "~/漫画库/银河英雄传说/第09卷",
+          "directory": "~/漫画库/银河英雄传说",
+          "name": "第09卷",
+          "source_pages": 175,
+          "steps": 525
+        }
+      ],
+      "unchecked": 0
+    },
+    "volumes": [
+      {
+        "root": "~/漫画库/哆啦A梦/第01卷",
+        "state": "deciding",
+        "pass": 1,
+        "done": 223,
+        "elapsed_s": 5.575,
+        "tally": [
+          [
+            "2bit+FS",
+            181
+          ],
+          [
+            "4bit",
+            29
+          ],
+          [
+            "1bit",
+            12
+          ]
+        ],
+        "took_s": {
+          "fingerprint": 0.697,
+          "first_pass": 4.878
+        },
+        "page_count": 223,
+        "notable_pages": [
+          {
+            "name": "017.jpg",
+            "output_size": [
+              1182,
+              1680
+            ],
+            "kinds": [
+              "failed"
+            ],
+            "failure": "JPEG 文件不完整"
+          }
+        ]
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/哆啦A梦/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第10卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第11卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第12卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第13卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第14卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第15卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第16卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第17卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/集英社/海贼王/第18卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/攻壳机动队/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第01卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第02卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第03卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第04卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第05卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第06卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第07卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第08卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      },
+      {
+        "root": "~/漫画库/银河英雄传说/第09卷",
+        "state": "queued",
+        "pass": -1,
+        "done": 0,
+        "elapsed_s": 0,
+        "tally": null
+      }
+    ]
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "directory",
+      "root": "~/漫画库/哆啦A梦"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

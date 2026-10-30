@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
-- [ ] 带坏页的预览过那一卷：行首 `!`、`]d` 落得到、目录行算一处，导一串比整屏
-- [ ] 一页都不需留意的卷进去那一屏导出、比整屏；留一条反着钉的断言：屏上不再出现「需要留意」
+- [x] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
+- [x] 带坏页的预览过那一卷：行首 `!`、`]d` 落得到、目录行算一处，导一串比整屏
+- [x] 一页都不需留意的卷进去那一屏导出、比整屏；留一条反着钉的断言：屏上不再出现「需要留意」
 - [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 不做会怎样
@@ -71,3 +71,24 @@
 - **Recommend:** ①。
 - **Whose call:** 拍板的人（设计稿）
 - **处置：** 并入 Q1169，随它走（拷问定案 2026-10-02：同一句措辞）。
+
+
+## 落地记录
+
+- 交付：先改既有设计稿，新增 `bad-page-deciding` 场景（只有坏页、没有其他需留意项，路径展开为分区），导出 `bad-page-deciding-s-jump`、`bad-page-deciding-s-collapsed`、`deciding-trialed-notable-jump`、`retained-no-notable-pages`。坏页预览过的卷行 `!`，`]d` 选中它，目录与分区汇总把它算一处；收起目录仍为 `!`。有其他需留意项的预览过卷行也保留「已分析，未写出」，不冒称已经写出或隔离。没有需留意页的空屏用「这一卷没有需留意的页」。
+- 实现：`live::troubled_at` 认 Trialed 的坏页；列表行首与跳转同源，目录/分区计入该卷，Trialed 行尾不被其他需留意项取代。场景测试不再把「报告中有坏页」误等同于「卷状态已进隔离」；快照场景数随新增场景更新。终端测试经真实键码翻译走四串输入，逐格比字与样式，并禁止「需要留意」「整卷写到隔离」「隔离 1 卷」。
+- 成本：新增一景、四串，设计导出新增四份快照网格与十二份序列文件、一份场景数据；既有快照/序列文件没有字节变化。未改依赖、黄金快照或 `.gitattributes`。
+- TDD：中断前 `/tmp/hs07-design-red.log` 的两条新设计测试先红；`/tmp/hs07-rust-red.log` 的终端整屏测试先红。恢复后先完整重导并逐字节检查，才重新验实现。旧 `design-green`/`npm-test` 日志曾因多余旧导出文件不绿，旧 `check`、闸门 2/3、polish 曾遭 ENOSPC，均不能当作最终代码结果；恢复后的日志统一用 `/tmp/hs07-final-*`。
+- 守卫反跑：设计与 Rust 各独立撤掉行首坏页判断、跳转坏页判断、目录/分区坏页计数、未写出行尾，并把空页措辞改回「需要留意」，五项分别红。Rust 五项均是运行一条测试后断言失败（退出 101），不是编译或磁盘失败：jump 光标落错，mark 第 10 行 `✓` 应为 `!`，branch 第 8 行 `◌` 应为 `!`，suffix 第 10 行缺「已」，word 第 10 行「要」应为「留」。日志 `/tmp/hs07-final-reversal-{jump,mark,branch,suffix,word}.log`；设计对应 `/tmp/hs07-final-design-reversal-{jump,mark,branch,suffix,word}.log`（各退出 1）。全部恢复后 Rust 1 passed、设计 6 passed，见 `final-restored.log`、`final-design-restored.log`；反跑脚本在 `/tmp/hs07-final-reversals.py`、`/tmp/hs07-design-reversals.py`。
+- 最终验证：`npm run export` 导出 32 份快照、205 串，`npm run check` 逐字节一致，完整 `npm test` 10 passed / 0 failed（含全树文件集合与两次导出确定性检查，排除 ENOSPC 截断及旧文件残留）；日志 `/tmp/hs07-final-{export,check,npm-test}.log`。`cargo test --bin tonefit session::` 为 338 passed / 0 failed / 1 ignored，日志 `/tmp/hs07-final-session.log`。`git diff --check` 绿。
+- 所有恢复后的 Cargo 都经 `/tmp/tonefit-honest-screen-cargo.py` 串行运行，并设 `RUSTC_WORKSPACE_WRAPPER=/tmp/hs-07-rustc-workspace.sh`、`CARGO_INCREMENTAL=0`。闸门分别执行，不借第一条提前停止；脚本 `/tmp/hs07-final-checks.sh`，状态 `/tmp/hs07-final-results`。
+- 未完成的勾选仅为「三闸全绿」：闸门 1、2 均只在已知基线 Q995 `many_archive_volumes_never_hold_more_than_the_one_being_processed` 红（`tests/concurrency.rs`）；本票明确不修也不放宽。它们提前停止，后续集成二进制未跑到，不声称全套 Rust 绿。闸门 3 与 polish 绿；无本票遗留功能缺口。
+
+## 数
+
+恢复后的最终日志（`/tmp/hs07-final-gate{1,2,3}.log`、`/tmp/hs07-final-polish.log`）：
+
+- 闸门 1：红；合计 769 通过、1 失败；lib 255 / bin 495。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 50.26s`（Q995）。
+- 闸门 2：红；合计 617 通过、1 失败；lib 255 / bin 343。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 52.99s`（Q995）。
+- 闸门 3：绿；末行 `Finished dev profile [unoptimized + debuginfo] target(s) in 2.83s`（原日志的 `dev` 带反引号）。
+- polish：四条全绿；fmt、两种 clippy、doc 均完成。文档 `warning: tonefit (lib doc) generated 15 warnings`（原日志的 `tonefit` 带反引号）；既有 `src/main.rs` 的 `fetch_update` 弃用告警未改，未加 suppressions。

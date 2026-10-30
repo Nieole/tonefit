@@ -869,7 +869,7 @@ function dirStat(run, d) {
       for (const [k, n] of s.tally) st.tally.set(k, (st.tally.get(k) || 0) + n);
       const pr = problemsOf(v);
       st.failedPages += pr.failed;
-      if (s.state !== 'isolated' && (pr.outlier || pr.wide || pr.gate || pr.salvage)) st.warn++;
+      if (s.state !== 'isolated' && (pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed))) st.warn++;
     }
   }
   return st;
@@ -895,7 +895,7 @@ function volMark(s, v) {
     case 'aborted': return ['⋅', 'c-gray'];
     case 'trialed': case 'done': {
       const pr = problemsOf(v);
-      return pr.outlier || pr.wide || pr.gate || pr.salvage ? ['!', 'c-yellow b'] : ['✓', 'c-green'];
+      return pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed) ? ['!', 'c-yellow b'] : ['✓', 'c-green'];
     }
     default: return ['⋅', 'c-gray'];
   }
@@ -1321,7 +1321,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
         if (pr.wide) bits.push(`页面超宽 ${pr.wide}`);
         if (pr.gate) bits.push(`尺寸未贴合屏幕 ${pr.gate}`);
         if (pr.salvage) bits.push(`残缺 ${pr.salvage}`);
-        tail = bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : [];
+        tail = vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : [];
       } else tail = [['等待中', 'c-gray d']];
     }
     if (tailW > 4) scr.line(X, y, tail, tailW);
@@ -1426,7 +1426,7 @@ function drawPages(scr, x, y, w, h) {
   const C = { name: 10, size: iw >= 84 ? 11 : 0, scale: iw >= 112 ? 24 : 0, verdict: 9, reason: 22, metric: iw >= 98 ? 15 : 0 };
   const head = [['   ', ''], [pad('页面', C.name), 'c-gray b'], [C.size ? pad('尺寸', C.size) : '', 'c-gray b'], [C.scale ? pad('缩放', C.scale) : '', 'c-gray b'], [pad('灰阶', C.verdict), 'c-gray b'], [pad('原因', C.reason), 'c-gray b'], [C.metric ? pad('画质分', C.metric) : '', 'c-gray b'], ['提示', 'c-gray b']];
   scr.line(x + 2, y + PAGES_HEAD, head, iw);
-  if (!list.length) { scr.line(x + 2, y + 1 + PAGES_HEAD, [['这一卷没有需要留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
+  if (!list.length) { scr.line(x + 2, y + 1 + PAGES_HEAD, [['这一卷没有需留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
   for (let i = 0; i < ih - 0 && from + i < list.length; i++) {
     const p = list[from + i], cur = from + i === P.cursor;
     const mark = p.tone === 'bad' ? ['✗ ', 'c-red b'] : p.tone === 'warn' ? ['! ', 'c-yellow b'] : ['  ', ''];
@@ -1743,7 +1743,7 @@ function targets(kind) {
         if (kind.q && (d.label + '/' + v.name).includes(kind.q) && !d.label.includes(kind.q)) out.push({ key: 'v:' + v.id, v });
         if (kind.trouble && s && s.tally !== undefined) {
           const pr = s.tally ? problemsOf(v) : {};
-          if (s.state === 'failed' || s.state === 'isolated' || ((s.state === 'done' || s.state === 'trialed') && (pr.outlier || pr.wide || pr.gate || pr.salvage))) out.push({ key: 'v:' + v.id, v });
+          if (s.state === 'failed' || s.state === 'isolated' || ((s.state === 'done' || s.state === 'trialed') && (pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed)))) out.push({ key: 'v:' + v.id, v });
         }
       }
     }
@@ -2088,7 +2088,7 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
@@ -2105,6 +2105,18 @@ function scene(name) {
       fastForward(S.run, (r) => { const v = findVol('虫师', '第03卷'), s = stateOf(r, v); return passOf(v, s) === '摊开' && s.done >= v.pages / 2; });
       S.toast = null;
       S.expanded.add(findVol('虫师', '第03卷').dir.id);
+      break;
+    }
+    case 'bad-page-deciding': {
+      S.named = [{ path: '~/漫画库', kind: '文件夹', on: true }];
+      startRun('trial');
+      fastForward(S.run, (r) => r.stage !== 'surveying');
+      S.run.tree.entries.forEach((e) => { e.notes = []; });
+      const v = S.run.tree.vols[0];
+      v.plan = { failed: [['017.jpg', 'JPEG 文件不完整']] };
+      PAGE_CACHE.delete(v.id);
+      fastForward(S.run, (r) => r.stage === 'deciding');
+      S.toast = null;
       break;
     }
     case 'deciding': startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null; break;

@@ -1702,6 +1702,24 @@ mod redesign {
         assert_sequence("deciding-s");
     }
 
+    #[test]
+    fn trialed_bad_pages_and_empty_notable_pages_match_the_design() {
+        for name in [
+            "bad-page-deciding-s-jump",
+            "bad-page-deciding-s-collapsed",
+            "deciding-trialed-notable-jump",
+            "retained-no-notable-pages",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(!text.contains("需要留意"));
+            assert!(!text.contains("整卷写到隔离"));
+            assert!(!text.contains("隔离 1 卷"));
+        }
+    }
+
     /// **写出过一卷之后再答「不写出」，那一卷收在预览过**（`design-parity/04`，收停车场 Q769、Q674）：
     /// `x` 写完第 5 卷、推进到第 6 卷的确认点、`s`——第 6 卷行首 `✓`、行尾「已分析，未写出」；
     /// 结论行已是转换那一副，「完成 1 卷」只数写了出去的第 5 卷，「等待 78 卷」也不数它

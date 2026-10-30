@@ -574,7 +574,10 @@ impl Painter<'_> {
                 marks::add_to(&mut tally.tally, *candidate, *pages);
             }
             tally.failed_pages += digest.failed_pages;
-            if state != VolumeState::Isolated && digest.notable.any() {
+            if state != VolumeState::Isolated
+                && (digest.notable.any()
+                    || (state == VolumeState::Trialed && digest.failed_pages > 0))
+            {
                 tally.warn += 1;
             }
         }
@@ -723,7 +726,11 @@ impl Painter<'_> {
                 pointed,
                 indent,
                 chevron: "  ",
-                mark: marks::volume_mark(state, notable > 0, self.spin(0)),
+                mark: marks::volume_mark(
+                    state,
+                    self.live.is_some_and(|live| live.troubled_at(at)),
+                    self.spin(0),
+                ),
                 name: self.volume_name(at),
                 name_look: if running {
                     Look::kind(Kind::Working)
@@ -795,7 +802,9 @@ impl Painter<'_> {
                 .map(|said| vec![Segment::new(said, Look::tone(Tone::Caution))])
                 .unwrap_or_default(),
             VolumeState::Queued => vec![Segment::new("等待中", Look::FAINT.dim())],
-            VolumeState::Done | VolumeState::Trialed if notable > 0 => {
+            // 没写出的卷即使有需留意的页，也不能把行尾写成已经写出的卷。
+            VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
+            VolumeState::Done if notable > 0 => {
                 let said: Vec<String> = self
                     .notable_bits(at)
                     .into_iter()
@@ -803,9 +812,6 @@ impl Painter<'_> {
                     .collect();
                 vec![Segment::new(said.join(" ⋅ "), Look::tone(Tone::Caution))]
             }
-            // **预览过的那一卷说清它没写出去**（`GLOSSARY.md` 的《卷状态》）：盘上没有它，
-            // 行尾空着就与写了出去的那几卷长得一样。需留意的几样更要紧，有就让给上面那一支。
-            VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
             VolumeState::Done => Vec::new(),
         }
     }

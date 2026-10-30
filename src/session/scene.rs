@@ -2074,7 +2074,7 @@ mod tests {
             );
             assert_eq!(
                 report.isolated(),
-                volume.state == "isolated",
+                expected.get("failed").copied().unwrap_or(0) > 0,
                 "{name}：{}",
                 listed.root
             );
@@ -2284,7 +2284,7 @@ mod tests {
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 14, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 15, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }
