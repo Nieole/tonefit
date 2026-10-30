@@ -290,6 +290,111 @@
   ],
   "sequences": [
     {
+      "name": "settings-elision-120",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "boox-poke6  ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-120.text.txt",
+      "style": "sequences/settings-elision-120.style.txt",
+      "data": "sequences/settings-elision-120.scene.json"
+    },
+    {
+      "name": "settings-elision-80",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "实测，其 ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-80.text.txt",
+      "style": "sequences/settings-elision-80.style.txt",
+      "data": "sequences/settings-elision-80.scene.json"
+    },
+    {
+      "name": "settings-elision-90",
+      "scene": "config",
+      "size": [
+        90,
+        36
+      ],
+      "final_size": [
+        90,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "实测，其 ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-90.text.txt",
+      "style": "sequences/settings-elision-90.style.txt",
+      "data": "sequences/settings-elision-90.scene.json"
+    },
+    {
       "name": "input-path-yield-0",
       "scene": "fresh",
       "size": [

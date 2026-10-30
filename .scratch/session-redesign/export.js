@@ -68,6 +68,12 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  // honest-screen/03：宽屏两栏与窄屏设置栏，画质门槛不再硬截成一句假完整的话。
+  ...[MAIN, NARROW, [90, 36]].map((size) => ({
+    name: `settings-elision-${size[0]}`, scene: 'config', size,
+    steps: k('h', 'g', 'g'),
+    says: { has: ['画质门槛', '⋯'], lacks: [size[0] === 120 ? 'boox-poke6  ┃' : '实测，其 ┃'] },
+  })),
   // honest-screen/02：80 列上依次让掉右端提示，缓冲与光标先于提示；全让光才留末尾。
   ...[0, 1, 2, 4, 6, 8].map((n) => ({
     name: `input-path-yield-${n}`, scene: 'fresh', size: NARROW,

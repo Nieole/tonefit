@@ -1020,6 +1020,28 @@ mod redesign {
         scene
     }
 
+    /// 设置栏截断要露出末尾省略号；整屏同时钉住字、样式和未截断的短值。
+    #[test]
+    fn settings_elision_keeps_the_start_and_marks_overflow_wide_and_narrow() {
+        for name in [
+            "settings-elision-120",
+            "settings-elision-80",
+            "settings-elision-90",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let lines = design::lines_of(&painted(&scene, &running, scene::sequence(name).size));
+            let threshold = lines
+                .iter()
+                .find(|line| line.contains("5.123（在"))
+                .unwrap();
+            assert!(threshold.contains("⋯"), "截断不能伪装成说完：{threshold}");
+            assert!(!threshold.contains("boox-poke6  ┃"));
+            assert!(!threshold.contains("实测，其 ┃"));
+            assert!(lines.iter().any(|line| line.contains("inside *")));
+        }
+    }
+
     /// **`j`／`k` 挪光标**，走完与期望屏逐格相等（票面第二条）。
     #[test]
     fn j_and_k_move_the_cursor_over_the_paths() {

@@ -183,6 +183,19 @@ function elideStart(s, w) {
   }
   return '⋯' + tail;
 }
+// 设置栏保留开头；省略号跟被截的那一截同样式，三组共用。
+function elideEndSegments(segs, w) {
+  if (segW(segs) <= w) return segs;
+  if (w <= 0) return [];
+  const out = [];
+  let left = w - 1;
+  for (const [text, st] of segs) {
+    const head = clip(text, left);
+    if (strW(text) > left) { out.push([head + '⋯', st]); break; }
+    out.push([head, st]); left -= strW(head);
+  }
+  return out;
+}
 // 按显示宽度折行，带禁则：收尾记号不落行首，起首记号不落行尾（后一张与 crate::wrap 的 NEVER_ENDS_A_ROW 同一张表）
 const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
 const NO_TAIL = '（【《「『〈〔“‘([{';
@@ -1481,13 +1494,13 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
   for (let i = 0; i < ih && from + i < CONFIG.length; i++) {
     const c = CONFIG[from + i], yy = y + 1 + i, cur = from + i === S.cfg.cursor;
     if (!c.key) {
-      scr.line(x + 2, yy, [[c.layer, c.layer === '画质判定参数' ? 'c-gray b' : 'c-magenta b'], [' ⋅ ' + c.note, 'c-gray d']], iw);
+      scr.line(x + 2, yy, elideEndSegments([[c.layer, c.layer === '画质判定参数' ? 'c-gray b' : 'c-magenta b'], [' ⋅ ' + c.note, 'c-gray d']], iw), iw);
       continue;
     }
     const set = c.kind === 'model' || c.kind === 'info' ? c.kind === 'model' : c.value != null;
     const changed = p && stored(c) && (c.value ?? null) !== (p.says[c.key] ?? null);
     const vst = (set ? 'c-fg' : 'c-gray') + (ro ? ' d' : '') + (cur && focused ? ' b' : '');
-    scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
+    scr.line(x + 1, yy, elideEndSegments([[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1), iw + 1);
     scr.hit(x + 1, yy, w - 2, 1, { cfgRow: from + i });
   }
 }

@@ -8,6 +8,7 @@
 
 use ratatui::layout::Rect;
 
+use super::super::columns::{self, Keep};
 use super::super::config::{self, Band, Item};
 use super::super::look::{Hue, Kind, Look, Segment};
 use super::super::state::Session;
@@ -61,11 +62,21 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
         match line {
             // 组抬头顶格写，停不住，行首没有光标那两格。
             config::Line::Band(band) => {
-                canvas.line(area.x + 2, y, &band_row(*band), Some(inner));
+                canvas.line(
+                    area.x + 2,
+                    y,
+                    &elided_row(band_row(*band), inner),
+                    Some(inner),
+                );
             }
             config::Line::Item(item) => {
                 let segments = item_row(session, *item, at == cursor, focused, locked, column);
-                canvas.line(area.x + 1, y, &segments, Some(inner + 1));
+                canvas.line(
+                    area.x + 1,
+                    y,
+                    &elided_row(segments, inner + 1),
+                    Some(inner + 1),
+                );
                 canvas.hit_row(area, y, Target::Item(*item));
             }
         }
@@ -139,4 +150,33 @@ fn item_row(
         segments.push(Segment::new(" *", Look::tone(Tone::Caution).bold()));
     }
     segments
+}
+
+/// 三组共用《让位》的保留开头截法；按原段分回样式，省略号沿用被截那一段。
+fn elided_row(segments: Vec<Segment>, room: u16) -> Vec<Segment> {
+    let text: String = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect();
+    let elided = columns::elide_at(&text, usize::from(room), Some(Keep::Start));
+    if elided == text {
+        return segments;
+    }
+    if room == 0 {
+        return Vec::new();
+    }
+    let mut left = elided.chars().count() - 1;
+    let mut out = Vec::new();
+    for segment in segments {
+        let count = segment.text.chars().count();
+        if count > left {
+            let mut head: String = segment.text.chars().take(left).collect();
+            head.push_str(&elided[elided.len() - '⋯'.len_utf8()..]);
+            out.push(Segment::new(head, segment.look));
+            break;
+        }
+        left -= count;
+        out.push(segment);
+    }
+    out
 }
