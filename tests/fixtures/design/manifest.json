@@ -3007,6 +3007,76 @@
       "data": "sequences/running-q.scene.json"
     },
     {
+      "name": "survey-s-advance-120",
+      "scene": "survey",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": {
+        "has": [
+          "已停止 ⋅ 清点途中停下，一卷都没开始",
+          "＋ 添加路径"
+        ],
+        "lacks": [
+          "处理到第 0 卷",
+          "第 0 卷未保存",
+          "总进度",
+          "当前卷"
+        ]
+      },
+      "text": "sequences/survey-s-advance-120.text.txt",
+      "style": "sequences/survey-s-advance-120.style.txt",
+      "data": "sequences/survey-s-advance-120.scene.json"
+    },
+    {
+      "name": "survey-s-advance-80",
+      "scene": "survey",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": {
+        "has": [
+          "已停止 ⋅ 清点途中停下，一卷都没开始",
+          "＋ 添加路径"
+        ],
+        "lacks": [
+          "处理到第 0 卷",
+          "第 0 卷未保存",
+          "总进度",
+          "当前卷"
+        ]
+      },
+      "text": "sequences/survey-s-advance-80.text.txt",
+      "style": "sequences/survey-s-advance-80.style.txt",
+      "data": "sequences/survey-s-advance-80.scene.json"
+    },
+    {
       "name": "survey-s",
       "scene": "survey",
       "size": [

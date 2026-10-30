@@ -1,0 +1,55 @@
+{
+  "scene": "survey",
+  "now_ms": 1030000,
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": {
+    "mode": "process",
+    "stage": "ended",
+    "outcome": "stopped",
+    "envelope": false,
+    "elapsed_s": 0.35,
+    "steps": 0,
+    "total_steps": 0,
+    "current": null,
+    "stop_level": 1,
+    "for_the_rest": false,
+    "wrote": false,
+    "survey": {
+      "entries": [],
+      "volumes": [],
+      "unchecked": 1
+    },
+    "volumes": []
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

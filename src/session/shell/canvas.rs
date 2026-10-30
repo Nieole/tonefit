@@ -503,4 +503,3 @@ mod tests {
         assert_eq!(cell.bg, Color::Reset, "不设背景色");
     }
 }
-

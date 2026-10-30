@@ -56,3 +56,15 @@ test('型号详情只在与预设不同时解释，没写型号不能说使用�
     assert.ok(!text.includes('未设置（使用默认值）'));
   } finally { page.dom.window.close(); }
 });
+
+
+test('清点途中停止后回到路径列表，不说第零卷或开工进度', async () => {
+  const page = await load();
+  try {
+    page.chip('survey'); page.press('s'); page.play(1000);
+    const text = textGrid(page.frame());
+    assert.ok(text.includes('已停止 ⋅ 清点途中停下，一卷都没开始'));
+    assert.ok(text.includes('＋ 添加路径'));
+    for (const old of ['处理到第 0 卷', '第 0 卷未保存', '总进度', '当前卷']) assert.ok(!text.includes(old), old);
+  } finally { page.dom.window.close(); }
+});

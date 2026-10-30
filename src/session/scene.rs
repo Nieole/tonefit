@@ -1109,6 +1109,17 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
         return live;
     }
 
+    // 清点途中停下没有开工或结束事件，只有线程交回的报告。
+    if run.stage == "ended" && run.survey.volumes.is_empty() {
+        live.tick(now);
+        let mut report = live.report();
+        report.outcome = outcome_of(run);
+        report.elapsed = Duration::from_secs_f64(run.elapsed_s);
+        live.returned(Ok(report));
+        session.run_finished();
+        return live;
+    }
+
     let roster: Vec<SurveyedVolume> = run
         .survey
         .volumes

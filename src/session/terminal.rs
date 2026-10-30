@@ -1174,6 +1174,77 @@ mod redesign {
         assert_sequence("survey-s");
     }
 
+    #[test]
+    fn survey_stop_returns_to_paths_without_claiming_a_started_volume() {
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            let (scene, running, exit) = walked(name);
+            assert_eq!(exit, Exit::Stay);
+            // 报告用时在清点收手时冻结；结束后仍走的屏钟让按停止的回话到点。
+            let buffer = painted_at(
+                &scene,
+                &running,
+                scene::sequence(name).size,
+                scene.now() + std::time::Duration::from_secs(30),
+            );
+            assert_same_cells(&buffer, &design::sequence(name));
+            let text: String = buffer
+                .content()
+                .iter()
+                .flat_map(|cell| cell.symbol().chars())
+                .filter(|glyph| !glyph.is_whitespace())
+                .collect();
+            assert!(text.contains("已停止⋅清点途中停下，一卷都没开始"));
+            for old in ["处理到第0卷", "第0卷未保存", "总进度", "当前卷"] {
+                assert!(!text.contains(old), "{old}");
+            }
+            assert!(text.contains("＋添加路径"));
+        }
+    }
+
+    #[test]
+    fn a_real_survey_stop_report_draws_the_design_finished_screen() {
+        struct StopDuringSurvey(std::sync::Arc<std::sync::Mutex<super::super::live::Live>>);
+        impl tonefit::Progress for StopDuringSurvey {
+            fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+                self.0.lock().expect("拿得到 Live").observe(&event);
+                if matches!(event, tonefit::Event::Surveying { .. }) {
+                    tonefit::Instruction::Finish
+                } else {
+                    tonefit::Instruction::Continue
+                }
+            }
+        }
+        let mut scene = Scene::named("survey");
+        let mut request = scene
+            .session
+            .request(tonefit::Mode::Process)
+            .expect("配置齐了");
+        let live = std::sync::Arc::new(std::sync::Mutex::new(
+            scene.live.take().expect("清点中的 Live"),
+        ));
+        request.progress = Some(tonefit::ProgressSink::new(StopDuringSurvey(
+            std::sync::Arc::clone(&live),
+        )));
+        let report = tonefit::run(&request).expect("清点途中停止交回报告");
+        assert_eq!(
+            report.outcome,
+            tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish)
+        );
+        assert!(report.volumes.is_empty());
+        let mut live = live.lock().expect("拿得到 Live");
+        assert!(live.roster().is_empty(), "没有开工事件");
+        live.returned(Ok(report));
+        scene.session.run_finished();
+        scene.session.watch_the_run(&live);
+        let running = Running::holding(live.clone());
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            assert_same_cells(
+                &painted(&scene, &running, scene::sequence(name).size),
+                &design::sequence(name),
+            );
+        }
+    }
+
     /// **`s` 按一次、再按一次**（票面第三条）：一次是做完当前卷就停，两次立即停止——
     /// 那一趟当场结束，当前卷标成已中断、未保存。
     #[test]

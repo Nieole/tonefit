@@ -870,8 +870,8 @@ impl Session {
         }
         let mut lines = vec![Line::Output, Line::Heading];
         lines.extend((0..self.scope.paths.len()).map(Line::Path));
-        // 开跑之后「＋ 添加路径」那一行不在：跑着的时候加不进路径（设计稿 `taskRows`）。
-        if self.stage() == Stage::Fresh {
+        // 跑着的时候加不进路径；清点途中停下则回到带「＋ 添加路径」的路径列表（设计稿 `taskRows`）。
+        if matches!(self.stage(), Stage::Fresh | Stage::Ended) {
             lines.push(Line::Add);
         }
         lines
@@ -1495,7 +1495,7 @@ impl Session {
         // 「列着几页」就换了一个数。收在这一处是因为那个数要那一卷的报告，而状态机读不到
         // 那一趟——与底下把树拼出来、把光标带到正在处理那一卷同一条分工。
         self.settle_the_pages(live);
-        if !live.surveying() && !self.views.task.surveyed {
+        if !live.roster().is_empty() && !self.views.task.surveyed {
             self.views.task.tree = tree::Tree::of(
                 &self.scope.paths,
                 live.roster(),

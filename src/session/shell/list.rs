@@ -111,6 +111,7 @@ pub(super) fn draw(
 fn title(session: &Session, phase: Phase) -> Vec<Segment> {
     let rest = match phase {
         Phase::Fresh => Segment::faint(" ⋅ 路径"),
+        Phase::Ended if !session.views.task.surveyed => Segment::faint(" ⋅ 路径"),
         Phase::Surveying => Segment::faint(" ⋅ 正在清点，马上显示卷列表"),
         _ => Segment::faint(format!(" ⋅ {} 卷", session.views.task.tree.roots.len())),
     };
@@ -265,10 +266,18 @@ impl Painter<'_> {
         let session = self.session;
         // 行上顺口提的那两个键（`[i → 修改]`、`[o → 添加]`）连同那一句都从按键表取；派不出就不提。
         let mentioned = |want: Want| {
-            keymap::hints(self.phase, session.views.block(), &[want])
-                .first()
-                .map(|said| hint(&said.spelt(), said.what))
-                .unwrap_or_default()
+            keymap::hints(
+                if self.phase == Phase::Ended && matches!(line, Line::Add) {
+                    Phase::Fresh
+                } else {
+                    self.phase
+                },
+                session.views.block(),
+                &[want],
+            )
+            .first()
+            .map(|said| hint(&said.spelt(), said.what))
+            .unwrap_or_default()
         };
         let named = |look: Look| name_look(look, pointed);
         let cursor = || pointed.cursor.clone();

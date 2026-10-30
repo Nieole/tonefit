@@ -771,6 +771,7 @@ function tick(run, dt) {
   if (!run || run.stage === 'ended' || run.stage === 'deciding') return;
   run.elapsed += dt;
   if (run.stage === 'surveying') {
+    if (run.latch) { run.stage = 'ended'; run.outcome = 'stopped'; return; }
     run.surveyT += dt;
     if (run.surveyT >= SURVEY_SEC) { run.stage = 'running'; startNext(run); }
     return;
@@ -841,6 +842,7 @@ function answer(run, key) {
 // 按停：一级收尾、二级中止
 function stop(run) {
   if (!run || (run.stage !== 'running' && run.stage !== 'surveying')) return 0;
+  if (run.stage === 'surveying') S.playing = true;
   run.latch = Math.min(2, run.latch + 1);
   if (run.latch === 2) {
     if (run.cur >= 0 && run.cur < run.vs.length) run.vs[run.cur].state = 'aborted';
@@ -1077,9 +1079,10 @@ function drawFooter(scr) {
 
 // ───── 总览块 ─────
 function volPath(v) { return `${v.dir.label}/${v.name}`; }
+function stoppedDuringSurvey(r) { return r && r.stage === 'ended' && r.cur < 0; }
 function overviewLines(iw, compact) {
   const r = S.run;
-  if (!r) {
+  if (!r || stoppedDuringSurvey(r)) {
     const on = S.named.filter((n) => n.on).length, off = S.named.length - on;
     if (compact) return [
       [['输出目录 ', 'c-gray'], [S.outRoot, 'c-fg b'], [' ⋅ 路径 ', 'c-gray'], [`已勾选 ${on} 个`, 'c-fg'], [' ⋅ ' + modelName(), 'c-gray']],
@@ -1155,7 +1158,7 @@ function overviewTitle() {
   if (r.stage === 'surveying') return { title: [mode, [' ⋅ 清点中', 'c-fg']], right: used };
   if (r.stage === 'deciding') return { title: [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷 ⋅ `, 'c-fg'], ['等待确认', 'c-yellow b']], right: used };
   if (r.stage === 'ended') {
-    const why = r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
+    const why = stoppedDuringSurvey(r) ? '⋅ 清点途中停下，一卷都没开始' : r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
     return { title: [[r.outcome === 'done' ? '完成 ' : r.outcome === 'stopped' ? '已停止 ' : '已中断 ', r.outcome === 'done' ? 'c-green b' : 'c-yellow b'], [why, 'c-fg'], [' ⋅ 用时 ' + fmtDur(r.elapsed * SHOW), 'c-gray']], right: [[`输出目录 ${S.outRoot}`, 'c-gray']] };
   }
   const frac = r.steps / r.total;
@@ -1168,11 +1171,11 @@ function overviewTitle() {
 // ───── 任务树的行 ─────
 function taskRows() {
   const r = S.run, rows = [];
-  if (!r || r.stage === 'surveying') {
+  if (!r || r.stage === 'surveying' || stoppedDuringSurvey(r)) {
     rows.push({ key: 'out', kind: 'out' });
     rows.push({ kind: 'label' });
     S.named.forEach((n, i) => rows.push({ key: 'np:' + n.path, kind: 'named', n, i }));
-    if (!r) rows.push({ key: 'add', kind: 'add' });
+    if (!r || stoppedDuringSurvey(r)) rows.push({ key: 'add', kind: 'add' });
     return rows;
   }
   for (const e of r.tree.entries) {
@@ -1352,7 +1355,7 @@ function drawList(scr, x, y, w, h) {
   const focused = !S.overlay && !S.input;
   const r = S.run;
   const selPos = sel.indexOf(ci) + 1;
-  const title = !r ? [['任务', 'c-fg b'], [' ⋅ 路径', 'c-gray']] : r.stage === 'surveying' ? [['任务', 'c-fg b'], [' ⋅ 正在清点，马上显示卷列表', 'c-gray']] : [['任务', 'c-fg b'], [` ⋅ ${r.tree.vols.length} 卷`, 'c-gray']];
+  const title = !r || stoppedDuringSurvey(r) ? [['任务', 'c-fg b'], [' ⋅ 路径', 'c-gray']] : r.stage === 'surveying' ? [['任务', 'c-fg b'], [' ⋅ 正在清点，马上显示卷列表', 'c-gray']] : [['任务', 'c-fg b'], [` ⋅ ${r.tree.vols.length} 卷`, 'c-gray']];
   const right = r && r.stage !== 'ended' && r.stage !== 'surveying'
     ? (S.follow ? [['[自动滚动]', 'c-green b']] : [['[已暂停自动滚动 ⋅ F 恢复]', 'c-yellow']]) : null;
   const bottomLeft = S.search && S.search.q ? [[`/${S.search.q}`, 'c-yellow i'], [' ⋅ n N 跳到下一个 / 上一个', 'c-gray i']] : null;

@@ -195,6 +195,7 @@ const SEQUENCES = [
   { name: 'running-s-advance', scene: 'running', size: MAIN, steps: [{ key: 's' }, { advance: 30 }], says: '已停止 ' },
   { name: 'running-s-s', scene: 'running', size: MAIN, steps: k('s', 's'), says: '已立即停止：' },
   { name: 'running-q', scene: 'running', size: MAIN, steps: k('q'), says: 'q 不会退出' },
+  ...[MAIN, NARROW].map((size) => ({ name: `survey-s-advance-${size[0]}`, scene: 'survey', size, steps: [{ key: 's' }, { advance: 30 }], says: { has: ['已停止 ⋅ 清点途中停下，一卷都没开始', '＋ 添加路径'], lacks: ['处理到第 0 卷', '第 0 卷未保存', '总进度', '当前卷'] } })),
   { name: 'survey-s', scene: 'survey', size: MAIN, steps: k('s'), says: '正在停止：' },
   { name: 'ended-q', scene: 'ended', size: MAIN, steps: k('q'), says: '退出' },
   { name: 'fresh-q', scene: 'fresh', size: MAIN, steps: k('q'), says: '退出' },
@@ -526,6 +527,9 @@ function sceneData(page) {
       return out;
     }),
   };
+  if (r.stage === 'ended' && r.cur < 0) {
+    data.run.survey.entries = []; data.run.survey.volumes = []; data.run.volumes = []; data.run.total_steps = 0;
+  }
   return data;
 }
 
