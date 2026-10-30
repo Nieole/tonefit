@@ -288,13 +288,16 @@ const SEQUENCES = [
   { name: 'config-p-j-Enter', scene: 'config', size: MAIN, steps: k('p', 'j', 'Enter'), says: '已使用预设「画集」' },
   { name: 'config-p-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd'), says: '再按一次 dd 删除「漫画」' },
   { name: 'config-p-dd-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd', 'd', 'd'), says: '已删除预设「漫画」' },
-  { name: 'config-p-G', scene: 'config', size: MAIN, steps: k('p', 'G'), says: { has: ['❯   ＋ 把当前设置保存为预设', '[p → 返回]'], lacks: ['[dd → 删除]'] } },
+  { name: 'config-p-G', scene: 'config', size: MAIN, steps: k('p', 'G'), says: { has: ['❯   ＋ 把当前设置保存为预设', '[⏎ → 保存为预设]', '[p → 返回]'], lacks: ['[dd → 删除]', '[⏎ → 使用]'] } },
   { name: 'config-p-G-dd', scene: 'config', size: MAIN, steps: k('p', 'G', 'd', 'd'), says: { has: ['❯   ＋ 把当前设置保存为预设', '预设 ⋅ 2 个'], lacks: ['[dd → 删除]', '再按一次 dd'] } },
   { name: 'config-p-save', scene: 'config', size: MAIN, steps: k('p', 'G', 'Enter'), says: '保存为预设，名称  ' },
   { name: 'config-p-save-named', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '插图' }, { key: 'Enter' }], says: '已保存预设「插图」' },
   // 同名覆盖要按两下：第一下在预设栏里问一句、输入行与名字留着，第二下才盖（design-parity/08，Q894）
   { name: 'config-p-save-taken', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }], says: { has: ['再按一次 ⏎ 覆盖「漫画」：覆盖后无法恢复，其他预设不受影响', '保存为预设，名称  漫画▏'], lacks: ['已保存预设', '再按一次 dd'] } },
-  // 重开起名那一行，上一次撞名等着的那一下就作废：那一问没了（Esc 关掉之后它还挂着，Q1189）
+  // 重开起名那一行，上一次撞名等着的那一下就作废：那一问没了（Esc 关掉时同样作废）
+  { name: 'config-p-save-taken-Escape', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }], says: { has: ['[⏎ → 保存为预设]'], lacks: ['再按一次', '[⏎ → 使用]'] } },
+  { name: 'config-p-save-taken-Escape-p-p', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'p' }, { key: 'p' }], says: { has: ['[⏎ → 保存为预设]'], lacks: ['再按一次'] } },
+  { name: 'config-p-j-Enter-t', scene: 'config', size: MAIN, steps: k('p', 'j', 'Enter', 't'), says: '先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来' },
   { name: 'config-p-save-taken-Escape-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'Enter' }], says: { has: ['保存为预设，名称  ▏'], lacks: ['再按一次'] } },
   { name: 'config-p-save-taken-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Enter' }], says: { has: ['已保存预设「漫画」', '预设 ⋅ 2 个'], lacks: ['再按一次'] } },
   { name: 'config-p-p', scene: 'config', size: MAIN, steps: k('p', 'p'), says: '[l → 展开]' },

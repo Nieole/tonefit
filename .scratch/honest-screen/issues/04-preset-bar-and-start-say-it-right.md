@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
-- [ ] 末行那一串写 `⏎ → 保存为预设`，停在一份预设上照旧 `⏎ → 使用`；留一条反着钉的断言：末行上不再出现 `⏎ → 使用`
-- [ ] 起名那一行 `Esc` 之后那一问不在，导一串停在 `Esc` 那一刻；收起预设栏再掀开同样不在
-- [ ] 套了没写型号的预设按 `t`：设计稿与实现都说「先挑型号」，导一串比整屏
+- [x] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
+- [x] 末行那一串写 `⏎ → 保存为预设`，停在一份预设上照旧 `⏎ → 使用`；留一条反着钉的断言：末行上不再出现 `⏎ → 使用`
+- [x] 起名那一行 `Esc` 之后那一问不在，导一串停在 `Esc` 那一刻；收起预设栏再掀开同样不在
+- [x] 套了没写型号的预设按 `t`：设计稿与实现都说「先挑型号」，导一串比整屏
 - [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 不做会怎样
@@ -66,3 +66,54 @@
 - **Recommend:** ①。
 - **Whose call:** 拍板的人（设计稿）；开不开票归协调人
 - **处置：** 拷问定案（2026-10-02，`/grill-with-docs`）→ `honest-screen`，待 `/to-spec`／`/to-tickets`：设计稿 `startRun` 先问型号，措辞照 `Session::request` 那一句，导一串钉住。
+
+
+## 落地记录
+
+基点 `a816ba3`，工作树 `/tmp/tonefit-honest-screen/04`，分支 `hs-04`；全部未提交。实现完成；最后一条验收框不勾：闸门 1、2 实际仍被本 effort 明确排除的 macOS 基线 Q995 挡住，不声称全绿。
+
+### 做成与代价
+
+- 先改设计稿、导出三串：`config-p-save-taken-Escape`、`config-p-save-taken-Escape-p-p`、`config-p-j-Enter-t`；既有 `config-p-G` 增加正反措辞断言。
+- `keymap::TABLE` 给 `UsePreset` 增加「保存为预设」短句与全部按键长句；屏底按所选行点名短句，原有预设上仍是「使用」。全部按键新增说明「保存为预设（预设栏末行）」；代价是该说明使全部按键的既有屏重新分栏、滚动末页多一行。既有导出变动仅末行屏底与全部按键那一族（含其滚动场景数据），没有手改导出文件。
+- Rust 取消预设起名、收起预设栏都会作废覆盖问句；保留重开起名、保存成功两处原有清理。独立收栏用例从尚在等覆盖的夹具喂 `p p` 比整屏，不借 Esc 的清理。末行与取消后的旧措辞都有禁止断言。
+- 设计稿开跑先问型号、再问输出目录、再问路径；前两句照 Rust 现有措辞。Rust 的开跑守卫无需改动。无型号预设后按 `t` 从终端层重放、逐格比导出整屏。
+- 新增 `honest-screen.test.js`，`npm test` 一并运行：型号与输出目录都缺且路径全未勾时先说型号；给了型号才说输出目录；两者齐了才问路径。独立夹具测试收栏，防上游清理掩盖它。
+- 没改黄金快照、`.gitattributes`、公共 API、架构边界或其他票。
+
+### 红 → 绿与守卫按反
+
+接缝按本 effort 已批准的 Testing Decisions：设计导出整屏、终端输入重放、按键表派生提示、设计稿按键后屏上回话。
+
+- 安装依赖 `npm ci` 后，先加 `config-p-G` 新措辞断言，`npm run check` 红在旧的 `[⏎ → 使用]`（`/tmp/hs04-design-red.log`）；设计改完重导、check、test 绿，再开始 Rust。
+- Rust 新增 `honest_preset_footer_and_cancelled_naming_match_the_design`，先跑 `cargo test --bin tonefit honest_preset -- --nocapture`，1 条匹配、1 条失败，整屏仍是旧末行提示（`/tmp/hs04-rust-red.log`）。修正表与清理后会话用例绿。
+- `/tmp/hs04-reversals.py` 每次只反一处、运行后恢复原字节：Rust 的 Escape 清理、收栏清理、重开起名清理、保存成功清理、末行短句；各跑命名用例，均 1 条失败。设计稿分别拿掉型号守卫、输出目录守卫、`p` 收栏清理，`node --test .scratch/session-redesign/honest-screen.test.js` 各 1 条失败。证据：`/tmp/hs04-reversal-{escape,shut,reopen,saved,footer,design-model,design-output,design-shut}.log`。最终恢复后会话与设计用例重新绿。
+
+### 实际命令与日志
+
+以下所有 cargo（包括 fmt、反转用例和 xtask 子命令入口）都以同一形式调用：
+
+```
+RUSTC_WORKSPACE_WRAPPER=/tmp/hs-04-rustc-workspace.sh python3 /tmp/tonefit-honest-screen-cargo.py cargo <参数>
+```
+
+wrapper 是票专用 `#!/bin/sh` / `exec "$@"`，target 保持指向集成树的原 symlink。
+
+- 在 `.scratch/session-redesign`：`npm ci`（`/tmp/hs04-npm-ci.log`）；`npm run export`（`/tmp/hs04-export.log`）；`npm run check`（`/tmp/hs04-check.log`）；`npm test`（6 通过，`/tmp/hs04-npm-test.log`）。
+- `cargo test --bin tonefit session::`：333 通过、0 失败、1 原有 ignored（`/tmp/hs04-session.log`）。
+- `cargo test --test single_source --test session --test preset`：分别 12、2、6 通过（`/tmp/hs04-integration.log`），补验闸门提前停止之后的相关集成检查。
+- `cargo xtask gate 1`、`cargo xtask gate 2`、`cargo xtask gate 3` 分开实际执行（`/tmp/hs04-gate1.log`、`/tmp/hs04-gate2.log`、`/tmp/hs04-gate3.log`）。前两条唯一已见失败均是 Q995 的 `many_archive_volumes_never_hold_more_than_the_one_being_processed`，`tests/concurrency.rs:755`：打开时 macOS 仍能重命名目录，left 0 / right 96。没有改、跳过或削弱它；它之后的整套用例未由该闸门执行。
+- `cargo xtask polish`：四项绿（`/tmp/hs04-polish.log`）；`git diff --check` 绿。
+
+## 数
+
+本票最终验证这一次（不是声称整套已经跑完）：
+
+| 项 | 结果 / 末行 |
+|---|---|
+| 闸门 1 | 红；合计 764 通过 1 失败；lib 255 / bin 490；`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.21s` |
+| 闸门 2 | 红；合计 616 通过 1 失败；lib 255 / bin 342；`test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.24s` |
+| 闸门 3 | 绿；`Finished dev profile [unoptimized + debuginfo] target(s) in 0.65s` |
+| polish | fmt / clippy 默认 / clippy 无默认特性 / doc 四项绿；lib doc 15 条既有告警（未增加）；原有 `fetch_update` deprecated 告警仍在 |
+
+余项只有已排除的 Q995 基线红，以及闸门受其提前停止而未覆盖后续整套测试的风险；没有本票未完成的行为变更。

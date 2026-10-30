@@ -502,10 +502,12 @@ impl Session {
     /// **搜索那一行连它搜的那一句一起丢**（设计稿 `onKey` 打字那一支的 `S.search = null`）：
     /// 取消的是整件事，不只是那一行——匹配处的下划线与框底边那一截当场跟着没了。
     pub fn cancel_typed(&mut self) {
-        if let Some(line) = self.views.input.take()
-            && line.purpose == Purpose::Search
-        {
-            self.views.task.search = None;
+        if let Some(line) = self.views.input.take() {
+            match line.purpose {
+                Purpose::Search => self.views.task.search = None,
+                Purpose::Preset => self.views.config.armed_save = None,
+                _ => {}
+            }
         }
     }
 }

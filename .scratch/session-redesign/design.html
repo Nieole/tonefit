@@ -740,7 +740,7 @@ const KEYMAP = [
   ['转换', [['t', '预览：只分析，不写文件', 'IE'], ['x', '转换：写到输出目录', 'IE'], ['s', '停止：按一次做完当前卷，按两次立即停', 'SR']]],
   ['确认', [['x', '写出这一卷（不用重新分析）', 'D'], ['a', '写出，后面的卷不再询问', 'D'], ['s', '不写出，结束预览', 'D'], ['v', '查看这一卷的每页结果', 'D']]],
   ['每页结果', [['a', '需留意的页 / 全部页', 'RE'], ['h Esc', '回卷列表', 'RDE']]],
-  ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图']]],
+  ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图'], ['⏎', '保存为预设（预设栏末行）']]],
   ['输入', [['Tab', '补全路径', 'I'], ['C-w', '删一段', 'IRDE'], ['⏎', '确定', 'IRDE'], ['Esc', '取消', 'IRDE'], ['F1', '全部按键', 'IRDE']]],
   ['灰阶写法', [['1bit', '2 级灰'], ['2bit', '4 级灰'], ['4bit', '16 级灰'], ['+FS', '加抖动（误差扩散）']]],
   ['环节', PASSES.map((p) => [p, PASS_WHAT[p], 'RD'])],
@@ -1021,7 +1021,7 @@ function footerHints() {
   if (S.overlay) return [hint('j/k', '滚动'), hint('Esc', '关闭')];
   if (S.view === 'config') {
     // 末行「＋ 把当前设置保存为预设」不是一份预设，删不掉：光标停在那一行上不摆 `dd`
-    if (S.cfg.presets) return [hint('⏎', '使用'), ...(S.cfg.pcursor < PRESETS.length ? [hint('dd', '删除')] : []), hint('p', '返回'), hint('j/k', '选择'), help];
+    if (S.cfg.presets) return [hint('⏎', S.cfg.pcursor < PRESETS.length ? '使用' : '保存为预设'), ...(S.cfg.pcursor < PRESETS.length ? [hint('dd', '删除')] : []), hint('p', '返回'), hint('j/k', '选择'), help];
     const ro = readOnly();
     return [...stageHints(), hint(S.cfg.pane === 'left' ? 'l' : '⏎', ro ? '查看' : S.cfg.pane === 'left' ? '展开' : '确定'), hint('h', '返回'), hint('p', '预设'), hint('1', '任务'), hint('j/k', '选择'), help];
   }
@@ -1716,6 +1716,8 @@ function rightCount() {
 // ───── 一趟 ─────
 function startRun(mode) {
   if (S.run && S.run.stage !== 'ended') return toast([['正在处理中，', 'c-yellow b'], ['请先按 s 停止', 'c-fg']]);
+  if (!cfgValue('model')) return toast([['✗ ', 'c-red b'], ['先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来', 'c-red']]);
+  if (!S.outRoot) return toast([['✗ ', 'c-red b'], ['先填输出目录：每个卷在它下面得到一份同名副本', 'c-red']]);
   if (!S.named.some((n) => n.on)) return toast([['✗ ', 'c-red b'], ['没有勾选任何路径，无法开始', 'c-red']]);
   VOL_SEQ = 0; DIR_SEQ = 0; PAGE_CACHE.clear();
   S.run = newRun(mode, discover(S.named));
@@ -1822,7 +1824,7 @@ function onKey(k, raw = k) {
   if (S.input && !S.overlay) {
     const inp = S.input;
     if (k === 'F1') { S.overlay = { kind: 'help', from: 0 }; return true; }
-    if (k === 'Escape') { if (inp.kind === 'search') S.search = null; S.input = null; return true; }
+    if (k === 'Escape') { if (inp.kind === 'search') S.search = null; if (inp.kind === 'preset') S.cfg.armedSave = null; S.input = null; return true; }
     if (k === 'Enter') { submitInput(); return true; }
     if (k === 'Tab') { complete(); return true; }
     if (k === 'Backspace') { inp.buf = [...inp.buf].slice(0, -1).join(''); inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
@@ -1967,7 +1969,7 @@ function taskKey(k) {
 }
 function configKey(k) {
   const ro = readOnly(), c = CONFIG[S.cfg.cursor];
-  if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
+  if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; S.cfg.armedSave = null; return true; }
   // 写到哪儿摆不下时从中间省略（原样那一档的规矩，停车场 Q968）：目录的头与文件名的尾两头都在，
   // 不从行尾截掉文件名
   if (k === 'c') {
@@ -1977,7 +1979,7 @@ function configKey(k) {
   }
   if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
   if (S.cfg.presets) {
-    if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
+    if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; S.cfg.armedSave = null; return true; }
     if (k === 'Enter' || k === 'l') {
       if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
       // 末行那一件经输入行起名；重开一次就把上一次撞名等着的那一下作废——那一问问的是上一次打的名字

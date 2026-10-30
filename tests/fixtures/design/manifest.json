@@ -5323,10 +5323,12 @@
       "says": {
         "has": [
           "❯   ＋ 把当前设置保存为预设",
+          "[⏎ → 保存为预设]",
           "[p → 返回]"
         ],
         "lacks": [
-          "[dd → 删除]"
+          "[dd → 删除]",
+          "[⏎ → 使用]"
         ]
       },
       "text": "sequences/config-p-G.text.txt",
@@ -5473,6 +5475,129 @@
       "text": "sequences/config-p-save-taken.text.txt",
       "style": "sequences/config-p-save-taken.style.txt",
       "data": "sequences/config-p-save-taken.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Escape",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": {
+        "has": [
+          "[⏎ → 保存为预设]"
+        ],
+        "lacks": [
+          "再按一次",
+          "[⏎ → 使用]"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Escape.text.txt",
+      "style": "sequences/config-p-save-taken-Escape.style.txt",
+      "data": "sequences/config-p-save-taken-Escape.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Escape-p-p",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        },
+        {
+          "key": "p"
+        },
+        {
+          "key": "p"
+        }
+      ],
+      "says": {
+        "has": [
+          "[⏎ → 保存为预设]"
+        ],
+        "lacks": [
+          "再按一次"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Escape-p-p.text.txt",
+      "style": "sequences/config-p-save-taken-Escape-p-p.style.txt",
+      "data": "sequences/config-p-save-taken-Escape-p-p.scene.json"
+    },
+    {
+      "name": "config-p-j-Enter-t",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "t"
+        }
+      ],
+      "says": "先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来",
+      "text": "sequences/config-p-j-Enter-t.text.txt",
+      "style": "sequences/config-p-j-Enter-t.style.txt",
+      "data": "sequences/config-p-j-Enter-t.scene.json"
     },
     {
       "name": "config-p-save-taken-Escape-Enter",

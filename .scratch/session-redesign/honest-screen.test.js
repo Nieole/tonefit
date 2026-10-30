@@ -1,0 +1,40 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { load, textGrid } = require('./render');
+
+// 状态是夹具；输入与屏上的回话是接缝。每道守卫单独给一个前提，避免上游清理替下游挡住。
+test('开跑先问型号，再问输出目录，最后问路径', async () => {
+  const page = await load();
+  try {
+    for (const [model, out, says] of [
+      [null, '', '先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来'],
+      ['kobo-libra-2', '', '先填输出目录：每个卷在它下面得到一份同名副本'],
+      ['kobo-libra-2', '~/转好的', '没有勾选任何路径，无法开始'],
+    ]) {
+      page.chip('config');
+      page.design.CONFIG.find((c) => c.key === 'model').value = model;
+      page.design.S.outRoot = out;
+      page.design.S.named.forEach((n) => { n.on = false; });
+      page.press('t');
+      assert.ok(textGrid(page.frame()).includes(says), says);
+      assert.equal(page.design.S.run, null, '拒绝时不应开跑');
+    }
+  } finally { page.dom.window.close(); }
+});
+
+test('收起预设栏使覆盖那一问作废，不借 Esc 的上游清理', async () => {
+  const page = await load();
+  try {
+    page.chip('config');
+    page.press('p');
+    page.press('G');
+    page.design.S.cfg.armedSave = '漫画';
+    page.press('p');
+    page.press('p');
+    const text = textGrid(page.frame());
+    assert.ok(text.includes('[⏎ → 保存为预设]'));
+    assert.ok(!text.includes('再按一次 ⏎ 覆盖'));
+    assert.ok(!text.includes('[⏎ → 使用]'));
+  } finally { page.dom.window.close(); }
+});

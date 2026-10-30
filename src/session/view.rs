@@ -1913,6 +1913,7 @@ impl Session {
         self.views.config.picker = false;
         self.views.config.pane = Pane::Settings;
         self.views.config.armed_delete = None;
+        self.views.config.armed_save = None;
     }
 
     /// 预设栏上 `⏎`／`l`：**套用光标停着的那一份**；停在末行那一件上时经输入行起名。
@@ -2129,7 +2130,14 @@ impl Session {
                 );
             }
             (View::Config, Focus::Picker) => {
-                wants.push(Want::of(Deed::UsePreset));
+                wants.push(Want::saying(
+                    Deed::UsePreset,
+                    if self.views.config.picked().is_some() {
+                        "使用"
+                    } else {
+                        "保存为预设"
+                    },
+                ));
                 // **`dd` 只在光标停在一份预设上时摆**：末行「＋ 把当前设置保存为预设」不是一份
                 // 预设，按下去一件事都不做（[`Session::ask_then_erase`]）——屏上不摆按不动的键，
                 // 与卷列表上的 [`Session::open_want`] 同一条形状。
@@ -3381,7 +3389,7 @@ mod tests {
         assert!(session.views.config.picked().is_none(), "光标真在末行上");
         assert_eq!(
             spelt(&session),
-            ["⏎ → 使用", "p → 返回", "j/k → 选择", "? → 全部按键"]
+            ["⏎ → 保存为预设", "p → 返回", "j/k → 选择", "? → 全部按键"]
         );
     }
 

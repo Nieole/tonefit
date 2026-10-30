@@ -2619,6 +2619,47 @@ mod redesign {
         assert_eq!(scene.session.views.config.armed_delete, None);
     }
 
+    /// 单独给收栏那道守卫一份尚在等覆盖的夹具，不让 Esc 的上游清理替它挡住。
+    #[test]
+    fn shutting_the_picker_forgets_the_overwrite_question() {
+        let (mut scene, mut running, _) = walked("config-p-save-taken");
+        scene.session.views.input = None;
+        let here = charts_land_in(&scene);
+        tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('p'), Key::Char('p')],
+        );
+        assert_same_cells(
+            &painted(&scene, &running, (120, 36)),
+            &design::sequence("config-p-save-taken-Escape-p-p"),
+        );
+    }
+
+    #[test]
+    fn honest_preset_footer_and_cancelled_naming_match_the_design() {
+        for name in [
+            "config-p-G",
+            "config-p-save-taken-Escape",
+            "config-p-save-taken-Escape-p-p",
+        ] {
+            let scene = assert_sequence(name);
+            let (_, running, _) = walked(name);
+            let lines = design::lines_of(&painted(&scene, &running, scene::sequence(name).size));
+            let text = lines.join("\n");
+            assert!(text.contains("[⏎ → 保存为预设]"), "{text}");
+            assert!(!text.contains("[⏎ → 使用]"), "末行不许再说使用：{text}");
+            assert!(
+                !text.contains("再按一次 ⏎ 覆盖"),
+                "取消后不许留着那一问：{text}"
+            );
+        }
+        assert_sequence("config-p");
+        let scene = assert_sequence("config-p-j-Enter-t");
+        assert!(replied(&scene).contains("先挑型号"));
+    }
+
     /// **末行那一件上不摆 `dd`，按下去一件事都不做**（`design-parity/02` 票面第四条）：
     /// `G` 停到「＋ 把当前设置保存为预设」上，屏底没有 `[dd → 删除]`；在那一行上按 `dd`
     /// 不闩、不删、不说话——走完那一屏与只按了 `G` 那一屏逐格相同，盘一个字节都不动。
@@ -2676,6 +2717,10 @@ mod redesign {
             Some("插图")
         );
         assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        assert_eq!(
+            scene.session.views.config.armed_save, None,
+            "存下后覆盖那一问作废"
+        );
     }
 
     /// **同名覆盖要按两下**（票面第一条）：第一下**在预设栏里**问一句、盘一个字节都不动、
@@ -2700,6 +2745,10 @@ mod redesign {
         // 第二下才盖。
         let scene = assert_sequence("config-p-save-taken-Enter");
         assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        assert_eq!(
+            scene.session.views.config.armed_save, None,
+            "存下后覆盖那一问作废"
+        );
         let stored = scene.session.preset_to_store();
         // 盖上去的与原来那一份不同（这一景改过缩放方式与抖动）：否则「第二下才盖」是一次空操作，照绿。
         assert_ne!(stored, taken, "这一景存出去的与原来那一份不同");
