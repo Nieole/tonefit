@@ -1020,6 +1020,27 @@ mod redesign {
         scene
     }
 
+    /// 型号与预设不同才解释；两段说明与报告抬头共用标定来源。
+    #[test]
+    fn details_name_the_preset_model_and_calibrated_panels() {
+        for name in [
+            "details-model-specified",
+            "details-model-omitted",
+            "details-threshold-provenance",
+            "details-device-provenance",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(!text.contains("这个数是在 boox-poke6 上"), "{name}: {text}");
+            if name == "details-model-omitted" {
+                assert!(text.contains("没写型号（套用时型号回到没挑）"), "{text}");
+                assert!(!text.contains("未设置（使用默认值）"), "{text}");
+            }
+        }
+    }
+
     /// 设置栏截断要露出末尾省略号；整屏同时钉住字、样式和未截断的短值。
     #[test]
     fn settings_elision_keeps_the_start_and_marks_overflow_wide_and_narrow() {

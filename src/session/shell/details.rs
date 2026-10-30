@@ -131,7 +131,7 @@ fn rows(session: &Session, item: Item, fold: u16, focused: bool) -> Vec<Row> {
         rows.extend(folded(NOW_NOT_LAST_TIME, fold, Look::FAINT));
     }
     if let Item::Setting(field) = item
-        && field != Field::Profile
+        && (field != Field::Profile || config::starred(session, field))
         && let Some(applied) = &session.views.config.applied
     {
         rows.push(Row::blank());
@@ -303,7 +303,13 @@ fn preset_says(
     let said = config::preset_says(session, preset, field);
     let mut segments = vec![
         Segment::faint(format!("预设「{name}」中：")),
-        Segment::plain(said.clone().unwrap_or_else(|| PRESET_UNSAID.to_owned())),
+        Segment::plain(said.unwrap_or_else(|| {
+            if field == Field::Profile {
+                "没写型号（套用时型号回到没挑）".to_owned()
+            } else {
+                PRESET_UNSAID.to_owned()
+            }
+        })),
     ];
     if config::starred(session, field) {
         segments.push(Segment::new("   ← 与预设不同", Look::tone(Tone::Caution)));

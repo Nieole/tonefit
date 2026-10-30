@@ -640,7 +640,7 @@ const CONFIG = [
   { key: 'levels', label: '可见灰阶数', kind: 'text', unset: '默认（按屏幕规格）', value: null,
     desc: '你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。' },
   { key: 'threshold', label: '画质门槛', kind: 'text', unset: '跟着型号走（先挑一个）', value: null,
-    desc: '画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。' },
+    desc: () => `画质分低于这个数，就算看不出和原图的差别。内置${thresholdText({value: null})}。这个数由人盲看对比定出来：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。` },
   { layer: '处理选项', note: '每次转换都可以调' },
   { key: 'fit', label: '缩放方式', kind: 'ring', options: ['height', 'inside'], unset: '默认（height）', value: 'inside', preset: null,
     desc: 'height（按高度铺满）：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。inside（整页放进屏幕）：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
@@ -666,7 +666,7 @@ const CONFIG = [
     desc: 'auto（自动）：按硬盘类型自己选。serial（逐个读）：适合机械硬盘和网络盘。concurrent（同时读）：适合固态硬盘。' },
   { layer: '画质判定参数', note: '只读' },
   { key: 'p1', label: '设备配置', kind: 'info',
-    desc: '下一趟照这份设备配置判定：型号、屏幕规格、画质门槛，门槛是在哪块屏幕上实测的也写着。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。' },
+    desc: () => `下一趟照这份设备配置判定：型号、屏幕规格、画质门槛。内置${thresholdText({value: null})}。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。` },
   { key: 'p2', label: '画质分构成', kind: 'info',
     desc: '画质分由两部分相加。① 整体走样：把原图和转换后的图都稍微模糊一下（相当于在正常阅读距离看），比较灰度差多少，色带、灰调发闷都算在这里。② 抖动颗粒：抖动的点子本身有多扎眼；起伏不到「相邻两级灰度差的 21.6%」就当看不见，不扣分。21.6% 这个比例是在 boox-poke6 上实测的。' },
   { key: 'p3', label: '细节放宽', kind: 'info',
@@ -1539,12 +1539,12 @@ function drawCfgRight(scr, x, y, w, h, ro) {
     lines.push({ segs: [] });
     for (const l of wrap('这里是此刻的设置，下一趟照它判定；上一趟用的是什么，看退出时印出的那份报告的抬头。', iw - 2)) lines.push({ segs: [[l, 'c-gray']] });
   }
-  if (c.kind === 'ring' || c.kind === 'text') {
+  if (stored(c)) {
     const p = presetOf(S.cfg.applied);
-    if (p) {
+    if (p && (c.kind !== 'model' || changedKeys().includes(c.label))) {
       const said = p.says[c.key];
       lines.push({ segs: [] });
-      lines.push({ segs: [[`预设「${p.name}」中：`, 'c-gray'], [said == null ? '未设置（使用默认值）' : said, 'c-fg'], ...((c.value ?? null) !== (said ?? null) ? [['   ← 与预设不同', 'c-yellow']] : [])] });
+      lines.push({ segs: [[`预设「${p.name}」中：`, 'c-gray'], [said == null ? (c.kind === 'model' ? '没写型号（套用时型号回到没挑）' : '未设置（使用默认值）') : said, 'c-fg'], ...((c.value ?? null) !== (said ?? null) ? [['   ← 与预设不同', 'c-yellow']] : [])] });
     }
   }
   if (ro) { lines.push({ segs: [] }); lines.push({ segs: [['正在转换，设置暂时锁定，结束后才能修改。', 'c-yellow']] }); }

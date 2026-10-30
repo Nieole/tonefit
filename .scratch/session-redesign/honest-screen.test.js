@@ -38,3 +38,21 @@ test('收起预设栏使覆盖那一问作废，不借 Esc 的上游清理', asy
     assert.ok(!text.includes('[⏎ → 使用]'));
   } finally { page.dom.window.close(); }
 });
+
+
+test('型号详情只在与预设不同时解释，没写型号不能说使用默认值', async () => {
+  const page = await load();
+  try {
+    page.chip('config');
+    page.press('h'); page.press('g'); page.press('g'); page.press('l');
+    assert.ok(!textGrid(page.frame()).includes('预设「漫画」中：'));
+    page.design.CONFIG.find((c) => c.key === 'model').value = 'boox-leaf2';
+    let text = textGrid(page.frame());
+    assert.ok(text.includes('预设「漫画」中：kobo-libra-2'));
+    assert.ok(text.includes('← 与预设不同'));
+    page.design.S.cfg.applied = '画集';
+    text = textGrid(page.frame());
+    assert.ok(text.includes('没写型号（套用时型号回到没挑）'));
+    assert.ok(!text.includes('未设置（使用默认值）'));
+  } finally { page.dom.window.close(); }
+});

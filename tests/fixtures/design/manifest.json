@@ -290,6 +290,184 @@
   ],
   "sequences": [
     {
+      "name": "details-model-specified",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "预设「漫画」中：kobo-libra-2",
+          "← 与预设不同"
+        ],
+        "lacks": [
+          "没写型号"
+        ]
+      },
+      "text": "sequences/details-model-specified.text.txt",
+      "style": "sequences/details-model-specified.style.txt",
+      "data": "sequences/details-model-specified.scene.json"
+    },
+    {
+      "name": "details-model-omitted",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "预设「画集」中：没写型号（套用时型号回到没挑）"
+        ],
+        "lacks": [
+          "未设置（使用默认值）"
+        ]
+      },
+      "text": "sequences/details-model-omitted.text.txt",
+      "style": "sequences/details-model-omitted.style.txt",
+      "data": "sequences/details-model-omitted.scene.json"
+    },
+    {
+      "name": "details-threshold-provenance",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "boox-poke6 与 kobo-libra-2"
+        ],
+        "lacks": [
+          "这个数是在 boox-poke6 上"
+        ]
+      },
+      "text": "sequences/details-threshold-provenance.text.txt",
+      "style": "sequences/details-threshold-provenance.style.txt",
+      "data": "sequences/details-threshold-provenance.scene.json"
+    },
+    {
+      "name": "details-device-provenance",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "boox-poke6 与 kobo-libra-2",
+      "text": "sequences/details-device-provenance.text.txt",
+      "style": "sequences/details-device-provenance.style.txt",
+      "data": "sequences/details-device-provenance.scene.json"
+    },
+    {
       "name": "settings-elision-120",
       "scene": "config",
       "size": [

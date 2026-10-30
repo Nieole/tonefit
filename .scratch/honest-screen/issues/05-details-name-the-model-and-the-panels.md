@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
-- [ ] 型号那一项：预设写了型号与没写型号各一屏，比整屏且绿
-- [ ] 两段说明说出的面板，与设置栏那一行、报告抬头同一份名单
-- [ ] 单一出处扫描添一条：详情栏说明里不许出现面板名字面；按反跑一次（抄一个面板名回去）看见红
+- [x] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
+- [x] 型号那一项：预设写了型号与没写型号各一屏，比整屏且绿
+- [x] 两段说明说出的面板，与设置栏那一行、报告抬头同一份名单
+- [x] 单一出处扫描添一条：详情栏说明里不许出现面板名字面；按反跑一次（抄一个面板名回去）看见红
 - [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 不做会怎样
@@ -47,3 +47,35 @@
 - **Recommend:** ①。ADR 0019 决定第 13 条要先改设计稿，而那两段与 dp/03 改的是同一个函数；本票改它会撞上并行的那一槽。
 - **Whose call:** 协调人
 - **处置：** 拷问定案（2026-10-02，`/grill-with-docs`）→ `honest-screen`，待 `/to-spec`／`/to-tickets`：详情栏两段长说明里的面板名单从库里读（与抬头同一处 `ThresholdSource`），设计稿先改。
+
+
+## 落地记录
+
+- 工作树 `/tmp/tonefit-honest-screen/05`，分支 `hs-05`，起点与收尾 HEAD 均为 `139ee85`；全部修改未提交。只更改本票状态；黄金快照、`.gitattributes`、依赖与 Q995 均未改。
+- 设计先行：型号详情复用 `stored` / `changedKeys`，仅型号与预设不同时注预设型号；没写型号明说「没写型号（套用时型号回到没挑）」。两段说明复用设计稿的 `thresholdText`。新增四串 `details-{model-specified,model-omitted,threshold-provenance,device-provenance}`，导出后才改 Rust；既有导出文件仅 `config-model-drill-j-l` 的字与样式增加型号注解，另更新 manifest。快照不手改。
+- Rust 复用 `config::preset_says` / `starred`；仅解除不同型号的注解例外。两段说明通过内置表上的型号读取内置 Threshold，整个数值与来源交给库的 Display（与 render 抬头同源），不另拼面板名单或连接词。不增加公共 API；代价是说明包含完整的内置门槛值与来源，用户覆盖值仍在当前值与抬头显示，不冒充标定史。颗粒项的另一份标定说明不属于本票。
+- 验收接缝照 accepted spec：JS 输入→整屏文字、终端真实键码分派→设计导出的字/色/修饰逐格全屏、单一出处扫描。增加库来源一致性用例，明确选 `kobo-libra-2`、覆盖门槛 `7.25` 与不选型号三种前提，说明都保留内置标定；不借默认型号。单一出处扫描拒绝两段说明内任何内置型号字面。
+
+### 实际红证与按反
+
+所有日志在仓库外 `/tmp/hs05-*.log`，没有保留变异。
+
+- `npm ci` 后 `npm test`：新增 JS 用例先红，6 通过 / 1 失败；缺少 `预设「漫画」中：kobo-libra-2`（`/tmp/hs05-npm-red.log`）。最初未装 jsdom 的启动错误不算行为红证。
+- 设计导出并 check 后、Rust 跟进前，`cargo test --bin tonefit details_name_the_preset_model_and_calibrated_panels`：0 通过 / 1 失败（`/tmp/hs05-rust-red.log`）。实现后同名用例 1 通过（`/tmp/hs05-rust-green.log`）。
+- 单一出处按反：把 `boox-poke6` 抄回门槛说明，扫描 0 通过 / 1 失败，明确报「画质门槛说明抄了面板型号 boox-poke6」（`/tmp/hs05-mutation-scan.log`，退出 101）。
+- 恢复型号排除守卫 `field != Field::Profile`，整屏用例红在 `details-model-specified` 第 23 行第 56 格，实际空白、期望「预」（`/tmp/hs05-mutation-model-guard.log`，0/1，退出 101）。
+- 没写型号改回「未设置（使用默认值）」：整屏红在 `details-model-omitted` 第 23 行第 72 格，实际「未」、期望「没」（`/tmp/hs05-mutation-missing-model.log`，0/1，退出 101）。
+- 来源改成用户覆盖值 `7.25`：整屏红在 `details-threshold-provenance` 第 8 行第 111 格，实际「7」、期望「5」（`/tmp/hs05-mutation-provenance.log`，0/1，退出 101）。
+- 全部恢复后：`cargo test --bin tonefit details_` 6 通过 / 0 失败；`cargo test --test single_source` 13 通过 / 0 失败（`/tmp/hs05-details-green.log`、`/tmp/hs05-single-source.log`）。
+
+## 数
+
+所有 Cargo 命令均通过 `python3 /tmp/tonefit-honest-screen-cargo.py cargo ...` 串行 runner，且设 `RUSTC_WORKSPACE_WRAPPER=/tmp/hs-05-rustc-workspace.sh`（票专用透传包装）；三个闸门分别调用。
+
+- `npm run export`：30 份快照 / 199 串期望屏；`npm run check`：与库里那一份逐字节相同；`npm test`：7 通过 / 0 失败（原有 6 条全部执行，另加本票 1 条）。日志 `/tmp/hs05-export.log`、`/tmp/hs05-check.log`、`/tmp/hs05-npm-green.log`。
+- 闸门 1：退出 1，合计 **766 通过 / 1 失败；lib 255 / bin 492**（另 1 个既有测量用例 ignored）。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.81s`。日志 `/tmp/hs05-gate1.log`。
+- 闸门 2：退出 1，合计 **617 通过 / 1 失败；lib 255 / bin 343**。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 42.63s`。日志 `/tmp/hs05-gate2.log`。
+- 两条红均是已知基线 **Q995**：`tests/concurrency.rs:755` 的 `many_archive_volumes_never_hold_more_than_the_one_being_processed`，macOS 仍可重命名，left 0 / right 96；未削弱或修复。闸门会停在此处，后续测试不冒称已跑；单一出处另行定向跑满。上面「三条全绿」验收格因此保留未勾，本票范围内已完成。
+- 闸门 3：退出 0，末行 `Finished dev profile [unoptimized + debuginfo] target(s) in 2.41s`（原日志中 dev 两侧为反引号）。日志 `/tmp/hs05-gate3.log`。
+- `cargo xtask polish`：退出 0，fmt check、两种 clippy、doc 四项全绿；lib doc **15 个既有告警**；原子 `fetch_update` 弃用告警仍在未改的 `src/main.rs:1193`。日志 `/tmp/hs05-polish.log`。
+- `git diff --check`：退出 0；没有改黄金快照、`.gitattributes` 或依赖清单。

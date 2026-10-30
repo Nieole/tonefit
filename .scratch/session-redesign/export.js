@@ -68,6 +68,18 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  // honest-screen/05：预设型号的解释与两段标定来源说明。
+  { name: 'details-model-specified', scene: 'config', size: MAIN,
+    steps: k('h', 'g', 'g', 'l', 'l', 'j', 'l', 'l'),
+    says: { has: ['预设「漫画」中：kobo-libra-2', '← 与预设不同'], lacks: ['没写型号'] } },
+  { name: 'details-model-omitted', scene: 'config', size: MAIN,
+    steps: k('p', 'j', 'Enter', 'Escape', 'g', 'g', 'l', 'l', 'l', 'l'),
+    says: { has: ['预设「画集」中：没写型号（套用时型号回到没挑）'], lacks: ['未设置（使用默认值）'] } },
+  { name: 'details-threshold-provenance', scene: 'config', size: MAIN,
+    steps: k('h', 'k', 'l'), says: { has: ['boox-poke6 与 kobo-libra-2'], lacks: ['这个数是在 boox-poke6 上'] } },
+  { name: 'details-device-provenance', scene: 'config', size: MAIN,
+    steps: k('h', 'G', 'k', 'k', 'k', 'k', 'l'), says: 'boox-poke6 与 kobo-libra-2' },
+
   // honest-screen/03：宽屏两栏与窄屏设置栏，画质门槛不再硬截成一句假完整的话。
   ...[MAIN, NARROW, [90, 36]].map((size) => ({
     name: `settings-elision-${size[0]}`, scene: 'config', size,
