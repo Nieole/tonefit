@@ -821,10 +821,10 @@ mod tests {
         session.wheel(-1, now);
         assert_eq!(at(&session), Some(0), "到头为止");
         assert_eq!(session.views.task.cursor, under, "底下那张列表不动");
-        // 补全框没开时这一格落到底下那一块上（`Session::wheel` 的《滚轮在哪一块上做哪一件》；停车场 Q1107）。
+        // 打字清掉候选后，滚轮也不许落到底下那一块上。
         session.perform(Deed::Typed('x'), now);
         session.wheel(-1, now);
-        assert_eq!(session.views.task.cursor, Cursor::Output);
+        assert_eq!(session.views.task.cursor, under, "没候选也不动底下那张列表");
         assert_eq!(typed(&session), "~/Comics/第01卷/x", "缓冲一格不动");
     }
 

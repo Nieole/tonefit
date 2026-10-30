@@ -1,0 +1,36 @@
+# . = c-fg
+# a = c-gray
+# b = c-green b
+# c = c-fg b u
+# d = c-blue
+# e = c-fg b
+# f = c-gray d
+# g = c-yellow
+# h = c-magenta b
+# i = c-white
+# j = c-yellow b
+# k = c-lgreen
+".aaaaaaabbcc....................ddddddddddddddddddddddddddddddddddddddd."
+"aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaffffffffffffffffffffffffffffffaaa"
+"a.aaaaabbbbggggggggggg.........a.aaaaaa..a.aaaaaaaaa.a"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"a.hhhhfffffffffff..................................................."
+"aaaiiiiiiiiiiiiiiii..........................................................."
+"aaaeeeeeeeeeeeeeaaaaaaaaa........................................."
+"aaaiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..."
+"a.hhhhfffffffffff..................................................."
+"aaaiiiiiiiiiiiiii......jj..................................................."
+"aaaiiiiiiiiiiiiiiiaaaaa................................................."
+"aaaiiiiiiiiiiiiiiaaaaa................................................."
+"aaaiiiiiiiiiiiiaaaaaaa................................................"
+"aaaiiiiiiiiiiiiiiaaaaaaa................................................"
+"aaaiiiiiiiiiiiiiiaaaaaaaaaaaa..........................................."
+"aaaiiiiiiiiiiiiiiaaaaa.................................................."
+"aaaiiiiiiiiiiiiiiaaaaaaaaaa......................................."
+"aaaiiiiiiiiiiiiiiii..jj......................................................a"
+"aaaiiiiiiiiiiiiaaaaa................................................a"
+"aaaiiiiiiiiiiiiiiaaaaaaaaaaaaa.........................................a"
+"aaaiiiiiiiiiiiiiiaaaaaaaa..............................................a"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+".bbbbbbbk...........................a...aaaaaaa.a.aaaaaa.a...aaaaaa."

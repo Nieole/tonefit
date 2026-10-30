@@ -2042,6 +2042,75 @@ mod redesign {
         assert_sequence("fresh-o-Escape");
     }
 
+    /// 80 列上提示从前往后让，长路径的末尾与光标不再被盖住。
+    #[test]
+    fn the_input_path_yields_hints_before_clipping_the_buffer() {
+        for n in [0, 1, 2, 4, 6, 8] {
+            let name = format!("input-path-yield-{n}");
+            assert_sequence(&name);
+            let (scene, running, _) = walked(&name);
+            let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+            let footer = lines.last().expect("屏底");
+            assert!(footer.contains("/▏"), "末尾与光标不许被提示盖住：{footer}");
+            assert!(!footer.contains("[Tab → 补全]"), "先让补全：{footer}");
+            if n >= 2 {
+                assert!(!footer.contains("[C-w → 删一段]"), "再让删一段：{footer}");
+            }
+            if n >= 4 {
+                assert!(!footer.contains("[⏎ → 确定]"), "再让确定：{footer}");
+            }
+            if n >= 6 {
+                assert!(!footer.contains("[Esc → 取消]"), "最后让取消：{footer}");
+            }
+            assert_eq!(footer.contains('⋯'), n == 8, "全让光才截：{footer}");
+        }
+    }
+
+    /// 搜索也按同一副让法，长到全让光才从前面省略，末字与光标始终在场。
+    #[test]
+    fn the_input_search_yields_hints_before_clipping_the_buffer() {
+        for n in [18, 25, 32, 45] {
+            let name = format!("input-search-yield-{n}");
+            assert_sequence(&name);
+            let (scene, running, _) = walked(&name);
+            let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+            let footer = lines.last().expect("屏底");
+            let ending = if n % 2 == 0 { "画▏" } else { "卷▏" };
+            assert!(footer.contains(ending), "末字与光标不许被盖住：{footer}");
+            assert!(!footer.contains("[C-w → 删一段]"), "先让删一段：{footer}");
+            if n >= 25 {
+                assert!(!footer.contains("[⏎ → 跳到结果]"), "再让确定：{footer}");
+            }
+            if n >= 32 {
+                assert!(!footer.contains("[Esc → 取消]"), "最后让取消：{footer}");
+            }
+            assert_eq!(footer.contains('⋯'), n == 45, "全让光才截：{footer}");
+        }
+    }
+
+    /// 输入行没有候选时滚轮不碰底下的列表、设置栏、预设栏；有候选仍挪三个。
+    #[test]
+    fn the_input_wheel_never_moves_the_block_under_an_empty_completion_box() {
+        for name in [
+            "input-add-empty-wheel",
+            "input-search-empty-wheel",
+            "input-setting-empty-wheel",
+            "input-preset-empty-wheel",
+        ] {
+            let scene = assert_sequence(name);
+            let line = scene.session.views.input.as_ref().expect("输入行开着");
+            assert!(line.candidates.is_empty(), "{name} 必须没有候选");
+            assert!(
+                scene.session.views.task.follow,
+                "滚轮不许暂停底下的自动滚动"
+            );
+        }
+        let scene = assert_sequence("input-candidates-wheel");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.at, 3, "有候选仍挪三项");
+        assert_eq!(line.buffer, "~/Comics/火之鸟/");
+    }
+
     /// **`Tab` 列出这一层、再按轮到下一个、`C-w` 删一段**：`~/` 底下四项按名字排，
     /// 轮到哪一条缓冲跟着换；`C-w` 之后候选没了、缓冲回到 `~/`。三屏都逐格相等。
     #[test]

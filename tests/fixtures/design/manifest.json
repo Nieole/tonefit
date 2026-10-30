@@ -290,6 +290,540 @@
   ],
   "sequences": [
     {
+      "name": "input-path-yield-0",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-path-yield-0.text.txt",
+      "style": "sequences/input-path-yield-0.style.txt",
+      "data": "sequences/input-path-yield-0.scene.json"
+    },
+    {
+      "name": "input-path-yield-1",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-path-yield-1.text.txt",
+      "style": "sequences/input-path-yield-1.style.txt",
+      "data": "sequences/input-path-yield-1.scene.json"
+    },
+    {
+      "name": "input-path-yield-2",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]"
+        ]
+      },
+      "text": "sequences/input-path-yield-2.text.txt",
+      "style": "sequences/input-path-yield-2.style.txt",
+      "data": "sequences/input-path-yield-2.scene.json"
+    },
+    {
+      "name": "input-path-yield-4",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]"
+        ]
+      },
+      "text": "sequences/input-path-yield-4.text.txt",
+      "style": "sequences/input-path-yield-4.style.txt",
+      "data": "sequences/input-path-yield-4.scene.json"
+    },
+    {
+      "name": "input-path-yield-6",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-path-yield-6.text.txt",
+      "style": "sequences/input-path-yield-6.style.txt",
+      "data": "sequences/input-path-yield-6.scene.json"
+    },
+    {
+      "name": "input-path-yield-8",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "⋯",
+          "▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-path-yield-8.text.txt",
+      "style": "sequences/input-path-yield-8.style.txt",
+      "data": "sequences/input-path-yield-8.scene.json"
+    },
+    {
+      "name": "input-search-yield-18",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画"
+        }
+      ],
+      "says": {
+        "has": [
+          "画▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]"
+        ]
+      },
+      "text": "sequences/input-search-yield-18.text.txt",
+      "style": "sequences/input-search-yield-18.style.txt",
+      "data": "sequences/input-search-yield-18.scene.json"
+    },
+    {
+      "name": "input-search-yield-25",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画卷"
+        }
+      ],
+      "says": {
+        "has": [
+          "卷▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]"
+        ]
+      },
+      "text": "sequences/input-search-yield-25.text.txt",
+      "style": "sequences/input-search-yield-25.style.txt",
+      "data": "sequences/input-search-yield-25.scene.json"
+    },
+    {
+      "name": "input-search-yield-32",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画"
+        }
+      ],
+      "says": {
+        "has": [
+          "画▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-search-yield-32.text.txt",
+      "style": "sequences/input-search-yield-32.style.txt",
+      "data": "sequences/input-search-yield-32.scene.json"
+    },
+    {
+      "name": "input-search-yield-45",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画卷"
+        }
+      ],
+      "says": {
+        "has": [
+          "卷▏",
+          "⋯"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-search-yield-45.text.txt",
+      "style": "sequences/input-search-yield-45.style.txt",
+      "data": "sequences/input-search-yield-45.scene.json"
+    },
+    {
+      "name": "input-add-empty-wheel",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "wheel": -1
+        }
+      ],
+      "says": "添加路径  ~/▏",
+      "text": "sequences/input-add-empty-wheel.text.txt",
+      "style": "sequences/input-add-empty-wheel.style.txt",
+      "data": "sequences/input-add-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-search-empty-wheel",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "wheel": 1
+        }
+      ],
+      "says": {
+        "has": [
+          "[自动滚动]",
+          "/▏"
+        ],
+        "lacks": [
+          "已暂停自动滚动"
+        ]
+      },
+      "text": "sequences/input-search-empty-wheel.text.txt",
+      "style": "sequences/input-search-empty-wheel.style.txt",
+      "data": "sequences/input-search-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-setting-empty-wheel",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        },
+        {
+          "wheel": 1
+        }
+      ],
+      "says": "可见灰阶数  ",
+      "text": "sequences/input-setting-empty-wheel.text.txt",
+      "style": "sequences/input-setting-empty-wheel.style.txt",
+      "data": "sequences/input-setting-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-preset-empty-wheel",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wheel": -1
+        }
+      ],
+      "says": "保存为预设，名称  ",
+      "text": "sequences/input-preset-empty-wheel.text.txt",
+      "style": "sequences/input-preset-empty-wheel.style.txt",
+      "data": "sequences/input-preset-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-candidates-wheel",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "wheel": 1
+        }
+      ],
+      "says": {
+        "has": [
+          "4 of 4",
+          "~/Comics/火之鸟/▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-candidates-wheel.text.txt",
+      "style": "sequences/input-candidates-wheel.style.txt",
+      "data": "sequences/input-candidates-wheel.scene.json"
+    },
+    {
       "name": "running-2",
       "scene": "running",
       "size": [

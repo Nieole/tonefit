@@ -4,15 +4,15 @@
 
 **Blocked by:** 01 — 三种截法收在一处
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
-- [ ] 80 列「添加路径」那一屏：缓冲末尾与光标看得见，右端让掉的是 `⇥`（必要时再让 `C-w`），比整屏且绿
-- [ ] 长搜索词那一串：同一副让法，比整屏且绿
-- [ ] 缓冲长到右端全让光仍放不下：前面 `⋯`、露出末尾与光标，导一串钉住
-- [ ] 输入行开着、补全框没候选时滚一格：底下那一块一格不动，导一串钉住；有候选时照旧挪候选
-- [ ] 留一条反着钉的断言：80 列上缓冲末尾不再被右端那几件盖住
-- [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
+- [x] 设计稿改完、`npm run export` 重导，`npm run check` 绿；快照对实现只读；重导之后既有快照的变动只落在本票牵到的那几处
+- [x] 80 列「添加路径」那一屏：缓冲末尾与光标看得见，右端让掉的是 `⇥`（必要时再让 `C-w`），比整屏且绿
+- [x] 长搜索词那一串：同一副让法，比整屏且绿
+- [x] 缓冲长到右端全让光仍放不下：前面 `⋯`、露出末尾与光标，导一串钉住
+- [x] 输入行开着、补全框没候选时滚一格：底下那一块一格不动，导一串钉住；有候选时照旧挪候选
+- [x] 留一条反着钉的断言：80 列上缓冲末尾不再被右端那几件盖住
+- [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行（已分开跑完；1、2 仅在范围外基线 Q995 红，3 绿，见《数》）
 
 ## 不做会怎样
 
@@ -73,3 +73,54 @@
 - **Recommend:** ②。输入行开着时焦点在它身上，打字的键、`↓`／`↑` 都不碰底下那一块，只有滚轮碰，说不出道理。
 - **Whose call:** 拍板的人（设计稿）
 - **处置：** 拷问定案（2026-10-02，`/grill-with-docs`）→ `honest-screen`，待 `/to-spec`／`/to-tickets`：输入行开着、补全框没候选时滚轮一件事都不做，设计稿 `moveBy` 先改。
+
+
+## 落地记录
+
+起点与交付 HEAD 均为 `hs-02` / `d252f9a`（已含批准的 01）；保留并完成上次中断留下的认领与 `export.js` 序列草稿。改动全部未提交，供协调者转移。
+
+- 设计先行：`design.html` 输入行按实际显示宽度给缓冲、光标与间隔留位，右端按 `Tab`、`C-w`、`⏎`、`Esc` 次序让；全让光仍放不下才从前面放 `⋯`。回话仍占右端的位置。`moveBy` 在输入行上收走滚轮，没有候选也不落到底下的块。
+- `export.js` 导出 15 条本票 80×24 序列：路径六屏（从 `G`、`o`、打 `Comics/`、实际 `Tab` 补全起步）、搜索四屏、无候选滚轮四屏（路径列表、运行中搜索、设置栏、预设栏）、有候选滚轮一屏。路径与搜索都覆盖逐件让位、全让光、不够时保留末尾。序列的正负自检同时核光标、末尾与不该再占位的提示。
+- `npm run export` 重导，`npm run check` 逐字节相同，`npm test` 四条通过。已有导出只改变 `add.80x24` 与 `add-narrow-F1-j-k-Escape` 的屏底文字/样式；没有手改导出、黄金快照或 `.gitattributes`。
+- Rust `footer.rs` 删除固定 `W - 40` 裁剪预算，提示照按键表的用途次序让位；缓冲调 01 的 `columns::elide_at(..., Some(Keep::End))`，不另写裁剪循环。`view.rs` 的滚轮在输入行上统一交给 `InputLine::step`，空候选不碰底下的块，也不暂停自动滚动。
+- `terminal.rs` 三条新用例从终端输入入口走完上述序列，比整屏的字、色与修饰；另留末尾 `/▏` / `画▏` / `卷▏` 不许消失、已让掉的提示不许再出现的负断言。`typing.rs` 旧滚轮用例改为打字清空候选后底下列表仍不动，有候选时每格三项的断言保留。
+- 代价：设计多一个保留末尾的省略 helper，画法按实际宽度量提示；没有依赖、特性、边界变更或新抑制。词汇表与模块 spec 已覆盖这副规矩，不改它们。
+
+### 实际红 → 绿
+
+1. 原设计跑已有草稿序列，`npm run export` 红于 `input-path-yield-0` 缺 `~/Comics/大友克洋/`：旧屏底在 `大友克洋` 后直接画 `[Tab → 补全]`，`/` 与光标都不在（`/tmp/hs-02-design-red.log`）。先修设计、重导并 check 绿，再动 Rust。
+2. 新路径整屏用例在旧 Rust 上实际 0 通过 / 1 失败：第 23 行第 28 格实际 `[`、期望 `/`（`/tmp/hs-02-path-red.log`）；启用让位与共享末尾裁剪后 1 通过（`/tmp/hs-02-path-green.log`）。搜索同一副实现随后整屏及负断言通过。
+3. 新空候选滚轮用例在旧守卫上红于 `input-add-empty-wheel`：第 6 行第 2 格实际 `›`、期望空格，光标被滚到了输出目录（`/tmp/hs-02-input-red.log`）。输入行无条件收走滚轮后，该组 13 通过（`/tmp/hs-02-input-green.log`）；候选每格三项的旧用例单独 1 通过（`/tmp/hs-02-candidates-green.log`）。
+4. 首跑整仓闸门发现草稿 `input-path-yield-0` 没有步，两个夹具完整性检查红；没有放松检查，改为从 `fresh` 喂真实添加与补全步骤，再重导。最终两条夹具检查随闸门的 bin 套件通过。
+
+守卫按反与反转实跑，三次均实际 0 通过 / 1 失败、退出 101，随后全部还原：
+
+| 改坏哪一处 | 实际红证据 |
+| --- | --- |
+| 提示摆不下 `>` 改 `<` | `input-path-yield-0` 屏底出现过早的 `⋯`，期望 `~`；`/tmp/hs-02-yield-mutation.log` |
+| 缓冲保留末尾 `Keep::End` 改 `Keep::Start` | `input-search-yield-45` 第 23 行第 2 格实际 `漫`、期望 `⋯`；`/tmp/hs-02-tail-mutation.log` |
+| 恢复「有候选才收走滚轮」旧守卫 | `input-add-empty-wheel` 底下光标又挪到输出目录；`/tmp/hs-02-wheel-mutation.log` |
+
+最终整组会话验收 **329 通过、0 失败、1 个既有忽略**（`/tmp/hs-02-session-green.log`）；默认 bin 全组 **486 通过、0 失败、1 个既有忽略**。三次反转之后均回到实际绿的实现。
+
+所有 Cargo 命令都经 `python3 /tmp/tonefit-honest-screen-cargo.py cargo ...`，且设 `RUSTC_WORKSPACE_WRAPPER=/tmp/hs-02-rustc-workspace.sh`（仅 `exec "$@"`）。共享 target 的 workspace 指纹与其他票隔离。
+
+闸门 1、2 只剩已批准排除的 Q995：macOS 上 `tests/concurrency.rs:755` 的 `many_archive_volumes_never_hold_more_than_the_one_being_processed`，重命名检出力断言实际 `0`、期望 `96`，与 01 交付记录同一失败。未修改、弱化或跳过该例；闸门在它处停下，后续集成二进制没有跑。按这项已知基线例外结票，「三条全绿」保持未勾。
+
+## 数
+
+日志均在仓库外。三条闸门分别调用，没有用一条遇红早停的命令冒充跑完三条。
+
+- 闸门 1（`/tmp/hs-02-gate1.log`）：红，合计 **760 通过 1 失败；lib 255 / bin 486**。
+  - `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.58s`
+- 闸门 2（`/tmp/hs-02-gate2.log`）：红，合计 **616 通过 1 失败；lib 255 / bin 342**。
+  - `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 46.31s`
+- 闸门 3（`/tmp/hs-02-gate3.log`）：绿。
+  - `Finished dev profile [unoptimized + debuginfo] target(s) in 2.38s`
+- polish（`/tmp/hs-02-polish.log`）：`fmt --check`、两种构建 clippy、`doc --no-deps` 四条全绿。
+  - 默认 clippy：`Finished dev profile [unoptimized + debuginfo] target(s) in 5.86s`
+  - 无默认特性 clippy：`Finished dev profile [unoptimized + debuginfo] target(s) in 4.90s`
+  - 文档：`warning: tonefit (lib doc) generated 15 warnings`（既有私有链接告警，未增加）；`Generated /private/tmp/tonefit-honest-screen/02/target/doc/tonefit/index.html`
+  - 编译 / clippy 的既有 `src/main.rs:1193` `fetch_update` 弃用告警未动。初次 fmt check 提示两处换行，按 rustfmt 调整后 polish 通过。
+- `npm run export`：30 份快照、188 串期望屏；`npm run check` 逐字节相同；`npm test` **4 通过**（最终日志 `/tmp/hs-02-design-export.log`、`/tmp/hs-02-design-check.log`、`/tmp/hs-02-npm-test.log`）。
+- `git diff --check` 通过。

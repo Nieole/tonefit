@@ -20,9 +20,6 @@ use std::time::Instant;
 /// 待续记号占的宽度（`d…` 连同两边的空）。
 const PENDING_ROOM: u16 = 6;
 
-/// 输入行的缓冲至多占到离右端这么远（设计稿 `drawFooter` 的 `W - 40`）：右端要留给那几件。
-const BUFFER_KEEPS_CLEAR: u16 = 40;
-
 /// 输入行上的光标。
 const CARET: &str = "▏";
 
@@ -46,32 +43,36 @@ pub(super) fn draw(
     if matches!(session.views.focus(), Focus::Input(_))
         && let Some(line) = &session.views.input
     {
-        let mut x = canvas.put(
-            1,
-            y,
-            &line.purpose.prompt(),
-            Look::kind(Kind::Caption).bold(),
-        );
+        let prompt = line.purpose.prompt();
+        let reply = session.views.reply(now);
+        let mut groups = hints(session, phase, live);
+        // 缓冲与光标先于提示：按用途派下来的次序从前往后让，全部让光才截缓冲。
+        let left_width = 1
+            + usize::from(crate::wrap::width(&prompt))
+            + usize::from(crate::wrap::width(&line.buffer))
+            + usize::from(crate::wrap::width(CARET));
+        while reply.is_none()
+            && !groups.is_empty()
+            && left_width + 1 + spread(&groups) > usize::from(width.saturating_sub(1))
+        {
+            groups.remove(0);
+        }
+        // 回话照旧占右端那几件的位置，到点再退回提示。
+        let right = match reply {
+            Some(reply) => reply.to_vec(),
+            None => spaced(groups),
+        };
+        let right_x = width.saturating_sub(1 + width_of(&right) as u16);
+        let mut x = canvas.put(1, y, &prompt, Look::kind(Kind::Caption).bold());
+        let buffer_room = right_x.saturating_sub(x + 1 + u16::from(!right.is_empty()));
         x = canvas.put(
             x,
             y,
-            &columns::clip(
-                &line.buffer,
-                usize::from(width.saturating_sub(BUFFER_KEEPS_CLEAR)),
-                Keep::Start,
-            ),
+            &columns::elide_at(&line.buffer, usize::from(buffer_room), Some(Keep::End)),
             Look::PLAIN,
         );
         canvas.put(x, y, CARET, Look::kind(Kind::Focus));
-        // **回话占着的那几秒，回话画在右端那几件的位置上**（设计稿 `drawFooter` 输入行那一支；
-        // 停车场 Q792）：输入行开着时屏底只剩这一处说得出话——`Tab` 一条都对不上时那一句
-        // 就落在这里（`Session::complete_typed`），不画的话等于一个字都没说。到点那几件退回来。
-        let right = match session.views.reply(now) {
-            Some(reply) => reply.to_vec(),
-            None => spaced(hints(session, phase, live)),
-        };
-        let x = width.saturating_sub(1 + width_of(&right) as u16);
-        canvas.line(x, y, &right, None);
+        canvas.line(right_x, y, &right, None);
         return;
     }
     let pending = session.views.pending(now);

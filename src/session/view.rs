@@ -1188,14 +1188,13 @@ impl Session {
     ///
     /// 1. **全部按键那一张掀着时滚它**——那一支在终端层（`Views::wheel_cover`：那一张有几行要窗口的尺寸），
     ///    滚掉了就不再交到这里；
-    /// 2. **补全框开着时挪候选**，一格同样三个（[`InputLine::step`]，与 `↓`／`↑` 同一处）；
+    /// 2. **输入行开着时只管补全框**，一格同样三个（[`InputLine::step`]，与 `↓`／`↑` 同一处）；
+    ///    没有候选时一件事都不做，不碰底下那一块。
     /// 3. 其余一律落到底下那一块的光标上：卷列表、每页结果、配置视图那几栏——
-    ///    说明卡掀着（停车场 Q1109）与输入行开着而补全框没开（停车场 Q1107）也落到这里。
+    ///    说明卡掀着（停车场 Q1109）也落到这里。
     pub fn wheel(&mut self, notches: i16, now: Instant) {
         let by = wheel_rows(notches);
-        if let Some(line) = &mut self.views.input
-            && !line.candidates.is_empty()
-        {
+        if let Some(line) = &mut self.views.input {
             line.step(by);
             return;
         }

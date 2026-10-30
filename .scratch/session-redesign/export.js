@@ -68,6 +68,23 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  // honest-screen/02：80 列上依次让掉右端提示，缓冲与光标先于提示；全让光才留末尾。
+  ...[0, 1, 2, 4, 6, 8].map((n) => ({
+    name: `input-path-yield-${n}`, scene: 'fresh', size: NARROW,
+    steps: [...k('G', 'o'), { type: 'Comics/' }, { key: 'Tab' }, ...(n ? [{ type: '收藏版/'.repeat(n) }] : [])],
+    says: { has: [n === 8 ? '⋯' : '~/Comics/大友克洋/', '▏', ...(n < 6 ? ['[Esc → 取消]'] : [])], lacks: ['[Tab → 补全]', ...(n >= 2 ? ['[C-w → 删一段]'] : []), ...(n >= 4 ? ['[⏎ → 确定]'] : []), ...(n >= 6 ? ['[Esc → 取消]'] : [])] },
+  })),
+  ...[18, 25, 32, 45].map((n) => ({
+    name: `input-search-yield-${n}`, scene: 'running', size: NARROW,
+    steps: [{ key: '/' }, { type: '漫画'.repeat(Math.floor(n / 2)) + (n % 2 ? '卷' : '') }],
+    says: { has: [n % 2 ? '卷▏' : '画▏', ...(n === 45 ? ['⋯'] : [])], lacks: ['[C-w → 删一段]', ...(n >= 25 ? ['[⏎ → 跳到结果]'] : []), ...(n >= 32 ? ['[Esc → 取消]'] : [])] },
+  })),
+  // 空候选时滚轮不动底下任一块；有候选仍挪三项。
+  { name: 'input-add-empty-wheel', scene: 'fresh', size: NARROW, steps: [...k('o'), { wheel: -1 }], says: '添加路径  ~/▏' },
+  { name: 'input-search-empty-wheel', scene: 'running', size: NARROW, steps: [...k('/'), { wheel: 1 }], says: { has: ['[自动滚动]', '/▏'], lacks: ['已暂停自动滚动'] } },
+  { name: 'input-setting-empty-wheel', scene: 'config', size: NARROW, steps: [...k('h', 'k', 'k', 'i'), { wheel: 1 }], says: '可见灰阶数  ' },
+  { name: 'input-preset-empty-wheel', scene: 'config', size: NARROW, steps: [...k('p', 'G', 'Enter'), { wheel: -1 }], says: '保存为预设，名称  ' },
+  { name: 'input-candidates-wheel', scene: 'add', size: NARROW, steps: [{ wheel: 1 }], says: { has: ['4 of 4', '~/Comics/火之鸟/▏'], lacks: ['[Tab → 补全]'] } },
   // ── 视图：`1`／`2`／`gt`／`gT`、单击视图名（spec；13：跑着时 `2` 看只读与顶栏进度；16） ──
   { name: 'running-2', scene: 'running', size: MAIN, steps: k('2'), says: '处理中' },
   { name: 'running-2-1', scene: 'running', size: MAIN, steps: k('2', '1'), says: '[自动滚动]' },

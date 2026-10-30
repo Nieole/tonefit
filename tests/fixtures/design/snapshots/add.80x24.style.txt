@@ -33,4 +33,4 @@
 "ci.jjddd..............................................i......................c"
 "ci.jjdddd............................................i......................c"
 "ciiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiccccccccccccccccccccccc"
-".aaaaaa.............c...cccccc.c...ccccccc.c.cccccc.c...cccccc."
+".aaaaaa..............i...........c...ccccccc.c.cccccc.c...cccccc."

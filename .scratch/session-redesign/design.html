@@ -172,6 +172,17 @@ function elide(s, w) {
   }
   return head + '⋯' + tail;
 }
+// 输入缓冲保留末尾，前面放省略号；光标另留一格。
+function elideStart(s, w) {
+  if (strW(s) <= w) return s;
+  if (w <= 0) return '';
+  let tail = '', used = 0;
+  for (const ch of [...s].reverse()) {
+    const c = chW(ch); if (used + c > w - 1) break;
+    tail = ch + tail; used += c;
+  }
+  return '⋯' + tail;
+}
 // 按显示宽度折行，带禁则：收尾记号不落行首，起首记号不落行尾（后一张与 crate::wrap 的 NEVER_ENDS_A_ROW 同一张表）
 const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
 const NO_TAIL = '（【《「『〈〔“‘([{';
@@ -1022,17 +1033,19 @@ function drawFooter(scr) {
   // 覆盖层盖着输入行时屏底让给覆盖层，关掉之后输入行原样回来
   if (S.input && !S.overlay) {
     const inp = S.input;
-    let x = scr.put(1, y, inp.prompt, 'c-green b');
-    x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
-    scr.put(x, y, '▏', FOCUS);
-    // 右端那几件按输入行的用途摆（屏上不摆按不动的键，按得动的都摆）：`Tab` 只在补得出路径的那几种上，
-    // `C-w` 每一种都有，`⏎` 在搜索那一行上说「跳到结果」。
-    // 回话占着的那几秒，回话画在这几件的位置上：输入行开着时屏底只剩这一处说得出话
-    // （「这里没有以……开头的项」就落在这里，停车场 Q792）；到点退回那几件
     const said = liveToast();
-    const right = said ? said.segs : [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')]
-      .flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
-    scr.line(W - 1 - segW(right), y, right);
+    const groups = [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')];
+    const spaced = () => groups.flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
+    // 缓冲与光标先于提示：从前往后让，全让光仍放不下才截缓冲。
+    const leftW = 1 + strW(inp.prompt) + strW(inp.buf) + 1;
+    while (!said && groups.length && leftW + 1 + segW(spaced()) > W - 1) groups.shift();
+    // 回话照旧占右端那几件的位置，到点再退回提示。
+    const right = said ? said.segs : spaced();
+    const rightX = W - 1 - segW(right);
+    let x = scr.put(1, y, inp.prompt, 'c-green b');
+    x = scr.put(x, y, elideStart(inp.buf, Math.max(0, rightX - (right.length ? 1 : 0) - x - 1)), 'c-fg');
+    scr.put(x, y, '▏', FOCUS);
+    scr.line(rightX, y, right);
     return;
   }
   const t = liveToast();
@@ -1660,7 +1673,10 @@ const curRow = () => S.lastRows.find((r) => r.key === S.curKey);
 const pageH = () => Math.max(4, S.size[1] - 12);
 function moveBy(n) {
   if (S.overlay && S.overlay.kind === 'help') { S.overlay.from = Math.max(0, S.overlay.from + n); return; }
-  if (S.input && S.input.cands && S.input.cands.length) { S.input.ci = Math.max(0, Math.min(S.input.cands.length - 1, S.input.ci + n)); fillCand(); return; }
+  if (S.input) {
+    if (S.input.cands && S.input.cands.length) { S.input.ci = Math.max(0, Math.min(S.input.cands.length - 1, S.input.ci + n)); fillCand(); }
+    return;
+  }
   if (S.view === 'config') {
     if (S.cfg.presets) { S.cfg.pcursor = Math.max(0, Math.min(PRESETS.length, S.cfg.pcursor + n)); S.cfg.armedDelete = null; return; }
     if (S.cfg.pane === 'right') { S.cfg.right = Math.max(0, Math.min(rightCount() - 1, S.cfg.right + n)); return; }
