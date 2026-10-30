@@ -71,3 +71,42 @@
 ### 集成核验
 
 集成时移除了前票移动 `canvas::elided_row` 后留下的文件尾空行（无行为变化），不再把本批引入的格式问题留给下一票。`RUSTC_WORKSPACE_WRAPPER=/tmp/hs-integration-rustc-workspace.sh python3 /tmp/tonefit-honest-screen-cargo.py cargo xtask polish` 四项通过，只有既有 `fetch_update` 弃用告警与 15 条文档告警；日志 `/tmp/hs06-integration-polish.log`。合入时两条清点停止定向用例也通过，日志 `/tmp/hs-06-merge-targeted.log`。
+
+
+## 落地记录 — rc_e1f8d384 空清单修正
+
+在 `hs-empty-survey-fix`，起点与当前 HEAD 均为 `c97f23df629d54deed61b996ee18a351f9937af0`；改动未提交。
+
+独立复核指出本票的 `!live.roster().is_empty()` 把「没有收到开工事件」与「收到零卷的开工事件」混为一谈，破坏 `TaskView::surveyed` 已有的零卷保证。此前记录的「只在确实收到清单时拼树」实际实现不成立，现纠正：
+
+- `Live` 明确记住开工事件是否到达，初值假，仅 `run_started` 置真；不从卷数、备注数量或返回报告反推。
+- `watch_the_run` 以此决定是否拼树；总览的结束标题和正文也读同一事实。没有开工事件的停止仍保留已经批准的清点停止屏。
+- `src/specs/session.md` 明确零卷事件仍切树、备注卡及问题跳转保留。没有新增 UI 决定，没有修改设计稿或导出文件；恢复的是既有已批准行为。
+- 终端回归通过真实 `tonefit::run` 的公共事件 → `Live::observe` → view → 终端绘制/输入接缝：临时目录内一份 `readme.txt`、一个无读取权限的子目录，真实报告零卷、非漫画文件 1、无法访问 1；验证两条备注在屏上、`]d` 到无法访问备注、Enter 打开两种说明卡、Esc 关闭，且禁止「清点途中停下」「＋ 添加路径」「开始后会扫描」假话，要求总进度正文。权限在运行返回后恢复。
+- 零卷库即使观察者在开工回答 Finish 也会完成，因此测试的第二轮仅将返回报告的结束方式设为 Stopped(Finish)，显式覆盖「已有开工事件后停止」的标题分支；不把它冒称为真实库产生的停止报告。事件与备注两轮都来自真实库。该权限夹具标记 `cfg(unix)`，Windows 不运行这条；原有停止屏两条整屏用例继续通过。
+
+### 红 → 绿与按反
+
+日志前缀 `/tmp/hs-empty-survey-`，全在仓库外：
+
+- `red.log`：实际执行新增回归 1 条、失败 1 条；真实报告已拿到零卷及两类备注，屏上却为路径列表，缺少「已忽略 1 个文件」。此前编译/造错输入失败不算行为红证据。
+- `green.log`：新增回归实际 1 通过。
+- `reversal-tree.log`：恢复旧非空清单守卫，实际 1 失败（备注被藏）。
+- `reversal-title.log`：只恢复旧结束标题的空清单判断，实际 1 失败（误说清点途中停止）。首次按反未覆盖到真实库不产生的停止结局，补上显式停止报告轮次后重新按反才红；此处记录的是最终有效证据。
+- `reversal-body.log`：只恢复旧结束正文的空清单判断，实际 1 失败（总览退回开跑前）。三次按反全部恢复后再跑完整会话。
+- `session.log`：`cargo test session:: --bin tonefit`，339 通过、0 失败、1 忽略，包括两条原有清点停止结束屏用例。
+- `npm-ci.log`、`npm-check.log`、`npm-test.log`：本 worktree 装依赖后 `npm run check` 与 `npm test` 通过；check 逐字节一致，测试 10/10。未装依赖时的 check 失败不是产品红证据。未改依赖清单/锁文件。
+- `git diff --check` 通过；黄金快照、`.gitattributes`、依赖和设计夹具均未动。
+
+### 数 — 修正后最终检查
+
+所有 Cargo 命令（含 fmt、定向测试及按反）都带 `CARGO_INCREMENTAL=0 RUSTC_WORKSPACE_WRAPPER=/tmp/hs-empty-survey-rustc-workspace.sh`，经 `python3 /tmp/tonefit-honest-screen-cargo.py cargo ...` 串行运行。三闸门分别执行，不因第一条红跳过第二、三条。
+
+| 命令 | 实际结果及日志 |
+|---|---|
+| `cargo xtask gate 1` | 红；770 通过、1 失败，lib 255 / bin 496；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.57s`（`gate1.log`） |
+| `cargo xtask gate 2` | 红；617 通过、1 失败，lib 255 / bin 343；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 42.85s`（`gate2.log`） |
+| `cargo xtask gate 3` | 绿；`Finished dev profile [unoptimized + debuginfo] target(s) in 0.96s`（`gate3.log`） |
+| `cargo xtask polish` | 四项全绿：fmt、两种 clippy、doc；文档仍为 15 warnings（`polish.log`） |
+
+闸门 1、2 唯一失败仍为批准范围外的 Q995：`tests/concurrency.rs:755`，`many_archive_volumes_never_hold_more_than_the_one_being_processed`，macOS 重命名断言实际 0、期望 96。未修复或削弱它；三条全绿复选框仍不勾。既有 `fetch_update` 弃用告警保留。功能修正完成，剩余限制为上述基线红与 Unix 权限夹具不覆盖 Windows。

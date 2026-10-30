@@ -1201,6 +1201,115 @@ mod redesign {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_completed_empty_survey_keeps_note_cards_and_problem_jumps_accessible() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use std::os::unix::fs::PermissionsExt;
+        struct ObserveSurvey {
+            live: std::sync::Arc<std::sync::Mutex<super::super::live::Live>>,
+            stop: tonefit::Instruction,
+        }
+        impl tonefit::Progress for ObserveSurvey {
+            fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+                self.live.lock().unwrap().observe(&event);
+                if matches!(event, tonefit::Event::RunStarted { .. }) {
+                    self.stop
+                } else {
+                    tonefit::Instruction::Continue
+                }
+            }
+        }
+        for stop in [tonefit::Instruction::Continue, tonefit::Instruction::Finish] {
+            let space = tempfile::tempdir().unwrap();
+            let library = space.path().join("library");
+            std::fs::create_dir(&library).unwrap();
+            std::fs::write(library.join("readme.txt"), "not a comic").unwrap();
+            let missing = library.join("unreadable");
+            std::fs::create_dir(&missing).unwrap();
+            std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let mut scene = Scene::named("survey");
+            scene.session.scope.paths = [library]
+                .into_iter()
+                .map(|path| super::super::state::NamedPath { path, on: true })
+                .collect();
+            scene.session.scope.out = Some(space.path().join("output"));
+            let mut request = scene.session.request(tonefit::Mode::Process).unwrap();
+            let live = std::sync::Arc::new(std::sync::Mutex::new(super::super::live::Live::new(
+                &request,
+                super::super::live::Resuming::GoesOn,
+            )));
+            request.progress = Some(tonefit::ProgressSink::new(ObserveSurvey {
+                live: std::sync::Arc::clone(&live),
+                stop,
+            }));
+            let result = tonefit::run(&request);
+            std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut report = result.unwrap();
+            // 零卷的库会直接完成；另摆「开工后才停下」的结束方式，守住两种空清单的区分。
+            if stop == tonefit::Instruction::Finish {
+                report.outcome = tonefit::RunOutcome::Stopped(stop);
+            }
+            assert!(report.volumes.is_empty());
+            assert_eq!(report.non_volume_files.len(), 1);
+            assert_eq!(report.unreachable_places.len(), 1);
+            let mut live = live.lock().unwrap();
+            live.returned(Ok(report));
+            scene.session.run_finished();
+            scene.session.watch_the_run(&live);
+            let mut running = Running::holding(live.clone());
+            drop(live);
+            let text = design::lines_of(&painted(&scene, &running, (120, 36))).join("\n");
+            assert!(text.contains("已忽略 1 个文件"), "{text}");
+            assert!(text.contains("无法访问"), "{text}");
+            assert!(text.contains("总进度"), "completed survey: {text}");
+            assert!(!text.contains("开始后会扫描"), "completed survey: {text}");
+            assert!(!text.contains("清点途中停下"), "completed survey: {text}");
+            assert!(!text.contains("＋ 添加路径"), "completed survey: {text}");
+            for key in [']', 'd'] {
+                feed(
+                    &mut scene.session,
+                    &mut running,
+                    &scene.presets,
+                    space.path(),
+                    key,
+                );
+            }
+            assert_eq!(
+                scene.session.views.task.cursor,
+                super::super::view::Cursor::Note(missing)
+            );
+            for (key, expected) in [
+                (KeyCode::Enter, "unreadable"),
+                (KeyCode::Esc, "已忽略 1 个文件"),
+                (KeyCode::Char('G'), "已忽略 1 个文件"),
+                (KeyCode::Enter, "readme.txt"),
+            ] {
+                let now = scene.now();
+                super::input(
+                    &mut scene.session,
+                    &mut running,
+                    &scene.presets,
+                    space.path(),
+                    now,
+                    Window {
+                        cols: 120,
+                        rows: 36,
+                    },
+                    super::translate(&KeyEvent::new(key, KeyModifiers::NONE)).unwrap(),
+                );
+                let text = design::lines_of(&painted(&scene, &running, (120, 36))).join("\n");
+                assert!(text.contains(expected), "{expected}: {text}");
+                if key == KeyCode::Enter {
+                    assert!(matches!(
+                        scene.session.views.cover,
+                        Some(Overlay::Note { .. })
+                    ));
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_real_survey_stop_report_draws_the_design_finished_screen() {
         struct StopDuringSurvey(std::sync::Arc<std::sync::Mutex<super::super::live::Live>>);

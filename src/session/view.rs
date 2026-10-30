@@ -1495,7 +1495,7 @@ impl Session {
         // 「列着几页」就换了一个数。收在这一处是因为那个数要那一卷的报告，而状态机读不到
         // 那一趟——与底下把树拼出来、把光标带到正在处理那一卷同一条分工。
         self.settle_the_pages(live);
-        if !live.roster().is_empty() && !self.views.task.surveyed {
+        if live.surveyed() && !self.views.task.surveyed {
             self.views.task.tree = tree::Tree::of(
                 &self.scope.paths,
                 live.roster(),

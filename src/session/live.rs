@@ -323,6 +323,8 @@ pub struct Live {
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
     /// 开工那一刻整份收下，此后一格不变。这一趟共几卷就是它的长度（停车场 Q1218）。
     roster: Arc<Vec<SurveyedVolume>>,
+    /// 开工那一条是否已到：空清单也是清点完成，不等于清点途中停下。
+    surveyed: bool,
     /// **被立即停止掉的那一卷**在清单上排第几、做了多久——会话这一头自己量的那一份。
     ///
     /// 一卷做了多久先读库那一份，会话这一头只量**没有库那一份**的两种（读的先后见
@@ -434,6 +436,7 @@ impl Live {
             index: Arc::default(),
             steps: 0,
             roster: Arc::default(),
+            surveyed: false,
             states: Vec::new(),
             aborted_elapsed: None,
             began: None,
@@ -499,6 +502,7 @@ impl Live {
         non_volume_files: &[NonVolumeFile],
         unreachable_places: &[UnreachablePlace],
     ) {
+        self.surveyed = true;
         self.steps = steps;
         // 表从这里开始掐：开工之前那一段是清点与那几道检查，剩余时间算不进去。
         self.started = self.now;
@@ -1106,12 +1110,17 @@ impl Live {
     }
 
     /// **卷清单**：开工那一条带的那一列，照发现的次序（`session-redesign/03`）。
-    /// 开工之前、或那一条没带清单时是空的。
+    /// 开工之前、或清点完成但没有卷时是空的；区分这两种要问 [`Self::surveyed`]。
     ///
     /// 下面四个访问器眼下只有本模块的用例读：画卷列表那棵树那一票接上读者时把那一行
     /// `expect` 拆掉——留着它会当场报「这个 `expect` 没用上」。
     pub fn roster(&self) -> &[SurveyedVolume] {
         &self.roster
+    }
+
+    /// 是否收到开工事件（包括零卷）：不能从清单长度或备注有无推断。
+    pub fn surveyed(&self) -> bool {
+        self.surveyed
     }
 
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序**。

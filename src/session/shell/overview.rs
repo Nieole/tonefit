@@ -126,7 +126,7 @@ fn writing(live: &Live) -> bool {
 
 /// 结束之后那一条：完成 · 已停止 · 已中断，加用时。
 fn ended_title(live: &Live) -> Vec<Segment> {
-    if live.roster().is_empty() && matches!(live.outcome(), RunOutcome::Stopped(_)) {
+    if !live.surveyed() && matches!(live.outcome(), RunOutcome::Stopped(_)) {
         return vec![
             Segment::new("已停止 ", Look::tone(Tone::Caution).bold()),
             Segment::plain("⋅ 清点途中停下，一卷都没开始"),
@@ -198,7 +198,7 @@ fn lines(
     match (phase, live) {
         (Phase::Fresh, _) | (_, None) => before_the_run(session, compact),
         (Phase::Surveying, Some(_)) => surveying(session, now),
-        (Phase::Ended, Some(live)) if live.roster().is_empty() => before_the_run(session, compact),
+        (Phase::Ended, Some(live)) if !live.surveyed() => before_the_run(session, compact),
         (_, Some(live)) => in_a_run(session, live, phase, inner, compact),
     }
 }
