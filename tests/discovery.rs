@@ -67,24 +67,16 @@ fn a_split_rar_comes_out_as_one_volume_named_after_the_sequence() {
         ["库/第01卷.cbz"],
         "卷名没取分卷序列的名字，或者出了两份产物"
     );
-    // **报告与进度条印的是同一个**，而两边印的都是分卷序列的**头一份**。
-    //
-    // 卷标识**不是**序列名：它是头一份那个文件，报告、幂等的去处、成员身份都按它算。
-    // 序列名出现在**去处**上（上面那一条断言），与开工那一条的卷清单上
-    // （`SurveyedVolume::name`，`tests/events.rs` 的
-    // `the_roster_names_every_volume_and_a_split_sequence_after_the_sequence` 钉着）——
-    // 会话写卷名读的是后者；命令行进度条读的是卷标识，仍印 `第01卷.part1`（停车场 Q1297）。
-    //
-    // 这一条钉的因此是**两处不许分道**：`Event::VolumeStarted` 的卷标识与
-    // `VolumeReport::volume` 眼下同源，而「让进度条改印序列名」正是最容易只改一处的改法。
+    // 开卷事件与报告用同一个卷根：分卷序列的头一份。
+    // 屏上卷名则按这个根读清点清单，不从标识推名字。
     assert_eq!(
         seen.lock().expect("读回开卷那几条事件").as_slice(),
         [parts[0].clone()],
-        "进度条印的不是分卷序列的头一份"
+        "开卷事件的卷根不是分卷序列的头一份"
     );
     assert_eq!(
         report.volumes[0].volume, parts[0],
-        "报告印的卷与进度条印的不是同一个"
+        "报告与开卷事件的卷根不是同一个"
     );
 }
 
@@ -793,10 +785,8 @@ impl tonefit::Progress for Announced {
 
 /// 只留每条**开卷**事件带的那个卷标识，别的一律不看。
 ///
-/// 进度条印的卷从这里来（命令行那一路的 `Bar::start` 取 `Event::VolumeStarted` 的 `volume`；
-/// 会话那一路按它认回清单上那一卷、卷名读清单），
-/// 而报告里那一格是 `VolumeReport::volume`——「报告与进度条印的是同一个」
-/// 只有把两边比一次才钉得住。
+/// 命令行与会话都按它认回清点清单上的卷名；报告的 `VolumeReport::volume`
+/// 也是同一个卷根。这条观察者只验身份，不验屏上卷名。
 #[derive(Default)]
 struct StartedVolumes(Arc<Mutex<Vec<PathBuf>>>);
 

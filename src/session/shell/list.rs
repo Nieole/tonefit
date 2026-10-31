@@ -958,11 +958,11 @@ fn sentence(rows: &[Row], kind: RowKind) -> Option<String> {
 
 /// 代表页那一列的字：[那一行](RowKind::Driver)上的路径，只印最后那一段。
 ///
-/// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::volume_name`]）：
+/// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::page_name`]）：
 /// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
 fn driver(rows: &[Row]) -> Option<String> {
     rows.iter()
         .find(|row| row.kind == RowKind::Driver)
         .and_then(|row| row.cell(Field::Source))
-        .map(|path| render::volume_name(std::path::Path::new(path)))
+        .map(|path| render::page_name(std::path::Path::new(path)))
 }

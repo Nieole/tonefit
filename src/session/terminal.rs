@@ -1727,8 +1727,10 @@ mod redesign {
             .pages
             .as_ref()
             .expect("`v` 换屏进了每页结果");
+        let tree = &scene.session.views.task.tree;
+        let at = tree.index_of(&pages.volume).expect("确认点上的卷在清单里");
         assert_eq!(
-            crate::render::volume_name(&pages.volume),
+            tree.name(at).expect("清单给出卷名"),
             "第05卷",
             "进的是确认点上那一卷"
         );

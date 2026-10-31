@@ -2488,7 +2488,7 @@ mod on_the_grid {
             .position(|page| page.failure().is_some())
             .expect("开着的那一卷有一张坏页");
         let (geometry, verdict) = (&rows[failed * 2], &rows[failed * 2 + 1]);
-        let name = render::volume_name(&report.pages[failed].source);
+        let name = render::page_name(&report.pages[failed].source);
         let line = line_with(&notable, &name);
         for text in [
             cell(geometry, Field::Size),
@@ -2501,7 +2501,7 @@ mod on_the_grid {
         // 全部页那一屏的头几页：尺寸、缩放、灰阶、原因、画质分。
         for at in 0..3 {
             let (geometry, verdict) = (&rows[at * 2], &rows[at * 2 + 1]);
-            let name = render::volume_name(&report.pages[at].source);
+            let name = render::page_name(&report.pages[at].source);
             let line = line_with(&all, &name);
             for text in [
                 cell(geometry, Field::Size),
@@ -2513,6 +2513,15 @@ mod on_the_grid {
                 assert!(line.contains(text), "「{text}」不在这一行上：{line}");
             }
         }
+    }
+
+    fn roster_name<'a>(live: &'a Live, root: &Path) -> &'a str {
+        &live
+            .roster()
+            .iter()
+            .find(|listed| listed.root == root)
+            .expect("屏上的卷在清单里")
+            .name
     }
 
     /// 一卷的灰阶分布那一格的字（卷级那几行里的那一格，`render::tally_column`）。
@@ -2539,7 +2548,7 @@ mod on_the_grid {
             .expect("转换中那一景有一卷进了隔离");
         let report = report_of(&scene, &isolated.root);
         let rows = render::volume(report, limit);
-        let line = line_with(&lines, &render::volume_name(&report.volume));
+        let line = line_with(&lines, roster_name(live, &report.volume));
         let said = sentence(&rows, RowKind::Isolated);
         assert!(
             line.contains(&head(&said)),
@@ -2554,7 +2563,7 @@ mod on_the_grid {
         // 没做成的那一卷：行尾是那句原因。
         let failure = &live.report().failed_volumes[0];
         let row = render::failed_volume(failure);
-        let line = line_with(&lines, &render::volume_name(&failure.volume));
+        let line = line_with(&lines, roster_name(live, &failure.volume));
         let said = cell(&row, Field::Sentence);
         assert!(line.contains(said), "「{said}」不在这一行上：{line}");
 
@@ -2593,7 +2602,7 @@ mod on_the_grid {
             .expect("有跳过的卷");
         let report = report_of(&scene, &skipped.root);
         let said = sentence(&render::volume(report, limit), RowKind::Skipped);
-        let line = line_with(&lines, &render::volume_name(&report.volume));
+        let line = line_with(&lines, roster_name(live, &report.volume));
         assert!(
             line.contains(&head(&said)),
             "「{said}」不在这一行上：{line}"
@@ -2613,11 +2622,11 @@ mod on_the_grid {
             .expect("有一卷带差异大的页");
         let report = report_of(&scene, &with_driver.root);
         let rows = render::volume(report, limit);
-        let line = line_with_all(&lines, &[&render::volume_name(&report.volume), "代表页"]);
+        let line = line_with_all(&lines, &[roster_name(live, &report.volume), "代表页"]);
         let driver = rows
             .iter()
             .find(|row| row.kind == RowKind::Driver)
-            .map(|row| render::volume_name(Path::new(cell(row, Field::Source))))
+            .map(|row| render::page_name(Path::new(cell(row, Field::Source))))
             .expect("整卷统一灰阶那一趟每一卷有代表页");
         assert!(
             line.contains(&driver),
@@ -2631,10 +2640,7 @@ mod on_the_grid {
         let lines = design::snapshot("deciding", 120, 36).lines();
         let summarized = live.summarized().expect("停在确认点上");
         let tally = tally_text(summarized, live);
-        let line = line_with_all(
-            &lines,
-            &[&render::volume_name(&summarized.volume), "灰阶分布"],
-        );
+        let line = line_with_all(&lines, &[roster_name(live, &summarized.volume), "灰阶分布"]);
         assert!(line.contains(&tally), "「{tally}」不在确认条上：{line}");
     }
 }

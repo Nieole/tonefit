@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 进度条上分卷序列那一卷叫序列的名字，用例钉住（进度条那一侧的用例或起真进程比 stderr）
-- [ ] 那个函数改名、读者只剩页名；断言 `第01卷.part1` 的那条用例改成说它管页名
-- [ ] 场景与终端用例的卷名期望值读清单，不再拿那个函数推
+- [x] 进度条上分卷序列那一卷叫序列的名字，用例钉住（进度条那一侧的用例或起真进程比 stderr）
+- [x] 那个函数改名、读者只剩页名；断言 `第01卷.part1` 的那条用例改成说它管页名
+- [x] 场景与终端用例的卷名期望值读清单，不再拿那个函数推
 - [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 不做会怎样
@@ -54,3 +54,24 @@
 - **Recommend:** ②，等这两个文件没人在改的时候顺手做：期望值与产品代码同一个出处，用例才说得出「屏上写的是清单上那个名字」。
 - **Whose call:** 协调人
 - **处置：** 拷问定案（2026-10-02，`/grill-with-docs`）→ `honest-screen`，待 `/to-spec`／`/to-tickets`：场景与终端用例的期望值改读清单上的卷名。
+
+
+## 落地记录
+
+- `hs-10`，起点 `48f1b2b`；只交付本票，改动未提交。实现验收完成；「三条全绿」仍未达成，保留未勾选：闸门 1、2 都在基线 Q995 `many_archive_volumes_never_hold_more_than_the_one_being_processed` 红（`left: 0 / right: 96`），不修、不抑制。
+- CLI `Bar` 在 `RunStarted` 保存卷根 → 清单卷名，`VolumeStarted` 按根查；没有路径推卷名的回退。清点清单合同保证每条开卷事件的卷根在清单内。
+- `render::page_name` 只供页名/代表页，原 split 后缀断言保留并明确是成员路径显示、不承担卷名语义。场景五处卷名期望按根读 `Live::roster()`，终端用例按根查清单派生的 `Tree::name`；页名断言继续走页名函数。
+- 接缝按已批准票面：进度条 helper 的 `ProgressBar::message()`；实际库清点/开卷事件；设计整屏与终端交互。没有新增设计合同，无需改设计或重导，黄金快照未动。
+- TDD 红：`/tmp/hs10-red.log`，新增 `the_progress_bar_uses_the_roster_name_not_the_split_archive_stem` 在旧实现输出 `第01卷.part1`，负断言失败；绿：`/tmp/hs10-green.log`，1 passed。守卫按反：临时将 `Bar::start` 改回 `render::page_name(volume)`，同一条用例再次红在 `.part1`（`/tmp/hs10-reversal.log`）；已恢复，最终闸门 bin 全绿。独立真 split RAR 序列名字面断言保留在 `tests/events.rs::the_roster_names_every_volume_and_a_split_sequence_after_the_sequence`，实际运行 1 passed（`/tmp/hs10-real-roster.log`）。
+- 完整会话 `cargo test --bin tonefit session::`：341 passed / 1 ignored（`/tmp/hs10-session-final.log`）；当前 bin 测试族 `cargo test --bin tonefit tests::`：391 passed（`/tmp/hs10-current-final.log`，该过滤也匹配 render 等模块）。最初终端用例错误读取已被回放搬走的 Scene live，已改为读取树的清单名；上述最终完整会话复验通过。
+- `cargo test --test events --test discovery --test golden`：discovery 24 passed、events 36 passed；总命令 200 秒超时于 golden（`/tmp/hs10-events-discovery-golden.log`），不能把这次 golden 记绿。单独重跑 `cargo test --test golden`：2 passed，142.27 秒（`/tmp/hs10-golden-final.log`）。
+- 全部 Cargo 都经过 `python3 /tmp/tonefit-honest-screen-cargo.py cargo …` 串行锁，设置 `CARGO_INCREMENTAL=0` 与专用 `RUSTC_WORKSPACE_WRAPPER=/tmp/hs-10-rustc-workspace.sh`。收尾 `git diff --check` 通过，无黄金/设计导出变更。
+
+## 数
+
+各条独立运行，不让上一条红挡住下一条：
+
+- `cargo xtask gate 1`（`/tmp/hs10-gate1-final.log`）：红，合计 773 通过 / 1 失败；lib 255 / bin 499。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.31s`。唯一失败 Q995。
+- `cargo xtask gate 2`（`/tmp/hs10-gate2-final.log`）：红，合计 619 通过 / 1 失败；lib 255 / bin 345。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.45s`。唯一失败 Q995。
+- `cargo xtask gate 3`（`/tmp/hs10-gate3-final.log`）：绿。末行 `Finished dev profile [unoptimized + debuginfo] target(s) in 0.87s`。
+- `cargo xtask polish`（`/tmp/hs10-polish-final.log`）：fmt、默认 clippy、无默认特性 clippy、doc 四项全绿；lib doc 15 条既有告警，未增加。既有 `fetch_update` 弃用告警未动。

@@ -2251,35 +2251,17 @@ pub fn undone(said: &str) -> String {
     format!("这次没能完成：{said}")
 }
 
-/// 一条路径在屏上叫什么：路径的最后一段，**归档不带扩展名**，取不出就整条路径。
-/// **只看路径，不碰盘。**
-///
-/// 读者两种：**命令行的进度条**（`crate::Bar::start`）拿它写当前那一卷——它读的是开卷那一条
-/// 报的卷根，开工那一条带的卷清单没留（停车场 Q1297）；**会话里一页叫什么**也走它
-/// （每页结果的页面那一列、卷表的代表页那一列），一页只印最后那一段。
-///
-/// **会话里一卷叫什么不走它**（`design-parity/12`，收停车场 Q849）：卷行、目录行行尾、
-/// 总览的当前卷、面包屑末一截一律读清点清单上的卷名（`tonefit::SurveyedVolume::name`）
-/// ——那是库认卷时算出来的，分卷序列那一卷是序列的名字。
-///
-/// **归档卷让掉扩展名**：`GLOSSARY.md` 的《分卷序列》把卷名定成「序列的名字」，
-/// 而库那一头认卷名的地方（`crate::source::name_of`）对归档取的正是 `file_stem`
-/// ——去处因此是 `<卷名>.cbz`。屏上叫 `第01卷.cbz` 是把**输入的扩展名**当成了卷名的一截。
-/// 认「是不是归档」只看扩展名（[`tonefit::is_archive`]，不碰盘），
-/// 而认得的那几个扩展名里**没有一个是图片格式**：一页的名字（`003.jpg`、`087.png`）
-/// 因此一格不动，两种东西共用这一条规矩仍然成立。
-///
-/// **分卷序列头一份在这里仍带着 `.partN`**：去掉那一截要读一次归档头
-/// （`crate::source::name_in_sequence`），而这一问不碰盘。命令行进度条上那一卷因此仍叫
-/// `第01卷.part1`（停车场 Q1297）；会话读清单，不经这里。
-pub fn volume_name(volume: &Path) -> String {
-    let named = if tonefit::is_archive(volume) {
-        volume.file_stem()
+/// 页名：源成员路径的最后一段，取不出就整条路径；只看路径、不碰盘。
+/// 每页结果与代表页共用。保留归档扩展名的既有处理，但不推断分卷序列名；
+/// 卷名由清点清单提供，不走这里。
+pub fn page_name(page: &Path) -> String {
+    let named = if tonefit::is_archive(page) {
+        page.file_stem()
     } else {
-        volume.file_name()
+        page.file_name()
     };
     named.map_or_else(
-        || volume.display().to_string(),
+        || page.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
 }
@@ -3574,20 +3556,11 @@ mod tests {
         assert!(text.contains("是网络路径"), "{text}");
     }
 
-    /// **一条路径在屏上叫什么**（[`volume_name`]）：目录卷是路径的末一级，
-    /// **归档卷不带扩展名**——`GLOSSARY.md` 的《分卷序列》把卷名定成「序列的名字」，
-    /// 去处也是 `<卷名>.cbz`，屏上带着**输入的**扩展名是把它当成了卷名的一截。
-    ///
-    /// **一页的名字一格不动**：认得的归档扩展名里没有一个是图片格式，
-    /// 一页与一卷因此共用这一条规矩。
-    ///
-    /// **分卷序列头一份在这里仍带着 `.partN`**：去掉那一截要读一次归档头，
-    /// 而这一问不碰盘——命令行进度条照它印（停车场 Q1297）；会话读清点清单上的卷名，
-    /// 那一头的序列名由 `session::shell` 的 `a_split_sequence_goes_by_the_sequence_name_on_screen` 钉着。
+    /// 页名只处理成员路径，不把形似分卷的成员名认作卷序列。
     #[test]
-    fn a_volume_loses_its_archive_extension_and_a_page_keeps_its_own() {
-        let named = |path: &str| volume_name(Path::new(path));
-        assert_eq!(named("/库/棋魂/第01卷"), "第01卷", "目录卷是末一级");
+    fn a_page_name_keeps_image_extensions_without_inferring_a_split_sequence() {
+        let named = |path: &str| page_name(Path::new(path));
+        assert_eq!(named("/库/棋魂/第01卷"), "第01卷", "成员路径只印末一级");
         assert_eq!(named("/库/第01卷.cbz"), "第01卷");
         assert_eq!(named("/库/第01卷.ZIP"), "第01卷", "扩展名大小写不敏感");
         assert_eq!(named("003.jpg"), "003.jpg", "一页仍带着它自己的扩展名");
@@ -3595,7 +3568,7 @@ mod tests {
         assert_eq!(
             named("/库/第01卷.part1.rar"),
             "第01卷.part1",
-            "分卷序列头一份那一截要读归档头才去得掉，这里不碰盘（Q1297）"
+            "这是页成员路径的显示规则，不是卷序列的名字"
         );
     }
 
