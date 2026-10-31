@@ -42,7 +42,7 @@ const TINY = [56, 14];
 
 /** 要导出的快照：场景清单 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'eta-start', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
+  ...['zero-volume', 'fresh', 'survey', 'eta-start', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -68,6 +68,11 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  ...[MAIN, NARROW].flatMap((size) => [
+    { name: `zero-volume-problem-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd'), says: { has: ['无法访问', '问题 1/1'], lacks: ['＋ 添加路径', '清点途中停下'] } },
+    { name: `zero-volume-unreachable-card-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd', 'Enter'), says: '无法访问 1 处' },
+    { name: `zero-volume-noncomic-card-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd', 'j', 'Enter'), says: '非漫画文件 1 个' },
+  ]),
   ...[MAIN, NARROW].flatMap((size) => [
     { name: `eta-start-estimating-${size[0]}`, scene: 'eta-start', size, steps: [{ advance: 0.01 }],
       says: { has: ['正在估算剩余时间'], lacks: ['预计还要'] } },
@@ -502,6 +507,7 @@ function sceneData(page) {
   data.run = {
     mode: r.mode === 'exec' ? 'process' : 'dry-run',
     stage: r.stage,
+    surveyed: r.surveyed,
     outcome: r.outcome,
     envelope: r.envelope,
     elapsed_s: num(r.elapsed * SHOW),
@@ -542,7 +548,7 @@ function sceneData(page) {
       return out;
     }),
   };
-  if (r.stage === 'ended' && r.cur < 0) {
+  if (r.stage === 'ended' && !r.surveyed) {
     data.run.survey.entries = []; data.run.survey.volumes = []; data.run.volumes = []; data.run.total_steps = 0;
   }
   return data;

@@ -129,3 +129,26 @@ test('每一卷导出干净去处，与隔离去处共享镜像布局', async ()
     }
   } finally { page.dom.window.close(); }
 });
+
+test('零卷完成仍导出清点完成和两类备注，清点停止不冒充完成', async () => {
+  const { sceneData } = require('./export');
+  const page = await load();
+  try {
+    page.chip('zero-volume');
+    const data = JSON.parse(JSON.stringify(sceneData(page)));
+    assert.equal(data.run.surveyed, true);
+    assert.equal(data.run.stage, 'ended');
+    assert.equal(data.run.outcome, 'done');
+    assert.deepEqual(data.run.survey.volumes, []);
+    assert.deepEqual(data.run.volumes, []);
+    assert.deepEqual(data.run.survey.entries.flatMap((e) => e.notes.map((n) => n.kind)), ['unreachable', 'non-volume']);
+    const text = textGrid(page.frame());
+    for (const word of ['无法访问', '已忽略 1 个文件', '总进度']) assert.ok(text.includes(word), text);
+    for (const word of ['清点途中停下', '＋ 添加路径', 'NaN']) assert.ok(!text.includes(word), text);
+    page.chip('survey');
+    assert.equal(sceneData(page).run.surveyed, false);
+    page.press('s'); page.play(1000);
+    assert.equal(sceneData(page).run.surveyed, false);
+    assert.equal(sceneData(page).run.survey.entries.length, 0);
+  } finally { page.dom.window.close(); }
+});

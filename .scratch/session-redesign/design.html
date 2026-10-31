@@ -467,6 +467,13 @@ const PLAN = {
 
 let VOL_SEQ = 0, DIR_SEQ = 0;
 // 目录：`parentHint` 是它真正的父目录（`~/` 写法、带尾 `/`），接上 `label` 就是目录的根
+// 没有卷也能清点出备注；不靠虚构卷承载它们。
+LIB['~/漫画库/私藏'] = { groups: [], notes: [
+  { kind: 'unreach', label: '无法访问', what: '深处/', said: '无法访问 1 处：打不开这些文件夹，里面有没有卷无从知道，全部跳过。这一趟因此**不是「全都做成了」**，退出码跟着变；别的卷该做的照做，上面那些就是做出来的。要那底下的东西，先把下面这几处修好再重跑',
+    entries: [['~/漫画库/私藏/深处', 'Permission denied (os error 13)']] },
+  { kind: 'nonvol', label: '已忽略 1 个文件', what: 'README.md', said: '非漫画文件 1 个：不属于任何一卷，没有转换也没有复制，输出里没有它们。这**不算出错**，退出码不变；源文件没动，需要的话去原位置取',
+    entries: [['~/漫画库/私藏/README.md', '它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制']] },
+] };
 function mkDir(label, parentHint, mixKey) { return { id: 'd' + DIR_SEQ++, label, parentHint, mixKey, vols: [] }; }
 const dirRoot = (d) => `${d.parentHint}${d.label}`;
 // 卷：`named` 是它从哪一条处理路径来，`root` 是卷根——目录接上卷名，点名的压缩包就是它自己
@@ -501,6 +508,7 @@ function discover(named) {
       for (let i = 0; i < n; i++) { const v = mkVol(d, names ? names[i] : vn(i + 1), mix, np.path); d.vols.push(v); vols.push(v); }
       return d;
     });
+    if (!dirs.length) dirs.push(mkDir(np.path.slice(np.path.lastIndexOf('/') + 1), np.path.slice(0, np.path.lastIndexOf('/') + 1), ''));
     if (dirs.length >= 2) entries.push({ type: 'section', path: np.path, dirs, notes: spec.notes || [] });
     else entries.push({ type: 'dir', dir: dirs[0], notes: spec.notes || [] });
   }
@@ -758,7 +766,7 @@ const stepsOf = (v) => passesOf(v).length * v.pages;
 const passLen = (v, p) => (p === '分析' ? v.pages - retainedOf(v) : v.pages);
 function newRun(mode, tree) {
   return {
-    mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
+    mode, tree, surveyed: false, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
     // 开跑那一刻的快照：跑起来之后设置锁住，结束后再改也不影响这一趟的结果
     envelope: (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开',
     wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + stepsOf(v), 0),
@@ -773,7 +781,7 @@ function tick(run, dt) {
   if (run.stage === 'surveying') {
     if (run.latch) { run.stage = 'ended'; run.outcome = 'stopped'; return; }
     run.surveyT += dt;
-    if (run.surveyT >= SURVEY_SEC) { run.stage = 'running'; startNext(run); }
+    if (run.surveyT >= SURVEY_SEC) { run.surveyed = true; run.stage = 'running'; startNext(run); }
     return;
   }
   let budget = dt;
@@ -880,7 +888,7 @@ function markOf(run, st) {
   if (st.running) return [SPIN[Math.floor(performance.now() / 90) % SPIN.length], 'c-blue b'];
   if (st.bad) return ['✗', 'c-red b'];
   if (st.warn) return ['!', 'c-yellow b'];
-  if (st.finished === st.total) return st.skipped === st.total ? ['-', 'c-gray'] : ['✓', 'c-green'];
+  if (st.total > 0 && st.finished === st.total) return st.skipped === st.total ? ['-', 'c-gray'] : ['✓', 'c-green'];
   if (st.finished > 0) return ['◌', 'c-gray'];
   return ['⋅', 'c-gray'];
 }
@@ -1079,7 +1087,7 @@ function drawFooter(scr) {
 
 // ───── 总览块 ─────
 function volPath(v) { return `${v.dir.label}/${v.name}`; }
-function stoppedDuringSurvey(r) { return r && r.stage === 'ended' && r.cur < 0; }
+function stoppedDuringSurvey(r) { return r && r.stage === 'ended' && !r.surveyed; }
 function overviewLines(iw, compact) {
   const r = S.run;
   if (!r || stoppedDuringSurvey(r)) {
@@ -1101,7 +1109,7 @@ function overviewLines(iw, compact) {
     ];
   }
   const t = runTotals(r);
-  const frac = r.steps / r.total;
+  const frac = r.total ? r.steps / r.total : 0;
   const cur = r.cur >= 0 && r.cur < r.tree.vols.length ? r.tree.vols[r.cur] : null;
   const cs = cur ? r.vs[r.cur] : null;
   const barW = compact ? Math.max(8, Math.min(20, iw - 64)) : Math.max(10, Math.min(40, iw - 60));
@@ -1115,7 +1123,7 @@ function overviewLines(iw, compact) {
     const pass = passOf(cur, cs) || '分析';
     here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [pass, PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
   }
-  const wroteYet = r.mode === 'exec' || r.wrote;
+  const wroteYet = (r.mode === 'exec' && r.tree.vols.length > 0) || r.wrote;
   const concl = wroteYet
     ? [['完成 ', 'c-gray'], [`${t.done} 卷`, 'c-fg b'], [' ⋅ 跳过 ', 'c-gray'], [`${t.skipped} 卷`, 'c-fg'], [` ⋅ 等待 ${r.tree.vols.length - t.finished} 卷`, 'c-gray']]
     : [['已分析 ', 'c-gray'], [`${t.judged} 卷`, 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(t.tally)];
@@ -1274,7 +1282,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
     X = scr.put(X, y, pad(elide(label, nameW), nameW), nameSt(running ? 'c-blue' : isDir ? 'c-fg' : 'c-white'));
     X += 1;
     const count = isDir ? `${st.finished}/${st.total} 卷` : `${row.v.pages} 页`;
-    X = scr.put(X, y, pad(count, c.countW, 'r'), isDir && st.finished === st.total ? 'c-fg' : 'c-gray');
+    X = scr.put(X, y, pad(count, c.countW, 'r'), isDir && st.total > 0 && st.finished === st.total ? 'c-fg' : 'c-gray');
     X += 2;
     if (c.tallyW) {
       const tally = isDir ? [...st.tally.entries()] : vs && vs.tally ? vs.tally : [];
@@ -2090,11 +2098,12 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['eta-start', '剩余时间估算起点'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['zero-volume', '零卷完成'], ['fresh', '还没开始'], ['survey', '清点中'], ['eta-start', '剩余时间估算起点'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
   switch (name) {
+    case 'zero-volume': S.named = [{ path: '~/漫画库/私藏', kind: '文件夹', on: true }]; exec(1.01); S.curKey = null; break;
     case 'fresh': S.curKey = 'np:~/漫画库'; break;
     case 'survey': startRun('exec'); S.run.surveyT = 0.8; S.playing = false; S.toast = null; break;
     case 'eta-start': startRun('trial'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= 0.015); S.toast = null; break;

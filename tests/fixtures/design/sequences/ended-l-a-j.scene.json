@@ -12,6 +12,7 @@
   "run": {
     "mode": "process",
     "stage": "ended",
+    "surveyed": true,
     "outcome": "done",
     "envelope": false,
     "elapsed_s": 578.2,

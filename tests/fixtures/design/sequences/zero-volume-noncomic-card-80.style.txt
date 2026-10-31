@@ -1,0 +1,38 @@
+# . = c-fg
+# a = c-fg d
+# b = c-green b d
+# c = c-fg b d u
+# d = c-gray d
+# e = c-blue d
+# f = c-fg b d
+# g = c-red b d
+# h = c-red d
+# i = c-lgreen
+# j = c-fg b
+# k = c-white
+# l = c-gray
+# m = c-red b
+"abbccdddddddaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea"
+"ddbbbaaaaaaaaaadddddddddddddddddddddddddddddddddddddddddddddddd"
+"daddddddddddddddfffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"daddddfffgggggghhhhhhaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+"ddffddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+"daaaiijjjjjjjjjiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiaaad"
+"daaai......................................................................iaaad"
+"daddi..jjjjjjjjj...........................................................idaad"
+"daaai......................................................................iaaad"
+"daaai..kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk...iaaad"
+"daaai..kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk......iaaad"
+"daaai..kkkkkkkkkkkkkkkkkkkk...........................................iaaad"
+"daaai..kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk..iaaad"
+"daaai..kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk..iaaad"
+"daaai..kkkkkkk..........................................................iaaad"
+"daaai......................................................................iaaad"
+"daaaiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiilllllllliiiaaad"
+"daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+"ammm...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

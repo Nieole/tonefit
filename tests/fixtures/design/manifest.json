@@ -4,6 +4,25 @@
   "version_placeholder": "#.#.#",
   "snapshots": [
     {
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/zero-volume.120x36.text.txt",
+      "style": "snapshots/zero-volume.120x36.style.txt",
+      "data": "scenes/zero-volume.json"
+    },
+    {
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/zero-volume.80x24.text.txt",
+      "style": "snapshots/zero-volume.80x24.style.txt"
+    },
+    {
       "scene": "fresh",
       "size": [
         120,
@@ -327,6 +346,186 @@
     }
   ],
   "sequences": [
+    {
+      "name": "zero-volume-problem-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "无法访问",
+          "问题 1/1"
+        ],
+        "lacks": [
+          "＋ 添加路径",
+          "清点途中停下"
+        ]
+      },
+      "text": "sequences/zero-volume-problem-120.text.txt",
+      "style": "sequences/zero-volume-problem-120.style.txt",
+      "data": "sequences/zero-volume-problem-120.scene.json"
+    },
+    {
+      "name": "zero-volume-unreachable-card-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "无法访问 1 处",
+      "text": "sequences/zero-volume-unreachable-card-120.text.txt",
+      "style": "sequences/zero-volume-unreachable-card-120.style.txt",
+      "data": "sequences/zero-volume-unreachable-card-120.scene.json"
+    },
+    {
+      "name": "zero-volume-noncomic-card-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "非漫画文件 1 个",
+      "text": "sequences/zero-volume-noncomic-card-120.text.txt",
+      "style": "sequences/zero-volume-noncomic-card-120.style.txt",
+      "data": "sequences/zero-volume-noncomic-card-120.scene.json"
+    },
+    {
+      "name": "zero-volume-problem-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "无法访问",
+          "问题 1/1"
+        ],
+        "lacks": [
+          "＋ 添加路径",
+          "清点途中停下"
+        ]
+      },
+      "text": "sequences/zero-volume-problem-80.text.txt",
+      "style": "sequences/zero-volume-problem-80.style.txt",
+      "data": "sequences/zero-volume-problem-80.scene.json"
+    },
+    {
+      "name": "zero-volume-unreachable-card-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "无法访问 1 处",
+      "text": "sequences/zero-volume-unreachable-card-80.text.txt",
+      "style": "sequences/zero-volume-unreachable-card-80.style.txt",
+      "data": "sequences/zero-volume-unreachable-card-80.scene.json"
+    },
+    {
+      "name": "zero-volume-noncomic-card-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "非漫画文件 1 个",
+      "text": "sequences/zero-volume-noncomic-card-80.text.txt",
+      "style": "sequences/zero-volume-noncomic-card-80.style.txt",
+      "data": "sequences/zero-volume-noncomic-card-80.scene.json"
+    },
     {
       "name": "eta-start-estimating-120",
       "scene": "eta-start",

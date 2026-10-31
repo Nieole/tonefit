@@ -1,0 +1,122 @@
+{
+  "scene": "zero-volume",
+  "now_ms": 1000000,
+  "time_multiplier": 7,
+  "output": "~/转好的",
+  "cwd": "~",
+  "presets_file": "~/.config/tonefit/presets.toml",
+  "paths": [
+    {
+      "path": "~/漫画库/私藏",
+      "kind": "directory",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "profile": "kobo-libra-2",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": null,
+    "split": null,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": null,
+    "dither": "fs",
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "漫画",
+  "presets": [
+    {
+      "name": "漫画",
+      "says": {
+        "profile": "kobo-libra-2",
+        "fit": null,
+        "dither": null
+      }
+    },
+    {
+      "name": "画集",
+      "says": {
+        "fit": "inside",
+        "crop": false,
+        "split": false,
+        "bit-depth": 4
+      }
+    }
+  ],
+  "run": {
+    "mode": "process",
+    "stage": "ended",
+    "surveyed": true,
+    "outcome": "done",
+    "envelope": false,
+    "elapsed_s": 12.6,
+    "steps": 0,
+    "total_steps": 0,
+    "current": null,
+    "stop_level": 0,
+    "for_the_rest": false,
+    "wrote": false,
+    "survey": {
+      "entries": [
+        {
+          "kind": "directory",
+          "root": "~/漫画库/私藏",
+          "notes": [
+            {
+              "kind": "unreachable",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏/深处",
+                  "reason": "Permission denied (os error 13)"
+                }
+              ]
+            },
+            {
+              "kind": "non-volume",
+              "entries": [
+                {
+                  "path": "~/漫画库/私藏/README.md",
+                  "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "volumes": [],
+      "unchecked": 0
+    },
+    "volumes": []
+  },
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "directory",
+      "root": "~/漫画库/私藏"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": null,
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

@@ -112,6 +112,7 @@
   "run": {
     "mode": "process",
     "stage": "surveying",
+    "surveyed": false,
     "outcome": null,
     "envelope": false,
     "elapsed_s": 0,

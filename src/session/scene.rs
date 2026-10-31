@@ -122,6 +122,8 @@ pub(crate) struct Run {
     pub(crate) mode: String,
     /// `surveying` · `running` · `deciding` · `ended`。
     pub(crate) stage: String,
+    /// 清点完成、开工事件已到；零卷也为真。
+    pub(crate) surveyed: bool,
     /// 结束了才有：`done` · `stopped` · `aborted`。
     pub(crate) outcome: Option<String>,
     /// 整卷统一灰阶开没开。
@@ -1204,7 +1206,7 @@ fn replay(run: &Run, home: &Path, epoch: Instant, session: &mut Session) -> Live
     }
 
     // 清点途中停下没有开工或结束事件，只有线程交回的报告。
-    if run.stage == "ended" && run.survey.volumes.is_empty() {
+    if run.stage == "ended" && !run.surveyed {
         live.tick(now);
         let mut report = live.report();
         report.outcome = outcome_of(run);
@@ -1792,6 +1794,37 @@ mod tests {
     use crate::session::live::VolumeState;
 
     #[test]
+    fn survey_completion_discriminator_requires_a_boolean_not_an_unknown_value() {
+        for invalid in [
+            Value::Null,
+            Value::String("unknown".into()),
+            serde_json::json!(0),
+        ] {
+            let mut data = json("scenes/zero-volume.json");
+            data["run"]["surveyed"] = invalid;
+            assert!(std::panic::catch_unwind(|| parse(data)).is_err());
+        }
+        let mut missing = json("scenes/zero-volume.json");
+        missing["run"].as_object_mut().unwrap().remove("surveyed");
+        assert!(std::panic::catch_unwind(|| parse(missing)).is_err());
+    }
+
+    #[test]
+    fn completed_zero_volume_replay_keeps_both_note_tables_and_run_started() {
+        let scene = Scene::named("zero-volume");
+        assert!(scene.live().surveyed());
+        assert!(scene.live().roster().is_empty());
+        assert!(scene.live().ended());
+        assert_eq!(scene.live().unreachable_places().len(), 1);
+        assert_eq!(scene.live().non_volume_files().len(), 1);
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            let stopped = Scene::after(name);
+            assert!(!stopped.live().surveyed());
+            assert!(stopped.live().ended());
+        }
+    }
+
+    #[test]
     fn every_discriminant_in_all_scene_and_sequence_data_is_read_strictly() {
         for (name, data) in every_scene_data() {
             Scene::from_data(&name, data);
@@ -1895,6 +1928,7 @@ mod tests {
             "/run/survey/entries/0/kind",
             "/run/mode",
             "/run/stage",
+            "/run/surveyed",
             "/run/outcome",
             "/run/volumes/0/state",
             "/paths/0/kind",
@@ -2110,6 +2144,7 @@ mod tests {
             return;
         };
         let live = scene.live();
+        assert_eq!(live.surveyed(), run.surveyed, "{name}：开工事件");
         let panel = live.report().profile.panel();
 
         // 清点中：清单还是空的（开工那一条还没到）。
@@ -2477,7 +2512,7 @@ mod tests {
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 16, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 17, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }

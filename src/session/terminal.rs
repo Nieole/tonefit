@@ -1193,6 +1193,15 @@ mod redesign {
     }
 
     #[test]
+    fn completed_zero_volume_replay_navigates_and_opens_both_note_cards() {
+        for width in [120, 80] {
+            for action in ["problem", "unreachable-card", "noncomic-card"] {
+                assert_sequence(&format!("zero-volume-{action}-{width}"));
+            }
+        }
+    }
+
+    #[test]
     fn survey_stop_returns_to_paths_without_claiming_a_started_volume() {
         for name in ["survey-s-advance-120", "survey-s-advance-80"] {
             let (scene, running, exit) = walked(name);

@@ -52,6 +52,7 @@
   "run": {
     "mode": "dry-run",
     "stage": "deciding",
+    "surveyed": true,
     "outcome": null,
     "envelope": false,
     "elapsed_s": 18.2,

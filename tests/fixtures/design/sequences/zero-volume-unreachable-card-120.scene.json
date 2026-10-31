@@ -1,0 +1,49 @@
+{
+  "scene": "zero-volume",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "note",
+      "what": "深处/"
+    },
+    "expanded": [],
+    "follow": false,
+    "pages": null,
+    "overlay": {
+      "kind": "note",
+      "note": {
+        "kind": "unreachable",
+        "entries": [
+          {
+            "path": "~/漫画库/私藏/深处",
+            "reason": "Permission denied (os error 13)"
+          }
+        ]
+      }
+    },
+    "input": null,
+    "search": null,
+    "toast": "问题 1/1",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

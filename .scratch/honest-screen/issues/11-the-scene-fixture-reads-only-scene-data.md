@@ -85,3 +85,44 @@
 ### 留开的基线红
 
 验收最后一项不勾：闸门 1、2 均在已接受排除的 Q995 `tests/concurrency.rs::many_archive_volumes_never_hold_more_than_the_one_being_processed` 红（macOS 重命名检测 left 0 / right 96），闸门在那里停止，并非全套通过。本票交付已完成；不修、不 suppress、不弱化该基线用例。
+
+
+## 落地记录 — scene-survey-fix 场景回放修正
+
+本次修正 Status: resolved。工作树 `/tmp/tonefit-honest-screen/scene-survey-fix`，分支 `hs-scene-survey-fix`，起点 `1484a76`；不改写以上历史验收记录，全部改动未提交。
+
+最终 Spec 复核指出：生产路径已经以明确的 `surveyed` 标志区分开工与清点途中停止，但场景回放仍以空清单提前返回，零卷完成的两张备注表没有交给 `Live::run_started`。此前关于夹具完整性的记录不能覆盖这一缺口。
+
+- 设计先行：新建语义场景 `zero-volume`，清点自然发现零卷、无法访问 1 处与非漫画文件 1 个；树允许没有卷的目录及其备注，不造假卷。导出主稿与窄屏完整快照，以及 `]d`、打开无法访问卡、打开非漫画文件卡各两种尺寸共六串；保留原清点停止序列。
+- 导出必填布尔 `run.surveyed`：初始清点为假，清点完成置真，清点停止不置真；零卷完成仍为真。清点停止导出空清单和空备注，零卷完成保留两类备注。`src/specs/session.md` 记录契约。
+- Rust 夹具严格反序列化布尔（缺失、null、字符串、数字均拒绝），回放据标志分支；完成零卷走原有 tables / RunStarted / RunFinished，清点停止仅返回报告。测试直接使用新导出数据的 `Scene::named` 与终端序列，不绕过回放去注入生产事件。
+- 成本：无新依赖、无新产品范围；现有文字/样式网格不变，新增两张快照与六串。黄金快照、`.gitattributes`、依赖文件不动。
+
+- 零卷设计补齐此前未能表达的空目录、零分母 0% 与空目录的等待标记/颜色；不改变既有任何文字或样式网格。新景复用已有 `~/漫画库/私藏`，避免假盘并集新增家目录候选干扰旧补全序列。备注错误原因取 `Permission denied (os error 13)`，未扩展到既有折行差异的修复。
+- 本次新增 Rust 接缝测试 4 条、JS 测试 1 条，调整场景总数断言（17 景、36 快照、215 串）。完整文件清单在 `/tmp/hs-scene-survey-changed-paths.txt`；导出审计 `/tmp/hs-scene-survey-export-audit.log`：50 份既有 JSON 仅增加 surveyed，既有网格零差分。全部具体 run（含继承 unchanged 的末态与 advanced 中间态）核过：fresh 没有 run；清点中 5 份为假，清点停止 2 份为假，运行 63、完成 55、确认 9 及 advanced 确认 2 份均为真。
+
+### 本次 red → green 与反转
+
+日志前缀 `/tmp/hs-scene-survey-`，均在仓库外。
+
+- `design-red.log`：装好依赖后新增设计用例实际失败（原稿没有 zero-volume 场景）；`design-green.log`：新增设计用例通过。完整最终 JS 测试见 `npm-test.log`（13/13）。依赖缺失不算 red。
+- `rust-red.log`：新导出数据直接交给旧回放，实际执行 3 条、失败 3 条，备注找不到；`rust-green.log`：三条均通过（夹具的开工/表、完整快照、真实终端输入的六串说明卡/问题跳转）。未绕过 replay。
+- `reversal.log`：只把回放条件改回旧空清单捷径，实际执行 3 条、失败 3 条。`data-mutation.log`：把真实导出场景 surveyed 改为字符串 unknown，严格扫描实际执行 1 条、失败 1 条，报 expected a boolean。`mutation-restore.log` 记录两次变异各自前后 SHA256 相等、原字节恢复；恢复后再跑场景/会话/闸门/polish。
+- `strict-type.log`：缺失、null、数字、未知字符串均被拒绝，实际 1 条通过。屏上反断言禁止「清点途中停下」「＋ 添加路径」「NaN」，原清点停止的第零卷禁词断言照旧保留。
+
+### 本次数
+
+所有 Cargo 均设置 `CARGO_INCREMENTAL=0 RUSTC_WORKSPACE_WRAPPER=/tmp/hs-scene-survey-rustc-workspace.sh`，通过 `python3 /tmp/tonefit-honest-screen-cargo.py cargo ...` 串行；只在本工作树跑 npm。
+
+| 检查 | 最终实际结果（日志） |
+|---|---|
+| npm export / check / test | 全绿；36 份快照、215 串，13 passed / 0 failed（`export.log`、`check-final.log`、`npm-test.log`） |
+| scene 定向 | 15 passed / 0 failed（`scene.log`） |
+| session 全部 | 349 passed / 0 failed / 1 ignored（`session.log`） |
+| 独立 gate 1 | 782 通过 / 1 失败，lib 256 / bin 507；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.73s`（`gate1.log`） |
+| 独立 gate 2 | 626 通过 / 1 失败，lib 256 / bin 351；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.89s`（`gate2.log`） |
+| 独立 gate 3 | 绿；`Finished dev profile [unoptimized + debuginfo] target(s) in 0.13s`（`gate3.log`） |
+| polish | 四项全绿；既有 lib doc 15 warnings、fetch_update deprecated 与无默认特性 page_name dead-code 告警不增（`polish.log`） |
+| 审计 | `git diff --check` 绿；黄金快照、.gitattributes、依赖未动（`protected-audit.log`、`export-audit.log`） |
+
+本次修正 resolved；整仓仍不宣称全绿：gate 1、2 各仅卡批准排除的 Q995 `many_archive_volumes_never_hold_more_than_the_one_being_processed`（macOS 重命名计数实际 0 / 期望 96），没有修复、削弱或 suppress。以上历史记录保留，纠正的是场景回放空清单捷径与导出完成事实的缺口。

@@ -2254,6 +2254,7 @@ pub fn undone(said: &str) -> String {
 /// 页名：源成员路径的最后一段，取不出就整条路径；只看路径、不碰盘。
 /// 每页结果与代表页共用。保留归档扩展名的既有处理，但不推断分卷序列名；
 /// 卷名由清点清单提供，不走这里。
+#[cfg(any(feature = "tui", test))]
 pub fn page_name(page: &Path) -> String {
     let named = if tonefit::is_archive(page) {
         page.file_stem()

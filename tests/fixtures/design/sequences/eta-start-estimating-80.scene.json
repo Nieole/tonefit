@@ -12,6 +12,7 @@
   "run": {
     "mode": "dry-run",
     "stage": "running",
+    "surveyed": true,
     "outcome": null,
     "envelope": false,
     "elapsed_s": 13.72,
