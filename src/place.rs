@@ -3,8 +3,9 @@
 //!
 //! 两半，各住一处：
 //!
-//! - **判等**（[`same_place`]，查表时用它的键 [`Place`]）：纯函数，两条路径加一个
-//!   「这一侧认不认大小写」的答案进去，一次盘都不问。**字面规整**，再按那个答案折不折大小写。
+//! - **判等**（[`same_place`]，查表时用它的键 [`Place`]）：两条路径加一个
+//!   「这一侧认不认大小写」的答案进去，相对路径读当前目录，但不查路径是否存在。
+//!   **字面规整**，再按那个答案折不折大小写。
 //! - **探法**（[`case_sensitivity`]）：那个答案从哪儿来。只读地翻一个已有名字的大小写去问盘。
 //!
 //! 用它的有四处：**收编**认「同一个卷根」（`crate::discover::Found`）、**借住**认「这个卷的去处是不是
@@ -23,7 +24,8 @@
 //! - **软链不解析**：一条软链与它指向的那棵树是两个名字（`GLOSSARY.md` 的《尚未确立》）。
 //!   解析要路径存在，而撞名比的是还没写出来的去处。
 //! - **`..` 不解析**：与软链一起时，字面解析会指错地方。
-//! - **相对与绝对不互相认**：`库` 与 `/当前目录/库` 是两个写法——规整是字面的。
+//! - **相对路径先接当前目录**：自己接，不用 Windows 上会算掉 `..` 的 `std::path::absolute`。
+//!   只拿来比，报告仍留用户点的写法；读不到当前目录时保留相对写法，不猜它在哪里。
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -170,9 +172,9 @@ impl Side {
     }
 }
 
-/// **判等**：`a` 与 `b` 在 `case` 那一档上是不是同一处。纯函数，一次盘都不问。
+/// **判等**：`a` 与 `b` 在 `case` 那一档上是不是同一处，不查路径是否存在。
 ///
-/// 两步：**字面规整**——去掉 `.` 分量与尾分隔符，**`..` 不解析**（中间那一级是一条软链的话，
+/// 两步：**字面规整**——相对路径先接当前目录，再去掉 `.` 分量与尾分隔符，**`..` 不解析**（中间那一级是一条软链的话，
 /// 字面解析会指错地方）——再按 `case` 决定折不折大小写。软链同样不解析：一条软链与它指向的
 /// 那棵树是两个名字（`GLOSSARY.md` 的《尚未确立》）。
 ///
@@ -192,12 +194,17 @@ pub(crate) struct Place(Vec<OsString>);
 impl Place {
     /// `path` 在 `case` 那一档上认出来的样子。
     ///
-    /// [`Path::components`] 已经把中间的 `.`、重复的与末尾的分隔符去掉了，剩下打头那一个 `./`
-    /// 由这里去掉；`..` 原样留着。
+    /// 相对路径先接当前目录（只接，不解析 `..`）。[`Path::components`] 已经把中间的 `.`、
+    /// 重复的与末尾的分隔符去掉了，剩下打头那一个 `./` 由这里去掉；`..` 原样留着。
     ///
     /// 折法见 [`fold`]。分量不是合法 UTF-8 的原样留着、不折：
     /// 走 `to_string_lossy` 的话，两个不同的坏名字会折成同一串替换字符。
     pub(crate) fn of(path: &Path, case: CaseSensitivity) -> Self {
+        let path = if path.is_relative() {
+            std::env::current_dir().unwrap_or_default().join(path)
+        } else {
+            path.to_path_buf()
+        };
         Self(
             path.components()
                 .filter(|component| *component != Component::CurDir)
@@ -314,6 +321,47 @@ mod tests {
             assert!(same("库/作品/", "库/作品", case), "{case:?}");
             assert!(same("./库/./作品/", "库/作品", case), "{case:?}");
             assert!(same(".", "./", case), "{case:?}");
+        }
+    }
+
+    /// 相对路径先接上当前目录，两档都与绝对写法认作同一处；不要求路径存在。
+    #[test]
+    fn a_relative_path_and_its_absolute_spelling_are_the_same_place() {
+        let here = std::env::current_dir().expect("读取当前目录");
+        for case in [Sensitive, Insensitive] {
+            for relative in ["库", "./库/./作品/", ".", "../库", "库/作品/.."] {
+                assert!(
+                    same_place(Path::new(relative), &here.join(relative), case),
+                    "{relative} 在 {case:?} 上与绝对写法没认作同一处"
+                );
+            }
+            assert!(
+                same_place(Path::new(""), &here, case),
+                "空路径在 {case:?} 上不是当前目录"
+            );
+            assert!(same_place(
+                Path::new("Lib/作品"),
+                &here.join("lib/作品"),
+                Insensitive
+            ));
+            assert!(!same_place(
+                Path::new("Lib/作品"),
+                &here.join("lib/作品"),
+                Sensitive
+            ));
+            // 只接当前目录，不把 `..` 消掉（Windows 上也一样）。
+            assert!(
+                !same_place(Path::new("库/作品/.."), &here.join("库"), case),
+                "{case:?}：接上当前目录时算掉了 `..`"
+            );
+            assert!(
+                !same_place(
+                    Path::new("../库"),
+                    &here.parent().expect("当前目录有上一级").join("库"),
+                    case
+                ),
+                "{case:?}：打头的 `..` 被算掉了"
+            );
         }
     }
 
