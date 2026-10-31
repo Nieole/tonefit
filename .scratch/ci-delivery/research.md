@@ -19,7 +19,7 @@ These Mac labels are **standard**, not the paid `-large`/`-xlarge` labels; stand
 
 ## 2. Keep dav1d and AVIF; static native linkage is supported
 
-Repository evidence: [`Cargo.toml`](../../Cargo.toml), [`Cargo.lock`](../../Cargo.lock) lock `image 0.25.9` with runtime `avif-native`, `dav1d 0.11.1`, `dav1d-sys 0.8.3`, `system-deps 7.0.8`, and `unrar-ng(-sys) 0.7.7`. The high-level UnRAR wrapper is patched in [`vendor/unrar-ng/PATCH.md`](../../vendor/unrar-ng/PATCH.md); do not replace it with the registry wrapper while packaging. Dev-only `image/avif` is an encoder for fixtures, not a replacement runtime decoder.
+Repository evidence: [`Cargo.toml`](../../Cargo.toml), [`Cargo.lock`](../../Cargo.lock) lock `image 0.25.10` with runtime `avif-native`, `dav1d 0.11.1`, `dav1d-sys 0.8.3`, `system-deps 7.0.8`, and `unrar-ng(-sys) 0.7.7`. The high-level UnRAR wrapper is patched in [`vendor/unrar-ng/PATCH.md`](../../vendor/unrar-ng/PATCH.md); do not replace it with the registry wrapper while packaging. Dev-only `image/avif` is an encoder for fixtures, not a replacement runtime decoder.
 
 Inspected exact downloaded registry source at `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/` (matching lockfile versions); public equivalents:
 
@@ -87,3 +87,19 @@ Candidate contents: executable, any proven necessary sidecar runtimes, usage/min
 - Stage-tag naming/version mapping, OS floor, signing expectations, sample-fixture availability and maintenance, and immutable-release setting remain decisions for the user/design phase. Actual first prerelease requires trusted workflows merged to main, a successful real CI run, and successful final publication; research notes cannot claim those occurred.
 
 Evidence method: official documentation/source search; direct HTTP reads of runner table, Rust 1.98 manifest/versioned platform docs, dav1d/vcpkg sources; local exact-version Cargo registry and repository inspection. The content-fetch service failed for several URLs, so direct HTTP/source reads and official search results were used instead. No secondary blog was relied on for a technical conclusion.
+
+
+## Quality foundation verification (2026-10-31)
+
+Direct HTTP verification for implementation: Rust 1.98.0 manifest date 2026-08-20
+has rust/rustc/cargo/clippy/rustfmt available on all four selected hosts.
+Node distribution index reports 24.22.2 as Krypton LTS (satisfies jsdom 30).
+Official VideoLAN 1.5.4 tarball bytes hash to
+`686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5`,
+matching the adjacent official `.sha256` file. Meson 1.9.1 and Ninja 1.13.0
+exist on PyPI. Action commits were resolved through GitHub REST commits APIs:
+checkout v4 `11d5960a326750d5838078e36cf38b85af677262`, setup-node v4
+`49933ea5288caeca8642d1e84afbd3f7d6820020`, setup-python v5
+`a26af69be951a213d495a4c3e4e4022e16d87065`, msvc-dev-cmd v1
+`0b201ec74fa43914dc39ae48a89fd1d8cb592756`.
+These are source/version observations, not Windows execution or release validation.

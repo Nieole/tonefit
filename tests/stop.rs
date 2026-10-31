@@ -57,6 +57,8 @@
 //!
 //! # 清点途中按停：盘上没有记号，拿一串命名管道当记号
 //!
+//! 以下管道记号用于 Unix；Windows 的等价记号见本节末。
+//!
 //! 清点只列归档头、一个字节都不写，《按在哪一刻》那张表里
 //! 一个记号都没有。记号换成**点名的命名管道**（扩展名 `.cbz`）：清点开到它时卡在 `open` 上，
 //! 等一个写端；用例**非阻塞地**去开写端——开得动，说明清点正卡在那儿（键因此早已装上：
@@ -73,16 +75,30 @@
 //! 管道是**点名的**而不是躺在一个目录里：发现只收普通文件（`src/discover.rs` 的 `push_children`），
 //! 管道连候选都当不上。点名的坏归档撞上停止时**停止赢**（`tonefit::Event::Surveying` 的文档），
 //! 这一趟因此交回报告而不是拒绝。
+//!
+//! Windows 用 40 个有效 CBZ 上的 NTFS exclusive oplock 替代 FIFO：metadata-only
+//! 发现不破锁，Surveying 之后的真实 File::open 破锁并等待放行。首个破锁是就绪记号，
+//! 此时广播 CTRL_C_EVENT，逐个放行同样保留 5ms 的回调调度余地。报告末句必须精确是
+//! 「清点途中停下：一卷都没开工」，退出码 0、输出目录为空；全放完却没停会红。
+//! 私有 console、oplock 与真实 CLI 子进程由 tests/fixtures/windows_stop_console.rs
+//! 那个独立测试工具持有，libtest 不拆自己的 console。前两条仍共用原有盘上记号与全部断言。
 
-// `Ctrl-C` 在 Windows 上不是一个信号（那一头是 `SetConsoleCtrlHandler`，见 `Cargo.toml`
-// 里 `ctrlc` 那一条的注释），送它要另一套 API。**装那个键**两个平台上是同一句
-// `ctrlc::set_handler`，而**按它**这一半只有 unix 这一侧本仓验得到（停车场 Q263）。
-#![cfg(unix)]
+// Windows console ownership lives in a standalone test-only subprocess, never in libtest.
+#![cfg(any(unix, windows))]
+
+#[cfg(windows)]
+#[path = "fixtures/windows_stop.rs"]
+mod windows_stop;
 
 mod fixtures;
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
+use windows_stop::Child;
 
 use fixtures::Workspace;
 
@@ -182,6 +198,7 @@ fn two_ctrl_c_throws_the_volume_in_flight_away_and_the_final_place_is_untouched(
 /// 一页都没做，stdout 上的报告以「清点途中停下」收尾，退出码照按停止那一条走（0）。
 ///
 /// 记号与余地怎么来的，见模块文档《清点途中按停》。
+#[cfg(unix)]
 #[test]
 fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
     let space = Workspace::new();
@@ -233,12 +250,15 @@ fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
 /// 量级是毫秒到几十毫秒。0.2 秒高出后者一个数量级。正常的一趟里那条线程在第二、三个管道之前
 /// 就记上了，后面那些管道一个都不开（连跑二十趟，每趟整条用例约 0.7 秒，见票据《落地记录》）。
 /// 余地不够时这条用例**红**（管道放完、清点走到头被拒），不会假绿。
+#[cfg(unix)]
 const HOLES: usize = 40;
 
 /// 按下之后每放行一个管道之前歇多久。见 [`HOLES`]。
+#[cfg(unix)]
 const BREATHER: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// 在工作区根下造一个**命名管道**，名字照 `name`（带 `.cbz`，清点才把它当归档头去开）。
+#[cfg(unix)]
 fn pipe(space: &Workspace, name: &str) -> PathBuf {
     let path = space.root().join(name);
     let raw = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).expect("路径里没有 NUL");
@@ -253,6 +273,7 @@ fn pipe(space: &Workspace, name: &str) -> PathBuf {
 /// 进程先退了就回 `None`，一个字节都不等。
 ///
 /// 等一分钟都等不到读端就把子进程杀掉再红：那是清点卡在了别处，转下去只会把整趟闸门挂死。
+#[cfg(unix)]
 fn let_through(child: &mut Child, hole: &Path) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -344,6 +365,7 @@ fn partial(space: &Workspace) -> PathBuf {
 /// 进度条不进测试日志；报告接成管道，由 [`finished`] 读回来（只读末尾那一句结束方式）。
 /// 进度条那一头本来也不会写——对面不是终端时 indicatif 一个字节都不写
 /// （`src/main.rs` 的 `Bar`）。
+#[cfg(unix)]
 fn spawn(space: &Workspace, inputs: &[PathBuf]) -> Child {
     Command::new(env!("CARGO_BIN_EXE_tonefit"))
         .arg("--out")
@@ -396,9 +418,52 @@ fn until(child: &mut Child, what: &str, mark: impl Fn() -> bool) {
 }
 
 /// 往子进程上按一下 `Ctrl-C`。
+#[cfg(unix)]
 fn ctrl_c(child: &Child) {
     // SAFETY: 只是往一个还在的子进程上送一个信号。`kill` 对一个已经退掉、但还没被
     // `wait` 收走的进程同样是安全的（它还占着 pid），而下面那一句断言会把那种情形说出来。
     let sent = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     assert_eq!(sent, 0, "SIGINT 没送出去");
+}
+
+/// Valid CBZs, not FIFO-shaped bad inputs: an NTFS exclusive oplock observes and
+/// stalls each real archive open after Surveying. The console owner releases
+/// them with the same bounded callback scheduling allowance as the Unix case.
+#[cfg(windows)]
+#[test]
+fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
+    let space = Workspace::new();
+    let inputs: Vec<_> = (1..=40)
+        .map(|n| {
+            let mut archive = space.cbz(&format!("卷{n:02}"));
+            archive.page(&page_name(1), &fixtures::cheap_page());
+            archive.write();
+            archive.path().to_path_buf()
+        })
+        .collect();
+    let child = windows_stop::spawn(&space, &inputs, true);
+    let (code, printed) = finished(child);
+    assert_eq!(code, Some(0), "survey stop failed: {printed}");
+    assert!(!printed.contains("按停止"), "报告不该说按停止：{printed}");
+    assert_eq!(
+        printed.trim_end().lines().last(),
+        Some("清点途中停下：一卷都没开工"),
+        "survey must end with the exact neutral outcome, not a volume-stop outcome: {printed}"
+    );
+    assert!(!says(&printed, "停下（做完再停）"), "{printed}");
+    assert!(!says(&printed, "停下（立即停止）"), "{printed}");
+    assert!(
+        fixtures::names_in(&space.out()).is_empty(),
+        "survey started a volume"
+    );
+}
+
+#[cfg(windows)]
+fn spawn(space: &Workspace, inputs: &[PathBuf]) -> Child {
+    windows_stop::spawn(space, inputs, false)
+}
+
+#[cfg(windows)]
+fn ctrl_c(child: &Child) {
+    child.ctrl_c();
 }

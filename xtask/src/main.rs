@@ -44,17 +44,17 @@ struct Step {
 const GATES: [Step; 3] = [
     Step {
         name: "闸门 1 · 默认构建",
-        args: &["test"],
+        args: &["test", "--locked"],
         target_dir: None,
     },
     Step {
         name: "闸门 2 · 甩掉终端库",
-        args: &["test", "--no-default-features"],
+        args: &["test", "--locked", "--no-default-features"],
         target_dir: Some(NO_DEFAULT_FEATURES),
     },
     Step {
         name: "闸门 3 · 开着量具",
-        args: &["check", "--features", "profiling"],
+        args: &["check", "--locked", "--features", "profiling"],
         target_dir: Some(PROFILING),
     },
 ];
@@ -72,17 +72,22 @@ const POLISH: [Step; 4] = [
     },
     Step {
         name: "clippy · 默认构建",
-        args: &["clippy", "--all-targets"],
+        args: &["clippy", "--locked", "--all-targets"],
         target_dir: None,
     },
     Step {
         name: "clippy · 甩掉终端库",
-        args: &["clippy", "--all-targets", "--no-default-features"],
+        args: &[
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--no-default-features",
+        ],
         target_dir: Some(NO_DEFAULT_FEATURES),
     },
     Step {
         name: "文档",
-        args: &["doc", "--no-deps"],
+        args: &["doc", "--locked", "--no-deps"],
         target_dir: None,
     },
 ];

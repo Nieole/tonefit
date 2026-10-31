@@ -53,6 +53,10 @@ cargo xtask gate
 
 只跑其中几条、按点名的次序：`cargo xtask gate 2 1`。
 
+`xtask` 的 test/check/clippy/doc 子命令固定加 `--locked`，锁文件过期直接失败，
+不在验收时重算依赖。排版不解析依赖。CI 的平台与原生依赖契约见
+[交付](../../.github/SPEC.md)。
+
 那条别名在 `.cargo/config.toml`，跑的那件工具在 `xtask/`——一个 workspace 成员，
 `default-members` 把它挡在 `cargo build`／`cargo test` 之外，一个外部依赖都不收。
 
@@ -60,9 +64,9 @@ cargo xtask gate
 
 | | 命令 | target 目录 | 盖住的那一趟 |
 |---|---|---|---|
-| 1 | `cargo test` | `target`（默认那个） | **默认构建**（`tui` 开着）。库、命令行、会话，加上 `tests/` 那十几个二进制。 |
-| 2 | `cargo test --no-default-features` | `target/gate/no-default-features` | **甩掉终端库**那一趟。会话里不碰终端的那几个模块（`session` 下的 `state`、`live`、`run`、`complete`、`viewport`、`columns`、`tone`，新界面的 `look`、`home`、`keymap`、`view`，以及只在 `test` 里的场景夹具 `scene`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
-| 3 | `cargo check --features profiling` | `target/gate/profiling` | **开着量具**那一趟。`src/cost.rs` 的 `tally`（两张原子计数表）只有这一条够得着。 |
+| 1 | `cargo test --locked` | `target`（默认那个） | **默认构建**（`tui` 开着）。库、命令行、会话，加上 `tests/` 那十几个二进制。 |
+| 2 | `cargo test --locked --no-default-features` | `target/gate/no-default-features` | **甩掉终端库**那一趟。会话里不碰终端的那几个模块（`session` 下的 `state`、`live`、`run`、`complete`、`viewport`、`columns`、`tone`，新界面的 `look`、`home`、`keymap`、`view`，以及只在 `test` 里的场景夹具 `scene`）摆在特性外面，这一趟连它们自带的用例一起跑。 |
+| 3 | `cargo check --locked --features profiling` | `target/gate/profiling` | **开着量具**那一趟。`src/cost.rs` 的 `tally`（两张原子计数表）只有这一条够得着。 |
 
 **这三条不要裸敲。**右边那一列只有走 `cargo xtask` 才成立：裸敲一次
 `cargo test --no-default-features`，不带 `tui` 的那个二进制就被摆回默认的 `target` 里，
@@ -132,9 +136,9 @@ cargo xtask polish
 | | 命令 | target 目录 |
 |---|---|---|
 | 1 | `cargo fmt --check` | 不建目录 |
-| 2 | `cargo clippy --all-targets` | `target` |
-| 3 | `cargo clippy --all-targets --no-default-features` | `target/gate/no-default-features` |
-| 4 | `cargo doc --no-deps` | `target`（文档因此照旧落在 `target/doc`） |
+| 2 | `cargo clippy --locked --all-targets` | `target` |
+| 3 | `cargo clippy --locked --all-targets --no-default-features` | `target/gate/no-default-features` |
+| 4 | `cargo doc --locked --no-deps` | `target`（文档因此照旧落在 `target/doc`） |
 
 它们不判「站不站得住」，因此**不算闸门**；但一张票落地时照例过一遍。
 第三条跟着闸门 2 用同一个目录——它的特性组合与闸门 1 不同，摆在默认目录里

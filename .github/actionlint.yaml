@@ -1,0 +1,5 @@
+# Older actionlint releases predate GitHub's standard Intel macOS 15 label.
+# This supplements lint's label table; it does not change workflow scheduling.
+self-hosted-runner:
+  labels:
+    - macos-15-intel
