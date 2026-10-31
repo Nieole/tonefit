@@ -756,29 +756,127 @@ mod tests {
         writer.finish().expect("收尾").into_inner()
     }
 
-    /// 这个进程此刻开着的、落在 `root` 之下的文件有几个。问不出来就回 `None`。
+    /// 数本进程在 `root` 下打开的文件；Windows 由目录重命名探针回答。
     ///
-    /// `/proc/self/fd` 上问得出，别的平台上没有这个东西。只数落在点名那棵树下的，
-    /// 因此同一个测试二进制里别的用例开着的文件干扰不到它。
+    /// Linux 用 /proc/self/fd，macOS 用 /dev/fd + F_GETPATH。根先解析软链，
+    /// 与内核返回的路径对齐（尤其 macOS 的 /var -> /private/var）。
+    /// 两个 crate 的测试各留一份相同实现：另一份在 src/survey.rs / tests/concurrency.rs。
+    /// 只有 Windows 回 None；探针故障必须报错，不能冒充「没有打开文件」。
     fn open_files_under(root: &Path) -> Option<usize> {
-        let held = std::fs::read_dir("/proc/self/fd").ok()?;
-        Some(
-            held.filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
-                .filter(|target| target.starts_with(root))
-                .count(),
-        )
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let root = root.canonicalize().expect("解析探针根目录");
+            #[cfg(target_os = "linux")]
+            let directory = "/proc/self/fd";
+            #[cfg(target_os = "macos")]
+            let directory = "/dev/fd";
+            let held = std::fs::read_dir(directory).expect("列本进程描述符");
+            let mut count = 0;
+            for entry in held {
+                let entry = entry.expect("读描述符目录项");
+                #[cfg(target_os = "linux")]
+                let target = match std::fs::read_link(entry.path()) {
+                    Ok(path) => path,
+                    // 其他测试线程可能恰好关掉这一项。
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => panic!("读描述符路径失败：{error}"),
+                };
+                #[cfg(target_os = "macos")]
+                let target = {
+                    use std::os::unix::ffi::OsStrExt;
+                    let fd: libc::c_int = entry
+                        .file_name()
+                        .to_str()
+                        .expect("描述符是数字")
+                        .parse()
+                        .expect("解析描述符");
+                    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                    // SAFETY: stat 指向可写的、大小正确的缓冲；fstat 不接管 fd。
+                    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
+                        let error = std::io::Error::last_os_error();
+                        if error.raw_os_error() == Some(libc::EBADF) {
+                            continue; // 描述符在列出之后被关掉了。
+                        }
+                        panic!("检查描述符 {fd} 失败：{error}");
+                    }
+                    // SAFETY: fstat 已成功初始化 stat。
+                    let kind = unsafe { stat.assume_init() }.st_mode & libc::S_IFMT;
+                    if kind != libc::S_IFREG && kind != libc::S_IFDIR {
+                        continue; // pipe / socket 等没有文件系统路径。
+                    }
+                    let mut path = [0u8; libc::PATH_MAX as usize];
+                    // SAFETY: F_GETPATH 要求 PATH_MAX 字节的可写缓冲；不接管 fd。
+                    if unsafe { libc::fcntl(fd, libc::F_GETPATH, path.as_mut_ptr()) } == -1 {
+                        let error = std::io::Error::last_os_error();
+                        if matches!(error.raw_os_error(), Some(libc::EBADF | libc::ENOENT)) {
+                            continue; // 其他线程已关掉描述符或删掉文件。
+                        }
+                        panic!("取描述符 {fd} 路径失败：{error}");
+                    }
+                    let end = path
+                        .iter()
+                        .position(|&byte| byte == 0)
+                        .expect("路径以 NUL 结尾");
+                    PathBuf::from(std::ffi::OsStr::from_bytes(&path[..end]))
+                };
+                if target.starts_with(&root) {
+                    count += 1;
+                }
+            }
+            Some(count)
+        }
+        #[cfg(windows)]
+        {
+            let _ = root;
+            None
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        {
+            let _ = root;
+            panic!("此平台没有打开文件探针");
+        }
+    }
+
+    /// 打开/关闭与根外文件三种对照，另用软链根钉住内核路径的规整。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_descriptor_probe_counts_only_open_files_under_the_canonical_root() {
+        let space = tempfile::tempdir().expect("临时目录");
+        let library = space.path().join("库");
+        std::fs::create_dir(&library).expect("建库");
+        let path = library.join("归档.cbz");
+        std::fs::write(&path, b"probe").expect("写文件");
+        let outside = std::fs::File::create(space.path().join("根外.cbz")).expect("开根外文件");
+        let alias = space.path().join("软链根");
+        std::os::unix::fs::symlink(&library, &alias).expect("建软链");
+        assert_ne!(alias, library.canonicalize().expect("解析库路径"));
+        for root in [&library, &alias] {
+            assert_eq!(
+                open_files_under(root),
+                Some(0),
+                "关闭的文件与根外文件不计入"
+            );
+        }
+        let held = std::fs::File::open(&path).expect("开库内文件");
+        for root in [&library, &alias] {
+            assert_eq!(open_files_under(root), Some(1), "库内句柄必须数得出");
+        }
+        drop(held);
+        assert_eq!(open_files_under(&alias), Some(0), "关闭后必须归零");
+        drop(outside);
     }
 
     /// 清点**开完就放**：点名几百个归档卷，一趟下来一个句柄都不攥着
     /// （`volume-discovery/01`）。
     ///
-    /// 「还攥着没有」两个平台各答一半，两句都在：
+    /// 「还攥着没有」三个平台各答一份，计数与重命名都保留：
     ///
     /// - Linux 上 `/proc/self/fd` 直接数得出来（见 [`open_files_under`]）。
+    /// - macOS 上 `/dev/fd` 列本进程描述符，`fcntl(F_GETPATH)` 取路径后数。
     /// - Windows 上问不出句柄数，改问一件等价的事：**装着这些归档的目录还改不改得动名**。
     ///   那个平台上目录里只要还开着一个文件，重命名就会被拒。
     ///
-    /// 两句在对方的平台上都恒成立，因此谁也不会误报；而把卷留在清点手上的那一版，
+    /// 计数在 Linux/macOS 上、重命名在 Windows 上承担检出力；把卷留在清点手上的那一版，
     /// 两句各在自己的平台上当场红。
     #[test]
     fn a_survey_keeps_no_archive_open() {
