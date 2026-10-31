@@ -779,7 +779,7 @@ function tick(run, dt) {
   let budget = dt;
   while (budget > 1e-9 && run.stage === 'running') {
     const v = run.tree.vols[run.cur], s = run.vs[run.cur], p = passOf(v, s);
-    const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : p === '摊开' ? RATE * 3 : RATE;
+    const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : RATE;
     const len = passLen(v, p), need = len - s.done, can = budget * speed;
     if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; s.took[p] = (s.took[p] || 0) + budget; budget = 0; }
     // 一个环节走满，总步数就是一个整数（真程序一页一步）：连续时间一路攒下的浮点尾数在这里结清，
@@ -1161,9 +1161,10 @@ function overviewTitle() {
     const why = stoppedDuringSurvey(r) ? '⋅ 清点途中停下，一卷都没开始' : r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
     return { title: [[r.outcome === 'done' ? '完成 ' : r.outcome === 'stopped' ? '已停止 ' : '已中断 ', r.outcome === 'done' ? 'c-green b' : 'c-yellow b'], [why, 'c-fg'], [' ⋅ 用时 ' + fmtDur(r.elapsed * SHOW), 'c-gray']], right: [[`输出目录 ${S.outRoot}`, 'c-gray']] };
   }
-  const frac = r.steps / r.total;
-  const eta = frac > 0.02 ? (r.elapsed * (1 - frac)) / frac : null;
-  const t = [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷`, 'c-fg'], [eta ? ` ⋅ 预计还要 ${fmtDur(eta * SHOW)}` : ' ⋅ 正在估算剩余时间', 'c-fg']];
+  const walked = Math.floor(r.steps);
+  const frac = walked / r.total;
+  const eta = walked > 0 && frac >= 0.02 ? r.elapsed * (r.total - walked) / walked : null;
+  const t = [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷`, 'c-fg'], [eta !== null ? ` ⋅ 预计还要 ${fmtDur(eta * SHOW)}` : ' ⋅ 正在估算剩余时间', 'c-fg']];
   if (r.latch === 1) t.push([' ⋅ 正在停止：做完当前卷就停', 'c-yellow b']);
   return { title: t, right: used };
 }
@@ -2088,18 +2089,18 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['eta-start', '剩余时间估算起点'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
   switch (name) {
     case 'fresh': S.curKey = 'np:~/漫画库'; break;
     case 'survey': startRun('exec'); S.run.surveyT = 0.8; S.playing = false; S.toast = null; break;
+    case 'eta-start': startRun('trial'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= 0.015); S.toast = null; break;
     case 'running': exec(0.34); { const v = findVol('集英社/海贼王', '第07卷'); if (v) S.expanded.add(v.dir.id); } break;
     case 'extracting': {
-      // 有一卷正在摊开（CONTEXT《环节》）：虫师那三卷排在最前，前两卷做完，第03卷摊开到一半
-      // （总进度过了 2%，抬头报得出预计还要多久。预计还要多久那一句设计稿与实现算法两处不同——不到 2% 时说不说、
-      // 分子取不取整步——这一景挑在两边四舍五入到同一秒的那一刻，停车场 Q1129）
+      // 虫师那三卷排在最前，前两卷做完，第03卷摊开到一半。
+      // ETA 与实现都用完成整步；摊开与分析同速，不为 ETA 舍入挑速度或时刻。
       S.named = [...NAMED_RAR.map((n) => ({ ...n })), ...S.named];
       startRun('exec');
       fastForward(S.run, (r) => { const v = findVol('虫师', '第03卷'), s = stateOf(r, v); return passOf(v, s) === '摊开' && s.done >= v.pages / 2; });

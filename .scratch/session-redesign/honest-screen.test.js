@@ -91,3 +91,24 @@ test('没有需留意页时不出现需要留意', async () => {
     assert.ok(text.includes('这一卷没有需留意的页'));
   } finally { page.dom.window.close(); }
 });
+
+test('剩余时间只用完成整步，2% 边界开始报数', async () => {
+  const page = await load();
+  try {
+    page.chip('running');
+    const r = page.design.S.run;
+    // 10 秒 / 2 步，剩 98 步 = 490 秒；小数步不能把它报成 330 秒。
+    r.total = 100; r.elapsed = 10 / page.design.SHOW;
+    for (const [steps, expected, absent] of [
+      [0, '正在估算剩余时间', '预计还要'],
+      [1.99, '正在估算剩余时间', '预计还要'],
+      [2, '预计还要 8m10s', '正在估算剩余时间'],
+      [2.99, '预计还要 8m10s', '预计还要 5m24s'],
+    ]) {
+      r.steps = steps;
+      const text = textGrid(page.frame());
+      assert.ok(text.includes(expected), text);
+      assert.ok(!text.includes(absent), absent);
+    }
+  } finally { page.dom.window.close(); }
+});

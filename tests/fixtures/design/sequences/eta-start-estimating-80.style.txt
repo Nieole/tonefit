@@ -1,0 +1,38 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-magenta b
+# f = c-gray d
+# g = c-fg b
+# h = c-magenta
+# i = c-red b
+# j = c-red
+# k = c-lgreen
+# l = c-blue b
+# m = c-lgreen b
+".aabbccccccc....................ddddddddddddddddddddddddddddddddddddddd."
+"ccee......................cccccccccccccccccccccccccccccccccccccccc"
+"c.ccccffffffffffgggcccccccggggggggghhhcccccccc....................c"
+"c.ccccgggiiiiiijjjjjj................................................c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"kkggccccccckkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkaaaaaakkk"
+"k.cccllgggggccccccccccccjjjjjj.ccccccccccccccccccccccccccccccccccccccc.k"
+"k.mm..cclllllllllllllll.cccccccc.........hhhhhhhhfffcccccccc...........k"
+"k.....cccc...........cccccccc..fff...................................k"
+"k.....cccc............cccccccc..fff...................................k"
+"k.....cccc...........cccccccc..fff...................................k"
+"k.......iijjjjjj...fffffffffffffffffffffffffffffffffffffffffff.k"
+"k.......cc...................................ffffffffffff..k"
+"k..............................................................................k"
+"k...cccc................cccccccc..fff...................................k"
+"k...cccc.................cccccccc..fff...................................k"
+"k..............................................................................k"
+"k.cccccgggggggggggggcccccccc.cccccccccccccccccccccccccccccccccccccccccccc.k"
+"k.....cccc.................cccccccc..fff...................................k"
+"k.....cccc...............cccccccc..fff...................................k"
+"k..............................................................................k"
+"k...fffffffffffffffff............................................k"
+"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+".c.cccccc.c..ccccccccc.c.cccccc.c.cccccc.c.cccccccc.............."

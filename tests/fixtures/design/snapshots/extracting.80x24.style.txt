@@ -22,7 +22,7 @@
 "k...cclldddddddddddddddd.cccccccc.........hhhhhhhffffcccccccc............"
 "k.....cchhmmmmmmmmmmmmmm.cccccccc............................................"
 "k.....cchhmmmmmmmmmmmmmm.cccccccc............................................"
-"k.nn..ccllllllllllllllll.cccccccc..hhhhhhhhhffffcccccccc..................."
+"k.nn..ccllllllllllllllll.cccccccc..hhhhhhhhfffffcccccccc..................."
 "k..............................................................................."
 "k.ccciigggggccccccccccccjjjjjj.ccccccccccccccccccccccccccccccccccccccc.."
 "k.....cccc..............cccccccc..fff...................................."

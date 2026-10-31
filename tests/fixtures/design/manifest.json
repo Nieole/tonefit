@@ -42,6 +42,25 @@
       "style": "snapshots/survey.80x24.style.txt"
     },
     {
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/eta-start.120x36.text.txt",
+      "style": "snapshots/eta-start.120x36.style.txt",
+      "data": "scenes/eta-start.json"
+    },
+    {
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/eta-start.80x24.text.txt",
+      "style": "snapshots/eta-start.80x24.style.txt"
+    },
+    {
       "scene": "running",
       "size": [
         120,
@@ -308,6 +327,118 @@
     }
   ],
   "sequences": [
+    {
+      "name": "eta-start-estimating-120",
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "advance": 0.01
+        }
+      ],
+      "says": {
+        "has": [
+          "正在估算剩余时间"
+        ],
+        "lacks": [
+          "预计还要"
+        ]
+      },
+      "text": "sequences/eta-start-estimating-120.text.txt",
+      "style": "sequences/eta-start-estimating-120.style.txt",
+      "data": "sequences/eta-start-estimating-120.scene.json"
+    },
+    {
+      "name": "eta-start-ready-120",
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "advance": 0.05
+        }
+      ],
+      "says": {
+        "has": [
+          "预计还要"
+        ],
+        "lacks": [
+          "正在估算剩余时间"
+        ]
+      },
+      "text": "sequences/eta-start-ready-120.text.txt",
+      "style": "sequences/eta-start-ready-120.style.txt",
+      "data": "sequences/eta-start-ready-120.scene.json"
+    },
+    {
+      "name": "eta-start-estimating-80",
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "advance": 0.01
+        }
+      ],
+      "says": {
+        "has": [
+          "正在估算剩余时间"
+        ],
+        "lacks": [
+          "预计还要"
+        ]
+      },
+      "text": "sequences/eta-start-estimating-80.text.txt",
+      "style": "sequences/eta-start-estimating-80.style.txt",
+      "data": "sequences/eta-start-estimating-80.scene.json"
+    },
+    {
+      "name": "eta-start-ready-80",
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "advance": 0.05
+        }
+      ],
+      "says": {
+        "has": [
+          "预计还要"
+        ],
+        "lacks": [
+          "正在估算剩余时间"
+        ]
+      },
+      "text": "sequences/eta-start-ready-80.text.txt",
+      "style": "sequences/eta-start-ready-80.style.txt",
+      "data": "sequences/eta-start-ready-80.scene.json"
+    },
     {
       "name": "deciding-trialed-notable-jump",
       "scene": "deciding",

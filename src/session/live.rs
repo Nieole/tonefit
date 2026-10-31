@@ -1227,17 +1227,17 @@ pub struct Overall {
 /// 剩余时间：按**至今为止的平均步速**外推。
 ///
 /// 一步都还没走时答不出来（除以零），预告的步数是零时同理。走完了就是零。
+/// 完成整步不到总量的 2% 时不报估计；恰好 2% 起按整步外推。
 /// 它与预告的步数同一个性质——**上界外推出来的估计**，不是承诺：
 /// 幂等命中的卷提前收摊，剩下的那一截会突然缩短。
 fn eta(elapsed: Duration, walked: u64, steps: u64) -> Option<Duration> {
     let left = steps.checked_sub(walked)?;
-    if walked == 0 {
+    if walked == 0 || u128::from(walked) * 50 < u128::from(steps) {
         return None;
     }
     // 先乘后除：剩余步数与已用纳秒都可能很大，`Duration::mul_f64` 那一条路
     // 在长任务上会把秒以下的位数丢光。
-    let per_step = elapsed.as_nanos() / u128::from(walked);
-    let nanos = per_step.saturating_mul(u128::from(left));
+    let nanos = elapsed.as_nanos().saturating_mul(u128::from(left)) / u128::from(walked);
     Some(Duration::from_nanos(
         u64::try_from(nanos).unwrap_or(u64::MAX),
     ))
@@ -2625,6 +2625,30 @@ mod tests {
             Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn).mode(),
             RunMode::DryRun
         );
+    }
+
+    /// 用公开总览读数验 2% 的两侧与恰好边界，不借百分比四舍五入。
+    #[test]
+    fn eta_waits_for_two_percent_of_completed_integer_steps() {
+        for (walked, steps, expected) in [
+            (0, 100, None),
+            (1, 100, None),
+            (199, 10_000, None),
+            (2, 100, Some(Duration::from_secs(490))),
+            (200, 10_000, Some(Duration::from_secs(490))),
+            (201, 10_000, Some(Duration::from_nanos(487_512_437_810))),
+            (100, 100, Some(Duration::ZERO)),
+        ] {
+            let epoch = Instant::now();
+            let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
+            live.run_started(steps, &fixture::roster(["卷一"]), &[], &[]);
+            live.volume_started(Path::new("库/卷一"), steps);
+            for _ in 0..walked {
+                live.stepped();
+            }
+            live.tick(epoch + Duration::from_secs(10));
+            assert_eq!(live.overall().left, expected, "{walked}/{steps}");
+        }
     }
 
     /// 剩余时间按至今为止的平均步速外推；走完就是零，一步没走就答不出来。

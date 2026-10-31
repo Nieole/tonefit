@@ -40,9 +40,9 @@ const MAIN = [120, 36];
 const NARROW = [80, 24];
 const TINY = [56, 14];
 
-/** 要导出的快照：14 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
+/** 要导出的快照：场景清单 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
+  ...['fresh', 'survey', 'eta-start', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -68,6 +68,12 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  ...[MAIN, NARROW].flatMap((size) => [
+    { name: `eta-start-estimating-${size[0]}`, scene: 'eta-start', size, steps: [{ advance: 0.01 }],
+      says: { has: ['正在估算剩余时间'], lacks: ['预计还要'] } },
+    { name: `eta-start-ready-${size[0]}`, scene: 'eta-start', size, steps: [{ advance: 0.05 }],
+      says: { has: ['预计还要'], lacks: ['正在估算剩余时间'] } },
+  ]),
   { name: 'deciding-trialed-notable-jump', scene: 'deciding', size: MAIN, steps: k('s', 'l', ']', 'd'),
     says: { has: ['❯       ! 第05卷', '已分析，未写出'], lacks: ['整卷写到隔离'] } },
   { name: 'bad-page-deciding-s-jump', scene: 'bad-page-deciding', size: MAIN, steps: k('s', ']', 'd'),

@@ -129,8 +129,8 @@
     "stage": "running",
     "outcome": null,
     "envelope": false,
-    "elapsed_s": 30.8,
-    "steps": 1622,
+    "elapsed_s": 37.8,
+    "steps": 1618,
     "total_steps": 49081,
     "current": "~/下载/虫师/第03卷.rar",
     "stop_level": 0,
@@ -823,7 +823,7 @@
         "state": "done",
         "pass": 4,
         "done": 190,
-        "elapsed_s": 8.733,
+        "elapsed_s": 11.504,
         "tally": [
           [
             "2bit+FS",
@@ -835,7 +835,7 @@
           ]
         ],
         "took_s": {
-          "extraction": 1.385,
+          "extraction": 4.156,
           "fingerprint": 0.594,
           "first_pass": 4.156,
           "second_pass": 2.598
@@ -848,7 +848,7 @@
         "state": "done",
         "pass": 4,
         "done": 189,
-        "elapsed_s": 8.687,
+        "elapsed_s": 11.443,
         "tally": [
           [
             "2bit+FS",
@@ -860,7 +860,7 @@
           ]
         ],
         "took_s": {
-          "extraction": 1.378,
+          "extraction": 4.134,
           "fingerprint": 0.591,
           "first_pass": 4.134,
           "second_pass": 2.584
@@ -872,11 +872,11 @@
         "root": "~/下载/虫师/第03卷.rar",
         "state": "running",
         "pass": 0,
-        "done": 106.946,
-        "elapsed_s": 0.78,
+        "done": 102.982,
+        "elapsed_s": 2.253,
         "tally": null,
         "took_s": {
-          "extraction": 0.78
+          "extraction": 2.253
         }
       },
       {

@@ -54,7 +54,7 @@
     "stage": "ended",
     "outcome": "done",
     "envelope": false,
-    "elapsed_s": 17.85,
+    "elapsed_s": 20.65,
     "steps": 756,
     "total_steps": 756,
     "current": null,
@@ -87,7 +87,7 @@
         "state": "done",
         "pass": 4,
         "done": 189,
-        "elapsed_s": 5.078,
+        "elapsed_s": 7.834,
         "tally": [
           [
             "2bit+FS",
@@ -99,7 +99,7 @@
           ]
         ],
         "took_s": {
-          "extraction": 1.378,
+          "extraction": 4.134,
           "fingerprint": 0.591,
           "first_pass": 0.525,
           "second_pass": 2.584

@@ -2284,7 +2284,7 @@ mod tests {
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 15, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 16, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }

@@ -1020,6 +1020,24 @@ mod redesign {
         scene
     }
 
+    /// 回放设计稿的时钟推进；两种宽度整屏比对，同时反钉过早报数。
+    #[test]
+    fn eta_estimates_below_two_percent_and_reports_above_it() {
+        for (name, has, lacks) in [
+            ("eta-start-estimating-120", "正在估算剩余时间", "预计还要"),
+            ("eta-start-estimating-80", "正在估算剩余时间", "预计还要"),
+            ("eta-start-ready-120", "预计还要 7m55s", "正在估算剩余时间"),
+            ("eta-start-ready-80", "预计还要 7m55s", "正在估算剩余时间"),
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(text.contains(has), "{name}: {text}");
+            assert!(!text.contains(lacks), "{name}: {text}");
+        }
+    }
+
     /// 型号与预设不同才解释；两段说明与报告抬头共用标定来源。
     #[test]
     fn details_name_the_preset_model_and_calibrated_panels() {
