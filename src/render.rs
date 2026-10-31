@@ -850,7 +850,7 @@ fn why_nothing_judged(kind: RowKind) -> Option<&'static str> {
 /// （「跳过 之前转换过……」「无（默认逐页）……」「判定 X（覆盖项裁到只剩一个候选）」），
 /// 分布只是把它压成一个词，不编第二套说法。
 ///
-/// **读它的只有命令行目录那一行**（[`Listed::base`]），**而且只在 `--envelope` 那条路上**
+/// **读它的只有命令行目录那一行**（[`Listed::base`]）；默认路径不数「逐页」那几笔
 /// （理由见 [`directory`]）。卷列表那一列不读它——那一列是[灰阶分布](tally_column)（spec 的 story 18）。
 fn base_of(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|row| match row.kind {
@@ -1012,14 +1012,13 @@ fn directory_of(root: &Path) -> &Path {
 /// **哪几格在场随这一枝而变**：一卷都没判出档位的目录没有分布那一格，
 /// 一卷都没进隔离的目录没有隔离那一格——一格在不在场本身就是一句话（见 [`Row::cell`]）。
 ///
-/// **分布那一格只在 `--envelope` 那条路上在场**（`envelope` 照 [`Report::envelope`] 原样传；
-/// say-and-stop/08，收停车场 Q706）。默认那条路上每一卷判的都是「逐页」，那一格写出来是
-/// 「逐页 N」，与卷数那一格说的是同一件事——整格不在，跳过与没做成的那几卷也不另起一格。
-/// 与会话卷列表上代表页那一列同一条规矩（`GLOSSARY.md` 的《目录行 / 卷行》：默认逐页那一趟整列不在场）。
+/// **默认路径只拿掉「逐页」那几笔**（`envelope` 照 [`Report::envelope`] 原样传；
+/// honest-screen/09，收停车场 Q1388）：它与卷数那一格说的是同一件事。
+/// 跳过、没做成、覆盖顶死仍说得出新东西，照数；全是逐页时整格不在场。
+/// `--envelope` 那条路的统一档位分布照旧。
 ///
 /// 卷数把**没做成的那几卷也算进去**：它们同样是这一枝底下点到过的卷，
-/// 而「几卷没做成」在 `--envelope` 那条路上由分布那一格说（[`base_of`] 对它们答的是「没做成」），
-/// 两条路上都由末尾那几小结点名（[`tail`]）。
+/// 分布那一格照数（[`base_of`] 对它们答的是「没做成」），末尾那几小结再点名（[`tail`]）。
 pub fn directory(group: &Group, listed: &[Listed<'_>], envelope: bool) -> Row {
     let inside: Vec<Listed<'_>> = group
         .at
@@ -1030,11 +1029,9 @@ pub fn directory(group: &Group, listed: &[Listed<'_>], envelope: bool) -> Row {
         Cell::new(Field::Source, group.directory.display().to_string()),
         Cell::new(Field::VolumeCount, inside.len().to_string()),
     ];
-    if envelope {
-        let spread = base_spread(&inside);
-        if !spread.is_empty() {
-            cells.push(Cell::new(Field::Bases, spread));
-        }
+    let spread = base_spread(&inside, envelope);
+    if !spread.is_empty() {
+        cells.push(Cell::new(Field::Bases, spread));
     }
     let isolated = inside.iter().filter(|one| one.isolated()).count();
     if isolated > 0 {
@@ -1060,8 +1057,15 @@ pub fn isolated_note(count: &str) -> String {
 ///
 /// 排法见 [`tallied`]：**卷多的在前**。按报告先后原样排的话，一枝里最常见的那一档
 /// 常常落在末尾——而扫一眼要看出来的正是「这一枝多半判成哪一档」。
-fn base_spread(inside: &[Listed<'_>]) -> String {
-    tallied(inside.iter().filter_map(Listed::base))
+fn base_spread(inside: &[Listed<'_>], envelope: bool) -> String {
+    tallied(inside.iter().filter_map(|one| match one {
+        Listed::Settled(report)
+            if !envelope && matches!(report.verdict, Some(VolumeVerdict::PerPage)) =>
+        {
+            None
+        }
+        _ => one.base(),
+    }))
 }
 
 /// **数一串东西各出现几次，摆成「东西 数」那一串**：多的在前，一样多的按头一次出现的先后
@@ -1196,7 +1200,7 @@ pub fn outcome(report: &Report) -> Option<String> {
         RunOutcome::Stopped(level) => level,
     };
     let Some(unstarted) = report.unstarted else {
-        return Some("清点途中按停止停下：一卷都没开工".to_owned());
+        return Some("清点途中停下：一卷都没开工".to_owned());
     };
     let level = match level {
         Instruction::Finish => "（做完再停）",
@@ -1216,9 +1220,9 @@ pub fn outcome(report: &Report) -> Option<String> {
         taken.push(format!("剩下 {unstarted} 卷没开工"));
     }
     if taken.is_empty() {
-        return Some(format!("按停止停下{level}"));
+        return Some(format!("停下{level}"));
     }
-    Some(format!("按停止停下{level}：{}", taken.join("；")))
+    Some(format!("停下{level}：{}", taken.join("；")))
 }
 
 /// 产物合计那一小结，打头摆在末尾那几小结的最前面（say-and-stop/06，停车场 Q801）。
@@ -3887,7 +3891,7 @@ mod tests {
         let cases = [
             (
                 ended(RunOutcome::Stopped(Instruction::Finish), None, Some(2)),
-                "按停止停下（做完再停）：剩下 2 卷没开工",
+                "停下（做完再停）：剩下 2 卷没开工",
             ),
             (
                 ended(
@@ -3895,7 +3899,7 @@ mod tests {
                     Some("library/volume-b"),
                     Some(3),
                 ),
-                "按停止停下（立即停止）：library/volume-b 做到一半丢掉了，\
+                "停下（立即停止）：library/volume-b 做到一半丢掉了，\
                  最终位置上一个字节都没动过；剩下 3 卷没开工",
             ),
             // 丢掉的正是最后一卷：后面没有卷了，那半句不说「剩下 0 卷」。
@@ -3905,20 +3909,28 @@ mod tests {
                     Some("library/volume-b"),
                     Some(0),
                 ),
-                "按停止停下（立即停止）：library/volume-b 做到一半丢掉了，\
+                "停下（立即停止）：library/volume-b 做到一半丢掉了，\
                  最终位置上一个字节都没动过",
             ),
             (
                 ended(RunOutcome::Stopped(Instruction::Abort), None, Some(4)),
-                "按停止停下（立即停止）：剩下 4 卷没开工",
+                "停下（立即停止）：剩下 4 卷没开工",
+            ),
+            (
+                ended(RunOutcome::Stopped(Instruction::Finish), None, Some(0)),
+                "停下（做完再停）",
+            ),
+            (
+                ended(RunOutcome::Stopped(Instruction::Abort), None, Some(0)),
+                "停下（立即停止）",
             ),
             (
                 ended(RunOutcome::Stopped(Instruction::Finish), None, None),
-                "清点途中按停止停下：一卷都没开工",
+                "清点途中停下：一卷都没开工",
             ),
             (
                 ended(RunOutcome::Stopped(Instruction::Abort), None, None),
-                "清点途中按停止停下：一卷都没开工",
+                "清点途中停下：一卷都没开工",
             ),
         ];
         for (report, said) in cases {
@@ -3932,6 +3944,10 @@ mod tests {
             assert!(
                 printed.ends_with(&format!("{said}\n")),
                 "命令行报告没以结束方式那一句收尾：{printed}"
+            );
+            assert!(
+                !printed.contains("按停止"),
+                "报告不该把退出或停止都说成按停止：{printed}"
             );
             if report.aborted.is_none() {
                 assert!(!said.contains("丢掉"), "一卷都没丢，却说丢了：{said}");
@@ -6162,31 +6178,34 @@ mod tests {
         assert_eq!(row.cell(Field::Bases), None);
     }
 
-    /// **统一档位分布那一格只在 `--envelope` 那条路上在场**（say-and-stop/08，收停车场 Q706）。
-    ///
-    /// 默认那条路上每一卷判的都是「逐页」，那一格于是写成「逐页 N」——与卷数那一格说的是同一件事。
-    /// 一格在不在场本身就是一句话：默认路径上**整格不在**，跳过的那几卷也不例外；
-    /// `--envelope` 那条路上各卷判出各自的统一档位，那一格说得出新东西，照旧在。
-    ///
-    /// 问的是命令行 `--brief` 那一副（[`plain::report`]）：那条路走没走由**报告**上那一格说
-    /// （[`Report::envelope`]），接线漏了这一条照样红。两条路各摆一份那条路上真出得来的卷
-    /// （默认路径上没有统一档位，`--envelope` 上没有「逐页」），开关点名给。
-    /// **「逐页」不许再出现在默认那条路的目录行上**——那是这一票改掉的话
-    /// （抬头那一行说的「逐页判断」是另一件事，所以只问目录那一行）。
+    /// **默认路径只藏「逐页」那几笔**（honest-screen/09）：跳过、没做成、覆盖照数；
+    /// 全部逐页时分布整格不在，全部跳过时仍说得出这一枝没重做。
+    /// 问 `--brief` 那一份报告，`--envelope` 的分布与排序照旧。
     #[test]
-    fn the_directory_row_spreads_bases_only_on_the_envelope_path() {
-        let directory_line = |judged: Option<VolumeVerdict>, enveloped: bool| {
-            let skipped = Some(VolumeVerdict::Skipped { page_count: 1 });
-            let mut report = one_page_report(
-                Profile::resolve("kobo-libra-2").expect("内置型号"),
-                VolumeVerdict::Skipped { page_count: 1 },
-                a_volume("库/第1话", judged, false).pages.remove(0),
+    fn the_directory_row_omits_only_per_page_counts_on_the_default_path() {
+        let skipped = Some(VolumeVerdict::Skipped { page_count: 1 });
+        let each = Some(VolumeVerdict::PerPage);
+        let directory_line = |judged: &[Option<VolumeVerdict>], enveloped: bool, failed: bool| {
+            let mut report = switches_report(
+                FitMode::Inside,
+                true,
+                SplitRule {
+                    on: false,
+                    ..SplitRule::default()
+                },
             );
-            report.volumes = vec![
-                a_volume("库/第1话", judged, false),
-                a_volume("库/第2话", judged, false),
-                a_volume("库/第3话", skipped, false),
-            ];
+            report.volumes = judged
+                .iter()
+                .enumerate()
+                .map(|(at, verdict)| a_volume(&format!("库/第{at}话"), *verdict, false))
+                .collect();
+            if failed {
+                report.failed_volumes.push(VolumeFailure {
+                    volume: PathBuf::from("库/坏卷"),
+                    reason: "卷根不在了".to_owned(),
+                    timing: VolumeTiming::default(),
+                });
+            }
             report.envelope = enveloped;
             let text = plain::report(&report, Mode::Process, plain::ReportFold::ByDirectory);
             text.lines()
@@ -6195,18 +6214,36 @@ mod tests {
                 .to_owned()
         };
 
-        let per_page = directory_line(Some(VolumeVerdict::PerPage), false);
-        assert_eq!(per_page, "库  3 卷", "默认那条路上分布那一格还在");
+        let per_page = directory_line(&[each, each, skipped], false, false);
+        assert_eq!(per_page, "库  3 卷 · 跳过 1");
         assert!(
             !per_page.contains("逐页"),
-            "默认那条路的目录行又写上了「逐页」，与卷数那一格说的是同一件事：{per_page}"
+            "默认那条路的目录行又写上了「逐页」：{per_page}"
         );
+        let all_skipped = directory_line(&[skipped, skipped, skipped], false, false);
+        assert_eq!(all_skipped, "库  3 卷 · 跳过 3");
+        assert!(!all_skipped.contains("逐页"), "{all_skipped}");
+        assert_eq!(
+            directory_line(&[each, each, each], false, false),
+            "库  3 卷"
+        );
+
+        let forced = Some(VolumeVerdict::Override(Candidate::new(
+            BitDepth::Two,
+            Dither::Off,
+        )));
+        let mixed = directory_line(&[each, skipped, skipped, forced], false, true);
+        assert_eq!(mixed, "库  5 卷 · 跳过 2 ⋅ 覆盖 2bit 1 ⋅ 没做成 1");
+        assert!(!mixed.contains("逐页"), "{mixed}");
 
         let four = Some(VolumeVerdict::Envelope(envelope(Candidate::new(
             BitDepth::Four,
             Dither::Off,
         ))));
-        assert_eq!(directory_line(four, true), "库  3 卷 · 4bit 2 ⋅ 跳过 1");
+        assert_eq!(
+            directory_line(&[four, four, skipped, forced], true, true),
+            "库  5 卷 · 4bit 2 ⋅ 跳过 1 ⋅ 覆盖 2bit 1 ⋅ 没做成 1"
+        );
     }
 
     /// **命令行那一副把目录那一行摆在它那几卷前面**（票面第三条）。

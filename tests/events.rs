@@ -1756,7 +1756,7 @@ fn the_survey_asks_before_each_archive_header_and_never_for_a_directory() {
 /// 做完再停与立即停止停下来的现场相同，交出的结束方式各带各的那一级。
 ///
 /// 「剩下几卷」这一趟说不出：清点没走完（[`tonefit::Report::unstarted`] 是 `None`），
-/// 命令行报告末尾那一句因此说的是「清点途中按停止停下：一卷都没开工」（`src/render.rs` 的 `outcome`）。
+/// 命令行报告末尾那一句因此说的是「清点途中停下：一卷都没开工」（`src/render.rs` 的 `outcome`）。
 #[test]
 fn stopping_while_surveying_starts_nothing_and_returns_an_empty_report() {
     let space = Workspace::new();

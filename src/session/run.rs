@@ -1148,6 +1148,13 @@ mod tests {
         );
         drop(live);
         assert_eq!(landed(&out), Vec::<String>::new(), "盘上留下了东西");
+        let printed = running.report().expect("退出后留在 stdout 的报告");
+        let stopped = format!(
+            "停下（立即停止）：{} 做到一半丢掉了，最终位置上一个字节都没动过\n",
+            workspace.path().join("卷一").display()
+        );
+        assert!(printed.ends_with(&stopped), "退出报告末尾说错了：{printed}");
+        assert!(!printed.contains("按停止"), "退出不是按停止：{printed}");
     }
 
     /// **已经等在闸上的时候按一次做完再停，那一问仍旧留给用户**——闩不替他答。
