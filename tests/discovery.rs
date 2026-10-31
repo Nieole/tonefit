@@ -7,7 +7,7 @@
 //! 退出码那一条不在这里：「点名的 / 发现的」只决定点不开时的处置，而处置的差别是
 //! **退出码**，退出码只在真进程上观察得到（见 `tests/exit_code.rs`）。
 //!
-//! 起真进程的只有一条：`./库` 那个写法要从一个**当前目录**里敲才写得出来，而当前目录是
+//! 相对写法的用例起真进程：它们要从一个**当前目录**里敲才写得出来，而当前目录是
 //! 整个进程的事，同一个测试二进制里改它会搅到并行着的别的用例（见
 //! [`a_leading_dot_does_not_make_another_named_path`]）。
 
@@ -67,24 +67,16 @@ fn a_split_rar_comes_out_as_one_volume_named_after_the_sequence() {
         ["库/第01卷.cbz"],
         "卷名没取分卷序列的名字，或者出了两份产物"
     );
-    // **报告与进度条印的是同一个**，而两边印的都是分卷序列的**头一份**。
-    //
-    // 卷标识**不是**序列名：它是头一份那个文件，报告、幂等的去处、成员身份都按它算。
-    // 序列名出现在**去处**上（上面那一条断言），与开工那一条的卷清单上
-    // （`SurveyedVolume::name`，`tests/events.rs` 的
-    // `the_roster_names_every_volume_and_a_split_sequence_after_the_sequence` 钉着）——
-    // 会话写卷名读的是后者；命令行进度条读的是卷标识，仍印 `第01卷.part1`（停车场 Q1297）。
-    //
-    // 这一条钉的因此是**两处不许分道**：`Event::VolumeStarted` 的卷标识与
-    // `VolumeReport::volume` 眼下同源，而「让进度条改印序列名」正是最容易只改一处的改法。
+    // 开卷事件与报告用同一个卷根：分卷序列的头一份。
+    // 屏上卷名则按这个根读清点清单，不从标识推名字。
     assert_eq!(
         seen.lock().expect("读回开卷那几条事件").as_slice(),
         [parts[0].clone()],
-        "进度条印的不是分卷序列的头一份"
+        "开卷事件的卷根不是分卷序列的头一份"
     );
     assert_eq!(
         report.volumes[0].volume, parts[0],
-        "报告印的卷与进度条印的不是同一个"
+        "报告与开卷事件的卷根不是同一个"
     );
 }
 
@@ -526,6 +518,137 @@ fn a_leading_dot_does_not_make_another_named_path() {
     );
 }
 
+/// 同一棵树用相对、绝对两种写法点名，不再在同名同级的去处撞名那一道拒绝。
+/// 报告留头一回点名的写法，不能把用来判等的绝对写法印回去。混装目录也让借住走同一把尺子。
+#[test]
+fn relative_and_absolute_spellings_of_one_library_do_not_collide() {
+    for absolute_first in [false, true] {
+        let space = Workspace::new();
+        let cover = space.volume("库");
+        cover.page("cover.png", &fixtures::cheap_page());
+        write_archive(&space, "库/第1话.cbz", 1);
+        // macOS 的临时目录可能经过软链；这里要比的是相对/绝对，不是软链的两个名字。
+        let here = space.root().canonicalize().expect("取得工作区的当前目录");
+        let absolute = here.join("库");
+        let relative = Path::new("库");
+        let inputs = if absolute_first {
+            [absolute.as_path(), relative]
+        } else {
+            [relative, absolute.as_path()]
+        };
+
+        let said = run_relative_paths(&here, inputs);
+
+        assert_eq!(
+            fixtures::directory_members(&space.out()),
+            ["库/cover.png", "库/第1话.cbz"],
+            "同一棵树没收编，或者借住的卷丢了"
+        );
+        assert_eq!(
+            said.matches("→out").count(),
+            2,
+            "同一卷报了不止一遍：{said}"
+        );
+        for expected in [inputs[0].to_path_buf(), inputs[0].join("第1话.cbz")] {
+            assert!(
+                said.contains(&format!("{}→out", expected.display())),
+                "报告没留点名的写法：{said}"
+            );
+            if !absolute_first {
+                assert!(
+                    !said.contains(&format!("{}→out", here.join(expected).display())),
+                    "报告印了用来判等的绝对写法：{said}"
+                );
+            }
+        }
+    }
+}
+
+/// 里外两条路径一条写相对、一条写绝对：次序、写法怎么换，都只按最外层镜像一次。
+#[test]
+fn relative_and_absolute_nested_named_paths_do_the_work_once() {
+    for outer_absolute in [false, true] {
+        for inner_first in [false, true] {
+            let space = Workspace::new();
+            write_archive(&space, "库/作品/第1话.cbz", 1);
+            write_archive(&space, "库/作品/第2话.cbz", 1);
+            let here = space.root().canonicalize().expect("取得工作区的当前目录");
+            let outer = if outer_absolute {
+                here.join("库")
+            } else {
+                PathBuf::from("库")
+            };
+            let inner = if outer_absolute {
+                PathBuf::from("库/作品")
+            } else {
+                here.join("库/作品")
+            };
+            let inputs = if inner_first {
+                [&inner, &outer]
+            } else {
+                [&outer, &inner]
+            };
+
+            let said = run_relative_paths(&here, inputs.map(PathBuf::as_path));
+
+            assert_eq!(
+                fixtures::directory_members(&space.out()),
+                ["库/作品/第1话.cbz", "库/作品/第2话.cbz"],
+                "同一卷做了不止一遍，或者没按最外层镜像"
+            );
+            assert_eq!(
+                said.matches("→out").count(),
+                2,
+                "同一卷报了不止一遍：{said}"
+            );
+            let first = if inner_first {
+                inner
+            } else {
+                outer.join("作品")
+            };
+            for name in ["第1话.cbz", "第2话.cbz"] {
+                assert!(
+                    said.contains(&format!(
+                        "{}→{}",
+                        first.join(name).display(),
+                        Path::new("out")
+                            .join("库")
+                            .join("作品")
+                            .join(name)
+                            .display()
+                    )),
+                    "收编改掉了报告里的写法：{said}"
+                );
+                if first.is_relative() {
+                    assert!(
+                        !said.contains(&format!("{}→out", here.join(&first).join(name).display())),
+                        "报告印了用来判等的绝对写法：{said}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// 相对路径只在子进程里接当前目录；报告拿掉折行与格间空白后比路径，不依赖终端宽度。
+fn run_relative_paths(here: &Path, inputs: [&Path; 2]) -> String {
+    let ran = Command::new(env!("CARGO_BIN_EXE_tonefit"))
+        .current_dir(here)
+        .args(["--profile", fixtures::BASELINE_DEVICE, "--out", "out"])
+        .args(inputs)
+        .output()
+        .expect("启动 tonefit");
+    assert_eq!(
+        ran.status.code(),
+        Some(0),
+        "这一趟没做成：{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    String::from_utf8_lossy(&ran.stdout)
+        .split_whitespace()
+        .collect()
+}
+
 /// 里外哪个先点名都一样：收编到的恒是**最外层**那个根，输出树因此确定且可预测。
 #[test]
 fn the_outermost_named_root_wins_whichever_path_comes_first() {
@@ -793,10 +916,8 @@ impl tonefit::Progress for Announced {
 
 /// 只留每条**开卷**事件带的那个卷标识，别的一律不看。
 ///
-/// 进度条印的卷从这里来（命令行那一路的 `Bar::start` 取 `Event::VolumeStarted` 的 `volume`；
-/// 会话那一路按它认回清单上那一卷、卷名读清单），
-/// 而报告里那一格是 `VolumeReport::volume`——「报告与进度条印的是同一个」
-/// 只有把两边比一次才钉得住。
+/// 命令行与会话都按它认回清点清单上的卷名；报告的 `VolumeReport::volume`
+/// 也是同一个卷根。这条观察者只验身份，不验屏上卷名。
 #[derive(Default)]
 struct StartedVolumes(Arc<Mutex<Vec<PathBuf>>>);
 

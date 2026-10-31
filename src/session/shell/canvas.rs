@@ -18,6 +18,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
+use super::super::columns::{self, Keep};
 use super::super::look::{Look, Segment, width_of};
 use super::super::view::{Hit, Target};
 use super::super::viewport::Scrollbar;
@@ -148,7 +149,7 @@ impl<'a> Canvas<'a> {
                     let Some(left) = max.checked_sub(used).filter(|left| *left > 0) else {
                         break;
                     };
-                    clip(&segment.text, left)
+                    columns::clip(&segment.text, usize::from(left), Keep::Start)
                 }
                 None => segment.text.clone(),
             };
@@ -284,24 +285,9 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// 截到 `width` 格：一个宽字符装不下就停在它前面（设计稿的 `clip`）。
-pub(super) fn clip(text: &str, width: u16) -> String {
-    let mut out = String::new();
-    let mut used: u16 = 0;
-    for glyph in text.chars() {
-        let cells = crate::wrap::width(&glyph.to_string());
-        if used + cells > width {
-            break;
-        }
-        out.push(glyph);
-        used += cells;
-    }
-    out
-}
-
 /// 补到 `width` 格宽（左对齐）；超了先截。
 pub(super) fn padded(text: &str, width: u16) -> String {
-    let text = clip(text, width);
+    let text = columns::clip(text, usize::from(width), Keep::Start);
     let gap = width.saturating_sub(crate::wrap::width(&text));
     format!("{text}{}", " ".repeat(usize::from(gap)))
 }
@@ -313,6 +299,35 @@ pub(super) fn hint(keys: &str, what: &str) -> Vec<Segment> {
         Segment::plain(keys),
         Segment::faint(format!(" → {what}]")),
     ]
+}
+
+/// 保留开头并沿用原段样式：设置栏与输入行回话共用。
+pub(super) fn elided_row(segments: Vec<Segment>, room: u16) -> Vec<Segment> {
+    let text: String = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect();
+    let elided = columns::elide_at(&text, usize::from(room), Some(Keep::Start));
+    if elided == text {
+        return segments;
+    }
+    if room == 0 {
+        return Vec::new();
+    }
+    let mut left = elided.chars().count() - 1;
+    let mut out = Vec::new();
+    for segment in segments {
+        let count = segment.text.chars().count();
+        if count > left {
+            let mut head: String = segment.text.chars().take(left).collect();
+            head.push_str(&elided[elided.len() - '⋯'.len_utf8()..]);
+            out.push(Segment::new(head, segment.look));
+            break;
+        }
+        left -= count;
+        out.push(segment);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -379,7 +394,6 @@ mod tests {
             Some(3),
         );
         assert_eq!(used, 2, "三格里装得下 xy，装不下「设」");
-        assert_eq!(clip("设备x", 3), "设");
         assert_eq!(padded("设", 4), "设  ");
     }
 

@@ -27,7 +27,7 @@ const SIZES = [[120, 36], [80, 24], [56, 14]];
 const HANDLES = [
   'S', 'SCENES', 'render', 'setSize', 'term',
   'onMouse', 'onWheel', 'frame',
-  'VERSION', 'SHOW', 'TARGET_H', 'CONFIG', 'PRESETS', 'PANELS', 'PASSES', 'pagesOf', 'retainedOf', 'stepsOf', 'extracts', 'isolatedOutput', 'dirRoot', 'CWD', 'PRESETS_FILE',
+  'VERSION', 'SHOW', 'TARGET_H', 'CONFIG', 'PRESETS', 'PANELS', 'PASSES', 'pagesOf', 'retainedOf', 'stepsOf', 'extracts', 'volumeOutput', 'isolatedOutput', 'dirRoot', 'CWD', 'PRESETS_FILE',
 ];
 
 /**

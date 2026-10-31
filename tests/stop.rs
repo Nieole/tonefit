@@ -102,13 +102,14 @@ fn one_ctrl_c_lets_the_volume_in_flight_finish_and_stops_there() {
     });
     ctrl_c(&child);
     let (code, printed) = finished(child);
+    assert!(!printed.contains("按停止"), "报告不该说按停止：{printed}");
 
     // **按停止不是失败**：退出码照既有那四个走，这一趟做到的那一卷成了，交出的是 0
     // （`src/main.rs` 的 `exit_code`）。
     assert_eq!(code, Some(0), "按停止停下来的一趟没交出「全部成功」那个数");
     // **报告说得出它被按停过**，剩下哪一截（`say-and-stop/02`）：当前卷做完，后面两卷没开工。
     assert!(
-        says(&printed, "按停止停下（做完再停）：剩下 2 卷没开工"),
+        says(&printed, "停下（做完再停）：剩下 2 卷没开工"),
         "stdout 上的报告没说这一趟是按停止停下的：{printed}"
     );
     assert_eq!(
@@ -153,11 +154,12 @@ fn two_ctrl_c_throws_the_volume_in_flight_away_and_the_final_place_is_untouched(
     });
     ctrl_c(&child);
     let (code, printed) = finished(child);
+    assert!(!printed.contains("按停止"), "报告不该说按停止：{printed}");
 
     assert_eq!(code, Some(0), "按停止停下来的一趟没交出「全部成功」那个数");
     // **报告说得出丢掉的是哪一卷**、最终位置没动过、后面两卷没开工（`say-and-stop/02`）。
     let said = format!(
-        "按停止停下（立即停止）：{} 做到一半丢掉了，最终位置上一个字节都没动过；剩下 2 卷没开工",
+        "停下（立即停止）：{} 做到一半丢掉了，最终位置上一个字节都没动过；剩下 2 卷没开工",
         volumes[0].display()
     );
     assert!(
@@ -177,7 +179,7 @@ fn two_ctrl_c_throws_the_volume_in_flight_away_and_the_final_place_is_untouched(
 ///
 /// 从前清点那一段按下去停不下来：闩记住了，而第一个检查点在清点之后，几十个归档头要列完
 /// 才停得住。现在每开一个归档头之前问一句，这一趟当场收手——排在管道后面的那个真卷
-/// 一页都没做，stdout 上的报告以「清点途中按停止停下」收尾，退出码照按停止那一条走（0）。
+/// 一页都没做，stdout 上的报告以「清点途中停下」收尾，退出码照按停止那一条走（0）。
 ///
 /// 记号与余地怎么来的，见模块文档《清点途中按停》。
 #[test]
@@ -206,6 +208,7 @@ fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
     }
     drop(held);
     let (code, printed) = finished(child);
+    assert!(!printed.contains("按停止"), "报告不该说按停止：{printed}");
 
     assert_eq!(
         code,
@@ -213,7 +216,7 @@ fn ctrl_c_while_surveying_stops_there_and_the_report_says_no_volume_started() {
         "清点途中按停止没交出按停止那个数（管道放完了、清点走到头被拒？）：{printed}"
     );
     assert!(
-        says(&printed, "清点途中按停止停下：一卷都没开工"),
+        says(&printed, "清点途中停下：一卷都没开工"),
         "stdout 上的报告没说清点途中停下：{printed}"
     );
     assert!(

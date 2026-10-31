@@ -14,7 +14,7 @@ use super::super::state::Session;
 use super::super::tone::Tone;
 use super::super::view::{Focus, Target};
 use super::super::viewport::Viewport;
-use super::canvas::{Border, Canvas, padded};
+use super::canvas::{Border, Canvas, elided_row, padded};
 
 /// 项名那一列至多、至少多宽，以及取值那一列留多少（设计稿 `drawCfgLeft` 的 `labelW`）。
 const LABEL_WIDEST: u16 = 18;
@@ -61,11 +61,21 @@ pub(super) fn draw(canvas: &mut Canvas<'_>, session: &Session, area: Rect) {
         match line {
             // 组抬头顶格写，停不住，行首没有光标那两格。
             config::Line::Band(band) => {
-                canvas.line(area.x + 2, y, &band_row(*band), Some(inner));
+                canvas.line(
+                    area.x + 2,
+                    y,
+                    &elided_row(band_row(*band), inner),
+                    Some(inner),
+                );
             }
             config::Line::Item(item) => {
                 let segments = item_row(session, *item, at == cursor, focused, locked, column);
-                canvas.line(area.x + 1, y, &segments, Some(inner + 1));
+                canvas.line(
+                    area.x + 1,
+                    y,
+                    &elided_row(segments, inner + 1),
+                    Some(inner + 1),
+                );
                 canvas.hit_row(area, y, Target::Item(*item));
             }
         }

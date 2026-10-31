@@ -1,0 +1,50 @@
+# . = c-fg
+# a = c-gray
+# b = c-green b
+# c = c-fg b u
+# d = c-blue
+# e = c-fg b
+# f = c-gray d
+# g = c-yellow
+# h = c-lgreen
+# i = c-magenta b
+# j = c-yellow b
+# k = c-lgreen b
+# l = c-white
+# m = c-gray b
+".aaaaaaabbcc..............................................................ddddddddddddddddddddddddddddddddddddd."
+"aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaffffffffffffffffffffffffffffffaaa"
+"a.aaaaabbbbggggggggggg.............................................a.aaaaaa..a.aaaaaaaaa.a"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"aaeeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahheehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhaaa..........hhh"
+"a.iiiifffffffffff........................ah.aaaaaaaaaaaaaaffffffffffffff..........h"
+"aaaeeeeeeeeeeeeeeee..........jj....................ah.kkbb.................................fffffff...........h"
+"aaalllllllllllllaaaaaaaaa..............ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaaaaaaaaaaaaaaaaaaaaaa.ah.kkbb................................fffffff............h"
+"a.iiiifffffffffff........................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllll......jj........................ah.kkbbeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffff...........h"
+"aaalllllllllllllllaaaaa......................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaa......................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllaaaaaaa.....................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaaaa.....................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaaaaaaaaa................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaa.......................ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllaaaaaaaaaa............ah.kkbb.................................fffffff...........h"
+"aaallllllllllllllll..jj............................ah................................................................h"
+"aaallllllllllllaaaaa......................ah.llllllllllllllllllllllllllllll...h"
+"aaallllllllllllllaaaaaaaaaaaaa...............ah.llllllllllllllllllllllllllllll...h"
+"aaallllllllllllllaaaaaaaa....................ah.lllllllllllllllllllllllllllll.....h"
+"a.mmmmmmfffff................................ah................................................................h"
+"aaallllllllllllllaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.ah.aaaaaaaa............gggggggggg....................h"
+"aaalllllllllllllaaaaaaaaaaaaaaaaa.ah................................................................h"
+"aaallllllllllllllaaaaaaaaaaaaaaaaa..ah................................................................h"
+"aaallllllllllllllaaaaaaaaaaaaaaaaaaaaa.ah................................................................h"
+"aaallllllllllllllaaaaaaaaaaaaaaaaaaaa.ah................................................................h"
+"a....................................................ah................................................................h"
+"a....................................................ah................................................................h"
+"a....................................................ah................................................................h"
+"a....................................................ah................................................................h"
+"a....................................................ah................................................................h"
+"a....................................................ah................................................................h"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+".bb..................aaaaaaaaaaaaaaaaaaa......................................................"

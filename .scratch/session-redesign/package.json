@@ -7,7 +7,7 @@
     "render": "node render.js",
     "export": "node export.js",
     "check": "node export.js --check",
-    "test": "node --test export.test.js"
+    "test": "node --test export.test.js honest-screen.test.js"
   },
   "devDependencies": {
     "jsdom": "30.0.1"

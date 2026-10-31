@@ -157,7 +157,7 @@ impl Item {
             Self::Premise(Judging::Interlock) if !engaged(session) => Cow::Borrowed(
                 "当前这组设置之间没有互相冲突的组合。所有可能冲突的组合写在 tonefit --help 的末尾。",
             ),
-            Self::Premise(which) => Cow::Borrowed(about_premise(which)),
+            Self::Premise(which) => about_premise(which),
         }
     }
 }
@@ -422,7 +422,10 @@ fn about_setting(field: Field) -> Cow<'static, str> {
             ));
         }
         Field::Threshold => {
-            "画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。"
+            return Cow::Owned(format!(
+                "画质分低于这个数，就算看不出和原图的差别。内置{}。这个数由人盲看对比定出来：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。",
+                builtin_threshold()
+            ));
         }
         Field::Fit => {
             "height（按高度铺满）：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。inside（整页放进屏幕）：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。"
@@ -464,10 +467,13 @@ fn about_setting(field: Field) -> Cow<'static, str> {
 /// 画质判定参数那几项的**长说明**（设计稿 `CONFIG` 的 `desc`）。
 ///
 /// 选项冲突那一项咬上时说这一句；没咬上那一句在 [`Item::about`] 里分出去。
-fn about_premise(which: Judging) -> &'static str {
-    match which {
+fn about_premise(which: Judging) -> Cow<'static, str> {
+    Cow::Borrowed(match which {
         Judging::Device => {
-            "下一趟照这份设备配置判定：型号、屏幕规格、画质门槛，门槛是在哪块屏幕上实测的也写着。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。"
+            return Cow::Owned(format!(
+                "下一趟照这份设备配置判定：型号、屏幕规格、画质门槛。内置{}。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。",
+                builtin_threshold()
+            ));
         }
         Judging::Composition => {
             "画质分由两部分相加。① 整体走样：把原图和转换后的图都稍微模糊一下（相当于在正常阅读距离看），比较灰度差多少，色带、灰调发闷都算在这里。② 抖动颗粒：抖动的点子本身有多扎眼；起伏不到「相邻两级灰度差的 21.6%」就当看不见，不扣分。21.6% 这个比例是在 boox-poke6 上实测的。"
@@ -481,7 +487,15 @@ fn about_premise(which: Judging) -> &'static str {
         Judging::Interlock => {
             "这组设置里有两项凑在一起会互相削弱：上面那句写着是哪两项、代价是什么。组合本身能用，只是拿到的是部分收益。所有可能冲突的组合写在 tonefit --help 的末尾。"
         }
-    }
+    })
+}
+
+/// 说明讲的是内置门槛，不是此刻的覆盖值；所有内置型号共用这份标定。
+/// 连数值与来源一起交给库的 Display，名单与连接词都不在会话派生第二份。
+fn builtin_threshold() -> tonefit::Threshold {
+    Profile::resolve(Profile::devices().next().expect("内置型号表非空"))
+        .expect("表里的型号可解析")
+        .threshold()
 }
 
 #[cfg(test)]
@@ -490,6 +504,36 @@ mod tests {
     use crate::session::scene::Scene;
     use crate::session::state::Stage;
     use crate::session::view::Input;
+
+    /// 两段说明读的是库的内置标定；用户覆盖门槛或尚未选型号都不改写标定史。
+    #[test]
+    fn details_explain_the_same_builtin_calibration_as_the_header() {
+        let mut scene = Scene::named("config");
+        scene.session.set_device(Some("kobo-libra-2".to_owned()));
+        let threshold = Profile::resolve("kobo-libra-2")
+            .unwrap()
+            .threshold()
+            .to_string();
+        assert!(premise(&scene.session, Judging::Device).contains(&threshold));
+        for override_value in [None, Some(7.25)] {
+            scene.session.device.threshold = override_value;
+            for model in [Some("kobo-libra-2".to_owned()), None] {
+                scene.session.device.profile = model;
+                for item in [
+                    Item::Setting(Field::Threshold),
+                    Item::Premise(Judging::Device),
+                ] {
+                    let explanation = item.about(&scene.session);
+                    assert!(explanation.contains(&threshold), "{explanation}");
+                    assert!(!explanation.contains("由你指定"), "{explanation}");
+                    assert!(
+                        !explanation.contains("这个数是在 boox-poke6 上"),
+                        "{explanation}"
+                    );
+                }
+            }
+        }
+    }
 
     /// **画质判定参数那五行与报告抬头逐字相同**（`session-redesign/13` 票面第三条）。
     ///

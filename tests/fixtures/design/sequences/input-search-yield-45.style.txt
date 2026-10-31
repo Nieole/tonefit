@@ -1,0 +1,42 @@
+# . = c-fg
+# a = c-green b
+# b = c-fg b u
+# c = c-gray
+# d = c-blue
+# e = c-cyan b
+# f = c-gray d
+# g = c-fg b
+# h = c-red b
+# i = c-red
+# j = c-green
+# k = c-white
+# l = c-yellow b
+# m = c-yellow
+# n = c-blue b
+# o = c-yellow i
+# p = c-gray i
+# q = c-lgreen
+".aabbccccccc....................ddddddddddddddddddddddddddddddddddddddd."
+"ccee.........................ccccccccccccccccccccccccccccccccccccccccc"
+"c.ccccdddfffffffggggcccccccggggggggggggdddccccccc..............c"
+"c.cccggccccccccccccccchhhhhhiiiiccciiiiiiccciiiiii...........c"
+"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+"ccggccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccaaaaaaccc"
+"c.......ccjjkkkkkkkkkkkk.cccccccc...........................................c"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccllkkkkkkkkkkkk.cccccccc..mmmmmmmmmmmmmmmmmmmmmm.."
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc............................................"
+"c.......ccjjkkkkkkkkkkkk.cccccccc...........................................c"
+"c.......cchhkkkkkkkkkkkk.cccccccc..iiiii...............................c"
+"c.......ccjjkkkkkkkkkkkk.cccccccc...........................................c"
+"c.......ccjjkkkkkkkkkkkk.cccccccc...........................................c"
+"c.......ccjjkkkkkkkkkkkk.cccccccc...........................................c"
+"c.cc....ccnnnnnnnnnnnnnn.cccccccc..ddddfffffffffccccccc...................c"
+"c.......cccckkkkkkkkkkkk.cccccccc..fff...................................c"
+"ccoooooooooooooooooooooooooooooooopcccccccccccccc"
+".a......................................q.."

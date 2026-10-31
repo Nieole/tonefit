@@ -1,0 +1,53 @@
+{
+  "scene": "config",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": {
+    "profile": "kobo-clara-hd",
+    "gray-levels": null,
+    "threshold": null,
+    "fit": "inside",
+    "crop": false,
+    "split": false,
+    "split-threshold": null,
+    "reading-order": null,
+    "filter": null,
+    "white-align-limit": null,
+    "bit-depth": 4,
+    "dither": null,
+    "envelope": null,
+    "cache-budget": null,
+    "io-mode": null
+  },
+  "applied_preset": "画集",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "config",
+    "cursor": {
+      "kind": "out"
+    },
+    "expanded": [],
+    "follow": true,
+    "pages": null,
+    "overlay": null,
+    "input": null,
+    "search": null,
+    "toast": "✓ 设备型号已改为 kobo-clara-hd（之前填的可见灰阶数和画质门槛已清空）",
+    "pending": "",
+    "config": {
+      "pane": "right",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 1,
+      "armed_delete": null
+    }
+  }
+}

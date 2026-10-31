@@ -1020,6 +1020,67 @@ mod redesign {
         scene
     }
 
+    /// 回放设计稿的时钟推进；两种宽度整屏比对，同时反钉过早报数。
+    #[test]
+    fn eta_estimates_below_two_percent_and_reports_above_it() {
+        for (name, has, lacks) in [
+            ("eta-start-estimating-120", "正在估算剩余时间", "预计还要"),
+            ("eta-start-estimating-80", "正在估算剩余时间", "预计还要"),
+            ("eta-start-ready-120", "预计还要 7m55s", "正在估算剩余时间"),
+            ("eta-start-ready-80", "预计还要 7m55s", "正在估算剩余时间"),
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(text.contains(has), "{name}: {text}");
+            assert!(!text.contains(lacks), "{name}: {text}");
+        }
+    }
+
+    /// 型号与预设不同才解释；两段说明与报告抬头共用标定来源。
+    #[test]
+    fn details_name_the_preset_model_and_calibrated_panels() {
+        for name in [
+            "details-model-specified",
+            "details-model-omitted",
+            "details-threshold-provenance",
+            "details-device-provenance",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(!text.contains("这个数是在 boox-poke6 上"), "{name}: {text}");
+            if name == "details-model-omitted" {
+                assert!(text.contains("没写型号（套用时型号回到没挑）"), "{text}");
+                assert!(!text.contains("未设置（使用默认值）"), "{text}");
+            }
+        }
+    }
+
+    /// 设置栏截断要露出末尾省略号；整屏同时钉住字、样式和未截断的短值。
+    #[test]
+    fn settings_elision_keeps_the_start_and_marks_overflow_wide_and_narrow() {
+        for name in [
+            "settings-elision-120",
+            "settings-elision-80",
+            "settings-elision-90",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let lines = design::lines_of(&painted(&scene, &running, scene::sequence(name).size));
+            let threshold = lines
+                .iter()
+                .find(|line| line.contains("5.123（在"))
+                .unwrap();
+            assert!(threshold.contains("⋯"), "截断不能伪装成说完：{threshold}");
+            assert!(!threshold.contains("boox-poke6  ┃"));
+            assert!(!threshold.contains("实测，其 ┃"));
+            assert!(lines.iter().any(|line| line.contains("inside *")));
+        }
+    }
+
     /// **`j`／`k` 挪光标**，走完与期望屏逐格相等（票面第二条）。
     #[test]
     fn j_and_k_move_the_cursor_over_the_paths() {
@@ -1129,6 +1190,195 @@ mod redesign {
     #[test]
     fn stopping_while_surveying_says_so_on_the_title_and_the_footer() {
         assert_sequence("survey-s");
+    }
+
+    #[test]
+    fn completed_zero_volume_replay_navigates_and_opens_both_note_cards() {
+        for width in [120, 80] {
+            for action in ["problem", "unreachable-card", "noncomic-card"] {
+                assert_sequence(&format!("zero-volume-{action}-{width}"));
+            }
+        }
+    }
+
+    #[test]
+    fn survey_stop_returns_to_paths_without_claiming_a_started_volume() {
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            let (scene, running, exit) = walked(name);
+            assert_eq!(exit, Exit::Stay);
+            // 报告用时在清点收手时冻结；结束后仍走的屏钟让按停止的回话到点。
+            let buffer = painted_at(
+                &scene,
+                &running,
+                scene::sequence(name).size,
+                scene.now() + std::time::Duration::from_secs(30),
+            );
+            assert_same_cells(&buffer, &design::sequence(name));
+            let text: String = buffer
+                .content()
+                .iter()
+                .flat_map(|cell| cell.symbol().chars())
+                .filter(|glyph| !glyph.is_whitespace())
+                .collect();
+            assert!(text.contains("已停止⋅清点途中停下，一卷都没开始"));
+            for old in ["处理到第0卷", "第0卷未保存", "总进度", "当前卷"] {
+                assert!(!text.contains(old), "{old}");
+            }
+            assert!(text.contains("＋添加路径"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_completed_empty_survey_keeps_note_cards_and_problem_jumps_accessible() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use std::os::unix::fs::PermissionsExt;
+        struct ObserveSurvey {
+            live: std::sync::Arc<std::sync::Mutex<super::super::live::Live>>,
+            stop: tonefit::Instruction,
+        }
+        impl tonefit::Progress for ObserveSurvey {
+            fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+                self.live.lock().unwrap().observe(&event);
+                if matches!(event, tonefit::Event::RunStarted { .. }) {
+                    self.stop
+                } else {
+                    tonefit::Instruction::Continue
+                }
+            }
+        }
+        for stop in [tonefit::Instruction::Continue, tonefit::Instruction::Finish] {
+            let space = tempfile::tempdir().unwrap();
+            let library = space.path().join("library");
+            std::fs::create_dir(&library).unwrap();
+            std::fs::write(library.join("readme.txt"), "not a comic").unwrap();
+            let missing = library.join("unreadable");
+            std::fs::create_dir(&missing).unwrap();
+            std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let mut scene = Scene::named("survey");
+            scene.session.scope.paths = [library]
+                .into_iter()
+                .map(|path| super::super::state::NamedPath { path, on: true })
+                .collect();
+            scene.session.scope.out = Some(space.path().join("output"));
+            let mut request = scene.session.request(tonefit::Mode::Process).unwrap();
+            let live = std::sync::Arc::new(std::sync::Mutex::new(super::super::live::Live::new(
+                &request,
+                super::super::live::Resuming::GoesOn,
+            )));
+            request.progress = Some(tonefit::ProgressSink::new(ObserveSurvey {
+                live: std::sync::Arc::clone(&live),
+                stop,
+            }));
+            let result = tonefit::run(&request);
+            std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut report = result.unwrap();
+            // 零卷的库会直接完成；另摆「开工后才停下」的结束方式，守住两种空清单的区分。
+            if stop == tonefit::Instruction::Finish {
+                report.outcome = tonefit::RunOutcome::Stopped(stop);
+            }
+            assert!(report.volumes.is_empty());
+            assert_eq!(report.non_volume_files.len(), 1);
+            assert_eq!(report.unreachable_places.len(), 1);
+            let mut live = live.lock().unwrap();
+            live.returned(Ok(report));
+            scene.session.run_finished();
+            scene.session.watch_the_run(&live);
+            let mut running = Running::holding(live.clone());
+            drop(live);
+            let text = design::lines_of(&painted(&scene, &running, (120, 36))).join("\n");
+            assert!(text.contains("已忽略 1 个文件"), "{text}");
+            assert!(text.contains("无法访问"), "{text}");
+            assert!(text.contains("总进度"), "completed survey: {text}");
+            assert!(!text.contains("开始后会扫描"), "completed survey: {text}");
+            assert!(!text.contains("清点途中停下"), "completed survey: {text}");
+            assert!(!text.contains("＋ 添加路径"), "completed survey: {text}");
+            for key in [']', 'd'] {
+                feed(
+                    &mut scene.session,
+                    &mut running,
+                    &scene.presets,
+                    space.path(),
+                    key,
+                );
+            }
+            assert_eq!(
+                scene.session.views.task.cursor,
+                super::super::view::Cursor::Note(missing)
+            );
+            for (key, expected) in [
+                (KeyCode::Enter, "unreadable"),
+                (KeyCode::Esc, "已忽略 1 个文件"),
+                (KeyCode::Char('G'), "已忽略 1 个文件"),
+                (KeyCode::Enter, "readme.txt"),
+            ] {
+                let now = scene.now();
+                super::input(
+                    &mut scene.session,
+                    &mut running,
+                    &scene.presets,
+                    space.path(),
+                    now,
+                    Window {
+                        cols: 120,
+                        rows: 36,
+                    },
+                    super::translate(&KeyEvent::new(key, KeyModifiers::NONE)).unwrap(),
+                );
+                let text = design::lines_of(&painted(&scene, &running, (120, 36))).join("\n");
+                assert!(text.contains(expected), "{expected}: {text}");
+                if key == KeyCode::Enter {
+                    assert!(matches!(
+                        scene.session.views.cover,
+                        Some(Overlay::Note { .. })
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_real_survey_stop_report_draws_the_design_finished_screen() {
+        struct StopDuringSurvey(std::sync::Arc<std::sync::Mutex<super::super::live::Live>>);
+        impl tonefit::Progress for StopDuringSurvey {
+            fn observe(&self, event: tonefit::Event<'_>) -> tonefit::Instruction {
+                self.0.lock().expect("拿得到 Live").observe(&event);
+                if matches!(event, tonefit::Event::Surveying { .. }) {
+                    tonefit::Instruction::Finish
+                } else {
+                    tonefit::Instruction::Continue
+                }
+            }
+        }
+        let mut scene = Scene::named("survey");
+        let mut request = scene
+            .session
+            .request(tonefit::Mode::Process)
+            .expect("配置齐了");
+        let live = std::sync::Arc::new(std::sync::Mutex::new(
+            scene.live.take().expect("清点中的 Live"),
+        ));
+        request.progress = Some(tonefit::ProgressSink::new(StopDuringSurvey(
+            std::sync::Arc::clone(&live),
+        )));
+        let report = tonefit::run(&request).expect("清点途中停止交回报告");
+        assert_eq!(
+            report.outcome,
+            tonefit::RunOutcome::Stopped(tonefit::Instruction::Finish)
+        );
+        assert!(report.volumes.is_empty());
+        let mut live = live.lock().expect("拿得到 Live");
+        assert!(live.roster().is_empty(), "没有开工事件");
+        live.returned(Ok(report));
+        scene.session.run_finished();
+        scene.session.watch_the_run(&live);
+        let running = Running::holding(live.clone());
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            assert_same_cells(
+                &painted(&scene, &running, scene::sequence(name).size),
+                &design::sequence(name),
+            );
+        }
     }
 
     /// **`s` 按一次、再按一次**（票面第三条）：一次是做完当前卷就停，两次立即停止——
@@ -1486,8 +1736,10 @@ mod redesign {
             .pages
             .as_ref()
             .expect("`v` 换屏进了每页结果");
+        let tree = &scene.session.views.task.tree;
+        let at = tree.index_of(&pages.volume).expect("确认点上的卷在清单里");
         assert_eq!(
-            crate::render::volume_name(&pages.volume),
+            tree.name(at).expect("清单给出卷名"),
             "第05卷",
             "进的是确认点上那一卷"
         );
@@ -1586,6 +1838,24 @@ mod redesign {
         assert!(!live.has_written(), "这一卷一个字节都没写，结论行不翻");
         drop(live);
         assert_sequence("deciding-s");
+    }
+
+    #[test]
+    fn trialed_bad_pages_and_empty_notable_pages_match_the_design() {
+        for name in [
+            "bad-page-deciding-s-jump",
+            "bad-page-deciding-s-collapsed",
+            "deciding-trialed-notable-jump",
+            "retained-no-notable-pages",
+        ] {
+            assert_sequence(name);
+            let (scene, running, _) = walked(name);
+            let text =
+                design::lines_of(&painted(&scene, &running, scene::sequence(name).size)).join("\n");
+            assert!(!text.contains("需要留意"));
+            assert!(!text.contains("整卷写到隔离"));
+            assert!(!text.contains("隔离 1 卷"));
+        }
     }
 
     /// **写出过一卷之后再答「不写出」，那一卷收在预览过**（`design-parity/04`，收停车场 Q769、Q674）：
@@ -2040,6 +2310,99 @@ mod redesign {
     fn o_opens_the_input_line_and_escape_closes_it() {
         assert_sequence("fresh-o");
         assert_sequence("fresh-o-Escape");
+    }
+
+    /// 80 列上提示从前往后让，长路径的末尾与光标不再被盖住。
+    #[test]
+    fn the_input_path_yields_hints_before_clipping_the_buffer() {
+        for n in [0, 1, 2, 4, 6, 8] {
+            let name = format!("input-path-yield-{n}");
+            assert_sequence(&name);
+            let (scene, running, _) = walked(&name);
+            let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+            let footer = lines.last().expect("屏底");
+            assert!(footer.contains("/▏"), "末尾与光标不许被提示盖住：{footer}");
+            assert!(!footer.contains("[Tab → 补全]"), "先让补全：{footer}");
+            if n >= 2 {
+                assert!(!footer.contains("[C-w → 删一段]"), "再让删一段：{footer}");
+            }
+            if n >= 4 {
+                assert!(!footer.contains("[⏎ → 确定]"), "再让确定：{footer}");
+            }
+            if n >= 6 {
+                assert!(!footer.contains("[Esc → 取消]"), "最后让取消：{footer}");
+            }
+            assert_eq!(footer.contains('⋯'), n == 8, "全让光才截：{footer}");
+        }
+    }
+
+    /// 补全失败的长回话也不能盖掉缓冲与光标。
+    #[test]
+    fn the_input_completion_reply_never_overwrites_the_buffer_or_caret() {
+        let name = "input-unmatched-prefix-reply";
+        assert_sequence(name);
+        let (scene, running, _) = walked(name);
+        let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+        let footer = lines.last().expect("屏底");
+        assert!(
+            footer.contains(&format!("~/{}▏", "z".repeat(50))),
+            "缓冲不许消失：{footer}"
+        );
+        assert_eq!(footer.matches('▏').count(), 1, "光标不许消失：{footer}");
+        assert!(
+            footer.contains("这里没有") && footer.contains('⋯'),
+            "回话须有界且看得出省略：{footer}"
+        );
+        assert!(
+            !footer.contains("zzzz」开头的项"),
+            "完整长回话不许盖住输入：{footer}"
+        );
+        assert!(!footer.contains("[Tab → 补全]"), "回话占提示区：{footer}");
+    }
+
+    /// 搜索也按同一副让法，长到全让光才从前面省略，末字与光标始终在场。
+    #[test]
+    fn the_input_search_yields_hints_before_clipping_the_buffer() {
+        for n in [18, 25, 32, 45] {
+            let name = format!("input-search-yield-{n}");
+            assert_sequence(&name);
+            let (scene, running, _) = walked(&name);
+            let lines = design::lines_of(&painted(&scene, &running, (80, 24)));
+            let footer = lines.last().expect("屏底");
+            let ending = if n % 2 == 0 { "画▏" } else { "卷▏" };
+            assert!(footer.contains(ending), "末字与光标不许被盖住：{footer}");
+            assert!(!footer.contains("[C-w → 删一段]"), "先让删一段：{footer}");
+            if n >= 25 {
+                assert!(!footer.contains("[⏎ → 跳到结果]"), "再让确定：{footer}");
+            }
+            if n >= 32 {
+                assert!(!footer.contains("[Esc → 取消]"), "最后让取消：{footer}");
+            }
+            assert_eq!(footer.contains('⋯'), n == 45, "全让光才截：{footer}");
+        }
+    }
+
+    /// 输入行没有候选时滚轮不碰底下的列表、设置栏、预设栏；有候选仍挪三个。
+    #[test]
+    fn the_input_wheel_never_moves_the_block_under_an_empty_completion_box() {
+        for name in [
+            "input-add-empty-wheel",
+            "input-search-empty-wheel",
+            "input-setting-empty-wheel",
+            "input-preset-empty-wheel",
+        ] {
+            let scene = assert_sequence(name);
+            let line = scene.session.views.input.as_ref().expect("输入行开着");
+            assert!(line.candidates.is_empty(), "{name} 必须没有候选");
+            assert!(
+                scene.session.views.task.follow,
+                "滚轮不许暂停底下的自动滚动"
+            );
+        }
+        let scene = assert_sequence("input-candidates-wheel");
+        let line = scene.session.views.input.as_ref().expect("输入行开着");
+        assert_eq!(line.at, 3, "有候选仍挪三项");
+        assert_eq!(line.buffer, "~/Comics/火之鸟/");
     }
 
     /// **`Tab` 列出这一层、再按轮到下一个、`C-w` 删一段**：`~/` 底下四项按名字排，
@@ -2504,6 +2867,47 @@ mod redesign {
         assert_eq!(scene.session.views.config.armed_delete, None);
     }
 
+    /// 单独给收栏那道守卫一份尚在等覆盖的夹具，不让 Esc 的上游清理替它挡住。
+    #[test]
+    fn shutting_the_picker_forgets_the_overwrite_question() {
+        let (mut scene, mut running, _) = walked("config-p-save-taken");
+        scene.session.views.input = None;
+        let here = charts_land_in(&scene);
+        tap_all(
+            &mut scene,
+            &mut running,
+            &here,
+            [Key::Char('p'), Key::Char('p')],
+        );
+        assert_same_cells(
+            &painted(&scene, &running, (120, 36)),
+            &design::sequence("config-p-save-taken-Escape-p-p"),
+        );
+    }
+
+    #[test]
+    fn honest_preset_footer_and_cancelled_naming_match_the_design() {
+        for name in [
+            "config-p-G",
+            "config-p-save-taken-Escape",
+            "config-p-save-taken-Escape-p-p",
+        ] {
+            let scene = assert_sequence(name);
+            let (_, running, _) = walked(name);
+            let lines = design::lines_of(&painted(&scene, &running, scene::sequence(name).size));
+            let text = lines.join("\n");
+            assert!(text.contains("[⏎ → 保存为预设]"), "{text}");
+            assert!(!text.contains("[⏎ → 使用]"), "末行不许再说使用：{text}");
+            assert!(
+                !text.contains("再按一次 ⏎ 覆盖"),
+                "取消后不许留着那一问：{text}"
+            );
+        }
+        assert_sequence("config-p");
+        let scene = assert_sequence("config-p-j-Enter-t");
+        assert!(replied(&scene).contains("先挑型号"));
+    }
+
     /// **末行那一件上不摆 `dd`，按下去一件事都不做**（`design-parity/02` 票面第四条）：
     /// `G` 停到「＋ 把当前设置保存为预设」上，屏底没有 `[dd → 删除]`；在那一行上按 `dd`
     /// 不闩、不删、不说话——走完那一屏与只按了 `G` 那一屏逐格相同，盘一个字节都不动。
@@ -2561,6 +2965,10 @@ mod redesign {
             Some("插图")
         );
         assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        assert_eq!(
+            scene.session.views.config.armed_save, None,
+            "存下后覆盖那一问作废"
+        );
     }
 
     /// **同名覆盖要按两下**（票面第一条）：第一下**在预设栏里**问一句、盘一个字节都不动、
@@ -2585,6 +2993,10 @@ mod redesign {
         // 第二下才盖。
         let scene = assert_sequence("config-p-save-taken-Enter");
         assert!(scene.session.views.input.is_none(), "收下之后输入行关掉");
+        assert_eq!(
+            scene.session.views.config.armed_save, None,
+            "存下后覆盖那一问作废"
+        );
         let stored = scene.session.preset_to_store();
         // 盖上去的与原来那一份不同（这一景改过缩放方式与抖动）：否则「第二下才盖」是一次空操作，照绿。
         assert_ne!(stored, taken, "这一景存出去的与原来那一份不同");

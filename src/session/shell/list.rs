@@ -111,6 +111,7 @@ pub(super) fn draw(
 fn title(session: &Session, phase: Phase) -> Vec<Segment> {
     let rest = match phase {
         Phase::Fresh => Segment::faint(" ⋅ 路径"),
+        Phase::Ended if !session.views.task.surveyed => Segment::faint(" ⋅ 路径"),
         Phase::Surveying => Segment::faint(" ⋅ 正在清点，马上显示卷列表"),
         _ => Segment::faint(format!(" ⋅ {} 卷", session.views.task.tree.roots.len())),
     };
@@ -265,10 +266,18 @@ impl Painter<'_> {
         let session = self.session;
         // 行上顺口提的那两个键（`[i → 修改]`、`[o → 添加]`）连同那一句都从按键表取；派不出就不提。
         let mentioned = |want: Want| {
-            keymap::hints(self.phase, session.views.block(), &[want])
-                .first()
-                .map(|said| hint(&said.spelt(), said.what))
-                .unwrap_or_default()
+            keymap::hints(
+                if self.phase == Phase::Ended && matches!(line, Line::Add) {
+                    Phase::Fresh
+                } else {
+                    self.phase
+                },
+                session.views.block(),
+                &[want],
+            )
+            .first()
+            .map(|said| hint(&said.spelt(), said.what))
+            .unwrap_or_default()
         };
         let named = |look: Look| name_look(look, pointed);
         let cursor = || pointed.cursor.clone();
@@ -565,7 +574,10 @@ impl Painter<'_> {
                 marks::add_to(&mut tally.tally, *candidate, *pages);
             }
             tally.failed_pages += digest.failed_pages;
-            if state != VolumeState::Isolated && digest.notable.any() {
+            if state != VolumeState::Isolated
+                && (digest.notable.any()
+                    || (state == VolumeState::Trialed && digest.failed_pages > 0))
+            {
                 tally.warn += 1;
             }
         }
@@ -714,7 +726,11 @@ impl Painter<'_> {
                 pointed,
                 indent,
                 chevron: "  ",
-                mark: marks::volume_mark(state, notable > 0, self.spin(0)),
+                mark: marks::volume_mark(
+                    state,
+                    self.live.is_some_and(|live| live.troubled_at(at)),
+                    self.spin(0),
+                ),
                 name: self.volume_name(at),
                 name_look: if running {
                     Look::kind(Kind::Working)
@@ -786,7 +802,9 @@ impl Painter<'_> {
                 .map(|said| vec![Segment::new(said, Look::tone(Tone::Caution))])
                 .unwrap_or_default(),
             VolumeState::Queued => vec![Segment::new("等待中", Look::FAINT.dim())],
-            VolumeState::Done | VolumeState::Trialed if notable > 0 => {
+            // 没写出的卷即使有需留意的页，也不能把行尾写成已经写出的卷。
+            VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
+            VolumeState::Done if notable > 0 => {
                 let said: Vec<String> = self
                     .notable_bits(at)
                     .into_iter()
@@ -794,9 +812,6 @@ impl Painter<'_> {
                     .collect();
                 vec![Segment::new(said.join(" ⋅ "), Look::tone(Tone::Caution))]
             }
-            // **预览过的那一卷说清它没写出去**（`GLOSSARY.md` 的《卷状态》）：盘上没有它，
-            // 行尾空着就与写了出去的那几卷长得一样。需留意的几样更要紧，有就让给上面那一支。
-            VolumeState::Trialed => vec![Segment::new("已分析，未写出", Look::FAINT.dim())],
             VolumeState::Done => Vec::new(),
         }
     }
@@ -943,11 +958,11 @@ fn sentence(rows: &[Row], kind: RowKind) -> Option<String> {
 
 /// 代表页那一列的字：[那一行](RowKind::Driver)上的路径，只印最后那一段。
 ///
-/// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::volume_name`]）：
+/// 只印最后一段，与每页结果的页面那一列同一条规矩（[`crate::render::page_name`]）：
 /// 一整条路径在这一列上摆不下，而代表页要答的是「是哪一页」。
 fn driver(rows: &[Row]) -> Option<String> {
     rows.iter()
         .find(|row| row.kind == RowKind::Driver)
         .and_then(|row| row.cell(Field::Source))
-        .map(|path| render::volume_name(std::path::Path::new(path)))
+        .map(|path| render::page_name(std::path::Path::new(path)))
 }

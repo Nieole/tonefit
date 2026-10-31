@@ -4,6 +4,25 @@
   "version_placeholder": "#.#.#",
   "snapshots": [
     {
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/zero-volume.120x36.text.txt",
+      "style": "snapshots/zero-volume.120x36.style.txt",
+      "data": "scenes/zero-volume.json"
+    },
+    {
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/zero-volume.80x24.text.txt",
+      "style": "snapshots/zero-volume.80x24.style.txt"
+    },
+    {
       "scene": "fresh",
       "size": [
         120,
@@ -42,6 +61,25 @@
       "style": "snapshots/survey.80x24.style.txt"
     },
     {
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/eta-start.120x36.text.txt",
+      "style": "snapshots/eta-start.120x36.style.txt",
+      "data": "scenes/eta-start.json"
+    },
+    {
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/eta-start.80x24.text.txt",
+      "style": "snapshots/eta-start.80x24.style.txt"
+    },
+    {
       "scene": "running",
       "size": [
         120,
@@ -78,6 +116,25 @@
       ],
       "text": "snapshots/deciding.80x24.text.txt",
       "style": "snapshots/deciding.80x24.style.txt"
+    },
+    {
+      "scene": "bad-page-deciding",
+      "size": [
+        120,
+        36
+      ],
+      "text": "snapshots/bad-page-deciding.120x36.text.txt",
+      "style": "snapshots/bad-page-deciding.120x36.style.txt",
+      "data": "scenes/bad-page-deciding.json"
+    },
+    {
+      "scene": "bad-page-deciding",
+      "size": [
+        80,
+        24
+      ],
+      "text": "snapshots/bad-page-deciding.80x24.text.txt",
+      "style": "snapshots/bad-page-deciding.80x24.style.txt"
     },
     {
       "scene": "ended",
@@ -289,6 +346,1298 @@
     }
   ],
   "sequences": [
+    {
+      "name": "zero-volume-problem-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "无法访问",
+          "问题 1/1"
+        ],
+        "lacks": [
+          "＋ 添加路径",
+          "清点途中停下"
+        ]
+      },
+      "text": "sequences/zero-volume-problem-120.text.txt",
+      "style": "sequences/zero-volume-problem-120.style.txt",
+      "data": "sequences/zero-volume-problem-120.scene.json"
+    },
+    {
+      "name": "zero-volume-unreachable-card-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "无法访问 1 处",
+      "text": "sequences/zero-volume-unreachable-card-120.text.txt",
+      "style": "sequences/zero-volume-unreachable-card-120.style.txt",
+      "data": "sequences/zero-volume-unreachable-card-120.scene.json"
+    },
+    {
+      "name": "zero-volume-noncomic-card-120",
+      "scene": "zero-volume",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "非漫画文件 1 个",
+      "text": "sequences/zero-volume-noncomic-card-120.text.txt",
+      "style": "sequences/zero-volume-noncomic-card-120.style.txt",
+      "data": "sequences/zero-volume-noncomic-card-120.scene.json"
+    },
+    {
+      "name": "zero-volume-problem-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "无法访问",
+          "问题 1/1"
+        ],
+        "lacks": [
+          "＋ 添加路径",
+          "清点途中停下"
+        ]
+      },
+      "text": "sequences/zero-volume-problem-80.text.txt",
+      "style": "sequences/zero-volume-problem-80.style.txt",
+      "data": "sequences/zero-volume-problem-80.scene.json"
+    },
+    {
+      "name": "zero-volume-unreachable-card-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "无法访问 1 处",
+      "text": "sequences/zero-volume-unreachable-card-80.text.txt",
+      "style": "sequences/zero-volume-unreachable-card-80.style.txt",
+      "data": "sequences/zero-volume-unreachable-card-80.scene.json"
+    },
+    {
+      "name": "zero-volume-noncomic-card-80",
+      "scene": "zero-volume",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        }
+      ],
+      "says": "非漫画文件 1 个",
+      "text": "sequences/zero-volume-noncomic-card-80.text.txt",
+      "style": "sequences/zero-volume-noncomic-card-80.style.txt",
+      "data": "sequences/zero-volume-noncomic-card-80.scene.json"
+    },
+    {
+      "name": "eta-start-estimating-120",
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "advance": 0.01
+        }
+      ],
+      "says": {
+        "has": [
+          "正在估算剩余时间"
+        ],
+        "lacks": [
+          "预计还要"
+        ]
+      },
+      "text": "sequences/eta-start-estimating-120.text.txt",
+      "style": "sequences/eta-start-estimating-120.style.txt",
+      "data": "sequences/eta-start-estimating-120.scene.json"
+    },
+    {
+      "name": "eta-start-ready-120",
+      "scene": "eta-start",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "advance": 0.05
+        }
+      ],
+      "says": {
+        "has": [
+          "预计还要"
+        ],
+        "lacks": [
+          "正在估算剩余时间"
+        ]
+      },
+      "text": "sequences/eta-start-ready-120.text.txt",
+      "style": "sequences/eta-start-ready-120.style.txt",
+      "data": "sequences/eta-start-ready-120.scene.json"
+    },
+    {
+      "name": "eta-start-estimating-80",
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "advance": 0.01
+        }
+      ],
+      "says": {
+        "has": [
+          "正在估算剩余时间"
+        ],
+        "lacks": [
+          "预计还要"
+        ]
+      },
+      "text": "sequences/eta-start-estimating-80.text.txt",
+      "style": "sequences/eta-start-estimating-80.style.txt",
+      "data": "sequences/eta-start-estimating-80.scene.json"
+    },
+    {
+      "name": "eta-start-ready-80",
+      "scene": "eta-start",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "advance": 0.05
+        }
+      ],
+      "says": {
+        "has": [
+          "预计还要"
+        ],
+        "lacks": [
+          "正在估算剩余时间"
+        ]
+      },
+      "text": "sequences/eta-start-ready-80.text.txt",
+      "style": "sequences/eta-start-ready-80.style.txt",
+      "data": "sequences/eta-start-ready-80.scene.json"
+    },
+    {
+      "name": "deciding-trialed-notable-jump",
+      "scene": "deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "❯       ! 第05卷",
+          "已分析，未写出"
+        ],
+        "lacks": [
+          "整卷写到隔离"
+        ]
+      },
+      "text": "sequences/deciding-trialed-notable-jump.text.txt",
+      "style": "sequences/deciding-trialed-notable-jump.style.txt",
+      "data": "sequences/deciding-trialed-notable-jump.scene.json"
+    },
+    {
+      "name": "bad-page-deciding-s-jump",
+      "scene": "bad-page-deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        }
+      ],
+      "says": {
+        "has": [
+          "❯       ! 第01卷",
+          "▾ ! 哆啦A梦",
+          "! ~/漫画库",
+          "已分析，未写出",
+          "问题 1/1"
+        ],
+        "lacks": [
+          "整卷写到隔离",
+          "隔离 1 卷"
+        ]
+      },
+      "text": "sequences/bad-page-deciding-s-jump.text.txt",
+      "style": "sequences/bad-page-deciding-s-jump.style.txt",
+      "data": "sequences/bad-page-deciding-s-jump.scene.json"
+    },
+    {
+      "name": "bad-page-deciding-s-collapsed",
+      "scene": "bad-page-deciding",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "key": "]"
+        },
+        {
+          "key": "d"
+        },
+        {
+          "key": "h"
+        },
+        {
+          "key": "h"
+        }
+      ],
+      "says": {
+        "has": [
+          "▸ ! 哆啦A梦",
+          "! ~/漫画库"
+        ],
+        "lacks": [
+          "整卷写到隔离"
+        ]
+      },
+      "text": "sequences/bad-page-deciding-s-collapsed.text.txt",
+      "style": "sequences/bad-page-deciding-s-collapsed.style.txt",
+      "data": "sequences/bad-page-deciding-s-collapsed.scene.json"
+    },
+    {
+      "name": "retained-no-notable-pages",
+      "scene": "retained",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "says": {
+        "has": [
+          "这一卷没有需留意的页"
+        ],
+        "lacks": [
+          "需要留意"
+        ]
+      },
+      "text": "sequences/retained-no-notable-pages.text.txt",
+      "style": "sequences/retained-no-notable-pages.style.txt",
+      "data": "sequences/retained-no-notable-pages.scene.json"
+    },
+    {
+      "name": "details-model-specified",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "预设「漫画」中：kobo-libra-2",
+          "← 与预设不同"
+        ],
+        "lacks": [
+          "没写型号"
+        ]
+      },
+      "text": "sequences/details-model-specified.text.txt",
+      "style": "sequences/details-model-specified.style.txt",
+      "data": "sequences/details-model-specified.scene.json"
+    },
+    {
+      "name": "details-model-omitted",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "预设「画集」中：没写型号（套用时型号回到没挑）"
+        ],
+        "lacks": [
+          "未设置（使用默认值）"
+        ]
+      },
+      "text": "sequences/details-model-omitted.text.txt",
+      "style": "sequences/details-model-omitted.style.txt",
+      "data": "sequences/details-model-omitted.scene.json"
+    },
+    {
+      "name": "details-threshold-provenance",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": {
+        "has": [
+          "boox-poke6 与 kobo-libra-2"
+        ],
+        "lacks": [
+          "这个数是在 boox-poke6 上"
+        ]
+      },
+      "text": "sequences/details-threshold-provenance.text.txt",
+      "style": "sequences/details-threshold-provenance.style.txt",
+      "data": "sequences/details-threshold-provenance.scene.json"
+    },
+    {
+      "name": "details-device-provenance",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "l"
+        }
+      ],
+      "says": "boox-poke6 与 kobo-libra-2",
+      "text": "sequences/details-device-provenance.text.txt",
+      "style": "sequences/details-device-provenance.style.txt",
+      "data": "sequences/details-device-provenance.scene.json"
+    },
+    {
+      "name": "settings-elision-120",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "boox-poke6  ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-120.text.txt",
+      "style": "sequences/settings-elision-120.style.txt",
+      "data": "sequences/settings-elision-120.scene.json"
+    },
+    {
+      "name": "settings-elision-80",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "实测，其 ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-80.text.txt",
+      "style": "sequences/settings-elision-80.style.txt",
+      "data": "sequences/settings-elision-80.scene.json"
+    },
+    {
+      "name": "settings-elision-90",
+      "scene": "config",
+      "size": [
+        90,
+        36
+      ],
+      "final_size": [
+        90,
+        36
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "g"
+        },
+        {
+          "key": "g"
+        }
+      ],
+      "says": {
+        "has": [
+          "画质门槛",
+          "⋯"
+        ],
+        "lacks": [
+          "实测，其 ┃"
+        ]
+      },
+      "text": "sequences/settings-elision-90.text.txt",
+      "style": "sequences/settings-elision-90.style.txt",
+      "data": "sequences/settings-elision-90.scene.json"
+    },
+    {
+      "name": "input-path-yield-0",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-path-yield-0.text.txt",
+      "style": "sequences/input-path-yield-0.style.txt",
+      "data": "sequences/input-path-yield-0.scene.json"
+    },
+    {
+      "name": "input-path-yield-1",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-path-yield-1.text.txt",
+      "style": "sequences/input-path-yield-1.style.txt",
+      "data": "sequences/input-path-yield-1.scene.json"
+    },
+    {
+      "name": "input-path-yield-2",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]"
+        ]
+      },
+      "text": "sequences/input-path-yield-2.text.txt",
+      "style": "sequences/input-path-yield-2.style.txt",
+      "data": "sequences/input-path-yield-2.scene.json"
+    },
+    {
+      "name": "input-path-yield-4",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏",
+          "[Esc → 取消]"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]"
+        ]
+      },
+      "text": "sequences/input-path-yield-4.text.txt",
+      "style": "sequences/input-path-yield-4.style.txt",
+      "data": "sequences/input-path-yield-4.scene.json"
+    },
+    {
+      "name": "input-path-yield-6",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/Comics/大友克洋/",
+          "▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-path-yield-6.text.txt",
+      "style": "sequences/input-path-yield-6.style.txt",
+      "data": "sequences/input-path-yield-6.scene.json"
+    },
+    {
+      "name": "input-path-yield-8",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "G"
+        },
+        {
+          "key": "o"
+        },
+        {
+          "type": "Comics/"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "type": "收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/收藏版/"
+        }
+      ],
+      "says": {
+        "has": [
+          "⋯",
+          "▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[C-w → 删一段]",
+          "[⏎ → 确定]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-path-yield-8.text.txt",
+      "style": "sequences/input-path-yield-8.style.txt",
+      "data": "sequences/input-path-yield-8.scene.json"
+    },
+    {
+      "name": "input-search-yield-18",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画"
+        }
+      ],
+      "says": {
+        "has": [
+          "画▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]"
+        ]
+      },
+      "text": "sequences/input-search-yield-18.text.txt",
+      "style": "sequences/input-search-yield-18.style.txt",
+      "data": "sequences/input-search-yield-18.scene.json"
+    },
+    {
+      "name": "input-search-yield-25",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画卷"
+        }
+      ],
+      "says": {
+        "has": [
+          "卷▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]"
+        ]
+      },
+      "text": "sequences/input-search-yield-25.text.txt",
+      "style": "sequences/input-search-yield-25.style.txt",
+      "data": "sequences/input-search-yield-25.scene.json"
+    },
+    {
+      "name": "input-search-yield-32",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画"
+        }
+      ],
+      "says": {
+        "has": [
+          "画▏"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-search-yield-32.text.txt",
+      "style": "sequences/input-search-yield-32.style.txt",
+      "data": "sequences/input-search-yield-32.scene.json"
+    },
+    {
+      "name": "input-search-yield-45",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "type": "漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画漫画卷"
+        }
+      ],
+      "says": {
+        "has": [
+          "卷▏",
+          "⋯"
+        ],
+        "lacks": [
+          "[C-w → 删一段]",
+          "[⏎ → 跳到结果]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-search-yield-45.text.txt",
+      "style": "sequences/input-search-yield-45.style.txt",
+      "data": "sequences/input-search-yield-45.scene.json"
+    },
+    {
+      "name": "input-unmatched-prefix-reply",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "type": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        {
+          "key": "Tab"
+        }
+      ],
+      "says": {
+        "has": [
+          "~/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz▏",
+          "这里没有",
+          "⋯"
+        ],
+        "lacks": [
+          "[Tab → 补全]",
+          "[Esc → 取消]"
+        ]
+      },
+      "text": "sequences/input-unmatched-prefix-reply.text.txt",
+      "style": "sequences/input-unmatched-prefix-reply.style.txt",
+      "data": "sequences/input-unmatched-prefix-reply.scene.json"
+    },
+    {
+      "name": "input-add-empty-wheel",
+      "scene": "fresh",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "o"
+        },
+        {
+          "wheel": -1
+        }
+      ],
+      "says": "添加路径  ~/▏",
+      "text": "sequences/input-add-empty-wheel.text.txt",
+      "style": "sequences/input-add-empty-wheel.style.txt",
+      "data": "sequences/input-add-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-search-empty-wheel",
+      "scene": "running",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "/"
+        },
+        {
+          "wheel": 1
+        }
+      ],
+      "says": {
+        "has": [
+          "[自动滚动]",
+          "/▏"
+        ],
+        "lacks": [
+          "已暂停自动滚动"
+        ]
+      },
+      "text": "sequences/input-search-empty-wheel.text.txt",
+      "style": "sequences/input-search-empty-wheel.style.txt",
+      "data": "sequences/input-search-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-setting-empty-wheel",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "h"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "k"
+        },
+        {
+          "key": "i"
+        },
+        {
+          "wheel": 1
+        }
+      ],
+      "says": "可见灰阶数  ",
+      "text": "sequences/input-setting-empty-wheel.text.txt",
+      "style": "sequences/input-setting-empty-wheel.style.txt",
+      "data": "sequences/input-setting-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-preset-empty-wheel",
+      "scene": "config",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wheel": -1
+        }
+      ],
+      "says": "保存为预设，名称  ",
+      "text": "sequences/input-preset-empty-wheel.text.txt",
+      "style": "sequences/input-preset-empty-wheel.style.txt",
+      "data": "sequences/input-preset-empty-wheel.scene.json"
+    },
+    {
+      "name": "input-candidates-wheel",
+      "scene": "add",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "wheel": 1
+        }
+      ],
+      "says": {
+        "has": [
+          "4 of 4",
+          "~/Comics/火之鸟/▏"
+        ],
+        "lacks": [
+          "[Tab → 补全]"
+        ]
+      },
+      "text": "sequences/input-candidates-wheel.text.txt",
+      "style": "sequences/input-candidates-wheel.style.txt",
+      "data": "sequences/input-candidates-wheel.scene.json"
+    },
     {
       "name": "running-2",
       "scene": "running",
@@ -2151,6 +3500,76 @@
       "text": "sequences/running-q.text.txt",
       "style": "sequences/running-q.style.txt",
       "data": "sequences/running-q.scene.json"
+    },
+    {
+      "name": "survey-s-advance-120",
+      "scene": "survey",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": {
+        "has": [
+          "已停止 ⋅ 清点途中停下，一卷都没开始",
+          "＋ 添加路径"
+        ],
+        "lacks": [
+          "处理到第 0 卷",
+          "第 0 卷未保存",
+          "总进度",
+          "当前卷"
+        ]
+      },
+      "text": "sequences/survey-s-advance-120.text.txt",
+      "style": "sequences/survey-s-advance-120.style.txt",
+      "data": "sequences/survey-s-advance-120.scene.json"
+    },
+    {
+      "name": "survey-s-advance-80",
+      "scene": "survey",
+      "size": [
+        80,
+        24
+      ],
+      "final_size": [
+        80,
+        24
+      ],
+      "steps": [
+        {
+          "key": "s"
+        },
+        {
+          "advance": 30
+        }
+      ],
+      "says": {
+        "has": [
+          "已停止 ⋅ 清点途中停下，一卷都没开始",
+          "＋ 添加路径"
+        ],
+        "lacks": [
+          "处理到第 0 卷",
+          "第 0 卷未保存",
+          "总进度",
+          "当前卷"
+        ]
+      },
+      "text": "sequences/survey-s-advance-80.text.txt",
+      "style": "sequences/survey-s-advance-80.style.txt",
+      "data": "sequences/survey-s-advance-80.scene.json"
     },
     {
       "name": "survey-s",
@@ -4647,10 +6066,12 @@
       "says": {
         "has": [
           "❯   ＋ 把当前设置保存为预设",
+          "[⏎ → 保存为预设]",
           "[p → 返回]"
         ],
         "lacks": [
-          "[dd → 删除]"
+          "[dd → 删除]",
+          "[⏎ → 使用]"
         ]
       },
       "text": "sequences/config-p-G.text.txt",
@@ -4797,6 +6218,129 @@
       "text": "sequences/config-p-save-taken.text.txt",
       "style": "sequences/config-p-save-taken.style.txt",
       "data": "sequences/config-p-save-taken.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Escape",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        }
+      ],
+      "says": {
+        "has": [
+          "[⏎ → 保存为预设]"
+        ],
+        "lacks": [
+          "再按一次",
+          "[⏎ → 使用]"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Escape.text.txt",
+      "style": "sequences/config-p-save-taken-Escape.style.txt",
+      "data": "sequences/config-p-save-taken-Escape.scene.json"
+    },
+    {
+      "name": "config-p-save-taken-Escape-p-p",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "G"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "type": "漫画"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Escape"
+        },
+        {
+          "key": "p"
+        },
+        {
+          "key": "p"
+        }
+      ],
+      "says": {
+        "has": [
+          "[⏎ → 保存为预设]"
+        ],
+        "lacks": [
+          "再按一次"
+        ]
+      },
+      "text": "sequences/config-p-save-taken-Escape-p-p.text.txt",
+      "style": "sequences/config-p-save-taken-Escape-p-p.style.txt",
+      "data": "sequences/config-p-save-taken-Escape-p-p.scene.json"
+    },
+    {
+      "name": "config-p-j-Enter-t",
+      "scene": "config",
+      "size": [
+        120,
+        36
+      ],
+      "final_size": [
+        120,
+        36
+      ],
+      "steps": [
+        {
+          "key": "p"
+        },
+        {
+          "key": "j"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "t"
+        }
+      ],
+      "says": "先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来",
+      "text": "sequences/config-p-j-Enter-t.text.txt",
+      "style": "sequences/config-p-j-Enter-t.style.txt",
+      "data": "sequences/config-p-j-Enter-t.scene.json"
     },
     {
       "name": "config-p-save-taken-Escape-Enter",

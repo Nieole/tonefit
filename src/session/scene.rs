@@ -122,6 +122,8 @@ pub(crate) struct Run {
     pub(crate) mode: String,
     /// `surveying` · `running` · `deciding` · `ended`。
     pub(crate) stage: String,
+    /// 清点完成、开工事件已到；零卷也为真。
+    pub(crate) surveyed: bool,
     /// 结束了才有：`done` · `stopped` · `aborted`。
     pub(crate) outcome: Option<String>,
     /// 整卷统一灰阶开没开。
@@ -224,6 +226,8 @@ impl Listed {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct VolumeData {
     pub(crate) root: String,
+    /// 干净去处，直接读设计稿与隔离去处同源的镜像布局。
+    pub(crate) output: String,
     /// `queued` · `running` · `deciding` · `done` · `isolated` · `skipped` · `failed` · `aborted` · `trialed`。
     pub(crate) state: String,
     /// 走到这一卷自己那几个环节里的第几个（见 [`Listed::passes`]）；还没轮到是 -1，走完是它的个数。
@@ -464,8 +468,84 @@ pub(crate) fn sequence(name: &str) -> Sequence {
 }
 
 fn parse(value: Value) -> Data {
-    serde_json::from_value(value)
-        .unwrap_or_else(|error| panic!("场景数据读不成夹具的形状：{error}"))
+    let data: Data = serde_json::from_value(value)
+        .unwrap_or_else(|error| panic!("场景数据读不成夹具的形状：{error}"));
+    for named in &data.paths {
+        shape_of_named(&named.kind);
+    }
+    preset_of(&data.settings);
+    for preset in &data.presets {
+        preset_of(&preset.says);
+    }
+    if let Some(run) = &data.run {
+        assert!(
+            matches!(run.mode.as_str(), "process" | "dry-run"),
+            "认不出的模式：{}",
+            run.mode
+        );
+        assert!(
+            matches!(
+                run.stage.as_str(),
+                "surveying" | "running" | "deciding" | "ended"
+            ),
+            "认不出的阶段：{}",
+            run.stage
+        );
+        if run.outcome.is_some() {
+            outcome_of(run);
+        }
+        assert!(run.stop_level <= 2, "认不出的停止级别：{}", run.stop_level);
+        for volume in &run.volumes {
+            assert!(
+                matches!(
+                    volume.state.as_str(),
+                    "queued"
+                        | "running"
+                        | "deciding"
+                        | "done"
+                        | "isolated"
+                        | "skipped"
+                        | "failed"
+                        | "aborted"
+                        | "trialed"
+                ),
+                "认不出的卷状态：{}",
+                volume.state
+            );
+            for (candidate, _) in volume.tally.iter().flatten() {
+                candidate_of(candidate);
+            }
+            for page in volume
+                .pages
+                .iter()
+                .chain(volume.notable_pages.iter())
+                .flatten()
+            {
+                if let Some(candidate) = &page.verdict {
+                    candidate_of(candidate);
+                }
+                if let Some(reason) = &page.reason {
+                    reason_of(reason);
+                }
+                for kind in &page.kinds {
+                    assert!(
+                        matches!(
+                            kind.as_str(),
+                            "failed"
+                                | "outlier"
+                                | "wide"
+                                | "gate"
+                                | "salvage"
+                                | "driver"
+                                | "backstopped"
+                        ),
+                        "认不出的页种类：{kind}"
+                    );
+                }
+            }
+        }
+    }
+    data
 }
 
 /// 一个场景的场景数据。
@@ -567,7 +647,7 @@ impl Scene {
         let live = data
             .run
             .as_ref()
-            .map(|run| replay(run, &home, &data.output, epoch, &mut session));
+            .map(|run| replay(run, &home, epoch, &mut session));
         // **界面状态摆在回放之后**：起一趟那一下会把树、展开与自动滚动扳回开跑那一刻的样子
         // （`Session::run_started`），场景数据说的那几格要压在它上面。
         // 会话的时钟起点连同这一份一起摆（[`clock_of`]）。
@@ -625,7 +705,7 @@ impl Scene {
     pub(crate) fn advance_to(&mut self, data: Data) {
         let run = data.run.as_ref().expect("推进之后那一串仍在一趟里");
         let views = self.session.views.clone();
-        let live = replay(run, &self.home, &data.output, self.epoch, &mut self.session);
+        let live = replay(run, &self.home, self.epoch, &mut self.session);
         self.session.views = views;
         self.session.views.clock = Some(clock_of(self.epoch, &data));
         self.data = data;
@@ -650,7 +730,8 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
     views.clock = Some(clock_of(epoch, data));
     views.view = match data.session["view"].as_str() {
         Some("config") => View::Config,
-        _ => View::Task,
+        Some("task") => View::Task,
+        other => panic!("认不出的视图：{other:?}"),
     };
     views.task.cursor =
         cursor_of(&data.session["cursor"], home).unwrap_or_else(|why| panic!("{why}"));
@@ -658,19 +739,19 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
     if let Some(expanded) = data.session["expanded"].as_array() {
         views.task.expanded = expanded
             .iter()
-            .filter_map(Value::as_str)
+            .map(|value| value.as_str().expect("路径或候选是字符串"))
             .map(|path| expand(home, path))
             .collect();
     }
-    views.task.follow = data.session["follow"].as_bool().unwrap_or(true);
+    views.task.follow = data.session["follow"].as_bool().expect("follow 是布尔值");
     // **每页结果**：`pages` 那一段在场就是进了一卷（场景数据的 `S.pages`）。
     // 它只记卷根、第几页与列哪几页——列出来的是哪几页由那一趟的报告现算
     // （[`super::view::Pages::listed`]），夹具这一头不存第二份。
     let pages = &data.session["pages"];
     views.task.pages = pages["volume"].as_str().map(|root| Pages {
         volume: expand(home, root),
-        at: pages["cursor"].as_u64().unwrap_or(0) as usize,
-        listing: if pages["all"].as_bool().unwrap_or(false) {
+        at: pages["cursor"].as_u64().expect("每页结果光标是序号") as usize,
+        listing: if pages["all"].as_bool().expect("all 是布尔值") {
             Listing::All
         } else {
             Listing::Notable
@@ -696,17 +777,18 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
         // 改哪一条设计稿没导出：光标停在的那一条就是（改着的时候光标不挪）。
         Some("edit") => match &views.task.cursor {
             Cursor::Path(path) => Some(Purpose::EditPath(path.clone())),
-            _ => None,
+            _ => panic!("edit 输入行没有路径光标"),
         },
         // 改的是配置视图光标停着的那一项（改着的时候光标不挪）。
         Some("value") => match views.config.cursor {
             Item::Setting(field) => Some(Purpose::Setting(field)),
-            Item::Premise(_) => None,
+            Item::Premise(_) => panic!("value 输入行不能编辑判定参数"),
         },
         // 给预设起名：末行那一件按下去开的那一行。
         Some("preset") => Some(Purpose::Preset),
         Some("search") => Some(Purpose::Search),
-        _ => None,
+        None if input.is_null() => None,
+        other => panic!("认不出的输入行：{other:?}"),
     };
     if let Some(purpose) = purpose {
         let buffer = input["buffer"].as_str().expect("输入行的缓冲").to_owned();
@@ -729,10 +811,15 @@ fn views_of(data: &Data, home: &Path, presets: &Presets, epoch: Instant) -> View
         views.input = Some(line);
     }
     let overlay = &data.session["overlay"];
-    if overlay["kind"].as_str() == Some("help") {
-        views.cover = Some(Overlay::Keys {
-            from: overlay["from"].as_u64().unwrap_or(0) as usize,
-        });
+    match overlay["kind"].as_str() {
+        Some("help") => {
+            views.cover = Some(Overlay::Keys {
+                from: overlay["from"].as_u64().expect("按键表起始行是序号") as usize,
+            });
+        }
+        Some("note") => {} // 树拼出之后由 stand_on_a_note 摆。
+        None if overlay.is_null() => {}
+        other => panic!("认不出的覆盖层：{other:?}"),
     }
     views
 }
@@ -778,32 +865,41 @@ fn cursor_of(cursor: &Value, home: &Path) -> Result<Cursor, String> {
 fn config_of(said: &Value, views: &mut Views, presets: &Presets) {
     views.config.pane = match said["pane"].as_str() {
         Some("right") => Pane::Details,
-        _ => Pane::Settings,
+        Some("left") => Pane::Settings,
+        other => panic!("认不出的配置栏：{other:?}"),
     };
-    views.config.picker = said["presets"].as_bool().unwrap_or(false);
+    views.config.picker = said["presets"].as_bool().expect("presets 是布尔值");
     if views.config.picker {
         views.config.listed = presets
             .names()
             .expect("预设文件列得出名字")
             .into_iter()
             .map(|name| {
-                let preset = presets.read(&name).ok();
+                let preset = Some(
+                    presets
+                        .read(&name)
+                        .unwrap_or_else(|error| panic!("预设 {name} 读不出：{error:#}")),
+                );
                 NamedPreset { name, preset }
             })
             .collect();
     }
-    views.config.preset_cursor = said["preset_cursor"].as_u64().unwrap_or(0) as usize;
+    views.config.preset_cursor = said["preset_cursor"].as_u64().expect("预设光标是序号") as usize;
     views.config.armed_delete = said["armed_delete"].as_str().map(str::to_owned);
-    if let Some(item) = said["cursor"].as_str().and_then(item_named) {
-        views.config.cursor = item;
-    }
-    views.config.choice = said["choice_index"].as_u64().unwrap_or(0) as usize;
+    views.config.cursor = item_named(said["cursor"].as_str().expect("配置光标是名字"))
+        .unwrap_or_else(|| panic!("认不出的配置光标：{}", said["cursor"]));
+    views.config.choice = said["choice_index"].as_u64().expect("取值光标是序号") as usize;
     // 下钻那一格导出的是**那一块屏幕规格的写法**（它自己的 `Display`），照它认回那一块。
+    assert!(
+        said["drill"].is_null() || said["drill"].is_string(),
+        "屏幕规格必须是名字或 null"
+    );
     views.config.drill = said["drill"].as_str().and_then(|shown| {
         crate::session::config::panels()
             .into_iter()
             .find(|(panel, _)| panel.to_string() == shown)
             .map(|(panel, _)| panel)
+            .or_else(|| panic!("认不出的屏幕规格：{shown}"))
     });
 }
 
@@ -915,9 +1011,9 @@ fn offered(input: &Value) -> Option<Offered<'_>> {
     let candidates: Vec<&str> = input["candidates"]
         .as_array()?
         .iter()
-        .filter_map(Value::as_str)
+        .map(|value| value.as_str().expect("路径或候选是字符串"))
         .collect();
-    let at = input["candidate"].as_u64().unwrap_or(0) as usize;
+    let at = input["candidate"].as_u64().expect("补全光标是序号") as usize;
     let chosen = candidates
         .get(at)
         .unwrap_or_else(|| panic!("轮到第 {at} 条，候选只有 {} 条", candidates.len()));
@@ -1087,7 +1183,7 @@ fn write_presets(space: &Path, presets: &[PresetData]) -> Presets {
 // ───────────────────────── 那一趟 ─────────────────────────
 
 /// 沿真跑那条路把场景数据里的那一趟喂进 [`Live`]，会话的阶段跟着走。
-fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Session) -> Live {
+fn replay(run: &Run, home: &Path, epoch: Instant, session: &mut Session) -> Live {
     // 起手按的是哪个键：预览走的也是 `Mode::Process`（参照要留着），只是在确认点上等人
     // （`super::terminal::resuming`）。
     let resumes = match run.mode.as_str() {
@@ -1106,6 +1202,17 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
     if run.stage == "surveying" {
         press_stop(session, run);
         live.tick(now);
+        return live;
+    }
+
+    // 清点途中停下没有开工或结束事件，只有线程交回的报告。
+    if run.stage == "ended" && !run.surveyed {
+        live.tick(now);
+        let mut report = live.report();
+        report.outcome = outcome_of(run);
+        report.elapsed = Duration::from_secs_f64(run.elapsed_s);
+        live.returned(Ok(report));
+        session.run_finished();
         return live;
     }
 
@@ -1128,8 +1235,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
         &unreachable_places,
     );
 
-    let out = expand(home, output);
-    let disk = Disk { home, out: &out };
+    let disk = Disk { home };
     let typical = typical_size();
     // 收摊了的卷与没做成的卷做了多久，在库那一份上（报告的、没做成那一条的 `VolumeTiming`）：
     // 夹具照场景数据给，「此刻」不必跟着推（`Live::elapsed_at`）。
@@ -1142,7 +1248,7 @@ fn replay(run: &Run, home: &Path, output: &str, epoch: Instant, session: &mut Se
             "skipped" => {
                 live.volume_started(&root, listed.steps);
                 up_to_the_fingerprint(&mut live, listed);
-                live.volume_finished(&skipped_report(listed, volume, disk, run));
+                live.volume_finished(&skipped_report(listed, volume, disk));
             }
             "failed" => {
                 live.volume_started(&root, listed.steps);
@@ -1420,46 +1526,17 @@ fn typical_size() -> Size {
     })
 }
 
-/// 这一卷干净的去处：输出目录接上卷根在它那条分区（或顶格目录的上一层）之下的那一截。
-///
-/// **它不照库的镜像规则**（基准点是处理路径的父目录，`discover::mirrored`），而场景数据给的
-/// 隔离去处照（[`VolumeData::isolated_output`]）——同一卷的两个去处因此不是同一副结构。
-/// 屏上一处都不露干净的去处；收成一副的做法记在停车场 Q1058。
-fn output_of(listed: &Listed, out: &Path, run: &Run) -> PathBuf {
-    let base = run
-        .survey
-        .entries
-        .iter()
-        .find_map(|entry| match entry {
-            Entry::Section {
-                path, directories, ..
-            } if directories.contains(&listed.directory) => Some(path.as_str()),
-            Entry::Directory { root, .. } if *root == listed.directory => {
-                Some(root.rsplit_once('/').map_or("", |(parent, _)| parent))
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("清单上找不到 {} 所在的那一项", listed.root));
-    let inside = listed
-        .root
-        .strip_prefix(base)
-        .and_then(|rest| rest.strip_prefix('/'))
-        .unwrap_or_else(|| panic!("{} 不在 {base} 底下", listed.root));
-    out.join(inside)
-}
-
-/// 家目录与输出目录，造报告时一起传。
+/// 造报告时传入家目录。
 #[derive(Clone, Copy)]
 struct Disk<'a> {
     home: &'a Path,
-    out: &'a Path,
 }
 
 /// 一份**幂等命中**的卷报告。
-fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>, run: &Run) -> VolumeReport {
+fn skipped_report(listed: &Listed, volume: &VolumeData, disk: Disk<'_>) -> VolumeReport {
     VolumeReport {
         volume: expand(disk.home, &listed.root),
-        output: output_of(listed, disk.out, run),
+        output: expand(disk.home, &volume.output),
         superseded: None,
         pages: Vec::new(),
         retained_pages: 0,
@@ -1490,12 +1567,12 @@ fn volume_report(
     run: &Run,
     typical: Size,
 ) -> VolumeReport {
-    let Disk { home, out } = disk;
+    let Disk { home } = disk;
     let root = expand(home, &listed.root);
-    // 去处：进了隔离的卷场景数据直接给（`~/` 写法），其余照同一个写法接出来。
+    // 干净与隔离去处均直接读导出数据，不另算镜像布局。
     let output = match &volume.isolated_output {
         Some(isolated) => expand(home, isolated),
-        None => output_of(listed, out, run),
+        None => expand(home, &volume.output),
     };
     let pages_data = pages_of(volume, run.envelope, typical);
     let pages: Vec<PageReport> = pages_data
@@ -1716,6 +1793,168 @@ mod tests {
     use super::*;
     use crate::session::live::VolumeState;
 
+    #[test]
+    fn survey_completion_discriminator_requires_a_boolean_not_an_unknown_value() {
+        for invalid in [
+            Value::Null,
+            Value::String("unknown".into()),
+            serde_json::json!(0),
+        ] {
+            let mut data = json("scenes/zero-volume.json");
+            data["run"]["surveyed"] = invalid;
+            assert!(std::panic::catch_unwind(|| parse(data)).is_err());
+        }
+        let mut missing = json("scenes/zero-volume.json");
+        missing["run"].as_object_mut().unwrap().remove("surveyed");
+        assert!(std::panic::catch_unwind(|| parse(missing)).is_err());
+    }
+
+    #[test]
+    fn completed_zero_volume_replay_keeps_both_note_tables_and_run_started() {
+        let scene = Scene::named("zero-volume");
+        assert!(scene.live().surveyed());
+        assert!(scene.live().roster().is_empty());
+        assert!(scene.live().ended());
+        assert_eq!(scene.live().unreachable_places().len(), 1);
+        assert_eq!(scene.live().non_volume_files().len(), 1);
+        for name in ["survey-s-advance-120", "survey-s-advance-80"] {
+            let stopped = Scene::after(name);
+            assert!(!stopped.live().surveyed());
+            assert!(stopped.live().ended());
+        }
+    }
+
+    #[test]
+    fn every_discriminant_in_all_scene_and_sequence_data_is_read_strictly() {
+        for (name, data) in every_scene_data() {
+            Scene::from_data(&name, data);
+        }
+        for name in sequences() {
+            if json(&format!("sequences/{name}.scene.json"))
+                .get("advanced")
+                .is_some()
+            {
+                Scene::from_data(&name, advanced_data(&name));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_session_variants_are_errors_not_defaults() {
+        for pointer in [
+            "/view",
+            "/cursor/kind",
+            "/input/kind",
+            "/overlay/kind",
+            "/config/pane",
+            "/config/cursor",
+            "/config/drill",
+            "/config/choice_index",
+            "/config/presets",
+            "/follow",
+        ] {
+            let mut data = scene_data("config");
+            if pointer == "/input/kind" {
+                data.session["input"] = serde_json::json!({"kind": "add", "buffer": ""});
+            }
+            if pointer == "/overlay/kind" {
+                data.session["overlay"] = serde_json::json!({"kind": "help"});
+            }
+            *data
+                .session
+                .pointer_mut(pointer)
+                .expect("mutation field exists") = Value::String("unrecognized-hs11".to_owned());
+            assert!(
+                std::panic::catch_unwind(|| Scene::from_data("mutation", data)).is_err(),
+                "{pointer} silently accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn exported_clean_and_isolated_destinations_agree_with_the_real_library() {
+        let data = scene_data("running");
+        let run = data.run.as_ref().unwrap();
+        let volume = run
+            .volumes
+            .iter()
+            .find(|v| v.isolated_output.is_some())
+            .unwrap();
+        for isolated in [false, true] {
+            let space = tempfile::tempdir().unwrap();
+            let home = space.path();
+            let root = expand(home, &volume.root);
+            std::fs::create_dir_all(&root).unwrap();
+            image::GrayImage::from_pixel(8, 8, image::Luma([128]))
+                .save(root.join("001.png"))
+                .unwrap();
+            if isolated {
+                std::fs::write(root.join("002.png"), b"broken PNG").unwrap();
+            }
+            let mut session = Session::new();
+            let preset = preset_of(&data.settings);
+            session.device = preset.device;
+            session.taste = preset.taste;
+            session.taste.dither = Some(Dither::Off);
+            session.scope.out = Some(expand(home, &data.output));
+            session.scope.paths = data
+                .paths
+                .iter()
+                .filter(|p| {
+                    p.checked
+                        && (volume.root == p.path
+                            || volume.root.starts_with(&format!("{}/", p.path)))
+                })
+                .map(|p| NamedPath {
+                    path: expand(home, &p.path),
+                    on: true,
+                })
+                .collect();
+            let report = tonefit::run(&session.request(RunMode::Process).unwrap()).unwrap();
+            assert_eq!(report.volumes.len(), 1);
+            let expected = if isolated {
+                volume.isolated_output.as_ref().unwrap()
+            } else {
+                &volume.output
+            };
+            assert_eq!(report.volumes[0].output, expand(home, expected));
+            assert!(expand(home, expected).is_dir());
+        }
+    }
+
+    #[test]
+    fn unknown_run_and_page_variants_are_rejected_even_when_not_on_screen() {
+        for pointer in [
+            "/run/survey/entries/0/kind",
+            "/run/mode",
+            "/run/stage",
+            "/run/surveyed",
+            "/run/outcome",
+            "/run/volumes/0/state",
+            "/paths/0/kind",
+            "/run/volumes/4/tally/0/0",
+            "/run/volumes/4/notable_pages/0/kinds/0",
+            "/run/volumes/4/notable_pages/0/reason",
+            "/run/volumes/4/notable_pages/0/verdict",
+            "/settings/fit",
+            "/settings/profile",
+            "/settings/reading-order",
+            "/settings/filter",
+            "/settings/dither",
+            "/settings/io-mode",
+        ] {
+            let mut value = json("scenes/running.json");
+            *value
+                .pointer_mut(pointer)
+                .unwrap_or_else(|| panic!("missing mutation target {pointer}")) =
+                Value::String("unrecognized-hs11".to_owned());
+            assert!(
+                std::panic::catch_unwind(|| parse(value)).is_err(),
+                "{pointer} silently accepted"
+            );
+        }
+    }
+
     /// 一个卷根（`~/` 写法）在场景数据里对应的清单项与状态。
     fn volume_of<'a>(run: &'a Run, root: &str) -> (&'a Listed, &'a VolumeData) {
         let at = run
@@ -1905,6 +2144,7 @@ mod tests {
             return;
         };
         let live = scene.live();
+        assert_eq!(live.surveyed(), run.surveyed, "{name}：开工事件");
         let panel = live.report().profile.panel();
 
         // 清点中：清单还是空的（开工那一条还没到）。
@@ -2063,13 +2303,12 @@ mod tests {
             );
             assert_eq!(
                 report.isolated(),
-                volume.state == "isolated",
+                expected.get("failed").copied().unwrap_or(0) > 0,
                 "{name}：{}",
                 listed.root
             );
-            if let Some(isolated) = &volume.isolated_output {
-                assert_eq!(report.output, scene.path(isolated), "{name}");
-            }
+            let output = volume.isolated_output.as_ref().unwrap_or(&volume.output);
+            assert_eq!(report.output, scene.path(output), "{name}");
             assert_eq!(
                 report.retained_pages, volume.retained_pages,
                 "{name}：{}",
@@ -2273,7 +2512,7 @@ mod tests {
     #[test]
     fn every_scene_is_what_its_data_describes() {
         let scenes = scenes();
-        assert_eq!(scenes.len(), 14, "清单上有场景数据的场景：{scenes:?}");
+        assert_eq!(scenes.len(), 17, "清单上有场景数据的场景：{scenes:?}");
         for name in scenes {
             agrees_with_its_data(&Scene::named(&name));
         }
@@ -2331,14 +2570,11 @@ mod tests {
     /// 处理路径自己的名字因此恒出现在去处里；隔离目录只在输出目录底下插一级，
     /// 名字取库那一格（[`tonefit::ISOLATED_DIRECTORY`]）。
     #[test]
-    fn an_isolated_volume_lands_where_the_library_mirrors_it() {
+    fn clean_and_isolated_volumes_share_the_library_mirror_layout() {
         let mut isolated = 0;
         for (name, data) in every_scene_data() {
             let Some(run) = &data.run else { continue };
             for (listed, volume) in run.survey.volumes.iter().zip(&run.volumes) {
-                let Some(said) = &volume.isolated_output else {
-                    continue;
-                };
                 // 这一卷从哪一条处理路径来：勾着的、装着它的最外层那一条（里层那条已包含在它里面）。
                 let named = data
                     .paths
@@ -2352,13 +2588,21 @@ mod tests {
                     .unwrap_or_else(|| panic!("{name}：{} 不在哪一条处理路径底下", listed.root));
                 let parent = named.path.rsplit_once('/').map_or("", |(parent, _)| parent);
                 let mirrored = &listed.root[parent.len()..];
+                if let Some(said) = &volume.isolated_output {
+                    assert_eq!(
+                        *said,
+                        format!("{}/{}{mirrored}", data.output, tonefit::ISOLATED_DIRECTORY),
+                        "{name}：{}",
+                        listed.root
+                    );
+                    isolated += 1;
+                }
                 assert_eq!(
-                    *said,
-                    format!("{}/{}{mirrored}", data.output, tonefit::ISOLATED_DIRECTORY),
-                    "{name}：{}",
+                    volume.output,
+                    format!("{}{mirrored}", data.output),
+                    "{name}：{} 干净去处",
                     listed.root
                 );
-                isolated += 1;
             }
         }
         assert!(isolated > 0, "场景数据里总有一卷进了隔离");
@@ -2477,7 +2721,7 @@ mod on_the_grid {
             .position(|page| page.failure().is_some())
             .expect("开着的那一卷有一张坏页");
         let (geometry, verdict) = (&rows[failed * 2], &rows[failed * 2 + 1]);
-        let name = render::volume_name(&report.pages[failed].source);
+        let name = render::page_name(&report.pages[failed].source);
         let line = line_with(&notable, &name);
         for text in [
             cell(geometry, Field::Size),
@@ -2490,7 +2734,7 @@ mod on_the_grid {
         // 全部页那一屏的头几页：尺寸、缩放、灰阶、原因、画质分。
         for at in 0..3 {
             let (geometry, verdict) = (&rows[at * 2], &rows[at * 2 + 1]);
-            let name = render::volume_name(&report.pages[at].source);
+            let name = render::page_name(&report.pages[at].source);
             let line = line_with(&all, &name);
             for text in [
                 cell(geometry, Field::Size),
@@ -2502,6 +2746,15 @@ mod on_the_grid {
                 assert!(line.contains(text), "「{text}」不在这一行上：{line}");
             }
         }
+    }
+
+    fn roster_name<'a>(live: &'a Live, root: &Path) -> &'a str {
+        &live
+            .roster()
+            .iter()
+            .find(|listed| listed.root == root)
+            .expect("屏上的卷在清单里")
+            .name
     }
 
     /// 一卷的灰阶分布那一格的字（卷级那几行里的那一格，`render::tally_column`）。
@@ -2528,7 +2781,7 @@ mod on_the_grid {
             .expect("转换中那一景有一卷进了隔离");
         let report = report_of(&scene, &isolated.root);
         let rows = render::volume(report, limit);
-        let line = line_with(&lines, &render::volume_name(&report.volume));
+        let line = line_with(&lines, roster_name(live, &report.volume));
         let said = sentence(&rows, RowKind::Isolated);
         assert!(
             line.contains(&head(&said)),
@@ -2543,7 +2796,7 @@ mod on_the_grid {
         // 没做成的那一卷：行尾是那句原因。
         let failure = &live.report().failed_volumes[0];
         let row = render::failed_volume(failure);
-        let line = line_with(&lines, &render::volume_name(&failure.volume));
+        let line = line_with(&lines, roster_name(live, &failure.volume));
         let said = cell(&row, Field::Sentence);
         assert!(line.contains(said), "「{said}」不在这一行上：{line}");
 
@@ -2582,7 +2835,7 @@ mod on_the_grid {
             .expect("有跳过的卷");
         let report = report_of(&scene, &skipped.root);
         let said = sentence(&render::volume(report, limit), RowKind::Skipped);
-        let line = line_with(&lines, &render::volume_name(&report.volume));
+        let line = line_with(&lines, roster_name(live, &report.volume));
         assert!(
             line.contains(&head(&said)),
             "「{said}」不在这一行上：{line}"
@@ -2602,11 +2855,11 @@ mod on_the_grid {
             .expect("有一卷带差异大的页");
         let report = report_of(&scene, &with_driver.root);
         let rows = render::volume(report, limit);
-        let line = line_with_all(&lines, &[&render::volume_name(&report.volume), "代表页"]);
+        let line = line_with_all(&lines, &[roster_name(live, &report.volume), "代表页"]);
         let driver = rows
             .iter()
             .find(|row| row.kind == RowKind::Driver)
-            .map(|row| render::volume_name(Path::new(cell(row, Field::Source))))
+            .map(|row| render::page_name(Path::new(cell(row, Field::Source))))
             .expect("整卷统一灰阶那一趟每一卷有代表页");
         assert!(
             line.contains(&driver),
@@ -2620,10 +2873,7 @@ mod on_the_grid {
         let lines = design::snapshot("deciding", 120, 36).lines();
         let summarized = live.summarized().expect("停在确认点上");
         let tally = tally_text(summarized, live);
-        let line = line_with_all(
-            &lines,
-            &[&render::volume_name(&summarized.volume), "灰阶分布"],
-        );
+        let line = line_with_all(&lines, &[roster_name(live, &summarized.volume), "灰阶分布"]);
         assert!(line.contains(&tally), "「{tally}」不在确认条上：{line}");
     }
 }

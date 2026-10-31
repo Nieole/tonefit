@@ -323,6 +323,8 @@ pub struct Live {
     /// **卷清单**：开工那一条带的清点产出，照发现的次序（`session-redesign/03`）。
     /// 开工那一刻整份收下，此后一格不变。这一趟共几卷就是它的长度（停车场 Q1218）。
     roster: Arc<Vec<SurveyedVolume>>,
+    /// 开工那一条是否已到：空清单也是清点完成，不等于清点途中停下。
+    surveyed: bool,
     /// **被立即停止掉的那一卷**在清单上排第几、做了多久——会话这一头自己量的那一份。
     ///
     /// 一卷做了多久先读库那一份，会话这一头只量**没有库那一份**的两种（读的先后见
@@ -434,6 +436,7 @@ impl Live {
             index: Arc::default(),
             steps: 0,
             roster: Arc::default(),
+            surveyed: false,
             states: Vec::new(),
             aborted_elapsed: None,
             began: None,
@@ -499,6 +502,7 @@ impl Live {
         non_volume_files: &[NonVolumeFile],
         unreachable_places: &[UnreachablePlace],
     ) {
+        self.surveyed = true;
         self.steps = steps;
         // 表从这里开始掐：开工之前那一段是清点与那几道检查，剩余时间算不进去。
         self.started = self.now;
@@ -1073,7 +1077,10 @@ impl Live {
     pub fn troubled_at(&self, at: usize) -> bool {
         match self.states.get(at) {
             Some(VolumeState::Failed | VolumeState::Isolated) => true,
-            Some(VolumeState::Done | VolumeState::Trialed) => self.notable_at(at).any(),
+            Some(VolumeState::Done) => self.notable_at(at).any(),
+            Some(VolumeState::Trialed) => self
+                .digest_at(at)
+                .is_some_and(|digest| digest.notable.any() || digest.failed_pages > 0),
             _ => false,
         }
     }
@@ -1103,12 +1110,17 @@ impl Live {
     }
 
     /// **卷清单**：开工那一条带的那一列，照发现的次序（`session-redesign/03`）。
-    /// 开工之前、或那一条没带清单时是空的。
+    /// 开工之前、或清点完成但没有卷时是空的；区分这两种要问 [`Self::surveyed`]。
     ///
     /// 下面四个访问器眼下只有本模块的用例读：画卷列表那棵树那一票接上读者时把那一行
     /// `expect` 拆掉——留着它会当场报「这个 `expect` 没用上」。
     pub fn roster(&self) -> &[SurveyedVolume] {
         &self.roster
+    }
+
+    /// 是否收到开工事件（包括零卷）：不能从清单长度或备注有无推断。
+    pub fn surveyed(&self) -> bool {
+        self.surveyed
     }
 
     /// 清单上每一卷此刻怎么样，**与 [`roster`](Self::roster) 同序**。
@@ -1215,17 +1227,17 @@ pub struct Overall {
 /// 剩余时间：按**至今为止的平均步速**外推。
 ///
 /// 一步都还没走时答不出来（除以零），预告的步数是零时同理。走完了就是零。
+/// 完成整步不到总量的 2% 时不报估计；恰好 2% 起按整步外推。
 /// 它与预告的步数同一个性质——**上界外推出来的估计**，不是承诺：
 /// 幂等命中的卷提前收摊，剩下的那一截会突然缩短。
 fn eta(elapsed: Duration, walked: u64, steps: u64) -> Option<Duration> {
     let left = steps.checked_sub(walked)?;
-    if walked == 0 {
+    if walked == 0 || u128::from(walked) * 50 < u128::from(steps) {
         return None;
     }
     // 先乘后除：剩余步数与已用纳秒都可能很大，`Duration::mul_f64` 那一条路
     // 在长任务上会把秒以下的位数丢光。
-    let per_step = elapsed.as_nanos() / u128::from(walked);
-    let nanos = per_step.saturating_mul(u128::from(left));
+    let nanos = elapsed.as_nanos().saturating_mul(u128::from(left)) / u128::from(walked);
     Some(Duration::from_nanos(
         u64::try_from(nanos).unwrap_or(u64::MAX),
     ))
@@ -2613,6 +2625,30 @@ mod tests {
             Live::new(&fixture::request(RunMode::DryRun), Resuming::GoesOn).mode(),
             RunMode::DryRun
         );
+    }
+
+    /// 用公开总览读数验 2% 的两侧与恰好边界，不借百分比四舍五入。
+    #[test]
+    fn eta_waits_for_two_percent_of_completed_integer_steps() {
+        for (walked, steps, expected) in [
+            (0, 100, None),
+            (1, 100, None),
+            (199, 10_000, None),
+            (2, 100, Some(Duration::from_secs(490))),
+            (200, 10_000, Some(Duration::from_secs(490))),
+            (201, 10_000, Some(Duration::from_nanos(487_512_437_810))),
+            (100, 100, Some(Duration::ZERO)),
+        ] {
+            let epoch = Instant::now();
+            let mut live = fixture::live_at(epoch, RunMode::Process, Resuming::GoesOn);
+            live.run_started(steps, &fixture::roster(["卷一"]), &[], &[]);
+            live.volume_started(Path::new("库/卷一"), steps);
+            for _ in 0..walked {
+                live.stepped();
+            }
+            live.tick(epoch + Duration::from_secs(10));
+            assert_eq!(live.overall().left, expected, "{walked}/{steps}");
+        }
     }
 
     /// 剩余时间按至今为止的平均步速外推；走完就是零，一步没走就答不出来。

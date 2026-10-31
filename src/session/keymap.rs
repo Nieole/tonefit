@@ -1248,6 +1248,16 @@ pub const TABLE: &[Row] = &[
         ANY_PHASE,
         CONFIG,
     ),
+    row(
+        Group::Config,
+        Deed::UsePreset,
+        Chord::Key(Key::Enter),
+        "⏎",
+        "保存为预设",
+        "保存为预设（预设栏末行）",
+        ANY_PHASE,
+        PICKER,
+    ),
     // ───── 输入 ─────
     row(
         Group::Input,

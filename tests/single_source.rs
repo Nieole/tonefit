@@ -1233,3 +1233,34 @@ fn the_list_of_places_sharing_a_viewport_lives_in_one_place() {
         "《{VIEWPORT_TERM}》里指回家里的路标「{VIEWPORT_SIGNPOST}」不在了"
     );
 }
+
+/// 门槛与设备说明的面板名单只读库的标定来源，不另抄一份型号。
+/// 画质分构成的颗粒标定是另一件事，不在这两段说明的范围内。
+#[test]
+fn details_calibration_explanations_do_not_copy_panel_names() {
+    let source = code_only(&read(&root().join("src/session/config.rs")));
+    let setting = source.split_once("fn about_setting(").unwrap().1;
+    let threshold = setting
+        .split_once("Field::Threshold =>")
+        .unwrap()
+        .1
+        .split_once("Field::Fit =>")
+        .unwrap()
+        .0;
+    let premise = source.split_once("fn about_premise(").unwrap().1;
+    let device = premise
+        .split_once("Judging::Device =>")
+        .unwrap()
+        .1
+        .split_once("Judging::Composition =>")
+        .unwrap()
+        .0;
+    for model in tonefit::Profile::devices() {
+        for (name, explanation) in [("画质门槛", threshold), ("设备配置", device)] {
+            assert!(
+                !explanation.contains(model),
+                "{name}说明抄了面板型号 {model}，应读库的标定来源"
+            );
+        }
+    }
+}

@@ -206,6 +206,12 @@ mod tests {
         assert_same_cells(&buffer, &design::snapshot(&scene.label, width, height));
     }
 
+    #[test]
+    fn completed_zero_volume_replay_matches_the_design_wide_and_narrow() {
+        assert_scene("zero-volume", 120, 36);
+        assert_scene("zero-volume", 80, 24);
+    }
+
     /// **「还没开始」120×36 与 80×24 逐格相等**（票面第一条）：字、前景色、修饰。
     #[test]
     fn the_fresh_scene_matches_its_design_snapshot_wide_and_narrow() {

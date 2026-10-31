@@ -24,6 +24,7 @@ mod wrap;
 #[cfg(any(feature = "tui", test))]
 mod session;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -1302,6 +1303,8 @@ struct Bar {
     /// 每卷新起一条而不是复用同一条：走完的那一条已经收了尾，再往它身上设长度、加位置，
     /// indicatif 那一侧不保证还画得出来。
     volume: Mutex<Option<ProgressBar>>,
+    /// 清点给出的卷名，按开卷事件的卷根认回。
+    names: Mutex<HashMap<PathBuf, String>>,
     /// 回给库的那个字读哪一条[闩](Latch)。生产里恒是 [`PRESSED`]——`Ctrl-C` 按的就是它
     /// （[`install_the_stop_key`]）；用例给它一条自己的，按下去不漏到别的用例上。
     latch: &'static Latch,
@@ -1344,6 +1347,7 @@ impl Bar {
             survey: Mutex::new(Some(survey)),
             global: Mutex::new(None),
             volume: Mutex::new(None),
+            names: Mutex::new(HashMap::new()),
             latch,
         }
     }
@@ -1359,7 +1363,11 @@ impl Bar {
     }
 
     /// 清点完了：收掉转轮，把整趟那一条摆上。
-    fn start_run(&self, volumes: usize, steps: u64) {
+    fn start_run(&self, volumes: usize, steps: u64, roster: &[tonefit::SurveyedVolume]) {
+        *self.names.lock().unwrap_or_else(|p| p.into_inner()) = roster
+            .iter()
+            .map(|listed| (listed.root.clone(), listed.name.clone()))
+            .collect();
         if let Some(spinner) = Self::held(&self.survey).take() {
             spinner.finish_and_clear();
         }
@@ -1373,10 +1381,14 @@ impl Bar {
     fn start(&self, volume: &Path, steps: u64) {
         let bar = self.frame.add(ProgressBar::new(steps));
         bar.set_style(bar_style());
-        // 卷名从开卷那一条报的卷根取（`render::volume_name`）——开工那一条带的卷清单，
-        // `start_run` 收下时没留——分卷序列那一卷因此仍带着 `.partN`；会话那一侧读清单上的卷名，
-        // 写的是序列的名字（停车场 Q1297）。
-        bar.set_message(render::volume_name(volume));
+        let name = self
+            .names
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(volume)
+            .cloned()
+            .unwrap_or_default();
+        bar.set_message(name);
         *self.current() = Some(bar);
     }
 
@@ -1458,7 +1470,12 @@ impl Progress for Bar {
         // 问在下面那个 `match` 之前：它把事件吃掉了。
         let at_the_decision_point = stop::at_the_decision_point(&event);
         match event {
-            Event::RunStarted { volumes, steps, .. } => self.start_run(volumes, steps),
+            Event::RunStarted {
+                volumes,
+                steps,
+                roster,
+                ..
+            } => self.start_run(volumes, steps, roster),
             Event::VolumeStarted { volume, steps, .. } => self.start(volume, steps),
             Event::Stepped { .. } => self.step(),
             Event::VolumeFinished { .. } | Event::VolumeFailed { .. } => self.finish_volume(),
@@ -1994,7 +2011,7 @@ io-mode = \"concurrent\"
             "`run` 还没开始，屏上一条都没有"
         );
 
-        bar.start_run(3, 100);
+        bar.start_run(3, 100, &[]);
         assert!(
             Bar::held(&bar.survey).is_none(),
             "开工了，开工前那条转轮还留着"
@@ -2003,6 +2020,25 @@ io-mode = \"concurrent\"
             Bar::held(&bar.global).is_some(),
             "开工了，整趟那一条没摆上来"
         );
+    }
+
+    #[test]
+    fn the_progress_bar_uses_the_roster_name_not_the_split_archive_stem() {
+        let roster = [tonefit::SurveyedVolume {
+            root: PathBuf::from("库/第01卷.part1.rar"),
+            name: "第01卷".to_owned(),
+            steps: 70,
+            source_pages: 2,
+        }];
+        let bar = Bar::new(1);
+        bar.start_run(1, roster[0].steps, &roster);
+        bar.start(&roster[0].root, roster[0].steps);
+        let message = bar.current().as_ref().expect("当前卷在场").message();
+        assert!(
+            !message.contains(".part1"),
+            "卷名不许泄露分卷后缀：{message}"
+        );
+        assert_eq!(message, "第01卷");
     }
 
     /// 一卷提前收摊，全局条**结清**它预告剩下的那几步（03 号票，见 [`Bar::finish_volume`]）。
@@ -2016,7 +2052,7 @@ io-mode = \"concurrent\"
     #[test]
     fn a_volume_that_stops_early_settles_up_on_the_global_bar() {
         let bar = Bar::new(2);
-        bar.start_run(2, 100);
+        bar.start_run(2, 100, &[]);
 
         // 头一个卷预告 70 步，只走了 5 步就收摊——幂等命中就是这个样子。
         bar.start(Path::new("卷一"), 70);

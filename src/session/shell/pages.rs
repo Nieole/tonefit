@@ -162,7 +162,7 @@ fn word_of(what: Notable) -> Option<&'static str> {
 /// 坏页没有灰阶、没有原因、没有画质分。
 struct Entry {
     mark: Mark,
-    /// 页面：**源那一侧的成员名**，只印最后那一段（[`render::volume_name`]，
+    /// 页面：**源那一侧的成员名**，只印最后那一段（[`render::page_name`]，
     /// 与卷表代表页那一列同一处出处）。
     name: String,
     size: String,
@@ -276,7 +276,7 @@ fn entries(report: &VolumeReport, panel: Panel, mode: Mode) -> Vec<Entry> {
         .zip(&report.pages)
         .zip(render::notable(report, panel))
     {
-        entry.name = render::volume_name(&page.source);
+        entry.name = render::page_name(&page.source);
         entry.overflowed = why.contains(&Notable::Overflowed);
         entry.depth = page.verdict().map(|verdict| verdict.candidate.bit_depth);
         let mut words: Vec<String> = Vec::new();

@@ -1,6 +1,6 @@
 # honest-screen — 屏上每一句都站得住：盖住的露出来、截断的看得出、说错的改对、说漏的补上
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Problem Statement
 
@@ -171,3 +171,32 @@
   《详情栏》（型号那一项注预设）、《输入行》（指到《让位》），以及 `/settle` 里改对的《总览》《结束方式》《清点摘要》，都已写进 `CONTEXT.md`。
 - **排票提示**：改设计稿、重导的票彼此串行（重导重写整棵设计快照）；设置栏 `⋯` 那一张重导面最大，单独一张、放在其余改设计稿的票之后或之前都行，
   但不与它们并行；碰场景夹具的票（夹具干净去处、场景夹具认不出就报错、用例卷名期望值）同一时间只放一张。
+
+## 落地记录
+
+十二张票在集成分支 `implement-honest-screen` 交付；各票记录行为、代价、守卫按反证据与当时的数。实现基线为 `e9309bb`，最终核验覆盖该基线之后的全部实现及审查修复，不把早期 worktree 的检查冒充最终结果。
+
+- 屏上变动先改设计稿再重导，新增交互与整屏验收；黄金快照不变。
+- 步骤审查修复了长补全错误回话覆盖光标、零卷清点完成时备注消失两处；全分支 Spec 审查又补上场景数据的显式 `run.surveyed`，场景回放不再拿空清单猜清点是否完成。新增零卷备注、说明卡与问题跳转验收会独立咬住旧捷径。
+- 全分支 Standards 审查无实质问题；Spec 初审的阻塞项修复后复审通过。两轴独立报告，不以一轴掩盖另一轴。
+- durable 契约回写 `src/specs/session.md`（ETA、零卷清点、场景数据）与 `src/specs/cli.md`（停止报告、简报）；产品原则及模块边界不变，未改既有词义。
+- 仅在 TUI 或测试构建编译页名 helper，不用 `allow` 隐藏新增的无默认特性告警。未改依赖或用户原有 `.gitattributes`。
+
+### 最终集成核验
+
+以下 Cargo 实际命令共用前缀 `CARGO_INCREMENTAL=0 RUSTC_WORKSPACE_WRAPPER=/tmp/hs-integration-rustc-workspace.sh python3 /tmp/tonefit-honest-screen-cargo.py cargo`；wrapper 只透传，runner 只串行，避免各 worktree 混用测试二进制。`xtask` 保持三种构建各自的 target 目录。日志 `/tmp/hs-postfix-final-*.log`，展开命令在 `commands.log`。
+
+- `xtask gate 1` → 782 通过、1 失败；lib 256 / bin 507；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.91s`。
+- `xtask gate 2` → 626 通过、1 失败；lib 256 / bin 351；末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.56s`。
+- `xtask gate 3` → 通过；末行 `Finished dev profile [unoptimized + debuginfo] target(s) in 1.92s`。
+- `xtask polish` → 四项通过；仅既有 `fetch_update` 弃用告警与 15 条文档告警，新增 `page_name` 未使用告警已消除。
+- 闸门在 concurrency 失败后会停，因此额外在默认与无默认特性两侧逐一运行其余全部 21 个 integration target：`alignment container counters discovery events exit_code golden idempotency isolation metric perceptual pipeline preset profile proof resume session single_source smoke stop timing`，每个名字用 `--test` 点名，无默认特性同时指定 `CARGO_TARGET_DIR=target/gate/no-default-features`。两侧各 409 个 harness 用例通过，另各 3 个 perceptual 自定义用例通过，无额外失败。concurrency 的 13 条在两侧真正闸门中均已执行。
+- 去掉重复执行的 alignment 后，默认构建合计 **1187 通过、1 失败**（lib 256 / bin 507 / integration 424 通过、1 失败）；无默认特性合计 **1031 通过、1 失败**（lib 256 / bin 351 / integration 424 通过、1 失败）。`test --doc` 两侧各 2 条通过，另列不混进以上合计。
+- `npm --prefix .scratch/session-redesign run check` → 导出逐字节一致；`npm --prefix .scratch/session-redesign test` → 13 通过。
+- `git diff --check`、spec 图校验 → 通过；黄金快照 SHA256 与基线同为 `2a6aabc07627323b7ddd6539bc1c3a8450ebe8a234265fd7912fe0d48751602d`。
+
+### 明确保留
+
+闸门 1、2 **仍红**，两侧唯一失败均是本 spec 明确排除的 Q995：`tests/concurrency.rs:755` 的 `many_archive_volumes_never_hold_more_than_the_one_being_processed`，macOS 重命名断言实际 0、期望 96；未跳过、削弱或修补它，补跑通过不等于闸门全绿，因此各票「三条全绿」保持未勾。
+
+`TONEFIT_SAMPLES` 未设，两侧各跳过两条真实素材 perceptual 与一条 smoke，未声称实测真实素材；默认构建另外保留一条手动延迟量具 ignored。Windows 运行期未验证。设计稿既有依赖安装报告 Node/jsdom engine 不匹配与两项 high 漏洞，本批未升级依赖；安装警告不作为测试通过的替代。

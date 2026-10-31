@@ -11,7 +11,7 @@
 # j = c-green b
 "abbccdddddddaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea"
 "ddffgggghhhhhhhhhhhhhhhhhhhfffffffffffffffffffffffhhhhhhhhhhfffdd"
-"daf..iiiiiiiiii.......................................................fad"
+"daf..iiiiiiiiii..................................................fad"
 "daf..........................................................................fad"
 "ddf..jj....................................................................fdd"
 "ddf..iiiiiiiiii...........................................................fdd"

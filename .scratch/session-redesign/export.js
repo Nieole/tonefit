@@ -40,9 +40,9 @@ const MAIN = [120, 36];
 const NARROW = [80, 24];
 const TINY = [56, 14];
 
-/** 要导出的快照：14 个场景 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
+/** 要导出的快照：场景清单 × 主稿与验收线，外加「窗口太小」两份（还没开始、转换中）。 */
 const SNAPSHOTS = [
-  ...['fresh', 'survey', 'running', 'deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
+  ...['zero-volume', 'fresh', 'survey', 'eta-start', 'running', 'deciding', 'bad-page-deciding', 'ended', 'pages', 'envelope', 'config', 'help', 'add', 'search', 'extracting', 'envelope-deciding', 'retained']
     .flatMap((scene) => [{ scene, size: MAIN }, { scene, size: NARROW }]),
   { scene: 'fresh', size: TINY },
   { scene: 'running', size: TINY },
@@ -68,6 +68,64 @@ const k = (...keys) => keys.map((key) => ({ key }));
 // 配置那一景的光标停在缩放方式上：回设置栏、往下挪 n 项、`l` 进那一项的详情栏（n 照 design.html 里 CONFIG 的次序）
 const onItem = (n) => k('h', ...Array(n).fill('j'), 'l');
 const SEQUENCES = [
+  ...[MAIN, NARROW].flatMap((size) => [
+    { name: `zero-volume-problem-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd'), says: { has: ['无法访问', '问题 1/1'], lacks: ['＋ 添加路径', '清点途中停下'] } },
+    { name: `zero-volume-unreachable-card-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd', 'Enter'), says: '无法访问 1 处' },
+    { name: `zero-volume-noncomic-card-${size[0]}`, scene: 'zero-volume', size, steps: k(']', 'd', 'j', 'Enter'), says: '非漫画文件 1 个' },
+  ]),
+  ...[MAIN, NARROW].flatMap((size) => [
+    { name: `eta-start-estimating-${size[0]}`, scene: 'eta-start', size, steps: [{ advance: 0.01 }],
+      says: { has: ['正在估算剩余时间'], lacks: ['预计还要'] } },
+    { name: `eta-start-ready-${size[0]}`, scene: 'eta-start', size, steps: [{ advance: 0.05 }],
+      says: { has: ['预计还要'], lacks: ['正在估算剩余时间'] } },
+  ]),
+  { name: 'deciding-trialed-notable-jump', scene: 'deciding', size: MAIN, steps: k('s', 'l', ']', 'd'),
+    says: { has: ['❯       ! 第05卷', '已分析，未写出'], lacks: ['整卷写到隔离'] } },
+  { name: 'bad-page-deciding-s-jump', scene: 'bad-page-deciding', size: MAIN, steps: k('s', ']', 'd'),
+    says: { has: ['❯       ! 第01卷', '▾ ! 哆啦A梦', '! ~/漫画库', '已分析，未写出', '问题 1/1'], lacks: ['整卷写到隔离', '隔离 1 卷'] } },
+  { name: 'bad-page-deciding-s-collapsed', scene: 'bad-page-deciding', size: MAIN, steps: k('s', ']', 'd', 'h', 'h'),
+    says: { has: ['▸ ! 哆啦A梦', '! ~/漫画库'], lacks: ['整卷写到隔离'] } },
+  { name: 'retained-no-notable-pages', scene: 'retained', size: MAIN, steps: k('a'),
+    says: { has: ['这一卷没有需留意的页'], lacks: ['需要留意'] } },
+
+  // honest-screen/05：预设型号的解释与两段标定来源说明。
+  { name: 'details-model-specified', scene: 'config', size: MAIN,
+    steps: k('h', 'g', 'g', 'l', 'l', 'j', 'l', 'l'),
+    says: { has: ['预设「漫画」中：kobo-libra-2', '← 与预设不同'], lacks: ['没写型号'] } },
+  { name: 'details-model-omitted', scene: 'config', size: MAIN,
+    steps: k('p', 'j', 'Enter', 'Escape', 'g', 'g', 'l', 'l', 'l', 'l'),
+    says: { has: ['预设「画集」中：没写型号（套用时型号回到没挑）'], lacks: ['未设置（使用默认值）'] } },
+  { name: 'details-threshold-provenance', scene: 'config', size: MAIN,
+    steps: k('h', 'k', 'l'), says: { has: ['boox-poke6 与 kobo-libra-2'], lacks: ['这个数是在 boox-poke6 上'] } },
+  { name: 'details-device-provenance', scene: 'config', size: MAIN,
+    steps: k('h', 'G', 'k', 'k', 'k', 'k', 'l'), says: 'boox-poke6 与 kobo-libra-2' },
+
+  // honest-screen/03：宽屏两栏与窄屏设置栏，画质门槛不再硬截成一句假完整的话。
+  ...[MAIN, NARROW, [90, 36]].map((size) => ({
+    name: `settings-elision-${size[0]}`, scene: 'config', size,
+    steps: k('h', 'g', 'g'),
+    says: { has: ['画质门槛', '⋯'], lacks: [size[0] === 120 ? 'boox-poke6  ┃' : '实测，其 ┃'] },
+  })),
+  // honest-screen/02：80 列上依次让掉右端提示，缓冲与光标先于提示；全让光才留末尾。
+  ...[0, 1, 2, 4, 6, 8].map((n) => ({
+    name: `input-path-yield-${n}`, scene: 'fresh', size: NARROW,
+    steps: [...k('G', 'o'), { type: 'Comics/' }, { key: 'Tab' }, ...(n ? [{ type: '收藏版/'.repeat(n) }] : [])],
+    says: { has: [n === 8 ? '⋯' : '~/Comics/大友克洋/', '▏', ...(n < 6 ? ['[Esc → 取消]'] : [])], lacks: ['[Tab → 补全]', ...(n >= 2 ? ['[C-w → 删一段]'] : []), ...(n >= 4 ? ['[⏎ → 确定]'] : []), ...(n >= 6 ? ['[Esc → 取消]'] : [])] },
+  })),
+  ...[18, 25, 32, 45].map((n) => ({
+    name: `input-search-yield-${n}`, scene: 'running', size: NARROW,
+    steps: [{ key: '/' }, { type: '漫画'.repeat(Math.floor(n / 2)) + (n % 2 ? '卷' : '') }],
+    says: { has: [n % 2 ? '卷▏' : '画▏', ...(n === 45 ? ['⋯'] : [])], lacks: ['[C-w → 删一段]', ...(n >= 25 ? ['[⏎ → 跳到结果]'] : []), ...(n >= 32 ? ['[Esc → 取消]'] : [])] },
+  })),
+  { name: 'input-unmatched-prefix-reply', scene: 'fresh', size: NARROW,
+    steps: [...k('o'), { type: 'z'.repeat(50) }, { key: 'Tab' }],
+    says: { has: ['~/'+ 'z'.repeat(50) + '▏', '这里没有', '⋯'], lacks: ['[Tab → 补全]', '[Esc → 取消]'] } },
+  // 空候选时滚轮不动底下任一块；有候选仍挪三项。
+  { name: 'input-add-empty-wheel', scene: 'fresh', size: NARROW, steps: [...k('o'), { wheel: -1 }], says: '添加路径  ~/▏' },
+  { name: 'input-search-empty-wheel', scene: 'running', size: NARROW, steps: [...k('/'), { wheel: 1 }], says: { has: ['[自动滚动]', '/▏'], lacks: ['已暂停自动滚动'] } },
+  { name: 'input-setting-empty-wheel', scene: 'config', size: NARROW, steps: [...k('h', 'k', 'k', 'i'), { wheel: 1 }], says: '可见灰阶数  ' },
+  { name: 'input-preset-empty-wheel', scene: 'config', size: NARROW, steps: [...k('p', 'G', 'Enter'), { wheel: -1 }], says: '保存为预设，名称  ' },
+  { name: 'input-candidates-wheel', scene: 'add', size: NARROW, steps: [{ wheel: 1 }], says: { has: ['4 of 4', '~/Comics/火之鸟/▏'], lacks: ['[Tab → 补全]'] } },
   // ── 视图：`1`／`2`／`gt`／`gT`、单击视图名（spec；13：跑着时 `2` 看只读与顶栏进度；16） ──
   { name: 'running-2', scene: 'running', size: MAIN, steps: k('2'), says: '处理中' },
   { name: 'running-2-1', scene: 'running', size: MAIN, steps: k('2', '1'), says: '[自动滚动]' },
@@ -157,6 +215,7 @@ const SEQUENCES = [
   { name: 'running-s-advance', scene: 'running', size: MAIN, steps: [{ key: 's' }, { advance: 30 }], says: '已停止 ' },
   { name: 'running-s-s', scene: 'running', size: MAIN, steps: k('s', 's'), says: '已立即停止：' },
   { name: 'running-q', scene: 'running', size: MAIN, steps: k('q'), says: 'q 不会退出' },
+  ...[MAIN, NARROW].map((size) => ({ name: `survey-s-advance-${size[0]}`, scene: 'survey', size, steps: [{ key: 's' }, { advance: 30 }], says: { has: ['已停止 ⋅ 清点途中停下，一卷都没开始', '＋ 添加路径'], lacks: ['处理到第 0 卷', '第 0 卷未保存', '总进度', '当前卷'] } })),
   { name: 'survey-s', scene: 'survey', size: MAIN, steps: k('s'), says: '正在停止：' },
   { name: 'ended-q', scene: 'ended', size: MAIN, steps: k('q'), says: '退出' },
   { name: 'fresh-q', scene: 'fresh', size: MAIN, steps: k('q'), says: '退出' },
@@ -262,13 +321,16 @@ const SEQUENCES = [
   { name: 'config-p-j-Enter', scene: 'config', size: MAIN, steps: k('p', 'j', 'Enter'), says: '已使用预设「画集」' },
   { name: 'config-p-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd'), says: '再按一次 dd 删除「漫画」' },
   { name: 'config-p-dd-dd', scene: 'config', size: MAIN, steps: k('p', 'd', 'd', 'd', 'd'), says: '已删除预设「漫画」' },
-  { name: 'config-p-G', scene: 'config', size: MAIN, steps: k('p', 'G'), says: { has: ['❯   ＋ 把当前设置保存为预设', '[p → 返回]'], lacks: ['[dd → 删除]'] } },
+  { name: 'config-p-G', scene: 'config', size: MAIN, steps: k('p', 'G'), says: { has: ['❯   ＋ 把当前设置保存为预设', '[⏎ → 保存为预设]', '[p → 返回]'], lacks: ['[dd → 删除]', '[⏎ → 使用]'] } },
   { name: 'config-p-G-dd', scene: 'config', size: MAIN, steps: k('p', 'G', 'd', 'd'), says: { has: ['❯   ＋ 把当前设置保存为预设', '预设 ⋅ 2 个'], lacks: ['[dd → 删除]', '再按一次 dd'] } },
   { name: 'config-p-save', scene: 'config', size: MAIN, steps: k('p', 'G', 'Enter'), says: '保存为预设，名称  ' },
   { name: 'config-p-save-named', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '插图' }, { key: 'Enter' }], says: '已保存预设「插图」' },
   // 同名覆盖要按两下：第一下在预设栏里问一句、输入行与名字留着，第二下才盖（design-parity/08，Q894）
   { name: 'config-p-save-taken', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }], says: { has: ['再按一次 ⏎ 覆盖「漫画」：覆盖后无法恢复，其他预设不受影响', '保存为预设，名称  漫画▏'], lacks: ['已保存预设', '再按一次 dd'] } },
-  // 重开起名那一行，上一次撞名等着的那一下就作废：那一问没了（Esc 关掉之后它还挂着，Q1189）
+  // 重开起名那一行，上一次撞名等着的那一下就作废：那一问没了（Esc 关掉时同样作废）
+  { name: 'config-p-save-taken-Escape', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }], says: { has: ['[⏎ → 保存为预设]'], lacks: ['再按一次', '[⏎ → 使用]'] } },
+  { name: 'config-p-save-taken-Escape-p-p', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'p' }, { key: 'p' }], says: { has: ['[⏎ → 保存为预设]'], lacks: ['再按一次'] } },
+  { name: 'config-p-j-Enter-t', scene: 'config', size: MAIN, steps: k('p', 'j', 'Enter', 't'), says: '先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来' },
   { name: 'config-p-save-taken-Escape-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'Enter' }], says: { has: ['保存为预设，名称  ▏'], lacks: ['再按一次'] } },
   { name: 'config-p-save-taken-Enter', scene: 'config', size: MAIN, steps: [{ key: 'p' }, { key: 'G' }, { key: 'Enter' }, { type: '漫画' }, { key: 'Enter' }, { key: 'Enter' }], says: { has: ['已保存预设「漫画」', '预设 ⋅ 2 个'], lacks: ['再按一次'] } },
   { name: 'config-p-p', scene: 'config', size: MAIN, steps: k('p', 'p'), says: '[l → 展开]' },
@@ -402,7 +464,7 @@ const SEGMENT = { 摊开: 'extraction', 查重: 'fingerprint', 分析: 'first_pa
 /** 这一刻的场景数据（spec《导出》：语义字段，不是屏上的字）。 */
 function sceneData(page) {
   const { design, clock } = page;
-  const { S, CONFIG, PRESETS, PANELS, PASSES, SHOW, CWD, PRESETS_FILE, pagesOf, retainedOf, stepsOf, extracts, isolatedOutput, dirRoot } = design;
+  const { S, CONFIG, PRESETS, PANELS, PASSES, SHOW, CWD, PRESETS_FILE, pagesOf, retainedOf, stepsOf, extracts, volumeOutput, isolatedOutput, dirRoot } = design;
   const r = S.run;
   const cfgIndex = (i) => (CONFIG[i] && CONFIG[i].key) || null;
   const settings = settingsOf(CONFIG.filter((c) => c.key && c.kind !== 'info').map((c) => [c.key, c.value ?? null]));
@@ -445,6 +507,7 @@ function sceneData(page) {
   data.run = {
     mode: r.mode === 'exec' ? 'process' : 'dry-run',
     stage: r.stage,
+    surveyed: r.surveyed,
     outcome: r.outcome,
     envelope: r.envelope,
     elapsed_s: num(r.elapsed * SHOW),
@@ -470,7 +533,7 @@ function sceneData(page) {
     // （库 `VolumeReport::retained_pages`），页数 `page_count` 把它加回去（库 `VolumeReport::page_count`）
     volumes: r.tree.vols.map((v, i) => {
       const s = r.vs[i];
-      const out = { root: rootOf(v), state: s.state, pass: s.pass, done: num(s.done), elapsed_s: num(s.elapsed * SHOW), tally: s.tally ? s.tally.map(([k, n]) => [k, n]) : null };
+      const out = { root: rootOf(v), output: volumeOutput(v), state: s.state, pass: s.pass, done: num(s.done), elapsed_s: num(s.elapsed * SHOW), tally: s.tally ? s.tally.map(([k, n]) => [k, n]) : null };
       const took = PASSES.filter((p) => s.took[p] > 0);
       if (took.length) out.took_s = Object.fromEntries(took.map((p) => [SEGMENT[p], num(s.took[p] * SHOW)]));
       if (s.state === 'failed') out.failure = v.plan.volFail;
@@ -485,6 +548,9 @@ function sceneData(page) {
       return out;
     }),
   };
+  if (r.stage === 'ended' && !r.surveyed) {
+    data.run.survey.entries = []; data.run.survey.volumes = []; data.run.volumes = []; data.run.total_steps = 0;
+  }
   return data;
 }
 

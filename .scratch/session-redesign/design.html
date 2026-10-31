@@ -172,6 +172,30 @@ function elide(s, w) {
   }
   return head + '⋯' + tail;
 }
+// 输入缓冲保留末尾，前面放省略号；光标另留一格。
+function elideStart(s, w) {
+  if (strW(s) <= w) return s;
+  if (w <= 0) return '';
+  let tail = '', used = 0;
+  for (const ch of [...s].reverse()) {
+    const c = chW(ch); if (used + c > w - 1) break;
+    tail = ch + tail; used += c;
+  }
+  return '⋯' + tail;
+}
+// 保留开头；省略号跟被截的那一截同样式，设置栏与输入行回话共用。
+function elideEndSegments(segs, w) {
+  if (segW(segs) <= w) return segs;
+  if (w <= 0) return [];
+  const out = [];
+  let left = w - 1;
+  for (const [text, st] of segs) {
+    const head = clip(text, left);
+    if (strW(text) > left) { out.push([head + '⋯', st]); break; }
+    out.push([head, st]); left -= strW(head);
+  }
+  return out;
+}
 // 按显示宽度折行，带禁则：收尾记号不落行首，起首记号不落行尾（后一张与 crate::wrap 的 NEVER_ENDS_A_ROW 同一张表）
 const NO_HEAD = '，。、；：！？）」』】》,.;:!?)';
 const NO_TAIL = '（【《「『〈〔“‘([{';
@@ -443,6 +467,13 @@ const PLAN = {
 
 let VOL_SEQ = 0, DIR_SEQ = 0;
 // 目录：`parentHint` 是它真正的父目录（`~/` 写法、带尾 `/`），接上 `label` 就是目录的根
+// 没有卷也能清点出备注；不靠虚构卷承载它们。
+LIB['~/漫画库/私藏'] = { groups: [], notes: [
+  { kind: 'unreach', label: '无法访问', what: '深处/', said: '无法访问 1 处：打不开这些文件夹，里面有没有卷无从知道，全部跳过。这一趟因此**不是「全都做成了」**，退出码跟着变；别的卷该做的照做，上面那些就是做出来的。要那底下的东西，先把下面这几处修好再重跑',
+    entries: [['~/漫画库/私藏/深处', 'Permission denied (os error 13)']] },
+  { kind: 'nonvol', label: '已忽略 1 个文件', what: 'README.md', said: '非漫画文件 1 个：不属于任何一卷，没有转换也没有复制，输出里没有它们。这**不算出错**，退出码不变；源文件没动，需要的话去原位置取',
+    entries: [['~/漫画库/私藏/README.md', '它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制']] },
+] };
 function mkDir(label, parentHint, mixKey) { return { id: 'd' + DIR_SEQ++, label, parentHint, mixKey, vols: [] }; }
 const dirRoot = (d) => `${d.parentHint}${d.label}`;
 // 卷：`named` 是它从哪一条处理路径来，`root` 是卷根——目录接上卷名，点名的压缩包就是它自己
@@ -477,6 +508,7 @@ function discover(named) {
       for (let i = 0; i < n; i++) { const v = mkVol(d, names ? names[i] : vn(i + 1), mix, np.path); d.vols.push(v); vols.push(v); }
       return d;
     });
+    if (!dirs.length) dirs.push(mkDir(np.path.slice(np.path.lastIndexOf('/') + 1), np.path.slice(0, np.path.lastIndexOf('/') + 1), ''));
     if (dirs.length >= 2) entries.push({ type: 'section', path: np.path, dirs, notes: spec.notes || [] });
     else entries.push({ type: 'dir', dir: dirs[0], notes: spec.notes || [] });
   }
@@ -616,7 +648,7 @@ const CONFIG = [
   { key: 'levels', label: '可见灰阶数', kind: 'text', unset: '默认（按屏幕规格）', value: null,
     desc: '你在这台设备上用肉眼能分清几级灰。按 c 生成灰阶测试图，拷进设备里数一数；不填就用屏幕标称的灰阶数。它和标称值不一定相同：显示固件、环境光、看的距离都会影响。' },
   { key: 'threshold', label: '画质门槛', kind: 'text', unset: '跟着型号走（先挑一个）', value: null,
-    desc: '画质分低于这个数，就算看不出和原图的差别。这个数是在 boox-poke6 上让人盲看对比定出来的：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。' },
+    desc: () => `画质分低于这个数，就算看不出和原图的差别。内置${thresholdText({value: null})}。这个数由人盲看对比定出来：像素密度（PPI）相同的屏幕可以直接沿用，密度不同的屏幕还没验证过。` },
   { layer: '处理选项', note: '每次转换都可以调' },
   { key: 'fit', label: '缩放方式', kind: 'ring', options: ['height', 'inside'], unset: '默认（height）', value: 'inside', preset: null,
     desc: 'height（按高度铺满）：页面高度等于屏幕高度，宽度按比例缩放，比屏幕宽的页（多半是跨页）要左右平移着看。inside（整页放进屏幕）：整页缩进屏幕里，四周可能留边。普通漫画页两种方式结果一样，区别只出现在跨页上。' },
@@ -642,7 +674,7 @@ const CONFIG = [
     desc: 'auto（自动）：按硬盘类型自己选。serial（逐个读）：适合机械硬盘和网络盘。concurrent（同时读）：适合固态硬盘。' },
   { layer: '画质判定参数', note: '只读' },
   { key: 'p1', label: '设备配置', kind: 'info',
-    desc: '下一趟照这份设备配置判定：型号、屏幕规格、画质门槛，门槛是在哪块屏幕上实测的也写着。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。' },
+    desc: () => `下一趟照这份设备配置判定：型号、屏幕规格、画质门槛。内置${thresholdText({value: null})}。像素密度（PPI）相同的屏幕可以直接沿用这个门槛，密度不同的还没验证过。` },
   { key: 'p2', label: '画质分构成', kind: 'info',
     desc: '画质分由两部分相加。① 整体走样：把原图和转换后的图都稍微模糊一下（相当于在正常阅读距离看），比较灰度差多少，色带、灰调发闷都算在这里。② 抖动颗粒：抖动的点子本身有多扎眼；起伏不到「相邻两级灰度差的 21.6%」就当看不见，不扣分。21.6% 这个比例是在 boox-poke6 上实测的。' },
   { key: 'p3', label: '细节放宽', kind: 'info',
@@ -716,7 +748,7 @@ const KEYMAP = [
   ['转换', [['t', '预览：只分析，不写文件', 'IE'], ['x', '转换：写到输出目录', 'IE'], ['s', '停止：按一次做完当前卷，按两次立即停', 'SR']]],
   ['确认', [['x', '写出这一卷（不用重新分析）', 'D'], ['a', '写出，后面的卷不再询问', 'D'], ['s', '不写出，结束预览', 'D'], ['v', '查看这一卷的每页结果', 'D']]],
   ['每页结果', [['a', '需留意的页 / 全部页', 'RE'], ['h Esc', '回卷列表', 'RDE']]],
-  ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图']]],
+  ['配置', [['l ⏎', '展开选项 / 确定'], ['h Esc', '返回，不做修改'], ['p', '预设'], ['c', '生成灰阶测试图'], ['⏎', '保存为预设（预设栏末行）']]],
   ['输入', [['Tab', '补全路径', 'I'], ['C-w', '删一段', 'IRDE'], ['⏎', '确定', 'IRDE'], ['Esc', '取消', 'IRDE'], ['F1', '全部按键', 'IRDE']]],
   ['灰阶写法', [['1bit', '2 级灰'], ['2bit', '4 级灰'], ['4bit', '16 级灰'], ['+FS', '加抖动（误差扩散）']]],
   ['环节', PASSES.map((p) => [p, PASS_WHAT[p], 'RD'])],
@@ -734,7 +766,7 @@ const stepsOf = (v) => passesOf(v).length * v.pages;
 const passLen = (v, p) => (p === '分析' ? v.pages - retainedOf(v) : v.pages);
 function newRun(mode, tree) {
   return {
-    mode, tree, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
+    mode, tree, surveyed: false, stage: 'surveying', surveyT: 0, elapsed: 0, cur: -1, latch: 0, forTheRest: false,
     // 开跑那一刻的快照：跑起来之后设置锁住，结束后再改也不影响这一趟的结果
     envelope: (CONFIG.find((c) => c.key === 'envelope') || {}).value === '开',
     wrote: false, outcome: null, steps: 0, total: tree.vols.reduce((a, v) => a + stepsOf(v), 0),
@@ -747,14 +779,15 @@ function tick(run, dt) {
   if (!run || run.stage === 'ended' || run.stage === 'deciding') return;
   run.elapsed += dt;
   if (run.stage === 'surveying') {
+    if (run.latch) { run.stage = 'ended'; run.outcome = 'stopped'; return; }
     run.surveyT += dt;
-    if (run.surveyT >= SURVEY_SEC) { run.stage = 'running'; startNext(run); }
+    if (run.surveyT >= SURVEY_SEC) { run.surveyed = true; run.stage = 'running'; startNext(run); }
     return;
   }
   let budget = dt;
   while (budget > 1e-9 && run.stage === 'running') {
     const v = run.tree.vols[run.cur], s = run.vs[run.cur], p = passOf(v, s);
-    const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : p === '摊开' ? RATE * 3 : RATE;
+    const speed = p === '查重' ? RATE * 7 : p === '写出' ? RATE * 1.6 : RATE;
     const len = passLen(v, p), need = len - s.done, can = budget * speed;
     if (can < need) { s.done += can; run.steps += can; s.elapsed += budget; s.took[p] = (s.took[p] || 0) + budget; budget = 0; }
     // 一个环节走满，总步数就是一个整数（真程序一页一步）：连续时间一路攒下的浮点尾数在这里结清，
@@ -817,6 +850,7 @@ function answer(run, key) {
 // 按停：一级收尾、二级中止
 function stop(run) {
   if (!run || (run.stage !== 'running' && run.stage !== 'surveying')) return 0;
+  if (run.stage === 'surveying') S.playing = true;
   run.latch = Math.min(2, run.latch + 1);
   if (run.latch === 2) {
     if (run.cur >= 0 && run.cur < run.vs.length) run.vs[run.cur].state = 'aborted';
@@ -843,7 +877,7 @@ function dirStat(run, d) {
       for (const [k, n] of s.tally) st.tally.set(k, (st.tally.get(k) || 0) + n);
       const pr = problemsOf(v);
       st.failedPages += pr.failed;
-      if (s.state !== 'isolated' && (pr.outlier || pr.wide || pr.gate || pr.salvage)) st.warn++;
+      if (s.state !== 'isolated' && (pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed))) st.warn++;
     }
   }
   return st;
@@ -854,7 +888,7 @@ function markOf(run, st) {
   if (st.running) return [SPIN[Math.floor(performance.now() / 90) % SPIN.length], 'c-blue b'];
   if (st.bad) return ['✗', 'c-red b'];
   if (st.warn) return ['!', 'c-yellow b'];
-  if (st.finished === st.total) return st.skipped === st.total ? ['-', 'c-gray'] : ['✓', 'c-green'];
+  if (st.total > 0 && st.finished === st.total) return st.skipped === st.total ? ['-', 'c-gray'] : ['✓', 'c-green'];
   if (st.finished > 0) return ['◌', 'c-gray'];
   return ['⋅', 'c-gray'];
 }
@@ -869,7 +903,7 @@ function volMark(s, v) {
     case 'aborted': return ['⋅', 'c-gray'];
     case 'trialed': case 'done': {
       const pr = problemsOf(v);
-      return pr.outlier || pr.wide || pr.gate || pr.salvage ? ['!', 'c-yellow b'] : ['✓', 'c-green'];
+      return pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed) ? ['!', 'c-yellow b'] : ['✓', 'c-green'];
     }
     default: return ['⋅', 'c-gray'];
   }
@@ -997,7 +1031,7 @@ function footerHints() {
   if (S.overlay) return [hint('j/k', '滚动'), hint('Esc', '关闭')];
   if (S.view === 'config') {
     // 末行「＋ 把当前设置保存为预设」不是一份预设，删不掉：光标停在那一行上不摆 `dd`
-    if (S.cfg.presets) return [hint('⏎', '使用'), ...(S.cfg.pcursor < PRESETS.length ? [hint('dd', '删除')] : []), hint('p', '返回'), hint('j/k', '选择'), help];
+    if (S.cfg.presets) return [hint('⏎', S.cfg.pcursor < PRESETS.length ? '使用' : '保存为预设'), ...(S.cfg.pcursor < PRESETS.length ? [hint('dd', '删除')] : []), hint('p', '返回'), hint('j/k', '选择'), help];
     const ro = readOnly();
     return [...stageHints(), hint(S.cfg.pane === 'left' ? 'l' : '⏎', ro ? '查看' : S.cfg.pane === 'left' ? '展开' : '确定'), hint('h', '返回'), hint('p', '预设'), hint('1', '任务'), hint('j/k', '选择'), help];
   }
@@ -1022,17 +1056,19 @@ function drawFooter(scr) {
   // 覆盖层盖着输入行时屏底让给覆盖层，关掉之后输入行原样回来
   if (S.input && !S.overlay) {
     const inp = S.input;
-    let x = scr.put(1, y, inp.prompt, 'c-green b');
-    x = scr.put(x, y, clip(inp.buf, W - 40), 'c-fg');
-    scr.put(x, y, '▏', FOCUS);
-    // 右端那几件按输入行的用途摆（屏上不摆按不动的键，按得动的都摆）：`Tab` 只在补得出路径的那几种上，
-    // `C-w` 每一种都有，`⏎` 在搜索那一行上说「跳到结果」。
-    // 回话占着的那几秒，回话画在这几件的位置上：输入行开着时屏底只剩这一处说得出话
-    // （「这里没有以……开头的项」就落在这里，停车场 Q792）；到点退回那几件
     const said = liveToast();
-    const right = said ? said.segs : [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')]
-      .flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
-    scr.line(W - 1 - segW(right), y, right);
+    const groups = [...(COMPLETES.includes(inp.kind) ? [hint('Tab', '补全')] : []), hint('C-w', '删一段'), hint('⏎', inp.kind === 'search' ? '跳到结果' : '确定'), hint('Esc', '取消')];
+    const spaced = () => groups.flatMap((g, i) => (i ? [[' ', ''], ...g] : g));
+    // 缓冲与光标先于提示：从前往后让，全让光仍放不下才截缓冲。
+    const leftW = 1 + strW(inp.prompt) + strW(inp.buf) + 1;
+    while (!said && groups.length && leftW + 1 + segW(spaced()) > W - 1) groups.shift();
+    // 回话只用缓冲与光标之外的余位，不许盖住正在打的字。
+    const right = said ? elideEndSegments(said.segs, Math.max(0, W - 2 - leftW)) : spaced();
+    const rightX = W - 1 - segW(right);
+    let x = scr.put(1, y, inp.prompt, 'c-green b');
+    x = scr.put(x, y, elideStart(inp.buf, Math.max(0, rightX - (right.length ? 1 : 0) - x - 1)), 'c-fg');
+    scr.put(x, y, '▏', FOCUS);
+    scr.line(rightX, y, right);
     return;
   }
   const t = liveToast();
@@ -1051,9 +1087,10 @@ function drawFooter(scr) {
 
 // ───── 总览块 ─────
 function volPath(v) { return `${v.dir.label}/${v.name}`; }
+function stoppedDuringSurvey(r) { return r && r.stage === 'ended' && !r.surveyed; }
 function overviewLines(iw, compact) {
   const r = S.run;
-  if (!r) {
+  if (!r || stoppedDuringSurvey(r)) {
     const on = S.named.filter((n) => n.on).length, off = S.named.length - on;
     if (compact) return [
       [['输出目录 ', 'c-gray'], [S.outRoot, 'c-fg b'], [' ⋅ 路径 ', 'c-gray'], [`已勾选 ${on} 个`, 'c-fg'], [' ⋅ ' + modelName(), 'c-gray']],
@@ -1072,7 +1109,7 @@ function overviewLines(iw, compact) {
     ];
   }
   const t = runTotals(r);
-  const frac = r.steps / r.total;
+  const frac = r.total ? r.steps / r.total : 0;
   const cur = r.cur >= 0 && r.cur < r.tree.vols.length ? r.tree.vols[r.cur] : null;
   const cs = cur ? r.vs[r.cur] : null;
   const barW = compact ? Math.max(8, Math.min(20, iw - 64)) : Math.max(10, Math.min(40, iw - 60));
@@ -1086,7 +1123,7 @@ function overviewLines(iw, compact) {
     const pass = passOf(cur, cs) || '分析';
     here = [['当前卷 ', 'c-gray'], [elide(volPath(cur), compact ? 18 : 34), 'c-fg b'], [' ⋅ ', 'c-gray'], [pass, PASS_ST[pass]], [' ', ''], [bf, PASS_ST[pass]], [be, 'c-gray d'], [` ${Math.floor(cs.done)}/${cur.pages}`, 'c-gray']];
   }
-  const wroteYet = r.mode === 'exec' || r.wrote;
+  const wroteYet = (r.mode === 'exec' && r.tree.vols.length > 0) || r.wrote;
   const concl = wroteYet
     ? [['完成 ', 'c-gray'], [`${t.done} 卷`, 'c-fg b'], [' ⋅ 跳过 ', 'c-gray'], [`${t.skipped} 卷`, 'c-fg'], [` ⋅ 等待 ${r.tree.vols.length - t.finished} 卷`, 'c-gray']]
     : [['已分析 ', 'c-gray'], [`${t.judged} 卷`, 'c-fg b'], ['   灰阶分布 ', 'c-gray'], ...tallySegs(t.tally)];
@@ -1129,12 +1166,13 @@ function overviewTitle() {
   if (r.stage === 'surveying') return { title: [mode, [' ⋅ 清点中', 'c-fg']], right: used };
   if (r.stage === 'deciding') return { title: [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷 ⋅ `, 'c-fg'], ['等待确认', 'c-yellow b']], right: used };
   if (r.stage === 'ended') {
-    const why = r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
+    const why = stoppedDuringSurvey(r) ? '⋅ 清点途中停下，一卷都没开始' : r.outcome === 'done' ? `⋅ ${N} 卷全部处理完` : r.outcome === 'stopped' ? `⋅ 处理到第 ${r.cur + 1} 卷` : `⋅ 第 ${r.cur + 1} 卷未保存，不会留下半成品`;
     return { title: [[r.outcome === 'done' ? '完成 ' : r.outcome === 'stopped' ? '已停止 ' : '已中断 ', r.outcome === 'done' ? 'c-green b' : 'c-yellow b'], [why, 'c-fg'], [' ⋅ 用时 ' + fmtDur(r.elapsed * SHOW), 'c-gray']], right: [[`输出目录 ${S.outRoot}`, 'c-gray']] };
   }
-  const frac = r.steps / r.total;
-  const eta = frac > 0.02 ? (r.elapsed * (1 - frac)) / frac : null;
-  const t = [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷`, 'c-fg'], [eta ? ` ⋅ 预计还要 ${fmtDur(eta * SHOW)}` : ' ⋅ 正在估算剩余时间', 'c-fg']];
+  const walked = Math.floor(r.steps);
+  const frac = walked / r.total;
+  const eta = walked > 0 && frac >= 0.02 ? r.elapsed * (r.total - walked) / walked : null;
+  const t = [mode, [` ⋅ 第 ${r.cur + 1}/${N} 卷`, 'c-fg'], [eta !== null ? ` ⋅ 预计还要 ${fmtDur(eta * SHOW)}` : ' ⋅ 正在估算剩余时间', 'c-fg']];
   if (r.latch === 1) t.push([' ⋅ 正在停止：做完当前卷就停', 'c-yellow b']);
   return { title: t, right: used };
 }
@@ -1142,11 +1180,11 @@ function overviewTitle() {
 // ───── 任务树的行 ─────
 function taskRows() {
   const r = S.run, rows = [];
-  if (!r || r.stage === 'surveying') {
+  if (!r || r.stage === 'surveying' || stoppedDuringSurvey(r)) {
     rows.push({ key: 'out', kind: 'out' });
     rows.push({ kind: 'label' });
     S.named.forEach((n, i) => rows.push({ key: 'np:' + n.path, kind: 'named', n, i }));
-    if (!r) rows.push({ key: 'add', kind: 'add' });
+    if (!r || stoppedDuringSurvey(r)) rows.push({ key: 'add', kind: 'add' });
     return rows;
   }
   for (const e of r.tree.entries) {
@@ -1181,7 +1219,8 @@ function cols(iw) {
 const SKIPPED = '跳过 之前转换过：工具版本、设备配置、选项和源文件都没变，上次的输出还在，这一卷一页都没重做';   // render::SKIPPED
 // 隔离目录里这一卷的去处（假数据），照库的镜像规则（discover::mirrored）：基准点是处理路径的父目录，
 // 处理路径自己的名字因此恒出现在去处里；隔离只在输出目录底下插一级 `_isolated`
-const isolatedOutput = (v) => `${S.outRoot}/_isolated${v.root.slice(v.named.lastIndexOf('/'))}`;
+const volumeOutput = (v, isolated = false) => `${S.outRoot}${isolated ? '/_isolated' : ''}${v.root.slice(v.named.lastIndexOf('/'))}`;
+const isolatedOutput = (v) => volumeOutput(v, true);
 const isolatedRow = (v, failed) => `隔离 ${failed} 页读不出：这一卷整卷写到隔离目录 ${isolatedOutput(v)}，读不出的页用空白页占位，页码顺序不变`; // render::isolated_row
 const isolatedNote = (count) => `隔离 ${count} 卷`;                                                                     // render::isolated_note（目录那一行）
 // 一卷为什么一页都没判，压成灰阶分布那一列摆得下的一个词（render::why_nothing_judged），连同它的语义色：没做成是出事，跳过是不要紧
@@ -1243,7 +1282,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
     X = scr.put(X, y, pad(elide(label, nameW), nameW), nameSt(running ? 'c-blue' : isDir ? 'c-fg' : 'c-white'));
     X += 1;
     const count = isDir ? `${st.finished}/${st.total} 卷` : `${row.v.pages} 页`;
-    X = scr.put(X, y, pad(count, c.countW, 'r'), isDir && st.finished === st.total ? 'c-fg' : 'c-gray');
+    X = scr.put(X, y, pad(count, c.countW, 'r'), isDir && st.total > 0 && st.finished === st.total ? 'c-fg' : 'c-gray');
     X += 2;
     if (c.tallyW) {
       const tally = isDir ? [...st.tally.entries()] : vs && vs.tally ? vs.tally : [];
@@ -1292,7 +1331,7 @@ function drawRow(scr, x, y, iw, row, isCur, focused) {
         if (pr.wide) bits.push(`页面超宽 ${pr.wide}`);
         if (pr.gate) bits.push(`尺寸未贴合屏幕 ${pr.gate}`);
         if (pr.salvage) bits.push(`残缺 ${pr.salvage}`);
-        tail = bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : [];
+        tail = vs.state === 'trialed' ? [['已分析，未写出', 'c-gray d']] : bits.length ? [[bits.join(' ⋅ '), 'c-yellow']] : [];
       } else tail = [['等待中', 'c-gray d']];
     }
     if (tailW > 4) scr.line(X, y, tail, tailW);
@@ -1326,7 +1365,7 @@ function drawList(scr, x, y, w, h) {
   const focused = !S.overlay && !S.input;
   const r = S.run;
   const selPos = sel.indexOf(ci) + 1;
-  const title = !r ? [['任务', 'c-fg b'], [' ⋅ 路径', 'c-gray']] : r.stage === 'surveying' ? [['任务', 'c-fg b'], [' ⋅ 正在清点，马上显示卷列表', 'c-gray']] : [['任务', 'c-fg b'], [` ⋅ ${r.tree.vols.length} 卷`, 'c-gray']];
+  const title = !r || stoppedDuringSurvey(r) ? [['任务', 'c-fg b'], [' ⋅ 路径', 'c-gray']] : r.stage === 'surveying' ? [['任务', 'c-fg b'], [' ⋅ 正在清点，马上显示卷列表', 'c-gray']] : [['任务', 'c-fg b'], [` ⋅ ${r.tree.vols.length} 卷`, 'c-gray']];
   const right = r && r.stage !== 'ended' && r.stage !== 'surveying'
     ? (S.follow ? [['[自动滚动]', 'c-green b']] : [['[已暂停自动滚动 ⋅ F 恢复]', 'c-yellow']]) : null;
   const bottomLeft = S.search && S.search.q ? [[`/${S.search.q}`, 'c-yellow i'], [' ⋅ n N 跳到下一个 / 上一个', 'c-gray i']] : null;
@@ -1397,7 +1436,7 @@ function drawPages(scr, x, y, w, h) {
   const C = { name: 10, size: iw >= 84 ? 11 : 0, scale: iw >= 112 ? 24 : 0, verdict: 9, reason: 22, metric: iw >= 98 ? 15 : 0 };
   const head = [['   ', ''], [pad('页面', C.name), 'c-gray b'], [C.size ? pad('尺寸', C.size) : '', 'c-gray b'], [C.scale ? pad('缩放', C.scale) : '', 'c-gray b'], [pad('灰阶', C.verdict), 'c-gray b'], [pad('原因', C.reason), 'c-gray b'], [C.metric ? pad('画质分', C.metric) : '', 'c-gray b'], ['提示', 'c-gray b']];
   scr.line(x + 2, y + PAGES_HEAD, head, iw);
-  if (!list.length) { scr.line(x + 2, y + 1 + PAGES_HEAD, [['这一卷没有需要留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
+  if (!list.length) { scr.line(x + 2, y + 1 + PAGES_HEAD, [['这一卷没有需留意的页 ⋅ ', 'c-fg'], ['a → 全部页', 'c-gray']], iw); return; }
   for (let i = 0; i < ih - 0 && from + i < list.length; i++) {
     const p = list[from + i], cur = from + i === P.cursor;
     const mark = p.tone === 'bad' ? ['✗ ', 'c-red b'] : p.tone === 'warn' ? ['! ', 'c-yellow b'] : ['  ', ''];
@@ -1468,13 +1507,13 @@ function drawCfgLeft(scr, x, y, w, h, ro) {
   for (let i = 0; i < ih && from + i < CONFIG.length; i++) {
     const c = CONFIG[from + i], yy = y + 1 + i, cur = from + i === S.cfg.cursor;
     if (!c.key) {
-      scr.line(x + 2, yy, [[c.layer, c.layer === '画质判定参数' ? 'c-gray b' : 'c-magenta b'], [' ⋅ ' + c.note, 'c-gray d']], iw);
+      scr.line(x + 2, yy, elideEndSegments([[c.layer, c.layer === '画质判定参数' ? 'c-gray b' : 'c-magenta b'], [' ⋅ ' + c.note, 'c-gray d']], iw), iw);
       continue;
     }
     const set = c.kind === 'model' || c.kind === 'info' ? c.kind === 'model' : c.value != null;
     const changed = p && stored(c) && (c.value ?? null) !== (p.says[c.key] ?? null);
     const vst = (set ? 'c-fg' : 'c-gray') + (ro ? ' d' : '') + (cur && focused ? ' b' : '');
-    scr.line(x + 1, yy, [[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1);
+    scr.line(x + 1, yy, elideEndSegments([[cur ? (focused ? '❯ ' : '› ') : '  ', focused ? CURSOR : 'c-gray'], [pad(c.label, labelW), cur ? 'c-fg b' : 'c-white'], [valueOf(c), vst], ...(changed ? [[' *', 'c-yellow b']] : [])], iw + 1), iw + 1);
     scr.hit(x + 1, yy, w - 2, 1, { cfgRow: from + i });
   }
 }
@@ -1513,12 +1552,12 @@ function drawCfgRight(scr, x, y, w, h, ro) {
     lines.push({ segs: [] });
     for (const l of wrap('这里是此刻的设置，下一趟照它判定；上一趟用的是什么，看退出时印出的那份报告的抬头。', iw - 2)) lines.push({ segs: [[l, 'c-gray']] });
   }
-  if (c.kind === 'ring' || c.kind === 'text') {
+  if (stored(c)) {
     const p = presetOf(S.cfg.applied);
-    if (p) {
+    if (p && (c.kind !== 'model' || changedKeys().includes(c.label))) {
       const said = p.says[c.key];
       lines.push({ segs: [] });
-      lines.push({ segs: [[`预设「${p.name}」中：`, 'c-gray'], [said == null ? '未设置（使用默认值）' : said, 'c-fg'], ...((c.value ?? null) !== (said ?? null) ? [['   ← 与预设不同', 'c-yellow']] : [])] });
+      lines.push({ segs: [[`预设「${p.name}」中：`, 'c-gray'], [said == null ? (c.kind === 'model' ? '没写型号（套用时型号回到没挑）' : '未设置（使用默认值）') : said, 'c-fg'], ...((c.value ?? null) !== (said ?? null) ? [['   ← 与预设不同', 'c-yellow']] : [])] });
     }
   }
   if (ro) { lines.push({ segs: [] }); lines.push({ segs: [['正在转换，设置暂时锁定，结束后才能修改。', 'c-yellow']] }); }
@@ -1660,7 +1699,10 @@ const curRow = () => S.lastRows.find((r) => r.key === S.curKey);
 const pageH = () => Math.max(4, S.size[1] - 12);
 function moveBy(n) {
   if (S.overlay && S.overlay.kind === 'help') { S.overlay.from = Math.max(0, S.overlay.from + n); return; }
-  if (S.input && S.input.cands && S.input.cands.length) { S.input.ci = Math.max(0, Math.min(S.input.cands.length - 1, S.input.ci + n)); fillCand(); return; }
+  if (S.input) {
+    if (S.input.cands && S.input.cands.length) { S.input.ci = Math.max(0, Math.min(S.input.cands.length - 1, S.input.ci + n)); fillCand(); }
+    return;
+  }
   if (S.view === 'config') {
     if (S.cfg.presets) { S.cfg.pcursor = Math.max(0, Math.min(PRESETS.length, S.cfg.pcursor + n)); S.cfg.armedDelete = null; return; }
     if (S.cfg.pane === 'right') { S.cfg.right = Math.max(0, Math.min(rightCount() - 1, S.cfg.right + n)); return; }
@@ -1687,6 +1729,8 @@ function rightCount() {
 // ───── 一趟 ─────
 function startRun(mode) {
   if (S.run && S.run.stage !== 'ended') return toast([['正在处理中，', 'c-yellow b'], ['请先按 s 停止', 'c-fg']]);
+  if (!cfgValue('model')) return toast([['✗ ', 'c-red b'], ['先挑型号：目标尺寸与画质分都从那块面板上来，没有它跑不起来', 'c-red']]);
+  if (!S.outRoot) return toast([['✗ ', 'c-red b'], ['先填输出目录：每个卷在它下面得到一份同名副本', 'c-red']]);
   if (!S.named.some((n) => n.on)) return toast([['✗ ', 'c-red b'], ['没有勾选任何路径，无法开始', 'c-red']]);
   VOL_SEQ = 0; DIR_SEQ = 0; PAGE_CACHE.clear();
   S.run = newRun(mode, discover(S.named));
@@ -1709,7 +1753,7 @@ function targets(kind) {
         if (kind.q && (d.label + '/' + v.name).includes(kind.q) && !d.label.includes(kind.q)) out.push({ key: 'v:' + v.id, v });
         if (kind.trouble && s && s.tally !== undefined) {
           const pr = s.tally ? problemsOf(v) : {};
-          if (s.state === 'failed' || s.state === 'isolated' || ((s.state === 'done' || s.state === 'trialed') && (pr.outlier || pr.wide || pr.gate || pr.salvage))) out.push({ key: 'v:' + v.id, v });
+          if (s.state === 'failed' || s.state === 'isolated' || ((s.state === 'done' || s.state === 'trialed') && (pr.outlier || pr.wide || pr.gate || pr.salvage || (s.state === 'trialed' && pr.failed)))) out.push({ key: 'v:' + v.id, v });
         }
       }
     }
@@ -1793,7 +1837,7 @@ function onKey(k, raw = k) {
   if (S.input && !S.overlay) {
     const inp = S.input;
     if (k === 'F1') { S.overlay = { kind: 'help', from: 0 }; return true; }
-    if (k === 'Escape') { if (inp.kind === 'search') S.search = null; S.input = null; return true; }
+    if (k === 'Escape') { if (inp.kind === 'search') S.search = null; if (inp.kind === 'preset') S.cfg.armedSave = null; S.input = null; return true; }
     if (k === 'Enter') { submitInput(); return true; }
     if (k === 'Tab') { complete(); return true; }
     if (k === 'Backspace') { inp.buf = [...inp.buf].slice(0, -1).join(''); inp.cands = null; if (inp.kind === 'search') S.search.q = inp.buf; return true; }
@@ -1938,7 +1982,7 @@ function taskKey(k) {
 }
 function configKey(k) {
   const ro = readOnly(), c = CONFIG[S.cfg.cursor];
-  if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; return true; }
+  if (k === 'p') { S.cfg.presets = !S.cfg.presets; S.cfg.pane = S.cfg.presets ? 'right' : 'left'; S.cfg.armedDelete = null; S.cfg.armedSave = null; return true; }
   // 写到哪儿摆不下时从中间省略（原样那一档的规矩，停车场 Q968）：目录的头与文件名的尾两头都在，
   // 不从行尾截掉文件名
   if (k === 'c') {
@@ -1948,7 +1992,7 @@ function configKey(k) {
   }
   if (k === 'Tab') { S.cfg.pane = S.cfg.pane === 'left' ? 'right' : 'left'; return true; }
   if (S.cfg.presets) {
-    if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; return true; }
+    if (k === 'h' || k === 'Escape') { S.cfg.presets = false; S.cfg.pane = 'left'; S.cfg.armedSave = null; return true; }
     if (k === 'Enter' || k === 'l') {
       if (ro) return toast([['正在转换，设置已锁定', 'c-yellow']]), true;
       // 末行那一件经输入行起名；重开一次就把上一次撞名等着的那一下作废——那一问问的是上一次打的名字
@@ -2054,23 +2098,36 @@ function resetView() {
   CONFIG.forEach((c, i) => { if ('value' in c) c.value = CONFIG0[i]; });
   PRESETS.splice(0, PRESETS.length, ...PRESETS0.map((p) => ({ name: p.name, says: { ...p.says } })));
 }
-const SCENES = [['fresh', '还没开始'], ['survey', '清点中'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
+const SCENES = [['zero-volume', '零卷完成'], ['fresh', '还没开始'], ['survey', '清点中'], ['eta-start', '剩余时间估算起点'], ['running', '转换中'], ['extracting', '正在摊开'], ['deciding', '等待确认'], ['bad-page-deciding', '坏页预览确认'], ['ended', '已结束'], ['pages', '每页结果'], ['envelope', '整卷统一灰阶'], ['envelope-deciding', '整卷统一灰阶 + 等待确认'], ['retained', '按页跳过'], ['config', '配置'], ['help', '全部按键'], ['add', '添加路径'], ['search', '搜索']];
 function scene(name) {
   resetView(); S.playing = true;
   const exec = (frac) => { startRun('exec'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= frac); S.toast = null; };
   switch (name) {
+    case 'zero-volume': S.named = [{ path: '~/漫画库/私藏', kind: '文件夹', on: true }]; exec(1.01); S.curKey = null; break;
     case 'fresh': S.curKey = 'np:~/漫画库'; break;
     case 'survey': startRun('exec'); S.run.surveyT = 0.8; S.playing = false; S.toast = null; break;
+    case 'eta-start': startRun('trial'); fastForward(S.run, (r) => r.stage !== 'surveying' && r.steps / r.total >= 0.015); S.toast = null; break;
     case 'running': exec(0.34); { const v = findVol('集英社/海贼王', '第07卷'); if (v) S.expanded.add(v.dir.id); } break;
     case 'extracting': {
-      // 有一卷正在摊开（CONTEXT《环节》）：虫师那三卷排在最前，前两卷做完，第03卷摊开到一半
-      // （总进度过了 2%，抬头报得出预计还要多久。预计还要多久那一句设计稿与实现算法两处不同——不到 2% 时说不说、
-      // 分子取不取整步——这一景挑在两边四舍五入到同一秒的那一刻，停车场 Q1129）
+      // 虫师那三卷排在最前，前两卷做完，第03卷摊开到一半。
+      // ETA 与实现都用完成整步；摊开与分析同速，不为 ETA 舍入挑速度或时刻。
       S.named = [...NAMED_RAR.map((n) => ({ ...n })), ...S.named];
       startRun('exec');
       fastForward(S.run, (r) => { const v = findVol('虫师', '第03卷'), s = stateOf(r, v); return passOf(v, s) === '摊开' && s.done >= v.pages / 2; });
       S.toast = null;
       S.expanded.add(findVol('虫师', '第03卷').dir.id);
+      break;
+    }
+    case 'bad-page-deciding': {
+      S.named = [{ path: '~/漫画库', kind: '文件夹', on: true }];
+      startRun('trial');
+      fastForward(S.run, (r) => r.stage !== 'surveying');
+      S.run.tree.entries.forEach((e) => { e.notes = []; });
+      const v = S.run.tree.vols[0];
+      v.plan = { failed: [['017.jpg', 'JPEG 文件不完整']] };
+      PAGE_CACHE.delete(v.id);
+      fastForward(S.run, (r) => r.stage === 'deciding');
+      S.toast = null;
       break;
     }
     case 'deciding': startRun('trial'); fastForward(S.run, (r) => r.stage === 'deciding'); S.toast = null; break;

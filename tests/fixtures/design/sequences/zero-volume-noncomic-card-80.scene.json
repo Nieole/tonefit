@@ -1,0 +1,49 @@
+{
+  "scene": "zero-volume",
+  "now_ms": "unchanged",
+  "time_multiplier": "unchanged",
+  "output": "unchanged",
+  "cwd": "unchanged",
+  "presets_file": "unchanged",
+  "paths": "unchanged",
+  "settings": "unchanged",
+  "applied_preset": "unchanged",
+  "presets": "unchanged",
+  "run": "unchanged",
+  "session": {
+    "view": "task",
+    "cursor": {
+      "kind": "note",
+      "what": "README.md"
+    },
+    "expanded": [],
+    "follow": false,
+    "pages": null,
+    "overlay": {
+      "kind": "note",
+      "note": {
+        "kind": "non-volume",
+        "entries": [
+          {
+            "path": "~/漫画库/私藏/README.md",
+            "reason": "它所在的文件夹里没有图片，它自己也不是图片或压缩包，不属于任何一卷。如果它和图片放在同一个文件夹里，会作为那一卷的附带文件原样复制"
+          }
+        ]
+      }
+    },
+    "input": null,
+    "search": null,
+    "toast": "问题 1/1",
+    "pending": "",
+    "config": {
+      "pane": "left",
+      "cursor": "model",
+      "choice": "1072x1448 ⋅ 300 PPI ⋅ 16 级灰阶 ⋅ 黑白",
+      "choice_index": 0,
+      "drill": null,
+      "presets": false,
+      "preset_cursor": 0,
+      "armed_delete": null
+    }
+  }
+}

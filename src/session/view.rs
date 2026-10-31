@@ -870,8 +870,8 @@ impl Session {
         }
         let mut lines = vec![Line::Output, Line::Heading];
         lines.extend((0..self.scope.paths.len()).map(Line::Path));
-        // 开跑之后「＋ 添加路径」那一行不在：跑着的时候加不进路径（设计稿 `taskRows`）。
-        if self.stage() == Stage::Fresh {
+        // 跑着的时候加不进路径；清点途中停下则回到带「＋ 添加路径」的路径列表（设计稿 `taskRows`）。
+        if matches!(self.stage(), Stage::Fresh | Stage::Ended) {
             lines.push(Line::Add);
         }
         lines
@@ -1188,14 +1188,13 @@ impl Session {
     ///
     /// 1. **全部按键那一张掀着时滚它**——那一支在终端层（`Views::wheel_cover`：那一张有几行要窗口的尺寸），
     ///    滚掉了就不再交到这里；
-    /// 2. **补全框开着时挪候选**，一格同样三个（[`InputLine::step`]，与 `↓`／`↑` 同一处）；
+    /// 2. **输入行开着时只管补全框**，一格同样三个（[`InputLine::step`]，与 `↓`／`↑` 同一处）；
+    ///    没有候选时一件事都不做，不碰底下那一块。
     /// 3. 其余一律落到底下那一块的光标上：卷列表、每页结果、配置视图那几栏——
-    ///    说明卡掀着（停车场 Q1109）与输入行开着而补全框没开（停车场 Q1107）也落到这里。
+    ///    说明卡掀着（停车场 Q1109）也落到这里。
     pub fn wheel(&mut self, notches: i16, now: Instant) {
         let by = wheel_rows(notches);
-        if let Some(line) = &mut self.views.input
-            && !line.candidates.is_empty()
-        {
+        if let Some(line) = &mut self.views.input {
             line.step(by);
             return;
         }
@@ -1496,7 +1495,7 @@ impl Session {
         // 「列着几页」就换了一个数。收在这一处是因为那个数要那一卷的报告，而状态机读不到
         // 那一趟——与底下把树拼出来、把光标带到正在处理那一卷同一条分工。
         self.settle_the_pages(live);
-        if !live.surveying() && !self.views.task.surveyed {
+        if live.surveyed() && !self.views.task.surveyed {
             self.views.task.tree = tree::Tree::of(
                 &self.scope.paths,
                 live.roster(),
@@ -1914,6 +1913,7 @@ impl Session {
         self.views.config.picker = false;
         self.views.config.pane = Pane::Settings;
         self.views.config.armed_delete = None;
+        self.views.config.armed_save = None;
     }
 
     /// 预设栏上 `⏎`／`l`：**套用光标停着的那一份**；停在末行那一件上时经输入行起名。
@@ -2130,7 +2130,14 @@ impl Session {
                 );
             }
             (View::Config, Focus::Picker) => {
-                wants.push(Want::of(Deed::UsePreset));
+                wants.push(Want::saying(
+                    Deed::UsePreset,
+                    if self.views.config.picked().is_some() {
+                        "使用"
+                    } else {
+                        "保存为预设"
+                    },
+                ));
                 // **`dd` 只在光标停在一份预设上时摆**：末行「＋ 把当前设置保存为预设」不是一份
                 // 预设，按下去一件事都不做（[`Session::ask_then_erase`]）——屏上不摆按不动的键，
                 // 与卷列表上的 [`Session::open_want`] 同一条形状。
@@ -3382,7 +3389,7 @@ mod tests {
         assert!(session.views.config.picked().is_none(), "光标真在末行上");
         assert_eq!(
             spelt(&session),
-            ["⏎ → 使用", "p → 返回", "j/k → 选择", "? → 全部按键"]
+            ["⏎ → 保存为预设", "p → 返回", "j/k → 选择", "? → 全部按键"]
         );
     }
 
