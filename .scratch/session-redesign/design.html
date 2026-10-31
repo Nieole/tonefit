@@ -1211,7 +1211,8 @@ function cols(iw) {
 const SKIPPED = '跳过 之前转换过：工具版本、设备配置、选项和源文件都没变，上次的输出还在，这一卷一页都没重做';   // render::SKIPPED
 // 隔离目录里这一卷的去处（假数据），照库的镜像规则（discover::mirrored）：基准点是处理路径的父目录，
 // 处理路径自己的名字因此恒出现在去处里；隔离只在输出目录底下插一级 `_isolated`
-const isolatedOutput = (v) => `${S.outRoot}/_isolated${v.root.slice(v.named.lastIndexOf('/'))}`;
+const volumeOutput = (v, isolated = false) => `${S.outRoot}${isolated ? '/_isolated' : ''}${v.root.slice(v.named.lastIndexOf('/'))}`;
+const isolatedOutput = (v) => volumeOutput(v, true);
 const isolatedRow = (v, failed) => `隔离 ${failed} 页读不出：这一卷整卷写到隔离目录 ${isolatedOutput(v)}，读不出的页用空白页占位，页码顺序不变`; // render::isolated_row
 const isolatedNote = (count) => `隔离 ${count} 卷`;                                                                     // render::isolated_note（目录那一行）
 // 一卷为什么一页都没判，压成灰阶分布那一列摆得下的一个词（render::why_nothing_judged），连同它的语义色：没做成是出事，跳过是不要紧

@@ -84,6 +84,7 @@
     "volumes": [
       {
         "root": "~/下载/虫师/第04卷.rar",
+        "output": "~/转好的/第04卷.rar",
         "state": "done",
         "pass": 4,
         "done": 189,

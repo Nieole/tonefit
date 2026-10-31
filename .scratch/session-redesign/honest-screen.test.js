@@ -112,3 +112,20 @@ test('剩余时间只用完成整步，2% 边界开始报数', async () => {
     }
   } finally { page.dom.window.close(); }
 });
+
+
+test('每一卷导出干净去处，与隔离去处共享镜像布局', async () => {
+  const { sceneData } = require('./export');
+  const page = await load();
+  try {
+    page.chip('running');
+    const data = sceneData(page);
+    assert.ok(data.run.volumes.length > 0);
+    for (const volume of data.run.volumes) {
+      const named = data.paths.filter((p) => p.checked && (volume.root === p.path || volume.root.startsWith(p.path + '/'))).sort((a,b) => a.path.length - b.path.length)[0];
+      const inside = volume.root.slice(named.path.lastIndexOf('/'));
+      assert.equal(volume.output, data.output + inside);
+      if (volume.isolated_output) assert.equal(volume.isolated_output, data.output + '/_isolated' + inside);
+    }
+  } finally { page.dom.window.close(); }
+});

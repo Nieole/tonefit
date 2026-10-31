@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 设计稿导出干净去处，`npm run export` 重导，`npm run check` 绿；夹具照读、不再自己算
-- [ ] 干净的卷与隔离的卷，去处是同一副结构（一条用例核对）
-- [ ] 场景夹具每一处取值认不出就报错；走遍全部场景数据那一条绿；往一份数据里写一个认不出的取值它红（试完还原，数据一个字节不留）
+- [x] 设计稿导出干净去处，`npm run export` 重导，`npm run check` 绿；夹具照读、不再自己算
+- [x] 干净的卷与隔离的卷，去处是同一副结构（一条用例核对）
+- [x] 场景夹具每一处取值认不出就报错；走遍全部场景数据那一条绿；往一份数据里写一个认不出的取值它红（试完还原，数据一个字节不留）
 - [ ] `cargo xtask gate` 三条全绿；票据的《数》记下三条各自最后一行
 
 ## 不做会怎样
@@ -51,3 +51,37 @@
 - **Recommend:** ③。`scene.rs` 是本轮的冲突热点，本票改得越窄越好；那几格今天都对得上，晚收一张票不丢东西。
 - **Whose call:** 协调人
 - **处置：** 拷问定案（2026-10-02，`/grill-with-docs`）→ `honest-screen`，待 `/to-spec`／`/to-tickets`：场景夹具里每一处 `_ =>` 都改成认不出就报错，一条用例扫遍全部场景数据。
+
+
+## 落地记录
+
+- 工作树 `/tmp/tonefit-honest-screen/11`，分支 `hs-11`，起点/当前 HEAD `b810feb30c54bc8c21ddd3d4504aa62222a5b98f`；全部未提交。仅本票。
+- 先改设计稿：`design.html` 的 `volumeOutput(v, isolated)` 同一算法给两个去处；`render.js` 暴露它；`export.js` 每卷导出 `output`，仍只在实际隔离时导出 `isolated_output`。没有另造屏、没有手改导出物。新增一条 JS 接缝测试。
+- `src/session/scene.rs` 删除 `output_of`，包括幂等命中在内的干净去处直接读导出的 `output`；隔离读 `isolated_output`。原隔离布局扫描扩到全部干净去处且保留隔离非空断言。新增真实 `tonefit::run` 接缝：从导出数据选含隔离去处的目录卷，在全新临时盘各跑一次干净/含坏页，比较报告及盘上目录，不依赖夹具镜像计算。测试显式关闭抖动以隔离布局与几何互锁。
+- 视图、光标、输入种类、覆盖层、配置栏/光标/屏幕规格逐支识别，显式未知值报错。配置预设读取不再 `.ok()` 吞错；动态 JSON 的布尔/序号/字符串不再靠类型转换失败落默认档。合法 `null`（没跑、无输入/覆盖层/下钻/结局/判定）照旧。解析还验证所有卷状态、模式/阶段/结局/停止级别、路径种类、灰阶分布候选、逐页候选/理由/种类、设置和预设，含未显示的页。
+- 新增全部场景、全部序列末态与 `advanced` 中间态的实际夹具扫描；负变异覆盖各类 session 取值、run/page/清单取值、设置枚举。`src/specs/session.md` 写明去处与严格解析契约。
+- 成本：新增 Rust 接缝/守卫测试 4 条、JS 测试 1 条；无新增依赖。导出差分审计 `/tmp/hs-11-export-diff-audit.log`：48 份 JSON 仅新增卷 `output`，所有字/样式网格、黄金快照、`.gitattributes`、依赖文件不变。完整改动路径清单 `/tmp/hs-11-changed-paths.txt`。
+
+### Red → green 与反转证据
+
+1. JS 先红：`node --test --test-name-pattern='每一卷导出' honest-screen.test.js`，`output` 为 undefined，期望 `~/转好的/漫画库/哆啦A梦/第01卷`（`/tmp/hs-11-design-red.log`）。首次缺依赖后仅在本树 `npm ci`（`/tmp/hs-11-npm-ci.log`），再获得该行为红。
+2. Rust 先红：`cargo test --bin tonefit unknown_session_variants -- --nocapture`，`/view silently accepted`（`/tmp/hs-11-rust-red.log`）。严格分派后绿。
+3. 真数据变异：把 `sequences/fresh-dd.scene.json` 的 view 写成未知拼写，全部数据扫描 exit 101（`/tmp/hs-11-data-mutation-red.log`）；finally 原字节恢复，SHA256 前后均 `284dcaba8a3d85079af5ebd1558e0a11349e24ce9b18739a1f12164ab2dddb71`（`/tmp/hs-11-mutation-restore.log`）。
+4. 布局守卫按反：把 `scenes/running.json` 对应卷的干净输出删掉 `/漫画库`，真实库接缝 exit 101，实际库输出仍含 `/漫画库`（`/tmp/hs-11-layout-mutation-red.log`）；finally 原字节恢复，SHA256 前后均 `ca5f2467c7af0a8a562bc9938a1631816b6b4df2cc9307c87f6a29f1ca3dae3c`（`/tmp/hs-11-layout-restore.log`）。
+5. 还原后 `npm run check` 再核逐字节一致（`/tmp/hs-11-check-final.log`）。没有为绿削弱任何现有断言；本票不改屏上措辞，无需新增假话禁词断言。
+
+## 数
+
+所有 Cargo 命令均用 `CARGO_INCREMENTAL=0 RUSTC_WORKSPACE_WRAPPER=/tmp/hs-11-rustc-workspace.sh python3 /tmp/tonefit-honest-screen-cargo.py cargo ...`，串行执行；wrapper 为本票 pass-through。
+
+- 设计先行：`.scratch/session-redesign` 下 `npm run export`、`npm run check`、`npm test` 绿，full npm **12 passed / 0 failed**。日志 `/tmp/hs-11-export.log`、`/tmp/hs-11-check.log`、`/tmp/hs-11-npm-test.log`。
+- `cargo test --bin tonefit session::scene::tests`：**13 passed / 0 failed**（`/tmp/hs-11-scene-green.log`）。
+- `cargo test --bin tonefit session::`：**345 passed / 0 failed / 1 ignored**（`/tmp/hs-11-session.log`）。
+- 分别运行 `cargo xtask gate 1`：**777 通过 / 1 失败；lib 255 / bin 503**。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.34s`（`/tmp/hs-11-gate1.log`）。
+- 分别运行 `cargo xtask gate 2`：**623 通过 / 1 失败；lib 255 / bin 349**。末行 `test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.75s`（`/tmp/hs-11-gate2.log`）。
+- 分别运行 `cargo xtask gate 3`：绿，末行 `Finished dev profile [unoptimized + debuginfo] target(s) in 0.13s`（`/tmp/hs-11-gate3.log`）。
+- `cargo xtask polish` 四项全绿；lib doc 既有 **15 warnings**；既有 deprecated `fetch_update` 与 no-default 的 `page_name` dead-code 告警保留（`/tmp/hs-11-polish.log`）。`git diff --check` 绿。
+
+### 留开的基线红
+
+验收最后一项不勾：闸门 1、2 均在已接受排除的 Q995 `tests/concurrency.rs::many_archive_volumes_never_hold_more_than_the_one_being_processed` 红（macOS 重命名检测 left 0 / right 96），闸门在那里停止，并非全套通过。本票交付已完成；不修、不 suppress、不弱化该基线用例。

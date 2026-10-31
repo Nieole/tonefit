@@ -459,7 +459,7 @@ const SEGMENT = { 摊开: 'extraction', 查重: 'fingerprint', 分析: 'first_pa
 /** 这一刻的场景数据（spec《导出》：语义字段，不是屏上的字）。 */
 function sceneData(page) {
   const { design, clock } = page;
-  const { S, CONFIG, PRESETS, PANELS, PASSES, SHOW, CWD, PRESETS_FILE, pagesOf, retainedOf, stepsOf, extracts, isolatedOutput, dirRoot } = design;
+  const { S, CONFIG, PRESETS, PANELS, PASSES, SHOW, CWD, PRESETS_FILE, pagesOf, retainedOf, stepsOf, extracts, volumeOutput, isolatedOutput, dirRoot } = design;
   const r = S.run;
   const cfgIndex = (i) => (CONFIG[i] && CONFIG[i].key) || null;
   const settings = settingsOf(CONFIG.filter((c) => c.key && c.kind !== 'info').map((c) => [c.key, c.value ?? null]));
@@ -527,7 +527,7 @@ function sceneData(page) {
     // （库 `VolumeReport::retained_pages`），页数 `page_count` 把它加回去（库 `VolumeReport::page_count`）
     volumes: r.tree.vols.map((v, i) => {
       const s = r.vs[i];
-      const out = { root: rootOf(v), state: s.state, pass: s.pass, done: num(s.done), elapsed_s: num(s.elapsed * SHOW), tally: s.tally ? s.tally.map(([k, n]) => [k, n]) : null };
+      const out = { root: rootOf(v), output: volumeOutput(v), state: s.state, pass: s.pass, done: num(s.done), elapsed_s: num(s.elapsed * SHOW), tally: s.tally ? s.tally.map(([k, n]) => [k, n]) : null };
       const took = PASSES.filter((p) => s.took[p] > 0);
       if (took.length) out.took_s = Object.fromEntries(took.map((p) => [SEGMENT[p], num(s.took[p] * SHOW)]));
       if (s.state === 'failed') out.failure = v.plan.volFail;
