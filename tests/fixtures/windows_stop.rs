@@ -27,15 +27,17 @@ fn helper() -> &'static Path {
                 let linker = std::env::var_os("CC_LD")
                     .or_else(|| {
                         std::env::var_os("VCToolsInstallDir").map(|root| {
-                            PathBuf::from(root).join("bin/Hostx64/x64/link.exe").into_os_string()
+                            PathBuf::from(root)
+                                .join("bin/Hostx64/x64/link.exe")
+                                .into_os_string()
                         })
                     })
                     .expect("native MSVC linker: initialize VCToolsInstallDir or CC_LD");
-                command.arg("-C").arg(format!("linker={}", linker.to_string_lossy()));
+                command
+                    .arg("-C")
+                    .arg(format!("linker={}", linker.to_string_lossy()));
             }
-            let result = command
-                .output()
-                .expect("compile test-only console owner");
+            let result = command.output().expect("compile test-only console owner");
             assert!(
                 result.status.success(),
                 "{}",

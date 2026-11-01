@@ -4224,10 +4224,12 @@ fn a_page_and_a_lodger_that_would_write_to_the_same_place_are_refused() {
     lodger.page("001.png", &fixtures::cheap_page());
 
     let error = fixtures::run_paths_expecting_failure(&space, [mixed.path()]).to_string();
+    // `volume("N和S/001.png")` 在 Windows 上拼出混合分隔符；报告印的是系统规整后的写法。
+    let lodger_shown: std::path::PathBuf = lodger.path().components().collect();
 
     assert!(error.contains(&format!("← {}", page.display())), "{error}");
     assert!(
-        error.contains(&format!("← {}", lodger.path().display())),
+        error.contains(&format!("← {}", lodger_shown.display())),
         "{error}"
     );
     let shared = space.out().join("N和S").join("001.png");
@@ -4258,8 +4260,9 @@ fn a_page_and_a_lodger_that_differ_only_in_case_collide_where_the_output_disk_fo
             .expect_err("撞同一个去处的页与卷该在开工前被拒")
             .to_string();
         assert!(error.contains(&format!("← {}", page.display())), "{error}");
+        let lodger_shown: std::path::PathBuf = lodger.path().components().collect();
         assert!(
-            error.contains(&format!("← {}", lodger.path().display())),
+            error.contains(&format!("← {}", lodger_shown.display())),
             "{error}"
         );
         assert!(!space.out().exists(), "拒之前已经动过输出目录");
