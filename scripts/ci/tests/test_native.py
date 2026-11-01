@@ -31,7 +31,7 @@ class NativeInputTests(unittest.TestCase):
         git = self.root / "Git/usr/bin"
         git.mkdir(parents=True)
         (git / "link.EXE").write_text("GNU coreutils", encoding="utf-8")
-        env = {"VCToolsInstallDir": str(self.root / "MSVC/14.current"), "PATH": str(git)}
+        env = {"VCTOOLSINSTALLDIR": str(self.root / "MSVC/14.current"), "Path": str(git)}
         def identify(args, **kwargs):
             self.assertEqual(Path(args[0]).parent, tools)
             banners = {"cl.exe": "Microsoft C/C++ for x64", "link.exe": "Microsoft Linker",
@@ -40,6 +40,7 @@ class NativeInputTests(unittest.TestCase):
         with patch.object(native.subprocess, "run", side_effect=identify):
             selected = native.msvc_environment(env)
         self.assertEqual(selected["PATH"].split(os.pathsep)[0], str(tools))
+        self.assertEqual(selected["PATH"].split(os.pathsep)[1], str(git))
         for key in ("CC_LD", "CXX_LD", "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"):
             self.assertEqual(selected[key], str(tools / "link.exe"))
         self.assertEqual(selected["CC"], str(tools / "cl.exe"))
@@ -59,7 +60,7 @@ class NativeInputTests(unittest.TestCase):
         tools.mkdir(parents=True)
         for name in ("cl", "link", "lib"):
             (tools / f"{name}.exe").touch()
-        env = {"VCToolsInstallDir": str(self.root / "Visual Studio"),
+        env = {"VCTOOLSINSTALLDIR": str(self.root / "Visual Studio"),
                "PATH": str(self.root / "Git/usr/bin")}
         work = (self.root / "build-work").resolve()
         exported = self.root / "github-env"
@@ -103,12 +104,36 @@ class NativeInputTests(unittest.TestCase):
 
     def test_linux_runtime_probe_rejects_shared_cpp_runtime(self):
         # Boundary counterexample on every host; the real Linux build runs the probe.
-        with patch.object(native, "run") as run, patch.object(native, "output_env", return_value=
-                " (NEEDED) Shared library: [libstdc++.so.6]"):
+        archive = self.root / "GNU runtime with spaces/libstdc++.a"
+        archive.parent.mkdir()
+        archive.write_bytes(b"static runtime")
+        bad = subprocess.CompletedProcess([], 1, "", "could not find native static library `stdc++`")
+        with patch.object(native, "run") as run, patch.object(native.subprocess, "run", return_value=bad), \
+                patch.object(native, "output_env", side_effect=[str(archive),
+                    " (NEEDED) Shared library: [libstdc++.so.6]"]):
             with self.assertRaisesRegex(ValueError, "unexpectedly requires dynamic libstdc"):
                 native.probe_linux_runtime(self.root, os.environ.copy())
         rustc = next(call for call in run.call_args_list if call.args[0] == "rustc")
+        self.assertIn("--crate-type=rlib", rustc.args)
+        self.assertIn(f"native={archive.resolve().parent}", rustc.args)
         self.assertEqual(rustc.args[-2:], ("-l", "static=stdc++"))
+
+    def test_linux_runtime_resolves_archive_before_probe_and_preserves_flag_paths(self):
+        archive = self.root / "GNU runtime with spaces/libstdc++.a"
+        archive.parent.mkdir()
+        archive.write_bytes(b"static runtime")
+        bad = subprocess.CompletedProcess([], 1, "", "could not find native static library `stdc++`")
+        with patch.object(native, "run") as run, patch.object(native.subprocess, "run", return_value=bad), \
+                patch.object(native, "output_env", side_effect=[str(archive), "libc.so.6", "GCC"]):
+            report = native.probe_linux_runtime(self.root, os.environ.copy())
+        self.assertEqual(report["archive_sha256"], hashlib.sha256(archive.read_bytes()).hexdigest())
+        encoded = "\x1f".join(report["flags"])
+        self.assertEqual(encoded.split("\x1f"), ["-L", f"native={archive.resolve().parent}", "-l", "static=stdc++"])
+        self.assertTrue(any("--extern" in call.args for call in run.call_args_list))
+        with patch.object(native, "run") as run, patch.object(native, "output_env", return_value="/missing/libstdc++.a"):
+            with self.assertRaisesRegex(ValueError, "did not locate"):
+                native.probe_linux_runtime(self.root / "missing", {})
+            run.assert_not_called()
 
     def archive(self, name, kind=tarfile.REGTYPE):
         archive = self.root / "input.tar.xz"

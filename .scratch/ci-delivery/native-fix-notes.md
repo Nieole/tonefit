@@ -87,3 +87,64 @@ Completion / retry-resume audit:
   jobs green. Windows actual MSVC builds/console tests and Linux true ELF probe,
   final closure and pristine pinned Ubuntu runtime smoke are not locally proven;
   Docker daemon remains unavailable. Synthetic/macOS results do not replace them.
+
+## Candidate 238f350 — observed CI run 41294275077 repair
+
+Observed errors (not inferred): `/tmp/ci-candidate-linux-failed.log` shows the
+binary-only native probe succeeded, then cfg-if/unicode-ident RLIB creation
+failed “could not find native static library stdc++, perhaps -L missing”.
+`/tmp/ci-candidate-windows-failed.log` shows the helper's copied uppercase
+VCTOOLSINSTALLDIR was missed, plus valid synthetic Unix archives failed the
+NTFS filesystem executable-bit check, masking five identity negative cases.
+
+Changes:
+- Resolve and SHA256 c++'s actual libstdc++.a before probing; export its parent
+  as explicit rustc native search path alongside the kind-only static flag via
+  CARGO_ENCODED_RUSTFLAGS (unit-separated arguments preserve spaces). Native
+  provenance retains argument array, archive/hash, and missing-L diagnostic.
+  The actual Linux CI probe now first requires the old missing-L RLIB compile
+  to fail with that precise diagnostic, then builds the upstream link-attribute
+  RLIB with explicit -L, links/runs its consumer and rejects dynamic libstdc++.
+  Final ELF allowlist, pristine pinned Ubuntu container smoke and GCC licensing
+  are unchanged and mandatory.
+- Normalize Windows copied environment keys before SDK lookup/build handoff;
+  regressions exercise uppercase SDK keys, mixed-case Path, Git shadowing and
+  unchanged exact Microsoft cl/link/lib file/banner identity checks.
+- safe_extract validates Unix executable TAR entry mode before writing on all
+  hosts. validate_tree additionally enforces filesystem mode on Unix, not NTFS.
+  Synthetic four-target release fixtures explicitly assign Unix TAR modes,
+  including rearchives used by identity/tamper tests. Bad 0644 executable TAR
+  is rejected before tree validation on every host. A modeled NTFS collect
+  positive control and normal four-target offline CLI both pass. No release.py
+  changes or archive-path/manifest/provenance/architecture relaxation; actual
+  Windows .exe ZIP packaging is unchanged.
+
+Verification (actual commands/logs under `/tmp/ci-candidate-fix-*`):
+- `PATH=/tmp/tonefit-rust198/bin:$PATH CARGO_INCREMENTAL=0
+  TONEFIT_CARGO_SERIALIZER=/tmp/tonefit-honest-screen-cargo.py python3 -m unittest
+  discover -s scripts/ci/tests -v`: all 46 pass, zero skipped, helper log.
+  Initial run exposed two test path expectations lacking macOS /private path
+  resolution; corrected expectations and reran green.
+- `python3 /tmp/ci-candidate-fix-negative-controls.py`: exit 0; in-memory old
+  case-sensitive lookup, missing -L flags and disabled TAR mode enforcement
+  each produce genuine expected-red targeted tests. No worktree rollback or
+  git index mutation used. Actual unsupported-modifier Rust metadata negative
+  and dynamic-libstdc++ boundary negatives also pass in the helper suite.
+- `python3 scripts/ci/package.py --target aarch64-apple-darwin --verify-archive
+  /tmp/ci-native-fix-dist/tonefit-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz
+  --sha256 1078318e0810cf40a88a419e265d1a06bc4842c9535424f9f67ba3e38d83b75d
+  --fixtures /tmp/ci-package-resume-fixtures --output
+  /tmp/ci-candidate-fix-arm-reverify`: exit 0, revalidated actual final bytes,
+  newly extracted executable, Mach-O closure/signature and all real conversions
+  after package semantics changed. Log and verification.json retained there.
+- actionlint and git diff --check exit 0; spec_validate valid. No workflow,
+  JS/config or Rust inputs changed: reuse prior actual 1.98 three gates/polish
+  and 13 Node 24 JS results above, not rerun or claimed as new results.
+- `docker info`: exit 1, daemon still unavailable. No actual Linux Rust RLIB
+  execution or Windows native tool execution claimed locally. Real runner must
+  establish missing-L red / explicit-L green, full Linux closure/container smoke,
+  actual Windows build/tests, and all four native jobs green on parent's push.
+  Existing run's macOS-in-progress status is not a final-tree CI result.
+
+All changes remain uncommitted. User .gitattributes edit preserved. No commit,
+index/history edits, push, tag, release, or concurrent code writers used.

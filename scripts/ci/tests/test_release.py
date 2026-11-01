@@ -10,8 +10,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import urllib.error
 import unittest
+from unittest.mock import patch
 import zipfile
 
 import yaml
@@ -305,9 +307,44 @@ class ReleaseTests(unittest.TestCase):
             binary.chmod(0o755)
             self.manifest(stage)
             source = directory / release.archive_name(target, VERSION)
-            release.package.archive(stage, source)
+            self.fixture_archive(stage, source)
             self.report(directory, target)
         return artifacts
+
+    def fixture_archive(self, stage, source, executable_mode=0o755):
+        # Synthetic Unix archives must encode Unix modes even when built on NTFS.
+        if source.suffix == ".zip":
+            release.package.archive(stage, source)
+        else:
+            def modes(member):
+                member.mode = executable_mode if member.name == stage.name + "/tonefit" else (0o755 if member.isdir() else 0o644)
+                return member
+            with release.package.tarfile.open(source, "w:gz") as out:
+                out.add(stage, arcname=stage.name, filter=modes)
+
+    def test_collect_checks_tar_modes_without_unix_filesystem_bits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = self.fixture(root)
+            # Model only package's host capability, without changing pathlib's OS.
+            with patch.object(release.package, "os", SimpleNamespace(name="nt")):
+                release.collect(artifacts, TAG, SHA, VERSION, root / "final")
+            self.assertEqual(len(list((root / "final").iterdir())), 5)
+
+    def test_collect_rejects_bad_unix_tar_executable_mode_on_every_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = self.fixture(root)
+            target = "x86_64-unknown-linux-gnu"
+            directory = artifacts / release.artifact_name(target, SHA)
+            source = directory / release.archive_name(target, VERSION)
+            self.fixture_archive(root / release.package.name(target, VERSION), source, 0o644)
+            self.report(directory, target)
+            # Model NTFS too: security must come from actual TAR entry metadata.
+            with patch.object(release.package, "validate_tree", side_effect=AssertionError("must reject before tree validation")):
+                with self.assertRaisesRegex(ValueError, "missing executable permission"):
+                    release.collect(artifacts, TAG, SHA, VERSION, root / "final")
+            self.assertFalse((root / "final").exists())
 
     def manifest(self, stage):
         (stage / "manifest.json").write_text(json.dumps({p.relative_to(stage).as_posix(): release.package.digest(p)
@@ -368,7 +405,7 @@ class ReleaseTests(unittest.TestCase):
                         (stage / "licenses/UnRAR.txt").unlink()
                     (stage / "provenance.json").write_text(json.dumps(provenance), encoding="utf-8")
                     self.manifest(stage)
-                    release.package.archive(stage, source)
+                    self.fixture_archive(stage, source)
                     self.report(directory, target)
                 with self.assertRaises((ValueError, FileNotFoundError, release.package.tarfile.ReadError)):
                     release.collect(artifacts, TAG, SHA, VERSION, root / "final")

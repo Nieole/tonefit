@@ -84,7 +84,8 @@ LINUX_RUSTFLAGS = "-l static=stdc++"
 
 def msvc_environment(env):
     """Never discover the MSVC compiler/linker through Git Bash's PATH."""
-    root = env.get("VCToolsInstallDir")
+    env = {key.upper(): value for key, value in env.items()}
+    root = env.get("VCTOOLSINSTALLDIR")
     if not root:
         raise ValueError("VCToolsInstallDir missing; initialize the x64 MSVC toolchain")
     tools = Path(root) / "bin/Hostx64/x64"
@@ -112,29 +113,44 @@ def probe_linux_runtime(work, env):
     C++ runtime symbols, not an empty executable that could discard the library.
     The final package audit/container smoke remains independently mandatory.
     """
+    # rustc bundles native archives while creating *every* RLIB, before the
+    # system linker can supply its own search paths. Resolve this input first.
+    archive = Path(output_env(["c++", "-print-file-name=libstdc++.a"], env)).resolve()
+    if not archive.is_file():
+        raise ValueError("C++ compiler did not locate the static GNU runtime")
+    archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+    flags = ["-L", f"native={archive.parent}", *LINUX_RUSTFLAGS.split()]
+    if any("\x1f" in flag or "\n" in flag or "\r" in flag for flag in flags):
+        raise ValueError("invalid native runtime search path")
     probe = work / "cpp-runtime-probe"
     probe.mkdir()
     (probe / "shim.cc").write_text(
         '#include <string>\nextern "C" int tonefit_cpp_probe() {\n'
         'std::string s(256, \'x\'); return int(s.size()); }\n', encoding="utf-8")
-    (probe / "main.rs").write_text(
+    (probe / "upstream.rs").write_text(
         '#[link(name="tonefit_cpp_shim", kind="static")]\n'
         '#[link(name="stdc++")]\nunsafe extern "C" { fn tonefit_cpp_probe() -> i32; }\n'
-        'fn main() { assert_eq!(unsafe { tonefit_cpp_probe() }, 256); }\n', encoding="utf-8")
+        'pub fn check() { assert_eq!(unsafe { tonefit_cpp_probe() }, 256); }\n', encoding="utf-8")
+    (probe / "main.rs").write_text('fn main() { upstream::check(); }\n', encoding="utf-8")
     run("c++", "-c", probe / "shim.cc", "-o", probe / "shim.o", env=env)
     run("ar", "crs", probe / "libtonefit_cpp_shim.a", probe / "shim.o", env=env)
-    run("rustc", probe / "main.rs", "-o", probe / "probe",
-        "-L", f"native={probe}", *LINUX_RUSTFLAGS.split(), env=env)
+    command = ["rustc", str(probe / "upstream.rs"), "--crate-type=rlib",
+               "-o", str(probe / "libupstream.rlib"), "-L", f"native={probe}"]
+    # This must fail on the real Linux runner: a binary-only probe hid CI238f350.
+    bad = subprocess.run(command + LINUX_RUSTFLAGS.split(), env=env,
+                         capture_output=True, text=True, encoding="utf-8")
+    if bad.returncode == 0 or "could not find native static library `stdc++`" not in bad.stderr:
+        raise ValueError("missing-search-path RLIB counterexample did not fail as expected: " + bad.stderr)
+    run(*command, *flags, env=env)
+    run("rustc", probe / "main.rs", "--extern", f"upstream={probe / 'libupstream.rlib'}",
+        "-o", probe / "probe", *flags, env=env)
     dynamic = output_env(["readelf", "-d", str(probe / "probe")], env)
     if "libstdc++" in dynamic:
         raise ValueError("C++ runtime probe unexpectedly requires dynamic libstdc++")
     run(probe / "probe", env=env)
-    archive = Path(output_env(["c++", "-print-file-name=libstdc++.a"], env)).resolve()
-    if not archive.is_file():
-        raise ValueError("C++ compiler did not locate the static GNU runtime")
-    return {"flags": LINUX_RUSTFLAGS, "elf_dynamic": dynamic,
+    return {"flags": flags, "elf_dynamic": dynamic, "missing_search_path_stderr": bad.stderr,
             "cxx": output_env(["c++", "--version"], env), "archive": str(archive),
-            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+            "archive_sha256": archive_sha256}
 
 
 def build(work, target, archive=None, github_env=None):
@@ -152,6 +168,8 @@ def build(work, target, archive=None, github_env=None):
     extract(source_archive, work)
     prefix = work / "install"
     env = os.environ.copy()
+    if host[0] == "Windows":
+        env = {key.upper(): value for key, value in env.items()}
     if host[0] == "Darwin":
         env["MACOSX_DEPLOYMENT_TARGET"] = "15.0"
     options = ["--buildtype=release", "--default-library=static", "--libdir=lib",
@@ -198,7 +216,7 @@ def build(work, target, archive=None, github_env=None):
     elif host[0] == "Linux":
         # unrar-ng-sys deliberately disables cc-rs's automatic C++ runtime link.
         provenance["cpp_runtime_probe"] = probe_linux_runtime(work, env)
-        exports["RUSTFLAGS"] = LINUX_RUSTFLAGS
+        exports["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(provenance["cpp_runtime_probe"]["flags"])
     else:
         exports.update(windows_tools)
         exports.update(CARGO_BUILD_TARGET=target,

@@ -42,11 +42,13 @@ Rust 1.98.0；Node 24.22.2 LTS；Cargo 解析锁定，设计验收用 npm ci。
 每次全新目录构建静态库，禁用绑定的内部网络构建，并通过安装后的 pkg-config 元数据定位。
 Meson/Ninja 固定版本；编译器、汇编器、pkg-config 等宿主工具版本、架构、runner image、
 源码哈希、构建参数和提交记入 provenance。工具链设置不含 target-cpu=native。
-Windows 使用 MSVC，Rust/C++/dav1d 统一静态 CRT；从已初始化工具链的 VCToolsInstallDir
+Windows 使用 MSVC，Rust/C++/dav1d 统一静态 CRT；环境键按 Windows 大小写不敏感语义归一化，从已初始化工具链的 VCToolsInstallDir
 选取并验证 Hostx64/x64 的 cl/link/lib，不经 Git Bash PATH 猜测，Meson 使用显式 native file，
 后续 Cargo/cc 使用绝对工具路径。Linux 显式链接 UnRAR 需要的 C++ 标准运行库：
 `-l static=stdc++` 只覆盖 kind，不覆盖源码 link attribute 的 modifiers；Cargo 构建前用真实 C++ 符号与
-同形 Rust attribute 编译、运行并检查 ELF 无动态 libstdc++，记录编译器、静态库路径与哈希。
+同形 Rust attribute 构建 RLIB、链接并运行其 consumer，检查 ELF 无动态 libstdc++。
+先解析并哈希 c++ 定位的 libstdc++.a，以显式 native 搜索目录及 kind-only flag 通过
+CARGO_ENCODED_RUSTFLAGS 保留带空格路径；缺搜索目录的 RLIB 反例必须失败。记录编译器、静态库路径与哈希。
 随包保留 GCC 运行库许可与例外；macOS 部署目标 15.0。
 这些构建设置不能代替最终归档的依赖审计与运行验证。
 
@@ -76,7 +78,8 @@ Cargo 应用版本、包名与程序 --version 一致；当前为 0.1.0-alpha.1�
 （若有）、dirty 状态、目标、Rust/native 版本、锁文件哈希及 runner/toolchain 资料。
 
 `package.py` 对最终归档先验 SHA256，再在新目录校验并解压：拒绝越界路径、别名、重复/大小写碰撞、
-链接、特殊文件与文件/目录冲突；检查清单哈希、必需许可、版本/目标来源、真实二进制架构与 Unix 执行位。
+链接、特殊文件与文件/目录冲突；Unix 执行位在实际 TAR entry 元数据边界强制检查（含 Windows 宿主），
+在 Unix 宿主额外检查解压后的文件系统执行位，不依赖 NTFS 表示 Unix mode；检查清单哈希、必需许可、版本/目标来源、真实二进制架构与 Unix 执行位。
 依赖审计采用拒绝未知项的系统库白名单，不从 System32 或 Homebrew 随意复制库：
 Linux ELF 全部 NEEDED 必须是基线系统库，无 RPATH/RUNPATH，GLIBC 符号最高 2.35；
 Windows PE 仅系统 DLL/core API sets，拒绝动态 CRT/未知 DLL；macOS 仅 /usr/lib、/System/Library，

@@ -236,6 +236,9 @@ def safe_extract(source, destination, expected_root):
                     or canonical in seen or any(p.endswith((".", " ")) for p in path.parts)
                     or raw.rstrip("/") != path.as_posix()):
                 raise ValueError(f"unsafe archive member: {raw}")
+            # TAR metadata, unlike NTFS st_mode, is authoritative on every host.
+            if not zipped and path == PurePosixPath(expected_root, "tonefit") and not directory:
+                validate_mode("unix", mode)
             for prefix in [path, *path.parents]:
                 key = unicodedata.normalize("NFC", prefix.as_posix()).casefold()
                 if key in prefixes and prefixes[key] != prefix.as_posix():
@@ -283,7 +286,10 @@ def validate_tree(stage, target, ver):
         raise ValueError("missing dependency license")
     binary = stage / ("tonefit.exe" if "windows" in target else "tonefit")
     architecture(binary, target)
-    validate_mode(target, binary.stat().st_mode)
+    # NTFS cannot represent Unix execution bits; safe_extract checks TAR modes
+    # before writing. Keep the independent filesystem check on Unix hosts.
+    if os.name != "nt":
+        validate_mode(target, binary.stat().st_mode)
     return binary
 
 
