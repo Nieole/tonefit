@@ -208,9 +208,17 @@ fn main() {
         checked(SetStdHandle(-11_i32 as u32, stdout), "restore stdout pipe");
         checked(SetStdHandle(-12_i32 as u32, stderr), "restore stderr");
         checked(
+            SetConsoleCtrlHandler(None, 0),
+            "clear inherited CTRL_C ignore flag",
+        );
+        checked(
             SetConsoleCtrlHandler(Some(keep_owner_alive), 1),
             "owner handler",
         );
+        // A CI host may hand us a process whose CTRL_C ignore flag is already
+        // set. AllocConsole does not clear it, and the child would inherit it,
+        // silently dropping every generated event. Clear it first (above).
+        // SAFETY: the child is spawned below, after the flag is cleared.
     }
     // CLI argument prefix: binary --out PATH --profile NAME --envelope INPUTS...
     let mut gates: Vec<_> = if survey {

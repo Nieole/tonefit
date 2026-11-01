@@ -149,6 +149,18 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate_helper(broken)
 
+        console = (ROOT / "tests/fixtures/windows_stop_console.rs").read_text(encoding="utf-8")
+
+        def validate_console(source):
+            clear = "SetConsoleCtrlHandler(None, 0)"
+            assert clear in source
+            assert source.index(clear) < source.index("Command::new(&args[2])")
+        validate_console(console)
+        for broken in [console.replace("SetConsoleCtrlHandler(None, 0)", "SetConsoleCtrlHandler(None, 1)"),
+                       console.replace("SetConsoleCtrlHandler(None, 0)", "")]:
+            with self.assertRaises(AssertionError):
+                validate_console(broken)
+
     def test_helpers_never_decode_utf8_using_the_host_locale(self):
         # Include tests: the first Windows CI failed reading Chinese Rust comments
         # before native compilation. Also guard future JSON/tool-output call sites.
