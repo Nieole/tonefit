@@ -161,6 +161,23 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate_console(broken)
 
+    def test_helpers_never_print_tool_output_through_the_host_console_codec(self):
+        # The first Windows package smoke built and ran the binary fine, then
+        # failed echoing its Chinese report through cp1252 `print`.
+        def offenders(tree):
+            found = []
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id == "print"):
+                    for arg in node.args:
+                        if isinstance(arg, ast.Attribute) and arg.attr in {"stdout", "stderr"}:
+                            found.append(node.lineno)
+            return found
+        for path in (ROOT / "scripts/ci").glob("*.py"):
+            with self.subTest(path=path):
+                self.assertEqual(offenders(ast.parse(path.read_text(encoding="utf-8"))), [])
+        self.assertTrue(offenders(ast.parse("print(result.stdout, result.stderr)")))
+
     def test_helpers_never_decode_utf8_using_the_host_locale(self):
         # Include tests: the first Windows CI failed reading Chinese Rust comments
         # before native compilation. Also guard future JSON/tool-output call sites.

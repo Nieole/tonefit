@@ -298,6 +298,14 @@ def validate_mode(target, mode):
         raise ValueError("missing executable permission")
 
 
+def show(*parts):
+    # Windows runners attach a cp1252 console; tonefit reports are Chinese.
+    # Write UTF-8 bytes so echoing a successful smoke can never fail the step.
+    text = " ".join(parts) + "\n"
+    sys.stdout.buffer.write(text.encode("utf-8", "backslashreplace"))
+    sys.stdout.buffer.flush()
+
+
 def smoke(binary, fixtures, work, target, ver):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("DYLD_", "LD_", "PKG_CONFIG", "SYSTEM_DEPS"))}
     env["PATH"] = os.pathsep.join([str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32")]) if "windows" in target else "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -318,7 +326,7 @@ def smoke(binary, fixtures, work, target, ver):
         for args in commands:
             result = subprocess.run([str(binary), *args], check=True, env=env, cwd=work,
                                     capture_output=True, text=True, encoding="utf-8")
-            print(result.stdout, result.stderr)
+            show(result.stdout, result.stderr)
             if args == ["--version"] and result.stdout.strip() != f"tonefit {ver}":
                 raise ValueError("wrong binary version")
             if args == ["--help"]:
