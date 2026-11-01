@@ -1,4 +1,5 @@
 """Fake process adapters prove orchestration only, never native Windows behavior."""
+import io
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -56,11 +57,22 @@ class PrefixProofTests(unittest.TestCase):
         hashes = (self.logs / "source-sha256.txt").read_text(encoding="utf-8").splitlines()
         self.assertEqual(hashes[0].split()[1], hashes[1].split()[1])
 
+    def test_rust198_thread_id_in_nocapture_panic_is_accepted(self):
+        # Rust 1.98's real harness includes a numeric thread id before "panicked".
+        text = output(proof.NEGATIVE, True).replace(
+            f"thread '{proof.NEGATIVE}' panicked",
+            f"thread '{proof.NEGATIVE}' (38523753) panicked")
+        self.bad = (101, text)
+        proof.prove(self.root, self.logs, self.run_fake)
+        self.assertEqual(self.source.read_bytes(), self.original)
+
     def test_wrong_failures_and_exceptions_restore_bytes_and_reject(self):
         for bad in [(101, "error: could not compile"), (1, "infrastructure failure"),
                     (0, output(proof.NEGATIVE)), (101, output(proof.POSITIVE, True)),
                     (101, output(proof.NEGATIVE, True).replace("0 passed; 1 failed", "0 passed; 2 failed")),
                     (101, output(proof.NEGATIVE, True).replace("0 ignored", "1 ignored")),
+                    (101, output(proof.NEGATIVE, True).replace(
+                        f"thread '{proof.NEGATIVE}'", "thread 'unrelated_test'")),
                     OSError("process launch failed")]:
             with self.subTest(bad=bad):
                 self.bad = bad
@@ -98,6 +110,12 @@ class PrefixProofTests(unittest.TestCase):
         with patch.object(proof.platform, "system", return_value="Darwin"):
             with self.assertRaisesRegex(RuntimeError, "actual native Windows"):
                 proof.verify_host(self.root, lambda *args: self.fail("must reject before Cargo"))
+
+    def test_show_never_encodes_cargo_text_with_the_console_codepage(self):
+        buffer = io.BytesIO()
+        with patch.object(proof.sys, "stdout", type("Console", (), {"buffer": buffer})()):
+            proof.show("库")
+        self.assertEqual(buffer.getvalue(), "库".encode("utf-8"))
 
     def test_actual_process_adapter_uses_utf8_and_colorless_output(self):
         with patch.object(proof.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "库")) as run:

@@ -18,14 +18,19 @@ NEGATIVE = "place::tests::windows_namespace_semantics_are_not_erased_by_prefix_e
 GUARD = b"if !safe_windows_name(name) {"
 MUTANT = b"if false && !safe_windows_name(name) {"
 
+def show(text):
+    """Print UTF-8 cargo output without the Windows console code page."""
+    sys.stdout.buffer.write(text.encode("utf-8", "backslashreplace"))
+    sys.stdout.buffer.flush()
+
 
 def execute(args, root):
     env = dict(os.environ, CARGO_TERM_COLOR="never")
     result = subprocess.run(args, cwd=root, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
-    print("+ " + " ".join(args), flush=True)
-    print(result.stdout, flush=True)
-    print(f"exit: {result.returncode}", flush=True)
+    show("+ " + " ".join(args) + "\n")
+    show(result.stdout + "\n")
+    show(f"exit: {result.returncode}\n")
     return result
 
 
@@ -61,8 +66,7 @@ def table(root, run, logs, label, name, mutant=False):
             or not re.search(rf"^test {re.escape(name)} \.\.\. {state}$", output, re.M)
             or not re.search(r"^running 1 test$", output, re.M)
             or not re.search(summary, output, re.M)
-            or mutant and (f"---- {name} stdout ----" not in output
-                           and f"thread '{name}' panicked at" not in output)):
+            or mutant and not re.search(rf"^thread '{re.escape(name)}'( \(\d+\))? panicked at", output, re.M)):
         raise RuntimeError(f"{label}: not the required actual table result (exit {result.returncode})")
 
 
@@ -73,7 +77,7 @@ def prove(root, logs, run=execute):
     source = root / "src/place.rs"
     original = source.read_bytes()
     before = hashlib.sha256(original).hexdigest()
-    print(f"source SHA256 before: {before}", flush=True)
+    show(f"source SHA256 before: {before}\n")
     if original.count(GUARD) != 1 or MUTANT in original:
         raise RuntimeError("raw eligibility guard changed: update the proof coupling")
     try:
