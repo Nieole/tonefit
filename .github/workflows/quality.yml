@@ -5,6 +5,12 @@ on:
   push:
     branches: ['**']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      commit:
+        description: Exact tagged commit to rebuild and verify
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +44,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ inputs.commit || github.sha }}
+          fetch-depth: 0
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.commit || github.sha }}
+        run: |
+          python -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}", os.environ["EXPECTED_SHA"])'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13.7'
@@ -110,11 +124,13 @@ jobs:
       - name: Upload verified package and audit
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tonefit-${{ matrix.target }}-${{ github.sha }}
+          name: tonefit-${{ matrix.target }}-${{ inputs.commit || github.sha }}
           path: dist/*
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+          # Full-run retries replace only this run's temporary package artifacts.
+          overwrite: true
 
   quality-success:
     name: All required quality checks

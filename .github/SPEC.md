@@ -50,8 +50,11 @@ C++ 标准运行库（静态 libstdc++，随包保留 GCC 运行库许可与例�
 
 默认 contents:read；checkout 不保留凭据；不使用 pull_request_target、写令牌或秘密运行 PR。
 Action 引用完整提交 SHA。当前不保存 Cargo/native 缓存，PR 构建不向将来受信发行注入输出。
-本模块不发布、不创建标签；后续发布扩展须保持同提交全绿屏障及独立的受信构建/发布权限边界。
+本模块不创建或移动标签。`release.yml` 仅响应 alpha/beta/rc 阶段标签，调用同树的
+`quality.yml` workflow_call，在该标签完整 SHA 上重新执行四平台全部验收及打包。
 PR/分支包仅为临时验收资产，不得提升为受信发行输入。批准的完整交付范围见 task-ci-delivery。
+阶段 job 在执行源码 helper 前，以无插值 shell 数据核对远端标签 commit 与新取 origin/main 祖先关系；
+只有 main 历史内代码进入发布权限边界。工作流及 main/标签写入者本身是受信配置边界；本次不修改仓库规则。
 
 ## 打包与最终字节验证
 
@@ -83,4 +86,45 @@ Ubuntu 22.04 容器执行，不安装构建/解码/Python 包；Windows/macOS �
 
 最终 SHA256SUMS 与 verification.json 随每目标包保存为 7 天 Actions artifact，upload-artifact 固定完整
 提交 SHA，无新增写权限。只在完整包审计/运行成功后上传；矩阵汇总也因此覆盖打包失败。
-校验和证明字节完整性，不证明发行者身份。发行发布属于下一阶段。
+校验和证明字节完整性，不证明发行者身份。完整工作流重跑可替换同一 run 的同名临时 artifact，
+不覆盖任何 Release 资产。workflow_call 必须给完整 SHA，checkout 后先断言 HEAD 相等；分支/PR 入口不变。
+
+## 阶段发布契约
+
+标签严格为 `v<major>.<minor>.<patch>-<alpha|beta|rc>.<正整数>`，无前导零、额外后缀或稳定标签，
+去掉 v 后必须等于该提交 Cargo 版本（当前 0.1.0-alpha.1）。轻量及附注标签均剥离至唯一 40 位 commit；
+fresh fetch 明确读取远端标签与 main，要求该 commit 是 main 祖先，不要求它恰好为 main tip。
+拒绝远端标签消失、移动、非 main 提交、dirty tracked checkout、错误版本或伪造 CI 上下文。
+不手动触发发布，不自动创建标签，也不在配置实施阶段创建实际 Release。
+
+同标签尝试由 concurrency 串行，禁止自动取消在运行的尝试。stage 成功后才能运行 reusable quality；
+publish 显式 needs stage 与 quality，二者必须 success，矩阵及 quality-success 的失败、取消、跳过均不能发布。
+默认 contents:read，仅 publish 得到 contents:write（及下载本 run artifact 所需 actions:read），
+GITHUB_TOKEN 仅来自该 job 的 CI 环境，无嵌入秘密。不存在提权的 fork/PR 入口。
+
+`release.py` 只从当前 release workflow 的 push run 下载四个精确 target/SHA 名的 artifact；
+拒绝缺失、多余、重复、过期、错误 run SHA/事件/工作流、传输 digest 不符及不安全 ZIP。
+每个 artifact 仅含一份预期 archive、自有 SHA256SUMS、verification.json，后两者必须与最终字节、目标及版本一致。
+发行 helper 不执行跨架构程序：复用 package.safe_extract/validate_tree 检查安全路径、架构/权限、许可与 manifest，
+再核对包内 commit、clean 状态、阶段标签、锁文件、静态 dav1d 来源及默认 TUI 特性；原生审计及真实运行由同 SHA 矩阵完成。
+对这四份最终归档只汇总生成一个全局 SHA256SUMS，不重建归档。
+
+先重查标签/main，以 publish 的写令牌分页枚举 `GET /releases` 的全部结果（包含可见草稿），
+严格要求同 tag 至多一个 Release；重复时拒绝，不能选其中一个。`GET /releases/tags/{tag}` 只返回已公开
+Release，不能以它的 404 判断没有草稿。仅在全表无同 tag 记录时为已存在的标签创建 draft prerelease。
+创建请求的 target_commitish 仅给 `refs/tags/<tag>`，不提供 SHA 或 main 退路；GitHub 文档明确该字段在
+标签已存在时不使用，因此不能要求响应或既有草稿的 target_commitish 等于此值，也不能用它证明标签 SHA。
+权威标签身份来自反复 fresh fetch 的实际远端 tag commit/main 祖先检查与包内 provenance。
+body 中绑定 repository/tag/full SHA 的版本化所有权标记，作者必须 github-actions[bot]。
+只恢复 tag、该标记、作者及 draft/prerelease 状态完全一致的本流水线草稿，已有资产必须逐字节相同；
+未知/手工草稿或任何已发布 Release 一律 fail closed，不删除、覆盖、替换或重定向。
+上传恰好四 archive 与一个 SHA256SUMS。分页枚举全体资产，要求名字/数量/ID/状态/大小均精确，
+并重新下载五份资产逐字节比较。最后重新读取草稿状态/所有权，fresh fetch 再核对远端标签与 main 祖先关系，
+才一次 PATCH 为 draft:false、prerelease:true。之前任何失败都不主动公开草稿；响应异常同样失败关闭。
+公开 PATCH 已送达后的网络断连存在不可消除的不确定性，重跑仍不覆盖已公开资产。
+
+离线入口：`python scripts/ci/release.py check --tag v0.1.0-alpha.1 --sha <40位SHA>
+--artifacts <四个artifact名目录的父目录> --output <不存在的新目录>`。
+它只验证静态输入并写五个最终文件，不访问 GitHub、不执行包内程序。外部边界测试使用公开 Git/REST adapter
+与本机 HTTP server，覆盖部分上传、草稿恢复、标签竞态、分页、损坏回读及已公开不可替换策略。
+本机测试不是真实四平台 CI 或真实发布证明；本轮配置变更后的全树远端验证与最终实际交付仍须另行完成。

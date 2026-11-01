@@ -1,0 +1,70 @@
+name: Stage release
+
+on:
+  push:
+    tags: ['v*-alpha.*', 'v*-beta.*', 'v*-rc.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.guard.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13.7'
+      - name: Validate existing stage tag and main ancestry
+        id: guard
+        env:
+          STAGE_TAG: ${{ github.ref_name }}
+          STAGE_SHA: ${{ github.sha }}
+        # Do not execute checked-out helper code until Git proves main ancestry.
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(alpha|beta|rc)\.[1-9][0-9]*", os.environ["STAGE_TAG"]); assert re.fullmatch("[0-9a-f]{40}", os.environ["STAGE_SHA"])'
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main "+refs/tags/$STAGE_TAG:refs/remotes/origin/release-candidate"
+          test "$(git rev-parse 'refs/remotes/origin/release-candidate^{commit}')" = "$STAGE_SHA"
+          git merge-base --is-ancestor "$STAGE_SHA" refs/remotes/origin/main
+          python scripts/ci/release.py stage --tag "$STAGE_TAG" --sha "$STAGE_SHA"
+
+  quality:
+    needs: [stage]
+    uses: ./.github/workflows/quality.yml
+    with:
+      commit: ${{ needs.stage.outputs.sha }}
+
+  publish:
+    needs: [stage, quality]
+    if: ${{ !cancelled() && needs.stage.result == 'success' && needs.quality.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.stage.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13.7'
+      - name: Verify current-run packages, draft, roundtrip, then publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGE_TAG: ${{ github.ref_name }}
+          STAGE_SHA: ${{ needs.stage.outputs.sha }}
+        run: python scripts/ci/release.py publish --tag "$STAGE_TAG" --sha "$STAGE_SHA"

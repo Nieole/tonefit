@@ -12,8 +12,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def validate(workflow):
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
+    assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch", "workflow_call"}
     assert workflow["on"]["push"]["branches"] == ["**"]
+    assert workflow["on"]["workflow_call"]["inputs"]["commit"]["required"] == "true"
     jobs = workflow["jobs"]
     assert set(jobs) == {"native-quality", "quality-success"}
     quality = jobs["native-quality"]
@@ -47,6 +48,10 @@ def validate(workflow):
                                         "Record native provenance"}:
                     assert "if" not in step
     steps = quality["steps"]
+    assert steps[0]["with"]["ref"] == "${{ inputs.commit || github.sha }}"
+    assert steps[0]["with"]["fetch-depth"] == "0"
+    assert steps[1]["env"]["EXPECTED_SHA"] == "${{ inputs.commit || github.sha }}"
+    assert 'git rev-parse HEAD' in steps[1]["run"]
     delivery = ["Three build gates", "Polish", "Design acceptance", "Release binary",
                 "Deterministic package fixtures", "Package, audit and extracted-archive smoke",
                 "Upload verified package and audit"]
@@ -58,6 +63,7 @@ def validate(workflow):
     assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["path"] == "dist/*"
+    assert upload["with"]["name"] == "tonefit-${{ matrix.target }}-${{ inputs.commit || github.sha }}"
     assert upload["with"]["retention-days"] == "7"
     commands = "\n".join(runs)
     for required in ["cargo run --locked --quiet --package xtask -- gate",
