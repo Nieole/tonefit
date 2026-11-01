@@ -474,6 +474,14 @@ class ReleaseTests(unittest.TestCase):
             api = Downloads()
             release.download_artifacts(api, "9", SHA, root / "downloaded")
             release.collect(root / "downloaded", TAG, SHA, VERSION, root / "final")
+            # A JSON metadata body must not pass as an artifact, even with a matching digest.
+            original = api.data[1]
+            api.data[1] = b'{"id": 1, "archive_download_url": "not an archive"}'
+            api.artifacts[0]["digest"] = "sha256:" + hashlib.sha256(api.data[1]).hexdigest()
+            with self.assertRaises(zipfile.BadZipFile):
+                release.download_artifacts(api, "9", SHA, root / "json-metadata")
+            api.data[1] = original
+            api.artifacts[0]["digest"] = "sha256:" + hashlib.sha256(original).hexdigest()
             api.data[1] += b"tampered"
             with self.assertRaisesRegex(ValueError, "transport digest"):
                 release.download_artifacts(api, "9", SHA, root / "bad-digest")
@@ -486,6 +494,39 @@ class ReleaseTests(unittest.TestCase):
                 api.artifacts[0]["digest"] = "sha256:" + hashlib.sha256(api.data[1]).hexdigest()
                 with tempfile.TemporaryDirectory() as bad, self.assertRaisesRegex(ValueError, "ZIP entries"):
                     release.download_artifacts(api, "9", SHA, Path(bad) / "download")
+
+    def test_real_download_endpoint_accept_headers(self):
+        calls = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                accept = self.headers.get("Accept")
+                calls.append((self.path, accept))
+                expected = ("application/octet-stream" if self.path == "/releases/assets/10"
+                            else "application/vnd.github+json")
+                status = 415 if accept != expected or self.path == "/unsupported" else 200
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(b'actual download bytes' if status == 200 else b'{"message":"Unsupported Accept"}')
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            api = release.API(REPO, "offline-test-token")
+            api.base = f"http://127.0.0.1:{server.server_port}"
+            for path, accept in [("/actions/artifacts/123/zip", "application/vnd.github+json"),
+                                 ("/releases/assets/10", "application/octet-stream")]:
+                with self.subTest(path=path):
+                    self.assertEqual(api.request("GET", path, binary=True), b"actual download bytes")
+                    self.assertEqual(calls[-1], (path, accept))
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                api.request("GET", "/unsupported", binary=True)
+            self.assertEqual(error.exception.code, 415)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_real_rest_transport_checks_status_json_bytes_and_credentials(self):
         calls = []

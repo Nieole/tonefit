@@ -96,6 +96,12 @@ jobs:
           --work "$RUNNER_TEMP/tonefit-native" --github-env "$GITHUB_ENV"
       - name: Record native provenance
         run: cat "$RUNNER_TEMP/tonefit-native/provenance.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Native Windows safe-prefix guard proof
+        if: runner.os == 'Windows'
+        run: python scripts/ci/windows_prefix_proof.py --logs "$RUNNER_TEMP/windows-prefix-proof"
+      - name: Native Windows stop preflight
+        if: runner.os == 'Windows'
+        run: cargo test --locked --test stop
       # Spell out the xtask alias so the dispatcher's own build is locked too.
       - name: Three build gates
         run: cargo run --locked --quiet --package xtask -- gate

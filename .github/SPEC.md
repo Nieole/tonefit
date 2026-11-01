@@ -35,6 +35,16 @@ Rust 1.98.0；Node 24.22.2 LTS；Cargo 解析锁定，设计验收用 npm ci。
 交付 Python 辅助程序与测试对已知 UTF-8 源码、JSON、说明和捕获的工具文本显式使用 UTF-8，
 不依赖 Windows 本地代码页；回归覆盖非 ASCII 路径、许可内容及工具输出。
 
+Windows 原生任务在静态原生环境建立后、三构建闸门之前运行安全前缀证明：
+`windows_prefix_proof.py` 核对真实 Windows x64 与 MSVC Rust/Cargo 1.98.0、干净 tracked 源码，
+按 exact 名字运行 `Place` 阳性／阴性表（各 1 passed）；临时只绕过 `src/place.rs` 的
+`if !safe_windows_name(name) {` 原串守卫，要求阴性表实际 panic、exit 101、0 passed / 1 failed。
+编译／基础设施错误或零测试不算红灯。finally 按原始字节恢复源码、核对 SHA256 与 tracked 干净状态，
+再跑两表各 1 passed；保留工具输出及恢复前后哈希日志。守卫／表名更名须同步证明脚本与 adapter 测试，
+不添加生产 test hook。随后 Windows 额外先跑 `cargo test --locked --test stop`，
+及早暴露控制台／oplock 故障；完整三闸门仍无条件在恢复后运行并重复全部既有测试，
+mutant 不进入打包。非 Windows 不运行这两项预检；本机 fake adapter 只证明编排与恢复，不证明 Windows 行为。
+
 ## 原生构建输入
 
 `native.py` 的固定 URL 与 SHA256 是 dav1d 源码字节的权威输入；版本 1.5.4 满足

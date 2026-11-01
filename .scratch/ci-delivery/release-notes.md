@@ -39,3 +39,59 @@ Direct docs-page fetching was blocked by the local resolver; the official GitHub
 These are local configuration/helper tests, not real four-platform execution or a GitHub release. Parent must run the final changed workflow tree remotely; any independent Quality run of 699aa67 does not certify this tree. Actual native build/audit/runtime provenance, current-run artifact digest/download behavior, GitHub draft/upload/list/download/PATCH responses, token permissions, and eventual published asset downloads remain unproved remotely. Do not publish until the approved final tree is on main and the tagged same-SHA full matrix passes.
 
 Workflow/main/tag writers are trusted configuration owners; no repository protection/settings were changed. There is no atomic Git-ref-plus-Release transaction in GitHub REST: the helper rechecks immediately before visibility, but cannot prevent a privileged concurrent ref mutation after that final check. A connection loss after GitHub accepts the visibility PATCH can leave outcome uncertain; subsequent attempts refuse published releases rather than replacing anything. Platform minimum-system/client/quarantine and external-material caveats remain those in package-notes.md. Known Node 20 Action-runtime warnings forced to Node 24 are not counted as native failures; existing fully pinned action SHAs were not churned.
+
+## Artifact Accept negotiation correction (before first tag)
+
+The parent observed a real read-only GitHub failure: `GET
+repos/Nieole/tonefit/actions/artifacts/13080274440/zip` with
+`Accept: application/octet-stream` returned HTTP 415 (Unsupported Accept; JSON
+required). The same `gh api --allow-escape-sequences` GET with
+`Accept: application/vnd.github+json` downloaded an actual ZIP whose SHA-256 was
+`6bffa57135d36356ce767fdb28f8c0ebeca50c35ba6f00d5d03a67ed8a21d1d1`, matching
+GitHub artifact metadata. This was a real helper bug, not a CLI-only problem:
+`API.request(binary=True)` previously selected octet-stream globally.
+
+- `scripts/ci/release.py`: binary response decoding is now independent of Accept
+  negotiation. Only binary GET `/releases/assets/<numeric-id>` selects
+  octet-stream; Actions artifact ZIP requests retain GitHub JSON Accept. No
+  status handling, digest/ZIP validation, redirect allowlist, or redirect
+  Authorization stripping was weakened; HTTP 415 still raises.
+- `scripts/ci/tests/test_release.py`: a real local HTTP server captures requests
+  from the actual API opener, requires JSON for Actions ZIP and octet-stream for
+  Release asset downloads, and checks that 415 is propagated. Existing digest,
+  unsafe ZIP, corrupt asset roundtrip, status and redirect tests remain green;
+  an additional assertion rejects a JSON metadata body even when its transport
+  digest matches.
+- TDD: old source failed the new endpoint-header test with HTTP 415 (20 release
+  tests, one error; `/tmp/artifact-accept-red.log`). Fixed source passed all
+  **55 helper tests**, including Windows proof tests (previous 54 + one new test;
+  `/tmp/artifact-accept-green.log`). Reversing only the header selection produced
+  the same failure (`/tmp/artifact-accept-reversal-red.log`); restoring the fix
+  passed **55/55** again (`/tmp/artifact-accept-restored-green.log`).
+- `actionlint` and `git diff --check`: exit 0
+  (`/tmp/artifact-accept-actionlint.log`, `/tmp/artifact-accept-diffcheck.log`).
+  Spec graph validation: valid, no issues. Existing spec contracts are unchanged.
+  This correction changes only Python/tests/these notes; no Rust or JS checks
+  were rerun, and earlier results are not newly claimed.
+
+Actual helper integration proof (not merely gh CLI): the fixed `API` instance
+used its real `SafeRedirect` opener to GET artifact metadata, run metadata, and
+that artifact ZIP from GitHub. Token acquisition was in memory via `gh auth token`, never printed or written
+to a token file. No POST/PATCH/DELETE, tag,
+Release creation, commit, push, or index mutation occurred. All requests used
+GitHub API plus its allowlisted HTTPS download redirect. The resulting ZIP
+passed CRC checks, had exactly these three entries, and matched both the
+expected SHA-256 above and the live artifact digest:
+
+- `SHA256SUMS`
+- `tonefit-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz`
+- `verification.json`
+
+Log: `/tmp/artifact-accept-live-readonly.log` (safe metadata only). Run
+`41295011993` has SHA `49fb856b5912802155dd81b22002de9526c0f7b6`, event `push`,
+and workflow `.github/workflows/quality.yml`. This proves the real artifact
+transport/header/redirect/digest boundary for that existing Quality artifact;
+it does **not** bypass or prove `download_artifacts`' current release-workflow
+run gate, four-platform collection, or real five-asset Release roundtrip.
+Those publication proofs remain gated on the approved same-SHA trusted release
+matrix and five-asset verification; no actual publication is claimed.

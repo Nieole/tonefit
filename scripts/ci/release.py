@@ -75,8 +75,11 @@ class API:
         self.opener = urllib.request.build_opener(SafeRedirect())
 
     def request(self, method, path, data=None, binary=False, upload=False):
+        # Raw response bytes do not imply octet-stream negotiation: Actions ZIP
+        # redirects require JSON Accept; only Release asset downloads use octet-stream.
+        asset_download = binary and method == "GET" and re.fullmatch(r"/releases/assets/[0-9]+", path)
         headers = {"Authorization": "Bearer " + self.token, "X-GitHub-Api-Version": "2022-11-28",
-                   "Accept": "application/octet-stream" if binary else "application/vnd.github+json"}
+                   "Accept": "application/octet-stream" if asset_download else "application/vnd.github+json"}
         if isinstance(data, dict):
             data = json.dumps(data).encode("utf-8")
             headers["Content-Type"] = "application/json"

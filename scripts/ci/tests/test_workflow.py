@@ -52,6 +52,20 @@ def validate(workflow):
     assert steps[0]["with"]["fetch-depth"] == "0"
     assert steps[1]["env"]["EXPECTED_SHA"] == "${{ inputs.commit || github.sha }}"
     assert 'git rev-parse HEAD' in steps[1]["run"]
+    proof_name = "Native Windows safe-prefix guard proof"
+    stop_name = "Native Windows stop preflight"
+    preflight = ["Static dav1d", "Record native provenance", proof_name, stop_name, "Three build gates"]
+    positions = [next(i for i, s in enumerate(steps) if s.get("name") == n) for n in preflight]
+    assert positions == sorted(positions)
+    for name, command in [
+        (proof_name, 'python scripts/ci/windows_prefix_proof.py --logs "$RUNNER_TEMP/windows-prefix-proof"'),
+        (stop_name, "cargo test --locked --test stop"),
+    ]:
+        selected = [s for s in steps if s.get("name") == name]
+        assert len(selected) == 1
+        assert selected[0]["if"] == "runner.os == 'Windows'"
+        assert selected[0]["run"] == command
+        assert "env" not in selected[0]
     delivery = ["Three build gates", "Polish", "Design acceptance", "Release binary",
                 "Deterministic package fixtures", "Package, audit and extracted-archive smoke",
                 "Upload verified package and audit"]
@@ -100,6 +114,24 @@ class WorkflowTests(unittest.TestCase):
             changed = copy.deepcopy(self.workflow)
             mutate(changed)
             with self.assertRaises((AssertionError, StopIteration)):
+                validate(changed)
+
+    def test_windows_proof_cannot_move_after_gates_or_be_weakened(self):
+        def step(w, name):
+            return next(s for s in w["jobs"]["native-quality"]["steps"] if s.get("name") == name)
+        for name in ["Native Windows safe-prefix guard proof", "Native Windows stop preflight"]:
+            for field, value in [("if", "always()"), ("run", "echo skipped"),
+                                 ("continue-on-error", "true"), ("env", {"RUSTUP_TOOLCHAIN": "stable"})]:
+                changed = copy.deepcopy(self.workflow)
+                step(changed, name)[field] = value
+                with self.assertRaises(AssertionError):
+                    validate(changed)
+            changed = copy.deepcopy(self.workflow)
+            steps = changed["jobs"]["native-quality"]["steps"]
+            selected = step(changed, name)
+            steps.remove(selected)
+            steps.append(selected)
+            with self.assertRaises(AssertionError):
                 validate(changed)
 
     def test_helpers_never_decode_utf8_using_the_host_locale(self):

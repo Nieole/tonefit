@@ -205,6 +205,9 @@ impl Place {
         } else {
             path.to_path_buf()
         };
+        // 先看原串：components 会吞掉部分特殊分量，之后再问安全与否就晚了。
+        #[cfg(windows)]
+        let path = safe_windows_prefix(&path).unwrap_or(path);
         Self(
             path.components()
                 .filter(|component| *component != Component::CurDir)
@@ -237,6 +240,83 @@ impl Place {
     pub(crate) fn below(&self, depth: usize) -> PathBuf {
         self.0[depth..].iter().collect()
     }
+}
+
+/// 只把安全的扩展盘符 / UNC 换成常规前缀。其余命名空间一律原样留着。
+/// 不问盘、不解析 `..` 或软链；规则与取舍见 ADR 0022。
+#[cfg(windows)]
+fn safe_windows_prefix(path: &Path) -> Option<PathBuf> {
+    use std::path::Prefix;
+
+    let Component::Prefix(prefix) = path.components().next()? else {
+        return None;
+    };
+    let text = path.to_str()?; // 包含未配对 surrogate 时宁可不合并。
+    let rest = text.strip_prefix(r"\\?\")?;
+    let (ordinary, names, minimum) = match prefix.kind() {
+        Prefix::VerbatimDisk(_) => {
+            let bytes = rest.as_bytes();
+            if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || &bytes[1..3] != b":\\" {
+                return None;
+            }
+            (rest.to_owned(), &rest[3..], 0)
+        }
+        Prefix::VerbatimUNC(_, _) => {
+            let names = rest.strip_prefix(r"UNC\")?;
+            (format!(r"\\{names}"), names, 2)
+        }
+        _ => return None,
+    };
+    if names.is_empty() {
+        return (minimum == 0).then(|| PathBuf::from(ordinary));
+    }
+    // 一个尾分隔符无害；重复分隔符、正斜线和特殊分量不作猜测。
+    let names = names.strip_suffix('\\').unwrap_or(names);
+    let mut count = 0;
+    for name in names.split('\\') {
+        if !safe_windows_name(name) {
+            return None;
+        }
+        count += 1;
+    }
+    (count >= minimum).then(|| PathBuf::from(ordinary))
+}
+
+/// Win32 常规分量与扩展分量解释一致的保守子集（含 UNC 的服务器与共享名）。
+#[cfg(windows)]
+fn safe_windows_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.ends_with(['.', ' '])
+        || name
+            .chars()
+            .any(|c| c <= '\u{1f}' || r#"<>:"/\|?*"#.contains(c))
+    {
+        return false;
+    }
+    // 保留设备名加扩展名仍是设备名；扩展名前的空格也不放行。
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return false;
+    }
+    for prefix in ["COM", "LPT"] {
+        if let Some(number) = stem.strip_prefix(prefix)
+            && matches!(
+                number,
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// 一个分量在 `case` 那一档上的样子。
@@ -400,6 +480,159 @@ mod tests {
         assert!(same(r"D:\库", r"d:\库", Insensitive));
         assert!(same(r"D:\库\作品", r"d:/库/作品/", Insensitive));
         assert!(!same(r"D:\库", r"d:\库", Sensitive));
+    }
+
+    /// 真正的 Windows Prefix 解析；不碰盘，也不借 canonicalize 改夹具。
+    #[cfg(windows)]
+    #[test]
+    fn safe_windows_prefixes_share_keys_without_changing_the_tree() {
+        let pairs = [
+            (r"C:\", r"\\?\C:\"),
+            (r"C:\库\作品", r"\\?\C:\库\作品"),
+            (r"C:\库\作品\", r"\\?\C:\库\作品\"),
+            (r"C:/库/作品", r"\\?\C:\库\作品"),
+            (
+                r"C:\.hidden\COM10\NULish.txt",
+                r"\\?\C:\.hidden\COM10\NULish.txt",
+            ),
+            (r"\\server\share", r"\\?\UNC\server\share"),
+            (r"\\server\share\库\作品", r"\\?\UNC\server\share\库\作品"),
+        ];
+        for (a, b) in pairs {
+            for (a, b) in [(a, b), (b, a)] {
+                for case in [Sensitive, Insensitive] {
+                    assert!(same(a, b, case), "{a} / {b}: {case:?}");
+                    let a = Place::of(Path::new(a), case);
+                    let b = Place::of(Path::new(b), case);
+                    assert_eq!(a, b);
+                    assert_eq!(a.depth(), b.depth());
+                    for depth in 1..=a.depth() {
+                        assert_eq!(a.ancestor(depth), b.ancestor(depth));
+                        assert_eq!(a.below(depth), b.below(depth));
+                    }
+                }
+            }
+        }
+        for (a, b) in [
+            (r"C:\Lib\作品", r"\\?\c:\lib\作品"),
+            (r"\\SERVER\Share\Lib", r"\\?\UNC\server\share\lib"),
+        ] {
+            for (a, b) in [(a, b), (b, a)] {
+                assert!(same(a, b, Insensitive));
+                assert!(!same(a, b, Sensitive));
+            }
+        }
+        // 嵌套收编与借住数的是同一批分量：前缀只换一格，不多出一级。
+        for (root, child) in [
+            (r"C:\库", r"\\?\C:\库\作品\第1话.cbz"),
+            (
+                r"\\server\share\库",
+                r"\\?\UNC\server\share\库\作品\第1话.cbz",
+            ),
+        ] {
+            for case in [Sensitive, Insensitive] {
+                let root = Place::of(Path::new(root), case);
+                let child = Place::of(Path::new(child), case);
+                assert_eq!(child.depth(), root.depth() + 2);
+                assert_eq!(child.ancestor(root.depth()), root);
+                assert_eq!(child.below(root.depth()), Path::new(r"作品\第1话.cbz"));
+                assert!(child.into_ancestors().any(|(_, ancestor)| ancestor == root));
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_namespace_semantics_are_not_erased_by_prefix_equivalence() {
+        let unsafe_names = [
+            "CON",
+            "con.txt",
+            "con .txt",
+            "NUL.tar.gz",
+            "PRN",
+            "AUX.png",
+            "NUL",
+            "COM0",
+            "COM1",
+            "com9.log",
+            "LPT0.txt",
+            "LPT1",
+            "LPT9.txt",
+            "COM¹",
+            "COM².txt",
+            "LPT³",
+            "CONIN$",
+            "conout$.txt",
+            "name.",
+            "name ",
+            ".",
+            "..",
+            r"库\.\作品",
+            r"库\..\作品",
+            "库/作品",
+            r"库\\作品",
+            "page:stream",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
+            "a\0b",
+            "a\u{1f}b",
+        ];
+        for name in unsafe_names {
+            for (ordinary, extended) in [
+                (format!(r"C:\{name}"), format!(r"\\?\C:\{name}")),
+                (
+                    format!(r"\\server\share\{name}"),
+                    format!(r"\\?\UNC\server\share\{name}"),
+                ),
+                (
+                    format!(r"\\{name}\share\库"),
+                    format!(r"\\?\UNC\{name}\share\库"),
+                ),
+                (
+                    format!(r"\\server\{name}\库"),
+                    format!(r"\\?\UNC\server\{name}\库"),
+                ),
+            ] {
+                for (a, b) in [(&ordinary, &extended), (&extended, &ordinary)] {
+                    for case in [Sensitive, Insensitive] {
+                        assert!(!same(a, b, case), "{a:?} / {b:?}: {case:?}");
+                        assert_ne!(Place::of(Path::new(a), case), Place::of(Path::new(b), case));
+                    }
+                }
+            }
+        }
+        for (a, b) in [
+            (r"C:\库", r"\\.\C:\库"),
+            (r"C:\库", r"\\?\GLOBALROOT\Device\HarddiskVolume1\库"),
+            (r"C:\库", r"\\?\Volume{1234}\库"),
+            (r"C:\库", r"\\?\C:库"),
+            (r"C:\", r"\\?\C:\\"),
+            (r"\\server\share", r"\\?\UNC\server\share\\"),
+            (r"C:\库\作品", r"\\?\C:\库/作品"),
+            (r"C:\库", r"\\?\C:\库\.."),
+            (r"C:\库", r"\\?\C:\库\."),
+        ] {
+            for (a, b) in [(a, b), (b, a)] {
+                for case in [Sensitive, Insensitive] {
+                    assert!(!same(a, b, case), "{a} / {b}: {case:?}");
+                }
+            }
+        }
+        // 不是 UTF-8 的 WTF-16 名字不作猜测，更不能用替换字符合并。
+        use std::os::windows::ffi::OsStringExt;
+        let ordinary = OsString::from_wide(&[67, 58, 92, 0xd800]);
+        let extended = OsString::from_wide(&[92, 92, 63, 92, 67, 58, 92, 0xd800]);
+        for case in [Sensitive, Insensitive] {
+            assert!(!same_place(
+                Path::new(&ordinary),
+                Path::new(&extended),
+                case
+            ));
+        }
     }
 
     /// **探不出时两侧取相反的一边**：源那一侧按认，输出那一侧按不认。
