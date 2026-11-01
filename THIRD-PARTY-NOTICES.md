@@ -45,3 +45,25 @@ tonefit 本体按 MIT 发布（见 `LICENSE`）。**随程序分发**而许可�
 >
 > 这也是 ADR 0015 与 0014 分成两篇的理由，以及 `.rar` 不取纯 Rust 实现的理由：
 > 一个从零写起的 rar 解码器要么就是那条禁止的事，要么许可说不清楚。
+
+## dav1d（便携构建）
+
+CI 便携包把 dav1d 静态编入程序；固定版本、来源与 SHA256 以 `scripts/ci/native.py` 为准。
+原生库的许可不是 Rust 包装层的 MIT：dav1d 是 BSD-2-Clause，x86inc 汇编另有 ISC。
+包内 `licenses/dav1d-BSD-2-Clause.txt` 与 `licenses/dav1d-x86-ISC.asm` 保留上游版权及完整条件，
+包括静态链接时的通知义务。
+
+## Rust 与 C++ 工具链（便携构建）
+
+发行包生成 `dependency-licenses.json`：从目标传递依赖与 release 编译产物识别实际编译包，
+保留各依赖及内嵌原生源码的许可/通知，不仅列 SPDX 名称。保守包含构建期依赖。
+Rust 标准库及其不出现在 Cargo 图里的第三方代码见包内
+`licenses/rust-stdlib/COPYRIGHT-library.html` 和配套 `licenses/`。
+
+Linux 静态 libstdc++ 带有 GCC 版权、GPLv3 与 GCC Runtime Library Exception，全文随包提供；
+运行库例外不把 tonefit 本体改成 GPL。Windows 的 Microsoft C++ STL 及 macOS libc++ 头文件代码
+采用 Apache-2.0 WITH LLVM-exception；完整条款随 Rust 标准库的许可材料提供。
+Microsoft STL copyright (c) Microsoft Corporation；libc++ copyright LLVM Project contributors。
+Windows MSVC 静态 CRT 的 Microsoft 代码仍归 Microsoft Corporation 所有，按构建工具的
+Visual Studio 可再分发代码条款链接分发，不适用 tonefit 的 MIT。
+系统动态库归各操作系统，不从开发机器随意复制，也不声称由 tonefit 重新许可。

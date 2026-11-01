@@ -1,4 +1,5 @@
 """Parse the actual workflow and pin its security/quality contract."""
+import ast
 import copy
 from pathlib import Path
 import re
@@ -28,7 +29,7 @@ def validate(workflow):
     assert quality["env"]["CARGO_INCREMENTAL"] == "0"
     runs = []
     for job in jobs.values():
-        assert 0 < int(job["timeout-minutes"]) <= 90
+        assert 0 < int(job["timeout-minutes"]) <= (180 if job is quality else 5)
         assert "permissions" not in job
         assert "continue-on-error" not in job
         for step in job["steps"]:
@@ -45,10 +46,26 @@ def validate(workflow):
                                         "Helper and workflow contract tests", "Static dav1d",
                                         "Record native provenance"}:
                     assert "if" not in step
+    steps = quality["steps"]
+    delivery = ["Three build gates", "Polish", "Design acceptance", "Release binary",
+                "Deterministic package fixtures", "Package, audit and extracted-archive smoke",
+                "Upload verified package and audit"]
+    indices = [next(i for i, s in enumerate(steps) if s.get("name") == n) for n in delivery]
+    assert indices == sorted(indices)
+    for i in indices:
+        assert "if" not in steps[i]
+    upload = steps[indices[-1]]
+    assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["path"] == "dist/*"
+    assert upload["with"]["retention-days"] == "7"
     commands = "\n".join(runs)
     for required in ["cargo run --locked --quiet --package xtask -- gate",
                      "cargo run --locked --quiet --package xtask -- polish", "npm ci", "npm run check",
-                     "npm test", "python -m unittest discover", "scripts/ci/native.py build"]:
+                     "npm test", "python -m unittest discover", "scripts/ci/native.py build",
+                     "cargo build --locked --release --target", "cargo test --locked --test package",
+                     "scripts/ci/package.py --target", "--fixtures", "--native-work", "--build-messages",
+                     "--message-format=json-render-diagnostics"]:
         assert required in commands
     guard = jobs["quality-success"]
     assert guard["needs"] == ["native-quality"]
@@ -60,7 +77,7 @@ def validate(workflow):
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         # BaseLoader deliberately keeps GitHub's `on` and boolean-like values as strings.
-        self.workflow = yaml.load((ROOT / ".github/workflows/quality.yml").read_text(), Loader=yaml.BaseLoader)
+        self.workflow = yaml.load((ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
     def test_actual_workflow_contract(self):
         validate(self.workflow)
@@ -71,14 +88,31 @@ class WorkflowTests(unittest.TestCase):
             lambda w: w["jobs"]["native-quality"]["strategy"].update({"fail-fast": "true"}),
             lambda w: w["jobs"]["quality-success"].update({"if": "success()"}),
             lambda w: w["jobs"]["native-quality"]["steps"][0].update({"uses": "actions/checkout@v4"}),
+            lambda w: w["jobs"]["native-quality"]["steps"][-1].update({"if": "always()"}),
+            lambda w: w["jobs"]["native-quality"]["steps"].pop(-2),
         ]:
             changed = copy.deepcopy(self.workflow)
             mutate(changed)
-            with self.assertRaises(AssertionError):
+            with self.assertRaises((AssertionError, StopIteration)):
                 validate(changed)
 
+    def test_helpers_never_decode_utf8_using_the_host_locale(self):
+        # Include tests: the first Windows CI failed reading Chinese Rust comments
+        # before native compilation. Also guard future JSON/tool-output call sites.
+        for path in (ROOT / "scripts/ci").rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for node in ast.walk(ast.parse(source)):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                keywords = {k.arg: k.value for k in node.keywords}
+                if (node.func.attr in {"read_text", "write_text"}
+                        or node.func.attr in {"run", "check_output"} and "text" in keywords):
+                    with self.subTest(path=path, line=node.lineno):
+                        self.assertIn("encoding", keywords)
+                        self.assertEqual(ast.literal_eval(keywords["encoding"]), "utf-8")
+
     def test_xtask_locks_all_dependency_resolving_steps(self):
-        source = (ROOT / "xtask/src/main.rs").read_text()
+        source = (ROOT / "xtask/src/main.rs").read_text(encoding="utf-8")
         arguments = re.findall(r'args: &\[(.*?)\]', source, flags=re.DOTALL)
         self.assertEqual(len(arguments), 7)
         for args in arguments:

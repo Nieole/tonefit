@@ -68,7 +68,7 @@ class NativeInputTests(unittest.TestCase):
         env = self.root / "github-env"
         result = subprocess.run([sys.executable, str(HELPER), "build", "--target", target,
                                  "--archive", str(archive), "--work", str(work),
-                                 "--github-env", str(env)], capture_output=True, text=True)
+                                 "--github-env", str(env)], capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA256 mismatch", result.stderr)
         self.assertFalse((work / native.ROOT).exists())
@@ -77,7 +77,7 @@ class NativeInputTests(unittest.TestCase):
     def test_cli_rejects_incorrect_native_target(self):
         target = next(t for t, h in native.TARGETS.items() if h[0] != native.platform.system())
         result = subprocess.run([sys.executable, str(HELPER), "host", "--target", target],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires", result.stderr)
 

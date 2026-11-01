@@ -296,13 +296,17 @@ fn parse(name: &str, text: &str, style: &str, fixtures: &Fixtures) -> Expected {
     }
 }
 
-/// 顶栏那一行：占位换成 crate 的版本，一格换一格。
+/// 顶栏版本占位代入真实版本；方括号整块保持右对齐。
 ///
-/// 版本号变宽了（`0.10.0`）整条顶栏都会挪一格，那时快照得重新导出——这里只当场说出来，
-/// 不替它挪。
-fn substitute_version(row: &mut [Painted], placeholder: &str) {
+/// 只消费左侧空白，不改快照、不遮掉任何字或样式；没有足够空白就明确失败。
+/// alpha/beta 后缀改变的是版本宽度，不是设计稿里的布局契约。
+fn substitute_version(row: &mut Vec<Painted>, placeholder: &str) {
+    substitute_version_with(row, placeholder, env!("CARGO_PKG_VERSION"));
+}
+
+fn substitute_version_with(row: &mut Vec<Painted>, placeholder: &str, version: &str) {
     let placeholder: Vec<char> = placeholder.chars().collect();
-    let version: Vec<char> = env!("CARGO_PKG_VERSION").chars().collect();
+    let version: Vec<char> = version.chars().collect();
     let Some(at) = row.windows(placeholder.len()).position(|window| {
         window
             .iter()
@@ -311,15 +315,33 @@ fn substitute_version(row: &mut [Painted], placeholder: &str) {
     }) else {
         return;
     };
-    assert_eq!(
-        version.len(),
-        placeholder.len(),
-        "crate 的版本 {} 与快照里的占位 {} 不等宽：顶栏整条挪了一格，快照要重新导出",
-        env!("CARGO_PKG_VERSION"),
-        placeholder.iter().collect::<String>()
-    );
-    for (glyph, c) in row[at..at + placeholder.len()].iter_mut().zip(&version) {
-        glyph.symbol = c.to_string();
+    let banner = row[..at]
+        .iter()
+        .rposition(|glyph| glyph.symbol == "[")
+        .expect("版本号必须在右对齐顶栏方括号内");
+    let template = row[at].clone();
+    let replacement = version.iter().map(|c| Painted {
+        symbol: c.to_string(),
+        ..template.clone()
+    });
+    row.splice(at..at + placeholder.len(), replacement);
+    if version.len() > placeholder.len() {
+        let growth = version.len() - placeholder.len();
+        assert!(
+            banner >= growth
+                && row[banner - growth..banner]
+                    .iter()
+                    .all(|glyph| glyph.symbol == " "),
+            "版本号变宽后顶栏左侧没有足够空白；需审视设计，不许遮掉内容"
+        );
+        row.drain(banner - growth..banner);
+    } else if version.len() < placeholder.len() {
+        let blank = row[banner - 1].clone();
+        assert_eq!(blank.symbol, " ", "顶栏左侧必须是空白");
+        row.splice(
+            banner..banner,
+            std::iter::repeat_n(blank, placeholder.len() - version.len()),
+        );
     }
 }
 
@@ -572,6 +594,45 @@ pub(in crate::session) fn assert_no_background(buffer: &Buffer) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prerelease_substitution_keeps_banner_right_anchored_and_compares_every_cell() {
+        let original = "tabs             [ tonefit #.#.# ] ";
+        let mut row: Vec<super::Painted> = original
+            .chars()
+            .map(|c| super::Painted {
+                symbol: c.to_string(),
+                fg: ratatui::style::Color::Cyan,
+                modifiers: ratatui::style::Modifier::BOLD,
+            })
+            .collect();
+        super::substitute_version_with(&mut row, "#.#.#", "0.1.0-alpha.1");
+        assert_eq!(
+            row.iter().map(|p| p.symbol.as_str()).collect::<String>(),
+            "tabs     [ tonefit 0.1.0-alpha.1 ] "
+        );
+        assert!(row.iter().all(|p| p.fg == ratatui::style::Color::Cyan
+            && p.modifiers == ratatui::style::Modifier::BOLD));
+        super::substitute_version_with(&mut row, "0.1.0-alpha.1", "0.1.0");
+        assert_eq!(
+            row.iter().map(|p| p.symbol.as_str()).collect::<String>(),
+            "tabs             [ tonefit 0.1.0 ] "
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "顶栏左侧没有足够空白")]
+    fn a_wider_version_cannot_eat_nonblank_content() {
+        let mut row: Vec<super::Painted> = "tabs [ tonefit #.#.# ]"
+            .chars()
+            .map(|c| super::Painted {
+                symbol: c.to_string(),
+                fg: ratatui::style::Color::Reset,
+                modifiers: ratatui::style::Modifier::empty(),
+            })
+            .collect();
+        super::substitute_version_with(&mut row, "#.#.#", "0.1.0-alpha.1");
+    }
+
     use super::*;
     use ratatui::layout::Rect;
     use ratatui::style::Style;

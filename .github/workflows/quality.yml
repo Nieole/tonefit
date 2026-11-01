@@ -14,7 +14,7 @@ jobs:
   native-quality:
     name: Quality (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +48,7 @@ jobs:
         run: python scripts/ci/native.py host --target '${{ matrix.target }}'
       - name: Install Rust
         run: |
-          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt,rust-docs
           rustc -vV
           cargo -V
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -93,6 +93,28 @@ jobs:
           npm ci
           npm run check
           npm test
+      - name: Release binary
+        run: cargo build --locked --release --target '${{ matrix.target }}' --message-format=json-render-diagnostics > "$RUNNER_TEMP/tonefit-release.json"
+      - name: Deterministic package fixtures
+        env:
+          TONEFIT_PACKAGE_FIXTURES: ${{ runner.temp }}/tonefit-package-fixtures
+        run: cargo test --locked --test package
+      - name: Package, audit and extracted-archive smoke
+        run: |
+          binary="target/${{ matrix.target }}/release/tonefit"
+          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
+          python scripts/ci/package.py --target '${{ matrix.target }}' \
+            --binary "$binary" --native-work "$RUNNER_TEMP/tonefit-native" \
+            --build-messages "$RUNNER_TEMP/tonefit-release.json" \
+            --fixtures "$RUNNER_TEMP/tonefit-package-fixtures" --output dist
+      - name: Upload verified package and audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tonefit-${{ matrix.target }}-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
   quality-success:
     name: All required quality checks

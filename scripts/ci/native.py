@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -64,7 +65,9 @@ def run(*args, **kwargs):
 
 
 def output(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT).strip()
+    if args[0] == "cargo" and os.environ.get("TONEFIT_CARGO_SERIALIZER"):
+        args = (sys.executable, os.environ["TONEFIT_CARGO_SERIALIZER"], *args)
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, encoding="utf-8").strip()
 
 
 def check_host(target):
@@ -111,7 +114,7 @@ def build(work, target, archive=None, github_env=None):
     versions = {tool: output(tool, "--version") for tool in ["meson", "ninja", "nasm", "pkg-config", "rustc", "cargo"]}
     # cl reports its version with a nonzero exit status when no source is supplied.
     compiler = subprocess.run(["cl"] if host[0] == "Windows" else ["cc", "--version"],
-                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
     versions["cc"] = compiler.stdout.strip()
     provenance = {"source_url": URL, "source_sha256": SHA256, "dav1d": VERSION,
                   "target": target, "host": host, "platform": platform.platform(),
@@ -124,14 +127,14 @@ def build(work, target, archive=None, github_env=None):
         exports["MACOSX_DEPLOYMENT_TARGET"] = "15.0"
     elif host[0] == "Linux":
         # unrar-ng-sys deliberately disables cc-rs's automatic C++ runtime link.
-        exports["RUSTFLAGS"] = "-l stdc++"
+        exports["RUSTFLAGS"] = "-l static:-bundle=stdc++"
     else:
         exports.update(CARGO_BUILD_TARGET=target,
                        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="-C target-feature=+crt-static")
     provenance["cargo_environment"] = exports
     provenance["compiler_environment"] = {key: env.get(key) for key in
                                            ["CC", "CXX", "CFLAGS", "CXXFLAGS", "MACOSX_DEPLOYMENT_TARGET"]}
-    (work / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    (work / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     if github_env:
         with open(github_env, "a", encoding="utf-8") as dst:
             for key, value in exports.items():
@@ -142,7 +145,7 @@ def build(work, target, archive=None, github_env=None):
 
 
 def output_env(args, env):
-    return subprocess.check_output(args, env=env, text=True).strip()
+    return subprocess.check_output(args, env=env, text=True, encoding="utf-8").strip()
 
 
 def main():
