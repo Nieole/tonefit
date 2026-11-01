@@ -196,6 +196,7 @@ class PackageTests(unittest.TestCase):
                                  (needed, "GLIBC_PRIVATE"),
                                  (needed + "\n (RELR) relocations", "GLIBC_2.35"),
                                  (needed + "\n (NEEDED) Shared library: [libdav1d.so.7]", "GLIBC_2.35"),
+                                 (needed + "\n (NEEDED) Shared library: [libstdc++.so.6]", "GLIBC_2.35"),
                                  (needed + "\n (RUNPATH) [/build/lib]", "GLIBC_2.35")]:
             with self.assertRaises(ValueError):
                 package.elf_audit(dynamic, symbols)

@@ -79,6 +79,64 @@ def check_host(target):
     return actual
 
 
+LINUX_RUSTFLAGS = "-l static=stdc++"
+
+
+def msvc_environment(env):
+    """Never discover the MSVC compiler/linker through Git Bash's PATH."""
+    root = env.get("VCToolsInstallDir")
+    if not root:
+        raise ValueError("VCToolsInstallDir missing; initialize the x64 MSVC toolchain")
+    tools = Path(root) / "bin/Hostx64/x64"
+    selected = {name: tools / f"{name}.exe" for name in ("cl", "link", "lib")}
+    for name, path in selected.items():
+        if not path.is_file():
+            raise ValueError(f"missing MSVC tool: {path}")
+        result = subprocess.run([str(path), "/?"], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+        banner = result.stdout + result.stderr
+        expected = {"cl": "C/C++", "link": "Linker", "lib": "Library Manager"}[name]
+        if "Microsoft" not in banner or expected not in banner:
+            raise ValueError(f"unrecognized MSVC {name}: {banner}")
+    return {"PATH": str(tools) + os.pathsep + env.get("PATH", ""),
+            "CC": str(selected["cl"]), "CXX": str(selected["cl"]),
+            "AR": str(selected["lib"]), "CC_LD": str(selected["link"]),
+            "CXX_LD": str(selected["link"]),
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER": str(selected["link"])}
+
+
+def probe_linux_runtime(work, env):
+    """Compile the upstream link-attribute shape and prove static C++ ELF closure.
+
+    A kind override is legal; a modifier override (-bundle) is not. Exercise real
+    C++ runtime symbols, not an empty executable that could discard the library.
+    The final package audit/container smoke remains independently mandatory.
+    """
+    probe = work / "cpp-runtime-probe"
+    probe.mkdir()
+    (probe / "shim.cc").write_text(
+        '#include <string>\nextern "C" int tonefit_cpp_probe() {\n'
+        'std::string s(256, \'x\'); return int(s.size()); }\n', encoding="utf-8")
+    (probe / "main.rs").write_text(
+        '#[link(name="tonefit_cpp_shim", kind="static")]\n'
+        '#[link(name="stdc++")]\nunsafe extern "C" { fn tonefit_cpp_probe() -> i32; }\n'
+        'fn main() { assert_eq!(unsafe { tonefit_cpp_probe() }, 256); }\n', encoding="utf-8")
+    run("c++", "-c", probe / "shim.cc", "-o", probe / "shim.o", env=env)
+    run("ar", "crs", probe / "libtonefit_cpp_shim.a", probe / "shim.o", env=env)
+    run("rustc", probe / "main.rs", "-o", probe / "probe",
+        "-L", f"native={probe}", *LINUX_RUSTFLAGS.split(), env=env)
+    dynamic = output_env(["readelf", "-d", str(probe / "probe")], env)
+    if "libstdc++" in dynamic:
+        raise ValueError("C++ runtime probe unexpectedly requires dynamic libstdc++")
+    run(probe / "probe", env=env)
+    archive = Path(output_env(["c++", "-print-file-name=libstdc++.a"], env)).resolve()
+    if not archive.is_file():
+        raise ValueError("C++ compiler did not locate the static GNU runtime")
+    return {"flags": LINUX_RUSTFLAGS, "elf_dynamic": dynamic,
+            "cxx": output_env(["c++", "--version"], env), "archive": str(archive),
+            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+
+
 def build(work, target, archive=None, github_env=None):
     host = check_host(target)
     work = Path(work).resolve()
@@ -100,7 +158,18 @@ def build(work, target, archive=None, github_env=None):
                f"--prefix={prefix}", "-Denable_tools=false", "-Denable_tests=false"]
     if host[0] == "Windows":
         options += ["-Db_vscrt=mt"]
-        env.update(CC="cl", CXX="cl")
+        windows_tools = msvc_environment(env)
+        env.update(windows_tools)
+        # A native file avoids shell splitting absolute tool paths containing spaces.
+        native_file = work / "msvc.ini"
+        binaries = {"c": env["CC"], "cpp": env["CXX"], "ar": env["AR"],
+                    "c_ld": env["CC_LD"], "cpp_ld": env["CXX_LD"]}
+        entries = ["[binaries]\n"]
+        for key, value in binaries.items():
+            quoted = value.replace("\\", "/").replace("'", "\\'")
+            entries.append(f"{key} = '{quoted}'\n")
+        native_file.write_text("".join(entries), encoding="utf-8")
+        options += [f"--native-file={native_file}"]
     run("meson", "setup", work / "build", work / ROOT, *options, env=env)
     run("meson", "compile", "-C", work / "build", env=env)
     run("meson", "install", "-C", work / "build", env=env)
@@ -113,7 +182,8 @@ def build(work, target, archive=None, github_env=None):
         raise ValueError("expected static dav1d only")
     versions = {tool: output(tool, "--version") for tool in ["meson", "ninja", "nasm", "pkg-config", "rustc", "cargo"]}
     # cl reports its version with a nonzero exit status when no source is supplied.
-    compiler = subprocess.run(["cl"] if host[0] == "Windows" else ["cc", "--version"],
+    compiler = subprocess.run([env["CC"]] if host[0] == "Windows" else ["cc", "--version"],
+                              env=env,
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
     versions["cc"] = compiler.stdout.strip()
     provenance = {"source_url": URL, "source_sha256": SHA256, "dav1d": VERSION,
@@ -127,8 +197,10 @@ def build(work, target, archive=None, github_env=None):
         exports["MACOSX_DEPLOYMENT_TARGET"] = "15.0"
     elif host[0] == "Linux":
         # unrar-ng-sys deliberately disables cc-rs's automatic C++ runtime link.
-        exports["RUSTFLAGS"] = "-l static:-bundle=stdc++"
+        provenance["cpp_runtime_probe"] = probe_linux_runtime(work, env)
+        exports["RUSTFLAGS"] = LINUX_RUSTFLAGS
     else:
+        exports.update(windows_tools)
         exports.update(CARGO_BUILD_TARGET=target,
                        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="-C target-feature=+crt-static")
     provenance["cargo_environment"] = exports

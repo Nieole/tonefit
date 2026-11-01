@@ -9,7 +9,7 @@
 tonefit 的做法是**逐页判**：解一遍页、算一个画质分，拿它与那块面板上盲测出来的界比，
 再决定这一页用几位、抖不抖动。画质分跟着面板走，不同面板之间不可比较。
 
-> **状态：0.1.0，仍在开发中。** 画质门槛出自一块面板上的真机盲测，尚未逐面板复核——
+> **状态：0.1.0-alpha.1，预发布开发阶段，非稳定版。** 画质门槛出自一块面板上的真机盲测，尚未逐面板复核——
 > 换一块面板时请拿 `calibrate` 自己标一遍。
 
 ## 它能做什么
@@ -28,11 +28,15 @@ tonefit 的做法是**逐页判**：解一遍页、算一个画质分，拿它�
 
 **源库只读。** tonefit 不移动、不改名、不删除任何源文件。
 
-## 构建
+## 下载
 
-```
-cargo build --release
-```
+普通用户请从 [GitHub Releases](https://github.com/Nieole/tonefit/releases) 获取阶段预发布。
+发布状态以 Release 页面为准，只下载已经公开且资产齐全的版本；下载选包、校验、解压与首次运行见
+[下载与运行](docs/delivery.md)。
+
+## 从源码构建
+
+先备齐下列依赖，再运行 `cargo build --release`。下载发行包不需要这些构建工具。
 
 需要：
 
@@ -40,6 +44,11 @@ cargo build --release
 |---|---|
 | **Rust** | 1.98 或更高（edition 2024） |
 | **C++ 工具链** | **必需**——`.rar` 的解码要编译 UnRAR 的 C++ 源码。Windows 上装了 MSVC 生成工具即可（`cc` 自己会找），Linux/macOS 上是 `g++` 或 `clang++`。约多花 40 秒，不必预装 libunrar |
+| **dav1d 与 pkg-config** | **必需**——AVIF 原生解码依赖 dav1d（>= 1.3），须能由 `pkg-config` 找到开发库与头文件，不随 `--no-default-features` 去掉 |
+
+依赖核验见 [闸门《跑得起来需要什么》](docs/agents/gate.md#跑得起来需要什么)；
+本机 dav1d 的查找与 Windows 用户级配置见 [.cargo/config.toml](.cargo/config.toml) 的《本机的 dav1d》，
+无需照搬 CI 的构建目录。
 
 可选特性：
 
