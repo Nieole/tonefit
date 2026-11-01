@@ -11,14 +11,29 @@ fn helper() -> &'static Path {
     BUILT
         .get_or_init(|| {
             let dir = tempfile::tempdir().expect("helper build directory");
-            let result = Command::new("rustc")
+            let mut command = Command::new("rustc");
+            command
                 .args(["--edition=2024", "--crate-name", "tonefit_stop_console"])
                 .arg(
                     Path::new(env!("CARGO_MANIFEST_DIR"))
                         .join("tests/fixtures/windows_stop_console.rs"),
                 )
                 .arg("-o")
-                .arg(dir.path().join("console.exe"))
+                .arg(dir.path().join("console.exe"));
+            // Git Bash puts its own GNU link ahead of MSVC on PATH. Pin the
+            // native linker exported by the CI native-toolchain step instead of
+            // letting rustc find `link.exe` by name.
+            if cfg!(windows) {
+                let linker = std::env::var_os("CC_LD")
+                    .or_else(|| {
+                        std::env::var_os("VCToolsInstallDir").map(|root| {
+                            PathBuf::from(root).join("bin/Hostx64/x64/link.exe").into_os_string()
+                        })
+                    })
+                    .expect("native MSVC linker: initialize VCToolsInstallDir or CC_LD");
+                command.arg("-C").arg(format!("linker={}", linker.to_string_lossy()));
+            }
+            let result = command
                 .output()
                 .expect("compile test-only console owner");
             assert!(

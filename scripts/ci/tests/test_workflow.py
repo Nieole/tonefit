@@ -134,6 +134,21 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate(changed)
 
+    def test_windows_stop_helper_pins_the_native_linker(self):
+        # Git Bash's GNU link.exe shadowed MSVC in the first real Windows stop
+        # run; the helper must name the linker exported by the native step.
+        def validate_helper(source):
+            assert "CC_LD" in source
+            assert '"linker=' in source
+            assert "VCToolsInstallDir" in source
+        source = (ROOT / "tests/fixtures/windows_stop.rs").read_text(encoding="utf-8")
+        validate_helper(source)
+        for broken in [source.replace("CC_LD", "PATH"),
+                       source.replace('"linker=', '"unused='),
+                       source.replace("VCToolsInstallDir", "PATH")]:
+            with self.assertRaises(AssertionError):
+                validate_helper(broken)
+
     def test_helpers_never_decode_utf8_using_the_host_locale(self):
         # Include tests: the first Windows CI failed reading Chinese Rust comments
         # before native compilation. Also guard future JSON/tool-output call sites.
