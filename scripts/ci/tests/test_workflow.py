@@ -136,16 +136,23 @@ class WorkflowTests(unittest.TestCase):
 
     def test_windows_stop_helper_pins_the_native_linker(self):
         # Git Bash's GNU link.exe shadowed MSVC in the first real Windows stop
-        # run; the helper must name the linker exported by the native step.
+        # run; the helper must name the linker exported by the native step,
+        # yet keep rustc's own MSVC discovery when nothing is exported.
         def validate_helper(source):
             assert "CC_LD" in source
             assert '"linker=' in source
             assert "VCToolsInstallDir" in source
+            assert "if let Some(linker) = pinned_linker(" in source
+            assert "assert_eq!(pinned_linker(env(&[])), None)" in source
+            assert "native MSVC linker" not in source
         source = (ROOT / "tests/fixtures/windows_stop.rs").read_text(encoding="utf-8")
         validate_helper(source)
         for broken in [source.replace("CC_LD", "PATH"),
                        source.replace('"linker=', '"unused='),
-                       source.replace("VCToolsInstallDir", "PATH")]:
+                       source.replace("VCToolsInstallDir", "PATH"),
+                       source.replace("if let Some(linker) = pinned_linker(", "let linker = pinned_linker("),
+                       source.replace("assert_eq!(pinned_linker(env(&[])), None)", ""),
+                       source + '\n// .expect("native MSVC linker")\n']:
             with self.assertRaises(AssertionError):
                 validate_helper(broken)
 

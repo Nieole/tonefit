@@ -1,4 +1,5 @@
 //! Host side of the isolated console protocol. No console API runs in libtest.
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -20,19 +21,7 @@ fn helper() -> &'static Path {
                 )
                 .arg("-o")
                 .arg(dir.path().join("console.exe"));
-            // Git Bash puts its own GNU link ahead of MSVC on PATH. Pin the
-            // native linker exported by the CI native-toolchain step instead of
-            // letting rustc find `link.exe` by name.
-            if cfg!(windows) {
-                let linker = std::env::var_os("CC_LD")
-                    .or_else(|| {
-                        std::env::var_os("VCToolsInstallDir").map(|root| {
-                            PathBuf::from(root)
-                                .join("bin/Hostx64/x64/link.exe")
-                                .into_os_string()
-                        })
-                    })
-                    .expect("native MSVC linker: initialize VCToolsInstallDir or CC_LD");
+            if let Some(linker) = pinned_linker(|name| std::env::var_os(name)) {
                 command
                     .arg("-C")
                     .arg(format!("linker={}", linker.to_string_lossy()));
@@ -46,6 +35,50 @@ fn helper() -> &'static Path {
             dir
         })
         .path()
+}
+
+/// The linker to pin for the helper build, if the environment names one.
+///
+/// Git Bash puts its own GNU `link` ahead of MSVC on PATH, so CI exports the
+/// native linker (`CC_LD`, or the `VCToolsInstallDir` of a developer prompt).
+/// With neither set, rustc keeps its own MSVC discovery, which finds an
+/// installed toolchain from a plain PowerShell.
+fn pinned_linker(var: impl Fn(&str) -> Option<OsString>) -> Option<OsString> {
+    var("CC_LD").or_else(|| {
+        var("VCToolsInstallDir").map(|root| {
+            PathBuf::from(root)
+                .join("bin/Hostx64/x64/link.exe")
+                .into_os_string()
+        })
+    })
+}
+
+#[test]
+fn the_helper_build_pins_only_a_linker_the_environment_names() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        }
+    };
+    assert_eq!(pinned_linker(env(&[])), None);
+    assert_eq!(
+        pinned_linker(env(&[("VCToolsInstallDir", r"C:\VC\")])),
+        Some(
+            PathBuf::from(r"C:\VC\")
+                .join("bin/Hostx64/x64/link.exe")
+                .into_os_string()
+        )
+    );
+    assert_eq!(
+        pinned_linker(env(&[
+            ("CC_LD", r"C:\VC\link.exe"),
+            ("VCToolsInstallDir", r"C:\Other\"),
+        ])),
+        Some(OsString::from(r"C:\VC\link.exe"))
+    );
 }
 
 pub struct Child {
