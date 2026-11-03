@@ -129,9 +129,10 @@ GITHUB_TOKEN 仅来自该 job 的 CI 环境，无嵌入秘密。不存在提权�
 先重查标签/main，以 publish 的写令牌分页枚举 `GET /releases` 的全部结果（包含可见草稿），
 严格要求同 tag 至多一个 Release；重复时拒绝，不能选其中一个。`GET /releases/tags/{tag}` 只返回已公开
 Release，不能以它的 404 判断没有草稿。仅在全表无同 tag 记录时为已存在的标签创建 draft prerelease。
-创建请求的 target_commitish 仅给 `refs/tags/<tag>`，不提供 SHA 或 main 退路；GitHub 文档明确该字段在
-标签已存在时不使用，因此不能要求响应或既有草稿的 target_commitish 等于此值，也不能用它证明标签 SHA。
-权威标签身份来自反复 fresh fetch 的实际远端 tag commit/main 祖先检查与包内 provenance。
+创建请求的 target_commitish 给 SHA（guard 刚验证的远端标签提交）：GitHub 仅认 SHA 或分支名（`refs/tags/<tag>`
+报 422 Validation Failed）；草稿不创建标签，而 PATCH 前 guard 会重新验证标签，如删除就停下。因此不能要求响应或
+既有草稿的 target_commitish 等于某值，
+也不能用它证明标签 SHA。权威标签身份来自反复 fresh fetch 的实际远端 tag commit/main 祖先检查与包内 provenance。
 body 中绑定 repository/tag/full SHA 的版本化所有权标记，作者必须 github-actions[bot]。
 只恢复 tag、该标记、作者及 draft/prerelease 状态完全一致的本流水线草稿，已有资产必须逐字节相同；
 未知/手工草稿或任何已发布 Release 一律 fail closed，不删除、覆盖、替换或重定向。

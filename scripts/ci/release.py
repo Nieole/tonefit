@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -91,9 +92,12 @@ class API:
             with self.opener.open(request, timeout=120) as response:
                 status, body = response.status, response.read()
         except urllib.error.HTTPError as error:
+            detail = error.read(4096).decode("utf-8", "replace")
             error.close()
             if error.code == 404 and method == "GET" and path.startswith("/releases/tags/"):
                 return None
+            # GitHub's validation body names the rejected field; keep it in the log.
+            print(f"GitHub {method} {path} -> HTTP {error.code}: {detail}", file=sys.stderr, flush=True)
             raise
         require(status == (201 if method == "POST" else 200), "unexpected REST status")
         return body if binary else json.loads(body)
@@ -222,9 +226,11 @@ def publish(api, git, files, tag, sha, version, repository):
     require(len(matches) <= 1, "duplicate tag releases: refusing replacement")
     release = matches[0] if matches else None
     if release is None:
-        # A SHA here would authorize GitHub to recreate a concurrently deleted tag.
-        # Resolve only the existing tag itself; absent tag => unresolvable commitish.
-        release = api.request("POST", "/releases", {"tag_name": tag, "target_commitish": "refs/tags/" + tag,
+        # GitHub rejects `refs/tags/<tag>` here (422: commit SHA or branch only).
+        # Name the SHA guard just verified for the remote tag: a draft creates no
+        # tag, and the pre-PATCH guard re-fetches the tag, so a deleted tag stops
+        # the release; at worst GitHub recreates it at this same verified commit.
+        release = api.request("POST", "/releases", {"tag_name": tag, "target_commitish": sha,
                               "name": tag, "body": marker, "draft": True, "prerelease": True})
     release_ok(release, tag, sha, marker)
     rid = release["id"]

@@ -1,10 +1,12 @@
 """Offline public-seam checks: untrusted archives, Git command adapter, REST adapter."""
+import contextlib
 import copy
 import http.server
 import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -79,6 +81,11 @@ class RestAdapter:
             page = int(path.rsplit("=", 1)[1])
             return copy.deepcopy(entries[(page - 1) * 100:page * 100])
         if method == "POST" and path == "/releases":
+            # Real GitHub: target_commitish takes a commit SHA or branch name;
+            # `refs/tags/<tag>` is a 422 Validation Failed (the first real stage run).
+            commitish = data.get("target_commitish", "")
+            if commitish.startswith("refs/") or not re.fullmatch(r"[0-9a-f]{40}", commitish):
+                raise urllib.error.HTTPError(path, 422, "Unprocessable Entity", {}, None)
             self.creations += 1
             self.release = dict(data, id=1, author={"login": "github-actions[bot]"})
             return copy.deepcopy(self.release)
@@ -139,7 +146,7 @@ class ReleaseTests(unittest.TestCase):
         self.publish(api)
         self.assertEqual(api.publishes, 1)
         self.assertEqual(len(api.entries), 5)
-        self.assertEqual(api.release["target_commitish"], "refs/tags/" + TAG)
+        self.assertEqual(api.release["target_commitish"], SHA)
         self.assertEqual(sum(1 for m, p in api.calls if m == "GET" and p.startswith("/releases/assets/")), 5)
         before = copy.deepcopy(api.entries)
         with self.assertRaisesRegex(ValueError, "published or unknown"):
@@ -560,8 +567,11 @@ class ReleaseTests(unittest.TestCase):
             self.assertIsNone(api.request("GET", "/releases/tags/absent"))
             with self.assertRaisesRegex(ValueError, "REST status"):
                 api.request("GET", "/wrong-status")
-            with self.assertRaises(urllib.error.HTTPError):
+            with self.assertRaises(urllib.error.HTTPError), \
+                    contextlib.redirect_stderr(io.StringIO()) as logged:
                 api.request("GET", "/failure")
+            # The validation body names the rejected field: keep it in the CI log.
+            self.assertIn('HTTP 500: {"id": 1}', logged.getvalue())
             self.assertTrue(all(token == "Bearer offline-test-token" for _, token in calls))
             request = release.urllib.request.Request("https://api.github.com/test", headers={"Authorization": "secret"})
             redirected = release.SafeRedirect().redirect_request(request, None, 302, "", {},
