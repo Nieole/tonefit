@@ -1918,6 +1918,13 @@ fn the_survey_lists_members_without_reading_a_single_pixel() {
     })
     .expect("一张坏图不该毁掉整卷");
 
+    assert!(
+        report.failed_volumes.is_empty(),
+        "卷处理失败：{:?}",
+        report.failed_volumes
+    );
+    assert_eq!(report.volumes.len(), 1, "应当做出一卷");
+
     let failures: Vec<&PathBuf> = report.failures().map(|page| &page.source).collect();
     assert_eq!(failures.len(), 1, "坏页的数目不对：{failures:?}");
     assert!(

@@ -876,12 +876,19 @@ fn a_color_page_is_outside_the_scope_of_the_geometry_gate() {
     // 两趟都点名 fit-inside：头一页要贴不住面板，而未贴合屏幕那一支只在这条路上走得到
     // （页几何批 01 号票）。
     let run = |space: &Workspace, volume: &fixtures::Volume, profile| {
-        tonefit::run(&Request {
+        let report = tonefit::run(&Request {
             profile,
             fit: FitMode::Inside,
             ..fixtures::request(space, [volume.path()])
         })
-        .expect("处理应当成功")
+        .expect("处理应当成功");
+        assert!(
+            report.failed_volumes.is_empty(),
+            "卷处理失败：{:?}",
+            report.failed_volumes
+        );
+        assert_eq!(report.volumes.len(), 1, "应当做出一卷");
+        report
     };
     let color_space = Workspace::new();
     let color = run(

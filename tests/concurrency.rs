@@ -154,15 +154,19 @@ fn io_mode_overrides_the_probe_and_the_report_says_where_the_number_came_from() 
     let space = Workspace::new();
     let volume = long_volume(&space, "volume-a");
     let plan = |mode: IoMode, out: &str| {
-        tonefit::run(&Request {
+        let report = tonefit::run(&Request {
             io_mode: mode,
             output_root: space.out_named(out),
             ..fixtures::request(&space, [volume.path()])
         })
-        .expect("处理应当成功")
-        .volumes[0]
-            .io
-            .clone()
+        .expect("处理应当成功");
+        assert!(
+            report.failed_volumes.is_empty(),
+            "{mode:?} 卷处理失败：{:?}",
+            report.failed_volumes
+        );
+        assert_eq!(report.volumes.len(), 1, "{mode:?} 应当做出一卷");
+        report.volumes[0].io.clone()
     };
 
     let automatic = plan(IoMode::Auto, "auto");
