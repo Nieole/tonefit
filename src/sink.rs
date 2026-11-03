@@ -282,7 +282,7 @@ impl DirectorySink {
             std::fs::remove_dir_all(&self.path)
                 .with_context(|| format!("腾出输出位置 {}", self.path.display()))?;
         }
-        std::fs::rename(partial, &self.path)
+        rename_output_directory(partial, &self.path)
             .with_context(|| format!("把 {} 改名到 {}", partial.display(), self.path.display()))
     }
 
@@ -601,3 +601,41 @@ fn partial_path(path: &Path) -> PathBuf {
     name.push(".partial");
     path.with_file_name(name)
 }
+
+// 只包住整目录发布：归档与借住卷路径上的逐成员改名仍走原来的单次调用。
+fn rename_output_directory(source: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        retry_output_directory_rename(|| std::fs::rename(source, target), std::thread::sleep)
+    }
+    #[cfg(not(windows))]
+    std::fs::rename(source, target)
+}
+
+#[cfg(windows)]
+fn retry_output_directory_rename(
+    mut rename: impl FnMut() -> std::io::Result<()>,
+    mut wait: impl FnMut(std::time::Duration),
+) -> std::io::Result<()> {
+    use std::time::Duration;
+
+    // 限制主动安排的等待，不承诺墙钟上界（系统调用、调度可能更久）。
+    // 策略与取舍见 specs/io.md《Windows 目录输出发布》。
+    let mut remaining_ms = 250;
+    let mut delay_ms = 1;
+    loop {
+        match rename() {
+            Err(error) if error.raw_os_error() == Some(5) && remaining_ms > 0 => {
+                let sleep_ms = delay_ms.min(remaining_ms);
+                wait(Duration::from_millis(sleep_ms));
+                remaining_ms -= sleep_ms;
+                delay_ms = (delay_ms * 2).min(50);
+            }
+            result => return result,
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+#[path = "../tests/sink/windows_rename.rs"]
+mod windows_rename_tests;
