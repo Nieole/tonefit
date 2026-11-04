@@ -49,7 +49,7 @@
 4. 接入阶段标签安全发布与完整性校验；独立审查后在真实 GitHub CI 验证最终树。
 5. 合入 main、CI 全绿后创建 `v0.1.0-alpha.1`；等待预发布完整成功，下载核验全部资产并交付链接。
 
-交付链契约归 `.github/SPEC.md`；本地门禁命令仍归 `docs/agents/gate.md`，README 只提供用户入口。研究事实与未验证事项见 [research.md](research.md)。不改用户原有 `.gitattributes` 工作区改动。
+本地门禁命令归 `docs/agents/gate.md`，README 只提供用户入口。研究事实与未验证事项见 [research.md](research.md)。不改用户原有 `.gitattributes` 工作区改动。
 
 ## 非目标
 

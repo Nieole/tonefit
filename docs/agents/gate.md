@@ -54,8 +54,7 @@ cargo xtask gate
 只跑其中几条、按点名的次序：`cargo xtask gate 2 1`。
 
 `xtask` 的 test/check/clippy/doc 子命令固定加 `--locked`，锁文件过期直接失败，
-不在验收时重算依赖。排版不解析依赖。CI 的平台与原生依赖契约见
-[交付](../../.github/SPEC.md)。
+不在验收时重算依赖。排版不解析依赖。
 
 那条别名在 `.cargo/config.toml`，跑的那件工具在 `xtask/`——一个 workspace 成员，
 `default-members` 把它挡在 `cargo build`／`cargo test` 之外，一个外部依赖都不收。

@@ -179,7 +179,7 @@
 - 屏上变动先改设计稿再重导，新增交互与整屏验收；黄金快照不变。
 - 步骤审查修复了长补全错误回话覆盖光标、零卷清点完成时备注消失两处；全分支 Spec 审查又补上场景数据的显式 `run.surveyed`，场景回放不再拿空清单猜清点是否完成。新增零卷备注、说明卡与问题跳转验收会独立咬住旧捷径。
 - 全分支 Standards 审查无实质问题；Spec 初审的阻塞项修复后复审通过。两轴独立报告，不以一轴掩盖另一轴。
-- durable 契约回写 `src/specs/session.md`（ETA、零卷清点、场景数据）与 `src/specs/cli.md`（停止报告、简报）；产品原则及模块边界不变，未改既有词义。
+- 产品原则及模块边界不变，未改既有词义。
 - 仅在 TUI 或测试构建编译页名 helper，不用 `allow` 隐藏新增的无默认特性告警。未改依赖或用户原有 `.gitattributes`。
 
 ### 最终集成核验
@@ -193,7 +193,7 @@
 - 闸门在 concurrency 失败后会停，因此额外在默认与无默认特性两侧逐一运行其余全部 21 个 integration target：`alignment container counters discovery events exit_code golden idempotency isolation metric perceptual pipeline preset profile proof resume session single_source smoke stop timing`，每个名字用 `--test` 点名，无默认特性同时指定 `CARGO_TARGET_DIR=target/gate/no-default-features`。两侧各 409 个 harness 用例通过，另各 3 个 perceptual 自定义用例通过，无额外失败。concurrency 的 13 条在两侧真正闸门中均已执行。
 - 去掉重复执行的 alignment 后，默认构建合计 **1187 通过、1 失败**（lib 256 / bin 507 / integration 424 通过、1 失败）；无默认特性合计 **1031 通过、1 失败**（lib 256 / bin 351 / integration 424 通过、1 失败）。`test --doc` 两侧各 2 条通过，另列不混进以上合计。
 - `npm --prefix .scratch/session-redesign run check` → 导出逐字节一致；`npm --prefix .scratch/session-redesign test` → 13 通过。
-- `git diff --check`、spec 图校验 → 通过；黄金快照 SHA256 与基线同为 `2a6aabc07627323b7ddd6539bc1c3a8450ebe8a234265fd7912fe0d48751602d`。
+- `git diff --check` → 通过；黄金快照 SHA256 与基线同为 `2a6aabc07627323b7ddd6539bc1c3a8450ebe8a234265fd7912fe0d48751602d`。
 
 ### 明确保留
 

@@ -7,7 +7,7 @@ design export checking and JS tests. No publisher, tag mutation, release or git
 index/history changes. `.gitattributes` is untouched. App and root lock entry only
 are 0.1.0-alpha.1; no dependency updates.
 
-The owning contract is `.github/SPEC.md`. Helpers and archive checks are deliberately
+Helpers and archive checks are deliberately
 fail-closed: unknown dynamic libraries / missing license texts fail CI, rather than
 silently copying a runner's development libraries into a portable package.
 

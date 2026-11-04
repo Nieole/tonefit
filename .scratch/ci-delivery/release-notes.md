@@ -4,8 +4,6 @@ Configuration-only step: no release, tag, commit, push, index/history change or 
 
 ## Implemented boundary
 
-Owning contract: `.github/SPEC.md`, “阶段发布契约”.
-
 - `release.yml`: strict helper-validated alpha/beta/rc tag push; inline Git ancestry verification before executing tagged helper code; same-SHA reusable four-native-target quality/package run; explicit success-only publisher dependency barrier; per-tag concurrency; only publisher has contents:write.
 - `quality.yml`: existing PR/all-branch/dispatch behavior retained, plus workflow_call with an exact commit input, explicit checkout/HEAD equality and same-SHA artifact names. Full retries replace only same-run temporary artifacts, never Release assets.
 - `release.py`: fresh remote tag/main checks; exact current-run artifact whitelist and transport digest; safe artifact ZIP and final archive validation; internal clean SHA/tag/target/version/native/lock provenance; global checksums from the four unchanged final archives. No cross-architecture execution in the publisher.

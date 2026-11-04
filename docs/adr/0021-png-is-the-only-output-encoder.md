@@ -1,16 +1,3 @@
----
-id: adr-0021
-type: architecture-design
-title: "ADR 0021：PNG 是唯一的输出编码器"
-status: draft
-parent: tonefit-encoding
-depends-on:
-  - adr-0004
-  - adr-0009
-references:
-  - tonefit-measurements
----
-
 # ADR 0021：PNG 是唯一的输出编码器
 
 状态：已采纳（2026-10-27）；**取代 ADR 0004**

@@ -1,13 +1,3 @@
----
-id: adr-0020
-type: architecture-design
-title: "ADR 0020：输出容器只有目录与 CBZ"
-status: draft
-parent: tonefit-io
-depends-on:
-  - adr-0015
----
-
 # ADR 0020：输出容器只有目录与 CBZ
 
 状态：已采纳（2026-09-17）

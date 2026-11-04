@@ -1,11 +1,3 @@
----
-id: adr-0004
-type: architecture-design
-title: "ADR 0004：输出以 PNG 为默认，AVIF 为显式可选"
-status: draft
-parent: tonefit-encoding
----
-
 # ADR 0004：输出以 PNG 为默认，AVIF 为显式可选
 
 状态：**已被取代**（2026-10-27，ADR 0021）——决定第 1、5 条照旧执行，第 2、3、4 条不再执行。

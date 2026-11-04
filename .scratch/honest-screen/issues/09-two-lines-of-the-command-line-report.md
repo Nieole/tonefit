@@ -52,7 +52,7 @@
 
 - `src/render.rs` 的结束方式改为「停下（做完再停）」「停下（立即停止）」「清点途中停下」，包括没有剩余卷、没有丢弃卷的短句分支；命令行与会话退出仍共用 `plain::report`，不新增措辞出处。
 - 默认路径的目录分布只过滤语义上的 `VolumeVerdict::PerPage`，不靠认字符串；跳过、覆盖、没做成照原先的分布规则计数排序，全部逐页时整格不在场，`--envelope` 不改。代价是默认路径现在也逐卷计算状态分布；没有新增依赖、参数或公共 API。
-- 用例接缝按 spec《接缝 ②》：报告纯函数覆盖两级停止、清点途中两级、卷边界没有丢弃卷、剩余零卷；`--brief` 覆盖全跳过、全逐页、混合跳过／覆盖／失败与 `--envelope`。`session::run` 既有退出用例在真线程等确认后调用 `leave`，断言退出报告收尾及不含「按停止」；会话生产代码不改。`tests/stop.rs` 真进程三条跟随新措辞，并各自反向禁止「按停止」。`tests/events.rs` 同步那句报告文字的注释；`src/specs/cli.md` 记下当前契约。
+- 用例接缝按 spec《接缝 ②》：报告纯函数覆盖两级停止、清点途中两级、卷边界没有丢弃卷、剩余零卷；`--brief` 覆盖全跳过、全逐页、混合跳过／覆盖／失败与 `--envelope`。`session::run` 既有退出用例在真线程等确认后调用 `leave`，断言退出报告收尾及不含「按停止」；会话生产代码不改。`tests/stop.rs` 真进程三条跟随新措辞，并各自反向禁止「按停止」。`tests/events.rs` 同步那句报告文字的注释。
 - 实际 red：`/tmp/hs-09-red-outcome.log` 中 `Stopped(Finish)` 实得「按停止停下（做完再停）…」、期望「停下（做完再停）…」；`/tmp/hs-09-red-leave.log` 的退出报告因仍含「按停止」失败（单靠后缀正断言抓不到它）。`/tmp/hs-09-red-directory.log` 实得「库  3 卷」、期望「库  3 卷 · 跳过 1」。均在实现之前跑到断言红。
 - 实际 reversal：把过滤守卫的 `!envelope` 反成 `envelope`，目录用例红为「库  3 卷 · 逐页 2 ⋅ 跳过 1」（`/tmp/hs-09-mutation-directory-guard.log`）；把生产措辞前缀加回「按停止」，退出报告的反向断言红（`/tmp/hs-09-mutation-exit-wording.log`）。两次均 exit 101，均已还原并重验绿。
 - 验证：报告层 71 通过、退出报告用例 1 通过；真进程停止 3 通过。另跑 events 36、exit_code 13、golden 2、session 2、single_source 12、stop 3 全通过（`/tmp/hs-09-final-integration.log`）。`git diff --check` 通过；黄金快照、设计稿、导出夹具、场景夹具、`main.rs` 和 `.gitattributes` 均无改动。

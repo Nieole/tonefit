@@ -1,11 +1,3 @@
----
-id: tonefit-glossary
-type: architecture-design
-title: "tonefit — 领域上下文（词汇表）"
-status: draft
-parent: tonefit-goal
----
-
 # tonefit — 领域上下文
 
 tonefit 把漫画页适配到电子墨水阅读设备：在尽量不影响阅读效果的前提下，为每页选择缩放、几何裁切与输出灰阶档位。

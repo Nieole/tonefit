@@ -1,13 +1,3 @@
----
-id: adr-0003
-type: architecture-design
-title: "ADR 0003：面板灰阶数是位深的硬上界"
-status: draft
-parent: tonefit-judging
-depends-on:
-  - adr-0007
----
-
 # ADR 0003：面板灰阶数是位深的硬上界
 
 状态：已采纳（2026-08-25）

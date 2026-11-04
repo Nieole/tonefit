@@ -11,7 +11,7 @@ Windows Server 2022，Actions run **41295011993**，源 **49fb856**；日志 `/t
 
 ## 设计与落点
 
-用户已明确批准「补安全前缀等价」。词义归 `GLOSSARY.md`《同一处》，非平凡命名空间规则与取舍归 [ADR 0022](../../docs/adr/0022-safe-windows-path-prefix-equivalence.md)（保持 draft），模块入口为 `src/specs/scope.md`。
+用户已明确批准「补安全前缀等价」。词义归 `GLOSSARY.md`《同一处》，非平凡命名空间规则与取舍归 [ADR 0022](../../docs/adr/0022-safe-windows-path-prefix-equivalence.md)（保持 draft）。
 
 生产修改只在 `src/place.rs`：接当前目录之后、分量规整与大小写折叠之前，检查扩展原串是否属于安全盘符／UNC 子集，安全才转换前缀。其余命名空间保留区别；不做 IO、canonicalize、软链或 `..` 解析，不改报告写法。检查包括 UNC 服务器／共享名，不能让分量迭代器先吞掉特殊语义。普通写法仍沿用既有 `.` 规整，不把扩展写法的点分量解释成它。
 

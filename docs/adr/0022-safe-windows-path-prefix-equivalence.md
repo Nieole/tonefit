@@ -1,12 +1,3 @@
----
-id: adr-0022
-type: architecture-design
-status: draft
-title: ADR 0022：Windows 路径只在安全分量上合并扩展前缀
-parent: tonefit-scope
-references: [tonefit-glossary, adr-0014]
----
-
 # Windows 路径只在安全分量上合并扩展前缀
 
 用户已批准「补安全前缀等价」：《同一处》须认出常规绝对路径与不改变分量解释的 Windows 扩展前缀，才能让相对点名与 canonicalize 产生的写法收编为一份，守住 ADR 0014 的「一页不处理两遍」。修生产比较，不改原 discovery 回归的夹具或断言。

@@ -267,12 +267,12 @@
   翻案条件写成决定第 5 条。
 - `docs/adr/0004` 状态行改成「已被取代（2026-10-27，ADR 0021）」，加修订记录块，
   写法与 ADR 0017 同形。《不要做的「简化」》**一个字节没动**。
-> 同批还带上了 `CONTEXT.md` → `GLOSSARY.md` 的全仓改名（spec 图那一批的收尾）。
+> 同批还带上了 `CONTEXT.md` → `GLOSSARY.md` 的全仓改名。
 > 因此下面凡写 `CONTEXT.md` 的地方，今天读作 `GLOSSARY.md`；`.scratch/` 里的旧票照旧用旧名。
 
 - `docs/measurements.md` 添《AVIF 无损输出：这条依赖链上做不到，而近似无损在 1~4bit 内容上大 9~702 倍》，
   21 组全表 + 编码器版本 + 两条源码依据 + 与《编码器对比》不可并列的注。**03 号票那一格由这一节收下。**
-- `src/encode.rs` 两句、`src/request.rs` 一句、`src/specs/encoding.md` 两处、`CONTEXT.md` 的《输出》一节
+- `src/encode.rs` 两句、`src/request.rs` 一句、`CONTEXT.md` 的《输出》一节
   跟着改口；`src/report.rs`、`src/pipeline.rs`、`tests/pipeline.rs`、`tests/smoke.rs` 里指 0004 的
   调色板那几处改指 0021 决定第 6 条（0004 的决定第 3 条已被取代，指针不能留在那儿）。
 - `tests/single_source.rs` 的 `ON_GRID_SIGNPOSTED` 补上 ADR 0021 那一行（注释里预告过的那一步）。

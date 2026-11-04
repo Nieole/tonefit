@@ -1,13 +1,3 @@
----
-id: task-ddd-reorganization
-type: task-spec
-status: draft
-title: 全项目 DDD 重组：三 crate 与六项职责深化
-parent: tonefit-architecture
-references: [tonefit-glossary, tonefit-page-transform, tonefit-judging, tonefit-encoding, tonefit-io, tonefit-scope, tonefit-progress-report, tonefit-assembly, tonefit-instruments, tonefit-cli, tonefit-session, tonefit-delivery, adr-0005, adr-0011, adr-0012, adr-0013, adr-0016, adr-0018, adr-0019, adr-0021, adr-0022]
-tags: [ddd, architecture, testing]
----
-
 # 全项目 DDD 重组：三 crate 与六项职责深化
 
 Status: ready-for-agent
@@ -213,7 +203,7 @@ Status: ready-for-agent
 
 ## Further Notes
 
-- 本规格发布于项目本地 issue tracker，`Status: ready-for-agent` 表示无需再进行需求 triage。spec 图中的 `status: draft` 表示这份新综合文档尚待用户阅读，不推翻已完成的 grill 确认。
+- 本规格发布于项目本地 issue tracker，`Status: ready-for-agent` 表示无需再进行需求 triage。
 - Q1–Q11 与高层 seam 已由用户确认；其来源为 [grill 记录](grill.md)。本规格是后续 to-tickets 的需求与决定出处；[设计收敛稿](design.md) 留作来源说明，[参考拆解](migration.md) 不构成已批准的票据顺序或执行计划。冲突以本规格及现行行为不变量为准，不以旧 HTML 草案为准。
 - 本规格提出替换现行单库拓扑与部分职责归属；对应 durable spec 随实施同步更新。其余决定继续受关联 spec 与 ADR 约束，特别是单次解码、默认逐页、两级停止与确认、事件流、措辞单一出处及 PNG 唯一输出。新领域术语确立后补词汇表，已有含义变更另行拍板。
 - 发布本规格不代表已实施、已运行产品验收或已获得源码迁移授权。当前工作树与并行提交的归属按实际基线核对，不沿用旧的 Windows/CI 未完成假设。
